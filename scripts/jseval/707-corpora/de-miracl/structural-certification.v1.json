@@ -7,6 +7,7 @@
       "short-natural": {
         "dataset": "mixed/de-miracl-1k-short-natural",
         "corpus_signature": "04a71497dbb15efd48bcf0f48bf09e376e2a4f4071705fea9bb82db70090a0ce",
+        "query_gold_sha256": "f0ed79852de9d16fd34f0f6925f9e593d0fe2a48a46fe05f026b4a4f8300deb2",
         "query_count": 20,
         "checks": {
           "size": true,
@@ -35,11 +36,31 @@
           "passed": true,
           "method": "exact-title-match"
         },
-        "passed": true
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
       },
       "verbose": {
         "dataset": "mixed/de-miracl-1k-verbose",
         "corpus_signature": "04a71497dbb15efd48bcf0f48bf09e376e2a4f4071705fea9bb82db70090a0ce",
+        "query_gold_sha256": "59a9194ebdb79a7b6b5c2e8578106a9bca02ad9257ba902a27b68d246d001698",
         "query_count": 20,
         "checks": {
           "size": true,
@@ -68,13 +89,33 @@
           "passed": true,
           "method": "exact-title-match"
         },
-        "passed": true
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
       }
     },
     "10000": {
       "short-natural": {
         "dataset": "mixed/de-miracl-10k-short-natural",
         "corpus_signature": "81bbdc4497e442fb2eb23bb310bc0cc2b4c770309a65d47048ac9ae410731b58",
+        "query_gold_sha256": "f0ed79852de9d16fd34f0f6925f9e593d0fe2a48a46fe05f026b4a4f8300deb2",
         "query_count": 20,
         "checks": {
           "size": true,
@@ -103,11 +144,31 @@
           "passed": true,
           "method": "exact-title-match"
         },
-        "passed": true
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
       },
       "verbose": {
         "dataset": "mixed/de-miracl-10k-verbose",
         "corpus_signature": "81bbdc4497e442fb2eb23bb310bc0cc2b4c770309a65d47048ac9ae410731b58",
+        "query_gold_sha256": "59a9194ebdb79a7b6b5c2e8578106a9bca02ad9257ba902a27b68d246d001698",
         "query_count": 20,
         "checks": {
           "size": true,
@@ -136,7 +197,26 @@
           "passed": true,
           "method": "exact-title-match"
         },
-        "passed": true
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
       }
     }
   },

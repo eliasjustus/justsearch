@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "707-corpus-certification-policy.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "unresolved", "required_cells"],
+  "properties": {
+    "schema": {"const": "707-corpus-certification-policy.v1"},
+    "status": {"enum": ["draft", "active"]},
+    "unresolved": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "required_cells": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["member", "dataset", "corpus_signature", "query_gold_sha256", "query_count", "thresholds"],
+        "properties": {
+          "member": {"type": "string", "minLength": 1},
+          "dataset": {"type": "string", "minLength": 1},
+          "corpus_signature": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "query_gold_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "query_count": {"type": "integer", "minimum": 1},
+          "thresholds": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["closed_book", "retrieval_calibration", "union_recall", "leak_floor"],
+            "properties": {
+              "closed_book": {
+                "type": "object", "additionalProperties": false,
+                "required": ["maximum_accuracy"],
+                "properties": {"maximum_accuracy": {"type": "number", "minimum": 0, "maximum": 1}}
+              },
+              "retrieval_calibration": {
+                "type": "object", "additionalProperties": false,
+                "required": ["ndcg_band", "shortcut_leak_rate_max"],
+                "properties": {
+                  "ndcg_band": {
+                    "type": "array", "minItems": 2, "maxItems": 2,
+                    "items": {"type": "number", "minimum": 0, "maximum": 1}
+                  },
+                  "shortcut_leak_rate_max": {"type": "number", "minimum": 0, "maximum": 1}
+                }
+              },
+              "union_recall": {
+                "type": "object", "additionalProperties": false,
+                "required": ["minimum"],
+                "properties": {"minimum": {"type": "number", "minimum": 0, "maximum": 1}}
+              },
+              "leak_floor": {
+                "type": "object", "additionalProperties": false,
+                "required": ["maximum"],
+                "properties": {"maximum": {"type": "number", "minimum": 0, "maximum": 1}}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

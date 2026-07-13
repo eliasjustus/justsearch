@@ -20,37 +20,53 @@ related:
 > records before building on it. Historical proposal language below is retained for auditability;
 > the current implementation authority is the fold immediately below.
 
-## Current implementation fold (2026-07-13; repair complete, promotion blocked)
+## Current implementation fold (2026-07-13; internal promotion boundary implemented)
 
-The first implementation was incorrectly described as complete. The repair now makes the critical
-boundaries fail closed and has passed local verification, but this tempdoc remains incomplete until
-the explicit external gates below are satisfied:
+The first implementation was incorrectly described as complete. The internal promotion boundary now
+fails closed, but this tempdoc remains incomplete until the explicit external gates below are
+satisfied:
 
 - One all-attempt observation seam indexes the expected condition/seed/query matrix, rejects corrupt
   or incomplete logs, and feeds loss accounting, status, scale reporting, composition, sanitization,
   and replay. Excluded cells retain tool/leak/surface evidence.
 - Source identity covers corpus bytes, query-and-gold bytes, full canonical MCP `tools/list`, resolved
   model, environment, and Git status including untracked files. Resume recomputes those facts; replay
-  cannot supply search identity.
+  cannot supply search identity. It also captures the matching fully certified 707 snapshot and
+  rejects missing, partial, stale, or byte-drifted certification.
 - `utility-recompose` is a pure offline finalizer for logs or sanitized evidence. The versioned claim
-  policy is threaded through composition and applies every threshold to ITT-primary evidence.
-  Per-protocol evidence is secondary; validity is separate from benefit, harm, null, adoption-only,
-  and inconclusive outcome direction. The owner-set thresholds remain deliberately unresolved.
+  policy pre-registers the exact member/dataset/size/query-variant/model/query-count/seed matrix,
+  rejects missing, extra, and duplicate strata, requires every stratum to be the complete
+  seed-by-query Cartesian product in both arms, and treats an empty matrix as unresolved. Seed,
+  paired-observation, uncertainty, adoption, and outcome gates apply to every ITT stratum; aggregate
+  counts are descriptive. Per-protocol evidence is secondary; validity is separate from benefit,
+  harm, null, adoption-only, and inconclusive outcome direction. Any inconclusive required stratum
+  blocks promotion. The owner-set matrix and thresholds remain deliberately unresolved.
 - The rejected 2026-07-12 pilot is strict allowlisted JSONL evidence. It replays all 48 attempts and
   rejects the false-green survivor projection through the actual loss accounting.
 - CLERC and MIRACL-DE have committed 1k/10k verbose and short-natural members plus immutable
-  commitment manifests and structural certification. CLERC is revision-pinned and MIRACL records
-  its dataset/library version. Closed-book, retrieval, union-recall, and leak gates remain pending. EnronQA stays
-  non-claim-eligible because its upstream license is unresolved.
+  commitment manifests and structural certification. The certification command can now aggregate
+  those four member cells with typed closed-book, retrieval-calibration, union-recall, and leak
+  measurement-only artifacts whose verdicts are recomputed against a separate, checked-in pre-run
+  policy rather than artifact-supplied thresholds. That 707 policy remains draft and unresolved.
+  It binds the exact query-and-gold digest as well as corpus bytes. Gate artifacts embed the canonical
+  measurement and, for backend gates, run-manifest/projection bytes. The source-time snapshot embeds
+  the exact policy, certificate, and gate bytes, so policy evaluation and replay re-hash and
+  re-evaluate them;
+  those scientific runs remain pending. CLERC is revision-pinned and MIRACL records its
+  dataset/library version. EnronQA stays non-claim-eligible because its upstream license is unresolved.
 - Publication construction is accepted-only and bundles the exact policy snapshot. Python and CI
   agree on initial-null, accepted, superseded, and withdrawn pointer states. Rejected evidence stays
   in test/history fixtures; the checked-in pointer remains `current:null`.
 - A dedicated reference page, outward `RESEARCH.md` checks, projection lifecycle/drift tests, and
-  canonical jseval CI replay exist. Manual judge/recomposition/probe helpers were removed.
+  canonical jseval CI replay exist. Accepted README output is a short outcome-specific teaser;
+  `RESEARCH.md` is per-stratum; the reference page carries full arm distributions, intervals, loss,
+  outcome, certification, evidence, and replay identity. Manual judge/recomposition/probe helpers
+  were removed.
 
 Remaining work: run the no-cost backend corpus gates when a stack is available; obtain owner
-decisions for scientific margins and the email source; authorize any future
-paid campaign; and select a result only if an accepted immutable bundle passes all gates.
+decisions for the exact campaign matrix, scientific margins, model cohort, email source or
+replacement, and smoke/powered budgets; authorize any future paid campaign; and select a result only
+if an accepted immutable bundle passes all gates.
 
 ### Verification and handoff evidence (repair run)
 
@@ -58,19 +74,22 @@ Branch: `codex/719-agent-utility-publication`. No PR, push, merge, paid call, cr
 accepted-result selection was performed.
 
 - Final repair verification: `python -m pytest -q scripts/jseval/tests` reached
-  **1732 passed, 2 failed** in 263.37 seconds (2026-07-13). Both failures
+  **1750 passed, 2 failed** in 446.84 seconds (2026-07-13). Both failures
   are the pre-existing `test_correction_probe` default-manifest tests, because
   `scripts/jseval/jseval/data/correction-eval-queries.v1.json` is absent from both this HEAD and the
   main checkout. This unrelated missing fixture was not fabricated as part of 719.
-- The focused evidence, policy, MCP/source-identity, comparison, and corpus-injection suite is
-  **128 passed**. This includes safe/recomputed environment identity, all-required-strata promotion,
-  policy-alpha threading, forbidden-tool gating, full MCP schema identity/drift, and commitment-tied
-  regeneration evidence.
+- The final focused policy, certification, capture, command-surface, and publication suite is
+  **150 passed**. This includes the exact seed-by-query product, pre-run threshold authority,
+  query/gold drift, canonical source/manifest tampering, shortcut-leak arithmetic, safe/recomputed
+  environment identity, all-required-strata promotion, and full MCP schema identity/drift. An
+  independent refute-first reviewer dynamically repeated the promotion attacks and found no remaining
+  blocker in that scope.
 - Recomposition of the committed rejected fixture produces semantic digest
-  `bfa489c576dc1757ae828a47b958790c3bf12c6fafc3552f4b57d92a0be50397`, `comparable=false`, paired
+  `2cea990ce444f6cb177f8ec3e0dddae4354286e8d62f512f0ee2a8594c076ee6`, `comparable=false`, paired
   retention `0.5`, A loss `24/16/8`, B loss `24/14/10`, and `claim_verdict.accepted=false`.
 - Serialized single- and cross-corpus records validate against the two v2 schemas. Command inventory
-  check is green at 83 commands. `python -m compileall -q scripts/jseval/jseval` is green.
+  check is green at 84 commands, including the canonical scientific-evidence packager.
+  `python -m compileall -q scripts/jseval/jseval` is green.
 - `check-public-agent-utility.mjs`, the three projection `--check` results, outward-number citation
   tests, workflow-trigger tests/guard, `git diff --check`, canonical-doc links, module-dependency
   canonical check, runtime-config matrix, `llms.txt --check`, skills sync, and methodology
@@ -78,7 +97,7 @@ accepted-result selection was performed.
 - A fresh `git clone --no-local` replayed the rejected evidence with the canonical CLI and ran
   `check-public-agent-utility.mjs` from inside the clean clone: worktree clean, pointer null,
   `accepted=false`, `comparable=false`, semantic digest
-  `bfa489c576dc1757ae828a47b958790c3bf12c6fafc3552f4b57d92a0be50397`.
+  `2cea990ce444f6cb177f8ec3e0dddae4354286e8d62f512f0ee2a8594c076ee6`.
 
 ### Explicit deferred checks and owner gates
 
@@ -89,6 +108,10 @@ accepted-result selection was performed.
   other worktrees' tempdoc 720 drafts; 719 itself has no number collision.
 - CLERC/MIRACL structural materialization is complete and recorded in 707. Closed-book, retrieval,
   union-recall, leak, provider replication, and paid adoption/powered campaigns remain unverified.
+  Two canonical backend-only attempts were made against the CLERC 1k verbose member; both stopped
+  before ingestion because the backend did not become healthy within jseval's 120-second startup
+  boundary. No process or data directory survived. The checked-in 707 scientific policy remains
+  draft, so no scientific evidence can certify until the owner settles its exact cells and thresholds.
 
 # 719 — Public agent-utility evidence release
 

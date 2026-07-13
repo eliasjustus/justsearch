@@ -77,9 +77,11 @@ def _intention_to_treat_estimand(
     for observation in observations:
         source = observation.get("source") or {}
         corpus = source.get("corpus") or {}
+        cohort = source.get("cohort") or {}
         key = (
             corpus.get("dataset"), corpus.get("signature"), source.get("model_alias"),
             observation.get("resolved_model"),
+            _canonical_bytes(cohort.get("corpus_certification")),
         )
         condition = observation.get("condition")
         if condition not in {"A", "B"}:
@@ -89,7 +91,7 @@ def _intention_to_treat_estimand(
         ] = observation
 
     strata = []
-    for (dataset, signature, model, resolved_model), arms in sorted(
+    for (dataset, signature, model, resolved_model, certification_bytes), arms in sorted(
         grouped.items(), key=lambda item: str(item[0])
     ):
         shared = sorted(set(arms.get("A", {})) & set(arms.get("B", {})))
@@ -149,17 +151,100 @@ def _intention_to_treat_estimand(
         campaign_identities = {
             _canonical_bytes(item.get("campaign_identity")) for item in source_cohorts
         }
-        if len(query_identities) != 1 or len(campaign_identities) != 1:
-            raise ValueError("one ITT stratum mixes query or campaign identities")
+        certifications = {
+            _canonical_bytes(item.get("corpus_certification")) for item in source_cohorts
+        }
+        if (
+            len(query_identities) != 1
+            or len(campaign_identities) != 1
+            or len(certifications) != 1
+        ):
+            raise ValueError(
+                "one ITT stratum mixes query, campaign, or corpus-certification identities"
+            )
+        query_identity = json.loads(next(iter(query_identities)).decode("utf-8"))
+        campaign_identity = json.loads(next(iter(campaign_identities)).decode("utf-8"))
+        certification = json.loads(next(iter(certifications)).decode("utf-8"))
+        if _canonical_bytes(certification) != certification_bytes:
+            raise ValueError("ITT stratum certification grouping drifted")
+        expected_by_arm = {"A": set(), "B": set()}
+        for expected_cell in (campaign_identity or {}).get("expected_cells") or []:
+            condition, seed, qid = str(expected_cell).split("|", 2)
+            if condition in expected_by_arm:
+                expected_by_arm[condition].add((int(seed), qid))
+        expected_pairs = expected_by_arm["A"] & expected_by_arm["B"]
+        seed_ids = sorted({seed for seed, _ in expected_pairs})
+        query_ids = sorted({qid for _, qid in expected_pairs})
+        member = (certification or {}).get("member")
+        size = (certification or {}).get("size")
+        query_variant = (certification or {}).get("query_variant")
+        stratum_id = (
+            f"{member}|{dataset}|{size}|{query_variant}|{model}"
+            if member and size and query_variant and model else None
+        )
+        per_arm_loss = {
+            condition: {
+                "n_expected": len(expected_by_arm[condition]),
+                "n_attempted": len(arms.get(condition, {})),
+                "n_completed": sum(
+                    not bool(item.get("excluded"))
+                    for item in arms.get(condition, {}).values()
+                ),
+                "n_excluded": sum(
+                    bool(item.get("excluded"))
+                    for item in arms.get(condition, {}).values()
+                ),
+                "n_pending": len(
+                    expected_by_arm[condition] - set(arms.get(condition, {}))
+                ),
+                "exclusion_rate": (
+                    sum(
+                        bool(item.get("excluded"))
+                        for item in arms.get(condition, {}).values()
+                    ) / len(arms.get(condition, {}))
+                    if arms.get(condition) else 0.0
+                ),
+            }
+            for condition in ("A", "B")
+        }
+        excluded = {
+            condition: {
+                key for key, item in arms.get(condition, {}).items()
+                if bool(item.get("excluded"))
+            }
+            for condition in ("A", "B")
+        }
+        excluded_union = excluded["A"] | excluded["B"]
+        excluded_jaccard = (
+            len(excluded["A"] & excluded["B"]) / len(excluded_union)
+            if excluded_union else 1.0
+        )
         strata.append({
+            "stratum_id": stratum_id,
+            "corpus_member": member,
             "corpus": dataset,
+            "corpus_size": size,
+            "query_variant": query_variant,
             "corpus_signature": signature,
             "model": model,
             "resolved_provider_model": resolved_model,
-            "query_identity": json.loads(next(iter(query_identities)).decode("utf-8")),
-            "campaign_identity": json.loads(next(iter(campaign_identities)).decode("utf-8")),
+            "query_identity": query_identity,
+            "campaign_identity": campaign_identity,
+            "corpus_certification": certification,
+            "seed_ids": seed_ids,
+            "seed_count": len(seed_ids),
+            "query_count": len(query_ids),
+            "n_expected_cells": len((campaign_identity or {}).get("expected_cells") or []),
+            "n_observed_cells": sum(len(arm) for arm in arms.values()),
+            "n_pending_cells": sum(item["n_pending"] for item in per_arm_loss.values()),
+            "n_expected_pairs": len(expected_pairs),
             "n_paired_observations": len(shared),
             "n_per_protocol_pairs": per_protocol_pairs,
+            "paired_retention": (
+                per_protocol_pairs / len(expected_pairs) if expected_pairs else 0.0
+            ),
+            "excluded_jaccard": excluded_jaccard,
+            "per_arm_loss": per_arm_loss,
             "usage_complete": usage_complete,
             "accuracy": (stats or {}).get("accuracy"),
             "provider_cache_creation_input_tokens": (
@@ -195,7 +280,10 @@ def _validate_expected_campaign(observations: list[dict]) -> None:
         return
     if len(expected_sets) != 1:
         raise ValueError("evidence mixes incompatible expected campaign matrices")
-    expected = set(next(iter(expected_sets)))
+    expected_sequence = next(iter(expected_sets))
+    expected = set(expected_sequence)
+    if len(expected) != len(expected_sequence):
+        raise ValueError("expected campaign matrix contains duplicate cells")
     actual = {
         f"{item.get('condition')}|{int(item.get('seed', 0))}|{item.get('qid')}"
         for item in observations

@@ -72,6 +72,10 @@
     "group": "corpus"
   },
   {
+    "name": "corpus-scientific-evidence-build",
+    "group": "corpus"
+  },
+  {
     "name": "correction-probe",
     "group": "analysis"
   },

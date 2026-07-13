@@ -280,6 +280,7 @@ def compose_utility(
             manifest.get("query_identity"),
             manifest.get("campaign_identity"),
             manifest.get("corpus_identity"),
+            manifest.get("corpus_certification"),
         )
         display_key = (slug, model)
         prior = cell_identities.setdefault(display_key, identity)
@@ -297,7 +298,8 @@ def compose_utility(
     ):
         cell = _compose_cell(cell_summaries, statistical_alpha=statistical_alpha)
         if cell is not None:
-            signature, resolved_model, query_identity, campaign_identity, corpus_identity = (
+            (signature, resolved_model, query_identity, campaign_identity,
+             corpus_identity, corpus_certification) = (
                 cell_identities[(slug, model)]
             )
             cell["identity"] = {
@@ -307,6 +309,7 @@ def compose_utility(
                 "query_identity": query_identity,
                 "campaign_identity": campaign_identity,
                 "corpus_identity": corpus_identity,
+                "corpus_certification": corpus_certification,
             }
             measured.setdefault(slug, {})[model] = cell
 
@@ -1006,7 +1009,7 @@ def compose_utility_cross_corpus(
         manifest = summary["manifest"]
         identity = (
             manifest.get("query_identity"), manifest.get("campaign_identity"),
-            manifest.get("corpus_identity"),
+            manifest.get("corpus_identity"), manifest.get("corpus_certification"),
         )
         prior = per_corpus_identity.setdefault(label, identity)
         if prior != identity:
@@ -1074,6 +1077,10 @@ def compose_utility_cross_corpus(
                 },
                 "campaign_identities": {
                     label: per_corpus_identity[label][1]
+                    for label in sorted(per_corpus_identity)
+                },
+                "corpus_certifications": {
+                    label: per_corpus_identity[label][3]
                     for label in sorted(per_corpus_identity)
                 },
             }

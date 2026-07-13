@@ -137,6 +137,7 @@ def assess_fidelity(
 
     # shortcut sub-gate (no stack): genuine multi-hop?
     leak_rate, n_leaks = shortcut_leak_rate(queries, docs, model=model, concurrency=concurrency)
+    n_shortcut_queries = sum(1 for query in queries if query.get("evidence_ids"))
 
     in_band = band_low <= ndcg <= band_high
     passed = in_band and leak_rate <= leak_threshold
@@ -149,6 +150,7 @@ def assess_fidelity(
         "comparability_reasons": comp_reasons,
         "shortcut_leak_rate": round(leak_rate, 4),
         "n_shortcut_leaks": n_leaks,
+        "n_shortcut_queries": n_shortcut_queries,
         "band": [band_low, band_high],
         "in_band": in_band,
         "passed": passed,

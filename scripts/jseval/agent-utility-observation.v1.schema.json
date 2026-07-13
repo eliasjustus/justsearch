@@ -61,7 +61,7 @@
         "model_alias", "corpus", "packages", "source_git_sha", "source_git_dirty", "source_git_state",
         "cli_version", "mcp_tool_surface_hash", "mcp_tool_surface", "judge_kind", "prompt_template_hash",
         "decoding", "eval_limits", "search_config_cohort_key", "environment",
-        "corpus_identity", "query_identity", "campaign_identity"
+        "corpus_identity", "corpus_certification", "query_identity", "campaign_identity"
       ],
       "properties": {
         "model_alias": {"type": ["string", "null"]},
@@ -80,8 +80,56 @@
         "search_config_cohort_key": {"type": ["string", "null"]},
         "environment": {"type": ["object", "null"]},
         "corpus_identity": {"type": ["object", "null"]},
+        "corpus_certification": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["schema", "member", "dataset", "size", "query_variant", "query_count", "query_gold_sha256", "corpus_signature", "certification_sha256", "certification_base64", "scientific_gates", "fully_certified"],
+              "properties": {
+                "schema": {"const": "707-corpus-certification-snapshot.v1"},
+                "member": {"type": "string", "minLength": 1},
+                "dataset": {"type": "string", "minLength": 1},
+                "size": {"type": "integer", "minimum": 1},
+                "query_variant": {"enum": ["verbose", "short-natural"]},
+                "query_count": {"type": "integer", "minimum": 1},
+                "query_gold_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "corpus_signature": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "certification_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "certification_base64": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9+/]+={0,2}$"},
+                "scientific_gates": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["closed_book", "retrieval_calibration", "union_recall", "leak_floor"],
+                  "properties": {
+                    "closed_book": {"$ref": "#/$defs/scientificGate"},
+                    "retrieval_calibration": {"$ref": "#/$defs/scientificGate"},
+                    "union_recall": {"$ref": "#/$defs/scientificGate"},
+                    "leak_floor": {"$ref": "#/$defs/scientificGate"}
+                  }
+                },
+                "fully_certified": {"const": true}
+              }
+            }
+          ]
+        },
         "query_identity": {"type": ["object", "null"]},
         "campaign_identity": {"type": ["object", "null"]}
+      }
+    }
+  },
+  "$defs": {
+    "scientificGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "status", "sha256", "artifact_base64", "observed", "threshold"],
+      "properties": {
+        "passed": {"const": true},
+        "status": {"const": "passed"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "artifact_base64": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9+/]+={0,2}$"},
+        "observed": {"type": "object"},
+        "threshold": {"type": "object"}
       }
     }
   }

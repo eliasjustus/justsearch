@@ -38,9 +38,12 @@ def cmd_corpus_query_stratum_build(ctx, source, output, language):
               help="SIZE:VARIANT:NAME; provide all 1k/10k verbose/short-natural cells.")
 @click.option("--commitment", "commitments", multiple=True, required=True,
               help="SIZE:VARIANT:PATH; immutable recipe/input commitment for each cell.")
+@click.option("--scientific-evidence", "scientific_evidence", multiple=True,
+              help="SIZE:VARIANT:GATE:PATH; omit all entries for structural-only certification.")
 @click.pass_context
-def cmd_corpus_certify_member(ctx, member, datasets_dir, output, datasets, commitments):
-    """Certify zero-cost structural facts for a complete 707 member matrix."""
+def cmd_corpus_certify_member(ctx, member, datasets_dir, output, datasets, commitments,
+                              scientific_evidence):
+    """Certify structural facts and, when supplied, the full measured 707 gate matrix."""
     from ..corpus_certify import certify_materialized_family
 
     matrix: dict[str, dict[str, str]] = {}
@@ -49,6 +52,8 @@ def cmd_corpus_certify_member(ctx, member, datasets_dir, output, datasets, commi
             size, variant, name = value.split(":", 2)
         except ValueError as exc:
             raise click.UsageError("--dataset must be SIZE:VARIANT:NAME") from exc
+        if variant in matrix.get(size, {}):
+            raise click.UsageError(f"duplicate --dataset cell {size}:{variant}")
         matrix.setdefault(size, {})[variant] = name
     required = {
         ("1000", "verbose"), ("1000", "short-natural"),
@@ -63,6 +68,8 @@ def cmd_corpus_certify_member(ctx, member, datasets_dir, output, datasets, commi
             size, variant, path = value.split(":", 2)
         except ValueError as exc:
             raise click.UsageError("--commitment must be SIZE:VARIANT:PATH") from exc
+        if variant in commitment_matrix.get(size, {}):
+            raise click.UsageError(f"duplicate --commitment cell {size}:{variant}")
         commitment_matrix.setdefault(size, {})[variant] = path
     commitment_actual = {
         (size, variant)
@@ -70,9 +77,42 @@ def cmd_corpus_certify_member(ctx, member, datasets_dir, output, datasets, commi
     }
     if commitment_actual != required:
         raise click.UsageError(f"--commitment matrix must be exactly {sorted(required)!r}")
+    evidence_matrix = None
+    if scientific_evidence:
+        from ..corpus_certify import SCIENTIFIC_GATES
+
+        evidence_matrix = {}
+        for value in scientific_evidence:
+            try:
+                size, variant, gate, path = value.split(":", 3)
+            except ValueError as exc:
+                raise click.UsageError(
+                    "--scientific-evidence must be SIZE:VARIANT:GATE:PATH"
+                ) from exc
+            if gate in evidence_matrix.get(size, {}).get(variant, {}):
+                raise click.UsageError(
+                    f"duplicate --scientific-evidence cell {size}:{variant}:{gate}"
+                )
+            evidence_matrix.setdefault(size, {}).setdefault(variant, {})[gate] = path
+        evidence_actual = {
+            (size, variant, gate)
+            for size, variants in evidence_matrix.items()
+            for variant, gates in variants.items()
+            for gate in gates
+        }
+        evidence_required = {
+            (size, variant, gate)
+            for size, variant in required
+            for gate in SCIENTIFIC_GATES
+        }
+        if evidence_actual != evidence_required:
+            raise click.UsageError(
+                "--scientific-evidence matrix must be exactly complete for every member cell"
+            )
     report = certify_materialized_family(
         datasets_dir, member=member, dataset_names=matrix,
-        commitment_dirs=commitment_matrix)
+        commitment_dirs=commitment_matrix,
+        scientific_evidence=evidence_matrix)
     target = Path(output)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -82,6 +122,46 @@ def cmd_corpus_certify_member(ctx, member, datasets_dir, output, datasets, commi
         click.echo(f"{member}: {report['status']} -> {target}")
     if not report["structural_passed"]:
         raise click.ClickException("structural certification failed")
+    if scientific_evidence and not report["fully_certified"]:
+        raise click.ClickException("scientific certification failed")
+
+
+@click.command("corpus-scientific-evidence-build")
+@click.option("--member", required=True)
+@click.option("--dataset", required=True)
+@click.option("--dataset-dir", required=True, type=click.Path(exists=True, file_okay=False))
+@click.option("--gate", required=True,
+              type=click.Choice(["closed_book", "retrieval_calibration", "union_recall", "leak_floor"]))
+@click.option("--measurement", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--run-manifest", type=click.Path(exists=True, dir_okay=False))
+@click.option("--output", required=True, type=click.Path(dir_okay=False))
+@click.pass_context
+def cmd_corpus_scientific_evidence_build(
+    ctx, member, dataset, dataset_dir, gate, measurement, run_manifest, output,
+):
+    """Bind canonical scientific outputs to exact corpus and query/gold bytes."""
+    from ..corpus_certify import build_scientific_measurement_artifact
+
+    try:
+        artifact = build_scientific_measurement_artifact(
+            member=member,
+            dataset=dataset,
+            dataset_dir=dataset_dir,
+            gate=gate,
+            measurement_path=measurement,
+            run_manifest_path=run_manifest,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    target = Path(output)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(artifact, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
+    )
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(artifact, indent=2))
+    else:
+        click.echo(f"{dataset}:{gate} evidence -> {target}")
 
 
 @click.command("corpus-inject-real")
@@ -594,5 +674,7 @@ def cmd_corpus_probe(ctx, dataset, base_url, datasets_dir, modes, embedding, top
             click.echo(f"  control (head's own descriptor): rank={ctrl['rank']}")
 
 
-COMMANDS = [cmd_corpus_query_stratum_build, cmd_corpus_certify_member, cmd_corpus_inject_real, cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe,
+COMMANDS = [cmd_corpus_query_stratum_build, cmd_corpus_certify_member,
+            cmd_corpus_scientific_evidence_build, cmd_corpus_inject_real,
+            cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe,
             cmd_corpus_fetch_miracl, cmd_corpus_fetch_clerc, cmd_corpus_query_variant]

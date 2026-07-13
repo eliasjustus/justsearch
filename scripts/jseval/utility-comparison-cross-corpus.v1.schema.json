@@ -30,7 +30,7 @@
         "properties": {
           "identity": {
             "type": "object",
-            "required": ["corpus_signatures", "requested_model_alias", "resolved_provider_model"]
+            "required": ["corpus_signatures", "requested_model_alias", "resolved_provider_model", "query_identities", "campaign_identities", "corpus_certifications"]
           },
           "primary_arm": {"enum": ["addition_b", "substitution_c"]}
         }

@@ -4,8 +4,70 @@
   "title": "Agent-utility comparison record (tempdoc 624)",
   "description": "Condition-paired sibling of the 623 benchmark release. Projects over agent-eval runs cohort-identical on every axis except `condition` (with-tool vs. without-tool), one cell per (corpus, agent_model), aggregating over seed. A separate canonical record, NOT a metric family inside the single-cohort 623 release.",
   "type": "object",
-  "required": ["schema", "schema_version", "composed_at", "cohort", "measured", "coverage", "comparability", "claim_verdict", "semantic_digest"],
+  "required": ["schema", "schema_version", "composed_at", "cohort", "measured", "coverage", "comparability", "tool_call_assertions", "estimands", "statistical_alpha", "claim_verdict", "semantic_digest"],
   "additionalProperties": true,
+  "definitions": {
+    "armLoss": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["n_expected", "n_attempted", "n_completed", "n_excluded", "n_pending", "exclusion_rate"],
+      "properties": {
+        "n_expected": {"type": "integer", "minimum": 0},
+        "n_attempted": {"type": "integer", "minimum": 0},
+        "n_completed": {"type": "integer", "minimum": 0},
+        "n_excluded": {"type": "integer", "minimum": 0},
+        "n_pending": {"type": "integer", "minimum": 0},
+        "exclusion_rate": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "ittStratum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stratum_id", "corpus_member", "corpus", "corpus_size", "query_variant",
+        "corpus_signature", "model", "resolved_provider_model", "query_identity",
+        "campaign_identity", "corpus_certification", "seed_ids", "seed_count",
+        "query_count", "n_expected_cells", "n_observed_cells", "n_pending_cells",
+        "n_expected_pairs", "n_paired_observations", "n_per_protocol_pairs",
+        "paired_retention", "excluded_jaccard", "per_arm_loss", "usage_complete",
+        "accuracy", "provider_cache_creation_input_tokens", "cost_usd", "adoption"
+      ],
+      "properties": {
+        "stratum_id": {"type": ["string", "null"]},
+        "corpus_member": {"type": ["string", "null"]},
+        "corpus": {"type": ["string", "null"]},
+        "corpus_size": {"type": ["integer", "null"], "minimum": 1},
+        "query_variant": {"type": ["string", "null"]},
+        "corpus_signature": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]},
+        "resolved_provider_model": {"type": ["string", "null"]},
+        "query_identity": {"type": ["object", "null"]},
+        "campaign_identity": {"type": ["object", "null"]},
+        "corpus_certification": {"type": ["object", "null"]},
+        "seed_ids": {"type": "array", "uniqueItems": true, "items": {"type": "integer", "minimum": 0}},
+        "seed_count": {"type": "integer", "minimum": 0},
+        "query_count": {"type": "integer", "minimum": 0},
+        "n_expected_cells": {"type": "integer", "minimum": 0},
+        "n_observed_cells": {"type": "integer", "minimum": 0},
+        "n_pending_cells": {"type": "integer", "minimum": 0},
+        "n_expected_pairs": {"type": "integer", "minimum": 0},
+        "n_paired_observations": {"type": "integer", "minimum": 0},
+        "n_per_protocol_pairs": {"type": "integer", "minimum": 0},
+        "paired_retention": {"type": "number", "minimum": 0, "maximum": 1},
+        "excluded_jaccard": {"type": "number", "minimum": 0, "maximum": 1},
+        "per_arm_loss": {
+          "type": "object", "additionalProperties": false,
+          "required": ["A", "B"],
+          "properties": {"A": {"$ref": "#/definitions/armLoss"}, "B": {"$ref": "#/definitions/armLoss"}}
+        },
+        "usage_complete": {"type": "boolean"},
+        "accuracy": {"type": ["object", "null"]},
+        "provider_cache_creation_input_tokens": {"type": ["object", "null"]},
+        "cost_usd": {"type": ["object", "null"]},
+        "adoption": {"type": "object"}
+      }
+    }
+  },
   "properties": {
     "schema": { "const": "utility-comparison.v1" },
     "schema_version": { "const": 2 },
@@ -111,9 +173,38 @@
       }
     },
     "comparability": {"type": "object"},
+    "tool_call_assertions": {"type": "object"},
+    "statistical_alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+    "estimands": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "per_protocol", "intention_to_treat"],
+      "properties": {
+        "primary": {"const": "intention_to_treat"},
+        "per_protocol": {
+          "type": "object", "required": ["role"],
+          "properties": {"role": {"const": "secondary"}}
+        },
+        "intention_to_treat": {
+          "type": "object", "additionalProperties": false, "required": ["strata"],
+          "properties": {"strata": {"type": "array", "items": {"$ref": "#/definitions/ittStratum"}}}
+        }
+      }
+    },
     "claim_verdict": {
       "type": "object",
-      "required": ["status", "accepted", "policy_id", "policy_hash", "gates", "reasons"]
+      "required": ["status", "accepted", "outcome", "stratum_outcomes", "policy_id", "policy_hash", "gates", "reasons"],
+      "properties": {
+        "outcome": {"enum": ["benefit", "harm", "null", "adoption-only", "inconclusive"]},
+        "stratum_outcomes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["stratum_id", "corpus", "model", "outcome", "gates"],
+            "properties": {"gates": {"type": "object"}}
+          }
+        }
+      }
     },
     "semantic_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "revision": {

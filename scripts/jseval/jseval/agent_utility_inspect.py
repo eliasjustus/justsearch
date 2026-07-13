@@ -557,6 +557,7 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
                 "search_config_cohort_key": source_identity.get("search_config_cohort_key"),
                 "environment": source_identity.get("environment"),
                 "corpus_identity": source_identity.get("corpus"),
+                "corpus_certification": source_identity.get("corpus_certification"),
                 "query_identity": source_identity.get("queries"),
                 "campaign_identity": source_identity.get("campaign"),
             },
@@ -631,6 +632,7 @@ def _capture_or_load_source_identity(
     seeds: int = 0,
     max_queries: int | None = None,
     mcp_tool_surface: list[dict] | None = None,
+    corpus_certification: str | Path | None = None,
 ) -> dict:
     """Persist source-time identity and fail closed when resumed inputs drift."""
     from jseval.corpus_identity import corpus_signature
@@ -651,6 +653,18 @@ def _capture_or_load_source_identity(
         raise ValueError(
             f"declared corpus signature {declared} disagrees with materialized {signature}"
         )
+    certification = None
+    if corpus_certification is not None:
+        from jseval.corpus_certify import certification_snapshot
+
+        try:
+            certification = certification_snapshot(
+                corpus_certification,
+                dataset=corpus_dataset,
+                expected_signature=signature,
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError(f"corpus_certification rejected: {exc}") from exc
     query_identity = None
     campaign = None
     if queries_path is not None:
@@ -675,6 +689,14 @@ def _capture_or_load_source_identity(
             "seeds": int(seeds),
             "expected_cells": expected_cells,
         }
+    if (
+        certification is not None
+        and query_identity is not None
+        and certification.get("query_gold_sha256") != query_identity.get("sha256")
+    ):
+        raise ValueError(
+            "corpus_certification rejected: query-and-gold digest disagrees with queries"
+        )
 
     git_state = _git_source_state(exclude=log_dir)
     stable_identity = {
@@ -690,6 +712,7 @@ def _capture_or_load_source_identity(
             "signature": signature,
             "signature_matches": signature_matches,
         },
+        "corpus_certification": certification,
         "queries": query_identity,
         "campaign": campaign,
         "environment": safe_environment_identity(),
@@ -717,7 +740,8 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
                      max_turns: int = _DEFAULT_MAX_TURNS,
                      cli_version: str | None = None,
                      corpus_dataset: str = "", corpus_signature: str = "",
-                     search_config_cohort_key: str | None = None) -> str:
+                     search_config_cohort_key: str | None = None,
+                     corpus_certification: str | Path | None = None) -> str:
     """Run the matrix through Inspect `eval_set` (resumable). seeds → `epochs`.
 
     Returns the log_dir; re-invoking with the same log_dir resumes (skips done
@@ -763,6 +787,7 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
         seeds=seeds,
         max_queries=max_queries,
         mcp_tool_surface=captured_mcp_surface,
+        corpus_certification=corpus_certification,
     )
     source_identity_json = json.dumps(source_identity, sort_keys=True, separators=(",", ":"))
     # Pin a DETERMINISTIC eval_set_id (default is random per-process): without it,

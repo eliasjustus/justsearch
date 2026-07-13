@@ -12,6 +12,7 @@ from jseval.utility_claim_policy import load_policy
 from jseval.utility_evidence import sanitize_observation
 from jseval.utility_recompose import finalize_evidence, finalize_observation_groups, write_record
 from tests.test_utility_evidence import _observation
+from tests.test_corpus_inject import _certification_snapshot_fixture
 
 
 def _setup_rejected(tmp_path):
@@ -40,6 +41,7 @@ def _setup_rejected(tmp_path):
 def _setup_accepted(tmp_path):
     observations = []
     expected = []
+    certification = _certification_snapshot_fixture(query_gold_sha256="e" * 64)
     for seed in range(5):
         for index in range(20):
             qid = f"q{index}"
@@ -47,6 +49,8 @@ def _setup_accepted(tmp_path):
                 item = copy.deepcopy(_observation(condition, qid=qid))
                 item["seed"] = seed
                 campaign = item["source"]["cohort"]["campaign_identity"]
+                item["source"]["cohort"]["corpus_certification"] = certification
+                item["source"]["cohort"]["query_identity"]["row_count"] = 20
                 expected.append(f"{condition}|{seed}|{qid}")
                 campaign.update({"conditions": ["A", "B"], "seeds": 5})
                 observations.append(item)
@@ -56,6 +60,16 @@ def _setup_accepted(tmp_path):
     policy = copy.deepcopy(load_policy())
     policy["status"] = "active"
     policy["unresolved"] = []
+    policy["required_strata"] = [{
+        "stratum_id": "fixture-member|fixture|1000|verbose|haiku",
+        "corpus_member": "fixture-member",
+        "dataset": "fixture",
+        "size": 1000,
+        "query_variant": "verbose",
+        "requested_model": "haiku",
+        "query_count": 20,
+        "seed_ids": [0, 1, 2, 3, 4],
+    }]
     policy["thresholds"].update({
         "minimum_adoption_rate": 0.5,
         "accuracy_noninferiority_margin": 0.02,

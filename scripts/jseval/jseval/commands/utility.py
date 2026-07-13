@@ -279,6 +279,8 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
 @click.option("--calibration", default=None, type=click.Path(exists=True), help="calibration.json from `utility-calibrate` (overrides timeout/concurrency/search-key + filters queries).")
 @click.option("--dataset", required=True, help="Corpus slug, e.g. mixed/multihop-rag.")
 @click.option("--corpus-signature", default=None)
+@click.option("--corpus-certification", default=None, type=click.Path(exists=True, dir_okay=False),
+              help="Fully-certified 707 member record captured into claim-grade source identity.")
 @click.option("--search-config-key", default=None, help="623 config_cohort_key of the with-tool backend.")
 @click.option("--contamination-class",
               type=click.Choice(["public-pre-cutoff", "post-cutoff", "private-synthetic", "unknown"]),
@@ -289,6 +291,7 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
 @click.pass_context
 def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, seeds, concurrency,
                     max_queries, max_budget, timeout_s, max_turns, calibration, dataset, corpus_signature,
+                    corpus_certification,
                     search_config_key, contamination_class, confidence_tier,
                     log_dir, output_dir):
     """Run the agent-utility matrix THROUGH Inspect AI (resumable) and compose (tempdoc 624).
@@ -339,6 +342,7 @@ def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, see
         cli_version=cli_version,
         corpus_dataset=dataset, corpus_signature=corpus_signature or dataset,
         search_config_cohort_key=search_config_key,
+        corpus_certification=corpus_certification,
     )
     from ..utility_recompose import finalize_logs
     record = finalize_logs(

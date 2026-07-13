@@ -7,6 +7,9 @@ Proves the cohort-identity, pairing, McNemar, and composer machinery.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from jseval import agent_manifest, compare_runs, utility_comparison
@@ -1273,6 +1276,15 @@ def _xcorpus_fixture():
 def test_cross_corpus_pooled_offsets_but_strata_reveal_signal():
     rec = utility_comparison.compose_utility_cross_corpus(
         _xcorpus_fixture(), composed_at="t", contamination_class="private-synthetic")
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(
+        (Path(__file__).parents[1] / "utility-comparison-cross-corpus.v1.schema.json")
+        .read_text(encoding="utf-8")
+    )
+    identity_schema = schema["properties"]["measured"]["additionalProperties"][
+        "properties"
+    ]["identity"]
+    jsonschema.validate(rec["measured"]["haiku"]["identity"], identity_schema)
 
     assert rec["schema"] == "utility-comparison-cross-corpus.v1"
     assert rec["corpora"] == [

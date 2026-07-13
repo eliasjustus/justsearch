@@ -230,6 +230,7 @@ def successful_summaries(
             "hardware": cohort.get("hardware"),
             "environment": safe_environment_identity(cohort.get("environment") or {}),
             "corpus_identity": cohort.get("corpus_identity"),
+            "corpus_certification": cohort.get("corpus_certification"),
             "query_identity": cohort.get("query_identity"),
             "campaign_identity": cohort.get("campaign_identity"),
         }

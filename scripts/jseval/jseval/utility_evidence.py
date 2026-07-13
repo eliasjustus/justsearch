@@ -23,7 +23,7 @@ _SOURCE_KEYS = {
     "model_alias", "corpus", "packages", "source_git_sha", "source_git_dirty", "source_git_state",
     "cli_version", "mcp_tool_surface_hash", "mcp_tool_surface", "judge_kind", "prompt_template_hash",
     "decoding", "eval_limits", "search_config_cohort_key", "environment", "corpus_identity",
-    "query_identity", "campaign_identity",
+    "corpus_certification", "query_identity", "campaign_identity",
 }
 
 
@@ -121,6 +121,7 @@ def sanitize_observation(observation: dict) -> dict:
             "search_config_cohort_key": cohort.get("search_config_cohort_key"),
             "environment": safe_environment_identity(cohort.get("environment") or {}),
             "corpus_identity": cohort.get("corpus_identity"),
+            "corpus_certification": cohort.get("corpus_certification"),
             "query_identity": cohort.get("query_identity"),
             "campaign_identity": cohort.get("campaign_identity"),
         },
@@ -171,6 +172,7 @@ def read_evidence(path: str | Path) -> list[dict]:
                 "mcp_tool_surface_hash", "mcp_tool_surface", "judge_kind", "prompt_template_hash",
                 "decoding", "eval_limits", "search_config_cohort_key",
                 "environment", "corpus_identity",
+                "corpus_certification",
                 "query_identity", "campaign_identity",
             )
         }

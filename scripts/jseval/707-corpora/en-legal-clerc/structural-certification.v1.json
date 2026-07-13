@@ -7,6 +7,7 @@
       "short-natural": {
         "dataset": "mixed/en-legal-clerc-1k-short-natural",
         "corpus_signature": "eff6406d23500db3cc7f4a18807b086d05db75f0c6c9f4a1cee0d82a908b8932",
+        "query_gold_sha256": "ff6aea6f3d2efb19da4be23e86498e02c9e6c6eab703e4d50e887caf30d630c1",
         "query_count": 20,
         "checks": {
           "size": true,
@@ -35,11 +36,31 @@
           "passed": true,
           "method": "exact-title-match"
         },
-        "passed": true
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
       },
       "verbose": {
         "dataset": "mixed/en-legal-clerc-1k-verbose",
         "corpus_signature": "eff6406d23500db3cc7f4a18807b086d05db75f0c6c9f4a1cee0d82a908b8932",
+        "query_gold_sha256": "e7118a85c7d2a4d24ba86809d639d5c95698876ff898895e45a8db4682695533",
         "query_count": 20,
         "checks": {
           "size": true,
@@ -68,13 +89,33 @@
           "passed": true,
           "method": "exact-title-match"
         },
-        "passed": true
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
       }
     },
     "10000": {
       "short-natural": {
         "dataset": "mixed/en-legal-clerc-10k-short-natural",
         "corpus_signature": "7b108fc4f2f3b9b95e234fbf251d2a7258cbaf3dd5685f4d11d2b18b15f68395",
+        "query_gold_sha256": "ff6aea6f3d2efb19da4be23e86498e02c9e6c6eab703e4d50e887caf30d630c1",
         "query_count": 20,
         "checks": {
           "size": true,
@@ -103,11 +144,31 @@
           "passed": true,
           "method": "exact-title-match"
         },
-        "passed": true
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
       },
       "verbose": {
         "dataset": "mixed/en-legal-clerc-10k-verbose",
         "corpus_signature": "7b108fc4f2f3b9b95e234fbf251d2a7258cbaf3dd5685f4d11d2b18b15f68395",
+        "query_gold_sha256": "e7118a85c7d2a4d24ba86809d639d5c95698876ff898895e45a8db4682695533",
         "query_count": 20,
         "checks": {
           "size": true,
@@ -136,7 +197,26 @@
           "passed": true,
           "method": "exact-title-match"
         },
-        "passed": true
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
       }
     }
   },

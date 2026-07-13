@@ -64,31 +64,166 @@ function loadSelection(root) {
   ) {
     throw new Error("selected record lacks the accepted, hash-pinned claim verdict");
   }
+  const observationsPath = path.resolve(path.dirname(manifestPath), manifest.observations.path);
+  if (sha256(observationsPath) !== manifest.observations.sha256) {
+    throw new Error("selected agent-utility observation evidence hash mismatch");
+  }
   return { pointer, manifest, record };
 }
 
 function cells(record) {
-  const out = (record.estimands?.intention_to_treat?.strata || []).map((cell) => ({
-    corpus: cell.corpus,
-    model: cell.model,
-    cell,
-  }));
-  return out.sort((a, b) => `${a.corpus}/${a.model}`.localeCompare(`${b.corpus}/${b.model}`));
+  const outcomes = record.claim_verdict?.stratum_outcomes || [];
+  const byId = new Map(outcomes.map((item) => [item.stratum_id, item.outcome]));
+  const out = (record.estimands?.intention_to_treat?.strata || []).map((cell) => {
+    const outcome = byId.get(cell.stratum_id);
+    if (!outcome) throw new Error(`accepted record lacks an outcome for stratum ${cell.stratum_id}`);
+    return { cell, outcome };
+  });
+  return out.sort((a, b) => a.cell.stratum_id.localeCompare(b.cell.stratum_id));
 }
 
-function pct(value) {
-  return typeof value === "number" ? `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)} pp` : "n/a";
+const OUTCOME_COPY = {
+  benefit: "Adding JustSearch produced a policy-qualified utility benefit in every required stratum.",
+  harm: "Adding JustSearch produced material harm in at least one required stratum.",
+  null: "The conditions were equivalent within the pre-registered accuracy and efficiency margins.",
+  "adoption-only": "Agents adopted JustSearch, but the campaign did not establish an efficiency or accuracy improvement across every required stratum.",
+};
+
+function outcomeCopy(outcome) {
+  const copy = OUTCOME_COPY[outcome];
+  if (!copy) throw new Error(`accepted record has unsupported outcome ${outcome}`);
+  return copy;
 }
 
-function acceptedTable(record) {
+function number(value, digits = 1) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  return value.toFixed(digits);
+}
+
+function signed(value, digits = 1, suffix = "") {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(digits)}${suffix}`;
+}
+
+function percentage(value) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${(value * 100).toFixed(1)}%`
+    : "n/a";
+}
+
+function accuracyDelta(value) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? signed(value * 100, 1, " pp")
+    : "n/a";
+}
+
+function usd(value, signedValue = false) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  const prefix = value < 0 ? "-" : signedValue ? "+" : "";
+  return `${prefix}$${Math.abs(value).toFixed(6)}`;
+}
+
+function interval(block, formatter) {
+  const values = block?.delta_ci || block?.delta_ci95;
+  if (!Array.isArray(values) || values.length !== 2) return "CI unavailable";
+  return `CI ${formatter(values[0])} to ${formatter(values[1])}`;
+}
+
+function deltaWithInterval(block, key, formatter) {
+  return `${formatter(block?.[key])} (${interval(block, formatter)})`;
+}
+
+function markdown(value) {
+  return String(value ?? "n/a").replaceAll("|", "\\|").replaceAll("\n", " ");
+}
+
+function stratumLabel(cell) {
+  return [cell.corpus_member, cell.corpus, cell.corpus_size, cell.query_variant]
+    .filter((value) => value !== null && value !== undefined && value !== "")
+    .map(markdown)
+    .join(" / ");
+}
+
+function researchTable(record) {
   return [
-    "| Corpus | Agent model | Baseline accuracy | With JustSearch | Paired delta | Paired n |",
-    "|---|---|---:|---:|---:|---:|",
-    ...cells(record).map(({ corpus, model, cell }) =>
-      `| ${corpus} | ${model} | ${(cell.accuracy.baseline * 100).toFixed(1)}% | ` +
-      `${(cell.accuracy.with_tool * 100).toFixed(1)}% | ${pct(cell.accuracy.delta)} | ` +
-      `${cell.n_paired_observations} |`
-    ),
+    "| Corpus stratum | Agent model | Outcome | Provider cache-creation token delta | Accuracy delta | Adoption | Paired n |",
+    "|---|---|---|---:|---:|---:|---:|",
+    ...cells(record).map(({ cell, outcome }) => {
+      const tokens = deltaWithInterval(
+        cell.provider_cache_creation_input_tokens, "delta_mean", (value) => signed(value, 1),
+      );
+      const accuracy = deltaWithInterval(cell.accuracy, "delta", accuracyDelta);
+      const adoption = percentage(cell.adoption?.with_tool?.adoption_rate);
+      return `| ${stratumLabel(cell)} | ${markdown(cell.model)} | ${outcome} | ${tokens} | ${accuracy} | ${adoption} | ${cell.n_paired_observations} |`;
+    }),
+  ].join("\n");
+}
+
+function distribution(block, formatter) {
+  if (!block || block.available === false) return markdown(block?.reason || "unavailable");
+  return `mean ${formatter(block.mean)}; median ${formatter(block.median)}; p95 ${formatter(block.p95)}; n=${block.n ?? "n/a"}`;
+}
+
+function metricTable(cell) {
+  const tokens = cell.provider_cache_creation_input_tokens || {};
+  const cost = cell.cost_usd || {};
+  return [
+    "| Measure | Condition A | Condition B (with JustSearch) | Paired delta and interval |",
+    "|---|---:|---:|---:|",
+    `| Accuracy | ${percentage(cell.accuracy?.baseline)} | ${percentage(cell.accuracy?.with_tool)} | ${deltaWithInterval(cell.accuracy, "delta", accuracyDelta)} |`,
+    `| Provider cache-creation input tokens | ${distribution(tokens.baseline, (value) => number(value, 1))} | ${distribution(tokens.with_tool, (value) => number(value, 1))} | ${deltaWithInterval(tokens, "delta_mean", (value) => signed(value, 1))} |`,
+    `| Cost (USD) | ${distribution(cost.baseline, usd)} | ${distribution(cost.with_tool, usd)} | ${deltaWithInterval(cost, "delta_mean", (value) => usd(value, true))} |`,
+  ].join("\n");
+}
+
+function lossTable(cell) {
+  const loss = cell.per_arm_loss || {};
+  return [
+    "| Condition | Expected | Attempted | Completed | Excluded | Pending | Exclusion rate |",
+    "|---|---:|---:|---:|---:|---:|---:|",
+    ...["A", "B"].map((condition) => {
+      const arm = loss[condition] || {};
+      return `| ${condition} | ${arm.n_expected ?? "n/a"} | ${arm.n_attempted ?? "n/a"} | ${arm.n_completed ?? "n/a"} | ${arm.n_excluded ?? "n/a"} | ${arm.n_pending ?? "n/a"} | ${percentage(arm.exclusion_rate)} |`;
+    }),
+  ].join("\n");
+}
+
+function certificationTable(cell) {
+  const certification = cell.corpus_certification || {};
+  const gates = Object.entries(certification.scientific_gate_sha256 || {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([gate, digest]) => `${gate}=\`${digest}\``)
+    .join("; ") || "n/a";
+  return [
+    "| Certification identity | Value |",
+    "|---|---|",
+    `| Member / dataset / size / query variant | ${markdown(certification.member)} / ${markdown(certification.dataset)} / ${certification.size ?? "n/a"} / ${markdown(certification.query_variant)} |`,
+    `| Corpus signature | \`${certification.corpus_signature ?? "n/a"}\` |`,
+    `| Certification SHA-256 | \`${certification.certification_sha256 ?? "n/a"}\` |`,
+    `| Fully certified | ${certification.fully_certified === true ? "yes" : "no"} |`,
+    `| Scientific gate evidence | ${gates} |`,
+  ].join("\n");
+}
+
+function referenceStratum(cell, outcome) {
+  const adopted = cell.adoption?.with_tool || {};
+  return [
+    `### ${stratumLabel(cell)} / ${markdown(cell.model)}`,
+    "",
+    `Stratum outcome: **${outcome}**. Adoption was ${percentage(adopted.adoption_rate)} ` +
+      `(${adopted.adopted_cells ?? "n/a"}/${adopted.eligible_cells ?? "n/a"} eligible cells).`,
+    "",
+    metricTable(cell),
+    "",
+    `Seeds: ${cell.seed_count ?? "n/a"} (${(cell.seed_ids || []).map(markdown).join(", ") || "n/a"}); ` +
+      `queries: ${cell.query_count ?? "n/a"}; expected/observed cells: ` +
+      `${cell.n_expected_cells ?? "n/a"}/${cell.n_observed_cells ?? "n/a"}; ITT/per-protocol paired observations: ` +
+      `${cell.n_paired_observations ?? "n/a"}/${cell.n_per_protocol_pairs ?? "n/a"}; ` +
+      `paired retention: ${percentage(cell.paired_retention)}.`,
+    "",
+    lossTable(cell),
+    "",
+    certificationTable(cell),
   ].join("\n");
 }
 
@@ -97,8 +232,9 @@ function noResult(selection, target) {
   const state = selection.pointer.previous ? "The previously selected result was withdrawn. " : "";
   const common =
     `No agent-utility result is currently accepted for publication. ${state}${reason} ` +
-    "The checked-in scientific policy intentionally leaves its adoption, non-inferiority, and efficiency-equivalence thresholds unresolved; " +
-    "choosing those thresholds and paying for a new model run are owner decisions, not defaults the harness invents.";
+    "The checked-in policy has no required campaign matrix and intentionally leaves its model cohort and scientific margins unresolved. " +
+    "CLERC and MIRACL-DE also lack the complete closed-book, retrieval-calibration, union-recall, and leak certificates required for promotion. " +
+    "Those owner decisions, certifications, and any paid run require separate authorization; the harness does not invent them.";
   if (target === "readme") return common;
   if (target === "research") {
     return [
@@ -133,15 +269,45 @@ function noResult(selection, target) {
 }
 
 function accepted(selection, target) {
-  const { manifest, record } = selection;
-  const lead =
-    `Accepted agent-utility publication \`${manifest.publication_id}\` (record ` +
-    `\`${record.semantic_digest.slice(0, 12)}\`) passed policy \`${manifest.policy.id}\` and immutable replay. ` +
-    `Outcome: **${record.claim_verdict.outcome}**.`;
-  if (target === "readme") return `${lead}\n\n${acceptedTable(record)}`;
-  const tail =
-    `Reproduce it with \`cd scripts/jseval && python -m jseval utility-replay --publication ${manifest.publication_id}\`.`;
-  return `${lead}\n\n${acceptedTable(record)}\n\n${tail}`;
+  const { pointer, manifest, record } = selection;
+  const outcome = record.claim_verdict.outcome;
+  const outcomeStatement = outcomeCopy(outcome);
+  const identity =
+    `Accepted publication \`${manifest.publication_id}\` (record ` +
+    `\`${record.semantic_digest.slice(0, 12)}\`, policy \`${manifest.policy.id}\`).`;
+  if (target === "readme") {
+    return `${identity} ${outcomeStatement}\n\n` +
+      "[See the per-stratum evidence, provenance, and limitations](docs/reference/benchmarks/agent-utility.md).";
+  }
+  if (target === "research") {
+    return [
+      `${identity} ${outcomeStatement}`,
+      "",
+      researchTable(record),
+      "",
+      "Provider cache-creation input tokens exclude cache reads and retain the provider-specific meaning of that counter. " +
+        "See the [agent-utility benchmark reference](docs/reference/benchmarks/agent-utility.md) for arm distributions, cost, loss, certification, and replay evidence.",
+    ].join("\n");
+  }
+  const manifestPath = `scripts/jseval/public-agent-utility/${pointer.current.path}`;
+  const bundlePath = path.posix.dirname(manifestPath);
+  const evidencePath = path.posix.normalize(path.posix.join(bundlePath, manifest.observations.path));
+  const recordPath = path.posix.normalize(path.posix.join(bundlePath, manifest.record.path));
+  const policyPath = path.posix.normalize(path.posix.join(bundlePath, manifest.policy.path));
+  return [
+    `${identity} ${outcomeStatement}`,
+    "",
+    ...cells(record).flatMap(({ cell, outcome: stratumOutcome }) => [
+      referenceStratum(cell, stratumOutcome), "",
+    ]),
+    "### Immutable evidence and replay",
+    "",
+    `- Publication manifest: \`${manifestPath}\``,
+    `- Canonical record: \`${recordPath}\``,
+    `- Sanitized observation evidence: \`${evidencePath}\``,
+    `- Captured policy: \`${policyPath}\``,
+    `- Replay: \`${manifest.replay_command}\``,
+  ].join("\n");
 }
 
 function generated(selection, target) {

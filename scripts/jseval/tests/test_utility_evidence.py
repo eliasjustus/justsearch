@@ -136,6 +136,12 @@ def test_evidence_roundtrip_preserves_semantic_digest(tmp_path):
         _observation("B", qid="q0"),
     ]
     direct = finalize_observation_groups([observations], composed_at="one")
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(
+        (Path(__file__).parents[1] / "utility-comparison.v1.schema.json")
+        .read_text(encoding="utf-8")
+    )
+    jsonschema.validate(json.loads(json.dumps(direct)), schema)
     path = tmp_path / "observations.v1.jsonl"
     path.write_text(
         "".join(json.dumps(sanitize_observation(item), sort_keys=True) + "\n" for item in observations),
@@ -158,6 +164,16 @@ def test_evidence_roundtrip_preserves_semantic_digest(tmp_path):
 def test_missing_expected_cell_fails_closed():
     with pytest.raises(ValueError, match="expected campaign matrix"):
         finalize_observation_groups([[_observation("A")]], composed_at="missing")
+
+
+def test_duplicate_expected_cell_fails_closed():
+    observations = [_observation("A"), _observation("B")]
+    for item in observations:
+        item["source"]["cohort"]["campaign_identity"]["expected_cells"].append(
+            "B|0|q0"
+        )
+    with pytest.raises(ValueError, match="duplicate cells"):
+        finalize_observation_groups([observations], composed_at="duplicate")
 
 
 def test_excluded_unverified_b_cell_remains_in_authoritative_assertions():

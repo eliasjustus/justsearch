@@ -6,9 +6,18 @@ import json
 import pytest
 
 from jseval.utility_claim_policy import evaluate_claim, load_policy, policy_digest
+from tests.test_corpus_inject import _certification_snapshot_fixture
 
 
 def _record() -> dict:
+    seed_ids = [0, 1, 2, 3, 4]
+    expected_cells = [
+        f"{condition}|{seed}|q{query}"
+        for condition in ("A", "B")
+        for seed in seed_ids
+        for query in range(20)
+    ]
+    certification = _certification_snapshot_fixture()
     return {
         "schema": "utility-comparison.v1",
         "schema_version": 2,
@@ -16,14 +25,19 @@ def _record() -> dict:
         "cohort": {
             "git_sha": "a" * 40,
             "git_dirty": False,
-            "source_git_state": {"tracked_diff_sha256": "0" * 64},
+            "source_git_state": {
+                "tracked_diff_sha256": "0" * 64,
+                "untracked_sha256": "0" * 64,
+                "untracked_count": 0,
+                "dirty": False,
+            },
             "environment": {"platform": {
                 "system": "test", "release": "1", "machine": "test64",
             }},
             "search_config_cohort_key": "search-1",
             "mcp_tool_surface_hash": "f" * 64,
-            "query_identity": {"sha256": "q" * 64},
-            "campaign_identity": {"expected_cells": ["A|0|q0", "B|0|q0"]},
+            "query_identity": {"sha256": "b" * 64, "row_count": 20},
+            "campaign_identity": {"expected_cells": expected_cells},
             "judge": {"kind": "substring-em"},
         },
         "comparability": {
@@ -51,13 +65,34 @@ def _record() -> dict:
             "primary": "intention_to_treat",
             "per_protocol": {"role": "secondary"},
             "intention_to_treat": {"strata": [{
+                "stratum_id": "fixture-member|fixture|1000|verbose|haiku",
+                "corpus_member": "fixture-member",
                 "corpus": "fixture",
+                "corpus_size": 1000,
+                "query_variant": "verbose",
                 "corpus_signature": "c" * 64,
                 "model": "haiku",
                 "resolved_provider_model": "claude-haiku-versioned",
-                "query_identity": {"sha256": "q" * 64},
-                "campaign_identity": {"expected_cells": ["A|0|q0", "B|0|q0"]},
+                "corpus_certification": certification,
+                "query_identity": {"sha256": "b" * 64, "row_count": 20},
+                "campaign_identity": {"expected_cells": expected_cells},
+                "seed_ids": seed_ids,
+                "seed_count": len(seed_ids),
+                "query_count": 20,
+                "n_expected_cells": 200,
+                "n_observed_cells": 200,
+                "n_pending_cells": 0,
+                "n_expected_pairs": 100,
                 "n_paired_observations": 100,
+                "n_per_protocol_pairs": 100,
+                "paired_retention": 1.0,
+                "excluded_jaccard": 1.0,
+                "per_arm_loss": {
+                    "A": {"n_expected": 100, "n_attempted": 100, "n_completed": 100,
+                          "n_excluded": 0, "n_pending": 0, "exclusion_rate": 0.0},
+                    "B": {"n_expected": 100, "n_attempted": 100, "n_completed": 100,
+                          "n_excluded": 0, "n_pending": 0, "exclusion_rate": 0.0},
+                },
                 "usage_complete": True,
                 "accuracy": {"delta_ci95": [-0.01, 0.05]},
                 "provider_cache_creation_input_tokens": {"delta_ci95": [-30, -10]},
@@ -84,6 +119,43 @@ def _record() -> dict:
     }
 
 
+def _active_policy(record: dict | None = None) -> dict:
+    record = record or _record()
+    policy = copy.deepcopy(load_policy())
+    policy["status"] = "active"
+    policy["unresolved"] = []
+    policy["thresholds"].update({
+        "minimum_adoption_rate": 0.5,
+        "accuracy_noninferiority_margin": 0.02,
+        "provider_token_equivalence_margin": 5,
+        "cost_equivalence_margin_usd": 0.001,
+    })
+    policy["required_strata"] = [
+        {
+            "stratum_id": cell["stratum_id"],
+            "corpus_member": cell["corpus_member"],
+            "dataset": cell["corpus"],
+            "size": cell["corpus_size"],
+            "query_variant": cell["query_variant"],
+            "requested_model": cell["model"],
+            "query_count": cell["query_count"],
+            "seed_ids": cell["seed_ids"],
+        }
+        for cell in record["estimands"]["intention_to_treat"]["strata"]
+    ]
+    return policy
+
+
+def _sync_tool_assertion_counts(record: dict) -> None:
+    total = sum(
+        cell["per_arm_loss"]["B"]["n_attempted"]
+        for cell in record["estimands"]["intention_to_treat"]["strata"]
+    )
+    assertions = record["tool_call_assertions"]["B"]
+    assertions["cells_total"] = total
+    assertions["cells_with_mcp_surface_verified"] = total
+
+
 def test_checked_in_policy_validates_and_is_deliberately_unresolved():
     policy = load_policy()
     jsonschema = pytest.importorskip("jsonschema")
@@ -106,13 +178,7 @@ def test_favorable_outcomes_cannot_override_unresolved_policy():
 
 
 def test_settled_active_policy_is_machine_evaluable_without_posthoc_wording():
-    policy = copy.deepcopy(load_policy())
-    policy["status"] = "active"
-    policy["unresolved"] = []
-    policy["thresholds"]["minimum_adoption_rate"] = 0.5
-    policy["thresholds"]["accuracy_noninferiority_margin"] = 0.02
-    policy["thresholds"]["provider_token_equivalence_margin"] = 5
-    policy["thresholds"]["cost_equivalence_margin_usd"] = 0.001
+    policy = _active_policy()
 
     verdict = evaluate_claim(_record(), policy)
     assert verdict["accepted"] is True
@@ -127,22 +193,20 @@ def test_settled_active_policy_is_machine_evaluable_without_posthoc_wording():
 
 
 def test_every_required_stratum_must_support_a_benefit_claim():
-    policy = copy.deepcopy(load_policy())
-    policy["status"] = "active"
-    policy["unresolved"] = []
-    policy["thresholds"].update({
-        "minimum_adoption_rate": 0.5,
-        "accuracy_noninferiority_margin": 0.02,
-        "provider_token_equivalence_margin": 5,
-        "cost_equivalence_margin_usd": 0.001,
-    })
     record = _record()
     second = copy.deepcopy(record["estimands"]["intention_to_treat"]["strata"][0])
     second["corpus"] = "second"
     second["corpus_signature"] = "d" * 64
+    second["stratum_id"] = "second-member|second|1000|verbose|haiku"
+    second["corpus_member"] = "second-member"
+    second["corpus_certification"] = _certification_snapshot_fixture(
+        member="second-member", dataset="second", signature="d" * 64,
+    )
     second["provider_cache_creation_input_tokens"]["delta_ci95"] = [-10, 10]
     second["cost_usd"]["delta_ci95"] = [-0.01, 0.01]
     record["estimands"]["intention_to_treat"]["strata"].append(second)
+    _sync_tool_assertion_counts(record)
+    policy = _active_policy(record)
 
     verdict = evaluate_claim(record, policy)
 
@@ -150,18 +214,146 @@ def test_every_required_stratum_must_support_a_benefit_claim():
     assert [item["outcome"] for item in verdict["stratum_outcomes"]] == [
         "benefit", "adoption-only",
     ]
+    for item in verdict["stratum_outcomes"]:
+        assert set(item["gates"]) == {
+            "derived_matrix", "minimum_seeds", "minimum_paired_observations",
+            "maximum_exclusion_rate", "complete_expected_matrix",
+            "minimum_paired_retention", "minimum_excluded_jaccard",
+            "accuracy_delta_interval", "minimum_adoption_rate", "outcome_resolved",
+        }
+
+
+def test_inconclusive_required_stratum_prevents_harm_promotion():
+    record = _record()
+    first = record["estimands"]["intention_to_treat"]["strata"][0]
+    first["accuracy"]["delta_ci95"] = [-0.2, -0.1]
+    second = copy.deepcopy(first)
+    second.update({
+        "stratum_id": "second-member|second|1000|verbose|haiku",
+        "corpus_member": "second-member",
+        "corpus": "second",
+        "corpus_signature": "d" * 64,
+    })
+    second["corpus_certification"] = copy.deepcopy(second["corpus_certification"])
+    second["corpus_certification"].update({
+        "member": "second-member", "dataset": "second", "corpus_signature": "d" * 64,
+    })
+    second["accuracy"]["delta_ci95"] = [-0.04, 0.20]
+    second["provider_cache_creation_input_tokens"]["delta_ci95"] = [-100, 100]
+    second["cost_usd"]["delta_ci95"] = [-0.1, 0.1]
+    second["adoption"]["with_tool"]["adoption_rate"] = 0.1
+    record["estimands"]["intention_to_treat"]["strata"].append(second)
+    _sync_tool_assertion_counts(record)
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    assert [item["outcome"] for item in verdict["stratum_outcomes"]] == [
+        "harm", "inconclusive",
+    ]
+    assert verdict["outcome"] == "inconclusive"
+    assert verdict["accepted"] is False
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "query-count"])
+def test_required_strata_matrix_is_exact(mutation):
+    record = _record()
+    policy = _active_policy(record)
+    if mutation == "missing":
+        policy["required_strata"] = []
+    elif mutation == "extra":
+        extra = copy.deepcopy(policy["required_strata"][0])
+        extra["stratum_id"] = "extra|fixture|1000|verbose|haiku"
+        extra["corpus_member"] = "extra"
+        policy["required_strata"].append(extra)
+    else:
+        policy["required_strata"][0]["query_count"] += 1
+
+    verdict = evaluate_claim(record, policy)
+
+    assert verdict["accepted"] is False
+    assert "required_strata_exact" in verdict["reasons"]
+
+
+def test_itt_counts_must_be_derived_from_expected_cells():
+    record = _record()
+    record["estimands"]["intention_to_treat"]["strata"][0][
+        "n_expected_cells"
+    ] += 2
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    assert verdict["accepted"] is False
+    assert "itt_strata_derived" in verdict["reasons"]
+
+
+def test_minimum_seed_gate_is_per_stratum_not_global():
+    record = _record()
+    second = copy.deepcopy(record["estimands"]["intention_to_treat"]["strata"][0])
+    second.update({
+        "stratum_id": "second-member|second|1000|verbose|haiku",
+        "corpus_member": "second-member",
+        "corpus": "second",
+        "corpus_signature": "d" * 64,
+        "seed_ids": [0],
+        "seed_count": 1,
+    })
+    second["corpus_certification"] = copy.deepcopy(second["corpus_certification"])
+    second["corpus_certification"].update({
+        "member": "second-member", "dataset": "second", "corpus_signature": "d" * 64,
+    })
+    record["estimands"]["intention_to_treat"]["strata"].append(second)
+    _sync_tool_assertion_counts(record)
+    record["seed_count"] = 5
+    policy = _active_policy(record)
+
+    verdict = evaluate_claim(record, policy)
+
+    assert verdict["accepted"] is False
+    assert "minimum_seeds" in verdict["reasons"]
+
+
+def test_incomplete_or_mismatched_corpus_certification_rejects_promotion():
+    record = _record()
+    policy = _active_policy(record)
+    record["estimands"]["intention_to_treat"]["strata"][0][
+        "corpus_certification"
+    ]["scientific_gates"].pop("leak_floor")
+
+    verdict = evaluate_claim(record, policy)
+
+    assert verdict["accepted"] is False
+    assert "corpus_certification_complete" in verdict["reasons"]
+
+
+def test_sparse_seed_query_matrix_cannot_satisfy_required_stratum():
+    record = _record()
+    cell = record["estimands"]["intention_to_treat"]["strata"][0]
+    pairs = {
+        (seed, f"q{query}")
+        for query in range(50)
+        for seed in (query % 5, (query + 1) % 5)
+    }
+    expected = [
+        f"{condition}|{seed}|{qid}"
+        for condition in ("A", "B")
+        for seed, qid in sorted(pairs)
+    ]
+    cell["query_count"] = 50
+    cell["query_identity"]["row_count"] = 50
+    cell["campaign_identity"]["expected_cells"] = expected
+    cell["corpus_certification"] = _certification_snapshot_fixture(query_count=50)
+    record["cohort"]["query_identity"]["row_count"] = 50
+    record["cohort"]["campaign_identity"]["expected_cells"] = expected
+    policy = _active_policy(record)
+
+    verdict = evaluate_claim(record, policy)
+
+    assert verdict["accepted"] is False
+    assert "itt_strata_derived" in verdict["reasons"]
 
 
 def test_disallowed_tool_call_in_any_arm_rejects_scientific_validity():
-    policy = copy.deepcopy(load_policy())
-    policy["status"] = "active"
-    policy["unresolved"] = []
-    policy["thresholds"].update({
-        "minimum_adoption_rate": 0.5,
-        "accuracy_noninferiority_margin": 0.02,
-        "provider_token_equivalence_margin": 5,
-        "cost_equivalence_margin_usd": 0.001,
-    })
+    policy = _active_policy()
     record = _record()
     record["tool_call_assertions"]["A"] = {
         "cells_total": 100,
@@ -176,15 +368,7 @@ def test_disallowed_tool_call_in_any_arm_rejects_scientific_validity():
 
 
 def test_all_null_environment_identity_fails_closed():
-    policy = copy.deepcopy(load_policy())
-    policy["status"] = "active"
-    policy["unresolved"] = []
-    policy["thresholds"].update({
-        "minimum_adoption_rate": 0.5,
-        "accuracy_noninferiority_margin": 0.02,
-        "provider_token_equivalence_margin": 5,
-        "cost_equivalence_margin_usd": 0.001,
-    })
+    policy = _active_policy()
     record = _record()
     record["cohort"]["environment"] = {
         "platform": {"system": None, "release": None, "machine": None},
@@ -195,17 +379,19 @@ def test_all_null_environment_identity_fails_closed():
     assert "source_identity_complete" in verdict["reasons"]
 
 
+def test_incomplete_git_source_state_fails_closed():
+    record = _record()
+    record["cohort"]["source_git_state"] = {"dirty": False}
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    assert verdict["accepted"] is False
+    assert "source_identity_complete" in verdict["reasons"]
+
+
 def test_unsupported_per_stratum_policy_mode_fails_closed():
-    policy = copy.deepcopy(load_policy())
-    policy["status"] = "active"
-    policy["unresolved"] = []
+    policy = _active_policy()
     policy["requirements"]["per_stratum_promotion"] = "unsupported-any-pass"
-    policy["thresholds"].update({
-        "minimum_adoption_rate": 0.5,
-        "accuracy_noninferiority_margin": 0.02,
-        "provider_token_equivalence_margin": 5,
-        "cost_equivalence_margin_usd": 0.001,
-    })
     verdict = evaluate_claim(_record(), policy)
     assert verdict["accepted"] is False
     assert "per_stratum_promotion" in verdict["reasons"]
@@ -221,26 +407,42 @@ def test_unsupported_per_stratum_policy_mode_fails_closed():
     ],
 )
 def test_every_declared_governance_threshold_changes_the_verdict(field, value, reason):
-    policy = copy.deepcopy(load_policy())
-    policy["status"] = "active"
-    policy["unresolved"] = []
-    policy["thresholds"].update({
-        "minimum_adoption_rate": 0.5,
-        "accuracy_noninferiority_margin": 0.02,
-        "provider_token_equivalence_margin": 5,
-        "cost_equivalence_margin_usd": 0.001,
-        field: value,
-    })
+    policy = _active_policy()
+    policy["thresholds"][field] = value
     record = _record()
     if field == "maximum_exclusion_rate":
-        record["comparability"]["per_arm_loss"]["B"]["exclusion_rate"] = 0.01
+        record["estimands"]["intention_to_treat"]["strata"][0][
+            "per_arm_loss"
+        ]["B"]["exclusion_rate"] = 0.01
     elif field == "minimum_paired_retention":
-        record["comparability"]["metrics"]["paired_n_retention"] = 0.99
+        record["estimands"]["intention_to_treat"]["strata"][0][
+            "paired_retention"
+        ] = 0.99
     elif field == "minimum_excluded_jaccard":
-        record["comparability"]["metrics"]["excluded_jaccard"] = 0.99
+        record["estimands"]["intention_to_treat"]["strata"][0][
+            "excluded_jaccard"
+        ] = 0.99
     verdict = evaluate_claim(record, policy)
     assert verdict["accepted"] is False
     assert reason in verdict["reasons"]
+
+
+def test_aggregate_comparability_counts_are_descriptive_not_authoritative():
+    record = _record()
+    record["comparability"] = {
+        "comparable": False,
+        "reasons": ["stale aggregate"],
+        "metrics": {"paired_n_retention": 0.0, "excluded_jaccard": 0.0},
+        "per_arm_loss": {
+            "A": {"n_attempted": 100, "n_pending": 100, "exclusion_rate": 1.0},
+            "B": {"n_attempted": 100, "n_pending": 100, "exclusion_rate": 1.0},
+        },
+    }
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    assert verdict["accepted"] is True
+    assert verdict["outcome"] == "benefit"
 
 
 @pytest.mark.parametrize(
@@ -252,25 +454,15 @@ def test_every_declared_governance_threshold_changes_the_verdict(field, value, r
     ],
 )
 def test_every_count_or_adoption_threshold_can_reject(field, value, reason):
-    policy = copy.deepcopy(load_policy())
-    policy["status"] = "active"
-    policy["unresolved"] = []
-    policy["thresholds"].update({
-        "minimum_adoption_rate": 0.5,
-        "accuracy_noninferiority_margin": 0.02,
-        "provider_token_equivalence_margin": 5,
-        "cost_equivalence_margin_usd": 0.001,
-        field: value,
-    })
+    policy = _active_policy()
+    policy["thresholds"][field] = value
     verdict = evaluate_claim(_record(), policy)
     assert verdict["accepted"] is False
     assert reason in verdict["reasons"]
 
 
 def test_accuracy_and_equivalence_margins_change_outcome_classification():
-    policy = copy.deepcopy(load_policy())
-    policy["status"] = "active"
-    policy["unresolved"] = []
+    policy = _active_policy()
     policy["thresholds"].update({
         "minimum_adoption_rate": 0.5,
         "accuracy_noninferiority_margin": 0.05,
@@ -298,9 +490,7 @@ def test_accuracy_and_equivalence_margins_change_outcome_classification():
 
 
 def test_all_outcome_classes_are_reachable_under_one_active_policy():
-    policy = copy.deepcopy(load_policy())
-    policy["status"] = "active"
-    policy["unresolved"] = []
+    policy = _active_policy()
     policy["thresholds"].update({
         "minimum_adoption_rate": 0.5,
         "accuracy_noninferiority_margin": 0.05,

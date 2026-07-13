@@ -38,9 +38,14 @@ consolidated logs use one all-attempt observation seam; loss accounting reads sa
 source SHA/dirty state, actual corpus identity, resolved provider model, provider usage,
 judge-calibration identity, and the observed offered MCP tool-name surface are captured before
 composition; duplicate legacy readers are removed; and canonical writers converge on pure offline
-recomposition plus a machine-readable claim verdict. The 2026-07-12 pilot is a sanitized rejected
-fixture, not a publication candidate. A new powered result still requires owner-set thresholds,
-certified 707 members, and paid-run authorization.
+recomposition plus a machine-readable claim verdict. Promotion now requires an exact pre-registered
+member/dataset/size/query-variant/model/query-count/seed matrix, applies seed/pair/uncertainty/adoption/
+outcome gates per ITT stratum, requires the complete seed-by-query Cartesian product in both arms,
+and treats aggregate counts as descriptive. Certified-corpus snapshots embed the exact pre-run
+scientific policy, certificate, and typed gate bytes for replay-time re-hash and verdict
+recomputation. The 2026-07-12 pilot is a
+sanitized rejected fixture, not a publication candidate. A new powered result still requires the
+owner-set matrix and thresholds, fully certified 707 snapshots, and paid-run authorization.
 
 # 624 — Agentic-retrieval eval rebuild
 

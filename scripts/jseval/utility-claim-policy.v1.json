@@ -4,6 +4,7 @@
   "policy_id": "agent-utility-public-v1-draft",
   "status": "draft",
   "primary_estimand": "addition_b",
+  "required_strata": [],
   "thresholds": {
     "minimum_seeds": 5,
     "minimum_paired_observations": 100,
@@ -20,6 +21,7 @@
     "source_identity_complete": true,
     "clean_source_checkout": true,
     "computed_corpus_signature": true,
+    "corpus_certification": true,
     "resolved_provider_model": true,
     "captured_search_config": true,
     "verified_tool_surface": true,
@@ -32,6 +34,7 @@
     "per_stratum_promotion": "all_required_strata_pass"
   },
   "unresolved": [
+    "required_strata",
     "thresholds.minimum_adoption_rate",
     "thresholds.accuracy_noninferiority_margin",
     "thresholds.provider_token_equivalence_margin",

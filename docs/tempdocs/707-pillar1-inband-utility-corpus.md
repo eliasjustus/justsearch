@@ -34,6 +34,17 @@ also pin CLERC to Hugging Face revision `ef042f8ab436f78704f17faa0a866d1b2b862f6
 `miracl-v1.0` through `ir_datasets` 0.5.11. They are license-eligible but not scientifically certified. EnronQA is explicitly
 `claim_eligible:false`: its upstream dataset card supplies no license, so the recipe fails closed.
 
+The 719 promotion boundary now extends this certification path: it accepts scientific evidence only
+as an exact four-cell 1k/10k by verbose/short-natural matrix. Gate-specific typed measurements carry
+no thresholds or `passed` assertion: certification recomputes them against the separate checked-in
+pre-run policy, which is deliberately draft until the owner settles its exact cells and thresholds.
+Policy and evidence bind the exact query-and-gold digest separately from the corpus signature. Gate
+artifacts embed the canonical measurement plus backend run-manifest/projection bytes. The source-time
+snapshot embeds and hashes the exact policy, certificate, and gate bytes only when structural, closed-book,
+retrieval-calibration, union-recall, and leak evidence all pass; policy evaluation and replay validate
+those embedded bytes again. Utility-run captures that snapshot and rechecks it on resume. This machinery does
+not upgrade the current structural records; their scientific gates are still pending.
+
 Still gated: closed-book certification, member retrieval calibration, union recall, leak floor, and
 any paid adoption/powered run. EnronQA additionally requires an approved licensing-clean source.
 The earlier email probe proves mechanism only; it cannot override license.

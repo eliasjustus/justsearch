@@ -351,6 +351,58 @@ def test_source_identity_resume_rejects_changed_corpus_and_query_bytes(tmp_path,
         aui._capture_or_load_source_identity(**kwargs)
 
 
+def test_source_identity_captures_and_rechecks_corpus_certification(tmp_path, monkeypatch):
+    from jseval.corpus_certify import SCIENTIFIC_GATES
+    from jseval.corpus_identity import corpus_signature
+    from tests.test_corpus_inject import _complete_certificate, _gate_evidence
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "doc.txt").write_text("stable corpus", encoding="utf-8")
+    signature = corpus_signature(corpus, [corpus / "doc.txt"])
+    queries = tmp_path / "queries.json"
+    queries.write_text('[{"query":"q","answer":"a"}]', encoding="utf-8")
+    query_gold_sha256 = hashlib.sha256(queries.read_bytes()).hexdigest()
+    gate_rows = {
+        gate: _gate_evidence(
+            gate, dataset="fixture", signature=signature,
+            query_gold_sha256=query_gold_sha256, query_count=1,
+        )
+        for gate in SCIENTIFIC_GATES
+    }
+    certification = tmp_path / "certification.json"
+    certification.write_text(json.dumps(_complete_certificate(
+        "fixture-member", "fixture", signature, gate_rows, query_count=1,
+        query_gold_sha256=query_gold_sha256,
+    )), encoding="utf-8")
+    logs = tmp_path / "logs"
+
+    import jseval.manifest as manifest
+    monkeypatch.setattr(manifest, "_git_sha_full", lambda: "a" * 40)
+    monkeypatch.setattr(aui, "_git_source_state", lambda **_: {
+        "tracked_diff_sha256": "0" * 64,
+        "untracked_sha256": "0" * 64,
+        "untracked_count": 0,
+        "dirty": False,
+    })
+    kwargs = dict(
+        log_dir=str(logs), corpus_dir=str(corpus), corpus_dataset="fixture",
+        declared_corpus_signature=signature, search_config_cohort_key="search-1",
+        corpus_certification=str(certification),
+        queries_path=str(queries), conditions=("A", "B"), seeds=1,
+    )
+    first = aui._capture_or_load_source_identity(**kwargs)
+    assert first["corpus_certification"]["fully_certified"] is True
+
+    changed = json.loads(certification.read_text(encoding="utf-8"))
+    changed["datasets"]["1000"]["verbose"]["scientific_gates"][
+        "closed_book"
+    ]["threshold"] = {"maximum": 0.01}
+    certification.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ValueError, match="corpus_certification"):
+        aui._capture_or_load_source_identity(**kwargs)
+
+
 def test_source_identity_resume_recomputes_safe_environment(tmp_path, monkeypatch):
     corpus = tmp_path / "corpus"
     corpus.mkdir()
