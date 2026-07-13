@@ -1,0 +1,13 @@
+# SHA-256 checksums for JustSearch release assets.
+#
+# NOTE (m1): the v0.1.0 hash below was computed from the LOCAL build
+# (F:\JustSearch\dist\installer\JustSearch_0.1.0_x64-setup.exe, 852,874,628 bytes —
+# byte size matches the uploaded GitHub release asset exactly). Before publishing,
+# the owner must re-verify it against the actual asset downloaded from
+# https://github.com/eliasjustus/justsearch/releases/tag/v0.1.0 and then attach
+# this file to that release. Verify on Windows with:
+#   certutil -hashfile JustSearch_0.1.0_x64-setup.exe SHA256
+# or in PowerShell:
+#   Get-FileHash JustSearch_0.1.0_x64-setup.exe -Algorithm SHA256
+
+f6336a668b8f6abd66b1ff483def6ae17ac34f64d406a8edab16b45d2b61ae38  JustSearch_0.1.0_x64-setup.exe
