@@ -1083,3 +1083,30 @@ def test_corpus_fidelity_refuses_start_backend_without_clean():
     r = CliRunner().invoke(main, ["corpus-fidelity", "--dataset", "x", "--start-backend"])
     assert r.exit_code != 0
     assert "requires --clean" in r.output
+
+
+def test_certify_resolves_family_qualified_dataset_under_mixed(tmp_path):
+    """707 gate-run unblocker: `corpus-certify --dataset mixed/<name>` must resolve
+    datasets/mixed/<name> (the 707 member layout) instead of the historical hardcoded
+    datasets/golden/<name>. Bare names keep the golden/ resolution (covered by the
+    end-to-end tests above)."""
+    from click.testing import CliRunner
+
+    from jseval.cli import main
+
+    ds = tmp_path / "datasets" / "mixed" / "m707"
+    ds.mkdir(parents=True)
+    (ds / "queries.json").write_text(json.dumps(
+        [{"query": "q1", "answer": "a1", "evidence_ids": ["d1"]}]), encoding="utf-8")
+    fake = {"contamination_class": "private-synthetic",
+            "closed_book_certification": {"passed": True, "closed_book_accuracy": 0.0},
+            "fidelity": {"memory_independence": 1.0, "retrieval_difficulty": None}}
+    with patch("jseval.corpus_certify.certify_corpus", return_value=fake) as mock_cert:
+        r = CliRunner().invoke(main, ["corpus-certify", "--dataset", "mixed/m707",
+                                      "--datasets-dir", str(tmp_path / "datasets")])
+    assert r.exit_code == 0, r.output
+    # certify ran against the mixed-dir queries, and metadata landed next to them —
+    # NOT under a phantom datasets/golden/mixed/m707.
+    assert mock_cert.call_args.args[0][0]["query"] == "q1"
+    assert (ds / "metadata.json").is_file()
+    assert not (tmp_path / "datasets" / "golden").exists()

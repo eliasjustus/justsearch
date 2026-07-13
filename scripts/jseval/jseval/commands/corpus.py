@@ -328,7 +328,10 @@ def cmd_corpus_fetch_clerc(ctx, name, seed, n_queries, n_docs, datasets_dir):
 
 
 @click.command("corpus-certify")
-@click.option("--dataset", required=True, help="Golden dataset name, e.g. synth-multihop-v1.")
+@click.option("--dataset", required=True,
+              help="Dataset name. Bare names resolve under golden/ (e.g. synth-multihop-v1); "
+                   "family-qualified names resolve as given (e.g. mixed/en-legal-clerc-1k-verbose "
+                   "— the 707 member layout).")
 @click.option("--datasets-dir", default=None, type=click.Path())
 @click.option("--model", default="haiku", show_default=True)
 @click.option("--threshold", default=0.15, show_default=True, type=float,
@@ -344,7 +347,9 @@ def cmd_corpus_certify(ctx, dataset, datasets_dir, model, threshold, concurrency
     from .._paths import REPO_ROOT
 
     base = Path(datasets_dir) if datasets_dir else (REPO_ROOT / "datasets")
-    dataset_dir = base / "golden" / dataset
+    # 707 members live under datasets/mixed/<name>; a family-qualified --dataset
+    # resolves as given, a bare name keeps the historical golden/ resolution.
+    dataset_dir = (base / dataset) if "/" in dataset else (base / "golden" / dataset)
     queries = json.loads((dataset_dir / "queries.json").read_text(encoding="utf-8"))
     result = cc.certify_corpus(queries, model=model, threshold=threshold, concurrency=concurrency)
 
