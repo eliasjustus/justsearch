@@ -1110,3 +1110,17 @@ def test_certify_resolves_family_qualified_dataset_under_mixed(tmp_path):
     assert mock_cert.call_args.args[0][0]["query"] == "q1"
     assert (ds / "metadata.json").is_file()
     assert not (tmp_path / "datasets" / "golden").exists()
+
+
+def test_generated_gold_source_is_checkout_stable(tmp_path):
+    """End-to-end sibling of test_commitment_files_are_checkout_stable (independent-review
+    finding, 2026-07-14): the REAL generator must emit LF bytes, because 635-corpora gold is
+    git-committed and flows verbatim into the 707 fabricated-* commitments. The commitment-level
+    test seeds LF explicitly, so it alone would stay green if corpus_generate regressed to
+    platform-default newlines on Windows."""
+    corpus_generate.generate(tmp_path, axis="prose", lang="en", n_chains=3, hops=1,
+                             distractor_ratio=1, doc_words=40, suite="test", seed=3,
+                             semantic=True)
+    for name in ("docs.jsonl", "queries.json", "meta.json"):
+        raw = (tmp_path / name).read_bytes()
+        assert b"\r" not in raw, f"{name} contains CR bytes — git eol=lf will rewrite it after commit"

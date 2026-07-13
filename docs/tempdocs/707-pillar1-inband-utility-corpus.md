@@ -493,7 +493,14 @@ claims re-verified first-hand at `backend.py:23,61` and `commands/corpus.py:347`
    **Gate-run chain HALTED by founder (2026-07-14):** one cell completed (de-miracl-1k-short-natural
    fidelity, rc=0), chain killed cleanly mid-step-2, GPU released. The runbook
    (`overnight-707-gates.bat`, session scratchpad) is parked; overnight windows are founder-scheduled
-   only — do not fire the chain without an explicit go. **Windows-EOL coupling of `corpus_signature`:** materialized datasets are
+   only — do not fire the chain without an explicit go.
+6. **Independent refute-first review (opus, reviewer ≠ implementer, 2026-07-14): NO BLOCKERS.**
+   All claims confirmed from primary sources — parent-commit blob-hash mismatch (16/32 files, all 8
+   cells) vs HEAD 0/32; repair commit touched only manifests (recipes/fabricated-* not in the diff);
+   cache migration verified down to hardlink inode identity + fail-closed lookup re-hash; 119
+   focused tests green. One finding, fixed same session: `corpus_generate.py` (the 635 gold writer,
+   upstream of the 707 fabricated-* commitments) still wrote platform-default newlines — now
+   `newline="\n"` + an end-to-end no-CR regression test on the real generator path. **Windows-EOL coupling of `corpus_signature`:** materialized datasets are
    written with platform-default newlines, so all recorded corpus signatures are Windows-CRLF-locked
    (a Linux materialization would produce different signatures). Acceptable while the campaign runs
    on this box; flagged as an owner decision — LF-canonical dataset writers force a one-time

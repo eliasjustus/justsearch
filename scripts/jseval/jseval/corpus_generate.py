@@ -676,10 +676,14 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     # not positions, so this has no effect on query correctness.
     rng.shuffle(all_docs)
 
-    with (out_dir / "docs.jsonl").open("w", encoding="utf-8") as f:
+    # newline="\n": 635 gold sources are git-committed (and flow verbatim into the 707
+    # fabricated-* commitments) — platform-default CRLF here re-introduces the
+    # unmatchable-manifest bake-in the 2026-07-14 repair removed (independent-review find).
+    with (out_dir / "docs.jsonl").open("w", encoding="utf-8", newline="\n") as f:
         for d in all_docs:
             f.write(json.dumps(d, ensure_ascii=False) + "\n")
-    (out_dir / "queries.json").write_text(json.dumps(queries, ensure_ascii=False, indent=1), encoding="utf-8")
+    (out_dir / "queries.json").write_text(
+        json.dumps(queries, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
     (out_dir / "meta.json").write_text(json.dumps({
         "version": "1.0", "type_axis": axis, "suite": suite,
         "contamination_class": "private-synthetic",
@@ -690,7 +694,7 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
                                   "seed": seed, "hops": hops, "distractor_ratio": distractor_ratio,
                                   "semantic": sem_active, "templated": True,
                                   "n_chains": n_chains, "doc_words": doc_words},
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    }, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
     return {"docs": len(all_docs), "gold_chains": n_chains, "queries": len(queries),
             "distractor_docs": made}
 
