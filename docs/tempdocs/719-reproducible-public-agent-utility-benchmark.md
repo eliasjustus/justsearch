@@ -1625,3 +1625,76 @@ low-context implementers. After that contract is stable, two workstreams can pro
 Avoid concurrent edits to `commands/utility.py` and the utility schemas. Integrate each workstream through the
 shared contract, then perform one refute-first review of fail-closed behavior before any paid checkpoint. No PR
 is created until explicitly requested.
+
+---
+
+# Post-implementation takeover verification (2026-07-13, session 9d3c1869)
+
+A second takeover pass, performed after the implementation fold above, independently re-verified the
+branch state rather than trusting the fold's self-report. All checks were run fresh in this worktree.
+
+## Independently reproduced facts
+
+- **Branch state:** `codex/719-agent-utility-publication` at `04bb078`, clean tree, **6 commits ahead
+  of and 0 behind `origin/main`** (fully reconciled). 112 files, +17,778/−1,043. Never pushed; no PR;
+  hosted CI has not run.
+- **Pointer:** `scripts/jseval/public-agent-utility/current.v1.json` is committed with
+  `current: null` and a machine-readable reason — the handoff's hard requirement holds.
+- **Fail-closed policies:** both `utility-claim-policy.v1.json` and
+  `707-corpus-certification-policy.v1.json` are `status: draft` with explicit `unresolved` lists
+  (required strata/cells, adoption floor, non-inferiority margin, token/cost margins). Promotion
+  deterministically rejects with `policy_unresolved`; no threshold was invented.
+- **Rejected-fixture replay:** `jseval utility-recompose --evidence tests/fixtures/agent-utility-rejected-2026-07-12/observations.v1.jsonl`
+  reproduced semantic digest `2cea990ce444f6cb…c076ee6`, `comparable=false`, loss A 24/16/8 (33.3%),
+  B 24/14/10 (41.7%), `claim_verdict.accepted=false`, `outcome=inconclusive`, reasons including
+  `policy_unresolved` and `maximum_exclusion_rate` — byte-for-byte the fold's claim.
+- **Tests:** focused suites (`test_agent_utility_inspect`, `test_utility_claim_policy`,
+  `test_utility_evidence`, `test_utility_publication`, `test_utility_comparison`,
+  `test_command_surface`) — **151 passed, 0 failed**. `compileall` green; command inventory 84.
+- **Projections/CI:** `gen-public-agent-utility.mjs --check` and `check-public-agent-utility.mjs`
+  green ("no accepted result"); both are wired into the required `Public claims` job in `ci.yml`
+  with Python + editable jseval install, as the design demanded.
+- **Sanitization spot-check:** the committed `observations.v1.jsonl` contains no usernames,
+  drive-letter paths, `/tmp`, or `AppData` strings.
+- **Pre-existing failure confirmed:** the 2 full-suite failures (`test_correction_probe`) are caused
+  by `jseval/data/correction-eval-queries.v1.json`, absent from `origin/main` since v0.1.0 — not
+  719's doing. Logged to the observations inbox (session shard 9d3c1869).
+- **No supersession:** tempdoc 720 (RAG generation layer) does not touch agent-utility; nothing
+  merged to `main` since reconciliation conflicts with this branch. PR #169 (the shard repeating the
+  invalid 25.7% survivor figure) is still open and unmerged, so the rejected number has not escaped.
+
+## Findings for PR review (not blockers)
+
+1. **RESEARCH.md lost its retraction narrative.** The generated block replaced not only the
+   drift-prone current-state assertions but also the authored honesty story — the retracted
+   "92%/62%" figure and the A-vs-A MCP-config discovery. That story was 667's strongest rigor
+   evidence for the research/grant audience and now survives only in internal docs. The design said
+   RESEARCH.md "keeps its explanatory research narrative." Recommend restoring a short authored,
+   dated retrospective paragraph above the generated marker (pure history, no current-state claims,
+   so it cannot drift) — an owner wording call at PR review, not a machinery defect.
+2. **One branch instead of several focused changes.** The plan expected "several focused changes
+   rather than one large PR"; the branch mixes 624-substrate, 707-corpus, and 719-publication work
+   in 6 commits / 112 files. Re-splitting now would cost more than it buys (the seams share schemas
+   and tests); recommend one squash PR with a body that names the three workstreams explicitly.
+
+## Verdict
+
+**GO — publish the branch now; everything further is owner-gated.** The level-1
+(autonomous/code-complete) contract defined by the plan is implemented and, per the checks above,
+real. The cheapest missing evidence for it is hosted CI on the pushed branch — the only verification
+tier not yet exercised. Ordered next actions:
+
+1. Push the branch, open the PR (single squash), let required CI run — zero risk of publishing a
+   number, because every public surface renders the honest no-result state and CI enforces it.
+   Merge only on explicit owner go-ahead.
+2. After merge, retry the deferred no-cost backend corpus gates (closed-book, retrieval-calibration,
+   union-recall, leak) from a main-based worktree with the shared dev stack — the two prior attempts
+   died on the 120-second backend-startup boundary and need that diagnosed first.
+3. Everything else — required campaign matrix, adoption floor, accuracy non-inferiority margin,
+   model cohort, EnronQA replacement or license resolution, smoke/powered budgets, and any pointer
+   movement — is a founder decision the harness correctly refuses to invent. Do not proceed past
+   the draft policies without those recorded.
+
+This is not a NO-GO-until-evidence verdict: the evidence the earlier takeover demanded (rejected
+pilot recomposes as rejected; sanitized replay reproduces arithmetic and failed gates from committed
+evidence) now exists and was independently reproduced here.
