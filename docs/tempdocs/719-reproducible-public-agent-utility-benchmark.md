@@ -1698,3 +1698,66 @@ tier not yet exercised. Ordered next actions:
 This is not a NO-GO-until-evidence verdict: the evidence the earlier takeover demanded (rejected
 pilot recomposes as rejected; sanitized replay reproduces arithmetic and failed gates from committed
 evidence) now exists and was independently reproduced here.
+
+## Code-quality review of the implementation (2026-07-13; 4 independent scoped reviewers)
+
+Four scoped reviewers (observation/recompose seam; policy/evidence/publication; corpus machinery;
+JS projector + tests) audited *how* the branch is written. No correctness defects; all findings are
+maintainability/structure. Summary for PR review and a later `/simplify` pass:
+
+**Genuinely good:** clean acyclic module layering (`agent_utility_observations` stdlib-leaf →
+`utility_recompose` → `utility_publication`; `utility_claim_policy` stdlib-leaf); `utility_recompose`
+verified pure; real deduplication happened (`agent_utility_run.py` net −98 lines, old parallel
+log-walks in `scale_matrix_report`/`compute_loss_accounting` routed through the seam); corpus
+determinism has a single RNG seed site and thresholds come only from the checked-in policy; **test
+quality is the standout** — exact reason-string assertions, parametrized every-threshold-changes-the-
+verdict coverage, path-escape tests, and the real false-green pilot replayed byte-for-byte
+(`test_utility_evidence.py:194-217`); no statistics were duplicated into JavaScript.
+
+**Systemic defects (ranked):**
+
+1. **JS re-implements Python's verification rules** — `check-public-agent-utility.mjs:26-96`
+   duplicates ~70 lines of manifest-shape/hash/path-confinement validation that
+   `utility_publication.replay_publication` already enforces (a second authority that can drift —
+   the projection-vs-fork risk applied to validation logic). It also has no companion `.test.mjs`,
+   and prints `offline replay failed:\nundefined` when Python is missing.
+2. **Generator ergonomics fork the cited idiom** — `gen-public-agent-utility.mjs:317-341` throws a
+   raw stack trace on the routine `--check`-drift path, reports only the first failing target, and
+   writes targets sequentially with no check-before-write (a crash can leave README updated while
+   RESEARCH.md is stale), unlike `gen-public-benchmark.mjs`'s typed per-target status collection.
+   Its `.test.mjs` also aborts on first assertion instead of the repo's `ok()` collector idiom.
+3. **Schema↔Python allowlist duplication ×3 with no sync test** — `_OBSERVATION_KEYS`
+   (`utility_evidence.py:13-21`), `supported_requirements` (`utility_claim_policy.py:173-181`), and
+   the pointer ref-triple (`utility_publication.py:57-60`) each hand-mirror their schema; only the
+   forward direction is tested, so a drifted allowlist in a fail-closed system is a silent-drift
+   class.
+4. **Monolithic correctness-critical functions** — `evaluate_claim` 437 lines
+   (`utility_claim_policy.py:147-583`), `_intention_to_treat_estimand` 198
+   (`utility_recompose.py:72-269`), `certify_materialized_family` 191 and
+   `_derive_scientific_verdict` 189 (`corpus_certify.py`), `compose_utility_cross_corpus` 189 —
+   ~3× the package's established ~60-line ceiling for dense statistical code, concentrated exactly
+   where reviewability matters most. `corpus_certify.py` (172→1,050 lines) mixes ≥6 responsibilities
+   and repeats one exact-shape-validation idiom ~6×.
+5. **Micro-duplication despite the anti-fork design** — `_WITH_TOOL = {"B","C"}` defined 4×
+   (one dead at `agent_utility_run.py:292`, one inline literal); campaign-matrix validator written
+   2×; MCP-surface singularity check 3×; canonical-JSON+sha256 recipe 2×
+   (`policy_digest` vs `semantic_digest`); `_read_jsonl` re-authored in `corpus_inject.py:18-19`
+   despite existing verbatim in `corpus_build.py:31-37`; a second spawn-and-diff mechanism beside
+   `corpus_generate.regenerate_and_diff`, whose docstring exists to prevent exactly that.
+6. **Inconsistent error vocabulary** — `UtilityComposeError` vs bare `ValueError` for identical
+   failure classes in the new seam; structured report-cell failures vs raised `ValueError` in the
+   same corpus-certify call graph; the CLI-local rejection-reason literal
+   `"legacy_executor_non_claim_grade"` living only in `commands/utility.py:238` outside the policy
+   module's vocabulary; `cmd_utility_compose` and `cmd_corpus_certify_member` are logic-bearing
+   wrappers.
+7. **"Typed observation seam" is untyped** — plain `dict[str, Any]` with ~25 convention-threaded
+   string keys across 4+ modules, ignoring the existing `jseval/types.py` dataclass idiom.
+
+**Judgment:** the macro-architecture matches the settled design; the micro-implementation is
+correct, heavily tested first-draft code at roughly 1.5–2× necessary volume. Recommended pre/at-PR
+fixes (small, targeted): reduce the JS check to orchestration with a clear missing-Python message
+(#1), align the generator to collect-all/check-before-write (#2), add the three schema↔constant
+sync tests (#3), unify `_WITH_TOOL` + delete the dead definition and share the digest helper (#5,
+partial). Defer monolith decomposition (#4) and dataclass typing (#7) to a deliberate post-merge
+simplify pass — churning a green 151-test correctness boundary for readability alone is not worth
+the risk in the same PR.
