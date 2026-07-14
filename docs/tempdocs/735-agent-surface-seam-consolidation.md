@@ -370,3 +370,13 @@ threads the intermediate `PipelineConfig` through expansion gating before proto 
 two-site consumption would be wrong. Both sites still land on the same `expandPreset` definition, which
 is the unification G5 sought; the factory Javadoc records the reasoning + F-037. Refute-first review:
 5/5 claims confirmed, no refutations, merge-ready.
+
+**W5 (G6 environment intent) — landed 2026-07-14.** `justsearch_dev_start` gained optional
+`leaseDurationSec` (clamped [30,7200] once at dev-runner parse time; both lease write-sites use it;
+omitted = byte-identical behavior). `ownership.lease.remainingSec` + `leaseFresh` surfaced from the
+single `buildOwnershipProjection` site, liveness-qualified (a crashed supervisor shows 0, not hours —
+review MINOR, fixed pre-commit). Review confirmed the zombie-lease concern is structurally mitigated:
+takeover verdicts key off session activity + supervisor PID liveness, and the resource reaper keys off
+activity age — none of them off the TTL. Docs in `mcp-dev-tools.md` (skill regenerated), shared-stack
+convention lines in `branch-safety.md` (prose-tier gate green). Tests 10/10 + 9/9. Refute-first review:
+7/7 confirmed, merge-ready.

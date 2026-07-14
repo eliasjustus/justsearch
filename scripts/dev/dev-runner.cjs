@@ -75,6 +75,20 @@ const {
 } = require('./lib/ownership-verdict.cjs');
 const RUN_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const RUN_RETENTION_COUNT = 200;
+// Tempdoc 735 G6: campaign-length lease hold. Passive-expiry default stays 30s (unchanged
+// behavior); a starter that declares intent can hold ownership up to 2h without depending on
+// the presence-aware renewer, so a busy-but-CLI-silent measurement campaign (minutes of
+// jseval/gradle activity with no Claude Code session touches) doesn't get reaped or taken over
+// mid-run purely because the 10s renewal loop paused on a stale-activity read.
+const DEFAULT_LEASE_DURATION_SEC = 30;
+const MIN_LEASE_DURATION_SEC = 30;
+const MAX_LEASE_DURATION_SEC = 7200;
+
+function clampLeaseDurationSec(value) {
+  if (value == null || value === '' || !Number.isFinite(Number(value))) return DEFAULT_LEASE_DURATION_SEC;
+  const n = Math.round(Number(value));
+  return Math.min(MAX_LEASE_DURATION_SEC, Math.max(MIN_LEASE_DURATION_SEC, n));
+}
 
 class NoActiveRunError extends Error {
   constructor(message) {
@@ -139,6 +153,7 @@ function parseArgs(argv) {
     skipBuild: false,
     hotReload: false,
     sessionId: null,
+    leaseDurationSec: DEFAULT_LEASE_DURATION_SEC,
   };
 
   const args = [...argv];
@@ -200,6 +215,11 @@ function parseArgs(argv) {
       case '--session-id':
         out.sessionId = takeValue();
         break;
+      case '--lease-duration-sec':
+        // Tempdoc 735 G6: clamp here so every downstream reader (lease record write +
+        // periodic renewal) sees one already-clamped value — no second clamp site to drift.
+        out.leaseDurationSec = clampLeaseDurationSec(takeValue());
+        break;
       case '--help':
       case '-h':
         out.cmd = 'help';
@@ -224,6 +244,7 @@ function printUsage() {
       '',
       'Commands:',
       '  start   [--ui-port 5173] [--api-port 0|33221] [--data-dir <path>] [--clean soft|hard|none] [--json]',
+      '          [--lease-duration-sec 30-7200]  (campaign-length ownership hold; default 30, clamped)',
       '  status  [--run <runId>|--active] [--json]',
       '  stop    [--run <runId>|--active] [--force] [--json]',
       '  cleanup [--run <runId>|--active] [--force] [--clean soft|hard|none] [--json]',
@@ -1569,9 +1590,12 @@ async function cmdStart(opts) {
     // Tempdoc 606 Piece 2: provenance of the code this stack actually runs.
     provenance: devStackProvenance,
     lease: {
-      durationSec: 30,
+      // Tempdoc 735 G6: opts.leaseDurationSec is pre-clamped to [30, 7200]s at parse time
+      // (clampLeaseDurationSec) and defaults to 30 — unchanged behavior when the starter
+      // doesn't declare a longer campaign hold.
+      durationSec: opts.leaseDurationSec,
       renewedAt: leaseNow,
-      expiresAt: new Date(Date.now() + 30_000).toISOString(),
+      expiresAt: new Date(Date.now() + opts.leaseDurationSec * 1000).toISOString(),
       sequence: 1,
     },
     updatedAt: leaseNow,
@@ -1696,16 +1720,22 @@ async function cmdStart(opts) {
         }
         process.stderr.write(
           `[dev-runner] Owner ${current?.holder?.agentSessionId ?? '?'} is silent — ` +
-          `pausing lease renewal so the stack can be reclaimed.\n`);
-        return; // skip this renewal; lease lapses within its 30s TTL
+          `pausing lease renewal so the stack can be reclaimed (lapses within its ` +
+          `${opts.leaseDurationSec}s TTL).\n`);
+        return; // skip this renewal; lease lapses within its declared TTL
       }
       const now = nowIso();
       await writeJsonAtomic(activePath, {
         ...current,
+        // Tempdoc 735 G6: reassert the SAME declared duration on every renewal (not a fixed
+        // 30s) — this is what gives a campaign-length hold its teeth: when the presence check
+        // above later pauses renewal (owner busy for minutes with no CC-session activity), the
+        // most recent expiresAt was already now+leaseDurationSec, not now+30s, so the passive
+        // grace window is the full declared hold, not 30s.
         lease: {
-          durationSec: 30,
+          durationSec: opts.leaseDurationSec,
           renewedAt: now,
-          expiresAt: new Date(Date.now() + 30_000).toISOString(),
+          expiresAt: new Date(Date.now() + opts.leaseDurationSec * 1000).toISOString(),
           sequence: leaseSequence,
         },
         updatedAt: now,
@@ -2072,6 +2102,12 @@ if (require.main === module) {
       cleanDataDir,
       acquireAdmission,
       readActiveOpLeases,
+      // Tempdoc 735 G6: lease-duration clamp + CLI arg parsing.
+      clampLeaseDurationSec,
+      parseArgs,
+      DEFAULT_LEASE_DURATION_SEC,
+      MIN_LEASE_DURATION_SEC,
+      MAX_LEASE_DURATION_SEC,
       computeOwnershipVerdict,
       classifyActivity,
       readSessionActivity,
