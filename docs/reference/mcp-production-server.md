@@ -39,6 +39,18 @@ MCP server on?" is exactly "which port is the API on?":
 
 ## Setup
 
+### Claude Desktop one-click (MCPB) — available from the next release
+
+An MCPB bundle (`justsearch-mcp.mcpb`, sources in
+[`packaging/mcpb/`](../../packaging/mcpb/README.md)) will be attached to
+JustSearch releases **starting with the next release** — it is not on any
+published release yet, and the v0.1.0 app predates the `/mcp` endpoint, so
+the bundle cannot work against it. Once shipped: download the `.mcpb` from
+the release page and open it with Claude Desktop (Settings → Extensions) —
+one click, no JSON editing. The bundle is a thin local stdio bridge to the
+running app's `/mcp` endpoint; it handles port discovery via `api-port.txt`
+automatically. Until then, use the connector flow below.
+
 ### Claude Desktop in ~2 minutes, starting from "launch the app"
 
 1. **Launch JustSearch** (Start menu). Wait for the window to load — the API is up when

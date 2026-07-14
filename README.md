@@ -7,6 +7,9 @@
 [![CI](https://github.com/eliasjustus/justsearch/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/eliasjustus/justsearch/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/eliasjustus/justsearch?include_prereleases&label=release)](https://github.com/eliasjustus/justsearch/releases)
 <!-- badges: <<nDCG benchmark badge>> — deferred: no workflow publishes a benchmark badge yet -->
+<!-- mcp-name: io.github.eliasjustus/justsearch -->
+<!-- ^ Official MCP Registry ownership marker (modelcontextprotocol.io/registry/package-types);
+     must match "name" in packaging/mcpb/server.json. Do not remove. -->
 
 <!-- HERO VISUAL PLACEHOLDER (m1-shippability):
      Add a hero screenshot + short demo GIF here. Exact shots to take and how:
