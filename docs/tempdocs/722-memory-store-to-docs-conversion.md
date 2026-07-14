@@ -48,7 +48,7 @@ memory fork that will drift (the tempdoc 553 representation-fork class).
 | `ui_screenshot_capture_method` | convert method | `.claude/skills/ui-check/SKILL.md` (sidecar context stripped) |
 | `multi_pr_merge_mechanics` | delete after PR #176 | `agent-guide.md` §3.7 |
 | `jseval_long_runs_detached_pattern` | delete after PR #176 | `jseval-pipeline-reference.md` |
-| `project_direction_2026-07` | **stays private** | sidecar `F:\justsearch-sidecar` |
+| `project_direction_2026-07` | **stays private** | a private sidecar (outside this repo) |
 | `reference_memory_hygiene_policy` | **stays (meta)** | governs the store; codifies the intake rule below |
 
 **End state:** memory shrinks 15 → ~3 (`project_direction`, `memory_hygiene_policy`, trimmed `subagent_model_guard`).
