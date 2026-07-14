@@ -46,9 +46,8 @@ Installer SHA-256 (also in [`SHA256SUMS`](SHA256SUMS)):
 f6336a668b8f6abd66b1ff483def6ae17ac34f64d406a8edab16b45d2b61ae38  JustSearch_0.1.0_x64-setup.exe
 ```
 
-<!-- TODO(operator): this hash was computed from the local build (F:\JustSearch\dist\installer);
-     its byte size matches the uploaded v0.1.0 asset exactly, but re-verify the hash against the
-     actual GitHub release asset before publishing this README. -->
+<!-- hash verified 2026-07-14 against the asset downloaded from the v0.1.0 GitHub release
+     (identical to the local build). -->
 
 ## System requirements
 
@@ -96,11 +95,14 @@ Follow [Install (Windows)](#install-windows) above, point it at a folder, and se
 
 ## Why JustSearch
 
-Local file search is either **fast-but-literal** (Everything, Recoll — private, but vocabulary-bound) or
-**smart-but-cloud** (NotebookLM, Copilot — capable, but your files leave your machine). JustSearch aims at the
-missing cell: **semantic *and* fully offline.** We're not aware of another local tool that combines
-**{true hybrid retrieval × fully offline × multilingual × OCR}** at once — if you know one, please
-[open an issue](https://github.com/eliasjustus/justsearch/issues) and we'll gladly list it.
+Desktop file search is either **fast-but-lexical** (Everything — filenames, instantly; Recoll — full-text and
+even OCR, but keyword matching only) or **smart-but-cloud** (NotebookLM, Copilot — capable, but your files
+leave your machine). Self-hosted server stacks (RAGFlow, Open WebUI, QAnything) can combine semantic retrieval,
+offline operation, multilingual models, and OCR — if you deploy and configure a Docker stack yourself.
+JustSearch aims at the gap between those worlds: as far as we know, the only **single-install desktop app**
+that ships **{true hybrid retrieval × fully offline × multilingual × OCR}** out of the box — here is the
+[sourced comparison](docs/comparison.md) behind that sentence, and if we've missed a tool, please
+[open an issue](https://github.com/eliasjustus/justsearch/issues) and we'll list it.
 
 - **Hybrid retrieval, not single-model RAG** — BM25 + dense vectors + SPLADE learned-sparse, fused and reranked
   by a cross-encoder. Most local RAG tools use one embedding model and basic chunking.
