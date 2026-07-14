@@ -73,10 +73,13 @@ jobs:
       - name: Outward benchmark numbers cite the canonical release
         run: node scripts/ci/check-outward-number-citations.mjs
 
+      - name: Test deterministic MCPB packer
+        run: node scripts/ci/pack-mcpb.test.mjs
+
       - name: Test MCPB release-bundle consistency gate
         run: node scripts/ci/check-mcpb-consistency.test.mjs
 
-      - name: MCPB bundle hash matches server.json (release integrity)
+      - name: MCPB source matches server.json.fileSha256 (release integrity + freshness)
         run: node scripts/ci/check-mcpb-consistency.mjs
 
       - name: Test agent-utility projection lifecycle and drift

@@ -119,6 +119,13 @@ $changed = (Update-FileRegex -Path $tauriConf -Label "tauri.conf.json" -Pattern 
 $changed = (Update-FileRegex -Path $shellPkg -Label "modules/shell/package.json" -Pattern '\"version\"\s*:\s*\"[^\"]+\"' -Replacement ('"version": "' + $version + '"') -DryRun:$WhatIf) -or $changed
 $changed = (Update-FileRegex -Path $cargoToml -Label "Cargo.toml" -Pattern '^(\s*version\s*=\s*\")[^\"]+(\"\s*)$' -Replacement ('${1}' + $version + '${2}') -DryRun:$WhatIf) -or $changed
 
+# MCPB registry metadata: version + release-asset URL are projections of the gradle version
+# (tempdoc 726 -- server.json stops being a hand-authored fork). fileSha256 is source-derived,
+# not version-derived, so it is synced separately by scripts/ci/pack-mcpb.mjs --sync.
+$serverJson = Join-Path $root "packaging\\mcpb\\server.json"
+$changed = (Update-FileRegex -Path $serverJson -Label "packaging/mcpb/server.json (version)" -Pattern '\"version\"\s*:\s*\"[^\"]+\"' -Replacement ('"version": "' + $version + '"') -DryRun:$WhatIf) -or $changed
+$changed = (Update-FileRegex -Path $serverJson -Label "packaging/mcpb/server.json (asset URL)" -Pattern 'releases/download/v[^/]+/justsearch-mcp\.mcpb' -Replacement ('releases/download/v' + $version + '/justsearch-mcp.mcpb') -DryRun:$WhatIf) -or $changed
+
 if ($WhatIf.IsPresent) {
   if ($changed) {
     Write-Host "WhatIf: changes would be applied."

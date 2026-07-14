@@ -52,16 +52,20 @@ The bundle does **not** contain JustSearch itself. The desktop app
 
 ## Build
 
+The bundle is built **deterministically from source** by `scripts/ci/pack-mcpb.mjs`
+(zero-dependency Node; a STORED zip with a fixed mtime, so the same source always
+produces the same bytes). It is **not committed** — the release build produces it, and
+`server.json.fileSha256` is the committed record of its hash.
+
 ```powershell
-# from the repo root; requires Node >= 18
-npx -y @anthropic-ai/mcpb pack packaging/mcpb packaging/mcpb/dist/justsearch-mcp.mcpb
-Get-FileHash packaging/mcpb/dist/justsearch-mcp.mcpb -Algorithm SHA256
+# from the repo root; requires Node (already used by the build)
+node scripts/ci/pack-mcpb.mjs packaging/mcpb/dist/justsearch-mcp.mcpb   # write the bundle
+node scripts/ci/pack-mcpb.mjs --sync                                    # write its hash into server.json
 ```
 
-`npx` downloads the *packing tool* at build time; the produced bundle itself
-has no dependencies. Commit the packed `dist/justsearch-mcp.mcpb` and record its
-SHA-256 in `server.json` (`fileSha256`); the release's `SHA256SUMS` is generated
-from the committed bundle by the pipeline, not by hand.
+After editing `manifest.json` or `server/**`, run `--sync` and commit `server.json`.
+The `check-mcpb-consistency` gate re-packs from source and fails the build if
+`server.json.fileSha256` is stale — there is no way to ship a source/hash mismatch.
 
 Signing: `mcpb sign` exists (code-signing certificate / self-signed). We do
 not sign yet — same posture as the unsigned installer; revisit together with
@@ -82,17 +86,18 @@ Claude Desktop → Settings → Extensions.
 
 ## Release flow (operator)
 
-The bundle is a **committed artifact** (`dist/justsearch-mcp.mcpb`, un-ignored) whose hash
-is kept in sync with `server.json` by the `check-mcpb-consistency` gate — the build fails on
-drift, so there is no hand-editing of checksums at release time. The pipeline
-(`scripts/ci/build-release-assets.ps1`, driven by `build-installer.yml` /
-`package-installer-win.ps1 -AssembleReleaseAssets`) stages the installer +
-`justsearch-mcp.mcpb` + a generated `SHA256SUMS` and attaches all three to the GitHub Release.
+The bundle is **built from source** at release time (never committed); its hash is recorded
+in `server.json.fileSha256` and enforced by the `check-mcpb-consistency` gate (rebuild +
+compare) — the build fails on any source/hash drift, so there is no hand-editing of checksums
+at release time. The pipeline (`scripts/ci/build-release-assets.ps1`, driven by
+`build-installer.yml` / `package-installer-win.ps1 -AssembleReleaseAssets`) builds the bundle
+and stages the installer + `justsearch-mcp.mcpb` + a generated `SHA256SUMS`, attaching all
+three to the GitHub Release.
 
 Operator steps:
 
-1. **Only when the bundle source changed** — re-pack (above), commit the new
-   `dist/justsearch-mcp.mcpb`, and set `server.json` `fileSha256` to the new hash.
+1. **Only when the bundle source changed** — run `node scripts/ci/pack-mcpb.mjs --sync` and
+   commit `server.json` (its `fileSha256` now matches the source).
    `node scripts/ci/check-mcpb-consistency.mjs` must pass. (The `mcpb-repack-hint` fires on
    source edits as a reminder.)
 2. **Before a release cut** — bump `gradle.properties` to the release version and update

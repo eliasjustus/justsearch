@@ -3,14 +3,14 @@
 /**
  * PostToolUse hook for Edit/Write on the MCPB bundle source.
  *
- * The packed bundle (packaging/mcpb/dist/justsearch-mcp.mcpb) is a committed
- * artifact whose SHA-256 is a published contract (server.json.fileSha256 + the
- * release SHA256SUMS). `mcpb pack` is nondeterministic, so editing the source
- * without re-packing leaves a STALE committed bundle whose hash still matches
- * server.json — the consistency gate can't catch that, so this hint is the
- * moment-of-relevance backstop (tempdoc 726; mirrors lockfile-hint).
+ * The bundle is built deterministically from source (pack-mcpb.mjs); its SHA-256 is
+ * a published contract recorded in server.json.fileSha256 (+ the release SHA256SUMS).
+ * Editing manifest.json / server/** changes that hash, so server.json must be re-synced.
+ * The check-mcpb-consistency gate rebuilds from source and FAILS on an un-synced edit,
+ * so this hint is a convenience (run --sync now) rather than the sole backstop
+ * (tempdoc 726; mirrors lockfile-hint).
  *
- * - Synchronous, no external process spawning — just a path check.
+ * - Synchronous, no external process spawning -- just a path check.
  * - Advisory: outputs hookSpecificOutput.additionalContext, never blocks.
  */
 
@@ -41,13 +41,12 @@ async function main() {
     if (!filePath || !isMcpbSource(filePath)) return;
 
     const hint = [
-      `MCPB source edited — the packed bundle is now stale. Re-pack and re-hash before commit:`,
-      `  npx -y @anthropic-ai/mcpb pack packaging/mcpb packaging/mcpb/dist/justsearch-mcp.mcpb`,
-      `Then update packaging/mcpb/server.json "fileSha256" to the new bundle hash and re-verify:`,
-      `  node scripts/ci/check-mcpb-consistency.mjs`,
-      `The bundle's hash is a published contract (server.json + release SHA256SUMS); a stale`,
-      `bundle whose hash still matches an un-updated server.json passes the gate but ships old`,
-      `bridge code. See packaging/mcpb/README.md.`,
+      `MCPB source edited -- server.json.fileSha256 is now stale. Re-sync it before commit:`,
+      `  node scripts/ci/pack-mcpb.mjs --sync`,
+      `That re-packs deterministically from source and writes the new hash into server.json.`,
+      `The check-mcpb-consistency gate rebuilds from source, so an un-synced edit FAILS the`,
+      `build (the hash is a published contract: server.json + release SHA256SUMS).`,
+      `See packaging/mcpb/README.md.`,
     ].join('\n');
 
     process.stdout.write(JSON.stringify({

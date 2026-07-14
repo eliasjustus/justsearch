@@ -8,8 +8,8 @@
   or the CI build step), this stages the full release asset set:
 
     - the installer *-setup.exe (already present; left in place)
-    - justsearch-mcp.mcpb  (the COMMITTED bundle, copied, never re-packed: 'mcpb pack'
-      is nondeterministic, so the reviewed committed bytes are canonical; tempdoc 726)
+    - justsearch-mcp.mcpb  (built deterministically from source by pack-mcpb.mjs -- NOT
+      committed; the gate verifies the build matches server.json.fileSha256; tempdoc 726)
     - SHA256SUMS           (sha256sum(1)-compatible manifest over both assets)
 
   Before staging the bundle it runs the fail-closed consistency gate
@@ -39,7 +39,7 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir) # scripts/ci -> scripts -> repo root
 
-$bundleSrc = Join-Path $repoRoot "packaging\mcpb\dist\justsearch-mcp.mcpb"
+$packer = Join-Path $repoRoot "scripts\ci\pack-mcpb.mjs"
 $gate = Join-Path $repoRoot "scripts\ci\check-mcpb-consistency.mjs"
 $gradleProps = Join-Path $repoRoot "gradle.properties"
 
@@ -74,15 +74,11 @@ try {
   & node @gateArgs
   if ($LASTEXITCODE -ne 0) { throw "MCPB consistency gate failed (exit=$LASTEXITCODE); refusing to assemble an inconsistent asset set." }
 
-  # 3. Stage the committed bundle (copy, never re-pack).
-  if (-not (Test-Path -LiteralPath $bundleSrc)) {
-    throw ("MCPB bundle missing: $bundleSrc`n" +
-      "It is a committed release artifact. Build it with`n" +
-      "  npx -y @anthropic-ai/mcpb pack packaging/mcpb packaging/mcpb/dist/justsearch-mcp.mcpb`n" +
-      "and commit it (and set server.json.fileSha256 to its hash).")
-  }
+  # 3. Build the bundle deterministically from source into OutDir (never committed).
+  # The gate above already verified this build matches server.json.fileSha256.
   $bundleDest = Join-Path $outDirPath "justsearch-mcp.mcpb"
-  Copy-Item -LiteralPath $bundleSrc -Destination $bundleDest -Force
+  & node $packer $bundleDest
+  if ($LASTEXITCODE -ne 0) { throw "pack-mcpb.mjs failed (exit=$LASTEXITCODE)" }
 
   # 4. Generate SHA256SUMS over {installer, bundle} -- basenames, so 'sha256sum -c' works from OutDir.
   $assets = @($installer.FullName, $bundleDest)

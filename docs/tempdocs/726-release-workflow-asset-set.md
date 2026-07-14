@@ -1,11 +1,14 @@
 # 726 — Release workflow: one dispatch → the full, hash-consistent release asset set
 
-- **status:** IMPLEMENTED 2026-07-14 (branch `worktree-release-asset-set`, pre-PR) — asset
-  generator + fail-closed consistency gate + committed bundle + workflow wiring + re-pack hint
-  + canonical runbook + orphan teardown all landed and validated (gates green). **Freshness
-  content-compare deferred** to a fast-follow (v1 gate = hash + release-version; the
-  `mcpb-repack-hint` is the interim backstop — see §Derisk). Owner-only release steps are a
-  handoff (`docs/m1-operator-checklist.md`); this tempdoc closes on merge.
+- **status:** IMPLEMENTED 2026-07-14 (branch `worktree-release-asset-set`, pre-PR). v1 (asset
+  generator + fail-closed gate + workflow wiring + canonical runbook + orphan teardown) AND the
+  **keystone** (deterministic `pack-mcpb.mjs` → build-the-bundle-from-source; the gate now
+  re-packs-and-compares; the committed bundle is removed; `server.json` version/URL stamped by
+  `sync-version.ps1`) both landed and validated (gates green). **The freshness gap is closed
+  structurally** — the gate rebuilds from source, so a stale source edit FAILS; no longer deferred.
+  Owner-only release steps are a handoff (`docs/m1-operator-checklist.md`); this tempdoc closes on
+  merge. Still deferred to their own design passes: the two-mode generalized register + the
+  monotonic Sandbox loop (see §Long-term).
 - **created:** 2026-07-14
 - **author-role:** orchestrator (Opus) — design/judgment; implementation self-authored (small,
   tightly wiring-coupled, gate-validated — under the delegation floor)
@@ -188,3 +191,114 @@ it. **Earns-its-keep:** zero "wrong `fileSha256` broke install" / "checksum comm
 incidents after it lands, **and** the gate fires at least once on a real drift. **Retirement:** if
 the MCPB/registry path is abandoned (`server.json` deleted) or the published-hash surfaces collapse
 to one, the gate is dead apparatus — retire it.
+
+## Long-term viability & correct end-state (2026-07-14)
+
+Critical self-analysis of what shipped, and the architecture the shipped v1 is a way-station toward.
+The v1 is *architecturally* sound but *coverage-incomplete*: its gates are **drift *detectors***, and
+drift is possible at all only because the system still has humans **transcribing derived facts**
+(the bundle hash into `server.json`; versions into `server.json` beside `gradle.properties`; the
+release-index rows by hand). Each hand-authored copy is a **fork** of a fact owned elsewhere, and
+every fork is a drift site. A gate that checks two hand-authored copies agree is itself evidence you
+shouldn't have two copies.
+
+### Ranked liabilities in the shipped v1
+1. **Freshness gap (top).** The hash gate proves `bundle == server.json`, not `bundle == its source`.
+   Edit `server/index.js`, forget to re-pack → stale bundle whose hash still matches an untouched
+   `server.json` → **gate passes, ships old bridge code.** Backstop is the `mcpb-repack-hint`, which
+   fires only for Claude-Code main-loop sessions (0% for humans/external contributors/subagents) and
+   widens as contributors grow. Compounded by the fragile 3-rule `.gitignore` negation stack (a
+   future edit can silently re-ignore the bundle → `git add` no-ops on re-pack → stale, undetected).
+2. **`build-installer.yml` never run in CI** — the system-tier integration (runner builds installer →
+   `build-release-assets.ps1` → `& node` gate → attach) is unproven; validated only at unit/stub tier.
+3. **Re-introduced drift** — the release-index table and the version bump (`gradle.properties` +
+   `server.json` version + URL) are hand-maintained/unenforced day-to-day; the gate catches the
+   dangerous mismatch only at release-path, not the ergonomic drift.
+4. **Runbook `draft` ⇒ unindexed** — discoverability hinges on links from dated/transient docs and a
+   status flag a human must remember to flip.
+5. **External-schema risk** — the gate hard-codes `server.json` shape against a preview-stage registry
+   spec; a schema change breaks it or gives false green.
+
+### Correct end-state — "generate, don't verify"
+The target design makes drift **unrepresentable** by having one build derive every downstream
+appearance from a single source — the stronger form of "verify, don't guess". Each fix is an instance:
+- **Deterministic packing is the keystone.** Normalize the `.mcpb` zip (fixed mtimes, sorted entries)
+  so the bundle is a pure function of source; then **build it in CI and stamp its hash into
+  `server.json` + `SHA256SUMS` from the freshly-built bytes.** Freshness ceases to exist; the committed
+  binary, the repack-hint, and the freshness gate all disappear. (Unlocks everything below.)
+- **One version source.** `server.json` version + asset URL become *generated* fields stamped from
+  `gradle.properties` (as Tauri/Cargo/npm already are); the equality gate becomes moot.
+- **Derived index.** Render the release index from the GitHub Releases API — it can't drift because it
+  isn't authored.
+- **Discoverability without memory.** Index all canonical docs regardless of maturity; show maturity as
+  a badge, not by omission.
+- **Gate the contract, not its shape.** Validate `server.json` against the pinned published MCP-registry
+  JSON Schema; a spec change is a loud, deliberate upgrade, never a silent false-green.
+- **Generalize the mechanism.** A single hash-consistency gate over a register of
+  `{artifact → generated-from}` tuples covering the installer, MCPB, **every model in
+  `model-registry.v2.json`** (already drifting per 409 D7/D10), and the pinned llama SHA. A second
+  surface already demands the general structure.
+
+**Enabling precondition:** v1 *worked around* two constraints rather than removing them —
+nondeterministic upstream packing and the offline-at-release posture (why the bundle is committed
+instead of built). Aside from feasibility, the correct move is to attack those directly (reproducible
+packing upstream / a vendored deterministic packer), which dissolves the offline objection and makes
+CI-build-and-stamp safe.
+
+**Process side (the loop, not the assets):** make the Sandbox-convergence loop **monotonic by
+construction** — a regression can't be marked resolved without a linked regression test, so rounds
+provably shrink and never re-discover a class. This is `audit-without-test` promoted from prose to an
+enforced gate on the release-convergence process.
+
+**Consequence:** in the end-state, most of v1's gates are **scaffolding you delete, not extend** — they
+verify hand-authored copies that would no longer exist. v1 ships the correct *seam* and the honest
+*gaps*; the end-state removes the need for the seam by removing the copies. (Falsifier for this whole
+frame: if determinism proves genuinely unattainable upstream *and* un-vendorable, the committed-bundle
++ content-freshness-gate fallback is the correct terminal design, not a way-station.)
+
+### Derisk of the long-term fixes (2026-07-14)
+
+Assumptions tested before anyone implements the end-state:
+
+- **Keystone — deterministic packing — GREEN (the scariest assumption collapsed).** The `.mcpb` is a
+  plain 2-file DEFLATE zip; the sole nondeterminism is the embedded mtime. A normalized zip writer
+  (fixed mtime, sorted entries) produced **byte-identical output across two runs**, and `mcpb info`
+  reads it as a valid bundle. So determinism is a ~15-line packer *replacement*, fully in our control,
+  **no upstream dependency** — the falsifier above does not fire. This unlocks CI-build-and-stamp,
+  deletes the committed binary + the freshness gap, and needs only one owner-side confirmation
+  (Claude Desktop installs our normalized bundle — low risk, it is a valid mcpb per the official tool).
+- **The generalization is two-mode, not one — REFRAMED.** `model-registry.v2.json` holds 28
+  `downloadUrl`+`sha256` pairs for **redistributed remote ONNX assets** (still pointing at the old
+  `justsearch-releases` repo, a live 409-D-series staleness). Their hashes can only be **verified**
+  (download+hash / trust), never *generated* from a local build. So the "one mechanism" is a register
+  with two modes — **`generate`** (built: installer, MCPB) and **`verify`** (redistributed: models).
+  The clean "generate everything" story is partly wrong; the register must respect the boundary.
+- **Monotonic loop is prerequisite-blocked.** No structured finding/verdict substrate for Sandbox
+  rounds exists (findings live as prose in tempdocs). A "no-resolve-without-linked-test" gate needs a
+  machine-readable finding↔test format *first* — so this is a design-a-substrate research item, not a
+  bounded implementation.
+- **server.json stamping + derived index — low uncertainty.** `sync-version.ps1` doesn't touch
+  server.json (confirming version is a *fork*); stamping it there is a straightforward projection.
+  The derived release-index has a ready template (the `generate + --check` pattern of
+  `check-readme-benchmark-numbers` against `release.v1.json`), with CI `GITHUB_TOKEN` for the API.
+
+**Confidence & sequencing.** Staged, not uniform: **~8/10 for the near-term core** (deterministic
+packer → stamp `fileSha256`/`SHA256SUMS`/`server.json` version → delete the committed bundle → freshness
+gap dissolved) — this alone closes the #1 liability and is well-scoped/verifiable (**Sonnet, medium**).
+**~5/10 for the full end-state**: the two-mode register needs a design pass + reconciling the stale
+model-distribution surface (**Opus design, Sonnet impl**); the monotonic loop needs a findings-substrate
+design first (**Opus, design-only — do not implement yet**). Recommendation: implement the keystone core
+as the next slice; treat generalization and the loop as separate design passes, not one push.
+
+### Keystone landed (2026-07-14)
+
+The near-term core is **implemented on this branch**. `scripts/ci/pack-mcpb.mjs` builds the bundle
+deterministically from source (STORED zip, fixed mtime, CRC-32 in-house — no zlib-version variance);
+proven byte-stable across runs and accepted by the official `mcpb info`/`unpack`. The gate now imports
+the packer, **re-packs from source and compares to `server.json.fileSha256`**, so integrity *and*
+freshness are one check (a source edit without `pack-mcpb.mjs --sync` FAILS). The committed bundle is
+deleted and re-gitignored; `server.json` version/URL are stamped by `sync-version.ps1` (last hand-authored
+fork closed). The v1 committed-bundle mechanism + the deferred content-freshness gate are **superseded**
+(torn down in the same change). **Still open** (own design passes): the two-mode `generate|verify` register
+(models are verify-only + `model-registry.v2.json` still points at the retired `justsearch-releases` repo),
+the derived GH-API release index, and the monotonic Sandbox loop (needs a findings substrate).
