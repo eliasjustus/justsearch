@@ -54,21 +54,56 @@ final class McpSearchResultFormatter {
           "will", "just", "should", "now");
 
   /**
-   * Strips newlines/control chars from corpus-sourced text before it is echoed back to an agent
-   * (defensive against the echo-injection shape — matched terms are quoted corpus content, not
-   * agent-authored text). Also strips {@code "} and {@code \} (tempdoc 725 review fix): a
-   * corpus term containing a double quote would otherwise escape the quoted span in the rendered
-   * {@code Matched: "term"} line — {@code "} breaks out of the quotes, {@code \} is stripped
-   * alongside it for the same reason (no escaping scheme is defined for this plain-text render).
+   * Strips non-formatting control chars (embedded NUL/ESC/other C0-C1 controls) from
+   * corpus-sourced text before it is echoed back to an agent — transport/rendering hygiene
+   * against corrupted or malformed source bytes, defensible regardless of the trust posture taken
+   * on the text's content. Deliberately preserves {@code \t}/{@code \n}/{@code \r}: those are
+   * ISO control chars by the JDK's classification but are legitimate text-formatting whitespace
+   * (paragraph/section breaks in multi-line excerpt, preview, and answer-context text) rather than
+   * corrupted bytes — stripping them would collapse the {@code [From: ...]} section structure
+   * detailed-mode answers render verbatim. Tempdoc 732 issue 7: extracted out of {@link #sanitize}
+   * so the narrower control-char concern can be applied on its own at raw-echo sites
+   * (excerpt/preview/answer text) that must NOT also lose printable punctuation like {@code "} and
+   * {@code \} — those are routine in corpus text (citations, quoted holdings, possessives) and are
+   * only unsafe in the quote-delimited {@code Matched: "term"} rendering {@link #sanitize} exists
+   * for.
    */
-  static String sanitize(String s) {
+  static String stripControlChars(String s) {
     if (s == null || s.isEmpty()) {
       return "";
     }
     StringBuilder sb = new StringBuilder(s.length());
     for (int i = 0; i < s.length(); i++) {
       char c = s.charAt(i);
-      if (Character.isISOControl(c) || c == '"' || c == '\\') {
+      if (Character.isISOControl(c) && c != '\t' && c != '\n' && c != '\r') {
+        continue;
+      }
+      sb.append(c);
+    }
+    return sb.toString();
+  }
+
+  /**
+   * Strips newlines/control chars from corpus-sourced text before it is echoed back to an agent
+   * (defensive against the echo-injection shape — matched terms are quoted corpus content, not
+   * agent-authored text). Also strips {@code "} and {@code \} (tempdoc 725 review fix): a
+   * corpus term containing a double quote would otherwise escape the quoted span in the rendered
+   * {@code Matched: "term"} line — {@code "} breaks out of the quotes, {@code \} is stripped
+   * alongside it for the same reason (no escaping scheme is defined for this plain-text render).
+   * Tempdoc 732: delegates the non-formatting-control-char removal to {@link #stripControlChars},
+   * then separately strips {@code \t}/{@code \n}/{@code \r} (which that helper deliberately
+   * preserves) alongside the quote/backslash pair — the combined removal set is identical to this
+   * method's pre-732 behavior, so no existing caller sees a behavior change.
+   */
+  static String sanitize(String s) {
+    if (s == null || s.isEmpty()) {
+      return "";
+    }
+    String withoutControlChars = stripControlChars(s);
+    StringBuilder sb = new StringBuilder(withoutControlChars.length());
+    for (int i = 0; i < withoutControlChars.length(); i++) {
+      char c = withoutControlChars.charAt(i);
+      if (c == '"' || c == '\\' || c == '\t' || c == '\n' || c == '\r') {
         continue;
       }
       sb.append(c);

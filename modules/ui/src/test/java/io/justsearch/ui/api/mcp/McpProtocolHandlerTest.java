@@ -276,6 +276,36 @@ class McpProtocolHandlerTest {
   }
 
   @Test
+  void resourcesList_returnsDeterministicKeyOrder() throws Exception {
+    // Tempdoc 732 issue 8: resource() used a 4-entry Map.of, the same JDK-salted-iteration-order
+    // defect already fixed for tool()/schema()/propStringArray()/propEnum() via orderedMap(...).
+    // Mirrors the tools/list order assertion above for the resources/list response.
+    Context ctx = mock(Context.class);
+    when(ctx.header("Mcp-Session-Id")).thenReturn("s1");
+    when(ctx.body())
+        .thenReturn(
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"resources/list\",\"params\":{}}");
+    ArgumentCaptor<String> resultCaptor = ArgumentCaptor.forClass(String.class);
+    when(ctx.result(resultCaptor.capture())).thenReturn(ctx);
+    when(ctx.contentType(anyString())).thenReturn(ctx);
+
+    handler.handlePost(ctx);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> response = MAPPER.readValue(resultCaptor.getValue(), Map.class);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> result = (Map<String, Object>) response.get("result");
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> resources = (List<Map<String, Object>>) result.get("resources");
+
+    assertFalse(resources.isEmpty());
+    assertEquals(
+        List.of("uri", "name", "description", "mimeType"),
+        List.copyOf(resources.get(0).keySet()),
+        "resource entries must serialize in declared source order");
+  }
+
+  @Test
   void toolsCall_search_attachesStructuredEvidence() throws Exception {
     // Tempdoc 658: end-to-end wiring — the search tool projects the canonical SearchTrace onto the
     // structuredContent channel (the McpEvidenceProjection mapping itself is unit-tested in

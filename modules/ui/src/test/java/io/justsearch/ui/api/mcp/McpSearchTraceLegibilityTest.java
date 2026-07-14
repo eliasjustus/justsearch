@@ -535,4 +535,201 @@ final class McpSearchTraceLegibilityTest {
     assertTrue(text.contains(payloadSentence), text);
     assertTrue(text.contains(McpSearchResultFormatter.TRUNCATION_REMEDY), text);
   }
+
+  // ---------------------------------------------------------------------
+  // (i) tempdoc 732 issue 7: buildHitPreview strips control chars but must NOT reuse the
+  // quote/backslash-stripping sanitize() -- excerpt/preview text is not quote-delimited, so a
+  // literal quote or backslash (routine in legal-text corpora) must survive verbatim. Control
+  // char and backslash characters below are built via char-code concatenation, not escape
+  // literals, to keep the corpus-fidelity fixtures unambiguous.
+  // ---------------------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "(i) buildHitPreview strips an embedded control char from the excerpt-region preview")
+  void previewStripsControlCharFromExcerptRegion() {
+    char controlChar = (char) 7;
+    String cleanText = "The cavby8 widget assembly guide explains torque settings.";
+    String regionText =
+        "The cavby8 widget assembly guide explains torque" + controlChar + " settings.";
+    MatchSpan nestedSpan = new MatchSpan("content_preview", 4, 10, "cavby8");
+    ExcerptRegion region =
+        new ExcerptRegion(regionText, 0, regionText.length(), 1, List.of(nestedSpan));
+    Hit hit =
+        new Hit(
+            "doc-ctrl",
+            0.8d,
+            Map.of("title", "Widget Assembly", "path", "docs/widgets/assembly.md"),
+            List.of("content_preview"),
+            List.of(nestedSpan),
+            List.of(region),
+            null);
+    KnowledgeSearchResponse canned =
+        new KnowledgeSearchResponse(
+            1L, 1L, 12L, List.of(hit), null, null, null, null, null, null, null, null);
+
+    String text = textOf(invokeSearch(canned));
+
+    assertFalse(text.contains(String.valueOf(controlChar)), text);
+    assertTrue(text.contains("    Preview: " + cleanText), text);
+  }
+
+  @Test
+  @DisplayName(
+      "(i) buildHitPreview preserves literal quotes and backslashes in the excerpt-region"
+          + " preview (corpus fidelity -- must NOT reuse the quote-stripping sanitize())")
+  void previewPreservesQuotesAndBackslashesInExcerptRegion() {
+    char backslash = (char) 92;
+    String regionText =
+        "The court cited \"Roe v. Wade\" and the C:" + backslash + "legal" + backslash
+            + "path reference.";
+    MatchSpan nestedSpan = new MatchSpan("content_preview", 4, 9, "court");
+    ExcerptRegion region =
+        new ExcerptRegion(regionText, 0, regionText.length(), 1, List.of(nestedSpan));
+    Hit hit =
+        new Hit(
+            "doc-quote-preview",
+            0.8d,
+            Map.of("title", "Legal Citation", "path", "docs/legal/citation.md"),
+            List.of("content_preview"),
+            List.of(nestedSpan),
+            List.of(region),
+            null);
+    KnowledgeSearchResponse canned =
+        new KnowledgeSearchResponse(
+            1L, 1L, 12L, List.of(hit), null, null, null, null, null, null, null, null);
+
+    String text = textOf(invokeSearch(canned));
+
+    assertTrue(text.contains("    Preview: " + regionText), text);
+  }
+
+  @Test
+  @DisplayName(
+      "(i) buildHitPreview strips control chars from the content_preview-field fallback path"
+          + " (no excerptRegions) and preserves quotes/backslashes there too")
+  void previewFieldFallbackStripsControlCharsAndPreservesQuotes() {
+    char controlChar = (char) 7;
+    char backslash = (char) 92;
+    String cleanText = "A \"quoted\" C:" + backslash + "path value with a control char.";
+    String fieldValue =
+        "A \"quoted\" C:" + backslash + "path value" + controlChar + " with a control char.";
+    Hit hit =
+        new Hit(
+            "doc-field-fallback",
+            0.7d,
+            Map.of(
+                "title", "Field Fallback",
+                "path", "docs/field-fallback.md",
+                "content_preview", fieldValue),
+            List.of(),
+            List.of(),
+            List.of(),
+            null);
+    KnowledgeSearchResponse canned =
+        new KnowledgeSearchResponse(
+            1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null);
+
+    String text = textOf(invokeSearch(canned));
+
+    assertFalse(text.contains(String.valueOf(controlChar)), text);
+    assertTrue(text.contains("    Preview: " + cleanText), text);
+  }
+
+  // ---------------------------------------------------------------------
+  // (j) refute-first review of the tempdoc 732 delta: 2 of the 7 stripControlChars wrap sites in
+  // buildHitPreview were still unpinned -- the content_preview informative-window branch (bestWindow
+  // over previewOccurrences, no excerptRegions) and the >200-char head-substring fallback (no
+  // informative spans at all). Both use the same char-code-concatenation fixture style as (i) above
+  // so a literal quote/backslash is unambiguous in source.
+  // ---------------------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "(j) buildHitPreview strips a control char from the content_preview informative-window"
+          + " path (no excerptRegions, informative matchSpans) and preserves quotes/backslashes")
+  void previewFieldWindowStripsControlCharsAndPreservesQuotes() {
+    char controlChar = (char) 7;
+    char backslash = (char) 92;
+    String filler = "x".repeat(250);
+    String term = "cavby8";
+    // afterTermClean is the content immediately following the matched term, with no control char;
+    // afterTermRaw is the same content prefixed by the control char that must be stripped.
+    String afterTermClean =
+        " \"Roe v. Wade\" at C:" + backslash + "legal" + backslash + "path." + "y".repeat(200);
+    String afterTermRaw =
+        controlChar + " \"Roe v. Wade\" at C:" + backslash + "legal" + backslash + "path."
+            + "y".repeat(200);
+    String fieldValue = filler + term + afterTermRaw;
+    int termStart = filler.length();
+    Hit hit =
+        new Hit(
+            "doc-field-window",
+            0.75d,
+            Map.of(
+                "title", "Field Window",
+                "path", "docs/field-window.md",
+                "content_preview", fieldValue),
+            List.of("content_preview"),
+            List.of(new MatchSpan("content_preview", termStart, termStart + term.length(), term)),
+            List.of(),
+            null);
+    KnowledgeSearchResponse canned =
+        new KnowledgeSearchResponse(
+            1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null);
+
+    String text = textOf(invokeSearch(canned));
+
+    assertFalse(text.contains(String.valueOf(controlChar)), text);
+    // Branch pin: bestWindow/windowCentered (PREVIEW_WINDOW_CHARS=200, half=100) centers the
+    // window on the term, so it starts 100 chars before it -- i.e. skipping the first 150 of the
+    // 250 leading filler chars. This distinguishes it from the head-substring fallback (which
+    // would start at field offset 0) and from the plain stripControlChars-only return (which would
+    // include the whole 250-char filler run).
+    String expectedWindow = "x".repeat(100) + term + afterTermClean.substring(0, 93);
+    assertTrue(
+        text.contains(
+            "    Preview: " + expectedWindow + McpSearchResultFormatter.TRUNCATION_REMEDY),
+        text);
+  }
+
+  @Test
+  @DisplayName(
+      "(j) buildHitPreview strips a control char from the >200-char content_preview"
+          + " head-substring fallback (no excerptRegions, no informative matchSpans) and preserves"
+          + " quotes/backslashes")
+  void previewFieldHeadSubstringFallbackStripsControlCharsAndPreservesQuotes() {
+    char controlChar = (char) 7;
+    char backslash = (char) 92;
+    String cleanPrefix =
+        "The court cited \"Roe v. Wade\" at C:" + backslash + "legal" + backslash + "path. ";
+    String rawPrefix =
+        "The court cited \"Roe v. Wade\"" + controlChar + " at C:" + backslash + "legal"
+            + backslash + "path. ";
+    String fieldValue = rawPrefix + "z".repeat(300); // total > 200; rawPrefix stays under 200
+    Hit hit =
+        new Hit(
+            "doc-field-headcut",
+            0.65d,
+            Map.of(
+                "title", "Field Head Cut",
+                "path", "docs/field-headcut.md",
+                "content_preview", fieldValue),
+            List.of(),
+            List.of(),
+            List.of(),
+            null);
+    KnowledgeSearchResponse canned =
+        new KnowledgeSearchResponse(
+            1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null);
+
+    String text = textOf(invokeSearch(canned));
+
+    assertFalse(text.contains(String.valueOf(controlChar)), text);
+    // Branch pin: the trailing "..." (not the TRUNCATION_REMEDY suffix the window branches use)
+    // marks the plain fieldValue.substring(0, 200) head-cut fallback.
+    String expectedPreview = cleanPrefix + "z".repeat(200 - rawPrefix.length()) + "...";
+    assertTrue(text.contains("    Preview: " + expectedPreview), text);
+    assertFalse(text.contains(McpSearchResultFormatter.TRUNCATION_REMEDY), text);
+  }
 }

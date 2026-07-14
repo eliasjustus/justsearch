@@ -226,4 +226,115 @@ final class McpAnswerLegibilityTest {
 
     assertEquals(withDetailed, withoutArg);
   }
+
+  // ---------------------------------------------------------------------
+  // Tempdoc 732 issue 7: raw-echo sites strip control chars but must NOT reuse the
+  // quote/backslash-stripping sanitize() -- answer context/passage text is not quote-delimited,
+  // so a literal quote or backslash (routine in legal-text corpora) must survive verbatim.
+  // Control char and backslash characters below are built via char-code concatenation, not
+  // escape literals, to keep the corpus-fidelity fixtures unambiguous.
+  // ---------------------------------------------------------------------
+
+  private static ContextResult customContextFixture(String context, List<ContextSection> sections) {
+    List<ContextCitation> citations =
+        List.of(new ContextCitation("doc-1", 0, 1, 0, 40, 0.9f, "excerpt-1", 1, 4, "", 0));
+    return new ContextResult(
+        context,
+        1,
+        1,
+        0,
+        citations,
+        "HYBRID",
+        "HYBRID_AVAILABLE",
+        false,
+        sections,
+        new QualitySignals(0.9f, 0.1f, 0.5f, 5, 3));
+  }
+
+  @Test
+  @DisplayName(
+      "(d) detailed mode strips a control char from result.context() but preserves quotes and"
+          + " backslashes")
+  void detailedContextStripsControlCharAndPreservesQuotesBackslashes() {
+    char controlChar = (char) 7;
+    char backslash = (char) 92;
+    String cleanContext =
+        "[From: doc-1]\nThe court cited \"Roe v. Wade\" at C:" + backslash + "legal" + backslash
+            + "path.";
+    String rawContext =
+        "[From: doc-1]\nThe court cited \"Roe v. Wade\"" + controlChar + " at C:" + backslash
+            + "legal" + backslash + "path.";
+    ContextResult canned = customContextFixture(rawContext, List.of());
+
+    String text = textOf(invokeAnswer(canned).result());
+
+    assertFalse(text.contains(String.valueOf(controlChar)), text);
+    assertTrue(text.contains(cleanContext), text);
+  }
+
+  @Test
+  @DisplayName(
+      "(d) concise mode strips a control char from per-section passage text but preserves"
+          + " quotes and backslashes")
+  void concisePerSectionTextStripsControlCharAndPreservesQuotesBackslashes() {
+    char controlChar = (char) 7;
+    char backslash = (char) 92;
+    String cleanSection =
+        "The court cited \"Roe v. Wade\" at C:" + backslash + "legal" + backslash + "path.";
+    String rawSection =
+        "The court cited \"Roe v. Wade\"" + controlChar + " at C:" + backslash + "legal"
+            + backslash + "path.";
+    List<ContextSection> sections = List.of(new ContextSection("doc-1", rawSection, false, 0, 0));
+    ContextResult canned = customContextFixture("[From: doc-1]\n" + rawSection, sections);
+
+    String text =
+        textOf(invokeAnswer(canned, Map.of("query", "q", "response_format", "concise")).result());
+
+    assertFalse(text.contains(String.valueOf(controlChar)), text);
+    assertTrue(text.contains(cleanSection), text);
+  }
+
+  // ---------------------------------------------------------------------
+  // Refute-first review of the tempdoc 732 delta: buildConciseAnswerText's empty-sections
+  // fallback (result.sections().isEmpty() -> windowStartingAt(result.context(), 0, 600)) was still
+  // unpinned for stripControlChars -- distinct from the per-section branch pinned above.
+  // ---------------------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "(e) concise mode with empty sections strips a control char from the raw-context window"
+          + " fallback and preserves quotes/backslashes")
+  void conciseEmptySectionsWindowStripsControlCharAndPreservesQuotesBackslashes() {
+    char controlChar = (char) 7;
+    char backslash = (char) 92;
+    String cleanHead =
+        "The court cited \"Roe v. Wade\" at C:" + backslash + "legal" + backslash + "path. ";
+    String rawHead =
+        "The court cited \"Roe v. Wade\"" + controlChar + " at C:" + backslash + "legal"
+            + backslash + "path. ";
+    String rawContext = rawHead + "z".repeat(700); // > 600 chars: forces windowStartingAt to cut
+    ContextResult canned =
+        new ContextResult(
+            rawContext, 0, 0, 0, List.of(), "FULLTEXT_FALLBACK", "GRPC_FAILED", false, List.of());
+
+    String text =
+        textOf(invokeAnswer(canned, Map.of("query", "q", "response_format", "concise")).result());
+
+    // Branch pin: citations AND sections both empty drives the "sections absent too" defensive
+    // header fallback (McpToolSurface.callAnswer, tempdoc 725 review-fix comment) --
+    // distinctDocs floors to max(docsUsed, 1) = 1, so the header reads "1 passages from 1
+    // documents" even though nothing was retrieved. This corroborates result.sections() is empty,
+    // the precondition for the buildConciseAnswerText branch under test.
+    assertTrue(
+        text.startsWith(
+            "Evidence pack: 1 passages from 1 documents (retrieval mode: FULLTEXT_FALLBACK)."),
+        text);
+    assertFalse(text.contains(String.valueOf(controlChar)), text);
+    assertFalse(text.contains("[From:"), text);
+    String expectedWindow =
+        cleanHead
+            + "z".repeat(600 - rawHead.length())
+            + McpSearchResultFormatter.TRUNCATION_REMEDY;
+    assertTrue(text.contains(expectedWindow), text);
+  }
 }

@@ -533,7 +533,10 @@ public final class McpToolSurface {
       sb.append("\n\n");
 
       if (result.context() != null && !result.context().isBlank()) {
-        sb.append(concise ? buildConciseAnswerText(result) : result.context());
+        sb.append(
+            concise
+                ? buildConciseAnswerText(result)
+                : McpSearchResultFormatter.stripControlChars(result.context()));
       } else {
         sb.append("No relevant passages found for: ").append(query);
       }
@@ -602,9 +605,8 @@ public final class McpToolSurface {
     if (sections.isEmpty()) {
       McpSearchResultFormatter.Window window =
           McpSearchResultFormatter.windowStartingAt(result.context(), 0, 600);
-      return window.truncated()
-          ? window.text() + McpSearchResultFormatter.TRUNCATION_REMEDY
-          : window.text();
+      String text = McpSearchResultFormatter.stripControlChars(window.text());
+      return window.truncated() ? text + McpSearchResultFormatter.TRUNCATION_REMEDY : text;
     }
     var sb = new StringBuilder();
     int shown = Math.min(3, sections.size());
@@ -613,7 +615,10 @@ public final class McpToolSurface {
       if (i > 0) sb.append(DocumentService.SECTION_SEPARATOR);
       McpSearchResultFormatter.Window window =
           McpSearchResultFormatter.windowStartingAt(section.content(), 0, 600);
-      sb.append("[From: ").append(section.sourceLabel()).append("]\n").append(window.text());
+      sb.append("[From: ")
+          .append(section.sourceLabel())
+          .append("]\n")
+          .append(McpSearchResultFormatter.stripControlChars(window.text()));
       if (window.truncated()) sb.append(McpSearchResultFormatter.TRUNCATION_REMEDY);
     }
     return sb.toString();
@@ -821,7 +826,8 @@ public final class McpToolSurface {
                   region.text(), 0, McpSearchResultFormatter.REGION_WINDOW_CHARS)
               : McpSearchResultFormatter.bestWindow(
                   region.text(), regionOccurrences, McpSearchResultFormatter.REGION_WINDOW_CHARS);
-      return window.truncated() ? window.text() + McpSearchResultFormatter.TRUNCATION_REMEDY : window.text();
+      String text = McpSearchResultFormatter.stripControlChars(window.text());
+      return window.truncated() ? text + McpSearchResultFormatter.TRUNCATION_REMEDY : text;
     }
 
     List<KnowledgeSearchResponse.MatchSpan> previewFieldSpans = new ArrayList<>();
@@ -837,13 +843,14 @@ public final class McpToolSurface {
       McpSearchResultFormatter.Window window =
           McpSearchResultFormatter.bestWindow(
               fieldValue, previewOccurrences, McpSearchResultFormatter.PREVIEW_WINDOW_CHARS);
-      return window.truncated() ? window.text() + McpSearchResultFormatter.TRUNCATION_REMEDY : window.text();
+      String text = McpSearchResultFormatter.stripControlChars(window.text());
+      return window.truncated() ? text + McpSearchResultFormatter.TRUNCATION_REMEDY : text;
     }
 
     if (fieldValue.length() > 200) {
-      return fieldValue.substring(0, 200) + "...";
+      return McpSearchResultFormatter.stripControlChars(fieldValue.substring(0, 200)) + "...";
     }
-    return fieldValue;
+    return McpSearchResultFormatter.stripControlChars(fieldValue);
   }
 
   /**
@@ -1427,7 +1434,8 @@ public final class McpToolSurface {
   }
 
   private static Map<String, Object> resource(String uri, String name, String description) {
-    return Map.of("uri", uri, "name", name, "description", description, "mimeType", "application/json");
+    return orderedMap(
+        "uri", uri, "name", name, "description", description, "mimeType", "application/json");
   }
 
   private static Map<String, Object> resourceError(String uri, String message) {
