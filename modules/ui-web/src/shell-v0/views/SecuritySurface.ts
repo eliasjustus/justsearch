@@ -374,7 +374,8 @@ export class SecuritySurface extends JfElement {
     } else if (this.encState === 'not_configured') {
       body = html`
         <p class="help" style="margin-top:0">
-          Encrypt your chat history with a passphrase so it can't be read without unlocking.
+          Encrypt new chat messages with a passphrase so they can't be read without unlocking. This only
+          applies going forward — messages already saved stay unencrypted.
           <strong>If you forget the passphrase, your chat history is lost for good</strong> — your
           search index is unaffected (it rebuilds from your files). You'll save a recovery key next.
         </p>
@@ -391,7 +392,7 @@ export class SecuritySurface extends JfElement {
     } else if (this.encState === 'locked') {
       body = html`
         <p class="help" style="margin-top:0">
-          Your chat history is <strong>locked</strong>. Enter your passphrase to unlock it.
+          Your new chat messages are <strong>locked</strong>. Enter your passphrase to unlock them.
         </p>
         <div style=${row}>
           <input id="enc-pass" type="password" placeholder="Passphrase" style=${inputStyle} />
@@ -406,7 +407,7 @@ export class SecuritySurface extends JfElement {
     } else if (this.encState === 'unlocked') {
       body = html`
         <p class="help" style="margin-top:0">
-          Your chat history is <strong>encrypted and unlocked</strong>.
+          Your new chat messages are <strong>encrypted and unlocked</strong>.
         </p>
         ${this.encRecoveryUnsaved
           ? html`<div

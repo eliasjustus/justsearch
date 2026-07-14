@@ -119,16 +119,24 @@ export function renderAtRestCard(status: StatusSnapshot | null): TemplateResult 
             rest. Note: Windows backs the recovery key up to your Microsoft account by default.
           </div>`
         : nothing}
-      <!-- 629 (#12): honest "what's protected vs not" disclosure, projected from the typed status. -->
+      <!-- 629 (#12) / F-7: honest "what's protected vs not" disclosure, projected from the typed status.
+           Scoped forward-only (727 F-7): chat encryption is encrypt-on-write, with no backfill of
+           pre-setup content, and agent-run transcripts saved for search are never passphrase-encrypted
+           regardless of this setting (AgentHistoryIndexer writes plaintext .md, not covered by
+           DataKeyManager). -->
       <div class="empty" style="padding: 0.5rem 0; line-height: 1.5">
-        <strong>What this protects:</strong> your chat history, memories, and agent runs are encrypted
-        with your passphrase${convState === 'unlocked'
+        <strong>What this protects:</strong> your chat history and memories are encrypted with your
+        passphrase${convState === 'unlocked'
           ? ' — readable right now because they are unlocked'
           : convState === 'locked'
             ? ' and are currently locked'
             : ' once you set up chat encryption'}.
-        Your search index is <em>not</em> passphrase-encrypted — it is protected only by your device's
-        disk encryption (above) and rebuilds from your original files.
+        This only covers what's written from setup onward — anything on disk from before you set up
+        encryption stays as plaintext.
+        Agent-run transcripts saved for search are <em>not</em> passphrase-encrypted, regardless of this
+        setting. Your search index is <em>not</em> passphrase-encrypted either — it is protected only by
+        your device's disk encryption (above); the document index rebuilds from your original files, but
+        agent-run transcripts do not (there is no source file to rebuild them from).
       </div>
     </div>
   `;
