@@ -1038,3 +1038,112 @@ degradation specimen). Campaign evidence relocated from the removed worktree to
    (the thinnest-evidenced intervention in the literature).
 5. **Do not build on content annotations** (`priority`/`audience`) for behavior — unenforced
    metadata; may emit them as optional extras only.
+
+---
+
+# Theorization (2026-07-14; before design — response legibility)
+
+> Owner constraint (2026-07-14): fixes/improvements must be **model-agnostic in the first
+> place** — the MCP surface serves arbitrary clients and models; nothing may depend on one
+> vendor's model behavior to work.
+
+## The model-agnosticism axiom sorts the lever space
+
+Levers differ in *mechanism universality*, and the axiom ranks them:
+
+- **Tier 1 — content-honesty levers** (degradation notice, truncation notice with remedy,
+  payload-visible previews, "what this result does not contain"): work by giving *information*
+  any model can use or ignore. Universal by construction. These ship on evidence.
+- **Tier 2 — economics levers** (`response_format: concise|detailed`, result-size defaults,
+  pagination affordances): token cost is universal across vendors. Ship on evidence.
+- **Tier 3 — behavioral-steering levers** (gap statements shaped to induce the next hop,
+  follow-up suggestions): depend on how a given model *reacts* to result content — exactly the
+  cohort-relative territory (Anthropic docs warn imperative in-result text may be flagged as
+  injection; other vendors differ). These are hypothesis-tier per the research pass AND
+  model-relative per the axiom: they ship only through multi-cohort pre-registered A/Bs, if ever.
+
+Convenient consequence: the descriptive-not-imperative grammar the research pass found for
+Claude is also the *lowest-common-denominator safe shape* across vendors — facts about the
+result are never injection-shaped, never vendor-specific. The axiom and the research converge
+on the same grammar.
+
+## Framings worth keeping
+
+1. **Information scent (IR/HCI).** The three failure buckets are all scent failures: preview
+   truncation cuts the scent trail mid-sentence; the degraded answer dump dilutes scent under
+   10KB of noise; the missing second hop is a trail that ends without pointing anywhere. Response
+   design = scent engineering. This framing imports a mature literature (query-biased snippets)
+   without importing model assumptions.
+2. **Weakest-cohort design (curb-cut effect).** Designing result shapes for the weakest common
+   agent helps strong agents too — payload-visible previews save the strong model a Read call
+   (tokens), not just the weak model a failure. No lever should *cost* strong cohorts to help
+   weak ones; that's the acceptance frame for every Tier-1/2 change.
+3. **Capability absorption (the deep alternative).** Instead of teaching weak agents to hop,
+   the product can absorb the hop: `justsearch_answer` with the local LLM online is *supposed*
+   to do retrieval-augmented answering — if its RAG loop resolved entity chains internally
+   (multi-hop decomposition inside the product), agent capability would stop mattering for this
+   task class entirely. This is the most model-agnostic fix possible and the only one that
+   converts the 9-cell shortcut bucket directly. Open questions: does answer-with-AI already
+   handle 2-hop on this corpus (cheap local probe: `ai_activate` + the 20 questions, no agent
+   loop, ~$0)? What are latency/VRAM costs? This is a bigger work item that likely routes to the
+   search/RAG tempdocs, but the *probe* belongs here — it decides whether response legibility or
+   answer capability is the binding product fix.
+
+## Explore-before-implementing: the degradation machinery already exists
+
+JustSearch already models degradation honestly — `LifecycleReasonCode`, `SearchReasonCode`,
+readiness composites, and the `searchTraceExplain` projection (gate-paired via
+`check-search-degradation-reason-codes`). The UI surface consumes it; **the MCP result surface
+does not**. L4a (degradation notice) is therefore a *projection of existing reason codes into
+tool results*, not new status machinery — the `aiFeatures: DEGRADED / inference.offline`
+composite that the status endpoint already reports is exactly what the answer tool should have
+said. Similarly, any "why did this match" rationale in results must be a **projection of the
+canonical `SearchTrace`** (execution-surfaces register; the gate fails unregistered
+referencers). SPLADE expansion terms are interpretable and already flow through the trace —
+a match-rationale line ("matched via: archive≈records-vault") has a canonical source. Design
+rule: every new response field names its canonical source or it doesn't ship.
+
+## Ideas recorded for later (not design commitments)
+
+- **Structured results**: `structuredContent` with `matched_span`, `gaps`, `degraded: reason`
+  fields once the widened schema (2026-07-28 revision) is adopted; prose mirrors remain for
+  compatibility. Machine-readable beats prose for agent parsing, vendor-neutrally.
+- **Session-scoped redundancy notice** ("~80% of these results overlap your previous query") —
+  the thrash cells re-searched near-identical queries 8-16×; a redundancy fact is Tier 1 and
+  directly token-saving. Constraint: needs per-session state the MCP server already has; must
+  degrade gracefully for stateless clients.
+- **Total-hits / "N more results" affordance** in every search result (cheap, universal scent).
+- **Query-side affordance** as an alternative to response-side steering: a search parameter
+  shaped for entity follow-up. Rejected for now (schema-minimal principle, ADR-0015; adds
+  surface area for a behavior the response can carry), recorded so it isn't re-invented.
+
+## Hidden assumptions surfaced
+
+1. **"The response is the only lever"** — false; parameter schemas and the answer tool's
+   internal capability (absorption) are levers too. The design should say why response-side is
+   first (cheapest, no protocol change, no inference cost).
+2. **"Agents read previews"** — partially verified at best; the forensics shows Read calls
+   following searches, but not which preview drove them. The A/B must measure recognition, not
+   assume it.
+3. **"Our synthetic 2-hop task generalizes"** — Goodhart risk: engineering responses to pass
+   *this* eval's designer-code chains would be overfitting. Guard: every lever must be justified
+   by a task-generic mechanism (honesty, scent, economics) and never reference task idioms;
+   the eval only *measures*.
+4. **"Notices are free"** — they cost tokens on every call. Keep Tier-1 notices one line,
+   conditional (only when degraded/truncated), and count their cost in the A/B.
+5. **Echo-injection surface** — reflecting query text or matched terms back into results creates
+   a channel where corpus/query content masquerades as tool voice (same class as the
+   `toolsearch_targets` capture leak the level-1 review caught). Reflected content must be
+   clearly attributed/quoted, never phrased as the tool speaking.
+
+## Candidate principle (not yet design): self-describing results
+
+**"Every tool result declares its own nature and limits — what it is, what was elided, what
+capability was degraded, and (where canonical data supports it) why it matched."** This is the
+reinforcement-stage sibling of the visibility funnel: the funnel got the agent TO the result;
+self-description is what lets the result be *correctly used*. It conforms to the product's
+existing honesty machinery (reason codes, SearchTrace) by projection, and it is model-agnostic
+because it adds information, never behavioral dependence. Candidate scope beyond MCP: the
+agent-api HTTP endpoints and the UI's evidence rendering already half-follow it. Retirement
+condition: if agent clients converge on protocol-level result metadata that carries the same
+facts (spec-level degraded/provenance fields), the prose projections retire into those fields.
