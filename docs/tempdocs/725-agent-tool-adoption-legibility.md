@@ -1,7 +1,7 @@
 ---
 title: "Agent tool-adoption legibility: diagnose why agents offered the JustSearch MCP surface rarely invoke it, and raise correct adoption as far as the product surface allows"
 type: tempdocs
-status: "open — level 1 merged to main (PR #178, 401c1ae); exposure A/B smoke RUN and STOPPED after Campaign D (2026-07-14, results + judgment recorded in the final section): DEFERRED-arm adoption hit CEILING (20/20 discovery+invocation) on the grep-stressed CLERC member — visibility hypothesis refuted in this regime, adoption is corpus-conditional; frontier moves to result quality/reinforcement. The agent_utility_inspect.py:605 A-arm assertion defect is FIXED (2026-07-14, condition-gated + live-shape regression fixtures, red-proofed against the pre-fix producer). Campaign E was not run (cap + defect). Awaiting owner decisions; no levers shipped."
+status: "open — level 1 merged (PR #178); A/B smoke run + judged (deferred-arm adoption at CEILING on grep-stressed CLERC — visibility refuted in-regime, adoption is corpus-conditional); #605 A-arm defect FIXED + merged (PR #179, a8321f6). Failure forensics COMPLETE (2026-07-14, final section): 16 wrong B-cells split 9 agent-shortcut / 4 findable-but-unrecognized (live ranks 1-6) / 2 genuine retrieval miss / 0 error-ejection / 0 scoring-artifact; two product defects found live (justsearch_answer AI-offline silent 10KB degradation dump; preview truncation before payload); token-efficiency analysis added (thrash modes cost ~1.5x correct cells). Owner decision: weak-agent failure modes are product-addressable — L4 re-scoped to response legibility. Next: response-legibility design pass (research→theorize→design→plan) in worktree 725-response-legibility; 624 Step-2 tier sweep is the sharpest paid discriminator (owner-gated)."
 created: 2026-07-14
 author: agent (Fable, session 9d3c1869) — filed at founder direction after the 719 publish, which surfaced the adoption gap as the program's most under-weighted finding
 category: product / mcp-surface / agent-adoption / eval-supporting
@@ -864,4 +864,92 @@ tri-state/null-padding cases. Red-proofed: the headline fixture and the or-chain
 against the pre-fix producer (`401c1ae`). Full jseval suite green (1874 passed; only the 2
 known-red `test_correction_probe` pre-existing failures). The A-arm baseline is restored for any
 future campaign; Campaign E's evidentiary blocker is gone (the spend question remains the
-owner's).
+owner's). Merged as PR #179 (`a8321f6`); post-merge CI green.
+
+---
+
+# Campaign-D failure forensics + live retrieval check (2026-07-14, follow-up session; $0)
+
+## Method
+
+Three evidence layers, all free: (1) field extraction over the raw Campaign-D Inspect log —
+tool-call ARGUMENTS survive per cell; **tool RESULT CONTENT is structurally ABSENT** (confirmed
+by exhaustive key search over all 40 samples: `tool_calls` entries hold only `{tool, input}`,
+`messages` holds only the initial user turn, `events`/`store` empty — an upstream capture gap,
+noted for 624); (2) corpus-side identification of every failed query's planted hop-1/hop-2 doc
+(all exist; wording distance = full synonym swap, comparable to the control that succeeded);
+(3) live re-check on a hard-clean re-ingest of the same member, querying through **the agents'
+own path** (`POST /mcp` → `justsearch_search` / `justsearch_answer`).
+
+## The split (16 wrong completed B-cells)
+
+| Class | n | Cells | Avg cost/turns | Evidence |
+|---|---|---|---|---|
+| Agent shortcut (hop-1 found, no hop-2 lookup) | 9 | q1,q2,q4,q5,q7,q11,q13,q18,q19 | $0.09 / 9.3 | Completion quotes the hop-1 doc, answers the engineer name or its digits; zero follow-up query with the code. Several stop at 4-5 turns |
+| Findable but not recognized | 4 | q3,q6,q12,q16 | $0.35 / 20.8 | Live ranks **1, 6, 2, 5** for the verbatim question (the SUCCESSFUL control ranked 5). Mechanisms: keyword-shortened paraphrases that miss (q3 verbatim #1, agent's own paraphrase absent); preview truncation before payload; synonym non-recognition (q12 printed its hop-1 code `Quenthorn25` while declaring failure — never connected "power station"→"reactor") |
+| Genuine retrieval miss | 2 | q8,q14 | $0.37 / 25.5 | Absent from top-10 under BOTH phrasings (printing house/market square; watermill/granite quarry). Real dense+sparse gap on these synonym pairs |
+| Error ejection | 0 | — | — | Zero blocked/errored MCP calls anywhere (caveat: executed-call error payloads invisible in this log format) |
+| Scoring artifact | 0 | — | — | No I-scored completion contains the gold or a formatting near-miss |
+
+Correct cells (3): all executed a genuine second retrieval hop; avg $0.23 / 18.7 turns.
+
+## Product defects found live (not inference)
+
+1. **`justsearch_answer` silently degrades when AI is offline**: returns ~10.3 KB of raw legal
+   passages, no notice, no synthesized answer — and its passage set did not include the doc
+   `search` ranks #1 for the same question. The harness never activates AI and the campaign log
+   has zero inference mentions, so **every campaign B-cell's first tool call got this response**.
+   Partially explains the answer→search+Read abandonment pattern. Strongest L4 candidate found
+   to date.
+2. **Preview truncation hides the payload at rank 1**: druker7's preview reads "The archive in
+   the old courthouse" and cuts before "designated Druker7, was designed by the engineer
+   Cavby8" — the agent must Read the file to get the answer-bearing span. Upgrades L4 backlog
+   item 3 from hypothesis to demonstrated cause.
+
+## Token efficiency (owner directive 2026-07-14: analyze as a first-class dimension)
+
+- 46 `justsearch_answer` + 106 `justsearch_search` calls across 20 B-cells. The AI-offline
+  answer dumps alone injected ~474 KB (~120k tokens) of low-signal context — ~6k tokens/cell
+  before any Read.
+- Failure-mode economics: the wrong-but-fast shortcut mode costs $0.09/cell; the thrash modes
+  (unrecognized / retrieval-miss) cost $0.35–0.37 — **~1.5× a correct cell ($0.23) while
+  producing nothing**. Bad response legibility is paid for in tokens, not just accuracy.
+- Implication: response-shape fixes have direct token ROI (an honest degradation notice replaces
+  a 10 KB dump; payload-centered previews shorten the search→Read loop). Token cost per correct
+  answer joins the funnel + outcome sanity as a lever-evaluation criterion.
+
+## Ownership reframing (owner decision 2026-07-14)
+
+Weak-agent (haiku-class) failure modes are **in scope for the product**: the client population
+includes weak agents, and the product surface is the controllable side of the interaction. The
+shortcut and non-recognition buckets therefore route to product levers — response affordances
+that make the second hop and result recognition easy for the weakest common cohort (explicit
+follow-up nudges in result shapes, payload-visible previews, honest degradation notices), not
+just to "use a bigger model". This extends L4's mandate from error legibility to **response
+legibility** generally; success is measured under the funnel + outcome sanity + token
+efficiency, with the usual over-triggering guard.
+
+## Data note → 624/707
+
+The 20 committed queries carry `question_type: 1_hop`, but every successful trace required two
+retrievals (facility→engineer, engineer→value). Check the label taxonomy vs the stratum builder
+before the next campaign interprets per-type slices.
+
+## Evidence
+
+`scripts/jseval/tmp/725-ab/725-forensics/` (main checkout, untracked): `b-cells-table.md` +
+`b-cells.v1.json` (per-cell extraction), `hop-docs.v1.json` (corpus identification),
+`live-retrieval-check.v1.json` (ranks via the MCP path), `answer-offline-probe.txt` (the 10.3 KB
+degradation specimen). Campaign evidence relocated from the removed worktree to
+`scripts/jseval/tmp/725-ab/` (see `README-provenance.md` there).
+
+## Consequences for the lever program
+
+- L4 is re-scoped to **response legibility** (degradation notice, payload-visible previews,
+  follow-up affordances) with two items now causally evidenced; L2/L3 remain demoted.
+- 624 Step-2 (model-tier sweep) is the sharpest paid discriminator: the forensics predicts hop-2
+  execution improves with model tier (~$10–20 at sonnet for a 20-cell B-arm). Owner spend call.
+- Retrieval quality: real but smallest bucket (2/16); q8/q14 become regression queries for the
+  legal-retrieval work (708/712/713) when it starts.
+- Next design step: response-legibility design pass (research → theorize → design → plan) on
+  this evidence, in worktree `725-response-legibility`.
