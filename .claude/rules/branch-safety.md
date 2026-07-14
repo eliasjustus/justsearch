@@ -181,6 +181,15 @@ The `docs-granularity-hint` hook surfaces this at `git push` when a branch
 changes only working history; it never blocks. Rationale and the worked example
 live in `docs/reference/contributing/agent-guide.md` (History publication).
 
+### Verifying whether squash-merged work already landed <!-- rule:squash-merge-verify-content-not-ancestry -->
+
+Since ADR-0045 squash-merges every PR into one commit, a squashed branch's original commits
+never appear in `main`'s history. **Do not conclude a branch's work is "unmerged" from
+`git log` / branch-ancestry alone** — that is exactly the signal squash-merging invalidates.
+The reliable check is content, not ancestry: `git diff <branch> main -- <paths>` (empty output
+= that content already landed under some other, differently-titled squashed commit). Verify
+this way before a conclusion like "X isn't on main yet" feeds a user-facing decision.
+
 ### Working on shared `main` safely (multi-agent)
 
 The main checkout routinely holds other agents' uncommitted WIP. Keep PR

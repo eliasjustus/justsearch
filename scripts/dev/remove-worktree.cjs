@@ -102,12 +102,17 @@ function reportHolders(p) {
   // path in argv (e.g. `node serve-worktree-fe <path>`, an editor opened on it).
   const psCmd =
     `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${base}*' -and $_.ProcessId -ne $PID } | ` +
-    `ForEach-Object { "PID $($_.ProcessId): $($_.Name) — $($_.CommandLine)" }`;
+    `ForEach-Object { "PID $($_.ProcessId): $($_.Name) — $($_.CommandLine)\`n  kill: taskkill /F /PID $($_.ProcessId)" }`;
   const res = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
     encoding: 'utf8',
   });
   const out = (res.stdout || '').trim();
   if (out) {
+    // Tempdoc 727 F-2: alongside the existing description, print a ready-to-run kill
+    // command per holder — turns manual recovery into "copy this line if you're sure
+    // it's safe" instead of hand-constructing the right taskkill invocation. Never
+    // executed automatically: an unconditional auto-kill risks a legitimate process
+    // (an open editor, another agent's session) that merely happens to name this path.
     console.error(`[remove-worktree] possible holder(s) of ${p}:`);
     for (const line of out.split(/\r?\n/)) console.error(`[remove-worktree]   ${line}`);
   } else {

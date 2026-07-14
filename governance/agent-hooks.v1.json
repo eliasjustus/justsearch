@@ -182,6 +182,51 @@
     "ui-shot-hint": {
       "file": "ui-shot-hint.mjs",
       "role": "advisory"
+    },
+    "cwd-hint": {
+      "file": "cwd-hint.mjs",
+      "role": "advisory",
+      "bite": {
+        "kind": "unit",
+        "test": "scripts/agent-analytics/hooks/cwd-hint.test.mjs",
+        "note": "tempdoc 727 F-6a; pure buildCwdContext() logic proven by its unit test"
+      }
+    },
+    "taskcreate-guard": {
+      "file": "taskcreate-guard.mjs",
+      "role": "blocking",
+      "bite": {
+        "kind": "command-signal",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "tool_name": "TaskCreate",
+          "tool_input": {
+            "tasks": "[{\"description\":\"x\"}]"
+          }
+        },
+        "expect": {
+          "exitCode": 2
+        },
+        "note": "tempdoc 727 F-7b; the exact confirmed real-world malformed shape -> exit 2"
+      }
+    },
+    "edit-reread-hint": {
+      "file": "edit-reread-hint.mjs",
+      "role": "advisory",
+      "bite": {
+        "kind": "unit",
+        "test": "scripts/agent-analytics/hooks/edit-reread-hint.test.mjs",
+        "note": "tempdoc 727 F-7a; pure buildRereadContext() logic proven by its unit test"
+      }
+    },
+    "worktree-base-hint": {
+      "file": "worktree-base-hint.mjs",
+      "role": "advisory",
+      "bite": {
+        "kind": "unit",
+        "test": "scripts/agent-analytics/hooks/worktree-base-hint.test.mjs",
+        "note": "mechanizes verify-worktree-base (rule 35); tempdoc 727 F-3 extends it with the uncommitted-changes-on-main check, proven by its unit test"
+      }
     }
   },
   "bindings": {
@@ -315,6 +360,15 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "TaskCreate",
+        "hooks": [
+          {
+            "hookId": "taskcreate-guard",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -390,6 +444,15 @@
             "if": "Edit(scripts/ci/npm-audit-ratchet-baseline.v1.json)|Edit(.claude/rules/tier-register.md)|Edit(gates/**)"
           }
         ]
+      },
+      {
+        "matcher": "EnterWorktree",
+        "hooks": [
+          {
+            "hookId": "worktree-base-hint",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUseFailure": [
@@ -400,6 +463,25 @@
             "hookId": "dispatch",
             "timeout": 5,
             "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "hookId": "edit-reread-hint",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "CwdChanged": [
+      {
+        "hooks": [
+          {
+            "hookId": "cwd-hint",
+            "timeout": 5
           }
         ]
       }
