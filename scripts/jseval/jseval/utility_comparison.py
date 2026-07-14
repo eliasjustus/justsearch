@@ -265,6 +265,14 @@ def compose_utility(
         "tool_surfacing_mode": _tool_surfacing_mode(run_summaries),
         "executor": _executor_stamp(run_summaries),
     }
+    # tempdoc 725 increment 2: EXCLUDED (not added as `None`) when absent, so a
+    # record composed from pre-725 evidence -- which never captured this identity
+    # -- hashes byte-identical to before this field existed (same discipline as
+    # the agent_cohort_key key_surface exclusion above).
+    if ref.get("exposure_config") is not None:
+        cohort["exposure_config"] = ref.get("exposure_config")
+    if ref.get("mcp_initialize_identity") is not None:
+        cohort["mcp_initialize_identity"] = ref.get("mcp_initialize_identity")
 
     # 3. Group by display axes, but reject hidden content/model identity mixes.
     cells: dict = {}
@@ -281,6 +289,11 @@ def compose_utility(
             manifest.get("campaign_identity"),
             manifest.get("corpus_identity"),
             manifest.get("corpus_certification"),
+            # tempdoc 725 increment 2: a cell mixing two differently-configured
+            # exposure/instructions campaigns is the same class of hidden-identity
+            # mix this guard exists to catch (R1/R2 harness-identity discipline).
+            manifest.get("exposure_mode"),
+            manifest.get("instructions_sha256"),
         )
         display_key = (slug, model)
         prior = cell_identities.setdefault(display_key, identity)
@@ -299,9 +312,17 @@ def compose_utility(
         cell = _compose_cell(cell_summaries, statistical_alpha=statistical_alpha)
         if cell is not None:
             (signature, resolved_model, query_identity, campaign_identity,
-             corpus_identity, corpus_certification) = (
+             corpus_identity, corpus_certification,
+             _exposure_mode, _instructions_sha256) = (
                 cell_identities[(slug, model)]
             )
+            # exposure_mode/instructions_sha256 (tempdoc 725 increment 2) are part
+            # of the mix-guard identity tuple above but are deliberately NOT
+            # projected into cell["identity"] -- unlike the cohort-level fields,
+            # this dict has no conditional-omission path, so adding them
+            # unconditionally (even as `null`) would change semantic_digest for
+            # every pre-725 record. The mix-guard check above is what matters;
+            # this cell dict stays byte-identical to its pre-725 shape.
             cell["identity"] = {
                 "corpus_signature": signature,
                 "requested_model_alias": model,
@@ -532,8 +553,11 @@ def _pair_observations(baseline: list[dict], with_tool: list[dict]) -> tuple[dic
         ``{"{seed}:{qid}": {"seed":, "qid":, "a_correct":, "c_correct":,
         "a_cost":, "c_cost":, "a_tok":, "c_tok":, "a_turns":, "c_turns":,
         "a_tool_calls":, "c_tool_calls":}}`` (the last two feed the adoption
-        metrics, tempdoc 624 §M.8 amendment Step 0 item 5) and
-        ``leak_suspect_cells`` is ``[{"seed":, "qid":,
+        metrics, tempdoc 624 §M.8 amendment Step 0 item 5) plus
+        ``"c_toolsearch_targets"``/``"c_tool_call_sequence"`` (feed the adoption
+        FUNNEL metrics, tempdoc 725 increment 3 -- with-tool-arm-only, like the
+        tool-call fields, ``None`` on evidence captured before these fields
+        existed) and ``leak_suspect_cells`` is ``[{"seed":, "qid":,
         "baseline_leak_suspect":, "with_tool_leak_suspect":}, ...]``.
     """
     a_by_seed = _index_by_seed(baseline)
@@ -575,6 +599,8 @@ def _pair_observations(baseline: list[dict], with_tool: list[dict]) -> tuple[dic
                 "c_turns": cc.get("num_turns"),
                 "a_tool_calls": ca.get("tool_calls"),
                 "c_tool_calls": cc.get("tool_calls"),
+                "c_toolsearch_targets": cc.get("toolsearch_targets"),
+                "c_tool_call_sequence": cc.get("tool_call_sequence"),
             }
     return pairs, leak_suspect_cells
 
@@ -632,6 +658,142 @@ def _adoption_metrics(tool_calls_per_cell: list[list[dict] | None]) -> dict:
 # Arm A (baseline) never carries an MCP config -- its adoption metrics are
 # always null by construction, not computed from its (always-zero) tool_calls.
 _NULL_ADOPTION = {"adoption_rate": None, "first_mcp_call_index": None, "mcp_call_share": None}
+
+
+# --- Adoption FUNNEL metrics (tempdoc 725 increment 3) ----------------------
+#
+# `_adoption_metrics` above answers "did the cell call an mcp__justsearch tool
+# at all." The funnel breaks that single question into the pilot's observed
+# stages -- offered -> discovered (a `select:` ToolSearch call named a
+# justsearch tool) -> invoked (>=1 of those names was actually called
+# successfully) -> reinforced (durable use, not a one-off) -- so a near-zero
+# adoption_rate can be attributed to a specific stage instead of read as one
+# undifferentiated "didn't use it."
+
+_TOOL_SEARCH_TOOL_NAME = "ToolSearch"
+
+_NULL_FUNNEL = {
+    "discovery_rate": None,
+    "post_discovery_invocation_rate": None,
+    "first_discovery_turn": None,
+    "reinforced_proxy_rate": None,
+    "reinforced_rate": None,
+    "funnel_fields_absent": True,
+}
+
+
+def _first_toolsearch_call_index(sequence: list[dict] | None) -> int | None:
+    """1-based index of the FIRST ``ToolSearch``-named entry in a cell's full
+    ``tool_call_sequence`` (every attempt, in order, regardless of status).
+
+    Used only for cells already classified as "discovered" (non-empty
+    ``toolsearch_targets``), under the simplifying assumption that a cell's
+    first ``ToolSearch`` call is the discovery event: a per-call correlation
+    between a specific ``ToolSearch`` invocation and the names it resolved
+    would need the raw call inputs, which the redacted evidence contract
+    deliberately does not carry (only the aggregated, pre-filtered
+    ``toolsearch_targets`` survives sanitization)."""
+    for i, entry in enumerate(sequence or [], start=1):
+        if entry.get("name") == _TOOL_SEARCH_TOOL_NAME:
+            return i
+    return None
+
+
+def _is_strictly_reinforced(sequence: list[dict] | None) -> bool:
+    """Strict reinforced-adoption signal: among a cell's full
+    ``tool_call_sequence`` (every attempt, in order, regardless of status),
+    find the LAST ``mcp__justsearch*``-named entry. The cell counts as
+    strictly reinforced only if that FINAL justsearch-related interaction
+    succeeded (``status == "ok"``).
+
+    If the agent's last interaction with the tool was blocked or disallowed --
+    and by construction nothing after it, in the full sequence, is another
+    justsearch-named event, since it is the LAST one -- the cell's use of the
+    tool ended on a failure note and does not count as durable adoption, even
+    if an EARLIER call in the same cell executed successfully (that weaker,
+    proxy signal is ``reinforced_proxy_rate``, which only counts raw successful
+    calls regardless of how the cell's justsearch usage ended)."""
+    justsearch_events = [
+        entry for entry in (sequence or [])
+        if str(entry.get("name", "")).startswith(_MCP_JUSTSEARCH_PREFIX)
+    ]
+    if not justsearch_events:
+        return False
+    return justsearch_events[-1].get("status") == "ok"
+
+
+def _funnel_metrics(
+    tool_calls_per_cell: list[list[dict] | None],
+    toolsearch_targets_per_cell: list[list[str] | None],
+    tool_call_sequences_per_cell: list[list[dict] | None],
+) -> dict:
+    """Adoption funnel (tempdoc 725 increment 3): offered -> discovered ->
+    invoked -> reinforced, derived purely from each cell's already-captured
+    ``tool_calls`` / ``toolsearch_targets`` / ``tool_call_sequence``.
+
+    - ``discovery_rate``: fraction of CHECKED cells whose ``toolsearch_targets``
+      is non-empty (a ``select:`` ToolSearch call named >=1 justsearch tool).
+    - ``post_discovery_invocation_rate``: of the DISCOVERED cells, the fraction
+      that also went on to make >=1 successful ``mcp__justsearch*`` call.
+    - ``first_discovery_turn``: median 1-based call-index (see
+      ``_first_toolsearch_call_index``) of the discovery event, over
+      discovered cells.
+    - ``reinforced_proxy_rate``: of the INVOKED cells, the fraction with MORE
+      THAN ONE successful ``mcp__justsearch*`` call (a cheap repeat-use proxy).
+    - ``reinforced_rate``: of the INVOKED cells, the fraction whose final
+      justsearch-related interaction succeeded (see ``_is_strictly_reinforced``
+      -- the strict version: a cell that called the tool once successfully and
+      then let a later blocked attempt be its last word does NOT count).
+
+    A ``None`` entry in ANY of the three parallel per-cell inputs excludes that
+    cell from every denominator -- the same tri-state discipline as
+    ``_adoption_metrics``/``_tool_call_assertions``: evidence captured before
+    these fields existed must read as "no funnel data," never as a fabricated
+    zero. When no cell in the record carries funnel data at all,
+    ``funnel_fields_absent`` is ``True`` and every rate is ``None``.
+    """
+    checked = [
+        (tc, targets, seq)
+        for tc, targets, seq in zip(
+            tool_calls_per_cell, toolsearch_targets_per_cell, tool_call_sequences_per_cell)
+        if tc is not None and targets is not None and seq is not None
+    ]
+    if not checked:
+        return dict(_NULL_FUNNEL)
+
+    discovered = [(tc, targets, seq) for tc, targets, seq in checked if targets]
+    discovery_rate = round(len(discovered) / len(checked), 4)
+
+    invoked = [(tc, targets, seq) for tc, targets, seq in discovered if _mcp_call_count(tc) > 0]
+    post_discovery_invocation_rate = (
+        round(len(invoked) / len(discovered), 4) if discovered else None
+    )
+
+    first_indices = [
+        idx for _, _, seq in discovered
+        if (idx := _first_toolsearch_call_index(seq)) is not None
+    ]
+    first_discovery_turn = (
+        round(_percentile([float(i) for i in first_indices], 0.5), 2)
+        if first_indices else None
+    )
+
+    reinforced_proxy_n = sum(1 for tc, _, _ in invoked if _mcp_call_count(tc) > 1)
+    reinforced_proxy_rate = (
+        round(reinforced_proxy_n / len(invoked), 4) if invoked else None
+    )
+
+    reinforced_n = sum(1 for _, _, seq in invoked if _is_strictly_reinforced(seq))
+    reinforced_rate = round(reinforced_n / len(invoked), 4) if invoked else None
+
+    return {
+        "discovery_rate": discovery_rate,
+        "post_discovery_invocation_rate": post_discovery_invocation_rate,
+        "first_discovery_turn": first_discovery_turn,
+        "reinforced_proxy_rate": reinforced_proxy_rate,
+        "reinforced_rate": reinforced_rate,
+        "funnel_fields_absent": False,
+    }
 
 
 def _stats_from_pairs(pairs: dict, *, statistical_alpha: float = 0.05) -> dict | None:
@@ -699,7 +861,7 @@ def _stats_from_pairs(pairs: dict, *, statistical_alpha: float = 0.05) -> dict |
     a_turns = [p["a_turns"] for p in pairs.values()]
     c_turns = [p["c_turns"] for p in pairs.values()]
 
-    return {
+    result = {
         "accuracy": {
             "baseline": mc["accuracy_a"],
             "with_tool": mc["accuracy_b"],
@@ -753,6 +915,22 @@ def _stats_from_pairs(pairs: dict, *, statistical_alpha: float = 0.05) -> dict |
         },
         "n_paired_observations": mc["n_paired"],
     }
+    # Adoption FUNNEL (tempdoc 725 increment 3): same with-tool-arm-only shape
+    # as "adoption" above -- arm A is null by construction. OMITTED entirely
+    # (not added as a null-marker dict) when NONE of the paired cells carry
+    # funnel data at all -- a comparison composed purely from pre-725 evidence
+    # must project to a byte-identical record to before this key existed. Once
+    # ANY cell carries real toolsearch_targets/tool_call_sequence data, the key
+    # always appears (even if every rate legitimately computes to a genuine
+    # 0.0 -- that IS signal, unlike the "never captured" case).
+    with_tool_funnel = _funnel_metrics(
+        [p["c_tool_calls"] for p in pairs.values()],
+        [p.get("c_toolsearch_targets") for p in pairs.values()],
+        [p.get("c_tool_call_sequence") for p in pairs.values()],
+    )
+    if not with_tool_funnel["funnel_fields_absent"]:
+        result["funnel"] = {"baseline": dict(_NULL_FUNNEL), "with_tool": with_tool_funnel}
+    return result
 
 
 def _arm_comparison(

@@ -168,6 +168,22 @@ class McpConfigMissingTypeError(ValueError):
     """
 
 
+class McpConfigInvalidAlwaysLoadError(ValueError):
+    """A `--mcp-config` server entry's `alwaysLoad` key is present but not a JSON boolean.
+
+    `alwaysLoad` (tempdoc 725 increment 2/4) is the harness-side signal
+    `_derive_exposure_mode` reads to decide eager vs. deferred exposure —
+    `agent_utility_inspect._capture_exposure_config` reads it straight off the parsed
+    config with `bool(raw_always_load) if raw_always_load is not None else None`, and
+    `_derive_exposure_mode`'s own check is `always_load is True` (an identity check, not
+    a truthiness check upstream of that cast). A string `"true"`, an int `1`, or any
+    other non-bool JSON value would silently take a DIFFERENT path through that logic
+    than a real `true` literal — the exposure identity recorded for the campaign could
+    disagree with what the config author intended, undetected. Fail closed instead of
+    letting a typo mismeasure the eager/deferred arm.
+    """
+
+
 def assert_mcp_config_http_typed(mcp_config_path: str) -> None:
     """Raise `McpConfigMissingTypeError` if `mcp_config_path` carries an `mcpServers` entry
     with a `url` but no `type` — the exact shape the `claude` CLI silently drops (see
@@ -176,10 +192,15 @@ def assert_mcp_config_http_typed(mcp_config_path: str) -> None:
     config aborts the run immediately instead of producing 0-tool-call cells that read as
     healthy.
 
+    Also raises `McpConfigInvalidAlwaysLoadError` (tempdoc 725 increment 4) if any server
+    entry carries an `alwaysLoad` key whose value is not a JSON boolean — see that error's
+    docstring for why a non-bool value must fail closed rather than degrade.
+
     A missing/malformed config file, a config with no `mcpServers` key, an empty
     `mcpServers` (condition A's `{"mcpServers":{}}`), or a command-style entry
     (`{"command": ..., "args": [...]}`, no `url`) is NOT an error here — this guards only
-    the specific silent-drop shape (`url` present, `type` absent).
+    the specific silent-drop shape (`url` present, `type` absent) plus the `alwaysLoad`
+    type check above.
     """
     try:
         cfg = json.loads(Path(mcp_config_path).read_text(encoding="utf-8"))
@@ -191,6 +212,14 @@ def assert_mcp_config_http_typed(mcp_config_path: str) -> None:
     for name, entry in servers.items():
         if not isinstance(entry, dict):
             continue
+        if "alwaysLoad" in entry and not isinstance(entry["alwaysLoad"], bool):
+            raise McpConfigInvalidAlwaysLoadError(
+                f"mcp_config {mcp_config_path!r} server {name!r} has a non-boolean "
+                f"`alwaysLoad` ({entry['alwaysLoad']!r}, type "
+                f"{type(entry['alwaysLoad']).__name__}) -- alwaysLoad must be a JSON "
+                "boolean (true/false) or omitted entirely. Fix: set it to `true`/`false`, "
+                f"e.g. {{\"mcpServers\":{{{name!r}:{{\"alwaysLoad\":true}}}}}}."
+            )
         if "url" in entry and "type" not in entry:
             raise McpConfigMissingTypeError(
                 f"mcp_config {mcp_config_path!r} server {name!r} has a `url` but no `type` "

@@ -69,6 +69,15 @@ related:
 3. **Adoption measurement (the reason the layer exists)** — NOT yet done; the decisive result is still
    open. See "next agent" below.
 
+4. **Ownership transfer (2026-07-14)** — the adoption/discoverability lever — including the "Next lever
+   (owned here)" backlog at the bottom of this file (decision-to-retrieve gap: tool naming/annotations,
+   instructions strengthening, answer-first framing) — TRANSFERS to tempdoc 725. 725 has since run the
+   takeover/research/design/derisk sequence: its deferral-by-default finding (the current Claude CLI/SDK
+   cohort defers ALL MCP tools by default, so tool descriptions are invisible pre-search) reframes the gap
+   this file quantified, and the funnel vocabulary (offered → discovered → invoked → reinforced) and the
+   resulting lever order now live in 725, not here. 655 KEEPS: MCP conformance, capability policy, and the
+   open Q2 client-fixture decision — those remain this file's scope.
+
 **For the next agent — remaining work, deferred checks, and unverified assumptions:**
 - **Deferred (external dependency, the main open work):** the decisive **two-corpus adoption contrast**
   — re-run 624's Step-1 pilot on a headroom corpus and show adoption rising where the index wins while
@@ -1934,6 +1943,8 @@ attributable more cleanly to 655: `justsearch_answer` usage (the layer specifica
 was never called pre-655 across many runs on other corpora).
 
 ## Next lever (owned here)
+
+> TRANSFERRED to tempdoc 725 (2026-07-14) — see 725's settled design; this list is retained as history.
 
 The decision-to-retrieve gap is now quantified (adoption 16.7%, median 21st call, 18/30 habit-prior
 grep attempts) — this is the concrete target for the still-open 655 steering candidates (tool

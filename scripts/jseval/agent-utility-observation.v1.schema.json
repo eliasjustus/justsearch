@@ -53,15 +53,35 @@
       "pattern": "^[0-9a-f]{64}$"
     },
     "mcp_surface_unverified": {"type": "boolean"},
-    "mcp_tools_deferred": {"type": ["boolean", "null"]},
+    "mcp_tools_deferred": {
+      "type": ["boolean", "null"],
+      "$comment": "Protocol-level end-of-session echo (was the justsearch server connected but its tools reachable only via ToolSearch). Superseded as AUTHORITY by source.exposure_config.exposure_mode (tempdoc 725 increment 2, config-derived, never inferred from the SDK) -- this field stays for its own record, no longer the last word on eager-vs-deferred."
+    },
+    "toolsearch_targets": {
+      "type": ["array", "null"],
+      "items": {"type": "string", "pattern": "^mcp__justsearch__[A-Za-z0-9_]+$"}
+    },
+    "tool_call_sequence": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": {"type": "string"},
+          "status": {"enum": ["ok", "blocked", "disallowed"]}
+        }
+      }
+    },
     "source": {
       "type": "object",
       "additionalProperties": false,
+      "$comment": "source_git_state, mcp_tool_surface, corpus_certification, query_identity, and campaign_identity are intentionally NOT required: sanitize_observation() always emits them (as null when unavailable) for freshly captured evidence, but pre-existing evidence captured before these fields existed (e.g. tests/fixtures/agent-utility-rejected-2026-07-12/observations.v1.jsonl) omits the keys entirely. Required-ness is relaxed here to admit that historical evidence rather than to invite new omissions; additionalProperties:false still rejects anything misspelled or unknown, and each key's declared type still applies whenever the key is present.",
       "required": [
-        "model_alias", "corpus", "packages", "source_git_sha", "source_git_dirty", "source_git_state",
-        "cli_version", "mcp_tool_surface_hash", "mcp_tool_surface", "judge_kind", "prompt_template_hash",
+        "model_alias", "corpus", "packages", "source_git_sha", "source_git_dirty",
+        "cli_version", "mcp_tool_surface_hash", "judge_kind", "prompt_template_hash",
         "decoding", "eval_limits", "search_config_cohort_key", "environment",
-        "corpus_identity", "corpus_certification", "query_identity", "campaign_identity"
+        "corpus_identity"
       ],
       "properties": {
         "model_alias": {"type": ["string", "null"]},
@@ -114,7 +134,38 @@
           ]
         },
         "query_identity": {"type": ["object", "null"]},
-        "campaign_identity": {"type": ["object", "null"]}
+        "campaign_identity": {"type": ["object", "null"]},
+        "exposure_config": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["enable_tool_search", "always_load", "exposure_mode"],
+              "properties": {
+                "enable_tool_search": {"type": ["string", "null"]},
+                "always_load": {"type": ["boolean", "null"]},
+                "exposure_mode": {"enum": ["eager", "deferred", "unknown"]}
+              }
+            }
+          ]
+        },
+        "mcp_initialize_identity": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["instructions", "instructions_sha256", "server_version", "protocol_version"],
+              "properties": {
+                "instructions": {"type": ["string", "null"]},
+                "instructions_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+                "server_version": {"type": ["string", "null"]},
+                "protocol_version": {"type": ["string", "null"]}
+              }
+            }
+          ]
+        }
       }
     }
   },
