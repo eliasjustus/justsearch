@@ -1100,6 +1100,11 @@ async function cmdStart(opts) {
         JUSTSEARCH_API_PORT: String(apiPortRequested),
         JUSTSEARCH_DATA_DIR: dataDir,
         JUSTSEARCH_HOME: dataDir,
+        // The Worker's shipped default for the io.justsearch logger is INFO, so query text
+        // (logged at DEBUG) stays out of diagnostics exports, which bundle logs/ with
+        // path-only redaction. Dev has no such exposure and wants the verbose lines, so the
+        // dev-runner opts back in — honour an explicit override if the caller set one.
+        JUSTSEARCH_LOG_LEVEL: process.env.JUSTSEARCH_LOG_LEVEL || 'DEBUG',
         // Tempdoc 542 §B Layer 3: Head reads this to know where to write op-leases.json.
         // Absent → Head's OperationLeaseService is a no-op (production / non-dev-runner).
         JUSTSEARCH_DEV_RUNNER_STATE_ROOT: stateRoot,
