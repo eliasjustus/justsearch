@@ -75,7 +75,17 @@ public final class FileConversationStore implements ConversationStore {
       return loadOwnMessages(sessionId);
     }
     List<Map<String, Object>> prefix = List.of();
-    Map<String, Object> meta = readMeta(sessionId);
+    Map<String, Object> meta;
+    try {
+      meta = readMeta(sessionId);
+    } catch (io.justsearch.agent.api.encryption.KeyLockedException locked) {
+      // Tempdoc 727 (fix): readMeta decrypts firstUserMessage/contextFloorSummary and throws while
+      // locked. Parent/branch resolution below only needs the PLAINTEXT structural fields
+      // (parentSessionId/branchPointMessageId), so fail safe to "no parent info" — the same fail-safe
+      // already used for a missing/stale floor id — instead of letting the whole session's history
+      // 500. loadOwnMessages degrades independently below for THIS session's own sealed lines.
+      meta = null;
+    }
     if (meta != null) {
       Object parent = meta.get("parentSessionId");
       Object branchPoint = meta.get("branchPointMessageId");
@@ -117,8 +127,30 @@ public final class FileConversationStore implements ConversationStore {
       int index = 0;
       for (String line : Files.readAllLines(messagesFile, StandardCharsets.UTF_8)) {
         if (line.isBlank()) continue;
-        @SuppressWarnings("unchecked")
-        Map<String, Object> msg = MAPPER.readValue(cipher.open(line), Map.class);
+        Map<String, Object> msg;
+        try {
+          @SuppressWarnings("unchecked")
+          Map<String, Object> opened = MAPPER.readValue(cipher.open(line), Map.class);
+          msg = opened;
+        } catch (io.justsearch.agent.api.encryption.KeyLockedException locked) {
+          // Tempdoc 727 (fix) — mirrors listSessions's "keep the item, hide the content" precedent
+          // (:216-227): a sealed + locked message must not 500 the whole session's history (would
+          // look deleted), and must not silently disappear from the count either. Unlike
+          // listSessions's per-FIELD seal, messages.jsonl seals the WHOLE line (role/id/ts/content
+          // together, appendMessage :151-158), so the finest degrade this format allows is a
+          // position-preserving placeholder with an opaque role — chatTurn() filters it the same way
+          // it already filters "system"/context messages, so the thread renders what it can instead
+          // of erroring.
+          Map<String, Object> placeholder = new LinkedHashMap<>();
+          placeholder.put("role", "locked");
+          placeholder.put("content", "");
+          placeholder.put("id", "idx-" + index + "-locked");
+          placeholder.put("locked", true);
+          placeholder.put("hash", computeHash(placeholder));
+          history.add(placeholder);
+          index++;
+          continue;
+        }
         // Slice 513: synthesize id/hash for legacy messages that lack them. The
         // synthetic id is deterministic (idx-N) so the FE can pass it back to
         // the branch endpoint even for pre-513 sessions.

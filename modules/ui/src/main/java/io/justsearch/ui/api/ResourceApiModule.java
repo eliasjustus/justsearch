@@ -309,8 +309,19 @@ final class ResourceApiModule implements ApiModule {
     // AgentService) — joined by conversationId. No new store.
     this.interactionThreadController =
         new InteractionThreadController(
+            // Tempdoc 727 (fix): the live cipher — a projection of StoreCatalog.CONVERSATIONS's
+            // recoverability class (AUTHORED), same as ConversationApiAssembly's build (:204-209),
+            // NOT the single-arg ctor's disabled() default. The single-arg ctor permanently disables
+            // the cipher (key.enabled() always false), so StoreCipher.open throws KeyLockedException
+            // on the FIRST sealed line unconditionally — once encryption is enabled this 500'd
+            // GET /api/thread/{id} for EVERY read, unlock or not. ConversationApiAssembly builds its
+            // own correctly-ciphered FileConversationStore instance over the same conversationsPath;
+            // consolidating the two instances into one is a follow-up (bigger diff/risk than this
+            // release-branch fix — see LocalApiServer :198/:242 construction order).
             new io.justsearch.app.services.conversation.FileConversationStore(
-                indexBasePath.resolveSibling("conversations")),
+                indexBasePath.resolveSibling("conversations"),
+                headAssembly.storeCipher(
+                    io.justsearch.agent.api.encryption.StoreCatalog.CONVERSATIONS.recoverability())),
             headAssembly.core().agent() != null
                 ? headAssembly.core().agent()
                 : io.justsearch.agent.api.AgentService.unavailable());
