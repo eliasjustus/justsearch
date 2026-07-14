@@ -287,15 +287,31 @@ async def _mcp_surface(client: ClaudeSDKClient) -> tuple[list | None, list[str],
 
     Replaces the CLI init-event parse (tempdoc 675 finding 2: `query()`'s
     `SystemMessage` init does not list the offered tools). Defensive across the
-    `McpStatusResponse` shape: returns `(None, [])` if status is unavailable so the
-    caller can flag "unverified" rather than conflate unknown with healthy."""
+    `McpStatusResponse` shape: returns `(None, [], [])` if status is unavailable so
+    the caller can flag "unverified" rather than conflate unknown with healthy.
+
+    Tri-state on `servers` (tempdoc 725 A/B smoke fix 2): `[]` (known-empty --
+    status WAS available and reported zero servers) and `None` (unknown -- status
+    unavailable) are distinct and must be captured deterministically. The prior
+    `status.get("servers") or status.get("mcp_servers") or status.get("mcpServers")`
+    `or`-chain returns the LAST operand when all are falsy, so an empty list under
+    the FIRST present key silently collapsed to the NEXT key's value (or None) --
+    inconsistent depending on which key the SDK happened to populate. First
+    NON-NULL key lookup fixes this: the first key holding a non-None value wins,
+    empty list and all; an explicit `null` is treated as absent (typed serializers
+    commonly emit every alternative key with null padding for the unused ones)."""
     try:
         status = await client.get_mcp_status()
     except Exception:
         return None, [], []
     if not isinstance(status, dict):
         return None, [], []
-    servers = status.get("servers") or status.get("mcp_servers") or status.get("mcpServers")
+    servers = None
+    for key in ("servers", "mcp_servers", "mcpServers"):
+        value = status.get(key)
+        if value is not None:
+            servers = value
+            break
     if servers is None:
         return None, [], []
     js_tools: list[str] = []
@@ -596,13 +612,23 @@ def _record_cell(state: TaskState, got: dict, condition: str,
             if servers is not None and justsearch_surface else None
         )
     state.metadata["observed_mcp_tool_surface_hash"] = observed_surface_hash
-    if (declared_mcp_tool_surface_hash and observed_surface_hash
+    # Condition A (baseline) is exempt by construction: `_one_attempt` passes
+    # `mcp_servers={}` for any condition not in `_WITH_TOOL` (line ~386), so an A
+    # cell never offers the campaign-declared surface and must not be compared
+    # against it. Without this gate, A cells were voided at record time against
+    # the declared 6-tool surface -- 17/20 A-cells errored in the 2026-07-14
+    # exposure A/B smoke (tempdoc 725) because the SDK's `get_mcp_status()`
+    # legitimately returned `servers == []` (empty list, not None) for a cell
+    # that was never given any MCP servers to begin with.
+    with_tool_cell = condition in _WITH_TOOL and bool(mcp_config)
+    if (with_tool_cell and declared_mcp_tool_surface_hash and observed_surface_hash
             and declared_mcp_tool_surface_hash != observed_surface_hash):
         state.metadata.setdefault(
             "error",
             "declared MCP tool-surface hash disagrees with observed tools/list",
         )
-    if declared_names and servers is not None and observed_names != declared_names:
+    if (with_tool_cell and declared_names and servers is not None
+            and observed_names != declared_names):
         state.metadata.setdefault(
             "error",
             "offered MCP tool names disagree with captured canonical tools/list",
@@ -616,7 +642,7 @@ def _record_cell(state: TaskState, got: dict, condition: str,
 
     # With-tool surface assertion (condition A exempt by construction). Preserve the
     # tri-state: status unavailable -> "unverified" (never conflated with healthy).
-    if condition in _WITH_TOOL and mcp_config:
+    if with_tool_cell:
         if servers is None:
             state.metadata["mcp_surface_unverified"] = True
         elif not justsearch_tools:

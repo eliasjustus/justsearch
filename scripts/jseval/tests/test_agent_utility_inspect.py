@@ -22,6 +22,7 @@ not installed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import hashlib
 import os
@@ -937,6 +938,142 @@ def test_record_cell_with_tool_condition_without_mcp_config_is_exempt():
     aui._record_cell(state, got, "B", build_disallowed_tools("B"), None)
 
     assert "error" not in state.metadata
+
+
+# --- _record_cell: the 2026-07-14 exposure A/B smoke regression (tempdoc 725)
+# -- the with-tool surface assertion was NOT condition-gated, so a condition-A
+# (baseline, no MCP servers) cell that received the campaign-level declared
+# surface got compared against it and errored at record time. ---
+
+def test_record_cell_condition_a_live_arm_shape_exempt_from_surface_assertion():
+    """The EXACT live-run shape (tempdoc 725, 2026-07-14 exposure A/B smoke): a
+    baseline condition-A cell whose captured `mcp_servers` is `[]` (an empty
+    LIST, not None -- the SDK's `get_mcp_status()` legitimately returns this
+    for a session `_one_attempt` gave zero MCP servers to, since condition A
+    is not in `_WITH_TOOL`), while the campaign-level `declared_mcp_tool_surface`
+    (6 canonical justsearch tools, parsed once per task) is threaded through
+    unconditionally to every cell including A.
+
+    This is the exact shape the prior unconditional assertion missed: the
+    pre-existing regression test (`test_record_cell_condition_a_exempt_from_surface_assertion`
+    below) seeded `mcp_servers: None` and passed NO declared surface -- a shape
+    that never occurs in production, so it stayed green while the live matrix
+    voided 17/20 A-cells at record time ($4.91 burned), arm A error_rate 1.0,
+    against the declared surface. Classic `unreachable-seed-green`: a seed that
+    doesn't mirror the real producer's data flow gives confident-but-wrong
+    green."""
+    state = _state()
+    declared = [
+        {"name": f"mcp__justsearch__justsearch_{n}", "description": "d",
+         "input_schema": {"type": "object"}}
+        for n in ("answer", "browse", "ingest", "runtime_manifest", "search", "status")
+    ]
+    from jseval.agent_manifest import mcp_tool_surface_hash
+    declared_hash = mcp_tool_surface_hash(declared)
+    got = {
+        "attempts": {}, "results": {}, "texts": [],
+        "rmsg": _rmsg(),
+        "mcp_servers": [], "justsearch_tools": [],
+    }
+
+    aui._record_cell(
+        state, got, "A", build_disallowed_tools("A"), "/mcp.json",
+        declared_hash, declared,
+    )
+
+    assert "error" not in state.metadata
+    assert "mcp_surface_unverified" not in state.metadata
+    assert state.metadata["mcp_tool_names_offered"] == []
+
+
+def test_record_cell_condition_a_none_status_with_declared_surface_is_exempt():
+    """Sibling of `test_record_cell_condition_a_exempt_from_surface_assertion`:
+    the `servers is None` (status genuinely unavailable) A-cell shape, but WITH
+    a declared surface present -- production threads the declared surface to
+    every cell regardless of whether `get_mcp_status()` succeeded."""
+    state = _state()
+    declared = [{"name": "mcp__justsearch__search", "description": "d",
+                 "input_schema": {"type": "object"}}]
+    from jseval.agent_manifest import mcp_tool_surface_hash
+    declared_hash = mcp_tool_surface_hash(declared)
+    got = {
+        "attempts": {}, "results": {}, "texts": [],
+        "rmsg": _rmsg(),
+        "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(
+        state, got, "A", build_disallowed_tools("A"), "/mcp.json",
+        declared_hash, declared,
+    )
+
+    assert "error" not in state.metadata
+    assert "mcp_surface_unverified" not in state.metadata
+
+
+def test_record_cell_condition_b_names_mismatch_still_errors():
+    """Guard against over-correction: the new condition-A exemption gate must
+    NOT weaken the assertion for with-tool cells. A B cell with a declared
+    surface whose observed offered names genuinely disagree must still error
+    exactly as before (tempdoc 725 fix 1 -- gate, don't remove)."""
+    state = _state()
+    declared = [
+        {"name": "mcp__justsearch__search", "description": "d", "input_schema": {"type": "object"}},
+        {"name": "mcp__justsearch__answer", "description": "d", "input_schema": {"type": "object"}},
+    ]
+    servers = [{"name": "justsearch", "status": "connected",
+                "tools": [{"name": "search"}]}]
+    got = {
+        "attempts": {}, "results": {}, "texts": [], "rmsg": _rmsg(),
+        "mcp_servers": servers, "justsearch_tools": ["mcp__justsearch__search"],
+    }
+
+    # declared_mcp_tool_surface_hash intentionally None so the (separately
+    # tested) hash-mismatch assertion can't set `error` first and mask the
+    # names-mismatch assertion under test here.
+    aui._record_cell(
+        state, got, "B", build_disallowed_tools("B"), "/mcp.json",
+        None, declared,
+    )
+
+    assert "offered MCP tool names disagree" in state.metadata["error"]
+
+
+# --- _mcp_surface: first-non-null-key tri-state semantics (tempdoc 725 fix 2
+# -- the prior `status.get("servers") or status.get("mcp_servers") or
+# status.get("mcpServers")` `or`-chain returned the LAST operand when all were
+# falsy, so an empty list under a non-last key silently collapsed towards
+# `None`, conflating known-empty with status-unavailable). ---
+
+class _StubMcpStatusClient:
+    """Minimal async stand-in for `ClaudeSDKClient` -- `_mcp_surface` only
+    calls `get_mcp_status()` on the client it's given."""
+    def __init__(self, status):
+        self._status = status
+
+    async def get_mcp_status(self):
+        return self._status
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ({"servers": []}, []),
+        ({"mcpServers": []}, []),
+        ({}, None),
+        # Null-padded shapes: typed serializers commonly emit every alternative
+        # key with null for the unused ones -- an explicit null is "absent",
+        # never a match, so the populated (even empty) key still wins.
+        ({"servers": None, "mcpServers": []}, []),
+        ({"servers": None, "mcp_servers": None, "mcpServers": None}, None),
+    ],
+)
+def test_mcp_surface_first_non_null_key_tri_state(status, expected):
+    servers, tools, surface = asyncio.run(
+        aui._mcp_surface(_StubMcpStatusClient(status)))
+    assert servers == expected
+    assert tools == []
+    assert surface == []
 
 
 # --- run_utility_eval: the corpus-dir isolation fix, cleanup-on-raise, the
