@@ -79,13 +79,30 @@ def exposure_contrast_eligibility(record: dict) -> dict:
     """
     reasons: list[str] = []
     measured = record.get("measured")
-    if not isinstance(measured, dict) or not measured:
-        reasons.append(
-            "measured is empty -- record predates the #605 exposure-identity "
-            "capture fix and carries no with-tool measured cell at all"
-        )
     cohort = record.get("cohort") or {}
-    if cohort.get("exposure_config") is None or cohort.get("mcp_initialize_identity") is None:
+    has_exposure_identity = (
+        cohort.get("exposure_config") is not None
+        and cohort.get("mcp_initialize_identity") is not None
+    )
+    if not isinstance(measured, dict) or not measured:
+        # Two distinct empty-measured causes with opposite remedies (Campaign U
+        # results nit, fixed during Campaign V): a post-#605 single-condition
+        # composition (e.g. a B-only pilot) captured identity fine and just has
+        # no contrast arm BY DESIGN, while a pre-#605 record is permanently
+        # ineligible. Conflating them sent readers chasing a fixed defect.
+        if has_exposure_identity:
+            reasons.append(
+                "measured is empty but cohort exposure identity IS captured -- "
+                "a single-condition composition (e.g. a B-only pilot) has no "
+                "with-tool contrast cell by design; this record needs a "
+                "counterpart arm, not a capture fix (not the pre-#605 defect)"
+            )
+        else:
+            reasons.append(
+                "measured is empty -- record predates the #605 exposure-identity "
+                "capture fix and carries no with-tool measured cell at all"
+            )
+    if not has_exposure_identity:
         reasons.append(
             "cohort carries no exposure identity (exposure_config / "
             "mcp_initialize_identity both required) -- record predates the "

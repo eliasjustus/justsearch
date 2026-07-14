@@ -198,6 +198,21 @@ def test_eligibility_flags_missing_measured_key_entirely():
     assert any("measured is empty" in r for r in result["reasons"])
 
 
+def test_eligibility_distinguishes_b_only_pilot_from_pre_605_defect():
+    """Campaign U/V nit (fixed 2026-07-15): a post-#605 single-condition record
+    (identity captured, measured empty by design) must NOT be diagnosed as the
+    pre-#605 capture defect -- the remedies are opposite (add a contrast arm
+    vs. permanently ineligible)."""
+    record = _record()
+    record["measured"] = {}
+
+    result = exposure_contrast_eligibility(record)
+
+    assert result["eligible"] is False
+    assert any("by design" in r and "not the pre-#605 defect" in r for r in result["reasons"])
+    assert not any("predates the #605" in r for r in result["reasons"])
+
+
 def test_eligibility_flags_absent_exposure_identity():
     record = _record(omit_exposure_identity=True)
 
