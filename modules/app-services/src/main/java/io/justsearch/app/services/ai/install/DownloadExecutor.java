@@ -71,6 +71,25 @@ public final class DownloadExecutor {
     cancelCurlBestEffort();
   }
 
+  /**
+   * Verifies a downloaded file against its expected size and SHA-256. Throws {@link
+   * IllegalStateException} on mismatch (fail-closed). The size check is skipped when {@code
+   * expectedSize <= 0} (size unknown in the registry). Shared by the fresh-download path and any
+   * future re-verification of already-present files.
+   */
+  public static void verify(Path file, long expectedSize, String expectedSha256) throws Exception {
+    if (expectedSize > 0) {
+      long size = Files.size(file);
+      if (size != expectedSize) {
+        throw new IllegalStateException("Size mismatch: expected " + expectedSize + ", got " + size);
+      }
+    }
+    String got = sha256(file);
+    if (!got.equalsIgnoreCase(expectedSha256)) {
+      throw new IllegalStateException("SHA-256 mismatch");
+    }
+  }
+
   /** SHA-256 hash of a file (lowercase hex). */
   public static String sha256(Path file) throws Exception {
     MessageDigest digest = MessageDigest.getInstance("SHA-256");
