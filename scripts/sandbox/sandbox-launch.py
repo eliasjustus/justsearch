@@ -501,11 +501,15 @@ def stage_mcp_client_harness(share_dir: Path):
     -tool step of the cohort:mcp procedure cannot be driven through it
     (verified against a real round). Rather than promoting a second, divergent
     HTTP client, this stages the REAL shipped MCPB stdio bridge
-    (packaging/mcpb/server/index.js, copied verbatim) plus a thin PowerShell
-    driver (mcp-typed-confirm.ps1) that spawns it and speaks JSON-RPC over its
+    (packaging/mcpb/server/index.js, copied verbatim) plus a thin Node driver
+    (mcp-typed-confirm.mjs) that spawns it and speaks JSON-RPC over its
     stdin/stdout -- exactly how a real MCP host drives it. That means the
     round validates the actual artifact JustSearch ships, not a parallel
-    bespoke client."""
+    bespoke client. (A PowerShell predecessor was removed 2026-07-15: it hung
+    waiting on the tools/call response even though the server and bridge were
+    independently verified working -- Node is already a sandbox requirement
+    via the MCP Inspector CLI's npx dependency, so a Node driver for the Node
+    bridge is the natural, proven-working shape.)"""
     dst = share_dir / "mcp-client"
     dst.mkdir(parents=True, exist_ok=True)
     count = 0
@@ -517,9 +521,9 @@ def stage_mcp_client_harness(share_dir: Path):
     else:
         print(f"WARNING: MCPB bridge not found at {bridge_src} -- mcp-client/ will be incomplete")
 
-    driver_src = SCRIPT_DIR / "mcp-typed-confirm.ps1"
+    driver_src = SCRIPT_DIR / "mcp-typed-confirm.mjs"
     if driver_src.exists():
-        shutil.copy2(driver_src, dst / "mcp-typed-confirm.ps1")
+        shutil.copy2(driver_src, dst / "mcp-typed-confirm.mjs")
         count += 1
 
     readme_src = SCRIPT_DIR / "mcp-client-README.md"

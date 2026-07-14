@@ -113,7 +113,8 @@ unique job is proving clean-install reachability and discoverability.
 **The mutating-tool step needs a different client.** The Inspector CLI's
 `--tool-arg` string-coerces every value and cannot express `justsearch_ingest`'s
 `paths: string[]` argument, so `tools/call justsearch_ingest` cannot be driven
-through it. Use the staged `mcp-client\mcp-typed-confirm.ps1` instead (see
+through it. Use the staged `mcp-client\mcp-typed-confirm.mjs` instead (run as
+`node mcp-client\mcp-typed-confirm.mjs --target <path>`; see
 `mcp-client\README.md`) — it drives the REAL shipped MCPB stdio bridge
 (`mcp-client\index.js`, a verbatim copy of `packaging/mcpb/server/index.js`) to
 exercise the TYPED_CONFIRM procedure. See `governance/sandbox-coverage.v1.json`'s
