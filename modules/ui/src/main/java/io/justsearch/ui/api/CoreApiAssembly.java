@@ -379,7 +379,8 @@ final class CoreApiAssembly {
                 gpuCapabilitiesService,
                 enterprisePolicyService,
                 b.workerFeatureCache,
-                resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability));
+                resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability),
+                aiInstallHelper);
     AiRuntimeController aiRuntimeController =
         new AiRuntimeController(runtimeActivationHelper, enterprisePolicyService, telemetry);
     // Tempdoc 656 Task 4: read-only reconciliation of the model registry against on-disk
