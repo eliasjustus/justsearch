@@ -16,7 +16,7 @@ import { JfElement } from '../primitives/JfElement.js';
 import { surfaceScrollLayoutStyles } from '../primitives/surfaceLayout.js';
 import { icon } from '../components/Icon.js';
 import { readAutoLockMinutes, writeAutoLockMinutes } from '../utils/autoLock.js';
-import { subscribeAiState, type StatusSnapshot } from '../state/aiStateStore.js';
+import { subscribeAiState, refreshStatusNow, type StatusSnapshot } from '../state/aiStateStore.js';
 import type { PluginHostApi } from '../plugin-api/plugin-types.js';
 import { renderAtRestCard, atRestCardStyles } from './security/atRestCard.js';
 import '../components/Button.js';
@@ -245,6 +245,11 @@ export class SecuritySurface extends JfElement {
         return;
       }
       this.encState = data.state ?? 'unlocked';
+      // Tempdoc 727 F-8: the DATA PROTECTION row (shared `renderAtRestCard`) derives its
+      // "Conversations: … unlocked/locked" text from the aiStateStore's POLLED /api/status
+      // snapshot, not this response — without this, it disagreed with this panel until the next
+      // scheduled poll (up to statusPoll's INTERVAL_MS) caught up.
+      void refreshStatusNow();
     } finally {
       this.encBusy = false;
     }
@@ -256,6 +261,9 @@ export class SecuritySurface extends JfElement {
       const res = await this.encPost('lock', {});
       if (res.ok) {
         this.encState = ((await res.json()) as { state?: string }).state ?? 'locked';
+        // Tempdoc 727 F-8: same state-source refresh as unlockEncryption — the symmetric
+        // transition has the identical staleness mechanism.
+        void refreshStatusNow();
       }
     } finally {
       this.encBusy = false;

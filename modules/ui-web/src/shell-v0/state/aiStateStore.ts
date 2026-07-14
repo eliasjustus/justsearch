@@ -37,6 +37,7 @@ import {
 import {
   subscribeStatus,
   setStatusApiBase,
+  refreshStatusNow as refreshStatusPollNow,
   type StatusSnapshot,
 } from '../utils/statusPoll.js';
 import {
@@ -881,6 +882,18 @@ export function subscribeAiState(listener: (s: AiState) => void): () => void {
 
 export function getAiState(): AiState {
   return aiState.get();
+}
+
+/**
+ * Tempdoc 727 F-8 — force the shared `/api/status` snapshot to refresh immediately, so a caller
+ * that just performed a backend-reflected action (e.g. unlocking chat encryption) doesn't leave
+ * dependent projections (the DATA PROTECTION row's `conversationProtection.state`) waiting out the
+ * poll interval while a sibling panel driven by that action's own direct response has already
+ * updated. Resolves once the fresh snapshot has been applied to `statusSig` (subscribers are
+ * notified synchronously within the same call).
+ */
+export function refreshStatusNow(): Promise<void> {
+  return refreshStatusPollNow();
 }
 
 export function setAiActivity(patch: Partial<AiActivity>): void {
