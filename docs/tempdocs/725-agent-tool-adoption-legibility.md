@@ -1136,7 +1136,122 @@ rule: every new response field names its canonical source or it doesn't ship.
    `toolsearch_targets` capture leak the level-1 review caught). Reflected content must be
    clearly attributed/quoted, never phrased as the tool speaking.
 
-## Candidate principle (not yet design): self-describing results
+---
+
+# Settled design #2 (2026-07-14): response legibility — self-describing results by projection
+
+## Two corrections from design-time probes (record before the design)
+
+1. **The "AI-offline silent degradation" diagnosis is CORRECTED.** `justsearch_answer` has no
+   LLM branch at all — `callAnswer` (`McpToolSurface.java:410-512`) calls
+   `DocumentService.retrieveContext` and never touches inference state; a live probe with the
+   local LLM fully active returned the identical passage dump in <1s. The tool is an
+   **evidence-pack tool by construction** (its description says "get evidence"), which is
+   defensible and model-agnostic — the calling agent owns synthesis. The real defects: the pack
+   does not *say* what it is, its curation quality is suspect (below), and it is token-heavy.
+2. **Two new defect candidates found by the probe** (investigate during implementation; fixes
+   may route to search-quality/RAG if deep): (a) **constant-leader anomaly** — the same document
+   (`3875907.txt`) led the evidence pack for four unrelated queries; (b) **format discrepancy** —
+   `callAnswer` sets `ContextFormat.XML` (`:435`) but live output shows the LABELED
+   (`[From: …]`) format (`ContextBudgeter.java:95`) — a wrong-gate-shaped mismatch between the
+   parameter set-site and observed output. Also: evidence-pack selection did not include the doc
+   `search` ranks #1 for the same query (fusion discrepancy between the two tools' retrieval).
+
+## Design statement
+
+Every MCP tool result becomes **self-describing** — it states what it is, what was elided, what
+was degraded, and (for search hits) why it matched — built almost entirely by **projecting data
+the call site already holds** onto the text and the existing registered `structuredContent`
+projection (`McpEvidenceProjection`, execution-surfaces entry `mcp-evidence-projection`). No new
+status machinery, no new retrieval machinery, no imperative text anywhere (research pass #2
+grammar rule; model-agnostic axiom). Three increments:
+
+### D1 — Search result legibility (Tier 1; data in-hand)
+
+- **Match-centered previews**: render the preview from `hit.excerptRegions()`/`matchSpans()`
+  (populated by `HighlightingOps`, silently dropped today at `callSearch`) instead of the head
+  of the stored `content_preview` field; center the ~200-char window on the best match span so
+  the payload sentence is visible at rank 1. `content_preview` head remains the fallback when no
+  spans exist. When the window cuts content, say so descriptively with the remedy (first-party
+  truncation-notice grammar: full text via the path).
+- **Match rationale**: one attributed line per hit from `matchSpans[].term` +
+  `matchedFields` (e.g. `matched: "archive", "courthouse" in content`) — quoted as corpus terms,
+  never tool voice (echo-injection guard). Dense/semantic-only matches state that fact instead.
+- **Degradation line (conditional)**: when `SearchTrace.Degradation` reports
+  `vectorBlocked`/`hybridFallback`, one descriptive line ("semantic ranking degraded:
+  <reason>; results are keyword-ranked") — the MCP projection of the same canonical trace the
+  UI's `searchTraceExplain` already consumes.
+- **Coverage line**: "showing N of <totalHits>" when hits exceed those shown (totalHits is
+  already in-hand; no cursor/schema change — the wire `next_cursor` stays unexposed for now,
+  schema-minimal).
+- structuredContent: extend `McpEvidenceProjection.searchEvidence` with matchSpans /
+  matchedFields / degradation — extending the registered projection, not forking it.
+
+### D2 — Answer tool honesty (Tier 1/2)
+
+- **Pack self-description header**: one descriptive line — kind ("evidence pack, no synthesized
+  answer included"), size (N passages from M documents), and selection basis — so the weakest
+  agent knows what it holds and the strongest stops re-calling it expecting synthesis.
+- **Curation verification**: resolve the constant-leader anomaly and the XML/LABELED
+  discrepancy; verify pack selection against search ranking for the same query (the probe's
+  missing-#1 case). Fixes land here if shallow (parameter/config wiring), route to
+  search-quality with an inbox/tempdoc pointer if deep (fusion redesign).
+- **Token economics**: `response_format: concise|detailed` on answer + search (first-party
+  precedent, ~3x cuts measured externally); concise trims passage count/length and relies on
+  the self-description + coverage lines. Schema addition ⇒ TOOL_SURFACE_VERSION bump ⇒ new
+  measurement cohort by construction (declared, not fought).
+
+### D3 — Error legibility (the pre-registered L4 backlog, revalidated)
+
+The 8-item backlog stands with item 3 (preview truncation) absorbed into D1. Priority order
+re-ranked by forensics evidence: generic exception fallbacks get classification + next-state
+pointer (`justsearch_status`), "Knowledge server not available" gets transient-vs-permanent
+framing, the unlogged catch at `McpToolSurface.java:386-389` gets logged. All error text follows
+the actionable-error grammar (what failed, what state to check) — descriptive, never imperative.
+
+## Measurement (pre-registered before any cell runs; 624 protocol)
+
+Baseline vs D1+D2 response shapes on the CLERC member, funnel + completed-cell accuracy +
+tokens/cell + trajectory length, with over-trigger negative controls (queries where retrieval
+should NOT be reinforced). Dual cohort (haiku + sonnet) if budget allows — the model-agnostic
+axiom makes single-cohort evidence structurally insufficient for shipping Tier-3 levers, and
+desirable even for Tier-1/2. Ship decisions stay owner-gated; L4d (gap-statement affordance)
+remains hypothesis-tier and is NOT in this design's ship set.
+
+## Orphans (owned by this design's implementation)
+
+1. The forensics section's "AI-offline silent degradation" diagnosis — corrected above (the
+   tempdoc is append-only; the correction supersedes, the original stays as dated history).
+2. `content_preview`-head as the sole preview source — superseded by match-centered rendering
+   (kept as fallback only).
+3. L4 backlog item 3 — absorbed into D1.
+4. The unlogged catch at `McpToolSurface.java:386-389` — fixed in D3.
+5. If `ContextFormat.XML` turns out to be silently unhonored, the dead parameter is the orphan —
+   fix or remove with the D2 curation work.
+
+## Design reach
+
+- **Conforms to (projection, not invention)**: `McpEvidenceProjection` (registered
+  execution-surface — this design is the completion of the register's own "MCP historically
+  dropped the evidence" reverse-coverage note, tempdoc 658); the canonical `SearchTrace` (the
+  degradation line is its third consumer after FE explain + OTel); the product's reason-code
+  honesty layer; ADR-0015 schema-minimalism (one new enum param total); 655's single-sourced
+  steering (new lines are per-result facts, not a second guidance channel — the initialize
+  instructions text is untouched).
+- **Principle promoted from theorization**: **self-describing results** (defined below) — the
+  MCP surface was the violation; D1-D3 is its remediation. It earns its keep when the A/B shows
+  recognition/token improvement without over-trigger regression, and retires into protocol
+  fields if MCP ever standardizes result-provenance/degradation metadata.
+- **Recurring shape worth naming (not building)**: **"dropped at the boundary"** — data computed
+  upstream (matchSpans, trace degradation, totalHits context) exists on the exact object a
+  boundary holds, and the boundary's projection silently discards it; each such drop is a
+  legibility defect candidate. Candidate scope: every projection listed in
+  `execution-surfaces.v1.json` (audit: does each projection carry the fields its consumers'
+  failure modes need?); the agent-api HTTP responses. Evidence of earning keep: a second
+  boundary audit finding a same-shaped drop; retirement: if the register's coverage checks grow
+  a completeness dimension that mechanizes this, the prose shape retires into that gate.
+
+## Candidate principle (from theorization, now adopted by the design): self-describing results
 
 **"Every tool result declares its own nature and limits — what it is, what was elided, what
 capability was degraded, and (where canonical data supports it) why it matched."** This is the
