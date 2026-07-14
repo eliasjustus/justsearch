@@ -81,9 +81,41 @@ function collectEntries(repoRoot) {
   return entries;
 }
 
+/**
+ * Fail-closed guards (do not change the packed bytes for the current ASCII, no-asset content):
+ *  - entry names must be pure ASCII: the zip headers use flags=0 (no UTF-8-filename bit), so a
+ *    non-ASCII name could mis-decode in CP437 readers. Fail rather than emit an ambiguous name.
+ *  - manifest.json must not reference a top-level asset outside server/ (the known case is `icon`):
+ *    the packer bundles only manifest.json + server/**, so such an asset would be silently omitted.
+ */
+function assertPackable(repoRoot, entries) {
+  for (const e of entries) {
+    if (!/^[\x20-\x7e]+$/.test(e.name)) {
+      throw new Error(
+        `pack-mcpb: non-ASCII archive name ${JSON.stringify(e.name)} — the packer emits zip ` +
+          'flags=0 (no UTF-8 filename flag); add UTF-8-flag support before bundling non-ASCII names.',
+      );
+    }
+  }
+  const manifestPath = path.join(repoRoot, MCPB_DIR, 'manifest.json');
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch (e) {
+    throw new Error(`pack-mcpb: ${MCPB_DIR}/manifest.json is not valid JSON: ${e.message}`);
+  }
+  if (typeof manifest.icon === 'string' && !manifest.icon.replace(/\\/g, '/').startsWith('server/')) {
+    throw new Error(
+      `pack-mcpb: manifest.json "icon" (${manifest.icon}) is outside server/ — the packer bundles ` +
+        'only manifest.json + server/**. Move the asset under server/ or extend the packer to bundle it.',
+    );
+  }
+}
+
 /** Build the deterministic .mcpb zip. Returns { buffer, sha256, entries }. */
 export function packMcpb(repoRoot = repoRootFromCwd()) {
   const entries = collectEntries(repoRoot);
+  assertPackable(repoRoot, entries);
   const locals = [];
   const centrals = [];
   let offset = 0;
@@ -145,21 +177,69 @@ export function packMcpb(repoRoot = repoRootFromCwd()) {
   return { buffer, sha256, entries: entries.map((e) => e.name) };
 }
 
-function syncServerJson(repoRoot, sha256) {
+// server.json mutations are JSON-aware (parse -> set the exact field -> stringify), never regex:
+// regex-editing JSON silently no-ops on a malformed value and can match an unintended nested key.
+// JSON.stringify(obj, null, 2) + "\n" is byte-identical to the committed formatting.
+function readServerJson(repoRoot) {
   const p = path.join(repoRoot, SERVER_JSON_REL);
-  const raw = fs.readFileSync(p, 'utf8');
-  const next = raw.replace(/("fileSha256"\s*:\s*")[0-9a-fA-F]{64}(")/, `$1${sha256}$2`);
-  if (next === raw) {
-    if (!/"fileSha256"\s*:/.test(raw)) throw new Error(`${SERVER_JSON_REL} has no fileSha256 field to sync`);
-    return false; // already up to date
+  const obj = JSON.parse(fs.readFileSync(p, 'utf8'));
+  if (!Array.isArray(obj.packages) || !obj.packages[0]) {
+    throw new Error(`${SERVER_JSON_REL} has no packages[0]`);
   }
-  fs.writeFileSync(p, next);
+  return { p, obj };
+}
+
+function writeServerJson(p, obj) {
+  fs.writeFileSync(p, JSON.stringify(obj, null, 2) + '\n');
+}
+
+function syncServerJson(repoRoot, sha256) {
+  const { p, obj } = readServerJson(repoRoot);
+  if (obj.packages[0].fileSha256 === sha256) return false;
+  obj.packages[0].fileSha256 = sha256; // always sets, even from a malformed/placeholder value
+  writeServerJson(p, obj);
   return true;
+}
+
+/** Set the top-level version + the release-asset URL (derived from repository.url). */
+function setServerVersion(repoRoot, version, { dryRun = false } = {}) {
+  const { p, obj } = readServerJson(repoRoot);
+  const repoUrl = (obj.repository && typeof obj.repository.url === 'string'
+    ? obj.repository.url
+    : 'https://github.com/eliasjustus/justsearch'
+  ).replace(/\/+$/, '');
+  const url = `${repoUrl}/releases/download/v${version}/justsearch-mcp.mcpb`;
+  const changed = obj.version !== version || obj.packages[0].identifier !== url;
+  if (!dryRun && changed) {
+    obj.version = version;
+    obj.packages[0].identifier = url;
+    writeServerJson(p, obj);
+  }
+  return { changed, version, url };
 }
 
 function main() {
   const args = process.argv.slice(2);
   const repoRoot = repoRootFromCwd();
+
+  const setVerIdx = args.indexOf('--set-version');
+  if (setVerIdx !== -1) {
+    const version = args[setVerIdx + 1];
+    if (!version || version.startsWith('--')) {
+      console.error('pack-mcpb: --set-version requires a value (e.g. --set-version 0.2.0)');
+      process.exit(1);
+    }
+    const dryRun = args.includes('--dry-run');
+    const res = setServerVersion(repoRoot, version, { dryRun });
+    const suffix = res.changed ? '' : ' (already set)';
+    console.log(
+      dryRun
+        ? `pack-mcpb: --set-version (dry-run) would set ${SERVER_JSON_REL} version=${res.version} identifier=${res.url}${suffix}`
+        : `pack-mcpb: --set-version set ${SERVER_JSON_REL} version=${res.version}${suffix}`,
+    );
+    return;
+  }
+
   const { buffer, sha256, entries } = packMcpb(repoRoot);
 
   if (args.includes('--sync')) {

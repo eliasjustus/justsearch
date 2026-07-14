@@ -165,7 +165,12 @@ jobs:
         env:
           ORG_GRADLE_PROJECT_includeCuda: "false"
           ORG_GRADLE_PROJECT_skipOnnxModels: "true"
-        run: ./scripts/ci/package-installer-win.ps1 -OutDir dist/installer -SkipVerify -AssembleReleaseAssets
+        run: |
+          # On a v* tag ref (a real release cut) also verify server.json version/URL match the
+          # tag; skip on non-tag dry-runs where gradle.properties may not match yet. (Tempdoc 726.)
+          $extra = @()
+          if ($env:GITHUB_REF -like 'refs/tags/v*') { $extra += '-VerifyReleaseVersion' }
+          ./scripts/ci/package-installer-win.ps1 -OutDir dist/installer -SkipVerify -AssembleReleaseAssets @extra
 
       # Diagnostic: log modules/ui/build contents + sizes so we can see what the
       # Post Cache step will save. Tempdoc 374 speed investigation: the cache

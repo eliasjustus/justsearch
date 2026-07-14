@@ -120,11 +120,23 @@ $changed = (Update-FileRegex -Path $shellPkg -Label "modules/shell/package.json"
 $changed = (Update-FileRegex -Path $cargoToml -Label "Cargo.toml" -Pattern '^(\s*version\s*=\s*\")[^\"]+(\"\s*)$' -Replacement ('${1}' + $version + '${2}') -DryRun:$WhatIf) -or $changed
 
 # MCPB registry metadata: version + release-asset URL are projections of the gradle version
-# (tempdoc 726 -- server.json stops being a hand-authored fork). fileSha256 is source-derived,
-# not version-derived, so it is synced separately by scripts/ci/pack-mcpb.mjs --sync.
-$serverJson = Join-Path $root "packaging\\mcpb\\server.json"
-$changed = (Update-FileRegex -Path $serverJson -Label "packaging/mcpb/server.json (version)" -Pattern '\"version\"\s*:\s*\"[^\"]+\"' -Replacement ('"version": "' + $version + '"') -DryRun:$WhatIf) -or $changed
-$changed = (Update-FileRegex -Path $serverJson -Label "packaging/mcpb/server.json (asset URL)" -Pattern 'releases/download/v[^/]+/justsearch-mcp\.mcpb' -Replacement ('releases/download/v' + $version + '/justsearch-mcp.mcpb') -DryRun:$WhatIf) -or $changed
+# (tempdoc 726 -- server.json stops being a hand-authored fork). Done JSON-aware via
+# pack-mcpb.mjs --set-version (never a regex on JSON, which would replace-all and could hit a
+# future nested "version"). fileSha256 is source-derived, synced separately by pack-mcpb.mjs --sync.
+$packMcpb = Join-Path $root "scripts\\ci\\pack-mcpb.mjs"
+$setVerArgs = @($packMcpb, "--set-version", $version)
+if ($WhatIf.IsPresent) { $setVerArgs += "--dry-run" }
+$prevRootEnv = $env:CHECK_MCPB_ROOT
+$env:CHECK_MCPB_ROOT = $root
+try {
+  $setVerOut = & node @setVerArgs
+  if ($LASTEXITCODE -ne 0) { throw "pack-mcpb.mjs --set-version failed (exit=$LASTEXITCODE): $setVerOut" }
+} finally {
+  if ($null -eq $prevRootEnv) { Remove-Item Env:\CHECK_MCPB_ROOT -ErrorAction SilentlyContinue }
+  else { $env:CHECK_MCPB_ROOT = $prevRootEnv }
+}
+Write-Host $setVerOut
+if ("$setVerOut" -notmatch 'already set') { $changed = $true }
 
 if ($WhatIf.IsPresent) {
   if ($changed) {

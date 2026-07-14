@@ -299,6 +299,13 @@ the packer, **re-packs from source and compares to `server.json.fileSha256`**, s
 freshness are one check (a source edit without `pack-mcpb.mjs --sync` FAILS). The committed bundle is
 deleted and re-gitignored; `server.json` version/URL are stamped by `sync-version.ps1` (last hand-authored
 fork closed). The v1 committed-bundle mechanism + the deferred content-freshness gate are **superseded**
-(torn down in the same change). **Still open** (own design passes): the two-mode `generate|verify` register
+(torn down in the same change).
+
+A refute-first review pass then hardened it (all 10 verification claims held): the tagged release build
+now verifies `server.json` version/URL (`-VerifyReleaseVersion` on `refs/tags/v*`, decoupled from
+signing); all `server.json` mutation moved to JSON-aware `pack-mcpb.mjs --sync`/`--set-version` (no more
+regex-on-JSON — a malformed hash or a future nested `version` can no longer silently mis-edit); and the
+packer fail-closes on a non-ASCII entry name or a top-level manifest asset outside `server/`. Byte-neutral
+(hash stays `b71d792c…`). **Still open** (own design passes): the two-mode `generate|verify` register
 (models are verify-only + `model-registry.v2.json` still points at the retired `justsearch-releases` repo),
 the derived GH-API release index, and the monotonic Sandbox loop (needs a findings substrate).
