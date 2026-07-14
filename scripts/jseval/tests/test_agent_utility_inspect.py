@@ -454,6 +454,44 @@ def test_record_cell_tool_result_digests_never_stash_raw_content():
     assert secret not in json.dumps(digests)
 
 
+def test_record_cell_tool_result_digests_furniture_markers_block_list_content_shape():
+    """tempdoc 729 L1 probe follow-up: `ToolResultBlock.content` is typed
+    `str | list[dict[str, Any]] | None` on the real Claude Agent SDK
+    (`claude_agent_sdk/types.py`, confirmed against the installed package) -- a
+    tool result can arrive as a LIST of content blocks (`[{"type": "text",
+    "text": ...}]`), not only as a plain string. `_content_sha256`/`_content_len`
+    operate on the raw `content` value directly (shape-agnostic: `len()` /
+    `json.dumps()` both accept `str` or `list`), so they already cover this
+    shape; this fixture proves the SAME real shape drives `furniture_markers`
+    correctly too -- both readings go through the ONE extraction helper,
+    `_content_text`, so there is a single source of truth for "what text did
+    this result contain" across sha/len and the marker booleans."""
+    state = _state()
+    secret = "CORPUS_SECRET_STRING_a1b2c3"
+    block_list_content = [
+        {"type": "text", "text": f"Evidence pack: 1 passages ({secret})"},
+    ]
+    got = {
+        "attempts": {"t1": {"tool": "mcp__justsearch__justsearch_answer", "input": {}}},
+        "results": {"t1": {"is_error": False, "content": block_list_content}},
+        "texts": [], "rmsg": _rmsg(), "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "C", [], None)
+
+    digests = state.metadata["tool_result_digests"]
+    assert digests == [{
+        "content_sha256": aui._content_sha256(block_list_content),
+        "content_len": len(block_list_content),
+        "content_is_error": False,
+        "content_shape": "blocks",
+        "furniture_markers": {
+            "rationale": False, "evidence_pack": True, "coverage": False, "degradation": False,
+        },
+    }]
+    assert secret not in json.dumps(digests)
+
+
 def test_record_cell_tool_result_digests_null_for_blocked_and_disallowed_attempts():
     """No result arrived (blocked) or the tool never executed (disallowed) -- the
     digest carries honest nulls, never a fabricated zero/empty hash."""
