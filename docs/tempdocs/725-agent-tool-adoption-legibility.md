@@ -1703,3 +1703,64 @@ facts (spec-level degraded/provenance fields), the prose projections retire into
   resumable on its log dir `scripts/jseval/tmp/725-campaign-v/`); corpus signature drift
   (U recorded `signature_matches: false` against the declared slug — V will record the same
   identity block; comparability rests on same-dataset-dir, which is byte-shared with U).
+
+# Campaign V — results and judgment (2026-07-15; run complete, $4.93 of $6 cap, 20/20 cells)
+
+Evidence: `scripts/jseval/tmp/725-campaign-v/{logs,out}` (worktree). Judged against the
+pre-registered primaries.
+
+## Primary result: delivery is now measured, and the tier-equivalence fields arrive
+
+First campaign with `delivered_tier`/`delivered_fields` captured (735 W2): across 186 MCP calls,
+**98.9% structured-json** (answer 49/49, search 135/137), and the four 0.4.0 equivalence fields
+(`hints`/`facets`/`coverage`/`truncated`) fired on **184/184 (100%)** of structured deliveries.
+`furniture_markers` null on all 184 — Campaign U's "0/153 markers" open item is now formally
+resolved: the markers grepped a tier the CLI never delivered; the parsed-field measurement
+replaces them, and the fields it measures are confirmed delivered.
+
+## Cost of tier equivalence: small and constant per response; campaign deltas are mix, not price
+
+Paired same-query first-search payloads (19 pairs): **median +466 bytes (range 445–526, ~+3.7%**
+on a 12.8KB search response) — consistent with the fields' serialized size (facets ~386B top-5
+parity + hints ~140B + coverage/truncated ~80B). The raw campaign-level deltas (median
+cache-creation tokens +32%, median cost +20.5%, turns +2) are dominated by a different
+behavioral MIX at seed 1 — V agents searched more (137 vs 108 search calls; 2 cells with exact
+duplicate queries vs 0 in U; more limit-50 calls whose payloads are huge) — which sits inside
+the D→T→U-established single-seed churn envelope and is not attributable to the surface at this
+n. Instructions were hash-identical between U and V (verified); the only surface delta was the
+structured-tier field carriage.
+
+## Hypotheses judged (pre-registered, honest)
+
+- **Facet-filter adoption after facts delivery: refuted at this n/tier.** 0/20 V cells used
+  facet-derived filters (U: also 0 true facet filters) despite 100% facets delivery. Haiku-tier
+  agents do not pick up the affordance from data alone — consistent with the program's standing
+  finding that behavioral adoption levers are model-tier-bound.
+- **Fewer redundant re-searches after coverage/truncated: refuted (direction reversed, churn-n).**
+  V had 2/20 duplicate-query cells vs U 0/20.
+- **Accuracy: descriptive only, as pre-registered** — V 0/20 vs U 3/20 exact-match;
+  `seed_floor_met: false` self-labeled, claim policy refused promotion. No claim either
+  direction (the 15-point swing is exactly the churn the seed floor exists to block).
+
+## New open items
+
+1. **Third delivery shape: oversized-result truncation notice.** 2/137 search deliveries came
+   back `prose` at identical content_len 2286 (both `limit: 50` calls). Live re-probe of the
+   same query at limit 50 shows the SERVER returns structuredContent fine — the truncation is
+   client-side (suspect: the CLI's oversized-tool-result cap replacing the payload with a
+   notice). Consequence: at limit 50 on verbose corpora an agent can receive NEITHER tier.
+   Follow-up: characterize the cap, consider a server-side response-size governor so the
+   delivered payload stays under client caps.
+2. Blocked-call bookkeeping misaligns `metadata.tool_calls` vs `tool_call_sequence` by one entry
+   in cells with a blocked call (2 V + 3 U cells) — positional pairing across those arrays is
+   unreliable; the digests' own pairing is 1:1 and was used instead. Harness legibility fix
+   candidate.
+
+## Pilot verdict
+
+Tier equivalence ships at a measured, honest price: ~+3.7% per search response, ~+0.5KB
+(constant, deterministic across queries), with delivery now instrumented instead of assumed.
+The behavioral upside hypotheses did not materialize at haiku/n=20 — as with the whole
+legibility program, correctness-of-contract (both cohorts see the same facts; SEP-1624
+direction) is the justification, not measured behavior change. No rollback indicated; the
+delivered-tier instrument and the truncation-notice discovery alone justify the spend.
