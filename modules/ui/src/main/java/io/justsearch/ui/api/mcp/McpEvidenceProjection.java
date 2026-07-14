@@ -48,6 +48,13 @@ public final class McpEvidenceProjection {
     SearchTrace trace = resp.searchTrace();
     if (trace != null) {
       out.put("searchTrace", projectTrace(trace));
+      // Tempdoc 725 W1: a response-level summary of SearchTrace.Degradation, alongside the
+      // structural detail already nested under searchTrace.degradation — the agent-legible
+      // "was this degraded" answer without navigating the full trace.
+      SearchTrace.Degradation degradation = trace.degradation();
+      if (degradation != null) {
+        out.put("degradation", projectDegradationSummary(degradation));
+      }
     }
     List<Map<String, Object>> results = new ArrayList<>();
     for (KnowledgeSearchResponse.Hit hit : resp.results()) {
@@ -62,6 +69,29 @@ public final class McpEvidenceProjection {
         h.put("path", path);
       }
       h.put("score", hit.score());
+
+      // Tempdoc 725 W1: the same informative-term filter that drives the text-block "Matched:"
+      // line, projected onto structuredContent — matchedTerms/matchedFields/excerpts.
+      List<KnowledgeSearchResponse.MatchSpan> informative =
+          McpSearchResultFormatter.filterInformative(hit.matchSpans());
+      if (!informative.isEmpty()) {
+        h.put("matchedTerms", McpSearchResultFormatter.informativeTerms(informative));
+      }
+      if (hit.matchedFields() != null && !hit.matchedFields().isEmpty()) {
+        h.put("matchedFields", hit.matchedFields());
+      }
+      if (hit.excerptRegions() != null && !hit.excerptRegions().isEmpty()) {
+        List<Map<String, Object>> excerpts = new ArrayList<>();
+        for (KnowledgeSearchResponse.ExcerptRegion region : hit.excerptRegions()) {
+          Map<String, Object> e = new LinkedHashMap<>();
+          e.put("text", region.text());
+          e.put("startChar", region.startChar());
+          e.put("endChar", region.endChar());
+          excerpts.add(e);
+        }
+        h.put("excerpts", excerpts);
+      }
+
       List<SearchTrace.HitStage> hitTrace = hit.trace();
       if (hitTrace != null && !hitTrace.isEmpty()) {
         h.put("trace", projectHitStages(hitTrace));
@@ -120,6 +150,30 @@ public final class McpEvidenceProjection {
     quality.put("chunksIncluded", r.quality().chunksIncluded());
     out.put("quality", quality);
     return out;
+  }
+
+  /**
+   * Tempdoc 725 W1: response-level {vectorBlocked, hybridFallback, reasons} summary of {@link
+   * SearchTrace.Degradation}. {@code reasons} collects vectorBlockedReason/hybridFallbackReason
+   * only for the flags that are actually {@code true} (gated the same way as the text-block
+   * degradation note in {@code McpToolSurface#appendDegradationNote}), so this summary never lists
+   * a reason for a degradation mode that did not occur.
+   */
+  private static Map<String, Object> projectDegradationSummary(SearchTrace.Degradation d) {
+    Map<String, Object> deg = new LinkedHashMap<>();
+    deg.put("vectorBlocked", d.vectorBlocked());
+    deg.put("hybridFallback", d.hybridFallback());
+    List<String> reasons = new ArrayList<>();
+    if (d.vectorBlocked() && d.vectorBlockedReason() != null && !d.vectorBlockedReason().isBlank()) {
+      reasons.add(d.vectorBlockedReason());
+    }
+    if (d.hybridFallback()
+        && d.hybridFallbackReason() != null
+        && !d.hybridFallbackReason().isBlank()) {
+      reasons.add(d.hybridFallbackReason());
+    }
+    deg.put("reasons", reasons);
+    return deg;
   }
 
   private static Map<String, Object> projectTrace(SearchTrace t) {

@@ -13,6 +13,7 @@ import io.justsearch.app.api.RetrieveContextParams;
 import io.justsearch.app.api.knowledge.KnowledgeSearchRequest;
 import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
 import io.justsearch.app.api.knowledge.KnowledgeStatus;
+import io.justsearch.app.api.knowledge.SearchTrace;
 import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.ui.api.KnowledgeSearchController;
 import java.time.Clock;
@@ -565,10 +566,12 @@ public final class McpToolSurface {
               new KnowledgeSearchRequest.FieldSpec("entity_locations_raw", 5));
       var facets = new KnowledgeSearchRequest.Facets(true, null, defaultFacetFields);
 
+      // Tempdoc 725 W1: request excerpt windows so the preview can anchor on the actual match
+      // instead of a blind head-of-field truncation (see buildHitPreview below).
       KnowledgeSearchRequest req =
           new KnowledgeSearchRequest(
               query, Math.min(limit, 50), mode, null, null, null, filters, null, facets, null,
-              null, detail, null);
+              Boolean.TRUE, detail, null);
       KnowledgeSearchResponse resp = adapter.search(req);
 
       var sb = new StringBuilder();
@@ -577,7 +580,6 @@ public final class McpToolSurface {
         for (var hit : resp.results()) {
           String title = hit.fields().getOrDefault("title", "");
           String path = hit.fields().getOrDefault("path", "");
-          String preview = hit.fields().getOrDefault("content_preview", "");
           sb.append("[")
               .append(rank++)
               .append("] ")
@@ -586,17 +588,43 @@ public final class McpToolSurface {
               .append(String.format("%.2f", hit.score()))
               .append(")\n");
           if (!path.isBlank()) sb.append("    Path: ").append(path).append("\n");
+
+          // Tempdoc 725 W1: informative-term-anchored preview + a DESCRIPTIVE (never imperative)
+          // match-basis line, so an agent can tell WHY a hit matched without opening the file.
+          List<KnowledgeSearchResponse.MatchSpan> informative =
+              McpSearchResultFormatter.filterInformative(hit.matchSpans());
+          String preview = buildHitPreview(hit);
           if (!preview.isBlank()) {
-            if (preview.length() > 200) preview = preview.substring(0, 200) + "...";
             sb.append("    Preview: ").append(preview).append("\n");
+          }
+          if (!informative.isEmpty()) {
+            List<String> terms = McpSearchResultFormatter.informativeTerms(informative);
+            StringBuilder quoted = new StringBuilder();
+            for (int i = 0; i < terms.size(); i++) {
+              if (i > 0) quoted.append(", ");
+              quoted.append('"').append(terms.get(i)).append('"');
+            }
+            sb.append("    Matched: ").append(quoted);
+            if (hit.matchedFields() != null && !hit.matchedFields().isEmpty()) {
+              sb.append(" in ").append(String.join(", ", hit.matchedFields()));
+            }
+            sb.append("\n");
+          } else {
+            sb.append("    Match basis: semantic similarity (no distinctive term overlap)\n");
           }
           sb.append("\n");
         }
       }
 
+      int shownCount = resp.results() == null ? 0 : resp.results().size();
       sb.append("Found ").append(resp.totalHits()).append(" results");
       if (resp.tookMs() > 0) sb.append(" (took ").append(resp.tookMs()).append("ms)");
-      sb.append(".");
+      if (resp.totalHits() > shownCount) {
+        sb.append("; showing ").append(shownCount).append(".");
+      } else {
+        sb.append(".");
+      }
+      appendDegradationNote(sb, resp.searchTrace());
 
       // Facets
       if (resp.facets() != null && !resp.facets().isEmpty()) {
@@ -651,6 +679,76 @@ public final class McpToolSurface {
       log.warn("MCP search failed", e);
       return errorContent("Search failed: " + e.getMessage());
     }
+  }
+
+  /**
+   * Tempdoc 725 W1 preview-selection order: (a) an excerpt region anchored on its most-informative
+   * span, (b) a content_preview window centered on the first informative content_preview span, (c)
+   * the pre-existing head-of-field fallback. Cases (a)/(b) append {@link
+   * McpSearchResultFormatter#TRUNCATION_REMEDY} when the rendered text is a cut of a larger source;
+   * case (c) keeps its existing "..." suffix unchanged.
+   */
+  private static String buildHitPreview(KnowledgeSearchResponse.Hit hit) {
+    List<KnowledgeSearchResponse.ExcerptRegion> regions = hit.excerptRegions();
+    if (regions != null && !regions.isEmpty()) {
+      KnowledgeSearchResponse.ExcerptRegion region = McpSearchResultFormatter.selectBestRegion(regions);
+      List<KnowledgeSearchResponse.MatchSpan> regionInformative =
+          McpSearchResultFormatter.filterInformative(region.matchSpans());
+      int start = regionInformative.isEmpty() ? 0 : regionInformative.get(0).startChar();
+      McpSearchResultFormatter.Window window =
+          McpSearchResultFormatter.windowStartingAt(
+              region.text(), start, McpSearchResultFormatter.REGION_WINDOW_CHARS);
+      return window.truncated() ? window.text() + McpSearchResultFormatter.TRUNCATION_REMEDY : window.text();
+    }
+
+    List<KnowledgeSearchResponse.MatchSpan> previewFieldSpans = new ArrayList<>();
+    if (hit.matchSpans() != null) {
+      for (KnowledgeSearchResponse.MatchSpan span : hit.matchSpans()) {
+        if ("content_preview".equals(span.field())) previewFieldSpans.add(span);
+      }
+    }
+    List<KnowledgeSearchResponse.MatchSpan> previewInformative =
+        McpSearchResultFormatter.filterInformative(previewFieldSpans);
+    String fieldValue = hit.fields().getOrDefault("content_preview", "");
+    if (!previewInformative.isEmpty()) {
+      int center = previewInformative.get(0).startChar();
+      McpSearchResultFormatter.Window window =
+          McpSearchResultFormatter.windowCentered(
+              fieldValue, center, McpSearchResultFormatter.PREVIEW_WINDOW_CHARS);
+      return window.truncated() ? window.text() + McpSearchResultFormatter.TRUNCATION_REMEDY : window.text();
+    }
+
+    if (fieldValue.length() > 200) {
+      return fieldValue.substring(0, 200) + "...";
+    }
+    return fieldValue;
+  }
+
+  /**
+   * Tempdoc 725 W1: a once-per-response, DESCRIPTIVE-only note when {@link SearchTrace.Degradation}
+   * says semantic ranking was blocked or fell back — read from the canonical {@link SearchTrace}
+   * (registered in {@code governance/execution-surfaces.v1.json}), never re-derived. Null-safe:
+   * absent trace or degradation appends nothing.
+   */
+  private static void appendDegradationNote(StringBuilder sb, SearchTrace trace) {
+    if (trace == null || trace.degradation() == null) return;
+    SearchTrace.Degradation degradation = trace.degradation();
+    if (!degradation.vectorBlocked() && !degradation.hybridFallback()) return;
+    List<String> reasons = new ArrayList<>();
+    if (degradation.vectorBlocked()
+        && degradation.vectorBlockedReason() != null
+        && !degradation.vectorBlockedReason().isBlank()) {
+      reasons.add(degradation.vectorBlockedReason());
+    }
+    if (degradation.hybridFallback()
+        && degradation.hybridFallbackReason() != null
+        && !degradation.hybridFallbackReason().isBlank()) {
+      reasons.add(degradation.hybridFallbackReason());
+    }
+    String reasonText = reasons.isEmpty() ? "reason unavailable" : String.join("; ", reasons);
+    sb.append("\nNote: semantic ranking degraded (")
+        .append(reasonText)
+        .append("); results may be keyword-ranked only.");
   }
 
   // =========================================================================

@@ -49,6 +49,8 @@ def _record(
     omit_funnel=False,
     omit_adoption=False,
     omit_exposure_identity=False,
+    mcp_tool_surface_hash="surface-hash-v1",
+    server_version="1.0.0",
 ):
     cell = {
         "accuracy": {"baseline": 0.9, "with_tool": 0.9},
@@ -80,6 +82,7 @@ def _record(
     cohort = {
         "agent_cohort_key": "cohort-key-placeholder",
         "git_sha": "f" * 40,
+        "mcp_tool_surface_hash": mcp_tool_surface_hash,
     }
     if not omit_exposure_identity:
         cohort["exposure_config"] = {
@@ -88,7 +91,7 @@ def _record(
         }
         cohort["mcp_initialize_identity"] = {
             "instructions": None, "instructions_sha256": instructions_sha256,
-            "server_version": "1.0.0", "protocol_version": "2025-06-18",
+            "server_version": server_version, "protocol_version": "2025-06-18",
         }
     return {
         "schema": "utility-comparison.v1",
@@ -199,6 +202,70 @@ def test_exposure_contrast_rejects_mismatched_query_identity():
 
     with pytest.raises(ExposureContrastError, match="query_identity"):
         exposure_contrast(record_a, record_b)
+
+
+# --- surface-aware guard (tempdoc 725 increment 4 W4) -------------------------
+# A version bump changes `mcp_tool_surface_hash` / `server_version` -- two runs
+# on different tool surfaces must not silently contrast as an exposure effect.
+
+
+def test_exposure_contrast_rejects_mismatched_mcp_tool_surface_hash():
+    record_a = _record(exposure_mode="deferred", mcp_tool_surface_hash="hash-v1")
+    record_b = _record(exposure_mode="eager", mcp_tool_surface_hash="hash-v2")
+
+    with pytest.raises(ExposureContrastError, match="surface_contrast=True") as excinfo:
+        exposure_contrast(record_a, record_b)
+    assert "hash-v1" in str(excinfo.value)
+    assert "hash-v2" in str(excinfo.value)
+
+
+def test_exposure_contrast_rejects_mismatched_server_version():
+    record_a = _record(exposure_mode="deferred", server_version="1.0.0")
+    record_b = _record(exposure_mode="eager", server_version="2.0.0")
+
+    with pytest.raises(ExposureContrastError, match="surface_contrast=True") as excinfo:
+        exposure_contrast(record_a, record_b)
+    assert "1.0.0" in str(excinfo.value)
+    assert "2.0.0" in str(excinfo.value)
+
+
+def test_exposure_contrast_surface_contrast_true_allows_mismatch_and_echoes_identities():
+    record_a = _record(
+        exposure_mode="deferred", mcp_tool_surface_hash="hash-v1", server_version="1.0.0",
+    )
+    record_b = _record(
+        exposure_mode="eager", mcp_tool_surface_hash="hash-v2", server_version="2.0.0",
+    )
+
+    result = exposure_contrast(record_a, record_b, surface_contrast=True)
+
+    assert result["surface_identities"] == {
+        "a": {"mcp_tool_surface_hash": "hash-v1", "server_version": "1.0.0"},
+        "b": {"mcp_tool_surface_hash": "hash-v2", "server_version": "2.0.0"},
+    }
+    # The contrast still computes -- surface_contrast permits, it does not suppress.
+    assert result["funnel"]["discovery_rate"]["a"] == _FUNNEL_A["discovery_rate"]
+
+
+def test_exposure_contrast_surface_contrast_true_same_surface_is_harmless():
+    record_a = _record(exposure_mode="deferred")
+    record_b = _record(exposure_mode="eager")
+
+    result = exposure_contrast(record_a, record_b, surface_contrast=True)
+
+    assert result["surface_identities"] == {
+        "a": {"mcp_tool_surface_hash": "surface-hash-v1", "server_version": "1.0.0"},
+        "b": {"mcp_tool_surface_hash": "surface-hash-v1", "server_version": "1.0.0"},
+    }
+
+
+def test_exposure_contrast_default_surface_contrast_false_omits_echo_on_match():
+    record_a = _record(exposure_mode="deferred")
+    record_b = _record(exposure_mode="eager")
+
+    result = exposure_contrast(record_a, record_b)
+
+    assert "surface_identities" not in result
 
 
 def test_exposure_contrast_rejects_record_with_more_than_one_measured_cell():
