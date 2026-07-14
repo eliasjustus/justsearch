@@ -760,6 +760,33 @@ above)*
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
 
+### F-037: the MCP evidence pack's document universe came from a DEPRECATED sparse-only pre-search while `justsearch_search` ran hybrid — a two-retrievals fork at the pack's first stage; universe fixed, curation-stage disagreement remains open (tempdoc 731, 2026-07-14)
+
+- **Answer:** `RemoteDocumentService.preSearchForDocIds` (the stage that selects the evidence
+  pack's candidate documents for `justsearch_answer`) sent a bare `SearchRequest`, which the
+  worker resolved via the deprecated-mode fallback to sparse-only+expansion, while
+  `justsearch_search` runs the hybrid preset — so a document that hybrid ranks #1 could be
+  structurally absent from the pack's 20-doc universe (observed live: the same verbatim query's
+  search-#1 missing from its pack). Rank order was additionally discarded into a `HashSet`.
+  **Fixed (731 I1):** the pre-search now single-sources the same hybrid `PipelineConfig` the MCP
+  search path builds (`SearchPipelinePresets.expandPreset(SEARCH_MODE_HYBRID, …)`), order
+  preserved end-to-end (`LinkedHashSet` + an order-preserving `RetrieveContextParams`), pinned by
+  a wire-shape regression test.
+- **Post-fix live measurement (honest):** top1-in-pack agreement on the 7 hop-doc probe queries
+  (mixed/en-legal-clerc-1k-verbose) was still **0/7** — the residual disagreement is the
+  **chunk-level curation stage** (chunk fusion selecting different parents within the aligned
+  universe), plus hybrid rank instability across index rebuilds (same corpus, rebuilt index: a
+  doc moved rank 1 → outside top-10). Universe alignment was necessary, not sufficient — the
+  curation half is 731 I6(b)'s pre-registered $0 eval (agreement metric + gold-in-context), open.
+- **Ranking-instability piece (issue 4):** two gratuitous nondeterminism sources fixed
+  (job-claim order tie-break; SQLite RETURNING-order dependence removed); HNSW rebuild variance
+  is inherent; the H4-B hypothesis (low-signal gating threshold amplifying small ANN variance
+  into large rank swings) has a committed instrument
+  (`scripts/jseval/experiments/determinism_instrument_731.py`) and awaits its two-pass live run.
+- **Evidence:** tempdoc 731 (DESIGN 3.1/3.2 with file:line, PLAN); live probes in
+  `scripts/jseval/tmp/725-ab/725-forensics/lease-probes-agreement-p0-p1.v1.json`; commits
+  `b7c2fc2`, `fd2c98e` (branch `worktree-725-response-legibility`).
+
 ### F-036: live chunk-SPLADE revives the sparse leg 4.4× in isolation but is hybrid-NEUTRAL at +108% enrichment cost on legal-clerc-200 → default stays OFF (tempdoc 712, 2026-07-11; the live-tier answer to F-033/Q-017)
 
 - **Answer:** the `rag.chunk_splade.enabled` flag realizes F-033's offline revival on the live
