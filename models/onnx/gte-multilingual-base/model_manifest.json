@@ -1,5 +1,5 @@
 {
-  "cpu": "model_fp16.onnx",
+  "cpu": "model.onnx",
   "gpu": "model_fp16.onnx",
   "tokenizer": "tokenizer.json",
   "pooling_config": "pooling_config.json",
@@ -11,6 +11,6 @@
     "gpu_precision": "fp16",
     "document_prefix": "",
     "query_prefix": "",
-    "_comment": "Alibaba-NLP/gte-multilingual-base. pooling_mode matches this dir's own pooling_config.json ({\"pooling_mode\":\"cls\"}). context_length/embedding_dimension verified against the real HF repo's config.json (max_position_embeddings=8192, hidden_size=768 — tempdoc 710 S-C.R; this repo copy ships no local config.json, so the fact is declared here rather than read locally). precision: only one file variant exists (model_fp16.onnx serves both cpu and gpu roles), so both are fp16 — no separate fp32 CPU build. prefixes match this dir's own prefix_config.json (both empty — gte-multilingual-base uses no task-instruction prefix). Tempdoc 710 Wave 2 Move 1 manifest authoring pass."
+    "_comment": "Alibaba-NLP/gte-multilingual-base. pooling_mode matches this dir's own pooling_config.json ({\"pooling_mode\":\"cls\"}). context_length/embedding_dimension verified against the real HF repo's config.json (max_position_embeddings=8192, hidden_size=768 — tempdoc 710 S-C.R; this repo copy ships no local config.json, so the fact is declared here rather than read locally). precision: an FP32 model.onnx exists alongside model_fp16.onnx — model-registry.v2.json ships model.onnx as this package's FP32/CPU variant (targetEP: CPU) and model_fp16.onnx as the FP16/GPU (CUDA) variant; cpu below is aligned to the shipped CPU selection. prefixes match this dir's own prefix_config.json (both empty — gte-multilingual-base uses no task-instruction prefix). Tempdoc 710 Wave 2 Move 1 manifest authoring pass; CPU-variant correction per model-identity audit."
   }
 }
