@@ -21,12 +21,28 @@
     Sequence driven: initialize -> notifications/initialized ->
     tools/call justsearch_ingest(paths: [<TargetPath>]).
 
-    UNVERIFIED AGAINST A LIVE /mcp AS OF AUTHORING. This was written by
-    reading index.js and mirroring the message sequence already proven to
-    work by the round-3 hand-rolled client, but has not itself been run
-    against a running JustSearch instance -- the next Sandbox round MUST
-    run it live and report back (see the validateHow note in
-    governance/sandbox-coverage.v1.json).
+    STATUS (verified live 2026-07, dev-stack round): the pieces this script
+    depends on were individually live-verified against a running JustSearch
+    instance driving this same shipped bridge over stdio -- initialize and
+    tools/call both answer correctly, and the TYPED_CONFIRM gate fires as
+    designed (tools/call justsearch_ingest with a real array `paths` returns
+    isError:true plus the approval notice). The SCRIPT ITSELF was found hung
+    by a real defect: the server replied to the notifications/initialized
+    notification at all (JSON-RPC 2.0 SS4.1 forbids replying to a
+    Notification, independent of whether the method is recognized), which
+    desynced a spec-correct client's read loop. That server defect is fixed
+    in McpProtocolHandler (see the commit touching
+    modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpProtocolHandler.java
+    for the live evidence), and this script was separately hardened below to
+    match responses by JSON-RPC id (not read-order/count) and to discard,
+    not hang on, any unsolicited or id-null frame -- so it no longer relies
+    on the server behaving perfectly to avoid hanging. That said, THIS
+    HARDENING PASS DID NOT ITSELF RE-RUN THE SCRIPT END-TO-END against a
+    live dev stack (no dev stack was started for this pass) -- the next
+    Sandbox round that runs it live should still report back and update
+    this status (see the validateHow note in
+    governance/sandbox-coverage.v1.json). Do not read this docstring as a
+    claim that the full sequence has been re-verified post-hardening.
 
 .PARAMETER TargetPath
     Absolute path to ingest via justsearch_ingest (e.g. the mapped SciFact
@@ -81,10 +97,17 @@ function Send-Message {
 }
 
 function Read-ResponseForId {
+    # Matches strictly by JSON-RPC `id` -- never by read-order/count. A frame with no "id"
+    # member, an explicit "id":null, or an id belonging to some OTHER pending request is not
+    # the answer to THIS request: it must be discarded (with a warning), not consumed as if it
+    # were. This is what makes the script robust regardless of server behaviour -- e.g. a server
+    # that (incorrectly) replies to a notification with an id:null error frame no longer hangs or
+    # confuses this reader, it just gets logged and skipped.
     param(
         [Parameter(Mandatory = $true)]$Id,
         [int]$Seconds = $TimeoutSeconds
     )
+    $seenFrames = New-Object System.Collections.Generic.List[string]
     $deadline = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $deadline) {
         if ($proc.HasExited -and $proc.StandardOutput.EndOfStream) {
@@ -94,19 +117,28 @@ function Read-ResponseForId {
             $line = $proc.StandardOutput.ReadLine()
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             Write-Log "<<< $line"
+            $seenFrames.Add($line)
             try {
                 $msg = $line | ConvertFrom-Json -ErrorAction Stop
             }
             catch {
+                Write-Log "[WARN] non-JSON frame on bridge stdout, discarding: $line"
                 continue
             }
             if ($null -ne $msg.id -and $msg.id -eq $Id) { return $msg }
+            Write-Log "[WARN] discarding unsolicited/unmatched frame (id=$($msg.id), expected id=$Id)"
         }
         else {
             Start-Sleep -Milliseconds 100
         }
     }
-    throw "Timed out after ${Seconds}s waiting for response id=$Id"
+    $frameDump = if ($seenFrames.Count -gt 0) {
+        ($seenFrames | ForEach-Object { "    $_" }) -join "`n"
+    }
+    else {
+        "    (no frames received)"
+    }
+    throw "Timed out after ${Seconds}s waiting for response id=$Id. Frames seen while waiting:`n$frameDump"
 }
 
 try {
