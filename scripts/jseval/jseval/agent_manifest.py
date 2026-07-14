@@ -106,6 +106,10 @@ def build_agent_manifest(
     timestamp: str | None = None,
     source_git_sha: str | None = None,
     source_git_dirty: bool | None = None,
+    exposure_config: dict | None = None,
+    mcp_initialize_identity: dict | None = None,
+    exposure_mode: str | None = None,
+    instructions_sha256: str | None = None,
 ) -> dict:
     """Build one agent-run manifest (a single corpus x model x condition x seed cell).
 
@@ -113,6 +117,13 @@ def build_agent_manifest(
     excluded from ``agent_cohort_key`` by construction — they are not in the
     hashed field set. All other fields are identity-stable across re-runs of the
     same cell.
+
+    ``exposure_config``/``mcp_initialize_identity`` (tempdoc 725 increment 2) are
+    the full recorded cohort blocks; ``exposure_mode``/``instructions_sha256`` are
+    the flattened scalars actually folded into ``agent_cohort_key`` (see below) --
+    mirrors how ``mcp_tool_surface`` is recorded in full but only
+    ``mcp_tool_surface_hash`` is hashed. Defaulting both to ``None`` keeps every
+    existing caller (which never captured exposure identity) byte-compatible.
     """
     manifest = {
         # volatile — identifies this specific run, never part of cohort identity
@@ -127,6 +138,10 @@ def build_agent_manifest(
         "prompt_template_hash": _sha256_canonical(prompt_template),
         "decoding": decoding or {"temperature": 0, "max_tokens": None},
         "eval_limits": eval_limits or {},
+        "exposure_config": exposure_config,
+        "mcp_initialize_identity": mcp_initialize_identity,
+        "exposure_mode": exposure_mode,
+        "instructions_sha256": instructions_sha256,
         # range / co-varying axes (recorded, excluded from cohort key)
         "corpus": corpus,
         "agent_model": agent_model,
@@ -165,6 +180,20 @@ def agent_cohort_key(manifest: dict) -> str:
         "source_git_state": manifest.get("source_git_state"),
         "environment": manifest.get("environment"),
     }
+    # tempdoc 725 increment 2: how the MCP tool surface was exposed (eager vs.
+    # deferred vs. unknown) and the server's own init identity mediate whether the
+    # agent could adopt the tool at all -- harness identity, like the tool surface
+    # hash above, not a per-cell curiosity. EXCLUDED (not added as `None`) when a
+    # manifest never captured exposure identity (pre-725 evidence): this is what
+    # keeps agent_cohort_key -- and therefore semantic_digest -- byte-identical
+    # for pre-contract evidence (adding the keys with a `null` value would still
+    # change the hashed JSON even though the identity is "the same nothing").
+    # Once captured, a config/instructions change correctly splits the cohort
+    # (R1/R2 test: cohort key DIFFERS on exposure change).
+    if manifest.get("exposure_mode") is not None:
+        key_surface["exposure_mode"] = manifest.get("exposure_mode")
+    if manifest.get("instructions_sha256") is not None:
+        key_surface["instructions_sha256"] = manifest.get("instructions_sha256")
     return _sha256_canonical(key_surface)
 
 

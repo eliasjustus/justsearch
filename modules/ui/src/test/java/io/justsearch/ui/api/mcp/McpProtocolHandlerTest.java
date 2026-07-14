@@ -208,6 +208,52 @@ class McpProtocolHandlerTest {
     Map<String, Object> searchProps =
         (Map<String, Object>) searchInputSchema.get("properties");
     assertTrue(searchProps.containsKey("detail"), "search tool advertises the detail arg");
+
+    // Tempdoc 725: tools/list must serialize with a byte-stable key order across JVM restarts —
+    // the MCP draft spec SHOULDs deterministic ordering for client-side cache hits. Jackson
+    // deserializes JSON objects into LinkedHashMap, so the parsed key order here mirrors exactly
+    // what was serialized; asserting it matches the documented source-literal order catches a
+    // regression back to JDK Map.of (whose 2+-entry iteration order is salted per JVM run and
+    // would only reveal itself as flakiness across separate process launches, not within one
+    // test run).
+    assertEquals(
+        List.of("query", "limit", "mode", "filters", "detail"),
+        List.copyOf(searchProps.keySet()),
+        "search inputSchema properties must serialize in declared source order");
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> searchFilters = (Map<String, Object>) searchProps.get("filters");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> searchFilterProps = (Map<String, Object>) searchFilters.get("properties");
+    assertEquals(
+        List.of(
+            "path_prefix",
+            "meta_source",
+            "meta_author",
+            "meta_category",
+            "entity_persons",
+            "entity_organizations",
+            "entity_locations"),
+        List.copyOf(searchFilterProps.keySet()),
+        "filters schema properties must serialize in declared source order");
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> browseInputSchema =
+        (Map<String, Object>) tools.get(2).get("inputSchema");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> browseProps = (Map<String, Object>) browseInputSchema.get("properties");
+    assertEquals(
+        List.of("parent_path", "list_files"),
+        List.copyOf(browseProps.keySet()),
+        "browse inputSchema properties must serialize in declared source order");
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> ingestAnnotations =
+        (Map<String, Object>) tools.get(3).get("annotations");
+    assertEquals(
+        List.of("readOnlyHint", "idempotentHint"),
+        List.copyOf(ingestAnnotations.keySet()),
+        "ingest tool annotations must serialize in declared source order");
   }
 
   @Test

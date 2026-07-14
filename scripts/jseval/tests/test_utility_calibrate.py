@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from jseval.utility_calibrate import (
+    McpConfigInvalidAlwaysLoadError,
     McpConfigMissingTypeError,
     StrayWatchedRootError,
     _normalize_root_path,
@@ -277,6 +278,68 @@ class TestAssertMcpConfigHttpTyped:
             '"justsearch":{"url":"http://127.0.0.1:56300/mcp"}}}',
             encoding="utf-8")
         with pytest.raises(McpConfigMissingTypeError, match="justsearch"):
+            assert_mcp_config_http_typed(str(cfg))
+
+
+# --- assert_mcp_config_http_typed: alwaysLoad must be a JSON boolean if present
+# (tempdoc 725 increment 4 -- a non-bool silently mismeasures the eager/deferred
+# exposure arm downstream in `_derive_exposure_mode`'s `always_load is True` check) ---
+
+
+class TestAssertMcpConfigAlwaysLoadValidation:
+    def test_accepts_true(self, tmp_path):
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text(
+            '{"mcpServers":{"justsearch":{"type":"http","url":"http://x/mcp","alwaysLoad":true}}}',
+            encoding="utf-8")
+        assert_mcp_config_http_typed(str(cfg))  # must not raise
+
+    def test_accepts_false(self, tmp_path):
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text(
+            '{"mcpServers":{"justsearch":{"type":"http","url":"http://x/mcp","alwaysLoad":false}}}',
+            encoding="utf-8")
+        assert_mcp_config_http_typed(str(cfg))  # must not raise
+
+    def test_accepts_absent(self, tmp_path):
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text(
+            '{"mcpServers":{"justsearch":{"type":"http","url":"http://x/mcp"}}}',
+            encoding="utf-8")
+        assert_mcp_config_http_typed(str(cfg))  # must not raise
+
+    def test_rejects_string_true(self, tmp_path):
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text(
+            '{"mcpServers":{"justsearch":{"type":"http","url":"http://x/mcp","alwaysLoad":"true"}}}',
+            encoding="utf-8")
+        with pytest.raises(McpConfigInvalidAlwaysLoadError, match="justsearch") as exc_info:
+            assert_mcp_config_http_typed(str(cfg))
+        assert "alwaysLoad" in str(exc_info.value)
+
+    def test_rejects_int(self, tmp_path):
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text(
+            '{"mcpServers":{"justsearch":{"type":"http","url":"http://x/mcp","alwaysLoad":1}}}',
+            encoding="utf-8")
+        with pytest.raises(McpConfigInvalidAlwaysLoadError):
+            assert_mcp_config_http_typed(str(cfg))
+
+    def test_rejects_null(self, tmp_path):
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text(
+            '{"mcpServers":{"justsearch":{"type":"http","url":"http://x/mcp","alwaysLoad":null}}}',
+            encoding="utf-8")
+        with pytest.raises(McpConfigInvalidAlwaysLoadError):
+            assert_mcp_config_http_typed(str(cfg))
+
+    def test_rejects_naming_the_offending_server(self, tmp_path):
+        cfg = tmp_path / "mcp.json"
+        cfg.write_text(
+            '{"mcpServers":{"other":{"type":"http","url":"http://x/mcp","alwaysLoad":true},'
+            '"justsearch":{"type":"http","url":"http://y/mcp","alwaysLoad":"yes"}}}',
+            encoding="utf-8")
+        with pytest.raises(McpConfigInvalidAlwaysLoadError, match="justsearch"):
             assert_mcp_config_http_typed(str(cfg))
 
 

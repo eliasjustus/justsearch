@@ -1,7 +1,7 @@
 ---
 title: "Agent tool-adoption legibility: diagnose why agents offered the JustSearch MCP surface rarely invoke it, and raise correct adoption as far as the product surface allows"
 type: tempdocs
-status: "open — takeover (GO, rescoped), targeted research, and settled design complete (2026-07-14); implementation not started. Design: adoption-funnel program (visible→discovered→invoked→reinforced) with exposure-mode identity capture (624), deferral ground-truth probe first, then an eager-vs-deferred alwaysLoad A/B before any text lever ships; ownership of the adoption lever transfers here from 655 at first implementation change."
+status: "open — level 1 (autonomous) IMPLEMENTED and verified 2026-07-14 (see §Level-1 implementation): exposure-mode + initialize identity capture, funnel fields/metrics, A/B config wiring, 655→725 transfer recorded, evidence-contract repair, byte-stable tools/list, opus refute-first review (one MAJOR redaction hole found and closed). Recompose digest deliberately moved to 2f555f66…a100 (policy_hash only; proof in §Semantic-digest transition). Level 2 stays owner-gated: A/B smoke spend + thresholds, 707 materialization, lever shipping per pre-registered rules."
 created: 2026-07-14
 author: agent (Fable, session 9d3c1869) — filed at founder direction after the 719 publish, which surfaced the adoption gap as the program's most under-weighted finding
 category: product / mcp-surface / agent-adoption / eval-supporting
@@ -590,3 +590,111 @@ pre-registration + instructions-v2 wording** (correctness-sensitive, cross-tempd
 edits); **Sonnet (medium-high effort) for the bounded increments** — probe-script productization,
 evidence-field additions + tests, A/B config wiring, 655 transfer edit, docs — under the lead's
 review. Full-campaign execution stays owner-gated regardless.
+
+---
+
+# Level-1 implementation (2026-07-14; complete)
+
+All level-1 increments from the approved plan are implemented and verified on
+`worktree-adoption-legibility`. Orchestration: seven scoped sonnet implementers/auditors + one
+opus refute-first reviewer; briefs, contract decisions, evidence judgment, and commits stayed in
+the main loop. No campaign was run; no lever text shipped; public surfaces carry no new claims.
+
+## What landed (per increment, with evidence)
+
+- **0 — evidence contract repaired.** Root cause was sharper than the derisk flag: FIVE
+  late-added `source.*` fields (incl. `source_git_state`) were schema-required but absent from
+  the pre-contract fixture, and the schema was never enforced against evidence rows in CI.
+  Fix: required-ness relaxed to properties-only for late-added fields (types still checked;
+  `additionalProperties:false` and `read_evidence` unknown-key rejection untouched), plus a
+  parametrized test validating all 48 committed fixture rows. This set the pattern all new
+  fields follow: schema-optional, sanitizer always-emits, claim-grade strictness lives in the
+  policy gate.
+- **1 — 655 → 725 transfer recorded** in 655's STATUS SUMMARY (+ pointer at its "Next lever"
+  section) and 624's fold; headless-approval note added to
+  `docs/reference/mcp-production-server.md` (increment 6 rode along; llms.txt/links/markdownlint
+  green).
+- **2 — exposure + initialize identity.** New cohort blocks `exposure_config`
+  ({enable_tool_search, always_load, exposure_mode} — config-derived only) and
+  `mcp_initialize_identity` ({instructions + sha256, server_version, protocol_version}, captured
+  via a JSON-RPC `initialize` call beside the existing `tools/list` capture).
+  `mcp_tools_deferred` relabeled as protocol echo (orphan closed). Identity joins per the
+  settled contract: cohort key + compose mix-guard + ITT stratum key — NOT `pairing_key`
+  (search-config precedent; pinned tests extended, none weakened). Claim policy:
+  `source_identity_complete` extended; new `verified_exposure_mode` requirement + gate; policy
+  file remains draft and still rejects `policy_unresolved`.
+- **3 — funnel fields + metrics.** New per-cell `toolsearch_targets` (strict tool-name grammar)
+  and `tool_call_sequence` ([{name,status}] over ALL attempts, ordered — `tool_call_names`
+  untouched for existing consumers). Funnel block beside `adoption`: `discovery_rate`,
+  `post_discovery_invocation_rate`, `first_discovery_turn`, `reinforced_proxy_rate`, strict
+  `reinforced_rate`. Old evidence: metrics null + `funnel_fields_absent: true`, never silent 0
+  (fixture-asserted). Producer-shaped synthetic campaign reproduces the pilot funnel
+  14→2→1→1 as a regression test.
+- **4 — A/B wiring (config only).** `--agent-env KEY=VALUE` on `utility-run` threads
+  `env=` into `ClaudeAgentOptions` (SDK merge semantics verified against installed source:
+  `options.env` wins); recorded exposure reflects the child session's effective config;
+  `alwaysLoad` validated (boolean, fail-closed) in the existing calibration assert; new pure
+  `exposure_contrast.py` (descriptive per-metric {a,b,delta}; hard ValueError on mismatched
+  non-exposure identity; no verdict field — that boundary is level-2/owner). Command inventory
+  unchanged at 84.
+- **5 — audits.** `tools/list` tool ORDER was already deterministic; the nested
+  `inputSchema.properties` used JVM-salted `Map.of` → converted to insertion-ordered maps
+  (idiom-matching helper), order assertions added; spotless + module tests + build green. Our
+  own `mcp_tool_surface_hash` was never affected (canonical sorted-key hashing) — the fix is for
+  external byte-fingerprinting/prompt-cache stability. Residual noted: `resource()`'s `Map.of`
+  feeds `resources/list` (outside scope, trivial follow-up). The L4 error-legibility audit
+  produced a ranked 8-item GAP backlog (below).
+
+## Semantic-digest transition (deliberate, proven)
+
+The rejected-fixture recompose digest moved
+`2cea990ce444…c076ee6` → `2f555f661a91…4a100`. Independent structural diff of old-vs-new
+records: the ONLY non-volatile delta is `claim_verdict.policy_hash`, because adding
+`verified_exposure_mode` to the checked-in draft policy is inseparable from a policy-content
+change (the policy schema is exhaustively-required by design and the three-way sync test pins
+it). Arithmetic, loss, exclusions, identity, gates, reasons: byte-identical. The bare-recompose
+digest was always a function of the current draft policy and will legitimately move again when
+the owner resolves thresholds; publication replay is immune (bundles pin their policy bytes —
+`test_replay_uses_bundled_policy_not_changed_default`). Historical digest citations in tempdoc
+719 and this file's earlier sections remain true for their dates.
+
+## Refute-first review (opus, reviewer ≠ implementers)
+
+Attacked: conditional-exclusion asymmetries (absent/unknown/eager/deferred are four distinct
+identities; every forged mixed-exposure combination trips the mix-guard), legacy invariance,
+sanitizer leak surface, pinned-test integrity (zero weakened assertions across all modified test
+files), exposure-derivation edge cases (15 parametrized), SDK env merge order, Java content
+preservation, schema coherence. **One MAJOR confirmed and fixed:** `toolsearch_targets` captured
+same-comma-segment free text verbatim (prompt-injection-shaped `select:` input could leak
+paths/emails into durable evidence) — closed with a fullmatch tool-name grammar in both producer
+and schema pattern, with the reviewer's adversarial case as a permanent regression test.
+
+## Pre-registered L4 backlog (from the error-legibility audit; evidence-gated, NOT shipped)
+
+Ranked; each item cites its site in `McpToolSurface.java`/`IngestTool.java`:
+1. Generic exception fallbacks leak raw `e.getMessage()` with no classification/next action
+   (5 dispatch paths) — the most probable mechanism behind the pilot adopter's 2 errored search
+   calls before abandonment (a zero-hit search returns SUCCESS with a helpful hint, so the
+   errored calls were not the no-results path).
+2. "Knowledge server not available" (answer/search/status) has no transient-vs-permanent or
+   retry guidance. 3. Silent search-preview truncation (…substring(0,200), no notice).
+4. "No readable files found" doesn't distinguish causes or point at `justsearch_browse`.
+5. Many-results hint suppressed once any filter is applied. 6. Answer context-truncation note
+   has no action. 7. Unknown-tool-no-suggestion is bare. 8. Unresolved-operation/manifest bare
+   errors (likely unreachable).
+Positive findings recorded: zero-results paths are already exemplary (success + concrete next
+action); the gated-approval responses are best-in-class ("do not retry" + async flow).
+
+## Verification (final tree)
+
+Full jseval suite green except the 2 known pre-existing `test_correction_probe` failures;
+`check-public-agent-utility` OK (no accepted result; all three projections in-sync — README and
+RESEARCH.md untouched by this branch); inventory 84 in-sync; llms.txt/canonical-links green;
+`gradlew build -x test` BUILD SUCCESSFUL (exit 0); recompose digest `2f555f66…a100` reproduced
+across three independent agents + the main loop; `git diff --check` clean.
+
+## Remaining (level 2 — unchanged owner gates)
+
+Exposure A/B smoke (spend + thresholds with 624), 707 CLERC fetch/materialization, lever
+shipping (L1 `alwaysLoad` recommendation, L2 instructions v2, L3 matchability, L4 backlog) per
+the pre-registered decision rules, and the 2026-07-28 MCP spec migration (parked with 500/655).

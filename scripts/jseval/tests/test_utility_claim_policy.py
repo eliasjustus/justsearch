@@ -45,6 +45,13 @@ def _record() -> dict:
             "query_identity": {"sha256": "b" * 64, "row_count": 20},
             "campaign_identity": {"expected_cells": expected_cells},
             "judge": {"kind": "substring-em"},
+            "exposure_config": {
+                "enable_tool_search": "true", "always_load": False, "exposure_mode": "deferred",
+            },
+            "mcp_initialize_identity": {
+                "instructions": "search the corpus", "instructions_sha256": "d" * 64,
+                "server_version": "1.0.0", "protocol_version": "2025-06-18",
+            },
         },
         "comparability": {
             "comparable": True,
@@ -64,6 +71,9 @@ def _record() -> dict:
                 "cells_with_leak_suspect": 0,
                 "observed_mcp_tool_surface_hashes": ["f" * 64],
                 "observed_mcp_tool_surface_consistent": True,
+                "cells_with_exposure_mode_verified": 100,
+                "observed_exposure_modes": ["deferred"],
+                "observed_exposure_mode_consistent": True,
             }
         },
         "statistical_alpha": 0.05,
@@ -160,6 +170,7 @@ def _sync_tool_assertion_counts(record: dict) -> None:
     assertions = record["tool_call_assertions"]["B"]
     assertions["cells_total"] = total
     assertions["cells_with_mcp_surface_verified"] = total
+    assertions["cells_with_exposure_mode_verified"] = total
 
 
 def test_checked_in_policy_validates_and_is_deliberately_unresolved():
@@ -531,3 +542,79 @@ def test_supported_requirements_match_schema_properties_exactly():
     requirements_schema = schema["properties"]["requirements"]
     assert SUPPORTED_REQUIREMENTS == set(requirements_schema["properties"])
     assert SUPPORTED_REQUIREMENTS == set(requirements_schema["required"])
+
+
+# --- verified_exposure_mode (tempdoc 725 increment 2) -----------------------
+#
+# `_record()`'s cohort already carries a consistent, real exposure_config /
+# mcp_initialize_identity + a matching tool_call_assertions["B"] exposure
+# rollup, so the settled-active-policy test above already proves the HAPPY
+# path (gate passes, record accepted). These tests exercise the two OTHER
+# cases: the gate is entirely ABSENT when the record never captured exposure
+# identity at all (byte-identical to pre-725 evidence, no digest footprint),
+# and it correctly REJECTS when exposure identity was captured but disagrees.
+
+def test_verified_exposure_mode_gate_absent_when_no_exposure_identity_captured():
+    """Evidence that never captured exposure identity (pre-tempdoc-725) must
+    not even carry a `verified_exposure_mode` gate entry -- omission, not a
+    failing gate, is what keeps old records byte-identical (tempdoc 725
+    increment 2 digest-preservation requirement)."""
+    record = _record()
+    del record["cohort"]["exposure_config"]
+    del record["cohort"]["mcp_initialize_identity"]
+    del record["tool_call_assertions"]["B"]["cells_with_exposure_mode_verified"]
+    del record["tool_call_assertions"]["B"]["observed_exposure_modes"]
+    del record["tool_call_assertions"]["B"]["observed_exposure_mode_consistent"]
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    gate_names = {item["name"] for item in verdict["gates"]}
+    assert "verified_exposure_mode" not in gate_names
+    # source_identity_complete legitimately fails on its OWN account (tempdoc
+    # 725 increment 2 also requires exposure identity there) -- but the
+    # verified_exposure_mode gate itself must never appear when there is
+    # nothing for it to check.
+    assert "source_identity_complete" in verdict["reasons"]
+    assert "verified_exposure_mode" not in verdict["reasons"]
+
+
+def test_verified_exposure_mode_gate_fails_on_mismatched_declared_and_observed():
+    record = _record()
+    # Declared cohort value says "deferred"; the tool_call_assertions rollup
+    # observed a different (or inconsistent) value -- a mix of two
+    # differently-configured campaigns' evidence, the case this gate exists
+    # to catch (same failure mode as verified_tool_surface's hash mismatch).
+    record["tool_call_assertions"]["B"]["observed_exposure_modes"] = ["eager"]
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    gate = next(item for item in verdict["gates"] if item["name"] == "verified_exposure_mode")
+    assert gate["passed"] is False
+    assert verdict["accepted"] is False
+    assert "verified_exposure_mode" in verdict["reasons"]
+
+
+def test_verified_exposure_mode_gate_fails_when_not_every_cell_verified():
+    record = _record()
+    record["tool_call_assertions"]["B"]["cells_with_exposure_mode_verified"] = 99  # < cells_total
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    gate = next(item for item in verdict["gates"] if item["name"] == "verified_exposure_mode")
+    assert gate["passed"] is False
+    assert verdict["accepted"] is False
+
+
+def test_source_identity_complete_requires_well_formed_mcp_initialize_identity():
+    """tempdoc 725 increment 2: source_identity_complete additionally requires
+    exposure_config.exposure_mode resolved past "unknown" AND a well-formed
+    mcp_initialize_identity (non-null instructions_sha256 + server_version)."""
+    missing_server_version = _record()
+    missing_server_version["cohort"]["mcp_initialize_identity"]["server_version"] = None
+    verdict = evaluate_claim(missing_server_version, _active_policy(missing_server_version))
+    assert "source_identity_complete" in verdict["reasons"]
+
+    unknown_exposure_mode = _record()
+    unknown_exposure_mode["cohort"]["exposure_config"]["exposure_mode"] = "unknown"
+    verdict = evaluate_claim(unknown_exposure_mode, _active_policy(unknown_exposure_mode))
+    assert "source_identity_complete" in verdict["reasons"]

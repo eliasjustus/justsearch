@@ -57,6 +57,14 @@ def _observation(condition="A", *, excluded=False, qid="q0") -> dict:
                     "top_processes": [{"name": "secret.exe", "pid": 123}],
                     "power_plan": "private plan",
                 },
+                "exposure_config": {
+                    "enable_tool_search": "true", "always_load": False,
+                    "exposure_mode": "deferred",
+                },
+                "mcp_initialize_identity": {
+                    "instructions": "search the corpus", "instructions_sha256": "d" * 64,
+                    "server_version": "1.0.0", "protocol_version": "2025-06-18",
+                },
             },
         },
         "condition": condition,
@@ -84,6 +92,11 @@ def _observation(condition="A", *, excluded=False, qid="q0") -> dict:
         "observed_mcp_tool_surface_hash": _SURFACE_HASH,
         "mcp_surface_unverified": False,
         "mcp_tools_deferred": False,
+        "toolsearch_targets": ["mcp__justsearch__search"],
+        "tool_call_sequence": [
+            {"name": "ToolSearch", "status": "ok"},
+            {"name": "mcp__justsearch__search", "status": "ok"},
+        ],
         "completion": "third-party copyrighted text",
         "credential": "do-not-export",
     }
@@ -117,6 +130,63 @@ def test_gate_relevant_negative_fields_change_sanitized_bytes():
     leaked = _observation(excluded=False)
     leaked["leak_suspect"] = True
     assert sanitize_observation(leaked) != baseline
+
+    # tempdoc 725 increment 3: the funnel/adoption-audit fields are gate-relevant
+    # too -- a status flip or a discovered-vs-not toggle must change sanitized
+    # bytes, never silently disappear into an unchanged digest.
+    different_targets = _observation(excluded=False)
+    different_targets["toolsearch_targets"] = []
+    assert sanitize_observation(different_targets) != baseline
+
+    different_sequence = _observation(excluded=False)
+    different_sequence["tool_call_sequence"] = [
+        {"name": "ToolSearch", "status": "blocked"},
+        {"name": "mcp__justsearch__search", "status": "blocked"},
+    ]
+    assert sanitize_observation(different_sequence) != baseline
+
+
+def test_toolsearch_targets_free_text_query_cannot_survive_to_the_observation_boundary():
+    """tempdoc 725 increment 3 redaction contract: `toolsearch_targets` carries
+    ONLY resolved `mcp__justsearch__*` tool names, never a ToolSearch call's
+    raw free-text query string -- proven two ways: the sanitizer preserves
+    whatever the producer already resolved (never re-derives from raw text,
+    so it cannot accidentally admit any), and the schema's pattern constraint
+    fails closed if a future producer bug ever let free text through anyway."""
+    baseline = sanitize_observation(_observation())
+    changed = _observation()
+    # A DIFFERENT ToolSearch free-text query would have produced this exact same
+    # resolved toolsearch_targets/tool_call_sequence (the producer already
+    # collapsed it to names+status before this observation existed) -- so
+    # sanitize_observation must be indifferent to it, proving no raw query text
+    # is threaded through anywhere in this boundary.
+    changed["toolsearch_targets"] = list(baseline["toolsearch_targets"])
+    changed["tool_call_sequence"] = [dict(item) for item in baseline["tool_call_sequence"]]
+    assert sanitize_observation(changed) == baseline
+
+    jsonschema = pytest.importorskip("jsonschema")
+    schema_path = Path(__file__).parents[1] / "agent-utility-observation.v1.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    tampered = sanitize_observation(_observation())
+    tampered["toolsearch_targets"] = ["notification jira slack search tools"]
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(tampered, schema)
+
+
+def test_toolsearch_targets_schema_rejects_trailing_free_text_target():
+    """tempdoc 725 review finding #1: the schema's `toolsearch_targets` item
+    pattern must be full-grammar-anchored (`^mcp__justsearch__[A-Za-z0-9_]+$`),
+    not merely start-anchored -- a value carrying a well-formed name PLUS a
+    trailing space and extra token (the shape a prefix-only producer bug would
+    have emitted) must fail validation, not pass because the string merely
+    starts with `mcp__justsearch`."""
+    jsonschema = pytest.importorskip("jsonschema")
+    schema_path = Path(__file__).parents[1] / "agent-utility-observation.v1.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    tampered = sanitize_observation(_observation())
+    tampered["toolsearch_targets"] = ["mcp__justsearch__search /etc/passwd bob@evil.com"]
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(tampered, schema)
 
 
 def test_schema_is_strict_at_observation_boundary():
@@ -238,6 +308,38 @@ def test_observation_keys_match_schema_properties_exactly():
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     assert _OBSERVATION_KEYS == set(schema["properties"])
     assert _SOURCE_KEYS == set(schema["properties"]["source"]["properties"])
+
+
+def _load_rejected_2026_07_12_fixture_rows() -> list[dict]:
+    path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "agent-utility-rejected-2026-07-12"
+        / "observations.v1.jsonl"
+    )
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+@pytest.mark.parametrize(
+    "row",
+    _load_rejected_2026_07_12_fixture_rows(),
+    ids=[f"row{i}" for i in range(len(_load_rejected_2026_07_12_fixture_rows()))],
+)
+def test_committed_fixture_rows_validate_against_schema(row):
+    # Regression guard: every row of the immutable committed evidence fixture
+    # must validate against agent-utility-observation.v1.schema.json. This
+    # caught a real drift once (schema required source.source_git_state,
+    # source.mcp_tool_surface, source.corpus_certification, source.query_identity,
+    # and source.campaign_identity, but the fixture — captured before those
+    # fields existed — omits all five; see the schema's $comment on "source").
+    jsonschema = pytest.importorskip("jsonschema")
+    schema_path = Path(__file__).parents[1] / "agent-utility-observation.v1.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    jsonschema.validate(row, schema)
 
 
 def test_source_complete_evidence_digest_is_checkout_independent(tmp_path, monkeypatch):

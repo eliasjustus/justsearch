@@ -192,7 +192,7 @@ public final class McpToolSurface {
                 "justsearch_browse",
                 BROWSE_DESC,
                 schema(
-                    Map.of(
+                    orderedMap(
                         "parent_path",
                             prop("string", "Folder path to browse (empty for top-level roots)"),
                         "list_files",
@@ -205,15 +205,9 @@ public final class McpToolSurface {
                 schema(
                     Map.of(
                         "paths",
-                            Map.of(
-                                "type",
-                                "array",
-                                "items",
-                                Map.of("type", "string"),
-                                "description",
-                                "Absolute file or folder paths to index")),
+                        propStringArray("Absolute file or folder paths to index")),
                     List.of("paths")),
-                Map.of("readOnlyHint", false, "idempotentHint", true)),
+                orderedMap("readOnlyHint", false, "idempotentHint", true)),
             tool("justsearch_status", STATUS_DESC, STATUS_SCHEMA, Map.of("readOnlyHint", true)),
             tool(
                 "justsearch_runtime_manifest",
@@ -241,7 +235,7 @@ public final class McpToolSurface {
   private static Map<String, Object> buildFiltersSchema() {
     var s =
         schema(
-            Map.of(
+            orderedMap(
                 "path_prefix", prop("string", "Restrict results to paths under this prefix"),
                 "meta_source", propStringArray("Filter by source"),
                 "meta_author", propStringArray("Filter by author"),
@@ -260,7 +254,7 @@ public final class McpToolSurface {
 
   private static final Map<String, Object> ANSWER_SCHEMA =
       schema(
-          Map.of(
+          orderedMap(
               "query", prop("string", "The question to answer"),
               "top_k", prop("integer", "Number of passages to retrieve (default 5, max 20)"),
               "filters", FILTERS_SCHEMA),
@@ -268,7 +262,7 @@ public final class McpToolSurface {
 
   private static final Map<String, Object> SEARCH_SCHEMA =
       schema(
-          Map.of(
+          orderedMap(
               "query", prop("string", "Search text"),
               "limit", prop("integer", "Max results (default 10, max 50)"),
               "mode", prop("string", "Search mode: hybrid (default), text, or vector"),
@@ -1180,13 +1174,30 @@ public final class McpToolSurface {
     return s;
   }
 
+  /**
+   * Tempdoc 725: alternating key/value builder for the {@code inputSchema} property maps and
+   * annotation maps that end up in the {@code tools/list} response. {@link Map#of} for 2+ entries
+   * iterates in a per-JVM-salted order (JDK {@code ImmutableCollections.MapN}), so the exact same
+   * literal can serialize its keys in a different order across server restarts — harmless for a
+   * client that reads by key, but it breaks byte-identical {@code tools/list} responses, which the
+   * MCP draft spec SHOULDs for client-side cache hits. {@link LinkedHashMap} fixes iteration to
+   * insertion (i.e. source-literal) order instead.
+   */
+  private static Map<String, Object> orderedMap(Object... keysAndValues) {
+    var m = new LinkedHashMap<String, Object>();
+    for (int i = 0; i < keysAndValues.length; i += 2) {
+      m.put((String) keysAndValues[i], keysAndValues[i + 1]);
+    }
+    return m;
+  }
+
   private static Map<String, Object> prop(String type, String description) {
-    return Map.of("type", type, "description", description);
+    return orderedMap("type", type, "description", description);
   }
 
   /** Tempdoc 655 fix pass: a declared array-of-string property (mirrors `paths` on ingest). */
   private static Map<String, Object> propStringArray(String description) {
-    return Map.of(
+    return orderedMap(
         "type", "array", "items", Map.of("type", "string"), "description", description);
   }
 

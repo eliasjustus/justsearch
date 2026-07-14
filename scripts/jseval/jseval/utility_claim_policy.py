@@ -11,7 +11,7 @@ _HEX = frozenset("0123456789abcdef")
 SUPPORTED_REQUIREMENTS = frozenset({
     "source_identity_complete", "clean_source_checkout",
     "computed_corpus_signature", "corpus_certification", "resolved_provider_model",
-    "captured_search_config", "verified_tool_surface",
+    "captured_search_config", "verified_tool_surface", "verified_exposure_mode",
     "no_leak_suspect_cells", "contamination_classes",
     "judge_calibration", "accuracy_delta_interval",
     "intention_to_treat", "per_protocol_is_secondary",
@@ -302,6 +302,14 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
         and (cohort.get("source_git_state") or {}).get("dirty") is False
         and _is_sha256(cohort.get("mcp_tool_surface_hash"))
         and environment_complete
+        # tempdoc 725 increment 2: exposure-mode + MCP-server-identity capture is
+        # part of source identity now -- a record whose exposure mode never
+        # resolved past "unknown" (or wasn't captured at all) is not a
+        # source-identity-complete record, same bar as the git/environment checks
+        # above.
+        and (cohort.get("exposure_config") or {}).get("exposure_mode") in ("eager", "deferred")
+        and bool((cohort.get("mcp_initialize_identity") or {}).get("instructions_sha256"))
+        and bool((cohort.get("mcp_initialize_identity") or {}).get("server_version"))
     )
     gate("source_identity_complete", identity_complete, True, identity_complete)
     certifications = [cell.get("corpus_certification") or {} for cell in cells]
@@ -369,6 +377,40 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
         == (with_tool_assertions.get("observed_mcp_tool_surface_hashes") or [None])[0]
     )
     gate("verified_tool_surface", verified_surface, True, verified_surface)
+
+    # tempdoc 725 increment 2: only add this gate when the record actually
+    # captured exposure identity somewhere (`cohort.exposure_config` is present
+    # -- itself conditionally excluded, never emitted as a bare `null`, for
+    # evidence that never captured it). Evidence composed entirely from
+    # pre-725 observations must project to a BYTE-IDENTICAL record to before
+    # this gate existed -- appending a gate that could only ever read as
+    # "not applicable" would silently change every historical record's
+    # claim_verdict shape and semantic_digest for no signal gained (there is
+    # nothing to verify when nothing was captured). Once ANY exposure identity
+    # is present, the gate always fires -- same as verified_tool_surface -- and
+    # legitimately fails on genuinely incomplete/inconsistent 725-era evidence.
+    if cohort.get("exposure_config") is not None:
+        declared_exposure_mode = (cohort.get("exposure_config") or {}).get("exposure_mode")
+        # Same shape as verified_tool_surface above: every with-tool attempted
+        # cell must carry the SAME exposure_mode, and it must match the
+        # cohort's declared value. exposure_mode is a cohort-level constant
+        # (derived from config, never a per-cell SDK signal), so this is
+        # primarily a mix-detection check -- it catches evidence assembled
+        # from two differently-configured campaigns, not per-cell variance
+        # (there is none to observe).
+        verified_exposure = (
+            with_tool_assertions.get("cells_total", 0) > 0
+            and with_tool_assertions.get("cells_total") == attempted_with_tool
+            and with_tool_assertions.get("cells_with_exposure_mode_verified")
+            == with_tool_assertions.get("cells_total")
+            and with_tool_assertions.get("observed_exposure_mode_consistent") is True
+            and len(with_tool_assertions.get("observed_exposure_modes") or []) == 1
+            and declared_exposure_mode in ("eager", "deferred")
+            and declared_exposure_mode
+            == (with_tool_assertions.get("observed_exposure_modes") or [None])[0]
+        )
+        gate("verified_exposure_mode", verified_exposure, True, verified_exposure)
+
     leak_count = sum(item.get("cells_with_leak_suspect", 0) for item in assertions.values())
     gate("no_leak_suspect_cells", leak_count, 0, leak_count == 0)
     disallowed_count = sum(
