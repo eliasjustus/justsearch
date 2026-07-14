@@ -84,8 +84,23 @@ public final class EmbeddingCompatibilityController {
    * Initializes/refreshes the compatibility state based on current vs stored fingerprints.
    *
    * <p>Call this at Worker startup after index is opened, and whenever the index is rebuilt.
+   *
+   * <p><b>Not safe to call while a rebuild is in flight.</b> This method unconditionally
+   * re-derives state from the fingerprint suppliers, but the stored fingerprint isn't stamped
+   * until certification ({@link #checkRebuildCompletion}) — so a mid-rebuild call would re-read
+   * the stale/missing stored fingerprint, re-derive {@code BLOCKED_LEGACY}/{@code
+   * BLOCKED_MISMATCH}, and silently clobber the in-flight rebuild's {@code REBUILDING} state and
+   * certification progress. Guarded below: a call while {@link State#REBUILDING} is a no-op.
    */
   public void refresh() {
+    if (state.get() == State.REBUILDING) {
+      log.warn(
+          "Embedding compatibility: refresh() called while a rebuild is in flight; ignoring — the"
+              + " rebuild's certification path owns the state until it completes or the process"
+              + " restarts");
+      return;
+    }
+
     Optional<String> current = EmbeddingFingerprint.get();
     currentFingerprint.set(current.orElse(null));
 

@@ -223,6 +223,24 @@ final class WorkerSnapshotTapTest {
 
   @Test
   @DisplayName(
+      "embedding INITIALIZING → embedding.not-ready ADDED on worker.embedding (WARNING), not"
+          + " unmapped (734)")
+  void embeddingInitializingMapsToNotReady() {
+    // INITIALIZING is IndexStatusOps.safeEmbeddingCompatState's boot-window sentinel (controller
+    // not yet wired). A mapped state emits a CONDITION event; the unmapped branch would emit
+    // nothing — so a fired event proves this doesn't hit the unmapped-WARN/preserve branch.
+    tap.accept(embeddingBlocked("INITIALIZING"), false);
+
+    assertEquals(1, listener.size());
+    HealthEvent event = listener.events.get(0).event();
+    assertEquals("embedding.not-ready", event.id());
+    AssertedCondition cond = (AssertedCondition) event.body();
+    assertEquals("worker.embedding", cond.subject());
+    assertEquals(Severity.WARNING, event.severity());
+  }
+
+  @Test
+  @DisplayName(
       "embedding BLOCKED_LEGACY → REBUILDING swaps embedding.blocked to embedding.not-ready"
           + " (no freeze; 726 F5)")
   void embeddingRebuildingSwapsPriorBlockedInsteadOfFreezing() {

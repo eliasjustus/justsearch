@@ -91,6 +91,32 @@ final class EmbeddingCompatibilityControllerTest {
   }
 
   @Test
+  void refreshWhileRebuildingIsIgnored() throws Exception {
+    // 734: refresh() re-derives state unconditionally from the fingerprint suppliers, but the
+    // stored fingerprint isn't stamped until certification — so a mid-rebuild refresh() call
+    // would re-derive BLOCKED_LEGACY (storedFp still null/stale) and silently clobber the
+    // in-flight rebuild. Guard: refresh() while REBUILDING is a no-op.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(Map::of, () -> 5L);
+    controller.refresh();
+    controller.maybeAutoStartRebuildForBlockedLegacy(5L);
+    assertEquals(EmbeddingCompatibilityController.State.REBUILDING, controller.state());
+    assertEquals("REBUILD_IN_PROGRESS", controller.reasonCode());
+
+    controller.refresh();
+
+    assertEquals(
+        EmbeddingCompatibilityController.State.REBUILDING,
+        controller.state(),
+        "refresh() must not clobber an in-flight rebuild");
+    assertEquals(
+        "REBUILD_IN_PROGRESS",
+        controller.reasonCode(),
+        "reason must stay REBUILD_IN_PROGRESS, not re-derive BLOCKED_LEGACY's reason");
+  }
+
+  @Test
   void checkRebuildCompletionCertifiesOnPendingZeroEvenWhenJobQueueNonEmpty() throws Exception {
     // Tempdoc 726 T2 (pins F1): a job stuck in PROCESSING — or any ongoing unrelated ingestion —
     // keeps the global queueDepth > 0. Certification must NOT depend on it: pending_embedding==0
