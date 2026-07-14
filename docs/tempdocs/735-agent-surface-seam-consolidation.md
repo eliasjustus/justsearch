@@ -277,3 +277,44 @@ one-build-at-a-time convention documented where the worktree guide lives.
 - **Violation noted, not fixed here:** every historical interpretation that assumed text-tier
   delivery (tempdoc 655's response-hint attributions may partially share the misattribution —
   flagged for that lineage's next revisit, not relitigated now).
+
+
+---
+
+# De-risking pass (2026-07-14; probes + static reads)
+
+- **U1 (delivery generality) — SETTLED.** Broadened child-session probe (CLI 2.1.209 pinned):
+  `search` also delivers the serialized structuredContent JSON; tools WITHOUT structuredContent
+  (`status`) deliver prose text blocks; the text tier is entirely absent when structured exists.
+  Delivery rule confirmed: structured-if-present, text-otherwise. (One result-attribution wobble
+  between search/browse in the probe harness — the shapes themselves are unambiguous.)
+- **U2 (structured coverage) — GAP LIST CONFIRMED, and it is a live product gap.** Text-tier
+  content with NO structured counterpart, i.e. currently UNDELIVERED to CLI-cohort agents:
+  the 655 response hints (all of them), the facet-values block, totalHits/"showing K" coverage
+  facts, and truncation remedies. Also QUANTIFIED: delivered answer packs are ~2.7KB of
+  citation metadata+excerpts vs ~10KB of full passages in the text tier — CLI agents receive a
+  substantially thinner evidence pack than the text tier ships. This list IS G3's content-model
+  field backlog, priority-ordered by what the measured cohort has been missing.
+- **U3 (record-time tier detection) — CONFIRMED feasible** (raw content in hand at the digest
+  site, ephemeral tier); historical records cannot be re-tiered (sha-only) — stated.
+- **U4 (renderer fidelity) — declared choice, not a risk**: golden-fixture comparisons (G4)
+  serve either byte-identical reproduction or a declared surface-bump path.
+
+## Confidence: 8/10
+
+The design's central fact is now triple-probed (answer/search/status, version-pinned) and the
+gap list converts the design from restructuring-for-hygiene into closing a measured delivery
+gap. Held back from 9+: the coverage gaps' behavioral impact is inferred (thin packs →
+file-Reads) not yet A/B-measured, and other clients' delivery behavior (Desktop/Cursor) remains
+uncharacterized — both are measurement items the design already carries.
+
+## Difficulty and staffing recommendation
+
+Moderate, well-partitioned. G1/G2 (docs role + delivered-tier capture + field markers):
+**sonnet, medium** — bounded, pattern-following. G4/G5/G6 (fixtures, builder factory, lease
+intent): **sonnet, medium-high**. G3 (one content model, two renderers): the only genuinely
+design-sensitive increment — **sonnet implementation with the content-model field contract
+fixed main-loop first, plus an opus refute-first review before commit** (the level-2/725
+staffing pattern, which caught every MAJOR this program produced). No increment warrants
+opus-tier implementation; the ordering constraint (G3 rides an intentional surface bump,
+after G1/G2 land the measurement that will judge it) matters more than model tier.
