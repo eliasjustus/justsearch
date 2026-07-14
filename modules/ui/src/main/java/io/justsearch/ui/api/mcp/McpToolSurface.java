@@ -253,12 +253,23 @@ public final class McpToolSurface {
     return s;
   }
 
+  // Tempdoc 725 W2c: opt-in response density tier, shared by justsearch_answer and
+  // justsearch_search. "detailed" (default) is the current full-fidelity shape; "concise" trims
+  // passage/preview volume for token economics while keeping the header/coverage/degradation
+  // lines that carry the elided-ness facts.
+  private static final Map<String, Object> RESPONSE_FORMAT_SCHEMA =
+      propEnum(
+          List.of("concise", "detailed"),
+          "Response density: \"detailed\" (default) is the full shape; \"concise\" trims"
+              + " passage/preview volume");
+
   private static final Map<String, Object> ANSWER_SCHEMA =
       schema(
           orderedMap(
               "query", prop("string", "The question to answer"),
               "top_k", prop("integer", "Number of passages to retrieve (default 5, max 20)"),
-              "filters", FILTERS_SCHEMA),
+              "filters", FILTERS_SCHEMA,
+              "response_format", RESPONSE_FORMAT_SCHEMA),
           List.of("query"));
 
   private static final Map<String, Object> SEARCH_SCHEMA =
@@ -272,7 +283,8 @@ public final class McpToolSurface {
               // trace + per-hit ranking provenance) is always returned in structuredContent; when
               // detail=true the per-hit numeric fusion-leg detail scores are included too.
               "detail",
-                  prop("boolean", "Include the numeric per-hit detail tier in the ranking evidence")),
+                  prop("boolean", "Include the numeric per-hit detail tier in the ranking evidence"),
+              "response_format", RESPONSE_FORMAT_SCHEMA),
           List.of("query"));
 
   private static final Map<String, Object> STATUS_SCHEMA = schema(Map.of(), List.of());
@@ -386,7 +398,8 @@ public final class McpToolSurface {
       content.put("structuredContent", publicView);
       return content;
     } catch (Exception e) {
-      return errorContent("Failed to serialize runtime manifest: " + e.getMessage());
+      log.warn("MCP runtime manifest serialization failed", e);
+      return errorContent(toolFailureMessage("Runtime manifest", e));
     }
   }
 
@@ -412,12 +425,13 @@ public final class McpToolSurface {
   private Map<String, Object> callAnswer(Map<String, Object> args) {
     HeadAssembly facade = appFacadeLookup.get();
     if (facade == null || facade.workers().documents() == null) {
-      return errorContent("Knowledge server not available");
+      return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE);
     }
     try {
       String query = (String) args.getOrDefault("query", "");
       int topK = ((Number) args.getOrDefault("top_k", 5)).intValue();
       Map<String, Object> rawFilters = (Map<String, Object>) args.get("filters");
+      boolean concise = "concise".equals(args.get("response_format"));
 
       RetrieveContextParams params =
           new RetrieveContextParams(
@@ -433,7 +447,14 @@ public final class McpToolSurface {
               rawFilters != null ? (String) rawFilters.getOrDefault("path_prefix", "") : "",
               List.of(),
               true,
-              RetrieveContextParams.ContextFormat.XML,
+              // Tempdoc 725 W2b: LABELED is the only format the Worker's ContextBudgeter actually
+              // renders — RagContextOps never reads contextFormat off the wire, and ContextBudgeter
+              // has no XML/PLAIN branch at all (it unconditionally emits "[From: label]\n" +
+              // content). Requesting XML here was a dead orphan (tempdoc 725 orphan #5): the param
+              // was serialized onto the gRPC request correctly, but nothing downstream consumed it,
+              // so every caller has always received LABELED regardless of what it asked for.
+              // Requesting the format that is actually delivered keeps this call site honest.
+              RetrieveContextParams.ContextFormat.LABELED,
               toStringList(rawFilters, "meta_source"),
               toStringList(rawFilters, "meta_author"),
               toStringList(rawFilters, "meta_category"),
@@ -455,8 +476,33 @@ public final class McpToolSurface {
       Map<String, Object> evidence = McpEvidenceProjection.answerEvidence(result);
 
       var sb = new StringBuilder();
+
+      // Tempdoc 725 W2a: a self-describing header, stated once, ahead of the passages — this pack
+      // is retrieved evidence, not a synthesized answer. N/M/mode come from the in-hand result: N
+      // is the citation count (== chunksUsed; both are derived from the same worker-reported chunk
+      // list — RemoteDocumentService.mapRetrieveContextResponse), which equals the number of
+      // rendered "[From: ...]" sections in result.context() for both the chunk-RAG and
+      // virtual-chunk-fallback paths.
+      long distinctDocs =
+          result.citations().stream()
+              .map(DocumentService.ContextCitation::parentDocId)
+              .filter(id -> !id.isBlank())
+              .distinct()
+              .count();
+      sb.append("Evidence pack: ")
+          .append(result.citations().size())
+          .append(" passages from ")
+          .append(distinctDocs)
+          .append(" documents (retrieval mode: ")
+          .append(result.retrievalMode())
+          .append("). No synthesized answer is included.");
+      if (result.contextTruncated()) {
+        sb.append(" Context was truncated to fit limits.");
+      }
+      sb.append("\n\n");
+
       if (result.context() != null && !result.context().isBlank()) {
-        sb.append(result.context());
+        sb.append(concise ? buildConciseAnswerText(result) : result.context());
       } else {
         sb.append("No relevant passages found for: ").append(query);
       }
@@ -508,8 +554,38 @@ public final class McpToolSurface {
           false);
     } catch (Exception e) {
       log.warn("MCP answer failed", e);
-      return errorContent("Answer retrieval failed: " + e.getMessage());
+      return errorContent(toolFailureMessage("Answer", e));
     }
+  }
+
+  /**
+   * Tempdoc 725 W2c: concise-mode passage rendering — caps at the 3 highest-rank sections
+   * (sections are already rank-ordered by the Worker's chunk assembly) and trims each to ~600
+   * chars, appending the W1 truncation-remedy suffix when a passage is cut. Falls back to a
+   * single trimmed window of the assembled context when the result carries no structured
+   * sections (defensive: every production retrieval path populates them alongside a non-blank
+   * context, but a section-less result should still render something in concise mode).
+   */
+  private static String buildConciseAnswerText(DocumentService.ContextResult result) {
+    List<DocumentService.ContextSection> sections = result.sections();
+    if (sections.isEmpty()) {
+      McpSearchResultFormatter.Window window =
+          McpSearchResultFormatter.windowStartingAt(result.context(), 0, 600);
+      return window.truncated()
+          ? window.text() + McpSearchResultFormatter.TRUNCATION_REMEDY
+          : window.text();
+    }
+    var sb = new StringBuilder();
+    int shown = Math.min(3, sections.size());
+    for (int i = 0; i < shown; i++) {
+      DocumentService.ContextSection section = sections.get(i);
+      if (i > 0) sb.append(DocumentService.SECTION_SEPARATOR);
+      McpSearchResultFormatter.Window window =
+          McpSearchResultFormatter.windowStartingAt(section.content(), 0, 600);
+      sb.append("[From: ").append(section.sourceLabel()).append("]\n").append(window.text());
+      if (window.truncated()) sb.append(McpSearchResultFormatter.TRUNCATION_REMEDY);
+    }
+    return sb.toString();
   }
 
   /**
@@ -543,7 +619,7 @@ public final class McpToolSurface {
   @SuppressWarnings("unchecked")
   private Map<String, Object> callSearch(Map<String, Object> args) {
     KnowledgeSearchController ctrl = knowledgeLookup.get();
-    if (ctrl == null) return errorContent("Knowledge server not available");
+    if (ctrl == null) return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE);
     try {
       KnowledgeHttpApiAdapter adapter = ctrl.getAdapter();
       String query = (String) args.getOrDefault("query", "");
@@ -552,6 +628,10 @@ public final class McpToolSurface {
       // Tempdoc 658: the opt-in `detail` arg maps to the request `debug` flag (→ include_detail),
       // which gates the per-hit numeric detail tier surfaced in the structured ranking evidence.
       Boolean detail = (args.get("detail") instanceof Boolean b) ? b : null;
+      // Tempdoc 725 W2c: concise mode omits the Preview line only — rank/title/score, Path, and
+      // Matched/Match-basis lines (plus the summary/degradation/coverage lines below the loop) all
+      // carry facts, not bulk, so they stay in both response densities.
+      boolean concise = "concise".equals(args.get("response_format"));
 
       KnowledgeSearchRequest.Filters filters =
           parseFilters((Map<String, Object>) args.get("filters"));
@@ -593,9 +673,11 @@ public final class McpToolSurface {
           // match-basis line, so an agent can tell WHY a hit matched without opening the file.
           List<KnowledgeSearchResponse.MatchSpan> informative =
               McpSearchResultFormatter.filterInformative(hit.matchSpans());
-          String preview = buildHitPreview(hit);
-          if (!preview.isBlank()) {
-            sb.append("    Preview: ").append(preview).append("\n");
+          if (!concise) {
+            String preview = buildHitPreview(hit);
+            if (!preview.isBlank()) {
+              sb.append("    Preview: ").append(preview).append("\n");
+            }
           }
           if (!informative.isEmpty()) {
             List<String> terms = McpSearchResultFormatter.informativeTerms(informative);
@@ -677,7 +759,7 @@ public final class McpToolSurface {
           false);
     } catch (Exception e) {
       log.warn("MCP search failed", e);
-      return errorContent("Search failed: " + e.getMessage());
+      return errorContent(toolFailureMessage("Search", e));
     }
   }
 
@@ -757,7 +839,7 @@ public final class McpToolSurface {
 
   private Map<String, Object> callStatus() {
     KnowledgeSearchController ctrl = knowledgeLookup.get();
-    if (ctrl == null) return errorContent("Knowledge server not available");
+    if (ctrl == null) return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE);
     try {
       KnowledgeHttpApiAdapter adapter = ctrl.getAdapter();
       var status = adapter.status();
@@ -790,7 +872,7 @@ public final class McpToolSurface {
           "content", List.of(Map.of("type", "text", "text", sb.toString())), "isError", false);
     } catch (Exception e) {
       log.warn("MCP status failed", e);
-      return errorContent("Status unavailable: " + e.getMessage());
+      return errorContent(toolFailureMessage("Status", e));
     }
   }
 
@@ -845,7 +927,7 @@ public final class McpToolSurface {
       }
     } catch (Exception e) {
       log.warn("MCP operation dispatch error for {}", opIdValue, e);
-      return errorContent("Operation failed: " + e.getMessage());
+      return errorContent(toolFailureMessage("Operation " + opIdValue, e));
     }
   }
 
@@ -1299,6 +1381,11 @@ public final class McpToolSurface {
         "type", "array", "items", Map.of("type", "string"), "description", description);
   }
 
+  /** Tempdoc 725 W2c: a declared string enum property (e.g. {@code response_format}). */
+  private static Map<String, Object> propEnum(List<String> values, String description) {
+    return orderedMap("type", "string", "enum", values, "description", description);
+  }
+
   private static Map<String, Object> resource(String uri, String name, String description) {
     return Map.of("uri", uri, "name", name, "description", description, "mimeType", "application/json");
   }
@@ -1310,5 +1397,36 @@ public final class McpToolSurface {
 
   static Map<String, Object> errorContent(String message) {
     return Map.of("content", List.of(Map.of("type", "text", "text", message)), "isError", true);
+  }
+
+  // =========================================================================
+  // Tempdoc 725 W3: error-result legibility. DESCRIPTIVE grammar only — an error result states
+  // what happened and where a status check can be found; it never issues an imperative ("now
+  // call X").
+  // =========================================================================
+
+  /**
+   * The 3 "backend not reachable" tool/call sites (justsearch_answer, justsearch_search,
+   * justsearch_status) share this exact wording: the condition, plus a descriptive pointer to
+   * where live component state can be checked.
+   */
+  private static final String KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE =
+      "Knowledge server is not available (worker offline or still starting). This is usually"
+          + " transient during startup; state is reported by the justsearch_status tool.";
+
+  /**
+   * Uniform message for the 5 generic {@code catch (Exception e)} tool/call sites: the tool name,
+   * the exception's simple class name and message (never swallowed into a bare, unattributed
+   * string), plus the same descriptive status-tool pointer the availability message above uses.
+   */
+  private static String toolFailureMessage(String tool, Exception e) {
+    String detail = e.getMessage() != null ? e.getMessage() : "no additional detail";
+    return tool
+        + " failed: "
+        + e.getClass().getSimpleName()
+        + ": "
+        + detail
+        + ". This may be transient; current component state is available via the"
+        + " justsearch_status tool.";
   }
 }

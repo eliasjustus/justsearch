@@ -36,8 +36,15 @@ public final class McpContractVersions {
    * opt-in {@code detail} argument (658) — material, agent-visible additions to the surface, so the
    * SemVer minor bumps. Single-sourced here, it projects by construction into MCP
    * {@code serverInfo.version} and the runtime manifest's {@code mcpToolSurfaceVersion}.
+   *
+   * <p>0.3.0 (tempdoc 725, increments W1-W3): {@code justsearch_search} responses gained
+   * match-anchored previews and rationale/degradation/coverage lines; {@code justsearch_answer}
+   * gained a self-describing evidence-pack header; both tools gained an opt-in {@code
+   * response_format} ("concise"/"detailed") argument; error results across the surface gained a
+   * uniform, descriptive failure grammar pointing at {@code justsearch_status} — material,
+   * agent-visible additions, so the SemVer minor bumps again.
    */
-  public static final String TOOL_SURFACE_VERSION = "0.2.0";
+  public static final String TOOL_SURFACE_VERSION = "0.3.0";
 
   private McpContractVersions() {}
 }

@@ -217,9 +217,28 @@ class McpProtocolHandlerTest {
     // would only reveal itself as flakiness across separate process launches, not within one
     // test run).
     assertEquals(
-        List.of("query", "limit", "mode", "filters", "detail"),
+        List.of("query", "limit", "mode", "filters", "detail", "response_format"),
         List.copyOf(searchProps.keySet()),
         "search inputSchema properties must serialize in declared source order");
+
+    // Tempdoc 725 W2c: the opt-in `response_format` argument is part of the published
+    // answer-tool contract too (sibling of the search-tool assertion above).
+    @SuppressWarnings("unchecked")
+    Map<String, Object> answerInputSchema =
+        (Map<String, Object>) tools.get(0).get("inputSchema");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> answerProps =
+        (Map<String, Object>) answerInputSchema.get("properties");
+    assertEquals(
+        List.of("query", "top_k", "filters", "response_format"),
+        List.copyOf(answerProps.keySet()),
+        "answer inputSchema properties must serialize in declared source order");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> answerResponseFormat =
+        (Map<String, Object>) answerProps.get("response_format");
+    assertEquals(
+        List.of("concise", "detailed"), answerResponseFormat.get("enum"),
+        "answer response_format is a concise/detailed enum");
 
     @SuppressWarnings("unchecked")
     Map<String, Object> searchFilters = (Map<String, Object>) searchProps.get("filters");

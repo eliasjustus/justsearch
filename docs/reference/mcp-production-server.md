@@ -76,7 +76,9 @@ Streamable HTTP on the existing Javalin server (loopback-only,
 same JVM as the Head process. No Node.js required.
 
 Protocol version: `2025-11-25`. Capabilities: tools, resources,
-prompts.
+prompts. Curated tool-surface version (MCP `serverInfo.version`,
+single-sourced from `McpContractVersions.TOOL_SURFACE_VERSION`):
+`0.3.0`.
 
 ## Available Tools (6, position-bias ordered)
 
@@ -92,6 +94,25 @@ prompts.
 All 6 tools validate their arguments against a declared JSON Schema at the MCP boundary before
 dispatch (tempdoc 655) — a malformed call gets a clean tool error rather than an internal cast
 failure.
+
+## Response shape (tempdoc 725)
+
+The human-readable `content` text on `justsearch_search` and `justsearch_answer` carries several
+descriptive lines beyond the raw results, so an agent can judge a response without a second call:
+
+- **`justsearch_answer` evidence-pack header** — the first line states the passage count, the
+  distinct-document count, the retrieval mode, and that the pack is retrieved evidence, not a
+  synthesized answer (plus a truncation note when the context was cut to fit token limits).
+- **`justsearch_search` match lines** — each hit carries a `Matched:` line naming the distinctive
+  terms that drove the match (or a `Match basis: semantic similarity` line when no term overlap
+  was distinctive), so an agent can tell *why* a hit matched without opening the file.
+- **Degradation and coverage lines** — a once-per-response note when semantic ranking degraded or
+  fell back, and a "showing N of M" line when a response was capped below the total hit count.
+
+**`response_format`** (optional on both tools; default `"detailed"`). `"concise"` trims volume for
+token economics while keeping every line that carries an elided-ness fact: `justsearch_answer`
+caps passages at the 3 highest-rank sections and trims each; `justsearch_search` omits only the
+preview snippet, keeping rank/title/score, path, and the match lines above.
 
 ## Structured retrieval evidence (tempdoc 658)
 
