@@ -8,12 +8,15 @@ import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexApi.IndexDocument;
 import io.justsearch.indexing.runtime.CommitMetadataSource;
 import io.justsearch.indexing.runtime.CommitMetadataValidator;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import org.apache.lucene.index.IndexWriter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -71,6 +74,30 @@ class EmbeddingFingerprintProductionWiringDurabilityTest {
   @AfterEach
   void clearFingerprint() {
     EmbeddingFingerprint.invalidate();
+  }
+
+  /**
+   * Simulates a hard kill (taskkill, no graceful shutdown): releases the underlying Lucene
+   * write-lock via {@link IndexWriter#rollback()} directly, bypassing {@code RuntimeSession.close()}
+   * entirely — so no extra close-time commit runs and, critically, {@code CleanShutdownMarker} is
+   * NEVER written (that only happens inside {@code RuntimeSession.close()} after a clean {@code
+   * writer().close()}). Reflection is required because the raw {@code IndexWriter} is only reachable
+   * via package-private internals of {@code io.justsearch.adapters.lucene.runtime}, which this test
+   * (in a different module/package) has no visibility into — mirrors what a real process death does
+   * (drops the OS file handle/lock with no application-level shutdown code running at all).
+   */
+  private static void abandonWithoutGracefulClose(
+      io.justsearch.adapters.lucene.runtime.RunningRuntime runtime) throws Exception {
+    Method sessionMethod = runtime.getClass().getDeclaredMethod("session");
+    sessionMethod.setAccessible(true);
+    Object session = sessionMethod.invoke(runtime);
+    Field snapshotField = session.getClass().getDeclaredField("snapshot");
+    snapshotField.setAccessible(true);
+    Object snapshot = snapshotField.get(session);
+    Method writerMethod = snapshot.getClass().getMethod("writer");
+    writerMethod.setAccessible(true);
+    IndexWriter writer = (IndexWriter) writerMethod.invoke(snapshot);
+    writer.rollback();
   }
 
   // ---- (a) ratchet reproduction ----
@@ -247,6 +274,94 @@ class EmbeddingFingerprintProductionWiringDurabilityTest {
               + "COMPATIBLE (this is the ratchet hole IndexingLoop.finalizeShutdownCommit() now "
               + "closes by guaranteeing the completion commit at shutdown, not just on the next "
               + "idle/batch iteration)");
+    }
+  }
+
+  // ---- (d) live falsification: DEFERRED (production restart) boot ----
+
+  @Test
+  @DisplayName(
+      "(d) Live falsification: boot the PRODUCTION way (DEFERRED read-only-first open, matching "
+          + "KnowledgeServer.java:505-510's useDeferredWriter=true restart path) after a completed "
+          + "rebuild's guarantee commit landed durably on disk — reopen must resolve COMPATIBLE with "
+          + "the stored fingerprint, not BLOCKED_LEGACY. Every other reopen in this class (and in "
+          + "EmbeddingFingerprintDurabilityTest) uses IndexSchema.atPath().open() (read-write) for the "
+          + "reopen — production restarts always take openDeferred() once segments exist on disk")
+  void productionDeferredBootReadsStoredFingerprintAfterGuaranteeCommit() throws Exception {
+    EmbeddingFingerprint.setForTesting(FP);
+    Path dir = Files.createTempDirectory("embed-fp-deferred-boot");
+
+    Supplier<CommitMetadataSource> noStamp = EmbeddingMetadataOverlay.createSupplier(Optional::empty);
+    try (var r1 =
+        io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
+                FieldCatalogDef.forTesting(768), noStamp, PERMISSIVE)
+            .atPath(dir)
+            .open()) {
+      r1.indexingCoordinator()
+          .indexSingle(
+              new IndexDocument(
+                  Map.of(SchemaFields.DOC_ID, "d1", SchemaFields.DOC_UID, "d1#0")));
+      r1.commitOps().commitAndTrack();
+    }
+
+    AtomicReference<Supplier<Optional<String>>> fpSupplierRef = new AtomicReference<>(Optional::empty);
+    Supplier<CommitMetadataSource> productionWiredOverlay =
+        EmbeddingMetadataOverlay.createSupplier(
+            () -> fpSupplierRef.get().get(), () -> Optional.of(SIBLING_FP));
+
+    var r2 =
+        io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
+                FieldCatalogDef.forTesting(768), productionWiredOverlay, PERMISSIVE)
+            .atPath(dir)
+            .open();
+    var ecc =
+        new EmbeddingCompatibilityController(
+            r2::latestCommitUserDataBestEffort, () -> r2.indexCountOps().docCount());
+    fpSupplierRef.set(ecc::fingerprintToStamp);
+    ecc.refresh();
+    assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, ecc.state());
+
+    ecc.onForcedReindexRequested();
+    r2.indexingCoordinator()
+        .indexSingle(
+            new IndexDocument(
+                Map.of(SchemaFields.DOC_ID, "d2", SchemaFields.DOC_UID, "d2#0")));
+    boolean completed = ecc.checkRebuildCompletion(0, 0);
+    assertTrue(completed, "sanity: queue==0 && pending==0 must report completion");
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, ecc.state());
+
+    // The completion-guarantee commit — the same commitAndTrack + onFingerprintStamped pair
+    // tryFinalizeRebuild() / finalizeShutdownCommit() issues. This is what the live orchestrator
+    // probe observed as "storedFp present, /api/status COMPATIBLE" before the hard-kill: the
+    // stamp is genuinely durable on disk (fsynced) at this point.
+    r2.commitOps().commitAndTrack();
+    ecc.onFingerprintStamped();
+
+    // HARD KILL: no further writes follow, and — critically — no graceful RuntimeSession.close()
+    // runs either. taskkill drops the process with no JVM shutdown hook, so CleanShutdownMarker is
+    // never written. Model that exactly instead of try-with-resources (which would call close()
+    // and mask the unclean-shutdown precondition production actually restarts from).
+    abandonWithoutGracefulClose(r2);
+
+    // PRODUCTION restart shape: KnowledgeServer.java:505 `hasLuceneSegments(activeIndexPath)` is
+    // true (segments exist on disk from r1/r2 above), so boot takes the DEFERRED (read-only-first)
+    // path (`builder.openDeferred()`) — never the plain read-write `.open()` this test class (and
+    // EmbeddingFingerprintDurabilityTest) otherwise uses for its reopen.
+    try (var r3 =
+        io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
+                FieldCatalogDef.forTesting(768), noStamp, PERMISSIVE)
+            .atPath(dir)
+            .openDeferred()) {
+      var freshEcc =
+          new EmbeddingCompatibilityController(
+              r3::latestCommitUserDataBestEffort, () -> r3.indexCountOps().docCount());
+      freshEcc.refresh();
+      assertEquals(
+          EmbeddingCompatibilityController.State.COMPATIBLE,
+          freshEcc.state(),
+          "DEFERRED (production restart) boot must see the same guarantee-commit fingerprint a "
+              + "read-write reopen sees");
+      assertEquals(FP, freshEcc.storedFingerprint());
     }
   }
 

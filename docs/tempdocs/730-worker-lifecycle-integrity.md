@@ -488,3 +488,95 @@ reopen → detect → REBUILDING (new reason) → completion-guarantee commit �
 the legitimately-earned (not back-stamped) fingerprint, plus the two named negative controls
 (properly-stamped generation doesn't trigger it; genuinely-empty all-pending generation still uses
 the original rescue path).
+
+---
+
+## Live-falsification follow-up (2026-07-14, boot-time re-read investigation)
+
+**Trigger.** After 90b02c0/7a46ca1, a live dev-runner restart cycle (HARD taskkill, no graceful
+shutdown, following a completed rebuild where `/api/status` had already shown COMPATIBLE + storedFp
+present) reportedly re-resolved `embeddingFingerprintStored: ""` → BLOCKED_LEGACY, with A4's
+auto-rescue firing again. On-disk inspection at that time showed
+`index/default/indices/g-20260714-134648/segments_22` containing `embedding_model_sha256` — so
+persistence had worked and the suspected defect was the boot-time re-read.
+
+**Investigation.** Traced the exact production boot path: `KnowledgeServer.java:505`
+(`hasLuceneSegments(activeIndexPath)` → true once segments exist) selects `builder.openDeferred()`
+(`RuntimeSession.Mode.DEFERRED`, read-only-first), and `ecc.refresh()`
+(`KnowledgeServer.java:1009`) reads via `ingestLifecycle::latestCommitUserDataBestEffort`
+→ `RuntimeSession.latestCommitUserDataBestEffort()` (`RuntimeSession.java:653-665`), which opens a
+**fresh** `DirectoryReader.open(directory)` on every call — independent of any writer/searcher state,
+independent of `openTimeCommitUserData`'s open-time snapshot. Every existing 730 test
+(`EmbeddingFingerprintProductionWiringDurabilityTest`, `EmbeddingFingerprintDurabilityTest`) reopens
+via `IndexSchema.atPath(dir).open()` (read-write `RUNNING` mode) — never `openDeferred()` — so none of
+them actually exercised production's restart shape, matching this tempdoc's own suspicion
+("the unit tests' reopen... find the exact divergence").
+
+Two new regression tests were added to close that gap, both mirroring production exactly:
+
+1. **`(d)` — DEFERRED boot, graceful close.** Stamps the fingerprint via the real
+   `EmbeddingCompatibilityController`/`EmbeddingMetadataOverlay` production wiring (same two-phase
+   late-binding shape as `KnowledgeServer.java:485-486` + the supplier set-site), closes gracefully,
+   then reopens via `.openDeferred()` (not `.open()`) and asserts COMPATIBLE + the stored fingerprint.
+   **Result: GREEN on the first run** — DEFERRED-mode boot reads the commit userData identically to a
+   read-write reopen.
+2. **`(d)`, hardened — true hard-kill semantics.** Rewrote the same scenario to *not* call
+   `RuntimeSession.close()` at all after the guarantee commit: a new
+   `abandonWithoutGracefulClose()` helper (reflection into the package-private `RunningRuntime.session()`
+   → `RuntimeSession.snapshot` → `LifecycleSnapshot.writer()`, required because those internals are
+   package-private to `io.justsearch.adapters.lucene.runtime` and this test lives in
+   `io.justsearch.indexerworker.embed`) calls `IndexWriter.rollback()` directly. This is a materially
+   more faithful hard-kill than a graceful close: it releases the Lucene write-lock without running
+   `RuntimeSession.close()`'s clean-shutdown path at all, so `CleanShutdownMarker` is genuinely never
+   written (the same precondition a real `taskkill` leaves behind) — triggering
+   `ComponentsFactory.java:158-166`'s "dirty-open escalation" (FULL integrity scan) on the next open, a
+   precondition the graceful-close variant above never exercised. **Result: still GREEN** — DEFERRED
+   boot reads the stamped fingerprint correctly even under a genuinely unclean shutdown.
+
+Also independently reconciled with a read-only inspection of the actual live `.dev-data` index
+directory (which the orchestrator's rebuild was running in, at the time): `state.json`'s
+`active_generation` matches `g-20260714-134648`; that directory has exactly one `segments_N` file
+(`segments_22`, no higher generation superseding it — ruling out an ordinary post-stamp commit
+silently dropping the key, since `CommitOps.commit()` fully rebuilds commit metadata from
+`CommitMetadataSource.build()` on every call via `IndexWriter.setLiveCommitData()` — a **replace**, not
+a merge — so any commit at a moment `ecc.state()` isn't COMPATIBLE would in principle erase a prior
+stamp; this was a live structural concern investigated and ruled out here specifically because no
+superseding generation exists and the periodic commit-timer (`CommitOps.timerTick()`,
+`CommitOps.java:332-335`) only fires when `pendingDocs > 0`, so an idle worker between the guarantee
+commit and a later hard-kill issues no further commits); the file's raw bytes contain both
+`embedding_model_sha256` and `splade_model_sha256` with a plausible, complete-looking `commit_time`
+and no follow-on generation.
+
+Also checked and ruled out: `IndexMetadataParityGuard.checkOnOpen()` (a third, independent
+`DirectoryReader.open` read used only for schema-parity diagnostics, not gating); `ecc.refresh()` has
+exactly one production call site (`KnowledgeServer.java:1009`), so no stale/second-refresh race exists;
+`EmbeddingProviderLifecycle`'s `embeddingCompatController` is wired from the *same* `ecc` instance via
+`DefaultWorkerAppServices.wireEmbeddingCompatController` (no split-ownership `standalone-capability`
+gap); the installed worker dist in this worktree's `.dev-data` (`build-stamp.txt`, all lib jars
+uniformly timestamped from one `installDist` run) is consistent with a fresh, post-fix build, not an
+obviously stale one.
+
+**Outcome: no code-level defect reproduced.** Per `interrogate-results` / `audit-driven-fixes-need-test`,
+a static/live claim is a hypothesis until a test proves it; here the test says the opposite of the
+hypothesis, on two independent fidelity levels (graceful close and genuine hard-kill via
+`IndexWriter.rollback()`). The mixed-provenance guard and the gated `ecc::fingerprintToStamp` supplier
+were not touched. **This addendum does not claim the live observation was wrong** — only that it was
+not reproduced by a test that faithfully mirrors production's boot mechanics as closely as this
+investigation could construct. Before treating this as a closed non-issue, the live falsification
+should be re-run with: (a) a guaranteed-fresh worker dist
+(`./gradlew.bat :modules:indexer-worker:installDist` immediately before the restart, to positively rule
+out a stale-JVM/stale-dist explanation — `justsearch_dev_start` does not always reinstall when
+upstream tasks report UP-TO-DATE, a documented pitfall for the Head process and plausibly analogous for
+the Worker's own `installDist`/`build-stamp.txt` mechanism), and (b) the worker log captured across the
+exact restart, specifically the `EmbeddingCompatibilityController` BLOCKED_LEGACY warn line
+(`EmbeddingCompatibilityController.java:115-118`, which logs `docCount`) and whatever logs the
+resolved `activeIndexPath`/generation id at that boot, to confirm the same generation directory was
+opened both before and after the kill.
+
+**New tests** (both green): `EmbeddingFingerprintProductionWiringDurabilityTest` gained
+`(d) productionDeferredBootReadsStoredFingerprintAfterGuaranteeCommit` and the
+`abandonWithoutGracefulClose` helper (indexer-worker module,
+`modules/indexer-worker/src/test/java/io/justsearch/indexerworker/embed/EmbeddingFingerprintProductionWiringDurabilityTest.java`).
+These are a net-new coverage gap closed regardless of this addendum's outcome: production's actual
+restart path (`openDeferred()` after a genuinely unclean shutdown) was previously untested by any test
+in this class.
