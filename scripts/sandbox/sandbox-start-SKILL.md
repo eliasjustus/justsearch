@@ -26,13 +26,25 @@ durable method; what *this* candidate must cover is in the staged
 
 ## What to do at session start
 
-0. **Capability probe, before reading anything else.** Check whether a
-   computer-use/screenshot/browser tool is available (e.g. `ToolSearch` for
-   screenshot/computer/browser terms). If none is available, this is an
-   API-only round — record that immediately as a standing round-level gap
-   (`staging-gaps.md` or your findings notes), and do not plan or ask the
-   user anything that presupposes GUI access (screenshots, driving the Tauri
-   shell). Doing this probe late costs a wasted round-trip to the user.
+0. **Capability probe, before reading anything else.** Probe for GUI
+   **capability**, not merely a tool — a false negative here previously wrote
+   off all 14 surface-tier items in a round while a fully working GUI tier
+   sat unused (tempdoc 727-followup). Run BOTH checks:
+   - **Tool check**: is a computer-use/screenshot/browser tool available
+     (e.g. `ToolSearch` for screenshot/computer/browser terms)?
+   - **Native-capture check**: run the staged `gui\snap.ps1` (see
+     `gui/README.md`) and confirm it wrote a non-blank PNG you can `Read`
+     back. Windows provides screen capture and input (`CopyFromScreen`,
+     `SendKeys`, `mouse_event`) natively — no tool is required for this to
+     work, and it drives the real Tauri WebView2 shell.
+
+   **Only if BOTH fail** is this an API-only round — record that immediately
+   as a standing round-level gap (`staging-gaps.md` or your findings notes),
+   and do not plan or ask the user anything that presupposes GUI access
+   (screenshots, driving the Tauri shell). Doing this probe late costs a
+   wasted round-trip to the user. If the native-capture check succeeds, GUI
+   access exists even with zero computer-use tools in the session — proceed
+   with the native PowerShell GUI tier (`gui/README.md`) as the default.
 1. Read `coverage-brief.md`, `validation-mode.md`, `sandbox-environment.md`,
    and `staging-gaps.md` (assets the host failed to stage — each entry is a
    round-level coverage gap, not something to silently absorb).

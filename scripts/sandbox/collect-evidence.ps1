@@ -236,8 +236,52 @@ $mcpOutFile = Join-Path -Path $EvidenceDir -ChildPath "mcp-tools-list.json"
 $npxCommand = Get-Command "npx" -ErrorAction SilentlyContinue
 
 if ($npxCommand -eq $null) {
-    $note = "MCP Inspector CLI was NOT exercised: 'npx' was not found on PATH in this sandbox. " +
-            "Node.js/npm may not be installed. This is a recorded gap, not a fatal error."
+    # Self-repair before declaring Node absent: a clean-environment race (Node
+    # installed mid-session by a PATH-mutating MSI, but this PowerShell process
+    # started before that MSI ran) leaves node.exe genuinely ON DISK while this
+    # session's PATH is stale. A prior smoke round hit exactly this and lost
+    # all /mcp coverage to a false "Node.js may not be installed" diagnostic
+    # (tempdoc 727-followup). Probe well-known install dirs plus the MACHINE
+    # (not just session) PATH, and repair the session PATH if found, before
+    # concluding Node is missing.
+    $repaired = $false
+    $wellKnownNodeDirs = @("C:\Program Files\nodejs", "C:\Program Files (x86)\nodejs")
+    foreach ($dir in $wellKnownNodeDirs) {
+        if ((Test-Path -LiteralPath (Join-Path $dir "node.exe")) -and ($env:Path -notlike "*$dir*")) {
+            $env:Path = "$env:Path;$dir"
+            Write-Log "Found node.exe at $dir (not on session PATH) -- prepending to session PATH."
+            $repaired = $true
+        }
+    }
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    if ($machinePath) {
+        foreach ($segment in $machinePath -split ";") {
+            if ($segment -and ($segment -like "*nodejs*") -and (Test-Path -LiteralPath (Join-Path $segment "node.exe") -ErrorAction SilentlyContinue) -and ($env:Path -notlike "*$segment*")) {
+                $env:Path = "$env:Path;$segment"
+                Write-Log "Found node.exe via machine PATH at $segment (not on session PATH) -- prepending to session PATH."
+                $repaired = $true
+            }
+        }
+    }
+
+    if ($repaired) {
+        $npxCommand = Get-Command "npx" -ErrorAction SilentlyContinue
+    }
+}
+
+if ($npxCommand -eq $null) {
+    $nodeOnDisk = (Test-Path -LiteralPath "C:\Program Files\nodejs\node.exe") -or (Test-Path -LiteralPath "C:\Program Files (x86)\nodejs\node.exe")
+    if ($nodeOnDisk) {
+        $note = "MCP Inspector CLI was NOT exercised: npx exists on disk but was not on this " +
+                "session's PATH (session likely started before Node install) -- PATH repair was " +
+                "attempted but did not resolve npx. This is a harness/environment-timing gap, not " +
+                "evidence that Node.js is missing."
+    }
+    else {
+        $note = "MCP Inspector CLI was NOT exercised: 'npx' was not found on PATH in this sandbox, " +
+                "and node.exe was not found in well-known install dirs either. Node.js/npm may " +
+                "genuinely not be installed. This is a recorded gap, not a fatal error."
+    }
     Write-Log $note
     $note | Out-File -LiteralPath $mcpOutFile -Encoding utf8
 }

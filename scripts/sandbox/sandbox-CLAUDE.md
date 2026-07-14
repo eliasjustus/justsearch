@@ -50,23 +50,42 @@ user can understand it during setup and heavy local work. Two layers:
   API passes.
 
 **GUI-capture launch requirement.** Surface-tier coverage (screenshots, the
-Frontend / trust truthfulness layer above) requires the session itself be
-launched with a computer-use-capable client — this is an **operator
-launch-time responsibility**, not something the harness stages (investigated:
-no repo-staged screenshot mechanism has ever existed; earlier rounds' capture
-was operator-side). **Recommended: Claude for Chrome (`claude --chrome`)**
-driving the frontend in a Chrome tab (the Chrome MSI is staged in `tools/` for
-this), with two caveats stated plainly: (1) it renders the SPA in Chrome, NOT
-the Tauri WebView2 shell — sufficient for surface/truthfulness coverage, blind
-to shell-specific behavior (tray, autostart, native dialogs, session-token
-IPC); (2) its in-sandbox viability (extension pairing + reaching the SPA from
-Chrome inside the sandbox) is **UNVERIFIED** — one operator-assisted
-verification spike is required before the next GUI round relies on it.
-Alternative: the tauri-driver/WebView2 path (tempdoc 374 item 4, POC'd), which
-captures the real shell. Either way, the Step-0 capability probe (staged as the
-`/start` skill, `sandbox-start-SKILL.md`) remains the fail-loud guard — if
-neither is available, record the round as API-only immediately rather than
-silently skipping GUI findings.
+Frontend / trust truthfulness layer above) needs a PNG on disk, not a
+computer-use tool — nothing requires the screenshot come from a tool call.
+
+**Claude-for-Chrome (`claude --chrome`) is RESOLVED NEGATIVE — do not attempt
+it again.** A verification spike (tempdoc 727-followup smoke round) found it
+doubly blocked: (1) the paired Chrome is the operator's **HOST** browser, not
+one inside the sandbox — `list_connected_browsers` reports `isLocal: true`
+for it regardless, which is a trap, since pairing follows the Claude account
+to the host machine, not the sandbox; sandbox loopback (`127.0.0.1:<port>`)
+is unreachable from it while a public page like `example.com` loads fine. (2)
+An installed build serves **no HTTP SPA at all** — every route probed returns
+404 except the API surface, so even a sandbox-local Chrome would have nothing
+to point at. Either blocker alone is fatal; both apply. Do not stage or
+recommend the Chrome MSI for this purpose again.
+
+**Recommended default: the native PowerShell GUI tier**, staged at
+`<mapped folder>\gui\` (`snap.ps1`, `win-capture.ps1`, `click.ps1`,
+`crop.ps1`, `gui-approve.ps1` — see `gui/README.md`). It drives the **real**
+Tauri WebView2 shell via `System.Drawing.Graphics.CopyFromScreen` capture and
+`SendKeys`/`mouse_event` input — proven end-to-end including a full
+GUI-driven TYPED_CONFIRM approval (backend-verified: grant issued, docCount
+incremented, file searchable). It needs no tool, no extension, no pairing, no
+account, and no network, and it caught a HIGH-severity trust-surface finding
+(an expired pending authorization presenting a live-looking but dead
+Approve/Deny ceremony) that the API tier's clean PASS on the same feature
+could not see. Coverage credits the PNGs these scripts write, exactly like any
+other screenshot.
+
+Alternative for the future: the tauri-driver/WebView2 path (tempdoc 374 item
+4, POC'd) — structured, element-based targeting instead of pixel coordinates,
+worth having eventually but not currently blocking anything.
+
+Either way, the Step-0 capability probe (staged as the `/start` skill,
+`sandbox-start-SKILL.md`) remains the fail-loud guard — it now checks BOTH a
+computer-use tool AND the native-capture path before declaring a round
+API-only (see that skill for the amended rule).
 
 Cover every `sandbox`-tier item in `coverage-brief.md`, or record why an item was
 not reachable. Items marked "covered elsewhere (host tier)" are verified by a host
@@ -95,8 +114,10 @@ unique job is proving clean-install reachability and discoverability.
 
 - **Mapped folder** at `C:\Users\WDAGUtilityAccount\Desktop\JustSearchTest\` —
   contains the JustSearch installer, this CLAUDE.md, `coverage-brief.md`,
-  `validation-mode.md`, `docs/`, `.claude/`, `collect-evidence.ps1`, and a
-  `tools/` directory for installers staged from the host.
+  `validation-mode.md`, `docs/`, `.claude/`, `collect-evidence.ps1`, the
+  `gui/` native GUI capture/input harness (see *GUI-capture launch
+  requirement* below and `gui/README.md`), and a `tools/` directory for
+  installers staged from the host.
 - **Models** may be mapped at
   `C:\Users\WDAGUtilityAccount\Desktop\JustSearchModels\` only in
   `pre-staged-models` mode. Read `validation-mode.md`; never set
@@ -268,6 +289,12 @@ The backend binds to `127.0.0.1` on a port disclosed two ways:
    Get-NetTCPConnection -State Listen | Where-Object { $_.LocalAddress -eq '127.0.0.1' }
    ```
 
+**Manifest field paths.** `instanceId`, `pid`, and `lifecycle` are **top-level**
+in `runtime/manifest.json`, NOT under `.head` — only `apiPort`, `apiBaseUrl`,
+and `readyAt` are nested under `.head`. The restart check in phase 11 above
+reads `instanceId`/`pid` directly off the manifest root (`$j.instanceId`, not
+`$j.head.pid`, which reads empty).
+
 Key API endpoints (no auth needed, `prod=false`):
 
 | Endpoint | Method | Purpose |
@@ -286,6 +313,14 @@ Key API endpoints (no auth needed, `prod=false`):
 | `/api/mcp/token` | GET | MCP session-token issuance |
 
 Full body shapes for every endpoint live in `docs/reference/api-contract-map.md` (staged under `docs/`).
+
+**SSE requires the `Accept` header.** `GET /api/advisory/authorization-pending/stream`
+called WITHOUT an `Accept: text/event-stream` header returns `200` with empty
+`text/plain` body and closes immediately — indistinguishable from "no pendings
+outstanding." Send the header to get the real `text/event-stream` response
+(a `snapshot` frame plus live `UPDATE` frames). A host-side fix/test for the
+server's silent-200 behavior is tracked separately (see the SSE observation
+note filed against this finding).
 
 **Queue visibility** — `worker.core.pendingJobs` in `/api/status` is the FULL queue
 depth (PENDING+PROCESSING) despite its name. `worker.migration.pendingJobsCount` in

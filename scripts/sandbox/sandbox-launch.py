@@ -372,6 +372,26 @@ def stage_evidence_harness(share_dir: Path):
         print("Staged collect-evidence.ps1")
 
 
+def stage_gui_harness(share_dir: Path):
+    """Copy the native PowerShell GUI capture/input harness (tempdoc
+    727-followup). This is the resolved-negative-on-Chrome, working-native
+    alternative for surface-tier (screenshot) coverage: it drives the real
+    Tauri WebView2 shell via CopyFromScreen/SendKeys/mouse_event, needs no
+    computer-use tool, extension, pairing, or network. Staged next to
+    collect-evidence.ps1 so no round has to reconstruct it from scratch."""
+    gui_src = SCRIPT_DIR / "gui"
+    if not gui_src.is_dir():
+        return
+    gui_dst = share_dir / "gui"
+    gui_dst.mkdir(parents=True, exist_ok=True)
+    count = 0
+    for f in gui_src.iterdir():
+        if f.is_file():
+            shutil.copy2(f, gui_dst / f.name)
+            count += 1
+    print(f"Staged gui/ ({count} files — native PowerShell GUI capture/input harness)")
+
+
 def generate_wsb(wsb_path: Path, share_dir: Path, memory_mb: int, models_dir: Path | None = None):
     """Generate the .wsb configuration file with proper XML escaping.
 
@@ -572,6 +592,7 @@ def main():
     write_validation_mode(share_dir, installer, models_dir, args.no_models)
     stage_coverage_brief(share_dir)
     stage_evidence_harness(share_dir)
+    stage_gui_harness(share_dir)
     wsb_path = stage_dir / "JustSearch-Validation.wsb"
     generate_wsb(wsb_path, share_dir, args.memory, models_dir)
     print(f"Sandbox RAM: {args.memory} MB")
