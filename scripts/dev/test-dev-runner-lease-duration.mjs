@@ -130,6 +130,35 @@ function testLeaseWriteSitesUseDeclaredDuration() {
   console.log('test-dev-runner-lease-duration: both lease write-sites use the declared duration, not a hardcoded 30s — PASS');
 }
 
+// --- Regression guard: the abandoned-stack REAPER honors the declared hold (735 G6 -------------
+// --- completion). Same static-source idiom as above. A quiet-but-declared owner session --------
+// --- must not be reaped inside its declared lease window — proven gap 2026-07-14: a 1k-doc ----
+// --- enrichment wait was reaped_abandoned at ~10 min despite the stack doing its started job. --
+
+function testReaperHonorsDeclaredHold() {
+  const fs = require('node:fs');
+  const src = fs.readFileSync(path.join(__dirname, 'dev-runner.cjs'), 'utf8');
+
+  assert.match(
+    src,
+    /declaredHoldMs\s*=\s*\(opts\.leaseDurationSec\s*\?\?\s*DEFAULT_LEASE_DURATION_SEC\)\s*\*\s*1000/,
+    'reaper must derive its threshold from the declared lease duration (opts.leaseDurationSec)',
+  );
+  assert.match(
+    src,
+    /abandonedThresholdMs\s*=\s*Math\.max\(\s*\n?\s*DEFAULT_THRESHOLDS\.abandonedAfterMs\s*\+\s*REAPER_GRACE_MS,\s*\n?\s*declaredHoldMs\s*\+\s*REAPER_GRACE_MS,?\s*\n?\s*\)/,
+    'reaper threshold must be max(default+grace, declaredHold+grace) — the declared hold may only '
+      + 'EXTEND the reaper window, never shorten it below the default',
+  );
+  assert.match(
+    src,
+    /abandonedMs\s*>\s*abandonedThresholdMs/,
+    'the reap condition must compare against the intent-aware threshold, not the raw default',
+  );
+
+  console.log('test-dev-runner-lease-duration: reaper honors the declared campaign-length hold — PASS');
+}
+
 async function main() {
   testClampDefaultsWhenAbsent();
   testClampWithinRangePassesThrough();
@@ -141,6 +170,7 @@ async function main() {
   testParseArgsThreadsDeclaredValue();
   testParseArgsClampsOutOfRangeAtParseTime();
   testLeaseWriteSitesUseDeclaredDuration();
+  testReaperHonorsDeclaredHold();
   console.log('test-dev-runner-lease-duration: ALL PASS');
 }
 

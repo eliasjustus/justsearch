@@ -442,3 +442,13 @@ recording still requires a capture path that bypasses deferral.
 **Program status: W1–W6 all landed and reviewed (refute-first, zero MAJORs across four reviews).**
 Branch green and unpushed; no PR per standing instruction. Owner-gated leftovers unchanged
 (full-passage parity A/B; hop-absorption A/B; powered 624).
+
+**G6 completion (reaper honors declared hold) — 2026-07-14, incident-driven.** First labeled kill
+via the 730 stop-report substrate: `disposition: reaped_abandoned` — the dev-runner's own reaper
+killed a healthy stack ~10 min into a 1k-doc enrichment wait because the owner session was quiet
+(background HTTP polls are not session activity). Gap: W5 threaded the declared lease into the
+LEASE but the reaper still keyed off session-activity age alone. Fix: the reap threshold is now
+`max(default+grace, declaredHold+grace)` — a declared hold can only extend, never shorten, the
+reaper window; default behavior unchanged. Static-guard test added (11/11 + 9/9 green). Note: the
+prior campaigns' "backend deaths" attributed to foreign takeover may include reaper kills — the
+dispositions were unlabeled before 730.

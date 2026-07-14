@@ -1703,7 +1703,19 @@ async function cmdStart(opts) {
         const REAPER_GRACE_MS = Number(process.env.JUSTSEARCH_DEV_REAPER_GRACE_MS) > 0
           ? Number(process.env.JUSTSEARCH_DEV_REAPER_GRACE_MS)
           : 5 * 60_000;
-        if (abandonedMs > DEFAULT_THRESHOLDS.abandonedAfterMs + REAPER_GRACE_MS) {
+        // Tempdoc 735 G6 completion: a declared campaign-length hold (--lease-duration-sec)
+        // is INTENT — the owner said "I will be busy-but-quiet for this long". The reaper
+        // honors it: the abandoned threshold is at least the declared lease duration. With
+        // the default 30s lease this is a no-op (default thresholds dominate). Proven gap
+        // 2026-07-14: a 1k-doc enrichment wait with a quiet owner session was reaped at
+        // ~10 min (disposition reaped_abandoned) while the stack was doing exactly what the
+        // owner started it for.
+        const declaredHoldMs = (opts.leaseDurationSec ?? DEFAULT_LEASE_DURATION_SEC) * 1000;
+        const abandonedThresholdMs = Math.max(
+          DEFAULT_THRESHOLDS.abandonedAfterMs + REAPER_GRACE_MS,
+          declaredHoldMs + REAPER_GRACE_MS,
+        );
+        if (abandonedMs > abandonedThresholdMs) {
           process.stderr.write(
             `[dev-runner] Reaping abandoned stack (owner silent ${Math.round(abandonedMs / 1000)}s, ` +
             `no successor) — freeing resources.\n`);

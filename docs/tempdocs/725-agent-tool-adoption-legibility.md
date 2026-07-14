@@ -1669,3 +1669,37 @@ because it adds information, never behavioral dependence. Candidate scope beyond
 agent-api HTTP endpoints and the UI's evidence rendering already half-follow it. Retirement
 condition: if agent clients converge on protocol-level result metadata that carries the same
 facts (spec-level degraded/provenance fields), the prose projections retire into those fields.
+
+# Campaign V — tier-equivalence pilot: pre-registration (2026-07-14, BEFORE any cell runs)
+
+> Owner authorization: "proceed with 2" (2026-07-14), following the 735 W6 landing. Purpose:
+> measure the behavioral effect of tier-equivalence closure (tool surface 0.4.0 — the structured
+> tier now carries `hints`/`facets`/`coverage`/`truncated`, which structured-delivery cohorts
+> previously never received) against Campaign U's 0.3.1 B-arm. First campaign captured with
+> `delivered_tier`/`delivered_fields` live (735 W2), so exposure identity is measured, not
+> assumed — this also resolves U's "furniture markers 0/153" open item at campaign scale
+> (the markers were text-grep against a tier the CLI wasn't delivering; V measures the
+> delivered tier directly).
+
+- **Arm:** ONE campaign (V): tool surface 0.4.0 (branch dist), B-condition only, corpus
+  `mixed/en-legal-clerc-1k-verbose` (fresh hard-clean ingest), all 20 committed queries ×
+  seed 0, haiku, exact-match scoring, same per-cell limits as U (max-budget 0.5/cell,
+  timeout 180s, max-turns 100, seeds 1). Estimated ~$4.50; hard cap USD 6 — abort if projected
+  over. No A-arm (T's A-arm stands).
+- **Primary metrics:** (1) `delivered_tier` distribution across MCP calls (expected: search and
+  answer structured-json, status blocks — the first campaign-scale delivery measurement);
+  (2) `delivered_fields` fire rates for the four 0.4.0 equivalence fields (exposure
+  confirmation); (3) the U-stable behavioral set for drift: Reads-per-search, median
+  cache-creation tokens, answer:search mix, organic `response_format` use, funnel, turns.
+- **Hypotheses (directional, honest):** newly-delivered hints/coverage may shift follow-up
+  behavior (e.g. facet-filter usage after the facets fact, fewer redundant re-searches after
+  coverage/truncated). Token cost of the additions is bounded (~hundreds of bytes/call of
+  structured metadata; answer packs unchanged). No accuracy claim at seed 1 — the record will
+  self-label `seed_floor_met: false` and the claim policy refuses promotion, as designed.
+- **Comparison:** descriptive raw-log table vs U-B (same corpus/queries/model/limits);
+  `exposure_contrast(U,V)` surface-contrast attempted for the formal record pair (both B-only —
+  expected to refuse on empty measured, as with U; the descriptive table is the deliverable).
+- **Known risks declared:** lease contention (mitigation: owner-session keepalive; the run is
+  resumable on its log dir `scripts/jseval/tmp/725-campaign-v/`); corpus signature drift
+  (U recorded `signature_matches: false` against the declared slug — V will record the same
+  identity block; comparability rests on same-dataset-dir, which is byte-shared with U).

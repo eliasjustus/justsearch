@@ -147,9 +147,11 @@ async def _run_one_sdk_probe(base_url: str, tool: str, call: dict, model: str, t
     mirrored here deliberately, not duplicated logic -- this script has no
     Inspect/eval-log dependency to share code with it directly)."""
     from claude_agent_sdk import (
+        AssistantMessage,
         ClaudeAgentOptions,
         ClaudeSDKClient,
         ToolResultBlock,
+        ToolUseBlock,
         UserMessage,
     )
 
@@ -161,7 +163,10 @@ async def _run_one_sdk_probe(base_url: str, tool: str, call: dict, model: str, t
     opts = ClaudeAgentOptions(
         model=model,
         permission_mode="bypassPermissions",
-        max_turns=3,
+        # 6, not 3: under the CLI's deferred-MCP-tools behavior the session spends extra
+        # turns loading the tool (ToolSearch hop) before the target call can execute --
+        # observed 2026-07-14 when max_turns=3 runs ended on the placeholder.
+        max_turns=6,
         mcp_servers={"justsearch": {"type": "http", "url": base_url}},
         strict_mcp_config=True,
         allowed_tools=[full_tool_name],
@@ -171,19 +176,34 @@ async def _run_one_sdk_probe(base_url: str, tool: str, call: dict, model: str, t
 
     async def _drive():
         nonlocal found
+        # Correlate by tool_use_id: capture ONLY the result of the TARGET tool's
+        # ToolUseBlock. "First ToolResultBlock in the session" is wrong under deferred
+        # MCP tools -- the first result is the deferral placeholder/tool-load result,
+        # not the target delivery (the 2026-07-14 placeholder-fixture incident).
+        target_ids: set[str] = set()
         async with ClaudeSDKClient(options=opts) as client:
             await client.query(prompt)
             async for msg in client.receive_response():
+                if isinstance(msg, AssistantMessage):
+                    for b in (getattr(msg, "content", None) or []):
+                        if isinstance(b, ToolUseBlock) and b.name == full_tool_name:
+                            target_ids.add(b.id)
                 if isinstance(msg, UserMessage):
                     for b in (getattr(msg, "content", None) or []):
-                        if isinstance(b, ToolResultBlock) and found is None:
+                        if (
+                            isinstance(b, ToolResultBlock)
+                            and found is None
+                            and getattr(b, "tool_use_id", None) in target_ids
+                        ):
                             found = {"is_error": bool(b.is_error), "content": b.content}
 
     await asyncio.wait_for(_drive(), timeout=timeout_s)
     if found is None:
         raise RuntimeError(
-            f"SDK probe for {full_tool_name} completed without a ToolResultBlock -- "
-            "the model may have refused the forced call; inspect manually."
+            f"SDK probe for {full_tool_name} completed without a ToolResultBlock "
+            f"correlated to a {full_tool_name} ToolUseBlock -- the session may have "
+            "deferred the tool without executing it, or the model refused the forced "
+            "call; inspect manually."
         )
     return found
 
