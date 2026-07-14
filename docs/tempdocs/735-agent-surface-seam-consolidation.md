@@ -174,11 +174,106 @@ breaks"). Two cheap directions, both assumptions-checked:
 ## Open questions for the design pass
 
 1. SDK/CLI delivery of `structuredContent` to child sessions (the debug cell — also closes the
-   marker mystery). **Gate: no Framing-B design without this answer.**
+   marker mystery). **Gate: no Framing-B design without this answer.** → **ANSWERED, below.**
 2. Exact scope of the furniture register vs. jumping straight to text-as-projection for the
-   MCP surface only (SearchTool deferred to its own evidence).
+   MCP surface only (SearchTool deferred to its own evidence). → resolved by the answer to 1.
 3. Whether the lifecycle-state map (Framing A applied to the worker) is worth a register or
    whether 730's shipped observability already suffices — measure by whether the next lifecycle
    incident is diagnosable from status alone.
 4. Sequencing against the measured cohorts: which structural changes ride the next intentional
    TOOL_SURFACE_VERSION bump.
+
+---
+
+# Settled design (2026-07-14; the gate probe inverted the premise)
+
+## The decisive probe result
+
+A debug cell (direct Claude Agent SDK session against the live 0.3.1 stack, raw
+`ToolResultBlock` inspection — no redaction) answered the gate question in the strongest
+possible way: **for MCP tools that return `structuredContent`, the Claude Code CLI delivers the
+model the serialized `structuredContent` JSON as the tool result — not the human-readable text
+tier.** The `justsearch_answer` result arrived as `content: str` beginning
+`{"citations":[{"parentDocId":...` (the `McpEvidenceProjection` output). Consequences, in
+order of importance:
+
+1. **The furniture-marker mystery (0/153) is fully explained**: the text lines were never
+   delivered to campaign agents in this cohort. Extraction was always correct; the contract
+   assumption was wrong.
+2. **The measured behavioral effects re-attribute to the structured tier**: Reads-per-search
+   halved at 0.3.0 because `searchEvidence` gained excerpts/matchedTerms (delivered), not
+   because the text previews improved (undelivered in this cohort); concise adoption jumped at
+   0.3.1 via the schema description (tools/list IS delivered). The effects are real; their
+   carrier was misattributed. A dated correction rides in tempdoc 725.
+3. **The text tier's audience is humans and text-rendering clients** (and any client cohort
+   whose delivery behavior differs — Desktop/Cursor unverified). It remains a real product
+   surface; it is not the measured cohort's contract.
+4. **Delivery tier is a cohort fact**: what a client hands the model is as identity-relevant as
+   which tools it exposes. This extends 725's cohort-relativity principle one level down.
+
+## The design (govern-then-remove, re-anchored on the structured tier)
+
+**G1 — Declare the real contract.** `structuredContent` (already a registered projection:
+`mcp-evidence-projection` in `governance/execution-surfaces.v1.json`) is promoted in docs and
+register-role to *the primary agent-delivered contract for structured-preferring clients*;
+`docs/reference/mcp-production-server.md` gets an honest delivery-tier note (its current prose
+implies agents read the text lines — for the CLI cohort they do not). Public-claims-safe wording
+required (no client-behavior claims beyond what the probe evidences, named client + date).
+
+**G2 — Measure what is delivered.** The 729 capture gains a per-call `delivered_tier` derivation
+(structured-JSON vs prose text — derivable from existing digests via a JSON-parse check, no new
+raw capture) and the furniture markers are recomputed against **structured fields** (e.g.
+`quality`, `matchedTerms`, `degradation` presence) rather than text greps. The Java→Python text
+literals dissolve into field names governed by the observation schema. The text-grep markers
+remain only as a secondary signal for prose-delivered results.
+
+**G3 — One response content model (the remove step, now REQUIRED rather than optional).** The
+probe shows text and structured tiers can silently serve different content to different
+audiences; today they are assembled independently in `McpToolSurface` (59 append sites) and
+`McpEvidenceProjection`. The design: one content-model builder per tool response (facts:
+header counts, per-hit rationale/excerpts/degradation, quality, hints), with **two renderers** —
+the structured projection (schema-governed) and the text projection (for humans/prose clients).
+This guarantees tier equivalence by construction. Rides the next intentional
+TOOL_SURFACE_VERSION bump (renderer must either reproduce 0.3.1 text byte-for-byte or ship as a
+declared surface change). `SearchTool`'s rendering joins as a third renderer profile ONLY when
+its own evidence demands (AHA; its consumer regex is a live constraint).
+
+**G4 — Recorded-reality fixtures.** Seeded by this probe's output (the serialized-structured
+delivery shape is fixture #1), plus the SDK stream shapes, generation-layout boot, and
+hard-kill states from the 725/730 incidents. Scope stays: boundary layers with demonstrated
+unreachable-seed incidents. Provenance stamps (SDK/CLI/surface versions) mandatory.
+
+**G5 — Request-builder unification** (unchanged from theorization): one factory for the two
+shared-reason sites (interactive search + pack pre-search); suggest/autocomplete stay separate
+by intent.
+
+**G6 — Environment intent** (unchanged): lease-duration declaration for campaign-length holds;
+one-build-at-a-time convention documented where the worktree guide lives.
+
+## Orphans (owned by this design)
+
+1. **The 725/732 text-attribution claims** — corrected by a dated note in tempdoc 725 (effects
+   real, carrier re-attributed for the CLI cohort); the text-tier work itself is NOT orphaned
+   (other audiences + the same in-hand data feeds both tiers).
+2. **Text-grep furniture markers as primary** (729) — superseded by field-based markers (G2);
+   kept as secondary for prose-delivered results.
+3. **The theorized text-furniture register** — dissolved: G2 removes its consumers; G3 removes
+   its producer-side need.
+
+## Design reach
+
+- **Conforms to:** the execution-surfaces register (G1 is a role clarification of an existing
+  entry, not a new authority); the projection discipline (G3 is `searchTraceExplain`'s shape
+  applied to the MCP response); 725's cohort-relativity (delivery tier joins exposure mode as
+  identity); the recorded-fixture idea conforms to the committed-fixture precedent (the 48-row
+  evidence fixture).
+- **Principle (promoted from theorization, sharpened by the probe):** **"What the model is
+  delivered is a cohort fact, distinct from what the server authored — capture it, never assume
+  it."** Instances already visible: tool visibility (deferred vs eager — 725), and now content
+  tier (structured vs prose). Candidate scope: any client-mediated surface (future MCP
+  resources/prompts, agent-api HTTP responses through gateways). Earns its keep each time a
+  delivery-tier split explains a cohort behavior difference (twice already: adoption regime,
+  marker mystery); retires if clients converge on a spec-mandated delivery behavior.
+- **Violation noted, not fixed here:** every historical interpretation that assumed text-tier
+  delivery (tempdoc 655's response-hint attributions may partially share the misattribution —
+  flagged for that lineage's next revisit, not relitigated now).

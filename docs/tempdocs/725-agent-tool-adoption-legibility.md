@@ -1625,6 +1625,18 @@ pre-registered and now policy-enforced — not claimable at this scale. The resp
 program's default shapes are economically justified as shipped; the accuracy frontier stays
 with the model-tier and hop-absorption experiments (both owner-gated).
 
+## Delivery-tier correction (2026-07-14, tempdoc 735 gate probe — read this before citing the shape attributions above)
+
+A raw-SDK debug probe proved that for MCP tools returning `structuredContent`, the Claude Code
+CLI delivers the model the serialized structuredContent JSON — NOT the human-readable text tier.
+For the campaign cohort (haiku + Claude CLI), therefore: the Reads-per-search halving
+re-attributes to `searchEvidence` gaining excerpts/matchedTerms at 0.3.0 (delivered), not to the
+text preview improvements (undelivered in this cohort); concise adoption at 0.3.1 re-attributes
+to the schema description (delivered via tools/list). The furniture-marker 0/153 open item is
+CLOSED by this: the markers measured text that was never delivered. All measured effects stand;
+their carrier is corrected. The text tier remains real product surface for humans and
+prose-rendering clients. Full analysis + the follow-on design: tempdoc 735.
+
 ## Issue-remediation program (2026-07-14, owner directive: fix all 15)
 
 Owner directed full remediation of the consolidated inventory, each area proceeding
