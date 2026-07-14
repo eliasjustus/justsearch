@@ -52,7 +52,7 @@
     "requirements": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["source_identity_complete", "clean_source_checkout", "computed_corpus_signature", "corpus_certification", "resolved_provider_model", "captured_search_config", "verified_tool_surface", "no_leak_suspect_cells", "contamination_classes", "judge_calibration", "accuracy_delta_interval", "intention_to_treat", "per_protocol_is_secondary", "per_stratum_promotion"],
+      "required": ["source_identity_complete", "clean_source_checkout", "computed_corpus_signature", "corpus_certification", "resolved_provider_model", "captured_search_config", "verified_tool_surface", "verified_exposure_mode", "no_leak_suspect_cells", "contamination_classes", "judge_calibration", "accuracy_delta_interval", "intention_to_treat", "per_protocol_is_secondary", "per_stratum_promotion"],
       "properties": {
         "source_identity_complete": {"const": true},
         "clean_source_checkout": {"const": true},
@@ -61,6 +61,7 @@
         "resolved_provider_model": {"const": true},
         "captured_search_config": {"const": true},
         "verified_tool_surface": {"const": true},
+        "verified_exposure_mode": {"const": true},
         "no_leak_suspect_cells": {"const": true},
         "contamination_classes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
         "judge_calibration": {"const": true},

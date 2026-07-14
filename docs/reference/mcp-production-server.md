@@ -53,6 +53,22 @@ Add to `.cursor/mcp.json` or equivalent:
 claude mcp add justsearch --transport http http://127.0.0.1:33221/mcp
 ```
 
+### Claude Code: headless / non-interactive approval
+
+Project-scope MCP servers in Claude Code (added with `claude mcp add` at the default project
+scope, or picked up from a shared `.mcp.json`) require a one-time **interactive** approval per
+project directory before Claude Code will actually connect to them. In a non-interactive context
+— `claude -p`, or an Agent SDK session — launched from a directory where the server has never
+been approved, the server is silently dropped: there is no error, it just does not connect.
+`claude mcp list` shows it as **"Pending approval"** rather than connected.
+
+Remedies:
+
+- Run `claude` interactively once in that project directory and approve the server when
+  prompted; subsequent non-interactive runs from the same directory pick it up.
+- Or skip the project-scope approval flow entirely: pass the server programmatically via SDK
+  options (Agent SDK), or via `--mcp-config <file> --strict-mcp-config` on the CLI.
+
 ## Transport
 
 Streamable HTTP on the existing Javalin server (loopback-only,

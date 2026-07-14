@@ -64,7 +64,8 @@
         "accuracy": {"type": ["object", "null"]},
         "provider_cache_creation_input_tokens": {"type": ["object", "null"]},
         "cost_usd": {"type": ["object", "null"]},
-        "adoption": {"type": "object"}
+        "adoption": {"type": "object"},
+        "funnel": {"type": ["object", "null"]}
       }
     }
   },
@@ -88,7 +89,38 @@
         "eval_limits": { "type": ["object", "null"], "description": "Per-query token/step/cost budget." },
         "search_config_cohort_key": { "type": ["string", "null"], "description": "623 config_cohort_key of the with-tool search backend (null for the without-tool arm)." },
         "hardware": { "type": ["object", "null"], "description": "Stable hardware projection (gpu/vram/driver/ort), reused from release._hardware_projection." },
-        "environment": { "type": ["object", "null"] }
+        "environment": { "type": ["object", "null"] },
+        "exposure_config": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["enable_tool_search", "always_load", "exposure_mode"],
+              "properties": {
+                "enable_tool_search": {"type": ["string", "null"]},
+                "always_load": {"type": ["boolean", "null"]},
+                "exposure_mode": {"enum": ["eager", "deferred", "unknown"]}
+              }
+            }
+          ]
+        },
+        "mcp_initialize_identity": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["instructions", "instructions_sha256", "server_version", "protocol_version"],
+              "properties": {
+                "instructions": {"type": ["string", "null"]},
+                "instructions_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+                "server_version": {"type": ["string", "null"]},
+                "protocol_version": {"type": ["string", "null"]}
+              }
+            }
+          ]
+        }
       }
     },
     "conditions": {

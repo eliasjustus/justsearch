@@ -277,6 +277,11 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
 @click.option("--timeout-s", default=180, show_default=True, type=int, help="Per-cell timeout (calibrate sets ~2x contended-p95).")
 @click.option("--max-turns", default=100, show_default=True, type=int, help="Per-cell agent turn cap (safety net for the pathological tail; the wall-clock timeout is the primary bound).")
 @click.option("--calibration", default=None, type=click.Path(exists=True), help="calibration.json from `utility-calibrate` (overrides timeout/concurrency/search-key + filters queries).")
+@click.option("--agent-env", "agent_env_specs", multiple=True, metavar="KEY=VALUE",
+              help="Repeatable. An env var threaded into every cell's child Agent SDK "
+                   "session (tempdoc 725 increment 4 — exposure A/B wiring), e.g. "
+                   "--agent-env ENABLE_TOOL_SEARCH=false for the eager arm. Empty by "
+                   "default = today's behavior byte-for-byte (no env overlay).")
 @click.option("--dataset", required=True, help="Corpus slug, e.g. mixed/multihop-rag.")
 @click.option("--corpus-signature", default=None)
 @click.option("--corpus-certification", default=None, type=click.Path(exists=True, dir_okay=False),
@@ -290,7 +295,8 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
 @click.option("--output-dir", default=None, type=click.Path())
 @click.pass_context
 def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, seeds, concurrency,
-                    max_queries, max_budget, timeout_s, max_turns, calibration, dataset, corpus_signature,
+                    max_queries, max_budget, timeout_s, max_turns, calibration, agent_env_specs,
+                    dataset, corpus_signature,
                     corpus_certification,
                     search_config_key, contamination_class, confidence_tier,
                     log_dir, output_dir):
@@ -308,6 +314,19 @@ def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, see
 
     conds = tuple(c.strip().upper() for c in conditions.split(",") if c.strip())
     cli_version = aur.claude_cli_version()
+    # --agent-env KEY=VALUE (repeatable, tempdoc 725 increment 4): threaded into every
+    # cell's child Agent SDK session env. Empty by default = no overlay (today's
+    # behavior byte-for-byte). Fails loudly on a malformed spec, mirroring --run
+    # COND=PATH's own `click.BadParameter` idiom above.
+    agent_env: dict[str, str] = {}
+    for spec in agent_env_specs:
+        if "=" not in spec:
+            raise click.BadParameter(f"--agent-env must be KEY=VALUE, got {spec!r}")
+        key, value = spec.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise click.BadParameter(f"--agent-env key must be non-empty, got {spec!r}")
+        agent_env[key] = value
     # Calibration (from `utility-calibrate`) overrides timeout/concurrency/search-key
     # and filters the queries to the closed-book-retained (retrieval-relevant) set.
     calib_readiness = None  # threaded into the run's comparability verdict (readiness ∧ error_rate)
@@ -343,6 +362,7 @@ def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, see
         corpus_dataset=dataset, corpus_signature=corpus_signature or dataset,
         search_config_cohort_key=search_config_key,
         corpus_certification=corpus_certification,
+        agent_env=agent_env or None,
     )
     from ..utility_recompose import finalize_logs
     record = finalize_logs(
