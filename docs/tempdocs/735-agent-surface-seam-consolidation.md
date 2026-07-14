@@ -351,3 +351,22 @@ The 2026-07-28 RC adds nothing on client forwarding.
 4. Public-docs wording (G1) must present the delivery behavior as observed-and-versioned
    ("observed with Claude Code CLI 2.1.209, 2026-07-14; behavior is undocumented upstream and
    has changed before"), never as a stable platform guarantee.
+
+## Implementation log
+
+**W1 (G1 docs honesty) — landed 2026-07-14, commit `360a0a6`.** `docs/reference/mcp-production-server.md`
+gained the "Delivery tiers" section: tier equivalence stated as the product contract; client
+forwarding behavior stated as observed-and-versioned (Claude Code CLI 2.1.209, CC issue #9962
+cited), never a guarantee. `governance/execution-surfaces.v1.json` `mcp-evidence-projection`
+description extended with its delivered-contract role. Regen + link check + `execution-surface`
+gate green. Wording authored main-loop (public-claims lane).
+
+**W4 (G5 request-builder factory) — landed 2026-07-14.** `SearchPipelinePresets.defaultHybridProtoConfig()`
+(app-services, package-private static) is now the single authority for the default agent-path
+pipeline request; `RemoteDocumentService.preSearchForDocIds` consumes it (byte-identical drop-in,
+wire-shape pin test green). Deliberate deviation from G5's literal wording: `KnowledgeSearchEngine.doSearch`
+is NOT a consumer — its mode is dynamic (default AUTO with denseAuto=true, not fixed hybrid), and it
+threads the intermediate `PipelineConfig` through expansion gating before proto conversion, so literal
+two-site consumption would be wrong. Both sites still land on the same `expandPreset` definition, which
+is the unification G5 sought; the factory Javadoc records the reasoning + F-037. Refute-first review:
+5/5 claims confirmed, no refutations, merge-ready.

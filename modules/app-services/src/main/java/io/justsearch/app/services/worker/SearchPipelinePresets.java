@@ -87,6 +87,29 @@ final class SearchPipelinePresets {
   }
 
   /**
+   * Tempdoc 735 G5: single authority for the default agent-path pipeline request — the explicit
+   * HYBRID preset with {@code denseAuto=false}, matching what {@code justsearch_search}
+   * (McpToolSurface's {@code mode="hybrid"} default) resolves to via {@code
+   * KnowledgeSearchEngine#doSearch}'s generic mode dispatch. Fuses {@link #expandPreset} +
+   * {@link #toProtoPipelineConfig(PipelineConfig, boolean)} for call sites with no intervening use
+   * for the intermediate app-api {@link PipelineConfig} — {@code KnowledgeSearchEngine#doSearch}
+   * itself keeps the two calls separate because it threads the intermediate object through
+   * query-classification gating logic between them, so it is not a consumer of this method.
+   *
+   * <p>F-037: {@code RemoteDocumentService#preSearchForDocIds} previously hand-built a divergent,
+   * bare search request instead of calling {@link #expandPreset}/{@link
+   * #toProtoPipelineConfig(PipelineConfig, boolean)} at all, silently landing on a different pipeline
+   * than {@code justsearch_search}'s default and forking the evidence pack's document universe from
+   * the doc-ranking surface the tool exposes (fixed tempdoc 731 I1). Single-sourcing the two literal
+   * call-site arguments here (rather than each call site re-typing {@code SEARCH_MODE_HYBRID} and
+   * {@code false}) prevents that drift from silently reoccurring.
+   */
+  static io.justsearch.ipc.PipelineConfig defaultHybridProtoConfig() {
+    return toProtoPipelineConfig(
+        expandPreset(SearchMode.SEARCH_MODE_HYBRID, RerankerConfig.fromEnv()), false);
+  }
+
+  /**
    * Converts an app-api {@link PipelineConfig} to the proto wire type, setting the tempdoc 598 R1
    * {@code dense_auto} marker. When {@code denseAuto} is true the Worker resolves the dense leg from
    * the embedding-compat boundary at query time (run dense iff the index is COMPATIBLE, else keyword).

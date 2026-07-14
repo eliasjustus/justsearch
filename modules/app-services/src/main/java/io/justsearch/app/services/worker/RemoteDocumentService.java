@@ -321,15 +321,11 @@ public final class RemoteDocumentService implements DocumentService {
       // (SearchPlanner's `deprecated_mode_fallback` WARN, modeToDefaultPipeline default branch) —
       // a different leg set than justsearch_search's default hybrid preset (sparse+dense RRF).
       // That divergence forked the evidence pack's document universe from the doc-ranking surface
-      // `justsearch_search` exposes. Single-source the same hybrid PipelineConfig
-      // `justsearch_search`'s default "hybrid" mode expands to (SearchPipelinePresets.expandPreset),
-      // rather than hand-building a second copy, so both surfaces search the same pipeline.
-      io.justsearch.reranker.RerankerConfig rerankConfig =
-          io.justsearch.reranker.RerankerConfig.fromEnv();
-      io.justsearch.app.api.knowledge.PipelineConfig pipelineConfig =
-          SearchPipelinePresets.expandPreset(
-              io.justsearch.ipc.SearchMode.SEARCH_MODE_HYBRID, rerankConfig);
-      searchBuilder.setPipeline(SearchPipelinePresets.toProtoPipelineConfig(pipelineConfig, false));
+      // `justsearch_search` exposes. Tempdoc 735 G5: single-sourced via
+      // SearchPipelinePresets#defaultHybridProtoConfig (the shared factory both this call site and
+      // KnowledgeSearchEngine#doSearch's default-hybrid resolution are anchored to), rather than
+      // each call site re-deriving the hybrid+denseAuto=false combination independently.
+      searchBuilder.setPipeline(SearchPipelinePresets.defaultHybridProtoConfig());
 
       // Apply filters from the RAG params
       boolean hasFilters = !params.pathPrefix().isEmpty()
