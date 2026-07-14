@@ -135,3 +135,27 @@ standalone demos. Run `jseval ui-shot --list` for the authoritative set.
 - **Glassmorphism**: Playwright renders without a compositor — blur appears flat.
 - **DPI**: 1× only (2× exceeds the API's 2000px image cap).
 - **Motion**: static frames can't show transitions — assert motion *structurally* (the `--duration-*` / `--ease-*` CSS tokens) rather than watching it.
+
+## Reliable screenshot capture (Playwright script, not manual/extension)
+
+Two methods look plausible and fail silently. Don't use them:
+
+- **Manual "prepare window, ask user to screenshot" workflow is unreliable.** Verified once: ~15 "READY — capture X" requests produced zero saved files. Never trust "I've taken a screenshot" — verify the file exists at the expected path (`find <dir> -newer <marker>` or equivalent) before reporting success.
+- **`claude-in-chrome`'s `resize_window` is unreliable for viewport control.** It silently succeeds without resizing roughly half the time (window snap/focus contention), producing misleadingly same-size "wide"/"narrow" pairs. Don't trust it for before/after comparisons.
+
+**Use a standalone Playwright script instead**, written to a scratch dir — do NOT modify the shared `scripts/jseval/jseval/ui_check.py`. Launch headless Chromium, set an exact viewport, and capture full-page:
+
+```python
+page.set_viewport_size({"width": 1568, "height": 900})  # wide
+# page.set_viewport_size({"width": 840, "height": 900})  # narrow
+page.goto(url)
+page.screenshot(path="out.png", full_page=True)
+```
+
+1568 (wide) and 840 (narrow) are known-good widths for this app — no responsive breakpoint observed between them. Always pass `full_page=True`: the shared `ui_check.py` defaults to `full_page=False` (viewport-only, clips content) — fine for its own step registry but not for ad-hoc captures. This saves directly to a real file, unattended, no user round-trip.
+
+**Gotchas:**
+- `data-testid` locators (`page.locator('[data-testid="..."]')`) often return 0 matches against this app's Lit shadow-DOM components, even though Playwright generally pierces open shadow roots. Fall back to tag/role selectors: `page.locator("textarea")`, `page.get_by_role("textbox")`.
+- The app persists "last-open Inspector doc" client-side; a same-context `page.goto()` reload can leave a `<jf-document-pane>` overlay intercepting clicks on the next state. Give each captured state its own fresh `browser.new_context()` — don't reuse a page across states.
+- The dev stack auto-stops after several minutes of inactivity between tool calls. Check `quick_health` before a long capture batch; restart with `clean: "none"` if it died (preserves index/data).
+- Headless vs headed showed no visible backdrop-blur/glass difference on pixel diff for this app — headless is sufficient, don't switch to headed for that reason alone.

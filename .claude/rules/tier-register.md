@@ -70,6 +70,8 @@ why prose-tier is intentionally the right choice).
 | 26 | `pre-merge-gradle-build` | Pre-merge `./gradlew build -x test` required | `prose-only` | — | CI catches at PR time, but local-first discipline is honor system |
 | 35 | `verify-worktree-base` | Always verify a new worktree's base contains the expected work before coding | `prose-only` | — | Agent discipline; `worktree.baseRef:"head"` is the by-construction half (config, not a gate), and manual `git worktree add` ignores it — no mechanical check that the base matched task intent (tempdoc 618 §1) |
 | 36 | `docs-ride-along` | Publishing docs-only changes: tempdoc/observations edits ride-along with their code PR or batch; canonical-doc updates may stand alone (ADR-0045 axis-2 / tempdoc 653) | `hook-hint` | `hook:docs-granularity-hint.mjs` | `docs-granularity-hint.mjs` (PreToolUse Bash `git push`) fires when a branch's whole diff vs `origin/main` is `docs/tempdocs/**` / `docs/observations*` only, delivering the ride-along/batch convention — non-blocking (~85%); canonical-doc-only and docs+code branches intentionally don't trigger |
+| 38 | `no-merge-without-authorization` | Never merge/publish a PR without an explicit per-action go-ahead; take it to green-and-ready then wait | `prose-only` | — | Agent discipline; branch protection can gate a direct push, but "wait for the owner's merge word" is honor-system — no mechanical signal for per-action authorization |
+| 39 | `accepted-tracked-skills-no-removal` | The 4 orchestration skills tracked on public `main` are owner-accepted; never open a PR to remove them | `prose-only` | — | Agent discipline; no mechanical check that a removal PR targets owner-accepted tracked files |
 
 ## .claude/rules/agent-lessons.md
 
