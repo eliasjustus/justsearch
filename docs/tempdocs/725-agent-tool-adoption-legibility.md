@@ -953,3 +953,88 @@ degradation specimen). Campaign evidence relocated from the removed worktree to
   legal-retrieval work (708/712/713) when it starts.
 - Next design step: response-legibility design pass (research → theorize → design → plan) on
   this evidence, in worktree `725-response-legibility`.
+
+---
+
+# Research pass #2 (2026-07-14; response legibility — 3 parallel lanes, cited summaries only)
+
+> Scope: tool RESPONSE shapes as behavioral steering — the surface the forensics made binding.
+> Prior passes covered descriptions/discovery/spec-priority; none of that is re-covered. No
+> external code or text copied into the repo.
+
+## Lane 1 — Anthropic first-party guidance (the binding constraint)
+
+- **Imperative instructions inside tool results are officially warned against**: Claude treats
+  tool-result content as untrusted data; command-shaped steering "may be ignored or flagged as a
+  potential injection" (platform docs: Handle tool calls / Mitigate jailbreaks). Symptom: refusal
+  or confirm-with-user on instructions originating in results.
+- **Descriptive/contract-shaped in-result guidance is officially RECOMMENDED**: truncation and
+  error responses should carry "helpful instructions" and can "directly encourage agents to
+  pursue more token-efficient strategies" ("Writing effective tools for AI agents", engineering
+  blog). Claude Code's own Read tool ships the pattern verbatim: "content (X tokens) exceeds
+  maximum… use offset and limit parameters…".
+- **Net design rule: the hint grammar must be DESCRIPTIVE (facts about the result and its
+  limits), never imperative (commands about the next call).** This is the single most
+  design-constraining finding of the pass.
+- Token-efficient shapes have first-party precedent: a `response_format: concise|detailed` enum
+  cut a worked example from 206→72 tokens; "return only high-signal information"; pagination/
+  filtering/truncation with sensible defaults. "Code execution with MCP" (2025-11) is the
+  results-bypass-context endgame (98.7% reduction in their example) — out of scope for us now,
+  direction confirmed.
+- Actionable-error guidance exists ("what went wrong and what Claude should try next"); Claude
+  retries invalid calls 2-3 times with corrections. **Degraded-but-successful signaling: NOT
+  FOUND in any official material** — genuine gap.
+
+## Lane 2 — MCP spec + ecosystem (greenfield confirmations)
+
+- Current spec: `isError` is binary (execution error vs protocol error); `structuredContent` +
+  `outputSchema` exist (SHOULD mirror into text block); content annotations
+  (`audience`/`priority` 0-1) are legal on every content block **but purely descriptive — no
+  client behavior mandated, and no evidence Claude Code/Desktop/Cursor honor them.**
+- **The ~2026-07-28 revision does not touch result semantics we'd design against** (verified via
+  the RC post + SEP list): `structuredContent` widens to any JSON value (helps us);
+  initialize→server/discover confirmed (655's carrier migrates, already parked); new
+  Tasks/InputRequired/CacheableResult are orthogonal. **No partial-success/degraded status exists
+  in current or draft spec.**
+- **Degraded-mode practice: NO convention exists** (GitHub MCP server documents a hard
+  binary; reference servers have nothing). Result-shape conventions (snippet length,
+  highlighting, verbosity params, "N more" affordances): none established across
+  Exa/Tavily/Brave — per-call pagination is not even spec'd (cursors are list-ops only).
+  **We would be establishing patterns, not conforming to or breaking any.**
+
+## Lane 3 — Multi-hop weak-agent literature (evidence tiers for the levers)
+
+- The shortcut failure is real but **not unified under one named phenomenon**: pieces exist —
+  lexical-overlap "reasoning shortcuts" (ACL 2019, arXiv:1906.07132), premature/over-extended
+  chain termination correlating with wrong answers + explicit model-size gradient
+  (AgenticRAGTracer, arXiv:2602.19127), late bridge-entity resolution mechanistically
+  (arXiv:2402.16837), path-execution vs path-discovery split (WebDetective, arXiv:2510.05137).
+  Our per-cell data (9 bridge-entity answers with a size gradient implied by the 3 correct
+  traces) is genuinely novel evidence — noted for 719 someday, no claim now.
+- **Best-evidenced tool-side lever: match quality + snippet/recognition support**, not
+  suggestion text — hybrid dense+sparse for paraphrase chains (arXiv:2606.21553), listwise
+  reranking ~+6 nDCG@10 (arXiv:2501.09186), attention-steering to the right passage +11.5% in
+  low-visibility positions (arXiv:2601.12499). Matched-span-centered snippets are classic IR
+  (query-biased summaries) but **untested on LLM agents** — low-risk, evidence-adjacent.
+- **The "suggested follow-up query" affordance is literature-UNTESTED for LLM agents in both
+  directions** (benefit and over-steering cost). IRCoT-style interleaving (+15 QA pts, holds for
+  small models, arXiv:2212.10509) proves the *mechanism* (structured next-lookup framing helps
+  weak models) but is harness-side. Treat the tool-side variant as a HYPOTHESIS our own
+  pre-registered A/B must test, not a design fact.
+
+## Net effect on the lever program
+
+1. **L4a (degradation notice)** — proceed; greenfield everywhere; shape it as a descriptive
+   notice at the TOP of the result (+ `structuredContent` status field when we adopt the
+   widened schema), never as an instruction.
+2. **L4b (payload-visible previews)** — proceed; strongest evidence-adjacent lever
+   (query-biased/matched-span snippets + the demonstrated rank-1 truncation cause); follows the
+   first-party truncation-notice grammar.
+3. **L4c (`response_format: concise|detailed`)** — proceed; first-party precedent, direct
+   token ROI on the 10KB-dump and preview problems.
+4. **L4d (follow-up/gap-statement affordance)** — hypothesis tier: must be phrased as a
+   descriptive gap statement ("this document names engineer X; no value information appears in
+   it"), and ships only through a pre-registered A/B with over-triggering negative controls
+   (the thinnest-evidenced intervention in the literature).
+5. **Do not build on content annotations** (`priority`/`audience`) for behavior — unenforced
+   metadata; may emit them as optional extras only.
