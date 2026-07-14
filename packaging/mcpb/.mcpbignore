@@ -1,0 +1,8 @@
+# Keep the bundle minimal: manifest.json + server/ only.
+# (mcpb pack already excludes dotfiles and common junk; these are ours.)
+dist
+test
+server.json
+README.md
+.gitignore
+.mcpbignore

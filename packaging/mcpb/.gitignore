@@ -1,0 +1,2 @@
+# Built .mcpb artifacts — build with `npx -y @anthropic-ai/mcpb pack` (see README.md).
+dist/
