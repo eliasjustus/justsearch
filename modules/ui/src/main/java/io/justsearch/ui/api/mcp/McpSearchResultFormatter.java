@@ -120,6 +120,39 @@ final class McpSearchResultFormatter {
   }
 
   /**
+   * Every span whose term passes the same informativeness filter as {@link
+   * #filterInformative(List)} (min length, not a stopword) — but, unlike that method, WITHOUT the
+   * term-level dedup. {@code filterInformative}'s dedup is right for the "Matched:" term list
+   * (an agent doesn't need to see "cavby8" listed twice), but wrong for window placement: a
+   * title-echo occurrence of a term near the head of a region and a payload occurrence of the
+   * SAME term deep in the body are different candidates for where to anchor the preview window
+   * (tempdoc 725 W2, live-validated on doc cavby8 — {@code filterInformative} collapsed both
+   * occurrences to the char-4 title echo, so the window never reached the char-336 payload
+   * sentence). Feed this list, not {@code filterInformative}'s, to {@link #bestWindow}.
+   */
+  static List<MatchSpan> informativeOccurrences(List<MatchSpan> spans) {
+    if (spans == null || spans.isEmpty()) {
+      return List.of();
+    }
+    List<MatchSpan> out = new ArrayList<>();
+    for (MatchSpan span : spans) {
+      String term = sanitize(span.term());
+      if (term.isBlank()) {
+        continue;
+      }
+      String lower = term.toLowerCase(Locale.ROOT);
+      if (lower.length() < MIN_INFORMATIVE_TERM_LENGTH) {
+        continue;
+      }
+      if (STOPWORDS.contains(lower)) {
+        continue;
+      }
+      out.add(span);
+    }
+    return out;
+  }
+
+  /**
    * Picks the excerpt region whose nested spans contain the most informative terms; ties resolve
    * to the first region (input order preserved). Returns {@code null} for an empty/null list.
    */
@@ -143,9 +176,10 @@ final class McpSearchResultFormatter {
   record Window(String text, boolean truncated) {}
 
   /**
-   * A window of up to {@code maxLen} chars starting at {@code startOffset} (case a: the excerpt
-   * region already brackets the match, so the window starts at the first informative span rather
-   * than centering).
+   * A window of up to {@code maxLen} chars starting at {@code startOffset}. Used as the head-window
+   * fallback when no informative spans are available to drive {@link #bestWindow} (the excerpt
+   * region already brackets the match, so a head window still starts on-topic rather than at an
+   * arbitrary field offset).
    */
   static Window windowStartingAt(String text, int startOffset, int maxLen) {
     String safe = text == null ? "" : text;
@@ -167,13 +201,52 @@ final class McpSearchResultFormatter {
     if (safe.length() <= maxLen) {
       return new Window(safe, false);
     }
+    int start = centeredStart(safe, centerOffset, maxLen);
+    int end = Math.min(safe.length(), start + maxLen);
+    boolean truncated = start > 0 || end < safe.length();
+    return new Window(safe.substring(start, end), truncated);
+  }
+
+  /** Shared start-offset math for a {@code maxLen}-wide window centered on {@code centerOffset}. */
+  private static int centeredStart(String safe, int centerOffset, int maxLen) {
     int half = maxLen / 2;
     int start = Math.max(0, centerOffset - half);
     if (start + maxLen > safe.length()) {
       start = Math.max(0, safe.length() - maxLen);
     }
-    int end = Math.min(safe.length(), start + maxLen);
-    boolean truncated = start > 0 || end < safe.length();
-    return new Window(safe.substring(start, end), truncated);
+    return start;
+  }
+
+  /**
+   * Picks the window (of up to {@code maxLen} chars, centered per {@link #windowCentered}) that
+   * covers the most of {@code spans}; ties resolve to the window centered on the LATER span
+   * (higher {@code startChar}) — a later occurrence tends to sit in body content rather than a
+   * title echo near the head of the text (tempdoc 725 W2). Returns {@code null} for a null/empty
+   * {@code spans} list; callers fall back to a head window in that case.
+   */
+  static Window bestWindow(String text, List<MatchSpan> spans, int maxLen) {
+    if (spans == null || spans.isEmpty()) {
+      return null;
+    }
+    String safe = text == null ? "" : text;
+    int bestAnchor = spans.get(0).startChar();
+    int bestCount = -1;
+    for (MatchSpan span : spans) {
+      int anchor = span.startChar();
+      int start = centeredStart(safe, anchor, maxLen);
+      int end = Math.min(safe.length(), start + maxLen);
+      int count = 0;
+      for (MatchSpan other : spans) {
+        int otherStart = other.startChar();
+        if (otherStart >= start && otherStart < end) {
+          count++;
+        }
+      }
+      if (count > bestCount || (count == bestCount && anchor > bestAnchor)) {
+        bestCount = count;
+        bestAnchor = anchor;
+      }
+    }
+    return windowCentered(safe, bestAnchor, maxLen);
   }
 }

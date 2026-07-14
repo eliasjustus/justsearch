@@ -416,6 +416,31 @@ final class McpSearchTraceLegibilityTest {
   }
 
   @Test
+  @DisplayName("bestWindow: prefers the window covering the most spans, ties resolve to the later span")
+  void bestWindowPrefersHighestCoverageTiesLater() {
+    String text = "z".repeat(1000);
+    MatchSpan early = new MatchSpan("content_preview", 10, 16, "aaaaaa");
+    MatchSpan midA = new MatchSpan("content_preview", 500, 506, "bbbbbb");
+    MatchSpan midB = new MatchSpan("content_preview", 520, 526, "cccccc");
+
+    // early's centered window [0,100) covers only itself (count 1). midA's centered window
+    // [450,550) covers midA + midB (count 2). midB's centered window [470,570) also covers
+    // midA + midB (count 2) — a tie with midA's window, broken toward the LATER span (midB).
+    McpSearchResultFormatter.Window window =
+        McpSearchResultFormatter.bestWindow(text, List.of(early, midA, midB), 100);
+
+    assertEquals(text.substring(470, 570), window.text());
+    assertTrue(window.truncated());
+  }
+
+  @Test
+  @DisplayName("bestWindow: null/empty span list returns null so callers fall back to a head window")
+  void bestWindowReturnsNullForEmptySpans() {
+    assertNull(McpSearchResultFormatter.bestWindow("some text", List.of(), 100));
+    assertNull(McpSearchResultFormatter.bestWindow("some text", null, 100));
+  }
+
+  @Test
   @DisplayName("sanitize: strips control characters including CR/LF, leaves ordinary text untouched")
   void sanitizeStripsControlChars() {
     assertEquals("cavby8", McpSearchResultFormatter.sanitize("cav\r\nby8"));
@@ -462,5 +487,52 @@ final class McpSearchTraceLegibilityTest {
     @SuppressWarnings("unchecked")
     List<Map<String, Object>> results = (List<Map<String, Object>>) structured.get("results");
     assertEquals(List.of("hello"), results.get(0).get("matchedTerms"));
+  }
+
+  // ---------------------------------------------------------------------
+  // (h) live-validated cavby8 shape: a title-echo occurrence must not starve the payload
+  // occurrence of the same term out of the preview window (tempdoc 725 W2)
+  // ---------------------------------------------------------------------
+
+  @Test
+  @DisplayName(
+      "(h) live cavby8 shape: preview window covers the payload occurrence, not just the title echo")
+  void previewWindowCoversPayloadOccurrenceOverTitleEcho() {
+    String titleEcho = "The cavby8 widget assembly guide.";
+    String filler = "Unrelated filler content padding out the region text. ".repeat(7);
+    String payloadSentence = "Cavby8 is associated with azure vellum 0008.";
+    String regionText = titleEcho + " " + filler + payloadSentence;
+
+    int titleSpanStart = regionText.indexOf("cavby8");
+    int payloadSpanStart = regionText.indexOf("Cavby8 is associated");
+    assertTrue(titleSpanStart >= 0, regionText);
+    assertTrue(payloadSpanStart > titleSpanStart, regionText);
+    // Sanity: the payload sits past the old windowStartingAt(titleSpanStart, 300) reach — this is
+    // exactly the shape that cut the payload off before this fix.
+    assertTrue(
+        payloadSpanStart > titleSpanStart + McpSearchResultFormatter.REGION_WINDOW_CHARS, regionText);
+
+    MatchSpan titleSpan = new MatchSpan("content_preview", titleSpanStart, titleSpanStart + 6, "cavby8");
+    MatchSpan payloadSpan =
+        new MatchSpan("content_preview", payloadSpanStart, payloadSpanStart + 6, "cavby8");
+    ExcerptRegion region =
+        new ExcerptRegion(regionText, 0, regionText.length(), 1, List.of(titleSpan, payloadSpan));
+    Hit hit =
+        new Hit(
+            "cavby8",
+            0.91d,
+            Map.of("title", "Cavby8 Doc", "path", "docs/cavby8.md"),
+            List.of("content_preview"),
+            List.of(titleSpan, payloadSpan),
+            List.of(region),
+            null);
+    KnowledgeSearchResponse canned =
+        new KnowledgeSearchResponse(
+            1L, 1L, 10L, List.of(hit), null, null, null, null, null, null, null, null);
+
+    String text = textOf(invokeSearch(canned));
+
+    assertTrue(text.contains(payloadSentence), text);
+    assertTrue(text.contains(McpSearchResultFormatter.TRUNCATION_REMEDY), text);
   }
 }

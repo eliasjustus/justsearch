@@ -795,22 +795,32 @@ public final class McpToolSurface {
   }
 
   /**
-   * Tempdoc 725 W1 preview-selection order: (a) an excerpt region anchored on its most-informative
-   * span, (b) a content_preview window centered on the first informative content_preview span, (c)
+   * Tempdoc 725 W1/W2 preview-selection order: (a) an excerpt region windowed to cover the most
+   * informative-term occurrences (ties broken toward the LATER occurrence — a later occurrence
+   * tends to sit in body content rather than a title echo near the head of the text), (b) a
+   * content_preview window chosen the same way over the field's informative-term occurrences, (c)
    * the pre-existing head-of-field fallback. Cases (a)/(b) append {@link
    * McpSearchResultFormatter#TRUNCATION_REMEDY} when the rendered text is a cut of a larger source;
    * case (c) keeps its existing "..." suffix unchanged.
+   *
+   * <p>Windowing uses {@link McpSearchResultFormatter#informativeOccurrences}, not {@link
+   * McpSearchResultFormatter#filterInformative}: the latter dedups by term (right for the
+   * "Matched:" line) and would collapse two occurrences of the same term — e.g. a title-echo
+   * occurrence and a payload occurrence — down to whichever comes first, which is the defect this
+   * increment fixes (tempdoc 725 W2, live-validated on doc cavby8).
    */
   private static String buildHitPreview(KnowledgeSearchResponse.Hit hit) {
     List<KnowledgeSearchResponse.ExcerptRegion> regions = hit.excerptRegions();
     if (regions != null && !regions.isEmpty()) {
       KnowledgeSearchResponse.ExcerptRegion region = McpSearchResultFormatter.selectBestRegion(regions);
-      List<KnowledgeSearchResponse.MatchSpan> regionInformative =
-          McpSearchResultFormatter.filterInformative(region.matchSpans());
-      int start = regionInformative.isEmpty() ? 0 : regionInformative.get(0).startChar();
+      List<KnowledgeSearchResponse.MatchSpan> regionOccurrences =
+          McpSearchResultFormatter.informativeOccurrences(region.matchSpans());
       McpSearchResultFormatter.Window window =
-          McpSearchResultFormatter.windowStartingAt(
-              region.text(), start, McpSearchResultFormatter.REGION_WINDOW_CHARS);
+          regionOccurrences.isEmpty()
+              ? McpSearchResultFormatter.windowStartingAt(
+                  region.text(), 0, McpSearchResultFormatter.REGION_WINDOW_CHARS)
+              : McpSearchResultFormatter.bestWindow(
+                  region.text(), regionOccurrences, McpSearchResultFormatter.REGION_WINDOW_CHARS);
       return window.truncated() ? window.text() + McpSearchResultFormatter.TRUNCATION_REMEDY : window.text();
     }
 
@@ -820,14 +830,13 @@ public final class McpToolSurface {
         if ("content_preview".equals(span.field())) previewFieldSpans.add(span);
       }
     }
-    List<KnowledgeSearchResponse.MatchSpan> previewInformative =
-        McpSearchResultFormatter.filterInformative(previewFieldSpans);
+    List<KnowledgeSearchResponse.MatchSpan> previewOccurrences =
+        McpSearchResultFormatter.informativeOccurrences(previewFieldSpans);
     String fieldValue = hit.fields().getOrDefault("content_preview", "");
-    if (!previewInformative.isEmpty()) {
-      int center = previewInformative.get(0).startChar();
+    if (!previewOccurrences.isEmpty()) {
       McpSearchResultFormatter.Window window =
-          McpSearchResultFormatter.windowCentered(
-              fieldValue, center, McpSearchResultFormatter.PREVIEW_WINDOW_CHARS);
+          McpSearchResultFormatter.bestWindow(
+              fieldValue, previewOccurrences, McpSearchResultFormatter.PREVIEW_WINDOW_CHARS);
       return window.truncated() ? window.text() + McpSearchResultFormatter.TRUNCATION_REMEDY : window.text();
     }
 
