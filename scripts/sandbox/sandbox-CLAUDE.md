@@ -110,6 +110,16 @@ was not exercised and why (a gap to close), rather than skipping silently.
 Protocol conformance itself is owned by a host integration test; the Sandbox's
 unique job is proving clean-install reachability and discoverability.
 
+**The mutating-tool step needs a different client.** The Inspector CLI's
+`--tool-arg` string-coerces every value and cannot express `justsearch_ingest`'s
+`paths: string[]` argument, so `tools/call justsearch_ingest` cannot be driven
+through it. Use the staged `mcp-client\mcp-typed-confirm.ps1` instead (see
+`mcp-client\README.md`) — it drives the REAL shipped MCPB stdio bridge
+(`mcp-client\index.js`, a verbatim copy of `packaging/mcpb/server/index.js`) to
+exercise the TYPED_CONFIRM procedure. See `governance/sandbox-coverage.v1.json`'s
+`cohort:mcp` `validateHow` (surfaced in your `coverage-brief.md`) for the exact
+required sequence.
+
 ## What's available
 
 - **Mapped folder** at `C:\Users\WDAGUtilityAccount\Desktop\JustSearchTest\` —
@@ -205,6 +215,8 @@ Two staged tools make rounds repeatable and make coverage fail closed:
     --evidence-dir tmp/sandbox/share/evidence
   ```
   An untouched `sandbox`-tier surface is a **blocking finding** (non-zero exit).
+  The same check also fails closed if `evidence/retrospective.md` is missing or
+  too thin — see *Retrospective* below.
 
 ### Search parity (golden queries)
 
@@ -260,6 +272,21 @@ against two independently rebuilt dev indexes and diffing them to measure the en
    is the only sensor, which is why attribution must be pre-announced, not
    inferred after the fact. Sequence elevating installs (Git, Node) far from the
    JustSearch install so a stray prompt can't be misattributed.
+   **Elevated-terminal fallback:** if this session's own terminal is already
+   running elevated (`collect-evidence.ps1` self-checks this at Step 0 and
+   writes `evidence/elevation-check.txt`), NO UAC prompt can appear during the
+   JustSearch install regardless of what the installer requests — an
+   already-elevated process tree is never re-prompted. In that case, observing
+   "no UAC prompt appeared" is not a pass; it is the elevation making the
+   observation impossible. Record it explicitly as **structurally
+   unobservable this round** (state the reason), and substitute the
+   structural facts instead: the installer is per-user
+   (`bundle.windows.nsis.installMode: currentUser`, ADR-0024) and requests no
+   elevation. A host-side check now asserts that structural fact mechanically
+   on every build (`scripts/ci/check-installer-execution-level.mjs`) — it
+   proves only that the installer doesn't request elevation, nothing about
+   SmartScreen or unsigned-publisher warnings (those stay this round's job to
+   observe whenever elevation posture allows it).
 2. **First app launch** — does `%LOCALAPPDATA%\JustSearch\JustSearch.exe` start
    and render? Save `evidence/NN-first-paint.png`.
 3. **Backend health** — read the runtime manifest, then save raw `/api/health`,
@@ -382,3 +409,26 @@ Files written to the mapped folder
 the sandbox closes. Anywhere else (`C:\`, the user profile) is wiped on shutdown.
 Report findings by journey with screenshot filenames and raw API/log evidence, and
 state the coverage result against `coverage-brief.md`.
+
+### Retrospective (required — the loop only improves via this channel)
+
+Every round must write `evidence/retrospective.md`. This is not an optional
+afterthought: a prior round's spontaneous "Part B" harness/process retrospective
+drove roughly 15 harness fixes, and a later round that skipped one produced zero —
+not because nothing went wrong, but because nothing asked for it. The harness only
+gets better if every round leaves this behind, on purpose, every time.
+
+Cover, at minimum, four things:
+
+- **What the harness/docs got WRONG or made impossible** — a documented procedure
+  you could not follow as written (wrong field path, an API call that doesn't do
+  what the doc claims, a tool flag that can't express what's needed).
+- **What you had to work around or build yourself** to get the job done, and why
+  the documented path didn't work.
+- **What slowed you down** — friction, ambiguity, a missing staged asset, a dead
+  end that cost real time.
+- **What you would change** — the concrete fix, not just the complaint.
+
+`evidence/retrospective.md` is checked at finalize (see *Coverage & evidence*
+above) and the round **fails closed** if it is missing or too thin to be a real
+retrospective — a stub file does not satisfy this.

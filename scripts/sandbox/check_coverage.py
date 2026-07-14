@@ -30,6 +30,89 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
 
 # --------------------------------------------------------------------------
+# Round retrospective check (D1): a required PROCESS deliverable, not a
+# product surface. Deliberately NOT routed through mustTouch/cohortCoverage/
+# surfaceCoverage -- that schema classifies surfaces the candidate SHIPS;
+# this is a fixed, every-round check on the harness's own improvement loop,
+# so it lives as its own top-level gate here instead.
+# --------------------------------------------------------------------------
+
+RETROSPECTIVE_FILENAME = "retrospective.md"
+
+# Deliberately dumb (no NLP, per the design constraint): a minimum
+# non-whitespace byte count, AND at least one substring hit per required
+# topic group, checked case-insensitively against the whole file. This
+# cannot judge QUALITY, but it reliably rejects the two concrete failure
+# modes this closes: an absent file, and a placeholder/stub file that
+# exists only to satisfy the check.
+RETROSPECTIVE_MIN_BYTES = 400
+
+RETROSPECTIVE_REQUIRED_TOPICS: list[tuple[str, tuple[str, ...]]] = [
+    (
+        "what the harness/docs got wrong or made impossible",
+        ("wrong", "impossible", "couldn't", "could not", "unfollowable", "doesn't work", "does not work"),
+    ),
+    (
+        "what had to be worked around or built",
+        ("work around", "workaround", "worked around", "built", "wrote its own", "had to build", "had to write"),
+    ),
+    (
+        "what slowed the round down",
+        ("slow", "friction", "wasted", "delay", "cost us", "cost time"),
+    ),
+    (
+        "what would change",
+        ("would change", "should change", "recommend", "next round", "fix:"),
+    ),
+]
+
+
+def check_retrospective(evidence_dir: str | None) -> tuple[bool, str]:
+    """Check evidence/retrospective.md is present and substantial (D1).
+
+    Returns (ok, reason). Does not raise on I/O errors -- a missing/unreadable
+    file is reported as a normal failure reason, matching this module's
+    warn-and-continue style elsewhere.
+    """
+    if not evidence_dir:
+        return False, "no --evidence-dir given; cannot check for evidence/retrospective.md"
+
+    path = os.path.join(evidence_dir, RETROSPECTIVE_FILENAME)
+    if not os.path.isfile(path):
+        return False, f"{RETROSPECTIVE_FILENAME} not found in evidence dir {evidence_dir!r}"
+
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            content = fh.read()
+    except OSError as exc:
+        return False, f"{RETROSPECTIVE_FILENAME} could not be read: {exc}"
+
+    stripped = content.strip()
+    if len(stripped) < RETROSPECTIVE_MIN_BYTES:
+        return False, (
+            f"{RETROSPECTIVE_FILENAME} is only {len(stripped)} non-whitespace-trimmed byte(s) "
+            f"(minimum {RETROSPECTIVE_MIN_BYTES}) -- reads like an empty or placeholder stub, "
+            f"not a real retrospective"
+        )
+
+    lowered = content.lower()
+    missing_topics = [
+        label
+        for label, alternatives in RETROSPECTIVE_REQUIRED_TOPICS
+        if not any(alt in lowered for alt in alternatives)
+    ]
+    if missing_topics:
+        return False, (
+            f"{RETROSPECTIVE_FILENAME} is missing required coverage of: {'; '.join(missing_topics)} "
+            f"(no matching keyword found for the topic) -- the retrospective must cover what the "
+            f"harness/docs got wrong or made impossible, what was worked around or built, what "
+            f"slowed the round down, and what would change"
+        )
+
+    return True, f"{RETROSPECTIVE_FILENAME} present ({len(stripped)} bytes, all required topics found)"
+
+
+# --------------------------------------------------------------------------
 # Data model
 # --------------------------------------------------------------------------
 
@@ -477,7 +560,24 @@ def main(argv: list[str] | None = None) -> int:
         exempt=manifest.get("exempt", []) or [],
     )
 
-    return 0 if all_covered else 1
+    retrospective_ok, retrospective_reason = check_retrospective(args.evidence_dir)
+    print("=" * 72)
+    print("Round retrospective check (D1 -- process deliverable, not a mustTouch item)")
+    print("=" * 72)
+    print(f"[{'PRESENT' if retrospective_ok else 'MISSING/TRIVIAL'}] evidence/{RETROSPECTIVE_FILENAME}")
+    print(f"    reason: {retrospective_reason}")
+    if not retrospective_ok:
+        print("=" * 72)
+        print(f"BLOCKING: evidence/{RETROSPECTIVE_FILENAME} is required and must be substantial.")
+        print(
+            "Every round must write it covering: what the harness/docs got WRONG or made "
+            "impossible, what had to be worked around or built, what slowed the round down, "
+            "and what would change. See scripts/sandbox/sandbox-CLAUDE.md 'Writing results' "
+            "-> 'Retrospective' for the full ask."
+        )
+        print("=" * 72)
+
+    return 0 if (all_covered and retrospective_ok) else 1
 
 
 if __name__ == "__main__":

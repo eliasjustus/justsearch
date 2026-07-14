@@ -58,7 +58,11 @@ durable method; what *this* candidate must cover is in the staged
    `sandbox`-tier item in `coverage-brief.md`.
 6. At finalize, assert coverage (traces + evidence vs `coverage-manifest.json`) and
    route every confirmed finding to a regression home (see *Convergence* in
-   `CLAUDE.md`).
+   `CLAUDE.md`). **Also write `evidence/retrospective.md`** — required, not
+   optional (see *Retrospective* in `CLAUDE.md`'s *Writing results* section):
+   what the harness/docs got wrong or made impossible, what you had to work
+   around or build yourself, what slowed you down, and what you would change.
+   The finalize coverage check fails closed if this file is absent or too thin.
 
 ## Validation rhythm — durable rules
 

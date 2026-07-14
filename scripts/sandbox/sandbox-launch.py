@@ -493,6 +493,43 @@ def stage_gui_harness(share_dir: Path):
     print(f"Staged gui/ ({count} files — native PowerShell GUI capture/input harness)")
 
 
+def stage_mcp_client_harness(share_dir: Path):
+    """Copy the TYPED_CONFIRM MCP-client harness (D2, tempdoc 728-followup).
+
+    The MCP Inspector CLI's `--tool-arg` string-coerces every value and cannot
+    express `justsearch_ingest`'s `paths: string[]` argument, so the mutating
+    -tool step of the cohort:mcp procedure cannot be driven through it
+    (verified against a real round). Rather than promoting a second, divergent
+    HTTP client, this stages the REAL shipped MCPB stdio bridge
+    (packaging/mcpb/server/index.js, copied verbatim) plus a thin PowerShell
+    driver (mcp-typed-confirm.ps1) that spawns it and speaks JSON-RPC over its
+    stdin/stdout -- exactly how a real MCP host drives it. That means the
+    round validates the actual artifact JustSearch ships, not a parallel
+    bespoke client."""
+    dst = share_dir / "mcp-client"
+    dst.mkdir(parents=True, exist_ok=True)
+    count = 0
+
+    bridge_src = REPO_ROOT / "packaging" / "mcpb" / "server" / "index.js"
+    if bridge_src.exists():
+        shutil.copy2(bridge_src, dst / "index.js")
+        count += 1
+    else:
+        print(f"WARNING: MCPB bridge not found at {bridge_src} -- mcp-client/ will be incomplete")
+
+    driver_src = SCRIPT_DIR / "mcp-typed-confirm.ps1"
+    if driver_src.exists():
+        shutil.copy2(driver_src, dst / "mcp-typed-confirm.ps1")
+        count += 1
+
+    readme_src = SCRIPT_DIR / "mcp-client-README.md"
+    if readme_src.exists():
+        shutil.copy2(readme_src, dst / "README.md")
+        count += 1
+
+    print(f"Staged mcp-client/ ({count} files — real MCPB stdio bridge + TYPED_CONFIRM driver)")
+
+
 def generate_wsb(wsb_path: Path, share_dir: Path, memory_mb: int, models_dir: Path | None = None):
     """Generate the .wsb configuration file with proper XML escaping.
 
@@ -694,6 +731,7 @@ def main():
     stage_coverage_brief(share_dir)
     stage_evidence_harness(share_dir)
     stage_gui_harness(share_dir)
+    stage_mcp_client_harness(share_dir)
     wsb_path = stage_dir / "JustSearch-Validation.wsb"
     generate_wsb(wsb_path, share_dir, args.memory, models_dir)
     print(f"Sandbox RAM: {args.memory} MB")

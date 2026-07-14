@@ -80,6 +80,44 @@ Write-Log "EvidenceDir: $EvidenceDir"
 Write-Log "DataDir: $DataDir"
 
 # ---------------------------------------------------------------------------
+# Step 0: Elevation self-check (D3, tempdoc 728-followup)
+# ---------------------------------------------------------------------------
+# sandbox-CLAUDE.md's UAC announce-and-attribute protocol relies on the
+# operator being the only sensor for a UAC prompt during the JustSearch
+# install -- but if THIS session's own terminal is already running elevated,
+# no UAC prompt can appear at all regardless of what the installer requests
+# (Windows does not re-prompt an already-elevated process tree). A round
+# running elevated silently produces nothing for that protocol item, which
+# reads indistinguishably from "no prompt appeared, so it passed." Detect
+# and record this so the round reports "structurally unobservable" instead.
+# Same detection pattern as scripts/bench/_lib/launch-elevated.ps1.
+$isElevated = [Security.Principal.WindowsPrincipal]::new(
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if ($isElevated) {
+    $elevationNote = "ELEVATED: this session's terminal is running with Administrator " +
+        "privileges. The UAC announce-and-attribute protocol (sandbox-CLAUDE.md) CANNOT " +
+        "observe a UAC prompt during the JustSearch install this round -- an already-" +
+        "elevated process tree is never re-prompted by UAC, regardless of whether the " +
+        "installer requests elevation. Record the UAC item as STRUCTURALLY UNOBSERVABLE " +
+        "this round (with this reason), not as a pass or as silence. The structural fact " +
+        "that substitutes for it -- the installer is per-user " +
+        "(bundle.windows.nsis.installMode: currentUser, ADR-0024) and requests no " +
+        "elevation -- is asserted mechanically, independent of sandbox elevation state, " +
+        "by scripts/ci/check-installer-execution-level.mjs (proves only that the " +
+        "installer doesn't request elevation; says nothing about SmartScreen/publisher " +
+        "trust)."
+}
+else {
+    $elevationNote = "NOT ELEVATED: this session's terminal is running as a standard " +
+        "user. A UAC prompt during the JustSearch install, if one appears, IS observable " +
+        "this round per the announce-and-attribute protocol."
+}
+Write-Log $elevationNote
+$elevationNote | Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "elevation-check.txt")
+
+# ---------------------------------------------------------------------------
 # Step 1: Port discovery (canonical: runtime manifest.json; tempdoc 501)
 # ---------------------------------------------------------------------------
 
@@ -526,6 +564,13 @@ $summaryLines += "JustSearch Sandbox evidence collection summary"
 $summaryLines += "Timestamp: $timestamp"
 $summaryLines += "Resolved port: $port (source: $portSource)"
 $summaryLines += "Base URL: $base"
+$summaryLines += ""
+if ($isElevated) {
+    $summaryLines += "Elevation self-check: ELEVATED -- UAC prompt during install is structurally unobservable this round (see elevation-check.txt)"
+}
+else {
+    $summaryLines += "Elevation self-check: not elevated -- UAC prompt during install IS observable this round (see elevation-check.txt)"
+}
 $summaryLines += ""
 $summaryLines += "API sanity ladder:"
 foreach ($result in $ladderResults) {

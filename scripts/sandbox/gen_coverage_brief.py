@@ -38,6 +38,11 @@ CORE_PLUGIN_REL = "modules/ui-web/src/shell-v0/plugin-api/CorePlugin.ts"
 INTERACTION_SHAPES_REL = "modules/ui-web/src/shell-v0/plugin-api/coreInteractionShapes.ts"
 REGISTER_REL = "governance/sandbox-coverage.v1.json"
 
+# D4 (tempdoc 728-followup): mustWatch observability tiers. 'blocked-by-posture'
+# is the honest "cannot be observed under the CURRENT sandbox posture" status
+# (distinct from 'this was never checked') -- see install-trust-prompts.
+ALLOWED_MUST_WATCH_OBSERVABILITY = {"sandbox", "host", "blocked-by-posture"}
+
 SURFACE_ID_RE = re.compile(
     r"id:\s*'(core\.[^']+)'(?:(?!id:\s*')[\s\S])*?placement:\s*'([A-Z]+)'"
 )
@@ -184,6 +189,37 @@ def validate_exempt_reasons(register: dict[str, Any]) -> list[str]:
     return errors
 
 
+def validate_must_watch_observability(register: dict[str, Any]) -> list[str]:
+    """D4 (tempdoc 728-followup): every mustWatch entry must declare an
+    `observability` tier -- 'sandbox' | 'host' | 'blocked-by-posture'.
+    Without this, a round has no mechanical way to distinguish "nobody
+    checked this" from "structurally impossible to check here" (the
+    install-trust-prompts item, which the current SAC-disable + folder-mount
+    posture makes unobservable). A 'blocked-by-posture' entry must also carry
+    a non-empty 'note' explaining WHY, so the brief can render an honest
+    status instead of a silent skip. Fail closed, same style as
+    validate_exempt_reasons above."""
+    errors: list[str] = []
+    for item in register.get("mustWatch", []) or []:
+        item_id = item.get("id", "<unknown>")
+        observability = item.get("observability")
+        if observability not in ALLOWED_MUST_WATCH_OBSERVABILITY:
+            errors.append(
+                f"MUSTWATCH-BAD-OBSERVABILITY: mustWatch {item_id!r} has observability="
+                f"{observability!r}, must be one of {sorted(ALLOWED_MUST_WATCH_OBSERVABILITY)!r}"
+            )
+            continue
+        if observability == "blocked-by-posture":
+            note = item.get("note")
+            if not isinstance(note, str) or not note.strip():
+                errors.append(
+                    f"MUSTWATCH-BAD-OBSERVABILITY: mustWatch {item_id!r} is observability="
+                    "'blocked-by-posture' but has no non-empty 'note' explaining why -- "
+                    "fail closed rather than silently rendering an unexplained skip."
+                )
+    return errors
+
+
 def run_drift_check(
     register: dict[str, Any],
     cohort_routes: dict[str, list[str]],
@@ -214,6 +250,11 @@ def run_drift_check(
         # Return early: classify() below indexes *Exempt entries by id_key,
         # which would crash on a malformed bare-id entry this check just caught.
         errors.extend(exempt_reason_errors)
+        return errors, warnings, {}
+
+    must_watch_errors = validate_must_watch_observability(register)
+    if must_watch_errors:
+        errors.extend(must_watch_errors)
         return errors, warnings, {}
 
     results: dict[str, DriftResult] = {
@@ -377,8 +418,18 @@ def build_brief_markdown(manifest: dict[str, Any], register: dict[str, Any]) -> 
     if not must_watch:
         lines.append("None.")
     else:
+        observability_labels = {
+            "sandbox": "sandbox-observable",
+            "host": "host-observable",
+            "blocked-by-posture": "NOT OBSERVABLE under current sandbox posture",
+        }
         for item in must_watch:
-            lines.append(f"- **{item['id']}** — {item['reason']}")
+            observability = item.get("observability", "sandbox")
+            label = observability_labels.get(observability, observability)
+            lines.append(f"- **{item['id']}** [{label}] — {item['reason']}")
+            note = item.get("note")
+            if note:
+                lines.append(f"  - {note}")
     lines.append("")
 
     lines.append("## Claims cross-check")
