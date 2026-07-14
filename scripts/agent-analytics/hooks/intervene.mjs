@@ -59,6 +59,103 @@ export function shouldInjectLimit(toolInput) {
   return null;
 }
 
+// Tempdoc 727 F-7c: chars-per-token estimate, calibrated live against a real dense tempdoc
+// (docs/tempdocs/624-agentic-retrieval-eval-rebuild.md — heavy on hyphenated technical terms,
+// parenthetical citations, and punctuation, which tokenizes less efficiently than plain
+// prose). A first pass at 3.5 chars/token undershot the real ceiling (a 737-line slice
+// estimated at 20,000 tokens actually reported 28,220) — the measured real ratio for that
+// slice was ~2.59 chars/token. 2.3 stays conservative below that measured value (one real
+// data point, not a guaranteed universal constant — err toward capping earlier, not later)
+// and a safety margin below the platform's own ~25,000-token Read ceiling.
+const CHARS_PER_TOKEN_ESTIMATE = 2.3;
+const SAFE_TOKEN_CEILING = 18_000;
+
+/**
+ * shouldInjectLimit (above) only ever acts when the caller supplies NO offset/limit at all —
+ * confirmed live (tempdoc 727 derisk) that an agent-specified offset/limit sails straight
+ * through this hook untouched even when that requested slice is itself still large enough to
+ * hit the platform's own Read ceiling. A file-wide average bytes-per-line estimate is not
+ * reliable for deciding this: a real tempdoc's YAML frontmatter can contain a handful of
+ * individual "lines" that are each thousands of characters (confirmed live against
+ * docs/tempdocs/624-agentic-retrieval-eval-rebuild.md), which skews any global per-file
+ * average far off the actual density of the requested slice. This measures the ACTUAL
+ * requested line range's real character count instead of estimating from the whole file.
+ */
+/**
+ * Read only enough of `filePath` off disk to cover lines `[1, offset - 1 + limit]`, rather
+ * than the whole file — an earlier version of this function read+split the entire file on
+ * every call, which defeats the purpose of offset/limit for a huge file deliberately read in
+ * small slices (tempdoc 727 review Finding B). Grows the read geometrically (starting from a
+ * generous per-line byte estimate) until enough lines are collected or EOF is hit, so total
+ * bytes read stay bounded by roughly the requested range, not the file's full size.
+ *
+ * `limit === null` means "read to true EOF" (no limit given, just an offset) — that request is
+ * inherently for "the rest of the file," so it reads the whole remainder; this only bounds the
+ * case Finding B was about (a limit IS given).
+ */
+function readLineRangeBounded(filePath, offset, limit, fileSizeBytes) {
+  if (limit == null) {
+    return fs.readFileSync(filePath, 'utf8').split('\n');
+  }
+
+  const neededLines = offset - 1 + limit;
+  const GENEROUS_BYTES_PER_LINE = 200; // generous starting estimate; doubled on undershoot
+  let readBytes = Math.min(fileSizeBytes, neededLines * GENEROUS_BYTES_PER_LINE);
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    for (;;) {
+      const buf = Buffer.alloc(readBytes);
+      const bytesRead = fs.readSync(fd, buf, 0, readBytes, 0);
+      const text = buf.toString('utf8', 0, bytesRead);
+      const lines = text.split('\n');
+      const hitEof = bytesRead >= fileSizeBytes;
+      if (lines.length > neededLines || hitEof) {
+        return lines;
+      }
+      readBytes = Math.min(fileSizeBytes, readBytes * 2);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+export function shouldCapExplicitLimit(toolInput) {
+  if (!toolInput?.file_path) return null;
+  const hasExplicitRange = toolInput.offset != null || toolInput.limit != null;
+  if (!hasExplicitRange) return null; // shouldInjectLimit already owns the no-range case
+
+  let stat;
+  try {
+    stat = fs.statSync(toolInput.file_path);
+  } catch {
+    return null; // let Read handle a missing/inaccessible file
+  }
+  if (stat.size <= SIZE_THRESHOLD_BYTES) return null;
+
+  const offset = toolInput.offset != null ? Math.max(1, toolInput.offset) : 1;
+  let lines;
+  try {
+    lines = readLineRangeBounded(toolInput.file_path, offset, toolInput.limit ?? null, stat.size);
+  } catch {
+    return null;
+  }
+
+  const requestedLimit = toolInput.limit != null ? toolInput.limit : lines.length - offset + 1;
+  const slice = lines.slice(offset - 1, offset - 1 + requestedLimit);
+  const sliceChars = slice.reduce((sum, l) => sum + l.length + 1, 0); // +1 per line for the stripped '\n'
+  const estimatedTokens = sliceChars / CHARS_PER_TOKEN_ESTIMATE;
+  if (estimatedTokens <= SAFE_TOKEN_CEILING) return null;
+
+  const safeLimit = Math.max(1, Math.floor(requestedLimit * (SAFE_TOKEN_CEILING / estimatedTokens)));
+  return {
+    updatedInput: { ...toolInput, limit: safeLimit },
+    sizeBytes: stat.size,
+    requestedLimit,
+    safeLimit,
+    estimatedTokens: Math.round(estimatedTokens),
+  };
+}
+
 // --- Read-count tracking ---
 
 function readCountFilePath(sessionId) {
@@ -132,6 +229,20 @@ function pruneStaleCountFiles() {
   }
 }
 
+// Tempdoc 727 F-7a: reserved key for the basename→[full paths] index (below), stored
+// alongside the per-path counts in the same read-counts-<sessionId>.json file rather than a
+// second cache file — one source of truth for "what has this session read." Prefixed with an
+// underscore so it can't collide with a normalized file path (all real paths contain `/`).
+// Review Finding D: living in the SAME cache file means compact-save.mjs's read-counts reset
+// wipes this index too on every compaction (deliberate for its original hot-file-cap purpose)
+// — cross-root recognition in edit-reread-hint.mjs only covers reads since the last compaction.
+const BASENAME_INDEX_KEY = '_byBasename';
+
+function basenameOf(normPath) {
+  const idx = normPath.lastIndexOf('/');
+  return idx === -1 ? normPath : normPath.slice(idx + 1);
+}
+
 function trackRead(sessionId, filePath, isUnbounded) {
   if (!sessionId || !filePath) return { total: 0, unbounded: 0 };
   const counts = loadReadCounts(sessionId);
@@ -146,12 +257,37 @@ function trackRead(sessionId, filePath, isUnbounded) {
 
   counts[norm].total += 1;
   if (isUnbounded) counts[norm].unbounded += 1;
+
+  // Tempdoc 727 F-7a: index this read by basename too, so a later Edit-before-fresh-Read
+  // failure on a DIFFERENT full path with the same basename (the worktree-copy vs.
+  // main-checkout-copy case) can be recognized as "you read this file, just under a
+  // different root" rather than staying silent or restating the platform's own generic error.
+  const byBasename = counts[BASENAME_INDEX_KEY] ?? (counts[BASENAME_INDEX_KEY] = {});
+  const base = basenameOf(norm);
+  const paths = byBasename[base] ?? (byBasename[base] = []);
+  if (!paths.includes(norm)) paths.push(norm);
+
   saveReadCounts(sessionId, counts);
 
   // Prune stale cache files on first read of a new session
   if (isFirst) pruneStaleCountFiles();
 
   return counts[norm];
+}
+
+/**
+ * Tempdoc 727 F-7a: full normalized paths read this session sharing `filePath`'s basename,
+ * EXCLUDING `filePath` itself — used by edit-reread-hint.mjs to recognize a cross-root
+ * re-read miss. Returns `[]` if nothing else with this basename was read (including when
+ * `filePath` was never read at all, or is the only path read under this basename).
+ */
+export function getOtherPathsWithSameBasename(sessionId, filePath) {
+  if (!sessionId || !filePath) return [];
+  const counts = loadReadCounts(sessionId);
+  const norm = normalizePath(filePath);
+  const base = basenameOf(norm);
+  const paths = counts[BASENAME_INDEX_KEY]?.[base] ?? [];
+  return paths.filter(p => p !== norm);
 }
 
 function trackEdit(sessionId, filePath) {
@@ -207,6 +343,26 @@ async function main() {
 
     // Check if we need to inject a limit for large files
     const injection = shouldInjectLimit(toolInput);
+
+    // Tempdoc 727 F-7c: the caller supplied its own offset/limit (shouldInjectLimit always
+    // defers in that case), but that requested slice may itself still be too large.
+    const explicitCap = injection ? null : shouldCapExplicitLimit(toolInput);
+    if (explicitCap) {
+      const shortPath = (toolInput.file_path || '').split(/[/\\]/).slice(-2).join('/');
+      process.stdout.write(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+          updatedInput: explicitCap.updatedInput,
+          additionalContext:
+            `Note: the requested limit (${explicitCap.requestedLimit} lines) on ${shortPath} ` +
+            `(${explicitCap.sizeBytes} bytes) was estimated at ~${explicitCap.estimatedTokens} tokens — ` +
+            `over the safe ceiling — so it was capped to ${explicitCap.safeLimit} lines. ` +
+            `Re-read with a later offset for more.`,
+        },
+      }));
+      return;
+    }
 
     // Only emit output if we're injecting a limit
     if (injection) {
