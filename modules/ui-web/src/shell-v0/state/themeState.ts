@@ -47,6 +47,68 @@ import { setUiMode } from './uiModeState.js';
 
 const ACTIVE_THEME_STYLE_ID = 'jf-active-theme';
 
+/**
+ * Tempdoc 727 F-5 — the `system` (Follow OS) resolver.
+ *
+ * Pre-fix, `applyAppearance({ theme: 'system' })` did `root.removeAttribute('data-theme')` and
+ * relied on `tokens.css` to media-query the OS preference for the bare `:root` block. It doesn't:
+ * `tokens.css`'s `:root` is the DARK theme unconditionally (see `src/styles/tokens.css` — light
+ * only exists as the `[data-theme="light"]` override, there is no
+ * `@media (prefers-color-scheme: dark)` wrapper anywhere). So stripping the attribute always fell
+ * back to dark, never to the OS setting — "Follow OS" silently meant "use the app default (dark)."
+ * This is also why the Settings UI labels the Dark card "Default theme": that IS the CSS default,
+ * which `system` was accidentally exposing instead of following the OS.
+ *
+ * The one place that DID correctly query `matchMedia('(prefers-color-scheme: dark)')` was the
+ * pre-paint inline script in `index.html` (flash-of-wrong-theme guard) — a ONE-TIME sample that
+ * runs before `main.jsx` boots. `restoreAppearanceOnBoot` then fetches `/api/settings/v2`
+ * asynchronously and, on a persisted `theme: "system"`, called the removeAttribute path above —
+ * stripping whatever `data-theme` the inline script had already set correctly. This produced the
+ * exact race the round observed: OS light → inline script paints light → the async settings
+ * fetch resolves → `system` strips the attribute → page flips to dark with no user action. When
+ * the settings fetch failed or lost the race, the inline script's correct light value survived —
+ * matching the "intermittent, not constant" symptom.
+ *
+ * The fix: resolve `system` by actively querying `matchMedia` (mirroring what the inline script
+ * already does) instead of delegating to CSS, and subscribe to the query's `change` event so a
+ * live OS theme flip is honored without a reload — matching a singleton "one matchMedia, fanned
+ * out" listener already established for viewport breakpoints (`responsiveState.ts`).
+ */
+const SYSTEM_THEME_QUERY = '(prefers-color-scheme: dark)';
+let systemThemeMql: MediaQueryList | null = null;
+let systemThemeListenerBound = false;
+let followingSystemTheme = false;
+
+/** Is the OS-level color scheme dark? Defaults to dark (matching tokens.css's own default) when `matchMedia` is unavailable (tests/SSR). */
+function isSystemThemeDark(): boolean {
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    return window.matchMedia(SYSTEM_THEME_QUERY).matches;
+  }
+  return true;
+}
+
+/** Sets `data-theme` to the CURRENT OS preference. Only call while `system` is the active choice. */
+function applyResolvedSystemTheme(): void {
+  if (typeof document === 'undefined') return;
+  document.documentElement.setAttribute(
+    'data-theme',
+    isSystemThemeDark() ? 'dark' : 'light',
+  );
+}
+
+/** Binds the OS-preference-change listener once (module lifetime); re-applies live while `system` is active. */
+function ensureSystemThemeListener(): void {
+  if (systemThemeListenerBound) return;
+  systemThemeListenerBound = true;
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+  systemThemeMql = window.matchMedia(SYSTEM_THEME_QUERY);
+  if (typeof systemThemeMql.addEventListener === 'function') {
+    systemThemeMql.addEventListener('change', () => {
+      if (followingSystemTheme) applyResolvedSystemTheme();
+    });
+  }
+}
+
 type Listener = (themeId: string | null) => void;
 
 /**
@@ -185,9 +247,20 @@ export async function applyAppearance(
   if (typeof document !== 'undefined') {
     const root = document.documentElement;
     if (appearance.theme !== undefined) {
-      if (appearance.theme === 'light') root.setAttribute('data-theme', 'light');
-      else if (appearance.theme === 'dark') root.setAttribute('data-theme', 'dark');
-      else root.removeAttribute('data-theme'); // 'system' / unknown → OS default
+      if (appearance.theme === 'light') {
+        followingSystemTheme = false;
+        root.setAttribute('data-theme', 'light');
+      } else if (appearance.theme === 'dark') {
+        followingSystemTheme = false;
+        root.setAttribute('data-theme', 'dark');
+      } else {
+        // 'system' / unknown → actively resolve + live-follow the OS preference (see the
+        // SYSTEM_THEME_QUERY doc comment above for why this can't just removeAttribute and
+        // delegate to CSS).
+        followingSystemTheme = true;
+        ensureSystemThemeListener();
+        applyResolvedSystemTheme();
+      }
     }
     if (appearance.highContrast !== undefined) {
       root.classList.toggle('high-contrast', appearance.highContrast === true);
@@ -356,4 +429,11 @@ export function __resetThemeStateForTest(): void {
     ...doc,
     activeThemeId: null,
   }));
+  // Tempdoc 727 F-5: reset the system-theme-follow flag AND the listener-bound state so each
+  // test's `matchMedia` mock gets its own fresh `ensureSystemThemeListener()` bind — otherwise
+  // the listener registered against test A's mock would silently outlive it (the bind is
+  // module-lifetime, once-only) and test B's `change` events would never reach it.
+  followingSystemTheme = false;
+  systemThemeListenerBound = false;
+  systemThemeMql = null;
 }
