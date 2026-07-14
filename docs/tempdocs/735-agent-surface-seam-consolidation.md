@@ -1,8 +1,9 @@
 ---
 title: "Agent-surface seam consolidation: why the MCP/eval/retrieval intersection generates defects, and what structure removes the generator"
 type: tempdocs
-status: "open — theorized + DESIGNED + DERISKED (2026-07-14): delivery-tier inversion probed (CLI delivers structuredContent JSON when present; text otherwise; 2.1.209); coverage gap list = G3 backlog (hints/facets/coverage-facts/full passages undelivered to CLI cohort, ~2.7KB vs ~10KB packs); confidence 8/10; implementation not started, G3 rides next intentional surface bump"
+status: "IMPLEMENTED on branch (2026-07-15): W1–W6 all landed + refute-first reviewed (zero MAJORs), tool surface 0.4.0, tier-equivalence golden guard in-repo; live-verified both tiers; G6 completed incident-driven (reaper honors declared hold); genuine recorded fixtures (CLI-mediated, all three tools); Campaign V measured the shipped surface (delivery 98.9% structured-json, equivalence fields 100% delivered, cost +466B/search constant, behavioral hypotheses refuted at haiku/n=20; see 725 Campaign V section); branch unpushed, no PR per standing instruction. Open: truncation-notice third delivery shape (response-size governor candidate), concise-mode golden pin, tool_calls/blocked-call index misalignment"
 created: 2026-07-14
+updated: 2026-07-15
 author: agent (session 25f8ac5d, chartered at founder direction after the 725 remediation program's root-cause analysis)
 related:
   - 725-agent-tool-adoption-legibility   # the program whose ~20 issues this analyzes
@@ -452,3 +453,43 @@ LEASE but the reaper still keyed off session-activity age alone. Fix: the reap t
 reaper window; default behavior unchanged. Static-guard test added (11/11 + 9/9 green). Note: the
 prior campaigns' "backend deaths" attributed to foreign takeover may include reaper kills — the
 dispositions were unlabeled before 730.
+
+## Current state and program reading (2026-07-15, post-Campaign-V)
+
+All six increments are landed, reviewed, and live-verified; the effect of the shipped surface is
+measured (Campaign V, pre-registered — full record in tempdoc 725). What the results mean for
+this tempdoc's thesis:
+
+1. **The seam thesis is confirmed by its own instrument.** The program's earlier text-tier
+   polish was undelivered to the primary cohort — the exact "second authority drifts silently"
+   failure this tempdoc chartered against, operating at the ecosystem level (emitter → client →
+   model, client hop unverified). The wins the earlier campaigns measured came from channels
+   that happened to be delivered (schema, instructions, structured fields). The durable output
+   is the instrument: every future campaign records the delivered tier per call, so this
+   blindness class is structurally closed, not episodically patched.
+2. **Tier equivalence is justified as contract, not behavior — now with the price tag.**
+   +466 bytes/search, constant and deterministic (19/19 paired queries), ~+3.7%. Facet/hint
+   affordances produced zero behavioral adoption at haiku (third consistent refutation across
+   campaigns) — response-shape work is henceforth justified only by correctness and economics;
+   the accuracy frontier belongs to hop absorption / model tier (owner-gated).
+3. **Client delivery is an unstable external dependency with a size cap.** Third delivery shape
+   discovered: oversized results are replaced client-side by a ~2.3KB truncation notice —
+   neither tier arrives (2/137 search calls at limit 50; server-side payload verified fine).
+   Consequences: (a) a server-side response-size governor is a real product item; (b) any
+   future full-passage parity proposal must argue against the truncation cliff, not just token
+   cost. Posture: versioned recorded fixtures + refresh probe + per-campaign tier capture.
+4. **Environment intent works end-to-end.** The reaper incident (first labeled kill via 730
+   stop reports: `reaped_abandoned` mid-enrichment) closed G6's real gap same-day — declared
+   holds now govern both the lease and the reaper. Prior "takeover deaths" likely include
+   unlabeled reaper kills.
+
+**Definition-of-done ledger (against the W1–W6 plan):** W1 regen+links green; W2/W3 full pytest
+1974/2-known-reds, U1 pin green, fixtures now genuine recordings; W4/W5 module tests + wire pins
+green; W6 golden byte-identity (zero divergences), tier-equivalence test green, full gradlew test
+green, live probe on 0.4.0 both tiers, opus review resolved. Branch green + unpushed; no PR, no
+further spend without explicit word.
+
+**Remaining (not this branch's blockers):** truncation-notice characterization + response-size
+governor (new, from V); concise-mode golden pin (W6 review MINOR-2); blocked-call index
+misalignment in harness metadata (V anomaly); SDK-deferral interaction documented in the probe.
+Owner-gated: PR/merge; full-passage parity A/B; hop-absorption A/B; powered 624.
