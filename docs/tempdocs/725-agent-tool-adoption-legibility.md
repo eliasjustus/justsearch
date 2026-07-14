@@ -1419,12 +1419,63 @@ register-guard-resolution + suppression-ratchet gates green.
   and header/notice shipping (economics + honesty are their own justification); bars on exact
   thresholds set with the owner at authorization, before results are seen.
 
+# Response-shape A/B — results and judgment (2026-07-14; owner-authorized "small spend"; Campaign T run)
+
+Small variant executed per authorization: ONE treatment campaign (T: surface 0.3.0, this branch,
+haiku, conditions A+B, 20 queries × seed 0), contrasted descriptively against Campaign D
+(0.2.0) as the pre-registered baseline arm. **Spend: $9.38** (A $4.93 + B $4.45), inside the $12
+cap. All 40 cells completed (Inspect status success, resumed compose after a backend death —
+below). Evidence: `scripts/jseval/tmp/725-response-ab/` (worktree) + copies in
+`scripts/jseval/tmp/725-ab/725-forensics/`.
+
+## Instrument limitation found first (recorded for 624)
+
+Campaign D's composed record carries `measured: {}` (its A-arm was voided at record time by
+pre-fix #605 — baked into the log, unrecoverable by recompose), so `exposure_contrast` —
+including the new `surface_contrast=True` mode — can never consume it: the instrument requires
+measured cells. The cross-campaign comparison below is therefore a **descriptive raw-log
+table**, explicitly not the instrument (`descriptive-contrast-D-vs-T.v1.json` carries the same
+caveat inline). Confounds declared up front: index rebuilt between campaigns (ranking variance
+demonstrated during validation), single seed, one cohort.
+
+## Results (completed cells; descriptive, smoke-scale)
+
+| arm | n | completed | correct | acc | med cost | med turns | med cache-tokens | med MCP calls | discovery |
+|---|---|---|---|---|---|---|---|---|---|
+| D 0.2.0 B | 20 | 19 | 3 | 15.8% | $0.217 | 18 | 58.5k | 8 | 20/20 |
+| **T 0.3.0 B** | 20 | 19 | 4 | **21.1%** | $0.217 | 16 | 67.5k | 9 | 20/20 |
+| T 0.3.0 A (baseline) | 20 | 16 | 1 | 6.2% | $0.411 | 26 | 95.0k | — | — |
+
+- **Response-shape effect (D-B vs T-B):** accuracy +5.3pp (+1 cell — direction positive, far
+  below significance at n=19), median turns 18→16, cost flat, **cache tokens +15%** (the
+  review-predicted provenance cost of detailed mode: Matched lines + larger previews). Adoption
+  stayed at ceiling (20/20 discovery, MCP call counts stable) — no reinforcement regression, no
+  over-triggering.
+- **Judged against the pre-registered bars: in-between → reported as-is.** Accuracy improved
+  but weakly; tokens did NOT drop in default mode. Notably, **no agent ever passed
+  `response_format=concise` unprompted** — the token lever exists but is unexercised without
+  a default flip or client guidance; that choice (concise-by-default vs guidance vs leave) is
+  an owner decision the pre-registration did not cover.
+- **The strongest new datum is A vs B (first valid baseline on this corpus, courtesy of the
+  #605 fix working live — zero voided A-cells):** with-tool beat without-tool 21.1% vs 6.2%
+  accuracy at HALF the median cost ($0.217 vs $0.411), 10 fewer median turns, and 29% fewer
+  cache tokens, with fewer timeouts (1 vs 4). Descriptive and smoke-scale — but it is the
+  first time the program has measured the tool actually *paying for itself* on a grep-stressed
+  corpus, and it materially strengthens the case for the powered 624 campaign.
+
+## Operational finding
+
+Second unexplained backend death under sustained MCP-only load, at/near campaign end (all cells
+already complete; caught by the post-eval surface re-capture; resume-on-same-port recovered
+compose cleanly). Observation logged; dev-runner lifecycle territory, not 725 scope.
+
 ## Remaining (owner-gated)
 
 1. PR + merge of this branch (no PR opened per instruction).
-2. The A/B run above (spend authorization + threshold setting).
+2. Concise-mode decision: default flip, client-config guidance, or leave opt-in (token lever
+   is real but unexercised by agents on their own).
 3. L4d gap-statement affordance: still hypothesis-tier, NOT implemented, needs its own A/B.
-4. 624 Step-2 model-tier sweep decision (unchanged from the forensics recommendation).
+4. 624 Step-2 / powered campaign — now with the strongest supporting datum yet (A-vs-B above).
 
 ## Candidate principle (from theorization, now adopted by the design): self-describing results
 
