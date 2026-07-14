@@ -422,4 +422,45 @@ final class McpSearchTraceLegibilityTest {
     assertEquals("plain term", McpSearchResultFormatter.sanitize("plain term"));
     assertEquals("", McpSearchResultFormatter.sanitize(null));
   }
+
+  @Test
+  @DisplayName("sanitize: strips embedded double quotes and backslashes (tempdoc 725 review fix)")
+  void sanitizeStripsQuotesAndBackslashes() {
+    assertEquals("hello", McpSearchResultFormatter.sanitize("he\"llo"));
+    assertEquals("hello", McpSearchResultFormatter.sanitize("he\\llo"));
+    assertEquals("hello", McpSearchResultFormatter.sanitize("h\"e\\l\"lo"));
+  }
+
+  // ---------------------------------------------------------------------
+  // (g) a quote-bearing corpus term cannot escape its quotes in the Matched: line
+  // ---------------------------------------------------------------------
+
+  @Test
+  @DisplayName("(g) matched term containing a double quote cannot break out of the Matched: \"...\" line")
+  void matchedTermWithQuoteCannotEscapeQuotedSpan() {
+    String quoteBearingTerm = "he\"llo"; // corpus term embedding a literal double quote
+    Hit hit =
+        new Hit(
+            "doc-quote",
+            0.6d,
+            Map.of("title", "Quote Target", "path", "docs/quote.md", "content_preview", ""),
+            List.of("content_preview"),
+            List.of(new MatchSpan("content_preview", 0, quoteBearingTerm.length(), quoteBearingTerm)),
+            List.of(),
+            null);
+    KnowledgeSearchResponse canned =
+        new KnowledgeSearchResponse(1L, 1L, 4L, List.of(hit), null, null, null, null, null, null, null, null);
+
+    Map<String, Object> result = invokeSearch(canned);
+    String text = textOf(result);
+
+    assertTrue(text.contains("    Matched: \"hello\" in content_preview"), text);
+    assertFalse(text.contains("\"he\"llo\""), text);
+    assertFalse(text.contains(quoteBearingTerm), text);
+
+    Map<String, Object> structured = structuredOf(result);
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> results = (List<Map<String, Object>>) structured.get("results");
+    assertEquals(List.of("hello"), results.get(0).get("matchedTerms"));
+  }
 }

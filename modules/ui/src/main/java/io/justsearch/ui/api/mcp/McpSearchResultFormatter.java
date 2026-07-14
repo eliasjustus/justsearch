@@ -56,7 +56,10 @@ final class McpSearchResultFormatter {
   /**
    * Strips newlines/control chars from corpus-sourced text before it is echoed back to an agent
    * (defensive against the echo-injection shape — matched terms are quoted corpus content, not
-   * agent-authored text).
+   * agent-authored text). Also strips {@code "} and {@code \} (tempdoc 725 review fix): a
+   * corpus term containing a double quote would otherwise escape the quoted span in the rendered
+   * {@code Matched: "term"} line — {@code "} breaks out of the quotes, {@code \} is stripped
+   * alongside it for the same reason (no escaping scheme is defined for this plain-text render).
    */
   static String sanitize(String s) {
     if (s == null || s.isEmpty()) {
@@ -65,7 +68,7 @@ final class McpSearchResultFormatter {
     StringBuilder sb = new StringBuilder(s.length());
     for (int i = 0; i < s.length(); i++) {
       char c = s.charAt(i);
-      if (Character.isISOControl(c)) {
+      if (Character.isISOControl(c) || c == '"' || c == '\\') {
         continue;
       }
       sb.append(c);

@@ -483,14 +483,45 @@ public final class McpToolSurface {
       // list — RemoteDocumentService.mapRetrieveContextResponse), which equals the number of
       // rendered "[From: ...]" sections in result.context() for both the chunk-RAG and
       // virtual-chunk-fallback paths.
-      long distinctDocs =
-          result.citations().stream()
-              .map(DocumentService.ContextCitation::parentDocId)
-              .filter(id -> !id.isBlank())
-              .distinct()
-              .count();
+      //
+      // Tempdoc 725 review fix: RemoteDocumentService.retrieveContextFallback (FULLTEXT_FALLBACK
+      // path, gRPC-failure catch) returns citations=List.of() with a non-blank context and
+      // populated sections()/docsUsed() — citations is a chunk-RAG-only concept the full-document
+      // fallback never populates. Deriving N/M from citations().size() there always reads 0/0
+      // above real evidence. When citations is empty but context is non-blank, derive counts from
+      // ContextSection (sourceLabel/content/truncated/sectionIndex/chunkIndex) instead.
+      long passages;
+      long distinctDocs;
+      if (result.citations().isEmpty() && !result.context().isBlank()) {
+        if (!result.sections().isEmpty()) {
+          passages = result.sections().size();
+          distinctDocs =
+              result.sections().stream()
+                  .map(DocumentService.ContextSection::sourceLabel)
+                  .filter(label -> !label.isBlank())
+                  .distinct()
+                  .count();
+          if (distinctDocs == 0) {
+            distinctDocs = Math.max(result.docsUsed(), 1);
+          }
+        } else {
+          // Sections absent too (not observed from retrieveContextFallback today, but defend
+          // against a future producer that populates context without sections): fall back to
+          // docsUsed, assuming one passage per document.
+          distinctDocs = Math.max(result.docsUsed(), 1);
+          passages = distinctDocs;
+        }
+      } else {
+        passages = result.citations().size();
+        distinctDocs =
+            result.citations().stream()
+                .map(DocumentService.ContextCitation::parentDocId)
+                .filter(id -> !id.isBlank())
+                .distinct()
+                .count();
+      }
       sb.append("Evidence pack: ")
-          .append(result.citations().size())
+          .append(passages)
           .append(" passages from ")
           .append(distinctDocs)
           .append(" documents (retrieval mode: ")

@@ -128,6 +128,39 @@ final class McpAnswerLegibilityTest {
         text);
   }
 
+  /**
+   * Mirrors the REAL shape {@code RemoteDocumentService.retrieveContextFallback} (gRPC-failure
+   * catch, FULLTEXT_FALLBACK path) actually returns: empty citations (a chunk-RAG-only concept
+   * the full-document fallback never populates), a non-blank budgeter-built context with two
+   * {@code [From: ...]} sections, populated {@code sections()}/{@code docsUsed()}, and
+   * retrievalMode "FULLTEXT_FALLBACK" — the 9-arg {@code ContextResult} constructor this call site
+   * uses (quality defaults to {@code QualitySignals.EMPTY}).
+   */
+  private static ContextResult fulltextFallbackFixtureResult() {
+    String context = "[From: doc-a.txt]\ncontent-a\n\n---\n\n[From: doc-b.txt]\ncontent-b";
+    List<ContextSection> sections =
+        List.of(
+            new ContextSection("doc-a.txt", "content-a", false, 0, 0),
+            new ContextSection("doc-b.txt", "content-b", false, 1, 1));
+    return new ContextResult(
+        context, 0, 0, 2, List.of(), "FULLTEXT_FALLBACK", "GRPC_FAILED", false, sections);
+  }
+
+  @Test
+  @DisplayName(
+      "(a) header derives passage/document counts from sections in the FULLTEXT_FALLBACK path"
+          + " (citations empty, tempdoc 725 review fix)")
+  void headerDerivesCountsFromSectionsWhenCitationsEmptyInFallback() {
+    String text = textOf(invokeAnswer(fulltextFallbackFixtureResult()).result());
+
+    assertTrue(
+        text.startsWith(
+            "Evidence pack: 2 passages from 2 documents (retrieval mode: FULLTEXT_FALLBACK). No"
+                + " synthesized answer is included."),
+        text);
+    assertFalse(text.contains("Evidence pack: 0 passages from 0 documents"), text);
+  }
+
   // ---------------------------------------------------------------------
   // W2b: the call site must request the format the Worker actually renders
   // ---------------------------------------------------------------------
