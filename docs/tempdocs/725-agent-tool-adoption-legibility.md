@@ -1,7 +1,7 @@
 ---
 title: "Agent tool-adoption legibility: diagnose why agents offered the JustSearch MCP surface rarely invoke it, and raise correct adoption as far as the product surface allows"
 type: tempdocs
-status: "open — level 1 (autonomous) IMPLEMENTED and verified 2026-07-14 (see §Level-1 implementation): exposure-mode + initialize identity capture, funnel fields/metrics, A/B config wiring, 655→725 transfer recorded, evidence-contract repair, byte-stable tools/list, opus refute-first review (one MAJOR redaction hole found and closed). Recompose digest deliberately moved to 2f555f66…a100 (policy_hash only; proof in §Semantic-digest transition). Level 2 stays owner-gated: A/B smoke spend + thresholds, 707 materialization, lever shipping per pre-registered rules."
+status: "open — level 1 merged to main (PR #178, 401c1ae); exposure A/B smoke RUN and STOPPED after Campaign D (2026-07-14, results + judgment recorded in the final section): DEFERRED-arm adoption hit CEILING (20/20 discovery+invocation) on the grep-stressed CLERC member — visibility hypothesis refuted in this regime, adoption is corpus-conditional; frontier moves to result quality/reinforcement. Found + must fix before any campaign: agent_utility_inspect.py:605 A-arm assertion voids baselines. Campaign E not run (cap + defect). Awaiting owner decisions; no levers shipped."
 created: 2026-07-14
 author: agent (Fable, session 9d3c1869) — filed at founder direction after the 719 publish, which surfaced the adoption gap as the program's most under-weighted finding
 category: product / mcp-surface / agent-adoption / eval-supporting
@@ -701,7 +701,7 @@ the pre-registered decision rules, and the 2026-07-28 MCP spec migration (parked
 
 ---
 
-# Exposure A/B smoke â€” pre-registration (2026-07-14, BEFORE any cell runs)
+# Exposure A/B smoke — pre-registration (2026-07-14, BEFORE any cell runs)
 
 > Owner authorization: budget cents-to-few-dollars haiku smoke, granted 2026-07-14
 > ("you have authorization regarding item 3"). This smoke produces decision evidence
@@ -712,58 +712,131 @@ the pre-registered decision rules, and the 2026-07-28 MCP spec migration (parked
 
 Two campaigns, identical in every respect except MCP tool exposure:
 
-- **Campaign D (deferred):** default client behavior â€” `{"type":"http","url":<mcp>}`;
+- **Campaign D (deferred):** default client behavior — `{"type":"http","url":<mcp>}`;
   tools collapsed to names + server instructions pre-search (current-cohort default).
-- **Campaign E (eager):** same entry + `"alwaysLoad": true` â€” full descriptions/schemas
+- **Campaign E (eager):** same entry + `"alwaysLoad": true` — full descriptions/schemas
   in context from turn 1.
 
 Shared matrix per campaign: corpus `mixed/en-legal-clerc-1k-verbose` (materialized
 2026-07-14; every commitment/certification signature reproduced; structural certification
-only â€” sufficient because no public claim is made), all 20 committed queries Ã— seed 0 Ã—
+only — sufficient because no public claim is made), all 20 committed queries × seed 0 ×
 conditions A and B, model haiku, exact-match scoring (no LLM judge), existing per-cell
-wall-clock and budget limits. Estimated total â‰¤ 80 cells; hard spend cap USD 6 total â€”
+wall-clock and budget limits. Estimated total ≤ 80 cells; hard spend cap USD 6 total —
 abort if projected to exceed.
 
 ## Pre-registered metrics (from the 725 substrate, per campaign B-arm)
 
-Primary: funnel â€” discovery_rate, post_discovery_invocation_rate (and derived overall
+Primary: funnel — discovery_rate, post_discovery_invocation_rate (and derived overall
 invocation/adoption_rate), first_discovery_turn, reinforced_proxy_rate, strict
 reinforced_rate. Contrast computed by `exposure_contrast` (descriptive {a,b,delta}).
 
 Sanity (must-check, not optimization targets): completed-cell accuracy per arm,
 timeout/exclusion rates, A-arm invariance (A cells have no tools; any A-arm difference
 between campaigns is noise scale), exposure identity captured as declared
-(D: exposure_mode=deferred, E: eager; initialize identity present; any `unknown` â†’
+(D: exposure_mode=deferred, E: eager; initialize identity present; any `unknown` →
 run is void, fix capture, rerun).
 
 Descriptive only (no bars): provider token counters (tool definitions mechanically
-shift cache-write tokens â€” 719 research), turns, cost.
+shift cache-write tokens — 719 research), turns, cost.
 
 ## Pre-registered signal bars (interpretation guide, not ship triggers)
 
-- **Visibility-binding signal:** E invocation â‰¥ 3Ã— D invocation AND E invocation
-  â‰¥ 25% absolute (â‰¥ 5/20 B-cells).
-- **Persuasion-binding signal:** E â‰ˆ D (< 1.5Ã— ratio) with both < 25% â€” visibility is
+- **Visibility-binding signal:** E invocation ≥ 3× D invocation AND E invocation
+  ≥ 25% absolute (≥ 5/20 B-cells).
+- **Persuasion-binding signal:** E ≈ D (< 1.5× ratio) with both < 25% — visibility is
   not the bottleneck; L2/L3 levers move up.
 - **Outcome-sanity veto:** E completed-cell accuracy worse than D by > 10 pp, or E
   spurious-looking invocation on cells whose grep path succeeded faster (qualitative
-  note) â€” flag prominently regardless of funnel deltas.
+  note) — flag prominently regardless of funnel deltas.
 - In-between results are reported as-is. The ship/no-ship decision on L1
   (`alwaysLoad` README recommendation) and any lever work is the owner's, made on this
-  evidence â€” pre-committed here to prevent post-hoc bar-moving, not to auto-ship.
+  evidence — pre-committed here to prevent post-hoc bar-moving, not to auto-ship.
 
 ## Known caveats (declared up front)
 
 1. **F-029 (dense-on-legal):** dense retrieval may underperform on legal text; affects
-   both campaigns identically â€” the exposure CONTRAST is valid even if absolute
+   both campaigns identically — the exposure CONTRAST is valid even if absolute
    retrieval quality is poor; absolute adoption may be depressed if early tool results
    disappoint (reinforcement stage). Recorded, not corrected.
 2. **CRLF commitment nuance (corpus agent, 2026-07-14):** committed commitment digests
    hash CRLF build-time bytes; LF checkouts must regenerate the gold source via
    `corpus-query-stratum-build` to reproduce (done here; signatures reproduced exactly).
-   Cross-platform replay gotcha for 707/719 â€” logged to observations.
+   Cross-platform replay gotcha for 707/719 — logged to observations.
 3. **n=20 queries, 1 seed, one model, one client cohort:** smoke-scale; detects large
    effects only; no significance claims; cohort-relative by design.
-4. First live exercise of the 725 capture path â€” a substrate defect discovered live is
+4. First live exercise of the 725 capture path — a substrate defect discovered live is
    fix-and-rerun, and would itself be a finding.
 
+---
+
+# Exposure A/B smoke — results and judgment (2026-07-14; STOPPED after Campaign D)
+
+Both pre-registered stop conditions fired and were honored: the $6 cap (Campaign D alone cost
+$8.87 — real cost ~$0.22/cell vs the $0.075 assumed; future pre-registrations must budget from
+this measured rate) and a substrate capture defect (below). Campaign E was not run; the contrast
+is mechanically unproducible from D's record. **Judged against the pre-registered bars, the
+outcome is a third case neither bar anticipated — and it is decisive anyway.**
+
+## Headline: adoption was at CEILING in the DEFERRED arm
+
+Campaign D (deferred exposure — the supposedly handicapped arm), B-condition, 20 cells on the
+grep-stressed CLERC 1k-verbose member, haiku, live 655 instructions (v0.2.0, initialize identity
+captured):
+
+- discovery 20/20 (funnel `discovery_rate` 1.0), invocation 20/20 (`adoption_rate` 1.0);
+- first discovery at call index ~1, first MCP call at index 2 — immediate, not late;
+- `mcp_call_share` 0.49; `reinforced_proxy_rate` 0.90, strict `reinforced_rate` 1.0;
+- exposure identity captured exactly as declared (`exposure_mode="deferred"`, `always_load: null`,
+  `instructions_sha256=360df3a1…`, server 0.2.0) — the 725 capture worked first time live.
+
+**Interpretation (vs the bars):** the visibility-binding hypothesis is REFUTED in this regime —
+with a corpus where grep genuinely struggles, natural-language 2-hop queries, and the 655
+connect-time instructions live, agents discover and adopt the deferred tools instantly and
+universally. Campaign E could not have improved adoption over 1.0; the cap-stop was scientifically
+correct, not merely fiscal. Combined with the 2026-07-12 pilot (8.3% adoption, synthetic
+grep-friendly corpus), **adoption is corpus-conditional: rational non-adoption was the dominant
+mechanism all along** (655's original hypothesis, now with the cleanest evidence yet). The L1
+`alwaysLoad` recommendation is NOT needed for adoption in this regime (owner call whether E ever
+runs for its residual questions: token/cache-cost effects of eager loading, and non-CLI cohorts).
+
+## The frontier moves down-funnel: outcomes, not adoption
+
+Descriptive, smoke-scale, no claim: B completed 19/20 (1 budget exclusion), but substring-EM
+accuracy on completed cells was only **3/19 (15.8%)** despite universal tool use — on this corpus
+the binding constraint is now **result quality/reinforcement** (retrieval quality on legal text —
+the F-029 caveat — plus 2-hop difficulty at haiku, and the L4 error/response-legibility backlog),
+not tool selection. A-arm baseline accuracy is unavailable (all 20 A-cells void — below).
+
+## Substrate defect found by first live contact (must-fix before any future campaign)
+
+`agent_utility_inspect.py:605`: the offered-vs-declared MCP tool-name assertion is not
+condition-gated — A-cells (no MCP servers; empty offered list) are compared against the declared
+6-tool canonical surface and marked errored AT RECORD TIME (after the agent loop ran and incurred
+cost: $4.91 of void A-cells). Downstream, `_compose_cell` drops the baseline arm and the record
+composes `measured: {}` — deterministic, would have voided E identically. Escaped 333 unit tests
+AND the adversarial review because no fixture exercises a live A-cell WITH a declared canonical
+surface (`unreachable-seed-green`, precisely). Fix + A-arm-shaped regression fixture is the next
+implementation item; logged to observations. Second operational finding: `justsearch_dev_stop`
+resolves dev-runner from the session-inject-time worktree path and breaks after that worktree's
+teardown (observation logged; stack was PID-tree-killed cleanly).
+
+## Evidence
+
+All under `scripts/jseval/tmp/725-ab/` in the `725-ab-smoke` worktree (untracked): raw Inspect log
+(J7GN33YAvwSmMYH9C7Xdrb), `source-identity.v1.json` sidecar, run-composed + recomposed records
+(semantic_digest `e367a0f3…87b`, `measured:{}`), both mcp-config files, ingest/campaign logs.
+Prep was fully green: ingestion+enrichment of the 1000-doc member in ~13.5 min, watched-root
+scoped, corpus-dir signature match, queries sha == committed `query_gold_sha256`. Backend healthy
+throughout; campaign wall-clock 11m10s.
+
+## Owner decision points created by this result
+
+1. Is Campaign E still wanted for its residual questions (eager-mode token/cache cost; nothing
+   about adoption), at measured cost ~$9? Default recommendation: no, not until the #605 fix
+   restores the A-arm baseline and a question actually needs it.
+2. Lever order revision: L1 (`alwaysLoad`) demoted — adoption doesn't need it where retrieval
+   matters; the productive frontier is L4 (reinforcement/error legibility) + retrieval quality on
+   legal (708/712/713 territory), and the 624 utility campaign becomes MORE attractive since
+   adoption is no longer the blocker on the target corpus regime.
+3. The 8.3%→100% corpus-conditionality finding is the single most useful sentence for 624's
+   pre-registered interpretation tree going forward.
