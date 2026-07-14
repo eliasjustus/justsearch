@@ -88,7 +88,11 @@ import {
   type WorkflowCatalogEntry,
 } from '../../api/registry/WorkflowCatalogClient.js';
 import { presentLabel } from '../display/present.js';
-import { fetchUnifiedThread, type ThreadLifecycle } from './unifiedThreadClient.js';
+import {
+  fetchUnifiedThread,
+  type ThreadFetchFailureReason,
+  type ThreadLifecycle,
+} from './unifiedThreadClient.js';
 import {
   projectBudget,
   projectContextHorizon,
@@ -624,6 +628,13 @@ export class UnifiedChatView extends JfElement {
   // Tempdoc 561 P-A/P-A2: the agent runs' typed loop objects (state + Turn/Iteration counts + budget)
   // projected from the record; surfaced in the Activity rail.
   private unifiedLifecycles: ThreadLifecycle[] = [];
+  // Tempdoc 727 F-8: fetchUnifiedThread's EMPTY-on-failure fallback is deliberate (the projector must
+  // never become an authority — see refreshUnifiedThread), but it was completely silent: a backend
+  // error left the live render in place with no hint anything was wrong. This is the out-of-band
+  // signal, set on a failed refresh and cleared on the next successful one; it renders a notice, not
+  // a substitute for the EMPTY contract.
+  private unifiedThreadRefreshFailed: { reason: ThreadFetchFailureReason; detail?: string } | null =
+    null;
   // Tempdoc 561 P-A/P-B (Slice 3): the agent run's budget, surfaced from <jf-agent-view> for the
   // secondary Activity rail (the demoted chrome; the conversation stays primary). Null until a run
   // reports budget.
@@ -1809,6 +1820,7 @@ export class UnifiedChatView extends JfElement {
     // and lifecycle must not survive into this one (the stale-budget-after-reload defect).
     this.agentBudget = null;
     this.unifiedLifecycles = [];
+    this.unifiedThreadRefreshFailed = null;
     void this.refreshUnifiedThread();
     const resumed = await resumeConversation(sessionId, shapeId);
     // Tempdoc 629 (LAYER): the conversation store is encrypted + locked. Render a locked notice with an
@@ -1967,6 +1979,7 @@ export class UnifiedChatView extends JfElement {
     // returned to the bare landing.
     this.unifiedEvents = [];
     this.unifiedLifecycles = [];
+    this.unifiedThreadRefreshFailed = null;
     this.agentBudget = null;
     this.showResumePrompt = false;
     // Slice 515 FIX-1: forget the previous askAi-pinned docIds so a new
@@ -2128,6 +2141,7 @@ export class UnifiedChatView extends JfElement {
         }</span>
       </div>
       ${this.renderDegradationBanner()}
+      ${this.renderThreadRefreshFailedNotice()}
       <div class="answer-plane">${this.renderAnswerPlane()}</div>
     `;
   }
@@ -2963,14 +2977,48 @@ export class UnifiedChatView extends JfElement {
   /**
    * Tempdoc 561 P-A/P-B (Slice 2): refresh the unified thread from the canonical record. Best-effort
    * — failures leave the live this.thread render in place (the projector never becomes an authority).
+   *
+   * <p>Tempdoc 727 F-8: that silent fallback used to be truly silent — a backend bug that 500'd
+   * `/api/thread/{id}` for every encrypted conversation left the user staring at an empty thread with
+   * no hint anything was wrong. `fetchUnifiedThread`'s `onFailure` callback is the out-of-band signal;
+   * it does not change the EMPTY-on-failure contract itself (still pinned by
+   * `unifiedThreadClient.test.ts`'s "returns EMPTY on a non-ok response" case).
    */
   private async refreshUnifiedThread(): Promise<void> {
     if (!this.sessionId) return;
-    const res = await fetchUnifiedThread(this.apiBase, this.sessionId);
+    let failed: { reason: ThreadFetchFailureReason; detail?: string } | null = null;
+    const res = await fetchUnifiedThread(this.apiBase, this.sessionId, undefined, (reason, detail) => {
+      failed = { reason, detail };
+    });
+    this.unifiedThreadRefreshFailed = failed;
     this.unifiedEvents = res.events;
     this.unifiedLifecycles = res.lifecycles;
     this.hydrateAnswerEvidenceFromRecord(res.events);
     this.requestUpdate();
+  }
+
+  /**
+   * Tempdoc 727 F-8 — the honest, non-alarming failed-refresh notice. Reuses `<jf-system-notice>` (the
+   * same primitive the AI-degradation banner renders through, tempdoc 559 Authority III) rather than a
+   * new component; `tone="info"` keeps it visually distinct from the degradation banner's warning/error
+   * tones, since a failed thread refresh is a different, usually transient cause (a request failure),
+   * not an ongoing AI-readiness degradation — the two must not be conflated into one banner.
+   */
+  private renderThreadRefreshFailedNotice(): TemplateResult | typeof nothing {
+    if (!this.unifiedThreadRefreshFailed) return nothing;
+    const { reason, detail } = this.unifiedThreadRefreshFailed;
+    const statusSuffix = reason === 'http-error' && detail ? ` (status ${detail})` : '';
+    return html`<jf-system-notice
+      tone="info"
+      live="status"
+      class="thread-refresh-failed-notice"
+      data-testid="thread-refresh-failed"
+    >
+      <span class="notice-row"
+        >${icon({ name: 'alert-triangle', size: 13 })} Couldn't load the full activity thread — showing
+        what's here.${statusSuffix}</span
+      >
+    </jf-system-notice>`;
   }
 
   /**

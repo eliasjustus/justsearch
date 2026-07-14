@@ -62,6 +62,14 @@ export const unifiedChatBodyStyles = css`
     .degradation-banner-collapsed .notice-remedy {
       margin-top: 0;
     }
+    /* Tempdoc 727 F-8 — the failed-unified-thread-refresh notice: shares the icon+text row layout
+       with the degradation banner above, but is its own class (a different, usually transient cause
+       — a request failure, not an AI-readiness degradation — must not read as the same banner). */
+    .thread-refresh-failed-notice .notice-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.4rem;
+    }
     .degradation-expand,
     .degradation-collapse {
       all: unset;
