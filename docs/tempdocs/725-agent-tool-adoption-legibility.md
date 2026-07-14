@@ -698,3 +698,72 @@ across three independent agents + the main loop; `git diff --check` clean.
 Exposure A/B smoke (spend + thresholds with 624), 707 CLERC fetch/materialization, lever
 shipping (L1 `alwaysLoad` recommendation, L2 instructions v2, L3 matchability, L4 backlog) per
 the pre-registered decision rules, and the 2026-07-28 MCP spec migration (parked with 500/655).
+
+---
+
+# Exposure A/B smoke â€” pre-registration (2026-07-14, BEFORE any cell runs)
+
+> Owner authorization: budget cents-to-few-dollars haiku smoke, granted 2026-07-14
+> ("you have authorization regarding item 3"). This smoke produces decision evidence
+> for the owner's lever-shipping call (design Part III). It is NOT a utility claim,
+> NOT publication input, and ships nothing by itself.
+
+## Design
+
+Two campaigns, identical in every respect except MCP tool exposure:
+
+- **Campaign D (deferred):** default client behavior â€” `{"type":"http","url":<mcp>}`;
+  tools collapsed to names + server instructions pre-search (current-cohort default).
+- **Campaign E (eager):** same entry + `"alwaysLoad": true` â€” full descriptions/schemas
+  in context from turn 1.
+
+Shared matrix per campaign: corpus `mixed/en-legal-clerc-1k-verbose` (materialized
+2026-07-14; every commitment/certification signature reproduced; structural certification
+only â€” sufficient because no public claim is made), all 20 committed queries Ã— seed 0 Ã—
+conditions A and B, model haiku, exact-match scoring (no LLM judge), existing per-cell
+wall-clock and budget limits. Estimated total â‰¤ 80 cells; hard spend cap USD 6 total â€”
+abort if projected to exceed.
+
+## Pre-registered metrics (from the 725 substrate, per campaign B-arm)
+
+Primary: funnel â€” discovery_rate, post_discovery_invocation_rate (and derived overall
+invocation/adoption_rate), first_discovery_turn, reinforced_proxy_rate, strict
+reinforced_rate. Contrast computed by `exposure_contrast` (descriptive {a,b,delta}).
+
+Sanity (must-check, not optimization targets): completed-cell accuracy per arm,
+timeout/exclusion rates, A-arm invariance (A cells have no tools; any A-arm difference
+between campaigns is noise scale), exposure identity captured as declared
+(D: exposure_mode=deferred, E: eager; initialize identity present; any `unknown` â†’
+run is void, fix capture, rerun).
+
+Descriptive only (no bars): provider token counters (tool definitions mechanically
+shift cache-write tokens â€” 719 research), turns, cost.
+
+## Pre-registered signal bars (interpretation guide, not ship triggers)
+
+- **Visibility-binding signal:** E invocation â‰¥ 3Ã— D invocation AND E invocation
+  â‰¥ 25% absolute (â‰¥ 5/20 B-cells).
+- **Persuasion-binding signal:** E â‰ˆ D (< 1.5Ã— ratio) with both < 25% â€” visibility is
+  not the bottleneck; L2/L3 levers move up.
+- **Outcome-sanity veto:** E completed-cell accuracy worse than D by > 10 pp, or E
+  spurious-looking invocation on cells whose grep path succeeded faster (qualitative
+  note) â€” flag prominently regardless of funnel deltas.
+- In-between results are reported as-is. The ship/no-ship decision on L1
+  (`alwaysLoad` README recommendation) and any lever work is the owner's, made on this
+  evidence â€” pre-committed here to prevent post-hoc bar-moving, not to auto-ship.
+
+## Known caveats (declared up front)
+
+1. **F-029 (dense-on-legal):** dense retrieval may underperform on legal text; affects
+   both campaigns identically â€” the exposure CONTRAST is valid even if absolute
+   retrieval quality is poor; absolute adoption may be depressed if early tool results
+   disappoint (reinforcement stage). Recorded, not corrected.
+2. **CRLF commitment nuance (corpus agent, 2026-07-14):** committed commitment digests
+   hash CRLF build-time bytes; LF checkouts must regenerate the gold source via
+   `corpus-query-stratum-build` to reproduce (done here; signatures reproduced exactly).
+   Cross-platform replay gotcha for 707/719 â€” logged to observations.
+3. **n=20 queries, 1 seed, one model, one client cohort:** smoke-scale; detects large
+   effects only; no significance claims; cohort-relative by design.
+4. First live exercise of the 725 capture path â€” a substrate defect discovered live is
+   fix-and-rerun, and would itself be a finding.
+
