@@ -1251,6 +1251,90 @@ remains hypothesis-tier and is NOT in this design's ship set.
   boundary audit finding a same-shaped drop; retirement: if the register's coverage checks grow
   a completeness dimension that mechanizes this, the prose shape retires into that gate.
 
+---
+
+# De-risking pass #2 (2026-07-14; design #2 — static reads + clean-base live probes)
+
+Evidence: `scripts/jseval/tmp/725-ab/725-forensics/derisk-live-probe.v1.json` (+ static reads
+with file:line below). Stack built and launched FROM this worktree's dist (`distFrom`), fresh
+ingest — the earlier probes' dist provenance concern (U4) was real and mattered (below).
+
+## Per-uncertainty verdicts
+
+- **U1 (spans/excerpts populated on the search path) — CONFIRMED end-to-end, with a quality
+  catch.** `includeExcerpts: true` through the HTTP body reaches the worker and returns
+  `excerptRegions` with REAL TEXT windows (lexical probe: the excerpt contains the exact payload
+  sentence "Cavby8 is associated with azure vellum 0008"). `matchSpans` populate on the hybrid
+  path without any flag. **The catch: for paraphrase hits the spans are stopword noise** — q3's
+  rank-1 hit carried 20 spans of "the", and the worker's excerpt window followed the junk to an
+  irrelevant passage. Naive projection is NOT enough for the flagship paraphrase case: D1 needs
+  informative-term filtering (drop stopwords/ubiquitous terms before rationale/centering) and an
+  honest "semantic match — no distinctive term overlap" fallback. Worker-side excerpt scoring
+  (`HighlightingOps` window selection) is the deeper fix; head-side filtering is the level-1
+  scope, the worker-side change routes to search-quality if level-1 proves insufficient.
+- **U2 (offset semantics) — RESOLVED, favorable.** Spans offset into the stored field VALUE
+  (`content_preview`, capped 4096 chars — `IndexingDocumentOps.java:430`), so head-side
+  centering has 4KB of text to work with; `excerptRegions` carry text extracted worker-side from
+  FULL content (`HighlightingOps.java:203-205`) with nested spans relative to the excerpt
+  (`indexing.proto:232`). Head never sees full content (`SearchResponseBuilder.java:403-411`
+  excludes it) — excerpts are the only full-content window, and they already exist.
+- **U3 (constant-leader anomaly) — NOT REPRODUCIBLE on the clean base.** With the worktree dist
+  + fresh ingest, the three probe queries had three different pack leaders. The anomaly was an
+  artifact of the earlier probe environment (foreign-branch dist from the main checkout and/or
+  its index state) — dropped from the defect list. Pack curation on legal text remains weak
+  (leaders are irrelevant CLERC docs; bestChunkScore ~0.03, coverage ~0.60) but that is the
+  known F-029/legal-retrieval territory, not a new MCP defect. The `quality` block is rich and
+  in-hand — D2's self-description should surface it (a "low-confidence evidence pack"
+  descriptive line derives directly from bestChunkScore/coverage).
+- **U4 (probe validity) — CONFIRMED as a real concern, now retired.** Clean-base rerun changed
+  one conclusion (U3). **The XML/LABELED discrepancy SURVIVES the clean base**: `callAnswer`
+  sets `ContextFormat.XML` (`McpToolSurface.java:435`) and live output is LABELED `[From: …]` —
+  a genuine wrong-gate defect (parameter set-site does not govern the output path); confirmed
+  D2 fix item.
+- **U5 (pinned-test blast radius) — SMALL and located elsewhere.** ~10-12 methods pin the
+  *agent-internal* `SearchTool` format (plus a PRODUCTION regex dependency:
+  `AgentContextCompressor.java:36` hard-depends on `SearchTool`'s "Excerpt:" label — do NOT
+  touch SearchTool in this work). `McpToolSurface.callSearch`'s own text block has ZERO pinning
+  tests — MCP shape changes are test-free but must ARRIVE with new shape tests.
+  `McpProtocolHandlerTest:220` pins the search schema's property keys — expected single break
+  when `response_format` lands.
+- **U6 (A/B comparability) — GAP CONFIRMED, one small work item.** `exposure_contrast` matches
+  only corpus/model/query identity (`exposure_contrast.py:45`) and never reads
+  `mcp_tool_surface_hash` — a cross-surface-version contrast would compute silently. The
+  response-shape A/B needs an explicit surface-aware comparison mode (declared
+  surface-identity echo + guard), added to the implementation list.
+- **U7 (version bump) — LOW risk.** Constant is single-sourced (`McpContractVersions.java:40`);
+  prior bump (0.1.0→0.2.0, `5779c48`/PR #87) shows the shape: version constant + guidance text +
+  handler tests + `mcp-production-server.md`. No public-projection consumers (ABSENT in
+  `check-public-agent-utility`).
+
+## Design adjustments out of derisk (no redesign; scope refinements)
+
+1. D1 gains: informative-term span filtering + semantic-match fallback line; excerpt-window
+   quality noted as a possible worker-side follow-up (search-quality routed).
+2. D2 drops the constant-leader item; gains the confirmed XML-format wrong-gate fix; gains the
+   quality-block-derived confidence line.
+3. New implementation item: surface-aware contrast mode/guard in `exposure_contrast.py`.
+4. MCP response-shape tests are green-field — write them with the new shapes (no legacy pins to
+   preserve on the MCP surface itself).
+
+## Confidence: 8/10
+
+The design's substance is probe-verified end-to-end (data exists, flag works, text windows
+real, bump cheap, test blast radius small and avoidable). Held back from 9+ by: the span-noise
+filtering heuristic is judgment-quality work whose sufficiency is only provable by the A/B; and
+the excerpt-window scoring may yet need the worker-side change (bounded, but cross-module).
+
+## Difficulty and recommended staffing
+
+Moderate. Concentrated sites: `McpToolSurface.java` (+ its new tests), `McpEvidenceProjection`,
+one request flag, `ContextBudgeter`/format wiring fix, `exposure_contrast.py` guard, version
+bump. **Recommendation: sonnet (medium-high effort) implementation workers on bounded increments
+(D1 text/projection; D2 header+format fix; D3 error grammar; U6 guard) under main-loop briefs;
+one opus (high effort) refute-first reviewer before any commit; pre-registration wording and
+response-text style decisions stay main-loop.** The span-filtering heuristic brief must include
+the probe's noisy-span examples as fixtures.
+
 ## Candidate principle (from theorization, now adopted by the design): self-describing results
 
 **"Every tool result declares its own nature and limits — what it is, what was elided, what
