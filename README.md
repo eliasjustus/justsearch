@@ -53,9 +53,9 @@ f6336a668b8f6abd66b1ff483def6ae17ac34f64d406a8edab16b45d2b61ae38  JustSearch_0.1
 
 | | |
 |---|---|
-| **OS** | **Windows 10/11, 64-bit (x64) only** — macOS/Linux are not in the current scope ([NON-GOALS](NON-GOALS.md)). WebView2, the VC++ runtime, and a Java runtime are bundled by the installer; there is nothing to install first. <!-- TODO(operator): verified on Windows 11; Windows 10 is the expected Tauri/WebView2 baseline but has not been explicitly tested --> |
+| **OS** | **Windows 10 or 11, 64-bit (x64) only** — macOS/Linux are not in the current scope ([NON-GOALS](NON-GOALS.md)). Verified on Windows 11; Windows 10 x64 is the expected WebView2 baseline but is not yet explicitly tested. WebView2, the VC++ runtime, and a Java runtime are bundled by the installer; there is nothing to install first. |
 | **Disk** | 853 MB installer + ~0.7 GB installed + **~9 GB one-time model download** + the search index (grows with your corpus). Plan for **≥ 15 GB free**. |
-| **RAM** | **16 GB recommended**; 8 GB minimum for keyword/semantic search only. The on-device chat model (~5.9 GB file) is loaded into RAM when answering on CPU. <!-- TODO(operator): conservative estimate, not a measured floor — verify on an 8 GB machine --> |
+| **RAM** | **16 GB recommended.** 8 GB is a conservative floor for keyword/semantic search only (not a benchmarked minimum). The on-device chat model (~5.9 GB file) is loaded into RAM when answering on CPU. |
 | **GPU** | **Optional.** Everything runs on CPU by default. An NVIDIA GPU with **≥ 8 GB VRAM** enables CUDA acceleration for chat and reranking (the app requires ~7.5 GB free VRAM before it will run the chat model on GPU; below that it stays on CPU). |
 | **Network** | Only for the one-time model download. Nothing else, ever — see [Privacy](#privacy). |
 

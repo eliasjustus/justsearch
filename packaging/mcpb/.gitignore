@@ -1,2 +1,7 @@
-# Built .mcpb artifacts — build with `npx -y @anthropic-ai/mcpb pack` (see README.md).
-dist/
+# Built .mcpb artifacts. dist/ is ignored EXCEPT the canonical release bundle, which
+# IS committed: its SHA-256 is a published contract (server.json.fileSha256 + the release
+# SHA256SUMS), so it must be reviewable and the consistency gate must run on every PR.
+# `mcpb pack` is nondeterministic, so re-pack only when the source changes, then update
+# server.json.fileSha256 (see README.md and tempdoc 726).
+dist/*
+!dist/justsearch-mcp.mcpb

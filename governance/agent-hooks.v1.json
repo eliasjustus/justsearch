@@ -102,6 +102,10 @@
       "file": "lockfile-hint.mjs",
       "role": "advisory"
     },
+    "mcpb-repack-hint": {
+      "file": "mcpb-repack-hint.mjs",
+      "role": "advisory"
+    },
     "observation-shard-hint": {
       "file": "observation-shard-hint.mjs",
       "role": "advisory"
@@ -367,6 +371,10 @@
           {
             "hookId": "search-engine-hint",
             "if": "Edit(modules/adapters-lucene/src/**)|Write(modules/adapters-lucene/src/**)|Edit(modules/reranker/src/**)|Write(modules/reranker/src/**)|Edit(modules/worker-services/src/**)|Write(modules/worker-services/src/**)|Edit(modules/app-services/src/**)|Write(modules/app-services/src/**)|Edit(modules/search/src/**)|Edit(modules/app-search/src/**)"
+          },
+          {
+            "hookId": "mcpb-repack-hint",
+            "if": "Edit(packaging/mcpb/server/**)|Write(packaging/mcpb/server/**)|Edit(packaging/mcpb/manifest.json)|Write(packaging/mcpb/manifest.json)"
           }
         ]
       },

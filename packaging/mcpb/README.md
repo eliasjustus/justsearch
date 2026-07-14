@@ -59,8 +59,9 @@ Get-FileHash packaging/mcpb/dist/justsearch-mcp.mcpb -Algorithm SHA256
 ```
 
 `npx` downloads the *packing tool* at build time; the produced bundle itself
-has no dependencies. Record the SHA-256 — it goes into `server.json`
-(`fileSha256`) and the release's `SHA256SUMS`.
+has no dependencies. Commit the packed `dist/justsearch-mcp.mcpb` and record its
+SHA-256 in `server.json` (`fileSha256`); the release's `SHA256SUMS` is generated
+from the committed bundle by the pipeline, not by hand.
 
 Signing: `mcpb sign` exists (code-signing certificate / self-signed). We do
 not sign yet — same posture as the unsigned installer; revisit together with
@@ -81,16 +82,27 @@ Claude Desktop → Settings → Extensions.
 
 ## Release flow (operator)
 
-1. Build the bundle (above) from the tagged commit.
-2. Attach `justsearch-mcp.mcpb` to the GitHub release **whose installer
-   actually ships the `/mcp` endpoint** (the v0.1.0 app does **not** — its
-   backend predates the MCP handler; the bundle is useful only from the next
-   release onward).
-3. Add the bundle's SHA-256 to the release's `SHA256SUMS`.
-4. Update `server.json`: `version`, the release-asset URL in
-   `packages[0].identifier`, and `packages[0].fileSha256` (hash of the exact
-   uploaded asset). The asset URL must contain the string `mcp` (registry
-   rule) — the `justsearch-mcp.mcpb` filename satisfies it.
+The bundle is a **committed artifact** (`dist/justsearch-mcp.mcpb`, un-ignored) whose hash
+is kept in sync with `server.json` by the `check-mcpb-consistency` gate — the build fails on
+drift, so there is no hand-editing of checksums at release time. The pipeline
+(`scripts/ci/build-release-assets.ps1`, driven by `build-installer.yml` /
+`package-installer-win.ps1 -AssembleReleaseAssets`) stages the installer +
+`justsearch-mcp.mcpb` + a generated `SHA256SUMS` and attaches all three to the GitHub Release.
+
+Operator steps:
+
+1. **Only when the bundle source changed** — re-pack (above), commit the new
+   `dist/justsearch-mcp.mcpb`, and set `server.json` `fileSha256` to the new hash.
+   `node scripts/ci/check-mcpb-consistency.mjs` must pass. (The `mcpb-repack-hint` fires on
+   source edits as a reminder.)
+2. **Before a release cut** — bump `gradle.properties` to the release version and update
+   `server.json` `version` + the `packages[0].identifier` release-asset URL to the same
+   `v<version>` tag (the URL must contain `mcp` — the filename satisfies it).
+   `node scripts/ci/check-mcpb-consistency.mjs --release-version <version>` must pass.
+3. **Cut the release** — the build stages + attaches the asset set automatically. Attach only
+   to a release whose installer actually ships the `/mcp` endpoint: the v0.1.0 app does **not**
+   (its backend predates the MCP handler), so the bundle is useful only from the next release
+   onward.
 
 ## Registry publish (operator — do not run without approval)
 

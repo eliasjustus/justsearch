@@ -46,6 +46,10 @@ dist/
 # ui-bundle enforcer's metric-computation path.
 !scripts/governance/_fixtures/**/dist/
 !scripts/governance/_fixtures/**/dist/**
+# The canonical MCPB release bundle is committed (its SHA-256 is a published
+# contract). Re-include the dir here so packaging/mcpb/.gitignore can keep the
+# bundle while ignoring other dist/ build junk. (Tempdoc 726.)
+!packaging/mcpb/dist/
 reports/*
 !reports/phase6a/
 !reports/phase6a/**

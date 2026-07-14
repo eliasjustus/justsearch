@@ -27,7 +27,13 @@ param(
   [switch]$NoEvidence,
 
   # If set, validate the produced EvidenceBundle v1 (always gates).
-  [switch]$ValidateEvidenceBundle
+  [switch]$ValidateEvidenceBundle,
+
+  # If set, assemble the full release asset set (installer + SHA256SUMS + MCPB bundle)
+  # into -OutDir via build-release-assets.ps1 after the installer is staged. Default off,
+  # so ordinary dev/smoke builds are unaffected. -Release additionally verifies that
+  # server.json's version + asset URL match the gradle.properties version being cut.
+  [switch]$AssembleReleaseAssets
 )
 
 Set-StrictMode -Version Latest
@@ -348,6 +354,20 @@ try {
     if (-not $stagingSuccess) {
       Write-Host "  (staging had partial errors)" -ForegroundColor Yellow
     }
+  }
+
+  # Assemble the full release asset set (installer + SHA256SUMS + MCPB bundle) into OutDir.
+  # Opt-in (-AssembleReleaseAssets) so dev/smoke builds are unaffected. Fails closed on any
+  # MCPB hash drift. -Release also verifies server.json version/URL match the cut version. (726)
+  if ($AssembleReleaseAssets.IsPresent) {
+    Measure-Phase "release_assets" {
+      $assetArgs = @("-OutDir", $outDirPath)
+      if ($Release.IsPresent) { $assetArgs += "-VerifyReleaseVersion" }
+      & powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\build-release-assets.ps1 @assetArgs
+      if ($LASTEXITCODE -ne 0) { throw "build-release-assets.ps1 failed (exit=$LASTEXITCODE)" }
+    }
+  } else {
+    Skip-Phase "release_assets" "AssembleReleaseAssets flag"
   }
   } finally {
     Pop-Location

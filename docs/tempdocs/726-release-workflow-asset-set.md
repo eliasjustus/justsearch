@@ -1,10 +1,19 @@
 # 726 — Release workflow: one dispatch → the full, hash-consistent release asset set
 
-- **status:** open — DESIGN + DERISK 2026-07-14. Design settled; load-bearing assumption
-  (MCPB pack determinism) tested. Confidence 8/10, implementation delegatable to sonnet.
-  Not started. Owner-only release steps enumerated as handoff (`docs/m1-operator-checklist.md`).
+- **status:** IMPLEMENTED 2026-07-14 (branch `worktree-release-asset-set`, pre-PR) — asset
+  generator + fail-closed consistency gate + committed bundle + workflow wiring + re-pack hint
+  + canonical runbook + orphan teardown all landed and validated (gates green). **Freshness
+  content-compare deferred** to a fast-follow (v1 gate = hash + release-version; the
+  `mcpb-repack-hint` is the interim backstop — see §Derisk). Owner-only release steps are a
+  handoff (`docs/m1-operator-checklist.md`); this tempdoc closes on merge.
 - **created:** 2026-07-14
-- **author-role:** orchestrator (Opus) — design/judgment; implementation delegatable to sonnet
+- **author-role:** orchestrator (Opus) — design/judgment; implementation self-authored (small,
+  tightly wiring-coupled, gate-validated — under the delegation floor)
+- **scope & lifecycle:** 726 is a **bounded** design/decision doc for the asset-assembly slice
+  and **closes on ship**. The durable "how a release is cut" lives in the canonical runbook
+  `docs/how-to/cut-a-release.md` (single living surface + 1-row-per-release index). Each future
+  release's round-by-round Sandbox convergence gets its **own** bounded tempdoc — no single doc
+  spans releases (that was 374's decay mode).
 - **relation:** post-go-public continuation of the release/distribution slice of tempdoc **374**
   (App Packaging & Distribution — its G2/G3 "mechanism wired, no release cut yet"). Supersedes
   the publication-surface intent of tempdoc **409** (justsearch-releases repo audit), which
