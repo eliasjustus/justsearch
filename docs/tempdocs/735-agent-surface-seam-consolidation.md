@@ -1,7 +1,7 @@
 ---
 title: "Agent-surface seam consolidation: why the MCP/eval/retrieval intersection generates defects, and what structure removes the generator"
 type: tempdocs
-status: "open — chartered + theorized (2026-07-14); no design settled, no implementation"
+status: "open — theorized + DESIGNED + DERISKED (2026-07-14): delivery-tier inversion probed (CLI delivers structuredContent JSON when present; text otherwise; 2.1.209); coverage gap list = G3 backlog (hints/facets/coverage-facts/full passages undelivered to CLI cohort, ~2.7KB vs ~10KB packs); confidence 8/10; implementation not started, G3 rides next intentional surface bump"
 created: 2026-07-14
 author: agent (session 25f8ac5d, chartered at founder direction after the 725 remediation program's root-cause analysis)
 related:
