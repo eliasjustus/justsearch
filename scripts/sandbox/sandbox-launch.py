@@ -64,6 +64,107 @@ def find_installer(explicit_path: str | None) -> Path:
     sys.exit("No installer found. Build one first or pass --installer.")
 
 
+def resolve_main_checkout_root() -> Path:
+    """Resolve the main checkout root even when this script runs from a git
+    worktree, mirroring scripts/dev/dev-runner.cjs's resolveMainRepoRoot()
+    (tempdoc 618 SS2). A worktree's models/ dir holds only tracked
+    config/tokenizer JSON — the real ~11.5 GB of model weights are untracked
+    and live only in the MAIN checkout, so resolving from the current
+    checkout silently maps a weightless dir.
+
+    Prefers `git rev-parse --git-common-dir` (robust to worktree nesting and
+    symlinks); falls back to manual .git-file parsing (a worktree's .git is a
+    file pointing at <main>/.git/worktrees/<name>); falls back to REPO_ROOT
+    itself if git is unavailable or this isn't a worktree."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        common_dir = result.stdout.strip()
+        if common_dir:
+            p = Path(common_dir)
+            if not p.is_absolute():
+                p = REPO_ROOT / p
+            return p.resolve().parent
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        pass
+
+    git_path = REPO_ROOT / ".git"
+    try:
+        if git_path.is_file():
+            content = git_path.read_text(encoding="utf-8").strip()
+            if content.startswith("gitdir:"):
+                git_dir = Path(content.split(":", 1)[1].strip())
+                if not git_dir.is_absolute():
+                    git_dir = REPO_ROOT / git_dir
+                return git_dir.resolve().parent.parent.parent
+    except OSError:
+        pass
+
+    return REPO_ROOT
+
+
+def dir_has_model_weights(d: Path) -> bool:
+    """True if d contains at least one *.onnx or *.gguf file anywhere beneath
+    it. A dir with only tracked config/tokenizer JSON (a worktree's models/)
+    is weightless and must not be mapped as pre-staged-models."""
+    if not d.is_dir():
+        return False
+    return any(d.rglob("*.onnx")) or any(d.rglob("*.gguf"))
+
+
+def resolve_models_dir(explicit_path: str | None) -> tuple[Path | None, str | None]:
+    """Resolve the host models directory to map into the sandbox, refusing to
+    map a directory that holds no model weights.
+
+    Returns (resolved_dir, gap_message). resolved_dir is None whenever no
+    weight-bearing directory was found — including when an explicit
+    --models-dir was weightless (refused, not mapped). gap_message is a
+    staging-gaps.md entry explaining why, or None when a weight-bearing dir
+    was found and will be mapped."""
+    main_root = resolve_main_checkout_root()
+
+    if explicit_path:
+        p = Path(explicit_path)
+        if not p.is_absolute():
+            p = REPO_ROOT / p
+        if not p.is_dir():
+            sys.exit(f"--models-dir not found: {p}")
+        if dir_has_model_weights(p):
+            return p, None
+        return None, (
+            f"--models-dir {p} has no model weights (no *.onnx/*.gguf found "
+            "under it) — refusing to map it and claim pre-staged-models. The "
+            f"real ~11.5 GB of weights live only in the main checkout at "
+            f"{main_root / 'models'}. Remedy: pass --models-dir "
+            f"{main_root / 'models'}, or --no-models for a true fresh-install round."
+        )
+
+    for candidate in (main_root / "models", REPO_ROOT / "models"):
+        if candidate.is_dir() and dir_has_model_weights(candidate):
+            return candidate, None
+
+    # Auto-detect found a models/ dir but it had no weights (the worktree
+    # case) — report it explicitly rather than falling through to "no models
+    # directory found at all", which understates what actually happened.
+    for candidate in (main_root / "models", REPO_ROOT / "models"):
+        if candidate.is_dir():
+            return None, (
+                f"Auto-detected models dir {candidate} has no model weights "
+                "(no *.onnx/*.gguf found under it) — refusing to map it and "
+                "claim pre-staged-models. This is a worktree checkout, which "
+                "holds only tracked config/tokenizer JSON; the real weights "
+                f"live only in the main checkout at {main_root / 'models'}. "
+                f"Remedy: pass --models-dir {main_root / 'models'} explicitly, "
+                "or --no-models for a true fresh-install round."
+            )
+    return None, None
+
+
 def clean_dir(path: Path):
     """Remove a directory tree, handling read-only files. Best-effort: a
     Hyper-V worker (vmwp.exe) holds VHDX overlays on a sandbox's mapped
@@ -554,6 +655,29 @@ def main():
     if node_gap:
         gaps.append(node_gap)
 
+    # 3. Resolve models dir. Never map a weightless directory: a worktree's
+    # own models/ holds only tracked config/tokenizer JSON (~42 MB) — the
+    # real ~11.5 GB of *.onnx/*.gguf weights are untracked and live only in
+    # the MAIN checkout. Mapping a weightless dir used to silently claim
+    # pre-staged-models while the app found no models and the round died
+    # with NO_EMBEDDING_MODEL. Resolved before write_staging_gaps below so a
+    # refused/weightless dir surfaces through the same gap plumbing as every
+    # other staging gap, rather than a second ad hoc mechanism.
+    models_dir = None
+    if args.no_models:
+        print("Models directory: SKIPPED (--no-models, Rule 14 — true fresh install)")
+        print("  Install AI in the sandbox will do the full ~10 GB clean download.")
+    else:
+        models_dir, models_gap = resolve_models_dir(args.models_dir)
+        if models_gap:
+            gaps.append(models_gap)
+        if models_dir:
+            model_size = sum(f.stat().st_size for f in models_dir.rglob("*") if f.is_file()) // (1024 * 1024)
+            print(f"Models directory: {models_dir} ({model_size} MB)")
+            print(f"  Mapped into sandbox at: {SANDBOX_MODELS_FOLDER}")
+        else:
+            print("No models directory with real weights found — models will need to be downloaded in sandbox")
+
     # Write the collected staging gaps now that staging (short of the
     # fail-closed coverage-brief step below) is complete.
     write_staging_gaps(share_dir, gaps)
@@ -562,29 +686,6 @@ def main():
     total_bytes = sum(f.stat().st_size for f in share_dir.rglob("*") if f.is_file())
     print(f"\nShare directory: {share_dir}")
     print(f"Share size: {total_bytes // (1024 * 1024)} MB")
-
-    # 3. Resolve models dir
-    models_dir = None
-    if args.no_models:
-        print("Models directory: SKIPPED (--no-models, Rule 14 — true fresh install)")
-        print("  Install AI in the sandbox will do the full ~10 GB clean download.")
-    elif args.models_dir:
-        models_dir = Path(args.models_dir)
-        if not models_dir.is_absolute():
-            models_dir = REPO_ROOT / models_dir
-    else:
-        # Default: use repo models/ if it has ONNX models
-        default_models = REPO_ROOT / "models"
-        if (default_models / "onnx").is_dir():
-            models_dir = default_models
-
-    if models_dir and models_dir.is_dir():
-        model_size = sum(f.stat().st_size for f in models_dir.rglob("*") if f.is_file()) // (1024 * 1024)
-        print(f"Models directory: {models_dir} ({model_size} MB)")
-        print(f"  Mapped into sandbox at: {SANDBOX_MODELS_FOLDER}")
-    elif not args.no_models:
-        models_dir = None
-        print("No models directory — models will need to be downloaded in sandbox")
 
     # 4. Stamp actual validation mode, generate the per-candidate coverage brief
     #    (fail-closed on an unclassified shipped surface), stage the capture
