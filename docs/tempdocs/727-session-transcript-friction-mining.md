@@ -1,7 +1,7 @@
 ---
 title: "727 — Session-transcript friction mining: batch analysis + fixes for confirmed developer-agent process timewastes"
 type: tempdocs
-status: "open — all 7 designed fixes IMPLEMENTED, derisked, and independently review-verified in worktree .claude/worktrees/727-friction-fixes (F-6a cwd-hint, F-7b taskcreate-guard, F-7a agent-lessons.md prose + intervene.mjs basename-tracking + edit-reread-hint, F-7c intervene.mjs explicit-limit capping, F-8a branch-safety.md prose, F-2 remove-worktree.cjs taskkill line, F-3 worktree-base-hint.mjs extension + registration). All 4 new/extended hooks registered in governance/agent-hooks.v1.json, settings.local.json regenerated with zero drift, hook-integrity + prose-tier-register gates both pass, full hook test suite green (14 files + 1 new integration test). A refute-first subagent review found 3 real lower-severity issues (all fixed: intervene.mjs's F-7c cap no longer reads whole files, worktree-base-hint.mjs now honors the hook kill switch, compaction's wipe of F-7a's cross-root index is now documented) and 1 high-severity platform constraint (not a code bug, documented): worktree-local hook edits don't take effect until merged to main, confirmed via a live runtime probe. A conceptual tempdoc-fit re-review then found and closed 2 more items: F-7c's secondary context-efficiency.md fix was actually made (which surfaced and fixed an always-loaded-budget ratchet failure in 2 files, plus logged a pre-existing, out-of-scope budget violation in 2 others), and the Theorization section's rollout-risk question was explicitly resolved (kill switch verified sufficient; no new soak/opt-in machinery built). See 'Implementation review' and 'Fit-review closure' sections below for full detail. Nothing committed, no PR opened — gated on explicit founder go-ahead."
+status: "published — all 7 designed fixes merged to main via PR #180 (2026-07-14, squash commit 80b77ba), plus 2 small follow-up maintenance PRs from the publish pass itself: #181 (observation-shard fold) and #182 (ts-any governance-baseline reconciliation, a pre-existing unrelated gap this pass's full-kernel verification surfaced). Public CI confirmed green on main's tip after each of the 3 merges (not just each PR's own checks). See 'Implementation review', 'Fit-review closure', and 'Verification evidence' sections below for the full pre-merge verification record, and the frontmatter-adjacent 'Publication' note near the end of this file for the merge/PR detail."
 created: 2026-07-14
 author: agent session e8c883b6 (Sonnet 5)
 category: agent-process / tooling / observability
@@ -958,3 +958,80 @@ explicitly rather than left standing as unqualified fact:
   `friction-excluded-sessions.json`, which hasn't changed). Regenerate via
   `node scripts/agent-analytics/aggregate-friction.mjs` /
   `node scripts/agent-analytics/friction-timeline.mjs` if these numbers need re-confirming.
+
+## Publication
+
+Merged via 3 PRs on 2026-07-14, each verified with a fresh CI run against `main`'s actual tip
+(not just each PR's own pre-merge checks) before the next was opened:
+
+- **PR #180** (squash commit `80b77ba`) — this tempdoc plus the friction-mining tool trio
+  (`mine-friction.mjs`/`aggregate-friction.mjs`/`friction-timeline.mjs`/
+  `friction-excluded-sessions.json`) and all 7 designed fixes. Pre-merge: full 15-file hook test
+  suite green, `hook-integrity`/`prose-tier-register` gates pass, manual secret/credential scan
+  and quantitative-claims scan of the full diff both clean (no README/`docs/business` files
+  touched, so the claims check was moot), `preview-squash-message.mjs` clean.
+- **PR #181** — post-merge maintenance: folded 4 pending session observation shards (15
+  entries, including this session's own) into `docs/observations.md`'s conditions store.
+- **PR #182** — a full, unfiltered governance-gate-kernel run (`node scripts/governance/run.mjs
+  --mode gate`, 33 gates) during the publish pass surfaced one genuine failure unrelated to
+  this tempdoc's own diff: the `ts-any` ratchet gate was red on `main`'s own HEAD, because
+  `modules/ui-web/src/api/devMode.ts` and `.../streaming/MultiplexedStream.ts` each carry a
+  legacy `(import.meta as any).env?.DEV` cast (since old PRs #77/#22) that was never registered
+  in `gates/ts-any/baseline.txt`. Confirmed this gate isn't wired into the public `ci.yml`
+  workflow (`main`'s actual CI runs were green throughout), so this was local-governance-only
+  debt, not a public-CI-red condition — fixed anyway since it was a small, mechanical,
+  config-only reconciliation (a `merge-import` changeset + baseline update), not a judgment call
+  on product code.
+
+**Known anomaly found during publish, not fixed (flagged for the repo owner):** the main
+checkout (`F:\justsearch-public`) is on branch `mcpb-packaging` — a stale, unpushed feature
+branch whose tip predates this session — instead of `main`. `bash-guard.mjs` blocks
+`git checkout <branch>` unconditionally in the main worktree, so this could not be corrected
+from inside this session. 3 commits from this session's earlier main-checkout work landed on
+that branch by mistake before this was discovered; they were cherry-picked onto the correct
+branch for PR #180 and are harmless left in place on `mcpb-packaging` (identical content,
+already published through the proper path), but that branch's owner should decide whether to
+clean them up. Logged to the observations inbox.
+
+## Follow-ups considered at publish (not opened as new work)
+
+**Candidate follow-up tempdocs** (named for future consideration, not started):
+
+- **Always-loaded-budget reconciliation.** 4 files (`CLAUDE.md`, `branch-safety.md`,
+  `hooks-reference.md`, `tier-register.md`) are now over their byte ceiling — 2 pre-existing
+  before this tempdoc touched anything, 2 more unrelated drift discovered during this session's
+  publish pass. The `prose-tier-register` gate requires `tier-register.md` to grow with every
+  new anchored rule, while the budget ratchet never lets its ceiling rise — a real, structural
+  tension between two of this repo's own gates, not a one-off overage. Worth a dedicated
+  tempdoc to decide where the content moves (a skill, a consult-register projection — the
+  gate's own failure message already names these options).
+- **A "diagnosed-but-never-promoted" backlog register**, named in this tempdoc's own
+  Theorization section. This tempdoc independently rediscovered a friction category
+  (F-7a) that tempdoc 618 had already diagnosed and flagged for promotion — a promotion that
+  silently stalled. Worth a small tempdoc designing a lightweight register for exactly this
+  gap, distinct from the tier-register (which tracks *how* a rule is enforced, not *whether* a
+  proposed promotion ever landed).
+- **`audit-without-test` tier promotion (F-8b).** 3 sessions in this dataset show a subagent
+  audit accepted without independent verification, later proven wrong — direct evidence a
+  prose-only rule this repo already names is under-performing. Worth a tempdoc exploring
+  whether any partial mechanical signal is feasible (e.g., flagging when a subagent's "audit
+  confirmed X" language isn't paired with a test-file diff in the same session) rather than
+  another restatement of the existing prose.
+
+**Tempdocs intentionally NOT updated:** tempdoc 618 (§11e) and 696 are the origin of F-7a's
+stalled promotion and F-6d's designed-but-unimplemented `.gitattributes` fix, respectively.
+Per this repo's own "tempdocs are dated history, not current truth" rule, they are left as-is
+— this tempdoc is the record of F-7a's closure; editing older tempdocs to retroactively note it
+would work against their append-only, point-in-time nature.
+
+**Small follow-up work that doesn't need its own tempdoc:**
+
+- **F-6b** — fix the "New chat" button's state-gating bug
+  (`modules/ui-web/src/shell-v0/views/UnifiedChatView.ts:2114-2117`). Small, well-scoped,
+  already logged to the observations inbox.
+- **F-6e** — the novel Windows/git-bash CI path error needs a live repro session before a fix
+  can even be scoped; not actionable without one.
+- **F-6d** — pick up the already-designed `.gitattributes` `eol=lf` pin from tempdoc 618/696's
+  backlog; no new design needed, just implementation.
+- **Next-steps item 10** — fold a periodic `mine-friction.mjs`/`friction-timeline.mjs` re-run
+  into the `session-retro` skill rather than a new tempdoc, so the friction timeline stays live.
