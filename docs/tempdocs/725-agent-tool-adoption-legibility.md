@@ -1574,6 +1574,57 @@ compose cleanly). Observation logged; dev-runner lifecycle territory, not 725 sc
   post-completion; mitigation: owner-session keepalive status calls during the run; the run is
   resumable on the same log dir.
 
+# Campaign U — results and judgment (2026-07-14; run complete, ~$4.5, all 20 cells)
+
+Evidence: `scripts/jseval/tmp/725-campaign-u/` (worktree) + analysis copies in
+`scripts/jseval/tmp/725-ab/725-campaign-u-analysis/`. Judged against the pre-registered
+primaries; accuracy stayed descriptive-only as declared (3/4/3 across D/T/U with 5/20 per-query
+flips both directions — churn, per the standing caveat; the record self-labeled
+`seed_floor_met: false` and the claim policy refused promotion, both working as designed).
+
+## Headline: the 0.3.1 guidance converted the token lever into usage, and the legibility
+## program's net token cost vs the original surface is now ≈ neutral — with the benefits kept
+
+| metric (B-arm, n=20) | D 0.2.0 | T 0.3.0 | U 0.3.1 |
+|---|---|---|---|
+| median cache-creation tokens | 58,524 | 67,459 | **56,137** |
+| pooled Reads-per-search | 1.038 | 0.597 | **0.583** |
+| median turns | 18 | 16 | **15** |
+| median cost (completed) | $0.217 | $0.217 | **$0.203** |
+| organic `response_format` use | — (n/a) | 5/20 cells | **19/20 cells** (concise=45 calls) |
+| discovery / invocation | 20/20 | 20/20 | 19/20 / 1.0 |
+
+Mechanism visible in the substrate: answers' captured content_len median 2,729 (the concise
+footprint) — agents actively chose concise after the schema+instructions guidance shipped,
+erasing T's +15% token cost while keeping the halved file-reads and the richer provenance
+lines. Turns and cost drifted down again. This is the pre-registered "in-between → report
+as-is" case resolved favorably on the economics axis; accuracy remains a model-tier question
+(624 Step-2), exactly as the forensics predicted.
+
+## Substrate validation at campaign scale (first campaign through the 729 capture)
+
+Four-state status: 277 ok / 3 errored (all file tools — every one of 153 MCP calls succeeded) /
+0 blocked. Per-tool content_len signatures clean (answer ~2.7KB vs search ~12.8KB medians).
+Composed record self-described correctly (seed floor, denominators, tier C, claim refusal).
+`exposure_contrast(T,U)` refused with the anticipated reason (U is B-only → empty measured) —
+a design property of the pilot, though the refusal message's boilerplate conflates it with the
+pre-#605 case (minor legibility nit for a future pass).
+
+## Open item CONFIRMED at scale: furniture markers 0/153
+
+All four markers zero across every MCP call, while the extraction functions are proven correct
+against live 0.3.1 responses in-process. The child-agent session's ToolResultBlock content
+therefore differs systematically from the server's response text in some way the redacted
+capture cannot show. Resolution path unchanged: one debug-instrumented cell (future session).
+
+## Pilot verdict
+
+The remediation's measurable behavioral effects are real and favorable where the design said
+they would be (token economics, read-dependence, turns); accuracy effects are — as
+pre-registered and now policy-enforced — not claimable at this scale. The response-legibility
+program's default shapes are economically justified as shipped; the accuracy frontier stays
+with the model-tier and hop-absorption experiments (both owner-gated).
+
 ## Issue-remediation program (2026-07-14, owner directive: fix all 15)
 
 Owner directed full remediation of the consolidated inventory, each area proceeding
