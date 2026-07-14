@@ -691,4 +691,73 @@ class McpProtocolHandlerTest {
     String text = (String) content.get(0).get("text");
     assertTrue(text.contains("Invalid arguments"), "must be the boundary-validation error: " + text);
   }
+
+  // Live-verified defect (2026-07): a real client speaking the shipped MCPB stdio bridge over
+  // /mcp sent `{"jsonrpc":"2.0","method":"notifications/initialized"}` (the mandatory
+  // post-initialize lifecycle notification) and got back HTTP 200 with a JSON-RPC error body
+  // (`{"id":null,"error":{"code":-32601,"message":"Method not found: notifications/initialized"}}`).
+  // Two distinct spec violations: (1) the method wasn't recognized at all — the pre-fix switch
+  // only matched the never-sent bare string "initialized"; (2) the server replied to a
+  // Notification at all, which JSON-RPC 2.0 §4.1 forbids regardless of whether the method is
+  // known. A spec-correct client that (correctly) expects no reply desyncs its read loop and
+  // hangs — reproduced by scripts/sandbox/mcp-typed-confirm.ps1.
+
+  @Test
+  void notificationsInitialized_noErrorBody_noResponsePayload() throws Exception {
+    Context ctx = mock(Context.class);
+    when(ctx.header("Mcp-Session-Id")).thenReturn(null);
+    when(ctx.body())
+        .thenReturn("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");
+    when(ctx.status(anyInt())).thenReturn(ctx);
+
+    handler.handlePost(ctx);
+
+    // Pre-fix: this method wasn't recognized (only bare "initialized" was), so it fell into the
+    // switch's default branch and called writeError -> ctx.result(...) with a -32601 body. A
+    // Notification must never get a JSON-RPC reply body of any kind, error or otherwise.
+    verify(ctx, never()).result(anyString());
+    verify(ctx).status(202);
+  }
+
+  @Test
+  void unrecognizedNotification_stillNoResponsePayload() throws Exception {
+    // A notification (no "id" member) with a method the server doesn't specifically recognize.
+    // Pre-fix: any unrecognized *method name* -> -32601 error body, with no branch that first
+    // checked "is this a notification" before deciding to reply. JSON-RPC 2.0 §4.1's "MUST NOT
+    // reply to a Notification" applies independently of whether the method is known.
+    Context ctx = mock(Context.class);
+    when(ctx.header("Mcp-Session-Id")).thenReturn(null);
+    when(ctx.body())
+        .thenReturn("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/some_future_thing\"}");
+    when(ctx.status(anyInt())).thenReturn(ctx);
+
+    handler.handlePost(ctx);
+
+    verify(ctx, never()).result(anyString());
+    verify(ctx).status(202);
+  }
+
+  @Test
+  void unknownRequestWithId_stillReturnsMethodNotFound() throws Exception {
+    // Regression guard for the fix above: an unknown method that IS a request (carries an "id"
+    // member) must keep getting a real JSON-RPC error reply — the notification short-circuit must
+    // key off "id" member presence, not off any-unrecognized-method, or this would go silent too.
+    Context ctx = mock(Context.class);
+    when(ctx.header("Mcp-Session-Id")).thenReturn(null);
+    when(ctx.body())
+        .thenReturn("{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"totally/unknown\"}");
+    ArgumentCaptor<String> resultCaptor = ArgumentCaptor.forClass(String.class);
+    when(ctx.result(resultCaptor.capture())).thenReturn(ctx);
+    when(ctx.contentType(anyString())).thenReturn(ctx);
+
+    handler.handlePost(ctx);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> response = MAPPER.readValue(resultCaptor.getValue(), Map.class);
+    assertEquals(99, ((Number) response.get("id")).intValue());
+    @SuppressWarnings("unchecked")
+    Map<String, Object> error = (Map<String, Object>) response.get("error");
+    assertNotNull(error, "an unknown REQUEST (has id) must still get a JSON-RPC error, unlike a notification");
+    assertEquals(-32601, ((Number) error.get("code")).intValue());
+  }
 }
