@@ -1304,7 +1304,16 @@ public final class KnowledgeServer implements Closeable {
       int completed = countOps.countByField(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
       int failed = countOps.countByField(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_FAILED);
 
-      embeddingCompatController.maybeAutoStartRebuildForLegacyAllPending(docs, pending, completed, failed);
+      if (embeddingCompatController.maybeAutoStartRebuildForLegacyAllPending(docs, pending, completed, failed)) {
+        return;
+      }
+      // Tempdoc 730 A4: the "all pending" rescue above only proves safety when NOTHING has been
+      // embedded yet (completed == 0 by design — see that method's scope note). Its complement is
+      // the corruption-signature case reproduced from g-20260714-134648: dense vectors already
+      // exist (completed > 0) but the generation's embedding fingerprint was never persisted, a
+      // legacy victim of the pre-fix asymmetric-stamping-gate ratchet (§THEORIZE A). We cannot
+      // back-stamp those vectors' provenance, so the only safe rescue is a real re-embed.
+      embeddingCompatController.maybeAutoStartRebuildForLegacyUnattestedVectors(docs, completed);
     } catch (Exception ignored) {
       // Best-effort: never block worker startup on auto-rebuild heuristics.
     }

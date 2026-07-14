@@ -451,3 +451,40 @@ pins the actual shutdown-wiring fix directly (disable/red -> restore/green verif
 **Bonus hardening (Scope-3, unrelated module):** `SqliteJobQueue.pollPending`'s claim UPDATE now
 also guards with `WHERE state = 'PENDING'`, not just the upstream SELECT — defense-in-depth for a
 hypothetical future multi-consumer change, with a direct SQL-shape test in `JobQueueTest`.
+
+---
+
+## A4 migration (2026-07-14, Increment 3)
+
+Shipped as detection-plus-rebuild, not back-stamping, per the orchestrator-resolved semantics: an
+on-disk generation showing the corruption signature (docCount > 0, embedding fingerprint absent from
+commit userData, `completed > 0` evidencing dense vectors already exist — the exact shape reproduced
+by `g-20260714-134648`) cannot have its provenance retroactively proven, so
+`EmbeddingCompatibilityController.maybeAutoStartRebuildForLegacyUnattestedVectors(docCount, completed)`
+(`modules/worker-core/.../embed/EmbeddingCompatibilityController.java`) is added as a sibling to
+`maybeAutoStartRebuildForLegacyAllPending` and wired as its fallback at the same startup/refresh call
+site (`KnowledgeServer.maybeAutoStartEmbeddingRebuildAllPendingBestEffort`,
+`modules/indexer-worker/.../server/KnowledgeServer.java:1289-1315`): it transitions BLOCKED_LEGACY →
+REBUILDING (the same forced-reindex path a user-initiated reindex takes), letting the index earn a
+legitimate stamp once the rebuild completes through the already-commit-guaranteed paths from the
+A1/A3 correction (`EmbeddingProviderLifecycle.tryFinalizeRebuild()` /
+`IndexingLoop.finalizeShutdownCommit()`) — making the recovery self-terminating on the next restart.
+Operators can tell the two auto-rescue paths apart via a new diagnostic-only
+`lastAutoRescueReason()` accessor (`"legacy_all_pending"` vs. `"embedding_legacy_unattested_vectors"`,
+also logged at INFO) that is deliberately kept OUT of the `SearchReasonCode` wire contract — both
+paths still resolve the shared, contract-stable `"REBUILD_IN_PROGRESS"` `reasonCode()` for query-time
+degradation messaging, so this migration does not touch `searchTraceExplain.ts` or
+`check-search-degradation-reason-codes`. **Guard reconciliation:** the original method's
+`completed == 0` guard is NOT loosened or superseded — it is preserved verbatim for its original
+purpose (proving *nothing* has been embedded yet is what makes a blind, consent-free rebuild safe
+without the new method's re-embed cost), and the new method's own `completed > 0` guard is its exact
+complement, so the two guards partition the BLOCKED_LEGACY space with no overlap and no case falls
+through unhandled. Tests: `EmbeddingCompatibilityControllerTest` (worker-core) gained three ECC-level
+guard tests (`maybeAutoStartRebuildForLegacyUnattestedVectorsTransitionsToRebuilding`,
+`...IsConservative`, `...DoesNotFireOnProperlyStampedGeneration`); a new
+`EmbeddingFingerprintLegacyUnattestedVectorsMigrationTest` (indexer-worker), harness-modeled on
+`EmbeddingFingerprintProductionWiringDurabilityTest`, seeds the exact on-disk signature and drives
+reopen → detect → REBUILDING (new reason) → completion-guarantee commit → reopen → COMPATIBLE with
+the legitimately-earned (not back-stamped) fingerprint, plus the two named negative controls
+(properly-stamped generation doesn't trigger it; genuinely-empty all-pending generation still uses
+the original rescue path).
