@@ -103,7 +103,7 @@ each release's convergence tempdoc + its GitHub Release):
 | Version | Date | Sandbox verdict | Notes | Links |
 |---|---|---|---|---|
 | v0.1.0 | 2026-06-25 | (pre-pipeline) | Prerelease/alpha. **No MCP endpoint.** Installer built locally, not via CI. | [release](https://github.com/eliasjustus/justsearch/releases/tag/v0.1.0) |
-| v0.2.x | pending | — | First cut with the MCP endpoint + the hash-consistent asset pipeline. | — |
+| v0.2.x | pending | round 1-2: API-tier only; A.1 fixed on branch, live-verify + GUI round pending | First cut with the MCP endpoint + the hash-consistent asset pipeline. | [convergence](../tempdocs/734-0.2.0-sandbox-convergence.md) |
 
 ## See also
 
