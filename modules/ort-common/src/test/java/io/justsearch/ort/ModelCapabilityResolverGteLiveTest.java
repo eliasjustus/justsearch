@@ -16,6 +16,14 @@ import org.junit.jupiter.api.Test;
  * exactly (CLS, 8192, 768, empty document/query prefixes) — the facts verified against the real
  * HF repo in the tempdoc's S-C.R research pass.
  *
+ * <p>CPU precision is FP32, not FP16: {@code model-registry.v2.json} ships {@code model.onnx}
+ * (this package's declared {@code cpu} variant) as the FP32/CPU build and {@code
+ * model_fp16.onnx} as the separate FP16/CUDA build — there is no FP16 CPU variant. The manifest
+ * briefly declared {@code capabilities.cpu_precision: "fp16"} while pointing {@code cpu} at the
+ * FP32 file (a self-contradiction introduced when commit ce26575 corrected the {@code cpu} file
+ * selection but not the paired precision field); corrected so the declared precision matches the
+ * file actually loaded on the CPU path.
+ *
  * <p>Gated on the manifest + tokenizer files only (not the multi-hundred-MB {@code
  * model_fp16.onnx} weight file — every fact this test asserts is manifest-declared, so the ORT
  * boot-probe/precision-sanity-check paths never fire; they no-op when the weight file is absent).
@@ -44,7 +52,7 @@ class ModelCapabilityResolverGteLiveTest {
     assertEquals(768, caps.embeddingDimension());
     assertEquals("", caps.documentPrefix());
     assertEquals("", caps.queryPrefix());
-    assertEquals(ModelPrecision.FP16, caps.cpuPrecision());
+    assertEquals(ModelPrecision.FP32, caps.cpuPrecision());
     assertEquals(ModelPrecision.FP16, caps.gpuPrecision());
   }
 }

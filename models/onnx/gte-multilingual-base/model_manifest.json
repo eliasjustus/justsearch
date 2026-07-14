@@ -7,7 +7,7 @@
     "pooling_mode": "cls",
     "context_length": 8192,
     "embedding_dimension": 768,
-    "cpu_precision": "fp16",
+    "cpu_precision": "fp32",
     "gpu_precision": "fp16",
     "document_prefix": "",
     "query_prefix": "",
