@@ -1543,6 +1543,37 @@ compose cleanly). Observation logged; dev-runner lifecycle territory, not 725 sc
 4. 624 Step-2 / powered campaign — strengthened by the A-vs-B result AND by issue 1's
    tool-independence evidence (the reasoning gap is exactly what a model-tier sweep measures).
 
+# Campaign U — post-remediation pilot: pre-registration (2026-07-14, BEFORE any cell runs)
+
+> Owner authorization: "run a small pilot, to see the effects" (2026-07-14). Purpose: measure
+> the behavioral effects of the full remediation surface (0.3.1 — response_format guidance in
+> schema+instructions, pack-selection facts line, pre-search universe alignment, plus the 729
+> capture substrate) against the recorded 0.2.0 (Campaign D) and 0.3.0 (Campaign T) B-arms.
+> This is the first campaign captured THROUGH the new substrate (per-call result digests,
+> furniture markers, four-state status, seed-floor self-labeling) — the pilot also validates
+> that substrate at campaign scale.
+
+- **Arm:** ONE campaign (U): tool surface 0.3.1 (branch dist), B-condition only, corpus
+  `mixed/en-legal-clerc-1k-verbose` (fresh hard-clean ingest), all 20 committed queries ×
+  seed 0, haiku, exact-match scoring, same per-cell limits as D/T. Estimated ~$4.50; hard cap
+  USD 6 — abort if projected over. No A-arm (T's A-arm baseline stands; this pilot measures
+  shape effects on the with-tool arm).
+- **Primary metrics (behavioral — the ones stable across D/T):** Reads-per-search, median
+  cache-creation tokens, answer:search call mix, funnel (discovery/invocation/reinforced),
+  organic `response_format` usage rate (schema+instructions guidance shipped — D/T prior: 5/20
+  cells with zero guidance), furniture-marker fire rates from the new digests (first-ever
+  campaign measurement), errored-call visibility count.
+- **Accuracy:** reported descriptively ONLY, with the churn caveat (D→T flips proved
+  single-seed accuracy is noise); the record will self-label `seed_floor_met: false` and the
+  claim policy will refuse accuracy-claim promotion — by design, and itself part of what the
+  pilot validates.
+- **Comparison:** descriptive raw-log table vs D-B and T-B (the established method;
+  `exposure_contrast` cannot consume D and a U-vs-T surface contrast via `surface_contrast=True`
+  will be attempted for the formal record pair).
+- **Known risk declared:** lease-takeover contention killed a prior campaign's backend
+  post-completion; mitigation: owner-session keepalive status calls during the run; the run is
+  resumable on the same log dir.
+
 ## Issue-remediation program (2026-07-14, owner directive: fix all 15)
 
 Owner directed full remediation of the consolidated inventory, each area proceeding
