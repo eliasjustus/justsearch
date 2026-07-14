@@ -418,7 +418,17 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                     elif isinstance(msg, UserMessage):
                         for b in (getattr(msg, "content", None) or []):
                             if isinstance(b, ToolResultBlock):
-                                capture["results"][b.tool_use_id] = {"is_error": bool(b.is_error)}
+                                # tempdoc 729 D9 (issue 9): stash raw content alongside
+                                # is_error. `b.content` is `str | list[dict] | None`
+                                # (SDK-confirmed). This is the EPHEMERAL tier only --
+                                # it lives in `capture`/`state.metadata` and never
+                                # reaches the committed record directly; `_record_cell`
+                                # derives a redacting digest (hash/len/shape/flags,
+                                # never raw text) from it for the committed tier.
+                                capture["results"][b.tool_use_id] = {
+                                    "is_error": bool(b.is_error),
+                                    "content": b.content,
+                                }
                     elif isinstance(msg, ResultMessage):
                         capture["rmsg"] = msg
                 (capture["mcp_servers"], capture["justsearch_tools"],
@@ -516,6 +526,120 @@ def _toolsearch_targets(attempts: dict) -> list[str]:
     return seen
 
 
+# tempdoc 729 D9/U2: product-emitted CONSTANT text prefixes (never corpus text) --
+# detecting their presence in tool-result content is leak-safe by construction.
+# Verbatim grep sources (2026-07-14):
+#   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:523
+#     sb.append("Evidence pack: ")...                          -> evidence_pack
+#   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:725
+#     sb.append("    Matched: ").append(quoted);                -> rationale
+#   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:549
+#     sb.append("\n\n--- Quality ---\n");                        -> coverage
+#   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:878
+#     sb.append("\nNote: semantic ranking degraded (")...        -> degradation
+_FURNITURE_MARKERS: dict[str, str] = {
+    "rationale": "Matched: ",
+    "evidence_pack": "Evidence pack: ",
+    "coverage": "--- Quality ---",
+    "degradation": "semantic ranking degraded (",
+}
+
+
+def _content_text(content) -> str:
+    """Concatenated text view of a `ToolResultBlock.content` payload, used ONLY for
+    leak-safe furniture-marker detection -- never stored or returned verbatim."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return ""
+
+
+def _content_shape(content) -> str:
+    """Coarse structural tag derived from type/first-block -- NEVER the text."""
+    if content is None:
+        return "empty"
+    if isinstance(content, str):
+        return "empty" if content == "" else "text"
+    if isinstance(content, list):
+        if not content:
+            return "empty"
+        first = content[0]
+        if isinstance(first, dict) and first.get("type") == "json":
+            return "json"
+        return "blocks"
+    return "json"
+
+
+def _content_len(content) -> int | None:
+    if content is None:
+        return None
+    if isinstance(content, (str, list)):
+        return len(content)
+    return None
+
+
+def _content_sha256(content) -> str | None:
+    if content is None:
+        return None
+    canonical = json.dumps(content, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _furniture_marker_flags(content) -> dict[str, bool]:
+    text = _content_text(content)
+    return {key: (marker in text) for key, marker in _FURNITURE_MARKERS.items()}
+
+
+def _tool_result_digest_entry(result: dict | None) -> dict:
+    """Redacted, committed-safe derivation of one tool result (tempdoc 729 D9):
+    hash/len/is_error/shape/furniture-marker booleans -- NEVER the raw content,
+    which stays in the ephemeral (gitignored) log only. `result` is None when the
+    call never executed (blocked/disallowed) -- honest nulls throughout, never a
+    fabricated zero/empty for the size/hash/is_error fields."""
+    if result is None:
+        return {
+            "content_sha256": None,
+            "content_len": None,
+            "content_is_error": None,
+            "content_shape": "empty",
+            "furniture_markers": _furniture_marker_flags(None),
+        }
+    content = result.get("content")
+    return {
+        "content_sha256": _content_sha256(content),
+        "content_len": _content_len(content),
+        "content_is_error": bool(result.get("is_error")),
+        "content_shape": _content_shape(content),
+        "furniture_markers": _furniture_marker_flags(content),
+    }
+
+
+def _call_status(tid: str, entry: dict, results: dict, denied: set, disallowed: list[str]) -> str:
+    """tempdoc 729 D10 (issue 10): the four-state per-call status authority for
+    `tool_call_sequence` -- DISTINCT from `_blocked()` below, whose executed/blocked
+    split for `tool_calls`/`tool_calls_blocked` stays deliberately UNCHANGED (an
+    errored call is still "not executed" for that side-array's purposes; only this
+    ordered-sequence status gains the new `errored` state). Partition, in order:
+    disallowed (name in the campaign's disallowed set) > blocked (no result arrived,
+    OR a permission denial -- the call never executed) > errored (a result arrived
+    with is_error=True -- executed and returned an error) > ok."""
+    if entry["tool"] in disallowed:
+        return "disallowed"
+    r = results.get(tid)
+    if r is None or entry["tool"] in denied:
+        return "blocked"
+    if r["is_error"]:
+        return "errored"
+    return "ok"
+
+
 def _record_cell(state: TaskState, got: dict, condition: str,
                  disallowed: list[str], mcp_config: str | None,
                  declared_mcp_tool_surface_hash: str | None = None,
@@ -563,13 +687,16 @@ def _record_cell(state: TaskState, got: dict, condition: str,
     state.metadata["tool_call_sequence"] = [
         {
             "name": entry["tool"],
-            "status": (
-                "disallowed" if entry["tool"] in disallowed
-                else "blocked" if _blocked(tid, entry)
-                else "ok"
-            ),
+            "status": _call_status(tid, entry, results, denied, disallowed),
         }
         for tid, entry in attempts.items()
+    ]
+    # tempdoc 729 D9 (issue 9, committed tier): one redacted digest entry per
+    # attempt, in the same order as `tool_call_sequence` -- `content_is_error`
+    # here and the `errored` status above are cross-consistent BY CONSTRUCTION
+    # (both derive from the same `results[tid]["is_error"]`).
+    state.metadata["tool_result_digests"] = [
+        _tool_result_digest_entry(results.get(tid)) for tid in attempts
     ]
 
     # Offered MCP surface from the SDK's own status (tempdoc 675 finding 2).
@@ -665,6 +792,17 @@ def _record_cell(state: TaskState, got: dict, condition: str,
                 "resolved provider model changed within one cell: "
                 f"{sorted(resolved_models)!r}",
             )
+        # tempdoc 729 D12 (issue 12): `total_cost_usd`/`num_turns` are fields of
+        # EVERY ResultMessage, independent of `is_error` (SDK-confirmed via
+        # `inspect.getsource(ResultMessage)`) -- populate them here, BEFORE the
+        # is_error early-return below, so an errored cell's incremental spend/turn
+        # count is not silently dropped. Only the no-ResultMessage `else` branch
+        # below leaves them null -- genuinely unknowable there, an honest null
+        # rather than a fabricated zero (P3 tri-state).
+        state.metadata.update({
+            "cost_usd": getattr(rmsg, "total_cost_usd", None),
+            "num_turns": getattr(rmsg, "num_turns", None),
+        })
         if getattr(rmsg, "is_error", False):
             # Forensically complete (tempdoc 675): a bare "result error: None" is
             # unactionable — carry the SDK's own error signals (subtype/stop_reason
@@ -680,11 +818,7 @@ def _record_cell(state: TaskState, got: dict, condition: str,
                 "error", (f"result error: {str(getattr(rmsg, 'result', ''))[:200]} | {err_bits}")[:600])
             return
         state.output.completion = getattr(rmsg, "result", "") or ""
-        state.metadata.update({
-            "cost_usd": getattr(rmsg, "total_cost_usd", None),
-            "unique_tokens": usage.get("cache_creation_input_tokens"),
-            "num_turns": getattr(rmsg, "num_turns", None),
-        })
+        state.metadata["unique_tokens"] = usage.get("cache_creation_input_tokens")
     else:
         state.metadata.setdefault(
             "error", "no ResultMessage (stream ended without a terminal result)")

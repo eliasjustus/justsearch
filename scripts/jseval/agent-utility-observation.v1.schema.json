@@ -69,9 +69,39 @@
         "required": ["name", "status"],
         "properties": {
           "name": {"type": "string"},
-          "status": {"enum": ["ok", "blocked", "disallowed"]}
+          "status": {"enum": ["ok", "blocked", "disallowed", "errored"]}
         }
-      }
+      },
+      "$comment": "tempdoc 729 D10 (issue 10): this ordered, per-attempt sequence is the AUTHORITY for per-call outcome (four states: ok/blocked/disallowed/errored). blocked_tool_call_names below is a name-only convenience projection superseded in authority by this field -- kept for the always-emit contract and existing readers, not deleted; a future reader should reconcile against THIS field, not treat the two as two authorities."
+    },
+    "tool_result_digests": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "content_sha256", "content_len", "content_is_error", "content_shape",
+          "furniture_markers"
+        ],
+        "properties": {
+          "content_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+          "content_len": {"type": ["integer", "null"], "minimum": 0},
+          "content_is_error": {"type": ["boolean", "null"]},
+          "content_shape": {"enum": ["text", "blocks", "empty", "json"]},
+          "furniture_markers": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["rationale", "evidence_pack", "coverage", "degradation"],
+            "properties": {
+              "rationale": {"type": "boolean"},
+              "evidence_pack": {"type": "boolean"},
+              "coverage": {"type": "boolean"},
+              "degradation": {"type": "boolean"}
+            }
+          }
+        }
+      },
+      "$comment": "tempdoc 729 D9 (issue 9, committed tier): ONE entry per attempt, same order as tool_call_sequence. A redacted derivation of the tool result content -- hash/len/is_error/structural-shape/product-furniture-marker booleans. additionalProperties:false on each entry and NO raw-content property is permitted anywhere in this schema -- the schema structurally forbids committing raw corpus/result text. Raw content lives only in the ephemeral (gitignored) Inspect log."
     },
     "source": {
       "type": "object",

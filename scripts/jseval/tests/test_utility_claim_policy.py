@@ -15,19 +15,20 @@ from jseval.utility_claim_policy import (
 from tests.test_corpus_inject import _certification_snapshot_fixture
 
 
-def _record() -> dict:
-    seed_ids = [0, 1, 2, 3, 4]
+def _record(seed_ids: list[int] | None = None) -> dict:
+    seed_ids = [0, 1, 2, 3, 4] if seed_ids is None else seed_ids
     expected_cells = [
         f"{condition}|{seed}|q{query}"
         for condition in ("A", "B")
         for seed in seed_ids
         for query in range(20)
     ]
+    n_attempted = len(seed_ids) * 20
     certification = _certification_snapshot_fixture()
     return {
         "schema": "utility-comparison.v1",
         "schema_version": 2,
-        "seed_count": 5,
+        "seed_count": len(seed_ids),
         "cohort": {
             "git_sha": "a" * 40,
             "git_dirty": False,
@@ -58,20 +59,20 @@ def _record() -> dict:
             "reasons": [],
             "metrics": {"paired_n_retention": 1.0, "excluded_jaccard": 1.0},
             "per_arm_loss": {
-                "A": {"n_attempted": 100, "n_planned": 100, "n_pending": 0, "exclusion_rate": 0.0},
-                "B": {"n_attempted": 100, "n_planned": 100, "n_pending": 0, "exclusion_rate": 0.0},
+                "A": {"n_attempted": n_attempted, "n_planned": n_attempted, "n_pending": 0, "exclusion_rate": 0.0},
+                "B": {"n_attempted": n_attempted, "n_planned": n_attempted, "n_pending": 0, "exclusion_rate": 0.0},
             },
         },
         "coverage": {"contamination_class": "private-synthetic"},
         "tool_call_assertions": {
             "B": {
-                "cells_total": 100,
-                "cells_with_mcp_surface_verified": 100,
+                "cells_total": n_attempted,
+                "cells_with_mcp_surface_verified": n_attempted,
                 "cells_mcp_surface_unverified": 0,
                 "cells_with_leak_suspect": 0,
                 "observed_mcp_tool_surface_hashes": ["f" * 64],
                 "observed_mcp_tool_surface_consistent": True,
-                "cells_with_exposure_mode_verified": 100,
+                "cells_with_exposure_mode_verified": n_attempted,
                 "observed_exposure_modes": ["deferred"],
                 "observed_exposure_mode_consistent": True,
             }
@@ -95,18 +96,18 @@ def _record() -> dict:
                 "seed_ids": seed_ids,
                 "seed_count": len(seed_ids),
                 "query_count": 20,
-                "n_expected_cells": 200,
-                "n_observed_cells": 200,
+                "n_expected_cells": n_attempted * 2,
+                "n_observed_cells": n_attempted * 2,
                 "n_pending_cells": 0,
-                "n_expected_pairs": 100,
-                "n_paired_observations": 100,
-                "n_per_protocol_pairs": 100,
+                "n_expected_pairs": n_attempted,
+                "n_paired_observations": n_attempted,
+                "n_per_protocol_pairs": n_attempted,
                 "paired_retention": 1.0,
                 "excluded_jaccard": 1.0,
                 "per_arm_loss": {
-                    "A": {"n_expected": 100, "n_attempted": 100, "n_completed": 100,
+                    "A": {"n_expected": n_attempted, "n_attempted": n_attempted, "n_completed": n_attempted,
                           "n_excluded": 0, "n_pending": 0, "exclusion_rate": 0.0},
-                    "B": {"n_expected": 100, "n_attempted": 100, "n_completed": 100,
+                    "B": {"n_expected": n_attempted, "n_attempted": n_attempted, "n_completed": n_attempted,
                           "n_excluded": 0, "n_pending": 0, "exclusion_rate": 0.0},
                 },
                 "usage_complete": True,
@@ -124,7 +125,7 @@ def _record() -> dict:
                         "resolved_provider_model": "claude-haiku-versioned",
                     },
                     "primary_arm": "addition_b",
-                    "n_paired_observations": 100,
+                    "n_paired_observations": n_attempted,
                     "accuracy": {"delta_ci95": [-0.01, 0.05]},
                     "provider_cache_creation_input_tokens": {"delta_ci95": [-30, -10]},
                     "cost_usd": {"delta_ci95": [-0.03, -0.01]},
@@ -209,6 +210,65 @@ def test_settled_active_policy_is_machine_evaluable_without_posthoc_wording():
     assert accepted_harm["outcome"] == "harm"
 
 
+# --- Seed floor (tempdoc 729 D15/U5) ------------------------------------------
+#
+# `SEED_FLOOR` (code constant, 3) is deliberately distinct from the policy's
+# own `thresholds.minimum_seeds` (owner-configurable, currently 5 in the draft
+# policy) -- these tests isolate the NEW floor by relaxing minimum_seeds to 1,
+# so a failure here can only be attributed to `seed_floor_met`.
+
+def _single_seed_policy(record: dict) -> dict:
+    policy = _active_policy(record)
+    # Relax the OTHER scale-sensitive thresholds (pre-existing, unrelated to
+    # SEED_FLOOR) so a 1-seed/20-query fixture isolates the new floor alone.
+    policy["thresholds"]["minimum_seeds"] = 1
+    policy["thresholds"]["minimum_paired_observations"] = 1
+    return policy
+
+
+def test_seed_floor_met_gate_reports_min_seed_count_and_the_floor():
+    policy = _active_policy()
+    verdict = evaluate_claim(_record(), policy)
+    seed_floor_gate = next(g for g in verdict["gates"] if g["name"] == "seed_floor_met")
+    assert seed_floor_gate["observed"] == 5
+    assert seed_floor_gate["threshold"] == 3
+    assert seed_floor_gate["passed"] is True
+
+
+def test_single_seed_accuracy_claim_is_refused_below_seed_floor():
+    """D15: a record below SEED_FLOOR (single-seed here) can never resolve to
+    an accuracy-based outcome (benefit/null) -- it demotes to adoption-only
+    (still publishable as exploratory/smoke), never silently promoted."""
+    record = _record(seed_ids=[0])
+    policy = _single_seed_policy(record)
+
+    verdict = evaluate_claim(record, policy)
+
+    assert verdict["stratum_outcomes"][0]["outcome"] == "adoption-only"
+    assert verdict["stratum_outcomes"][0]["gates"]["seed_floor_met"] == {
+        "observed": 1, "threshold": 3, "passed": False,
+    }
+    assert verdict["outcome"] != "benefit"
+    assert verdict["outcome"] != "null"
+
+
+def test_single_seed_harmful_claim_still_publishes_below_seed_floor():
+    """U5: the seed floor gates ONLY accuracy-based claims -- a valid harmful
+    finding remains publishable even below the floor (mirrors how
+    minimum_adoption_rate never blocks a harm claim, utility_claim_policy.py
+    ~line 470)."""
+    record = _record(seed_ids=[0])
+    record["estimands"]["intention_to_treat"]["strata"][0]["accuracy"]["delta_ci95"] = [-0.2, -0.1]
+    policy = _single_seed_policy(record)
+
+    verdict = evaluate_claim(record, policy)
+
+    assert verdict["stratum_outcomes"][0]["outcome"] == "harm"
+    assert verdict["stratum_outcomes"][0]["gates"]["seed_floor_met"]["passed"] is False
+    assert verdict["outcome"] == "harm"
+    assert verdict["accepted"] is True
+
+
 def test_every_required_stratum_must_support_a_benefit_claim():
     record = _record()
     second = copy.deepcopy(record["estimands"]["intention_to_treat"]["strata"][0])
@@ -236,7 +296,8 @@ def test_every_required_stratum_must_support_a_benefit_claim():
             "derived_matrix", "minimum_seeds", "minimum_paired_observations",
             "maximum_exclusion_rate", "complete_expected_matrix",
             "minimum_paired_retention", "minimum_excluded_jaccard",
-            "accuracy_delta_interval", "minimum_adoption_rate", "outcome_resolved",
+            "accuracy_delta_interval", "minimum_adoption_rate", "seed_floor_met",
+            "outcome_resolved",
         }
 
 

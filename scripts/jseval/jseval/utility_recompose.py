@@ -32,12 +32,54 @@ from jseval.utility_governance import (
 
 _VOLATILE_SEMANTIC_FIELDS = frozenset({"composed_at", "semantic_digest"})
 
+# tempdoc 729 D13/B2 (cross-chain finding, U1 discipline): these fields are
+# PURE self-description, never new discriminating information --
+# `denominators` (and its mirrored `denominator_note` strings) is a FIXED
+# constant, byte-identical across every record regardless of content;
+# `seed_floor_met` and `exposure_contrast_ineligible` are deterministic
+# re-derivations of fields ALREADY covered by the digest (`seed_count`;
+# `measured` emptiness / `cohort.exposure_config` + `mcp_initialize_identity`
+# absence, respectively) -- two records that differ in either of these
+# necessarily already differ in an already-digested field, so excluding them
+# from digest coverage loses no discriminating power. Declared here (a
+# coverage rule, not ad hoc per-callsite guessing) so historical-record
+# recomposition stays digest-STABLE (tempdoc 725 precedent / tempdoc 729 U1)
+# even though the record SHAPE gains these fields -- the digest fingerprints
+# the MEASUREMENT, not its self-description.
+_NON_SEMANTIC_TOP_LEVEL_FIELDS = frozenset({
+    "denominators", "seed_floor_met", "exposure_contrast_ineligible",
+})
+
 
 def semantic_projection(record: dict) -> dict:
-    """Return the record with only the explicit volatile transport set removed."""
+    """Return the record with the volatile transport set (`_VOLATILE_SEMANTIC_FIELDS`)
+    AND tempdoc 729's purely-declarative self-description fields
+    (`_NON_SEMANTIC_TOP_LEVEL_FIELDS` plus their nested `denominator_note`
+    mirrors, plus the `seed_floor_met` claim-policy gate -- same
+    deterministic-re-derivation rationale, this time of `evaluate_claim`'s
+    own gate list rather than of `compose_utility`'s output) removed."""
     projected = copy.deepcopy(record)
-    for field in _VOLATILE_SEMANTIC_FIELDS:
+    for field in _VOLATILE_SEMANTIC_FIELDS | _NON_SEMANTIC_TOP_LEVEL_FIELDS:
         projected.pop(field, None)
+    comparability = projected.get("comparability")
+    if isinstance(comparability, dict):
+        comparability.pop("denominator_note", None)
+    for by_model in (projected.get("measured") or {}).values():
+        for cell in (by_model or {}).values():
+            funnel = cell.get("funnel") if isinstance(cell, dict) else None
+            if isinstance(funnel, dict):
+                funnel.pop("denominator_note", None)
+    claim_verdict = projected.get("claim_verdict")
+    if isinstance(claim_verdict, dict):
+        gates = claim_verdict.get("gates")
+        if isinstance(gates, list):
+            claim_verdict["gates"] = [
+                g for g in gates
+                if not (isinstance(g, dict) and g.get("name") == "seed_floor_met")
+            ]
+        for stratum in claim_verdict.get("stratum_outcomes") or []:
+            if isinstance(stratum, dict) and isinstance(stratum.get("gates"), dict):
+                stratum["gates"].pop("seed_floor_met", None)
     return projected
 
 

@@ -1475,6 +1475,41 @@ def test_pure_recomposition_digest_ignores_only_composed_at(tmp_path):
     assert semantic_digest(changed) != first["semantic_digest"]
 
 
+def test_semantic_digest_excludes_tempdoc_729_self_description_fields(tmp_path):
+    """Cross-chain finding (tempdoc 729 U1): `denominators`, `seed_floor_met`,
+    `exposure_contrast_ineligible`, and their nested `denominator_note`/
+    claim-policy-gate mirrors are pure self-description -- either a fixed
+    constant or a deterministic re-derivation of an already-digested field
+    -- so they must NOT move `semantic_digest`. Regression-locks
+    `semantic_projection`'s declared exclusion (utility_recompose.py)."""
+    import copy
+
+    from jseval.utility_recompose import finalize_logs, semantic_digest
+
+    log = _graded_logs(tmp_path, {"A": 1, "B": 2})
+    real = finalize_logs([log], composed_at="t")
+    assert "denominators" in real
+    assert "seed_floor_met" in real
+
+    stripped = copy.deepcopy(real)
+    del stripped["denominators"]
+    del stripped["seed_floor_met"]
+    stripped.pop("exposure_contrast_ineligible", None)
+    if isinstance(stripped.get("comparability"), dict):
+        stripped["comparability"].pop("denominator_note", None)
+    for by_model in (stripped.get("measured") or {}).values():
+        for cell in by_model.values():
+            if isinstance(cell.get("funnel"), dict):
+                cell["funnel"].pop("denominator_note", None)
+    stripped["claim_verdict"]["gates"] = [
+        g for g in stripped["claim_verdict"]["gates"] if g["name"] != "seed_floor_met"
+    ]
+    for stratum in stripped["claim_verdict"]["stratum_outcomes"]:
+        stratum["gates"].pop("seed_floor_met", None)
+
+    assert semantic_digest(stripped) == real["semantic_digest"]
+
+
 def test_composer_separates_addition_b_and_substitution_c(tmp_path):
     pytest.importorskip("inspect_ai")
     from jseval import agent_utility_run as aur
@@ -1793,3 +1828,17 @@ def test_build_revision_rejects_non_string_changed_field():
             reason="leak_correction",
             changed_fields=["cohort.judge", 42],
         )
+
+
+def test_non_semantic_digest_exclusion_list_is_exactly_pinned():
+    """Tempdoc 729 hardening (refute-first review finding): the digest-exclusion
+    frozenset must be an exact, test-visible contract -- adding ANY field to it
+    silently removes that field from semantic_digest coverage, so growth must be
+    a deliberate act that fails this pin first. Do not extend the set without a
+    tempdoc-recorded justification that the new field is a pure re-derivation of
+    already-digested content."""
+    from jseval.utility_recompose import _NON_SEMANTIC_TOP_LEVEL_FIELDS
+
+    assert _NON_SEMANTIC_TOP_LEVEL_FIELDS == frozenset(
+        {"denominators", "seed_floor_met", "exposure_contrast_ineligible"}
+    )

@@ -766,6 +766,13 @@ shift cache-write tokens — 719 research), turns, cost.
    effects only; no significance claims; cohort-relative by design.
 4. First live exercise of the 725 capture path — a substrate defect discovered live is
    fix-and-rerun, and would itself be a finding.
+5. **Protocol addendum (tempdoc 729 D15, 2026-07-14):** any ACCURACY-based decision drawn
+   from an agent-utility campaign needs seeds ≥ 3 (`SEED_FLOOR`,
+   `jseval.utility_comparison`) — a single-seed campaign, like the one this smoke ran (see
+   caveat 3), is exploratory/smoke-only and self-labels `seed_floor_met: false`;
+   `utility_claim_policy` refuses to promote a benefit/null claim from it, though it remains
+   publishable as adoption-only or as a harmful finding. This generalizes caveat 3's
+   campaign-specific "no significance claims" into a named, code-enforced floor.
 
 ---
 
