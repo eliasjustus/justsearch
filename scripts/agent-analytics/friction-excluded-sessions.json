@@ -1,0 +1,39 @@
+{
+  "_comment": "Tempdoc 727: sessions excluded from developer-agent friction analysis because they are not organic coding/engineering work on this repo. Classified by hand against each session's judge-produced summary + first user message; scope confirmed with the user 2026-07-14 (business/research sessions excluded, coding/engineering only). Update this file when re-running mine-friction.mjs on new sessions.",
+  "excluded": {
+    "03c2a600-c190-45b2-8d26-11737bafe2aa": "benchmark-subject: battlefield-en-v1 eval harness burst (2026-07-08 15:01-15:13)",
+    "08f9f832-9ee3-4749-8bba-197cf015e905": "benchmark-subject: battlefield-en-v1 eval harness burst",
+    "093c1695-b125-4980-8b33-8a97e6bd737f": "benchmark-subject: battlefield-en-v1 eval harness burst",
+    "158a7721-d401-4feb-8b92-7fcba8e7b463": "benchmark-subject: battlefield-en-v1 eval harness burst",
+    "24b11d2e-5d26-4091-aef6-b19377337749": "benchmark-subject: battlefield-en-v1 eval harness burst",
+    "33e5b37a": "benchmark-subject: battlefield-en-v1 eval harness burst",
+    "8ed3b6bd-2550-4d27-8b81-5248f50a9894": "benchmark-subject: battlefield-en-v1 eval harness burst",
+    "9afc6bb5-2dd2-4e75-88a5-46ada039d2b0": "benchmark-subject: battlefield-en-v1 eval harness burst",
+    "ae3fff2b-d902-4944-8f57-51d3a971bcdb": "benchmark-subject: battlefield-en-v1 eval harness burst",
+    "c9e0c02e-12b5-49e4-95e9-eff62a73cc80": "benchmark-subject: battlefield-en-v1 eval harness burst",
+    "cbce9400-9031-4639-afe4-1e39311fb73a": "benchmark-subject: battlefield-en-v1 eval harness burst",
+    "cfc71061-35da-4dc4-b9d9-950694e3a187": "benchmark-subject: battlefield-en-v1 eval harness burst",
+    "d91e0923-2314-4205-afd1-a8e85ab59243": "benchmark-subject: battlefield-en-v1 eval harness burst",
+    "ec6fc252-843c-41ae-a115-6a4b21f3f3dd": "benchmark-subject: battlefield-en-v1 eval harness burst",
+
+    "1163dbe2": "personal/unrelated: League of Legends match-history lookup + Discord scam check, not JustSearch work",
+    "a14f38ab": "personal/unrelated: YouTube-transcript capability test + general Q&A, not JustSearch work",
+
+    "126c62ad": "empty: slash-commands only, no task content",
+    "178c7bde": "empty: slash-commands only, no task content",
+    "1da66f21": "empty: model-switch command only",
+    "291a7dfe": "empty: /resume attempt, no content (background session could not be resumed)",
+    "50f9f0ac": "empty: clear/model commands only",
+    "514779f1": "empty: model-switch + empty /start",
+    "986d0b58": "empty: /passes command only (clipboard referral link), no task",
+    "b4ca6d06": "empty: /model command only",
+    "d6e5b480": "empty: model-switch + /start, no task content",
+
+    "260122b2": "non-coding: Claude Science grant research, funding docs, partner-lab strategy",
+    "4bd6a45f": "non-coding: competitor/market research + doc curation (business-facing)",
+    "abec4096": "non-coding: grant/funding research, Gmail search, outreach drafting",
+    "dfbf016c": "non-coding: GEO (AI-search brand visibility) research",
+    "a127b720": "non-coding: public-release policy research + personal prompt-library renaming",
+    "697e772a": "non-coding: Claude Code agent best-practices discussion (research only, no implementation)"
+  }
+}
