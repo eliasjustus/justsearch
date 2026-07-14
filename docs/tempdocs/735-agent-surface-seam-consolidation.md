@@ -418,3 +418,27 @@ text is not golden-pinned (branches untouched this increment).
 
 Remaining for closure: live delivered-tier probe on 0.4.0 under a lease (also converts the W3
 reconstructed fixtures to true recordings and settles the status-tier assumption).
+
+**Live closure pass — 2026-07-14, dev stack from this worktree's dist.** `serverInfo.version`
+0.4.0 live; direct-MCP probe: search AND answer deliver structured-json carrying all four
+equivalence fields (`hints`/`facets`/`coverage`/`truncated` all present per `delivered_fields`);
+status has no structured tier (blocks, by design). Two fixes fell out: (1) the probe's answer call
+used `question` where the tool schema requires `query` (probe bug, fixed); (2) W2's
+`_DELIVERED_FIELD_KEYS` predated W6 — extended with the four new keys so structured-cohort exposure
+to the formerly text-only furniture is measurable per call (fixture tests re-pinned; 113 green).
+
+SDK-mode capture finding: the Agent-SDK probe run captured `tool_reference` placeholder blocks for
+search/answer — the CLI DEFERRED those tools instead of executing them, so no delivery was observed
+(status executed and recorded genuinely: delivered as a text block in a list — `blocks`, settling
+W3's open assumption; fixture renamed `justsearch_status_blocks.json`, provenance `recorded`). The
+bogus search/answer "recordings" were restored to their honest reconstructed versions, and the probe
+now refuses to write a fixture from a placeholder capture (`_is_placeholder_capture` guard +
+`placeholder_capture` report flag) — a failed capture can no longer masquerade as a recording. The
+established delivery rule (structured-if-present, CC CLI 2.1.209) is NOT contradicted: no delivery
+was observed for those tools in that run. Open follow-up: why the SDK session defers forced
+single-tool calls (suspect: deferred-MCP-tools/ToolSearch behavior); a genuine search/answer
+recording still requires a capture path that bypasses deferral.
+
+**Program status: W1–W6 all landed and reviewed (refute-first, zero MAJORs across four reviews).**
+Branch green and unpushed; no PR per standing instruction. Owner-gated leftovers unchanged
+(full-passage parity A/B; hop-absorption A/B; powered 624).

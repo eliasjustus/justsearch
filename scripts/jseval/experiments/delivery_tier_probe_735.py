@@ -70,12 +70,12 @@ _PROBE_CALLS = {
     },
     "justsearch_answer": {
         "name": "justsearch_answer",
-        "arguments": {"question": "What causes timeout errors?"},
+        "arguments": {"query": "What causes timeout errors?"},
     },
 }
 
 _FIXTURE_FILES = {
-    "justsearch_status": FIXTURES_DIR / "justsearch_status_prose.json",
+    "justsearch_status": FIXTURES_DIR / "justsearch_status_blocks.json",
     "justsearch_search": FIXTURES_DIR / "justsearch_search_structured.json",
     "justsearch_answer": FIXTURES_DIR / "justsearch_answer_structured.json",
 }
@@ -199,6 +199,20 @@ async def probe_via_sdk_all(base_url: str, model: str, timeout_s: float) -> dict
 # Reporting + fixture write-back
 # ---------------------------------------------------------------------------
 
+def _is_placeholder_capture(content) -> bool:
+    """True when the captured "result" is not a delivery at all but a deferred-tool
+    placeholder (a ``tool_reference`` block). Observed 2026-07-14: an SDK probe run
+    captured ``[{"type": "tool_reference", "tool_name": ...}]`` for search/answer while
+    status delivered normally -- the CLI deferred those tools instead of executing them,
+    so no delivery was observed. Writing such a capture as a ``recorded`` fixture would
+    be exactly the corrupted-evidence failure this probe exists to prevent."""
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(b, dict) and b.get("type") == "tool_reference" for b in content
+    )
+
+
 def _report(captured: dict[str, dict]) -> list[dict]:
     rows = []
     for tool, entry in captured.items():
@@ -213,6 +227,7 @@ def _report(captured: dict[str, dict]) -> list[dict]:
             "delivered_tier": tier,
             "delivered_fields": fields,
             "is_error": entry.get("is_error"),
+            **({"placeholder_capture": True} if _is_placeholder_capture(content) else {}),
         })
     return rows
 
@@ -224,6 +239,14 @@ def _write_fixtures(captured: dict[str, dict], *, provenance: str, cli_version: 
         if path is None:
             continue
         content = entry.get("content")
+        if _is_placeholder_capture(content):
+            print(
+                f"CAPTURE FAILED for {tool}: content is a deferred-tool placeholder "
+                "(tool_reference block), not a delivery -- fixture NOT written. The CLI "
+                "deferred the tool instead of executing it; re-run, or inspect why the "
+                "session did not execute the forced call."
+            )
+            continue
         tier = _delivered_tier(content)
         payload = {
             "tool": tool,

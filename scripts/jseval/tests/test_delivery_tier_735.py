@@ -42,7 +42,7 @@ def _load_fixture(name: str) -> dict:
     [
         ("justsearch_answer_structured.json", "structured-json"),
         ("justsearch_search_structured.json", "structured-json"),
-        ("justsearch_status_prose.json", "prose"),
+        ("justsearch_status_blocks.json", "blocks"),
         ("sdk_block_list.json", "blocks"),
     ],
 )
@@ -89,6 +89,12 @@ def test_delivered_fields_on_answer_fixture_top_level_only():
         "excerpts": False,
         "searchTrace": False,
         "results": False,
+        # tempdoc 735 W6 fields -- absent on the reconstructed 0.3.1-shape
+        # fixture; a 0.4.0 refresh via the probe flips these True.
+        "hints": False,
+        "facets": False,
+        "coverage": False,
+        "truncated": False,
     }
 
 
@@ -107,6 +113,12 @@ def test_delivered_fields_on_search_fixture_including_nested_placement():
         "excerpts": True,
         "searchTrace": True,
         "results": True,
+        # tempdoc 735 W6 fields -- absent on the reconstructed 0.3.1-shape
+        # fixture; a 0.4.0 refresh via the probe flips these True.
+        "hints": False,
+        "facets": False,
+        "coverage": False,
+        "truncated": False,
     }
     # Cross-check against the raw content: matchedTerms/excerpts are genuinely
     # absent at the TOP level of the parsed payload (the field-presence signal
@@ -119,7 +131,7 @@ def test_delivered_fields_on_search_fixture_including_nested_placement():
 
 
 def test_delivered_fields_none_for_prose_and_blocks():
-    prose = _load_fixture("justsearch_status_prose.json")
+    prose = _load_fixture("justsearch_status_blocks.json")
     blocks = _load_fixture("sdk_block_list.json")
     assert _delivered_fields(prose["result"]["content"]) is None
     assert _delivered_fields(blocks["result"]["content"]) is None
@@ -139,7 +151,7 @@ def test_delivered_fields_none_for_absent_content():
     [
         "justsearch_answer_structured.json",
         "justsearch_search_structured.json",
-        "justsearch_status_prose.json",
+        "justsearch_status_blocks.json",
         "sdk_block_list.json",
     ],
 )
@@ -234,7 +246,7 @@ def test_experiment_script_imports_the_same_delivered_tier_function():
     for fixture_name in (
         "justsearch_answer_structured.json",
         "justsearch_search_structured.json",
-        "justsearch_status_prose.json",
+        "justsearch_status_blocks.json",
         "sdk_block_list.json",
     ):
         fixture = _load_fixture(fixture_name)

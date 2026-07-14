@@ -647,8 +647,14 @@ def _delivered_tier(content) -> str | None:
 # top-level-only, produced by `searchEvidence` (McpEvidenceProjection.java:50-58).
 # `results` itself is the top-level array `searchEvidence` always emits
 # (McpEvidenceProjection.java:108).
+# tempdoc 735 W6 (tool-surface 0.4.0) added the tier-equivalence fields
+# `hints`/`facets`/`coverage`/`truncated` to both tools' structured tier --
+# tracked here so structured-delivery cohorts' exposure to the formerly
+# text-only furniture is measurable per call. Absent on <=0.3.1 responses
+# (presence booleans just read False -- no schema impact).
 _DELIVERED_FIELD_KEYS = (
     "quality", "matchedTerms", "degradation", "excerpts", "citations", "searchTrace", "results",
+    "hints", "facets", "coverage", "truncated",
 )
 
 
