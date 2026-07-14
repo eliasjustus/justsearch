@@ -1,7 +1,7 @@
 ---
 title: "Agent-surface seam consolidation: why the MCP/eval/retrieval intersection generates defects, and what structure removes the generator"
 type: tempdocs
-status: "IMPLEMENTED on branch (2026-07-15): W1–W6 all landed + refute-first reviewed (zero MAJORs), tool surface 0.4.0, tier-equivalence golden guard in-repo; live-verified both tiers; G6 completed incident-driven (reaper honors declared hold); genuine recorded fixtures (CLI-mediated, all three tools); Campaign V measured the shipped surface (delivery 98.9% structured-json, equivalence fields 100% delivered, cost +466B/search constant, behavioral hypotheses refuted at haiku/n=20; see 725 Campaign V section); branch unpushed, no PR per standing instruction. Open: truncation-notice third delivery shape (response-size governor candidate), concise-mode golden pin, tool_calls/blocked-call index misalignment"
+status: "IMPLEMENTED on branch (2026-07-15): W1–W6 all landed + refute-first reviewed (zero MAJORs), tool surface 0.4.0, tier-equivalence golden guard in-repo; live-verified both tiers; G6 completed incident-driven (reaper honors declared hold); genuine recorded fixtures (CLI-mediated, all three tools); Campaign V measured the shipped surface (delivery 98.9% structured-json, equivalence fields 100% delivered, cost +466B/search constant, behavioral hypotheses refuted at haiku/n=20; see 725 Campaign V section); MERGED to main 2026-07-15 (PR #185, squash 88a4305). Open: truncation-notice third delivery shape (response-size governor candidate), concise-mode golden pin, tool_calls/blocked-call index misalignment"
 created: 2026-07-14
 updated: 2026-07-15
 author: agent (session 25f8ac5d, chartered at founder direction after the 725 remediation program's root-cause analysis)
