@@ -33,7 +33,7 @@ final class EmbeddingCompatibilityControllerTest {
   }
 
   @Test
-  void maybeAutoStartRebuildForLegacyAllPendingTransitionsToRebuilding() throws Exception {
+  void maybeAutoStartRebuildForBlockedLegacyTransitionsToRebuilding() throws Exception {
     // Inject a fake fingerprint so the controller sees embedding as "available" without
     // needing a real model file on disk. Without this, EmbeddingFingerprint.get() returns
     // empty and the controller goes to UNAVAILABLE instead of BLOCKED_LEGACY.
@@ -48,32 +48,66 @@ final class EmbeddingCompatibilityControllerTest {
     assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, controller.state());
     assertEquals("LEGACY_INDEX_NO_FINGERPRINT", controller.reasonCode());
 
-    // Act: prove all docs are pending embeddings
-    boolean started = controller.maybeAutoStartRebuildForLegacyAllPending(5L, 5, 0, 0);
+    boolean started = controller.maybeAutoStartRebuildForBlockedLegacy(5L);
 
-    // Assert
     assertTrue(started);
     assertEquals(EmbeddingCompatibilityController.State.REBUILDING, controller.state());
     assertEquals("REBUILD_IN_PROGRESS", controller.reasonCode());
   }
 
   @Test
-  void maybeAutoStartRebuildForLegacyAllPendingIsConservative() throws Exception {
+  void maybeAutoStartRebuildForBlockedLegacyFiresRegardlessOfDistribution() throws Exception {
+    // Tempdoc 726 T3 (pins F3 at the controller level): a fully-embedded-but-unstamped index
+    // (documents COMPLETED, none PENDING) is exactly what the pre-fix in-place backfill path leaves
+    // after a restart. Recovery must STILL auto-start REBUILDING — the former all-pending-only guard
+    // (completed==0 && failed==0 && pending==docCount) refused, stranding it in BLOCKED_LEGACY.
     EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
 
     EmbeddingCompatibilityController controller =
-        new EmbeddingCompatibilityController(
-            Map::of,
-            () -> 5L);
+        new EmbeddingCompatibilityController(Map::of, () -> 5L);
     controller.refresh();
-
-    // Not all pending => should not start
-    assertFalse(controller.maybeAutoStartRebuildForLegacyAllPending(5L, 4, 0, 0));
     assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, controller.state());
 
-    // Completed exists => should not start
-    assertFalse(controller.maybeAutoStartRebuildForLegacyAllPending(5L, 5, 1, 0));
+    // docCount>0 but NOT all-pending (the recovery caller re-marks COMPLETED/FAILED docs PENDING
+    // before/around this; the controller only needs to know there are documents to (re-)embed).
+    boolean started = controller.maybeAutoStartRebuildForBlockedLegacy(5L);
+
+    assertTrue(started);
+    assertEquals(EmbeddingCompatibilityController.State.REBUILDING, controller.state());
+  }
+
+  @Test
+  void maybeAutoStartRebuildForBlockedLegacyGuardsEmptyIndex() throws Exception {
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(Map::of, () -> 5L);
+    controller.refresh();
     assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, controller.state());
+
+    // No documents → nothing to rebuild → stays BLOCKED_LEGACY.
+    assertFalse(controller.maybeAutoStartRebuildForBlockedLegacy(0L));
+    assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, controller.state());
+  }
+
+  @Test
+  void checkRebuildCompletionCertifiesOnPendingZeroEvenWhenJobQueueNonEmpty() throws Exception {
+    // Tempdoc 726 T2 (pins F1): a job stuck in PROCESSING — or any ongoing unrelated ingestion —
+    // keeps the global queueDepth > 0. Certification must NOT depend on it: pending_embedding==0
+    // alone certifies. On the OLD code (`queueDepth==0 && pendingEmbeddingCount==0`) this call with
+    // queueDepth=7 returned false and REBUILDING persisted forever (the sandbox hang, reproduced 3x).
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(Map::of, () -> 5L);
+    controller.refresh();
+    controller.maybeAutoStartRebuildForBlockedLegacy(5L);
+    assertEquals(EmbeddingCompatibilityController.State.REBUILDING, controller.state());
+
+    boolean completed = controller.checkRebuildCompletion(7L /* non-empty job queue */, 0);
+
+    assertTrue(completed);
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
+    assertEquals("fake-sha256-for-test", controller.fingerprintToStamp().orElse(null));
   }
 
   @Test
@@ -86,7 +120,7 @@ final class EmbeddingCompatibilityControllerTest {
     EmbeddingCompatibilityController controller =
         new EmbeddingCompatibilityController(Map::of, () -> 5L);
     controller.refresh();
-    controller.maybeAutoStartRebuildForLegacyAllPending(5L, 5, 0, 0);
+    controller.maybeAutoStartRebuildForBlockedLegacy(5L);
     assertEquals(EmbeddingCompatibilityController.State.REBUILDING, controller.state());
     // While REBUILDING-not-yet-complete, there is nothing to stamp.
     assertTrue(controller.fingerprintToStamp().isEmpty());
@@ -106,7 +140,7 @@ final class EmbeddingCompatibilityControllerTest {
     EmbeddingCompatibilityController controller =
         new EmbeddingCompatibilityController(Map::of, () -> 5L);
     controller.refresh();
-    controller.maybeAutoStartRebuildForLegacyAllPending(5L, 5, 0, 0);
+    controller.maybeAutoStartRebuildForBlockedLegacy(5L);
 
     boolean completed = controller.checkRebuildCompletion(0L, 3); // 3 docs still pending embeddings
 

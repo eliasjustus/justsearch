@@ -1010,7 +1010,7 @@ public final class KnowledgeServer implements Closeable {
       embeddingCompatController = ecc;
       embeddingFingerprintSupplier.set(ecc::fingerprintToStamp);
       appServices.wireEmbeddingCompatController(ecc);
-      maybeAutoStartEmbeddingRebuildAllPendingBestEffort();
+      maybeAutoStartEmbeddingRebuildForBlockedLegacyBestEffort();
 
       // NER — surface-provided assembly wraps in NerService.
       var nerConfig = io.justsearch.indexerworker.ner.NerConfig.fromEnv();
@@ -1266,7 +1266,7 @@ public final class KnowledgeServer implements Closeable {
     JvmRuntimeGauges.register(telemetry, "worker");
   }
 
-  private void maybeAutoStartEmbeddingRebuildAllPendingBestEffort() {
+  private void maybeAutoStartEmbeddingRebuildForBlockedLegacyBestEffort() {
     try {
       if (embeddingCompatController == null || ingestLifecycle == null) return;
       if (embeddingCompatController.state() != EmbeddingCompatibilityController.State.BLOCKED_LEGACY) return;
@@ -1280,13 +1280,31 @@ public final class KnowledgeServer implements Closeable {
       long docs = totalDocs - chunkDocs;
       if (docs <= 0) return;
 
-      int pending = countOps.countByField(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
-      int completed = countOps.countByField(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
-      int failed = countOps.countByField(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_FAILED);
+      // Tempdoc 726 F3: a BLOCKED_LEGACY index has no stored embedding fingerprint, so any vectors
+      // on documents already marked COMPLETED/FAILED have unknowable provenance. Re-mark them PENDING
+      // so the backfill re-embeds them under the current model; then enter REBUILDING regardless of
+      // the completed/pending distribution (the pre-fix all-pending-only trigger left a
+      // fully-embedded-but-never-stamped index stuck here forever). The re-mark needs the write-side
+      // coordinator, which only a RunningRuntime exposes — a non-writable phase can't recover here.
+      int remarked = 0;
+      if (ingestLifecycle instanceof RunningRuntime running) {
+        remarked =
+            io.justsearch.indexerworker.loop.ops.EmbeddingRecoveryOps.remarkEmbeddedParentDocsPending(
+                running.documentFieldOps(), running.indexingCoordinator(), 1000, log);
+      }
 
-      embeddingCompatController.maybeAutoStartRebuildForLegacyAllPending(docs, pending, completed, failed);
-    } catch (Exception ignored) {
-      // Best-effort: never block worker startup on auto-rebuild heuristics.
+      boolean started = embeddingCompatController.maybeAutoStartRebuildForBlockedLegacy(docs);
+      log.warn(
+          "Embedding recovery: BLOCKED_LEGACY index with no fingerprint (parentDocs={},"
+              + " reMarkedPending={}) -> auto-started rebuild={}. Dense/hybrid retrieval will be"
+              + " restored once the backfill re-embeds and the fingerprint is stamped.",
+          docs,
+          remarked,
+          started);
+    } catch (Exception e) {
+      // Best-effort: never block worker startup on auto-rebuild recovery, but make the failure
+      // visible instead of silently swallowing it (tempdoc 726 F3).
+      log.warn("Embedding recovery: BLOCKED_LEGACY auto-rebuild attempt failed (best-effort)", e);
     }
   }
 

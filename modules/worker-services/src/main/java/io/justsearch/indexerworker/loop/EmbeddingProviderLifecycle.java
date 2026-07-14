@@ -69,6 +69,20 @@ public final class EmbeddingProviderLifecycle {
   private final Object embeddingLifecycleLock = new Object();
   private volatile boolean lastMainGpuActiveState = false;
 
+  /**
+   * Two-consecutive-reads guard for {@link #tryFinalizeRebuild()} (tempdoc 726 F1). Counts how many
+   * consecutive finalize attempts have observed {@code pendingEmbeddings==0}; certification fires only
+   * on the second, guarding a mid-flush race where a document is written between the count and the
+   * stamp. Mutated on the single indexing-loop thread only.
+   */
+  private int pendingZeroStreak = 0;
+
+  /**
+   * Last {@code pendingEmbeddings} value logged by the finalize-waiting notice, so the on-change
+   * INFO fires when the value moves rather than on every loop iteration. {@code -1} = not yet logged.
+   */
+  private int lastLoggedWaitPending = -1;
+
   private volatile Consumer<EmbeddingProvider> embeddingProviderChangeListener;
 
   /** Tempdoc 518 Appendix F W4.3 — additional-listeners branch migrated to the shared
@@ -257,13 +271,17 @@ public final class EmbeddingProviderLifecycle {
     var controller = embeddingCompatController;
     if (controller == null) return false;
     if (controller.state() != EmbeddingCompatibilityController.State.REBUILDING) {
+      pendingZeroStreak = 0;
       return false;
     }
 
+    // queueDepth is read for diagnostics only (tempdoc 726 F1) — it does NOT gate certification.
     long queueDepth;
     try {
       queueDepth = jobQueue.queueDepth();
     } catch (Exception e) {
+      log.warn(
+          "tryFinalizeRebuild: failed to read job queue depth; skipping this finalize attempt", e);
       return false;
     }
 
@@ -273,18 +291,55 @@ public final class EmbeddingProviderLifecycle {
           indexCountOps.countByField(
               SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
     } catch (Exception e) {
+      log.warn(
+          "tryFinalizeRebuild: failed to read pending-embedding count; skipping this finalize"
+              + " attempt",
+          e);
       return false;
     }
 
-    if (!controller.checkRebuildCompletion(queueDepth, pendingEmbeddings)) return false;
+    // F1: certify on the embedding-scoped fact pendingEmbeddings==0, confirmed on two consecutive
+    // reads to guard a mid-flush race (a doc written between the count and the stamp). The global
+    // queue depth (incl. jobs stuck in PROCESSING) is deliberately not consulted.
+    if (pendingEmbeddings != 0) {
+      pendingZeroStreak = 0;
+      maybeLogFinalizeWaiting(pendingEmbeddings, queueDepth);
+      return false;
+    }
+    if (++pendingZeroStreak < 2) {
+      maybeLogFinalizeWaiting(pendingEmbeddings, queueDepth);
+      return false;
+    }
+
+    if (!controller.checkRebuildCompletion(queueDepth, pendingEmbeddings)) {
+      pendingZeroStreak = 0;
+      return false;
+    }
 
     try {
       commitOps.commitAndTrack(CommitReason.INDEXING_LOOP_REBUILD_STAMP);
       controller.onFingerprintStamped();
+      pendingZeroStreak = 0;
+      lastLoggedWaitPending = -1;
       return true;
     } catch (RuntimeException e) {
       log.error("Failed to commit embedding fingerprint after rebuild completion", e);
+      pendingZeroStreak = 0;
       return false;
+    }
+  }
+
+  /**
+   * On-change INFO so a stuck rebuild is one grep away without flooding the log every loop iteration
+   * (tempdoc 726 F2). Logs only when {@code pendingEmbeddings} moves from the last logged value.
+   */
+  private void maybeLogFinalizeWaiting(int pendingEmbeddings, long queueDepth) {
+    if (pendingEmbeddings != lastLoggedWaitPending) {
+      log.info(
+          "embedding rebuild finalize waiting: pendingEmbeddings={} (queueDepth={})",
+          pendingEmbeddings,
+          queueDepth);
+      lastLoggedWaitPending = pendingEmbeddings;
     }
   }
 

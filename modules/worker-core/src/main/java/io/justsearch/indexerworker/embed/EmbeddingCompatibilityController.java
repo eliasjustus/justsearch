@@ -30,7 +30,9 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>During BLOCKED_* states, embedding writes and vector/hybrid queries are blocked.</li>
  *   <li>When a forced reindex is observed, transition to REBUILDING.</li>
- *   <li>When rebuild completes (queue=0, pending_embedding=0), stamp fingerprint and transition to COMPATIBLE.</li>
+ *   <li>When rebuild completes (pending_embedding=0 — an embedding-scoped fact; the global
+ *       job queue is deliberately NOT part of the certification condition), stamp fingerprint
+ *       and transition to COMPATIBLE.</li>
  * </ul>
  */
 public final class EmbeddingCompatibilityController {
@@ -153,46 +155,51 @@ public final class EmbeddingCompatibilityController {
   }
 
   /**
-   * Best-effort helper: auto-start an embedding rebuild for the common "indexed before embeddings were
-   * available" case.
+   * Best-effort helper: auto-start an embedding rebuild for a legacy index that has documents but no
+   * stored embedding fingerprint.
    *
-   * <p>When an index has documents but no stored embedding fingerprint, we must normally block
-   * embedding writes to avoid silently mixing incompatible vectors. However, when we can prove that
-   * <b>all</b> documents are still pending embeddings (and none have completed/failed embeddings),
-   * it is safe to proceed with a rebuild/backfill without requiring a user-initiated forced reindex.
+   * <p>Fires for any {@link State#BLOCKED_LEGACY} / {@code LEGACY_INDEX_NO_FINGERPRINT} index with
+   * documents — <b>regardless</b> of the completed/pending/failed distribution. This broadens the
+   * former all-pending-only trigger, which left a fully-embedded-but-never-stamped index (the state
+   * the pre-fix in-place backfill path leaves after a restart) stuck in BLOCKED_LEGACY forever with
+   * no recovery path.
    *
-   * <p>This is intentionally conservative: it only triggers for {@link State#BLOCKED_LEGACY} with
-   * {@code LEGACY_INDEX_NO_FINGERPRINT} and requires {@code pending == docCount}.
+   * <p>Vectors on documents already marked {@code COMPLETED} but committed WITHOUT a fingerprint have
+   * unknowable provenance (they may have been written by a different embedding model), so the caller
+   * is responsible for re-marking such documents PENDING before/around this call so the backfill
+   * re-embeds them under the current model.
    *
-   * @param docCount total docs in the index
-   * @param pending count of docs with embedding_status=PENDING
-   * @param completed count of docs with embedding_status=COMPLETED
-   * @param failed count of docs with embedding_status=FAILED
+   * @param docCount total (parent) docs in the index
    * @return true if the controller transitioned to REBUILDING
    */
-  public boolean maybeAutoStartRebuildForLegacyAllPending(
-      long docCount,
-      int pending,
-      int completed,
-      int failed) {
+  public boolean maybeAutoStartRebuildForBlockedLegacy(long docCount) {
     if (state.get() != State.BLOCKED_LEGACY) return false;
     if (!"LEGACY_INDEX_NO_FINGERPRINT".equals(reasonCode.get())) return false;
     if (docCount <= 0) return false;
-    if (completed != 0 || failed != 0) return false;
-    if ((long) pending != docCount) return false;
 
     log.info(
-        "Embedding compatibility: auto-starting REBUILDING (legacy index, all embeddings pending). docCount={} pending={}",
-        docCount,
-        pending);
+        "Embedding compatibility: auto-starting REBUILDING (legacy index, no fingerprint; documents"
+            + " will be (re-)embedded under the current model). docCount={}",
+        docCount);
     onForcedReindexRequested();
     return state.get() == State.REBUILDING;
   }
 
   /**
-   * Called to check if rebuild is complete. Call periodically or after queue drains.
+   * Certifies rebuild completion from the embedding-scoped fact {@code pendingEmbeddingCount == 0}.
    *
-   * @param queueDepth current job queue depth
+   * <p>The global {@code queueDepth} is <b>not</b> part of the certification condition (it is
+   * accepted only as a diagnostic to log): a job stuck in {@code PROCESSING}, or simply ongoing
+   * unrelated ingestion, must never block embedding certification. Coverage==100% algebraically
+   * implies {@code pending==0} on the same counter, and new documents arriving after the stamp are
+   * handled by the normal COMPATIBLE incremental path — global idleness adds nothing but livelock.
+   *
+   * <p>This certifier flips COMPATIBLE on the FIRST {@code pending==0} read; the indexing-loop caller
+   * ({@code EmbeddingProviderLifecycle.tryFinalizeRebuild}) debounces with a two-consecutive-reads
+   * guard, while the deterministic blue/green cutover ({@code finalizeEmbeddingRebuildBeforeCutover})
+   * calls this once on an already-drained green.
+   *
+   * @param queueDepth current job queue depth — logged as diagnostics only, does NOT gate
    * @param pendingEmbeddingCount count of documents with embedding_status=PENDING
    * @return true if rebuild just completed (fingerprint should be stamped)
    */
@@ -201,8 +208,10 @@ public final class EmbeddingCompatibilityController {
       return false;
     }
 
-    if (queueDepth == 0 && pendingEmbeddingCount == 0) {
-      log.info("Embedding compatibility: rebuild complete (queue=0, pending_embedding=0)");
+    if (pendingEmbeddingCount == 0) {
+      log.info(
+          "Embedding compatibility: rebuild complete (pending_embedding=0; queueDepth={} not gating)",
+          queueDepth);
       rebuildCompleted = true;
       state.set(State.COMPATIBLE);
       reasonCode.set("REBUILD_COMPLETED");

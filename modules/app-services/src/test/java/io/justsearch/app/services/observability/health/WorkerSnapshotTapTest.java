@@ -194,6 +194,71 @@ final class WorkerSnapshotTapTest {
   }
 
   @Test
+  @DisplayName(
+      "embedding REBUILDING → embedding.not-ready ADDED on worker.embedding (WARNING), not unmapped"
+          + " (726 F5/T4)")
+  void embeddingRebuildingMapsToNotReady() {
+    tap.accept(embeddingBlocked("REBUILDING"), false);
+
+    // A mapped state emits a CONDITION event; the unmapped branch would emit nothing (see
+    // unknownSchemaStateAfterKnownPreservesPrior) — so a fired event proves no unmapped-WARN.
+    assertEquals(1, listener.size());
+    HealthEvent event = listener.events.get(0).event();
+    assertEquals("embedding.not-ready", event.id());
+    AssertedCondition cond = (AssertedCondition) event.body();
+    assertEquals("worker.embedding", cond.subject());
+    assertEquals(Severity.WARNING, event.severity());
+  }
+
+  @Test
+  @DisplayName("embedding UNAVAILABLE → embedding.not-ready ADDED (WARNING) (726 F5/T4)")
+  void embeddingUnavailableMapsToNotReady() {
+    tap.accept(embeddingBlocked("UNAVAILABLE"), false);
+
+    assertEquals(1, listener.size());
+    HealthEvent event = listener.events.get(0).event();
+    assertEquals("embedding.not-ready", event.id());
+    assertEquals(Severity.WARNING, event.severity());
+  }
+
+  @Test
+  @DisplayName(
+      "embedding BLOCKED_LEGACY → REBUILDING swaps embedding.blocked to embedding.not-ready"
+          + " (no freeze; 726 F5)")
+  void embeddingRebuildingSwapsPriorBlockedInsteadOfFreezing() {
+    // The bug: REBUILDING hit the unmapped-WARN branch and FROZE the prior embedding.blocked
+    // assertion on the Head side (early return preserving prior). Now it must clear blocked and
+    // assert embedding.not-ready.
+    tap.accept(embeddingBlocked("BLOCKED_LEGACY"), false);
+    assertTrue(conditions.find("embedding.blocked", "worker.embedding").isPresent());
+    listener.events.clear();
+
+    tap.accept(embeddingBlocked("REBUILDING"), false);
+
+    assertTrue(
+        conditions.find("embedding.blocked", "worker.embedding").isEmpty(),
+        "prior embedding.blocked must be CLEARED on the move to REBUILDING, not frozen");
+    assertTrue(
+        conditions.find("embedding.not-ready", "worker.embedding").isPresent(),
+        "REBUILDING must assert embedding.not-ready");
+  }
+
+  @Test
+  @DisplayName("embedding REBUILDING → COMPATIBLE clears embedding.not-ready (726 F5)")
+  void embeddingNotReadyClearsWhenCompatible() {
+    tap.accept(embeddingBlocked("REBUILDING"), false);
+    assertTrue(conditions.find("embedding.not-ready", "worker.embedding").isPresent());
+    listener.events.clear();
+
+    tap.accept(healthyView(), false);
+
+    assertEquals(1, listener.size());
+    assertEquals(HealthEventChangeRegistry.Kind.CONDITION_REMOVED, listener.events.get(0).kind());
+    assertEquals("embedding.not-ready", listener.events.get(0).event().id());
+    assertTrue(conditions.find("embedding.not-ready", "worker.embedding").isEmpty());
+  }
+
+  @Test
   @DisplayName("queueDbHealthy=false → queue-db.unhealthy ADDED on worker.queue-db (ERROR)")
   void queueDbUnhealthy() {
     tap.accept(
