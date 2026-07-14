@@ -58,6 +58,43 @@ class ExposureContrastError(ValueError):
     """Raised when two records cannot form a valid exposure contrast."""
 
 
+def exposure_contrast_eligibility(record: dict) -> dict:
+    """Pure predicate (tempdoc 729 D11): is ``record`` even the right SHAPE to
+    ever participate in an exposure contrast, independent of whether it happens
+    to match some OTHER record's identity?
+
+    A record composed entirely from evidence that predates the #605
+    exposure-identity capture fix never has a with-tool ``measured`` cell with
+    real funnel/adoption data, AND never has cohort-level exposure identity
+    (``cohort.exposure_config`` / ``cohort.mcp_initialize_identity``) -- both
+    are increment-2 fields (tempdoc 725) that simply were never recorded. Such
+    a record is PERMANENTLY ineligible, not merely "not yet contrasted": even
+    recomposing its raw observations cannot manufacture identity that was
+    never captured. This predicate names the specific disqualifier so a caller
+    (or ``exposure_contrast`` itself) reports WHY, instead of a puzzle-shaped
+    generic error.
+
+    :returns: ``{"eligible": bool, "reasons": [str, ...]}`` -- ``reasons`` is
+        empty iff ``eligible`` is ``True``.
+    """
+    reasons: list[str] = []
+    measured = record.get("measured")
+    if not isinstance(measured, dict) or not measured:
+        reasons.append(
+            "measured is empty -- record predates the #605 exposure-identity "
+            "capture fix and carries no with-tool measured cell at all"
+        )
+    cohort = record.get("cohort") or {}
+    if cohort.get("exposure_config") is None or cohort.get("mcp_initialize_identity") is None:
+        reasons.append(
+            "cohort carries no exposure identity (exposure_config / "
+            "mcp_initialize_identity both required) -- record predates the "
+            "#605 exposure-identity capture fix and is permanently "
+            "descriptive-only, never exposure-contrast-eligible"
+        )
+    return {"eligible": not reasons, "reasons": reasons}
+
+
 def _only_cell(record: dict, *, label: str) -> dict:
     """The sole ``measured[dataset][model]`` cell of a single-campaign record.
 
@@ -162,6 +199,14 @@ def exposure_contrast(
     Descriptive only -- see the module docstring for the no-significance-testing /
     no-verdict boundary.
     """
+    for label, record in (("record_a", record_a), ("record_b", record_b)):
+        eligibility = exposure_contrast_eligibility(record)
+        if not eligibility["eligible"]:
+            raise ExposureContrastError(
+                f"{label} is not exposure-contrast-eligible: "
+                f"{'; '.join(eligibility['reasons'])}"
+            )
+
     cell_a = _only_cell(record_a, label="record_a")
     cell_b = _only_cell(record_b, label="record_b")
 

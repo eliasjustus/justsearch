@@ -38,6 +38,7 @@ import statistics as _stats
 from jseval import compare_runs
 from jseval.agent_manifest import agent_cohort_key
 from jseval.agent_utility_observations import WITH_TOOL_CONDITIONS
+from jseval.exposure_contrast import exposure_contrast_eligibility
 from jseval.release import canonical_dataset_slug
 
 SCHEMA = "utility-comparison.v1"
@@ -47,6 +48,16 @@ SCHEMA_VERSION = 2
 # Condition semantics (tempdoc 346): A = file tools only (baseline),
 # B = file + JustSearch, C = JustSearch only (substitution).
 _BASELINE = "A"
+
+# Minimum seed count for a DECISION-GRADE accuracy claim (tempdoc 729 D15).
+# `--seeds` already defaults to 3 (commands/utility.py); this is a labeling
+# floor, not a default change -- the A/B smokes ran single-seed and were
+# nonetheless read for accuracy, which is the protocol gap this closes. A
+# record below the floor self-labels `seed_floor_met: False` and
+# `utility_claim_policy` refuses to promote an accuracy-based claim (benefit
+# / null) from it -- exploratory/smoke publication and harmful-result
+# publication are both untouched by this floor (see utility_claim_policy.py).
+SEED_FLOOR = 3
 
 
 class UtilityComposeError(ValueError):
@@ -192,6 +203,57 @@ def _seed_envelope(values: list[float]) -> dict:
         "stdev": round(_stats.pstdev(values), 4),
         "n": len(values),
     }
+
+
+# Which denominator answers which question (tempdoc 729 D13) -- a PURE
+# declaration, never a re-derivation: every number named below already lives
+# on the record (`comparability.per_arm_loss.<arm>` for n_attempted/n_excluded;
+# `measured.<dataset>.<model>.funnel` for the checked-cell population), this
+# block only makes the RELATIONSHIP between them machine-readable. No metric
+# numerator/denominator is computed here (tempdoc 729 derisk U4).
+_DENOMINATORS = {
+    "n_attempted": {
+        "tier": "primary",
+        "estimand": "intention_to_treat",
+        "source": "comparability.per_arm_loss.<condition>.n_attempted",
+        "question": (
+            "How many cells did this campaign spend money attempting, "
+            "including the errored/timed-out tail? The honest base for "
+            "cost accounting and cross-campaign comparability -- the ITT "
+            "ledger never silently drops an attempted cell."
+        ),
+    },
+    "n_checked": {
+        "tier": "secondary",
+        "estimand": "funnel_conditional",
+        "source": (
+            "measured.<dataset>.<model>.funnel.with_tool -- the paired "
+            "cells carrying tool_calls/toolsearch_targets/tool_call_sequence"
+        ),
+        "question": (
+            "Of the paired cells, how many carried funnel instrumentation "
+            "and are therefore usable for adoption-funnel behavior "
+            "analysis? Descriptive of behavior GIVEN a usable cell, not of "
+            "campaign spend -- a different question than n_attempted."
+        ),
+    },
+    "n_excluded": {
+        "tier": "secondary",
+        "estimand": "funnel_conditional",
+        "source": (
+            "measured.<dataset>.<model>.funnel -- paired cells lacking "
+            "funnel instrumentation (e.g. evidence composed before funnel "
+            "fields existed)"
+        ),
+        "question": (
+            "Of the paired cells, how many lack funnel instrumentation and "
+            "are excluded from the funnel's OWN denominator? NOT the same "
+            "population as the ITT ledger's errored/excluded tail -- a cell "
+            "can be a successfully-attempted ITT n_attempted member and "
+            "still be excluded here for lacking funnel data."
+        ),
+    },
+}
 
 
 def compose_utility(
@@ -345,10 +407,37 @@ def compose_utility(
             "reasons": governance.get("reasons", []),
             "metrics": governance.get("metrics", {}),
             "per_arm_loss": governance.get("per_arm_loss", {}),
+            # tempdoc 729 D13: one-line pointer to the top-level `denominators`
+            # declaration -- this block's own n_attempted/n_excluded (per arm)
+            # are the PRIMARY (ITT) denominator; pure documentation, no value
+            # here is recomputed.
+            "denominator_note": (
+                "per_arm_loss.<arm>.n_attempted is the PRIMARY (ITT) "
+                "denominator for spend/comparability -- see the record's "
+                "top-level `denominators` block."
+            ),
         }
         derived_tier = "C" if not governance.get("comparable") else confidence_tier
 
-    return {
+    seed_count = len([x for x in seeds_seen if x is not None])
+    seed_floor_met = seed_count >= SEED_FLOOR
+
+    # tempdoc 729 D11: stamp the pre-#605 tombstone reason onto the record
+    # ITSELF when detected, so the ineligibility is visible without a failed
+    # `exposure_contrast` call. OMITTED entirely (never stamped as
+    # `{"eligible": true}` or similar) when the record IS eligible -- a
+    # record composed from post-#605 evidence stays byte-identical to before
+    # this stamp existed, same conditional-omission discipline as
+    # `exposure_config` above.
+    exposure_eligibility = exposure_contrast_eligibility(
+        {"measured": measured, "cohort": cohort}
+    )
+    exposure_contrast_ineligible = (
+        None if exposure_eligibility["eligible"]
+        else {"reasons": exposure_eligibility["reasons"], "since": "#605"}
+    )
+
+    result = {
         "schema": SCHEMA,
         "schema_version": SCHEMA_VERSION,
         "composed_at": composed_at,
@@ -359,7 +448,11 @@ def compose_utility(
             "addition": "B (file tools + JustSearch)",
         },
         "measured": measured,
-        "seed_count": len([x for x in seeds_seen if x is not None]),
+        "seed_count": seed_count,
+        # tempdoc 729 D15: a decision-grade-signal, analogous to
+        # confidence_tier -- `--seeds` already defaults to 3, this is a
+        # protocol/labeling floor, not a default change. See SEED_FLOOR.
+        "seed_floor_met": seed_floor_met,
         "confidence_tier": derived_tier,
         # Run-governance verdict — the record vouching for its own trustworthiness.
         "comparability": comparability,
@@ -372,7 +465,13 @@ def compose_utility(
         # is unchanged, so a consumer that doesn't know this key is byte-for-byte
         # compatible with the pre-this-change record shape.
         "tool_call_assertions": _tool_call_assertions(run_summaries),
+        # tempdoc 729 D13: self-describing denominators (always emitted --
+        # a pure declaration, not a per-record computation, see _DENOMINATORS).
+        "denominators": _DENOMINATORS,
     }
+    if exposure_contrast_ineligible is not None:
+        result["exposure_contrast_ineligible"] = exposure_contrast_ineligible
+    return result
 
 
 def _tool_call_assertions(run_summaries: list[dict]) -> dict:
@@ -929,7 +1028,20 @@ def _stats_from_pairs(pairs: dict, *, statistical_alpha: float = 0.05) -> dict |
         [p.get("c_tool_call_sequence") for p in pairs.values()],
     )
     if not with_tool_funnel["funnel_fields_absent"]:
-        result["funnel"] = {"baseline": dict(_NULL_FUNNEL), "with_tool": with_tool_funnel}
+        result["funnel"] = {
+            "baseline": dict(_NULL_FUNNEL),
+            "with_tool": with_tool_funnel,
+            # tempdoc 729 D13: one-line pointer to the top-level `denominators`
+            # declaration -- the rates above are computed over CHECKED cells
+            # (the SECONDARY/funnel-conditional denominator), never the ITT
+            # n_attempted population. Pure documentation, no rate recomputed.
+            "denominator_note": (
+                "rates above are computed over CHECKED cells (paired cells "
+                "carrying funnel instrumentation) -- the SECONDARY "
+                "denominator, conditional on a usable cell; see the "
+                "record's top-level `denominators` block."
+            ),
+        }
     return result
 
 

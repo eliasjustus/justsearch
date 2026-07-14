@@ -13,7 +13,11 @@ from __future__ import annotations
 import pytest
 
 from jseval.agent_manifest import agent_cohort_key, build_agent_manifest
-from jseval.exposure_contrast import ExposureContrastError, exposure_contrast
+from jseval.exposure_contrast import (
+    ExposureContrastError,
+    exposure_contrast,
+    exposure_contrast_eligibility,
+)
 
 _FUNNEL_A = {
     "discovery_rate": 0.2,
@@ -175,6 +179,70 @@ def test_exposure_contrast_rejects_record_missing_exposure_identity():
 
     with pytest.raises(ExposureContrastError, match="exposure identity"):
         exposure_contrast(record_a, record_b)
+
+
+# --- exposure_contrast_eligibility / pre-#605 tombstone (tempdoc 729 D11) -----
+
+
+def test_eligibility_flags_empty_measured():
+    result = exposure_contrast_eligibility({"cohort": {}, "measured": {}})
+
+    assert result["eligible"] is False
+    assert any("measured is empty" in r and "#605" in r for r in result["reasons"])
+
+
+def test_eligibility_flags_missing_measured_key_entirely():
+    result = exposure_contrast_eligibility({"cohort": {}})
+
+    assert result["eligible"] is False
+    assert any("measured is empty" in r for r in result["reasons"])
+
+
+def test_eligibility_flags_absent_exposure_identity():
+    record = _record(omit_exposure_identity=True)
+
+    result = exposure_contrast_eligibility(record)
+
+    assert result["eligible"] is False
+    assert any("exposure identity" in r and "#605" in r for r in result["reasons"])
+    # measured is populated in this fixture -- only the identity reason fires.
+    assert not any("measured is empty" in r for r in result["reasons"])
+
+
+def test_eligibility_reports_both_reasons_when_both_disqualifiers_present():
+    result = exposure_contrast_eligibility({"cohort": {}, "measured": {}})
+
+    assert result["eligible"] is False
+    assert len(result["reasons"]) == 2
+
+
+def test_eligibility_true_for_a_normal_post_605_record():
+    record = _record(exposure_mode="deferred")
+
+    result = exposure_contrast_eligibility(record)
+
+    assert result == {"eligible": True, "reasons": []}
+
+
+def test_exposure_contrast_rejects_pre_605_record_with_tombstone_not_generic_message():
+    """A pre-#605-shaped record (empty `measured`, no cohort exposure identity)
+    must raise the SPECIFIC tombstone reason, not the old generic 'has no
+    measured cells' message -- so a future agent gets a self-describing
+    failure, not a puzzle (tempdoc 729 D11)."""
+    pre_605_record = {
+        "schema": "utility-comparison.v1",
+        "schema_version": 2,
+        "cohort": {"agent_cohort_key": "old-cohort", "git_sha": "f" * 40},
+        "measured": {},
+    }
+    record_b = _record(exposure_mode="eager")
+
+    with pytest.raises(ExposureContrastError, match="not exposure-contrast-eligible") as excinfo:
+        exposure_contrast(pre_605_record, record_b)
+    message = str(excinfo.value)
+    assert "#605" in message
+    assert "record_a" in message
+    assert "has no measured cells" not in message
 
 
 # --- hard validation: mismatched corpus/model ---------------------------------

@@ -829,6 +829,128 @@ def test_compose_utility_cell_carries_funnel_when_any_cell_has_funnel_data():
     assert cell["funnel"]["with_tool"]["discovery_rate"] == 1.0
 
 
+# --- Denominators / seed floor / eligibility stamp (tempdoc 729 B2/B3/B1) ---
+
+def test_compose_utility_denominators_block_names_primary_and_secondary():
+    """D13: the top-level `denominators` block names n_attempted as the
+    PRIMARY (ITT) denominator and n_checked/n_excluded as SECONDARY
+    (funnel-conditional), each with a declarative one-sentence `question`."""
+    summaries = [_summary("A", {"q0": _pq_entry()}), _summary("C", {"q0": _pq_entry()}, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    denominators = rec["denominators"]
+    assert denominators["n_attempted"]["tier"] == "primary"
+    assert denominators["n_checked"]["tier"] == "secondary"
+    assert denominators["n_excluded"]["tier"] == "secondary"
+    for entry in denominators.values():
+        assert entry["question"]  # a non-empty declarative sentence
+        assert entry["source"]
+
+
+def test_compose_utility_denominators_block_does_not_perturb_existing_metrics(tmp_path):
+    """U4: adding the `denominators` block is pure reporting -- no existing
+    metric numerator/denominator changes value. Reuses the funnel-carrying
+    fixture and asserts its funnel rates are untouched by the new block."""
+    c_pq = {
+        "q0": _pq_entry(
+            tool_calls=[{"tool": "mcp__justsearch__search"}],
+            toolsearch_targets=["mcp__justsearch__search"],
+            tool_call_sequence=[
+                {"name": "ToolSearch", "status": "ok"},
+                {"name": "mcp__justsearch__search", "status": "ok"},
+            ],
+        ),
+    }
+    a_pq = {"q0": _pq_entry()}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+
+    assert cell["funnel"]["with_tool"]["discovery_rate"] == 1.0
+    assert "denominators" in rec
+    assert "denominator_note" in cell["funnel"]
+    assert "SECONDARY" in cell["funnel"]["denominator_note"]
+
+
+def test_compose_utility_comparability_carries_denominator_note():
+    from jseval.utility_governance import ArmLoss, paired_comparability
+
+    full = {0: {"q0"}}
+    A = ArmLoss("A", 1, 1, 1, n_error_cells=0, excluded_query_ids=set(), ok_by_seed=full)
+    C = ArmLoss("C", 1, 1, 1, n_error_cells=0, excluded_query_ids=set(), ok_by_seed=full)
+    verdict, metrics = paired_comparability({"A": A, "C": C})
+    governance = {
+        "comparable": verdict.comparable, "reasons": verdict.reasons,
+        "metrics": metrics,
+        "per_arm_loss": {
+            "A": {"n_attempted": A.n_attempted, "n_excluded": A.n_excluded},
+            "C": {"n_attempted": C.n_attempted, "n_excluded": C.n_excluded},
+        },
+    }
+    summaries = [_summary("A", {"q0": _pq_entry()}), _summary("C", {"q0": _pq_entry()}, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t", governance=governance)
+
+    assert "PRIMARY" in rec["comparability"]["denominator_note"]
+    assert "denominators" in rec["comparability"]["denominator_note"]
+
+
+def test_compose_utility_seed_floor_met_true_at_the_floor():
+    summaries = [
+        _summary("A", {"q0": _pq_entry()}, seed=s) for s in range(utility_comparison.SEED_FLOOR)
+    ] + [
+        _summary("C", {"q0": _pq_entry()}, search_key="s", seed=s)
+        for s in range(utility_comparison.SEED_FLOOR)
+    ]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    assert rec["seed_count"] == utility_comparison.SEED_FLOOR
+    assert rec["seed_floor_met"] is True
+
+
+def test_compose_utility_seed_floor_met_false_below_the_floor():
+    summaries = [_summary("A", {"q0": _pq_entry()}, seed=0),
+                 _summary("C", {"q0": _pq_entry()}, search_key="s", seed=0)]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    assert rec["seed_count"] == 1
+    assert rec["seed_count"] < utility_comparison.SEED_FLOOR
+    assert rec["seed_floor_met"] is False
+
+
+def test_compose_utility_stamps_exposure_contrast_ineligible_when_pre_605_shaped():
+    """D11: a record composed without exposure identity anywhere (the shape
+    of every pre-#605 evidence) self-describes as exposure-contrast-ineligible
+    directly on the composed record, not only when a contrast is attempted."""
+    summaries = [_summary("A", {"q0": _pq_entry()}), _summary("C", {"q0": _pq_entry()}, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    assert "exposure_contrast_ineligible" in rec
+    assert rec["exposure_contrast_ineligible"]["since"] == "#605"
+    assert any("exposure identity" in r for r in rec["exposure_contrast_ineligible"]["reasons"])
+
+
+def test_compose_utility_omits_exposure_contrast_ineligible_when_eligible():
+    """Conditional-omission discipline (tempdoc 725 precedent): an eligible
+    record never carries the marker at all, not even as a `null`/false value --
+    a post-#605 record stays byte-identical to a record composed before this
+    stamp existed."""
+    manifest_over = {
+        "exposure_config": {"enable_tool_search": None, "always_load": False, "exposure_mode": "deferred"},
+        "mcp_initialize_identity": {"instructions": None, "instructions_sha256": "a" * 64,
+                                     "server_version": "1.0.0", "protocol_version": "2025-06-18"},
+        "exposure_mode": "deferred",
+        "instructions_sha256": "a" * 64,
+    }
+    summaries = [
+        _summary("A", {"q0": _pq_entry()}, **manifest_over),
+        _summary("C", {"q0": _pq_entry(
+            tool_calls=[{"tool": "mcp__justsearch__search"}],
+            toolsearch_targets=["mcp__justsearch__search"],
+            tool_call_sequence=[{"name": "mcp__justsearch__search", "status": "ok"}],
+        )}, search_key="s", **manifest_over),
+    ]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    assert "exposure_contrast_ineligible" not in rec
+
+
 def test_real_2026_07_12_rejected_fixture_funnel_is_absent_not_null_marker():
     """The immutable committed fixture predates toolsearch_targets/
     tool_call_sequence entirely -- `finalize_evidence` over it must produce a

@@ -114,6 +114,17 @@ token economics while keeping every line that carries an elided-ness fact: `just
 caps passages at the 3 highest-rank sections and trims each; `justsearch_search` omits only the
 preview snippet, keeping rank/title/score, path, and the match lines above.
 
+### What these tools do and do not do (multi-step lookups)
+
+`justsearch_answer` performs retrieval, not synthesis: it returns relevant passages with source
+attribution, and the calling agent composes the answer. Questions whose answer spans a chain of
+documents (for example, an entity named in one document whose details live in another) require
+the calling agent to issue a follow-up retrieval for each step of the chain — the tools do not
+traverse entity chains on the agent's behalf. In measurement, completion of such multi-step
+lookups varies substantially with the calling agent's model tier; the response furniture above
+(match lines, headers, coverage notes) makes each step's result legible but does not remove the
+need for the follow-up step itself.
+
 ## Structured retrieval evidence (tempdoc 658)
 
 `justsearch_search` and `justsearch_answer` return a machine-readable `structuredContent` object
