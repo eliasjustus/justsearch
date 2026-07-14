@@ -318,3 +318,36 @@ fixed main-loop first, plus an opus refute-first review before commit** (the lev
 staffing pattern, which caught every MAJOR this program produced). No increment warrants
 opus-tier implementation; the ordering constraint (G3 rides an intentional surface bump,
 after G1/G2 land the measurement that will judge it) matters more than model tier.
+
+
+---
+
+# Research pass (2026-07-14; one question — delivery-tier stability; cited summaries only)
+
+**Verdict: UNDOCUMENTED-OBSERVED, with an active churn signal.** The structured-preferred
+delivery we probed is documented NOWHERE official (code.claude.com/docs/en/mcp: zero mentions
+of structuredContent); it is user-discovered in a cluster of GitHub issues
+(anthropics/claude-code #9962 — "undocumented breaking change", a prior SILENT FLIP from
+text-preferred to structured-preferred between v2.0.10–2.0.22; #55677 — text dropped when
+structured present, closed "not planned"). VS Code Copilot MCP exhibits the identical behavior
+as an OPEN bug (microsoft/vscode #290063), while per issue reports Claude.ai web forwards text —
+the ecosystem has not converged. Spec-side, client-forwarding guidance exists only as a DRAFT
+(SEP-1624, unmerged): tiers "MUST be semantically equivalent"; clients "SHOULD NOT forward both."
+The 2026-07-28 RC adds nothing on client forwarding.
+
+## Design amendments this forces (recorded here; the design sections above stand otherwise)
+
+1. **G1 rewritten in intent:** do NOT declare structuredContent "the contract" — declare
+   **tier equivalence** as the product's contract ("both tiers carry the same information;
+   which one a client delivers is a client fact we capture, not assume"). This is precisely
+   draft SEP-1624's direction — G3's one-content-model design becomes conformance to the
+   emerging spec guidance, not just internal hygiene.
+2. **G2 promoted from useful to non-negotiable:** delivery flipped silently once already;
+   without per-cell delivered-tier capture, any cross-CLI-version measurement comparison is
+   silently confounded. Delivered tier joins cohort identity.
+3. **The U2 gap list reframes as tier-equivalence VIOLATIONS** (hints/facets/coverage-facts/full
+   passages exist in text only) — under SEP-1624's draft MUST, these are spec-conformance gaps
+   in waiting, which prioritizes closing them regardless of which tier any client prefers.
+4. Public-docs wording (G1) must present the delivery behavior as observed-and-versioned
+   ("observed with Claude Code CLI 2.1.209, 2026-07-14; behavior is undocumented upstream and
+   has changed before"), never as a stable platform guarantee.
