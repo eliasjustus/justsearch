@@ -100,9 +100,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] ui-shot/ui-check chat steps target the retired React inspector (search-input, inspector-pane, context-state pills) or a broken ?shell-demo bypass — none render the live shell-v0 UnifiedChatView, so the main chat surface has no visual-verification coverage — `scripts/jseval/jseval/ui_check.py` (2026-06-19)
 
 ### obs:utility-comparison — Pre-existing (unrelated to tempdoc 624 utility_comparison.py work): tests/test_agent_retrieval_eval.
-`kind: environment?` `anchor: utility_comparison.py` `seen: 2` `first: 2026-07-02` `last: 2026-07-02`
+`kind: environment?` `anchor: utility_comparison.py` `seen: 3` `first: 2026-07-02` `last: 2026-07-14`
 - [ ] Pre-existing (unrelated to tempdoc 624 utility_comparison.py work): tests/test_agent_retrieval_eval.py::test_build_disallowed_tools_condition_{a,b,c}_* fail with 'Extra items in the left set: Skill' — a disallowed-tools set assertion out of sync with agent_retrieval_eval.py, in already-uncommitted worktree changes predating this session. (2026-07-02)
 - [ ] utility_comparison._pair_observations only reads a_by_seed[seed][0]/c_by_seed[seed][0] — if a cell's cell_summaries ever contain >1 summary at the SAME (seed, arm) pair (e.g. a corpus-signature refresh landing at the same seed the _default_corpus_stratify docstring anticipates), all but the first summary's per_query is silently dropped rather than merged; the existing stratify test avoids this by using distinct seeds per signature — `scripts/jseval/jseval/utility_comparison.py:298-300` (2026-07-02)
+- [ ] Shared-worktree race: Chain B (tempdoc 736) concurrently edited scripts/jseval/jseval/utility_claim_policy.py while Chain A's git-stash isolation probe was mid-flight, causing a stash-pop conflict (recovered via per-file git checkout from stash@{0}, no data lost, stash left in place as safety net). Separately, Chain B's utility_comparison.py currently adds compose_utility()'s top-level `seed_floor_met` and `denominators` keys UNCONDITIONALLY (no conditional-omission path), which changes semantic_digest for every pre-736 historical composed record — the same digest-perturbation class the pre-existing cell["identity"] comment at utility_comparison.py warns about. Chain A verified in isolation that its own tool_result_digests/four-state/cost-turns changes do NOT perturb the historical fixture's semantic_digest (unchanged at 2f555f661a9165fcb29a3f7d0ec10c70ca5ca28b8e4d47581361c430a464a100); this finding is Chain B's, out of Chain A's file scope (utility_comparison.py) to fix. — `scripts/jseval/jseval/utility_comparison.py` (D13/D15 unconditional dict additions) (2026-07-14)
 
 ### obs:corpus-generate — battlefield-en-v1's materialized corpus-dir contained 858 stale .txt files from an earlier, larger r
 `kind: follow-up` `anchor: corpus_generate.py` `seen: 3` `first: 2026-07-02` `last: 2026-07-02`
@@ -141,8 +142,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Dev-stack: orphaned dev-runner/Worker processes accumulate across sessions and hold `index/default.index.lock` + squat port 5173, crash-looping new Workers (`Index base path is already locked`) and tearing the stack down — symptom looks like a code boot failure but isn't. Recover: kill stray java/node dev PIDs + delete the stale lock; run `dev-runner.cjs start` as a BARE persistent background process (its children are in a KILL_ON_JOB_CLOSE Job Object, so a timeout/pipe wrapper kills the whole stack). Hit during 629 LAYER live-validation. (2026-06-22)
 
 ### obs:agent-utility-inspect — jseval utility-run (Inspect eval_set): re-invoking a FULLY-COMPLETED set errors 'log file not associ
-`kind: defect?` `anchor: agent_utility_inspect.py` `seen: 1` `first: 2026-06-22` `last: 2026-06-22`
+`kind: defect?` `anchor: agent_utility_inspect.py` `seen: 2` `first: 2026-06-22` `last: 2026-07-14`
 - [ ] jseval utility-run (Inspect eval_set): re-invoking a FULLY-COMPLETED set errors 'log file not associated with a task' — needs --log-dir-allow-dirty; partial-crash resume uses the now-pinned deterministic eval_set_id. tempdoc 624 run-governance validation — `scripts/jseval/jseval/agent_utility_inspect.py:run_utility_eval` (2026-06-22)
+- [ ] furniture_markers all-False in the one live L1 capture cell despite extraction verified correct on both content shapes against live 0.3.1 responses (evidence_pack=True in-process) — child-agent-session content path discrepancy, unrecoverable from redacted logs; settle via one debug-instrumented cell — `scripts/jseval/jseval/agent_utility_inspect.py:548-621` (2026-07-14)
 
 ### obs:knowledgeapi — Pre-existing: modules/app-api/.../KnowledgeApi.java is a 1-byte empty stub (no package/class) — like
 `kind: environment?` `anchor: modules/app-api/src/main/java/io/justsearch/app/api/KnowledgeApi.java` `seen: 1` `first: 2026-06-23` `last: 2026-06-23`
@@ -841,7 +843,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
 - [ ] Dev stack (dev-runner) backend died silently mid-session ~2026-07-14 00:20 during light MCP-only load (a few SDK agent sessions hitting /mcp; run 561cb894, port 62520) — quick_health running:false, backend logs empty of errors. Second start ran fine. Unexplained; watch for recurrence under agent-session load. Noted during 725 derisk. (2026-07-14)
 
-### obs:commitment-v1 — 707/719 cross-platform replay gotcha: committed 707 commitment.v1.json digests hash CRLF build-time 
+### obs:commitment-v1 — 707/719 cross-platform replay gotcha: committed 707 commitment.v1.json digests hash CRLF build-time
 `kind: lesson?` `anchor: commitment.v1.json` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
 - [ ] 707/719 cross-platform replay gotcha: committed 707 commitment.v1.json digests hash CRLF build-time bytes, but git text=auto stores LF — a fresh LF checkout's fabricated-queries/meta/recipe files hash differently than their own manifests; rebuilding via corpus-query-stratum-build + corpus-inject-real reproduces all committed signatures exactly (proven 2026-07-14, en-legal-clerc 1k members). Outsider replay docs should say regenerate-then-verify, not hash-the-checkout. Discovered during 725 A/B corpus prep. (2026-07-14)
 
@@ -880,6 +882,51 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:devmode — the ts-any governance gate (gates/ts-any/baseline.txt, tempdoc 530 sec2.5) is red on origin/main's a
 `kind: environment?` `anchor: devMode.ts` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
 - [ ] the ts-any governance gate (gates/ts-any/baseline.txt, tempdoc 530 sec2.5) is red on origin/main's actual HEAD (401c1ae) independent of any merge from today's session: modules/ui-web/src/api/devMode.ts and modules/ui-web/src/shell-v0/streaming/MultiplexedStream.ts each have an unregistered '(import.meta as any).env?.DEV' cast, present since commit daa74bd (tempdoc 683 PR #77) and a9694aa (tempdoc 662 PR #22) respectively -- neither was ever added to the baseline file, which has been untouched since the initial-release seed commit (29579e5). Confirmed this gate is NOT wired into the public .github/workflows/ci.yml (no match for 'governance'/'ts-any'), so main's actual public CI is unaffected and shows success (gh run list --branch main) -- this is a local/manual-governance-only finding, not a CI-red condition. Found via tempdoc 727's publish verification pass; not fixed here (unrelated pre-existing debt, out of this tempdoc's scope). (2026-07-14)
+
+### obs:unanchored-general-28 — Embedding fingerprint apparently not persisted across worker restarts: an index healthy in-session (
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
+- [ ] Embedding fingerprint apparently not persisted across worker restarts: an index healthy in-session (compat REBUILDING->complete, CHUNK_HYBRID serving) re-flags BLOCKED_LEGACY/LEGACY_INDEX_NO_FINGERPRINT on plain dev-stack restart, blocking the dense leg until full re-embed; reproduced twice during 725 live validation (worktree .dev-data and main .dev-data) — `modules/indexer-worker` compat/fingerprint persistence (2026-07-14)
+
+### obs:unanchored-general-40 — Second unexplained dev-stack death under MCP-only agent load: backend died at/near the end of a 40-c
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
+- [ ] Second unexplained dev-stack death under MCP-only agent load: backend died at/near the end of a 40-cell utility campaign (all cells completed; death caught by the post-eval surface re-capture); first instance was logged during 725 derisk. Pattern: sustained MCP tool-call load — `dev-runner backend lifecycle` (2026-07-14)
+
+### obs:unanchored-error-2 — app-services:integrationTest crashes the forked test-worker JVM with java.io.EOFException before any
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
+- [ ] app-services:integrationTest crashes the forked test-worker JVM with java.io.EOFException before any test runs (no test-results XML updated) — unrelated to tempdoc 730 dev-runner/build.gradle.kts changes; likely environment/resource contention (GPU/native lib) on this machine — `modules/app-services/build.gradle.kts` (integrationTest task) (2026-07-14)
+
+### obs:unanchored-red-test — Local Gradle build cache (F:/caches) had a stale/corrupted entry for :modules:ipc-common:compileJava
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
+- [ ] Local Gradle build cache (F:/caches) had a stale/corrupted entry for :modules:ipc-common:compileJava missing RequestIdClientInterceptor.class, causing cascading app-services compile failures and NoClassDefFoundError test failures unrelated to source changes — resolved locally via --no-build-cache; not caused by tempdoc 732 items 1/2 work. (2026-07-14)
+
+### obs:unanchored-flake-2 — app-services:integrationTest fails reproducibly (isolated + full-build) with Gradle's own internal t
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
+- [ ] app-services:integrationTest fails reproducibly (isolated + full-build) with Gradle's own internal test-results binary I/O (java.io.EOFException / NoSuchFileException on in-progress-results-generic.bin), unrelated to module content — module never touched by tempdoc 731 I2 work; looks like environment/build-output infra flakiness on this machine, not a code defect — `modules/app-services/build.gradle.kts` (2026-07-14)
+
+### obs:retrievecontextparams — Worktree .claude/worktrees/725-response-legibility had concurrent agent-session activity during this
+`kind: environment?` `anchor: RetrieveContextParams.java` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
+- [ ] Worktree .claude/worktrees/725-response-legibility had concurrent agent-session activity during this task (~24 unrelated files modified: RetrieveContextParams.java, RemoteDocumentService.java, SqliteJobQueue.java, mcp/*.java, dev-runner.cjs, jseval/**, new tempdocs 736/731/732/733) — violates branch-safety.md 'never share a worktree'. Caused transient Gradle build-output corruption (ipc-common missing proto classes, app-services:integrationTest Gradle-internal SerializableTestResultStore EOFException/NoSuchFileException while writing its own HTML report) unrelated to tempdoc 730 code — resolved by clearing stale build/classes and build/test-results dirs and retrying — `.claude/worktrees/725-response-legibility` (shared worktree, 2026-07-14) (2026-07-14)
+
+### obs:mcptoolsurface — resources/read path still uses raw multi-entry Map.of (salted wire key order) at McpToolSurface.java
+`kind: follow-up?` `anchor: McpToolSurface.java` `seen: 2` `first: 2026-07-14` `last: 2026-07-14`
+- [ ] resources/read path still uses raw multi-entry Map.of (salted wire key order) at McpToolSurface.java:1220,1233,1250,1269,1442 + the {type,text} content blocks — same JVM-salt class as the fixed resources/list; follow-up candidate — `McpToolSurface.java:1220` (2026-07-14)
+- [ ] Pre-existing latent: corpus newlines in preview/answer text can mimic column-0 response furniture (Found N results / Hints lines); mitigation sketch: indent continuation lines; LOW-MODERATE, unchanged by 732 — `McpToolSurface.java:738-785` (2026-07-14)
+
+### obs:exposure-contrast — Concurrent Chain A activity in the shared worktree 725-response-legibility swept my (Chain B, tempdo
+`kind: follow-up?` `anchor: exposure_contrast.py` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
+- [ ] Concurrent Chain A activity in the shared worktree 725-response-legibility swept my (Chain B, tempdoc 736) uncommitted exposure_contrast.py/utility_comparison.py/test edits into commit a86d05b, whose message is entirely about unrelated 736-733 tempdoc docs — a git add -A/commit boundary violation of branch-safety.md's 'stage your own files explicitly' guidance, not caused by me. Code content verified correct (full pytest green) regardless of which commit it lives in, but commit-message attribution is now misleading and the orchestrator should consider recomposing history before merge — `git show a86d05b --stat` (repo root). (2026-07-14)
+
+### obs:knowledgeserver — tempdoc 730 A4: KnowledgeServer.maybeAutoStartEmbeddingRebuildAllPendingBestEffort's chunk-exclusion
+`kind: environment?` `anchor: modules/indexer-worker/src/main/java/io/justsearch/indexerworker/server/KnowledgeServer.java` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
+- [ ] tempdoc 730 A4: KnowledgeServer.maybeAutoStartEmbeddingRebuildAllPendingBestEffort's chunk-exclusion doc-count math (totalDocs - chunkDocs) is unit-untested at the KnowledgeServer level (only exercised indirectly via ECC-level tests that don't use chunks) — pre-existing gap, not touched by this increment — `modules/indexer-worker/src/main/java/io/justsearch/indexerworker/server/KnowledgeServer.java:1295-1300` (2026-07-14)
+
+### obs:unanchored-general-44 — Entity-filter cluster expansion turns a single-doc planted code (entity_persons=Cavby8) into 41 hits
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
+- [ ] Entity-filter cluster expansion turns a single-doc planted code (entity_persons=Cavby8) into 41 hits — disambiguation-cluster over-expansion on short synthetic codes; precision concern for entity-filtered retrieval — `entity facet filter expansion` (2026-07-14)
+
+### obs:dev-runner-drift-2 — Backend-death root cause substantially resolved: deaths coincide with other sessions' lease takeover
+`kind: follow-up?` `anchor: dev-runner.cjs` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
+- [ ] Backend-death root cause substantially resolved: deaths coincide with other sessions' lease takeovers (30s lease not renewed during long-running probes/campaigns that make no MCP dev-tool calls; observed live — session f3e41644 reclaimed mid-probe, stale_reclaim written by ITS runner). Issue 6 reframes from product crash to contention semantics; candidate fix: lease renewal heartbeat during utility-run/long ops — `scripts/dev/dev-runner.cjs lease model` (2026-07-14)
 
 ## Parked
 
