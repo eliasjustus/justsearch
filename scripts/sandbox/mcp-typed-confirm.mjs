@@ -39,6 +39,14 @@
  *      are exonerated; the PowerShell driver itself was the defect (most
  *      likely synchronous stdout ReadLine / not draining stderr / pipe
  *      handling).
+ *   4. THIS script, exactly as it stands, was then run live against that
+ *      dev stack (2026-07-15) and PASSED: exit 0, with the tools/call
+ *      response matched by id and identified as the TYPED_CONFIRM gate.
+ *      So the whole chain -- driver -> shipped bridge -> server -> gate --
+ *      is verified end-to-end, not merely by construction. What a round
+ *      still adds beyond this: the post-approval half (resolve the pending
+ *      via POST /api/authorizations/approve, then confirm the ingest
+ *      actually proceeds) on a real clean install.
  * The PowerShell driver has been removed (it does not work and would
  * invite a future round to run it and hang). This Node driver is the sole
  * replacement -- Node is already a sandbox requirement (the MCP Inspector
