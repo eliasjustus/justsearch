@@ -1536,6 +1536,27 @@ compose cleanly). Observation logged; dev-runner lifecycle territory, not 725 sc
 4. 624 Step-2 / powered campaign — strengthened by the A-vs-B result AND by issue 1's
    tool-independence evidence (the reasoning gap is exactly what a model-tier sweep measures).
 
+## Issue-remediation program (2026-07-14, owner directive: fix all 15)
+
+Owner directed full remediation of the consolidated inventory, each area proceeding
+theorize → research → design → derisk → plan before implementation. The 15 issues exceed this
+tempdoc's scope, so they split into five area tempdocs (each the authority for its issues;
+this section is the map):
+
+| Area tempdoc | Issues | Domain |
+|---|---|---|
+| 729 — agent-eval capture & instrument integrity | 9, 10, 11, 12, 13, 15 | jseval harness (624-adjacent; 624 remains metric authority) |
+| 730 — worker/dev-runner lifecycle integrity | 5, 6 | fingerprint persistence; backend death under MCP load |
+| 731 — retrieval integrity on mixed corpora | 2, 4, 14 | evidence-pack curation/fusion discrepancy; rebuild ranking instability; 707 q_type labels |
+| 732 — response-surface residuals | 3, 7, 8 | concise-default decision memo; excerpt sanitization posture; resources/list ordering |
+| 733 — second-hop compensation for weak agents | 1 | L4d gap-statement hypothesis + answer-side hop absorption (both design-level; ties to 624 Step-2) |
+
+Orchestration: five parallel area agents run the thinking phases and STOP at plan; the
+orchestrator reviews each plan (reviewer ≠ author) before any implementation wave starts;
+implementation then proceeds per approved plan with bounded workers + adversarial review, as in
+level 2. Live-stack probes requested by area derisk sections execute only under the
+orchestrator's stack lease.
+
 ## Candidate principle (from theorization, now adopted by the design): self-describing results
 
 **"Every tool result declares its own nature and limits — what it is, what was elided, what
