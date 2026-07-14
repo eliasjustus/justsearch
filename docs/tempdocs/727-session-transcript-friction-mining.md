@@ -890,3 +890,71 @@ under "Rollout risk" in the Theorization section above: decided against new soak
 infrastructure, since the existing kill switch (`JUSTSEARCH_DISABLE_HOOKS=1`, now live-verified
 against all 4 hooks including `taskcreate-guard`'s hard block) already provides the same
 protection a bespoke mechanism would add, without new structure.
+
+## Verification evidence (session-closeout pass)
+
+Every claim above that says a test/gate/command passed is backed by one of these, re-run fresh
+at closeout time (not just recalled from earlier in the session) rather than left as an
+unqualified assertion:
+
+- **"Full test suite (14 hook test files, one new integration test) green"** — re-run at
+  closeout: `for f in scripts/agent-analytics/hooks/*.test.mjs; do node "$f"; done` inside
+  `.claude/worktrees/727-friction-fixes` → all 15 files (the count grew to 15 including
+  `edit-reread-integration.test.mjs`) printed `all N checks passed` / `N passed`, 0 failures.
+  Per-file counts: bash-guard 51, build-counter 11, compact-restore 8, cwd-hint 9,
+  dataset-cache-hint 28, docs-granularity-hint 12, edit-reread-hint 9,
+  edit-reread-integration 6, intervene 19, known-state-hint 12, observation-shard-hint 6,
+  pipe-mask-hint 47, repeat-guard 4, taskcreate-guard 10, worktree-base-hint 7.
+- **"`hook-integrity` and `prose-tier-register` gates both pass"** — re-run at closeout:
+  `node scripts/governance/run.mjs --gate hook-integrity --mode gate` → exit 0,
+  `governance: 1 gate evaluated, 0 fail, 0 findings ... hook-integrity: pass`.
+  `node scripts/governance/run.mjs --gate prose-tier-register --mode gate` → exit 0,
+  `governance: 1 gate evaluated, 0 fail, 0 findings ... prose-tier-register: pass`.
+- **`taskcreate-guard`'s kill-switch behavior** — re-verified at closeout with the real
+  malformed payload piped through the real hook file: with
+  `JUSTSEARCH_DISABLE_HOOKS=1` set, exit code 0 and silent stdout; unset, exit code 2 with the
+  block message ("TaskCreate was called with a `tasks` key... blocked before dispatch").
+- **`context-efficiency.md`/`agent-lessons.md` back within budget** — re-run at closeout:
+  `node scripts/ci/check-always-loaded-budget.mjs` shows both `ok` (context-efficiency.md
+  1934/1955 B, agent-lessons.md 9647/9680 B).
+- **Correction to the budget-overage claim above**: re-running that same command at closeout
+  found **4** files over ceiling, not 2 — `branch-safety.md` (12099/10581 B) and
+  `tier-register.md` (17304/15725 B), as already stated, **plus two not previously mentioned
+  in this tempdoc**: `CLAUDE.md` (24260/22656 B) and `.claude/rules/hooks-reference.md`
+  (2839/2740 B). Confirmed via `git diff origin/main -- CLAUDE.md .claude/rules/hooks-reference.md`
+  (empty output, both files) that neither was touched by this worktree's commit — this is
+  separate pre-existing drift from other sessions that landed on `main` while this work was in
+  progress, not caused by tempdoc 727. Logged to the observations shard
+  (`docs/observations.d/e8c883b6-6084-42ea-8a08-6148373891b2.md`), not fixed here, same
+  reasoning as the other two files.
+
+### Unverified assumptions / not reproducible at closeout
+
+These claims elsewhere in this tempdoc rest on observations made earlier in the implementation
+session and are **not** re-confirmed by a fresh command at closeout time — recorded here
+explicitly rather than left standing as unqualified fact:
+
+- **Finding A's live runtime probe** ("an Agent-tool subagent operating in this worktree still
+  executed main's checkout copy of a modified hook file") — a one-time observation from a
+  specific subagent dispatch earlier in the session; not independently re-run at closeout. The
+  underlying mechanism (`${CLAUDE_PROJECT_DIR}` resolving to the main checkout) is a platform
+  behavior, not a repo-code claim, so there's no repo-side command that would re-prove it here.
+- **Finding B's "verified identical output against the real 624 incident file before and
+  after the change"** — the specific before/after comparison was done earlier in the
+  implementation session; the regression test added for it (a ~7MB synthetic file case inside
+  `intervene.test.mjs`) is the durable, re-run-at-closeout proof instead (see above), which is
+  why the claim is trustworthy going forward even though the original one-off comparison itself
+  wasn't repeated here.
+- **F-2's correction that `reportHolders()` was "live-tested through the real function with
+  real background processes"** — a one-time manual test against real `node.exe` processes
+  earlier in the session; not repeated at closeout (would require spawning and orphaning a real
+  background process again, which isn't warranted just to re-confirm a already-narrow, already
+  test-covered claim).
+- **F-6/F-7/F-8's underlying friction-mining numbers** (the aggregate table, the timeline
+  thirds, the per-category counts) — these come from `tmp/agent-telemetry/friction-aggregate.json`
+  / `friction-timeline.json`, which are gitignored, point-in-time outputs of
+  `aggregate-friction.mjs`/`friction-timeline.mjs` and are **not** re-generated at closeout (the
+  underlying judge run cost real API spend and its 58-session classification depends on
+  `friction-excluded-sessions.json`, which hasn't changed). Regenerate via
+  `node scripts/agent-analytics/aggregate-friction.mjs` /
+  `node scripts/agent-analytics/friction-timeline.mjs` if these numbers need re-confirming.
