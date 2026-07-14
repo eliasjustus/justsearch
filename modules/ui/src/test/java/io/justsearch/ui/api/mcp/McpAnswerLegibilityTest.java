@@ -128,6 +128,33 @@ final class McpAnswerLegibilityTest {
         text);
   }
 
+  @Test
+  @DisplayName(
+      "(a) header appends the pack-selection facts sentence when quality signals are populated"
+          + " (tempdoc 731 I6a)")
+  void headerAppendsPackSelectionFactsWhenQualityPresent() {
+    String text = textOf(invokeAnswer(fixtureResult(false, List.of())).result());
+
+    // fixtureResult's QualitySignals(0.9f, 0.1f, 0.5f, 5, 3): chunksIncluded=3,
+    // chunksConsidered=5, retrievalCoverage=0.5f → "0.50" at 2 decimals.
+    assertTrue(
+        text.contains(
+            "Pack selection: 3 of 5 candidate passages (retrieval coverage 0.50)."),
+        text);
+  }
+
+  @Test
+  @DisplayName(
+      "(a) header omits the pack-selection facts sentence when quality signals are absent"
+          + " (tempdoc 731 I6a — never render a 0-of-0 placeholder)")
+  void headerOmitsPackSelectionFactsWhenQualityAbsent() {
+    // fulltextFallbackFixtureResult uses the 9-arg ContextResult constructor, which defaults
+    // quality to QualitySignals.EMPTY — the FULLTEXT_FALLBACK path never computes real signals.
+    String text = textOf(invokeAnswer(fulltextFallbackFixtureResult()).result());
+
+    assertFalse(text.contains("Pack selection:"), text);
+  }
+
   /**
    * Mirrors the REAL shape {@code RemoteDocumentService.retrieveContextFallback} (gRPC-failure
    * catch, FULLTEXT_FALLBACK path) actually returns: empty citations (a chunk-RAG-only concept

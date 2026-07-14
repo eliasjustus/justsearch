@@ -102,7 +102,9 @@ public final class McpToolSurface {
           + " multiple documents, or when you want to conserve context. For a small set of files or"
           + " an exact string / filename lookup, ordinary file tools are equally good. Use"
           + " justsearch_search to explore what is in the index, and justsearch_status for the live"
-          + " index size and readiness.";
+          + " index size and readiness. Both tools accept response_format; \"concise\" returns"
+          + " substantially fewer tokens per call and keeps every line that reports what was"
+          + " elided.";
 
   private final List<OperationCatalog> operationCatalogs;
   private final OperationDispatcher dispatcher;
@@ -260,8 +262,10 @@ public final class McpToolSurface {
   private static final Map<String, Object> RESPONSE_FORMAT_SCHEMA =
       propEnum(
           List.of("concise", "detailed"),
-          "Response density: \"detailed\" (default) is the full shape; \"concise\" trims"
-              + " passage/preview volume");
+          "Response verbosity. \"detailed\" (default) includes preview snippets and full evidence"
+              + " passages. \"concise\" returns substantially fewer tokens per call: search results"
+              + " omit the preview line and answer packs cap at the 3 highest-ranked passages; the"
+              + " coverage, match, and header lines are kept in both modes.");
 
   private static final Map<String, Object> ANSWER_SCHEMA =
       schema(
@@ -529,6 +533,23 @@ public final class McpToolSurface {
           .append("). No synthesized answer is included.");
       if (result.contextTruncated()) {
         sb.append(" Context was truncated to fit limits.");
+      }
+      // Tempdoc 731 I6a: a descriptive pack-selection fact — no thresholds, no judgment words —
+      // stated only when retrieveContext actually populated quality signals. chunksConsidered() >
+      // 0 is the presence test: the call site's 9-arg ContextResult constructor defaults quality
+      // to QualitySignals.EMPTY (all-zero, e.g. the FULLTEXT_FALLBACK path, which never computes
+      // real signals at all), and the chunk-RAG path's own chunksConsidered is the raw candidate
+      // hit count before budgeting — zero only when literally no candidates were found. Either way
+      // chunksConsidered == 0 means there is nothing honest to report, never a "0 of 0" placeholder.
+      DocumentService.QualitySignals qualitySignals = result.quality();
+      if (qualitySignals.chunksConsidered() > 0) {
+        sb.append(" Pack selection: ")
+            .append(qualitySignals.chunksIncluded())
+            .append(" of ")
+            .append(qualitySignals.chunksConsidered())
+            .append(" candidate passages (retrieval coverage ")
+            .append(String.format("%.2f", qualitySignals.retrievalCoverage()))
+            .append(").");
       }
       sb.append("\n\n");
 

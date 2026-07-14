@@ -78,7 +78,7 @@ same JVM as the Head process. No Node.js required.
 Protocol version: `2025-11-25`. Capabilities: tools, resources,
 prompts. Curated tool-surface version (MCP `serverInfo.version`,
 single-sourced from `McpContractVersions.TOOL_SURFACE_VERSION`):
-`0.3.0`.
+`0.3.1`.
 
 ## Available Tools (6, position-bias ordered)
 
@@ -109,10 +109,10 @@ descriptive lines beyond the raw results, so an agent can judge a response witho
 - **Degradation and coverage lines** — a once-per-response note when semantic ranking degraded or
   fell back, and a "showing N of M" line when a response was capped below the total hit count.
 
-**`response_format`** (optional on both tools; default `"detailed"`). `"concise"` trims volume for
-token economics while keeping every line that carries an elided-ness fact: `justsearch_answer`
-caps passages at the 3 highest-rank sections and trims each; `justsearch_search` omits only the
-preview snippet, keeping rank/title/score, path, and the match lines above.
+**`response_format`** (optional on both tools; default `"detailed"`, which includes preview
+snippets and full evidence passages). `"concise"` returns substantially fewer tokens per call:
+`justsearch_search` results omit the preview line, and `justsearch_answer` packs cap at the 3
+highest-ranked passages; the coverage, match, and header lines are kept in both modes.
 
 ### What these tools do and do not do (multi-step lookups)
 

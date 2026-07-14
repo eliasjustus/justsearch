@@ -43,8 +43,16 @@ public final class McpContractVersions {
    * response_format} ("concise"/"detailed") argument; error results across the surface gained a
    * uniform, descriptive failure grammar pointing at {@code justsearch_status} — material,
    * agent-visible additions, so the SemVer minor bumps again.
+   *
+   * <p>0.3.1 (tempdoc 732 item 3 / 731 I6a): the {@code response_format} schema description and
+   * the single-sourced tool-selection guidance were reworded to state the concise/detailed
+   * per-call token-size tradeoff explicitly (both changes to published {@code tools/list} bytes);
+   * {@code justsearch_answer}'s evidence-pack header gained a descriptive pack-selection facts
+   * line ({@code chunksIncluded}/{@code chunksConsidered}/{@code retrievalCoverage}) when the
+   * retrieval's quality signals are populated — agent-visible text additions to the published
+   * surface, so the SemVer patch bumps.
    */
-  public static final String TOOL_SURFACE_VERSION = "0.3.0";
+  public static final String TOOL_SURFACE_VERSION = "0.3.1";
 
   private McpContractVersions() {}
 }

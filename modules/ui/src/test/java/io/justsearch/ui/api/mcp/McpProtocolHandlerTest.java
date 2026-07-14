@@ -141,6 +141,26 @@ class McpProtocolHandlerTest {
   }
 
   @Test
+  void instructions_stayUnderClientTruncationBudget() {
+    // Tempdoc 732 item 3(b): TOOL_SELECTION_GUIDANCE gained one sentence naming the
+    // response_format token-size tradeoff. Some MCP clients truncate the connect-time
+    // `instructions` field around 2KB, so this pins the byte length under that budget rather than
+    // relying on eyeballing the string during review.
+    var surface =
+        new McpToolSurface(
+            List.of(OperationCatalog.of("core", List.of())),
+            dispatcher,
+            () -> null,
+            () -> null,
+            FIXED_CLOCK);
+    int byteLength = surface.instructions().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+    assertTrue(
+        byteLength < 2048,
+        "instructions() must stay under the ~2KB client truncation budget, was " + byteLength
+            + " bytes");
+  }
+
+  @Test
   void comparativeAnswerHint_countsDistinctDocuments_notChunks() {
     // Regression (review finding F1): the hint must key on DISTINCT cited documents, not chunksFound
     // — multiple chunks from ONE document must NOT produce a "spanning multiple documents" claim.
@@ -239,6 +259,25 @@ class McpProtocolHandlerTest {
     assertEquals(
         List.of("concise", "detailed"), answerResponseFormat.get("enum"),
         "answer response_format is a concise/detailed enum");
+    // Tempdoc 732 item 3: the response_format schema description states the concise/detailed
+    // token-size tradeoff explicitly — the shared RESPONSE_FORMAT_SCHEMA constant, so pinning it
+    // once here covers both tools (search's copy is asserted identical below).
+    assertEquals(
+        "Response verbosity. \"detailed\" (default) includes preview snippets and full evidence"
+            + " passages. \"concise\" returns substantially fewer tokens per call: search results"
+            + " omit the preview line and answer packs cap at the 3 highest-ranked passages; the"
+            + " coverage, match, and header lines are kept in both modes.",
+        answerResponseFormat.get("description"),
+        "response_format schema description must state the per-call token-size tradeoff");
+    // Tempdoc 655's single-sourced RESPONSE_FORMAT_SCHEMA is shared by both tools (655 "projection,
+    // not fork") — search's copy must carry the identical description, not a drifted duplicate.
+    @SuppressWarnings("unchecked")
+    Map<String, Object> searchResponseFormat =
+        (Map<String, Object>) searchProps.get("response_format");
+    assertEquals(
+        answerResponseFormat.get("description"),
+        searchResponseFormat.get("description"),
+        "search and answer must share the identical response_format description (single-sourced)");
 
     @SuppressWarnings("unchecked")
     Map<String, Object> searchFilters = (Map<String, Object>) searchProps.get("filters");
