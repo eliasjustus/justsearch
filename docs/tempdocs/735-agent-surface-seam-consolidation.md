@@ -493,3 +493,29 @@ further spend without explicit word.
 governor (new, from V); concise-mode golden pin (W6 review MINOR-2); blocked-call index
 misalignment in harness metadata (V anomaly); SDK-deferral interaction documented in the probe.
 Owner-gated: PR/merge; full-passage parity A/B; hop-absorption A/B; powered 624.
+
+## Session-closeout ledger (2026-07-15): unverified assumptions + deferred checks
+
+Explicitly NOT verified (hypotheses a future agent must not treat as facts):
+
+1. **Truncation-notice mechanism.** The 2/137 prose-at-2286-bytes deliveries are ATTRIBUTED to a
+   client-side oversized-result cap by elimination (the server returns structuredContent fine for
+   the same call, live-verified 2026-07-15), but the cap itself — threshold, notice format, which
+   CLI layer — is uncharacterized. The redacted campaign digests cannot show the notice text.
+2. **SDK-deferral trigger.** The probe's placeholder captures are attributed to the CLI's
+   deferred-MCP-tools behavior (consistent with the campaign exposure_mode "deferred" and the
+   fix working), but the exact deferral conditions for a strict-config single-allowed-tool SDK
+   session were not isolated.
+3. **Reaper reattribution of prior "backend deaths".** Plausible (same silence pattern), but the
+   pre-730 kills wrote no disposition — unprovable retroactively.
+4. **Behavioral-mix explanation of V's campaign-level token delta.** The +466B/search constant is
+   verified (19/19 paired queries); attributing the REMAINING delta to seed-1 behavioral churn is
+   inference from the D→T→U envelope, not a measured decomposition.
+
+Deferred checks: concise-mode golden pin (W6 MINOR-2, branches untouched); blocked-call index
+misalignment fix in harness metadata; truncation-cap characterization; genuine multi-block +
+ToolSearch-placeholder fixture shapes (README marks which remain reconstructed).
+
+Registers: no `/search-quality` or `/inference-runtime` update owed — this session produced no
+retrieval-quality or inference-runtime findings (F-037 was registered earlier in the program;
+Campaign V measured delivery/economics, not ranking quality).
