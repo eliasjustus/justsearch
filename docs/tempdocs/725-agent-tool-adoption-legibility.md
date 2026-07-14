@@ -508,3 +508,85 @@ Any measured agent behavior is a (model, client/harness, exposure-mode) cohort f
 capture, build nothing new. Earns its keep when two cohorts' adoption numbers stop being silently
 comparable (already true: Desktop-vs-CLI exposure differs); retires only if the identity machinery
 itself subsumes it so completely that restating it adds nothing.
+
+---
+
+# De-risking pass (2026-07-14; live probes + log audit; no feature work)
+
+All evidence in session scratchpad `probe-results-v3/` (+v1/v2 for the failure forensics) and the
+funnel audit below. Dev stack used and stopped; CLI 2.1.207, `claude-agent-sdk` 0.2.111.
+
+## Per-uncertainty verdicts
+
+- **U1 (deferral on our versions) — CONFIRMED, on haiku.** Live SDK session, trusted cwd, default
+  config: all six `mcp__justsearch__*` tools present in the init message but self-reported
+  `names_only`; the model answered "Schema not visible (deferred tool)" for
+  `justsearch_answer`'s description. The docs' "tool search excludes Haiku" language is wrong at
+  the harness level — haiku sessions defer and can ToolSearch (three independent behavioral
+  proofs: this probe, the 2026-07-12 pilot, the v1 probe).
+- **U2 (`alwaysLoad` works) — CONFIRMED, with a clean within-session control.** Same session,
+  `{"type":"http","url":…,"alwaysLoad":true}` (SDK dict form): the six product tools moved to
+  `full_schema_visible` — the model quoted the description's first eight words verbatim ("Get
+  evidence from your indexed documents to") — while justsearch-dev's tools (no `alwaysLoad`)
+  stayed names-only in the same context. The A/B's treatment arm is a one-key config change.
+  (File-based `.mcp.json` form untested against a live server — trivial residual, verify when
+  wiring the A/B.)
+- **U4 (instructions reach the model) — CONFIRMED in BOTH modes.** The model quoted
+  TOOL_SELECTION_GUIDANCE's first sentence verbatim with tools deferred AND with them eager —
+  655's carrier works on the current cohort, including haiku.
+- **U3 (exposure-mode observability) — capture must be config-echo + initialize-response, not
+  init-message inference.** The SDK init message lists the six tool names identically in both
+  modes — it does NOT distinguish deferred from eager. Capture therefore records: the session's
+  `ENABLE_TOOL_SEARCH`/`alwaysLoad` config verbatim, plus the server `initialize` response
+  (version + instructions text/hash). **New capture gap found:** the current surface hash covers
+  `tools/list` only — `instructions` and server version are outside captured identity, and the
+  stale-dist incident (below) shows that gap is live, not theoretical.
+- **U5 (funnel derivability) — INVOKED fully derivable from both raw + sanitized shapes (order
+  survives sanitization byte-for-byte); DISCOVERED needs one new sanitized field** (ToolSearch
+  inputs are stripped — add `toolsearch_targets` or a referenced-justsearch boolean); a
+  **REINFORCED-strict predicate needs ordered per-call status** (blocked calls are an unordered
+  side-array with no positional linkage — upstream capture gap; `mcp_call_count>1` proxy works
+  meanwhile). Full per-cell funnel table for the pilot: offered 14/14 → discovered 2/14 →
+  invoked 1/14 → reinforced-proxy 1/14; `B|q9` is a clean discovered-then-abandoned drop-off.
+  Passing find (inbox + verify at implementation): the committed rejected fixture may not satisfy
+  the observation schema's `source.*` requirements — check before building on that schema.
+- **U6 (A/B substrate) — PARTIAL.** No materialized 707 member exists on this machine (the CLERC
+  6.7GB fetch never ran; only committed fabricated halves + recipes). Dev-runner stack starts
+  reliably (3× today, ~40s) and the ingest path is healthy (200/accepted on a smoke ingest), so
+  the 719-reported 120s-startup failures look specific to jseval's `--start-backend` launcher and
+  routable-around via the dev-runner + external-backend env vars. Fetch+materialize is time, not
+  dollars, and is the A/B's long pole.
+
+## Incidental findings that harden the design
+
+1. **Stale-dist hazard is real and silent:** the first stack launch served TOOL_SURFACE_VERSION
+   0.1.0 — *without* the 655 instructions field — despite 0.2.0 being merged; the known
+   `installDist` pitfall. Any eval run against a stale jar measures the wrong steering surface,
+   and nothing in current capture would notice (instructions isn't hashed). Direct justification
+   for the U3 capture rule; also means historical adoption runs' instructions-surface identity is
+   unverifiable in retrospect.
+2. **Project-scope MCP approval gates headless runs:** an unapproved project server shows
+   "Pending approval" and connects as `failed` in `-p`/SDK sessions from an untrusted cwd (this
+   masqueraded as server failure through an entire probe round). The A/B harness must pin a
+   trusted cwd / pre-approved config, and README guidance for headless users should mention the
+   approval step.
+3. **One unexplained dev-stack death** under light MCP-only load (logged to observations inbox;
+   watch during the A/B).
+
+## Confidence and difficulty
+
+**Confidence: 8/10** for the design's implementable increments (655 transfer, exposure-mode +
+initialize-response capture, funnel metrics/fields, A/B harness config, L1/L2 levers). The two
+residual unknowns are external and accepted: non-CLI client behavior (cohort-relative by design)
+and 707 materialization end-to-end (production commands + tests exist from 719, but the fetch has
+never run on this machine). Not 9+ because the schema/fixture drift find suggests the observation
+contract needs a verification pass before building on it, and the owner-set A/B thresholds are
+still open by design.
+
+**Difficulty: moderate** — the hard thinking (lever order, funnel semantics, capture contract) is
+done and probe-verified; what remains is disciplined plumbing plus one experiment. Recommended
+split: **one Opus-tier lead (high effort) for the 624 capture/identity/funnel contract and the
+pre-registration + instructions-v2 wording** (correctness-sensitive, cross-tempdoc authority
+edits); **Sonnet (medium-high effort) for the bounded increments** — probe-script productization,
+evidence-field additions + tests, A/B config wiring, 655 transfer edit, docs — under the lead's
+review. Full-campaign execution stays owner-gated regardless.
