@@ -1,7 +1,7 @@
 ---
 title: "Second-hop compensation for weak agents: adjudicate gap-statement affordance vs answer-side hop absorption vs honest expectation-setting for the model-level entity-chain failure"
 type: tempdocs
-status: "open — planned (725 remediation program), awaiting orchestrator review"
+status: "open — planned + stop-gate probes GREEN (P0: planted codes NER-tagged as persons; P1: entity-code query ranks hop-2 doc #1 in 7/7) — hop-absorption feasibility live-confirmed; option (c) docs paragraph SHIPPED (a86d05b); flag-gated build + pre-registered A/B (~$40-45) awaits owner authorization"
 created: 2026-07-14
 author: "agent (area agent, tempdoc 725 remediation program)"
 related:

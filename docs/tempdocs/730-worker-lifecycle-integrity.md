@@ -1,7 +1,7 @@
 ---
 title: "Worker/dev-runner lifecycle integrity: durable embedding-fingerprint persistence across restart, and diagnosability of backend death under sustained MCP-only agent load"
 type: tempdocs
-status: "open — planned (725 remediation program), awaiting orchestrator review"
+status: "open — implemented + review-corrected on branch (90b02c0/7a46ca1/a9e7b08/8bdcbce): gated supplier restored after mixed-provenance refutation, shutdown/completion stamp commits, A4 auto-rescue (validated LIVE on the real corrupted generation), death observability; live restart anomaly unreproduced under production-fidelity tests; deaths substantially reframed to lease-takeover contention (new observation: lease renewal during long ops)"
 created: 2026-07-14
 author: "agent (area agent, tempdoc 725 remediation program)"
 related:

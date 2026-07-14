@@ -1,7 +1,7 @@
 ---
 title: Agent-eval capture & instrument integrity
 type: tempdocs
-status: "open — planned (725 remediation program), awaiting orchestrator review"
+status: "open — implemented + adversarially reviewed + shipped on branch (chains A+B, commits 0ddcd7e/f71fe4b): tool-result digests, four-state status, errored-cell cost, tombstones, denominators, seed floor; digest-coverage exact-pinned; L1 live cell validated capture end-to-end (one open observation: furniture markers all-False in the child-session cell, extraction verified correct in-process)"
 created: 2026-07-14
 author: "agent (area agent, tempdoc 725 remediation program)"
 related: [725, 624, 719]

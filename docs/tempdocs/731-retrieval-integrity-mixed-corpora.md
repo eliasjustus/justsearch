@@ -1,7 +1,7 @@
 ---
 title: "Retrieval integrity on mixed corpora: two-retrievals-one-truth (pack-vs-search fusion disagreement), hybrid ranking instability across rebuilds, and 1_hop label correctness"
 type: tempdocs
-status: "open — planned (725 remediation program), awaiting orchestrator review"
+status: "open — I1/I2/I4/I5/I6a implemented + reviewed + shipped on branch (b7c2fc2/fd2c98e/6713f7d/e819e9f); register F-037 recorded; PENDING: I3 (needs live A3 probe), A2 determinism run (instrument committed), I6b curation eval (post-fix agreement still 0/7 top1-in-pack — chunk-stage)"
 created: 2026-07-14
 author: "agent (area agent, tempdoc 725 remediation program)"
 related: [725, 707, 708, 712, 713]
