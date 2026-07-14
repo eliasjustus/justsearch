@@ -83,6 +83,12 @@ public final class EmbeddingProviderLifecycle {
    */
   private int lastLoggedWaitPending = -1;
 
+  /**
+   * WARN-once latch for a failing {@code jobQueue.queueDepth()} diagnostics read in
+   * {@link #tryFinalizeRebuild()}; reset on the next successful read. Loop-thread only.
+   */
+  private boolean queueDepthReadFailureLogged = false;
+
   private volatile Consumer<EmbeddingProvider> embeddingProviderChangeListener;
 
   /** Tempdoc 518 Appendix F W4.3 — additional-listeners branch migrated to the shared
@@ -275,14 +281,20 @@ public final class EmbeddingProviderLifecycle {
       return false;
     }
 
-    // queueDepth is read for diagnostics only (tempdoc 726 F1) — it does NOT gate certification.
+    // queueDepth is read for diagnostics only (tempdoc 726 F1) — it does NOT gate certification, so
+    // a failed read must not block the finalize attempt either (a broken diagnostics read would
+    // otherwise re-create the certification livelock this fix removes). -1 = read failed.
     long queueDepth;
     try {
       queueDepth = jobQueue.queueDepth();
+      queueDepthReadFailureLogged = false;
     } catch (Exception e) {
-      log.warn(
-          "tryFinalizeRebuild: failed to read job queue depth; skipping this finalize attempt", e);
-      return false;
+      if (!queueDepthReadFailureLogged) {
+        log.warn(
+            "tryFinalizeRebuild: failed to read job queue depth (diagnostics only; continuing)", e);
+        queueDepthReadFailureLogged = true;
+      }
+      queueDepth = -1L;
     }
 
     int pendingEmbeddings;

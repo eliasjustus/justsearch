@@ -1285,13 +1285,22 @@ public final class KnowledgeServer implements Closeable {
       // so the backfill re-embeds them under the current model; then enter REBUILDING regardless of
       // the completed/pending distribution (the pre-fix all-pending-only trigger left a
       // fully-embedded-but-never-stamped index stuck here forever). The re-mark needs the write-side
-      // coordinator, which only a RunningRuntime exposes — a non-writable phase can't recover here.
-      int remarked = 0;
-      if (ingestLifecycle instanceof RunningRuntime running) {
-        remarked =
-            io.justsearch.indexerworker.loop.ops.EmbeddingRecoveryOps.remarkEmbeddedParentDocsPending(
-                running.documentFieldOps(), running.indexingCoordinator(), 1000, log);
+      // coordinator, which only a RunningRuntime exposes — without it, do NOT transition: entering
+      // REBUILDING with completed>0 and pending==0 un-re-marked would let the loop certify and stamp
+      // provenance-unknown vectors (the unsound certification this fix exists to prevent).
+      // BLOCKED_LEGACY is the safe state; the next boot with a RunningRuntime recovers.
+      if (!(ingestLifecycle instanceof RunningRuntime running)) {
+        log.warn(
+            "Embedding recovery: BLOCKED_LEGACY index detected but the write-side coordinator is"
+                + " unavailable (runtime phase {}); recovery deferred to a boot with a running"
+                + " writer",
+            ingestLifecycle.getClass().getSimpleName());
+        return;
       }
+
+      int remarked =
+          io.justsearch.indexerworker.loop.ops.EmbeddingRecoveryOps.remarkEmbeddedParentDocsPending(
+              running.documentFieldOps(), running.indexingCoordinator(), 1000, log);
 
       boolean started = embeddingCompatController.maybeAutoStartRebuildForBlockedLegacy(docs);
       log.warn(
