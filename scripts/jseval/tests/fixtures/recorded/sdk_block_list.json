@@ -1,0 +1,16 @@
+{
+  "tool": "(generic -- not a specific JustSearch tool)",
+  "delivered_tier": "blocks",
+  "provenance": "reconstructed-from-source, not recorded",
+  "provenance_note": "No in-repo JustSearch MCP tool today both omits structuredContent AND returns a multi-block content list, so there is no real endpoint to capture this shape from -- it is synthesized directly from the Claude Agent SDK's own type contract: `ToolResultBlock.content: str | list[dict[str, Any]] | None` (claude_agent_sdk, confirmed against the installed package -- see tests/test_agent_utility_inspect.py::test_record_cell_tool_result_digests_furniture_markers_block_list_content_shape for the same shape used elsewhere in this suite). Each block follows the MCP TextContent shape (`{\"type\": \"text\", \"text\": ...}`) that McpToolSurface.java itself emits for every text block it constructs (e.g. callStatus at McpToolSurface.java:940, callOperation at McpToolSurface.java:985/988). This fixture exists to exercise the `_delivered_tier` == \"blocks\" branch (list input) independent of any specific tool's real behavior.",
+  "cli_version": "2.1.209",
+  "mcp_tool_surface_version": "0.3.1",
+  "stamped": "2026-07-14",
+  "result": {
+    "is_error": false,
+    "content": [
+      {"type": "text", "text": "First block of a multi-block tool result."},
+      {"type": "text", "text": "Second block, e.g. a structured-data JSON string rendered as a second text block rather than via structuredContent."}
+    ]
+  }
+}

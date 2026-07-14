@@ -210,8 +210,16 @@ async function buildOwnershipProjection({ mainRepoRoot, callerRepoRoot, callerSe
     ...(leaseProv ? { provenance: leaseProv } : {}),
   };
   if (active.lease) {
-    ownership.lease = active.lease;
-    ownership.leaseFresh = new Date(active.lease.expiresAt) > new Date();
+    // Tempdoc 735 G6: surface remaining-hold as a computed, additive field so quick_health /
+    // status callers don't each redo the expiresAt-minus-now arithmetic to see how much of a
+    // declared campaign-length hold is left.
+    // A dead supervisor makes any advertised hold moot (verdict short-circuits to RECLAIM_DEAD),
+    // so liveness-qualify the advisory fields rather than showing hours of remaining hold on a
+    // crashed stack.
+    const remainingMs = supervisorAlive
+        ? new Date(active.lease.expiresAt).getTime() - Date.now() : 0;
+    ownership.lease = { ...active.lease, remainingSec: Math.max(0, Math.round(remainingMs / 1000)) };
+    ownership.leaseFresh = supervisorAlive && new Date(active.lease.expiresAt) > new Date();
   }
   if (opLeases.active.length > 0) ownership.opLeases = opLeases.active;
   // Tempdoc 606 3a: pull-at-next-action notification. Did THIS caller previously own a
@@ -614,6 +622,10 @@ export async function main() {
         'Then call reload after code changes to compile + push bytecode + restart services (~2-3s).',
         'Without hotReload on start, reload still pushes bytecode (method-body changes only).',
         '',
+        'Long campaigns: start with leaseDurationSec (30-7200) to hold ownership without frequent',
+        'renewals — avoids a mid-campaign takeover when the agent is busy (jseval/gradle) for minutes',
+        'with no session activity. quick_health/status report remaining hold via ownership.lease.remainingSec.',
+        '',
         'Prerequisites: ./gradlew.bat build must succeed before start.',
         'After compaction: call quick_health to re-orient.',
         '',
@@ -708,7 +720,11 @@ export async function main() {
         effDevRunnerPath = cand;
       }
 
-      const args = buildDevRunnerArgsStart({ apiPort, uiPort, clean, dataDir, takeover, skipBuild, hotReload, sessionId: input.sessionId });
+      const args = buildDevRunnerArgsStart({
+        apiPort, uiPort, clean, dataDir, takeover, skipBuild, hotReload,
+        sessionId: input.sessionId,
+        leaseDurationSec: input.leaseDurationSec,
+      });
       maybeAppendNdjson(mainRepoRoot, { event: 'tool_start', tool: 'justsearch.dev.start', args: { apiPort, uiPort, clean, distFrom: input.distFrom ?? null } });
 
       let json;

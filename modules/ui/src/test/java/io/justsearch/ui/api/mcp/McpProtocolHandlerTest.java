@@ -141,6 +141,26 @@ class McpProtocolHandlerTest {
   }
 
   @Test
+  void instructions_stayUnderClientTruncationBudget() {
+    // Tempdoc 732 item 3(b): TOOL_SELECTION_GUIDANCE gained one sentence naming the
+    // response_format token-size tradeoff. Some MCP clients truncate the connect-time
+    // `instructions` field around 2KB, so this pins the byte length under that budget rather than
+    // relying on eyeballing the string during review.
+    var surface =
+        new McpToolSurface(
+            List.of(OperationCatalog.of("core", List.of())),
+            dispatcher,
+            () -> null,
+            () -> null,
+            FIXED_CLOCK);
+    int byteLength = surface.instructions().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+    assertTrue(
+        byteLength < 2048,
+        "instructions() must stay under the ~2KB client truncation budget, was " + byteLength
+            + " bytes");
+  }
+
+  @Test
   void comparativeAnswerHint_countsDistinctDocuments_notChunks() {
     // Regression (review finding F1): the hint must key on DISTINCT cited documents, not chunksFound
     // — multiple chunks from ONE document must NOT produce a "spanning multiple documents" claim.
@@ -217,9 +237,47 @@ class McpProtocolHandlerTest {
     // would only reveal itself as flakiness across separate process launches, not within one
     // test run).
     assertEquals(
-        List.of("query", "limit", "mode", "filters", "detail"),
+        List.of("query", "limit", "mode", "filters", "detail", "response_format"),
         List.copyOf(searchProps.keySet()),
         "search inputSchema properties must serialize in declared source order");
+
+    // Tempdoc 725 W2c: the opt-in `response_format` argument is part of the published
+    // answer-tool contract too (sibling of the search-tool assertion above).
+    @SuppressWarnings("unchecked")
+    Map<String, Object> answerInputSchema =
+        (Map<String, Object>) tools.get(0).get("inputSchema");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> answerProps =
+        (Map<String, Object>) answerInputSchema.get("properties");
+    assertEquals(
+        List.of("query", "top_k", "filters", "response_format"),
+        List.copyOf(answerProps.keySet()),
+        "answer inputSchema properties must serialize in declared source order");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> answerResponseFormat =
+        (Map<String, Object>) answerProps.get("response_format");
+    assertEquals(
+        List.of("concise", "detailed"), answerResponseFormat.get("enum"),
+        "answer response_format is a concise/detailed enum");
+    // Tempdoc 732 item 3: the response_format schema description states the concise/detailed
+    // token-size tradeoff explicitly — the shared RESPONSE_FORMAT_SCHEMA constant, so pinning it
+    // once here covers both tools (search's copy is asserted identical below).
+    assertEquals(
+        "Response verbosity. \"detailed\" (default) includes preview snippets and full evidence"
+            + " passages. \"concise\" returns substantially fewer tokens per call: search results"
+            + " omit the preview line and answer packs cap at the 3 highest-ranked passages; the"
+            + " coverage, match, and header lines are kept in both modes.",
+        answerResponseFormat.get("description"),
+        "response_format schema description must state the per-call token-size tradeoff");
+    // Tempdoc 655's single-sourced RESPONSE_FORMAT_SCHEMA is shared by both tools (655 "projection,
+    // not fork") — search's copy must carry the identical description, not a drifted duplicate.
+    @SuppressWarnings("unchecked")
+    Map<String, Object> searchResponseFormat =
+        (Map<String, Object>) searchProps.get("response_format");
+    assertEquals(
+        answerResponseFormat.get("description"),
+        searchResponseFormat.get("description"),
+        "search and answer must share the identical response_format description (single-sourced)");
 
     @SuppressWarnings("unchecked")
     Map<String, Object> searchFilters = (Map<String, Object>) searchProps.get("filters");
@@ -254,6 +312,36 @@ class McpProtocolHandlerTest {
         List.of("readOnlyHint", "idempotentHint"),
         List.copyOf(ingestAnnotations.keySet()),
         "ingest tool annotations must serialize in declared source order");
+  }
+
+  @Test
+  void resourcesList_returnsDeterministicKeyOrder() throws Exception {
+    // Tempdoc 732 issue 8: resource() used a 4-entry Map.of, the same JDK-salted-iteration-order
+    // defect already fixed for tool()/schema()/propStringArray()/propEnum() via orderedMap(...).
+    // Mirrors the tools/list order assertion above for the resources/list response.
+    Context ctx = mock(Context.class);
+    when(ctx.header("Mcp-Session-Id")).thenReturn("s1");
+    when(ctx.body())
+        .thenReturn(
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"resources/list\",\"params\":{}}");
+    ArgumentCaptor<String> resultCaptor = ArgumentCaptor.forClass(String.class);
+    when(ctx.result(resultCaptor.capture())).thenReturn(ctx);
+    when(ctx.contentType(anyString())).thenReturn(ctx);
+
+    handler.handlePost(ctx);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> response = MAPPER.readValue(resultCaptor.getValue(), Map.class);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> result = (Map<String, Object>) response.get("result");
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> resources = (List<Map<String, Object>>) result.get("resources");
+
+    assertFalse(resources.isEmpty());
+    assertEquals(
+        List.of("uri", "name", "description", "mimeType"),
+        List.copyOf(resources.get(0).keySet()),
+        "resource entries must serialize in declared source order");
   }
 
   @Test

@@ -349,6 +349,181 @@ def test_record_cell_tool_call_sequence_marks_disallowed_over_blocked():
     assert state.metadata["tool_call_sequence"] == [{"name": "Bash", "status": "disallowed"}]
 
 
+# --- tempdoc 736 U3: the four-state (ok/blocked/disallowed/errored) partition
+# must be complete and correct over the FULL cartesian of {result present/absent}
+# x {is_error T/F} x {denied T/F} x {disallowed T/F}. Precedence: disallowed >
+# blocked (no execution) > errored (executed, is_error) > ok. ---
+
+@pytest.mark.parametrize(
+    "result_present,is_error,denied,disallowed,expected",
+    [
+        # result absent -- is_error is moot (no result carries an is_error flag).
+        (False, False, False, False, "blocked"),
+        (False, False, False, True, "disallowed"),
+        (False, False, True, False, "blocked"),
+        (False, False, True, True, "disallowed"),
+        (False, True, False, False, "blocked"),
+        (False, True, False, True, "disallowed"),
+        (False, True, True, False, "blocked"),
+        (False, True, True, True, "disallowed"),
+        # result present
+        (True, False, False, False, "ok"),
+        (True, False, False, True, "disallowed"),
+        (True, False, True, False, "blocked"),
+        (True, False, True, True, "disallowed"),
+        (True, True, False, False, "errored"),
+        (True, True, False, True, "disallowed"),
+        (True, True, True, False, "blocked"),
+        (True, True, True, True, "disallowed"),
+    ],
+)
+def test_record_cell_four_state_status_partition_is_complete_and_correct(
+    result_present, is_error, denied, disallowed, expected,
+):
+    state = _state()
+    tool_name = "mcp__justsearch__search"
+    results = {}
+    if result_present:
+        results["t1"] = {"is_error": is_error}
+    rmsg_kwargs = {}
+    if denied:
+        rmsg_kwargs["permission_denials"] = [
+            {"tool_name": tool_name, "tool_use_id": "t1", "tool_input": {}}]
+    got = {
+        "attempts": {"t1": {"tool": tool_name, "input": {}}},
+        "results": results,
+        "texts": [], "rmsg": _rmsg(**rmsg_kwargs), "mcp_servers": None, "justsearch_tools": [],
+    }
+    disallowed_tools = [tool_name] if disallowed else []
+
+    aui._record_cell(state, got, "C", disallowed_tools, None)
+
+    assert state.metadata["tool_call_sequence"] == [{"name": tool_name, "status": expected}]
+
+
+def test_record_cell_tool_result_digests_content_is_error_matches_errored_status():
+    """The `content_is_error` digest field (D9) and the `errored` status (D10) are
+    cross-consistent BY CONSTRUCTION -- both derive from the same
+    `results[tid]["is_error"]`."""
+    state = _state()
+    got = {
+        "attempts": {
+            "t1": {"tool": "mcp__justsearch__search", "input": {}},
+            "t2": {"tool": "mcp__justsearch__search", "input": {}},
+        },
+        "results": {
+            "t1": {"is_error": True, "content": "boom"},
+            "t2": {"is_error": False, "content": "ok"},
+        },
+        "texts": [], "rmsg": _rmsg(), "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "C", [], None)
+
+    sequence = state.metadata["tool_call_sequence"]
+    digests = state.metadata["tool_result_digests"]
+    assert len(sequence) == len(digests) == 2
+    for seq_entry, digest_entry in zip(sequence, digests):
+        assert (seq_entry["status"] == "errored") == bool(digest_entry["content_is_error"])
+
+
+def test_record_cell_tool_result_digests_never_stash_raw_content():
+    """tempdoc 736 D9 leak boundary + the echo-leak assertion: a result whose
+    content contains a known corpus-shaped string must not have that string appear
+    anywhere in the projected `tool_result_digests` (hash/len/shape/flags only)."""
+    state = _state()
+    secret = "CORPUS_SECRET_STRING_a1b2c3"
+    got = {
+        "attempts": {"t1": {"tool": "mcp__justsearch__search", "input": {}}},
+        "results": {"t1": {"is_error": False, "content": f"Evidence pack: 1 passages ({secret})"}},
+        "texts": [], "rmsg": _rmsg(), "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "C", [], None)
+
+    digests = state.metadata["tool_result_digests"]
+    assert digests == [{
+        "content_sha256": aui._content_sha256(f"Evidence pack: 1 passages ({secret})"),
+        "content_len": len(f"Evidence pack: 1 passages ({secret})"),
+        "content_is_error": False,
+        "content_shape": "text",
+        "furniture_markers": {
+            "rationale": False, "evidence_pack": True, "coverage": False, "degradation": False,
+        },
+        "delivered_tier": "prose",
+        "delivered_fields": None,
+    }]
+    assert secret not in json.dumps(digests)
+
+
+def test_record_cell_tool_result_digests_furniture_markers_block_list_content_shape():
+    """tempdoc 736 L1 probe follow-up: `ToolResultBlock.content` is typed
+    `str | list[dict[str, Any]] | None` on the real Claude Agent SDK
+    (`claude_agent_sdk/types.py`, confirmed against the installed package) -- a
+    tool result can arrive as a LIST of content blocks (`[{"type": "text",
+    "text": ...}]`), not only as a plain string. `_content_sha256`/`_content_len`
+    operate on the raw `content` value directly (shape-agnostic: `len()` /
+    `json.dumps()` both accept `str` or `list`), so they already cover this
+    shape; this fixture proves the SAME real shape drives `furniture_markers`
+    correctly too -- both readings go through the ONE extraction helper,
+    `_content_text`, so there is a single source of truth for "what text did
+    this result contain" across sha/len and the marker booleans."""
+    state = _state()
+    secret = "CORPUS_SECRET_STRING_a1b2c3"
+    block_list_content = [
+        {"type": "text", "text": f"Evidence pack: 1 passages ({secret})"},
+    ]
+    got = {
+        "attempts": {"t1": {"tool": "mcp__justsearch__justsearch_answer", "input": {}}},
+        "results": {"t1": {"is_error": False, "content": block_list_content}},
+        "texts": [], "rmsg": _rmsg(), "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "C", [], None)
+
+    digests = state.metadata["tool_result_digests"]
+    assert digests == [{
+        "content_sha256": aui._content_sha256(block_list_content),
+        "content_len": len(block_list_content),
+        "content_is_error": False,
+        "content_shape": "blocks",
+        "furniture_markers": {
+            "rationale": False, "evidence_pack": True, "coverage": False, "degradation": False,
+        },
+        "delivered_tier": "blocks",
+        "delivered_fields": None,
+    }]
+    assert secret not in json.dumps(digests)
+
+
+def test_record_cell_tool_result_digests_null_for_blocked_and_disallowed_attempts():
+    """No result arrived (blocked) or the tool never executed (disallowed) -- the
+    digest carries honest nulls, never a fabricated zero/empty hash."""
+    state = _state()
+    disallowed = ["Bash"]
+    got = {
+        "attempts": {
+            "t1": {"tool": "Bash", "input": {}},  # disallowed, never executes
+            "t2": {"tool": "WebFetch", "input": {}},  # no result at all -> blocked
+        },
+        "results": {},
+        "texts": [], "rmsg": _rmsg(), "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "C", disallowed, None)
+
+    for entry in state.metadata["tool_result_digests"]:
+        assert entry["content_sha256"] is None
+        assert entry["content_len"] is None
+        assert entry["content_is_error"] is None
+        assert entry["content_shape"] == "empty"
+        assert entry["furniture_markers"] == {
+            "rationale": False, "evidence_pack": False, "coverage": False, "degradation": False,
+        }
+        assert entry["delivered_tier"] is None
+        assert entry["delivered_fields"] is None
+
+
 def test_record_cell_stashes_cost_turns_and_tokens_from_rmsg():
     state = _state()
     got = {
@@ -625,7 +800,13 @@ def test_record_cell_result_error_sets_error_and_stops():
         {"tool": "Read", "input": {"file_path": "/corpus/doc1.txt"}},
     ]
     assert "budget exceeded" in state.metadata["error"]
-    assert "cost_usd" not in state.metadata  # short-circuited before usage stash
+    # tempdoc 736 D12 (issue 12): cost_usd/num_turns ARE on the ResultMessage
+    # regardless of is_error, so they are now populated BEFORE the short-circuit
+    # (this assertion used to be the inverse -- "cost_usd not in state.metadata" --
+    # which was exactly the defect issue 12 fixes: a recoverable value dropped
+    # only because of the early-return, not because it was unavailable).
+    assert state.metadata["cost_usd"] == 0.02
+    assert state.metadata["num_turns"] == 1
 
 
 def test_record_cell_no_result_message_sets_error():
@@ -638,6 +819,49 @@ def test_record_cell_no_result_message_sets_error():
     aui._record_cell(state, got, "A", build_disallowed_tools("A"), None)
 
     assert "no ResultMessage" in state.metadata["error"]
+    # tempdoc 736 D12 (issue 12, absent subset): genuinely unknowable here (no
+    # ResultMessage ever arrived) -- an honest null, never a fabricated zero.
+    assert state.metadata.get("cost_usd") is None
+    assert state.metadata.get("num_turns") is None
+
+
+# --- _record_cell: num_turns/cost_usd preserved on an errored cell (tempdoc 736
+# D12, issue 12 -- the two increment-A4 regression tests named in the plan). ---
+
+def test_record_cell_preserves_cost_and_turns_on_errored_result_message():
+    """Recoverable subset: a ResultMessage arrived with is_error=True -- num_turns
+    and total_cost_usd are fields of every ResultMessage (SDK-confirmed), so they
+    must be projected even though the cell short-circuits on the error."""
+    state = _state()
+    got = {
+        "attempts": {}, "results": {}, "texts": [],
+        "rmsg": _rmsg(is_error=True, num_turns=7, total_cost_usd=0.4321, result="max turns"),
+        "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "A", build_disallowed_tools("A"), None)
+
+    assert state.metadata["num_turns"] == 7
+    assert state.metadata["cost_usd"] == 0.4321
+    assert "error" in state.metadata
+
+
+def test_record_cell_no_result_message_leaves_cost_and_turns_null_not_zero():
+    """Absent subset (sibling of test_record_cell_no_result_message_sets_error,
+    explicit on the tri-state honesty distinction): no ResultMessage ever arrived,
+    so cost_usd/num_turns are None -- distinct from a measured 0."""
+    state = _state()
+    got = {
+        "attempts": {}, "results": {}, "texts": [],
+        "rmsg": None, "mcp_servers": None, "justsearch_tools": [],
+    }
+
+    aui._record_cell(state, got, "A", build_disallowed_tools("A"), None)
+
+    assert state.metadata.get("cost_usd") is None
+    assert state.metadata.get("num_turns") is None
+    assert state.metadata.get("cost_usd") != 0
+    assert state.metadata.get("num_turns") != 0
 
 
 # --- _record_cell: offered MCP tool-surface tri-state (tempdoc 675 finding 2

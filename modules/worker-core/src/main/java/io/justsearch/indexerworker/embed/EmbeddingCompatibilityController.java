@@ -61,6 +61,7 @@ public final class EmbeddingCompatibilityController {
   private final AtomicReference<String> currentFingerprint = new AtomicReference<>();
   private final AtomicReference<String> storedFingerprint = new AtomicReference<>();
   private final AtomicReference<String> reasonCode = new AtomicReference<>("INITIALIZING");
+  private final AtomicReference<String> lastAutoRescueReason = new AtomicReference<>();
   private volatile boolean rebuildRequested = false;
   private volatile boolean rebuildCompleted = false;
 
@@ -164,6 +165,13 @@ public final class EmbeddingCompatibilityController {
    * <p>This is intentionally conservative: it only triggers for {@link State#BLOCKED_LEGACY} with
    * {@code LEGACY_INDEX_NO_FINGERPRINT} and requires {@code pending == docCount}.
    *
+   * <p><b>Scope note (tempdoc 730 A4):</b> this guard's {@code completed == 0} requirement is
+   * preserved for its original purpose — proving that <em>nothing</em> has been embedded yet is
+   * what makes a blind, user-consent-free rebuild safe here. It is deliberately NOT loosened to
+   * cover {@code completed > 0}; that is a materially different signature (vectors already exist
+   * but their model provenance is unattested) with its own safety argument, handled separately by
+   * {@link #maybeAutoStartRebuildForLegacyUnattestedVectors(long, int)}.
+   *
    * @param docCount total docs in the index
    * @param pending count of docs with embedding_status=PENDING
    * @param completed count of docs with embedding_status=COMPLETED
@@ -185,6 +193,51 @@ public final class EmbeddingCompatibilityController {
         "Embedding compatibility: auto-starting REBUILDING (legacy index, all embeddings pending). docCount={} pending={}",
         docCount,
         pending);
+    lastAutoRescueReason.set("legacy_all_pending");
+    onForcedReindexRequested();
+    return state.get() == State.REBUILDING;
+  }
+
+  /**
+   * Auto-rescue for tempdoc 730 A4: an on-disk generation showing the corruption signature left
+   * behind by the pre-fix asymmetric-stamping-gate ratchet (§THEORIZE A) — dense vectors already
+   * exist (some or all documents carry {@code embedding_status=COMPLETED}) but the generation has
+   * <b>no persisted embedding fingerprint at all</b>. A commit finalized while the ECC was not
+   * {@code COMPATIBLE}/{@code REBUILDING}-complete could persist SPLADE's fingerprint (an
+   * unconditional supplier) while silently omitting the embedding one (a state-gated supplier),
+   * and every subsequent restart re-resolves {@link State#BLOCKED_LEGACY} — {@link
+   * #fingerprintToStamp()} never offers a value, so the index is stuck until intervention.
+   *
+   * <p>Unlike {@link #maybeAutoStartRebuildForLegacyAllPending}, this method does NOT require
+   * {@code completed == 0} — it requires the opposite: {@code completed > 0} is exactly the
+   * "vectors exist" evidence for the signature. We deliberately do not back-stamp the current
+   * fingerprint over these vectors — doing so would fabricate provenance for vectors we cannot
+   * prove came from the current model (the same mixed-provenance risk the tempdoc 730 A1 revert
+   * identified). The only safe rescue is a real re-embed: transition to {@link State#REBUILDING}
+   * via the same forced-reindex path a user-initiated reindex takes, so the index earns a
+   * legitimate stamp once the rebuild completes and the completion-guarantee commit fires
+   * ({@code EmbeddingProviderLifecycle.tryFinalizeRebuild()} /
+   * {@code IndexingLoop.finalizeShutdownCommit()}).
+   *
+   * @param docCount total docs in the index
+   * @param completed count of docs with embedding_status=COMPLETED (the "vectors exist" evidence)
+   * @return true if the controller transitioned to REBUILDING
+   */
+  public boolean maybeAutoStartRebuildForLegacyUnattestedVectors(long docCount, int completed) {
+    if (state.get() != State.BLOCKED_LEGACY) return false;
+    if (!"LEGACY_INDEX_NO_FINGERPRINT".equals(reasonCode.get())) return false;
+    if (docCount <= 0) return false;
+    if (completed <= 0) return false;
+
+    log.info(
+        "Embedding compatibility: auto-starting REBUILDING (reason=embedding_legacy_unattested_vectors; "
+            + "legacy index has {} completed/attested embedding(s) but no persisted fingerprint — "
+            + "re-embedding to earn a verifiable stamp rather than back-stamping unattested vectors). "
+            + "docCount={} completed={}",
+        completed,
+        docCount,
+        completed);
+    lastAutoRescueReason.set("embedding_legacy_unattested_vectors");
     onForcedReindexRequested();
     return state.get() == State.REBUILDING;
   }
@@ -293,6 +346,21 @@ public final class EmbeddingCompatibilityController {
   /** Returns true if a forced reindex has been requested. */
   public boolean isRebuildRequested() {
     return rebuildRequested;
+  }
+
+  /**
+   * Returns a tag naming which auto-rescue path (if any) last triggered a {@link
+   * State#REBUILDING} transition without user-initiated forced reindex — {@code
+   * "legacy_all_pending"} ({@link #maybeAutoStartRebuildForLegacyAllPending}) or {@code
+   * "embedding_legacy_unattested_vectors"} ({@link
+   * #maybeAutoStartRebuildForLegacyUnattestedVectors}). {@code null} if neither auto-rescue has
+   * fired. This is a diagnostic-only tag (tempdoc 730 A4) distinct from {@link #reasonCode()} —
+   * it is deliberately NOT part of the {@code SearchReasonCode} wire contract, since both
+   * auto-rescue paths still resolve the shared, contract-stable {@code "REBUILD_IN_PROGRESS"}
+   * reason for query-time degradation messaging.
+   */
+  public String lastAutoRescueReason() {
+    return lastAutoRescueReason.get();
   }
 
   /**

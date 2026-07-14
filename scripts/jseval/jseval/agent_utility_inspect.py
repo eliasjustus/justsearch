@@ -418,7 +418,17 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                     elif isinstance(msg, UserMessage):
                         for b in (getattr(msg, "content", None) or []):
                             if isinstance(b, ToolResultBlock):
-                                capture["results"][b.tool_use_id] = {"is_error": bool(b.is_error)}
+                                # tempdoc 736 D9 (issue 9): stash raw content alongside
+                                # is_error. `b.content` is `str | list[dict] | None`
+                                # (SDK-confirmed). This is the EPHEMERAL tier only --
+                                # it lives in `capture`/`state.metadata` and never
+                                # reaches the committed record directly; `_record_cell`
+                                # derives a redacting digest (hash/len/shape/flags,
+                                # never raw text) from it for the committed tier.
+                                capture["results"][b.tool_use_id] = {
+                                    "is_error": bool(b.is_error),
+                                    "content": b.content,
+                                }
                     elif isinstance(msg, ResultMessage):
                         capture["rmsg"] = msg
                 (capture["mcp_servers"], capture["justsearch_tools"],
@@ -516,6 +526,219 @@ def _toolsearch_targets(attempts: dict) -> list[str]:
     return seen
 
 
+# tempdoc 736 D9/U2: product-emitted CONSTANT text prefixes (never corpus text) --
+# detecting their presence in tool-result content is leak-safe by construction.
+# Verbatim grep sources (2026-07-14):
+#   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:523
+#     sb.append("Evidence pack: ")...                          -> evidence_pack
+#   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:725
+#     sb.append("    Matched: ").append(quoted);                -> rationale
+#   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:549
+#     sb.append("\n\n--- Quality ---\n");                        -> coverage
+#   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:878
+#     sb.append("\nNote: semantic ranking degraded (")...        -> degradation
+_FURNITURE_MARKERS: dict[str, str] = {
+    "rationale": "Matched: ",
+    "evidence_pack": "Evidence pack: ",
+    "coverage": "--- Quality ---",
+    "degradation": "semantic ranking degraded (",
+}
+
+
+def _content_text(content) -> str:
+    """Concatenated text view of a `ToolResultBlock.content` payload, used ONLY for
+    leak-safe furniture-marker detection -- never stored or returned verbatim."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return ""
+
+
+def _content_shape(content) -> str:
+    """Coarse structural tag derived from type/first-block -- NEVER the text."""
+    if content is None:
+        return "empty"
+    if isinstance(content, str):
+        return "empty" if content == "" else "text"
+    if isinstance(content, list):
+        if not content:
+            return "empty"
+        first = content[0]
+        if isinstance(first, dict) and first.get("type") == "json":
+            return "json"
+        return "blocks"
+    return "json"
+
+
+def _content_len(content) -> int | None:
+    if content is None:
+        return None
+    if isinstance(content, (str, list)):
+        return len(content)
+    return None
+
+
+def _content_sha256(content) -> str | None:
+    if content is None:
+        return None
+    canonical = json.dumps(content, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _furniture_marker_flags(content) -> dict[str, bool]:
+    text = _content_text(content)
+    return {key: (marker in text) for key, marker in _FURNITURE_MARKERS.items()}
+
+
+# tempdoc 735 G2: which tier the CLI actually DELIVERED to the model for this call --
+# a fact distinct from what the server authored (the settled-design principle: "what
+# the model is delivered is a cohort fact ... capture it, never assume it"). A
+# raw-SDK debug probe (tempdoc 735, CLI 2.1.209) proved the delivery rule is
+# structured-if-present, text-otherwise: when the tool response carries
+# `structuredContent`, the CLI hands the model that JSON serialized as a `content`
+# STRING (not the human-readable text tier, and not a `type":"json"` block) --
+# `justsearch_answer`/`justsearch_search` both observed this way. When the tool
+# response has no `structuredContent` (e.g. `justsearch_status`,
+# McpToolSurface.java:939-940 emits only a `type":"text"` block), the CLI forwards
+# the SDK's own block-list `ToolResultBlock.content` shape.
+_DELIVERED_TIER_STRUCTURED = "structured-json"
+_DELIVERED_TIER_PROSE = "prose"
+_DELIVERED_TIER_BLOCKS = "blocks"
+
+
+def _delivered_tier(content) -> str | None:
+    """Classify the raw delivered `content` into one of three tiers (never a
+    fourth value -- `None` only means "nothing to classify", e.g. the call never
+    executed): `"blocks"` for the SDK's list-of-block shape (`ToolResultBlock`,
+    `claude_agent_sdk`: `content: str | list[dict[str, Any]] | None`); a `str`
+    that parses (after stripping) as a JSON **object** is `"structured-json"` (a
+    JSON array/number/etc. does not count -- every real structuredContent payload
+    this surface emits is a top-level object, `McpEvidenceProjection.searchEvidence`/
+    `answerEvidence` both return `Map<String,Object>`); any other `str` is
+    `"prose"`."""
+    if content is None:
+        return None
+    if isinstance(content, list):
+        return _DELIVERED_TIER_BLOCKS
+    if isinstance(content, str):
+        try:
+            parsed = json.loads(content.strip())
+        except (ValueError, TypeError):
+            return _DELIVERED_TIER_PROSE
+        return _DELIVERED_TIER_STRUCTURED if isinstance(parsed, dict) else _DELIVERED_TIER_PROSE
+    return None
+
+
+# tempdoc 735 G2: the top-level structured-evidence fields worth knowing the
+# presence of, replacing the text-grep furniture markers for structured-json
+# deliveries. `matchedTerms`/`excerpts` are verified nested PER-HIT under
+# `results[]` for `justsearch_search`
+# (McpEvidenceProjection.java:75-93 -- `h.put("matchedTerms", ...)` /
+# `h.put("excerpts", ...)` inside the per-hit loop, never at the top level);
+# `quality`/`citations` are top-level-only, produced by `answerEvidence`
+# (McpEvidenceProjection.java:136,151); `searchTrace`/`degradation` are
+# top-level-only, produced by `searchEvidence` (McpEvidenceProjection.java:50-58).
+# `results` itself is the top-level array `searchEvidence` always emits
+# (McpEvidenceProjection.java:108).
+# tempdoc 735 W6 (tool-surface 0.4.0) added the tier-equivalence fields
+# `hints`/`facets`/`coverage`/`truncated` to both tools' structured tier --
+# tracked here so structured-delivery cohorts' exposure to the formerly
+# text-only furniture is measurable per call. Absent on <=0.3.1 responses
+# (presence booleans just read False -- no schema impact).
+_DELIVERED_FIELD_KEYS = (
+    "quality", "matchedTerms", "degradation", "excerpts", "citations", "searchTrace", "results",
+    "hints", "facets", "coverage", "truncated",
+)
+
+
+def _delivered_fields(content) -> dict[str, bool] | None:
+    """Top-level structured-evidence field presence for a structured-json
+    delivery. `None` for prose/blocks deliveries (or content that no longer
+    parses) -- never a fabricated all-False dict standing in for "not
+    applicable"; `_furniture_marker_flags` remains the signal for those tiers."""
+    if _delivered_tier(content) != _DELIVERED_TIER_STRUCTURED:
+        return None
+    parsed = json.loads(content.strip())
+    results = parsed.get("results")
+    results = results if isinstance(results, list) else []
+    _nested_ok_keys = ("matchedTerms", "excerpts")
+
+    def _present(key: str) -> bool:
+        if key in parsed:
+            return True
+        if key in _nested_ok_keys:
+            return any(isinstance(r, dict) and key in r for r in results)
+        return False
+
+    return {key: _present(key) for key in _DELIVERED_FIELD_KEYS}
+
+
+def _tool_result_digest_entry(result: dict | None) -> dict:
+    """Redacted, committed-safe derivation of one tool result (tempdoc 736 D9,
+    extended by tempdoc 735 G2 with `delivered_tier`/`delivered_fields`):
+    hash/len/is_error/shape/furniture-marker booleans plus the delivered-tier
+    classification -- NEVER the raw content, which stays in the ephemeral
+    (gitignored) log only. `result` is None when the call never executed
+    (blocked/disallowed) -- honest nulls throughout, never a fabricated
+    zero/empty for the size/hash/is_error fields.
+
+    `furniture_markers` is computed (as before) for `prose`/`blocks` deliveries;
+    for `structured-json` deliveries it is `None` and `delivered_fields` carries
+    the signal instead -- text-grepping a delivered JSON string for product
+    furniture strings is measuring the wrong tier (this is the exact bug this
+    increment fixes: tempdoc 735's 0/153 furniture-marker mystery was caused by
+    grepping content that was never delivered as text in the first place)."""
+    if result is None:
+        return {
+            "content_sha256": None,
+            "content_len": None,
+            "content_is_error": None,
+            "content_shape": "empty",
+            "furniture_markers": _furniture_marker_flags(None),
+            "delivered_tier": None,
+            "delivered_fields": None,
+        }
+    content = result.get("content")
+    tier = _delivered_tier(content)
+    return {
+        "content_sha256": _content_sha256(content),
+        "content_len": _content_len(content),
+        "content_is_error": bool(result.get("is_error")),
+        "content_shape": _content_shape(content),
+        "furniture_markers": (
+            _furniture_marker_flags(content) if tier != _DELIVERED_TIER_STRUCTURED else None
+        ),
+        "delivered_tier": tier,
+        "delivered_fields": _delivered_fields(content),
+    }
+
+
+def _call_status(tid: str, entry: dict, results: dict, denied: set, disallowed: list[str]) -> str:
+    """tempdoc 736 D10 (issue 10): the four-state per-call status authority for
+    `tool_call_sequence` -- DISTINCT from `_blocked()` below, whose executed/blocked
+    split for `tool_calls`/`tool_calls_blocked` stays deliberately UNCHANGED (an
+    errored call is still "not executed" for that side-array's purposes; only this
+    ordered-sequence status gains the new `errored` state). Partition, in order:
+    disallowed (name in the campaign's disallowed set) > blocked (no result arrived,
+    OR a permission denial -- the call never executed) > errored (a result arrived
+    with is_error=True -- executed and returned an error) > ok."""
+    if entry["tool"] in disallowed:
+        return "disallowed"
+    r = results.get(tid)
+    if r is None or entry["tool"] in denied:
+        return "blocked"
+    if r["is_error"]:
+        return "errored"
+    return "ok"
+
+
 def _record_cell(state: TaskState, got: dict, condition: str,
                  disallowed: list[str], mcp_config: str | None,
                  declared_mcp_tool_surface_hash: str | None = None,
@@ -563,13 +786,16 @@ def _record_cell(state: TaskState, got: dict, condition: str,
     state.metadata["tool_call_sequence"] = [
         {
             "name": entry["tool"],
-            "status": (
-                "disallowed" if entry["tool"] in disallowed
-                else "blocked" if _blocked(tid, entry)
-                else "ok"
-            ),
+            "status": _call_status(tid, entry, results, denied, disallowed),
         }
         for tid, entry in attempts.items()
+    ]
+    # tempdoc 736 D9 (issue 9, committed tier): one redacted digest entry per
+    # attempt, in the same order as `tool_call_sequence` -- `content_is_error`
+    # here and the `errored` status above are cross-consistent BY CONSTRUCTION
+    # (both derive from the same `results[tid]["is_error"]`).
+    state.metadata["tool_result_digests"] = [
+        _tool_result_digest_entry(results.get(tid)) for tid in attempts
     ]
 
     # Offered MCP surface from the SDK's own status (tempdoc 675 finding 2).
@@ -665,6 +891,17 @@ def _record_cell(state: TaskState, got: dict, condition: str,
                 "resolved provider model changed within one cell: "
                 f"{sorted(resolved_models)!r}",
             )
+        # tempdoc 736 D12 (issue 12): `total_cost_usd`/`num_turns` are fields of
+        # EVERY ResultMessage, independent of `is_error` (SDK-confirmed via
+        # `inspect.getsource(ResultMessage)`) -- populate them here, BEFORE the
+        # is_error early-return below, so an errored cell's incremental spend/turn
+        # count is not silently dropped. Only the no-ResultMessage `else` branch
+        # below leaves them null -- genuinely unknowable there, an honest null
+        # rather than a fabricated zero (P3 tri-state).
+        state.metadata.update({
+            "cost_usd": getattr(rmsg, "total_cost_usd", None),
+            "num_turns": getattr(rmsg, "num_turns", None),
+        })
         if getattr(rmsg, "is_error", False):
             # Forensically complete (tempdoc 675): a bare "result error: None" is
             # unactionable — carry the SDK's own error signals (subtype/stop_reason
@@ -680,11 +917,7 @@ def _record_cell(state: TaskState, got: dict, condition: str,
                 "error", (f"result error: {str(getattr(rmsg, 'result', ''))[:200]} | {err_bits}")[:600])
             return
         state.output.completion = getattr(rmsg, "result", "") or ""
-        state.metadata.update({
-            "cost_usd": getattr(rmsg, "total_cost_usd", None),
-            "unique_tokens": usage.get("cache_creation_input_tokens"),
-            "num_turns": getattr(rmsg, "num_turns", None),
-        })
+        state.metadata["unique_tokens"] = usage.get("cache_creation_input_tokens")
     else:
         state.metadata.setdefault(
             "error", "no ResultMessage (stream ended without a terminal result)")

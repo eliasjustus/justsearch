@@ -1,0 +1,13 @@
+Evidence pack: 3 passages from 2 documents (retrieval mode: HYBRID). No synthesized answer is included. Pack selection: 3 of 5 candidate passages (retrieval coverage 0.50).
+
+[From: doc-1]
+excerpt-1
+
+---
+
+[From: doc-2]
+excerpt-3
+
+--- Quality ---
+Sources found: 3, coverage 0.50, mode HYBRID
+Assembled evidence from 2 documents in a single retrieval call — for a question spanning multiple documents this is fewer steps than locating and reading each file.

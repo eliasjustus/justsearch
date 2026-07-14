@@ -28,6 +28,10 @@ const LeaseSchema = z
     renewedAt: z.string(),
     expiresAt: z.string(),
     sequence: z.number().int(),
+    // Tempdoc 735 G6: computed at projection time (buildOwnershipProjection) — seconds until
+    // expiresAt, floored at 0. Additive: makes "how much campaign hold is left" legible without
+    // every caller doing its own expiresAt-minus-now arithmetic.
+    remainingSec: z.number().int().optional(),
   })
   .passthrough();
 
@@ -96,6 +100,13 @@ export const StartInputSchema = z
       .describe('Takeover policy if another agent owns the backend (default: deny)'),
     hotReload: z.boolean().optional()
       .describe('Enable hot-reload: JDWP agent + DevReloadManager on Worker (default: false). Use with reload tool after code changes.'),
+    leaseDurationSec: z.number().int().optional()
+      .describe('Tempdoc 735 G6: campaign-length ownership hold, in seconds — clamped server-side to '
+        + '[30, 7200] (default: 30, i.e. current behavior). Declare this at start for a long measurement '
+        + 'campaign so the shared-lease renewal loop can hold ownership through minutes of jseval/gradle '
+        + 'activity without a Claude Code session touch, instead of lapsing on the default 30s passive-'
+        + 'expiry window and inviting a takeover mid-run. Does not change explicit takeover semantics — '
+        + 'force/warn still works normally; this only stretches the passive-expiry window.'),
     distFrom: z.string().optional()
       .describe('Tempdoc 606 Piece 4: launch the stack from THIS worktree\'s built dist (must be a '
         + 'sibling worktree under .claude/worktrees, or the main repo). The shared lease stays under '

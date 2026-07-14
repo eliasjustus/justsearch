@@ -189,6 +189,51 @@ def test_toolsearch_targets_schema_rejects_trailing_free_text_target():
         jsonschema.validate(tampered, schema)
 
 
+def test_tool_result_digests_echo_leak_absent_from_sanitized_bytes():
+    """tempdoc 736 D9 echo-leak assertion (mirrors the level-1 `toolsearch_targets`
+    leak test): a result whose RAW content contains a known corpus string must
+    produce a sanitized observation whose serialized bytes do NOT contain that
+    string -- proven via the real producer (`_tool_result_digest_entry`), not a
+    hand-rolled shortcut."""
+    pytest.importorskip("inspect_ai")
+    from jseval.agent_utility_inspect import _tool_result_digest_entry
+
+    secret = "CORPUS_SECRET_STRING_zz998"
+    digest = _tool_result_digest_entry({
+        "is_error": False,
+        "content": f"Evidence pack: 2 passages from 1 documents ({secret})",
+    })
+    observation = _observation()
+    observation["tool_result_digests"] = [digest]
+
+    sanitized = sanitize_observation(observation)
+    encoded = json.dumps(sanitized)
+    assert secret not in encoded
+    assert sanitized["tool_result_digests"] == [digest]  # digest itself carries no raw text
+
+
+def test_tool_result_digests_schema_rejects_raw_content_property():
+    """The schema structurally forbids a raw-content property on a
+    `tool_result_digests` entry -- `additionalProperties: false` fails closed even
+    if a future producer bug ever tried to smuggle one through."""
+    jsonschema = pytest.importorskip("jsonschema")
+    schema_path = Path(__file__).parents[1] / "agent-utility-observation.v1.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    tampered = sanitize_observation(_observation())
+    tampered["tool_result_digests"] = [{
+        "content_sha256": "0" * 64,
+        "content_len": 4,
+        "content_is_error": False,
+        "content_shape": "text",
+        "furniture_markers": {
+            "rationale": False, "evidence_pack": False, "coverage": False, "degradation": False,
+        },
+        "content": "raw corpus text must never validate here",
+    }]
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(tampered, schema)
+
+
 def test_schema_is_strict_at_observation_boundary():
     jsonschema = pytest.importorskip("jsonschema")
     schema_path = Path(__file__).parents[1] / "agent-utility-observation.v1.schema.json"
@@ -285,6 +330,29 @@ def test_real_2026_07_12_rejected_fixture_reproduces_false_green_loss():
     assert record["comparability"]["comparable"] is False
     assert record["claim_verdict"]["accepted"] is False
     assert "source_identity_complete" in record["claim_verdict"]["reasons"]
+
+
+def test_historical_fixture_semantic_digest_unchanged_by_tool_result_digests_addition():
+    """tempdoc 736 U1 (non-negotiable): adding the optional `tool_result_digests`
+    field (D9) must NOT perturb the `semantic_digest` of this pre-existing
+    committed 48-row historical evidence fixture, which predates the field.
+    `tool_result_digests` is deliberately NOT threaded into
+    `successful_summaries`'s per_query composer projection (that would touch
+    `utility_comparison.py`, out of this tempdoc's Chain-A scope) -- it is
+    evidence/sanitizer-tier only, so the composed record this digest covers is
+    byte-identical to before this change. Value captured with
+    `finalize_evidence([path], composed_at="fixture")["semantic_digest"]`
+    BEFORE any of the tempdoc 736 Chain A edits landed."""
+    path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "agent-utility-rejected-2026-07-12"
+        / "observations.v1.jsonl"
+    )
+    record = finalize_evidence([path], composed_at="fixture")
+    assert record["semantic_digest"] == (
+        "2f555f661a9165fcb29a3f7d0ec10c70ca5ca28b8e4d47581361c430a464a100"
+    )
 
 
 def test_recompose_cli_accepts_sanitized_evidence_without_logs(tmp_path):

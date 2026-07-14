@@ -44,9 +44,72 @@ _ADOPTION_METRICS = (
 # campaign under a different exposure mode," it is a different measurement.
 _MATCHED_IDENTITY_FIELDS = ("corpus_signature", "resolved_provider_model", "query_identity")
 
+# MCP tool surface identity fields that MUST also match by default -- two runs
+# measuring different tool surfaces (a version bump changed the tools/list
+# payload or the server build) would otherwise contrast silently, mislabeled as
+# an exposure effect rather than a surface-drift effect. Unlike
+# ``_MATCHED_IDENTITY_FIELDS`` this guard is escapable via ``surface_contrast``
+# (tempdoc 725 increment 4 W4): a deliberate cross-surface comparison is a
+# different, self-describing kind of record, not an error.
+_SURFACE_IDENTITY_FIELDS = ("mcp_tool_surface_hash", "server_version")
+
 
 class ExposureContrastError(ValueError):
     """Raised when two records cannot form a valid exposure contrast."""
+
+
+def exposure_contrast_eligibility(record: dict) -> dict:
+    """Pure predicate (tempdoc 736 D11): is ``record`` even the right SHAPE to
+    ever participate in an exposure contrast, independent of whether it happens
+    to match some OTHER record's identity?
+
+    A record composed entirely from evidence that predates the #605
+    exposure-identity capture fix never has a with-tool ``measured`` cell with
+    real funnel/adoption data, AND never has cohort-level exposure identity
+    (``cohort.exposure_config`` / ``cohort.mcp_initialize_identity``) -- both
+    are increment-2 fields (tempdoc 725) that simply were never recorded. Such
+    a record is PERMANENTLY ineligible, not merely "not yet contrasted": even
+    recomposing its raw observations cannot manufacture identity that was
+    never captured. This predicate names the specific disqualifier so a caller
+    (or ``exposure_contrast`` itself) reports WHY, instead of a puzzle-shaped
+    generic error.
+
+    :returns: ``{"eligible": bool, "reasons": [str, ...]}`` -- ``reasons`` is
+        empty iff ``eligible`` is ``True``.
+    """
+    reasons: list[str] = []
+    measured = record.get("measured")
+    cohort = record.get("cohort") or {}
+    has_exposure_identity = (
+        cohort.get("exposure_config") is not None
+        and cohort.get("mcp_initialize_identity") is not None
+    )
+    if not isinstance(measured, dict) or not measured:
+        # Two distinct empty-measured causes with opposite remedies (Campaign U
+        # results nit, fixed during Campaign V): a post-#605 single-condition
+        # composition (e.g. a B-only pilot) captured identity fine and just has
+        # no contrast arm BY DESIGN, while a pre-#605 record is permanently
+        # ineligible. Conflating them sent readers chasing a fixed defect.
+        if has_exposure_identity:
+            reasons.append(
+                "measured is empty but cohort exposure identity IS captured -- "
+                "a single-condition composition (e.g. a B-only pilot) has no "
+                "with-tool contrast cell by design; this record needs a "
+                "counterpart arm, not a capture fix (not the pre-#605 defect)"
+            )
+        else:
+            reasons.append(
+                "measured is empty -- record predates the #605 exposure-identity "
+                "capture fix and carries no with-tool measured cell at all"
+            )
+    if not has_exposure_identity:
+        reasons.append(
+            "cohort carries no exposure identity (exposure_config / "
+            "mcp_initialize_identity both required) -- record predates the "
+            "#605 exposure-identity capture fix and is permanently "
+            "descriptive-only, never exposure-contrast-eligible"
+        )
+    return {"eligible": not reasons, "reasons": reasons}
 
 
 def _only_cell(record: dict, *, label: str) -> dict:
@@ -81,7 +144,8 @@ def _identity(record: dict, cell: dict, *, label: str) -> dict:
     ``instructions_sha256`` (both cohort-level, from ``exposure_config`` /
     ``mcp_initialize_identity``), plus the cell-level ``corpus_signature`` /
     ``resolved_provider_model`` / ``query_identity`` used for the matched-campaign
-    hard validation below.
+    hard validation below, plus the cohort-level ``mcp_tool_surface_hash`` /
+    ``server_version`` used for the surface-aware guard (tempdoc 725 increment 4 W4).
 
     Raises if either cohort-level exposure block is absent -- a record composed
     from pre-725 evidence (which never captured exposure identity) cannot
@@ -103,6 +167,8 @@ def _identity(record: dict, cell: dict, *, label: str) -> dict:
         "corpus_signature": cell_identity.get("corpus_signature"),
         "resolved_provider_model": cell_identity.get("resolved_provider_model"),
         "query_identity": cell_identity.get("query_identity"),
+        "mcp_tool_surface_hash": cohort.get("mcp_tool_surface_hash"),
+        "server_version": mcp_initialize_identity.get("server_version"),
     }
 
 
@@ -120,7 +186,9 @@ def _metric_deltas(a_block: dict, b_block: dict, metrics: tuple[str, ...]) -> di
     return out
 
 
-def exposure_contrast(record_a: dict, record_b: dict) -> dict:
+def exposure_contrast(
+    record_a: dict, record_b: dict, *, surface_contrast: bool = False,
+) -> dict:
     """Descriptive per-metric ``{a, b, delta}`` contrast of two ``utility-comparison.v1``
     records' with-tool-arm ``funnel`` + ``adoption`` blocks (e.g. record_a = deferred,
     record_b = eager, or any other two exposure-mode campaigns).
@@ -136,11 +204,26 @@ def exposure_contrast(record_a: dict, record_b: dict) -> dict:
     - the two records' non-exposure identity (corpus signature, resolved provider
       model, query identity) must MATCH -- the contrast is only valid on the same
       campaign measured under two exposure modes, never on two different campaigns
-      that also happen to differ in exposure.
+      that also happen to differ in exposure;
+    - by default, the two records' MCP tool surface identity (``mcp_tool_surface_hash``,
+      ``server_version``) must also MATCH -- two runs measuring different tool
+      surfaces (a version bump) must not silently contrast as if it were an
+      exposure effect. Pass ``surface_contrast=True`` to intentionally allow and
+      report a cross-surface comparison instead; the returned block then carries
+      a ``surface_identities`` field so the record self-describes that it is a
+      cross-surface comparison, NOT an exposure contrast.
 
     Descriptive only -- see the module docstring for the no-significance-testing /
     no-verdict boundary.
     """
+    for label, record in (("record_a", record_a), ("record_b", record_b)):
+        eligibility = exposure_contrast_eligibility(record)
+        if not eligibility["eligible"]:
+            raise ExposureContrastError(
+                f"{label} is not exposure-contrast-eligible: "
+                f"{'; '.join(eligibility['reasons'])}"
+            )
+
     cell_a = _only_cell(record_a, label="record_a")
     cell_b = _only_cell(record_b, label="record_b")
 
@@ -173,7 +256,22 @@ def exposure_contrast(record_a: dict, record_b: dict) -> dict:
             f"valid on the same campaign measured under two exposure modes: {mismatched!r}"
         )
 
-    return {
+    surface_mismatched = {
+        field: (identity_a[field], identity_b[field])
+        for field in _SURFACE_IDENTITY_FIELDS
+        if identity_a[field] != identity_b[field]
+    }
+    if surface_mismatched and not surface_contrast:
+        raise ExposureContrastError(
+            "record_a/record_b MCP tool surface disagrees -- record_a="
+            f"{ {f: identity_a[f] for f in _SURFACE_IDENTITY_FIELDS} !r}, record_b="
+            f"{ {f: identity_b[f] for f in _SURFACE_IDENTITY_FIELDS} !r} "
+            f"({surface_mismatched!r}); a contrast across two different tool surfaces is "
+            "not an exposure-mode effect -- if this is an intentional cross-surface "
+            "comparison, pass surface_contrast=True"
+        )
+
+    result = {
         "funnel": _metric_deltas(funnel_a, funnel_b, _FUNNEL_METRICS),
         "adoption": _metric_deltas(adoption_a, adoption_b, _ADOPTION_METRICS),
         "identity": {
@@ -181,3 +279,9 @@ def exposure_contrast(record_a: dict, record_b: dict) -> dict:
             "record_b": {k: v for k, v in identity_b.items() if k != "query_identity"},
         },
     }
+    if surface_contrast:
+        result["surface_identities"] = {
+            "a": {field: identity_a[field] for field in _SURFACE_IDENTITY_FIELDS},
+            "b": {field: identity_b[field] for field in _SURFACE_IDENTITY_FIELDS},
+        }
+    return result

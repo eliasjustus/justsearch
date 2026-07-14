@@ -13,6 +13,7 @@ import io.justsearch.app.api.RetrieveContextParams;
 import io.justsearch.app.api.knowledge.KnowledgeSearchRequest;
 import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
 import io.justsearch.app.api.knowledge.KnowledgeStatus;
+import io.justsearch.app.api.knowledge.SearchTrace;
 import io.justsearch.app.services.worker.KnowledgeHttpApiAdapter;
 import io.justsearch.ui.api.KnowledgeSearchController;
 import java.time.Clock;
@@ -101,7 +102,9 @@ public final class McpToolSurface {
           + " multiple documents, or when you want to conserve context. For a small set of files or"
           + " an exact string / filename lookup, ordinary file tools are equally good. Use"
           + " justsearch_search to explore what is in the index, and justsearch_status for the live"
-          + " index size and readiness.";
+          + " index size and readiness. Both tools accept response_format; \"concise\" returns"
+          + " substantially fewer tokens per call and keeps every line that reports what was"
+          + " elided.";
 
   private final List<OperationCatalog> operationCatalogs;
   private final OperationDispatcher dispatcher;
@@ -252,12 +255,25 @@ public final class McpToolSurface {
     return s;
   }
 
+  // Tempdoc 725 W2c: opt-in response density tier, shared by justsearch_answer and
+  // justsearch_search. "detailed" (default) is the current full-fidelity shape; "concise" trims
+  // passage/preview volume for token economics while keeping the header/coverage/degradation
+  // lines that carry the elided-ness facts.
+  private static final Map<String, Object> RESPONSE_FORMAT_SCHEMA =
+      propEnum(
+          List.of("concise", "detailed"),
+          "Response verbosity. \"detailed\" (default) includes preview snippets and full evidence"
+              + " passages. \"concise\" returns substantially fewer tokens per call: search results"
+              + " omit the preview line and answer packs cap at the 3 highest-ranked passages; the"
+              + " coverage, match, and header lines are kept in both modes.");
+
   private static final Map<String, Object> ANSWER_SCHEMA =
       schema(
           orderedMap(
               "query", prop("string", "The question to answer"),
               "top_k", prop("integer", "Number of passages to retrieve (default 5, max 20)"),
-              "filters", FILTERS_SCHEMA),
+              "filters", FILTERS_SCHEMA,
+              "response_format", RESPONSE_FORMAT_SCHEMA),
           List.of("query"));
 
   private static final Map<String, Object> SEARCH_SCHEMA =
@@ -271,7 +287,8 @@ public final class McpToolSurface {
               // trace + per-hit ranking provenance) is always returned in structuredContent; when
               // detail=true the per-hit numeric fusion-leg detail scores are included too.
               "detail",
-                  prop("boolean", "Include the numeric per-hit detail tier in the ranking evidence")),
+                  prop("boolean", "Include the numeric per-hit detail tier in the ranking evidence"),
+              "response_format", RESPONSE_FORMAT_SCHEMA),
           List.of("query"));
 
   private static final Map<String, Object> STATUS_SCHEMA = schema(Map.of(), List.of());
@@ -385,7 +402,8 @@ public final class McpToolSurface {
       content.put("structuredContent", publicView);
       return content;
     } catch (Exception e) {
-      return errorContent("Failed to serialize runtime manifest: " + e.getMessage());
+      log.warn("MCP runtime manifest serialization failed", e);
+      return errorContent(toolFailureMessage("Runtime manifest", e));
     }
   }
 
@@ -411,12 +429,13 @@ public final class McpToolSurface {
   private Map<String, Object> callAnswer(Map<String, Object> args) {
     HeadAssembly facade = appFacadeLookup.get();
     if (facade == null || facade.workers().documents() == null) {
-      return errorContent("Knowledge server not available");
+      return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE);
     }
     try {
       String query = (String) args.getOrDefault("query", "");
       int topK = ((Number) args.getOrDefault("top_k", 5)).intValue();
       Map<String, Object> rawFilters = (Map<String, Object>) args.get("filters");
+      boolean concise = "concise".equals(args.get("response_format"));
 
       RetrieveContextParams params =
           new RetrieveContextParams(
@@ -432,7 +451,14 @@ public final class McpToolSurface {
               rawFilters != null ? (String) rawFilters.getOrDefault("path_prefix", "") : "",
               List.of(),
               true,
-              RetrieveContextParams.ContextFormat.XML,
+              // Tempdoc 725 W2b: LABELED is the only format the Worker's ContextBudgeter actually
+              // renders — RagContextOps never reads contextFormat off the wire, and ContextBudgeter
+              // has no XML/PLAIN branch at all (it unconditionally emits "[From: label]\n" +
+              // content). Requesting XML here was a dead orphan (tempdoc 725 orphan #5): the param
+              // was serialized onto the gRPC request correctly, but nothing downstream consumed it,
+              // so every caller has always received LABELED regardless of what it asked for.
+              // Requesting the format that is actually delivered keeps this call site honest.
+              RetrieveContextParams.ContextFormat.LABELED,
               toStringList(rawFilters, "meta_source"),
               toStringList(rawFilters, "meta_author"),
               toStringList(rawFilters, "meta_category"),
@@ -448,67 +474,248 @@ public final class McpToolSurface {
               .toCompletableFuture()
               .get(RETRIEVE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
-      // Tempdoc 658: project the canonical RAG evidence (ContextCitation provenance + quality
-      // signals) once; both the human summary line below and the structuredContent channel derive
-      // from this single object.
-      Map<String, Object> evidence = McpEvidenceProjection.answerEvidence(result);
+      // Tempdoc 735 W6: every response fact — header counts, hints, facets — computed ONCE by the
+      // content-model builder, then consumed by both the text renderer and the structured
+      // renderer, so the two tiers cannot silently diverge (735 G3).
+      McpAnswerResponseContent content = buildAnswerContent(result, query);
+      String text = renderAnswerText(result, content, concise, query);
 
-      var sb = new StringBuilder();
-      if (result.context() != null && !result.context().isBlank()) {
-        sb.append(result.context());
-      } else {
-        sb.append("No relevant passages found for: ").append(query);
-      }
-
-      // One human-readable quality line derived from the structured evidence object (single
-      // derivation — replaces the former hand-built multi-line "--- Quality ---" block, now
-      // redundant with the structured `quality` payload; tempdoc 658 orphan teardown).
-      @SuppressWarnings("unchecked")
-      Map<String, Object> quality = (Map<String, Object>) evidence.get("quality");
-      sb.append("\n\n--- Quality ---\n");
-      sb.append("Sources found: ")
-          .append(quality.get("chunksFound"))
-          .append(", coverage ")
-          .append(
-              String.format(
-                  "%.2f", ((Number) quality.get("retrievalCoverage")).doubleValue()))
-          .append(", mode ")
-          .append(quality.get("retrievalMode"))
-          .append("\n");
-      if (result.contextTruncated()) sb.append("Note: context was truncated to fit token budget.\n");
-
-      // Tempdoc 655: comparative response hint (placed in the RESPONSE, re-read each turn, per
-      // tempdoc 366's finding that descriptions are forgotten by turn 5). Counts DISTINCT cited
-      // documents — see comparativeAnswerHint for why chunksFound cannot back a "multiple documents"
-      // claim.
-      String comparativeHint = comparativeAnswerHint(result.citations());
-      if (!comparativeHint.isEmpty()) {
-        sb.append(comparativeHint).append("\n");
-      }
-
-      // Facet sidecar (parallel discovery)
-      appendFacetSidecar(sb, query);
-
-      // Enrichment hint
-      appendEnrichmentHint(sb);
-
-      // Zero-result hint
-      if (result.chunksFound() == 0) {
-        sb.append("\nHint: No results. Try different terms or check justsearch_status.");
-      }
-
-      // Tempdoc 658: the citation provenance + quality signals ride the structuredContent channel.
+      // Tempdoc 658/735: the citation provenance + quality signals, PLUS the tier-equivalence
+      // fields (hints/facets/coverage/truncated), ride the structuredContent channel.
       return Map.of(
           "content",
-          List.of(Map.of("type", "text", "text", sb.toString())),
+          List.of(Map.of("type", "text", "text", text)),
           "structuredContent",
-          evidence,
+          McpEvidenceProjection.answerEvidence(result, content),
           "isError",
           false);
     } catch (Exception e) {
       log.warn("MCP answer failed", e);
-      return errorContent("Answer retrieval failed: " + e.getMessage());
+      return errorContent(toolFailureMessage("Answer", e));
     }
+  }
+
+  // Tempdoc 735 W6: exact pre-735 wording of each tool's own enrichment-hint sentence — kept
+  // distinct per tool rather than unified, since unifying the wording would be a text change this
+  // increment does not make (see McpAnswerResponseContent's class-level note).
+  private static final String ANSWER_ENRICHMENT_MESSAGE =
+      "Enrichment in progress — semantic search and entity filters may be limited until complete."
+          + " Check justsearch_status.";
+  private static final String SEARCH_ENRICHMENT_MESSAGE =
+      "Enrichment in progress — semantic search and entity filters may be limited. Check"
+          + " justsearch_status.";
+
+  /**
+   * Tempdoc 735 W6: computes every {@code justsearch_answer} response fact ONCE — passage/document
+   * counts, the comparative/enrichment/zero-result hints, and the facet sidecar — so the text
+   * renderer ({@link #renderAnswerText}) and the structured renderer ({@link
+   * McpEvidenceProjection#answerEvidence(io.justsearch.app.api.DocumentService.ContextResult,
+   * McpAnswerResponseContent)}) derive from the same instance instead of two independent
+   * computations (the pre-735 shape: the facet sidecar and enrichment hint were appended directly
+   * to the text StringBuilder, invisible to structuredContent).
+   */
+  private McpAnswerResponseContent buildAnswerContent(
+      DocumentService.ContextResult result, String query) {
+    // Tempdoc 725 W2a: N/M come from the in-hand result: N is the citation count (== chunksUsed;
+    // both are derived from the same worker-reported chunk list —
+    // RemoteDocumentService.mapRetrieveContextResponse), which equals the number of rendered
+    // "[From: ...]" sections in result.context() for both the chunk-RAG and virtual-chunk-fallback
+    // paths.
+    //
+    // Tempdoc 725 review fix: RemoteDocumentService.retrieveContextFallback (FULLTEXT_FALLBACK
+    // path, gRPC-failure catch) returns citations=List.of() with a non-blank context and
+    // populated sections()/docsUsed() — citations is a chunk-RAG-only concept the full-document
+    // fallback never populates. Deriving N/M from citations().size() there always reads 0/0
+    // above real evidence. When citations is empty but context is non-blank, derive counts from
+    // ContextSection (sourceLabel/content/truncated/sectionIndex/chunkIndex) instead.
+    long passages;
+    long distinctDocs;
+    if (result.citations().isEmpty() && !result.context().isBlank()) {
+      if (!result.sections().isEmpty()) {
+        passages = result.sections().size();
+        distinctDocs =
+            result.sections().stream()
+                .map(DocumentService.ContextSection::sourceLabel)
+                .filter(label -> !label.isBlank())
+                .distinct()
+                .count();
+        if (distinctDocs == 0) {
+          distinctDocs = Math.max(result.docsUsed(), 1);
+        }
+      } else {
+        // Sections absent too (not observed from retrieveContextFallback today, but defend
+        // against a future producer that populates context without sections): fall back to
+        // docsUsed, assuming one passage per document.
+        distinctDocs = Math.max(result.docsUsed(), 1);
+        passages = distinctDocs;
+      }
+    } else {
+      passages = result.citations().size();
+      distinctDocs =
+          result.citations().stream()
+              .map(DocumentService.ContextCitation::parentDocId)
+              .filter(id -> !id.isBlank())
+              .distinct()
+              .count();
+    }
+
+    // Tempdoc 655: comparative response hint, keyed on DISTINCT cited documents — see
+    // comparativeAnswerHint for why chunksFound cannot back a "multiple documents" claim.
+    String comparativeHint = comparativeAnswerHint(result.citations());
+    String enrichmentHintText = enrichmentHint(ANSWER_ENRICHMENT_MESSAGE);
+    String zeroResultHint =
+        result.chunksFound() == 0
+            ? "No results. Try different terms or check justsearch_status."
+            : null;
+
+    List<String> hints = new ArrayList<>();
+    if (!comparativeHint.isEmpty()) hints.add(comparativeHint);
+    if (enrichmentHintText != null) hints.add(enrichmentHintText);
+    if (zeroResultHint != null) hints.add(zeroResultHint);
+
+    return new McpAnswerResponseContent(
+        passages,
+        distinctDocs,
+        result.contextTruncated(),
+        fetchFacets(query),
+        comparativeHint,
+        enrichmentHintText,
+        zeroResultHint,
+        hints);
+  }
+
+  /**
+   * Tempdoc 735 W6: the {@code justsearch_answer} text renderer — reproduces the pre-0.4.0
+   * StringBuilder rendering byte-for-byte (golden-pinned by {@code McpTierEquivalenceGoldenTest}),
+   * now reading every fact from {@code content} (and {@code result} for the fields the content
+   * model does not carry, e.g. {@code retrievalMode} and the {@code QualitySignals} block) instead
+   * of recomputing them.
+   */
+  private static String renderAnswerText(
+      DocumentService.ContextResult result,
+      McpAnswerResponseContent content,
+      boolean concise,
+      String query) {
+    var sb = new StringBuilder();
+
+    // Tempdoc 725 W2a: a self-describing header, stated once, ahead of the passages — this pack
+    // is retrieved evidence, not a synthesized answer.
+    sb.append("Evidence pack: ")
+        .append(content.passages())
+        .append(" passages from ")
+        .append(content.distinctDocs())
+        .append(" documents (retrieval mode: ")
+        .append(result.retrievalMode())
+        .append("). No synthesized answer is included.");
+    if (content.contextTruncated()) {
+      sb.append(" Context was truncated to fit limits.");
+    }
+    // Tempdoc 731 I6a: a descriptive pack-selection fact — no thresholds, no judgment words —
+    // stated only when retrieveContext actually populated quality signals. chunksConsidered() >
+    // 0 is the presence test: the call site's 9-arg ContextResult constructor defaults quality
+    // to QualitySignals.EMPTY (all-zero, e.g. the FULLTEXT_FALLBACK path, which never computes
+    // real signals at all), and the chunk-RAG path's own chunksConsidered is the raw candidate
+    // hit count before budgeting — zero only when literally no candidates were found. Either way
+    // chunksConsidered == 0 means there is nothing honest to report, never a "0 of 0" placeholder.
+    DocumentService.QualitySignals qualitySignals = result.quality();
+    if (qualitySignals.chunksConsidered() > 0) {
+      sb.append(" Pack selection: ")
+          .append(qualitySignals.chunksIncluded())
+          .append(" of ")
+          .append(qualitySignals.chunksConsidered())
+          .append(" candidate passages (retrieval coverage ")
+          .append(String.format("%.2f", qualitySignals.retrievalCoverage()))
+          .append(").");
+    }
+    sb.append("\n\n");
+
+    if (result.context() != null && !result.context().isBlank()) {
+      sb.append(
+          concise
+              ? buildConciseAnswerText(result)
+              : McpSearchResultFormatter.stripControlChars(result.context()));
+    } else {
+      sb.append("No relevant passages found for: ").append(query);
+    }
+
+    // One human-readable quality line, sourced directly from `result` (the same values the
+    // structured `quality` payload projects; tempdoc 658 orphan teardown / 735 single-source).
+    sb.append("\n\n--- Quality ---\n");
+    sb.append("Sources found: ")
+        .append(result.chunksFound())
+        .append(", coverage ")
+        .append(String.format("%.2f", (double) result.quality().retrievalCoverage()))
+        .append(", mode ")
+        .append(result.retrievalMode())
+        .append("\n");
+    if (content.contextTruncated()) sb.append("Note: context was truncated to fit token budget.\n");
+
+    // Tempdoc 655: comparative response hint (placed in the RESPONSE, re-read each turn, per
+    // tempdoc 366's finding that descriptions are forgotten by turn 5).
+    if (!content.comparativeHint().isEmpty()) {
+      sb.append(content.comparativeHint()).append("\n");
+    }
+
+    // Facet sidecar (parallel discovery)
+    if (content.facets() != null && !content.facets().isEmpty()) {
+      sb.append("\n--- Top sources & entities ---\n");
+      for (var entry : content.facets().entrySet()) {
+        String name = entry.getKey().replace("_raw", "");
+        if (entry.getValue() != null && !entry.getValue().isEmpty()) {
+          sb.append("  ").append(name).append(": ");
+          sb.append(
+              entry.getValue().entrySet().stream()
+                  .limit(5)
+                  .map(e -> String.valueOf(e.getKey()))
+                  .toList());
+          sb.append("\n");
+        }
+      }
+    }
+
+    // Enrichment hint
+    if (content.enrichmentHint() != null) {
+      sb.append("\nHint: ").append(content.enrichmentHint()).append("\n");
+    }
+
+    // Zero-result hint
+    if (content.zeroResultHint() != null) {
+      sb.append("\nHint: ").append(content.zeroResultHint());
+    }
+
+    return sb.toString();
+  }
+
+  /**
+   * Tempdoc 725 W2c: concise-mode passage rendering — caps at the 3 highest-rank sections
+   * (sections are already rank-ordered by the Worker's chunk assembly) and trims each to ~600
+   * chars, appending the W1 truncation-remedy suffix when a passage is cut. Falls back to a
+   * single trimmed window of the assembled context when the result carries no structured
+   * sections (defensive: every production retrieval path populates them alongside a non-blank
+   * context, but a section-less result should still render something in concise mode).
+   */
+  private static String buildConciseAnswerText(DocumentService.ContextResult result) {
+    List<DocumentService.ContextSection> sections = result.sections();
+    if (sections.isEmpty()) {
+      McpSearchResultFormatter.Window window =
+          McpSearchResultFormatter.windowStartingAt(result.context(), 0, 600);
+      String text = McpSearchResultFormatter.stripControlChars(window.text());
+      return window.truncated() ? text + McpSearchResultFormatter.TRUNCATION_REMEDY : text;
+    }
+    var sb = new StringBuilder();
+    int shown = Math.min(3, sections.size());
+    for (int i = 0; i < shown; i++) {
+      DocumentService.ContextSection section = sections.get(i);
+      if (i > 0) sb.append(DocumentService.SECTION_SEPARATOR);
+      McpSearchResultFormatter.Window window =
+          McpSearchResultFormatter.windowStartingAt(section.content(), 0, 600);
+      sb.append("[From: ")
+          .append(section.sourceLabel())
+          .append("]\n")
+          .append(McpSearchResultFormatter.stripControlChars(window.text()));
+      if (window.truncated()) sb.append(McpSearchResultFormatter.TRUNCATION_REMEDY);
+    }
+    return sb.toString();
   }
 
   /**
@@ -542,7 +749,7 @@ public final class McpToolSurface {
   @SuppressWarnings("unchecked")
   private Map<String, Object> callSearch(Map<String, Object> args) {
     KnowledgeSearchController ctrl = knowledgeLookup.get();
-    if (ctrl == null) return errorContent("Knowledge server not available");
+    if (ctrl == null) return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE);
     try {
       KnowledgeHttpApiAdapter adapter = ctrl.getAdapter();
       String query = (String) args.getOrDefault("query", "");
@@ -551,6 +758,10 @@ public final class McpToolSurface {
       // Tempdoc 658: the opt-in `detail` arg maps to the request `debug` flag (→ include_detail),
       // which gates the per-hit numeric detail tier surfaced in the structured ranking evidence.
       Boolean detail = (args.get("detail") instanceof Boolean b) ? b : null;
+      // Tempdoc 725 W2c: concise mode omits the Preview line only — rank/title/score, Path, and
+      // Matched/Match-basis lines (plus the summary/degradation/coverage lines below the loop) all
+      // carry facts, not bulk, so they stay in both response densities.
+      boolean concise = "concise".equals(args.get("response_format"));
 
       KnowledgeSearchRequest.Filters filters =
           parseFilters((Map<String, Object>) args.get("filters"));
@@ -565,92 +776,258 @@ public final class McpToolSurface {
               new KnowledgeSearchRequest.FieldSpec("entity_locations_raw", 5));
       var facets = new KnowledgeSearchRequest.Facets(true, null, defaultFacetFields);
 
+      // Tempdoc 725 W1: request excerpt windows so the preview can anchor on the actual match
+      // instead of a blind head-of-field truncation (see buildHitPreview below).
       KnowledgeSearchRequest req =
           new KnowledgeSearchRequest(
               query, Math.min(limit, 50), mode, null, null, null, filters, null, facets, null,
-              null, detail, null);
+              Boolean.TRUE, detail, null);
       KnowledgeSearchResponse resp = adapter.search(req);
 
-      var sb = new StringBuilder();
-      if (resp.results() != null) {
-        int rank = 1;
-        for (var hit : resp.results()) {
-          String title = hit.fields().getOrDefault("title", "");
-          String path = hit.fields().getOrDefault("path", "");
-          String preview = hit.fields().getOrDefault("content_preview", "");
-          sb.append("[")
-              .append(rank++)
-              .append("] ")
-              .append(!title.isBlank() ? title : path)
-              .append(" (score: ")
-              .append(String.format("%.2f", hit.score()))
-              .append(")\n");
-          if (!path.isBlank()) sb.append("    Path: ").append(path).append("\n");
-          if (!preview.isBlank()) {
-            if (preview.length() > 200) preview = preview.substring(0, 200) + "...";
-            sb.append("    Preview: ").append(preview).append("\n");
-          }
-          sb.append("\n");
-        }
-      }
+      // Tempdoc 735 W6: every response fact — per-hit rationale, hints, facets, coverage —
+      // computed ONCE by the content-model builder, then consumed by both the text renderer and
+      // the structured renderer, so the two tiers cannot silently diverge (735 G3).
+      McpSearchResponseContent content = buildSearchContent(resp, args);
+      String text = renderSearchText(resp, content, concise);
 
-      sb.append("Found ").append(resp.totalHits()).append(" results");
-      if (resp.tookMs() > 0) sb.append(" (took ").append(resp.tookMs()).append("ms)");
-      sb.append(".");
-
-      // Facets
-      if (resp.facets() != null && !resp.facets().isEmpty()) {
-        sb.append("\n\nFacets (use as filter values):\n");
-        for (var entry : resp.facets().entrySet()) {
-          String facetName = entry.getKey().replace("_raw", "");
-          sb.append("  ").append(facetName).append(": ");
-          if (entry.getValue() instanceof Map<?, ?> facetMap) {
-            var topEntries =
-                facetMap.entrySet().stream()
-                    .limit(5)
-                    .map(e -> e.getKey() + " (" + e.getValue() + ")")
-                    .toList();
-            sb.append(String.join(", ", topEntries));
-          }
-          sb.append("\n");
-        }
-      }
-
-      // Hints
-      var hints = new ArrayList<String>();
-      if (resp.totalHits() == 0) {
-        hints.add(
-            "No results found. Try broader terms, or use justsearch_status to check what's"
-                + " indexed.");
-      } else if (resp.totalHits() > 100 && args.get("filters") == null) {
-        hints.add("Many results. Use the facet values above as filters to narrow down.");
-      }
-      // Tempdoc 655: comparative response hint — searched the whole index in one call, which beats
-      // listing-and-reading files for a topical/semantic query. Factual, only on a productive search.
-      if (resp.totalHits() > 0) {
-        hints.add(
-            "Searched the index in one call. For conceptual or cross-document questions,"
-                + " justsearch_answer returns assembled cited passages directly.");
-      }
-      appendEnrichmentHintToList(hints);
-      if (!hints.isEmpty()) {
-        sb.append("\nHints:\n");
-        for (String hint : hints) sb.append("- ").append(hint).append("\n");
-      }
-
-      // Tempdoc 658: project the canonical search-execution evidence (SearchTrace + per-hit trace)
-      // onto the agent-facing structuredContent channel, alongside the human-readable text block.
+      // Tempdoc 658/735: the canonical search-execution evidence (SearchTrace + per-hit trace)
+      // PLUS the tier-equivalence fields (hints/facets/coverage/truncated) ride the agent-facing
+      // structuredContent channel, alongside the human-readable text block.
       return Map.of(
           "content",
-          List.of(Map.of("type", "text", "text", sb.toString())),
+          List.of(Map.of("type", "text", "text", text)),
           "structuredContent",
-          McpEvidenceProjection.searchEvidence(resp),
+          McpEvidenceProjection.searchEvidence(resp, content),
           "isError",
           false);
     } catch (Exception e) {
       log.warn("MCP search failed", e);
-      return errorContent("Search failed: " + e.getMessage());
+      return errorContent(toolFailureMessage("Search", e));
     }
+  }
+
+  /**
+   * Tempdoc 735 W6: computes every {@code justsearch_search} response fact ONCE — per-hit
+   * matched-terms/matched-fields/preview, response-level hints, and the raw facets map — so the
+   * text renderer ({@link #renderSearchText}) and the structured renderer ({@link
+   * McpEvidenceProjection#searchEvidence(KnowledgeSearchResponse, McpSearchResponseContent)})
+   * derive from the same instance instead of two independent {@code filterInformative} calls (the
+   * pre-735 duplication).
+   */
+  private McpSearchResponseContent buildSearchContent(
+      KnowledgeSearchResponse resp, Map<String, Object> args) {
+    List<McpSearchResponseContent.HitContent> hits = new ArrayList<>();
+    if (resp.results() != null) {
+      int rank = 1;
+      for (var hit : resp.results()) {
+        String title = hit.fields().getOrDefault("title", "");
+        String path = hit.fields().getOrDefault("path", "");
+        // Tempdoc 725 W1: informative-term-anchored preview + matched-term extraction, computed
+        // once regardless of response_format — the text renderer decides whether to show the
+        // preview line; the facts themselves are always available for structuredContent.
+        String preview = buildHitPreview(hit);
+        List<KnowledgeSearchResponse.MatchSpan> informative =
+            McpSearchResultFormatter.filterInformative(hit.matchSpans());
+        List<String> matchedTerms =
+            informative.isEmpty()
+                ? List.of()
+                : McpSearchResultFormatter.informativeTerms(informative);
+        List<String> matchedFields =
+            hit.matchedFields() == null ? List.of() : hit.matchedFields();
+        hits.add(
+            new McpSearchResponseContent.HitContent(
+                rank++, title, path, hit.score(), preview, matchedTerms, matchedFields));
+      }
+    }
+
+    int shownCount = resp.results() == null ? 0 : resp.results().size();
+    boolean truncated = resp.totalHits() > shownCount;
+
+    // Hints
+    var hints = new ArrayList<String>();
+    if (resp.totalHits() == 0) {
+      hints.add(
+          "No results found. Try broader terms, or use justsearch_status to check what's"
+              + " indexed.");
+    } else if (resp.totalHits() > 100 && args.get("filters") == null) {
+      hints.add("Many results. Use the facet values above as filters to narrow down.");
+    }
+    // Tempdoc 655: comparative response hint — searched the whole index in one call, which beats
+    // listing-and-reading files for a topical/semantic query. Factual, only on a productive search.
+    if (resp.totalHits() > 0) {
+      hints.add(
+          "Searched the index in one call. For conceptual or cross-document questions,"
+              + " justsearch_answer returns assembled cited passages directly.");
+    }
+    String enrichmentHintText = enrichmentHint(SEARCH_ENRICHMENT_MESSAGE);
+    if (enrichmentHintText != null) {
+      hints.add(enrichmentHintText);
+    }
+
+    return new McpSearchResponseContent(
+        resp.totalHits(), resp.tookMs(), shownCount, truncated, hits, resp.facets(), hints);
+  }
+
+  /**
+   * Tempdoc 735 W6: the {@code justsearch_search} text renderer — reproduces the pre-0.4.0
+   * StringBuilder rendering byte-for-byte (golden-pinned by {@code McpTierEquivalenceGoldenTest}),
+   * now reading every fact from {@code content} instead of {@code resp} directly (degradation is
+   * the one exception: it stays sourced straight from {@code resp.searchTrace()} since it was
+   * already tier-equivalent before this increment — see {@link McpSearchResponseContent}'s
+   * class-level note).
+   */
+  private static String renderSearchText(
+      KnowledgeSearchResponse resp, McpSearchResponseContent content, boolean concise) {
+    var sb = new StringBuilder();
+    for (var h : content.hits()) {
+      sb.append("[")
+          .append(h.rank())
+          .append("] ")
+          .append(!h.title().isBlank() ? h.title() : h.path())
+          .append(" (score: ")
+          .append(String.format("%.2f", h.score()))
+          .append(")\n");
+      if (!h.path().isBlank()) sb.append("    Path: ").append(h.path()).append("\n");
+
+      // Tempdoc 725 W1: informative-term-anchored preview + a DESCRIPTIVE (never imperative)
+      // match-basis line, so an agent can tell WHY a hit matched without opening the file.
+      if (!concise) {
+        if (!h.preview().isBlank()) {
+          sb.append("    Preview: ").append(h.preview()).append("\n");
+        }
+      }
+      if (!h.semanticFallback()) {
+        StringBuilder quoted = new StringBuilder();
+        for (int i = 0; i < h.matchedTerms().size(); i++) {
+          if (i > 0) quoted.append(", ");
+          quoted.append('"').append(h.matchedTerms().get(i)).append('"');
+        }
+        sb.append("    Matched: ").append(quoted);
+        if (!h.matchedFields().isEmpty()) {
+          sb.append(" in ").append(String.join(", ", h.matchedFields()));
+        }
+        sb.append("\n");
+      } else {
+        sb.append("    Match basis: semantic similarity (no distinctive term overlap)\n");
+      }
+      sb.append("\n");
+    }
+
+    sb.append("Found ").append(content.totalHits()).append(" results");
+    if (content.tookMs() > 0) sb.append(" (took ").append(content.tookMs()).append("ms)");
+    if (content.truncated()) {
+      sb.append("; showing ").append(content.shownCount()).append(".");
+    } else {
+      sb.append(".");
+    }
+    appendDegradationNote(sb, resp.searchTrace());
+
+    // Facets
+    if (content.facets() != null && !content.facets().isEmpty()) {
+      sb.append("\n\nFacets (use as filter values):\n");
+      for (var entry : content.facets().entrySet()) {
+        String facetName = entry.getKey().replace("_raw", "");
+        sb.append("  ").append(facetName).append(": ");
+        if (entry.getValue() instanceof Map<?, ?> facetMap) {
+          var topEntries =
+              facetMap.entrySet().stream()
+                  .limit(5)
+                  .map(e -> e.getKey() + " (" + e.getValue() + ")")
+                  .toList();
+          sb.append(String.join(", ", topEntries));
+        }
+        sb.append("\n");
+      }
+    }
+
+    // Hints
+    if (!content.hints().isEmpty()) {
+      sb.append("\nHints:\n");
+      for (String hint : content.hints()) sb.append("- ").append(hint).append("\n");
+    }
+
+    return sb.toString();
+  }
+
+  /**
+   * Tempdoc 725 W1/W2 preview-selection order: (a) an excerpt region windowed to cover the most
+   * informative-term occurrences (ties broken toward the LATER occurrence — a later occurrence
+   * tends to sit in body content rather than a title echo near the head of the text), (b) a
+   * content_preview window chosen the same way over the field's informative-term occurrences, (c)
+   * the pre-existing head-of-field fallback. Cases (a)/(b) append {@link
+   * McpSearchResultFormatter#TRUNCATION_REMEDY} when the rendered text is a cut of a larger source;
+   * case (c) keeps its existing "..." suffix unchanged.
+   *
+   * <p>Windowing uses {@link McpSearchResultFormatter#informativeOccurrences}, not {@link
+   * McpSearchResultFormatter#filterInformative}: the latter dedups by term (right for the
+   * "Matched:" line) and would collapse two occurrences of the same term — e.g. a title-echo
+   * occurrence and a payload occurrence — down to whichever comes first, which is the defect this
+   * increment fixes (tempdoc 725 W2, live-validated on doc cavby8).
+   */
+  private static String buildHitPreview(KnowledgeSearchResponse.Hit hit) {
+    List<KnowledgeSearchResponse.ExcerptRegion> regions = hit.excerptRegions();
+    if (regions != null && !regions.isEmpty()) {
+      KnowledgeSearchResponse.ExcerptRegion region = McpSearchResultFormatter.selectBestRegion(regions);
+      List<KnowledgeSearchResponse.MatchSpan> regionOccurrences =
+          McpSearchResultFormatter.informativeOccurrences(region.matchSpans());
+      McpSearchResultFormatter.Window window =
+          regionOccurrences.isEmpty()
+              ? McpSearchResultFormatter.windowStartingAt(
+                  region.text(), 0, McpSearchResultFormatter.REGION_WINDOW_CHARS)
+              : McpSearchResultFormatter.bestWindow(
+                  region.text(), regionOccurrences, McpSearchResultFormatter.REGION_WINDOW_CHARS);
+      String text = McpSearchResultFormatter.stripControlChars(window.text());
+      return window.truncated() ? text + McpSearchResultFormatter.TRUNCATION_REMEDY : text;
+    }
+
+    List<KnowledgeSearchResponse.MatchSpan> previewFieldSpans = new ArrayList<>();
+    if (hit.matchSpans() != null) {
+      for (KnowledgeSearchResponse.MatchSpan span : hit.matchSpans()) {
+        if ("content_preview".equals(span.field())) previewFieldSpans.add(span);
+      }
+    }
+    List<KnowledgeSearchResponse.MatchSpan> previewOccurrences =
+        McpSearchResultFormatter.informativeOccurrences(previewFieldSpans);
+    String fieldValue = hit.fields().getOrDefault("content_preview", "");
+    if (!previewOccurrences.isEmpty()) {
+      McpSearchResultFormatter.Window window =
+          McpSearchResultFormatter.bestWindow(
+              fieldValue, previewOccurrences, McpSearchResultFormatter.PREVIEW_WINDOW_CHARS);
+      String text = McpSearchResultFormatter.stripControlChars(window.text());
+      return window.truncated() ? text + McpSearchResultFormatter.TRUNCATION_REMEDY : text;
+    }
+
+    if (fieldValue.length() > 200) {
+      return McpSearchResultFormatter.stripControlChars(fieldValue.substring(0, 200)) + "...";
+    }
+    return McpSearchResultFormatter.stripControlChars(fieldValue);
+  }
+
+  /**
+   * Tempdoc 725 W1: a once-per-response, DESCRIPTIVE-only note when {@link SearchTrace.Degradation}
+   * says semantic ranking was blocked or fell back — read from the canonical {@link SearchTrace}
+   * (registered in {@code governance/execution-surfaces.v1.json}), never re-derived. Null-safe:
+   * absent trace or degradation appends nothing.
+   */
+  private static void appendDegradationNote(StringBuilder sb, SearchTrace trace) {
+    if (trace == null || trace.degradation() == null) return;
+    SearchTrace.Degradation degradation = trace.degradation();
+    if (!degradation.vectorBlocked() && !degradation.hybridFallback()) return;
+    List<String> reasons = new ArrayList<>();
+    if (degradation.vectorBlocked()
+        && degradation.vectorBlockedReason() != null
+        && !degradation.vectorBlockedReason().isBlank()) {
+      reasons.add(degradation.vectorBlockedReason());
+    }
+    if (degradation.hybridFallback()
+        && degradation.hybridFallbackReason() != null
+        && !degradation.hybridFallbackReason().isBlank()) {
+      reasons.add(degradation.hybridFallbackReason());
+    }
+    String reasonText = reasons.isEmpty() ? "reason unavailable" : String.join("; ", reasons);
+    sb.append("\nNote: semantic ranking degraded (")
+        .append(reasonText)
+        .append("); results may be keyword-ranked only.");
   }
 
   // =========================================================================
@@ -659,7 +1036,7 @@ public final class McpToolSurface {
 
   private Map<String, Object> callStatus() {
     KnowledgeSearchController ctrl = knowledgeLookup.get();
-    if (ctrl == null) return errorContent("Knowledge server not available");
+    if (ctrl == null) return errorContent(KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE);
     try {
       KnowledgeHttpApiAdapter adapter = ctrl.getAdapter();
       var status = adapter.status();
@@ -692,7 +1069,7 @@ public final class McpToolSurface {
           "content", List.of(Map.of("type", "text", "text", sb.toString())), "isError", false);
     } catch (Exception e) {
       log.warn("MCP status failed", e);
-      return errorContent("Status unavailable: " + e.getMessage());
+      return errorContent(toolFailureMessage("Status", e));
     }
   }
 
@@ -747,7 +1124,7 @@ public final class McpToolSurface {
       }
     } catch (Exception e) {
       log.warn("MCP operation dispatch error for {}", opIdValue, e);
-      return errorContent("Operation failed: " + e.getMessage());
+      return errorContent(toolFailureMessage("Operation " + opIdValue, e));
     }
   }
 
@@ -1049,10 +1426,16 @@ public final class McpToolSurface {
   // Helpers
   // =========================================================================
 
-  private void appendFacetSidecar(StringBuilder sb, String query) {
+  /**
+   * Tempdoc 735 W6: replaces {@code appendFacetSidecar} — fetches the SAME facet sidecar search
+   * (limit 0, hybrid mode, 3 facet fields) but returns the raw facets map instead of writing text,
+   * so it can feed both the text renderer's "--- Top sources & entities ---" block and the
+   * structured tier's {@code facets} field from one call.
+   */
+  private Map<String, Map<String, Long>> fetchFacets(String query) {
     try {
       KnowledgeSearchController ctrl = knowledgeLookup.get();
-      if (ctrl == null) return;
+      if (ctrl == null) return Map.of();
       var facetReq = new KnowledgeSearchRequest(
           query, 0, "hybrid", null, null, null, null, null,
           new KnowledgeSearchRequest.Facets(true, null, List.of(
@@ -1061,55 +1444,31 @@ public final class McpToolSurface {
               new KnowledgeSearchRequest.FieldSpec("entity_organizations_raw", 5))),
           null, null, null, null);
       var resp = ctrl.getAdapter().search(facetReq);
-      if (resp.facets() != null && !resp.facets().isEmpty()) {
-        sb.append("\n--- Top sources & entities ---\n");
-        for (var entry : resp.facets().entrySet()) {
-          String name = entry.getKey().replace("_raw", "");
-          if (entry.getValue() instanceof Map<?, ?> m && !m.isEmpty()) {
-            sb.append("  ").append(name).append(": ");
-            sb.append(
-                m.entrySet().stream()
-                    .limit(5)
-                    .map(e -> String.valueOf(e.getKey()))
-                    .toList());
-            sb.append("\n");
-          }
-        }
-      }
+      return resp.facets() == null ? Map.of() : resp.facets();
     } catch (Exception e) {
       log.debug("Facet sidecar failed: {}", e.getMessage());
+      return Map.of();
     }
   }
 
-  private void appendEnrichmentHint(StringBuilder sb) {
+  /**
+   * Tempdoc 735 W6: replaces {@code appendEnrichmentHint}/{@code appendEnrichmentHintToList} —
+   * both tools ran the identical enrichment-coverage check but appended different literal wording
+   * at different call sites; this returns the fact ({@code message} when enrichment coverage is
+   * low, {@code null} otherwise) so each caller can both render its own pre-existing text
+   * formatting AND surface the same fact on structuredContent's {@code hints}.
+   */
+  private String enrichmentHint(String message) {
     try {
       KnowledgeSearchController ctrl = knowledgeLookup.get();
-      if (ctrl == null) return;
+      if (ctrl == null) return null;
       var status = ctrl.getAdapter().status();
       Map<String, Object> extras = status.extras();
       boolean lowEmbedding = extras.get("embeddingCoveragePercent") instanceof Number n && n.doubleValue() < 100;
       boolean lowSplade = extras.get("spladeCoveragePercent") instanceof Number n && n.doubleValue() < 100;
-      if (lowEmbedding || lowSplade) {
-        sb.append("\nHint: Enrichment in progress — semantic search and entity filters may be limited until complete. Check justsearch_status.\n");
-      }
+      return (lowEmbedding || lowSplade) ? message : null;
     } catch (Exception e) {
-      // silent
-    }
-  }
-
-  private void appendEnrichmentHintToList(List<String> hints) {
-    try {
-      KnowledgeSearchController ctrl = knowledgeLookup.get();
-      if (ctrl == null) return;
-      var status = ctrl.getAdapter().status();
-      Map<String, Object> extras = status.extras();
-      boolean lowEmbedding = extras.get("embeddingCoveragePercent") instanceof Number n && n.doubleValue() < 100;
-      boolean lowSplade = extras.get("spladeCoveragePercent") instanceof Number n && n.doubleValue() < 100;
-      if (lowEmbedding || lowSplade) {
-        hints.add("Enrichment in progress — semantic search and entity filters may be limited. Check justsearch_status.");
-      }
-    } catch (Exception e) {
-      // silent
+      return null;
     }
   }
 
@@ -1201,8 +1560,14 @@ public final class McpToolSurface {
         "type", "array", "items", Map.of("type", "string"), "description", description);
   }
 
+  /** Tempdoc 725 W2c: a declared string enum property (e.g. {@code response_format}). */
+  private static Map<String, Object> propEnum(List<String> values, String description) {
+    return orderedMap("type", "string", "enum", values, "description", description);
+  }
+
   private static Map<String, Object> resource(String uri, String name, String description) {
-    return Map.of("uri", uri, "name", name, "description", description, "mimeType", "application/json");
+    return orderedMap(
+        "uri", uri, "name", name, "description", description, "mimeType", "application/json");
   }
 
   private static Map<String, Object> resourceError(String uri, String message) {
@@ -1212,5 +1577,36 @@ public final class McpToolSurface {
 
   static Map<String, Object> errorContent(String message) {
     return Map.of("content", List.of(Map.of("type", "text", "text", message)), "isError", true);
+  }
+
+  // =========================================================================
+  // Tempdoc 725 W3: error-result legibility. DESCRIPTIVE grammar only — an error result states
+  // what happened and where a status check can be found; it never issues an imperative ("now
+  // call X").
+  // =========================================================================
+
+  /**
+   * The 3 "backend not reachable" tool/call sites (justsearch_answer, justsearch_search,
+   * justsearch_status) share this exact wording: the condition, plus a descriptive pointer to
+   * where live component state can be checked.
+   */
+  private static final String KNOWLEDGE_SERVER_UNAVAILABLE_MESSAGE =
+      "Knowledge server is not available (worker offline or still starting). This is usually"
+          + " transient during startup; state is reported by the justsearch_status tool.";
+
+  /**
+   * Uniform message for the 5 generic {@code catch (Exception e)} tool/call sites: the tool name,
+   * the exception's simple class name and message (never swallowed into a bare, unattributed
+   * string), plus the same descriptive status-tool pointer the availability message above uses.
+   */
+  private static String toolFailureMessage(String tool, Exception e) {
+    String detail = e.getMessage() != null ? e.getMessage() : "no additional detail";
+    return tool
+        + " failed: "
+        + e.getClass().getSimpleName()
+        + ": "
+        + detail
+        + ". This may be transient; current component state is available via the"
+        + " justsearch_status tool.";
   }
 }

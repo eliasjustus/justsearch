@@ -472,6 +472,21 @@ public class IndexingLoop implements Closeable {
     }
   }
 
+  /**
+   * Tempdoc 730 A3: wraps {@link EmbeddingProviderLifecycle#tryFinalizeFreshCompatibleStamp()}
+   * with the same commit-driver counter reset {@link #tryFinalizeEmbeddingRebuild()} performs.
+   * Belt-and-suspenders alongside A1 (the unconditional stamp supplier) — closes the window
+   * where the fresh-index -> COMPATIBLE path's finalizing commit landed before the embedding
+   * model was producing a fingerprint.
+   */
+  private void tryFinalizeFreshCompatibleEmbeddingStamp() {
+    if (embeddingLifecycle.tryFinalizeFreshCompatibleStamp()) {
+      metrics.recordCommit();
+      lastCommitTime = System.currentTimeMillis();
+      indexedSinceCommit = 0;
+    }
+  }
+
   // W2.1: dropped private wrappers `embeddingProvider()` and `allowEmbeddingWrites()`;
   // callers go through `embeddingLifecycle.X()` directly. Removes one method-dispatch
   // hop + visual indirection.
@@ -568,6 +583,9 @@ public class IndexingLoop implements Closeable {
 
           // If a forced reindex is in progress, check whether rebuild has completed.
           tryFinalizeEmbeddingRebuild();
+          // Tempdoc 730 A3: fresh-index -> COMPATIBLE path has no REBUILDING to complete; check
+          // whether it still needs its stamp-persisting commit.
+          tryFinalizeFreshCompatibleEmbeddingStamp();
 
           boolean wasRunning = currentState == LoopState.RUNNING;
           transitionToIdle();
@@ -627,6 +645,9 @@ public class IndexingLoop implements Closeable {
 
         // If a forced reindex is in progress, check whether rebuild has completed.
         tryFinalizeEmbeddingRebuild();
+        // Tempdoc 730 A3: fresh-index -> COMPATIBLE path has no REBUILDING to complete; check
+        // whether it still needs its stamp-persisting commit.
+        tryFinalizeFreshCompatibleEmbeddingStamp();
 
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
@@ -657,7 +678,32 @@ public class IndexingLoop implements Closeable {
       }
     }
 
-    // Final commit on shutdown
+    finalizeShutdownCommit();
+
+    log.info("Indexing loop stopped");
+  }
+
+  /**
+   * Tempdoc 730 review item 2 (the "no subsequent commit" ratchet hole): a rebuild-completion or
+   * fresh-compatible fingerprint stamp that becomes due right as the loop is stopping previously
+   * had exactly one retry path — the next idle/batch iteration's {@link
+   * #tryFinalizeEmbeddingRebuild()} / {@link #tryFinalizeFreshCompatibleEmbeddingStamp()} calls.
+   * If the loop never reaches that next iteration (a plain worker restart stops the loop right
+   * after completion), the old shutdown commit below — gated on {@code indexedSinceCommit > 0} —
+   * skipped entirely, so the fingerprint was never persisted; the next boot's {@code refresh()}
+   * then saw {@code storedFp == null} with {@code docCount > 0} and re-flagged BLOCKED_LEGACY,
+   * even though the rebuild had genuinely completed in memory. Calling the two finalizers here,
+   * unconditionally, closes that window: both self-gate on ECC state (REBUILDING-completed /
+   * COMPATIBLE-with-docs-and-no-stored-fp respectively) and issue their own commit independent of
+   * {@code indexedSinceCommit}, so invoking them is a no-op when there is nothing to stamp and the
+   * guaranteed persisting commit otherwise when there is. This is the SAME wiring
+   * {@code tryFinalizeEmbeddingRebuild}/{@code tryFinalizeFreshCompatibleEmbeddingStamp} already
+   * use every idle/batch iteration — no parallel mechanism, just one more call site.
+   */
+  private void finalizeShutdownCommit() {
+    tryFinalizeEmbeddingRebuild();
+    tryFinalizeFreshCompatibleEmbeddingStamp();
+
     try {
       if (indexedSinceCommit > 0) {
         long commitStart = System.currentTimeMillis();
@@ -670,8 +716,6 @@ public class IndexingLoop implements Closeable {
     } catch (RuntimeException e) {
       log.error("Failed final commit", e);
     }
-
-    log.info("Indexing loop stopped");
   }
 
   /**

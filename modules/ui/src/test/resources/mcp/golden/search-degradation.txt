@@ -1,0 +1,8 @@
+[1] Degraded Hit (score: 0.60)
+    Path: docs/degraded.md
+    Match basis: semantic similarity (no distinctive term overlap)
+
+Found 1 results (took 9ms).
+Note: semantic ranking degraded (FINGERPRINT_MISMATCH); results may be keyword-ranked only.
+Hints:
+- Searched the index in one call. For conceptual or cross-document questions, justsearch_answer returns assembled cited passages directly.
