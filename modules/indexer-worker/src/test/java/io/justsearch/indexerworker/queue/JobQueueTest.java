@@ -71,6 +71,51 @@ final class JobQueueTest {
     assertEquals(1, jobQueue.queueDepth());
   }
 
+  // Tempdoc 731 §3.2 / PLAN I2 (job-queue claim-order tie-break): SqliteJobQueue.enqueue()
+  // stamps a single System.currentTimeMillis() for the whole batch, so a multi-path enqueue
+  // always produces same-timestamp PENDING rows in production — mirroring that real batch
+  // shape here (not a synthetic same-millis seed) is what makes this test's determinism claim
+  // trustworthy (unreachable-seed-green). Before the `, path ASC` secondary sort, pollPending's
+  // `ORDER BY last_updated ASC` alone left claim order among those ties undefined by SQL
+  // semantics. Assert the claim order is deterministic and path-lexicographic across repeated,
+  // independent enqueue/poll cycles.
+  @Test
+  void pollPendingClaimsSameTimestampBatchInDeterministicPathOrder() throws Exception {
+    List<Path> batch = List.of(
+        Path.of("/tmp/tie-break/c.txt"),
+        Path.of("/tmp/tie-break/a.txt"),
+        Path.of("/tmp/tie-break/e.txt"),
+        Path.of("/tmp/tie-break/b.txt"),
+        Path.of("/tmp/tie-break/d.txt"));
+    List<String> expectedOrder =
+        batch.stream()
+            .map(p -> PathNormalizer.normalizePath(p.toAbsolutePath().toString()))
+            .sorted()
+            .toList();
+
+    // Repeat across fresh, independent queue instances (own DB file each trial) so the
+    // assertion is about the SQL tie-break contract, not one connection's incidental state.
+    for (int trial = 0; trial < 3; trial++) {
+      Path trialDbPath = tempDir.resolve("jobs-tiebreak-" + trial + ".db");
+      SqliteJobQueue trialQueue = new SqliteJobQueue(trialDbPath);
+      trialQueue.open();
+      try {
+        assertEquals(
+            batch.size(), trialQueue.enqueue(batch), "trial " + trial + ": batch fully accepted");
+        var claimed = trialQueue.pollPending(batch.size());
+        List<String> claimedOrder =
+            claimed.stream().map(job -> job.path().toString()).toList();
+        assertEquals(
+            expectedOrder,
+            claimedOrder,
+            "trial " + trial + ": claim order among same-timestamp jobs must be deterministic"
+                + " path-ascending order");
+      } finally {
+        trialQueue.close();
+      }
+    }
+  }
+
   // Tempdoc 550 Thesis II (liveness reaper): the age-bounded recoverStuckJobs(olderThanMs) re-queues
   // ONLY genuinely-stale PROCESSING rows (worker died mid-process), never jobs actively draining.
   @Test

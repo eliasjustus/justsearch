@@ -309,34 +309,72 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
 
       long now = System.currentTimeMillis();
 
-      // Atomic claim using UPDATE...RETURNING (SQLite 3.35+)
-      // This atomically selects and marks jobs as PROCESSING in a single statement,
-      // preventing race conditions and avoiding partial progress on crashes.
-      // Note: attempts is NOT incremented here - it's incremented on failure in markFailed()
-      String atomicClaimSql = """
-          UPDATE jobs
-          SET state = 'PROCESSING', last_updated = ?
-          WHERE path IN (
-            SELECT path FROM jobs
-            WHERE state = 'PENDING' AND (retry_after IS NULL OR retry_after <= ?)
-            ORDER BY last_updated ASC
-            LIMIT ?
-          )
-          RETURNING path, collection
-          """;
+      // Local carrier for a candidate row selected before any mutation happens.
+      record ClaimedRow(String path, String collection) {}
 
-      List<IndexJob> result = new ArrayList<>();
-      try (PreparedStatement stmt = connection.prepareStatement(atomicClaimSql)) {
-        stmt.setLong(1, now);
-        stmt.setLong(2, now);
-        stmt.setInt(3, limit);
-        // Use executeQuery() for UPDATE...RETURNING to get the result set
-        try (ResultSet rs = stmt.executeQuery()) {
-          while (rs.next()) {
-            result.add(new IndexJob(Path.of(rs.getString(1)), rs.getString(2)));
-          }
-        }
-      }
+      // Claim is atomic via an explicit transaction (BEGIN/COMMIT through the existing
+      // inTransaction() helper), not a single UPDATE...RETURNING statement: SQLite's RETURNING
+      // clause (a) may only reference columns of the table being updated - not a joined CTE - and
+      // (b) its row order is documented as unspecified and empirically does NOT follow an
+      // ORDER BY used to select the candidate set (verified: it follows the UPDATE's own
+      // row-visitation order instead). So the SELECT below - not RETURNING - is the single
+      // source of both the claimed set AND its order; the follow-up UPDATE only flips state for
+      // exactly those paths. Wrapping both statements in one transaction preserves the original
+      // atomicity/crash-safety intent (either the whole claim commits or none of it does; no
+      // partial-progress window is visible to another connection).
+      //
+      // Tempdoc 731 §3.2 / PLAN I2: `last_updated ASC, path ASC` makes claim order deterministic
+      // even when a batch shares one enqueue-time timestamp (the fixable determinism gap).
+      List<IndexJob> result =
+          inTransaction(
+              () -> {
+                String selectSql = """
+                    SELECT path, collection FROM jobs
+                    WHERE state = 'PENDING' AND (retry_after IS NULL OR retry_after <= ?)
+                    ORDER BY last_updated ASC, path ASC
+                    LIMIT ?
+                    """;
+
+                List<ClaimedRow> claimedRows = new ArrayList<>();
+                try (PreparedStatement selectStmt = connection.prepareStatement(selectSql)) {
+                  selectStmt.setLong(1, now);
+                  selectStmt.setInt(2, limit);
+                  try (ResultSet rs = selectStmt.executeQuery()) {
+                    while (rs.next()) {
+                      claimedRows.add(new ClaimedRow(rs.getString(1), rs.getString(2)));
+                    }
+                  }
+                }
+
+                if (claimedRows.isEmpty()) {
+                  return List.<IndexJob>of();
+                }
+
+                StringBuilder placeholders = new StringBuilder();
+                for (int i = 0; i < claimedRows.size(); i++) {
+                  if (i > 0) {
+                    placeholders.append(',');
+                  }
+                  placeholders.append('?');
+                }
+                String updateSql =
+                    "UPDATE jobs SET state = 'PROCESSING', last_updated = ? WHERE path IN ("
+                        + placeholders
+                        + ")";
+                try (PreparedStatement updateStmt = connection.prepareStatement(updateSql)) {
+                  updateStmt.setLong(1, now);
+                  for (int i = 0; i < claimedRows.size(); i++) {
+                    updateStmt.setString(i + 2, claimedRows.get(i).path());
+                  }
+                  updateStmt.executeUpdate();
+                }
+
+                List<IndexJob> claimed = new ArrayList<>(claimedRows.size());
+                for (ClaimedRow row : claimedRows) {
+                  claimed.add(new IndexJob(Path.of(row.path()), row.collection()));
+                }
+                return claimed;
+              });
 
       if (!result.isEmpty()) {
         log.debug("Claimed {} jobs for processing", result.size());

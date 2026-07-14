@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.api;
 
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -52,7 +54,12 @@ public record RetrieveContextParams(
   /** Compact constructor with defaults. */
   public RetrieveContextParams {
     question = question == null ? "" : question;
-    docIds = docIds == null ? Set.of() : Set.copyOf(docIds);
+    // Tempdoc 731 I1: Set.copyOf() does not preserve iteration order (its Javadoc leaves order
+    // unspecified, and empirically it doesn't) — it would silently discard the pre-search's rank
+    // order before docIds ever reaches the wire. LinkedHashSet + unmodifiableSet preserves it.
+    docIds = docIds == null
+        ? Set.of()
+        : Collections.unmodifiableSet(new LinkedHashSet<>(docIds));
     topK = topK <= 0 ? 5 : Math.min(topK, 20);
     entityPersons = entityPersons == null ? List.of() : List.copyOf(entityPersons);
     entityOrganizations = entityOrganizations == null ? List.of() : List.copyOf(entityOrganizations);
