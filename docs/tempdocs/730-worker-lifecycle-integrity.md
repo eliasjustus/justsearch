@@ -316,3 +316,80 @@ dev-runner (Node) + gradle JVM-args, one `sonnet` chunk; B1 is the priority.
 **Brief inline for each worker:** Hard Invariants (Head never touches Lucene — all index IO via the
 Worker), primary-source `file:line` evidence required for load-bearing claims, and the specific
 acceptance test that must go green. Do not delegate the lease/live-run or the A4 sub-decision.
+
+---
+
+## Increment-4 review findings (2026-07-14, review-changes cycle)
+
+Independent review of the Increment-4 (B1/B2/B3) diff surfaced four items, all applied in the
+same pass. Files: `scripts/dev/dev-runner.cjs`, `scripts/dev/test-dev-runner-death-observability.mjs`,
+`modules/indexer-worker/build.gradle.kts`.
+
+**(a) Live-probe root cause: MCP-driven stop is a LATENT half, not an active one, until merge.**
+`scripts/dev/justsearch-dev-mcp/server.mjs` resolves `devRunnerPath` once at module load
+(`resolveRepoRoot()`, `server.mjs:596`) and the `justsearch.dev.start` tool handler accepts a
+`distFrom` override that lets a worktree agent point the *start* at its own checkout's
+`dev-runner.cjs` (`server.mjs:691-719`) — but the `justsearch.dev.stop` handler has no such
+override; it always spawns `devRunnerPath` (`server.mjs:1893,1933`), i.e. the dev-runner.cjs of
+**whichever checkout the MCP server process itself was launched from**. Consequence: B1's
+per-run worker.log preservation and B2's stop-report (both implemented in `stopRun()`) only run
+against a code path exercised via `dev_stop` when that call executes the *server's own* checkout's
+dev-runner — which is `main`'s, not this worktree's, until this branch merges and the MCP server
+process is restarted. The half of B1/B2 that IS active today is the self-exit path
+(`backend.on('exit')` inside `cmdStart`, `writeSelfExitStopReport` — see B2's comment at
+`dev-runner.cjs` ~line 587), because `cmdStart` runs inside whichever process invoked `dev_start`,
+which DOES honor `distFrom` and so can run this worktree's own dev-runner. Net: B1/B2 are fully
+implemented and unit-verified, but their `dev_stop`-driven half is latent until (1) this work lands
+on `main` and (2) the MCP server process is restarted to pick it up — file this as an operational
+note for whoever runs Increment 5's live validation, not a code defect.
+
+(`writeSelfExitStopReport` — the self-exit half that IS active today — is defined at
+`dev-runner.cjs:664`, current line count after this pass's edits.)
+
+**(b) Heap-cap inversion (Fix 1).** `buildHeadJavaOpts` (dev-runner.cjs) and `runWorkerStandalone`
+(indexer-worker/build.gradle.kts) previously defaulted `-Xmx` to `2g`/`1g` respectively even when
+`JUSTSEARCH_HEAD_HEAP`/`JUSTSEARCH_WORKER_HEAP` were unset. Review finding: a default cap can
+*induce* an artifact OOM in the exact death scenario B3 exists to diagnose — a process that would
+otherwise have run fine at JVM-default heap gets OOM-killed by an arbitrary dev-time bound, and the
+resulting heap dump documents an artifact of the diagnostic tooling, not the real defect. Both call
+sites now emit the dump flags (`-XX:+HeapDumpOnOutOfMemoryError`, `-XX:HeapDumpPath=...`)
+unconditionally and emit `-Xmx<value>` ONLY when the corresponding env var is explicitly set —
+no default bound. Verified via the two `buildHeadJavaOpts` unit tests (defaults: dump flags
+present, no `-Xmx` token at all; override: `-Xmx<value>` present) and a
+`:modules:indexer-worker:runWorkerStandalone --dry-run` config-time check.
+
+**(c) Ownership guard for `preserveWorkerLog` (Fix 2).** The originally-sketched guard
+("current file's mtime ≥ the readiness-stamp's mtime ⇒ still ours") is unsound: a worker.log
+legitimately grows during a run (mtime always advances), but so does a *later* run's overwrite of
+the same shared path — that later mtime is *also* ≥ the earlier run's stamp, so the naive guard
+would file run B's content as run A's "verified" log (a silent mislabel, worse than the original
+overwrite-loses-everything bug it replaces). Two designs were evaluated:
+- **First choice: birthtime identity** (WorkerSpawner rotates by *renaming* worker.log →
+  worker.log.1 → worker.log.2 on the next spawn; a rename preserves birthtime, a fresh spawn's
+  newly-created file gets a new one). A live probe against this Windows/NTFS checkout disproved
+  the assumption: NTFS *file-system tunneling* hands a file freshly created at a just-vacated path
+  (via rename-away or unlink+recreate) the OLD file's birthtime back, making the rotated file and
+  a brand-new replacement indistinguishable by birthtime alone. Reproduced directly
+  (create → rename-away → recreate-at-same-path → recreated file's `birthtimeMs` matched the
+  original's).
+- **Implemented (fallback named in the review plan): size-monotonicity + rotation-name matching.**
+  A stamp `{size, mtimeMs}` is captured at readiness (`captureWorkerLogStamp`, called once
+  `waitForBackendReady` confirms HTTP-readiness in `cmdStart`, so WorkerSpawner's own
+  startup/rotation has settled) and stored on `run.json` as `workerLogStamp`. At stop time,
+  `preserveWorkerLog` treats a same-path file as still-ours only if its size and mtime are both
+  ≥ the stamp (an append-only log never shrinks while a run owns it — a size drop is the tell that
+  the path was rotated/replaced under us) → `ownership:'verified'`. If the current file fails that
+  check, `worker.log.1`/`worker.log.2` are checked the same way → `ownership:'heuristic',
+  source:'rotated'`. If nothing matches → `preserved:false, reason:'ownership_unverified'` (never a
+  silent mislabel). A `run.json` with no stamp (pre-Increment-4-review runs) keeps the prior
+  best-effort copy behavior, tagged `ownership:'unstamped'`. New test
+  `testPreserveWorkerLogOwnershipGuard` in `test-dev-runner-death-observability.mjs` exercises all
+  four outcomes, including the exact mislabel construction this guard exists to prevent.
+
+**(d) Environmental note: concurrent Gradle corrupts shared caches in this tree.** Two independent
+workers on this program hit Gradle config-cache/build-cache corruption from running builds
+concurrently against the same checkout (shared `.gradle` state, not per-worktree). Orchestration
+for this program now serializes Gradle verification steps across parallel workers rather than
+fanning them out — noted here since it shaped how Increment 4's fix-review-verify cycle was run
+(the `--dry-run` config-time check above, plus the two death-observability/pruning/admission test
+scripts, were run one at a time, not concurrently).

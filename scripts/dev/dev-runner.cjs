@@ -492,6 +492,194 @@ function isPidAlive(pid) {
   try { process.kill(n, 0); return true; } catch { return false; }
 }
 
+// Tempdoc 730 B1: worker.log lives under the (persistent, cross-run) dataDir and is rotated by
+// WorkerSpawner.java on the NEXT worker spawn — a fixed 2-generation rotation that a death run's
+// log can fall out of before anyone reads it (the reproduced incident: the death run's log was
+// already gone by the time it was inspected). Copy THIS run's current worker.log into the run's
+// OWN directory at stop time, while stopRun still knows unambiguously which run it belongs to —
+// this converts every future death from "inconclusive" (log overwritten) to "diagnosable".
+//
+// Tempdoc 730 Increment-4 review findings (2026-07-14): the naive guard "current file's mtime >=
+// the readiness-time stamp's mtime => it's still ours" is WRONG — a worker.log legitimately grows
+// during a run (mtime keeps advancing), but so does a LATER run's overwrite of the same shared
+// path, and that later mtime is *also* >= the earlier run's stamp. That guard would silently file
+// run B's content as run A's "verified" log (the reap-after-restart mislabel case).
+//
+// The reviewed plan's first choice of guard was file-identity via birthtime (WorkerSpawner
+// rotates by RENAMING worker.log -> worker.log.1 -> worker.log.2 on the next spawn, and a rename
+// preserves birthtime while a fresh spawn's newly-created file gets a new one) — but a live probe
+// on this Windows/NTFS checkout disproved that assumption: NTFS file-system tunneling (the OS
+// caching a short-lived deleted/renamed-away file's metadata, incl. creation time, and handing it
+// back to a file recreated at the SAME path within ~15s) makes a brand-new worker.log inherit the
+// OLD file's birthtimeMs — exactly the case this guard needed to tell apart. `git status` isn't
+// relevant here; this was reproduced directly: create -> rename-away -> recreate-at-same-path ->
+// the recreated file's birthtimeMs matched the original's, indistinguishable from true identity.
+// So this substitutes the plan's named fallback: SIZE-MONOTONICITY (a worker.log is append-only —
+// it only grows while a run owns it; a value smaller than what was stamped at readiness proves
+// the path was rotated/replaced under us) combined with rotation-NAME matching (worker.log.1/.2
+// are exactly where WorkerSpawner puts what it rotated away).
+async function preserveWorkerLog(run, runPath) {
+  const dataDirAbs = run?.dataDir ? path.resolve(repoRoot, run.dataDir) : null;
+  if (!dataDirAbs) return { preserved: false, reason: 'no_data_dir' };
+  const logsDirAbs = path.join(dataDirAbs, 'logs');
+  const srcWorkerLog = path.join(logsDirAbs, 'worker.log');
+  const destLogsDir = path.join(path.dirname(runPath), 'logs');
+  const destWorkerLog = path.join(destLogsDir, 'worker.log');
+  const stamp = run?.workerLogStamp || null;
+
+  const copyFrom = async (sourcePath, extra) => {
+    try {
+      await mkdirp(destLogsDir);
+      await fsp.copyFile(sourcePath, destWorkerLog);
+      return { preserved: true, path: toPosix(path.relative(repoRoot, destWorkerLog)), ...extra };
+    } catch (err) {
+      return { preserved: false, reason: 'copy_failed', error: err?.message || String(err) };
+    }
+  };
+
+  if (!stamp) {
+    // Older run.json predates the ownership stamp (B1's original behavior) — best-effort copy,
+    // but the result says so explicitly rather than silently claiming verified ownership.
+    if (!fs.existsSync(srcWorkerLog)) return { preserved: false, reason: 'no_worker_log' };
+    return copyFrom(srcWorkerLog, { ownership: 'unstamped' });
+  }
+
+  const statOrNull = (filePath) => {
+    try { return fs.statSync(filePath); } catch { return null; }
+  };
+  // "Still consistent with THIS run's file": never shrunk below what was stamped at readiness,
+  // and never moved backward in time. A rotated-away path is replaced by a fresh, small file, so
+  // a size drop below the stamp is the tell that the path under us stopped being ours.
+  const isMonotonicWith = (st) => !!st && st.size >= stamp.size && st.mtimeMs >= stamp.mtimeMs;
+
+  const currentStat = statOrNull(srcWorkerLog);
+  if (isMonotonicWith(currentStat)) {
+    return copyFrom(srcWorkerLog, { ownership: 'verified' });
+  }
+
+  for (const rotatedName of ['worker.log.1', 'worker.log.2']) {
+    const rotatedPath = path.join(logsDirAbs, rotatedName);
+    const rotatedStat = statOrNull(rotatedPath);
+    if (isMonotonicWith(rotatedStat)) {
+      return copyFrom(rotatedPath, { ownership: 'heuristic', source: 'rotated' });
+    }
+  }
+
+  return { preserved: false, reason: 'ownership_unverified' };
+}
+
+// Tempdoc 730 Increment-4 review: capture the ownership-stamp identity of THIS run's worker.log
+// at the point cmdStart confirms backend HTTP-readiness — i.e. after WorkerSpawner's own startup
+// (and any rotation it performs on spawn) has settled, so the stamp names the log file this run
+// actually owns rather than one still mid-rotation. Null when the log doesn't exist yet (e.g. the
+// worker hasn't logged anything by the time HTTP readiness is confirmed).
+function captureWorkerLogStamp(dataDirAbs) {
+  try {
+    const st = fs.statSync(path.join(dataDirAbs, 'logs', 'worker.log'));
+    return { size: st.size, mtimeMs: st.mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+// Tempdoc 730 B2: pure report shape shared by the explicit-stop/reap path (stopRun) and the
+// in-process self-exit path (backend.on('exit') in cmdStart) so both produce the SAME
+// stop-report.json contract. Kept side-effect-free (no fs/process access) so it is unit-testable
+// with a fake exit code / fake PID-liveness list without a live stack.
+function buildStopReport({
+  runId,
+  stoppedAt,
+  disposition,
+  actor = null,
+  victim = null,
+  taskkillExitCode = null,
+  taskkillStderrTail = '',
+  killedPids = [],
+  pidLiveness = [],
+  backendExitCode = null,
+  ports = null,
+  portsClosed = null,
+  errors = [],
+  workerLog = null,
+  criticalOpsInterrupted = null,
+  interruptibleWithLossInterrupted = null,
+}) {
+  return {
+    schemaVersion: 2,
+    runId,
+    stoppedAt,
+    disposition,
+    actor,
+    victim,
+    taskkillExitCode,
+    taskkillStderrTail,
+    killedPids,
+    // Tempdoc 730 B2: per-PID liveness probe taken BEFORE the kill attempt, so a
+    // 'reaped_abandoned' report can distinguish "backend already dead, reaper cleaned up the
+    // shell" from "backend live, reaper killed an abandoned-but-healthy stack".
+    pidLiveness,
+    // Tempdoc 730 B2: the backend JVM's own exit code when it self-exits (crash/OOM), captured
+    // by the backend.on('exit') handler — absent for kill-driven stops (the exit code there is
+    // taskkill's, already carried by taskkillExitCode).
+    ...(backendExitCode !== null ? { backendExitCode } : {}),
+    ports,
+    portsClosed,
+    errors,
+    // Tempdoc 730 B1: where this run's worker.log ended up (or why it didn't).
+    ...(workerLog ? { workerLog } : {}),
+    ...(criticalOpsInterrupted ? { criticalOpsInterrupted } : {}),
+    ...(interruptibleWithLossInterrupted ? { interruptibleWithLossInterrupted } : {}),
+  };
+}
+
+// Tempdoc 730 B3: dump on OOM for the Head JVM. Dev-runner JVMs previously ran at JVM-default
+// (unbounded) heap with no dump flags, so a runaway leak would thrash/consume RAM rather than
+// OOM and leave evidence (see tempdoc 730 §THEORIZE B). The dump flags are always-on and cheap
+// (inert if the cause is elsewhere). `-Xmx` is opt-in ONLY (JUSTSEARCH_HEAD_HEAP) — Increment-4
+// review found a default cap can ITSELF induce an artifact OOM in the exact death scenario being
+// diagnosed (tempdoc 730 Increment-4 review findings, 2026-07-14), so no default bound is emitted.
+// Pure function (no process/env access beyond the passed-in values) so the generated flags are
+// unit-testable without spawning a JVM.
+function buildHeadJavaOpts({ existingJavaOpts, headAotOpts, headDistStamp, logsDir, headHeap }) {
+  const heapBound = headHeap && String(headHeap).trim() ? String(headHeap).trim() : null;
+  return [
+    existingJavaOpts,
+    headAotOpts ? '-XX:+UseSerialGC -XX:-UsePerfData' : '-XX:+UseSerialGC -XX:TieredStopAtLevel=1 -XX:-UsePerfData',
+    headAotOpts,
+    // Tempdoc 606 Piece 2b: the Head echoes this on /api/runtime/manifest so a
+    // stale old Head answering on a reused port is detectable (build mismatch).
+    headDistStamp ? `-Djustsearch.head.stamp=${headDistStamp}` : null,
+    heapBound ? `-Xmx${heapBound}` : null,
+    '-XX:+HeapDumpOnOutOfMemoryError',
+    logsDir ? `-XX:HeapDumpPath=${logsDir}` : null,
+  ].filter(Boolean).join(' ');
+}
+
+// Tempdoc 730 B2: write a stop-report for a backend that exited WITHOUT going through
+// stopRun() — i.e. the supervisor's backend.on('exit') fired on its own (crash/OOM) or in
+// response to an interactive Ctrl+C, not a `stop`/reap taskkill. Before this, that path wrote
+// NO stop-report at all (only onExit() closing the log streams), so a silent death left zero
+// exit-code artifact — the exact gap §THEORIZE B names. Also preserves worker.log (B1), since a
+// self-exit is precisely the "death run" scenario B1 exists for.
+async function writeSelfExitStopReport({ runId, runPath, run, backendExitCode, interactive }) {
+  const workerLog = await preserveWorkerLog(run, runPath);
+  const stopReport = buildStopReport({
+    runId,
+    stoppedAt: nowIso(),
+    disposition: interactive ? 'interactive_stop' : 'self_exited',
+    backendExitCode,
+    killedPids: [],
+    pidLiveness: [],
+    ports: null,
+    portsClosed: null,
+    errors: [],
+    workerLog,
+  });
+  const stopReportPath = path.join(path.dirname(runPath), 'stop-report.json');
+  await writeJsonAtomic(stopReportPath, stopReport);
+  return stopReport;
+}
+
 // Tempdoc 606 Piece 2 (provenance): capture, at spawn, WHICH code the launched
 // stack actually runs, so an arriving agent (or the owner after edits) can tell a
 // stack built from its own worktree from one built elsewhere / a stale dist.
@@ -1113,14 +1301,15 @@ async function cmdStart(opts) {
         // TieredStopAtLevel=1 is only used when AOT cache is absent — it conflicts
         // with AOT (bypasses C2, wasting the pre-linked classes and method profiles).
         // S1: Pass dev AOT cache flag when available.
-        JAVA_OPTS: [
-          process.env.JAVA_OPTS,
-          headAotOpts ? '-XX:+UseSerialGC -XX:-UsePerfData' : '-XX:+UseSerialGC -XX:TieredStopAtLevel=1 -XX:-UsePerfData',
+        // Tempdoc 730 B3: bounded -Xmx + HeapDumpOnOutOfMemoryError, dumping into THIS run's own
+        // logs dir (JUSTSEARCH_HEAD_HEAP overrides the 2g default for constrained devices).
+        JAVA_OPTS: buildHeadJavaOpts({
+          existingJavaOpts: process.env.JAVA_OPTS,
           headAotOpts,
-          // Tempdoc 606 Piece 2b: the Head echoes this on /api/runtime/manifest so a
-          // stale old Head answering on a reused port is detectable (build mismatch).
-          devStackProvenance.headDistStamp ? `-Djustsearch.head.stamp=${devStackProvenance.headDistStamp}` : null,
-        ].filter(Boolean).join(' '),
+          headDistStamp: devStackProvenance.headDistStamp,
+          logsDir,
+          headHeap: process.env.JUSTSEARCH_HEAD_HEAP,
+        }),
         // NOTE: justsearch.repo.root is NOT set here. In Tauri production, lib.rs sets it to
         // headless_dir where sidecar ONNX models live. In dev mode, OnnxModelDiscovery's sidecar
         // step is a no-op, so reranker/citation-scorer are inactive. To enable them, set
@@ -1246,6 +1435,11 @@ async function cmdStart(opts) {
     throw new Error(`Backend did not become ready at ${apiBaseUrl}/api/status within ${seconds}s`);
   }
 
+  // Tempdoc 730 Increment-4 review: stamp worker.log's identity now that HTTP-readiness confirms
+  // WorkerSpawner's own startup (and any rotation-on-spawn) has settled — see preserveWorkerLog /
+  // captureWorkerLogStamp above for why this feeds the stop-time ownership guard.
+  const workerLogStamp = captureWorkerLogStamp(dataDir);
+
   // indexBasePath capture (271 stage 4)
   const expectedIbp = resolveExpectedIndexBasePath(dataDir);
   let confirmedIbp = null;
@@ -1285,6 +1479,9 @@ async function cmdStart(opts) {
     uiUrl,
     dataDir: toPosix(dataDir),
     repoRoot: toPosix(repoRoot),
+    // Tempdoc 730 Increment-4 review: identity stamp of THIS run's worker.log at readiness, used
+    // by preserveWorkerLog's stop-time ownership guard (null if the file didn't exist yet).
+    workerLogStamp,
     spawn: {
       backend: { cwd: toPosix(spawnBackend.cwd), command: path.basename(spawnBackend.command), args: spawnBackend.args, shell: spawnBackend.shell },
       frontend: { cwd: toPosix(spawnF.cwd), command: spawnF.command, args: spawnF.args, shell: spawnF.shell },
@@ -1518,9 +1715,20 @@ async function cmdStart(opts) {
 
   backend.on('exit', (code) => {
     if (reaping) return; // deliberate reap owns teardown + exit (avoids racing stopRun cleanup)
-    onExit();
-    if (code != null && code !== 0) process.exit(code);
-    process.exit(0);
+    // Tempdoc 730 B2: capture the exit code + preserve worker.log (B1) even though no
+    // stopRun() ran for this exit. Best-effort/fire-and-forget: a signal-driven exit can't
+    // await, so the write races the process.exit() below but is fast (fs-local, ms-scale).
+    writeSelfExitStopReport({
+      runId,
+      runPath,
+      run: runJson,
+      backendExitCode: code,
+      interactive: shuttingDown,
+    }).catch(() => { }).finally(() => {
+      onExit();
+      if (code != null && code !== 0) process.exit(code);
+      process.exit(0);
+    });
   });
   frontend.on('exit', (code) => {
     if (reaping) return; // deliberate reap owns teardown + exit
@@ -1587,12 +1795,24 @@ async function stopRun(opts) {
 
   const killedPids = [];
   const errors = [];
+  // Tempdoc 730 B2: per-PID liveness probe taken BEFORE each kill attempt — distinguishes
+  // "backend already dead, reaper cleaned up the shell" from "backend live, reaper killed an
+  // abandoned-but-healthy stack" (the ambiguity §THEORIZE B flagged in `reaped_abandoned`).
+  const pidLiveness = [];
 
   let taskkillExitCode = null;
   let taskkillStderrTail = '';
 
-  const taskkill = async (pid) => {
-    if (!pid || !Number.isFinite(pid) || pid <= 0) return;
+  const taskkill = async (pid, role = null) => {
+    if (!pid || !Number.isFinite(pid) || pid <= 0) {
+      // Tempdoc 730 Increment-4 review: an invalid/missing pid for a named role is itself a
+      // liveness fact ("this role had no PID to probe"), not silence — record the null-shape
+      // entry so a stop-report reader can distinguish "role absent from the report" (report
+      // predates B2) from "role present but had no PID" instead of the entry just not existing.
+      if (role) pidLiveness.push({ role, pid: null, aliveBeforeKill: null });
+      return;
+    }
+    if (role) pidLiveness.push({ role, pid, aliveBeforeKill: isPidAlive(pid) });
     if (process.platform !== 'win32') {
       try {
         process.kill(pid, 'SIGKILL');
@@ -1625,9 +1845,9 @@ async function stopRun(opts) {
   // and the reaper then process.exit(0)s itself. Cross-process callers (stop / takeover) have
   // a different pid and still kill the victim's runner tree.
   const stopRunnerPid = Number(run?.pids?.runnerPid);
-  if (stopRunnerPid && stopRunnerPid !== process.pid) await taskkill(stopRunnerPid);
-  await taskkill(Number(run?.pids?.frontendRootPid));
-  await taskkill(Number(run?.pids?.backendRootPid));
+  if (stopRunnerPid && stopRunnerPid !== process.pid) await taskkill(stopRunnerPid, 'runner');
+  await taskkill(Number(run?.pids?.frontendRootPid), 'frontend');
+  await taskkill(Number(run?.pids?.backendRootPid), 'backend');
 
   const portInfo = async (port) => {
     const listening = port > 0 ? await isTcpListening(port, 500) : false;
@@ -1656,7 +1876,7 @@ async function stopRun(opts) {
       if (!inf || inf.closed) continue;
       if (process.platform === 'win32' && inf.ownerPid) {
         // eslint-disable-next-line no-await-in-loop
-        await taskkill(inf.ownerPid);
+        await taskkill(inf.ownerPid, inf === apiInfo ? 'port_owner_api' : 'port_owner_ui');
       }
     }
     // eslint-disable-next-line no-await-in-loop
@@ -1670,8 +1890,11 @@ async function stopRun(opts) {
   if (!apiInfo.closed) errors.push(`API port ${apiPort} still listening after stop timeout`);
   if (!uiInfo.closed) errors.push(`UI port ${uiPort} still listening after stop timeout`);
 
-  const stopReport = {
-    schemaVersion: 2,
+  // Tempdoc 730 B1: snapshot this run's worker.log into its own run dir before the next
+  // start's WorkerSpawner rotation can carry it away.
+  const workerLog = await preserveWorkerLog(run, runPath);
+
+  const stopReport = buildStopReport({
     runId,
     stoppedAt: nowIso(),
     disposition,
@@ -1680,14 +1903,16 @@ async function stopRun(opts) {
     taskkillExitCode,
     taskkillStderrTail,
     killedPids,
+    pidLiveness,
     ports: { api: apiInfo, ui: uiInfo },
     portsClosed: apiInfo.closed && uiInfo.closed,
     errors,
+    workerLog,
     // Tempdoc 542 §B Layer 4 — make interrupted critical/loss op-leases part of the
     // permanent audit record. Tells the operator what was lost on a `force` takeover.
-    ...(criticalOpsInterrupted ? { criticalOpsInterrupted } : {}),
-    ...(interruptibleWithLossInterrupted ? { interruptibleWithLossInterrupted } : {}),
-  };
+    criticalOpsInterrupted,
+    interruptibleWithLossInterrupted,
+  });
 
   const stopReportPath = path.join(path.dirname(runPath), 'stop-report.json');
   await writeJsonAtomic(stopReportPath, stopReport);
@@ -1860,6 +2085,12 @@ if (require.main === module) {
       repoRoot,
       resolveCuda12ServerExe,
       stageSharedCuda12,
+      // Tempdoc 730 Increment 4 (B1/B2/B3)
+      preserveWorkerLog,
+      buildStopReport,
+      buildHeadJavaOpts,
+      writeSelfExitStopReport,
+      captureWorkerLogStamp,
     },
   };
 }

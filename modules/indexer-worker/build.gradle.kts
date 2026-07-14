@@ -263,11 +263,24 @@ run {
       logger.lifecycle("  collection: $collection")
     }
 
+    // Tempdoc 730 B3: this debug-only standalone task did not dump on OOM (unlike the production
+    // worker spawned by WorkerSpawner.java, which already does — WorkerSpawner.java:452-453,
+    //531-532). Mirror that: an always-on dump path under this dataDir's crashes/ dir. Tempdoc 730
+    // Increment-4 review: the heap cap (-Xmx) is opt-in ONLY (JUSTSEARCH_WORKER_HEAP) — no default
+    // bound is emitted, since a default cap can itself induce an artifact OOM in the exact death
+    // scenario this observability exists to diagnose (same principle as buildHeadJavaOpts in
+    // scripts/dev/dev-runner.cjs).
+    val standaloneHeap = System.getenv("JUSTSEARCH_WORKER_HEAP")
     jvmArgs(
       "-Djustsearch.worker.config_snapshot=${snapshotFile.get().asFile.absolutePath}",
       "-Djustsearch.data.dir=$dataDir",
-      "--sun-misc-unsafe-memory-access=warn"
+      "--sun-misc-unsafe-memory-access=warn",
+      "-XX:+HeapDumpOnOutOfMemoryError",
+      "-XX:HeapDumpPath=$dataDir/crashes/"
     )
+    if (!standaloneHeap.isNullOrBlank()) {
+      jvmArgs("-Xmx$standaloneHeap")
+    }
 
     // Use production logback config if available. Disable if console output is preferred
     // by passing -Pstandalone.console=true.
