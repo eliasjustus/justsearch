@@ -1452,10 +1452,11 @@ demonstrated during validation), single seed, one cohort.
   stayed at ceiling (20/20 discovery, MCP call counts stable) — no reinforcement regression, no
   over-triggering.
 - **Judged against the pre-registered bars: in-between → reported as-is.** Accuracy improved
-  but weakly; tokens did NOT drop in default mode. Notably, **no agent ever passed
-  `response_format=concise` unprompted** — the token lever exists but is unexercised without
-  a default flip or client guidance; that choice (concise-by-default vs guidance vs leave) is
-  an owner decision the pre-registration did not cover.
+  but weakly; tokens did NOT drop in default mode. ~~No agent passed concise~~ **CORRECTED by
+  the deep analysis (below): agents used `response_format` in 5/20 B-cells unprompted (5
+  concise + 17 detailed values across their calls)** — the schema description alone induced
+  organic adoption in 25% of cells; the default-flip/guidance/leave decision stands but with
+  better priors than first reported.
 - **The strongest new datum is A vs B (first valid baseline on this corpus, courtesy of the
   #605 fix working live — zero voided A-cells):** with-tool beat without-tool 21.1% vs 6.2%
   accuracy at HALF the median cost ($0.217 vs $0.411), 10 fewer median turns, and 29% fewer
@@ -1469,13 +1470,71 @@ Second unexplained backend death under sustained MCP-only load, at/near campaign
 already complete; caught by the post-eval surface re-capture; resume-on-same-port recovered
 compose cleanly). Observation logged; dev-runner lifecycle territory, not 725 scope.
 
+## Deep analysis of Campaign T (per-cell forensics; evidence `725-forensics-T/` + copies in the evidence dirs)
+
+- **The hop-2 reasoning failure is UNTOUCHED by response shapes — and it is tool-independent.**
+  T-B: 11/20 hop1-found-no-hop2 (identical to D-B's 11). Decisive new datum: **T-A shows the
+  same failure through grep** (7/20 A-cells found the hop-1 code via file tools and stopped) —
+  the second-hop failure is a model-capability property of haiku, not a property of the tool
+  surface. No response furniture can be expected to fix it; the candidates remain L4d
+  (hypothesis), answer-side hop absorption, or model tier (624 Step-2).
+- **The +5.3pp accuracy delta is churn, not signal.** 5/20 B-queries flipped between campaigns
+  — 3 I→C (q6, q16, q18) but ALSO 2 C→I (q9, q10, D's two hop-2 executors). Single-seed
+  smoke-scale accuracy comparisons on this corpus are churn-dominated; no ship decision may
+  rest on the accuracy delta without seeds ≥3 or larger n.
+- **The strongest behavioral effect of the new shapes: Reads-per-search HALVED** (D 1.04 →
+  T 0.60 pooled) — richer previews demonstrably reduce file opening. But bigger responses cost
+  more than the saved Reads on this corpus (+15% median cache tokens): the preview-enrichment
+  economics depend on document size and currently net negative here. Concise mode (organically
+  adopted, 5/20 cells) is the counterweight.
+- **Zero completions quote the new furniture** ("Matched:"/"Evidence pack"/etc.) — agents act
+  on the shapes (Reads halved) without citing them; furniture-engagement cannot be measured
+  from completions, only from behavior (and result-content capture remains absent — twice
+  bitten now).
+- **Funnel (T-B, measured block):** discovery 1.0, invocation 1.0, first discovery turn 1.0,
+  reinforced_proxy 0.933, strict reinforced 0.867 — reinforcement healthy, no ejection under
+  the new shapes.
+
+## Consolidated remaining-issues inventory (2026-07-14, post-A/B)
+
+**Product (JustSearch):**
+1. Hop-2 execution failure at haiku — model-level, tool-independent (see above); open levers:
+   L4d gap-statement (hypothesis-tier, own A/B), answer-side entity-chain absorption
+   (theorization alternative, unbuilt), model-tier (624 Step-2).
+2. Evidence-pack curation on legal text: packs led by irrelevant docs, pack selection disagrees
+   with search ranking (fusion discrepancy) — F-029 / 708/712/713 territory.
+3. Preview-enrichment token economics net negative on small-doc corpora (+15% despite halved
+   Reads) — owner decision: concise default flip vs client guidance vs leave (organic adoption
+   priors now known: 25% of cells).
+4. Hybrid ranking instability across index rebuilds (druker7 rank 1 → >10 on same corpus) —
+   retrieval determinism question, unowned.
+5. Embedding fingerprint not persisted across worker restarts → BLOCKED_LEGACY + silent dense
+   loss on every restart (observation logged; worker lifecycle).
+6. Backend death under sustained MCP-only load, 2 occurrences (observation logged; dev-runner).
+7. Raw excerpt/preview text unsanitized (review NOTE; pre-existing posture, echo-adjacent).
+8. `resource()` Map.of ordering residual from level-1 (trivial).
+
+**Measurement/harness (624-owned):**
+9. Tool RESULT CONTENT not captured in Inspect logs — structural; blocks
+   retrieval-vs-synthesis classification and furniture-engagement analysis (bitten twice).
+10. Executed-call ERROR PAYLOADS invisible (ok/blocked binary only) — error-ejection can never
+    be ruled out from logs.
+11. Pre-#605 records (`measured:{}`) permanently unusable by `exposure_contrast` — Campaign D
+    can only ever be compared descriptively.
+12. Errored/timeout cells lose `num_turns`/`cost_usd` (exit path doesn't populate) — spend
+    accounting undercounts by the errored tail.
+13. Funnel denominator duality (measured n=15 vs ITT ledger n=16) — primary needs declaring.
+14. `question_type: 1_hop` labels on behaviorally-2-hop queries — 707 stratum builder check.
+15. Single-seed churn (5/20 flips) — smoke protocol should move to seeds ≥3 for any
+    accuracy-based decision.
+
 ## Remaining (owner-gated)
 
 1. PR + merge of this branch (no PR opened per instruction).
-2. Concise-mode decision: default flip, client-config guidance, or leave opt-in (token lever
-   is real but unexercised by agents on their own).
+2. Concise-mode decision (see issue 3).
 3. L4d gap-statement affordance: still hypothesis-tier, NOT implemented, needs its own A/B.
-4. 624 Step-2 / powered campaign — now with the strongest supporting datum yet (A-vs-B above).
+4. 624 Step-2 / powered campaign — strengthened by the A-vs-B result AND by issue 1's
+   tool-independence evidence (the reasoning gap is exactly what a model-tier sweep measures).
 
 ## Candidate principle (from theorization, now adopted by the design): self-describing results
 
