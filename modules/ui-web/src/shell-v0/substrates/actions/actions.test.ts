@@ -14,6 +14,7 @@ import {
   applyEffect,
   dispatchEffectToChrome,
   projectOperationsToActions,
+  registerShellActions,
   getAllActions,
   getAction,
   subscribeActions,
@@ -94,6 +95,54 @@ describe('operation projection', () => {
     expect(getAction('core.action.op.core.reindex')).toBeDefined();
     expect(getAction('core.action.op.core.start-ai-install')).toBeUndefined();
     expect(getAction('core.action.op.core.repair-ai-install')).toBeUndefined();
+  });
+});
+
+describe('shell actions — AI install palette reachability (727 F-1)', () => {
+  // On pre-fix code, `core.start-ai-install` / `core.repair-ai-install` were excluded from
+  // BOTH the zero-arg operation projection (correctly, per the test above — a bare invoke can
+  // never supply the required `acceptTerms`) AND any other palette registration, so searching
+  // "install" in the palette surfaced only `core.cancel-ai-install`'s zero-arg action. These
+  // assertions fail on pre-fix code because `getAction(...)` returns undefined for both ids —
+  // registerShellActions never registered them.
+  it('registers navigate-only palette entries for Start/Repair AI Install', () => {
+    const navigate = vi.fn();
+    registerShellActions({
+      navigate,
+      toggleInspector: () => {},
+      togglePalette: () => {},
+      focusComposer: () => {},
+    });
+
+    const start = getAction('core.action.shell.go-to-brain-install');
+    const repair = getAction('core.action.shell.go-to-brain-repair');
+    expect(start).toBeDefined();
+    expect(repair).toBeDefined();
+    expect(start!.title).toBe('Start AI Install');
+    expect(repair!.title).toBe('Repair AI Install');
+    // Both are global (no appliesTo) so they surface in the flat palette pool, same as
+    // core.action.op.core.cancel-ai-install would.
+    expect(start!.appliesTo).toBeUndefined();
+    expect(repair!.appliesTo).toBeUndefined();
+  });
+
+  it('invoking the Start/Repair entries navigates to the Brain surface (not a bare op-invoke)', async () => {
+    const navigate = vi.fn();
+    registerShellActions({
+      navigate,
+      toggleInspector: () => {},
+      togglePalette: () => {},
+      focusComposer: () => {},
+    });
+
+    const startEffect = await invokeAction('core.action.shell.go-to-brain-install');
+    expect(startEffect).toEqual({ kind: 'navigate', to: 'core.brain-surface' });
+    expect(navigate).toHaveBeenCalledWith('core.brain-surface');
+
+    navigate.mockClear();
+    const repairEffect = await invokeAction('core.action.shell.go-to-brain-repair');
+    expect(repairEffect).toEqual({ kind: 'navigate', to: 'core.brain-surface' });
+    expect(navigate).toHaveBeenCalledWith('core.brain-surface');
   });
 });
 
