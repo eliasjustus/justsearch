@@ -67,10 +67,13 @@ public final class EmbeddingFingerprint {
   }
 
   /**
-   * Injects a fake fingerprint for testing. Package-private to limit scope to tests
-   * in the same package. Call {@link #invalidate()} in {@code @AfterEach} to clean up.
+   * Injects a fake fingerprint for testing (or {@code null} to force "no live fingerprint" — the
+   * model-released case). Public so tests in other modules that depend on the shared, process-wide
+   * static cache (e.g. {@code worker-services}' {@code EmbeddingProviderLifecycleTest}, which
+   * gates on the live value per tempdoc 730 review item 3) can control it deterministically. Call
+   * {@link #invalidate()} in {@code @AfterEach} to clean up.
    */
-  static void setForTesting(String fingerprint) {
+  public static void setForTesting(String fingerprint) {
     cachedResult.set(new CachedResult(Optional.empty(), Optional.ofNullable(fingerprint)));
   }
 

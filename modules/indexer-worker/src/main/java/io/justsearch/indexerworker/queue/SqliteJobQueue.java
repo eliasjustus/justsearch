@@ -357,8 +357,15 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
                   }
                   placeholders.append('?');
                 }
+                // Tempdoc 730 review Scope-3 (defense-in-depth): guard the claim UPDATE with
+                // `state = 'PENDING'` too, not just the upstream SELECT. Today this connection
+                // holds `lock` for the whole SELECT+UPDATE transaction, so there is no real
+                // window for another consumer to have moved a claimed path off PENDING between
+                // the two statements — but a future multi-consumer/multi-connection change should
+                // not silently regress into re-claiming (and thus double-processing) a row a
+                // concurrent claim already moved to PROCESSING/DONE/FAILED.
                 String updateSql =
-                    "UPDATE jobs SET state = 'PROCESSING', last_updated = ? WHERE path IN ("
+                    "UPDATE jobs SET state = 'PROCESSING', last_updated = ? WHERE state = 'PENDING' AND path IN ("
                         + placeholders
                         + ")";
                 try (PreparedStatement updateStmt = connection.prepareStatement(updateSql)) {

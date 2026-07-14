@@ -1123,6 +1123,73 @@ class IndexingLoopTest {
               + "A.6 constraint #11.");
     }
 
+    @Test
+    @DisplayName(
+        "finalizeShutdownCommit() guarantees the rebuild-completion stamp commit fires at "
+            + "shutdown even with indexedSinceCommit == 0 (tempdoc 730 review item 2: the "
+            + "'no subsequent commit' ratchet hole — a plain worker restart right after rebuild "
+            + "completion previously skipped the shutdown commit entirely because it was gated "
+            + "on indexedSinceCommit > 0, a check irrelevant to whether the ECC completion needs "
+            + "a forced empty stamp commit)")
+    void finalizeShutdownCommitFiresRebuildStampWithNoIndexedSinceCommit() throws Exception {
+      RecordingQueue queue = new RecordingQueue();
+      CommitOps commitOps = mock(CommitOps.class);
+      DocumentFieldOps documentFieldOps = mock(DocumentFieldOps.class);
+      IndexCountOps indexCountOps = mock(IndexCountOps.class);
+      WorkerSignalBus signalBus = mock(WorkerSignalBus.class);
+      queue.indexingCoordinator = mock(IndexingCoordinator.class);
+      when(indexCountOps.countByField(any(), any())).thenReturn(0);
+
+      IndexingLoop loop =
+          new IndexingLoop(
+              queue,
+              queue.indexingCoordinator,
+              commitOps,
+              documentFieldOps,
+              indexCountOps,
+              () -> null,
+              signalBus,
+              null,
+              null,
+              null,
+              null,
+              new TimeboxedContentExtractor(
+                  providerReturning("unused"),
+                  Duration.ofSeconds(5),
+                  (io.justsearch.indexerworker.extract.ExtractionMetricCatalog) null),
+              null,
+              null);
+
+      // Rebuild has completed (queue drained, no pending embeddings) but — modelling a worker
+      // that stops right after completion, before any further loop iteration — nothing else has
+      // called tryFinalizeEmbeddingRebuild() yet.
+      io.justsearch.indexerworker.embed.EmbeddingCompatibilityController ecc =
+          mock(io.justsearch.indexerworker.embed.EmbeddingCompatibilityController.class);
+      when(ecc.state())
+          .thenReturn(
+              io.justsearch.indexerworker.embed.EmbeddingCompatibilityController.State.REBUILDING);
+      when(ecc.checkRebuildCompletion(0L, 0)).thenReturn(true);
+      loop.getEmbeddingLifecycle().setEmbeddingCompatController(ecc);
+
+      // indexedSinceCommit stays at its default 0 — the pre-fix shutdown block's
+      // `if (indexedSinceCommit > 0)` guard would have skipped its commit entirely here.
+      var indexedField = IndexingLoop.class.getDeclaredField("indexedSinceCommit");
+      indexedField.setAccessible(true);
+      assertEquals(0L, indexedField.getLong(loop), "sanity: nothing indexed since the last commit");
+
+      Method finalizeShutdown = IndexingLoop.class.getDeclaredMethod("finalizeShutdownCommit");
+      finalizeShutdown.setAccessible(true);
+      finalizeShutdown.invoke(loop);
+
+      verify(commitOps)
+          .commitAndTrack(io.justsearch.adapters.lucene.runtime.CommitReason.INDEXING_LOOP_REBUILD_STAMP);
+      verify(ecc).onFingerprintStamped();
+      // The indexedSinceCommit == 0 branch of the shutdown block must NOT also fire a redundant
+      // INDEXING_LOOP_SHUTDOWN commit.
+      verify(commitOps, org.mockito.Mockito.never())
+          .commitAndTrack(io.justsearch.adapters.lucene.runtime.CommitReason.INDEXING_LOOP_SHUTDOWN);
+    }
+
     private IndexingLoop newLoop(RecordingQueue queue, ContentExtractorProvider provider) {
       DocumentFieldOps documentFieldOps = mock(DocumentFieldOps.class);
       IndexCountOps indexCountOps = mock(IndexCountOps.class);

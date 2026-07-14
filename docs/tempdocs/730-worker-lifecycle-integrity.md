@@ -393,3 +393,61 @@ for this program now serializes Gradle verification steps across parallel worker
 fanning them out — noted here since it shaped how Increment 4's fix-review-verify cycle was run
 (the `--dry-run` config-time check above, plus the two death-observability/pruning/admission test
 scripts, were run one at a time, not concurrently).
+
+---
+
+## A1/A3 post-review correction (2026-07-14, MAJOR finding fix)
+
+Independent adversarial review of the A1/A3 delta found a MAJOR defect in **A1 as originally
+implemented**: it swapped `KnowledgeServer.java`'s embedding-fingerprint supplier from the
+ECC-gated `ecc::fingerprintToStamp` to the unconditional `EmbeddingFingerprint::get`, reasoning the
+stamp is "a fact about the write" decoupled from compat state. That reasoning was **review-refuted
+as a mixed-provenance over-claim**: a forced reindex is in-place/incremental
+(`JobBatchExtractor.java:193-212` — no wipe), so an interrupted BLOCKED_MISMATCH/BLOCKED_LEGACY ->
+REBUILDING run holds a genuinely MIXED old/new-model vector set. Stamping unconditionally meant an
+ordinary commit landing mid-rebuild persisted the NEW model's fingerprint over that mixed index;
+restart then resolved COMPATIBLE and silently served the mixture — exactly the class of bug the
+gate exists to prevent. The old gate correctly kept that state BLOCKED.
+
+**Shipped shape, post-correction:** A1's supplier swap is **reverted** —
+`KnowledgeServer.java:1022-1023` is back to `embeddingFingerprintSupplier.set(ecc::fingerprintToStamp)`.
+The REAL gap A1 was reacting to — a rebuild completion (or fresh-COMPATIBLE transition) with no
+SUBSEQUENT commit ever landing, leaving the fingerprint unpersisted and the next restart
+re-flagging BLOCKED_LEGACY even though the rebuild genuinely completed — is closed at two guarantee
+call sites instead of by weakening the stamp gate:
+
+1. **`EmbeddingProviderLifecycle.tryFinalizeRebuild()`** (`modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/EmbeddingProviderLifecycle.java:256-289`,
+   unchanged) already fires its own `commitAndTrack(REBUILD_STAMP)` + `onFingerprintStamped()` the
+   moment `checkRebuildCompletion` flips state — this always worked when the loop reached a
+   subsequent idle/batch iteration.
+2. **`IndexingLoop.finalizeShutdownCommit()`** (`modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/IndexingLoop.java`,
+   new — extracted from the former inline "Final commit on shutdown" block) is the actual root-cause
+   fix: the old shutdown block only committed when `indexedSinceCommit > 0`, a check irrelevant to
+   whether the ECC's completion needs a forced empty stamp commit. A plain worker restart right
+   after rebuild completion (or a fresh-COMPATIBLE transition with no further writes) previously hit
+   this exact gap — the loop stopped before its next idle/batch iteration could retry, and the
+   shutdown commit skipped entirely because there was nothing else pending. `finalizeShutdownCommit()`
+   now calls `tryFinalizeEmbeddingRebuild()` + `tryFinalizeFreshCompatibleEmbeddingStamp()`
+   unconditionally before the `indexedSinceCommit`-gated commit — both self-gate on ECC state and
+   are no-ops when nothing needs stamping, so this is the same wiring the idle/batch path already
+   uses, not a parallel mechanism.
+
+**A3 hardening** (`EmbeddingProviderLifecycle.tryFinalizeFreshCompatibleStamp()`): now additionally
+requires the LIVE `EmbeddingFingerprint.get()` to be present, not just the ECC's cached
+`currentFingerprint()` snapshot (the two can diverge if the model goes offline after the ECC's last
+`refresh()`), and backs off to at most one retry per 5 minutes after a failed forced commit
+(reset immediately if the ECC leaves COMPATIBLE), instead of retrying on every idle drain
+(~once/sec).
+
+**Tests reworked**: `EmbeddingFingerprintProductionWiringDurabilityTest` (indexer-worker) now wires
+the real, reverted `ecc::fingerprintToStamp` supplier (not the review-refuted unconditional one) and
+covers the ratchet reproduction (positive: guarantee commit persists; negative: no commit reverts to
+BLOCKED_LEGACY), the mixed-provenance guard (an ordinary mid-rebuild commit must stay BLOCKED on
+reopen — this is RED under the old unconditional supplier), and the existing negative control.
+`IndexingLoopTest#finalizeShutdownCommitFiresRebuildStampWithNoIndexedSinceCommit` (worker-services)
+pins the actual shutdown-wiring fix directly (disable/red -> restore/green verified).
+`EmbeddingProviderLifecycleTest` gained coverage for the A3 live-fingerprint + backoff hardening.
+
+**Bonus hardening (Scope-3, unrelated module):** `SqliteJobQueue.pollPending`'s claim UPDATE now
+also guards with `WHERE state = 'PENDING'`, not just the upstream SELECT — defense-in-depth for a
+hypothetical future multi-consumer change, with a direct SQL-shape test in `JobQueueTest`.

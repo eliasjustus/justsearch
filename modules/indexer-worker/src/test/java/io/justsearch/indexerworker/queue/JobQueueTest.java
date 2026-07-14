@@ -116,6 +116,53 @@ final class JobQueueTest {
     }
   }
 
+  // Tempdoc 730 review Scope-3 (defense-in-depth): pollPending's claim UPDATE now guards with
+  // `WHERE state = 'PENDING' AND path IN (...)`, not just the upstream SELECT filter. There is no
+  // real concurrent-consumer window to trigger this from black-box pollPending() calls (this
+  // connection holds `lock` for the whole SELECT+UPDATE transaction) — this is a tiny, direct
+  // assert on the exact UPDATE shape SqliteJobQueue issues, proving the guard clause itself
+  // behaves correctly if a future multi-consumer change ever removes the single-connection lock.
+  @Test
+  void pollPendingClaimUpdateGuardsAgainstNonPendingRows() throws Exception {
+    jobQueue.enqueue(List.of(Path.of("/tmp/guard/a.txt"), Path.of("/tmp/guard/b.txt")));
+    String pathA =
+        PathNormalizer.normalizePath(Path.of("/tmp/guard/a.txt").toAbsolutePath().toString());
+    String pathB =
+        PathNormalizer.normalizePath(Path.of("/tmp/guard/b.txt").toAbsolutePath().toString());
+
+    try (Connection raw = DriverManager.getConnection("jdbc:sqlite:" + dbPath)) {
+      // Simulate a row already claimed elsewhere (e.g. a concurrent consumer, or simply a state
+      // this claim UPDATE should never touch) by moving `a` out of PENDING directly.
+      try (PreparedStatement mark =
+          raw.prepareStatement("UPDATE jobs SET state = 'PROCESSING' WHERE path = ?")) {
+        mark.setString(1, pathA);
+        mark.executeUpdate();
+      }
+
+      // The exact claim-UPDATE shape SqliteJobQueue.pollPending issues (state='PROCESSING'
+      // guarded by state='PENDING'), run directly against both paths.
+      try (PreparedStatement claim =
+          raw.prepareStatement(
+              "UPDATE jobs SET state = 'PROCESSING', last_updated = ? "
+                  + "WHERE state = 'PENDING' AND path IN (?,?)")) {
+        claim.setLong(1, System.currentTimeMillis());
+        claim.setString(2, pathA);
+        claim.setString(3, pathB);
+        int updated = claim.executeUpdate();
+        assertEquals(
+            1, updated, "only the still-PENDING row (b) may be claimed; a was already PROCESSING");
+      }
+
+      try (PreparedStatement check = raw.prepareStatement("SELECT state FROM jobs WHERE path = ?")) {
+        check.setString(1, pathA);
+        try (ResultSet rs = check.executeQuery()) {
+          assertTrue(rs.next());
+          assertEquals("PROCESSING", rs.getString(1), "a's state must be untouched by the claim UPDATE");
+        }
+      }
+    }
+  }
+
   // Tempdoc 550 Thesis II (liveness reaper): the age-bounded recoverStuckJobs(olderThanMs) re-queues
   // ONLY genuinely-stale PROCESSING rows (worker died mid-process), never jobs actively draining.
   @Test
