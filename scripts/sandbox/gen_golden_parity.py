@@ -14,6 +14,19 @@ compares the two with tolerance (see that script's docstring).
 Goldens are regenerated per candidate — this is self-maintaining across
 intentional ranking changes, not a frozen fixture that goes stale.
 
+Provenance (model-identity audit, 2026-07-14): `/api/knowledge/status`'s
+`embeddingFingerprintCurrent` IS the SHA-256 of the loaded embedding model
+file (verified against the registry's declared hash), so it is a free, exact
+model-identity key. This generator refuses (exit 1) to write a baseline
+unless the backend reports a non-empty fingerprint AND
+`embeddingCompatState == "COMPATIBLE"` — a baseline generated against a
+not-yet-enriched or incompatible index is not meaningful. The written
+baseline also records `embeddingFingerprint`, `indexedDocuments`, and
+`probeExecutedRetrievalLegs` (from one probe query's `searchTrace.stages`)
+so `check_golden_parity.py` can detect a round that ran different embedding
+weights (e.g. CPU FP32 vs GPU FP16 — confirmed NOT byte-identical on CPU) or
+an under-ingested corpus before trusting a ranking comparison.
+
 Usage (from the repo root, against a running dev backend):
     python scripts/sandbox/gen_golden_parity.py --api-port 51823
 
@@ -86,6 +99,24 @@ def post_search(base_url: str, query: str, limit: int = TOP_N) -> dict[str, Any]
     return json.loads(raw)
 
 
+def get_knowledge_status(base_url: str) -> dict[str, Any]:
+    """GET /api/knowledge/status and return the parsed body.
+
+    This is the same endpoint the model-identity audit verified: its
+    `embeddingFingerprintCurrent` field IS the SHA-256 of the loaded embedding
+    model file (dev's live value matched sha256(model_fp16.onnx) and the
+    registry's declared hash for that asset) — a free, exact model-identity key
+    already on the wire. It also carries `embeddingCompatState` and
+    `indexedDocuments`, which is why this generator reads all three from here
+    instead of `/api/status`.
+    """
+    url = f"{base_url}/api/knowledge/status"
+    req = urllib.request.Request(url, method="GET")
+    with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_S) as resp:
+        raw = resp.read().decode("utf-8")
+    return json.loads(raw)
+
+
 def queries_hash(queries: list[dict[str, Any]]) -> str:
     """Stable hash of the query set's (id, query) pairs so a golden baseline can be
     checked against drift in the query set itself, independent of file formatting."""
@@ -103,7 +134,35 @@ def generate(
     if not queries:
         sys.exit("Queries file has no 'queries' entries — nothing to generate.")
 
+    # Provenance gate: refuse to generate a baseline against a backend that
+    # isn't fully enriched + index-compatible. Without this, a baseline could
+    # silently capture a NO_EMBEDDING_MODEL / incompatible-index round and
+    # later comparisons would show a phantom ranking regression that is
+    # really just "the round that generated the baseline wasn't meaningful."
+    try:
+        status = get_knowledge_status(base_url)
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
+        sys.exit(
+            f"Could not fetch /api/knowledge/status from {base_url}: {exc}. "
+            "Is the dev backend running and reachable at --api-port?"
+        )
+
+    embedding_fingerprint = status.get("embeddingFingerprintCurrent")
+    embedding_compat_state = status.get("embeddingCompatState")
+    indexed_documents = status.get("indexedDocuments")
+
+    if not embedding_fingerprint or embedding_compat_state != "COMPATIBLE":
+        sys.exit(
+            "REFUSING: /api/knowledge/status reports embeddingFingerprintCurrent="
+            f"{embedding_fingerprint!r}, embeddingCompatState={embedding_compat_state!r}. A "
+            "golden-parity baseline is only meaningful when the backend is fully enriched "
+            "(embedding model loaded) and the index is compatible with it. Ingest/enrich the "
+            "corpus and wait for embeddingCompatState=COMPATIBLE (poll /api/knowledge/status) "
+            "before regenerating this baseline."
+        )
+
     results: list[dict[str, Any]] = []
+    probe_executed_legs: list[str] | None = None
     for q in queries:
         qid = q.get("id")
         qtext = q.get("query")
@@ -126,6 +185,19 @@ def generate(
                 "then re-run this generator."
             )
 
+        if probe_executed_legs is None:
+            # Record which retrieval legs actually ran for one probe query
+            # (the first) so the baseline itself proves dense retrieval was
+            # active when it was generated, not just asserted.
+            stages = (response.get("searchTrace") or {}).get("stages") or []
+            probe_executed_legs = sorted(
+                {
+                    stage.get("id")
+                    for stage in stages
+                    if stage.get("status") == "executed" and stage.get("id")
+                }
+            )
+
         top10 = extract_top_identities(response, TOP_N)
         results.append(
             {
@@ -142,6 +214,11 @@ def generate(
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "gitHead": git_head(repo_root),
         "queriesHash": queries_hash(queries),
+        # Provenance (model-identity audit, 2026-07-14). See
+        # check_golden_parity.py's preconditions for how these are used.
+        "embeddingFingerprint": embedding_fingerprint,
+        "indexedDocuments": indexed_documents,
+        "probeExecutedRetrievalLegs": probe_executed_legs or [],
         "queries": results,
     }
 

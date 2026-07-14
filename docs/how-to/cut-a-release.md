@@ -40,7 +40,10 @@ A release **candidate** is qualified before its number is finalized:
    required surface was not exercised. The round also captures golden-query search responses
    (`evidence/golden/<queryId>.json`), checked at finalize by `check_golden_parity.py` against
    the per-candidate baseline generated from the dev stack on the same build — parity-with-dev,
-   not absolute quality, since the Sandbox has no `jseval`. The durable harness method lives in `scripts/sandbox/*.md`;
+   not absolute quality, since the Sandbox has no `jseval`. That check fails closed (exit 1, not a
+   reported ranking delta) on a model-identity mismatch, an under-staged corpus, or a skipped
+   dense-retrieval leg, rather than surfacing any of those as a phantom search-quality regression.
+   The durable harness method lives in `scripts/sandbox/*.md`;
    each candidate's round-by-round results live in that release's own convergence tempdoc (linked
    from the Release index below).
 3. **Fix and rebuild at the *same* candidate number.** Major findings are reported back, fixed

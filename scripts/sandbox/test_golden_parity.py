@@ -7,17 +7,23 @@ Run: python scripts/sandbox/test_golden_parity.py
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from check_golden_parity import (  # noqa: E402
+    KNOWLEDGE_STATUS_EVIDENCE_FILENAME,
     GoldenQuery,
+    check_corpus_sanity,
+    check_dense_leg,
+    check_model_identity,
     evaluate_all,
     evaluate_query,
     extract_doc_identity,
@@ -162,6 +168,209 @@ class EvaluateAllMissingCaptureTests(unittest.TestCase):
             }
             verdicts = evaluate_all(golden, str(evidence_dir))
             self.assertFalse(verdicts[0].passed)
+
+
+class PreconditionTestsBase(unittest.TestCase):
+    """Shared fixture builders for the model-identity / corpus / dense-leg
+    preconditions (2026-07-14 golden-parity hardening)."""
+
+    def _make_evidence_dir(self, tmp: str) -> Path:
+        evidence_dir = Path(tmp) / "evidence"
+        (evidence_dir / "golden").mkdir(parents=True)
+        return evidence_dir
+
+    def _write_knowledge_status(self, evidence_dir: Path, **fields) -> None:
+        (evidence_dir / KNOWLEDGE_STATUS_EVIDENCE_FILENAME).write_text(
+            json.dumps(fields), encoding="utf-8"
+        )
+
+    def _write_capture(self, evidence_dir: Path, query_id: str, response: dict) -> None:
+        (evidence_dir / "golden" / f"{query_id}.json").write_text(
+            json.dumps(response), encoding="utf-8"
+        )
+
+    def _baseline(self, **overrides) -> dict:
+        base = {
+            "embeddingFingerprint": "fp-abc123",
+            "indexedDocuments": 100,
+            "queries": [
+                {"id": "q01", "query": "a", "kind": "keyword", "expectedTop10": ["d1.txt"]},
+            ],
+        }
+        base.update(overrides)
+        return base
+
+
+class ModelIdentityPreconditionTests(PreconditionTestsBase):
+    def test_matching_fingerprint_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            self._write_knowledge_status(evidence_dir, embeddingFingerprintCurrent="fp-abc123")
+            result = check_model_identity(self._baseline(), str(evidence_dir))
+            self.assertIsNone(result)
+
+    def test_mismatched_fingerprint_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            self._write_knowledge_status(evidence_dir, embeddingFingerprintCurrent="fp-DIFFERENT")
+            result = check_model_identity(self._baseline(), str(evidence_dir))
+            self.assertIsNotNone(result)
+            self.assertIn("model identity differs", result)
+            self.assertIn("fp-abc123", result)
+            self.assertIn("fp-DIFFERENT", result)
+
+    def test_missing_fingerprint_in_round_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            self._write_knowledge_status(evidence_dir, embeddingFingerprintCurrent="")
+            result = check_model_identity(self._baseline(), str(evidence_dir))
+            self.assertIsNotNone(result)
+            self.assertIn("no embedding model / fingerprint", result)
+
+    def test_missing_evidence_file_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            # No api-api-knowledge-status.json written at all.
+            result = check_model_identity(self._baseline(), str(evidence_dir))
+            self.assertIsNotNone(result)
+            self.assertIn("no embedding model / fingerprint", result)
+
+    def test_legacy_baseline_without_fingerprint_warns_and_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            legacy_baseline = self._baseline()
+            del legacy_baseline["embeddingFingerprint"]
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                result = check_model_identity(legacy_baseline, str(evidence_dir))
+            self.assertIsNone(result)
+            self.assertIn("WARNING", buf.getvalue())
+            self.assertIn("embeddingFingerprint", buf.getvalue())
+
+
+class CorpusSanityPreconditionTests(PreconditionTestsBase):
+    def test_matching_corpus_size_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            self._write_knowledge_status(evidence_dir, indexedDocuments=100)
+            result = check_corpus_sanity(self._baseline(), str(evidence_dir))
+            self.assertIsNone(result)
+
+    def test_corpus_too_small_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            # 5 docs vs a 100-doc baseline (< 50% ratio floor).
+            self._write_knowledge_status(evidence_dir, indexedDocuments=5)
+            result = check_corpus_sanity(self._baseline(), str(evidence_dir))
+            self.assertIsNotNone(result)
+            self.assertIn("round indexed 5 docs vs baseline's 100", result)
+
+    def test_corpus_at_exact_ratio_floor_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            self._write_knowledge_status(evidence_dir, indexedDocuments=50)
+            result = check_corpus_sanity(self._baseline(indexedDocuments=100), str(evidence_dir))
+            self.assertIsNone(result)
+
+    def test_missing_evidence_file_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            result = check_corpus_sanity(self._baseline(), str(evidence_dir))
+            self.assertIsNotNone(result)
+            self.assertIn("not staged/ingested", result)
+
+    def test_legacy_baseline_without_indexed_documents_warns_and_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            legacy_baseline = self._baseline()
+            del legacy_baseline["indexedDocuments"]
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                result = check_corpus_sanity(legacy_baseline, str(evidence_dir))
+            self.assertIsNone(result)
+            self.assertIn("WARNING", buf.getvalue())
+            self.assertIn("indexedDocuments", buf.getvalue())
+
+
+class DenseLegPreconditionTests(PreconditionTestsBase):
+    def _stage(self, stage_id: str, status: str, reason: str = "") -> dict:
+        return {"id": stage_id, "status": status, "reason": reason}
+
+    def test_dense_retrieval_executed_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            response = _response(["d1.txt"])
+            response["searchTrace"] = {
+                "stages": [self._stage("sparse-retrieval", "executed"), self._stage("dense-retrieval", "executed")]
+            }
+            self._write_capture(evidence_dir, "q01", response)
+            result = check_dense_leg(self._baseline(), str(evidence_dir))
+            self.assertIsNone(result)
+
+    def test_dense_retrieval_skipped_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            response = _response(["d1.txt"])
+            response["searchTrace"] = {
+                "stages": [
+                    self._stage("sparse-retrieval", "executed"),
+                    self._stage("dense-retrieval", "skipped", reason="NO_EMBEDDING_MODEL"),
+                ]
+            }
+            self._write_capture(evidence_dir, "q01", response)
+            result = check_dense_leg(self._baseline(), str(evidence_dir))
+            self.assertIsNotNone(result)
+            self.assertIn("dense retrieval was skipped", result)
+            self.assertIn("NO_EMBEDDING_MODEL", result)
+            self.assertIn("q01", result)
+
+    def test_missing_search_trace_does_not_crash_and_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            self._write_capture(evidence_dir, "q01", _response(["d1.txt"]))  # no searchTrace key
+            result = check_dense_leg(self._baseline(), str(evidence_dir))
+            self.assertIsNone(result)
+
+    def test_missing_capture_is_not_this_preconditions_concern(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            # No golden/q01.json written at all — evaluate_all's fail-closed
+            # missing-capture path is responsible for reporting this, not
+            # check_dense_leg.
+            result = check_dense_leg(self._baseline(), str(evidence_dir))
+            self.assertIsNone(result)
+
+
+class BackwardCompatLegacyBaselineTests(PreconditionTestsBase):
+    """A baseline generated before provenance tracking (no embeddingFingerprint
+    / indexedDocuments) must still run the full tolerance comparison — the
+    new preconditions warn and skip rather than crash."""
+
+    def test_legacy_baseline_runs_tolerance_comparison_with_warnings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            expected = [f"d{i}.txt" for i in range(1, 11)]
+            self._write_capture(evidence_dir, "q01", _response(expected))
+
+            legacy_golden = {
+                "queries": [
+                    {"id": "q01", "query": "a", "kind": "keyword", "expectedTop10": expected},
+                ]
+            }
+
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                identity_result = check_model_identity(legacy_golden, str(evidence_dir))
+                corpus_result = check_corpus_sanity(legacy_golden, str(evidence_dir))
+                dense_result = check_dense_leg(legacy_golden, str(evidence_dir))
+
+            self.assertIsNone(identity_result)
+            self.assertIsNone(corpus_result)
+            self.assertIsNone(dense_result)
+            self.assertEqual(buf.getvalue().count("WARNING"), 2)
+
+            verdicts = evaluate_all(legacy_golden, str(evidence_dir))
+            self.assertTrue(verdicts[0].passed, verdicts[0].reason)
 
 
 if __name__ == "__main__":

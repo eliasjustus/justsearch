@@ -24,6 +24,31 @@ retrieves meaningfully differently than the dev build that qualified it.
 Fails CLOSED, matching check_coverage.py's philosophy: any query with a
 missing capture file is a failure, not a skip.
 
+Before the tolerance comparison, three additional preconditions also fail
+closed (model-identity audit, 2026-07-14) so a phantom ranking regression
+never gets reported when parity simply wasn't measurable:
+
+  - **Model identity**: the baseline's `embeddingFingerprint` (SHA-256 of the
+    loaded embedding model file — verified against the registry hash) must
+    match the round's `embeddingFingerprintCurrent`, read from the round's
+    saved `evidence/api-api-knowledge-status.json` (collect-evidence.ps1's
+    API-ladder capture of `/api/knowledge/status`). On the CPU path, dev and
+    a downloaded install do NOT load byte-identical weights (shipped manifest
+    selects FP32, dev's selects FP16) — comparing across that boundary would
+    show a phantom regression that is really a model-identity difference.
+  - **Corpus sanity**: the round's `indexedDocuments` must be at least half
+    the baseline's — catches a round validated against an under-staged index
+    (e.g. only bundled help docs, no real corpus).
+  - **Dense-leg check**: none of the round's captured `golden/<id>.json`
+    responses may show a `dense-retrieval` stage with status other than
+    `executed` — a skipped dense leg means hybrid silently collapsed to BM25,
+    which a prior sandbox round hit (NO_EMBEDDING_MODEL, no models staged).
+
+A baseline generated before this provenance was recorded (no
+`embeddingFingerprint` / `indexedDocuments` fields) still runs — the
+identity/corpus preconditions are skipped with a printed WARNING naming what
+couldn't be checked, rather than crashing.
+
 Pure Python 3 standard library only. No network access.
 """
 
@@ -39,6 +64,18 @@ from typing import Any
 MIN_OVERLAP = 7
 TOP_N = 10
 FIRST_WITHIN_TOP = 3
+
+# collect-evidence.ps1's Get-SanitizedFileName turns "/api/knowledge/status"
+# into "api-api-knowledge-status.json" (leading slash stripped, remaining
+# slashes -> dashes, "api-" prefix). Verified against collect-evidence.ps1's
+# API sanity ladder (line ~151/160).
+KNOWLEDGE_STATUS_EVIDENCE_FILENAME = "api-api-knowledge-status.json"
+
+# Fail if the round's indexedDocuments is below this fraction of the
+# baseline's — a simple, deliberately generous corpus-sanity floor (not a
+# tolerance-grade metric; the tolerance comparison below is what judges
+# ranking quality).
+MIN_CORPUS_RATIO = 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +182,120 @@ def load_capture(evidence_dir: str, query_id: str) -> dict[str, Any] | None:
             return json.load(fh)
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def load_evidence_json(evidence_dir: str, filename: str) -> dict[str, Any] | None:
+    """Load one of collect-evidence.ps1's saved API-ladder JSON snapshots
+    (e.g. `api-api-knowledge-status.json`, the raw body of `/api/knowledge/status`).
+
+    Returns None if the file is missing or unreadable, OR if the ladder
+    recorded an error body instead of a real response (collect-evidence.ps1
+    writes `{path, url, statusCode, exception, responseBody}` on a failed GET
+    — a dict with no `embeddingFingerprintCurrent`/`indexedDocuments` key,
+    which the callers below already treat as "field not present").
+    """
+    path = os.path.join(evidence_dir, filename)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed preconditions (run BEFORE the tolerance comparison)
+# ---------------------------------------------------------------------------
+
+
+def check_model_identity(golden: dict[str, Any], evidence_dir: str) -> str | None:
+    """Model-identity precondition. Returns a FAIL message, or None if this
+    precondition is satisfied (possibly after printing a WARNING for a
+    legacy baseline that predates provenance tracking)."""
+    baseline_fingerprint = golden.get("embeddingFingerprint")
+    if not baseline_fingerprint:
+        print(
+            "WARNING: baseline has no 'embeddingFingerprint' (generated before provenance "
+            "tracking) — skipping the model-identity precondition. Regenerate the baseline "
+            "with the current gen_golden_parity.py to restore this check.",
+            file=sys.stderr,
+        )
+        return None
+
+    status = load_evidence_json(evidence_dir, KNOWLEDGE_STATUS_EVIDENCE_FILENAME)
+    round_fingerprint = (status or {}).get("embeddingFingerprintCurrent")
+
+    if not round_fingerprint:
+        return (
+            "round has no embedding model / fingerprint (dense retrieval was not active) — "
+            "parity is not measurable."
+        )
+
+    if round_fingerprint != baseline_fingerprint:
+        return (
+            f"model identity differs (baseline {baseline_fingerprint} vs round "
+            f"{round_fingerprint}) — the round ran different embedding weights (e.g. CPU FP32 "
+            "vs GPU FP16); parity is not measurable across a model change. Regenerate the "
+            "baseline against the same model variant the round used."
+        )
+
+    return None
+
+
+def check_corpus_sanity(golden: dict[str, Any], evidence_dir: str) -> str | None:
+    """Corpus-sanity precondition. Returns a FAIL message, or None if this
+    precondition is satisfied (possibly after printing a WARNING for a
+    legacy baseline that predates provenance tracking)."""
+    baseline_docs = golden.get("indexedDocuments")
+    if not baseline_docs:
+        print(
+            "WARNING: baseline has no 'indexedDocuments' (generated before provenance "
+            "tracking) — skipping the corpus-sanity precondition. Regenerate the baseline "
+            "with the current gen_golden_parity.py to restore this check.",
+            file=sys.stderr,
+        )
+        return None
+
+    status = load_evidence_json(evidence_dir, KNOWLEDGE_STATUS_EVIDENCE_FILENAME)
+    round_docs = (status or {}).get("indexedDocuments")
+
+    if round_docs is None:
+        return (
+            "round has no readable indexedDocuments count in its evidence — the corpus was "
+            "not staged/ingested; parity is not measurable."
+        )
+
+    if round_docs < baseline_docs * MIN_CORPUS_RATIO:
+        return (
+            f"round indexed {round_docs} docs vs baseline's {baseline_docs} — the corpus was "
+            "not staged/ingested; parity is not measurable."
+        )
+
+    return None
+
+
+def check_dense_leg(golden: dict[str, Any], evidence_dir: str) -> str | None:
+    """Dense-retrieval-leg precondition. Scans every captured golden response
+    for a `dense-retrieval` stage that did not execute. Returns a FAIL
+    message on the first one found, or None if every capture that exists and
+    parses shows dense retrieval executed (a missing/unreadable capture is
+    not this precondition's concern — evaluate_all's fail-closed missing-
+    capture path already reports that separately)."""
+    golden_queries = [GoldenQuery.from_dict(raw) for raw in golden.get("queries", []) or []]
+    for gq in golden_queries:
+        response = load_capture(evidence_dir, gq.id)
+        if response is None:
+            continue
+        stages = (response.get("searchTrace") or {}).get("stages") or []
+        for stage in stages:
+            if stage.get("id") == "dense-retrieval" and stage.get("status") != "executed":
+                reason = stage.get("reason") or stage.get("status") or "unknown"
+                return (
+                    f"dense retrieval was skipped in the round (query {gq.id!r}, reason: "
+                    f"{reason}) — hybrid collapsed to BM25; parity is not measurable."
+                )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +430,21 @@ def main(argv: list[str] | None = None) -> int:
     if not os.path.isdir(args.evidence_dir):
         print(f"ERROR: evidence dir not found: {args.evidence_dir!r}", file=sys.stderr)
         return 2
+
+    identity_failure = check_model_identity(golden, args.evidence_dir)
+    if identity_failure:
+        print(f"BLOCKING (model identity): {identity_failure}", file=sys.stderr)
+        return 1
+
+    corpus_failure = check_corpus_sanity(golden, args.evidence_dir)
+    if corpus_failure:
+        print(f"BLOCKING (corpus sanity): {corpus_failure}", file=sys.stderr)
+        return 1
+
+    dense_leg_failure = check_dense_leg(golden, args.evidence_dir)
+    if dense_leg_failure:
+        print(f"BLOCKING (dense-retrieval leg): {dense_leg_failure}", file=sys.stderr)
+        return 1
 
     verdicts = evaluate_all(golden, args.evidence_dir)
     if not verdicts:

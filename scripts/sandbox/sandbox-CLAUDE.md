@@ -220,6 +220,17 @@ via `check_golden_parity.py`. If `staging-gaps.md` lists a missing golden-parity
 candidate, record that as a round-level coverage gap (per the protocol above) rather than
 attempting to judge search quality yourself.
 
+Parity is only measurable when the round ran the **same embedding weights** as the baseline —
+`check_golden_parity.py` checks this automatically via `embeddingFingerprintCurrent`
+(`/api/knowledge/status`), which IS the SHA-256 of the loaded embedding model file (audited
+2026-07-14). A `pre-staged-models` round maps the host's models; a `fresh-install` round downloads
+them — on GPU these are byte-identical, but a CPU-only round loads FP32 (`model.onnx`) where a
+GPU-generated baseline used FP16 (`model_fp16.onnx`), so a CPU round needs its own CPU-generated
+baseline, not the GPU one. The finalize check also fails closed if the round's indexed corpus is
+far smaller than the baseline's, or if any captured golden response shows `dense-retrieval`
+skipped (hybrid silently collapsed to BM25) — both would otherwise surface as a phantom ranking
+regression instead of the real cause.
+
 ## Required validation phases
 
 1. **Installer launch and security prompts** — run the installer from the mapped
