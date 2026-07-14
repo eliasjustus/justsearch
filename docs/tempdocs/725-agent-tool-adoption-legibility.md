@@ -1,7 +1,7 @@
 ---
 title: "Agent tool-adoption legibility: diagnose why agents offered the JustSearch MCP surface rarely invoke it, and raise correct adoption as far as the product surface allows"
 type: tempdocs
-status: "open — level 1 merged (PR #178); A/B smoke run + judged (deferred-arm adoption at CEILING on grep-stressed CLERC — visibility refuted in-regime, adoption is corpus-conditional); #605 A-arm defect FIXED + merged (PR #179, a8321f6). Failure forensics COMPLETE (2026-07-14, final section): 16 wrong B-cells split 9 agent-shortcut / 4 findable-but-unrecognized (live ranks 1-6) / 2 genuine retrieval miss / 0 error-ejection / 0 scoring-artifact; two product defects found live (justsearch_answer AI-offline silent 10KB degradation dump; preview truncation before payload); token-efficiency analysis added (thrash modes cost ~1.5x correct cells). Owner decision: weak-agent failure modes are product-addressable — L4 re-scoped to response legibility. Next: response-legibility design pass (research→theorize→design→plan) in worktree 725-response-legibility; 624 Step-2 tier sweep is the sharpest paid discriminator (owner-gated)."
+status: "open — level 1 merged (PR #178); A/B smoke judged (adoption corpus-conditional, visibility refuted in-regime); #605 fix merged (PR #179). Forensics complete (9/4/2 split; token-efficiency added; L4 re-scoped to response legibility, owner decision: weak-agent failures are product-addressable). Research#2 + theorization (model-agnostic axiom) + design#2 (self-describing results by projection) + derisk (8/10) done. LEVEL-2 IMPLEMENTED on branch worktree-725-response-legibility (unpushed, no PR per instruction): match-anchored previews + rationale/degradation/coverage lines, evidence-pack header, LABELED wrong-gate fix, response_format concise|detailed, actionable errors, TOOL_SURFACE_VERSION 0.3.0, surface-aware contrast guard; opus review MAJOR+MINOR fixed; live-validated incl. on a genuinely degraded stack; full suites green. Response-shape A/B PRE-REGISTERED (run owner-gated, ~$9-12/campaign/model). Awaiting owner: PR/merge word, A/B spend, 624 Step-2."
 created: 2026-07-14
 author: agent (Fable, session 9d3c1869) — filed at founder direction after the 719 publish, which surfaced the adoption gap as the program's most under-weighted finding
 category: product / mcp-surface / agent-adoption / eval-supporting
@@ -1334,6 +1334,97 @@ bump. **Recommendation: sonnet (medium-high effort) implementation workers on bo
 one opus (high effort) refute-first reviewer before any commit; pre-registration wording and
 response-text style decisions stay main-loop.** The span-filtering heuristic brief must include
 the probe's noisy-span examples as fixtures.
+
+---
+
+# Level-2 implementation: self-describing results (2026-07-14; complete on branch, unpushed)
+
+Branch `worktree-725-response-legibility` (base `bc4b26f`), commits `bf5cf59` (W1+W4),
+`7f3a047` (W2+W3), `1263c64` (review fixes), `a9dc976` (anchor heuristic). Orchestration: 4
+sonnet implementers + 1 opus refute-first reviewer; briefs, wording, register/version decisions,
+evidence judgment, commits, and stack lease stayed main-loop.
+
+## What landed
+
+- **W1 — search legibility.** `includeExcerpts` requested (one flag, worker excerpts flow
+  end-to-end); previews anchor on the informative-span-coverage-maximizing window (occurrences,
+  not deduped terms; ties prefer later spans — the title-echo case found live); `Matched:
+  "term" in <fields>` rationale (quoted + sanitized incl. quotes/backslashes) with a
+  semantic-similarity fallback line; conditional degradation note projected from
+  `SearchTrace.Degradation` (registered: `mcp-search-text-degradation` in
+  `execution-surfaces.v1.json`; gate green); `Found N…; showing K.` coverage; structuredContent
+  gains matchedTerms/matchedFields/excerpts/degradation. New `McpSearchResultFormatter`
+  (pure helpers) + 18-test shape suite (the MCP text shape previously had zero pins).
+- **W2 — answer honesty.** `Evidence pack: N passages from M documents (retrieval mode: X). No
+  synthesized answer is included.` header (+ truncation sentence when contextTruncated;
+  fallback-path counts derive from sections so the header can never say 0/0 above rendered
+  docs — review MAJOR); the `ContextFormat.XML` wrong-gate resolved by evidence (worker never
+  reads the field; no XML renderer exists) — LABELED now requested explicitly, dead XML request
+  removed (orphan #5), pinned by a call-site regression test AND an e2e
+  `ContextFormatIsIgnored` test that documents the wire field's deadness; `response_format:
+  concise|detailed` on both tools (detailed = prior shape; concise: answer ≤3 passages @600
+  chars ⇒ ~4x smaller live, search omits Preview); TOOL_SURFACE_VERSION 0.2.0→0.3.0;
+  `mcp-production-server.md` updated.
+- **W3 — error legibility.** All 5 generic catch sites + 3 "Knowledge server not available"
+  sites use actionable descriptive grammar with a `justsearch_status` state pointer;
+  the runtime-manifest catch now logs (orphan #4).
+- **W4 — measurement guard.** `exposure_contrast` fails closed on
+  `mcp_tool_surface_hash`/`server_version` mismatch unless `surface_contrast=True`, which
+  echoes both surface identities into the output (cross-surface comparisons are self-describing,
+  never silent).
+
+## Review + validation
+
+Opus refute-first review: 1 MAJOR (fallback header 0/0 — fixed + producer-mirrored fixture),
+1 MINOR (quote-escaping — fixed), 3 NOTEs recorded: raw excerpt text keeps the pre-existing
+raw-echo posture (not a regression); the anti-imperative test assertion is a narrow blocklist
+(grammar is enforced by review, not that assertion); detailed-mode adds ~600-800 tokens per
+10-hit response vs the old shape (the recorded cost of provenance; concise exists for economics).
+
+Live validation on the worktree dist (evidence:
+`scripts/jseval/tmp/725-ab/725-forensics/live-validation-0.3.0.{v1,v2,v3-anchorfix}.json/txt`):
+every shape verified live — including, unplanned, on a **genuinely degraded** stack, where the
+new note + honest `retrieval mode: BM25` header correctly reported a state that was previously
+invisible (twice). Bonus finding logged to observations: the embedding fingerprint appears not
+to persist across worker restarts (index re-flags BLOCKED_LEGACY on plain restart) — worker
+lifecycle territory, out of 725 scope. Enum validation rejects a bad `response_format` with a
+self-describing error (schema-enforced; better than silent default). Known residual: hybrid
+ranking on a rebuilt index shifted (druker7 1→outside MCP top-10 for the q3 paraphrase) —
+retrieval-quality territory (F-029/708/712/713), explicitly NOT a response-shape item.
+
+Suites: full `gradlew test` BUILD SUCCESSFUL; full jseval pytest 1879 passed (only the 2
+known-red `test_correction_probe` pre-existing failures); execution-surface +
+register-guard-resolution + suppression-ratchet gates green.
+
+# Response-shape A/B — pre-registration (2026-07-14, BEFORE any cell runs; run is owner-gated)
+
+- **Arms:** baseline = tool surface 0.2.0 (main, `a8321f6` lineage) vs treatment = 0.3.0 (this
+  branch, default `detailed` shapes). Same corpus (`mixed/en-legal-clerc-1k-verbose`), same 20
+  committed queries × seed 0, B-condition, same limits as the exposure smoke. Comparison via
+  `exposure_contrast(..., surface_contrast=True)` (the W4 mode built for exactly this).
+- **Cohorts:** haiku (primary); + sonnet arm if the owner funds dual-cohort (~2x) — the
+  model-agnostic axiom makes single-cohort evidence weak for any Tier-3 conclusion; Tier-1/2
+  ship decisions may rest on haiku + the sanity checks.
+- **Metrics (primary):** funnel (discovery/invocation/reinforced), completed-cell substring-EM
+  accuracy, tokens/cell (cost_usd + usage counters), trajectory length (num_turns,
+  tool_call_sequence length). **Negative controls:** the A-condition arm (no tools — restored
+  baseline post-#605-fix) and spurious-reinforcement check (MCP call share should not balloon
+  without accuracy movement).
+- **Budget:** from the measured ~$0.22/cell: ≈$9 per campaign per model (40 cells incl. A-arm);
+  hard cap USD 12/campaign, abort if projected over. Stop conditions: cap, or a substrate
+  capture defect (fix-and-rerun).
+- **Signal bars (interpretation guide, not ship triggers):** response shapes earn Tier-1/2 ship
+  if accuracy improves OR tokens/cell drop materially, with no reinforcement-stage regression
+  and A-arm invariance; a null result on accuracy with a token win still supports concise-mode
+  and header/notice shipping (economics + honesty are their own justification); bars on exact
+  thresholds set with the owner at authorization, before results are seen.
+
+## Remaining (owner-gated)
+
+1. PR + merge of this branch (no PR opened per instruction).
+2. The A/B run above (spend authorization + threshold setting).
+3. L4d gap-statement affordance: still hypothesis-tier, NOT implemented, needs its own A/B.
+4. 624 Step-2 model-tier sweep decision (unchanged from the forensics recommendation).
 
 ## Candidate principle (from theorization, now adopted by the design): self-describing results
 
