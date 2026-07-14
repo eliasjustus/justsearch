@@ -235,6 +235,40 @@ def write_validation_mode(share_dir: Path, installer: Path, models_dir: Path | N
     print(f"Staged validation-mode.md ({mode})")
 
 
+def stage_coverage_brief(share_dir: Path):
+    """Generate the per-candidate must-touch coverage brief (tempdoc 728, Part B1).
+
+    Derives the surfaces this candidate must exercise from committed artifacts
+    (route-manifest cohorts, CorePlugin.ts surfaces, interaction shapes) against
+    governance/sandbox-coverage.v1.json. FAILS CLOSED: if the candidate ships a
+    surface not yet classified in the register, the generator exits non-zero and
+    we abort staging rather than validate against a silently-incomplete brief —
+    that is the whole point (a new surface can no longer be forgotten).
+    """
+    gen = SCRIPT_DIR / "gen_coverage_brief.py"
+    result = subprocess.run(
+        [sys.executable, str(gen), "--out-dir", str(share_dir)],
+        capture_output=True,
+        text=True,
+    )
+    sys.stdout.write(result.stdout)
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        sys.exit(
+            "Coverage-brief generation FAILED (a shipped surface is unclassified in "
+            "governance/sandbox-coverage.v1.json). Classify it there before validating."
+        )
+    print("Staged coverage-brief.md + coverage-manifest.json")
+
+
+def stage_evidence_harness(share_dir: Path):
+    """Copy the in-sandbox capture harness (tempdoc 728, cross-cutting)."""
+    harness = SCRIPT_DIR / "collect-evidence.ps1"
+    if harness.exists():
+        shutil.copy2(harness, share_dir / "collect-evidence.ps1")
+        print("Staged collect-evidence.ps1")
+
+
 def generate_wsb(wsb_path: Path, share_dir: Path, memory_mb: int, models_dir: Path | None = None):
     """Generate the .wsb configuration file with proper XML escaping.
 
@@ -242,7 +276,31 @@ def generate_wsb(wsb_path: Path, share_dir: Path, memory_mb: int, models_dir: Pa
     can launch installers and docs manually. Claude Code, Git, and any other
     tools are installed by the user from inside the sandbox.
     """
-    logon_cmd = rf"explorer.exe {SANDBOX_FOLDER}"
+    # Enable per-request tracing for the round (JUSTSEARCH_HEAD_TRACING_LEVEL=detailed
+    # → telemetry/traces.ndjson records every endpoint the round exercises, the
+    # empirical input to the finalize coverage check — tempdoc 728). setx sets a
+    # persistent USER env var inherited by the app the operator launches afterwards.
+    # Restore the unofficial SAC-disable workaround that was dropped in the
+    # 2026-04-28 bootstrap refactor (INS-001; tempdoc 374:646). A fresh Windows
+    # Sandbox boots with Smart App Control enforcing and HARD-blocks the unsigned
+    # installer (no "Run anyway") — confirmed still current behaviour (mid-2026).
+    # This registry edit + CiTool refresh disables SAC at boot so a validation
+    # round can reach the installed app (/mcp, Install AI, search).
+    # NOTE: externally reported UNRELIABLE (Microsoft Q&A #5641557 — "didn't seem
+    # to have an effect" for several users). If the block persists despite this,
+    # it is NOT a JustSearch regression — the real fix is code-signing (374 G4),
+    # deferred by owner budget. The block itself remains valid first-run evidence
+    # (tempdoc 728): capture it before relying on this bypass.
+    sac_disable = (
+        r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\CI\Policy" '
+        r'/v VerifiedAndReputablePolicyState /t REG_DWORD /d 0 /f >nul 2>&1 & '
+        r'CiTool.exe -r >nul 2>&1 & '
+    )
+    logon_cmd = (
+        rf'cmd /c "{sac_disable}'
+        rf'setx JUSTSEARCH_HEAD_TRACING_LEVEL detailed >nul & '
+        rf'explorer.exe {SANDBOX_FOLDER}"'
+    )
 
     config = ET.Element("Configuration")
     ET.SubElement(config, "vGPU").text = "Default"
@@ -384,8 +442,12 @@ def main():
         models_dir = None
         print("No models directory — models will need to be downloaded in sandbox")
 
-    # 4. Stamp actual validation mode, then generate .wsb
+    # 4. Stamp actual validation mode, generate the per-candidate coverage brief
+    #    (fail-closed on an unclassified shipped surface), stage the capture
+    #    harness, then generate .wsb (tempdoc 728).
     write_validation_mode(share_dir, installer, models_dir, args.no_models)
+    stage_coverage_brief(share_dir)
+    stage_evidence_harness(share_dir)
     wsb_path = stage_dir / "JustSearch-Validation.wsb"
     generate_wsb(wsb_path, share_dir, args.memory, models_dir)
     print(f"Sandbox RAM: {args.memory} MB")

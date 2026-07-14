@@ -27,7 +27,19 @@ A release **candidate** is qualified before its number is finalized:
 2. **Verify in a clean Windows Sandbox.** Install the candidate in a fresh Sandbox and let an
    independent agent run a **whole-product** verification pass (search, chat/RAG, MCP, Install
    AI, restart cycles — not just the changed slice). The clean Sandbox avoids dev-machine model
-   pollution.
+   pollution. *What* to cover is not remembered — it is **derived from what the candidate ships:**
+   `scripts/sandbox/sandbox-launch.py` generates a per-candidate `coverage-brief.md` from the
+   committed surface artifacts against `governance/sandbox-coverage.v1.json` and **fails closed**
+   if the build ships a surface not yet classified there (so a new endpoint/panel like `/mcp` can't
+   be silently forgotten). The round runs with request tracing on
+   (`JUSTSEARCH_HEAD_TRACING_LEVEL=detailed`) and `collect-evidence.ps1` captures the API ladder,
+   the `/mcp` Inspector check, and a copy of `traces.ndjson` into the mapped evidence folder. At
+   finalize, on the **host** (the sandbox has no Python), against the persisted evidence dir:
+   `python scripts/sandbox/check_coverage.py --manifest <share>/coverage-manifest.json --traces
+   <share>/evidence/traces.ndjson --evidence-dir <share>/evidence` — a non-zero exit means a
+   required surface was not exercised. The durable harness method lives in `scripts/sandbox/*.md`;
+   each candidate's round-by-round results live in that release's own convergence tempdoc (linked
+   from the Release index below).
 3. **Fix and rebuild at the *same* candidate number.** Major findings are reported back, fixed
    in code, and the installer is rebuilt under the same number. Every confirmed regression
    should become a regression test/gate before the next round, so the loop converges instead of

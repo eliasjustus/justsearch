@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "tempdoc": 728,
+  "description": "Sandbox release-candidate validation coverage register (tempdoc 728, Part B/C). Projection-not-fork applied to release validation: what a clean-Sandbox round must verify DERIVES from what the app ships, instead of being remembered. scripts/sandbox/gen_coverage_brief.py reads the committed surface artifacts (route-manifest cohorts, CorePlugin.ts surface ids, coreInteractionShapes.ts) and FAILS CLOSED if any derived cohort/surface/shape is neither covered nor exempted here — so a newly-shipped surface (the /mcp and trust-panel misses that motivated this doc) can no longer be silently forgotten. Tiers: 'sandbox' = the clean-install / real-GUI / real-external-agent view only the Sandbox has; 'host' = protocol/contract correctness a host test already owns (the Sandbox still confirms reachability); 'sandbox-must-watch' = findings that cannot be CI-gated (Windows trust prompts) and are re-injected into every round's brief (Part C). Same positive-coverage shape as check-ui-step-coverage / check-declared-surfaces.",
+  "sources": {
+    "routeManifest": "modules/ui-web/src/api/generated/route-manifest.snapshot.json",
+    "surfaceCatalog": "modules/ui-web/src/shell-v0/plugin-api/CorePlugin.ts",
+    "interactionShapes": "modules/ui-web/src/shell-v0/plugin-api/coreInteractionShapes.ts"
+  },
+  "cohortCoverage": [
+    { "cohort": "mcp", "tier": "sandbox", "requiredRoutes": ["POST /mcp"], "validateHow": "On a clean install, confirm an EXTERNAL MCP client reaches POST /mcp: `npx @modelcontextprotocol/inspector --cli http://127.0.0.1:<port>/mcp --transport http --method tools/list` returns the tool set. requiredRoutes pins POST /mcp so a token-only GET can't satisfy coverage. Protocol conformance is host-owned (StdioMcpTransportIntegrationTest); the Sandbox proves clean-install reachability + discoverability." },
+    { "cohort": "knowledge", "tier": "sandbox", "validateHow": "Search + ingest journeys: add a folder / ingest SciFact via the UI, run real searches, compare UI results to /api/knowledge/* responses." },
+    { "cohort": "indexing", "tier": "sandbox", "validateHow": "Library indexing journey: per-folder row state, Tasks panel live updates, status-bar queue agree with /api/knowledge/status during ingest." },
+    { "cohort": "inference", "tier": "sandbox", "validateHow": "One idle chat completion at GPU speed; runtime selects cuda12; /api/inference/status truthful." },
+    { "cohort": "ai-runtime", "tier": "sandbox", "validateHow": "Install AI journey: full model + cuda-runtime download reaches installedFully; /api/ai/runtime/status truthful." },
+    { "cohort": "conversation", "tier": "sandbox", "validateHow": "Chat/RAG: grounded cited answer; escalation-ladder rungs honest (see shapeCoverage)." },
+    { "cohort": "interaction", "tier": "sandbox", "validateHow": "The one interaction surface renders; mode labels match the actual response." },
+    { "cohort": "agent", "tier": "sandbox", "validateHow": "The Agent 'delegate a task' rung makes obvious what it will do before it runs; disabled with a clear reason when AI is offline." },
+    { "cohort": "openai-compat", "tier": "sandbox", "validateHow": "An external client can call /v1 chat completions on a clean install (loopback)." },
+    { "cohort": "boot", "tier": "exempt", "reason": "Internal process-lifecycle API, not a user-facing surface." },
+    { "cohort": "config", "tier": "exempt", "reason": "Internal configuration API; effective-config is an inspection aid, not a validated surface." },
+    { "cohort": "debug", "tier": "exempt", "reason": "Diagnostic-only API (prod=false), not a shipped user surface." },
+    { "cohort": "governance", "tier": "exempt", "reason": "Internal governance/registry substrate." },
+    { "cohort": "i18n", "tier": "exempt", "reason": "Internal localization plumbing." },
+    { "cohort": "infra", "tier": "exempt", "reason": "Capabilities/contract-version substrate (host.* sub-API), not user-facing." },
+    { "cohort": "observability", "tier": "exempt", "reason": "Telemetry substrate; opt-in and internal." },
+    { "cohort": "plugins", "tier": "exempt", "reason": "Plugin-registry substrate, internal." },
+    { "cohort": "registry", "tier": "exempt", "reason": "Internal registry snapshot/consumer-presence substrate." },
+    { "cohort": "resource", "tier": "exempt", "reason": "Resource-declaration substrate, internal." },
+    { "cohort": "runtime", "tier": "exempt", "reason": "Runtime-manifest infra (port discovery); the /mcp reachability it also advertises is covered under the mcp cohort." },
+    { "cohort": "schema", "tier": "exempt", "reason": "Schema-serving API, internal tooling." },
+    { "cohort": "other", "tier": "exempt", "reason": "Catch-all bucket for unclassified/utility routes; not a coherent user surface." }
+  ],
+  "surfaceCoverage": [
+    { "surfaceId": "core.library-surface", "tier": "sandbox", "validateHow": "Library / Add Folder journey; toast occlusion; progress visibility." },
+    { "surfaceId": "core.brain-surface", "tier": "sandbox", "validateHow": "Install AI / Brain: Simple must suffice for first-run; Advanced must not surface scary internals as default." },
+    { "surfaceId": "core.unified-chat-surface", "tier": "sandbox", "validateHow": "The one chat/search window; walk the full escalation ladder (see shapeCoverage); AI-requiring rungs disable honestly when offline." },
+    { "surfaceId": "core.settings-surface", "tier": "sandbox", "validateHow": "Settings render + persistence across restart." },
+    { "surfaceId": "core.security-surface", "tier": "sandbox", "validateHow": "TRUST SURFACE: encryption at-rest status matches reality; the irreversible forget-passphrase consequence is unmissable before commit; recovery key surfaced." },
+    { "surfaceId": "core.memory-surface", "tier": "sandbox", "validateHow": "TRUST SURFACE (DEEPLINK): user can see what the AI learned and forget a fact; empty state reads private-by-default, not broken." },
+    { "surfaceId": "core.presentation-gallery-surface", "tier": "sandbox", "validateHow": "TRUST SURFACE (DEEPLINK, Skins): applying a built-in skin never leaves an illegible/broken surface; choice survives restart." },
+    { "surfaceId": "core.presentation-editor-surface", "tier": "sandbox", "validateHow": "TRUST SURFACE (DEEPLINK, Skins editor): editing/importing a skin JSON never leaves an illegible/broken surface." },
+    { "surfaceId": "core.health-surface", "tier": "sandbox", "validateHow": "Health/System during Install AI and ingest; UI/API agreement (no 'Reconnecting...' while REST is healthy)." },
+    { "surfaceId": "core.help-surface", "tier": "sandbox", "validateHow": "Built-in help search for 'getting started' returns a usable result." },
+    { "surfaceId": "core.browse-surface", "tier": "sandbox", "validateHow": "File browse surface renders and is navigable." },
+    { "surfaceId": "core.activity-surface", "tier": "sandbox", "validateHow": "Activity/Tasks surface reflects live job state." },
+    { "surfaceId": "core.logs-surface", "tier": "sandbox", "validateHow": "Logs surface renders without exposing scary internals as the default view." },
+    { "surfaceId": "core.command-palette", "tier": "sandbox", "validateHow": "Command palette is discoverable and exposes Install AI / key actions (discoverability check)." },
+    { "surfaceId": "core.governance-surface", "tier": "exempt", "reason": "Developer/diagnostic DEEPLINK surface, not part of a first-run user journey." },
+    { "surfaceId": "core.api-explorer-surface", "tier": "exempt", "reason": "Developer API-explorer DEEPLINK surface (prod=false aid), not a shipped user journey." }
+  ],
+  "shapeCoverage": [
+    { "shape": "core.rag-ask", "tier": "sandbox", "validateHow": "Documents rung: grounded, cited answer; label honest." },
+    { "shape": "core.free-chat", "tier": "sandbox", "validateHow": "Chat rung: label honest; disables with a clear reason when AI is offline." },
+    { "shape": "core.extract", "tier": "sandbox", "validateHow": "Structured rung: schema extraction; label/affordance honest." },
+    { "shape": "core.agent-run", "tier": "sandbox", "validateHow": "Agent rung: 'delegate a task' makes obvious what it will do before it runs." },
+    { "shape": "core.workflow-run", "tier": "sandbox", "validateHow": "Workflow rung: a mode of the one window; honest affordance." }
+  ],
+  "claims": [
+    { "claim": "The app exposes a private retrieval backend to AI agents over POST /mcp (loopback).", "source": "README.md (## Two ways to use it / MCP section)", "coversId": "cohort:mcp" },
+    { "claim": "MCP tool set is available to external agents.", "source": "docs/reference/mcp-production-server.md; packaging/mcpb/README.md", "coversId": "cohort:mcp" },
+    { "claim": "Loopback-only, no analytics/telemetry exporter; documents never leave the machine.", "source": "README.md (## Privacy); docs/reference/security/threat-model.md", "coversId": "surface:core.security-surface" },
+    { "claim": "Untrusted MCP-client actions are gated (TYPED_CONFIRM trust model).", "source": "docs/reference/mcp-production-server.md (## Trust Model)", "coversId": "cohort:mcp" }
+  ],
+  "mustWatch": [
+    { "id": "install-trust-prompts", "reason": "SmartScreen / Defender / Smart App Control / unsigned-publisher warnings on install cannot be reproduced in CI (no clean Windows); every round records the exact prompt text/screenshots and whether automation (/S) was honored.", "origin": "recurring across rounds; not CI-gateable" },
+    { "id": "ui-api-truthfulness-under-load", "reason": "Shell showing 'Reconnecting...' or stale cards while /api/health, /api/status, /api/knowledge/status are READY is a clean-environment/timing finding CI cannot see; must-watch on every round.", "origin": "recurring; not CI-gateable" }
+  ],
+  "cohortExempt": [],
+  "surfaceExempt": []
+}

@@ -1,0 +1,432 @@
+#!/usr/bin/env python3
+"""gen_coverage_brief.py — tempdoc 728 "coverage follows shipment" guard.
+
+Generates a per-round "must-touch surfaces" coverage brief for a JustSearch
+release-candidate Sandbox validation round, DERIVED from committed surface
+artifacts (route-manifest cohorts, CorePlugin.ts surface ids,
+coreInteractionShapes.ts), and FAILS CLOSED if any shipped surface is
+unclassified in governance/sandbox-coverage.v1.json.
+
+Pure Python 3 standard library only. No network access.
+
+Modes:
+  --check              Run the drift check only, print a summary, exit
+                        0/1. No files written. (Also the default mode.)
+  --out-dir DIR        Run the drift check (still fail closed); if clean,
+                        write coverage-brief.md and coverage-manifest.json
+                        into DIR.
+  --register PATH      Override the register path (testability only; the
+                        real register is the default and should be used in
+                        normal operation).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+# ---------------------------------------------------------------------------
+# Repo-root resolution + input paths
+# ---------------------------------------------------------------------------
+
+ROUTE_MANIFEST_REL = "modules/ui-web/src/api/generated/route-manifest.snapshot.json"
+CORE_PLUGIN_REL = "modules/ui-web/src/shell-v0/plugin-api/CorePlugin.ts"
+INTERACTION_SHAPES_REL = "modules/ui-web/src/shell-v0/plugin-api/coreInteractionShapes.ts"
+REGISTER_REL = "governance/sandbox-coverage.v1.json"
+
+SURFACE_ID_RE = re.compile(
+    r"id:\s*'(core\.[^']+)'(?:(?!id:\s*')[\s\S])*?placement:\s*'([A-Z]+)'"
+)
+SHAPE_ID_RE = re.compile(r"'(core\.[^']+)'")
+
+
+def find_repo_root(start: Path) -> Path:
+    """Walk up from `start` until a directory containing gradlew.bat is found."""
+    cur = start.resolve()
+    for candidate in [cur, *cur.parents]:
+        if (candidate / "gradlew.bat").exists():
+            return candidate
+    raise RuntimeError(
+        f"Could not locate repo root (no gradlew.bat found walking up from {start})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_cohorts(route_manifest_path: Path) -> dict[str, list[str]]:
+    """Return {cohort: sorted ["<METHOD> <path>", ...]} from the route manifest."""
+    data = json.loads(route_manifest_path.read_text(encoding="utf-8"))
+    cohorts: dict[str, set[str]] = {}
+    for route in data["routes"]:
+        cohort = route["cohort"]
+        if cohort is None:
+            raise ValueError(
+                f"route {route.get('method')} {route.get('path')} has a null cohort "
+                f"— every route must be classified into a cohort"
+            )
+        cohorts.setdefault(cohort, set()).add(f"{route['method']} {route['path']}")
+    return {cohort: sorted(routes) for cohort, routes in sorted(cohorts.items())}
+
+
+def extract_surfaces(core_plugin_path: Path) -> dict[str, str]:
+    """Return {surface_id: placement} parsed from CorePlugin.ts."""
+    text = core_plugin_path.read_text(encoding="utf-8")
+    surfaces: dict[str, str] = {}
+    for match in SURFACE_ID_RE.finditer(text):
+        surface_id, placement = match.group(1), match.group(2)
+        surfaces[surface_id] = placement
+    return dict(sorted(surfaces.items()))
+
+
+def extract_shapes(interaction_shapes_path: Path) -> list[str]:
+    """Return the sorted list of interaction shape ids from coreInteractionShapes.ts."""
+    text = interaction_shapes_path.read_text(encoding="utf-8")
+    marker = "CORE_INTERACTION_SHAPES"
+    idx = text.find(marker)
+    if idx == -1:
+        raise ValueError(f"could not find {marker} in {interaction_shapes_path}")
+    # Scope the scan to the array literal itself (up to the closing `] as const;`)
+    end = text.find("as const", idx)
+    region = text[idx: end if end != -1 else len(text)]
+    shapes = sorted({m.group(1) for m in SHAPE_ID_RE.finditer(region)})
+    return shapes
+
+
+def evidence_token(surface_id: str) -> str:
+    """core.security-surface -> security; core.presentation-gallery-surface -> presentation-gallery."""
+    token = surface_id
+    if token.startswith("core."):
+        token = token[len("core."):]
+    if token.endswith("-surface"):
+        token = token[: -len("-surface")]
+    return token
+
+
+# ---------------------------------------------------------------------------
+# Drift check
+# ---------------------------------------------------------------------------
+
+
+class DriftResult:
+    def __init__(self, kind: str, id_key: str):
+        self.kind = kind
+        self.id_key = id_key
+        self.drift: list[str] = []
+        self.stale: list[str] = []
+        self.covered_map: dict[str, dict[str, Any]] = {}
+        self.exempt_ids: set[str] = set()
+
+
+def classify(
+    kind: str,
+    id_key: str,
+    derived_ids: set[str],
+    coverage: list[dict[str, Any]],
+    exempt: list[dict[str, Any]],
+) -> DriftResult:
+    result = DriftResult(kind, id_key)
+    result.covered_map = {row[id_key]: row for row in coverage}
+    result.exempt_ids = {row[id_key] for row in exempt}
+    classified_ids = set(result.covered_map) | result.exempt_ids
+    result.drift = sorted(derived_ids - classified_ids)
+    result.stale = sorted(classified_ids - derived_ids)
+    return result
+
+
+def run_drift_check(
+    register: dict[str, Any],
+    cohort_routes: dict[str, list[str]],
+    surface_placements: dict[str, str],
+    shapes: list[str],
+) -> tuple[list[str], list[str], dict[str, DriftResult]]:
+    """Returns (fatal_errors, warnings, {kind: DriftResult})."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    derived_sets = {
+        "cohort": set(cohort_routes.keys()),
+        "surface": set(surface_placements.keys()),
+        "shape": set(shapes),
+    }
+    for kind, ids in derived_sets.items():
+        if not ids:
+            errors.append(
+                f"HARD ERROR: derived set '{kind}' is EMPTY — the source moved or the parser broke; "
+                f"refusing to silently pass."
+            )
+
+    if errors:
+        return errors, warnings, {}
+
+    results: dict[str, DriftResult] = {
+        "cohort": classify(
+            "cohort",
+            "cohort",
+            derived_sets["cohort"],
+            register.get("cohortCoverage", []),
+            register.get("cohortExempt", []),
+        ),
+        "surface": classify(
+            "surface",
+            "surfaceId",
+            derived_sets["surface"],
+            register.get("surfaceCoverage", []),
+            register.get("surfaceExempt", []),
+        ),
+        "shape": classify(
+            "shape",
+            "shape",
+            derived_sets["shape"],
+            register.get("shapeCoverage", []),
+            register.get("shapeExempt", []),
+        ),
+    }
+
+    register_name = REGISTER_REL
+    for kind, result in results.items():
+        for drifted_id in result.drift:
+            errors.append(
+                f"DRIFT: {kind} '{drifted_id}' is neither covered nor exempt in {register_name}"
+            )
+        for stale_id in result.stale:
+            # F3 (tempdoc 728 review): a register row whose id no longer derives
+            # from the source is FATAL, not a warning. Otherwise a partial
+            # extraction failure (a regex under-match that drops some surfaces)
+            # silently shrinks the must-touch set — surfaces quietly vanish from
+            # the brief, the opposite of fail-closed. Bidirectional drift control:
+            # a new unclassified surface fails, and a vanished one fails too.
+            errors.append(
+                f"STALE: {kind} '{stale_id}' is classified in {register_name} but no longer "
+                f"derives from the current source artifacts. Either the surface was genuinely "
+                f"removed (delete its register row) or the parser under-matched (fix the source/"
+                f"regex) — do not leave the register drifting from what ships."
+            )
+
+    return errors, warnings, results
+
+
+# ---------------------------------------------------------------------------
+# Brief / manifest generation
+# ---------------------------------------------------------------------------
+
+
+def build_manifest(
+    results: dict[str, DriftResult],
+    cohort_routes: dict[str, list[str]],
+) -> dict[str, Any]:
+    must_touch: list[dict[str, Any]] = []
+    covered_elsewhere: list[dict[str, Any]] = []
+    exempt: list[dict[str, Any]] = []
+
+    for kind, result in results.items():
+        for item_id in sorted(set(result.covered_map) | result.exempt_ids):
+            row = result.covered_map.get(item_id)
+            tier = row["tier"] if row is not None else "exempt"
+
+            if tier == "sandbox":
+                entry: dict[str, Any] = {
+                    "kind": kind,
+                    "id": item_id,
+                    "tier": "sandbox",
+                    "validateHow": row.get("validateHow", ""),
+                }
+                if kind == "cohort":
+                    entry["routes"] = cohort_routes.get(item_id, [])
+                    # F2: propagate a cohort's requiredRoutes (e.g. mcp -> POST /mcp)
+                    # so the finalize check can require the product route, not any route.
+                    required = row.get("requiredRoutes") if row is not None else None
+                    if required:
+                        entry["requiredRoutes"] = list(required)
+                elif kind == "surface":
+                    entry["evidenceToken"] = evidence_token(item_id)
+                must_touch.append(entry)
+            elif tier == "host":
+                covered_elsewhere.append({"kind": kind, "id": item_id, "tier": "host"})
+            else:
+                # tier == "exempt" (explicit row) or no row at all (bare *Exempt array entry)
+                exempt.append({"kind": kind, "id": item_id})
+
+    return {
+        "version": 1,
+        "mustTouch": must_touch,
+        "coveredElsewhere": covered_elsewhere,
+        "exempt": exempt,
+    }
+
+
+def build_brief_markdown(manifest: dict[str, Any], register: dict[str, Any]) -> str:
+    lines: list[str] = []
+    lines.append(
+        "<!-- GENERATED by scripts/sandbox/gen_coverage_brief.py (tempdoc 728). "
+        "This file is the authority for this round's Sandbox coverage — do not hand-edit; "
+        "regenerate instead. -->"
+    )
+    lines.append("")
+    lines.append("# Sandbox release-candidate coverage brief")
+    lines.append("")
+
+    must_touch = manifest["mustTouch"]
+    covered_elsewhere = manifest["coveredElsewhere"]
+    exempt = manifest["exempt"]
+
+    lines.append("## Must-touch surfaces (sandbox tier)")
+    lines.append("")
+    if not must_touch:
+        lines.append("None this round.")
+    else:
+        by_kind: dict[str, list[dict[str, Any]]] = {}
+        for item in must_touch:
+            by_kind.setdefault(item["kind"], []).append(item)
+        for kind in sorted(by_kind):
+            lines.append(f"### {kind.capitalize()}")
+            lines.append("")
+            for item in sorted(by_kind[kind], key=lambda x: x["id"]):
+                lines.append(f"- **{item['id']}** — {item['validateHow']}")
+                if kind == "cohort" and item.get("routes"):
+                    routes_str = ", ".join(f"`{r}`" for r in item["routes"])
+                    lines.append(f"  - routes: {routes_str}")
+                if kind == "surface":
+                    lines.append(f"  - evidence token: `{item['evidenceToken']}`")
+            lines.append("")
+
+    lines.append("## Covered elsewhere (host tier)")
+    lines.append("")
+    if not covered_elsewhere:
+        lines.append("None this round.")
+    else:
+        for item in sorted(covered_elsewhere, key=lambda x: (x["kind"], x["id"])):
+            lines.append(f"- {item['kind']}:{item['id']}")
+    lines.append("")
+
+    lines.append("## Exempt (not validated in Sandbox)")
+    lines.append("")
+    if not exempt:
+        lines.append("None this round.")
+    else:
+        by_kind_exempt: dict[str, list[str]] = {}
+        for item in exempt:
+            by_kind_exempt.setdefault(item["kind"], []).append(item["id"])
+        summary_parts = [
+            f"{len(ids)} {kind}(s): {', '.join(sorted(ids))}"
+            for kind, ids in sorted(by_kind_exempt.items())
+        ]
+        lines.append("- " + "; ".join(summary_parts))
+    lines.append("")
+
+    lines.append("## Must-watch (re-injected every round)")
+    lines.append("")
+    must_watch = register.get("mustWatch", [])
+    if not must_watch:
+        lines.append("None.")
+    else:
+        for item in must_watch:
+            lines.append(f"- **{item['id']}** — {item['reason']}")
+    lines.append("")
+
+    lines.append("## Claims cross-check")
+    lines.append("")
+    claims = register.get("claims", [])
+    if not claims:
+        lines.append("None.")
+    else:
+        for claim in claims:
+            lines.append(
+                f"- \"{claim['claim']}\" (source: {claim['source']}) -> covers `{claim['coversId']}`"
+            )
+    lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Generate a per-round Sandbox coverage brief, DERIVED from committed surface "
+            "artifacts, failing closed if any shipped surface is unclassified (tempdoc 728)."
+        )
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Run the drift check only; print a summary; no files written (default mode).",
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=str,
+        default=None,
+        help="Run the drift check, then (if clean) write coverage-brief.md + coverage-manifest.json here.",
+    )
+    parser.add_argument(
+        "--register",
+        type=str,
+        default=None,
+        help=argparse.SUPPRESS,  # testability-only override; real register is the default
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv if argv is not None else sys.argv[1:])
+
+    repo_root = find_repo_root(Path(__file__).parent)
+
+    route_manifest_path = repo_root / ROUTE_MANIFEST_REL
+    core_plugin_path = repo_root / CORE_PLUGIN_REL
+    interaction_shapes_path = repo_root / INTERACTION_SHAPES_REL
+    register_path = Path(args.register) if args.register else (repo_root / REGISTER_REL)
+
+    cohort_routes = extract_cohorts(route_manifest_path)
+    surface_placements = extract_surfaces(core_plugin_path)
+    shapes = extract_shapes(interaction_shapes_path)
+    register = json.loads(register_path.read_text(encoding="utf-8"))
+
+    errors, warnings, results = run_drift_check(register, cohort_routes, surface_placements, shapes)
+
+    if errors:
+        print("gen_coverage_brief: FAILED\n", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
+
+    print(
+        f"gen_coverage_brief: OK — {len(cohort_routes)} cohort(s), {len(surface_placements)} "
+        f"surface(s), {len(shapes)} shape(s) all classified against {register_path}."
+    )
+    if warnings:
+        print("\nWarnings (non-fatal):")
+        for warn in warnings:
+            print(f"  - {warn}")
+
+    if args.out_dir:
+        out_dir = Path(args.out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest = build_manifest(results, cohort_routes)
+        brief_md = build_brief_markdown(manifest, register)
+
+        manifest_path = out_dir / "coverage-manifest.json"
+        brief_path = out_dir / "coverage-brief.md"
+
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+        brief_path.write_text(brief_md, encoding="utf-8")
+
+        print(f"\nWrote {brief_path}")
+        print(f"Wrote {manifest_path}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
