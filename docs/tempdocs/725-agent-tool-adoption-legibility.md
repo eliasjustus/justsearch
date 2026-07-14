@@ -766,7 +766,7 @@ shift cache-write tokens — 719 research), turns, cost.
    effects only; no significance claims; cohort-relative by design.
 4. First live exercise of the 725 capture path — a substrate defect discovered live is
    fix-and-rerun, and would itself be a finding.
-5. **Protocol addendum (tempdoc 729 D15, 2026-07-14):** any ACCURACY-based decision drawn
+5. **Protocol addendum (tempdoc 736 D15, 2026-07-14):** any ACCURACY-based decision drawn
    from an agent-utility campaign needs seeds ≥ 3 (`SEED_FLOOR`,
    `jseval.utility_comparison`) — a single-seed campaign, like the one this smoke ran (see
    caveat 3), is exploratory/smoke-only and self-labels `seed_floor_met: false`;
@@ -1547,7 +1547,7 @@ compose cleanly). Observation logged; dev-runner lifecycle territory, not 725 sc
 
 > Owner authorization: "run a small pilot, to see the effects" (2026-07-14). Purpose: measure
 > the behavioral effects of the full remediation surface (0.3.1 — response_format guidance in
-> schema+instructions, pack-selection facts line, pre-search universe alignment, plus the 729
+> schema+instructions, pack-selection facts line, pre-search universe alignment, plus the 736
 > capture substrate) against the recorded 0.2.0 (Campaign D) and 0.3.0 (Campaign T) B-arms.
 > This is the first campaign captured THROUGH the new substrate (per-call result digests,
 > furniture markers, four-state status, seed-floor self-labeling) — the pilot also validates
@@ -1601,7 +1601,7 @@ lines. Turns and cost drifted down again. This is the pre-registered "in-between
 as-is" case resolved favorably on the economics axis; accuracy remains a model-tier question
 (624 Step-2), exactly as the forensics predicted.
 
-## Substrate validation at campaign scale (first campaign through the 729 capture)
+## Substrate validation at campaign scale (first campaign through the 736 capture)
 
 Four-state status: 277 ok / 3 errored (all file tools — every one of 153 MCP calls succeeded) /
 0 blocked. Per-tool content_len signatures clean (answer ~2.7KB vs search ~12.8KB medians).
@@ -1646,7 +1646,7 @@ this section is the map):
 
 | Area tempdoc | Issues | Domain |
 |---|---|---|
-| 729 — agent-eval capture & instrument integrity | 9, 10, 11, 12, 13, 15 | jseval harness (624-adjacent; 624 remains metric authority) |
+| 736 — agent-eval capture & instrument integrity | 9, 10, 11, 12, 13, 15 | jseval harness (624-adjacent; 624 remains metric authority) |
 | 730 — worker/dev-runner lifecycle integrity | 5, 6 | fingerprint persistence; backend death under MCP load |
 | 731 — retrieval integrity on mixed corpora | 2, 4, 14 | evidence-pack curation/fusion discrepancy; rebuild ranking instability; 707 q_type labels |
 | 732 — response-surface residuals | 3, 7, 8 | concise-default decision memo; excerpt sanitization posture; resources/list ordering |

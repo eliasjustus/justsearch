@@ -181,7 +181,7 @@ def test_exposure_contrast_rejects_record_missing_exposure_identity():
         exposure_contrast(record_a, record_b)
 
 
-# --- exposure_contrast_eligibility / pre-#605 tombstone (tempdoc 729 D11) -----
+# --- exposure_contrast_eligibility / pre-#605 tombstone (tempdoc 736 D11) -----
 
 
 def test_eligibility_flags_empty_measured():
@@ -243,7 +243,7 @@ def test_exposure_contrast_rejects_pre_605_record_with_tombstone_not_generic_mes
     """A pre-#605-shaped record (empty `measured`, no cohort exposure identity)
     must raise the SPECIFIC tombstone reason, not the old generic 'has no
     measured cells' message -- so a future agent gets a self-describing
-    failure, not a puzzle (tempdoc 729 D11)."""
+    failure, not a puzzle (tempdoc 736 D11)."""
     pre_605_record = {
         "schema": "utility-comparison.v1",
         "schema_version": 2,

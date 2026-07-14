@@ -49,7 +49,7 @@ SCHEMA_VERSION = 2
 # B = file + JustSearch, C = JustSearch only (substitution).
 _BASELINE = "A"
 
-# Minimum seed count for a DECISION-GRADE accuracy claim (tempdoc 729 D15).
+# Minimum seed count for a DECISION-GRADE accuracy claim (tempdoc 736 D15).
 # `--seeds` already defaults to 3 (commands/utility.py); this is a labeling
 # floor, not a default change -- the A/B smokes ran single-seed and were
 # nonetheless read for accuracy, which is the protocol gap this closes. A
@@ -205,12 +205,12 @@ def _seed_envelope(values: list[float]) -> dict:
     }
 
 
-# Which denominator answers which question (tempdoc 729 D13) -- a PURE
+# Which denominator answers which question (tempdoc 736 D13) -- a PURE
 # declaration, never a re-derivation: every number named below already lives
 # on the record (`comparability.per_arm_loss.<arm>` for n_attempted/n_excluded;
 # `measured.<dataset>.<model>.funnel` for the checked-cell population), this
 # block only makes the RELATIONSHIP between them machine-readable. No metric
-# numerator/denominator is computed here (tempdoc 729 derisk U4).
+# numerator/denominator is computed here (tempdoc 736 derisk U4).
 _DENOMINATORS = {
     "n_attempted": {
         "tier": "primary",
@@ -407,7 +407,7 @@ def compose_utility(
             "reasons": governance.get("reasons", []),
             "metrics": governance.get("metrics", {}),
             "per_arm_loss": governance.get("per_arm_loss", {}),
-            # tempdoc 729 D13: one-line pointer to the top-level `denominators`
+            # tempdoc 736 D13: one-line pointer to the top-level `denominators`
             # declaration -- this block's own n_attempted/n_excluded (per arm)
             # are the PRIMARY (ITT) denominator; pure documentation, no value
             # here is recomputed.
@@ -422,7 +422,7 @@ def compose_utility(
     seed_count = len([x for x in seeds_seen if x is not None])
     seed_floor_met = seed_count >= SEED_FLOOR
 
-    # tempdoc 729 D11: stamp the pre-#605 tombstone reason onto the record
+    # tempdoc 736 D11: stamp the pre-#605 tombstone reason onto the record
     # ITSELF when detected, so the ineligibility is visible without a failed
     # `exposure_contrast` call. OMITTED entirely (never stamped as
     # `{"eligible": true}` or similar) when the record IS eligible -- a
@@ -449,7 +449,7 @@ def compose_utility(
         },
         "measured": measured,
         "seed_count": seed_count,
-        # tempdoc 729 D15: a decision-grade-signal, analogous to
+        # tempdoc 736 D15: a decision-grade-signal, analogous to
         # confidence_tier -- `--seeds` already defaults to 3, this is a
         # protocol/labeling floor, not a default change. See SEED_FLOOR.
         "seed_floor_met": seed_floor_met,
@@ -465,7 +465,7 @@ def compose_utility(
         # is unchanged, so a consumer that doesn't know this key is byte-for-byte
         # compatible with the pre-this-change record shape.
         "tool_call_assertions": _tool_call_assertions(run_summaries),
-        # tempdoc 729 D13: self-describing denominators (always emitted --
+        # tempdoc 736 D13: self-describing denominators (always emitted --
         # a pure declaration, not a per-record computation, see _DENOMINATORS).
         "denominators": _DENOMINATORS,
     }
@@ -1031,7 +1031,7 @@ def _stats_from_pairs(pairs: dict, *, statistical_alpha: float = 0.05) -> dict |
         result["funnel"] = {
             "baseline": dict(_NULL_FUNNEL),
             "with_tool": with_tool_funnel,
-            # tempdoc 729 D13: one-line pointer to the top-level `denominators`
+            # tempdoc 736 D13: one-line pointer to the top-level `denominators`
             # declaration -- the rates above are computed over CHECKED cells
             # (the SECONDARY/funnel-conditional denominator), never the ITT
             # n_attempted population. Pure documentation, no rate recomputed.

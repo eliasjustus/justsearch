@@ -210,7 +210,7 @@ def test_settled_active_policy_is_machine_evaluable_without_posthoc_wording():
     assert accepted_harm["outcome"] == "harm"
 
 
-# --- Seed floor (tempdoc 729 D15/U5) ------------------------------------------
+# --- Seed floor (tempdoc 736 D15/U5) ------------------------------------------
 #
 # `SEED_FLOOR` (code constant, 3) is deliberately distinct from the policy's
 # own `thresholds.minimum_seeds` (owner-configurable, currently 5 in the draft

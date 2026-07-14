@@ -117,7 +117,7 @@ def read_inspect_observations(
                 "resolved_model": metadata.get("resolved_model"),
                 "toolsearch_targets": metadata.get("toolsearch_targets"),
                 "tool_call_sequence": metadata.get("tool_call_sequence"),
-                # tempdoc 729 D9: evidence-tier only -- deliberately NOT threaded
+                # tempdoc 736 D9: evidence-tier only -- deliberately NOT threaded
                 # into `successful_summaries`'s per_query composer projection below
                 # (out of Chain A's scope: composition/comparison lives in
                 # utility_comparison.py, which this tempdoc's Chain A does not

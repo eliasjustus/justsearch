@@ -7,7 +7,7 @@ author: "agent (area agent, tempdoc 725 remediation program)"
 related: [725, 624, 719]
 ---
 
-# 729 — Agent-eval capture & instrument integrity
+# 736 — Agent-eval capture & instrument integrity
 
 Area authority for issues **9, 10, 11, 12, 13, 15** of tempdoc 725's consolidated
 remaining-issues inventory (2026-07-14, post-A/B). This tempdoc runs the five thinking

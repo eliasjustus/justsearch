@@ -170,7 +170,7 @@ def test_tool_result_digest_entry_exactly_one_of_markers_or_fields_populated(fix
 
 def _historical_observation() -> dict:
     """A minimal, schema-complete observation whose `tool_result_digests` entry
-    is shaped exactly like the pre-735 producer (tempdoc 729 D9) -- no
+    is shaped exactly like the pre-735 producer (tempdoc 736 D9) -- no
     `delivered_tier`/`delivered_fields` keys at all, not even as `null`. This is
     the REAL historical shape (the D9-era `_tool_result_digest_entry` never
     emitted those keys), not a hand-waved approximation."""

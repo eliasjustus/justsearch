@@ -401,7 +401,7 @@ ever standardizes it).
 | U5 | Latency: worker-side design bounds added cost to ~1 internal chunk search (+optional rerank) inside the existing RPC; the naive head-side alternative doubles round-trips (4 gRPC, 2×15s ceilings). | **Static: RETIRED** by the placement decision (evidence: `RemoteDocumentService.java:263-305` round-trip structure; `RagContextOps` internal-search precedent `:255-276`). Live timing measured incidentally in P1. | Design already reflects it. |
 | U6 | Over-expansion on already-noisy legal packs (bestChunkScore ~0.03 — 731's territory): expansion could add a *wrong* neighbor doc and overturn correct answers. | **Partially static** (separate budget, ≤2 passages, hub pruning, quality-block reporting), **finally only the A/B** (negative-control cohort + overturn metric). Declared dependency on 731; not solved here. | Pre-registration controls (iii)/(iv). |
 | U7 | Weak-agent utilization: even a perfect pack may be ignored (arXiv:2603.11513). | **Only the A/B answers.** This is the residual that caps benefit-confidence; the probes measure pack content, not agent behavior. | Signal bars priced accordingly. |
-| U8 | A/B instrument: tool RESULT content is not captured in Inspect logs (725 inventory issue 9, 729's territory) — "did the agent read the expansion block" is unmeasurable; only behavior (answer contains hop-2 value; tool-call args) is. Single-seed churn (issue 15) invalidates accuracy deltas at n=20×1. | **Static: RETIRED into the pre-registration** — behavioral primary metric + seeds ≥3; capture-gap noted as a 729 dependency, not blocking. | Pre-registration metrics section. |
+| U8 | A/B instrument: tool RESULT content is not captured in Inspect logs (725 inventory issue 9, 736's territory) — "did the agent read the expansion block" is unmeasurable; only behavior (answer contains hop-2 value; tool-call args) is. Single-seed churn (issue 15) invalidates accuracy deltas at n=20×1. | **Static: RETIRED into the pre-registration** — behavioral primary metric + seeds ≥3; capture-gap noted as a 736 dependency, not blocking. | Pre-registration metrics section. |
 
 ## Confidence (0-10) and staffing
 
@@ -492,7 +492,7 @@ review. No delegation of: git, dev-stack lifecycle, the salience heuristic's fin
 - **Primary metric:** hop-2 completion rate — fraction of completed cells whose final answer
   contains the gold hop-2 value (substring-EM against gold), per-cell forensically classified
   (hop-1-stop / hop-2-executed-by-agent / hop-2-present-in-pack) from tool-call args + answers
-  (result-content capture is absent — 729 dependency, declared).
+  (result-content capture is absent — 736 dependency, declared).
 - **Secondary:** completed-cell accuracy, tokens/cell (cost + usage counters), median turns,
   Reads-per-search, funnel (discovery/invocation/reinforced), pack sizes, expansion-fired rate.
 - **Negative controls:** (i) **spurious-expansion cohort** — 10 single-hop queries (answerable

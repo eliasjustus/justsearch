@@ -99,7 +99,7 @@ _DELIVERED_FIELD_KEYS = (
 
 
 def _tool_result_digests(value: Any) -> list[dict] | None:
-    """tempdoc 729 D9 (extended by tempdoc 735 G2): pass through only the seven
+    """tempdoc 736 D9 (extended by tempdoc 735 G2): pass through only the seven
     declared digest fields, never a raw-content key, even if one were ever
     (mistakenly) present upstream -- this projection is itself part of the leak
     boundary, not just the schema.

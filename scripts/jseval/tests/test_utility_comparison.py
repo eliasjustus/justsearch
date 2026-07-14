@@ -829,7 +829,7 @@ def test_compose_utility_cell_carries_funnel_when_any_cell_has_funnel_data():
     assert cell["funnel"]["with_tool"]["discovery_rate"] == 1.0
 
 
-# --- Denominators / seed floor / eligibility stamp (tempdoc 729 B2/B3/B1) ---
+# --- Denominators / seed floor / eligibility stamp (tempdoc 736 B2/B3/B1) ---
 
 def test_compose_utility_denominators_block_names_primary_and_secondary():
     """D13: the top-level `denominators` block names n_attempted as the
@@ -1476,7 +1476,7 @@ def test_pure_recomposition_digest_ignores_only_composed_at(tmp_path):
 
 
 def test_semantic_digest_excludes_tempdoc_729_self_description_fields(tmp_path):
-    """Cross-chain finding (tempdoc 729 U1): `denominators`, `seed_floor_met`,
+    """Cross-chain finding (tempdoc 736 U1): `denominators`, `seed_floor_met`,
     `exposure_contrast_ineligible`, and their nested `denominator_note`/
     claim-policy-gate mirrors are pure self-description -- either a fixed
     constant or a deterministic re-derivation of an already-digested field
@@ -1831,7 +1831,7 @@ def test_build_revision_rejects_non_string_changed_field():
 
 
 def test_non_semantic_digest_exclusion_list_is_exactly_pinned():
-    """Tempdoc 729 hardening (refute-first review finding): the digest-exclusion
+    """Tempdoc 736 hardening (refute-first review finding): the digest-exclusion
     frozenset must be an exact, test-visible contract -- adding ANY field to it
     silently removes that field from semantic_digest coverage, so growth must be
     a deliberate act that fails this pin first. Do not extend the set without a

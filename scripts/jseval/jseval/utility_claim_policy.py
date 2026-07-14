@@ -239,7 +239,7 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
         bool(per_stratum_seeds)
         and min(per_stratum_seeds) >= thresholds.get("minimum_seeds", 1),
     )
-    # tempdoc 729 D15: the SEED_FLOOR code constant (3) is a decision-grade
+    # tempdoc 736 D15: the SEED_FLOOR code constant (3) is a decision-grade
     # accuracy-claim floor, distinct from `thresholds.minimum_seeds` (an
     # owner-configurable, generally-stricter policy knob already gated
     # above). Like `minimum_adoption_rate` below, this gate is reported for
@@ -467,7 +467,7 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
 
     # Adoption is an outcome/promotion threshold, not a scientific-validity fact.
     # A valid harmful result must remain publishable even when adoption is low.
-    # Same reasoning for `seed_floor_met` (tempdoc 729 D15/U5): a valid harmful
+    # Same reasoning for `seed_floor_met` (tempdoc 736 D15/U5): a valid harmful
     # finding must remain publishable even below the seed floor -- the floor
     # is enforced at the per-stratum OUTCOME level below (accuracy-based
     # outcomes only), never via this overall validity check.
@@ -506,7 +506,7 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
             and adoption_value is not None
             and adoption_value >= adoption_threshold
         )
-        # tempdoc 729 D15/U5: a stratum below SEED_FLOOR can never back an
+        # tempdoc 736 D15/U5: a stratum below SEED_FLOOR can never back an
         # ACCURACY-based claim (benefit/null) -- a single-seed campaign
         # remains publishable as exploratory/smoke ("adoption-only") or as a
         # harmful finding ("harm", checked below and NEVER gated on this),

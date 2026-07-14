@@ -59,7 +59,7 @@ class ExposureContrastError(ValueError):
 
 
 def exposure_contrast_eligibility(record: dict) -> dict:
-    """Pure predicate (tempdoc 729 D11): is ``record`` even the right SHAPE to
+    """Pure predicate (tempdoc 736 D11): is ``record`` even the right SHAPE to
     ever participate in an exposure contrast, independent of whether it happens
     to match some OTHER record's identity?
 

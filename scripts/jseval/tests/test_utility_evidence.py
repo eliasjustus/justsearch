@@ -190,7 +190,7 @@ def test_toolsearch_targets_schema_rejects_trailing_free_text_target():
 
 
 def test_tool_result_digests_echo_leak_absent_from_sanitized_bytes():
-    """tempdoc 729 D9 echo-leak assertion (mirrors the level-1 `toolsearch_targets`
+    """tempdoc 736 D9 echo-leak assertion (mirrors the level-1 `toolsearch_targets`
     leak test): a result whose RAW content contains a known corpus string must
     produce a sanitized observation whose serialized bytes do NOT contain that
     string -- proven via the real producer (`_tool_result_digest_entry`), not a
@@ -333,7 +333,7 @@ def test_real_2026_07_12_rejected_fixture_reproduces_false_green_loss():
 
 
 def test_historical_fixture_semantic_digest_unchanged_by_tool_result_digests_addition():
-    """tempdoc 729 U1 (non-negotiable): adding the optional `tool_result_digests`
+    """tempdoc 736 U1 (non-negotiable): adding the optional `tool_result_digests`
     field (D9) must NOT perturb the `semantic_digest` of this pre-existing
     committed 48-row historical evidence fixture, which predates the field.
     `tool_result_digests` is deliberately NOT threaded into
@@ -342,7 +342,7 @@ def test_historical_fixture_semantic_digest_unchanged_by_tool_result_digests_add
     evidence/sanitizer-tier only, so the composed record this digest covers is
     byte-identical to before this change. Value captured with
     `finalize_evidence([path], composed_at="fixture")["semantic_digest"]`
-    BEFORE any of the tempdoc 729 Chain A edits landed."""
+    BEFORE any of the tempdoc 736 Chain A edits landed."""
     path = (
         Path(__file__).parent
         / "fixtures"

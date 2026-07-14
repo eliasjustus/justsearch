@@ -418,7 +418,7 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                     elif isinstance(msg, UserMessage):
                         for b in (getattr(msg, "content", None) or []):
                             if isinstance(b, ToolResultBlock):
-                                # tempdoc 729 D9 (issue 9): stash raw content alongside
+                                # tempdoc 736 D9 (issue 9): stash raw content alongside
                                 # is_error. `b.content` is `str | list[dict] | None`
                                 # (SDK-confirmed). This is the EPHEMERAL tier only --
                                 # it lives in `capture`/`state.metadata` and never
@@ -526,7 +526,7 @@ def _toolsearch_targets(attempts: dict) -> list[str]:
     return seen
 
 
-# tempdoc 729 D9/U2: product-emitted CONSTANT text prefixes (never corpus text) --
+# tempdoc 736 D9/U2: product-emitted CONSTANT text prefixes (never corpus text) --
 # detecting their presence in tool-result content is leak-safe by construction.
 # Verbatim grep sources (2026-07-14):
 #   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:523
@@ -681,7 +681,7 @@ def _delivered_fields(content) -> dict[str, bool] | None:
 
 
 def _tool_result_digest_entry(result: dict | None) -> dict:
-    """Redacted, committed-safe derivation of one tool result (tempdoc 729 D9,
+    """Redacted, committed-safe derivation of one tool result (tempdoc 736 D9,
     extended by tempdoc 735 G2 with `delivered_tier`/`delivered_fields`):
     hash/len/is_error/shape/furniture-marker booleans plus the delivered-tier
     classification -- NEVER the raw content, which stays in the ephemeral
@@ -721,7 +721,7 @@ def _tool_result_digest_entry(result: dict | None) -> dict:
 
 
 def _call_status(tid: str, entry: dict, results: dict, denied: set, disallowed: list[str]) -> str:
-    """tempdoc 729 D10 (issue 10): the four-state per-call status authority for
+    """tempdoc 736 D10 (issue 10): the four-state per-call status authority for
     `tool_call_sequence` -- DISTINCT from `_blocked()` below, whose executed/blocked
     split for `tool_calls`/`tool_calls_blocked` stays deliberately UNCHANGED (an
     errored call is still "not executed" for that side-array's purposes; only this
@@ -790,7 +790,7 @@ def _record_cell(state: TaskState, got: dict, condition: str,
         }
         for tid, entry in attempts.items()
     ]
-    # tempdoc 729 D9 (issue 9, committed tier): one redacted digest entry per
+    # tempdoc 736 D9 (issue 9, committed tier): one redacted digest entry per
     # attempt, in the same order as `tool_call_sequence` -- `content_is_error`
     # here and the `errored` status above are cross-consistent BY CONSTRUCTION
     # (both derive from the same `results[tid]["is_error"]`).
@@ -891,7 +891,7 @@ def _record_cell(state: TaskState, got: dict, condition: str,
                 "resolved provider model changed within one cell: "
                 f"{sorted(resolved_models)!r}",
             )
-        # tempdoc 729 D12 (issue 12): `total_cost_usd`/`num_turns` are fields of
+        # tempdoc 736 D12 (issue 12): `total_cost_usd`/`num_turns` are fields of
         # EVERY ResultMessage, independent of `is_error` (SDK-confirmed via
         # `inspect.getsource(ResultMessage)`) -- populate them here, BEFORE the
         # is_error early-return below, so an errored cell's incremental spend/turn

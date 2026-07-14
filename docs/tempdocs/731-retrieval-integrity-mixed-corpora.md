@@ -383,7 +383,7 @@ certified corpus family to rename a self-consistent label is cost without measur
    `len(evidence_ids)` = N+1.
 2. **Consumer-side derivation:** any campaign analysis slicing by question type derives
    `retrieval_hops = len(evidence_ids)` instead of parsing the label (the 624-adjacent analysis
-   scripts; coordinate with area tempdoc 729, which owns instrument integrity).
+   scripts; coordinate with area tempdoc 736, which owns instrument integrity).
 3. **Future-generation option (owner call, folded into the next regeneration that happens for
    other reasons):** emit an explicit `retrieval_hops` field alongside `question_type` so the
    artifact self-describes both senses. Additive but digest-changing — never a standalone
@@ -439,7 +439,7 @@ certified corpus family to rename a self-consistent label is cost without measur
 ## Confidence (0-10, per issue)
 
 - **Issue 14: 9/10.** Fully evidenced; correction is documentation + consumer derivation; the
-  only residual is coordination with 729 on where analysis slices live.
+  only residual is coordination with 736 on where analysis slices live.
 - **Issue 2: 7/10.** The fork is verified statically end-to-end and the fix is small and
   well-located (send the MCP preset's pipeline in `preSearchForDocIds`); held back because the
   druker7-probe attribution is not yet live-confirmed (A1) and because pack-curation *quality*
@@ -489,7 +489,7 @@ document the contract at the seam and add the explicit test either way. Small, w
 **I4 — Issue-14 correction.**
 Builder docstrings at the three emit sites (`corpus_generate.py:354,388,419`); a definition
 paragraph in 707's corpus docs; consumer-side `retrieval_hops = len(evidence_ids)` derivation
-in the campaign-analysis path (coordinate with 729 — if 729's instrument work is in flight,
+in the campaign-analysis path (coordinate with 736 — if 736's instrument work is in flight,
 hand them the derivation as a one-line spec instead of double-editing). No regeneration, no
 digest churn; the additive `retrieval_hops` field rides the next owner-approved regeneration.
 
@@ -523,7 +523,7 @@ becomes the metric that proves it fixed).
 
 - I1, I2, I3: three bounded sonnet implementation briefs (each self-contained with the
   file:line fixtures above; acceptance = named tests green).
-- I4: one sonnet brief (docs + derivation), 729-coordination note included.
+- I4: one sonnet brief (docs + derivation), 736-coordination note included.
 - I5: sonnet builds the instrument; the *run* is main-loop-supervised under the lease.
 - I6a: sonnet; I6b eval design + pre-registration wording: main loop.
 - One opus refute-first review across the branch before any commit lands.

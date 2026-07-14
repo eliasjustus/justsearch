@@ -349,7 +349,7 @@ def test_record_cell_tool_call_sequence_marks_disallowed_over_blocked():
     assert state.metadata["tool_call_sequence"] == [{"name": "Bash", "status": "disallowed"}]
 
 
-# --- tempdoc 729 U3: the four-state (ok/blocked/disallowed/errored) partition
+# --- tempdoc 736 U3: the four-state (ok/blocked/disallowed/errored) partition
 # must be complete and correct over the FULL cartesian of {result present/absent}
 # x {is_error T/F} x {denied T/F} x {disallowed T/F}. Precedence: disallowed >
 # blocked (no execution) > errored (executed, is_error) > ok. ---
@@ -428,7 +428,7 @@ def test_record_cell_tool_result_digests_content_is_error_matches_errored_status
 
 
 def test_record_cell_tool_result_digests_never_stash_raw_content():
-    """tempdoc 729 D9 leak boundary + the echo-leak assertion: a result whose
+    """tempdoc 736 D9 leak boundary + the echo-leak assertion: a result whose
     content contains a known corpus-shaped string must not have that string appear
     anywhere in the projected `tool_result_digests` (hash/len/shape/flags only)."""
     state = _state()
@@ -457,7 +457,7 @@ def test_record_cell_tool_result_digests_never_stash_raw_content():
 
 
 def test_record_cell_tool_result_digests_furniture_markers_block_list_content_shape():
-    """tempdoc 729 L1 probe follow-up: `ToolResultBlock.content` is typed
+    """tempdoc 736 L1 probe follow-up: `ToolResultBlock.content` is typed
     `str | list[dict[str, Any]] | None` on the real Claude Agent SDK
     (`claude_agent_sdk/types.py`, confirmed against the installed package) -- a
     tool result can arrive as a LIST of content blocks (`[{"type": "text",
@@ -800,7 +800,7 @@ def test_record_cell_result_error_sets_error_and_stops():
         {"tool": "Read", "input": {"file_path": "/corpus/doc1.txt"}},
     ]
     assert "budget exceeded" in state.metadata["error"]
-    # tempdoc 729 D12 (issue 12): cost_usd/num_turns ARE on the ResultMessage
+    # tempdoc 736 D12 (issue 12): cost_usd/num_turns ARE on the ResultMessage
     # regardless of is_error, so they are now populated BEFORE the short-circuit
     # (this assertion used to be the inverse -- "cost_usd not in state.metadata" --
     # which was exactly the defect issue 12 fixes: a recoverable value dropped
@@ -819,13 +819,13 @@ def test_record_cell_no_result_message_sets_error():
     aui._record_cell(state, got, "A", build_disallowed_tools("A"), None)
 
     assert "no ResultMessage" in state.metadata["error"]
-    # tempdoc 729 D12 (issue 12, absent subset): genuinely unknowable here (no
+    # tempdoc 736 D12 (issue 12, absent subset): genuinely unknowable here (no
     # ResultMessage ever arrived) -- an honest null, never a fabricated zero.
     assert state.metadata.get("cost_usd") is None
     assert state.metadata.get("num_turns") is None
 
 
-# --- _record_cell: num_turns/cost_usd preserved on an errored cell (tempdoc 729
+# --- _record_cell: num_turns/cost_usd preserved on an errored cell (tempdoc 736
 # D12, issue 12 -- the two increment-A4 regression tests named in the plan). ---
 
 def test_record_cell_preserves_cost_and_turns_on_errored_result_message():

@@ -7,7 +7,7 @@ updated: 2026-07-15
 author: agent (session 25f8ac5d, chartered at founder direction after the 725 remediation program's root-cause analysis)
 related:
   - 725-agent-tool-adoption-legibility   # the program whose ~20 issues this analyzes
-  - 729-agent-eval-capture-instrument-integrity
+  - 736-agent-eval-capture-instrument-integrity
   - 730-worker-lifecycle-integrity
   - 731-retrieval-integrity-mixed-corpora
   - 553-representation-drift             # the register/projection medicine this proposes extending
@@ -114,7 +114,7 @@ states), sanitize through the existing redaction machinery, commit with provenan
 CLI versions, surface version), and require boundary-layer tests to consume them. Risks to
 carry into design: fixture staleness (recorded shapes age with SDK/CLI releases — provenance
 stamps plus a refresh procedure are part of the design, not an afterthought); privacy (the
-redaction contract exists and was leak-tested in 729); and the temptation to fixture
+redaction contract exists and was leak-tested in 736); and the temptation to fixture
 *everything* (scope: the five boundary layers that actually produced unreachable-seed
 incidents, nothing else — AHA applies).
 
@@ -221,7 +221,7 @@ register-role to *the primary agent-delivered contract for structured-preferring
 implies agents read the text lines — for the CLI cohort they do not). Public-claims-safe wording
 required (no client-behavior claims beyond what the probe evidences, named client + date).
 
-**G2 — Measure what is delivered.** The 729 capture gains a per-call `delivered_tier` derivation
+**G2 — Measure what is delivered.** The 736 capture gains a per-call `delivered_tier` derivation
 (structured-JSON vs prose text — derivable from existing digests via a JSON-parse check, no new
 raw capture) and the furniture markers are recomputed against **structured fields** (e.g.
 `quality`, `matchedTerms`, `degradation` presence) rather than text greps. The Java→Python text
@@ -256,7 +256,7 @@ one-build-at-a-time convention documented where the worktree guide lives.
 1. **The 725/732 text-attribution claims** — corrected by a dated note in tempdoc 725 (effects
    real, carrier re-attributed for the CLI cohort); the text-tier work itself is NOT orphaned
    (other audiences + the same in-hand data feeds both tiers).
-2. **Text-grep furniture markers as primary** (729) — superseded by field-based markers (G2);
+2. **Text-grep furniture markers as primary** (736) — superseded by field-based markers (G2);
    kept as secondary for prose-delivered results.
 3. **The theorized text-furniture register** — dissolved: G2 removes its consumers; G3 removes
    its producer-side need.

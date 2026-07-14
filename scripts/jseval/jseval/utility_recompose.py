@@ -32,7 +32,7 @@ from jseval.utility_governance import (
 
 _VOLATILE_SEMANTIC_FIELDS = frozenset({"composed_at", "semantic_digest"})
 
-# tempdoc 729 D13/B2 (cross-chain finding, U1 discipline): these fields are
+# tempdoc 736 D13/B2 (cross-chain finding, U1 discipline): these fields are
 # PURE self-description, never new discriminating information --
 # `denominators` (and its mirrored `denominator_note` strings) is a FIXED
 # constant, byte-identical across every record regardless of content;
@@ -43,7 +43,7 @@ _VOLATILE_SEMANTIC_FIELDS = frozenset({"composed_at", "semantic_digest"})
 # necessarily already differ in an already-digested field, so excluding them
 # from digest coverage loses no discriminating power. Declared here (a
 # coverage rule, not ad hoc per-callsite guessing) so historical-record
-# recomposition stays digest-STABLE (tempdoc 725 precedent / tempdoc 729 U1)
+# recomposition stays digest-STABLE (tempdoc 725 precedent / tempdoc 736 U1)
 # even though the record SHAPE gains these fields -- the digest fingerprints
 # the MEASUREMENT, not its self-description.
 _NON_SEMANTIC_TOP_LEVEL_FIELDS = frozenset({
@@ -53,7 +53,7 @@ _NON_SEMANTIC_TOP_LEVEL_FIELDS = frozenset({
 
 def semantic_projection(record: dict) -> dict:
     """Return the record with the volatile transport set (`_VOLATILE_SEMANTIC_FIELDS`)
-    AND tempdoc 729's purely-declarative self-description fields
+    AND tempdoc 736's purely-declarative self-description fields
     (`_NON_SEMANTIC_TOP_LEVEL_FIELDS` plus their nested `denominator_note`
     mirrors, plus the `seed_floor_met` claim-policy gate -- same
     deterministic-re-derivation rationale, this time of `evaluate_claim`'s
