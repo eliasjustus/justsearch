@@ -42,8 +42,8 @@ values:
 
 | File | Tool | delivered_tier | Provenance |
 |---|---|---|---|
-| `justsearch_answer_structured.json` | `justsearch_answer` | `structured-json` | reconstructed-from-source, not recorded (corroborated by the tempdoc 735 probe's captured content prefix) |
-| `justsearch_search_structured.json` | `justsearch_search` | `structured-json` | reconstructed-from-source, not recorded |
+| `justsearch_answer_structured.json` | `justsearch_answer` | `structured-json` | recorded (SDK capture via Claude Agent SDK, tool-surface 0.4.0, 2026-07-14) |
+| `justsearch_search_structured.json` | `justsearch_search` | `structured-json` | recorded (SDK capture via Claude Agent SDK, tool-surface 0.4.0, 2026-07-14) |
 | `justsearch_status_blocks.json` | `justsearch_status` | `blocks` | recorded (SDK capture, CLI via Agent SDK, surface 0.4.0, 2026-07-14) |
 | `sdk_block_list.json` | (generic, any tool with no `structuredContent`) | `blocks` | reconstructed-from-source, not recorded |
 

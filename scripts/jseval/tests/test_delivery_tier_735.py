@@ -89,12 +89,12 @@ def test_delivered_fields_on_answer_fixture_top_level_only():
         "excerpts": False,
         "searchTrace": False,
         "results": False,
-        # tempdoc 735 W6 fields -- absent on the reconstructed 0.3.1-shape
-        # fixture; a 0.4.0 refresh via the probe flips these True.
-        "hints": False,
-        "facets": False,
-        "coverage": False,
-        "truncated": False,
+        # tempdoc 735 W6 tier-equivalence fields -- delivered True on the
+        # RECORDED 0.4.0 fixture (genuine CLI-mediated capture, 2026-07-14).
+        "hints": True,
+        "facets": True,
+        "coverage": True,
+        "truncated": True,
     }
 
 
@@ -113,12 +113,12 @@ def test_delivered_fields_on_search_fixture_including_nested_placement():
         "excerpts": True,
         "searchTrace": True,
         "results": True,
-        # tempdoc 735 W6 fields -- absent on the reconstructed 0.3.1-shape
-        # fixture; a 0.4.0 refresh via the probe flips these True.
-        "hints": False,
-        "facets": False,
-        "coverage": False,
-        "truncated": False,
+        # tempdoc 735 W6 tier-equivalence fields -- delivered True on the
+        # RECORDED 0.4.0 fixture (genuine CLI-mediated capture, 2026-07-14).
+        "hints": True,
+        "facets": True,
+        "coverage": True,
+        "truncated": True,
     }
     # Cross-check against the raw content: matchedTerms/excerpts are genuinely
     # absent at the TOP level of the parsed payload (the field-presence signal
