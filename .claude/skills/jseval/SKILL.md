@@ -183,6 +183,29 @@ python -m jseval search --query "vitamin D" [--mode hybrid] [--ce] [--json]
 python -m jseval logs [--source worker|head] [--filter rerank] [--tail] [--level WARN]
 ```
 
+### Long detached runs (Windows)
+
+A long pipeline run launched through the Bash tool's `run_in_background` gets
+**killed mid-run** (observed repeatedly, e.g. mid-enrichment). Launch it fully
+detached instead, and stamp a `.done` marker with the exit code on completion:
+
+```powershell
+# Runs in a PowerShell that outlives the tool call; writes the exit code to a marker.
+Start-Process powershell -WindowStyle Hidden -ArgumentList @(
+  '-Command',
+  'python -m jseval run --dataset scifact --output-dir tmp/run1; $LASTEXITCODE | Out-File tmp/run1.done'
+)
+```
+
+Then wait on the `tmp/run1.done` marker with the `Monitor` tool, and read results
+from the run's `--output-dir` (`tmp/run1`) — do **not** parse the process's
+redirected stdout/stderr: PowerShell 5.1 writes those UTF-16 and wraps stderr
+lines, so the run's own JSON artifacts are the reliable source.
+
+> **`--clean` caveat:** `jseval run --clean` does **not** reliably wipe the index /
+> `watched_roots` (observations-logged defect). When a clean state matters between
+> arms, wipe `tmp/headless-eval-data` manually.
+
 ### Observability (tempdoc 400 Layer 1/4/5)
 
 Post-§23 closure, jseval is the single CLI surface for every piece of
