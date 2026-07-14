@@ -52,6 +52,19 @@ triaged into this register's sections or retired to `decisions.md`.
 Reference metadata. Every slug is a valid `dataset_name` argument to jseval.
 Query variants of the same corpus get distinct slugs.
 
+**Hop-count vocabulary note (tempdoc 731 §3.3, issue 14).** For the procedurally-generated
+`golden/*` chain corpora (`scripts/jseval/jseval/corpus_generate.py`; `golden/battlefield-en-v1`,
+`golden/battlefield-de-v1` below, and the `hops=N` generator parameter cited in the provenance
+notes under Findings) and the 707 fabricated-chain-injection family built on the same generator:
+the `hops=N` parameter and the emitted `question_type: "N_hop"` label count planted-chain
+relation *edges*, not behavioral retrieval hops. An N-entity chain has `hops = N-1` edges but
+requires **N retrievals** to answer (one gold doc per entity) — behavioral hops = edges + 1.
+Both vocabularies are internally consistent within their own contexts; the collision is only at
+the reader. Do not relabel `question_type` on committed corpora — `queries.json` bytes are
+digest-bound (`query_gold_sha256`, `corpus_certify.py:107,274,292`) and a relabel invalidates
+every committed cell signature. The behavioral count is already derivable without a relabel:
+`retrieval_hops = len(evidence_ids)`.
+
 | Slug | Domain | Lang | Docs | Queries | Query Form | Last Validated | Validated By | Notes |
 |------|--------|------|------|---------|------------|---------------|-------------|-------|
 | beir/scifact | academic | en | 5183 | 300 | factoid | 2026-06-13 | 580 | BEIR standard; 580 revalidated hybrid on-baseline at HEAD |
