@@ -115,6 +115,8 @@ def read_inspect_observations(
                 "mcp_surface_unverified": bool(metadata.get("mcp_surface_unverified")),
                 "mcp_tools_deferred": metadata.get("mcp_tools_deferred"),
                 "resolved_model": metadata.get("resolved_model"),
+                "toolsearch_targets": metadata.get("toolsearch_targets"),
+                "tool_call_sequence": metadata.get("tool_call_sequence"),
             })
     if require_complete:
         expected_sets = {
@@ -187,6 +189,7 @@ def successful_summaries(
                 "leak_suspect_tool_calls", "leak_suspect", "mcp_servers",
                 "mcp_tools_offered", "mcp_surface_unverified", "mcp_tools_deferred",
                 "mcp_tool_names_offered", "observed_mcp_tool_surface_hash",
+                "toolsearch_targets", "tool_call_sequence",
             )
         }
         if obs.get("resolved_model"):
@@ -233,6 +236,12 @@ def successful_summaries(
             "corpus_certification": cohort.get("corpus_certification"),
             "query_identity": cohort.get("query_identity"),
             "campaign_identity": cohort.get("campaign_identity"),
+            "exposure_config": cohort.get("exposure_config"),
+            "mcp_initialize_identity": cohort.get("mcp_initialize_identity"),
+            "exposure_mode": (cohort.get("exposure_config") or {}).get("exposure_mode"),
+            "instructions_sha256": (
+                (cohort.get("mcp_initialize_identity") or {}).get("instructions_sha256")
+            ),
         }
         manifest["agent_cohort_key"] = agent_cohort_key(manifest)
         summaries.append({
@@ -262,6 +271,15 @@ def all_attempt_tool_call_assertions(observations: Iterable[dict]) -> dict:
             "cells_with_mcp_surface_verified": 0,
             "cells_mcp_surface_unverified": 0,
             "observed_mcp_tool_surface_hashes": set(),
+            "cells_with_exposure_mode_verified": 0,
+            "observed_exposure_modes": set(),
+            # Private bookkeeping, popped before return -- tracks whether ANY
+            # observation in this condition ever captured exposure identity at
+            # all, so the three exposure_* keys above can be OMITTED entirely
+            # (not merely zero-valued) for a condition composed purely from
+            # pre-725 evidence (tempdoc 725 increment 2: this rollup must not
+            # change shape for evidence that never captured this).
+            "_exposure_config_seen": False,
         })
         aggregate["cells_total"] += 1
         if observation.get("excluded"):
@@ -282,9 +300,32 @@ def all_attempt_tool_call_assertions(observations: Iterable[dict]) -> dict:
             aggregate["cells_mcp_surface_unverified"] += 1
         if observed_hash:
             aggregate["observed_mcp_tool_surface_hashes"].add(observed_hash)
+        # Exposure-mode consistency (tempdoc 725 increment 2 claim-policy gate
+        # `verified_exposure_mode`): `exposure_config` is cohort-level (same
+        # source.cohort dict on every observation of one campaign), so this is a
+        # mix-detection check, same spirit as the tool-surface-hash consistency
+        # check above -- it catches evidence merged from two differently-
+        # configured campaigns, not per-cell variance (there is none to observe;
+        # exposure_mode is derived from config, never from a per-cell SDK signal).
+        exposure_config = ((observation.get("source") or {}).get("cohort") or {}).get(
+            "exposure_config")
+        if exposure_config is not None:
+            aggregate["_exposure_config_seen"] = True
+        exposure_mode = (exposure_config or {}).get("exposure_mode")
+        if exposure_mode in ("eager", "deferred"):
+            aggregate["cells_with_exposure_mode_verified"] += 1
+        if exposure_mode:
+            aggregate["observed_exposure_modes"].add(exposure_mode)
 
     for aggregate in by_condition.values():
         hashes = aggregate["observed_mcp_tool_surface_hashes"]
         aggregate["observed_mcp_tool_surface_hashes"] = sorted(hashes)
         aggregate["observed_mcp_tool_surface_consistent"] = bool(hashes) and len(hashes) == 1
+        exposure_config_seen = aggregate.pop("_exposure_config_seen")
+        modes = aggregate.pop("observed_exposure_modes")
+        cells_with_exposure_mode_verified = aggregate.pop("cells_with_exposure_mode_verified")
+        if exposure_config_seen:
+            aggregate["cells_with_exposure_mode_verified"] = cells_with_exposure_mode_verified
+            aggregate["observed_exposure_modes"] = sorted(modes)
+            aggregate["observed_exposure_mode_consistent"] = bool(modes) and len(modes) == 1
     return by_condition

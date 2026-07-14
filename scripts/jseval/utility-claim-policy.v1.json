@@ -25,6 +25,7 @@
     "resolved_provider_model": true,
     "captured_search_config": true,
     "verified_tool_surface": true,
+    "verified_exposure_mode": true,
     "no_leak_suspect_cells": true,
     "contamination_classes": ["post-cutoff", "private-synthetic"],
     "judge_calibration": true,

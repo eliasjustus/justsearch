@@ -18,12 +18,14 @@ _OBSERVATION_KEYS = {
     "disallowed_tool_call_names", "leak_suspect", "mcp_server_statuses",
     "mcp_tools_offered", "mcp_surface_unverified", "mcp_tools_deferred", "source",
     "mcp_tool_names_offered", "observed_mcp_tool_surface_hash",
+    "toolsearch_targets", "tool_call_sequence",
 }
 _SOURCE_KEYS = {
     "model_alias", "corpus", "packages", "source_git_sha", "source_git_dirty", "source_git_state",
     "cli_version", "mcp_tool_surface_hash", "mcp_tool_surface", "judge_kind", "prompt_template_hash",
     "decoding", "eval_limits", "search_config_cohort_key", "environment", "corpus_identity",
     "corpus_certification", "query_identity", "campaign_identity",
+    "exposure_config", "mcp_initialize_identity",
 }
 
 
@@ -74,6 +76,43 @@ def _mcp_statuses(servers: Any) -> list[dict] | None:
     ]
 
 
+def _toolsearch_targets(names: Any) -> list[str] | None:
+    if names is None:
+        return None
+    return [str(name) for name in names]
+
+
+def _tool_call_sequence(sequence: Any) -> list[dict] | None:
+    if sequence is None:
+        return None
+    return [
+        {"name": str(item.get("name")), "status": str(item.get("status"))}
+        for item in sequence
+        if isinstance(item, dict)
+    ]
+
+
+def _exposure_config(value: Any) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "enable_tool_search": value.get("enable_tool_search"),
+        "always_load": value.get("always_load"),
+        "exposure_mode": value.get("exposure_mode"),
+    }
+
+
+def _mcp_initialize_identity(value: Any) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "instructions": value.get("instructions"),
+        "instructions_sha256": value.get("instructions_sha256"),
+        "server_version": value.get("server_version"),
+        "protocol_version": value.get("protocol_version"),
+    }
+
+
 def sanitize_observation(observation: dict) -> dict:
     source = observation.get("source") or {}
     cohort = source.get("cohort") or {}
@@ -104,6 +143,8 @@ def sanitize_observation(observation: dict) -> dict:
         "observed_mcp_tool_surface_hash": observation.get("observed_mcp_tool_surface_hash"),
         "mcp_surface_unverified": bool(observation.get("mcp_surface_unverified")),
         "mcp_tools_deferred": observation.get("mcp_tools_deferred"),
+        "toolsearch_targets": _toolsearch_targets(observation.get("toolsearch_targets")),
+        "tool_call_sequence": _tool_call_sequence(observation.get("tool_call_sequence")),
         "source": {
             "model_alias": source.get("model_alias"),
             "corpus": source.get("corpus") or {},
@@ -124,6 +165,8 @@ def sanitize_observation(observation: dict) -> dict:
             "corpus_certification": cohort.get("corpus_certification"),
             "query_identity": cohort.get("query_identity"),
             "campaign_identity": cohort.get("campaign_identity"),
+            "exposure_config": _exposure_config(cohort.get("exposure_config")),
+            "mcp_initialize_identity": _mcp_initialize_identity(cohort.get("mcp_initialize_identity")),
         },
     }
 
@@ -174,6 +217,7 @@ def read_evidence(path: str | Path) -> list[dict]:
                 "environment", "corpus_identity",
                 "corpus_certification",
                 "query_identity", "campaign_identity",
+                "exposure_config", "mcp_initialize_identity",
             )
         }
         observations.append({
@@ -214,5 +258,7 @@ def read_evidence(path: str | Path) -> list[dict]:
             "observed_mcp_tool_surface_hash": item.get("observed_mcp_tool_surface_hash"),
             "mcp_surface_unverified": bool(item.get("mcp_surface_unverified")),
             "mcp_tools_deferred": item.get("mcp_tools_deferred"),
+            "toolsearch_targets": item.get("toolsearch_targets"),
+            "tool_call_sequence": item.get("tool_call_sequence"),
         })
     return observations

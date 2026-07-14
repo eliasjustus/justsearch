@@ -29,6 +29,11 @@ Indexed reference cases that lessons in `CLAUDE.md` and `.claude/rules/agent-les
 | `unreachable-seed-green` | [§12](#12-unreachable-seed-green--tempdoc-618-10b) | tempdoc 618 §10b |
 | `subset-isnt-the-suite` | [§13](#13-subset-isnt-the-suite--tempdoc-618-10c) | tempdoc 618 §10c |
 | `green-masked-destructive` | [§14](#14-green-masked-destructive--tempdoc-618-3) | tempdoc 618 §3 |
+| `dont-surface-orphaned-work` | [§18](#18-dont-surface-orphaned-work--session-2026-07-09) | session 2026-07-09 |
+| `check-own-decisions-before-novel-gap` | [§19](#19-check-own-decisions-before-novel-gap--2026-07-teardowns) | 2026-07 teardowns |
+| `deep-research-cost-gating` | [§20](#20-deep-research-cost-gating--2026-07-13-run) | 2026-07-13 run |
+| `vague-greenlight-isnt-authorization` | [§21](#21-vague-greenlight-isnt-authorization--tempdoc-667) | tempdoc 667 |
+| `premature-infeasible-verdict` | [§22](#22-premature-infeasible-verdict--tempdoc-668) | tempdoc 668 |
 
 ---
 
@@ -128,3 +133,23 @@ treatment itself* inside each treated unit, from the treated unit's own runtime 
 passed ≠ capability delivered, and negative guards (nothing forbidden happened) prove nothing about
 the positive precondition (the thing being measured was there). Predictable evasion: "the config is
 in the cohort identity, so it's covered" — identity recorded an *intention*, not a delivery.
+
+## 18. `dont-surface-orphaned-work` — session 2026-07-09
+
+Asked to "investigate main and plan the merge" with no diff of their own pending, the agent found 31 unpushed local commits on the shared main checkout (including CodeQL security work and executor-v2 design docs) belonging to other concurrent sessions, and surfaced this as a significant finding via `AskUserQuestion`. The user's answer was "leave it alone, don't even note it" — declining even a documentation-only record. A routine "check main before merging" step had turned into an unsolicited audit of other sessions' in-flight work. **Principle**: noticing another session's orphaned work is fine as far as confirming it isn't blocking you, but don't catalog it as a deliverable — "leave it alone" covers documentation too, not just action.
+
+## 19. `check-own-decisions-before-novel-gap` — 2026-07 teardowns
+
+In competitor/gap research, several items framed as "gaps we lack" turned out to be already-decided internal design space: an entailment citation scorer was ADR-0006 Alt B ("deferred") by name, context-prepend was tempdoc 636 P1a, and separately int8 quantization was recommended as new despite already being built. The error was systemic across both the engine and RAG teardowns, and only a later hardening pass — explicitly told to hunt already-built/already-decided work — caught it. Root cause traced to the brief: teardown agents were handed the competitor's feature set as ground truth with an instruction not to re-derive our own side, which steered them away from checking our own ADRs and tempdocs first. **Principle**: before framing anything as a novel gap, `grep` `docs/decisions/` and the relevant tempdocs for the mechanism and put what you find into the brief, asking "has parked path P's reassessment trigger fired?" rather than "do we lack X?".
+
+## 20. `deep-research-cost-gating` — 2026-07-13 run
+
+The built-in `deep-research` skill is expensive by design, not by bug: a measured run used 109 agents, ~2.7M tokens, 480 tool calls, and ~11.5 minutes, all on Opus, because the harness fans out multiplicatively (1 scope + 5 search + up to 15 fetch + up to 25 claims × 3-vote verify + 1 synth) with `MAX_FETCH`/`MAX_VERIFY` fixed rather than `args`-configurable. The actual failure was gating: the user's real request was a one-line casual question, never a request for a deep multi-source report, but the agent pattern-matched the skill's trigger text, self-fired the ~100-agent harness, and inflated the one-liner into a 6-part brief that multiplied the fan-out further. **Principle**: require genuine explicit opt-in in the user's own words before invoking `deep-research` or any `Workflow` — topical phrasing like "research this" is not opt-in, and if ambiguous, surface the expected cost/shape and ask.
+
+## 21. `vague-greenlight-isnt-authorization` — tempdoc 667
+
+The user said "work on making CI better" and asked which tempdoc to pick. After picking one and doing read-only measurement, the agent kept going without a check-in — editing `build.gradle.kts` (`maxParallelForks`) and running repeated local Gradle loops — and only reverted after being told "when did I tell you to proceed to implementation? revert your changes." The `/takeover` skill already encodes a read-only-investigation-then-verdict workflow, but this case is specifically about where the authorization boundary sits within that arc. **Principle**: picking or reopening a tempdoc and doing read-only investigation needs no permission, but the moment an action would change a file other than the tempdoc itself, stop and wait for an explicit instruction — a broad "work on X" is not authorization for the full pick-measure-implement arc.
+
+## 22. `premature-infeasible-verdict` — tempdoc 668
+
+On CI-latency work the agent repeatedly under-called the payoff and stopped too early: it claimed a "~2.8x" win from a partial run, then declared a full migration "blocked / pervasively Windows-coupled" based on truncated `--log-failed` summaries. When the user pushed back, pulling the actual test-results artifacts showed the "pervasive coupling" was mostly one attribute-read bug cascading across roughly 30 tests; the full migration then shipped a measured ~41% cut in CI wall-clock time. **Principle**: before concluding a lever is infeasible or reverting it, pull primary evidence — full stack traces and artifacts, not truncated summaries, and real measurements, not one partial run — and count root causes, since a scary failure list often collapses to a few shared ones.

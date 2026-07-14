@@ -38,6 +38,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -167,20 +169,149 @@ def _capture_canonical_mcp_surface(mcp_config: str) -> list[dict]:
     return canonical
 
 
+def _capture_mcp_initialize_identity(mcp_config: str) -> dict:
+    """Fetch the authoritative MCP ``initialize`` response for source-time cohort
+    identity (tempdoc 725 increment 2): the server's advertised ``instructions``
+    (verbatim + hashed), ``serverInfo.version``, and the negotiated
+    ``protocolVersion``. Nothing captures the ``initialize`` response anywhere
+    today (`_capture_canonical_mcp_surface` only speaks ``tools/list``); this is
+    that missing capture, at the same source-time point.
+
+    Fail-closed like `_capture_canonical_mcp_surface`: a JSON-RPC/HTTP/transport
+    failure RAISES -- it never returns a silently-empty identity block, which
+    would let a run proceed with an unverified 'None' identity that reads as
+    healthy. A missing (optional, per the MCP spec) ``instructions`` field is NOT
+    a failure -- it lawfully hashes to `None`.
+    """
+    servers = _mcp_servers_from_config(mcp_config)
+    server = servers.get("justsearch") or {}
+    url = server.get("url")
+    if not url:
+        raise ValueError("justsearch MCP config is missing its HTTP url")
+    body = json.dumps({
+        "jsonrpc": "2.0", "id": "jseval-source-identity-initialize",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "jseval-agent-utility-source-identity", "version": "1"},
+        },
+    }).encode("utf-8")
+    request = Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "User-Agent": "jseval-agent-utility-source-identity/1",
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=30) as response:  # noqa: S310 - configured MCP URL
+        payload = json.loads(response.read().decode("utf-8"))
+    if payload.get("error"):
+        raise RuntimeError(f"MCP initialize failed: {payload['error']}")
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("MCP initialize returned a malformed result")
+    instructions = result.get("instructions")
+    instructions = instructions if isinstance(instructions, str) else None
+    server_info = result.get("serverInfo") or {}
+    return {
+        "instructions": instructions,
+        "instructions_sha256": (
+            hashlib.sha256(instructions.encode("utf-8")).hexdigest()
+            if instructions is not None else None
+        ),
+        "server_version": server_info.get("version") if isinstance(server_info, dict) else None,
+        "protocol_version": result.get("protocolVersion"),
+    }
+
+
+def _derive_exposure_mode(*, enable_tool_search: str | None, always_load: bool | None) -> str:
+    """Config-only exposure-mode derivation (tempdoc 725 derisk): NEVER inferred
+    from the SDK's init/`mcp_status` response -- purely a function of the
+    ``ENABLE_TOOL_SEARCH`` harness env var and the justsearch MCP server entry's
+    ``alwaysLoad`` flag.
+
+    - ``always_load is True`` OR ``enable_tool_search == "false"`` -> ``"eager"``
+      (the tool surface is exposed directly, ToolSearch gating is off).
+    - no ``always_load`` and ``enable_tool_search`` in ``(None, "", "true")`` ->
+      ``"deferred"`` (tools are reachable only via ToolSearch).
+    - anything else (e.g. ``"auto"``) -> ``"unknown"``.
+    """
+    normalized_search = enable_tool_search if enable_tool_search is None else str(enable_tool_search)
+    if always_load is True or normalized_search == "false":
+        return "eager"
+    if not always_load and normalized_search in (None, "", "true"):
+        return "deferred"
+    return "unknown"
+
+
+def _capture_exposure_config(
+    mcp_config: str | None,
+    *,
+    enable_tool_search: str | None = None,
+    always_load: bool | None = None,
+) -> dict | None:
+    """Cohort-level ``exposure_config`` block (tempdoc 725 increment 2): how the
+    justsearch MCP tool surface was made available to the agent this campaign --
+    directly offered ("eager") vs. reachable only via ToolSearch ("deferred").
+
+    ``enable_tool_search``/``always_load`` are explicit parameters (not hidden
+    env/config reads) so a later agent can thread per-campaign values; they
+    default to the harness process's own ``ENABLE_TOOL_SEARCH`` env var and the
+    ``mcp_config``'s ``justsearch`` server entry's ``alwaysLoad`` key,
+    respectively. Returns ``None`` when there is no with-tool arm at all
+    (``mcp_config`` falsy) -- mirrors the empty ``mcp_tool_surface`` convention.
+    """
+    if not mcp_config:
+        return None
+    if enable_tool_search is None:
+        enable_tool_search = os.environ.get("ENABLE_TOOL_SEARCH")
+    if always_load is None:
+        servers = _mcp_servers_from_config(mcp_config)
+        server = servers.get("justsearch") or {}
+        raw_always_load = server.get("alwaysLoad")
+        always_load = bool(raw_always_load) if raw_always_load is not None else None
+    return {
+        "enable_tool_search": enable_tool_search,
+        "always_load": always_load,
+        "exposure_mode": _derive_exposure_mode(
+            enable_tool_search=enable_tool_search, always_load=always_load),
+    }
+
+
 async def _mcp_surface(client: ClaudeSDKClient) -> tuple[list | None, list[str], list[dict]]:
     """Return server status, offered names, and canonical full tool definitions.
 
     Replaces the CLI init-event parse (tempdoc 675 finding 2: `query()`'s
     `SystemMessage` init does not list the offered tools). Defensive across the
-    `McpStatusResponse` shape: returns `(None, [])` if status is unavailable so the
-    caller can flag "unverified" rather than conflate unknown with healthy."""
+    `McpStatusResponse` shape: returns `(None, [], [])` if status is unavailable so
+    the caller can flag "unverified" rather than conflate unknown with healthy.
+
+    Tri-state on `servers` (tempdoc 725 A/B smoke fix 2): `[]` (known-empty --
+    status WAS available and reported zero servers) and `None` (unknown -- status
+    unavailable) are distinct and must be captured deterministically. The prior
+    `status.get("servers") or status.get("mcp_servers") or status.get("mcpServers")`
+    `or`-chain returns the LAST operand when all are falsy, so an empty list under
+    the FIRST present key silently collapsed to the NEXT key's value (or None) --
+    inconsistent depending on which key the SDK happened to populate. First
+    NON-NULL key lookup fixes this: the first key holding a non-None value wins,
+    empty list and all; an explicit `null` is treated as absent (typed serializers
+    commonly emit every alternative key with null padding for the unused ones)."""
     try:
         status = await client.get_mcp_status()
     except Exception:
         return None, [], []
     if not isinstance(status, dict):
         return None, [], []
-    servers = status.get("servers") or status.get("mcp_servers") or status.get("mcpServers")
+    servers = None
+    for key in ("servers", "mcp_servers", "mcpServers"):
+        value = status.get(key)
+        if value is not None:
+            servers = value
+            break
     if servers is None:
         return None, [], []
     js_tools: list[str] = []
@@ -211,7 +342,7 @@ async def _mcp_surface(client: ClaudeSDKClient) -> tuple[list | None, list[str],
 def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                         model: str = "haiku", max_budget: str = "0.50",
                         timeout_s: int = 180, max_turns: int = _DEFAULT_MAX_TURNS,
-                        mcp_tool_surface_json: str = "[]"):
+                        mcp_tool_surface_json: str = "[]", agent_env_json: str = "{}"):
     """Per-sample solver: run one query as an in-process Claude Agent SDK cell.
 
     `condition` is read from `state.metadata["condition"]` (the single-pool sample
@@ -228,8 +359,18 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
     without `use_float`), so `task_identifier` re-hashes the resumed task to a
     different id than the persisted log and raises PrerequisiteError. A str
     round-trips identically. Converted to float only at the point of use below. Do
-    NOT reintroduce any float into the task/solver arg surface."""
+    NOT reintroduce any float into the task/solver arg surface.
+
+    `agent_env_json` (tempdoc 725 increment 4 — exposure A/B wiring): a JSON-encoded
+    ``{str: str}`` env-var overlay threaded into every cell's `ClaudeAgentOptions.env`
+    (e.g. ``{"ENABLE_TOOL_SEARCH": "false"}`` for the eager arm). A STR for the same
+    resume reason as `max_budget` above — a dict is fine (no floats), but keeping every
+    solver identity arg JSON-string-shaped is the established pattern here. Empty
+    (``"{}"``, the default) round-trips to `env={}`, which the SDK's
+    `default_factory=dict` makes byte-identical to omitting `env` entirely — today's
+    behavior is preserved when no `--agent-env` is passed."""
     mcp_servers = _mcp_servers_from_config(mcp_config)
+    agent_env = json.loads(agent_env_json) if agent_env_json else {}
     declared_mcp_tool_surface = json.loads(mcp_tool_surface_json)
     from jseval.agent_manifest import mcp_tool_surface_hash
     declared_mcp_tool_surface_hash = (
@@ -260,6 +401,7 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
             disallowed_tools=disallowed,
             mcp_servers=(mcp_servers if condition in _WITH_TOOL else {}),
             strict_mcp_config=True,
+            env=agent_env,
         )
         try:
             async with ClaudeSDKClient(options=opts) as client:
@@ -337,6 +479,43 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
     return solve
 
 
+_TOOL_SEARCH_TOOL_NAME = "ToolSearch"
+_MCP_JUSTSEARCH_PREFIX = "mcp__justsearch"
+_MCP_JUSTSEARCH_NAME_RE = re.compile(r"^mcp__justsearch__[A-Za-z0-9_]+$")
+
+
+def _toolsearch_targets(attempts: dict) -> list[str]:
+    """Ordered, deduplicated ``mcp__justsearch__*`` tool names referenced by a
+    ``select:...`` ToolSearch call input in this cell (tempdoc 725 increment 3).
+
+    ONLY the resolved tool names named after a ``select:`` prefix are extracted
+    -- a keyword/free-text ToolSearch query (e.g. ``"notification jira slack"``)
+    is a search string, not a resolved-tool declaration, and must NEVER leak
+    into this field (the redaction contract this field exists under: raw query
+    text is never public evidence).
+
+    A comma-segment is captured ONLY if it FULLMATCHES the tool-name grammar
+    ``^mcp__justsearch__[A-Za-z0-9_]+$`` -- a prefix check alone (tempdoc 725
+    review finding #1) lets a segment like
+    ``mcp__justsearch__search /etc/passwd bob@evil.com`` (a space-joined
+    ``select:`` list whose first token happens to start with the prefix) leak
+    the trailing free text verbatim into durable sanitized evidence. A segment
+    that fails the fullmatch is dropped entirely; it is simply not evidence
+    that a well-formed tool name was referenced there."""
+    seen: list[str] = []
+    for entry in attempts.values():
+        if entry.get("tool") != _TOOL_SEARCH_TOOL_NAME:
+            continue
+        query = (entry.get("input") or {}).get("query")
+        if not isinstance(query, str) or not query.startswith("select:"):
+            continue
+        for raw_name in query[len("select:"):].split(","):
+            name = raw_name.strip()
+            if _MCP_JUSTSEARCH_NAME_RE.fullmatch(name) and name not in seen:
+                seen.append(name)
+    return seen
+
+
 def _record_cell(state: TaskState, got: dict, condition: str,
                  disallowed: list[str], mcp_config: str | None,
                  declared_mcp_tool_surface_hash: str | None = None,
@@ -373,6 +552,25 @@ def _record_cell(state: TaskState, got: dict, condition: str,
     state.metadata["tool_calls_blocked"] = blocked  # tempdoc 675 forensic bonus (objects)
     state.metadata["disallowed_tool_calls"] = find_disallowed_tool_calls(executed, disallowed)
     state.metadata["leak_suspect_tool_calls"] = find_leak_suspect_tool_calls(executed)
+
+    # Adoption-funnel fields (tempdoc 725 increment 3): `toolsearch_targets` is the
+    # ONLY resolved mcp__justsearch__* names a `select:` ToolSearch call named in
+    # this cell (never free text); `tool_call_sequence` is the FULL ordered
+    # attempts sequence (unlike `tool_calls` above, which is executed-only) with a
+    # per-attempt ok/blocked/disallowed status, so funnel metrics can see e.g. a
+    # blocked-then-abandoned mcp call that `tool_calls` alone would hide entirely.
+    state.metadata["toolsearch_targets"] = _toolsearch_targets(attempts)
+    state.metadata["tool_call_sequence"] = [
+        {
+            "name": entry["tool"],
+            "status": (
+                "disallowed" if entry["tool"] in disallowed
+                else "blocked" if _blocked(tid, entry)
+                else "ok"
+            ),
+        }
+        for tid, entry in attempts.items()
+    ]
 
     # Offered MCP surface from the SDK's own status (tempdoc 675 finding 2).
     servers = got["mcp_servers"]
@@ -414,13 +612,23 @@ def _record_cell(state: TaskState, got: dict, condition: str,
             if servers is not None and justsearch_surface else None
         )
     state.metadata["observed_mcp_tool_surface_hash"] = observed_surface_hash
-    if (declared_mcp_tool_surface_hash and observed_surface_hash
+    # Condition A (baseline) is exempt by construction: `_one_attempt` passes
+    # `mcp_servers={}` for any condition not in `_WITH_TOOL` (line ~386), so an A
+    # cell never offers the campaign-declared surface and must not be compared
+    # against it. Without this gate, A cells were voided at record time against
+    # the declared 6-tool surface -- 17/20 A-cells errored in the 2026-07-14
+    # exposure A/B smoke (tempdoc 725) because the SDK's `get_mcp_status()`
+    # legitimately returned `servers == []` (empty list, not None) for a cell
+    # that was never given any MCP servers to begin with.
+    with_tool_cell = condition in _WITH_TOOL and bool(mcp_config)
+    if (with_tool_cell and declared_mcp_tool_surface_hash and observed_surface_hash
             and declared_mcp_tool_surface_hash != observed_surface_hash):
         state.metadata.setdefault(
             "error",
             "declared MCP tool-surface hash disagrees with observed tools/list",
         )
-    if declared_names and servers is not None and observed_names != declared_names:
+    if (with_tool_cell and declared_names and servers is not None
+            and observed_names != declared_names):
         state.metadata.setdefault(
             "error",
             "offered MCP tool names disagree with captured canonical tools/list",
@@ -434,7 +642,7 @@ def _record_cell(state: TaskState, got: dict, condition: str,
 
     # With-tool surface assertion (condition A exempt by construction). Preserve the
     # tri-state: status unavailable -> "unverified" (never conflated with healthy).
-    if condition in _WITH_TOOL and mcp_config:
+    if with_tool_cell:
         if servers is None:
             state.metadata["mcp_surface_unverified"] = True
         elif not justsearch_tools:
@@ -514,7 +722,8 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
                        mcp_tool_surface_json: str = "[]",
                        judge_kind: str = "substring-em", prompt_template_hash: str | None = None,
                        corpus_dataset: str = "", corpus_signature: str = "",
-                       source_identity_json: str = "{}") -> Task:
+                       source_identity_json: str = "{}",
+                       agent_env_json: str = "{}") -> Task:
     """ONE Inspect task over the whole matrix (tempdoc 675 single pool).
 
     Samples are the flat `condition × query` cross-product; `condition` is a sample
@@ -536,7 +745,7 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
         dataset=samples,
         solver=claude_agent_solver(
             corpus_dir, mcp_config, model, max_budget, timeout_s, max_turns,
-            mcp_tool_surface_json,
+            mcp_tool_surface_json, agent_env_json,
         ),
         scorer=substring_scorer(),
         metadata={
@@ -561,6 +770,8 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
                 "corpus_certification": source_identity.get("corpus_certification"),
                 "query_identity": source_identity.get("queries"),
                 "campaign_identity": source_identity.get("campaign"),
+                "exposure_config": source_identity.get("exposure_config"),
+                "mcp_initialize_identity": source_identity.get("mcp_initialize_identity"),
             },
         },
     )
@@ -634,6 +845,8 @@ def _capture_or_load_source_identity(
     max_queries: int | None = None,
     mcp_tool_surface: list[dict] | None = None,
     corpus_certification: str | Path | None = None,
+    exposure_config: dict | None = None,
+    mcp_initialize_identity: dict | None = None,
 ) -> dict:
     """Persist source-time identity and fail closed when resumed inputs drift."""
     from jseval.corpus_identity import corpus_signature
@@ -717,6 +930,8 @@ def _capture_or_load_source_identity(
         "queries": query_identity,
         "campaign": campaign,
         "environment": safe_environment_identity(),
+        "exposure_config": exposure_config,
+        "mcp_initialize_identity": mcp_initialize_identity,
     }
     path = Path(log_dir) / "source-identity.v1.json"
     if path.is_file():
@@ -742,13 +957,24 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
                      cli_version: str | None = None,
                      corpus_dataset: str = "", corpus_signature: str = "",
                      search_config_cohort_key: str | None = None,
-                     corpus_certification: str | Path | None = None) -> str:
+                     corpus_certification: str | Path | None = None,
+                     agent_env: dict[str, str] | None = None) -> str:
     """Run the matrix through Inspect `eval_set` (resumable). seeds → `epochs`.
 
     Returns the log_dir; re-invoking with the same log_dir resumes (skips done
     samples). condition A uses no MCP; B/C use the JustSearch one. Executor v2
     (tempdoc 675): ONE task, one concurrency pool at `max_samples` (no `max_tasks=1`
-    condition serialization)."""
+    condition serialization).
+
+    `agent_env` (tempdoc 725 increment 4 — exposure A/B wiring): an optional
+    ``{str: str}`` env-var overlay threaded into every cell's child Agent SDK
+    session (e.g. ``{"ENABLE_TOOL_SEARCH": "false"}`` for the eager arm). `None`/empty
+    is today's behavior byte-for-byte. Its `ENABLE_TOOL_SEARCH` entry (if present) is
+    also the EFFECTIVE value fed to the exposure-config capture below — the child
+    session sees `agent_env` merged OVER the harness process's own env (the SDK's
+    `subprocess_cli.py` does `{**inherited_env, **options.env}`), so an `agent_env`
+    override, not just the parent process's own `os.environ`, is what the recorded
+    `exposure_config` must describe to match the child's actual config."""
     # Dead-config fail-fast (tempdoc 624 battlefield retrospective): a `url`-only
     # `mcpServers` entry (no `"type":"http"`) is silently DROPPED — the run would
     # otherwise complete "successfully" with zero MCP tool calls per cell. Checked
@@ -774,6 +1000,23 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
     captured_mcp_surface_hash = (
         _surface_hash(captured_mcp_surface) if captured_mcp_surface else None
     )
+    # tempdoc 725 increment 2: the missing `initialize` capture + the config-only
+    # exposure-mode derivation, at the same source-time point as the tools/list
+    # capture above. Both fail closed (raise) rather than degrade to a silent None.
+    captured_mcp_initialize_identity = (
+        _capture_mcp_initialize_identity(mcp_config) if mcp_config else None
+    )
+    # Effective ENABLE_TOOL_SEARCH the child session will actually see: `agent_env`'s
+    # entry wins (it is applied OVER the harness process env by the SDK), falling back
+    # to the harness process's own env only when `agent_env` doesn't set it — so the
+    # capture below describes the child's real config, not merely this parent process.
+    effective_enable_tool_search = (
+        agent_env.get("ENABLE_TOOL_SEARCH")
+        if agent_env and "ENABLE_TOOL_SEARCH" in agent_env
+        else os.environ.get("ENABLE_TOOL_SEARCH")
+    )
+    captured_exposure_config = _capture_exposure_config(
+        mcp_config, enable_tool_search=effective_enable_tool_search)
 
     # The prompt template is identical across conditions → its hash is a cohort field.
     prompt_template_hash = _sha256_canonical(_PROMPT)
@@ -789,6 +1032,8 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
         max_queries=max_queries,
         mcp_tool_surface=captured_mcp_surface,
         corpus_certification=corpus_certification,
+        exposure_config=captured_exposure_config,
+        mcp_initialize_identity=captured_mcp_initialize_identity,
     )
     source_identity_json = json.dumps(source_identity, sort_keys=True, separators=(",", ":"))
     # Pin a DETERMINISTIC eval_set_id (default is random per-process): without it,
@@ -820,6 +1065,7 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
                 prompt_template_hash=prompt_template_hash, corpus_dataset=corpus_dataset,
                 corpus_signature=corpus_signature,
                 source_identity_json=source_identity_json,
+                agent_env_json=json.dumps(agent_env or {}, sort_keys=True, separators=(",", ":")),
             )
         ]
         # log_format="json": the .eval (zip) recorder breaks on Windows fsspec paths

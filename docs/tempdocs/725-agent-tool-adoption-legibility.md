@@ -1,0 +1,867 @@
+---
+title: "Agent tool-adoption legibility: diagnose why agents offered the JustSearch MCP surface rarely invoke it, and raise correct adoption as far as the product surface allows"
+type: tempdocs
+status: "open — level 1 merged to main (PR #178, 401c1ae); exposure A/B smoke RUN and STOPPED after Campaign D (2026-07-14, results + judgment recorded in the final section): DEFERRED-arm adoption hit CEILING (20/20 discovery+invocation) on the grep-stressed CLERC member — visibility hypothesis refuted in this regime, adoption is corpus-conditional; frontier moves to result quality/reinforcement. The agent_utility_inspect.py:605 A-arm assertion defect is FIXED (2026-07-14, condition-gated + live-shape regression fixtures, red-proofed against the pre-fix producer). Campaign E was not run (cap + defect). Awaiting owner decisions; no levers shipped."
+created: 2026-07-14
+author: agent (Fable, session 9d3c1869) — filed at founder direction after the 719 publish, which surfaced the adoption gap as the program's most under-weighted finding
+category: product / mcp-surface / agent-adoption / eval-supporting
+related:
+  - 624-agentic-retrieval-eval-rebuild            # owns the measurement harness + interpretation tree; its pre-registered "adoption pilot" is the measurement step this tempdoc's levers feed
+  - 719-reproducible-public-agent-utility-benchmark # publication boundary; surfaced the 8.3% finding; owns no product lever
+  - 707-pillar1-inband-utility-corpus              # corpus substrate for any adoption measurement at scale
+---
+
+# 725 — Agent tool-adoption legibility
+
+## Purpose
+
+Diagnose why agents that are *offered* the JustSearch MCP surface rarely *invoke* it, and then
+improve correct adoption **as far as possible** through the product surface itself — tool names,
+descriptions, parameter schemas, result shapes/legibility, and when-to-use guidance. "As far as
+possible" is bounded by honesty, not by a pre-set floor: the ceiling is an agent that adopts the
+tool **whenever it would genuinely help and not otherwise** — indiscriminate invocation
+manufactured by an over-eager description is a regression, not a win. The maximization target is
+therefore *correct* adoption, paired with a non-degrading outcome sanity check.
+
+This tempdoc owns the **product levers and the diagnosis**. It does not own measurement (624's
+harness and interpretation tree are the instrument), makes **no utility claim**, and publishes
+nothing (719's boundary). Instrument and subject stay in separate tempdocs deliberately — the tool
+surface is the thing being changed; 624 measures the change.
+
+## Why now (the evidence)
+
+- **B-arm adoption was 8.3% in the 2026-07-12 pilot**: exactly 1 of 12 paired B-cells (file tools
+  + JustSearch offered) made any MCP call, yet the (rejected, non-comparable) record showed a
+  favorable token delta — meaning 11 of 12 cells exhibited a token difference without using
+  JustSearch at all. 624's pre-registered tree already classifies this correctly: *a result with
+  low adoption is an adoption finding, not a utility finding*. Evidence:
+  `scripts/jseval/tests/fixtures/agent-utility-rejected-2026-07-12/observations.v1.jsonl`
+  (per-cell `mcp_tools_offered` + `tool_call_names`; committed, sanitized).
+- **Consequence for the program**: a powered paid campaign run today would most likely return an
+  expensive adoption-only verdict. The claim policy's `minimum_adoption_rate` is deliberately
+  unresolved (`scripts/jseval/utility-claim-policy.v1.json`); no owner will set a floor the product
+  cannot clear. Adoption work therefore *precedes* campaign spend in any sane ordering.
+- **The why is likely readable for $0**: the raw pilot log (untracked, main checkout,
+  `scripts/jseval/624-pilot-2026-07-12/logs/…agent-utility-task_7EXqthzWBGRHZeRtxMMXcX.json`)
+  contains the agents' actual completions and tool-call sequences for all 48 attempted cells — the
+  non-adopting B-cells' transcripts may state or reveal why the agent chose grep/read over the
+  offered tool. **This file is fragile evidence** (untracked, machine-local): if it disappears, the
+  committed sanitized fixture retains tool-call *names* but not completions.
+
+## What this owns
+
+1. **Diagnosis first ($0).** Read the 11 non-adopting B-cell trajectories from the raw pilot log:
+   did the agent never consider the tool, consider and reject it, misunderstand its parameters, or
+   fail to connect the task to the tool's description? Catalogue the current offered surface as the
+   agent actually sees it (the exact `tools/list` payload: five tools — `justsearch_answer`,
+   `justsearch_search`, `justsearch_browse`, `justsearch_ingest`, `justsearch_status` — names,
+   descriptions, schema sizes). External comparison: what do high-adoption MCP tools (per public
+   agent-tooling practice) do differently in naming/description shape?
+2. **Product levers.** Tool descriptions (when-to-use guidance, capability boundaries), tool
+   naming, parameter schema simplicity, result legibility (does the response invite follow-up use
+   or reward one-shot answers), surface size (five tools vs a leaner offer), and any
+   MCP-spec-level affordances (annotations/hints) the connected clients honor.
+3. **Cheap iteration loop.** Adoption is far cheaper to measure than utility: it needs invocation
+   events under a neutral prompt, not accuracy-gated powered runs. Define with 624 a smoke-scale
+   adoption probe (haiku, small n, existing corpus fixtures) that can rank lever variants before
+   any full campaign. Pre-registration discipline still applies: metric, floor/target, and variant
+   set fixed before outcomes are seen.
+4. **Honest maximization criteria.** Success = adoption on queries where retrieval would help AND
+   no increase in spurious invocation on queries where it wouldn't AND outcome sanity not degraded.
+   Report token effects only descriptively (see confounds).
+
+## Boundaries (what this does NOT own)
+
+- **NOT the measurement machinery** — 624 owns the harness, the adoption metric's formal
+  definition, and the interpretation tree. This tempdoc proposes lever variants and consumes 624
+  measurements; if the harness needs a small capture addition, that is a 624 ask, recorded there.
+- **NOT prompt-steering the evaluated agent.** The neutral-prompt discipline stands; the levers
+  are what the product *is* (its offered surface), not what the eval tells the agent to do. An
+  encouragement/steering *experiment* (does explicit prompting change adoption?) is a legitimate
+  diagnostic instrument here, but its results are diagnosis, never the shipped configuration.
+- **NOT utility or publication claims** — 624 interprets, 719 publishes, and only from an accepted
+  record. Adoption improvements shift what a future campaign measures; they claim nothing.
+- **NOT retrieval-quality work** — if diagnosis reveals agents tried the tool and abandoned it
+  because results were poor, that finding routes to the search-quality tempdocs, not here.
+
+## Known constraints and confounds (record up front)
+
+- **Surface changes create new cohorts by construction.** Any change to tool names/descriptions/
+  schemas changes the MCP `tools/list` hash, which the 719-merged identity machinery treats as a
+  different measured product — before/after cells cannot silently pair. State this; don't fight it.
+- **The tool-definition block perturbs token measurements.** Tool definitions participate in
+  prompt-cache writes (Anthropic cache semantics, 719 research pass), so lever variants mechanically
+  move `cache_creation_input_tokens` independent of behavior. Token effects are descriptive only.
+- **Adoption is gameable.** A shouty description can manufacture invocations. Every reported
+  adoption gain needs the spurious-invocation and outcome-sanity counterparts reported beside it.
+- **Client diversity.** Adoption behavior is a function of (model, client harness, surface). The
+  pilot observed one client cohort (Claude CLI + haiku); generalization to Cursor/Claude
+  Desktop/other models is an explicit open question, not an assumption.
+
+## First questions for the takeover agent
+
+1. Does the raw pilot log still exist, and what do the 11 non-adopting B-cell transcripts actually
+   show? (Secure this evidence first — copy the relevant cells into the tempdoc or a committed,
+   sanitized note before it is lost. If already lost, say so; do not reconstruct.)
+2. What exactly does the offered surface look like today — the verbatim `tools/list` payload an
+   agent receives, its total token weight, and each description's when-to-use signal?
+3. Is there prior art in our own decisions? (Check ADRs/tempdocs for earlier tool-description or
+   MCP-surface decisions before claiming a novel gap — e.g., how the five-tool surface and
+   `justsearch_answer`-as-primary framing were chosen.)
+4. What is the cheapest pre-registered adoption probe 624 would accept as decision-grade for
+   ranking lever variants (model, n, corpus, seeds), and what does it cost?
+5. Where is the diminishing-returns line — at what adoption level does the bottleneck plausibly
+   shift from legibility back to retrieval quality or task mix?
+
+---
+
+# Takeover investigation (2026-07-14, session 9d3c1869)
+
+## Verdict
+
+**GO — but rescoped, and with an explicit ownership transfer from 655 before any design work.**
+The goal (raise correct adoption) is real, owner-directed, and correctly sequenced before any paid
+campaign. But the opening stub's framing is partially stale and partially duplicative: most of its
+"diagnosis" was already done by ADR-0015, tempdoc 366, tempdoc 655, and 624's scale run — and this
+takeover's own new evidence (below) points the first lever somewhere the stub didn't anticipate:
+**tool visibility/discovery mechanics, not description copy.** Do not start with description
+rewording; that specific lever was already tried, measured, and judged weak (655), and the newest
+evidence suggests descriptions may not even be reliably *in context* for current-cohort agents.
+
+## Corrections to the opening stub (verified against source)
+
+- **The surface is six tools, not five** — `justsearch_runtime_manifest` was added post-501
+  (`modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:225-230`); README already
+  says six.
+- **"Diagnose why adoption is low" is largely answered prior art**, not an open question (see
+  Displacement below). The genuinely open question is narrower: what closes the quantified
+  **decision-to-retrieve gap** (adoption 16.7%, median first MCP call at the 21st tool call,
+  18/30 forced-arm cells still reflexively trying grep — 624 pass 26 / 655 scale re-test table).
+- **The raw pilot log does not contain agent reasoning** — `samples[].messages` holds only the
+  input prompt; the Claude Agent SDK runs out-of-process, so no chain-of-thought or per-turn
+  assistant text survives. "Read why the agent chose grep" is not possible from this artifact;
+  only behavioral traces (tool calls, blocked calls, final completion) exist. The log also stores
+  only a **hash** of the offered tool descriptions, not their text (by design,
+  `agent_utility_inspect.py:340-433`).
+- Raw evidence secured: full pilot directory copied to session scratchpad; the durable facts are
+  recorded here and in the committed sanitized fixture.
+
+## New load-bearing finding: the tools were behaviorally DEFERRED
+
+The pilot's per-cell flag says `mcp_tools_offered=6, mcp_tools_deferred=False` — but that flag is a
+**protocol-level end-of-session check** (`client.get_mcp_status()`: server connected, `tools/list`
+non-empty), not proof the tool schemas were in the model's context. The behavioral evidence says
+otherwise: **both** B cells that engaged with JustSearch at all (`B|q9`, `B|q18`) first had to call
+`ToolSearch("select:mcp__justsearch__…")` — the deferred-tool expansion pattern — before the tools
+were callable, while no cell ever needed to "search" for the always-visible native file tools. The
+other 12 completed B cells show zero mechanical trace of the tools (no ToolSearch, no MCP call, no
+blocked attempt).
+
+If MCP tools are collapsed placeholders in the current Claude CLI/Agent-SDK cohort (tool search is
+documented as on-by-default in the Agent SDK), then:
+
+1. **655's "descriptions were eagerly in-context and still ignored" conclusion is in doubt for
+   this cohort** — the description text may be invisible until an explicit discovery step.
+2. The adoption funnel has measurable stages, and the pilot locates the loss at the top:
+   **visibility/discovery** (2/14 expanded the tools) → **invocation** (1/2 invoked after
+   expanding) → **reinforcement** (0/1 — the one adopter made 8 MCP calls with reformulations,
+   had 2 blocked/errored `justsearch_search` calls, and still closed via plain `Read`).
+3. "Median 21st tool call" adoption lateness may be partly a *harness discovery artifact*, not
+   only a habit prior.
+4. The primary description-side lever becomes **keyword-matchability for ToolSearch discovery**
+   (per Claude Code tool-search docs: names/descriptions are keyword-matched), not eloquence.
+
+Also observed: `B|q9`'s blocked list contains a hallucinated Bash invocation
+`justsearch initialize .` — the model conceived of JustSearch as a CLI binary, not MCP functions.
+A cheap legibility signal worth remembering when naming/describing tools.
+
+**Caveat: this is one cohort (haiku + Claude CLI via Agent SDK).** Anthropic docs state the
+API-level Tool Search Tool is unsupported on Haiku, yet ToolSearch calls appear in this haiku log —
+harness-level and API-level tool search are evidently distinct mechanisms. Deferral ground truth
+per client (Claude Code / Desktop / Cursor) is THE first design question, not an assumption.
+
+## Rational non-adoption re-confirmed on this corpus
+
+Every completed cell in both arms answered correctly except 2 A cells (A: 14/16 correct of
+completed; B: 14/14). The corpus (`battlefield-en-scale-v1`, ~2.4k synthetic docs, exact-phrase
+2-hop lookups) is grep-favorable by construction. The real pressure was **wall-clock**: all 18
+exclusions were timeouts (A 8/24, B 10/24), with completed cells at a median ~26 tool calls. So the
+plausible utility story on such corpora is turns/time/timeout-rate, and adoption is the gate to
+observing it — but *correctness* pressure toward the tool does not exist there, consistent with the
+external finding (arXiv:2605.15184, "Is Grep All You Need?", 2026-05): grep beats vector retrieval
+in real harnesses except at corpus scale, on paraphrased (non-literal) queries, or one-shot
+retrieval. The 707 corpus family (grep-stressed, verbose/short-natural strata) targets exactly the
+regime where adoption *should* be rational — measurement there is decision-grade; more measurement
+on battlefield-en-scale-v1 is not.
+
+## Displacement — what already exists (do not re-derive)
+
+- **ADR-0015** (founding surface design): eval-driven 7→4 consolidation (41/50 vs 4/50
+  tool-composition accuracy), schema-minimal + position-bias (`answer` registered first) +
+  progressive disclosure principles, with literature citations. Current descriptions descend from
+  **tempdoc 366**; **tempdoc 655** was already the *second* copy iteration and warns that a third
+  is justified only if new evidence shows descriptions specifically are the bottleneck.
+- **655 shipped the `initialize.instructions` connect-time steering layer** (TOOL_SELECTION_GUIDANCE,
+  `McpToolSurface.java:96-104`) + response-level progressive-disclosure hints, after triaging
+  levers: descriptions = weak ("read and lost to a habit prior"), MCP prompts = unreachable by
+  autonomous agents (user-invoked by protocol), instructions = the untried lever.
+- **624 pass 26 / 655 scale re-test** already ran the scale discriminator: adoption 0.0 → 16.7%
+  (joint effect of 655 layer + corpus scale, explicitly not separable — no ablation);
+  `justsearch_answer` went from never-called to 27 cells; forced-arm answer-first rate 76.7%.
+  Adoption metric definitions (`adoption_rate`, `first_mcp_call_turn`, `mcp_call_share`) and the
+  interpretation tree live in 624.
+- **655 §"Next lever (owned here)" names the decision-to-retrieve gap as its own open work**, with
+  candidates (tool naming/annotations, instructions strengthening, answer-first framing before
+  grep commitment) and 624 Step-2 (model-tier sweep) as the capability-vs-rational discriminator.
+  **This is the overlap 725 must resolve by explicit transfer, not duplication**: at design time,
+  add a pointer in 655's current fold transferring the decision-to-retrieve lever work to 725, or
+  close 725 and resume under 655. Recommendation: transfer to 725 (655 is a sprawling
+  conformance-policy tempdoc whose core shipped; the adoption arc now has its own evidence base),
+  recorded in both tempdocs in the same change.
+
+## External evidence base (primary sources; full details in session research, key items here)
+
+- **Trigger conditions in descriptions measurably lift should-call rate**, especially on newer
+  conservative models (Anthropic tool-use guidance; "writing effective tools for agents",
+  2025-09); namespacing choices have "non-trivial effects".
+- **Tool-search-style deferral is the largest documented selection-accuracy lever** (Anthropic
+  advanced-tool-use, 2025-11: Opus 4 49%→74% with Tool Search vs all-upfront) — and it inverts
+  description strategy toward keyword-matchable discovery.
+- **Over-triggering is a measured cost, not hypothetical**: description augmentation improved task
+  success but +67% median execution steps and 16.7% outright regressions (arXiv:2602.14878, the
+  "smelly descriptions" study — which ADR-0015 already cites). A BFCL-relevance-style negative
+  control set (queries where the tool should NOT fire) is the cheap instrument for 725's "correct
+  adoption" criterion.
+- **Client approval friction suppresses MCP tool reuse independent of descriptions**
+  (anthropics/claude-code#25966: per-call approval for read-only MCP tools in Claude Desktop) —
+  `readOnlyHint: true` (already set on 5/6 tools) is the partial mitigation.
+- **No public data exists on MCP adoption rates** — documented absence; our own funnel numbers may
+  be genuinely novel evidence.
+
+## Cheapest evidence, ordered (all pre-paid-campaign)
+
+1. **Deferral ground truth (~$0, decisive for lever choice):** determine per-cohort whether MCP
+   tool schemas are in-context or collapsed behind ToolSearch — inspect a live session's init/tool
+   surface against the dev stack (one cell, no judging), and check the 2026-07-08 scale-run log
+   (if it survives) for ToolSearch-before-adoption in its 5 adopting cells. This either
+   revalidates or overturns 655's descriptions-read-and-ignored premise for current cohorts.
+2. **Funnel re-read of existing logs ($0):** recompute adoption as the three-stage funnel
+   (discovered → invoked → reinforced) on every surviving B-arm log; the stage split, not the
+   headline rate, picks the lever.
+3. **Smoke-scale adoption probe on a 707 member (small $, 624-owned protocol):** only after 1-2,
+   and only on the grep-stressed corpus where adoption is rational; battlefield-en-scale-v1
+   results cannot justify description/steering changes.
+
+## What this tempdoc should NOT become
+
+- A third description-copy iteration justified by near-ceiling-corpus data (655's explicit warning).
+- A re-run of the scale discriminator that 624 already ran.
+- A prompt-steering experiment shipped as product (boundary stands).
+- A duplicate authority over adoption metrics (624) or the decision-to-retrieve lever list (655 —
+  resolve by transfer).
+
+---
+
+# Research pass (2026-07-14; targeted — client exposure mechanics + MCP spec affordances)
+
+> Scope decision: the takeover already covered description-writing guidance, over-triggering costs,
+> and selection benchmarks. This pass researched only the two questions the deferral finding made
+> load-bearing and that are actively changing: (1) how current clients actually expose MCP tools to
+> the model; (2) what the MCP spec itself offers for discovery/steering. No external code or text
+> was copied into the repo; findings are cited summaries only (no license/attribution payload).
+
+## R1. Claude Code / Agent SDK defer ALL MCP tools by default — descriptions are invisible pre-search
+
+Current official docs (code.claude.com/docs/en/mcp.md §"Scale with MCP tool search";
+agent-sdk/tool-search.md; both fetched 2026-07-14): **"Tool search is enabled by default. MCP tools
+are deferred rather than loaded into context upfront"** — unconditional, not threshold-gated (the
+10%-of-context `auto` mode is opt-in; at the Jan 2026 launch the threshold WAS the default, and the
+flip to unconditional defer-all is undated in any changelog). Pre-search the model sees **"only
+tool names and server instructions"** — not descriptions, not schemas (both truncated at 2KB).
+Discovery search matches tool names, descriptions, argument names, and argument descriptions
+(platform tool-search-tool.md).
+
+Consequences for this tempdoc:
+
+- **655's conclusions survive, re-read under deferral.** The `initialize.instructions` text is
+  precisely one of the only two things a deferred-tools model ever sees pre-search — 655
+  unknowingly shipped the one server-side text with guaranteed pre-search visibility in this
+  cohort, and adoption moved off zero. "Descriptions read and lost to a habit prior" becomes
+  "descriptions never read pre-search"; the description lever is weak for a *documented structural
+  reason*, and its remaining value is as **ToolSearch match target** (keyword-matchability).
+- **Tool NAMES are the pre-search billboard.** The visible name in this cohort is
+  `mcp__justsearch__justsearch_answer` — the server prefix already carries "justsearch", so the
+  tool-side `justsearch_` prefix duplicates it in every listing. Naming is now a first-class
+  lever, but note the trade-off: bare `answer`/`search` names lose keyword-richness for clients
+  that DON'T prefix (spec guidance: names should be unique + descriptive). Design decision, not
+  obvious.
+- **A zero-risk client-config lever exists that no prior tempdoc considered:**
+  `"alwaysLoad": true` on the server entry in `.mcp.json` (Claude Code ≥v2.1.121) forces eager
+  loading of our 6-tool/~1.5k-token surface — well inside the docs' own "skip tool search under
+  ~10 tools" guidance. JustSearch's README/docs recommend the client config verbatim; adding
+  `alwaysLoad` there changes what every following user's agent sees, without touching the eval's
+  neutral-prompt discipline (it is product documentation, not eval steering). Whether
+  eager-vs-deferred actually moves adoption is then a clean, cheap A/B under 624's harness —
+  arguably the single highest-information experiment now available.
+- **Haiku contradiction (needs runtime probe, not docs):** CLI/SDK docs say tool search excludes
+  Haiku; the platform API model table (same day) lists Haiku 4.5 as supported; a Dec-2025 issue
+  (#14863) shows live 400s on Haiku `tool_reference` closed "not planned". Our pilot shows a haiku
+  Agent-SDK run successfully round-tripping ToolSearch. Docs cannot adjudicate; the deferral
+  ground-truth probe (Cheapest evidence #1) must capture the actual wire behavior.
+- **Client diversity confirmed as material:** Claude Desktop has no documented tool-search
+  mechanism (inferred eager, unconfirmed); Cursor documents a ~40-active-tool ceiling with silent
+  drops and no deferred loading (third-party, unverified). Adoption behavior is cohort-specific;
+  every measurement must record the client + exposure mode as identity (624's cohort machinery
+  already can, once the exposure mode is captured honestly — the current `mcp_tools_deferred`
+  protocol-level flag is demonstrably misleading and needs a capture fix under 624).
+
+## R2. The MCP spec offers no server-side priority lever — and `instructions` is only a MAY
+
+Spec research (modelcontextprotocol.io 2025-11-25 + draft, schema.ts diffed; fetched 2026-07-14):
+
+- **No spec-level "when to use" / priority / category field exists** on `Tool` or
+  `ToolAnnotations`, in any revision; no in-protocol tool search (closest proposal SEP-1821 is an
+  unsponsored draft); no server-suggested ordering a client must honor (the draft's deterministic
+  `tools/list` ordering SHOULD is cache-hit optimization only — worth conforming to regardless).
+- **`instructions` has always been a MAY** ("this information MAY be added to the system prompt")
+  — clients are not obliged to surface it. Claude Code/SDK do (see R1); other clients'
+  conformance is unverified. 655's layer therefore has guaranteed reach only in the cohort that
+  also defers tools.
+- **Forward-compat alert: the next spec revision (final expected 2026-07-28) removes the
+  `initialize` handshake entirely** (SEP-2575/2567); `instructions` relocates to a new mandatory
+  `server/discover` response. When JustSearch adopts that revision, 655's shipped layer must
+  migrate — noted here so the migration lands with spec-adoption work, not as a surprise.
+- **Direction of travel** (official client best-practices doc): hosts are told to implement
+  progressive discovery — search over tool `name` + `description` via a host-side meta-tool, with
+  a 1-5%-of-context trigger guidance. The ecosystem is converging on deferred-by-default; the
+  pre-search-visible surface (names + instructions) is where server-side legibility investment
+  compounds, and keyword-rich names/descriptions are the one spec-sanctioned discoverability lever.
+
+## Net effect on the takeover verdict
+
+Unchanged (GO, rescoped, transfer from 655), with the lever order now documentation-backed rather
+than inferred: (1) capture true exposure mode in the harness (624 fix — the misleading flag);
+(2) the eager-vs-deferred `alwaysLoad` A/B as the first experiment; (3) `instructions` +
+tool-name work as the pre-search-visible product surface; (4) descriptions rewritten only as
+ToolSearch match targets, with the over-triggering negative-control set; (5) the 2026-07-28 spec
+migration noted for whenever the protocol revision is adopted.
+
+---
+
+# Settled design (2026-07-14)
+
+## Design decision
+
+725 is **the adoption-funnel program for the agent-facing MCP surface**: measure where agents fall
+out of the funnel (visible → discovered → invoked → reinforced), then move the binding stage
+through the product surface, under pre-registered decision rules. It is not a description-rewrite
+project, not a new measurement authority, and not an eval-steering project.
+
+```text
+624 harness (instrument: funnel metrics, exposure-mode identity, A/B protocol)
+        |
+        v
+725 diagnosis + product levers (subject: names, instructions, descriptions,
+    error/response legibility, recommended client config)
+        |
+        v
+ship decisions gated by pre-registered funnel evidence; public wording stays
+config-recommendation-only until a 624-accepted record exists
+```
+
+## Part I — Measurement honesty (624-owned prerequisites, discovered here)
+
+1. **Exposure-mode capture.** Per-cell, capture-time record of how the tools were actually exposed:
+   eager in-context vs deferred placeholders, plus the harness config that determines it
+   (`ENABLE_TOOL_SEARCH` state, `alwaysLoad`) and a behavioral confirmation signal. Exposure mode
+   joins **cohort/pairing identity** — cells measured under different exposure modes must not
+   silently pair. This conforms to 719's source-provenance invariant ("run identity is an event
+   property") and lands in 624's existing identity machinery; it is not a new seam.
+   **Orphan:** the current protocol-level `mcp_tools_deferred` flag's misleading semantics — it is
+   demonstrably an end-of-session server check, not a model-context fact. It is superseded by the
+   new capture; it may remain only as an explicitly-labeled raw protocol echo. Old records stay
+   immutable and visibly pre-contract (719's pattern).
+2. **Funnel metrics.** `adoption_rate` (kept, 624's vocabulary) is decomposed with:
+   discovery rate (agent expanded/loaded our tools), post-discovery invocation rate, and a
+   reinforcement signal (continued/repeat use after first result; share of blocked/errored calls
+   followed by abandonment). Definitions belong to 624; 725 states the semantic need. The pilot's
+   funnel read (2/14 discovered → 1/2 invoked → 0/1 reinforced) is the motivating shape.
+3. **The deferral ground-truth probe is the first implementation act.** One live Agent-SDK session
+   against the dev stack (and per-client where cheap), capturing what the model context/wire
+   actually holds — settles the Haiku documentation contradiction and validates the new capture
+   before any lever experiment. Zero model-spend beyond one trivial session.
+
+## Part II — Product levers, ordered by pre-search visibility (the evidence-backed order)
+
+- **L1 — Recommended client configuration (`alwaysLoad`).** JustSearch's own docs/README recommend
+  the `.mcp.json` client snippet; adding `"alwaysLoad": true` makes the six-tool surface eager in
+  Claude Code/Agent SDK — inside Anthropic's own "skip tool search under ~10 tools" guidance. This
+  is a docs change, not an engine change, and does not touch the eval's neutral-prompt discipline
+  (it is the product's recommended configuration, i.e., part of the measured product). Shipping is
+  gated by the A/B decision rule below, because eager loading has a real cost (~1.5k tokens every
+  session, used or not) and an unmeasured benefit.
+- **L2 — `instructions` v2.** The connect-time text is one of only two things a deferred-tools
+  model sees pre-search. Revise the existing single-sourced TOOL_SELECTION_GUIDANCE to add what
+  the current text lacks under deferral: when to *search for* these tools, and decision-to-retrieve
+  timing (reach for retrieval *before* committing to iterative grep over a large corpus, not after
+  it fails). Constraints: remains a single-sourced projection (655's single-source guard stays),
+  ≤2KB (client truncation), comparative-not-feature-forward tone (366/655 evidence), and version
+  bump via the existing TOOL_SURFACE_VERSION. This is an in-place revision of 655's shipped layer,
+  not a parallel mechanism.
+- **L3 — ToolSearch matchability.** Descriptions and argument names/descriptions are the
+  documented match corpus for deferred discovery. Optimize keyword coverage for how agents phrase
+  retrieval tasks; explicitly NOT a third eloquence pass (655's warning honored — the target is
+  the search index, not the reader). Gated by a negative-control set (queries/tasks where the
+  tools should NOT fire) so over-triggering (+67% steps median in the external study) is measured,
+  not discovered in production.
+- **L4 — Reinforcement-stage legibility.** The one observed adopter was ejected by
+  blocked/errored `justsearch_search` calls and closed via `Read`. Audit tool-error responses:
+  execution errors should carry self-correction guidance (the 2025-11-25 spec moved validation
+  errors to execution errors for exactly this), and the existing 655 response hints should cover
+  the "result didn't advance the task" path. Extends 655's progressive-disclosure hints in place.
+- **Explicit non-lever: renaming tools.** Bare names (`answer`, `search`) would read better under
+  the client's `mcp__justsearch__` prefix, but tool names are user-facing config keys
+  (permissions/allowlists), the duplication is cosmetic, keyword-rich names aid both discovery and
+  non-prefixing clients, and spec guidance wants unique descriptive names. Churn cost exceeds
+  plausible gain; recorded so the question isn't reopened casually.
+- **Conformance rider:** deterministic `tools/list` ordering (draft-spec SHOULD; cache-hit
+  benefit) — verify at implementation, almost certainly already true in the Java surface.
+
+## Part III — Pre-registered decision rules (fixed before outcomes are seen)
+
+- The first experiment is the **exposure-mode A/B**: same corpus (a grep-stressed 707 member —
+  battlefield-scale data is explicitly not decision-grade), same instructions, arms differing only
+  in eager-vs-deferred exposure, haiku cohort, 624 protocol, funnel metrics + negative controls.
+  It answers whether visibility or persuasion is binding — the highest-information cheap question.
+- Ship L1 (recommend `alwaysLoad`) iff discovery+invocation improve materially without
+  outcome-sanity degradation and with acceptable token overhead; ship L2/L3 variants ranked under
+  the same rule. Numeric thresholds are set with 624 when the experiment is registered — not
+  invented here, and never after seeing results.
+- Spend is owner-gated per the jseval cost policy (smoke-scale, ~$3 class). No public quantitative
+  adoption claim ships from any of this until a 624-accepted record exists (719's boundary);
+  public docs may carry the recommended configuration and qualitative rationale only.
+
+## Sequencing
+
+1. Ownership transfer edit in 655's STATUS SUMMARY (dated pointer: adoption/discoverability lever
+   → 725; 655 keeps conformance + capability policy + its open Q2 fixture decision).
+2. Deferral ground-truth probe (Part I.3).
+3. Exposure-mode capture + funnel metrics under 624 (Part I.1-2) — same correctness boundary, one
+   lead.
+4. Owner-authorized exposure-mode A/B smoke on a 707 member (Part III) — depends on 707
+   member materialization (done) but not on its full scientific certification (adoption is not a
+   public claim).
+5. Ship winning levers (L1 docs change; L2 instructions v2 with TOOL_SURFACE_VERSION bump); then
+   L3/L4 with negative controls; re-measure funnel.
+6. Spec-migration note stays parked with 500/655 (initialize → server/discover when the 2026-07-28
+   revision is adopted); recorded here only as a dependency alert for L2's carrier field.
+
+## Orphans (owned by this tempdoc's implementation, not a later sweep)
+
+1. **655's ownership of the adoption/discoverability lever** (its 2026-07-07 status line and "Next
+   lever (owned here)" section) — superseded by transfer; the 655 edit lands with this tempdoc's
+   first implementation change.
+2. **`mcp_tools_deferred` capture semantics** — superseded by exposure-mode capture (Part I.1).
+3. **TOOL_SELECTION_GUIDANCE v1 text** — revised in place by L2 (version-bumped, single-source
+   guard intact); not a parallel text.
+4. The opening stub's description-first implication and five-tool count — already superseded by
+   the takeover corrections above.
+
+# Design reach
+
+## Conforms to (instances of existing seams — no new machinery)
+
+- **719's source-provenance invariant**: exposure mode is an event property of the run, captured at
+  source time, part of pairing/cohort identity.
+- **624's measurement authority** and pre-registration discipline (metrics vocabulary, decision
+  rules, interpretation).
+- **655's single-sourced steering projection** (instructions v2 revises the projection, does not
+  fork it) and ADR-0015's surface principles (schema-minimal, position-bias, progressive
+  disclosure).
+
+## New principle worth naming: the visibility funnel
+
+**"An agent-facing affordance is adopted through a funnel — visible → discovered → invoked →
+reinforced — and the binding stage must be identified by measurement before any stage's content is
+optimized."** The failure mode it prevents: polishing persuasion text (descriptions) when the loss
+is at visibility (deferral), or adding visibility when the loss is at reinforcement (errors eject
+the agent).
+
+- **Candidate scope beyond this problem:** MCP resources/prompts if ever exposed; the agent-api
+  HTTP endpoints (do external agents discover `/api/agent/*` affordances?); the plugin/community
+  surface (660); even 719's public replay command (is it discovered → run → trusted?).
+- **Existing violations:** the eval's single `adoption_rate` collapses the funnel (being fixed in
+  Part I); 655's description-tuning near-miss was optimizing a possibly-non-binding stage — its
+  own warning said so without the funnel vocabulary.
+- **Evidence it earns its keep:** a funnel measurement changes a lever decision. This has already
+  happened once (the takeover's discovery-stage finding demoted description work and promoted
+  exposure-mode work); the A/B will be the second, cleaner test.
+- **Retirement condition:** if agent clients converge on transparent/eager tool exposure so that
+  visible ≈ discovered (the funnel's top collapses), retire the extra stages back into plain
+  adoption/invocation metrics — do not maintain funnel machinery for a distinction reality stopped
+  making.
+
+## Smaller conforming principle: cohort relativity of agent-behavior facts
+
+Any measured agent behavior is a (model, client/harness, exposure-mode) cohort fact — this is
+624/719's existing direction with exposure mode as a newly recognized axis; conform via identity
+capture, build nothing new. Earns its keep when two cohorts' adoption numbers stop being silently
+comparable (already true: Desktop-vs-CLI exposure differs); retires only if the identity machinery
+itself subsumes it so completely that restating it adds nothing.
+
+---
+
+# De-risking pass (2026-07-14; live probes + log audit; no feature work)
+
+All evidence in session scratchpad `probe-results-v3/` (+v1/v2 for the failure forensics) and the
+funnel audit below. Dev stack used and stopped; CLI 2.1.207, `claude-agent-sdk` 0.2.111.
+
+## Per-uncertainty verdicts
+
+- **U1 (deferral on our versions) — CONFIRMED, on haiku.** Live SDK session, trusted cwd, default
+  config: all six `mcp__justsearch__*` tools present in the init message but self-reported
+  `names_only`; the model answered "Schema not visible (deferred tool)" for
+  `justsearch_answer`'s description. The docs' "tool search excludes Haiku" language is wrong at
+  the harness level — haiku sessions defer and can ToolSearch (three independent behavioral
+  proofs: this probe, the 2026-07-12 pilot, the v1 probe).
+- **U2 (`alwaysLoad` works) — CONFIRMED, with a clean within-session control.** Same session,
+  `{"type":"http","url":…,"alwaysLoad":true}` (SDK dict form): the six product tools moved to
+  `full_schema_visible` — the model quoted the description's first eight words verbatim ("Get
+  evidence from your indexed documents to") — while justsearch-dev's tools (no `alwaysLoad`)
+  stayed names-only in the same context. The A/B's treatment arm is a one-key config change.
+  (File-based `.mcp.json` form untested against a live server — trivial residual, verify when
+  wiring the A/B.)
+- **U4 (instructions reach the model) — CONFIRMED in BOTH modes.** The model quoted
+  TOOL_SELECTION_GUIDANCE's first sentence verbatim with tools deferred AND with them eager —
+  655's carrier works on the current cohort, including haiku.
+- **U3 (exposure-mode observability) — capture must be config-echo + initialize-response, not
+  init-message inference.** The SDK init message lists the six tool names identically in both
+  modes — it does NOT distinguish deferred from eager. Capture therefore records: the session's
+  `ENABLE_TOOL_SEARCH`/`alwaysLoad` config verbatim, plus the server `initialize` response
+  (version + instructions text/hash). **New capture gap found:** the current surface hash covers
+  `tools/list` only — `instructions` and server version are outside captured identity, and the
+  stale-dist incident (below) shows that gap is live, not theoretical.
+- **U5 (funnel derivability) — INVOKED fully derivable from both raw + sanitized shapes (order
+  survives sanitization byte-for-byte); DISCOVERED needs one new sanitized field** (ToolSearch
+  inputs are stripped — add `toolsearch_targets` or a referenced-justsearch boolean); a
+  **REINFORCED-strict predicate needs ordered per-call status** (blocked calls are an unordered
+  side-array with no positional linkage — upstream capture gap; `mcp_call_count>1` proxy works
+  meanwhile). Full per-cell funnel table for the pilot: offered 14/14 → discovered 2/14 →
+  invoked 1/14 → reinforced-proxy 1/14; `B|q9` is a clean discovered-then-abandoned drop-off.
+  Passing find (inbox + verify at implementation): the committed rejected fixture may not satisfy
+  the observation schema's `source.*` requirements — check before building on that schema.
+- **U6 (A/B substrate) — PARTIAL.** No materialized 707 member exists on this machine (the CLERC
+  6.7GB fetch never ran; only committed fabricated halves + recipes). Dev-runner stack starts
+  reliably (3× today, ~40s) and the ingest path is healthy (200/accepted on a smoke ingest), so
+  the 719-reported 120s-startup failures look specific to jseval's `--start-backend` launcher and
+  routable-around via the dev-runner + external-backend env vars. Fetch+materialize is time, not
+  dollars, and is the A/B's long pole.
+
+## Incidental findings that harden the design
+
+1. **Stale-dist hazard is real and silent:** the first stack launch served TOOL_SURFACE_VERSION
+   0.1.0 — *without* the 655 instructions field — despite 0.2.0 being merged; the known
+   `installDist` pitfall. Any eval run against a stale jar measures the wrong steering surface,
+   and nothing in current capture would notice (instructions isn't hashed). Direct justification
+   for the U3 capture rule; also means historical adoption runs' instructions-surface identity is
+   unverifiable in retrospect.
+2. **Project-scope MCP approval gates headless runs:** an unapproved project server shows
+   "Pending approval" and connects as `failed` in `-p`/SDK sessions from an untrusted cwd (this
+   masqueraded as server failure through an entire probe round). The A/B harness must pin a
+   trusted cwd / pre-approved config, and README guidance for headless users should mention the
+   approval step.
+3. **One unexplained dev-stack death** under light MCP-only load (logged to observations inbox;
+   watch during the A/B).
+
+## Confidence and difficulty
+
+**Confidence: 8/10** for the design's implementable increments (655 transfer, exposure-mode +
+initialize-response capture, funnel metrics/fields, A/B harness config, L1/L2 levers). The two
+residual unknowns are external and accepted: non-CLI client behavior (cohort-relative by design)
+and 707 materialization end-to-end (production commands + tests exist from 719, but the fetch has
+never run on this machine). Not 9+ because the schema/fixture drift find suggests the observation
+contract needs a verification pass before building on it, and the owner-set A/B thresholds are
+still open by design.
+
+**Difficulty: moderate** — the hard thinking (lever order, funnel semantics, capture contract) is
+done and probe-verified; what remains is disciplined plumbing plus one experiment. Recommended
+split: **one Opus-tier lead (high effort) for the 624 capture/identity/funnel contract and the
+pre-registration + instructions-v2 wording** (correctness-sensitive, cross-tempdoc authority
+edits); **Sonnet (medium-high effort) for the bounded increments** — probe-script productization,
+evidence-field additions + tests, A/B config wiring, 655 transfer edit, docs — under the lead's
+review. Full-campaign execution stays owner-gated regardless.
+
+---
+
+# Level-1 implementation (2026-07-14; complete)
+
+All level-1 increments from the approved plan are implemented and verified on
+`worktree-adoption-legibility`. Orchestration: seven scoped sonnet implementers/auditors + one
+opus refute-first reviewer; briefs, contract decisions, evidence judgment, and commits stayed in
+the main loop. No campaign was run; no lever text shipped; public surfaces carry no new claims.
+
+## What landed (per increment, with evidence)
+
+- **0 — evidence contract repaired.** Root cause was sharper than the derisk flag: FIVE
+  late-added `source.*` fields (incl. `source_git_state`) were schema-required but absent from
+  the pre-contract fixture, and the schema was never enforced against evidence rows in CI.
+  Fix: required-ness relaxed to properties-only for late-added fields (types still checked;
+  `additionalProperties:false` and `read_evidence` unknown-key rejection untouched), plus a
+  parametrized test validating all 48 committed fixture rows. This set the pattern all new
+  fields follow: schema-optional, sanitizer always-emits, claim-grade strictness lives in the
+  policy gate.
+- **1 — 655 → 725 transfer recorded** in 655's STATUS SUMMARY (+ pointer at its "Next lever"
+  section) and 624's fold; headless-approval note added to
+  `docs/reference/mcp-production-server.md` (increment 6 rode along; llms.txt/links/markdownlint
+  green).
+- **2 — exposure + initialize identity.** New cohort blocks `exposure_config`
+  ({enable_tool_search, always_load, exposure_mode} — config-derived only) and
+  `mcp_initialize_identity` ({instructions + sha256, server_version, protocol_version}, captured
+  via a JSON-RPC `initialize` call beside the existing `tools/list` capture).
+  `mcp_tools_deferred` relabeled as protocol echo (orphan closed). Identity joins per the
+  settled contract: cohort key + compose mix-guard + ITT stratum key — NOT `pairing_key`
+  (search-config precedent; pinned tests extended, none weakened). Claim policy:
+  `source_identity_complete` extended; new `verified_exposure_mode` requirement + gate; policy
+  file remains draft and still rejects `policy_unresolved`.
+- **3 — funnel fields + metrics.** New per-cell `toolsearch_targets` (strict tool-name grammar)
+  and `tool_call_sequence` ([{name,status}] over ALL attempts, ordered — `tool_call_names`
+  untouched for existing consumers). Funnel block beside `adoption`: `discovery_rate`,
+  `post_discovery_invocation_rate`, `first_discovery_turn`, `reinforced_proxy_rate`, strict
+  `reinforced_rate`. Old evidence: metrics null + `funnel_fields_absent: true`, never silent 0
+  (fixture-asserted). Producer-shaped synthetic campaign reproduces the pilot funnel
+  14→2→1→1 as a regression test.
+- **4 — A/B wiring (config only).** `--agent-env KEY=VALUE` on `utility-run` threads
+  `env=` into `ClaudeAgentOptions` (SDK merge semantics verified against installed source:
+  `options.env` wins); recorded exposure reflects the child session's effective config;
+  `alwaysLoad` validated (boolean, fail-closed) in the existing calibration assert; new pure
+  `exposure_contrast.py` (descriptive per-metric {a,b,delta}; hard ValueError on mismatched
+  non-exposure identity; no verdict field — that boundary is level-2/owner). Command inventory
+  unchanged at 84.
+- **5 — audits.** `tools/list` tool ORDER was already deterministic; the nested
+  `inputSchema.properties` used JVM-salted `Map.of` → converted to insertion-ordered maps
+  (idiom-matching helper), order assertions added; spotless + module tests + build green. Our
+  own `mcp_tool_surface_hash` was never affected (canonical sorted-key hashing) — the fix is for
+  external byte-fingerprinting/prompt-cache stability. Residual noted: `resource()`'s `Map.of`
+  feeds `resources/list` (outside scope, trivial follow-up). The L4 error-legibility audit
+  produced a ranked 8-item GAP backlog (below).
+
+## Semantic-digest transition (deliberate, proven)
+
+The rejected-fixture recompose digest moved
+`2cea990ce444…c076ee6` → `2f555f661a91…4a100`. Independent structural diff of old-vs-new
+records: the ONLY non-volatile delta is `claim_verdict.policy_hash`, because adding
+`verified_exposure_mode` to the checked-in draft policy is inseparable from a policy-content
+change (the policy schema is exhaustively-required by design and the three-way sync test pins
+it). Arithmetic, loss, exclusions, identity, gates, reasons: byte-identical. The bare-recompose
+digest was always a function of the current draft policy and will legitimately move again when
+the owner resolves thresholds; publication replay is immune (bundles pin their policy bytes —
+`test_replay_uses_bundled_policy_not_changed_default`). Historical digest citations in tempdoc
+719 and this file's earlier sections remain true for their dates.
+
+## Refute-first review (opus, reviewer ≠ implementers)
+
+Attacked: conditional-exclusion asymmetries (absent/unknown/eager/deferred are four distinct
+identities; every forged mixed-exposure combination trips the mix-guard), legacy invariance,
+sanitizer leak surface, pinned-test integrity (zero weakened assertions across all modified test
+files), exposure-derivation edge cases (15 parametrized), SDK env merge order, Java content
+preservation, schema coherence. **One MAJOR confirmed and fixed:** `toolsearch_targets` captured
+same-comma-segment free text verbatim (prompt-injection-shaped `select:` input could leak
+paths/emails into durable evidence) — closed with a fullmatch tool-name grammar in both producer
+and schema pattern, with the reviewer's adversarial case as a permanent regression test.
+
+## Pre-registered L4 backlog (from the error-legibility audit; evidence-gated, NOT shipped)
+
+Ranked; each item cites its site in `McpToolSurface.java`/`IngestTool.java`:
+1. Generic exception fallbacks leak raw `e.getMessage()` with no classification/next action
+   (5 dispatch paths) — the most probable mechanism behind the pilot adopter's 2 errored search
+   calls before abandonment (a zero-hit search returns SUCCESS with a helpful hint, so the
+   errored calls were not the no-results path).
+2. "Knowledge server not available" (answer/search/status) has no transient-vs-permanent or
+   retry guidance. 3. Silent search-preview truncation (…substring(0,200), no notice).
+4. "No readable files found" doesn't distinguish causes or point at `justsearch_browse`.
+5. Many-results hint suppressed once any filter is applied. 6. Answer context-truncation note
+   has no action. 7. Unknown-tool-no-suggestion is bare. 8. Unresolved-operation/manifest bare
+   errors (likely unreachable).
+Positive findings recorded: zero-results paths are already exemplary (success + concrete next
+action); the gated-approval responses are best-in-class ("do not retry" + async flow).
+
+## Verification (final tree)
+
+Full jseval suite green except the 2 known pre-existing `test_correction_probe` failures;
+`check-public-agent-utility` OK (no accepted result; all three projections in-sync — README and
+RESEARCH.md untouched by this branch); inventory 84 in-sync; llms.txt/canonical-links green;
+`gradlew build -x test` BUILD SUCCESSFUL (exit 0); recompose digest `2f555f66…a100` reproduced
+across three independent agents + the main loop; `git diff --check` clean.
+
+## Remaining (level 2 — unchanged owner gates)
+
+Exposure A/B smoke (spend + thresholds with 624), 707 CLERC fetch/materialization, lever
+shipping (L1 `alwaysLoad` recommendation, L2 instructions v2, L3 matchability, L4 backlog) per
+the pre-registered decision rules, and the 2026-07-28 MCP spec migration (parked with 500/655).
+
+---
+
+# Exposure A/B smoke — pre-registration (2026-07-14, BEFORE any cell runs)
+
+> Owner authorization: budget cents-to-few-dollars haiku smoke, granted 2026-07-14
+> ("you have authorization regarding item 3"). This smoke produces decision evidence
+> for the owner's lever-shipping call (design Part III). It is NOT a utility claim,
+> NOT publication input, and ships nothing by itself.
+
+## Design
+
+Two campaigns, identical in every respect except MCP tool exposure:
+
+- **Campaign D (deferred):** default client behavior — `{"type":"http","url":<mcp>}`;
+  tools collapsed to names + server instructions pre-search (current-cohort default).
+- **Campaign E (eager):** same entry + `"alwaysLoad": true` — full descriptions/schemas
+  in context from turn 1.
+
+Shared matrix per campaign: corpus `mixed/en-legal-clerc-1k-verbose` (materialized
+2026-07-14; every commitment/certification signature reproduced; structural certification
+only — sufficient because no public claim is made), all 20 committed queries × seed 0 ×
+conditions A and B, model haiku, exact-match scoring (no LLM judge), existing per-cell
+wall-clock and budget limits. Estimated total ≤ 80 cells; hard spend cap USD 6 total —
+abort if projected to exceed.
+
+## Pre-registered metrics (from the 725 substrate, per campaign B-arm)
+
+Primary: funnel — discovery_rate, post_discovery_invocation_rate (and derived overall
+invocation/adoption_rate), first_discovery_turn, reinforced_proxy_rate, strict
+reinforced_rate. Contrast computed by `exposure_contrast` (descriptive {a,b,delta}).
+
+Sanity (must-check, not optimization targets): completed-cell accuracy per arm,
+timeout/exclusion rates, A-arm invariance (A cells have no tools; any A-arm difference
+between campaigns is noise scale), exposure identity captured as declared
+(D: exposure_mode=deferred, E: eager; initialize identity present; any `unknown` →
+run is void, fix capture, rerun).
+
+Descriptive only (no bars): provider token counters (tool definitions mechanically
+shift cache-write tokens — 719 research), turns, cost.
+
+## Pre-registered signal bars (interpretation guide, not ship triggers)
+
+- **Visibility-binding signal:** E invocation ≥ 3× D invocation AND E invocation
+  ≥ 25% absolute (≥ 5/20 B-cells).
+- **Persuasion-binding signal:** E ≈ D (< 1.5× ratio) with both < 25% — visibility is
+  not the bottleneck; L2/L3 levers move up.
+- **Outcome-sanity veto:** E completed-cell accuracy worse than D by > 10 pp, or E
+  spurious-looking invocation on cells whose grep path succeeded faster (qualitative
+  note) — flag prominently regardless of funnel deltas.
+- In-between results are reported as-is. The ship/no-ship decision on L1
+  (`alwaysLoad` README recommendation) and any lever work is the owner's, made on this
+  evidence — pre-committed here to prevent post-hoc bar-moving, not to auto-ship.
+
+## Known caveats (declared up front)
+
+1. **F-029 (dense-on-legal):** dense retrieval may underperform on legal text; affects
+   both campaigns identically — the exposure CONTRAST is valid even if absolute
+   retrieval quality is poor; absolute adoption may be depressed if early tool results
+   disappoint (reinforcement stage). Recorded, not corrected.
+2. **CRLF commitment nuance (corpus agent, 2026-07-14):** committed commitment digests
+   hash CRLF build-time bytes; LF checkouts must regenerate the gold source via
+   `corpus-query-stratum-build` to reproduce (done here; signatures reproduced exactly).
+   Cross-platform replay gotcha for 707/719 — logged to observations.
+3. **n=20 queries, 1 seed, one model, one client cohort:** smoke-scale; detects large
+   effects only; no significance claims; cohort-relative by design.
+4. First live exercise of the 725 capture path — a substrate defect discovered live is
+   fix-and-rerun, and would itself be a finding.
+
+---
+
+# Exposure A/B smoke — results and judgment (2026-07-14; STOPPED after Campaign D)
+
+Both pre-registered stop conditions fired and were honored: the $6 cap (Campaign D alone cost
+$8.87 — real cost ~$0.22/cell vs the $0.075 assumed; future pre-registrations must budget from
+this measured rate) and a substrate capture defect (below). Campaign E was not run; the contrast
+is mechanically unproducible from D's record. **Judged against the pre-registered bars, the
+outcome is a third case neither bar anticipated — and it is decisive anyway.**
+
+## Headline: adoption was at CEILING in the DEFERRED arm
+
+Campaign D (deferred exposure — the supposedly handicapped arm), B-condition, 20 cells on the
+grep-stressed CLERC 1k-verbose member, haiku, live 655 instructions (v0.2.0, initialize identity
+captured):
+
+- discovery 20/20 (funnel `discovery_rate` 1.0), invocation 20/20 (`adoption_rate` 1.0);
+- first discovery at call index ~1, first MCP call at index 2 — immediate, not late;
+- `mcp_call_share` 0.49; `reinforced_proxy_rate` 0.90, strict `reinforced_rate` 1.0;
+- exposure identity captured exactly as declared (`exposure_mode="deferred"`, `always_load: null`,
+  `instructions_sha256=360df3a1…`, server 0.2.0) — the 725 capture worked first time live.
+
+**Interpretation (vs the bars):** the visibility-binding hypothesis is REFUTED in this regime —
+with a corpus where grep genuinely struggles, natural-language 2-hop queries, and the 655
+connect-time instructions live, agents discover and adopt the deferred tools instantly and
+universally. Campaign E could not have improved adoption over 1.0; the cap-stop was scientifically
+correct, not merely fiscal. Combined with the 2026-07-12 pilot (8.3% adoption, synthetic
+grep-friendly corpus), **adoption is corpus-conditional: rational non-adoption was the dominant
+mechanism all along** (655's original hypothesis, now with the cleanest evidence yet). The L1
+`alwaysLoad` recommendation is NOT needed for adoption in this regime (owner call whether E ever
+runs for its residual questions: token/cache-cost effects of eager loading, and non-CLI cohorts).
+
+## The frontier moves down-funnel: outcomes, not adoption
+
+Descriptive, smoke-scale, no claim: B completed 19/20 (1 budget exclusion), but substring-EM
+accuracy on completed cells was only **3/19 (15.8%)** despite universal tool use — on this corpus
+the binding constraint is now **result quality/reinforcement** (retrieval quality on legal text —
+the F-029 caveat — plus 2-hop difficulty at haiku, and the L4 error/response-legibility backlog),
+not tool selection. A-arm baseline accuracy is unavailable (all 20 A-cells void — below).
+
+## Substrate defect found by first live contact (must-fix before any future campaign)
+
+`agent_utility_inspect.py:605`: the offered-vs-declared MCP tool-name assertion is not
+condition-gated — A-cells (no MCP servers; empty offered list) are compared against the declared
+6-tool canonical surface and marked errored AT RECORD TIME (after the agent loop ran and incurred
+cost: $4.91 of void A-cells). Downstream, `_compose_cell` drops the baseline arm and the record
+composes `measured: {}` — deterministic, would have voided E identically. Escaped 333 unit tests
+AND the adversarial review because no fixture exercises a live A-cell WITH a declared canonical
+surface (`unreachable-seed-green`, precisely). Fix + A-arm-shaped regression fixture is the next
+implementation item; logged to observations. Second operational finding: `justsearch_dev_stop`
+resolves dev-runner from the session-inject-time worktree path and breaks after that worktree's
+teardown (observation logged; stack was PID-tree-killed cleanly).
+
+## Evidence
+
+All under `scripts/jseval/tmp/725-ab/` in the `725-ab-smoke` worktree (untracked): raw Inspect log
+(J7GN33YAvwSmMYH9C7Xdrb), `source-identity.v1.json` sidecar, run-composed + recomposed records
+(semantic_digest `e367a0f3…87b`, `measured:{}`), both mcp-config files, ingest/campaign logs.
+Prep was fully green: ingestion+enrichment of the 1000-doc member in ~13.5 min, watched-root
+scoped, corpus-dir signature match, queries sha == committed `query_gold_sha256`. Backend healthy
+throughout; campaign wall-clock 11m10s.
+
+## Owner decision points created by this result
+
+1. Is Campaign E still wanted for its residual questions (eager-mode token/cache cost; nothing
+   about adoption), at measured cost ~$9? Default recommendation: no, not until the #605 fix
+   restores the A-arm baseline and a question actually needs it.
+2. Lever order revision: L1 (`alwaysLoad`) demoted — adoption doesn't need it where retrieval
+   matters; the productive frontier is L4 (reinforcement/error legibility) + retrieval quality on
+   legal (708/712/713 territory), and the 624 utility campaign becomes MORE attractive since
+   adoption is no longer the blocker on the target corpus regime.
+3. The 8.3%→100% corpus-conditionality finding is the single most useful sentence for 624's
+   pre-registered interpretation tree going forward.
+
+## The #605 defect — FIXED (2026-07-14, same day, follow-up session)
+
+Root-cause turned out one layer deeper than the results section recorded: the defective
+assertion block was introduced by PR #173 (tempdoc 719, `70fb180`), not #178 — which is why the
+2026-07-12 pilot (pre-#173) was never voided and why #178's adversarial review (scoped to #178's
+changes) never examined it. Campaign D was the first live A-arm run against that code.
+
+The mechanism had a second half: `_mcp_surface`'s `servers`-key `or`-chain returns the LAST
+operand when all are falsy, so the SDK's empty server list reached `_record_cell` as `[]` (not
+`None`) and passed the `servers is not None` guard — known-empty and status-unavailable were
+conflated by key position.
+
+Fix (this branch): both declared-vs-observed assertions (hash + names) now share the existing
+`condition in _WITH_TOOL and mcp_config` gate ("condition A exempt by construction", same as the
+adjacent surface assertion); `_mcp_surface` uses first-non-null-key lookup (explicit `null` =
+absent, preserving null-padded serializer shapes). Regression fixtures mirror the live producer
+shape — `mcp_servers=[]` + declared 6-tool surface (the `unreachable-seed-green` gap: the old
+A-exempt test seeded `mcp_servers: None` with no declared surface, a shape production never
+produces) — plus a B-arm names-mismatch guard proving the assertion still bites, and
+tri-state/null-padding cases. Red-proofed: the headline fixture and the or-chain case FAIL
+against the pre-fix producer (`401c1ae`). Full jseval suite green (1874 passed; only the 2
+known-red `test_correction_probe` pre-existing failures). The A-arm baseline is restored for any
+future campaign; Campaign E's evidentiary blocker is gone (the spend question remains the
+owner's).

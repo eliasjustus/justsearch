@@ -74,6 +74,13 @@ def _intention_to_treat_estimand(
             corpus.get("dataset"), corpus.get("signature"), source.get("model_alias"),
             observation.get("resolved_model"),
             canonical_bytes(cohort.get("corpus_certification")),
+            # tempdoc 725 increment 2: additively join exposure/instructions
+            # identity into the stratum grouping key, the same discipline as
+            # agent_cohort_key/the compose_utility mix-guard tuple -- evidence
+            # from two differently-configured campaigns must never silently
+            # share one ITT stratum.
+            (cohort.get("exposure_config") or {}).get("exposure_mode"),
+            (cohort.get("mcp_initialize_identity") or {}).get("instructions_sha256"),
         )
         condition = observation.get("condition")
         if condition not in {"A", "B"}:
@@ -83,9 +90,10 @@ def _intention_to_treat_estimand(
         ] = observation
 
     strata = []
-    for (dataset, signature, model, resolved_model, certification_bytes), arms in sorted(
-        grouped.items(), key=lambda item: str(item[0])
-    ):
+    for (
+        dataset, signature, model, resolved_model, certification_bytes,
+        _exposure_mode, _instructions_sha256,
+    ), arms in sorted(grouped.items(), key=lambda item: str(item[0])):
         shared = sorted(set(arms.get("A", {})) & set(arms.get("B", {})))
         pairs = {}
         adopted = 0
@@ -121,6 +129,8 @@ def _intention_to_treat_estimand(
                 "c_turns": with_tool.get("num_turns"),
                 "a_tool_calls": baseline.get("tool_calls"),
                 "c_tool_calls": with_tool.get("tool_calls"),
+                "c_toolsearch_targets": with_tool.get("toolsearch_targets"),
+                "c_tool_call_sequence": with_tool.get("tool_call_sequence"),
             }
         stats = (
             _stats_from_pairs(pairs, statistical_alpha=statistical_alpha)
@@ -211,7 +221,7 @@ def _intention_to_treat_estimand(
             len(excluded["A"] & excluded["B"]) / len(excluded_union)
             if excluded_union else 1.0
         )
-        strata.append({
+        stratum = {
             "stratum_id": stratum_id,
             "corpus_member": member,
             "corpus": dataset,
@@ -250,7 +260,18 @@ def _intention_to_treat_estimand(
                     "adoption_rate": adopted / len(shared) if shared else None,
                 }
             },
-        })
+        }
+        # Adoption funnel (tempdoc 725 increment 3): `_stats_from_pairs` computes
+        # this from the SAME `pairs` dict built above (which now also carries
+        # `c_toolsearch_targets`/`c_tool_call_sequence`), so it is never a second,
+        # divergent adoption computation. `_stats_from_pairs` itself OMITS
+        # "funnel" (rather than emitting a null-marker dict) when none of this
+        # stratum's paired cells carry funnel data at all, so a stratum composed
+        # purely from pre-725 evidence has no "funnel" key at all -- byte-identical
+        # to before this key existed.
+        if stats and "funnel" in stats:
+            stratum["funnel"] = stats["funnel"]
+        strata.append(stratum)
     return {
         "primary": "intention_to_treat",
         "intention_to_treat": {"strata": strata},
