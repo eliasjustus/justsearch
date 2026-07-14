@@ -1,0 +1,13 @@
+{
+  "tool": "justsearch_search",
+  "delivered_tier": "structured-json",
+  "provenance": "reconstructed-from-source, not recorded",
+  "provenance_note": "No raw ToolResultBlock capture of this call survived on disk (same gap as the answer fixture -- see its provenance_note). This fixture is built field-for-field from McpEvidenceProjection.searchEvidence() (modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpEvidenceProjection.java:46-110), reusing the searchTrace/degradation/legScores values already verified by McpEvidenceProjectionTest.java:72-167 (searchProjectsQueryLevelTrace, searchProjectsPerHitTraceAndLegScores) for the first hit. The second hit (doc-2) adds matchedTerms/matchedFields/excerpts -- fields neither of those two JUnit tests populates -- constructed directly from the projection code at McpEvidenceProjection.java:75-93 (the per-hit loop) and McpSearchResultFormatter.informativeTerms/filterInformative (modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpSearchResultFormatter.java:119-156), so tests/test_delivery_tier_735.py has a real example of the nested (per-result, not top-level) matchedTerms/excerpts placement tempdoc 735's design calls out explicitly.",
+  "cli_version": "2.1.209",
+  "mcp_tool_surface_version": "0.3.1",
+  "stamped": "2026-07-14",
+  "result": {
+    "is_error": false,
+    "content": "{\"searchTrace\":{\"effectiveMode\":\"HYBRID\",\"decisionKind\":\"multi_leg\",\"qpp\":{\"maxIdf\":1.5,\"avgIctf\":2.0,\"queryScope\":3.0},\"degradation\":{\"vectorBlocked\":true,\"vectorBlockedReason\":\"FINGERPRINT_MISMATCH\",\"hybridFallback\":true,\"hybridFallbackReason\":\"NO_EMBEDDING_SERVICE\",\"spladeExecuted\":false,\"spladeSkipReason\":\"absent\"},\"stages\":[{\"id\":\"sparse-retrieval\",\"status\":\"executed\",\"ms\":5,\"cardinality\":42},{\"id\":\"dense-retrieval\",\"status\":\"skipped\",\"reason\":\"vector_blocked\"}]},\"degradation\":{\"vectorBlocked\":true,\"hybridFallback\":true,\"reasons\":[\"FINGERPRINT_MISMATCH\",\"NO_EMBEDDING_SERVICE\"]},\"results\":[{\"id\":\"doc-1\",\"title\":\"Troubleshooting\",\"path\":\"help/troubleshooting.md\",\"score\":0.9,\"trace\":[{\"id\":\"sparse-retrieval\",\"rank\":1,\"score\":3.3},{\"id\":\"fusion\",\"rank\":1,\"score\":0.9,\"detail\":{\"cc_weight_sparse\":0.6}},{\"id\":\"splade-retrieval\",\"rank\":2,\"score\":1.7}],\"legScores\":{\"sparse\":3.3,\"dense\":0.0,\"splade\":1.7,\"fused\":0.9}},{\"id\":\"doc-2\",\"title\":\"Timeout errors\",\"path\":\"help/timeouts.md\",\"score\":0.74,\"matchedTerms\":[\"troubleshooting\",\"timeout\"],\"matchedFields\":[\"title\",\"content\"],\"excerpts\":[{\"text\":\"...timeout errors occur when the upstream service is slow to respond...\",\"startChar\":120,\"endChar\":196}]}]}"
+  }
+}

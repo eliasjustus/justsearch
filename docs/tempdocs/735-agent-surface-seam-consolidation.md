@@ -380,3 +380,21 @@ takeover verdicts key off session activity + supervisor PID liveness, and the re
 activity age — none of them off the TTL. Docs in `mcp-dev-tools.md` (skill regenerated), shared-stack
 convention lines in `branch-safety.md` (prose-tier gate green). Tests 10/10 + 9/9. Refute-first review:
 7/7 confirmed, merge-ready.
+
+**W2+W3 (G2 delivered-tier capture + G4 recorded fixtures) — landed 2026-07-14.** Every
+tool_result_digests entry now carries `delivered_tier` (structured-json | prose | blocks; JSON
+object-parse check at the digest site) and, for structured deliveries, `delivered_fields` — presence
+booleans computed against the PARSED fields (camelCase wire names verified verbatim against
+McpEvidenceProjection emit sites). Text-grep furniture_markers demoted to null for structured-json
+deliveries — the wrong-tier measurement defect is closed. Schema-optional (historical records
+validate), sanitizer passes through, U1 digest pin + exact-pinned exclusion list proven green
+(tool_result_digests never feeds semantic_digest — grep-verified). Fixtures: 4 shapes under
+tests/fixtures/recorded/, ALL provenance-stamped "reconstructed-from-source, not recorded" — the
+executor never persists raw tool-result content, so genuine recordings need the refresh probe
+(`experiments/delivery_tier_probe_735.py`, which imports the same tier functions — no duplication)
+against a live stack; the status prose-vs-blocks assumption is flagged unsettled in the fixture
+itself. Full suite 1974 passed / 2 pre-registered known-reds. Refute-first review: 8/8 confirmed,
+no weakened assertions, single digest construction site, merge-ready.
+
+Follow-up (recorded, not blocking): run the probe live under a lease to replace reconstructed
+fixtures with true recordings and settle the status-tier assumption.

@@ -450,6 +450,8 @@ def test_record_cell_tool_result_digests_never_stash_raw_content():
         "furniture_markers": {
             "rationale": False, "evidence_pack": True, "coverage": False, "degradation": False,
         },
+        "delivered_tier": "prose",
+        "delivered_fields": None,
     }]
     assert secret not in json.dumps(digests)
 
@@ -488,6 +490,8 @@ def test_record_cell_tool_result_digests_furniture_markers_block_list_content_sh
         "furniture_markers": {
             "rationale": False, "evidence_pack": True, "coverage": False, "degradation": False,
         },
+        "delivered_tier": "blocks",
+        "delivered_fields": None,
     }]
     assert secret not in json.dumps(digests)
 
@@ -516,6 +520,8 @@ def test_record_cell_tool_result_digests_null_for_blocked_and_disallowed_attempt
         assert entry["furniture_markers"] == {
             "rationale": False, "evidence_pack": False, "coverage": False, "degradation": False,
         }
+        assert entry["delivered_tier"] is None
+        assert entry["delivered_fields"] is None
 
 
 def test_record_cell_stashes_cost_turns_and_tokens_from_rmsg():

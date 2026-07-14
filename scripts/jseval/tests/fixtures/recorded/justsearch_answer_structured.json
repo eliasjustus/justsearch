@@ -1,0 +1,13 @@
+{
+  "tool": "justsearch_answer",
+  "delivered_tier": "structured-json",
+  "provenance": "reconstructed-from-source, not recorded",
+  "provenance_note": "No raw ToolResultBlock capture of this call survived on disk from the tempdoc 735 probe session (the executor v2 harness keeps tool-result content in-process only -- see jseval/agent_utility_inspect.py's _content_sha256/_content_text doc comments; the committed Inspect eval logs under scripts/jseval/tmp/ never persist raw content, only the redacted tool_result_digests). This fixture is built field-for-field from McpEvidenceProjection.answerEvidence() (modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpEvidenceProjection.java:116-152), reusing the exact citation and quality-signal values already verified by McpEvidenceProjectionTest.java:170-205 (answerProjectsCitationsAndQuality) so the numbers are source-faithful, not invented. The leading fragment `{\"citations\":[{\"parentDocId\":` is corroborated by the tempdoc 735 debug probe's genuinely captured content prefix (docs/tempdocs/735-agent-surface-seam-consolidation.md:197).",
+  "cli_version": "2.1.209",
+  "mcp_tool_surface_version": "0.3.1",
+  "stamped": "2026-07-14",
+  "result": {
+    "is_error": false,
+    "content": "{\"citations\":[{\"parentDocId\":\"doc-42\",\"chunkIndex\":2,\"chunkTotal\":5,\"startChar\":100,\"endChar\":260,\"score\":0.87,\"excerpt\":\"an excerpt\",\"startLine\":12,\"endLine\":18,\"headingText\":\"Overview\",\"headingLevel\":2}],\"quality\":{\"chunksFound\":7,\"chunksUsed\":3,\"retrievalMode\":\"HYBRID\",\"retrievalModeReason\":\"HYBRID_AVAILABLE\",\"contextTruncated\":false,\"retrievalCoverage\":0.42,\"bestChunkScore\":0.87,\"scoreGap\":0.1,\"chunksConsidered\":7,\"chunksIncluded\":3}}"
+  }
+}

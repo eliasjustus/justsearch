@@ -597,12 +597,98 @@ def _furniture_marker_flags(content) -> dict[str, bool]:
     return {key: (marker in text) for key, marker in _FURNITURE_MARKERS.items()}
 
 
+# tempdoc 735 G2: which tier the CLI actually DELIVERED to the model for this call --
+# a fact distinct from what the server authored (the settled-design principle: "what
+# the model is delivered is a cohort fact ... capture it, never assume it"). A
+# raw-SDK debug probe (tempdoc 735, CLI 2.1.209) proved the delivery rule is
+# structured-if-present, text-otherwise: when the tool response carries
+# `structuredContent`, the CLI hands the model that JSON serialized as a `content`
+# STRING (not the human-readable text tier, and not a `type":"json"` block) --
+# `justsearch_answer`/`justsearch_search` both observed this way. When the tool
+# response has no `structuredContent` (e.g. `justsearch_status`,
+# McpToolSurface.java:939-940 emits only a `type":"text"` block), the CLI forwards
+# the SDK's own block-list `ToolResultBlock.content` shape.
+_DELIVERED_TIER_STRUCTURED = "structured-json"
+_DELIVERED_TIER_PROSE = "prose"
+_DELIVERED_TIER_BLOCKS = "blocks"
+
+
+def _delivered_tier(content) -> str | None:
+    """Classify the raw delivered `content` into one of three tiers (never a
+    fourth value -- `None` only means "nothing to classify", e.g. the call never
+    executed): `"blocks"` for the SDK's list-of-block shape (`ToolResultBlock`,
+    `claude_agent_sdk`: `content: str | list[dict[str, Any]] | None`); a `str`
+    that parses (after stripping) as a JSON **object** is `"structured-json"` (a
+    JSON array/number/etc. does not count -- every real structuredContent payload
+    this surface emits is a top-level object, `McpEvidenceProjection.searchEvidence`/
+    `answerEvidence` both return `Map<String,Object>`); any other `str` is
+    `"prose"`."""
+    if content is None:
+        return None
+    if isinstance(content, list):
+        return _DELIVERED_TIER_BLOCKS
+    if isinstance(content, str):
+        try:
+            parsed = json.loads(content.strip())
+        except (ValueError, TypeError):
+            return _DELIVERED_TIER_PROSE
+        return _DELIVERED_TIER_STRUCTURED if isinstance(parsed, dict) else _DELIVERED_TIER_PROSE
+    return None
+
+
+# tempdoc 735 G2: the top-level structured-evidence fields worth knowing the
+# presence of, replacing the text-grep furniture markers for structured-json
+# deliveries. `matchedTerms`/`excerpts` are verified nested PER-HIT under
+# `results[]` for `justsearch_search`
+# (McpEvidenceProjection.java:75-93 -- `h.put("matchedTerms", ...)` /
+# `h.put("excerpts", ...)` inside the per-hit loop, never at the top level);
+# `quality`/`citations` are top-level-only, produced by `answerEvidence`
+# (McpEvidenceProjection.java:136,151); `searchTrace`/`degradation` are
+# top-level-only, produced by `searchEvidence` (McpEvidenceProjection.java:50-58).
+# `results` itself is the top-level array `searchEvidence` always emits
+# (McpEvidenceProjection.java:108).
+_DELIVERED_FIELD_KEYS = (
+    "quality", "matchedTerms", "degradation", "excerpts", "citations", "searchTrace", "results",
+)
+
+
+def _delivered_fields(content) -> dict[str, bool] | None:
+    """Top-level structured-evidence field presence for a structured-json
+    delivery. `None` for prose/blocks deliveries (or content that no longer
+    parses) -- never a fabricated all-False dict standing in for "not
+    applicable"; `_furniture_marker_flags` remains the signal for those tiers."""
+    if _delivered_tier(content) != _DELIVERED_TIER_STRUCTURED:
+        return None
+    parsed = json.loads(content.strip())
+    results = parsed.get("results")
+    results = results if isinstance(results, list) else []
+    _nested_ok_keys = ("matchedTerms", "excerpts")
+
+    def _present(key: str) -> bool:
+        if key in parsed:
+            return True
+        if key in _nested_ok_keys:
+            return any(isinstance(r, dict) and key in r for r in results)
+        return False
+
+    return {key: _present(key) for key in _DELIVERED_FIELD_KEYS}
+
+
 def _tool_result_digest_entry(result: dict | None) -> dict:
-    """Redacted, committed-safe derivation of one tool result (tempdoc 729 D9):
-    hash/len/is_error/shape/furniture-marker booleans -- NEVER the raw content,
-    which stays in the ephemeral (gitignored) log only. `result` is None when the
-    call never executed (blocked/disallowed) -- honest nulls throughout, never a
-    fabricated zero/empty for the size/hash/is_error fields."""
+    """Redacted, committed-safe derivation of one tool result (tempdoc 729 D9,
+    extended by tempdoc 735 G2 with `delivered_tier`/`delivered_fields`):
+    hash/len/is_error/shape/furniture-marker booleans plus the delivered-tier
+    classification -- NEVER the raw content, which stays in the ephemeral
+    (gitignored) log only. `result` is None when the call never executed
+    (blocked/disallowed) -- honest nulls throughout, never a fabricated
+    zero/empty for the size/hash/is_error fields.
+
+    `furniture_markers` is computed (as before) for `prose`/`blocks` deliveries;
+    for `structured-json` deliveries it is `None` and `delivered_fields` carries
+    the signal instead -- text-grepping a delivered JSON string for product
+    furniture strings is measuring the wrong tier (this is the exact bug this
+    increment fixes: tempdoc 735's 0/153 furniture-marker mystery was caused by
+    grepping content that was never delivered as text in the first place)."""
     if result is None:
         return {
             "content_sha256": None,
@@ -610,14 +696,21 @@ def _tool_result_digest_entry(result: dict | None) -> dict:
             "content_is_error": None,
             "content_shape": "empty",
             "furniture_markers": _furniture_marker_flags(None),
+            "delivered_tier": None,
+            "delivered_fields": None,
         }
     content = result.get("content")
+    tier = _delivered_tier(content)
     return {
         "content_sha256": _content_sha256(content),
         "content_len": _content_len(content),
         "content_is_error": bool(result.get("is_error")),
         "content_shape": _content_shape(content),
-        "furniture_markers": _furniture_marker_flags(content),
+        "furniture_markers": (
+            _furniture_marker_flags(content) if tier != _DELIVERED_TIER_STRUCTURED else None
+        ),
+        "delivered_tier": tier,
+        "delivered_fields": _delivered_fields(content),
     }
 
 
