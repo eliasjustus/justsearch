@@ -28,9 +28,9 @@
 
 ## Why this exists now (and as a new tempdoc)
 
-374 is a pre-cutover artifact — 3,000+ lines of `alpha.1–28` sandbox history, a `2.0.0-alpha.N`
-scheme, and a separate `justsearch-releases` repo — all superseded by the go-public cutover
-(private tempdoc 634: version reset `2.0.0-alpha.28` → `0.1.0`, public snapshot repo created).
+374 is a pre-cutover artifact — a long rolling packaging/sandbox log, an older pre-release version
+scheme, and a separate `justsearch-releases` repo — all superseded by the go-public cutover, which
+reset the public version line to `0.1.0` and consolidated releases onto this repository.
 The post-cutover release surface is a new chapter (releases consolidated onto this repo, `0.1.0`
 scheme, MCPB + Official MCP Registry — none of which existed in 374's world), so it gets its own
 doc near the frontier rather than an append that buries current design under stale history.
@@ -309,3 +309,44 @@ packer fail-closes on a non-ASCII entry name or a top-level manifest asset outsi
 (hash stays `b71d792c…`). **Still open** (own design passes): the two-mode `generate|verify` register
 (models are verify-only + `model-registry.v2.json` still points at the retired `justsearch-releases` repo),
 the derived GH-API release index, and the monotonic Sandbox loop (needs a findings substrate).
+
+## Verification (evidence pointers, 2026-07-14)
+
+Each claim below was exercised on branch `worktree-release-asset-set`; commands are runnable from
+the repo root. An independent refute-first review re-ran all of them (all held).
+
+- **Deterministic bundle** — `node scripts/ci/pack-mcpb.mjs <out>` twice → identical
+  `sha256 b71d792c1ef38dd658947742d842ec221499b8b5338be83ce031bb3dcf079d8c` (19196 bytes).
+- **Valid zip / correct CRC** (external) — `unzip -t <bundle>` → "No errors detected".
+- **Valid MCPB, payload round-trips** (external) — `npx -y @anthropic-ai/mcpb info` + `unpack`;
+  unpacked `manifest.json` + `server/index.js` `diff`-clean vs source.
+- **Manifest passes official schema** (external) — `npx -y @anthropic-ai/mcpb validate
+  packaging/mcpb/manifest.json` → "Manifest schema validation passes!".
+- **Cross-platform determinism** — `.gitattributes` pins the packed source to LF
+  (`git check-attr eol packaging/mcpb/server/index.js` → `eol: lf`), so bytes are platform-independent.
+- **Gate = integrity + freshness** — `node scripts/ci/check-mcpb-consistency.mjs` → OK on the real
+  tree; editing `server/index.js` without `--sync` → exit 1 "MCPB hash drift".
+- **Release-version guard fires on a cut** — `build-release-assets.ps1 -VerifyReleaseVersion` →
+  FAIL on the version/URL mismatch; passes without the switch (dry-run).
+- **`--sync`/`--set-version` are JSON-aware** — `pack-mcpb.test.mjs` (14 assertions) covers
+  malformed-hash repair, nested-`version` non-clobber, and the two packer guards;
+  `check-mcpb-consistency.test.mjs` (13 assertions). Both green.
+- **Build assembles the set** — `build-release-assets.ps1` (stub installer) → installer + mcpb +
+  `SHA256SUMS`; `sha256sum -c SHA256SUMS` → both OK.
+- **Repo gates green** — `hook-integrity`, `check-workflow-triggers`, `check-root-readme`,
+  `verify-canonical-doc-links`, `llmstxt-generate --check`; PowerShell parse checks on the three `.ps1`.
+
+### Unverified assumptions / deferred checks (carry forward)
+
+- **Claude Desktop actually installs the from-scratch STORED-zip `.mcpb`.** Not testable here (no
+  desktop app); the official `mcpb info`/`unpack`/`validate` all accept it, so this is low-risk —
+  but confirm with one real install before relying on the MCP one-click path.
+- **`build-installer.yml` has never run in CI.** The unit/stub tiers pass, but the full CI path
+  (runner builds the ~1 GB installer → `build-release-assets.ps1` → attach) is unproven end-to-end;
+  the first real dispatch is owner-gated.
+- **Owner-only release steps** remain a handoff: `docs/m1-operator-checklist.md` +
+  `docs/how-to/cut-a-release.md` (push, bump `gradle.properties`, tag, dispatch, GitHub-UI).
+- **Deferred design passes** (not started): two-mode `generate|verify` register (and reconciling
+  `model-registry.v2.json`, whose model assets still point at the retired `justsearch-releases`
+  repo — a distribution-hygiene item), the derived GH-API release index, and the monotonic Sandbox
+  loop (blocked on a machine-readable findings substrate).
