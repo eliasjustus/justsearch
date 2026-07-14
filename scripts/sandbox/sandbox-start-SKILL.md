@@ -26,7 +26,16 @@ durable method; what *this* candidate must cover is in the staged
 
 ## What to do at session start
 
-1. Read `coverage-brief.md`, `validation-mode.md`, and `sandbox-environment.md`.
+0. **Capability probe, before reading anything else.** Check whether a
+   computer-use/screenshot/browser tool is available (e.g. `ToolSearch` for
+   screenshot/computer/browser terms). If none is available, this is an
+   API-only round — record that immediately as a standing round-level gap
+   (`staging-gaps.md` or your findings notes), and do not plan or ask the
+   user anything that presupposes GUI access (screenshots, driving the Tauri
+   shell). Doing this probe late costs a wasted round-trip to the user.
+1. Read `coverage-brief.md`, `validation-mode.md`, `sandbox-environment.md`,
+   and `staging-gaps.md` (assets the host failed to stage — each entry is a
+   round-level coverage gap, not something to silently absorb).
 2. Install Git, Claude Code, and JustSearch (see `CLAUDE.md` → Setup).
 3. Launch JustSearch (the launcher enables request tracing via
    `JUSTSEARCH_HEAD_TRACING_LEVEL=detailed`; if you launch it another way, set that
@@ -71,7 +80,16 @@ past miss; apply them regardless of candidate.
    actually tested.
 10. **Restart once between Install AI and the final assessment.** Some wireup only
     takes effect after a cold restart; assess the post-restart state, not the
-    first-boot state, as the real one.
+    first-boot state, as the real one. A restart means killing ALL FOUR processes —
+    the Tauri shell (`JustSearch.exe`), Head (`javaw.exe` under `resources\headless\`),
+    Worker (a second `java.exe`), and `llama-server.exe` if active. Closing only the
+    shell window reconnects to the same still-running backend and proves nothing;
+    verify a genuine restart by the runtime manifest's `instanceId`/`pid` changing.
+    Filter by process **Path**, not bare `ProcessName` — a bare `java`/`llama` pattern
+    can kill unrelated processes:
+    ```powershell
+    Get-Process | Where-Object { $_.Path -like "*\JustSearch\*" -or $_.Path -like "*io.justsearch.shell*" } | Stop-Process -Force
+    ```
 11. **Never patch product code from inside the sandbox.** There is no source tree
     here and no way to rebuild correctly; a "fix" attempted in-sandbox is invalid.
     Record the finding and let it be fixed in the repo, then re-cut the candidate.
@@ -100,6 +118,21 @@ past miss; apply them regardless of candidate.
     faces. Capture the exact text/screenshots and whether silent-install (`/S`) was
     honoured. These cannot be reproduced in CI, so the Sandbox is their only check
     (they live as must-watch items in `coverage-brief.md`).
+
+## Working mechanics
+
+- **Inspect large JSON/logs filter-first.** Extract the specific fields
+  (`Select-Object`, `ConvertFrom-Json`, `Select-String`) before ever reading a
+  raw dump into context. This governs *reading*, not *saving* — raw dumps are
+  still saved verbatim as evidence (rule 8 above stands).
+- **Any command containing `$env:` or other PowerShell-specific syntax must run
+  via the native PowerShell tool, never by shelling `powershell.exe -Command`
+  from a bash tool.** Bash expands `$env` first and mangles the path — this
+  happened 3 times in a prior round.
+- **After installing anything that changes PATH** (Node, Git, Claude Code),
+  resolve and reuse the absolute exe path for the rest of the session — shell
+  state does not persist between tool calls, so a PATH update in one call is
+  invisible to the next.
 
 ## What you can fast-path vs. keep doing thoroughly
 

@@ -121,18 +121,81 @@ def stage_docs(share_dir: Path):
     print("Staged docs (explanation, reference, how-to, decisions, tempdocs)")
 
 
-def stage_scifact(share_dir: Path):
+def stage_scifact(share_dir: Path) -> str | None:
     """Copy the SciFact eval corpus into the sandbox so the validation agent
     can ingest it via POST /api/knowledge/ingest and run search-quality
-    assertions. ~5,184 .txt docs, ~11 MB."""
+    assertions. ~5,184 .txt docs, ~11 MB.
+
+    Returns a staging-gap message if the host corpus isn't materialized (in
+    which case nothing is staged and search-quality verification cannot run
+    this round), or None if it staged successfully."""
     src = REPO_ROOT / "scripts" / "jseval" / "tmp" / "eval-corpora" / "scifact"
     if not src.is_dir():
         print(f"SciFact corpus not found at {src} — skipping (run jseval to materialize)")
-        return
+        return (
+            f"SciFact corpus not staged — not found at {src}. Search-quality "
+            "assertions (POST /api/knowledge/ingest + query verification) cannot "
+            "run this round. Remedy: from scripts/jseval, run "
+            "`python -m jseval run --dataset scifact --modes lexical,hybrid --pipeline` "
+            "to materialize the corpus, then re-run sandbox-launch.py."
+        )
     dst = share_dir / "scifact"
     shutil.copytree(src, dst, dirs_exist_ok=True)
     file_count = sum(1 for _ in dst.iterdir() if _.is_file())
     print(f"Staged SciFact corpus ({file_count} files)")
+    return None
+
+
+def check_node_installer_staged(tools_cache: Path) -> str | None:
+    """Check whether a Node.js Windows installer is present in the host tools
+    cache. `collect-evidence.ps1`'s in-sandbox MCP Inspector check needs `npx`
+    (Node) on PATH; if nothing is staged, that check silently depends on a
+    mid-session internet download instead of a reproducible staged asset.
+
+    Returns a staging-gap message if no installer is found, or None if one is
+    already present."""
+    if tools_cache.is_dir():
+        found = list(tools_cache.glob("node*.msi")) + list(tools_cache.glob("node*.exe"))
+        if found:
+            return None
+    return (
+        f"No Node.js installer found in {tools_cache} — the in-sandbox MCP "
+        "Inspector check (npx @modelcontextprotocol/inspector) has no staged "
+        "Node runtime, so it depends on a mid-session download instead of a "
+        "reproducible staged asset. Remedy: drop a Node LTS Windows installer "
+        "(e.g. node-v*-x64.msi) into that directory before launching."
+    )
+
+
+def write_staging_gaps(share_dir: Path, gaps: list[str]):
+    """Write the collected staging gaps to <share>/staging-gaps.md.
+
+    Gaps do NOT abort staging — the fail-closed abort stays reserved for the
+    coverage-brief step (an unclassified shipped surface). This file is the
+    in-sandbox agent's authoritative record of assets the host failed to
+    stage, so each entry must be recorded as a round-level coverage gap
+    rather than silently absorbed. Future gap types append another string to
+    the `gaps` list passed in — no format change needed here."""
+    lines = ["# Staging Gaps", ""]
+    if gaps:
+        for gap in gaps:
+            lines.append(f"- {gap}")
+    else:
+        lines.append("None — all documented assets staged.")
+    lines.append("")
+    lines.append(
+        "The in-sandbox agent must read this file and record each listed gap "
+        "as a round-level coverage gap, not silently absorb it."
+    )
+    (share_dir / "staging-gaps.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if gaps:
+        print()
+        print("WARNING: staging gaps detected — see staging-gaps.md")
+        for gap in gaps:
+            print(f"  - {gap}")
+        print()
+    else:
+        print("Staged staging-gaps.md (no gaps)")
 
 
 def stage_claude_settings(share_dir: Path):
@@ -380,8 +443,16 @@ def main():
     # Copy docs
     stage_docs(share_dir)
 
+    # Collect staging gaps as we go — surfaced loudly (WARNING block) and
+    # written to staging-gaps.md so a gap fails loud instead of silently
+    # dropping round coverage (e.g. the round that lost all search-quality
+    # verification because the SciFact corpus was silently missing).
+    gaps: list[str] = []
+
     # Stage SciFact corpus for ingest-and-quality validation
-    stage_scifact(share_dir)
+    scifact_gap = stage_scifact(share_dir)
+    if scifact_gap:
+        gaps.append(scifact_gap)
 
     # Copy sandbox-specific CLAUDE.md
     sandbox_claude_md = SCRIPT_DIR / "sandbox-CLAUDE.md"
@@ -413,6 +484,14 @@ def main():
                 staged += 1
         if staged:
             print(f"Staged tools/ from tools-cache ({staged} files)")
+
+    node_gap = check_node_installer_staged(tools_cache)
+    if node_gap:
+        gaps.append(node_gap)
+
+    # Write the collected staging gaps now that staging (short of the
+    # fail-closed coverage-brief step below) is complete.
+    write_staging_gaps(share_dir, gaps)
 
     # Report share size
     total_bytes = sum(f.stat().st_size for f in share_dir.rglob("*") if f.is_file())

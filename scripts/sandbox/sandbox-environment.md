@@ -17,6 +17,9 @@ folder at `C:\Users\WDAGUtilityAccount\Desktop\JustSearchTest\` with:
   must-touch surface set (derived from what the candidate ships)
 - `validation-mode.md` — generated authority for this instance's model mode
   (`fresh-install` vs `pre-staged-models`)
+- `staging-gaps.md` — generated record of assets the host failed to stage this
+  round (e.g. a missing SciFact corpus or Node installer); each entry must be
+  recorded as a round-level coverage gap, not silently absorbed
 - `collect-evidence.ps1` — the capture harness (port discovery + API ladder +
   `/mcp` Inspector check + snapshots)
 - `docs/` — `explanation/`, `reference/`, `how-to/`, `decisions/`, `tempdocs/`,

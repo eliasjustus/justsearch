@@ -255,9 +255,24 @@ else {
         $stdoutFile = [System.IO.Path]::GetTempFileName()
         $stderrFile = [System.IO.Path]::GetTempFileName()
 
-        $process = Start-Process -FilePath "npx" -ArgumentList $inspectorArgs `
-            -NoNewWindow -Wait -PassThru `
-            -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+        # 'npx' is a shell shim (npx.cmd), not a real PE. Start-Process -FilePath goes
+        # straight to Win32 CreateProcess, which cannot execute an extensionless shim --
+        # that always fails with "%1 is not a valid Win32 application" even when Node is
+        # installed correctly (see 08-collect-evidence-npx-bug.md). Resolve the real
+        # dispatchable form: prefer npx.cmd directly; fall back to cmd.exe /c npx.
+        $npxCmdCommand = Get-Command "npx.cmd" -ErrorAction SilentlyContinue
+        if ($npxCmdCommand -ne $null) {
+            $process = Start-Process -FilePath $npxCmdCommand.Source -ArgumentList $inspectorArgs `
+                -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+        }
+        else {
+            Write-Log "npx.cmd not found on PATH; falling back to 'cmd.exe /c npx'."
+            $cmdArgs = @("/c", "npx") + $inspectorArgs
+            $process = Start-Process -FilePath "cmd.exe" -ArgumentList $cmdArgs `
+                -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+        }
 
         $mcpExitCode = $process.ExitCode
         $stdoutContent = Get-Content -LiteralPath $stdoutFile -Raw -ErrorAction SilentlyContinue
@@ -294,7 +309,16 @@ else {
         Write-Log "MCP Inspector CLI finished with exit code $mcpExitCode; output saved to $(Split-Path -Leaf $mcpOutFile)"
     }
     catch {
-        $note = "MCP Inspector CLI invocation failed: $($_.Exception.Message)"
+        $exceptionMessage = $_.Exception.Message
+        $noteLines = @()
+        $noteLines += "MCP Inspector CLI invocation failed: $exceptionMessage"
+        if ($exceptionMessage -like "*is not a valid Win32 application*") {
+            $noteLines += "Hint: '%1 is not a valid Win32 application' is the known npx-shim launch bug -- the launch pattern regressed, see 08-collect-evidence-npx-bug.md. This is a harness bug, not an environment gap."
+        }
+        else {
+            $noteLines += "Hint: if the error above is '%1 is not a valid Win32 application', the launch pattern regressed -- see 08-collect-evidence-npx-bug.md. Otherwise this looks like a genuine environment gap (Node/npm/network), not that known harness bug."
+        }
+        $note = $noteLines -join "`r`n"
         Write-Log $note
         $note | Out-File -LiteralPath $mcpOutFile -Encoding utf8
         $mcpRan = $false

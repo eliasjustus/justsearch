@@ -8,7 +8,7 @@ misled, or scared.
 
 ## Read these first (per-round authority)
 
-Three staged files govern this round. Read them before launching JustSearch:
+Four staged files govern this round. Read them before launching JustSearch:
 
 1. **`coverage-brief.md`** — the generated, per-candidate list of the surfaces
    this release *must* exercise, derived from what the candidate actually ships
@@ -19,6 +19,9 @@ Three staged files govern this round. Read them before launching JustSearch:
    vs `pre-staged-models`). Overrides any static wording about host models.
 3. **`sandbox-environment.md`** — directory layout, what is staged, environment
    characteristics.
+4. **`staging-gaps.md`** — assets the host failed to stage this round (e.g. the
+   SciFact corpus, a Node installer). Each entry must be recorded as a
+   round-level coverage gap, not silently absorbed.
 
 The final validation summary must state the mode explicitly and report coverage
 against `coverage-brief.md`.
@@ -195,7 +198,14 @@ Two staged tools make rounds repeatable and make coverage fail closed:
     surface; the choice survives restart). These map to the privacy/threat-model
     claims the release publishes, so a misleading surface here is high-severity.
 11. **Restart cycles** — one cold restart for a frontend-focused round; three when
-    the target is lifecycle, persistence, port binding, or wireup.
+    the target is lifecycle, persistence, port binding, or wireup. A restart means
+    killing ALL FOUR processes — the Tauri shell (`JustSearch.exe`), Head
+    (`javaw.exe` under `resources\headless\`), Worker (a second `java.exe`), and
+    `llama-server.exe` if active. Closing only the shell window reconnects to the
+    same still-running backend and proves nothing; verify a genuine restart by the
+    runtime manifest's `instanceId`/`pid` changing. Filter kills by process **Path**
+    (`*\JustSearch\*` / `*io.justsearch.shell*`), not bare `ProcessName` — a bare
+    `java`/`llama` pattern can kill unrelated processes.
 12. **Uninstall** — run only after all evidence is saved, unless told to defer.
     Verify program files are removed and user-data behaviour matches ADR-0024.
 
@@ -221,12 +231,21 @@ Key API endpoints (no auth needed, `prod=false`):
 | `/api/knowledge/search` | POST | Search (`{"query":"...","limit":5}`) |
 | `/api/knowledge/ingest` | POST | Ingest (`{"paths":["..."]}` — directory inputs return `scanId`) |
 | `/api/knowledge/status` | GET | Index/enrichment progress |
+| `/api/chat/ask` | POST | RAG Q&A (`{"question":"..."}` — NOT `query`) |
 | `/api/ai/install/start` | POST | Start model download (`{"acceptTerms":true}`) |
 | `/api/ai/install/status` | GET | Download progress. Top-level `state: "completed"` does NOT mean all packages installed; check `installedFully: true` and per-package `state`. |
 | `/api/ai/runtime/status` | GET | Per-feature runtime status (NVML VRAM, ONNX `modelActive` flags) |
 | `/api/inference/status` | GET | LLM runtime state |
 | `POST /mcp` | POST | **Production MCP endpoint** (Streamable HTTP) — the agent-facing retrieval backend. Verify via the Inspector CLI, not raw curl. |
 | `/api/mcp/token` | GET | MCP session-token issuance |
+
+Full body shapes for every endpoint live in `docs/reference/api-contract-map.md` (staged under `docs/`).
+
+**Queue visibility** — `worker.core.pendingJobs` in `/api/status` is the FULL queue
+depth (PENDING+PROCESSING) despite its name. `worker.migration.pendingJobsCount` in
+`/api/knowledge/status` is PENDING-only and can read 0 while a job is stuck in
+PROCESSING — always check its sibling `processingJobsCount` (same payload, also in
+`/api/debug/state`) before concluding the queue is idle.
 
 ## Convergence — every finding gets a regression home
 
@@ -240,6 +259,12 @@ regression home — **exactly one of**:
 - a **`sandbox-must-watch` entry** in `governance/sandbox-coverage.v1.json` — for
   findings that cannot be CI-gated (Windows-trust prompts, clean-environment
   timing). These are re-injected into every future `coverage-brief.md`.
+
+A **HIGH-severity finding must get a deliberate second reproduction under varied
+conditions** (e.g. fresh install vs. warm reinstall) before the round closes — one
+observation is a report, two varied reproductions are evidence. Same discipline as
+rule 17 in the `/start` skill (verify a fix by triggering its condition), applied
+to findings.
 
 Record each round's findings and their routing decision in this candidate's
 **convergence tempdoc** (`docs/tempdocs/NNN-<version>-sandbox-convergence.md`);
