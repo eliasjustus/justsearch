@@ -100,10 +100,12 @@ Operator steps:
    commit `server.json` (its `fileSha256` now matches the source).
    `node scripts/ci/check-mcpb-consistency.mjs` must pass. (The `mcpb-repack-hint` fires on
    source edits as a reminder.)
-2. **Before a release cut** — bump `gradle.properties` to the release version and update
-   `server.json` `version` + the `packages[0].identifier` release-asset URL to the same
-   `v<version>` tag (the URL must contain `mcp` — the filename satisfies it).
-   `node scripts/ci/check-mcpb-consistency.mjs --release-version <version>` must pass.
+2. **Before a release cut** — bump `gradle.properties` to the release version; running
+   `scripts/ci/sync-version.ps1` (also invoked by `package-installer-win.ps1`) then stamps
+   `server.json`'s `version` and the `packages[0].identifier` release-asset URL to the same
+   `v<version>` tag automatically via `pack-mcpb.mjs --set-version` (the URL must contain
+   `mcp` — the filename satisfies it). `node scripts/ci/check-mcpb-consistency.mjs
+   --release-version <version>` must pass.
 3. **Cut the release** — the build stages + attaches the asset set automatically. Attach only
    to a release whose installer actually ships the `/mcp` endpoint: the v0.1.0 app does **not**
    (its backend predates the MCP handler), so the bundle is useful only from the next release

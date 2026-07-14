@@ -10,6 +10,6 @@ everything fixable in-repo. One line each, exact location.
 - [ ] **Set the repo homepage field** — repo front page → gear icon next to About → Website (currently empty; `homepageUrl: ""`).
 - [ ] **Decide on Discussions** — Settings → General → Features → tick "Discussions" to enable it, then optionally point SUPPORT.md/CONTRIBUTING.md links back at it; otherwise keep the Issues routing this branch installed (Discussions is currently disabled and the old links 404'd).
 - [ ] **Take the two hero screenshots** — see `docs/m1-screenshot-instructions.md`, then replace the README hero placeholder and delete both m1 doc files.
-- [ ] **Resolve the two TODO comments in README** — the RAM row (conservative estimate, not measured) and the Windows 10 note (only Windows 11 verified) in the System requirements table.
+- [x] **Resolve the two TODO comments in README** — the RAM row (conservative estimate, not measured) and the Windows 10 note (only Windows 11 verified) in the System requirements table. — done in-repo 2026-07-14 (726)
 
 Delete this file when the list is done.
