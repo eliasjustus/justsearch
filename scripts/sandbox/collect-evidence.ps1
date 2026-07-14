@@ -47,6 +47,24 @@ function Get-SanitizedFileName {
     return $sanitized
 }
 
+function Write-Utf8NoBom {
+    # Windows PowerShell 5.1's `Out-File -Encoding utf8` still writes a UTF-8
+    # BOM (ef bb bf), which broke the host-side checkers' plain `open(path,
+    # encoding="utf-8")` reads (JSONDecodeError: Expecting value: line 1
+    # column 1 -- a false "no fingerprint" BLOCKING verdict against a round
+    # that was actually fine). The checkers are now BOM-tolerant
+    # (utf-8-sig), but this writer-side fix keeps new evidence BOM-free too,
+    # so any other consumer of these files doesn't hit the same trap.
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)][AllowEmptyString()][string]$Content
+    )
+    process {
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
+    }
+}
+
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
@@ -134,7 +152,7 @@ if (-not $port) {
     $summaryLines += "Timestamp: $timestamp"
     $summaryLines += "Resolved port: NONE"
     $summaryLines += $errorText
-    ($summaryLines -join "`r`n") | Out-File -LiteralPath $summaryPath -Encoding utf8
+    ($summaryLines -join "`r`n") | Write-Utf8NoBom -Path $summaryPath
     exit 1
 }
 
@@ -166,7 +184,7 @@ foreach ($apiPath in $ladderPaths) {
         $response = Invoke-WebRequest -Uri $url -UseBasicParsing -ErrorAction Stop
         $statusCode = [int]$response.StatusCode
         $body = $response.Content
-        $body | Out-File -LiteralPath $outFile -Encoding utf8
+        $body | Write-Utf8NoBom -Path $outFile
         $ok = ($statusCode -ge 200) -and ($statusCode -lt 300)
         $ladderResults += New-Object PSObject -Property @{
             Path       = $apiPath
@@ -210,7 +228,7 @@ foreach ($apiPath in $ladderPaths) {
             exception   = $exceptionMessage
             responseBody = $errorBody
         }
-        ($errorRecord | ConvertTo-Json -Depth 5) | Out-File -LiteralPath $outFile -Encoding utf8
+        ($errorRecord | ConvertTo-Json -Depth 5) | Write-Utf8NoBom -Path $outFile
 
         $ladderResults += New-Object PSObject -Property @{
             Path       = $apiPath
@@ -283,7 +301,7 @@ if ($npxCommand -eq $null) {
                 "genuinely not be installed. This is a recorded gap, not a fatal error."
     }
     Write-Log $note
-    $note | Out-File -LiteralPath $mcpOutFile -Encoding utf8
+    $note | Write-Utf8NoBom -Path $mcpOutFile
 }
 else {
     Write-Log "Running MCP Inspector CLI against $mcpUrl"
@@ -374,11 +392,11 @@ else {
 
         if ($isJson) {
             $mcpOutFile = Join-Path -Path $EvidenceDir -ChildPath "mcp-tools-list.json"
-            $combined | Out-File -LiteralPath $mcpOutFile -Encoding utf8
+            $combined | Write-Utf8NoBom -Path $mcpOutFile
         }
         else {
             $mcpOutFile = Join-Path -Path $EvidenceDir -ChildPath "mcp-tools-list.txt"
-            $combined | Out-File -LiteralPath $mcpOutFile -Encoding utf8
+            $combined | Write-Utf8NoBom -Path $mcpOutFile
         }
 
         $mcpRan = $mcpSuccess
@@ -396,7 +414,7 @@ else {
         }
         $note = $noteLines -join "`r`n"
         Write-Log $note
-        $note | Out-File -LiteralPath $mcpOutFile -Encoding utf8
+        $note | Write-Utf8NoBom -Path $mcpOutFile
         $mcpRan = $false
     }
 }
@@ -450,7 +468,7 @@ if (-not (Test-Path -LiteralPath $goldenQueriesPath)) {
     $note = "Golden-query capture SKIPPED: golden-queries.json not found at $goldenQueriesPath -- " +
             "no per-candidate search-parity baseline was staged for this round. Recorded as a gap, not a fatal error."
     Write-Log $note
-    $note | Out-File -LiteralPath (Join-Path -Path $EvidenceDir -ChildPath "golden-capture-note.txt") -Encoding utf8
+    $note | Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "golden-capture-note.txt")
 }
 else {
     if (-not (Test-Path -LiteralPath $goldenDir)) {
@@ -473,7 +491,7 @@ else {
             try {
                 $response = Invoke-WebRequest -Uri $searchUrl -Method Post -Body $requestBody `
                     -ContentType "application/json" -UseBasicParsing -ErrorAction Stop
-                $response.Content | Out-File -LiteralPath $outFile -Encoding utf8
+                $response.Content | Write-Utf8NoBom -Path $outFile
                 $goldenCapturedCount++
                 Write-Log "  golden $qid -> captured to golden/$qid.json"
             }
@@ -486,7 +504,7 @@ else {
                     url       = $searchUrl
                     exception = $exceptionMessage
                 }
-                ($errorRecord | ConvertTo-Json -Depth 5) | Out-File -LiteralPath $outFile -Encoding utf8
+                ($errorRecord | ConvertTo-Json -Depth 5) | Write-Utf8NoBom -Path $outFile
                 Write-Log "  golden $qid -> ERROR ($exceptionMessage) recorded to golden/$qid.json"
             }
         }
@@ -494,7 +512,7 @@ else {
     catch {
         $note = "Golden-query capture FAILED to parse $goldenQueriesPath : $($_.Exception.Message)"
         Write-Log $note
-        $note | Out-File -LiteralPath (Join-Path -Path $EvidenceDir -ChildPath "golden-capture-note.txt") -Encoding utf8
+        $note | Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "golden-capture-note.txt")
     }
 }
 
@@ -542,7 +560,7 @@ else {
     $summaryLines += "Golden-query search-parity capture: $goldenCapturedCount captured, $goldenFailedCount failed -> golden/ (host-side check_golden_parity.py input)"
 }
 
-($summaryLines -join "`r`n") | Out-File -LiteralPath $summaryPath -Encoding utf8
+($summaryLines -join "`r`n") | Write-Utf8NoBom -Path $summaryPath
 
 $okCount = ($ladderResults | Where-Object { $_.Ok }).Count
 $totalCount = $ladderResults.Count

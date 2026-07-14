@@ -28,6 +28,8 @@ from check_golden_parity import (  # noqa: E402
     evaluate_query,
     extract_doc_identity,
     extract_top_identities,
+    load_capture,
+    load_golden,
     normalize_identity,
 )
 
@@ -370,6 +372,89 @@ class BackwardCompatLegacyBaselineTests(PreconditionTestsBase):
             self.assertEqual(buf.getvalue().count("WARNING"), 2)
 
             verdicts = evaluate_all(legacy_golden, str(evidence_dir))
+            self.assertTrue(verdicts[0].passed, verdicts[0].reason)
+
+
+class Utf8BomEvidenceTests(PreconditionTestsBase):
+    """Regression test for the BOM false-block bug (2026-07-14 live-evidence run):
+    collect-evidence.ps1 (PowerShell) writes UTF-8 WITH a BOM via
+    `Out-File -Encoding utf8` (Windows PowerShell 5.1's documented behavior). A
+    plain `open(path, encoding="utf-8")` read fails at byte 0 on that BOM
+    (json.JSONDecodeError: Expecting value: line 1 column 1), and the checker's
+    read-failure paths silently turned that into a false "no fingerprint" /
+    "no captured response" BLOCKING verdict against a round where the
+    fingerprint and dense retrieval were genuinely present. Every evidence read
+    in check_golden_parity.py (load_golden, load_capture, load_evidence_json)
+    must be BOM-tolerant. These fixtures are written by hand with the raw BOM
+    bytes precisely because the self-tests' existing fixtures are all written by
+    Python's `Path.write_text` (no BOM) — a "green fixtures, broken on real
+    (PowerShell-written) data" gap this class closes."""
+
+    def _write_bom_json(self, path: Path, payload: dict) -> None:
+        path.write_bytes(b"\xef\xbb\xbf" + json.dumps(payload).encode("utf-8"))
+
+    def test_bom_prefixed_baseline_parses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            baseline_path = Path(tmp) / "golden-parity.json"
+            self._write_bom_json(baseline_path, self._baseline())
+            loaded = load_golden(str(baseline_path))
+            self.assertEqual(loaded["embeddingFingerprint"], "fp-abc123")
+
+    def test_bom_prefixed_capture_parses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            response = _response(["d1.txt"])
+            self._write_bom_json(evidence_dir / "golden" / "q01.json", response)
+            loaded = load_capture(str(evidence_dir), "q01")
+            self.assertIsNotNone(loaded)
+            self.assertEqual(loaded["results"][0]["id"], "d1.txt")
+
+    def test_bom_prefixed_knowledge_status_does_not_false_block_preconditions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            self._write_bom_json(
+                evidence_dir / KNOWLEDGE_STATUS_EVIDENCE_FILENAME,
+                {"embeddingFingerprintCurrent": "fp-abc123", "indexedDocuments": 100},
+            )
+            identity_result = check_model_identity(self._baseline(), str(evidence_dir))
+            self.assertIsNone(identity_result, identity_result)
+            corpus_result = check_corpus_sanity(self._baseline(), str(evidence_dir))
+            self.assertIsNone(corpus_result, corpus_result)
+
+    def test_end_to_end_bom_round_reaches_normal_tolerance_verdict(self):
+        """Full-fidelity regression: baseline + knowledge-status + golden capture
+        all BOM-prefixed, as a real PowerShell-collected round looks. The checker
+        must get PAST the identity/corpus/dense preconditions to the normal
+        per-query tolerance table -- never the false "no fingerprint" block."""
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            expected = [f"d{i}.txt" for i in range(1, 11)]
+
+            self._write_bom_json(
+                evidence_dir / KNOWLEDGE_STATUS_EVIDENCE_FILENAME,
+                {"embeddingFingerprintCurrent": "fp-abc123", "indexedDocuments": 100},
+            )
+            response = _response(expected)
+            response["searchTrace"] = {
+                "stages": [{"id": "dense-retrieval", "status": "executed", "reason": ""}]
+            }
+            self._write_bom_json(evidence_dir / "golden" / "q01.json", response)
+
+            baseline = self._baseline(
+                queries=[{"id": "q01", "query": "a", "kind": "keyword", "expectedTop10": expected}]
+            )
+            baseline_path = Path(tmp) / "golden-parity.json"
+            self._write_bom_json(baseline_path, baseline)
+            loaded_baseline = load_golden(str(baseline_path))
+
+            identity_result = check_model_identity(loaded_baseline, str(evidence_dir))
+            self.assertIsNone(identity_result, identity_result)
+            corpus_result = check_corpus_sanity(loaded_baseline, str(evidence_dir))
+            self.assertIsNone(corpus_result, corpus_result)
+            dense_result = check_dense_leg(loaded_baseline, str(evidence_dir))
+            self.assertIsNone(dense_result, dense_result)
+
+            verdicts = evaluate_all(loaded_baseline, str(evidence_dir))
             self.assertTrue(verdicts[0].passed, verdicts[0].reason)
 
 

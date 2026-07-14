@@ -231,6 +231,19 @@ far smaller than the baseline's, or if any captured golden response shows `dense
 skipped (hybrid silently collapsed to BM25) — both would otherwise surface as a phantom ranking
 regression instead of the real cause.
 
+**The tolerance has never been calibrated against natural cross-run variance** (measured gap,
+2026-07-14 first real round): 8/10 golden queries passed the ≥7/10-overlap + top-1-in-top-3
+tolerance; the 2 that missed on overlap (`q06`, `q08` — the vaguest semantic queries) still had
+their expected top-1 inside the round's top-3, ran an identical pipeline (dense executed, no
+hybrid fallback, cross-encoder executed), and differed only in the tail. The likely cause is that
+dense retrieval is HNSW/approximate, so a separately-built index yields different neighbours among
+near-tied results (the round's index also held 5190 docs vs the baseline's 5184 — the app's bundled
+help docs plus an ingest canary). Until the tolerance is calibrated (e.g. generating two baselines
+against two independently rebuilt dev indexes and diffing them to measure the envelope, cf.
+`jseval calibrate`'s non-determinism envelope), treat an overlap-only miss with a stable top-1 as
+**informative, not as an install regression** — and do not overstate beyond what was measured
+(8/10, top-1 stable 10/10) versus what remains unknown (the envelope).
+
 ## Required validation phases
 
 1. **Installer launch and security prompts** — run the installer from the mapped

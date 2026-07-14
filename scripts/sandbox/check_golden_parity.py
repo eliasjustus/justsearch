@@ -163,8 +163,13 @@ class QueryVerdict:
 
 
 def load_golden(path: str) -> dict[str, Any]:
-    """Load and return the golden-parity baseline. Caller handles I/O/JSON errors."""
-    with open(path, "r", encoding="utf-8") as fh:
+    """Load and return the golden-parity baseline. Caller handles I/O/JSON errors.
+
+    `utf-8-sig` transparently strips a UTF-8 BOM when present and is a no-op
+    otherwise, so this reads both BOM-less (Python-written) and BOM-prefixed
+    (PowerShell-written, e.g. via `Out-File -Encoding utf8`) JSON alike.
+    """
+    with open(path, "r", encoding="utf-8-sig") as fh:
         return json.load(fh)
 
 
@@ -178,7 +183,13 @@ def load_capture(evidence_dir: str, query_id: str) -> dict[str, Any] | None:
     if not os.path.isfile(capture_path):
         return None
     try:
-        with open(capture_path, "r", encoding="utf-8") as fh:
+        # utf-8-sig: this capture is written by collect-evidence.ps1, which
+        # writes UTF-8 WITH a BOM (Windows PowerShell 5.1's `Out-File
+        # -Encoding utf8`). Plain "utf-8" fails at char 0 on that BOM
+        # (JSONDecodeError: Expecting value: line 1 column 1) and this
+        # except clause would silently turn that into a false "capture
+        # unreadable" — utf-8-sig avoids the false negative outright.
+        with open(capture_path, "r", encoding="utf-8-sig") as fh:
             return json.load(fh)
     except (OSError, json.JSONDecodeError):
         return None
@@ -198,7 +209,11 @@ def load_evidence_json(evidence_dir: str, filename: str) -> dict[str, Any] | Non
     if not os.path.isfile(path):
         return None
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        # utf-8-sig: collect-evidence.ps1's API-ladder snapshots are also
+        # written UTF-8-with-BOM; see load_capture's comment for why plain
+        # utf-8 here silently misreports a real, present fingerprint as
+        # absent.
+        with open(path, "r", encoding="utf-8-sig") as fh:
             return json.load(fh)
     except (OSError, json.JSONDecodeError):
         return None
