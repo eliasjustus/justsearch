@@ -135,6 +135,13 @@ backend work.
 
 ## Merge Workflow
 
+**Never merge or publish a PR without an explicit, per-action go-ahead.** <!-- rule:no-merge-without-authorization -->
+Authorization to *do the work* (implement a design, open a PR) is not authorization
+to merge it — merging is a separate, consequential action. Take the PR to
+green-and-ready, then stop and wait for an explicit "merge it"; the one exception is
+when the user names the merge in the same instruction. Predictable evasion: treating
+an upstream "do X" as covering the whole downstream merge/publish chain.
+
 1. **Branch verification (required):** In your worktree, run <!-- rule:pre-merge-gradle-build -->
    `./gradlew.bat build -x test` before marking a PR ready.
 2. Open/update a PR; title/body, review, CI are the durable record.
@@ -182,6 +189,10 @@ publication and cleanup scoped to your branch:
 - Do not use local merge/fast-forward as the normal public path; publish by PR
   squash, then update `main`.
 - Stage your own files explicitly (`git add <paths>`), not `git add -A`.
+- The four orchestration skills tracked on public `main`
+  (`.claude/skills/{design,plan,takeover,theorize}`) were leaked once by a
+  `git add -A` and the owner has since **accepted them as tracked** — never open a
+  PR to remove them (repeated removal PRs, e.g. #151, are unwanted). <!-- rule:accepted-tracked-skills-no-removal -->
 - For inbox notes, use `node scripts/agent-analytics/note-observation.mjs "…"`
   (618 Seam C) — it writes to *your* per-session shard under `docs/observations.d/`,
   not the shared `observations.md`, so a neighbour's commit can no longer reset out
