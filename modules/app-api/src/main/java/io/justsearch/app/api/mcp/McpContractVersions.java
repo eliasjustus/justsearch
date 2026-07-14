@@ -51,8 +51,19 @@ public final class McpContractVersions {
    * line ({@code chunksIncluded}/{@code chunksConsidered}/{@code retrievalCoverage}) when the
    * retrieval's quality signals are populated — agent-visible text additions to the published
    * surface, so the SemVer patch bumps.
+   *
+   * <p>0.4.0 (tempdoc 735 W6, tier equivalence): {@code justsearch_search} and {@code
+   * justsearch_answer}'s {@code structuredContent} gained {@code hints}, {@code facets}, {@code
+   * coverage}, and {@code truncated} fields — the response-level facts the text tier already
+   * carried (progressive-disclosure hints, facet values, totalHits/shown/tookMs, truncation) but
+   * structuredContent historically dropped. A structured-preferring client (observed default:
+   * Claude Code CLI 2.1.209, which delivers structuredContent verbatim when present and drops the
+   * text tier entirely) previously never saw these facts at all. Both tiers now derive from one
+   * shared per-request content model ({@code McpSearchResponseContent} /
+   * {@code McpAnswerResponseContent}), so they cannot silently diverge again — a new,
+   * agent-visible material addition to the structured surface, so the SemVer minor bumps.
    */
-  public static final String TOOL_SURFACE_VERSION = "0.3.1";
+  public static final String TOOL_SURFACE_VERSION = "0.4.0";
 
   private McpContractVersions() {}
 }

@@ -78,7 +78,7 @@ same JVM as the Head process. No Node.js required.
 Protocol version: `2025-11-25`. Capabilities: tools, resources,
 prompts. Curated tool-surface version (MCP `serverInfo.version`,
 single-sourced from `McpContractVersions.TOOL_SURFACE_VERSION`):
-`0.3.1`.
+`0.4.0`.
 
 ## Available Tools (6, position-bias ordered)
 
@@ -154,6 +154,18 @@ already render (`SearchTrace`, `ContextCitation`); it introduces no new authorit
   `parentDocId`, char/line span, heading, score, excerpt) plus `quality` (chunks found/used, retrieval
   mode + reason code, and the CRAG-style confidence signals: coverage, best-chunk score, score gap,
   chunks considered/included, truncation). Citations are empty on the full-document fallback path.
+
+**Tier equivalence (tempdoc 735 W6).** Both tools' `structuredContent` also carry `hints` (the
+same progressive-disclosure hint strings the text tier's `Hints:` block / `Hint:` lines render),
+`facets` (the same facet-value facts the text tier's facet block renders), `coverage`
+(`justsearch_search`: `totalHits`/`shown`/`tookMs`; `justsearch_answer`: `passages`/`documents`),
+and `truncated` (`justsearch_search`: the response was capped below `totalHits`;
+`justsearch_answer`: `contextTruncated`). These fields close the gap a structured-preferring
+client would otherwise hit: before this increment, hints/facets/coverage/truncation facts existed
+in the `content` text only, so a client that delivers `structuredContent` instead of text (see
+Delivery tiers, above) never received them. Full evidence-passage parity (the text tier's ~10KB
+answer-pack passages vs. the ~2.7KB `citations` excerpts) is explicitly out of scope for this
+increment — metadata parity only.
 
 **Data exposure.** MCP tool responses are **not redacted** — path redaction applies to the diagnostics
 *export* bundle (a shareable artifact), not to live tool output. `citations[].parentDocId` is the

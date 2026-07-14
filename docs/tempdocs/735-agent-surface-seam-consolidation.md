@@ -398,3 +398,23 @@ no weakened assertions, single digest construction site, merge-ready.
 
 Follow-up (recorded, not blocking): run the probe live under a lease to replace reconstructed
 fixtures with true recordings and settle the status-tier assumption.
+
+**W6 (G3 content model + two renderers) — landed 2026-07-14, tool-surface 0.4.0.** One content
+model per tool (`McpSearchResponseContent`, `McpAnswerResponseContent`) computed once; text tier
+re-rendered from it BYTE-IDENTICAL to 0.3.1 (6 golden fixtures captured from the actual pre-refactor
+code via stash isolation — zero divergences); structured tier extended additively with the
+equivalence-gap fields `hints[]` (full strings, not booleans), `facets`, `coverage`
+(search: totalHits/shown/tookMs; answer: passages/documents — asymmetry documented), `truncated`.
+Full-passage parity remains explicitly out of scope (owner-gated A/B). Orphans torn down: the
+59-append block, `appendFacetSidecar`/`appendEnrichmentHint*` deleted. Standing guard:
+`McpTierEquivalenceTest` (reflective fact-enum completeness over the content models + substantive
+dual-tier presence assertions) + `McpTierEquivalenceGoldenTest`. Opus refute review: 8/8 confirmed
+incl. wire-emitter-elision (production calls the 2-arg overloads; 1-arg search overload is test-only),
+merge-ready. Review MINOR-3 fixed pre-commit (shared `projectHitExcerptsAndTrace` helper — the
+mechanically identical per-hit projection can no longer drift between overloads). Recorded, not
+blocking: MINOR-1 — the equivalence guard covers content-model-routed facts; direct-from-response
+facts (degradation) are guarded separately by McpSearchTraceLegibilityTest; MINOR-2 — concise-mode
+text is not golden-pinned (branches untouched this increment).
+
+Remaining for closure: live delivered-tier probe on 0.4.0 under a lease (also converts the W3
+reconstructed fixtures to true recordings and settles the status-tier assumption).

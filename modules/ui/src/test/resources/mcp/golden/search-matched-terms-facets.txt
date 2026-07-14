@@ -1,0 +1,16 @@
+[1] Widget Assembly (score: 0.87)
+    Path: docs/widgets/assembly.md
+    Preview: The cavby8 widget assembly guide explains torque settings.
+    Matched: "cavby8" in content_preview
+
+[2] Semantic Doc (score: 0.50)
+    Path: docs/semantic.md
+    Match basis: semantic similarity (no distinctive term overlap)
+
+Found 2 results (took 12ms).
+
+Facets (use as filter values):
+  meta_source: docs (3)
+
+Hints:
+- Searched the index in one call. For conceptual or cross-document questions, justsearch_answer returns assembled cited passages directly.

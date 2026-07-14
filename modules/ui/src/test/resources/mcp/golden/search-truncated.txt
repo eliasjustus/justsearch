@@ -1,0 +1,43 @@
+[1] Doc 0 (score: 0.50)
+    Path: docs/doc-0.md
+    Match basis: semantic similarity (no distinctive term overlap)
+
+[2] Doc 1 (score: 0.50)
+    Path: docs/doc-1.md
+    Match basis: semantic similarity (no distinctive term overlap)
+
+[3] Doc 2 (score: 0.50)
+    Path: docs/doc-2.md
+    Match basis: semantic similarity (no distinctive term overlap)
+
+[4] Doc 3 (score: 0.50)
+    Path: docs/doc-3.md
+    Match basis: semantic similarity (no distinctive term overlap)
+
+[5] Doc 4 (score: 0.50)
+    Path: docs/doc-4.md
+    Match basis: semantic similarity (no distinctive term overlap)
+
+[6] Doc 5 (score: 0.50)
+    Path: docs/doc-5.md
+    Match basis: semantic similarity (no distinctive term overlap)
+
+[7] Doc 6 (score: 0.50)
+    Path: docs/doc-6.md
+    Match basis: semantic similarity (no distinctive term overlap)
+
+[8] Doc 7 (score: 0.50)
+    Path: docs/doc-7.md
+    Match basis: semantic similarity (no distinctive term overlap)
+
+[9] Doc 8 (score: 0.50)
+    Path: docs/doc-8.md
+    Match basis: semantic similarity (no distinctive term overlap)
+
+[10] Doc 9 (score: 0.50)
+    Path: docs/doc-9.md
+    Match basis: semantic similarity (no distinctive term overlap)
+
+Found 37 results (took 15ms); showing 10.
+Hints:
+- Searched the index in one call. For conceptual or cross-document questions, justsearch_answer returns assembled cited passages directly.
