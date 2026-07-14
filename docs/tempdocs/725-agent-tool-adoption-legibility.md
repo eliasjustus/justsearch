@@ -1,7 +1,7 @@
 ---
 title: "Agent tool-adoption legibility: diagnose why agents offered the JustSearch MCP surface rarely invoke it, and raise correct adoption as far as the product surface allows"
 type: tempdocs
-status: "open — pickup stub; no takeover, design, or implementation yet"
+status: "open — takeover (GO, rescoped), targeted research, and settled design complete (2026-07-14); implementation not started. Design: adoption-funnel program (visible→discovered→invoked→reinforced) with exposure-mode identity capture (624), deferral ground-truth probe first, then an eager-vs-deferred alwaysLoad A/B before any text lever ships; ownership of the adoption lever transfers here from 655 at first implementation change."
 created: 2026-07-14
 author: agent (Fable, session 9d3c1869) — filed at founder direction after the 719 publish, which surfaced the adoption gap as the program's most under-weighted finding
 category: product / mcp-surface / agent-adoption / eval-supporting
@@ -345,3 +345,166 @@ than inferred: (1) capture true exposure mode in the harness (624 fix — the mi
 tool-name work as the pre-search-visible product surface; (4) descriptions rewritten only as
 ToolSearch match targets, with the over-triggering negative-control set; (5) the 2026-07-28 spec
 migration noted for whenever the protocol revision is adopted.
+
+---
+
+# Settled design (2026-07-14)
+
+## Design decision
+
+725 is **the adoption-funnel program for the agent-facing MCP surface**: measure where agents fall
+out of the funnel (visible → discovered → invoked → reinforced), then move the binding stage
+through the product surface, under pre-registered decision rules. It is not a description-rewrite
+project, not a new measurement authority, and not an eval-steering project.
+
+```text
+624 harness (instrument: funnel metrics, exposure-mode identity, A/B protocol)
+        |
+        v
+725 diagnosis + product levers (subject: names, instructions, descriptions,
+    error/response legibility, recommended client config)
+        |
+        v
+ship decisions gated by pre-registered funnel evidence; public wording stays
+config-recommendation-only until a 624-accepted record exists
+```
+
+## Part I — Measurement honesty (624-owned prerequisites, discovered here)
+
+1. **Exposure-mode capture.** Per-cell, capture-time record of how the tools were actually exposed:
+   eager in-context vs deferred placeholders, plus the harness config that determines it
+   (`ENABLE_TOOL_SEARCH` state, `alwaysLoad`) and a behavioral confirmation signal. Exposure mode
+   joins **cohort/pairing identity** — cells measured under different exposure modes must not
+   silently pair. This conforms to 719's source-provenance invariant ("run identity is an event
+   property") and lands in 624's existing identity machinery; it is not a new seam.
+   **Orphan:** the current protocol-level `mcp_tools_deferred` flag's misleading semantics — it is
+   demonstrably an end-of-session server check, not a model-context fact. It is superseded by the
+   new capture; it may remain only as an explicitly-labeled raw protocol echo. Old records stay
+   immutable and visibly pre-contract (719's pattern).
+2. **Funnel metrics.** `adoption_rate` (kept, 624's vocabulary) is decomposed with:
+   discovery rate (agent expanded/loaded our tools), post-discovery invocation rate, and a
+   reinforcement signal (continued/repeat use after first result; share of blocked/errored calls
+   followed by abandonment). Definitions belong to 624; 725 states the semantic need. The pilot's
+   funnel read (2/14 discovered → 1/2 invoked → 0/1 reinforced) is the motivating shape.
+3. **The deferral ground-truth probe is the first implementation act.** One live Agent-SDK session
+   against the dev stack (and per-client where cheap), capturing what the model context/wire
+   actually holds — settles the Haiku documentation contradiction and validates the new capture
+   before any lever experiment. Zero model-spend beyond one trivial session.
+
+## Part II — Product levers, ordered by pre-search visibility (the evidence-backed order)
+
+- **L1 — Recommended client configuration (`alwaysLoad`).** JustSearch's own docs/README recommend
+  the `.mcp.json` client snippet; adding `"alwaysLoad": true` makes the six-tool surface eager in
+  Claude Code/Agent SDK — inside Anthropic's own "skip tool search under ~10 tools" guidance. This
+  is a docs change, not an engine change, and does not touch the eval's neutral-prompt discipline
+  (it is the product's recommended configuration, i.e., part of the measured product). Shipping is
+  gated by the A/B decision rule below, because eager loading has a real cost (~1.5k tokens every
+  session, used or not) and an unmeasured benefit.
+- **L2 — `instructions` v2.** The connect-time text is one of only two things a deferred-tools
+  model sees pre-search. Revise the existing single-sourced TOOL_SELECTION_GUIDANCE to add what
+  the current text lacks under deferral: when to *search for* these tools, and decision-to-retrieve
+  timing (reach for retrieval *before* committing to iterative grep over a large corpus, not after
+  it fails). Constraints: remains a single-sourced projection (655's single-source guard stays),
+  ≤2KB (client truncation), comparative-not-feature-forward tone (366/655 evidence), and version
+  bump via the existing TOOL_SURFACE_VERSION. This is an in-place revision of 655's shipped layer,
+  not a parallel mechanism.
+- **L3 — ToolSearch matchability.** Descriptions and argument names/descriptions are the
+  documented match corpus for deferred discovery. Optimize keyword coverage for how agents phrase
+  retrieval tasks; explicitly NOT a third eloquence pass (655's warning honored — the target is
+  the search index, not the reader). Gated by a negative-control set (queries/tasks where the
+  tools should NOT fire) so over-triggering (+67% steps median in the external study) is measured,
+  not discovered in production.
+- **L4 — Reinforcement-stage legibility.** The one observed adopter was ejected by
+  blocked/errored `justsearch_search` calls and closed via `Read`. Audit tool-error responses:
+  execution errors should carry self-correction guidance (the 2025-11-25 spec moved validation
+  errors to execution errors for exactly this), and the existing 655 response hints should cover
+  the "result didn't advance the task" path. Extends 655's progressive-disclosure hints in place.
+- **Explicit non-lever: renaming tools.** Bare names (`answer`, `search`) would read better under
+  the client's `mcp__justsearch__` prefix, but tool names are user-facing config keys
+  (permissions/allowlists), the duplication is cosmetic, keyword-rich names aid both discovery and
+  non-prefixing clients, and spec guidance wants unique descriptive names. Churn cost exceeds
+  plausible gain; recorded so the question isn't reopened casually.
+- **Conformance rider:** deterministic `tools/list` ordering (draft-spec SHOULD; cache-hit
+  benefit) — verify at implementation, almost certainly already true in the Java surface.
+
+## Part III — Pre-registered decision rules (fixed before outcomes are seen)
+
+- The first experiment is the **exposure-mode A/B**: same corpus (a grep-stressed 707 member —
+  battlefield-scale data is explicitly not decision-grade), same instructions, arms differing only
+  in eager-vs-deferred exposure, haiku cohort, 624 protocol, funnel metrics + negative controls.
+  It answers whether visibility or persuasion is binding — the highest-information cheap question.
+- Ship L1 (recommend `alwaysLoad`) iff discovery+invocation improve materially without
+  outcome-sanity degradation and with acceptable token overhead; ship L2/L3 variants ranked under
+  the same rule. Numeric thresholds are set with 624 when the experiment is registered — not
+  invented here, and never after seeing results.
+- Spend is owner-gated per the jseval cost policy (smoke-scale, ~$3 class). No public quantitative
+  adoption claim ships from any of this until a 624-accepted record exists (719's boundary);
+  public docs may carry the recommended configuration and qualitative rationale only.
+
+## Sequencing
+
+1. Ownership transfer edit in 655's STATUS SUMMARY (dated pointer: adoption/discoverability lever
+   → 725; 655 keeps conformance + capability policy + its open Q2 fixture decision).
+2. Deferral ground-truth probe (Part I.3).
+3. Exposure-mode capture + funnel metrics under 624 (Part I.1-2) — same correctness boundary, one
+   lead.
+4. Owner-authorized exposure-mode A/B smoke on a 707 member (Part III) — depends on 707
+   member materialization (done) but not on its full scientific certification (adoption is not a
+   public claim).
+5. Ship winning levers (L1 docs change; L2 instructions v2 with TOOL_SURFACE_VERSION bump); then
+   L3/L4 with negative controls; re-measure funnel.
+6. Spec-migration note stays parked with 500/655 (initialize → server/discover when the 2026-07-28
+   revision is adopted); recorded here only as a dependency alert for L2's carrier field.
+
+## Orphans (owned by this tempdoc's implementation, not a later sweep)
+
+1. **655's ownership of the adoption/discoverability lever** (its 2026-07-07 status line and "Next
+   lever (owned here)" section) — superseded by transfer; the 655 edit lands with this tempdoc's
+   first implementation change.
+2. **`mcp_tools_deferred` capture semantics** — superseded by exposure-mode capture (Part I.1).
+3. **TOOL_SELECTION_GUIDANCE v1 text** — revised in place by L2 (version-bumped, single-source
+   guard intact); not a parallel text.
+4. The opening stub's description-first implication and five-tool count — already superseded by
+   the takeover corrections above.
+
+# Design reach
+
+## Conforms to (instances of existing seams — no new machinery)
+
+- **719's source-provenance invariant**: exposure mode is an event property of the run, captured at
+  source time, part of pairing/cohort identity.
+- **624's measurement authority** and pre-registration discipline (metrics vocabulary, decision
+  rules, interpretation).
+- **655's single-sourced steering projection** (instructions v2 revises the projection, does not
+  fork it) and ADR-0015's surface principles (schema-minimal, position-bias, progressive
+  disclosure).
+
+## New principle worth naming: the visibility funnel
+
+**"An agent-facing affordance is adopted through a funnel — visible → discovered → invoked →
+reinforced — and the binding stage must be identified by measurement before any stage's content is
+optimized."** The failure mode it prevents: polishing persuasion text (descriptions) when the loss
+is at visibility (deferral), or adding visibility when the loss is at reinforcement (errors eject
+the agent).
+
+- **Candidate scope beyond this problem:** MCP resources/prompts if ever exposed; the agent-api
+  HTTP endpoints (do external agents discover `/api/agent/*` affordances?); the plugin/community
+  surface (660); even 719's public replay command (is it discovered → run → trusted?).
+- **Existing violations:** the eval's single `adoption_rate` collapses the funnel (being fixed in
+  Part I); 655's description-tuning near-miss was optimizing a possibly-non-binding stage — its
+  own warning said so without the funnel vocabulary.
+- **Evidence it earns its keep:** a funnel measurement changes a lever decision. This has already
+  happened once (the takeover's discovery-stage finding demoted description work and promoted
+  exposure-mode work); the A/B will be the second, cleaner test.
+- **Retirement condition:** if agent clients converge on transparent/eager tool exposure so that
+  visible ≈ discovered (the funnel's top collapses), retire the extra stages back into plain
+  adoption/invocation metrics — do not maintain funnel machinery for a distinction reality stopped
+  making.
+
+## Smaller conforming principle: cohort relativity of agent-behavior facts
+
+Any measured agent behavior is a (model, client/harness, exposure-mode) cohort fact — this is
+624/719's existing direction with exposure mode as a newly recognized axis; conform via identity
+capture, build nothing new. Earns its keep when two cohorts' adoption numbers stop being silently
+comparable (already true: Desktop-vs-CLI exposure differs); retires only if the identity machinery
+itself subsumes it so completely that restating it adds nothing.
