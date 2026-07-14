@@ -259,3 +259,89 @@ on battlefield-en-scale-v1 is not.
 - A prompt-steering experiment shipped as product (boundary stands).
 - A duplicate authority over adoption metrics (624) or the decision-to-retrieve lever list (655 —
   resolve by transfer).
+
+---
+
+# Research pass (2026-07-14; targeted — client exposure mechanics + MCP spec affordances)
+
+> Scope decision: the takeover already covered description-writing guidance, over-triggering costs,
+> and selection benchmarks. This pass researched only the two questions the deferral finding made
+> load-bearing and that are actively changing: (1) how current clients actually expose MCP tools to
+> the model; (2) what the MCP spec itself offers for discovery/steering. No external code or text
+> was copied into the repo; findings are cited summaries only (no license/attribution payload).
+
+## R1. Claude Code / Agent SDK defer ALL MCP tools by default — descriptions are invisible pre-search
+
+Current official docs (code.claude.com/docs/en/mcp.md §"Scale with MCP tool search";
+agent-sdk/tool-search.md; both fetched 2026-07-14): **"Tool search is enabled by default. MCP tools
+are deferred rather than loaded into context upfront"** — unconditional, not threshold-gated (the
+10%-of-context `auto` mode is opt-in; at the Jan 2026 launch the threshold WAS the default, and the
+flip to unconditional defer-all is undated in any changelog). Pre-search the model sees **"only
+tool names and server instructions"** — not descriptions, not schemas (both truncated at 2KB).
+Discovery search matches tool names, descriptions, argument names, and argument descriptions
+(platform tool-search-tool.md).
+
+Consequences for this tempdoc:
+
+- **655's conclusions survive, re-read under deferral.** The `initialize.instructions` text is
+  precisely one of the only two things a deferred-tools model ever sees pre-search — 655
+  unknowingly shipped the one server-side text with guaranteed pre-search visibility in this
+  cohort, and adoption moved off zero. "Descriptions read and lost to a habit prior" becomes
+  "descriptions never read pre-search"; the description lever is weak for a *documented structural
+  reason*, and its remaining value is as **ToolSearch match target** (keyword-matchability).
+- **Tool NAMES are the pre-search billboard.** The visible name in this cohort is
+  `mcp__justsearch__justsearch_answer` — the server prefix already carries "justsearch", so the
+  tool-side `justsearch_` prefix duplicates it in every listing. Naming is now a first-class
+  lever, but note the trade-off: bare `answer`/`search` names lose keyword-richness for clients
+  that DON'T prefix (spec guidance: names should be unique + descriptive). Design decision, not
+  obvious.
+- **A zero-risk client-config lever exists that no prior tempdoc considered:**
+  `"alwaysLoad": true` on the server entry in `.mcp.json` (Claude Code ≥v2.1.121) forces eager
+  loading of our 6-tool/~1.5k-token surface — well inside the docs' own "skip tool search under
+  ~10 tools" guidance. JustSearch's README/docs recommend the client config verbatim; adding
+  `alwaysLoad` there changes what every following user's agent sees, without touching the eval's
+  neutral-prompt discipline (it is product documentation, not eval steering). Whether
+  eager-vs-deferred actually moves adoption is then a clean, cheap A/B under 624's harness —
+  arguably the single highest-information experiment now available.
+- **Haiku contradiction (needs runtime probe, not docs):** CLI/SDK docs say tool search excludes
+  Haiku; the platform API model table (same day) lists Haiku 4.5 as supported; a Dec-2025 issue
+  (#14863) shows live 400s on Haiku `tool_reference` closed "not planned". Our pilot shows a haiku
+  Agent-SDK run successfully round-tripping ToolSearch. Docs cannot adjudicate; the deferral
+  ground-truth probe (Cheapest evidence #1) must capture the actual wire behavior.
+- **Client diversity confirmed as material:** Claude Desktop has no documented tool-search
+  mechanism (inferred eager, unconfirmed); Cursor documents a ~40-active-tool ceiling with silent
+  drops and no deferred loading (third-party, unverified). Adoption behavior is cohort-specific;
+  every measurement must record the client + exposure mode as identity (624's cohort machinery
+  already can, once the exposure mode is captured honestly — the current `mcp_tools_deferred`
+  protocol-level flag is demonstrably misleading and needs a capture fix under 624).
+
+## R2. The MCP spec offers no server-side priority lever — and `instructions` is only a MAY
+
+Spec research (modelcontextprotocol.io 2025-11-25 + draft, schema.ts diffed; fetched 2026-07-14):
+
+- **No spec-level "when to use" / priority / category field exists** on `Tool` or
+  `ToolAnnotations`, in any revision; no in-protocol tool search (closest proposal SEP-1821 is an
+  unsponsored draft); no server-suggested ordering a client must honor (the draft's deterministic
+  `tools/list` ordering SHOULD is cache-hit optimization only — worth conforming to regardless).
+- **`instructions` has always been a MAY** ("this information MAY be added to the system prompt")
+  — clients are not obliged to surface it. Claude Code/SDK do (see R1); other clients'
+  conformance is unverified. 655's layer therefore has guaranteed reach only in the cohort that
+  also defers tools.
+- **Forward-compat alert: the next spec revision (final expected 2026-07-28) removes the
+  `initialize` handshake entirely** (SEP-2575/2567); `instructions` relocates to a new mandatory
+  `server/discover` response. When JustSearch adopts that revision, 655's shipped layer must
+  migrate — noted here so the migration lands with spec-adoption work, not as a surprise.
+- **Direction of travel** (official client best-practices doc): hosts are told to implement
+  progressive discovery — search over tool `name` + `description` via a host-side meta-tool, with
+  a 1-5%-of-context trigger guidance. The ecosystem is converging on deferred-by-default; the
+  pre-search-visible surface (names + instructions) is where server-side legibility investment
+  compounds, and keyword-rich names/descriptions are the one spec-sanctioned discoverability lever.
+
+## Net effect on the takeover verdict
+
+Unchanged (GO, rescoped, transfer from 655), with the lever order now documentation-backed rather
+than inferred: (1) capture true exposure mode in the harness (624 fix — the misleading flag);
+(2) the eager-vs-deferred `alwaysLoad` A/B as the first experiment; (3) `instructions` +
+tool-name work as the pre-search-visible product surface; (4) descriptions rewritten only as
+ToolSearch match targets, with the over-triggering negative-control set; (5) the 2026-07-28 spec
+migration noted for whenever the protocol revision is adopted.
