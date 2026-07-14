@@ -140,6 +140,50 @@ def classify(
     return result
 
 
+def validate_exempt_reasons(register: dict[str, Any]) -> list[str]:
+    """734-followup review: an exempt row/entry with no 'reason' is a silent
+    'trust me' with nothing for a future reviewer to check — fail closed instead.
+    Covers both inline `tier: "exempt"` rows inside cohortCoverage/surfaceCoverage/
+    shapeCoverage AND the top-level `*Exempt` arrays, which previously accepted a
+    bare id with no reason at all (both arrays are empty today, so this is a
+    forward-looking guard, not a break)."""
+    errors: list[str] = []
+
+    coverage_lists = {
+        "cohortCoverage": "cohort",
+        "surfaceCoverage": "surfaceId",
+        "shapeCoverage": "shape",
+    }
+    for list_key, id_key in coverage_lists.items():
+        for row in register.get(list_key, []) or []:
+            if row.get("tier") == "exempt":
+                reason = row.get("reason")
+                if not isinstance(reason, str) or not reason.strip():
+                    errors.append(
+                        f"EXEMPT-NO-REASON: {list_key} row {row.get(id_key)!r} has tier=exempt "
+                        f"but no non-empty 'reason' — fail closed rather than silently exempting."
+                    )
+
+    exempt_array_keys = ["cohortExempt", "surfaceExempt", "shapeExempt"]
+    for array_key in exempt_array_keys:
+        for entry in register.get(array_key, []) or []:
+            if not isinstance(entry, dict):
+                errors.append(
+                    f"EXEMPT-NO-REASON: {array_key} entry {entry!r} is a bare id, not an object — "
+                    f"every exempt entry must carry a non-empty 'reason'."
+                )
+                continue
+            reason = entry.get("reason")
+            if not isinstance(reason, str) or not reason.strip():
+                entry_id = entry.get("cohort") or entry.get("surfaceId") or entry.get("shape") or entry
+                errors.append(
+                    f"EXEMPT-NO-REASON: {array_key} entry {entry_id!r} has no non-empty 'reason' — "
+                    f"fail closed rather than silently exempting."
+                )
+
+    return errors
+
+
 def run_drift_check(
     register: dict[str, Any],
     cohort_routes: dict[str, list[str]],
@@ -163,6 +207,13 @@ def run_drift_check(
             )
 
     if errors:
+        return errors, warnings, {}
+
+    exempt_reason_errors = validate_exempt_reasons(register)
+    if exempt_reason_errors:
+        # Return early: classify() below indexes *Exempt entries by id_key,
+        # which would crash on a malformed bare-id entry this check just caught.
+        errors.extend(exempt_reason_errors)
         return errors, warnings, {}
 
     results: dict[str, DriftResult] = {

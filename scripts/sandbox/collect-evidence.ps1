@@ -229,6 +229,8 @@ foreach ($apiPath in $ladderPaths) {
 $mcpUrl = "$base/mcp"
 $mcpRan = $false
 $mcpExitCode = $null
+$mcpToolNames = @()
+$mcpNote = ""
 $mcpOutFile = Join-Path -Path $EvidenceDir -ChildPath "mcp-tools-list.json"
 
 $npxCommand = Get-Command "npx" -ErrorAction SilentlyContinue
@@ -280,20 +282,50 @@ else {
         Remove-Item -LiteralPath $stdoutFile -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $stderrFile -Force -ErrorAction SilentlyContinue
 
-        $combined = "exit code: $mcpExitCode`r`n--- stdout ---`r`n$stdoutContent`r`n--- stderr ---`r`n$stderrContent"
-
+        # Success criterion (734 follow-up, live-verified): the Inspector CLI
+        # returns complete, valid tools/list JSON on stdout and THEN crashes in
+        # Node teardown on Windows (libuv assertion
+        # "!(handle->flags & UV_HANDLE_CLOSING)", exit 0xC0000409) -- a nonzero
+        # exit with a fully successful call. Judge success from stdout content,
+        # not the exit code; still log the exit code and flag the known-benign
+        # crash separately. A genuine failure (no/invalid stdout, no tools[])
+        # still reads as a failure.
         $isJson = $false
+        $parsedJson = $null
         if ($stdoutContent -ne $null) {
             $trimmed = $stdoutContent.Trim()
             if ($trimmed.StartsWith("{") -or $trimmed.StartsWith("[")) {
                 try {
-                    $null = $trimmed | ConvertFrom-Json -ErrorAction Stop
+                    $parsedJson = $trimmed | ConvertFrom-Json -ErrorAction Stop
                     $isJson = $true
                 }
                 catch {
                     $isJson = $false
                 }
             }
+        }
+
+        $mcpSuccess = $false
+        if ($isJson -and $parsedJson -ne $null -and ($parsedJson.PSObject.Properties.Name -contains "tools")) {
+            $toolsArray = @($parsedJson.tools)
+            if ($toolsArray.Count -gt 0) {
+                $mcpSuccess = $true
+                $mcpToolNames = $toolsArray | ForEach-Object { $_.name }
+            }
+        }
+
+        if ($mcpSuccess -and $mcpExitCode -ne 0) {
+            $mcpNote = "Note: process exited nonzero (exit code $mcpExitCode) AFTER returning valid tools/list JSON on stdout -- this is the known-benign Node teardown crash on Windows (libuv assertion '!(handle->flags & UV_HANDLE_CLOSING)', exit 0xC0000409), not a real failure. Judged SUCCESS from stdout content, per the 734 follow-up fix."
+            Write-Log $mcpNote
+        }
+
+        $toolNamesText = if ($mcpToolNames.Count -gt 0) { ($mcpToolNames -join ", ") } else { "(none)" }
+        $combined = "exit code: $mcpExitCode`r`n--- stdout ---`r`n$stdoutContent`r`n--- stderr ---`r`n$stderrContent"
+        if ($mcpSuccess) {
+            $combined = "SUCCESS -- tools discovered: $toolNamesText`r`n`r`n$combined"
+        }
+        if ($mcpNote -ne "") {
+            $combined = "$mcpNote`r`n`r`n$combined"
         }
 
         if ($isJson) {
@@ -305,8 +337,8 @@ else {
             $combined | Out-File -LiteralPath $mcpOutFile -Encoding utf8
         }
 
-        $mcpRan = $true
-        Write-Log "MCP Inspector CLI finished with exit code $mcpExitCode; output saved to $(Split-Path -Leaf $mcpOutFile)"
+        $mcpRan = $mcpSuccess
+        Write-Log "MCP Inspector CLI finished with exit code $mcpExitCode; success=$mcpSuccess (judged from stdout); output saved to $(Split-Path -Leaf $mcpOutFile)"
     }
     catch {
         $exceptionMessage = $_.Exception.Message
@@ -370,10 +402,15 @@ foreach ($result in $ladderResults) {
 }
 $summaryLines += ""
 if ($mcpRan) {
-    $summaryLines += "MCP Inspector CLI: RAN (exit code $mcpExitCode) -> $(Split-Path -Leaf $mcpOutFile)"
+    $toolNamesSummary = if ($mcpToolNames.Count -gt 0) { ($mcpToolNames -join ", ") } else { "(none)" }
+    $summaryLines += "MCP Inspector CLI: SUCCESS (exit code $mcpExitCode; judged from stdout, not exit code; tools: $toolNamesSummary) -> $(Split-Path -Leaf $mcpOutFile)"
+    if ($mcpNote -ne "") {
+        $summaryLines += "  $mcpNote"
+    }
 }
 else {
-    $summaryLines += "MCP Inspector CLI: NOT RUN (gap recorded) -> $(Split-Path -Leaf $mcpOutFile)"
+    $exitText = if ($mcpExitCode -eq $null) { "not run" } else { "exit code $mcpExitCode" }
+    $summaryLines += "MCP Inspector CLI: FAILED/NOT RUN ($exitText; gap recorded) -> $(Split-Path -Leaf $mcpOutFile)"
 }
 $summaryLines += ""
 if ($tracesCopied) {

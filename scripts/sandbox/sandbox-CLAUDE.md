@@ -17,6 +17,10 @@ Four staged files govern this round. Read them before launching JustSearch:
    surface. If a surface is on it and you cannot reach it, that is a finding.
 2. **`validation-mode.md`** — the model mode for this instance (`fresh-install`
    vs `pre-staged-models`). Overrides any static wording about host models.
+   **Round-mode policy:** a release's FIRST round and its FINAL qualifying round
+   MUST run `fresh-install` (the only mode that covers the real download path);
+   intermediate convergence rounds MAY use `pre-staged-models` for iteration
+   speed, and their evidence must be labeled as such.
 3. **`sandbox-environment.md`** — directory layout, what is staged, environment
    characteristics.
 4. **`staging-gaps.md`** — assets the host failed to stage this round (e.g. the
@@ -44,6 +48,25 @@ user can understand it during setup and heavy local work. Two layers:
   a mode that misrepresents the response, a trust surface (encryption status,
   memory, skins) that misleads. UI/API disagreement is a finding even when the
   API passes.
+
+**GUI-capture launch requirement.** Surface-tier coverage (screenshots, the
+Frontend / trust truthfulness layer above) requires the session itself be
+launched with a computer-use-capable client — this is an **operator
+launch-time responsibility**, not something the harness stages (investigated:
+no repo-staged screenshot mechanism has ever existed; earlier rounds' capture
+was operator-side). **Recommended: Claude for Chrome (`claude --chrome`)**
+driving the frontend in a Chrome tab (the Chrome MSI is staged in `tools/` for
+this), with two caveats stated plainly: (1) it renders the SPA in Chrome, NOT
+the Tauri WebView2 shell — sufficient for surface/truthfulness coverage, blind
+to shell-specific behavior (tray, autostart, native dialogs, session-token
+IPC); (2) its in-sandbox viability (extension pairing + reaching the SPA from
+Chrome inside the sandbox) is **UNVERIFIED** — one operator-assisted
+verification spike is required before the next GUI round relies on it.
+Alternative: the tauri-driver/WebView2 path (tempdoc 374 item 4, POC'd), which
+captures the real shell. Either way, the Step-0 capability probe (staged as the
+`/start` skill, `sandbox-start-SKILL.md`) remains the fail-loud guard — if
+neither is available, record the round as API-only immediately rather than
+silently skipping GUI findings.
 
 Cover every `sandbox`-tier item in `coverage-brief.md`, or record why an item was
 not reachable. Items marked "covered elsewhere (host tier)" are verified by a host
@@ -169,6 +192,15 @@ Two staged tools make rounds repeatable and make coverage fail closed:
    unsigned-publisher UI, any failure to honour `/S`, and the exact action needed
    to continue. (These Windows-trust prompts cannot be CI-gated — they are the
    Sandbox's unique responsibility; see the must-watch items in `coverage-brief.md`.)
+   **UAC announce-and-attribute protocol:** before any step that legitimately
+   elevates (e.g. the Git/Node MSI), announce it to the operator first with the
+   expected publisher and the fact that it is NOT JustSearch. Before the
+   JustSearch install itself, announce that NO elevation is expected — any UAC
+   prompt during it is a finding (note the publisher shown, report it). UAC
+   renders on the secure desktop, so screenshots cannot capture it; the operator
+   is the only sensor, which is why attribution must be pre-announced, not
+   inferred after the fact. Sequence elevating installs (Git, Node) far from the
+   JustSearch install so a stray prompt can't be misattributed.
 2. **First app launch** — does `%LOCALAPPDATA%\JustSearch\JustSearch.exe` start
    and render? Save `evidence/NN-first-paint.png`.
 3. **Backend health** — read the runtime manifest, then save raw `/api/health`,

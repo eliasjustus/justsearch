@@ -80,24 +80,35 @@ def load_manifest(path: str) -> dict:
 # --------------------------------------------------------------------------
 
 
-def load_exercised_endpoints(path: str | None) -> set[str]:
-    """Parse traces.ndjson and return the set of exercised endpoint paths.
+def load_exercised_endpoints(path: str | None) -> tuple[set[tuple[str, str]], set[str]]:
+    """Parse traces.ndjson and return (exercised_pairs, exercised_paths).
+
+    734-followup fix (method-blind route matching, verified defect): the prior
+    version returned a single path-only set, so `requiredRoutes: ["POST /mcp"]`
+    was satisfiable by a DELETE-only (or any-method) trace on the same path.
+
+    - `exercised_pairs`: {(METHOD, path)} built from every span that carries a
+      non-empty `attrs["http.method"]`.
+    - `exercised_paths`: every endpoint path seen regardless of method — the
+      fallback set a *bare* (no-method-prefix) route still matches against, and
+      also covers spans that lack an `http.method` attr entirely.
 
     For every line whose span `name` starts with "http." (or which carries
     an `attrs["http.method"]`), the endpoint path is
     `attrs.get("http.route")`, falling back to `attrs.get("http.target")`.
     Non-http spans are ignored. Malformed lines are skipped with a warning,
-    not a crash. A missing file yields an empty set plus a warning.
+    not a crash. A missing file yields empty sets plus a warning.
     """
-    exercised: set[str] = set()
+    exercised_pairs: set[tuple[str, str]] = set()
+    exercised_paths: set[str] = set()
 
     if not path:
         print("WARNING: no --traces path given; exercised-endpoint set is empty.", file=sys.stderr)
-        return exercised
+        return exercised_pairs, exercised_paths
 
     if not os.path.isfile(path):
         print(f"WARNING: traces file not found: {path!r} (treating as empty).", file=sys.stderr)
-        return exercised
+        return exercised_pairs, exercised_paths
 
     with open(path, "r", encoding="utf-8") as fh:
         for line_no, raw_line in enumerate(fh, start=1):
@@ -136,10 +147,15 @@ def load_exercised_endpoints(path: str | None) -> set[str]:
                 continue
 
             endpoint = attrs.get("http.route") or attrs.get("http.target")
-            if endpoint:
-                exercised.add(endpoint)
+            if not endpoint:
+                continue
 
-    return exercised
+            exercised_paths.add(endpoint)
+            method = attrs.get("http.method")
+            if isinstance(method, str) and method.strip():
+                exercised_pairs.add((method.strip().upper(), endpoint))
+
+    return exercised_pairs, exercised_paths
 
 
 # --------------------------------------------------------------------------
@@ -175,16 +191,39 @@ def load_evidence_filenames(path: str | None) -> set[str]:
 # --------------------------------------------------------------------------
 
 
+def parse_route(route: str) -> tuple[str | None, str]:
+    """Split a route string into (METHOD, path).
+
+    "POST /mcp" -> ("POST", "/mcp"). A route with no method prefix (no
+    whitespace) returns (None, path) — a bare path, matched method-blind.
+    """
+    parts = route.split(" ", 1)
+    if len(parts) == 2:
+        return parts[0].strip().upper(), parts[1].strip()
+    return None, route.strip()
+
+
 def route_path(route: str) -> str:
     """Strip the leading "<METHOD> " from a route string, returning the path.
 
     "POST /mcp" -> "/mcp". A route with no method prefix (no whitespace) is
     returned unchanged.
     """
-    parts = route.split(" ", 1)
-    if len(parts) == 2:
-        return parts[1].strip()
-    return route.strip()
+    _, path = parse_route(route)
+    return path
+
+
+def route_matches(
+    route: str, exercised_pairs: set[tuple[str, str]], exercised_paths: set[str]
+) -> bool:
+    """734-followup fix: a route carrying a method prefix (every route in this
+    checker's inputs does — both requiredRoutes and manifest-derived routes are
+    "METHOD path" strings) must match the exact (method, path) pair; a bare path
+    (no method prefix) keeps the old method-blind path-only match."""
+    method, path = parse_route(route)
+    if method is None:
+        return path in exercised_paths
+    return (method, path) in exercised_pairs
 
 
 def shape_token(shape_id: str) -> str:
@@ -198,14 +237,22 @@ def shape_token(shape_id: str) -> str:
     return shape_id
 
 
-def check_cohort(item: MustTouchItem, exercised: set[str]) -> CoverageResult:
+def check_cohort(
+    item: MustTouchItem, exercised_pairs: set[tuple[str, str]], exercised_paths: set[str]
+) -> CoverageResult:
     # requiredRoutes (tempdoc 728 review, defect F2): when a cohort names the
     # specific product route(s) that MUST be hit (e.g. mcp -> "POST /mcp"),
     # any-route OR-semantics is a hole — GET /api/mcp/token would satisfy the
     # cohort without ever touching the endpoint the release exists for. So when
     # requiredRoutes is present, EVERY required route must be exercised (AND).
+    # 734-followup fix (defect: method-blind matching): route_matches() now
+    # requires the exact (METHOD, path) pair for a method-prefixed route, so
+    # a DELETE-only (or any-other-method) trace can no longer satisfy a
+    # "POST /mcp" requirement.
     if item.required_routes:
-        missing = [r for r in item.required_routes if route_path(r) not in exercised]
+        missing = [
+            r for r in item.required_routes if not route_matches(r, exercised_pairs, exercised_paths)
+        ]
         if missing:
             return CoverageResult(
                 item=item,
@@ -220,10 +267,10 @@ def check_cohort(item: MustTouchItem, exercised: set[str]) -> CoverageResult:
 
     matched_route = None
     for route in item.routes:
-        path = route_path(route)
-        # Baseline: exact-path match on the route template (both the manifest
-        # path and the trace's http.route are Javalin registration strings).
-        if path in exercised:
+        # Baseline: exact (method, path) match on the route template (both the
+        # manifest route and the trace's http.method/http.route are Javalin
+        # registration strings).
+        if route_matches(route, exercised_pairs, exercised_paths):
             matched_route = route
             break
 
@@ -280,10 +327,13 @@ def check_shape(item: MustTouchItem, evidence_filenames: set[str]) -> CoverageRe
 
 
 def evaluate_item(
-    item: MustTouchItem, exercised: set[str], evidence_filenames: set[str]
+    item: MustTouchItem,
+    exercised_pairs: set[tuple[str, str]],
+    exercised_paths: set[str],
+    evidence_filenames: set[str],
 ) -> CoverageResult:
     if item.kind == "cohort":
-        return check_cohort(item, exercised)
+        return check_cohort(item, exercised_pairs, exercised_paths)
     if item.kind == "surface":
         return check_surface(item, evidence_filenames)
     if item.kind == "shape":
@@ -402,7 +452,7 @@ def main(argv: list[str] | None = None) -> int:
     all_items = [MustTouchItem.from_dict(raw) for raw in manifest.get("mustTouch", []) or []]
     sandbox_items = [item for item in all_items if item.tier == "sandbox"]
 
-    exercised = load_exercised_endpoints(args.traces)
+    exercised_pairs, exercised_paths = load_exercised_endpoints(args.traces)
     evidence_filenames = load_evidence_filenames(args.evidence_dir)
     # F1: only screenshots count as UI-surface/shape evidence — the API-snapshot
     # JSON the harness also writes here must not satisfy a surface token.
@@ -417,7 +467,9 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
-    results = [evaluate_item(item, exercised, screenshots) for item in sandbox_items]
+    results = [
+        evaluate_item(item, exercised_pairs, exercised_paths, screenshots) for item in sandbox_items
+    ]
 
     all_covered = print_report(
         results,

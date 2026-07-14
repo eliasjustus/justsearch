@@ -8,7 +8,7 @@
     "interactionShapes": "modules/ui-web/src/shell-v0/plugin-api/coreInteractionShapes.ts"
   },
   "cohortCoverage": [
-    { "cohort": "mcp", "tier": "sandbox", "requiredRoutes": ["POST /mcp"], "validateHow": "On a clean install, confirm an EXTERNAL MCP client reaches POST /mcp: `npx @modelcontextprotocol/inspector --cli http://127.0.0.1:<port>/mcp --transport http --method tools/list` returns the tool set. requiredRoutes pins POST /mcp so a token-only GET can't satisfy coverage. Protocol conformance is host-owned (StdioMcpTransportIntegrationTest); the Sandbox proves clean-install reachability + discoverability." },
+    { "cohort": "mcp", "tier": "sandbox", "requiredRoutes": ["POST /mcp"], "validateHow": "On a clean install, confirm an EXTERNAL MCP client reaches POST /mcp: `npx @modelcontextprotocol/inspector --cli http://127.0.0.1:<port>/mcp --transport http --method tools/list` returns the tool set. requiredRoutes pins POST /mcp so a token-only GET can't satisfy coverage. Protocol conformance is host-owned (McpProtocolHandlerTest); the Sandbox proves clean-install reachability + discoverability. REQUIRED PROCEDURE for the published TYPED_CONFIRM trust-gate claim (see claims[] below): call the mutating `justsearch_ingest` tool via the Inspector CLI (`--method tools/call --tool-name justsearch_ingest ...`) and confirm it returns a PENDING authorization, not a silent/immediate ingest; resolve it via `POST /api/authorizations/approve` (API-reachable, no GUI needed); then confirm the ingest actually proceeds after approval. `tools/list` reachability alone does NOT exercise this claim -- it is a separate, mandatory step this round must perform." },
     { "cohort": "knowledge", "tier": "sandbox", "validateHow": "Search + ingest journeys: add a folder / ingest SciFact via the UI, run real searches, compare UI results to /api/knowledge/* responses." },
     { "cohort": "indexing", "tier": "sandbox", "validateHow": "Library indexing journey: per-folder row state, Tasks panel live updates, status-bar queue agree with /api/knowledge/status during ingest." },
     { "cohort": "inference", "tier": "sandbox", "validateHow": "One idle chat completion at GPU speed; runtime selects cuda12; /api/inference/status truthful." },
@@ -17,19 +17,19 @@
     { "cohort": "interaction", "tier": "sandbox", "validateHow": "The one interaction surface renders; mode labels match the actual response." },
     { "cohort": "agent", "tier": "sandbox", "validateHow": "The Agent 'delegate a task' rung makes obvious what it will do before it runs; disabled with a clear reason when AI is offline." },
     { "cohort": "openai-compat", "tier": "sandbox", "validateHow": "An external client can call /v1 chat completions on a clean install (loopback)." },
-    { "cohort": "boot", "tier": "exempt", "reason": "Internal process-lifecycle API, not a user-facing surface." },
+    { "cohort": "boot", "tier": "exempt", "reason": "Internal process-lifecycle API; the /api/boot/phases data it exposes is rendered by BootPhasesPanel.ts inside core.logs-surface (sandbox tier), so it is covered via that surface, not directly." },
     { "cohort": "config", "tier": "exempt", "reason": "Internal configuration API; effective-config is an inspection aid, not a validated surface." },
-    { "cohort": "debug", "tier": "exempt", "reason": "Diagnostic-only API (prod=false), not a shipped user surface." },
+    { "cohort": "debug", "tier": "exempt", "reason": "The GET routes are diagnostic-only (prod=false), not a shipped user surface. The 4 mutating POST routes (POST /api/debug/clear-condition, POST /api/debug/logging, POST /api/debug/reset-index, POST /api/debug/trip-condition) are reachable in prod but carry prod session-token auth, unlike the GET diagnostics -- narrowed from a blanket prod=false claim." },
     { "cohort": "governance", "tier": "exempt", "reason": "Internal governance/registry substrate." },
     { "cohort": "i18n", "tier": "exempt", "reason": "Internal localization plumbing." },
     { "cohort": "infra", "tier": "exempt", "reason": "Capabilities/contract-version substrate (host.* sub-API), not user-facing." },
-    { "cohort": "observability", "tier": "exempt", "reason": "Telemetry substrate; opt-in and internal." },
+    { "cohort": "observability", "tier": "exempt", "reason": "Diagnostics/metrics/telemetry routes (POST /api/diagnostics/export, GET /api/diagnostics/ingestion/*, GET /api/diagnostics/traces, GET /api/metrics/*, GET /api/telemetry/health, GET /api/health/events/stream) are opt-in and internal. The two mandatory lifecycle endpoints in this cohort, GET /api/health and GET /api/status, are NOT opt-in -- they are exercised via `surface:core.health-surface` (sandbox tier) and the collect-evidence.ps1 API sanity ladder, so the blanket opt-in framing applies only to the diagnostics/metrics/telemetry subset." },
     { "cohort": "plugins", "tier": "exempt", "reason": "Plugin-registry substrate, internal." },
     { "cohort": "registry", "tier": "exempt", "reason": "Internal registry snapshot/consumer-presence substrate." },
     { "cohort": "resource", "tier": "exempt", "reason": "Resource-declaration substrate, internal." },
     { "cohort": "runtime", "tier": "exempt", "reason": "Runtime-manifest infra (port discovery); the /mcp reachability it also advertises is covered under the mcp cohort." },
     { "cohort": "schema", "tier": "exempt", "reason": "Schema-serving API, internal tooling." },
-    { "cohort": "other", "tier": "exempt", "reason": "Catch-all bucket for unclassified/utility routes; not a coherent user surface." }
+    { "cohort": "other", "tier": "exempt", "reason": "Per-member: /api/library/resolve-hash is consumed by indexingJobsBridge.ts / resolvePathLazy.ts and is exercised via the Library/indexing journeys (cohort:indexing, cohort:knowledge). /api/scans/{scanId}/progress has no FE consumer found -- unwired, harmless. Remaining members (OPTIONS /*, POST /api/admin/inference/reload, POST /api/admin/runtime/reload, GET /api/meta/openapi.json, GET /api/meta/routes, GET+POST /api/ui/ready) are internal/dev-tooling utility routes with no coherent user surface." }
   ],
   "surfaceCoverage": [
     { "surfaceId": "core.library-surface", "tier": "sandbox", "validateHow": "Library / Add Folder journey; toast occlusion; progress visibility." },
@@ -64,7 +64,8 @@
   ],
   "mustWatch": [
     { "id": "install-trust-prompts", "reason": "SmartScreen / Defender / Smart App Control / unsigned-publisher warnings on install cannot be reproduced in CI (no clean Windows); every round records the exact prompt text/screenshots and whether automation (/S) was honored.", "origin": "recurring across rounds; not CI-gateable" },
-    { "id": "ui-api-truthfulness-under-load", "reason": "Shell showing 'Reconnecting...' or stale cards while /api/health, /api/status, /api/knowledge/status are READY is a clean-environment/timing finding CI cannot see; must-watch on every round.", "origin": "recurring; not CI-gateable" }
+    { "id": "ui-api-truthfulness-under-load", "reason": "Shell showing 'Reconnecting...' or stale cards while /api/health, /api/status, /api/knowledge/status are READY is a clean-environment/timing finding CI cannot see; must-watch on every round.", "origin": "recurring; not CI-gateable" },
+    { "id": "warm-reinstall-over-existing-data", "reason": "uninstall (user data survives per ADR-0024) -> reinstall -> first boot against the pre-existing enriched index must reach a healthy embeddingCompatState and hybrid search must execute dense retrieval (regression home for the 734 A.1 recovery path).", "origin": "regression home for tempdoc 734 A.1 (dense/HYBRID retrieval recovery path); not CI-gateable, needs a real clean-install/uninstall/reinstall cycle" }
   ],
   "cohortExempt": [],
   "surfaceExempt": []
