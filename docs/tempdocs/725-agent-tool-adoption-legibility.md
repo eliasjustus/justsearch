@@ -1,7 +1,7 @@
 ---
 title: "Agent tool-adoption legibility: diagnose why agents offered the JustSearch MCP surface rarely invoke it, and raise correct adoption as far as the product surface allows"
 type: tempdocs
-status: "open — level 1 merged to main (PR #178, 401c1ae); exposure A/B smoke RUN and STOPPED after Campaign D (2026-07-14, results + judgment recorded in the final section): DEFERRED-arm adoption hit CEILING (20/20 discovery+invocation) on the grep-stressed CLERC member — visibility hypothesis refuted in this regime, adoption is corpus-conditional; frontier moves to result quality/reinforcement. Found + must fix before any campaign: agent_utility_inspect.py:605 A-arm assertion voids baselines. Campaign E not run (cap + defect). Awaiting owner decisions; no levers shipped."
+status: "open — level 1 merged to main (PR #178, 401c1ae); exposure A/B smoke RUN and STOPPED after Campaign D (2026-07-14, results + judgment recorded in the final section): DEFERRED-arm adoption hit CEILING (20/20 discovery+invocation) on the grep-stressed CLERC member — visibility hypothesis refuted in this regime, adoption is corpus-conditional; frontier moves to result quality/reinforcement. The agent_utility_inspect.py:605 A-arm assertion defect is FIXED (2026-07-14, condition-gated + live-shape regression fixtures, red-proofed against the pre-fix producer). Campaign E was not run (cap + defect). Awaiting owner decisions; no levers shipped."
 created: 2026-07-14
 author: agent (Fable, session 9d3c1869) — filed at founder direction after the 719 publish, which surfaced the adoption gap as the program's most under-weighted finding
 category: product / mcp-surface / agent-adoption / eval-supporting
@@ -840,3 +840,28 @@ throughout; campaign wall-clock 11m10s.
    adoption is no longer the blocker on the target corpus regime.
 3. The 8.3%→100% corpus-conditionality finding is the single most useful sentence for 624's
    pre-registered interpretation tree going forward.
+
+## The #605 defect — FIXED (2026-07-14, same day, follow-up session)
+
+Root-cause turned out one layer deeper than the results section recorded: the defective
+assertion block was introduced by PR #173 (tempdoc 719, `70fb180`), not #178 — which is why the
+2026-07-12 pilot (pre-#173) was never voided and why #178's adversarial review (scoped to #178's
+changes) never examined it. Campaign D was the first live A-arm run against that code.
+
+The mechanism had a second half: `_mcp_surface`'s `servers`-key `or`-chain returns the LAST
+operand when all are falsy, so the SDK's empty server list reached `_record_cell` as `[]` (not
+`None`) and passed the `servers is not None` guard — known-empty and status-unavailable were
+conflated by key position.
+
+Fix (this branch): both declared-vs-observed assertions (hash + names) now share the existing
+`condition in _WITH_TOOL and mcp_config` gate ("condition A exempt by construction", same as the
+adjacent surface assertion); `_mcp_surface` uses first-non-null-key lookup (explicit `null` =
+absent, preserving null-padded serializer shapes). Regression fixtures mirror the live producer
+shape — `mcp_servers=[]` + declared 6-tool surface (the `unreachable-seed-green` gap: the old
+A-exempt test seeded `mcp_servers: None` with no declared surface, a shape production never
+produces) — plus a B-arm names-mismatch guard proving the assertion still bites, and
+tri-state/null-padding cases. Red-proofed: the headline fixture and the or-chain case FAIL
+against the pre-fix producer (`401c1ae`). Full jseval suite green (1874 passed; only the 2
+known-red `test_correction_probe` pre-existing failures). The A-arm baseline is restored for any
+future campaign; Campaign E's evidentiary blocker is gone (the spend question remains the
+owner's).
