@@ -219,6 +219,49 @@ async def probe_via_sdk_all(base_url: str, model: str, timeout_s: float) -> dict
 # Reporting + fixture write-back
 # ---------------------------------------------------------------------------
 
+_LOCAL_PATH_RE = None  # compiled lazily
+
+
+def _redact_local_paths(obj):
+    """Redact absolute drive-letter paths (e.g. document ids/paths in real captures)
+    down to `<redacted-root>/<last-two-segments>` before a fixture is written. The
+    repo is public; recorded captures embed the capturing machine's directory layout
+    in `parentDocId`/`path`/excerpt fields. Operates on PARSED values and re-escapes
+    via json.dumps -- never regex the serialized form (that corrupts inner escapes;
+    learned 2026-07-15). Redaction changes content byte-length vs the true delivery;
+    fixtures are shape/field evidence, not length evidence."""
+    global _LOCAL_PATH_RE
+    import re
+    if _LOCAL_PATH_RE is None:
+        _LOCAL_PATH_RE = re.compile(r"(?i)[a-z]:[\\/][^\"'\s]+")
+
+    def _sub(m):
+        keep = [seg for seg in re.split(r"[\\/]", m.group(0)) if seg][-2:]
+        return "<redacted-root>/" + "/".join(keep)
+
+    if isinstance(obj, str):
+        return _LOCAL_PATH_RE.sub(_sub, obj)
+    if isinstance(obj, list):
+        return [_redact_local_paths(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _redact_local_paths(v) for k, v in obj.items()}
+    return obj
+
+
+def _sanitize_content_for_fixture(content):
+    """Path-redact a captured delivery, preserving its tier shape: a structured-json
+    str is parsed, redacted, and re-serialized; block lists are redacted in place."""
+    if isinstance(content, str):
+        try:
+            inner = json.loads(content.strip())
+        except (ValueError, TypeError):
+            return _redact_local_paths(content)
+        if isinstance(inner, dict):
+            return json.dumps(_redact_local_paths(inner), separators=(",", ":"), ensure_ascii=False)
+        return _redact_local_paths(content)
+    return _redact_local_paths(content)
+
+
 def _is_placeholder_capture(content) -> bool:
     """True when the captured "result" is not a delivery at all but a deferred-tool
     placeholder (a ``tool_reference`` block). Observed 2026-07-14: an SDK probe run
@@ -267,6 +310,7 @@ def _write_fixtures(captured: dict[str, dict], *, provenance: str, cli_version: 
                 "session did not execute the forced call."
             )
             continue
+        content = _sanitize_content_for_fixture(content)
         tier = _delivered_tier(content)
         payload = {
             "tool": tool,

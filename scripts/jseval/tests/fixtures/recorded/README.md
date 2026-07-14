@@ -62,8 +62,10 @@ These fixtures age with the CLI/SDK/surface versions named above. To refresh:
    delivered tier with the SAME function this test suite imports
    (`jseval.agent_utility_inspect._delivered_tier` — not a duplicate), and
    (with `--write-fixtures`) overwrites the fixture files in this directory
-   with freshly captured content (redacted per the existing jseval sanitizer
-   idioms) and a `"provenance": "recorded"` stamp plus updated CLI/surface
+   with freshly captured content (path-redacted post-capture by the probe's `_sanitize_content_for_fixture` (absolute
+   drive-letter paths collapse to `<redacted-root>/<last-two-segments>` on every
+   `--write-fixtures` run; redaction changes content byte-length vs the true delivery,
+   so fixtures are shape/field evidence, not length evidence)) and a `"provenance": "recorded"` stamp plus updated CLI/surface
    version fields.
 3. Update this README's "Stamped against" line and the per-file provenance
    table to match what was actually captured.
