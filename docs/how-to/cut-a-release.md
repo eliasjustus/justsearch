@@ -37,7 +37,10 @@ A release **candidate** is qualified before its number is finalized:
    finalize, on the **host** (the sandbox has no Python), against the persisted evidence dir:
    `python scripts/sandbox/check_coverage.py --manifest <share>/coverage-manifest.json --traces
    <share>/evidence/traces.ndjson --evidence-dir <share>/evidence` — a non-zero exit means a
-   required surface was not exercised. The durable harness method lives in `scripts/sandbox/*.md`;
+   required surface was not exercised. The round also captures golden-query search responses
+   (`evidence/golden/<queryId>.json`), checked at finalize by `check_golden_parity.py` against
+   the per-candidate baseline generated from the dev stack on the same build — parity-with-dev,
+   not absolute quality, since the Sandbox has no `jseval`. The durable harness method lives in `scripts/sandbox/*.md`;
    each candidate's round-by-round results live in that release's own convergence tempdoc (linked
    from the Release index below).
 3. **Fix and rebuild at the *same* candidate number.** Major findings are reported back, fixed

@@ -185,6 +185,20 @@ Two staged tools make rounds repeatable and make coverage fail closed:
   ```
   An untouched `sandbox`-tier surface is a **blocking finding** (non-zero exit).
 
+### Search parity (golden queries)
+
+The Sandbox cannot measure absolute search quality (no jseval here). Instead the round checks
+**parity with dev**: the operator generated a per-candidate "golden" expected-results baseline
+(`golden-parity.json`) by running the fixed query set (`golden-queries.json`) against the dev
+stack on the SAME build + SAME corpus (scifact) this round uses. Your job in-round is only the
+capture step, already wired into `collect-evidence.ps1` — if `golden-queries.json` is staged next
+to it, the script POSTs each query to `/api/knowledge/search` (hybrid, limit 10) against your
+running candidate and saves the raw responses to `evidence/golden/<queryId>.json`. No judgment is
+required from you here; the tolerance comparison against the baseline runs host-side at finalize
+via `check_golden_parity.py`. If `staging-gaps.md` lists a missing golden-parity baseline for this
+candidate, record that as a round-level coverage gap (per the protocol above) rather than
+attempting to judge search quality yourself.
+
 ## Required validation phases
 
 1. **Installer launch and security prompts** — run the installer from the mapped

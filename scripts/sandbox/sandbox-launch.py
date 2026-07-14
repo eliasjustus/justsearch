@@ -146,6 +146,46 @@ def stage_scifact(share_dir: Path) -> str | None:
     return None
 
 
+def stage_golden_parity(share_dir: Path) -> str | None:
+    """Stage the golden-parity search-quality harness (parity-with-dev, owner
+    design): the fixed golden-queries.json query set always ships (it's
+    checked in), plus the per-candidate golden-parity.json baseline when the
+    operator has generated one for THIS candidate build.
+
+    golden-parity.json is not committed — it's generated per candidate via
+    `gen_golden_parity.py` against a running dev stack on the same build +
+    corpus, and is looked for at its default output location next to this
+    script (scripts/sandbox/golden-parity.json) for simplicity. An operator
+    who wrote it elsewhere can drop/copy it there before staging.
+
+    Returns a staging-gap message if the baseline is absent (in which case
+    the round still stages the query set — the sandbox agent can capture
+    responses via collect-evidence.ps1 — but has no baseline to check parity
+    against at finalize), or None if the baseline staged successfully.
+    """
+    queries_src = SCRIPT_DIR / "golden-queries.json"
+    if queries_src.exists():
+        shutil.copy2(queries_src, share_dir / "golden-queries.json")
+        print("Staged golden-queries.json")
+    else:
+        print(f"golden-queries.json not found at {queries_src} — golden-query capture will not run this round")
+
+    baseline_src = SCRIPT_DIR / "golden-parity.json"
+    if baseline_src.exists():
+        shutil.copy2(baseline_src, share_dir / "golden-parity.json")
+        print("Staged golden-parity.json (per-candidate baseline)")
+        return None
+
+    print(f"golden-parity.json not found at {baseline_src} — no per-candidate search-parity baseline for this round")
+    return (
+        "golden-parity baseline not generated for this candidate — run "
+        "`python scripts/sandbox/gen_golden_parity.py --api-port <port> --corpus scifact` "
+        "against the dev stack on this build with scifact ingested, then re-run sandbox-launch.py. "
+        "Without it, the round can still capture golden-query responses via collect-evidence.ps1 but "
+        "check_golden_parity.py has nothing to compare them against at finalize."
+    )
+
+
 def check_node_installer_staged(tools_cache: Path) -> str | None:
     """Check whether a Node.js Windows installer is present in the host tools
     cache. `collect-evidence.ps1`'s in-sandbox MCP Inspector check needs `npx`
@@ -453,6 +493,11 @@ def main():
     scifact_gap = stage_scifact(share_dir)
     if scifact_gap:
         gaps.append(scifact_gap)
+
+    # Stage the golden-parity search-quality harness (query set + per-candidate baseline)
+    golden_parity_gap = stage_golden_parity(share_dir)
+    if golden_parity_gap:
+        gaps.append(golden_parity_gap)
 
     # Copy sandbox-specific CLAUDE.md
     sandbox_claude_md = SCRIPT_DIR / "sandbox-CLAUDE.md"

@@ -384,6 +384,77 @@ else {
 }
 
 # ---------------------------------------------------------------------------
+# Step 3.6: Golden-query search-parity capture (capture-only, no judgment)
+# ---------------------------------------------------------------------------
+# Parity-with-dev search-quality harness (owner design): if a golden query set
+# is staged next to this script, POST each query to /api/knowledge/search
+# (hybrid, limit 10) and save the raw response under evidence/golden/<queryId>.json.
+# This is capture-only -- the tolerance judgment (does the installed candidate's
+# retrieval still match the dev-generated golden baseline for this build/corpus?)
+# happens host-side at finalize via check_golden_parity.py. A missing queries
+# file is a recorded gap, not a fatal error, matching the rest of this harness's
+# capture-only philosophy.
+
+$goldenQueriesPath = Join-Path -Path $PSScriptRoot -ChildPath "golden-queries.json"
+$goldenDir = Join-Path -Path $EvidenceDir -ChildPath "golden"
+$goldenCapturedCount = 0
+$goldenFailedCount = 0
+$goldenSkipped = $false
+
+if (-not (Test-Path -LiteralPath $goldenQueriesPath)) {
+    $goldenSkipped = $true
+    $note = "Golden-query capture SKIPPED: golden-queries.json not found at $goldenQueriesPath -- " +
+            "no per-candidate search-parity baseline was staged for this round. Recorded as a gap, not a fatal error."
+    Write-Log $note
+    $note | Out-File -LiteralPath (Join-Path -Path $EvidenceDir -ChildPath "golden-capture-note.txt") -Encoding utf8
+}
+else {
+    if (-not (Test-Path -LiteralPath $goldenDir)) {
+        New-Item -ItemType Directory -Path $goldenDir -Force | Out-Null
+    }
+
+    try {
+        $goldenRaw = Get-Content -LiteralPath $goldenQueriesPath -Raw -ErrorAction Stop
+        $goldenDoc = $goldenRaw | ConvertFrom-Json -ErrorAction Stop
+        $goldenQueries = @($goldenDoc.queries)
+        Write-Log "Loaded $($goldenQueries.Count) golden quer$(if ($goldenQueries.Count -eq 1) {'y'} else {'ies'}) from $goldenQueriesPath"
+
+        foreach ($gq in $goldenQueries) {
+            $qid = $gq.id
+            $qtext = $gq.query
+            $outFile = Join-Path -Path $goldenDir -ChildPath "$qid.json"
+            $searchUrl = "$base/api/knowledge/search"
+            $requestBody = @{ query = $qtext; limit = 10; mode = "hybrid" } | ConvertTo-Json
+
+            try {
+                $response = Invoke-WebRequest -Uri $searchUrl -Method Post -Body $requestBody `
+                    -ContentType "application/json" -UseBasicParsing -ErrorAction Stop
+                $response.Content | Out-File -LiteralPath $outFile -Encoding utf8
+                $goldenCapturedCount++
+                Write-Log "  golden $qid -> captured to golden/$qid.json"
+            }
+            catch {
+                $goldenFailedCount++
+                $exceptionMessage = $_.Exception.Message
+                $errorRecord = New-Object PSObject -Property @{
+                    queryId   = $qid
+                    query     = $qtext
+                    url       = $searchUrl
+                    exception = $exceptionMessage
+                }
+                ($errorRecord | ConvertTo-Json -Depth 5) | Out-File -LiteralPath $outFile -Encoding utf8
+                Write-Log "  golden $qid -> ERROR ($exceptionMessage) recorded to golden/$qid.json"
+            }
+        }
+    }
+    catch {
+        $note = "Golden-query capture FAILED to parse $goldenQueriesPath : $($_.Exception.Message)"
+        Write-Log $note
+        $note | Out-File -LiteralPath (Join-Path -Path $EvidenceDir -ChildPath "golden-capture-note.txt") -Encoding utf8
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Step 4: Summary
 # ---------------------------------------------------------------------------
 
@@ -419,11 +490,18 @@ if ($tracesCopied) {
 else {
     $summaryLines += "Request traces: NOT COPIED (traces.ndjson absent -- tracing may not have been enabled)"
 }
+$summaryLines += ""
+if ($goldenSkipped) {
+    $summaryLines += "Golden-query search-parity capture: SKIPPED (golden-queries.json not staged -- recorded gap)"
+}
+else {
+    $summaryLines += "Golden-query search-parity capture: $goldenCapturedCount captured, $goldenFailedCount failed -> golden/ (host-side check_golden_parity.py input)"
+}
 
 ($summaryLines -join "`r`n") | Out-File -LiteralPath $summaryPath -Encoding utf8
 
 $okCount = ($ladderResults | Where-Object { $_.Ok }).Count
 $totalCount = $ladderResults.Count
-Write-Host "[collect-evidence] Done. Port=$port Ladder=$okCount/$totalCount 2xx MCP-ran=$mcpRan EvidenceDir=$EvidenceDir"
+Write-Host "[collect-evidence] Done. Port=$port Ladder=$okCount/$totalCount 2xx MCP-ran=$mcpRan Golden=$goldenCapturedCount/$($goldenCapturedCount + $goldenFailedCount) EvidenceDir=$EvidenceDir"
 
 exit 0
