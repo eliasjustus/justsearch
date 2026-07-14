@@ -125,6 +125,18 @@ lookups varies substantially with the calling agent's model tier; the response f
 (match lines, headers, coverage notes) makes each step's result legible but does not remove the
 need for the follow-up step itself.
 
+### Delivery tiers (tempdoc 735)
+
+Every `justsearch_search`/`justsearch_answer` response is authored in two tiers — the
+human-readable `content` text and the machine-readable `structuredContent` — and the product's
+contract is that they carry **equivalent information**. Which tier a connected client actually
+forwards to its model is a **client-specific behavior that is not documented upstream**:
+observed 2026-07-14 with Claude Code CLI 2.1.209, the client forwards the serialized
+`structuredContent` JSON when present and the text tier otherwise (this client behavior has
+changed without notice before — see anthropics/claude-code issue #9962). Agents connected
+through different clients may therefore receive different representations of the same response;
+nothing here should be read as a guarantee of which tier any client delivers.
+
 ## Structured retrieval evidence (tempdoc 658)
 
 `justsearch_search` and `justsearch_answer` return a machine-readable `structuredContent` object
