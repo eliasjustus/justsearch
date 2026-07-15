@@ -1,6 +1,6 @@
 ---
 title: "Config-surface classification pass — 70 inert ResolvedConfig components"
-status: "active — classification COMPLETE (70/70 with file:line evidence). Deletion: 2 of 8 clusters landed (Translator tree 8, Paging tree 4 + Corrections.indexFallbackEnabled, + 5 ConfigKey orphans + 2 cascade-orphaned builder helpers); full ./gradlew.bat test GREEN. Remaining clusters (Watcher, ai-backend fossil, Summary, Ai, language levers, remaining SPECULATIVE, UNWIRED-bypassed ≈ 31 components) not yet deleted. Owner scope: classification pass only, no gate; GJF out of scope."
+status: "PAUSED 2026-07-15 at a clean boundary (commit cc6b80a4) — classification COMPLETE (70/70). Deletion: 4 of 8 batches landed, 20/31 components; full ./gradlew.bat test GREEN at every batch. RESUME AT BATCH 5 — see §Resume point below. Owner scope: classification pass only, no gate; GJF settled separately in tempdoc 729."
 created: 2026-07-15
 author: agent session 1b3050fb (Opus 4.8) — orchestration/judgment; classification delegated to sonnet
 category: config / dead-code / docs-truth
@@ -306,6 +306,50 @@ that is now proven absent. Accessor usage is compiler-covered; the payload is co
 `/api/debug/effective-config` is a debug-cohort API with no component consuming it. A cold stack
 start for near-zero marginal information was not a good trade. **Reverse this if a cluster ever
 touches a key with a keyed lookup or a live FE consumer.**
+
+## Resume point (paused 2026-07-15, commit `cc6b80a4`)
+
+Branch `worktree-728-config-surface-triage`, unpushed, no PR. Tree clean; every landed batch is
+green on the FULL suite. A batch-5 delegation was stopped mid-flight and its partial, unverified
+edits were reverted — nothing half-cut is inherited. Nothing here is blocked; it is simply unstarted.
+
+**Landed (4 batches, 20/31):**
+
+| Batch | Components | Commit |
+|---|---|---|
+| — | Translator tree (9), Paging tree (5), `Corrections.indexFallbackEnabled`, 5 `ConfigKey` orphans, 2 cascade-orphaned builder helpers | `0fb64cc4`, `e011a3ca`, `204e8973`, `037ce5fd` |
+| 1 | Llm ai-backend fossil ×7 | `706e2a35` |
+| 2 | Summary ×5 | `751370b0` |
+| 3 | Ai ×3 (`llmMode`, `llmBackend`, `aiClassifyEnabled`) | `b442de8c` |
+| 4 | Watcher ×4 + `CollectionCfg.watcherStrategy` | `cc6b80a4` |
+
+**Remaining (4 batches, 11 components):**
+
+| Batch | Components | Rule |
+|---|---|---|
+| 5 | `Index.defaultLanguage`, `Policy.languagePolicy` | full teardown (completes ADR-0043) |
+| 6 | `Index.commitPolicy`, `Rag.includeSurroundingContext`, `Ocr.triggerMinImagePixels` | full teardown |
+| 7 | `Ui.requireTranslator` (full), `Ui.settingsMode` (component only) | **rule inverts inside the record — do NOT delegate** |
+| 8 | `Telemetry`×3 (full), `Index.tracingLevel` (component only) | **rule inverts — do NOT delegate** |
+
+**The teardown rule that inverts** (deleting these entries breaks live code):
+`Index.tracingLevel` → KEEP its `EnvRegistry` entry (3 live readers: `KnowledgeServer.java:352`,
+`NativeSessionHandle.java:67`, `EncoderOrtRunSpans.java:34`) AND its `environment-variables.md:49`
+row. `Ui.settingsMode` → KEEP its entry (1 live reader: `UiSettingsStore.java:124`).
+`Telemetry`×3 → entries have zero readers, delete them.
+
+**Near-miss survivors** — match every grep, must NOT be deleted: `Index.commitDebounceMs` /
+`ConfigKey.INDEX_COMMIT_DEBOUNCE_MS`; `Ocr.maxImagePixels` / `INDEX_OCR_MAX_IMAGE_PIXELS` (the
+live *ceiling*, vs the dead `trigger.min_image_pixels`); `Watcher.overflowRescanOnOverflow`; all
+28 UNWIRED-shadowed components.
+
+**Method that works** (do not re-derive): the checklist is the inverse of `## Add a configuration
+key` (`common-workflows.md:31-36`) **plus** the three it omits — `ConfigKey.java` (the "EnvRegistry
+**or** ConfigKey" step; the miss in `204e8973`), `runtime-config-ownership-matrix.md`, and
+`app-config.schema.json`. Verify per batch: `build -x test` → precise orphan grep (use word
+boundaries — a loose grep substring-matches live keys like `LLM_BACKEND_SELECTOR`) → **full**
+`./gradlew.bat test` (per-module is not the suite). Anything orphaned *by* a deletion gets deleted,
+never allowlisted (`037ce5fd`).
 
 ## Reach — and what NOT to generalize
 
