@@ -1,7 +1,7 @@
 ---
 title: "Pillar-1 in-band utility corpus: real-text distractor mass (legal+email, EN+DE) + fabricated injected gold — the measuring stick for the powered 624 Step-2 run, satisfying all seven 704 requirements at once"
 type: tempdocs
-status: "incomplete — CLERC and MIRACL-DE 1k/10k members exist at verbose and short-natural strata with structural certification, but closed-book, retrieval calibration, union-recall, and leak gates remain. EnronQA is non-claim-eligible until its source license is resolved. No paid run or completion claim is authorized. 2026-07-14 takeover: founder GPU-budget + claim-shape decisions recorded and gate-run execution plan set (§Takeover 2); pre-run unblockers in progress."
+status: "incomplete — retrieval-calibration floor candidates MEASURED for all 6 planned cells (2026-07-15, §Gate measurement floor candidates): EN-legal in-band at both sizes/strata (policy-ready); DE member FAILS in-band and needs a paraphrase-distance recalibration before its cells can be ratified. Union/leak measured on the two verbose 1k cells (leak 0.0; union 0.75 CLERC / 0.35 DE). Still gated: closed-book certification (small paid call, founder), policy ratification, remaining union/leak cells, EnronQA license, any paid run. No completion claim authorized."
 created: 2026-07-10
 author: agent (Fable orchestration) — filed at founder request after the pillar-5 attribution campaign; substrate choice founder-ratified same day
 category: eval-infrastructure / corpus-design / agent-utility / search-quality
@@ -505,3 +505,42 @@ claims re-verified first-hand at `backend.py:23,61` and `commands/corpus.py:347`
    (a Linux materialization would produce different signatures). Acceptable while the campaign runs
    on this box; flagged as an owner decision — LF-canonical dataset writers force a one-time
    signature re-baseline of all 8 cells (cheap: regenerate + re-certify, ~10 min, no GPU).
+
+### Gate measurement floor candidates (2026-07-15, post-#201 cohort) — PROPOSED, founder ratification pending
+
+Full gate chain executed under the founder-directed 30-min wakeup supervision loop (16:55–18:15 wall,
+~1 h 20 m GPU — far under the two-window budget; the 691 throughput work held: CLERC-10k full
+enrichment ≈ 50 min). All 8 steps rc=0. Cohort: HEAD ≡ origin/main post-#200/#201; fidelity headline
+mode `hybrid` with `--embedding`; bands shown are the DEFAULT (0.3–0.85) — the ratified policy sets
+the real thresholds.
+
+| cell | hybrid nDCG@10 | vector | lexical | verdict (default band) | union recall | leak |
+|---|---|---|---|---|---|---|
+| en-legal-clerc-1k-verbose | **0.5051** | 0.5952 | 0.0193 | PASS (moderate) | **0.75** | 0.0 |
+| en-legal-clerc-1k-short-natural | **0.4685** | — | — | PASS (hard) | — | — |
+| en-legal-clerc-10k-verbose | **0.3238** | 0.4165 | 0.0000 | PASS (hard) | — | — |
+| de-miracl-1k-verbose | 0.1849 | 0.1890 | 0.0000 | **FAIL** (below band) | 0.35 | 0.0 |
+| de-miracl-1k-short-natural | 0.2271 | — | — | **FAIL** | — | — |
+| de-miracl-10k-verbose | 0.0324 | — | — | **FAIL** (collapsed) | — | — |
+
+Run artifacts: `scripts/jseval/tmp/eval-results/20260715T160900_mixed_de-miracl-1k-verbose/` and
+`…T161458_mixed_en-legal-clerc-1k-verbose/` (staged_recall_accounting projections); fidelity blocks
+in each `datasets/mixed/<cell>/metadata.json`; full log in the session scratchpad (`chain-707.log`).
+
+**Reading (critical-analysis pass):**
+1. **The EN-legal member is policy-ready as designed.** In-band at both sizes and both strata, leak
+   0.0, union recall 0.75, and the U0 mechanism is visible in the raw legs: lexical ≈0.02 vs hybrid
+   0.51 at 1k — grep-hostile, retrieval-viable, on the paying-ICP document shape. The size trend
+   (0.51 → 0.32, still in-band) is requirements (c)+(f) working: difficulty grows with scale without
+   going dark.
+2. **The DE member fails retrieval-in-band (requirement b) and collapses at 10k.** Honest-constraint
+   #2 firing as predicted, not a corpus-family failure: the paraphrase-distance knob was calibrated
+   on synthetic filler and is too aggressive for the multilingual encoder on German wiki hosts.
+   Remedy is the designed one — regenerate DE gold at shorter paraphrase distance (local LLM, ~$0),
+   rematerialize (minutes; the commitment/digest chain re-runs automatically), re-measure (1k ≈ 3
+   min, 10k ≈ 20 min at measured rates). **DE cells must not enter the ratified policy until this
+   iteration lands.**
+3. Union-recall/leak were measured on the two verbose 1k cells only (chain scope); the remaining
+   cells' runs are cheap (≤30 min total) and should ride the DE re-measure window.
+4. Cohort hygiene: de-miracl-1k-verbose fidelity also ran once pre-restart on the identical cohort
+   (rc=0); superseded by this table — no pre-restart number is load-bearing.
