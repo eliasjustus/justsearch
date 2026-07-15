@@ -1,6 +1,6 @@
 ---
 title: "Config-surface classification pass — 70 inert ResolvedConfig components"
-status: "active — classification COMPLETE (70/70 with file:line evidence); deletion of the safe subset in progress. Owner scope: classification pass only, no gate; GJF out of scope."
+status: "active — classification COMPLETE (70/70 with file:line evidence). Deletion: 2 of 8 clusters landed (Translator tree 8, Paging tree 4 + Corrections.indexFallbackEnabled, + 5 ConfigKey orphans + 2 cascade-orphaned builder helpers); full ./gradlew.bat test GREEN. Remaining clusters (Watcher, ai-backend fossil, Summary, Ai, language levers, remaining SPECULATIVE, UNWIRED-bypassed ≈ 31 components) not yet deleted. Owner scope: classification pass only, no gate; GJF out of scope."
 created: 2026-07-15
 author: agent session 1b3050fb (Opus 4.8) — orchestration/judgment; classification delegated to sonnet
 category: config / dead-code / docs-truth
@@ -192,6 +192,31 @@ Highest-value instances:
 - `Llm.simulatedLatencyMs` — no shadowing constant, and no evidence a latency-simulation
   subsystem ever existed. Reads as SPECULATIVE but the squashed public history
   (single root commit `29579e51`) blocks a `git log -S` trail. **Left in place**, not deleted.
+
+## What deletion actually proved (execution findings)
+
+Three verification layers each caught a **different** defect class. None is redundant —
+this is the reusable lesson for the remaining clusters:
+
+| Layer | Caught | Blind to |
+|---|---|---|
+| `build -x test` (compiler) | record/field deletions with a real reader — production compiled clean every time, only *test fixtures* constructing the records broke | dangling enum entries; unreferenced private methods (both compile fine) |
+| orphan `grep` | 5 dangling `ConfigKey` entries the recipe's step 1 hides ("EnvRegistry **or** ConfigKey" — only EnvRegistry had been cleaned) | semantic reachability |
+| full `./gradlew.bat test` (ArchUnit `UnreferencedCodeTest`) | 2 builder helpers orphaned *by* the deletion — `putYamlFromNodeLower` and `putYamlLongClampedFromNode` each had exactly one caller, both dead keys | — |
+
+**The cascade is the thesis one level down**: dead config was keeping dead *code* alive.
+Draining the pond exposes more. Those helpers were deleted, not allowlisted into
+`KNOWN_UNREFERENCED` — allowlisting makes the failure invisible instead of impossible.
+
+**`subset-isnt-the-suite`, demonstrated:** `:modules:configuration:test` and
+`:modules:worker-services:test` were both green while the full suite was red — the
+cascade surfaces only at whole-program scope, in a *different* module (`app-launcher`).
+Run the full suite per cluster, not per module.
+
+**Expect the same shape in the remaining clusters.** The `ai-backend` fossil cluster in
+particular is likely to orphan more than it removes, since `LocalIntentTranslatorConfig`
+exists largely to serve those keys. `EnvRegistryTest` samples `LLM_ALLOW_REMOTE` and
+`LLM_TEMPLATE_ROOT`, so it will break again when that cluster lands.
 
 ## Reach — and what NOT to generalize
 
