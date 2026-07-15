@@ -45,6 +45,11 @@ export const unifiedChatBodyStyles = css`
       flex: 1 1 auto;
       min-width: 0;
     }
+    /* Tempdoc 697 — the one-line pill needs less vertical padding than the expanded multi-cause
+       banner; this outer rule overrides jf-system-notice's :host padding on the collapsed host. */
+    .degradation-banner-collapsed {
+      padding-block: 0.35rem;
+    }
     .degradation-banner-collapsed .degradation-summary {
       overflow: hidden;
       text-overflow: ellipsis;
@@ -58,6 +63,17 @@ export const unifiedChatBodyStyles = css`
       display: inline-flex;
       flex: 0 0 auto;
       margin-top: 0.35rem;
+      /* Tempdoc 697 — a slim notice renders the remedy as a COMPACT action, not a full-size button.
+         The op-button's ActionButton reads --justsearch-shell-action-button-padding (default 0.5rem
+         1rem) + a --justsearch-shell-form-control-spacing host margin; overriding them here (custom
+         props cross the shadow boundary) shrinks it. The navigate jf-button skins via ::part(control).
+         Without this the ~54px button inflated the one-line collapsed pill to ~76px. */
+      --justsearch-shell-action-button-padding: 0.1rem 0.5rem;
+      --justsearch-shell-form-control-spacing: 0;
+    }
+    .degradation-banner .notice-remedy jf-button::part(control) {
+      padding: 0.15rem 0.55rem;
+      min-height: 0;
     }
     .degradation-banner-collapsed .notice-remedy {
       margin-top: 0;
@@ -364,6 +380,12 @@ export const unifiedChatBodyStyles = css`
       border-radius: 0.5rem;
       font-size: var(--font-size-sm);
       line-height: 1.5;
+      /* Tempdoc 697 — pre-wrap lives on the raw-text leaf (.message-body), NOT this container, so the
+         Lit template's whitespace between the wrapper and the leaf no longer renders as phantom blank
+         lines (the user bubble measured ~75px for one 17px line). User newlines are still preserved. */
+      white-space: normal;
+    }
+    .message-body {
       white-space: pre-wrap;
     }
     .message.user {
@@ -405,11 +427,10 @@ export const unifiedChatBodyStyles = css`
       background: var(--surface-2);
       border: 1px solid var(--border-subtle);
       max-width: 95%;
-      /* Tempdoc 565 §12.3.B — assistant messages hold components (markdown block, tool-call card)
-         that manage their own whitespace. The parent .message pre-wrap (for raw user text) INHERITS
-         across the shadow boundary into the tool-call card, rendering every template newline as
-         visible vertical whitespace (the ~200px of empty space that bloated the tool cards). Reset
-         it so the rows are dense; user messages keep pre-wrap. */
+      /* Tempdoc 565 §12.3.B / 697 — assistant messages hold components (markdown block, tool-call
+         card) that manage their own whitespace. pre-wrap now lives on the .message-body leaf (697),
+         not this .message container, so the template whitespace no longer inherits across the shadow
+         boundary into the tool-call card as phantom vertical space. This reset is now belt-and-braces. */
       white-space: normal;
     }
     /* Tempdoc 565 §3.C — a reading measure: prose answers don't run edge-to-edge across the full

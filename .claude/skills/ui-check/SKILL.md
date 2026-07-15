@@ -53,15 +53,16 @@ Default-on (`--no-measure` to skip). Captured from the same page the screenshot 
 
 (`--no-demo` is legacy — the `?demo=true` mock-data branch is inert; data always comes from the live backend.)
 
-## The six instruments — which verb when (tempdoc 615 §11)
+## The seven instruments — which verb when (tempdoc 615 §11; proportion added by 697)
 
-`ui-shot` is the one you reach for most, but it is one of **six** verbs. Each answers a different question;
+`ui-shot` is the one you reach for most, but it is one of **seven** verbs. Each answers a different question;
 the rot they were built to avoid is being forgotten (§26 discoverability). Pick by the question you have:
 
 | Question you have | Verb | Needs | Output / exit |
 |---|---|---|---|
 | "Show me / let me verify ONE surface" | `jseval ui-shot <step>` (+`.measure.json`) | served FE (auto-serve); dev stack for data/AI steps | PNG + measure.json + 1-line fact summary |
 | "Did I break a11y closure anywhere?" | `jseval ui-a11y-gate` | auto-serve (`--fixtures`) | exit 0 clean · 1 a NEW axe violation vs `governance/ui-a11y-baseline.v1.json` · 2 capture error |
+| "Did persistent chrome GROW taller than it was?" | `jseval ui-proportion-gate` | auto-serve (`--fixtures`) | exit 0 clean · 1 a registered element grew beyond `governance/ui-proportion-baseline.v1.json` · 2 capture error / selector not found |
 | "Did this change MOVE/REMOVE anything I didn't intend?" | `jseval ui-diff <before.measure.json> <after.measure.json>` | two captures (shoot before, edit, shoot after) | semantic changelog (landmark removed · element moved/resized >4px · new axe rule · overflow flip · real console); exit 0 same · 1 changed |
 | "Critique this surface against THIS product's design system" | `jseval ui-critic <step>` | auto-serve (`--fixtures`) | prints a GROUNDED critique **prompt** (facts + `design-reference.v1.json` + rubric) — feed it to a model / `agent_chat` |
 | "Hunt edge-state bugs a human won't patiently click" | `jseval ui-fuzz` | auto-serve (`--fixtures`); ~80s | fuzzes search × {data-variant × viewport × theme}, flags anomalous cells; exit 0 clean · 1 flagged |

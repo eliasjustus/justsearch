@@ -63,13 +63,19 @@ function isFrontendFile(filePath) {
 // that is exactly when surfacing the gate/critic is pure gain, since there's no ui-shot hint for them.
 function styleHints(filePath) {
   const norm = normalize(filePath);
-  const styleish = /\.styles\.ts$/.test(norm) ||
+  // `/styles\.ts$/i` — NOT `/\.styles\.ts$/`. This repo's convention is camelCase
+  // `<name>Styles.ts` (unifiedChatStyles.ts, ambientStyles.ts); there are ZERO `*.styles.ts` files,
+  // so the dot-form matched nothing and BOTH style files fell through all three tests — this hint
+  // had never once fired for them (tempdoc 697 activation, 2026-07-15). That is the exact rot the
+  // comment above warns about, reproduced in the hook meant to prevent it.
+  const styleish = /styles\.ts$/i.test(norm) ||
     /\/(themes|styles)\//.test(norm) ||
     /(token|theme|presentation|contrast|color)/i.test(norm.split('/').pop() || '');
   if (!styleish) return [];
   return [
     'Style/token/theme edit — check a11y closure + the design system:',
     '  jseval ui-a11y-gate          # fail on a NEW axe violation vs baseline',
+    '  jseval ui-proportion-gate     # fail if registered chrome GREW taller (shrink-only ratchet)',
     '  jseval ui-critic <step>       # grounded design-reference critique prompt',
   ];
 }
