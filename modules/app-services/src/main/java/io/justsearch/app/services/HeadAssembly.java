@@ -856,7 +856,7 @@ public final class HeadAssembly implements AutoCloseable {
   /** §5/F1 snapshot accessor — projects the live inference manager into a status record. */
   public InferenceRuntimeView inferenceSnapshot() {
     return io.justsearch.app.services.bootstrap.phases.BootstrapProjections
-        .projectInferenceSnapshot(this.inferenceManager);
+        .projectInferenceSnapshot(this.inferenceManager, this.runtimeReconciler);
   }
 
   /**

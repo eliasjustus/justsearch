@@ -1259,3 +1259,65 @@ FE, sonnet for mechanical chunks and ceremony.
     on mode==ONLINE without consulting spec — so VDU-engine-up under soft-off would
     project chat as available to users. §12c projection concern; logged to
     observations.
+- **Phase 2a landed (wire additions + InferenceCapability spec-aware rekey + ndjson v2 + register
+  update)** — static-verified: `build -x test` green repo-wide; `app-api`/`app-services`/
+  `app-inference`/`ui` full suites green (11 new tests: 8 `InferenceCapabilityWiringTest` +
+  4 `BootstrapProjectionsTest` + 1 `NdjsonInferenceTransitionLogTest` addition); FE `typecheck`
+  + `test:unit:run` green (3756 tests); all named gates green (`runtime-state`,
+  `register-guard-resolution`, `contract-projection`) except `wire` (see deviation below).
+  - **Wire (`/api/status` inference block)**: `InferenceRuntimeView` (`app-api`) gains 5 additive
+    fields — `chatEnabledSpec`/`engineState`/`engineReason`/`procedure`/`leaseHolder` — mirrored
+    into `contracts/wire/status.proto` (fields 6-10) and the SSOT `status-response.schema.json` +
+    generated FE type + `status-response-live.json` fixture (two-pass `updateSchemas` capture-
+    verify cycle). `phase`'s accessor is explicitly overridden and `@Deprecated`-annotated
+    (record-component annotation syntax hit a javac "record components cannot have modifiers"
+    error — worked around via an explicit `@Override @Deprecated phase()` accessor, same wire
+    value, no behavior change); its derivation is byte-identical. No `starting` field exists on
+    this record (that field lives on the separate `/api/inference/status` `InferenceStatusResponse`
+    — the brief's "phase/starting" pairing was imprecise for THIS record; only `phase` was aliased
+    here). Producer: `BootstrapProjections.projectInferenceSnapshot` gained a nullable
+    `RuntimeReconciler` parameter (threaded from `HeadAssembly.inferenceSnapshot()`); a new
+    `RuntimeReconciler.currentSpec()` passthrough avoided a second `RuntimeSpecStore` parameter.
+    All positional-constructor call sites updated (`StatusRecordSchemaTest` ×4,
+    `StatusLifecycleHandler`, `AdminInferenceReloadEndpointTest` ×2).
+  - **InferenceCapability spec-aware rekey**: `InferenceCapabilityWiring.attachInferenceModeListener`
+    now takes `RuntimeSpecStore` + `RuntimeReconciler`; `ONLINE` requires `chatEnabled` too
+    (`DEGRADED`/`REASON_ENGINE_UP_FOR_BACKGROUND` otherwise) — the Phase-3 finding above is FIXED.
+    Re-derivation mechanism: the existing `ModeChangeListener` trigger, PLUS a new
+    `RuntimeReconciler.addSpecChangeListener` hook fired synchronously (before convergence) inside
+    `specChanged()` — catches a spec flip with no accompanying mode change (e.g. `chatEnabled`
+    toggling off while a VDU procedure holds the engine `ONLINE`). Both triggers share one
+    `deriveAndApply` derivation function. Bonus fix (following R3's mirror-initial-then-forward
+    discipline, not previously done here): `attachInferenceModeListener` now synchronously mirrors
+    initial state before registering listeners — previously `InferenceCapability` stayed `PENDING`
+    forever under default chat-off boot (no transition ever fires when already-at-spec), a latent
+    `standalone-capability-stays-stuck` instance.
+  - **ndjson v2**: `NdjsonInferenceTransitionLog` records now carry `"schemaVersion":2`; `reason`
+    already carried the full `TransitionReason` wireValue since Phase 2b task 5, so v2 adds exactly
+    the one field. No production reader/replay class exists yet — the "replay path" is the
+    forensic test harness in `NdjsonInferenceTransitionLogTest`, extended with a mixed-v1/v2-file
+    test proving the (hand-rolled, tolerant-of-missing-keys) field extraction and FSM replay both
+    work unaffected by the new field's presence or absence.
+  - **Register**: `governance/runtime-state.v1.json` — `inference-runtime-view-wire`,
+    `bootstrap-projections-wire`, `inference-capability-projection`, `inference-capability-wiring`
+    moved `projection-pending` → `projection`, each guarded by a real test
+    (`BootstrapProjectionsTest` / `StatusWireContractConformanceTest` /
+    `InferenceCapabilityWiringTest`) per the `register-guard-resolution` meta-gate's
+    `requireGuardedKinds:["projection","producer"]` requirement for this register (a `projection`
+    row with only an `exempt:` guard fails that gate — both rows needed a `+ test:...` token added).
+    `mode-enum-legacy` stays `projection-pending` as directed. **Pre-existing gap backfilled**:
+    Phase 2b's VDU reroute referenced `runtimestate` from `OfflineCoordinator` /
+    `OfflineCoordinatorBuilder` but never registered them, failing the gate's
+    unregistered-referencer check; added as two `consumer` rows (logged to observations, not
+    otherwise investigated/fixed beyond the registration).
+  - **Deviation — `wire` gate not green**: the gate's changeset-visibility mechanism diffs
+    `<baselineRef>...HEAD` (committed refs only — `scripts/governance/lib/git-utils.mjs
+    diffAddedModifiedFiles`), so it cannot see the uncommitted `contracts/wire/.changesets/
+    737-runtime-authority-inference-fields.md` file this session was instructed not to commit.
+    Verified everything the gate WOULD check pre-commit: `buf breaking` reports zero structural
+    breaks against the proto change (confirmed via direct `buf breaking` invocation — the
+    `phantom-version` finding is solely the changeset-invisibility artifact); the changeset's
+    frontmatter (`evolution-rule: additive-optional`) parses correctly; `VERSION` 1.0.2→1.0.3 is
+    the correct patch bump for that classification. Expected to read green immediately once this
+    branch is committed.
+  - Remaining Phase 2a scope from the brief: none — all four numbered tasks landed.

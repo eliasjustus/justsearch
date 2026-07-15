@@ -37,7 +37,7 @@
     ],
     "javaInclude": "/src/main/java/",
     "expectedMinPopulation": 3,
-    "expectedMinPopulationNote": "tempdoc 576 §5 vacuous-pass guard: the auto-scan must detect >= this many runtimestate-referencing files, else a renamed scan root would let the undeclared-referencer check pass vacuously. Live count is 6 (2026-07-15: RuntimeActivationService, InferenceWiring, OrchestrationAssembly, OrchestrationPhase, ServicePhase, HeadAssembly — the runtimestate package's own 5 files do not self-reference and are declared separately as canonical/carrier surfaces). Floor 3 is a conservative ~half-headroom, matching the execution-surface register's convention. Lower this with any change that legitimately shrinks the population."
+    "expectedMinPopulationNote": "tempdoc 576 §5 vacuous-pass guard: the auto-scan must detect >= this many runtimestate-referencing files, else a renamed scan root would let the undeclared-referencer check pass vacuously. Live count is 10 (2026-07-15 Phase 2a: RuntimeActivationService, InferenceWiring, OrchestrationAssembly, OrchestrationPhase, ServicePhase, HeadAssembly, BootstrapProjections, InferenceCapabilityWiring — grew from Phase 1's 6 — plus OfflineCoordinator/OfflineCoordinatorBuilder, backfilled retroactively from Phase 2b's VDU reroute; the runtimestate package's own 5 files do not self-reference and are declared separately as canonical/carrier surfaces). Floor 3 is a conservative headroom, matching the execution-surface register's convention. Lower this with any change that legitimately shrinks the population."
   },
   "surfaces": [
     {
@@ -130,6 +130,22 @@
       "note": "Top-level Head assembly; holds a RuntimeReconciler field (fully-qualified reference, no import statement)."
     },
     {
+      "id": "offline-coordinator-consumer",
+      "kind": "consumer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/vdu/OfflineCoordinator.java",
+      "guard": "exempt:consumer brackets the whole VDU run with RuntimeReconciler#beginProcedure/#endProcedure and routes each engine-state need through #procedureRequireEngine; the §3d fix (never-switch-back) — no projection law to mutate-guard",
+      "note": "Backfilled retroactively (Phase 2a housekeeping): this reference was added in Phase 2b's VDU reroute but never registered, which the runtime-state gate's unregistered-referencer check now catches. Zero direct switchTo* calls remain (grep-verified per §15 log)."
+    },
+    {
+      "id": "offline-coordinator-builder-consumer",
+      "kind": "consumer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/OfflineCoordinatorBuilder.java",
+      "guard": "exempt:consumer threads RuntimeReconciler into OfflineCoordinator construction (fully-qualified reference, no import statement); no projection law to mutate-guard",
+      "note": "Backfilled retroactively (Phase 2a housekeeping) — same Phase 2b gap as offline-coordinator-consumer."
+    },
+    {
       "id": "mode-enum-legacy",
       "kind": "projection-pending",
       "lang": "java",
@@ -139,35 +155,35 @@
     },
     {
       "id": "inference-runtime-view-wire",
-      "kind": "projection-pending",
+      "kind": "projection",
       "lang": "java",
       "path": "modules/app-api/src/main/java/io/justsearch/app/api/status/InferenceRuntimeView.java",
-      "guard": "exempt:pre-migration — today a Mode-derived /api/status sub-view; does not yet reference runtimestate",
-      "note": "737 §12c item 3: the /api/status wire projection. Phase 2 exposes spec + status additively; old phase/starting fields become derived aliases, then retire."
+      "guard": "test:BootstrapProjectionsTest + test:StatusWireContractConformanceTest + exempt:structurally cannot reference runtimestate directly — app-api sits BELOW app-services in the module graph (app-services depends on app-api, not the reverse), so this record can only carry plain bool/String fields; the actual projection logic lives in the bootstrap-projections-wire producer",
+      "note": "737 §12c item 3, Phase 2a landed: chatEnabledSpec/engineState/engineReason/procedure/leaseHolder added additively (BootstrapProjectionsTest + StatusWireContractConformanceTest); phase is now a deprecated alias (retirement trigger: FE cutover + public deprecation window, §12d)."
     },
     {
       "id": "bootstrap-projections-wire",
-      "kind": "projection-pending",
+      "kind": "projection",
       "lang": "java",
       "path": "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/BootstrapProjections.java",
-      "guard": "exempt:pre-migration — projectInferenceSnapshot builds InferenceRuntimeView from the Mode-keyed InferenceLifecycleManager today; does not yet reference runtimestate",
-      "note": "Feeds InferenceRuntimeView at status-read time; migrates to read RuntimeStatus once the reconciler is the sole writer (Phase 2, sibling of inference-runtime-view-wire)."
+      "guard": "test:BootstrapProjectionsTest",
+      "note": "737 §12c item 3, Phase 2a landed: projectInferenceSnapshot now ALSO reads RuntimeReconciler.current()/currentSpec() (nullable, null-safe) to feed InferenceRuntimeView's new fields; the pre-existing Mode-keyed phase/identity/usingExternal/lastFailure/counters derivation is unchanged."
     },
     {
       "id": "inference-capability-projection",
-      "kind": "projection-pending",
+      "kind": "projection",
       "lang": "java",
       "path": "modules/app-services/src/main/java/io/justsearch/app/services/lifecycle/InferenceCapability.java",
-      "guard": "exempt:pre-migration — health is mapped from Mode today (ONLINE→READY, OFFLINE→OFFLINE, TRANSITIONING→RECOVERING, INDEXING→DEGRADED); does not yet reference runtimestate",
-      "note": "737 §12c item 2: InferenceCapability re-keys to the RuntimeStatus ENGINE axis at Phase 2 (the CapabilityHealth mechanism is kept, only the source vocabulary changes)."
+      "guard": "test:InferenceCapabilityWiringTest + exempt:derivation lives in the inference-capability-wiring producer; this class itself stays a generic CapabilityHealth state machine with no direct runtimestate reference by design — callers feed it (health, reason) tuples",
+      "note": "737 §12c item 2, Phase 2a landed: health is now derived from BOTH the ENGINE-equivalent Mode axis AND RuntimeSpec.chatEnabled() (via the wiring producer) — ONLINE+chatEnabled=false yields DEGRADED with RuntimeStatus.REASON_ENGINE_UP_FOR_BACKGROUND instead of unconditional READY (the reported soft-off gap, §15 Phase 2b Phase-3 finding, is fixed)."
     },
     {
       "id": "inference-capability-wiring",
-      "kind": "projection-pending",
+      "kind": "projection",
       "lang": "java",
       "path": "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/InferenceCapabilityWiring.java",
-      "guard": "exempt:pre-migration — builds the InferenceCapability bundle at bootstrap; does not yet reference runtimestate",
-      "note": "Bootstrap wiring for InferenceCapability; migrates alongside inference-capability-projection at Phase 2."
+      "guard": "test:InferenceCapabilityWiringTest",
+      "note": "737 §12c item 2, Phase 2a landed: attachInferenceModeListener now takes RuntimeSpecStore + RuntimeReconciler; re-derives InferenceCapability on BOTH the existing ModeChangeListener trigger and a new RuntimeReconciler.addSpecChangeListener trigger (the mechanism that catches a spec flip with no accompanying mode change, e.g. chatEnabled toggling off while a VDU procedure holds the engine ONLINE)."
     }
   ]
 }

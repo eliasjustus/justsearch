@@ -8,6 +8,8 @@ import io.justsearch.app.api.ModeTransitionException;
 import io.justsearch.app.api.OnlineAiLifecycleControl;
 import io.justsearch.app.inference.telemetry.TransitionReason;
 import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -93,6 +95,20 @@ public final class RuntimeReconciler implements AutoCloseable {
 
   private final AtomicReference<RuntimeStatus> status = new AtomicReference<>(RuntimeStatus.initial());
   private final AtomicLong specVersion = new AtomicLong(0);
+
+  /**
+   * Tempdoc 737 §12c Phase 2a: fired synchronously (on the calling thread, i.e. whatever thread
+   * called {@link #specChanged()} — typically the settings-write thread) after every explicit
+   * spec write, BEFORE convergence has necessarily run. This is the smallest correct mechanism for
+   * a spec-aware projection (e.g. {@code InferenceCapabilityWiring}) that needs to re-derive on a
+   * spec flip even when the observed engine mode does not change (e.g. chatEnabled flips off while
+   * a VDU procedure holds the engine online for background work — no {@code ModeChangeListener}
+   * fires because the mode never changes, but the derived capability must). Listeners re-derive
+   * using their OWN combination of "current mode" (read live, not cached) + "freshly loaded spec"
+   * (via {@link #currentSpec()}), so firing before convergence completes is correct, not stale —
+   * the spec half of the derivation is authoritative the instant it is persisted.
+   */
+  private final List<Runnable> specChangeListeners = new CopyOnWriteArrayList<>();
 
   private final Object lock = new Object();
   private volatile boolean running = false;
@@ -192,6 +208,28 @@ public final class RuntimeReconciler implements AutoCloseable {
       resetFlapLocked(); // spec input changed — release any flap hold
     }
     requestConvergence(TransitionReason.USER_SWITCH);
+    notifySpecChangeListeners();
+  }
+
+  /**
+   * Register a listener notified after every {@link #specChanged()} call (tempdoc 737 §12c Phase
+   * 2a — see the {@link #specChangeListeners} javadoc for the firing contract). Best-effort: a
+   * throwing listener is logged and does not affect other listeners or convergence.
+   */
+  public void addSpecChangeListener(Runnable listener) {
+    if (listener != null) {
+      specChangeListeners.add(listener);
+    }
+  }
+
+  private void notifySpecChangeListeners() {
+    for (Runnable listener : specChangeListeners) {
+      try {
+        listener.run();
+      } catch (RuntimeException e) {
+        log.warn("RuntimeReconciler: spec-change listener threw", e);
+      }
+    }
   }
 
   private void requestConvergence(TransitionReason reason) {
@@ -307,6 +345,16 @@ public final class RuntimeReconciler implements AutoCloseable {
   /** Latest observed status snapshot (for future projections). */
   public RuntimeStatus current() {
     return status.get();
+  }
+
+  /**
+   * Current desired state (tempdoc 737 §12c Phase 2a) — a thin passthrough read of
+   * {@link RuntimeSpecStore#load()}, exposed so projections (e.g. {@code BootstrapProjections})
+   * that already hold a reference to the reconciler don't need a second constructor parameter
+   * threading the spec store separately.
+   */
+  public RuntimeSpec currentSpec() {
+    return specStore.load();
   }
 
   /** The TransitionReason the last reconciler-initiated transition was labeled with (may be null). */
