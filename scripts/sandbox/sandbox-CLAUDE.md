@@ -224,7 +224,12 @@ Two staged tools make rounds repeatable and make coverage fail closed:
   ```
   An untouched `sandbox`-tier surface is a **blocking finding** (non-zero exit).
   The same check also fails closed if `evidence/retrospective.md` is missing or
-  too thin — see *Retrospective* below.
+  too thin — see *Retrospective* below — and if `evidence/evidence-review.v1.json`
+  is missing, omits a credit-eligible screenshot, or reports a mismatch — see
+  *Evidence review* below. Filename-token matching proves a screenshot's NAME
+  claims a surface; it cannot prove the PIXELS show it, so a reader pass over
+  every credited screenshot is a required, separately fail-closed gate, not an
+  optional judgment call.
 
 ### Search parity (golden queries)
 
@@ -451,6 +456,53 @@ Files written to the mapped folder
 the sandbox closes. Anywhere else (`C:\`, the user profile) is wiped on shutdown.
 Report findings by journey with screenshot filenames and raw API/log evidence, and
 state the coverage result against `coverage-brief.md`.
+
+### Evidence review (required — a reader, not just a filename, must confirm coverage)
+
+This was measured, not assumed: known-bad artefacts planted into a copy of a
+real round's evidence showed `check_coverage.py`'s own filename-token match
+(`check_surface`/`check_shape`) credits a **mislabeled capture** (right bytes,
+wrong claim — e.g. a command-palette screenshot named/credited as the logs
+surface) **0 times out of 4**, while three independent blind readers caught it
+4/4, 4/4, 4/4. Four such plants alone flip a correct FAIL into a clean exit-0 —
+every gap gets "credited" by a screenshot of something else. No content hash
+catches this; only a reader who looks at the pixels can.
+
+**The rule: a capture must EVIDENCE the claimed surface/shape.** A filename is
+a claim; the pixels are the evidence. An honestly-named blank capture (a file
+genuinely named `-blank` that genuinely is blank) still does **not** evidence
+the surface it's filed under — an honest name for a non-evidencing capture is
+still not coverage.
+
+Before finalize, open every credit-eligible screenshot (every image file at or
+above the size floor `check_coverage.py` enforces — see `MIN_SCREENSHOT_BYTES`)
+and write `evidence/evidence-review.v1.json`
+(schema: `scripts/sandbox/evidence-review.schema.json`):
+
+- **`examined`** — every screenshot you actually opened, by filename. This is
+  the coverage assertion's enumerable list: the finalize check fails closed if
+  ANY credit-eligible screenshot in the evidence dir is missing from it. Do not
+  pad this list with files you did not look at, and if you run out of budget
+  partway through, leave the un-opened files OUT of it and report a partial
+  review — a truncated list that silently reads as "reviewed, no issues" on
+  the files it never opened is exactly the failure this file exists to close.
+- **`mismatches`** — any screenshot whose filename claims something the pixels
+  do not support: `{file, claims, shows}`. Any non-empty `mismatches` fails the
+  round closed, no matter how the rest of coverage reads — a review that finds
+  a lie and passes anyway is decoration.
+- **`uncertain`** — screenshots you could not confidently confirm or refute
+  (occluded, ambiguous crop): `{file, reason}`. Non-blocking, but report it —
+  do not resolve a genuine doubt into a false mismatch or a false clean pass.
+
+**Sharding**: ~90 images is near one agent's practical review budget in a
+single pass. On a round with more evidence than that, shard the review across
+multiple passes/agents and **reconcile into one `evidence-review.v1.json`**
+before finalize (union the `examined` lists, concatenate `mismatches` and
+`uncertain`) — do not finalize on an unreconciled partial shard.
+
+`evidence/evidence-review.v1.json` is checked at finalize (see *Coverage &
+evidence* above) and the round **fails closed** if it is missing, malformed,
+omits a credit-eligible screenshot, or reports a mismatch.
 
 ### Retrospective (required — the loop only improves via this channel)
 

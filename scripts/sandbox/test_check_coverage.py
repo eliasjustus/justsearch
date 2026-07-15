@@ -21,10 +21,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from check_coverage import (  # noqa: E402
+    EVIDENCE_REVIEW_FILENAME,
     MIN_SCREENSHOT_BYTES,
     RETROSPECTIVE_FILENAME,
     RETROSPECTIVE_MIN_BYTES,
     MustTouchItem,
+    check_evidence_review,
     check_retrospective,
     find_duplicate_token_collisions,
     main,
@@ -53,6 +55,12 @@ from the CLI's own help output and produced a confusing wrong-type error.
 Recommend the harness ship a small driver that speaks JSON-RPC directly
 instead of routing through a CLI that cannot express array arguments.
 """
+
+
+def _empty_evidence_review_json() -> str:
+    """A valid, empty evidence-review.v1.json -- for fixtures with zero
+    credit-eligible screenshots that only need the file to be PRESENT."""
+    return json.dumps({"version": 1, "examined": [], "mismatches": [], "uncertain": []})
 
 
 class CheckRetrospectiveTests(unittest.TestCase):
@@ -134,6 +142,9 @@ class MainWiringTests(unittest.TestCase):
             evidence_dir.mkdir()
             (evidence_dir / RETROSPECTIVE_FILENAME).write_text(
                 SUBSTANTIAL_RETROSPECTIVE, encoding="utf-8"
+            )
+            (evidence_dir / EVIDENCE_REVIEW_FILENAME).write_text(
+                _empty_evidence_review_json(), encoding="utf-8"
             )
             rc = main(["--manifest", str(manifest_path), "--evidence-dir", str(evidence_dir)])
             self.assertEqual(rc, 0)
@@ -256,6 +267,13 @@ class DuplicateContentMainWiringTests(unittest.TestCase):
         (evidence / "02-memory-surface.png").write_bytes(
             (b"\x89PNG-a" if identical else b"\x89PNG-b") + body
         )
+        review = {
+            "version": 1,
+            "examined": ["01-security-panel.png", "02-memory-surface.png"],
+            "mismatches": [],
+            "uncertain": [],
+        }
+        (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
         return evidence
 
     def test_fully_covered_round_still_fails_on_cross_token_duplicate(self):
@@ -275,6 +293,293 @@ class DuplicateContentMainWiringTests(unittest.TestCase):
             rc = main([
                 "--manifest", str(self._manifest_path(tmp)),
                 "--evidence-dir", str(self._evidence_dir(tmp, identical=False)),
+            ])
+            self.assertEqual(rc, 0)
+
+
+class CheckEvidenceReviewTests(unittest.TestCase):
+    """Unit-level tests for check_evidence_review() (735-followup): presence,
+    shape validation, the missing-examined coverage assertion, and the
+    mismatch/uncertain distinction."""
+
+    def test_no_evidence_dir_blocks(self):
+        ok, reason = check_evidence_review(None, set())
+        self.assertFalse(ok)
+        self.assertIn("no --evidence-dir", reason)
+
+    def test_absent_file_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ok, reason = check_evidence_review(tmp, set())
+            self.assertFalse(ok)
+            self.assertIn("not found", reason)
+
+    def test_malformed_json_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / EVIDENCE_REVIEW_FILENAME).write_text("{not valid json", encoding="utf-8")
+            ok, reason = check_evidence_review(tmp, set())
+            self.assertFalse(ok)
+            self.assertIn("not valid JSON", reason)
+
+    def test_non_object_json_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / EVIDENCE_REVIEW_FILENAME).write_text("[1, 2, 3]", encoding="utf-8")
+            ok, reason = check_evidence_review(tmp, set())
+            self.assertFalse(ok)
+            self.assertIn("JSON object", reason)
+
+    def test_examined_wrong_type_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = {"version": 1, "examined": "01.png", "mismatches": [], "uncertain": []}
+            (Path(tmp) / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(data), encoding="utf-8")
+            ok, reason = check_evidence_review(tmp, set())
+            self.assertFalse(ok)
+            self.assertIn("'examined' must be a list", reason)
+
+    def test_missing_examined_entry_blocks(self):
+        # The load-bearing coverage assertion: a screenshot present in the
+        # evidence dir but absent from 'examined' must fail closed.
+        with tempfile.TemporaryDirectory() as tmp:
+            data = {
+                "version": 1,
+                "examined": ["01-security-panel.png"],
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (Path(tmp) / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(data), encoding="utf-8")
+            screenshots = {"01-security-panel.png", "02-memory-surface.png"}
+            ok, reason = check_evidence_review(tmp, screenshots)
+            self.assertFalse(ok)
+            self.assertIn("02-memory-surface.png", reason)
+
+    def test_partial_review_budget_exhausted_mid_set_blocks(self):
+        # Reproduces the exact measured failure mode: a reader that examined
+        # only 2 of 10 present screenshots and reported no mismatches on the
+        # 2 it saw. Must NOT read as a clean pass on the other 8.
+        with tempfile.TemporaryDirectory() as tmp:
+            data = {
+                "version": 1,
+                "examined": ["01.png", "02.png"],
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (Path(tmp) / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(data), encoding="utf-8")
+            screenshots = {f"{i:02d}.png" for i in range(1, 11)}
+            ok, reason = check_evidence_review(tmp, screenshots)
+            self.assertFalse(ok)
+            self.assertIn("credit-eligible", reason)
+
+    def test_case_insensitive_examined_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = {
+                "version": 1,
+                "examined": ["01-Security-Panel.PNG"],
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (Path(tmp) / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(data), encoding="utf-8")
+            screenshots = {"01-security-panel.png"}
+            ok, reason = check_evidence_review(tmp, screenshots)
+            self.assertTrue(ok, reason)
+
+    def test_all_examined_no_mismatches_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = {
+                "version": 1,
+                "examined": ["01-security-panel.png", "02-memory-surface.png"],
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (Path(tmp) / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(data), encoding="utf-8")
+            screenshots = {"01-security-panel.png", "02-memory-surface.png"}
+            ok, reason = check_evidence_review(tmp, screenshots)
+            self.assertTrue(ok, reason)
+
+    def test_mismatch_blocks_even_when_all_examined(self):
+        # F-735: a review that finds a lie must not pass anyway.
+        with tempfile.TemporaryDirectory() as tmp:
+            data = {
+                "version": 1,
+                "examined": ["07-logs-surface.png"],
+                "mismatches": [
+                    {
+                        "file": "07-logs-surface.png",
+                        "claims": "core.logs-surface",
+                        "shows": "the command palette overlay",
+                    }
+                ],
+                "uncertain": [],
+            }
+            (Path(tmp) / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(data), encoding="utf-8")
+            screenshots = {"07-logs-surface.png"}
+            ok, reason = check_evidence_review(tmp, screenshots)
+            self.assertFalse(ok)
+            self.assertIn("mismatch", reason.lower())
+            self.assertIn("command palette overlay", reason)
+
+    def test_uncertain_is_reported_but_non_blocking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = {
+                "version": 1,
+                "examined": ["02-memory-surface.png"],
+                "mismatches": [],
+                "uncertain": [
+                    {"file": "02-memory-surface.png", "reason": "partially occluded by a toast"}
+                ],
+            }
+            (Path(tmp) / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(data), encoding="utf-8")
+            screenshots = {"02-memory-surface.png"}
+            ok, reason = check_evidence_review(tmp, screenshots)
+            self.assertTrue(ok, reason)
+            self.assertIn("uncertain", reason.lower())
+            self.assertIn("partially occluded by a toast", reason)
+
+
+class EvidenceReviewMainWiringTests(unittest.TestCase):
+    """End-to-end proof (via main()) that a TRUNCATED review -- one that
+    examined only SOME of the present, credit-eligible screenshots -- fails
+    the round closed even though mustTouch coverage, the retrospective, and
+    the duplicate-content check are all otherwise clean. This is the exact
+    scenario the task exists to close: a reader that exhausted its budget
+    mid-set and reported no mismatches on the screenshots it never opened
+    must not be indistinguishable from a clean pass.
+
+    Paired with a positive control on the identical evidence set (only the
+    review's completeness differs), following the
+    test_control_same_round_passes_when_captures_are_distinct pattern above:
+    the control isolates the truncated review as the cause of the failure,
+    not incidental unsatisfied coverage/retrospective/collision state.
+    """
+
+    def _manifest_path(self, tmp: Path) -> Path:
+        manifest = {
+            "version": 1,
+            "mustTouch": [
+                {
+                    "kind": "surface", "id": "core.security-surface", "tier": "sandbox",
+                    "validateHow": "security", "evidenceToken": "security",
+                },
+                {
+                    "kind": "surface", "id": "core.memory-surface", "tier": "sandbox",
+                    "validateHow": "memory", "evidenceToken": "memory",
+                },
+            ],
+            "coveredElsewhere": [],
+            "exempt": [],
+        }
+        path = tmp / "coverage-manifest.json"
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        return path
+
+    def _write_common_evidence(self, tmp: Path) -> Path:
+        evidence = tmp / "evidence"
+        evidence.mkdir()
+        (evidence / RETROSPECTIVE_FILENAME).write_text(SUBSTANTIAL_RETROSPECTIVE, encoding="utf-8")
+        body = b"\x00" * MIN_SCREENSHOT_BYTES
+        (evidence / "01-security-panel.png").write_bytes(b"\x89PNG-security" + body)
+        (evidence / "02-memory-surface.png").write_bytes(b"\x89PNG-memory" + body)
+        return evidence
+
+    def test_truncated_review_fails_closed_despite_clean_coverage_and_retrospective(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._write_common_evidence(tmp)
+            # Reader opened only ONE of the two present, credit-eligible
+            # screenshots and reported no mismatches on it -- it never looked
+            # at the second.
+            review = {
+                "version": 1,
+                "examined": ["01-security-panel.png"],
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 1)
+
+    def test_control_complete_review_of_same_evidence_passes(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._write_common_evidence(tmp)
+            review = {
+                "version": 1,
+                "examined": ["01-security-panel.png", "02-memory-surface.png"],
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 0)
+
+
+class SizeFloorBiteTests(unittest.TestCase):
+    """No existing test asserted that MIN_SCREENSHOT_BYTES actually REJECTS
+    an undersized image -- every prior fixture already wrote images clearing
+    the floor. Proves the bite both ways, isolating the floor as the cause
+    (test_check_coverage.py's collision-test pairing pattern): an undersized
+    capture fails to credit coverage, and the SAME capture padded to clear
+    the floor credits it.
+    """
+
+    def _manifest_path(self, tmp: Path) -> Path:
+        manifest = {
+            "version": 1,
+            "mustTouch": [
+                {
+                    "kind": "surface", "id": "core.security-surface", "tier": "sandbox",
+                    "validateHow": "security", "evidenceToken": "security",
+                },
+            ],
+            "coveredElsewhere": [],
+            "exempt": [],
+        }
+        path = tmp / "coverage-manifest.json"
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        return path
+
+    def _evidence_dir(self, tmp: Path, payload: bytes) -> Path:
+        evidence = tmp / "evidence"
+        evidence.mkdir()
+        (evidence / RETROSPECTIVE_FILENAME).write_text(SUBSTANTIAL_RETROSPECTIVE, encoding="utf-8")
+        (evidence / "01-security-panel.png").write_bytes(payload)
+        review = {
+            "version": 1,
+            "examined": ["01-security-panel.png"],
+            "mismatches": [],
+            "uncertain": [],
+        }
+        (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+        return evidence
+
+    def test_undersized_screenshot_does_not_credit_coverage(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            undersized = b"\x89PNG-blank" + b"\x00" * (MIN_SCREENSHOT_BYTES - 100)
+            self.assertLess(len(undersized), MIN_SCREENSHOT_BYTES)
+            evidence = self._evidence_dir(tmp, undersized)
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 1)
+
+    def test_control_same_capture_padded_above_floor_credits_coverage(self):
+        # Precision guard: identical filename and content prefix -- only the
+        # SIZE changes -- proving the floor, not something else, caused the
+        # failure above.
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            sized = b"\x89PNG-blank" + b"\x00" * MIN_SCREENSHOT_BYTES
+            self.assertGreaterEqual(len(sized), MIN_SCREENSHOT_BYTES)
+            evidence = self._evidence_dir(tmp, sized)
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
             ])
             self.assertEqual(rc, 0)
 
