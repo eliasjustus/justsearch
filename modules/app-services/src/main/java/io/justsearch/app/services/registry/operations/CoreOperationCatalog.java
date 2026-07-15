@@ -178,13 +178,30 @@ public final class CoreOperationCatalog implements OperationCatalog {
 
   /**
    * Slice 3a-2-c BrainRuntimeSection Switch-to-Online / Switch-to-Indexing
-   * buttons (single Operation with mode arg). MEDIUM risk (mode transition;
-   * may start/stop llama-server, change resource accounting). Args:
-   * {@code {"mode": "online" | "indexing"}}. Returns
-   * {@code structuredData.mode} (post-switch current mode).
+   * buttons (single Operation with mode arg).
+   *
+   * <p><b>Tempdoc 737 §12b/§12d:</b> superseded by {@link #SET_CHAT_ENABLED} — a temporary alias,
+   * retirement per tempdoc 737 §12d once the FE has fully migrated off the {@code mode} vocabulary.
+   * Its handler now maps {@code online} → {@code chatEnabled=true} / {@code indexing} →
+   * {@code chatEnabled=false} through the SAME spec-write path as {@code core.set-chat-enabled}, so
+   * it carries no preconditions and cannot re-introduce the §3b circular denial. Args:
+   * {@code {"mode": "online" | "indexing"}}.
    */
   public static final OperationRef SWITCH_INFERENCE_MODE =
       new OperationRef("core.switch-inference-mode");
+
+  /**
+   * Tempdoc 737 §12b: the runtime-authority intent write that supersedes
+   * {@link #SWITCH_INFERENCE_MODE}. Records the user's desired chat-engine state on the runtime
+   * spec ("Start AI" / "Shut Down AI") with <b>no preconditions</b> — an intent cannot be denied
+   * because the thing it asks for is off (§3b circular class made inexpressible). LOW risk, no
+   * confirm: it is a reversible preference toggle and the primary escape action from every runtime
+   * state (soft-off included), which must never be gated. Enterprise online-AI policy + GPU
+   * availability are enforced at convergence inside the reconciler, not at intent time. Args:
+   * {@code {"enabled": boolean}}. Returns {@code structuredData.chatEnabled} +
+   * {@code structuredData.engineState}.
+   */
+  public static final OperationRef SET_CHAT_ENABLED = new OperationRef("core.set-chat-enabled");
 
   /**
    * Slice 3a-2-c BrainRuntimeSection Trigger Offline Processing button.
@@ -314,6 +331,7 @@ public final class CoreOperationCatalog implements OperationCatalog {
       applyExcludes(),
       reloadInference(),
       switchInferenceMode(),
+      setChatEnabled(),
       triggerOfflineProcessing(),
       activateRuntimeVariant(),
       deactivateRuntimeVariant(),
@@ -808,6 +826,34 @@ public final class CoreOperationCatalog implements OperationCatalog {
         OperationAvailability.empty(),
         OperationLineage.empty(),
         Binding.of(SWITCH_INFERENCE_MODE),
+        Provenance.core("1.0"),
+        Set.of(ExecutorTag.UI, ExecutorTag.AGENT));
+  }
+
+  private static Operation setChatEnabled() {
+    return new Operation(
+        SET_CHAT_ENABLED,
+        Presentation.forId(SET_CHAT_ENABLED),
+        Interface.of(
+            "{\"type\":\"object\",\"properties\":{\"enabled\":{\"type\":\"boolean\"}},\"required\":[\"enabled\"]}",
+            "{\"type\":\"object\",\"properties\":{\"chatEnabled\":{\"type\":\"boolean\"},\"engineState\":{\"type\":\"string\"}}}"),
+        new OperationPolicy(
+            // Tempdoc 737 §12b: LOW + None — a reversible intent write with NO preconditions (the
+            // whole point: an intent to enable/disable chat cannot be denied for being off). The
+            // primary escape action from every runtime state; gating it with a confirm or a
+            // capability would re-introduce §3b's dead-button class.
+            RiskTier.LOW,
+            ConfirmStrategy.None.INSTANCE,
+            AuditPolicy.METADATA_ONLY,
+            RetryPolicy.noRetry(),
+            Optional.empty(),
+            Set.of(),
+            false),
+        OperationAvailability.empty(),
+        // Tempdoc 737 §12b: the superseding op declares what it supersedes (OperationLineage
+        // javadoc — supersedes lives on the newer Operation, favored by discovery/retrospection).
+        new OperationLineage(Set.of(), Set.of(SWITCH_INFERENCE_MODE)),
+        Binding.of(SET_CHAT_ENABLED),
         Provenance.core("1.0"),
         Set.of(ExecutorTag.UI, ExecutorTag.AGENT));
   }

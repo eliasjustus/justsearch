@@ -4,7 +4,8 @@
  *
  * Shown when system is in `mode === 'indexing'` AND embedding/VDU
  * queues are processing AND the user hasn't dismissed it. Provides a
- * "Go Online" button that invokes `core.switch-inference-mode`.
+ * "Go Online" button that invokes `core.set-chat-enabled` (tempdoc 737 §12b; supersedes
+ * `core.switch-inference-mode`).
  *
  * Two elements:
  *  - `<jf-indexing-overlay>`: presentational modal.
@@ -319,7 +320,9 @@ export class IndexingOverlayHost extends JfElement {
           (globalThis as { location?: { origin?: string } }).location?.origin) ||
         '';
       const client = getOperationClient(String(apiBase));
-      await client.invoke('core.switch-inference-mode', { args: { mode: 'online' } });
+      // Tempdoc 737 §12b: write the chat-enabled intent (no preconditions) instead of the superseded
+      // core.switch-inference-mode; the reconciler converges the engine toward the spec.
+      await client.invoke('core.set-chat-enabled', { args: { enabled: true } });
     } catch {
       // ignore; status will catch up via the poller
     } finally {

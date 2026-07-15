@@ -37,7 +37,7 @@
     ],
     "javaInclude": "/src/main/java/",
     "expectedMinPopulation": 3,
-    "expectedMinPopulationNote": "tempdoc 576 §5 vacuous-pass guard: the auto-scan must detect >= this many runtimestate-referencing files, else a renamed scan root would let the undeclared-referencer check pass vacuously. Live count is 10 (2026-07-15 Phase 2a: RuntimeActivationService, InferenceWiring, OrchestrationAssembly, OrchestrationPhase, ServicePhase, HeadAssembly, BootstrapProjections, InferenceCapabilityWiring — grew from Phase 1's 6 — plus OfflineCoordinator/OfflineCoordinatorBuilder, backfilled retroactively from Phase 2b's VDU reroute; the runtimestate package's own 5 files do not self-reference and are declared separately as canonical/carrier surfaces). Floor 3 is a conservative headroom, matching the execution-surface register's convention. Lower this with any change that legitimately shrinks the population."
+    "expectedMinPopulationNote": "tempdoc 576 §5 vacuous-pass guard: the auto-scan must detect >= this many runtimestate-referencing files, else a renamed scan root would let the undeclared-referencer check pass vacuously. Live count is 14 (2026-07-15 Phase 4: added SetChatEnabledHandler, SwitchInferenceModeHandler, OperationHandlerRegistrations, SubstratePhase for the core.set-chat-enabled intent-write op, growing from Phase 2a's 10: RuntimeActivationService, InferenceWiring, OrchestrationAssembly, OrchestrationPhase, ServicePhase, HeadAssembly, BootstrapProjections, InferenceCapabilityWiring, OfflineCoordinator, OfflineCoordinatorBuilder; the runtimestate package's own 5 files do not self-reference and are declared separately as canonical/carrier surfaces). Floor 3 is a conservative headroom, matching the execution-surface register's convention. Lower this with any change that legitimately shrinks the population."
   },
   "surfaces": [
     {
@@ -144,6 +144,38 @@
       "path": "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/OfflineCoordinatorBuilder.java",
       "guard": "exempt:consumer threads RuntimeReconciler into OfflineCoordinator construction (fully-qualified reference, no import statement); no projection law to mutate-guard",
       "note": "Backfilled retroactively (Phase 2a housekeeping) — same Phase 2b gap as offline-coordinator-consumer."
+    },
+    {
+      "id": "set-chat-enabled-handler-consumer",
+      "kind": "consumer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/handlers/SetChatEnabledHandler.java",
+      "guard": "test:SetChatEnabledHandlerTest",
+      "note": "737 §12b Phase 4: the core.set-chat-enabled intent-write handler — writes the chatEnabled bit via RuntimeSpecStore + nudges RuntimeReconciler.specChanged(), and projects the observed engineState/chatEnabled back into the op result. Consumes the authority; does not re-model it."
+    },
+    {
+      "id": "switch-inference-mode-alias-consumer",
+      "kind": "consumer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/registry/operations/handlers/SwitchInferenceModeHandler.java",
+      "guard": "test:SwitchInferenceModeHandlerTest",
+      "note": "737 §12b Phase 4: the superseded core.switch-inference-mode alias — maps online/indexing onto the same RuntimeSpecStore write + reconciler nudge as SetChatEnabledHandler (no longer touches BrainRuntimeService). Retires per §12d."
+    },
+    {
+      "id": "operation-handler-registrations-consumer",
+      "kind": "consumer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/OperationHandlerRegistrations.java",
+      "guard": "exempt:consumer threads RuntimeSpecStore/RuntimeReconciler suppliers into the two intent-write handlers at boot; no projection law to mutate-guard",
+      "note": "737 §12b Phase 4: registers SetChatEnabledHandler + SwitchInferenceModeHandler against runtime-authority suppliers pulled from the held ServiceGraph."
+    },
+    {
+      "id": "substrate-phase-consumer",
+      "kind": "consumer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/SubstratePhase.java",
+      "guard": "exempt:consumer threads the RuntimeSpecStore/RuntimeReconciler suppliers through to registerWorker (fully-qualified reference, no import statement); no projection law to mutate-guard",
+      "note": "737 §12b Phase 4: passes the runtime-authority suppliers from HeadAssembly down into OperationHandlerRegistrations.registerWorker."
     },
     {
       "id": "mode-enum-legacy",

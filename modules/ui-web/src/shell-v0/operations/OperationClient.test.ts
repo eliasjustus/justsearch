@@ -76,6 +76,10 @@ describe('OperationClient', () => {
   });
 
   // Slice 3a-2-c Phase B/G: typed-error fields surface on OperationError.
+  // Tempdoc 737 §12b: re-pinned from the retired core.switch-inference-mode onto its successor
+  // core.set-chat-enabled. This test's intent is the CLIENT's error-payload passthrough (errorCode/
+  // errorDetails/retryable → OperationError), not the op's own behaviour — the op is the vehicle, so
+  // the assertion carries the new op's {enabled} arg shape.
   it('parses typed errorCode + errorDetails + retryable from wire shape', async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -83,26 +87,26 @@ describe('OperationClient', () => {
         Promise.resolve(
           fakeResponse({
             success: false,
-            message: 'Online AI is disabled by administrator policy.',
+            message: 'Runtime authority unavailable',
             errorClass: 'HANDLER_FAILURE',
-            errorCode: 'POLICY_ONLINE_AI_DISABLED',
-            errorDetails: { mode: 'online' },
-            retryable: false,
+            errorCode: 'RUNTIME_UNAVAILABLE',
+            errorDetails: { enabled: true },
+            retryable: true,
           }),
         ),
       );
 
     const client = new OperationClient({ apiBase: 'http://localhost:33221', fetchImpl });
     try {
-      await client.invoke('core.switch-inference-mode', { args: { mode: 'online' } });
+      await client.invoke('core.set-chat-enabled', { args: { enabled: true } });
       throw new Error('expected throw');
     } catch (err) {
       expect(err).toBeInstanceOf(OperationError);
       const opErr = err as OperationError;
       expect(opErr.errorClass).toBe('HANDLER_FAILURE');
-      expect(opErr.errorCode).toBe('POLICY_ONLINE_AI_DISABLED');
-      expect(opErr.errorDetails).toEqual({ mode: 'online' });
-      expect(opErr.retryable).toBe(false);
+      expect(opErr.errorCode).toBe('RUNTIME_UNAVAILABLE');
+      expect(opErr.errorDetails).toEqual({ enabled: true });
+      expect(opErr.retryable).toBe(true);
     }
   });
 

@@ -104,7 +104,12 @@ public final class ServicePhase {
    */
   public record InferenceRuntimeHandles(
       io.justsearch.app.api.ModeChangeListener gpuBroadcastListener,
-      RuntimeReconciler runtimeReconciler) {}
+      RuntimeReconciler runtimeReconciler,
+      // Tempdoc 737 §12b: the spec writer, exposed so the core.set-chat-enabled /
+      // core.switch-inference-mode(alias) operation handlers can record the chat-enabled intent
+      // through the one authority (write via this store, then reconciler.specChanged()). Nullable
+      // when inference is not configured.
+      RuntimeSpecStore runtimeSpecStore) {}
 
   /** Bundled output — all services every downstream phase consumes. */
   public record Output(
@@ -168,6 +173,7 @@ public final class ServicePhase {
     io.justsearch.app.api.ModeChangeListener gpuListener = null;
     OfflineCoordinator offlineCoordinator = null;
     RuntimeReconciler runtimeReconciler = null;
+    RuntimeSpecStore runtimeSpecStore = null;
     // §31 Phase 1.A: EnterprisePolicyService impl in app-services. Tempdoc 737: constructed up-front
     // (moved from below) so the runtime reconciler can read the online-AI policy ceiling.
     EnterprisePolicyService enterprisePolicy = new EnterprisePolicyServiceImpl();
@@ -193,7 +199,7 @@ public final class ServicePhase {
       // its mode listener attaches (mirror-initial-then-forward) before the first boot convergence.
       // The env autostart flag seeds the persisted spec (item 1); the reconciler then converges the
       // engine toward spec — replacing the former direct InferenceWiring.tryStartOnlineMode switch.
-      RuntimeSpecStore runtimeSpecStore = new RuntimeSpecStore(in.settingsStore());
+      runtimeSpecStore = new RuntimeSpecStore(in.settingsStore());
       RuntimeGpuLease runtimeGpuLease = new RuntimeGpuLease();
       InferenceLifecycleManager manager = in.inferenceManager();
       runtimeReconciler =
@@ -321,7 +327,7 @@ public final class ServicePhase {
     return new Output(
         in.inferenceManager(),
         onlineAiService,
-        new InferenceRuntimeHandles(gpuListener, runtimeReconciler),
+        new InferenceRuntimeHandles(gpuListener, runtimeReconciler, runtimeSpecStore),
         offlineCoordinator,
         agentTools.agentSearchAdapter(),
         agentTools.fileOperationLog(),

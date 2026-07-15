@@ -57,6 +57,10 @@ export type AiEngineKind =
   | 'starting'
   | 'connecting'
   | 'online'
+  // Tempdoc 737 §15 decision 1 (soft-off): the engine is HEALTHY but the user disabled chat, and a
+  // background procedure (VDU) is holding it up to finish document understanding. Distinct from
+  // 'online' so the UI never shows a green "chat ready" for a state where chat is intentionally off.
+  | 'background'
   | 'indexing';
 
 export interface AiEngineVerdict {
@@ -78,6 +82,18 @@ export interface AiEngineObservedInput {
   /** `aiStateStore.connection.reachable` (tempdoc 649) - the ONE reachability signal, reused rather
    * than re-derived, so the calm "connecting"/stale-poll states degrade honestly under a starved poll. */
   readonly reachable: boolean;
+  /**
+   * Tempdoc 737 §12b/§12c — the runtime-authority engine axis, projected additively onto the
+   * `/api/status` inference block (`engineState`/`chatEnabledSpec`/`procedure`/`engineReason`). When
+   * present, these are the authoritative signals and are PREFERRED over the legacy `runtime.mode`
+   * (which is a coarser projection of the same backend Mode enum). All optional so an older backend
+   * that predates the additive fields falls back to `runtime.mode` — this fallback retires with the
+   * `phase`/`mode` aliases per §12d.
+   */
+  readonly engineState?: string;
+  readonly chatEnabledSpec?: boolean;
+  readonly procedure?: string;
+  readonly engineReason?: string;
 }
 
 /**
@@ -87,7 +103,8 @@ export interface AiEngineObservedInput {
  * instead read the result off `AiState.aiEngine` (optionally overlaid via `applyLocalIntent`).
  */
 export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVerdict {
-  const { installStatus, runtimeStatus, runtime, reachable } = input;
+  const { installStatus, runtimeStatus, runtime, reachable, engineState, chatEnabledSpec, procedure } =
+    input;
 
   if (installStatus?.state === 'running') {
     return {
@@ -105,21 +122,48 @@ export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVe
     };
   }
 
-  // The runtime may be active even if install status is stale - a running/indexing/online mode is
-  // itself proof of an installed, working engine, independent of whether the install poll has
-  // reported back yet (mirrors the original ladder's own reasoning for this ordering).
-  if (runtime.mode === 'online') {
-    return { kind: 'online', stability: { kind: 'settled' }, installFailure: null };
-  }
-  if (runtime.mode === 'indexing') {
-    return { kind: 'indexing', stability: { kind: 'settled' }, installFailure: null };
-  }
-  if (runtime.mode === 'starting') {
-    return {
-      kind: 'starting',
-      stability: { kind: 'provisional', cause: 'starting' },
-      installFailure: null,
-    };
+  // Engine axis (tempdoc 737 §12b/§12c). The runtime-authority `engineState` — when the backend
+  // provides it — is the ONE signal for the engine's lifecycle; PREFER it over the legacy
+  // `runtime.mode`. A running/healthy engine is itself proof of an installed, working engine,
+  // independent of whether the install poll has reported back yet (the original ladder's reasoning).
+  const authored = engineState !== undefined && engineState !== '';
+  if (authored) {
+    if (engineState === 'Healthy') {
+      // Soft-off (§15 decision 1): a background procedure holds the engine up while the user has
+      // chat DISABLED. Chat is intentionally NOT offered — surface it as 'background', never the
+      // green 'online', so the UI is honest about chat being off while work continues.
+      if (chatEnabledSpec === false && !!procedure) {
+        return { kind: 'background', stability: { kind: 'settled' }, installFailure: null };
+      }
+      return { kind: 'online', stability: { kind: 'settled' }, installFailure: null };
+    }
+    if (engineState === 'Starting' || engineState === 'Recovering') {
+      return {
+        kind: 'starting',
+        stability: { kind: 'provisional', cause: 'starting' },
+        installFailure: null,
+      };
+    }
+    // engineState === 'Down' with the GPU yielded to indexing is the INDEXING state; any other
+    // 'Down' reason falls through to the shared installed / connecting / offline logic below.
+    if (engineState === 'Down' && input.engineReason === 'gpu-yielded-to-indexing') {
+      return { kind: 'indexing', stability: { kind: 'settled' }, installFailure: null };
+    }
+  } else {
+    // Legacy fallback (pre-authority backends). Retires with the phase/mode aliases (§12d).
+    if (runtime.mode === 'online') {
+      return { kind: 'online', stability: { kind: 'settled' }, installFailure: null };
+    }
+    if (runtime.mode === 'indexing') {
+      return { kind: 'indexing', stability: { kind: 'settled' }, installFailure: null };
+    }
+    if (runtime.mode === 'starting') {
+      return {
+        kind: 'starting',
+        stability: { kind: 'provisional', cause: 'starting' },
+        installFailure: null,
+      };
+    }
   }
 
   const installed =
@@ -141,7 +185,8 @@ export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVe
     return { kind: 'not_installed', stability: { kind: 'settled' }, installFailure: null };
   }
 
-  if (runtime.mode === 'transitioning') {
+  // Legacy transitioning (pre-authority): the authored path already mapped Starting/Recovering above.
+  if (!authored && runtime.mode === 'transitioning') {
     return {
       kind: 'starting',
       stability: { kind: 'provisional', cause: 'starting' },
@@ -258,6 +303,9 @@ export function aiEngineHeadline(v: AiEngineVerdict): string {
       return 'Connecting…';
     case 'online':
       return 'Online';
+    case 'background':
+      // Soft-off (tempdoc 737 §15 decision 1): engine up for background work, chat off.
+      return 'Background processing';
     case 'indexing':
       return 'Indexing';
   }
@@ -276,6 +324,7 @@ export function aiEngineTone(kind: AiEngineKind): NoticeTone {
     case 'online':
       return 'success';
     case 'indexing':
+    case 'background':
     case 'starting':
     case 'connecting':
       return 'warning';
@@ -314,6 +363,9 @@ export function aiEngineBody(v: AiEngineVerdict): string {
       return 'Checking AI status…';
     case 'online':
       return 'Chat and summaries ready.';
+    case 'background':
+      // §15 decision 1 copy — honest about chat being off while the engine finishes background work.
+      return 'AI engine is finishing document understanding — chat is off.';
     case 'indexing':
       return 'Indexing embeddings…';
   }

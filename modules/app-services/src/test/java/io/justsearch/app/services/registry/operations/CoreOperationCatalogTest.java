@@ -59,6 +59,7 @@ final class CoreOperationCatalogTest {
             "core.apply-excludes",
             "core.reload-inference",
             "core.switch-inference-mode",
+            "core.set-chat-enabled",
             "core.trigger-offline-processing",
             "core.activate-runtime-variant",
             "core.deactivate-runtime-variant",
@@ -266,6 +267,27 @@ final class CoreOperationCatalogTest {
     String inputs = op.intf().inputs();
     assertTrue(inputs.contains("\"enum\":[\"online\",\"indexing\"]"));
     assertTrue(inputs.contains("\"required\":[\"mode\"]"));
+  }
+
+  /**
+   * Tempdoc 737 §12b: the intent-write op that supersedes switch-inference-mode. Pin its
+   * no-precondition / no-confirm shape, its enabled arg, its executors, and the supersedes edge —
+   * the properties the design turns on (an intent write cannot be gated or denied).
+   */
+  @Test
+  void setChatEnabledIsLowRiskNoConfirmNoPreconditionsAndSupersedesSwitchMode() {
+    Operation op = catalog.findById(CoreOperationCatalog.SET_CHAT_ENABLED).orElseThrow();
+    assertEquals(RiskTier.LOW, op.policy().risk());
+    assertInstanceOf(ConfirmStrategy.None.class, op.policy().confirm());
+    assertTrue(
+        op.policy().requiredCapabilities().isEmpty(),
+        "an intent write must carry no required capabilities (no preconditions)");
+    assertEquals(Set.of(ExecutorTag.UI, ExecutorTag.AGENT), op.executors());
+    assertTrue(op.intf().inputs().contains("\"required\":[\"enabled\"]"));
+    assertEquals(
+        Set.of(CoreOperationCatalog.SWITCH_INFERENCE_MODE),
+        op.lineage().supersedes(),
+        "the newer op declares that it supersedes switch-inference-mode");
   }
 
   @Test

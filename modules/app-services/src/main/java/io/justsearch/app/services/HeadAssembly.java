@@ -512,6 +512,12 @@ public final class HeadAssembly implements AutoCloseable {
             () -> this.serviceOut.packImport(),
             () -> this.serviceOut.brainInstall(),
             () -> this.serviceOut.policy(),
+            // Tempdoc 737 §12b: runtime-authority handles for the chat-enabled intent write.
+            () ->
+                this.serviceOut.inferenceRuntimeHandles() == null
+                    ? null
+                    : this.serviceOut.inferenceRuntimeHandles().runtimeSpecStore(),
+            () -> this.runtimeReconciler,
                     searchToolFinal,
                     browseToolFinal,
                     ingestToolFinal,
