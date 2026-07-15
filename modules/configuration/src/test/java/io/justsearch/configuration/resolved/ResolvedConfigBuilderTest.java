@@ -725,7 +725,6 @@ final class ResolvedConfigBuilderTest {
           Path.of("/models/llama.gguf"),
           config.ai().llmModelPath(),
           "YAML llm.model_path should be visible to buildAi()");
-      assertEquals("remote", config.ai().llmMode(), "YAML llm.mode should be visible to buildAi()");
     }
 
     @Test
@@ -772,7 +771,6 @@ final class ResolvedConfigBuilderTest {
       assertEquals(100_000L, config.worker().maxQueueDepth());
       // AI defaults — must match RuntimePolicyConfigFactory defaults
       assertTrue(config.ai().llmEnabled(), "llmEnabled default must be true (matches factory)");
-      assertEquals("remote", config.ai().llmMode(), "llmMode default must be 'remote' (matches factory)");
     }
   }
 

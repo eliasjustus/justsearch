@@ -238,28 +238,12 @@
                                                       "enabled":  {
                                                                       "type":  "boolean"
                                                                   },
-                                                      "mode":  {
-                                                                   "type":  "string",
-                                                                   "enum":  [
-                                                                                "local"
-                                                                            ]
-                                                               },
                                                       "model_path":  {
                                                                          "type":  [
                                                                                       "string",
                                                                                       "null"
                                                                                   ]
                                                                      },
-                                                      "backend":  {
-                                                                      "type":  "string",
-                                                                      "enum":  [
-                                                                                   "auto",
-                                                                                   "cpu",
-                                                                                   "metal",
-                                                                                   "cuda",
-                                                                                   "vulkan"
-                                                                               ]
-                                                                  },
                                                       "gpu_layers":  {
                                                                          "oneOf":  [
                                                                                        {

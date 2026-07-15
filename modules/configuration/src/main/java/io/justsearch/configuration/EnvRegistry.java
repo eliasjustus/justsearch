@@ -91,9 +91,6 @@ public enum EnvRegistry {
     /** LLM model path. */
     LLM_MODEL_PATH("justsearch.llm.model_path", "JUSTSEARCH_LLM_MODEL_PATH"),
 
-    /** LLM mode (local/remote). */
-    LLM_MODE("justsearch.llm.mode", "JUSTSEARCH_LLM_MODE"),
-
     /**
      * Install/runtime intent (tempdoc 657): {@code full-desktop} | {@code headless} |
      * {@code mcp-lite}. Set at launch by whichever launcher started the backend (the Tauri shell
@@ -102,9 +99,6 @@ public enum EnvRegistry {
      * unset), consumed by the install planner and the runtime-manifest publisher.
      */
     MODE("justsearch.mode", "JUSTSEARCH_MODE"),
-
-    /** LLM backend selector (auto/stub/etc). */
-    LLM_BACKEND("justsearch.llm.backend", "JUSTSEARCH_LLM_BACKEND"),
 
     /** LLM model file hash (sha256). */
     LLM_MODEL_SHA256("justsearch.llm.model_sha256", "JUSTSEARCH_LLM_MODEL_SHA256"),
@@ -392,9 +386,6 @@ public enum EnvRegistry {
 
     /** Enable/disable embedding feature independently (escape hatch; default from YAML/SSOT). */
     AI_EMBED_ENABLED("justsearch.ai.embed.enabled", "JUSTSEARCH_AI_EMBED_ENABLED"),
-
-    /** Enable/disable classification feature independently (escape hatch; default from YAML/SSOT). */
-    AI_CLASSIFY_ENABLED("justsearch.ai.classify.enabled", "JUSTSEARCH_AI_CLASSIFY_ENABLED"),
 
     /** Disable all AI features. */
     AI_DISABLED("justsearch.ai.disabled", "JUSTSEARCH_AI_DISABLED"),

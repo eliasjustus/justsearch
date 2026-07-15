@@ -395,7 +395,6 @@ public final class ResolvedConfigBuilder {
     putYamlBoolean("egress.block_all", root, "egress.block_all");
     putYamlBoolean("justsearch.llm.enabled", root, "llm.enabled");
     putYaml("justsearch.llm.model_path", root, "llm.model_path");
-    putYaml("justsearch.llm.mode", root, "llm.mode");
     // 347: policy GPU acceleration now handled by EnvRegistry.POLICY_GPU_ACCELERATION_ENABLED
     // (with configKey "policy.gpu_acceleration_enabled").
   }
@@ -931,12 +930,9 @@ public final class ResolvedConfigBuilder {
         resolvePath("justsearch.llm.model_path", null),
         resolveBoolean("justsearch.ai.disabled", false),
         resolveBoolean("justsearch.llm.enabled", true),
-        resolveString("justsearch.llm.mode", "remote"),
-        resolveString("justsearch.llm.backend", ""),
         resolveInt("justsearch.context.size", 8192),
         resolveString("justsearch.vlm.model", ""),
         resolveString("justsearch.mmproj.model", ""),
-        resolveBoolean("justsearch.ai.classify.enabled", true),
         resolveBoolean("justsearch.llm.use_thinking", true),
         resolveInt("justsearch.llm.reasoning_budget", 0),
         resolveString("justsearch.onnxruntime.variantId", ""),

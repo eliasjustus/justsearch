@@ -105,7 +105,6 @@ Precedence note:
 | - | JUSTSEARCH_AGENT_MAX_TOOL_RESULT_CHARS | justsearch.agent.max_tool_result_chars | AGENT_MAX_TOOL_RESULT_CHARS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_AGENT_SEARCH_DEFAULT_LIMIT | justsearch.agent.search.default_limit | AGENT_SEARCH_DEFAULT_LIMIT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_AGENT_SEARCH_DEFAULT_MODE | justsearch.agent.search.default_mode | AGENT_SEARCH_DEFAULT_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_AI_CLASSIFY_ENABLED | justsearch.ai.classify.enabled | AI_CLASSIFY_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | justsearch.ai.deadlineMs | JUSTSEARCH_AI_DEADLINE_MS | justsearch.ai.deadlineMs | AI_DEADLINE_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | - | JUSTSEARCH_AI_DISABLED | justsearch.ai.disabled | AI_DISABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_AI_EMBED_ENABLED | justsearch.ai.embed.enabled | AI_EMBED_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -180,7 +179,6 @@ Precedence note:
 | - | JUSTSEARCH_INGESTION_SKIP_PATTERNS | justsearch.ingestion.skip.patterns | INGESTION_SKIP_PATTERNS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LAMBDAMART_ENABLED | justsearch.lambdamart.enabled | LAMBDAMART_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LITE_MODE | justsearch.lite.mode | LITE_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_BACKEND | justsearch.llm.backend | LLM_BACKEND | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_BACKEND_SELECTOR | justsearch.llm.backend_selector | LLM_BACKEND_SELECTOR | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_BACKEND_SUPPORTS | justsearch.llm.backend_supports | LLM_BACKEND_SUPPORTS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_CONTEXT_LENGTH | justsearch.llm.context_length | LLM_CONTEXT_LENGTH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -192,7 +190,6 @@ Precedence note:
 | - | JUSTSEARCH_LLM_MAX_SESSIONS | justsearch.llm.max_sessions | LLM_MAX_SESSIONS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_MAX_SLOTS | justsearch.llm.max_slots | LLM_MAX_SLOTS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_MIN_P | justsearch.llm.min_p | LLM_MIN_P | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| justsearch.llm.mode | JUSTSEARCH_LLM_MODE | justsearch.llm.mode | LLM_MODE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | justsearch.llm.model_path | JUSTSEARCH_LLM_MODEL_PATH | justsearch.llm.model_path | LLM_MODEL_PATH | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | - | JUSTSEARCH_LLM_MODEL_SHA256 | justsearch.llm.model_sha256 | LLM_MODEL_SHA256 | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_QUEUE_CAPACITY | justsearch.llm.queue_capacity | LLM_QUEUE_CAPACITY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |

@@ -59,10 +59,7 @@ Scope:
 | `JUSTSEARCH_AI_DISABLED` | `justsearch.ai.disabled` | Bool | Disables all AI features (forces keyword-only flows where applicable). |
 | `JUSTSEARCH_LLM_ENABLED` | `justsearch.llm.enabled` | Bool | Enables/disables LLM features (escape hatch; policy/UI may override). |
 | `JUSTSEARCH_AI_EMBED_ENABLED` | `justsearch.ai.embed.enabled` | Bool | Enables/disables embeddings independently (escape hatch). |
-| `JUSTSEARCH_AI_CLASSIFY_ENABLED` | `justsearch.ai.classify.enabled` | Bool | Enables/disables classification independently (escape hatch). |
 | `JUSTSEARCH_LLM_MODEL_PATH` | `justsearch.llm.model_path` | Path | Path to the main chat/VLM GGUF model used by `llama-server`. |
-| `JUSTSEARCH_LLM_MODE` | `justsearch.llm.mode` | String | LLM mode selector (implementation-defined; e.g., local/remote). |
-| `JUSTSEARCH_LLM_BACKEND` | `justsearch.llm.backend` | String | Backend selector (e.g., `auto`, `stub`). `stub` disables vector embeddings (used by indexing benches). |
 | `JUSTSEARCH_EMBED_BACKEND` | `justsearch.embed.backend` | String | Embedding backend selector: `auto` (default) or `onnx`. Does NOT control GPU/CPU — use `JUSTSEARCH_EMBED_GPU_ENABLED` for GPU offload. |
 | `JUSTSEARCH_MODEL_PATH` | `justsearch.model.path` | Path | Legacy embedding model path. Propagated to Worker via env but not consumed by ONNX embedding discovery (use `JUSTSEARCH_EMBED_ONNX_MODEL_PATH` for explicit model override). |
 | `JUSTSEARCH_EMBED_ONNX_MODEL_PATH` | `justsearch.embed.onnx.model_path` | Path | Explicit ONNX embedding model directory (overrides auto-discovery). When unset, `EmbeddingOnnxModelDiscovery` tries `embeddinggemma-300m/` then `embedding/`. |
@@ -286,14 +283,7 @@ of the long-lived app runtime configuration contract. They are retained here as 
 
 ## Examples
 
-### 1) Mode 0 (lexical-only; disable embeddings)
-
-```powershell
-$env:JUSTSEARCH_LLM_BACKEND = "stub"
-powershell -ExecutionPolicy Bypass -File scripts/bench/run-claim-b-suite-win.ps1
-```
-
-### 2) Mode 1 (CPU embeddings)
+### 1) Mode 1 (CPU embeddings)
 
 ```powershell
 $env:JUSTSEARCH_MODEL_PATH = "C:\\AI\\models\\nomic-embed-text-v1.5.Q4_K_M.gguf"
@@ -301,7 +291,7 @@ $env:JUSTSEARCH_EMBED_GPU_LAYERS = "0"
 powershell -ExecutionPolicy Bypass -File scripts/bench/run-claim-b-suite-win.ps1
 ```
 
-### 3) Online inference GPU offload (llama-server)
+### 2) Online inference GPU offload (llama-server)
 
 ```powershell
 $env:JUSTSEARCH_LLM_MODEL_PATH = "C:\\AI\\models\\Qwen_Qwen3.5-9B-Q4_K_M.gguf"

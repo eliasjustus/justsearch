@@ -9,9 +9,7 @@ app:
 
 llm:
   enabled: true
-  mode: local
   # model_path: override via JUSTSEARCH_LLM_MODEL_PATH if needed (defaults resolved from models dir)
-  backend: llama
 
 workers:
   ai:
