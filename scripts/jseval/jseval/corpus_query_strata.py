@@ -62,10 +62,13 @@ def build_short_natural_source(
         "tool_version": TOOL_VERSION,
         "source": source.name,
     }
+    # newline="\n": these become git-committed gold inputs (fabricated-*) under eol=lf
+    # normalization — platform-default CRLF here is what baked unmatchable sha256s into
+    # the short-natural cells' 2026-07-13 commitment manifests.
     (output / "queries.json").write_text(
-        json.dumps(rewritten, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        json.dumps(rewritten, ensure_ascii=False, indent=1) + "\n", encoding="utf-8", newline="\n")
     (output / "meta.json").write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     return {
         "variant": "short-natural",
         "language": language,

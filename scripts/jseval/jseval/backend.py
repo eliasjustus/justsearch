@@ -58,7 +58,7 @@ def start_backend(
     port: int = _DEFAULT_PORT,
     clean: bool = False,
     env_overrides: dict[str, str] | None = None,
-    health_timeout_sec: float = _HEALTH_TIMEOUT_SEC,
+    health_timeout_sec: float | None = None,
     llm: bool = False,
 ) -> BackendInfo:
     """Start runHeadlessEval and wait for the backend to become healthy.
@@ -66,7 +66,20 @@ def start_backend(
     Returns a BackendInfo with the Popen handle and data directory path.
     When llm=True, passes -Pllm=true to Gradle and waits for inference readiness.
     Uses a single deadline for all readiness checks.
+
+    health_timeout_sec=None resolves JSEVAL_HEALTH_TIMEOUT_SEC from the
+    environment before falling back to the 120s default — the only lever that
+    reaches call sites that don't thread the kwarg (707 gate runs died at the
+    fixed boundary twice, cause undiagnosed; raise it without editing every CLI).
     """
+    if health_timeout_sec is None:
+        raw_timeout = os.environ.get("JSEVAL_HEALTH_TIMEOUT_SEC", "")
+        try:
+            health_timeout_sec = float(raw_timeout) if raw_timeout else _HEALTH_TIMEOUT_SEC
+        except ValueError as exc:
+            raise ValueError(
+                f"JSEVAL_HEALTH_TIMEOUT_SEC must be numeric, got {raw_timeout!r}"
+            ) from exc
     resolved_root = repo_root or REPO_ROOT
     # Honor JUSTSEARCH_DATA_DIR pre-set by callers (e.g. jseval calibrate
     # pointing every sub-run at the same cohort baseline registry).
