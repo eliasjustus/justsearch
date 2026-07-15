@@ -1,11 +1,11 @@
 ---
-title: AI-runtime lifecycle — why local fixes come out wrong
+title: "AI-runtime lifecycle — why local fixes come out wrong, and the spec/status model that replaces the mode enum"
 type: tempdocs
-status: "open — takeover investigation complete (§8, 2026-07-15): §4 probe found a CLASS (4 of 5 InferenceOnline-gated ops are circular) — subject is the capability algebra, not inference modes. §3 claims verified (3a corrected). Verdict: GO for /design → /derisk → /plan, after 0.2.0's minimal unblock ships. No design or implementation done."
+status: "open — takeover (§8), rewrite panel (§9), theorization (§10), research (§11), and DESIGN (§12-13, 2026-07-15) complete: one Head-side runtime authority (desired-state spec + Condition-shaped status + GPU lease arbiter + single-writer reconciler), five existing vocabularies become derived projections, orphan list named. Next: /derisk → /plan. No implementation."
 created: 2026-07-15
 updated: 2026-07-15
 author: "agent (opened from the 0.2.0 release round; owner-directed 2026-07-15)"
-related: [734, 726, 730]
+related: [734, 735, 725, 730, 726, 553]
 ---
 
 # 737 — AI-runtime lifecycle: why local fixes come out wrong
@@ -791,3 +791,179 @@ fair-use-scale). Citations inline; fast-moving items carry dates.
 5. New risk registered: ORT arena high-water-mark budgeting (11b) — any
    co-residency admission logic must account for it; this is a
    JustSearch-specific constraint no external scheduler shares.
+
+---
+
+## 12. Design (2026-07-15) — one runtime authority, five projections, named orphans
+
+General-level design; implementation detail belongs to `/plan`. Scope is matched
+to the problem §8 proved: the five-vocabulary fork structure and the
+unprincipled capability algebra. It deliberately does NOT include structure for
+problems not yet present (sized co-residency implementation, multi-model
+scheduling, wire v2) — but it refuses ontology that would *preclude* them
+(§10d-1's lesson).
+
+### 12a. The canonical model (new; Head-side)
+
+One authority answering "state × requested action → outcome", with four parts:
+
+- **`RuntimeSpec` (desired state; user/policy-owned, persisted).** Minimal:
+  `chatEnabled` (what "Start AI" / "Shut Down AI" actually mean) plus the
+  already-persisted variant/model selection it references. Subsumes
+  `JUSTSEARCH_AI_AUTOSTART_ENABLED` (boot = first reconcile toward spec) and
+  `preVduConfig` (procedures return to spec, not to a hand-saved copy).
+- **`RuntimeStatus` (observed state; controller-owned).** Condition-shaped
+  entries (§11a) — per-axis `status + reason + message + observed-spec-version`
+  — for: engine process (`Down(reason) | Starting | Healthy | Recovering`),
+  adoption (own-process | external), in-flight procedure overlay
+  (install / activation / VDU-batch, each with progress), GPU lease state.
+  Reason codes join the existing `LifecycleReasonCode` +
+  `check-readiness-reason-codes` mechanism — same register, same drift gate,
+  NOT a parallel one. The existing `CapabilityHealth` values (≈ KEP-1623
+  vocabulary, §11a) survive as this layer's status vocabulary.
+- **GPU lease arbiter.** Replaces the mode concept: chat engine and
+  embedding work are *holders* of a GPU grant; ONLINE ≡ chat holds it,
+  INDEXING ≡ worker may use it, OFFLINE ≡ nobody. Binary grants now; the
+  interface admits a grant *size* later (§11b: capacity-gated co-residency is
+  the ecosystem norm and Windows will not police oversubscription for us —
+  but implementing sized admission is future work, not this tempdoc's). The
+  MMF boolean stays exactly as-is, re-derived as the lease's cross-process
+  projection (§8c already showed it is the one honest artifact).
+- **One reconciler; single-writer field ownership.** Converges actual toward
+  `spec ∧ policy ∧ pending-work`. The five autonomous controllers stop calling
+  `switchTo*` directly and become *inputs*: the idle sampler contributes a
+  pending-work signal; crash recovery lives inside the engine axis; the VDU
+  coordinator requests a procedure; boot auto-start dissolves into "reconcile
+  at boot". Enforcement is the proven caller-forcing ArchUnit seam
+  (`embeddingAutoRescueMustGoThroughEmbeddingRecoveryOps` pattern): direct
+  mode/engine mutation outside the reconciler fails the build. This is what
+  makes §3d's never-switch-back *inexpressible* — a procedure ends and the
+  reconciler returns the system to spec, because spec is data, not a
+  convention.
+
+The 518 machinery (transition envelope, `LlamaServerOps`, immutable views,
+listener fan-out, MMF bus, install/activation procedure trackers) is retained
+under the authority — §9's "rewrite the model, keep the machinery."
+
+### 12b. The operation surface
+
+- **Lifecycle operations carry empty `RequiredCapability` sets** and validate
+  internally — conforming to the pattern the same catalog already uses
+  correctly for install/pack ops (§8a). The circular class is thereby
+  *inexpressible* for lifecycle ops rather than merely corrected.
+- **`core.switch-inference-mode` is superseded by a spec write** ("set chat
+  enabled true/false") with no preconditions — an intent cannot be "denied
+  because the thing it asks for is off". The old operation remains temporarily
+  as an alias (`online`→enabled, `indexing`→disabled) and is retired once the
+  FE migrates (§9a coupling: wire is string-soft; consumers, not contracts,
+  pin the old values).
+- **Denials become remedy-bearing** in 725's already-shipped actionable-errors
+  shape (conform, don't invent): any remaining denial names the unblocking
+  action. Lifecycle recovery operations are **always listed** on the agent
+  surface — the derived-availability hiding is removed for them (§11c:
+  spec-directed, and `list_changed` is unreliable in real clients).
+- **One dispatch authority per action**: `POST /api/ai/runtime/activate` and
+  `core.activate-runtime-variant` converge on the same internal entry point
+  with the same gating (today: gated-circular vs ungated — §8a's dual
+  authority).
+
+### 12c. Projections and gates (the fork-killer)
+
+The five §8d vocabularies become derived projections of the authority:
+
+1. `Mode` enum → derived during migration, then **deleted**. INDEXING/OFFLINE
+   collapse into `Down(reason)` + lease state; TRANSITIONING into the
+   procedure overlay (its wire leak and the redundant `starting` alias retire
+   with it).
+2. `InferenceCapability` → re-keyed to the engine axis (mechanism kept).
+3. Wire (`/api/status`) → exposes spec + status additively; old `phase` /
+   `starting` maintained as derived aliases, then retired.
+4. FE (`aiVerdict.ts` / `aiStateStore.ts`) → thin renderers of backend
+   spec+status+reason (aiVerdict already has the right shape — §9a; it stops
+   re-deriving and starts consuming).
+5. Agent palette → renderer of the same status (12b).
+
+Two gates, both extensions of existing mechanisms (not new machinery):
+
+- **Fork gate**: a `runtime-state` register in the `execution-surfaces`
+  pattern (553; 735's medicine) — canonical source + registered projections;
+  an unregistered referencer of runtime state fails the build. Per 735, the
+  register names the incident class it prevents (§3c/§8d) and its dissolution
+  condition (projections become generated).
+- **Circularity gate**: the declaration that produced §3b becomes either
+  inexpressible (empty sets for lifecycle ops, 12b) or build-failing (a
+  register row asserting lifecycle ops must not require `InferenceOnline`).
+  The §8f spike (derive establishes-sets from handler signatures) decides at
+  `/plan` time whether the stronger general form is cheap; the design does not
+  depend on it.
+
+### 12d. What this design orphans (deletion belongs to THIS tempdoc's work)
+
+| Orphan | Fate |
+|---|---|
+| `Mode` enum as authority (`app-api/Mode.java`) | derived projection during migration → deleted |
+| Wire `starting` alias; TRANSITIONING wire leak | retired with the old wire fields |
+| `RequiredCapability.InferenceOnline` on the 4 circular ops | removed (12b) |
+| `RequiredCapability.IndexedRoot` + `GpuAvailable` variants + lying resolver arms (`HeadAssembly.java:1213-1215`) | deleted now — dead vocabulary, zero users (§8a) |
+| `preVduConfig` save/restore | subsumed by spec-return |
+| `JUSTSEARCH_AI_AUTOSTART_ENABLED` semantics | subsumed by persisted spec (env at most seeds it) |
+| Direct `switchTo*` authority of `OfflineCoordinator` / samplers / boot paths | rerouted through the reconciler; ArchUnit-forced |
+| Derived-availability hiding of lifecycle ops on the agent surface | removed (12b) |
+| Ungated `POST /api/ai/runtime/activate` as second dispatch authority | unified (12b) |
+| Fossil tests: `CapabilityAvailabilityTest.java:43-53` circular pin; `BrainSurface.indexing-escape.test.ts` (5) | replaced by model-agnostic acceptance tests, headlined by: *"from every reachable state, the user-visible escape action succeeds"* (the §3b+§3d regression) |
+
+### 12e. Staging constraint (from §9c) and sequencing with 0.2.0
+
+The authority lands first *as the single writer* (ArchUnit-forced from its
+first commit); projections migrate one at a time; each fork's deletion is this
+tempdoc's work, not a later sweep; the fork register + gate arrive WITH the
+authority, so no step leaves two live authorities ungated. Do not touch the
+four ops' requirement sets until 0.2.0's minimal unblock has shipped
+(unlanded on the release branch as of this writing); the interim unblock
+should prefer the empty-requirements form (§10g) so rung 1 survives this
+design unchanged.
+
+## 13. Reach — principles, where else they bind, and when they retire
+
+This design is deliberately assembled from seams the repo already has —
+Condition-reasons join `LifecycleReasonCode`'s register+gate; the fork gate
+extends the 553/735 register pattern; single-writer enforcement reuses the
+ArchUnit caller-forcing seam; actionable denials conform to 725's shipped
+shape; wire evolution rides the additive-`v1` convention. The genuinely new
+things are exactly two: the spec/status split with a reconciler, and the GPU
+lease abstraction.
+
+- **P1 — "An operation must not require what its success establishes."**
+  Instance of the wider "declared metadata must be validated against behavior"
+  (LiveWitness's principle). Binds: every operation catalog, now and future.
+  Earning its keep: the gate (or the inexpressibility construction) catches a
+  circular declaration before review at least once, or no new instance appears
+  while it stands. Retirement: when requirement sets are *derived* from the
+  model instead of hand-declared, the rule is enforced by construction and the
+  gate dissolves (735's dissolution shape).
+- **P2 — "State consumed by more than one surface needs a declared canonical
+  source and a fork gate."** Not new — this is 553's principle, named by 735;
+  runtime lifecycle state is its third confirmed instance (SearchTrace, agent
+  response furniture, now this). This design *conforms* rather than
+  generalizes. Already-known candidate instances stay with their owners (735).
+- **P3 — "Autonomous controllers require a declared desired state and
+  single-writer field ownership."** New, this tempdoc's own principle. The
+  system had five controllers converging on shared state with no spec — §3d is
+  the incident class. Candidate scope beyond AI runtime: any future background
+  maintenance loop; a possible existing tension worth a one-line audit someday
+  is watchdog-restart vs user-stop intent in the dev runner. Earning its keep:
+  the §12d acceptance test stays green through future lifecycle changes, and
+  "the system changed state and the user can't tell why" stops appearing in
+  observations. Retirement: if the runtime ever becomes single-controller
+  (no autonomy), spec/status is apparatus — collapse it back to direct
+  commands.
+- **P4 — "Resource exclusivity is policy, not ontology."** The lease carries
+  the policy; the type admits sizes without carrying an implementation.
+  Earning its keep: the first co-residency request (12 GB tier, or any second
+  GPU consumer such as a Head-side reranker) lands as a policy change, not a
+  remodel. Retirement: a permanent product commitment to single-GPU-consumer
+  deletes the size dimension.
+
+Public-claims note: nothing in this design feeds public-facing quantitative or
+compliance claims; if any future README/business text cites the lease model or
+"predictable AI runtime", it must wait for the shipped, measured behavior.
