@@ -1,9 +1,9 @@
 ---
-title: "696 — Simple/Detailed disclosure coverage: bring user-facing technical strings under the one uiMode authority"
+title: "738 — Simple/Detailed disclosure coverage: bring user-facing technical strings under the one uiMode authority"
 type: tempdoc
-status: implemented (pending independent review + merge)
+status: implemented + independently reviewed; merged forward onto main 2026-07-15 and re-verified. Pending merge. NOTE — authored as tempdoc **696**; briefly renumbered to **728** on 2026-07-15, then renumbered again to **738** the same day after 728 was found to collide with in-flight work in other worktrees (see §Renumber) — so pre-2026-07-15 references to "tempdoc 696", and any short-lived same-day reference to the intermediate 728 number, meaning disclosure both mean this doc
 created: 2026-07-08
-updated: 2026-07-08
+updated: 2026-07-15
 related:
   - 557 (uiMode / Simple-Advanced authority origin, Q8)
   - 586 (uiMode rail-trim consumer, F-2)
@@ -12,7 +12,7 @@ related:
   - docs/explanation/27-frontend-presentation-kernel.md (the authority pattern this conforms to)
 ---
 
-# 696 — Simple/Detailed disclosure coverage
+# 738 — Simple/Detailed disclosure coverage
 
 ## Problem
 
@@ -167,3 +167,71 @@ Ship behind the existing `uiMode` preference, reversible per surface. Verify wit
 both `uiMode` states, and — because this is user-visible — live in-browser validation on both the
 search and agent surfaces in both Simple and Detailed, with the local model active for the agent
 run. Independent review (reviewer ≠ implementer) before merge, per the slice-execution rules.
+
+## Renumber: 696 → 728 → 738 (2026-07-15)
+
+This tempdoc was authored as **696** on 2026-07-08 in the `ui-audit-density-review` worktree. In
+parallel, a different agent authored an unrelated `696-dev-tooling-jdk-resolution-and-line-ending-normalization`
+that reached `main` first. Two unrelated docs therefore claimed 696 — in a repo where tempdocs are
+cited by bare number ("tempdoc 696"), including from ~45 code comments. Renumbered to **728** (the
+next free number; highest on main was 727), and every disclosure-meaning citation was repointed.
+Upstream's 696 is untouched.
+
+That renumber picked 728 by checking only `main` for a free number, which cannot see other
+worktrees' in-flight docs — 728 was already claimed by `728-sandbox-validation-redesign.md`,
+in-flight across four other local worktrees at the time. `node scripts/ci/check-tempdoc-numbers.mjs`
+correctly caught this second collision (worktree-vs-worktree is exactly the case it's designed to
+catch — see the gap note below for what it *doesn't* catch). Renumbered again to **738**, verified
+free across every registered worktree and `origin` for both `docs/tempdocs/**` and
+`gates/*/.changesets/**`, and every disclosure-meaning citation (including the ~45 code comments) was
+repointed a second time. Upstream's 728 (the sandbox-validation doc) is untouched.
+
+**`check-tempdoc-numbers` did not catch the original 696 collision, and that is a real gap** (logged
+to the observations inbox). It only reports a number claimed by two or more *in-flight* worktrees:
+any basename already on `origin` is filtered out of the comparison
+(`scripts/ci/check-tempdoc-numbers.mjs:117`), so an in-flight doc colliding with an already-merged
+one passes green. Reproduced live — the same run that missed the 696 collision flagged an unrelated
+720 collision between two other worktrees. The check guards worktree-vs-worktree (as the 728
+collision above confirms), not worktree-vs-main.
+
+## Merge-forward onto main (2026-07-15)
+
+The branch sat a week and fell 80 commits behind. `git merge origin/main` produced **zero textual
+conflicts** — and one **semantic** one, which only the post-merge suite caught:
+
+- **C7's receipt test broke.** Upstream PR #171 (tempdoc 720, "honest grounding badge for settled
+  zero-citation answers") reclassified a settled, zero-citation, chunk-precise answer from the
+  `grounded` frame to `sourced`. `answerFrameLabel()` returns `null` for `grounded` but a real string
+  for `sourced` (`components/chat/evidenceProjection.ts:182`), so the receipt line gained
+  "Based on your documents — per-sentence grounding not verified".
+- **C7's actual behaviour was never broken** — `not.toContain('Llama 3 8B')` still passed. What broke
+  was an over-tight `toBe('3.2s')` that incidentally pinned the whole line. Fixed by making the
+  expected string exact against the new upstream text, *not* by loosening it to a `contains` check
+  (that would be the "make the failure invisible" move this repo forbids).
+- Post-merge: typecheck exit 0, **3731/3731 unit tests green**.
+
+**Lesson worth carrying:** the branch was fully green on its own week-old base, and that green meant
+nothing — it verified a base that no longer existed. Diffstat, conflict count, and ancestry all looked
+clean. Only running the suite against the *merged* base surfaced the break. (Ancestry was also the
+wrong instrument for "has this landed?" — per `squash-merge-verify-content-not-ancestry`, the content
+check `git diff <branch> origin/main -- <paths>` is the reliable one.)
+
+## Finding: a new leak of this very class, arrived post-authorship
+
+`answerFrameLabel()` renders "Based on your documents — **per-sentence grounding not verified**"
+**unconditionally — it never consults `uiMode`**. That is technical vocabulary shown to a Simple-mode
+user: exactly the leak class this tempdoc exists to close. It arrived *after* this tempdoc was written,
+via a PR that had no way to know the disclosure authority existed.
+
+It is **out of scope here** (this tempdoc's scope names the banner, meta line, location, and the agent
+model-name/budget strings; the evidence surface was assessed as already-conforming) and it belongs to
+someone else's shipped feature, so it is logged to the observations inbox rather than absorbed.
+
+But it is the strongest available evidence for this tempdoc's own **Principle**: detail level is a
+presentation authority, and a *coverage* that depends on each future author knowing the authority
+exists will keep leaking. The Principle section says the generalized structure is deliberately not
+built because "the present problem only needs the specific sites wired." This finding is the first
+data point against that — the sites keep multiplying at prose-tier (~70%) adherence. Not an argument
+to build it now; an argument to record the trigger. Compare tempdoc 697, which faced the identical
+question for *proportion* and resolved it by moving the invariant to Gate-tier rather than trusting
+review.

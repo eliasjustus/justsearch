@@ -65,7 +65,7 @@ import { orElse } from '../state/known.js';
 import { readinessNotice, reasonFor, isReindexCause, type ReadinessNoticeView } from '../state/readinessNotice.js';
 import { verdictTone, type SystemHealthVerdict } from '../state/verdict.js';
 import { projectAvailability, unavailableBecause } from '../state/availability.js';
-// Tempdoc 696 — the degradation banner's disclosure now projects from the app-wide Simple/Detailed
+// Tempdoc 738 — the degradation banner's disclosure now projects from the app-wide Simple/Detailed
 // authority (uiMode), replacing tempdoc 687's per-cause-set "seen-hash" bookmark.
 import { subscribeUiMode, isAdvancedMode } from '../state/uiModeState.js';
 import '../components/SystemNotice.js';
@@ -557,12 +557,12 @@ export class UnifiedChatView extends JfElement {
   /** Tempdoc 577 §2.13 #17 — the agent authority-space ("what can it do") panel is open. */
   declare showAbilities: boolean;
   /**
-   * Tempdoc 696 — the degradation banner's LOCAL "See details" expand toggle. Default collapsed; the
+   * Tempdoc 738 — the degradation banner's LOCAL "See details" expand toggle. Default collapsed; the
    * render derives the effective state from disclosure (isAdvancedMode) + severity (see
    * renderDegradationBanner). Tempdoc 687's per-cause-set seen-hash default machinery is removed.
    */
   declare degradationBannerExpanded: boolean;
-  /** Tempdoc 696 — re-render the disclosure-gated banner when the Simple/Detailed mode changes. */
+  /** Tempdoc 738 — re-render the disclosure-gated banner when the Simple/Detailed mode changes. */
   private uiModeUnsubscribe: (() => void) | null = null;
   declare pinnedDocIds: string[];
   declare parentFirstMessagePreview: string | null;
@@ -742,7 +742,7 @@ export class UnifiedChatView extends JfElement {
     super.connectedCallback();
     // Tempdoc 565 §12.3.E — re-render when the cross-surface source selection changes (chip highlight).
     this.selectedSourceUnsub = subscribeSelectedSource(() => this.requestUpdate());
-    // Tempdoc 696 — re-render the disclosure-gated banner when the Simple/Detailed mode changes; the
+    // Tempdoc 738 — re-render the disclosure-gated banner when the Simple/Detailed mode changes; the
     // render reads isAdvancedMode() live, so a bare requestUpdate is all that is needed.
     this.uiModeUnsubscribe = subscribeUiMode(() => this.requestUpdate());
     // Tempdoc 565 fix F / 574 F1 — re-render the rail mount when the wide breakpoint is crossed,
@@ -978,7 +978,7 @@ export class UnifiedChatView extends JfElement {
     this.reasoning.reset();
     // Close transient panels/editors so they don't reopen on return.
     this.showAbilities = false;
-    // Tempdoc 696 — the banner's local "See details" toggle resets on hide; the effective expand
+    // Tempdoc 738 — the banner's local "See details" toggle resets on hide; the effective expand
     // state is re-derived from disclosure + severity on the next render.
     this.degradationBannerExpanded = false;
     this.forkEditing = false;
@@ -2115,7 +2115,7 @@ export class UnifiedChatView extends JfElement {
     if (!verdict) return nothing;
     const notice = readinessNotice(verdict);
     if (!notice) return nothing;
-    // Tempdoc 696 — disclosure decides how much banner. Simple (default) is the one-line pill
+    // Tempdoc 738 — disclosure decides how much banner. Simple (default) is the one-line pill
     // (headline + remedy, raw causes hidden); Detailed shows the causes. A severe (`error`) verdict
     // opens expanded even in Simple so a genuine failure is never a single ellipsized line. The local
     // "See details" toggle (degradationBannerExpanded) lets a Simple user open a cosmetic notice on
@@ -2134,7 +2134,7 @@ export class UnifiedChatView extends JfElement {
       <span class="notice-row"
         >${icon({ name: 'alert-triangle', size: 13 })}
         <span class="degradation-summary"><strong>${notice.headline}</strong> ${notice.body}</span>
-        ${/* Tempdoc 696 — the collapse ("See less") chevron shows only when the expansion is
+        ${/* Tempdoc 738 — the collapse ("See less") chevron shows only when the expansion is
               user-driven; a forced expansion (Detailed mode or a severe verdict) has nothing to
               collapse to, so hide the dead control. */ ''}
         ${forcedExpanded
@@ -2163,7 +2163,7 @@ export class UnifiedChatView extends JfElement {
 
   /**
    * The collapsed one-line form: severity icon + "N causes — <headline>" + the strongest remedy + an
-   * expand ("See details") chevron. Tempdoc 696 — this is the DEFAULT form in Simple mode (raw causes
+   * expand ("See details") chevron. Tempdoc 738 — this is the DEFAULT form in Simple mode (raw causes
    * hidden); {@link renderDegradationBanner} decides expanded-vs-collapsed from disclosure + severity.
    */
   private renderCollapsedDegradationBanner(
@@ -3086,7 +3086,7 @@ export class UnifiedChatView extends JfElement {
             ? html` · <span class="posture-policy">Policy: ${approvalPosture}</span>`
             : nothing}${this.agentCtrl?.budgetGate
             ? html` · <span class="over-budget"
-                >${/* Tempdoc 696 (C8) — plain in Simple, technical in Detailed. */ ''}${isAdvancedMode()
+                >${/* Tempdoc 738 (C8) — plain in Simple, technical in Detailed. */ ''}${isAdvancedMode()
                   ? 'Paused — awaiting budget'
                   : 'Paused — waiting to continue'}</span
               >`
@@ -4430,7 +4430,7 @@ export class UnifiedChatView extends JfElement {
           : `${receipt.durationMs}ms`,
       );
     }
-    // Tempdoc 696 (C7) — the model name is a technical fact; show it only in Detailed mode. The
+    // Tempdoc 738 (C7) — the model name is a technical fact; show it only in Detailed mode. The
     // duration (a plain "how long it took") stays in both.
     if (receipt.modelLabel && isAdvancedMode()) parts.push(receipt.modelLabel);
     return parts.join(' · ');

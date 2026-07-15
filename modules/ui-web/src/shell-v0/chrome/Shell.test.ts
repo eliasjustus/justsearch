@@ -140,7 +140,7 @@ describe('Shell — slice 492 substrate integration', () => {
     __resetUiModeForTest();
   });
 
-  it('Tempdoc 696 — the topbar Simple/Detailed toggle reflects the live uiMode and drives it on click', async () => {
+  it('Tempdoc 738 — the topbar Simple/Detailed toggle reflects the live uiMode and drives it on click', async () => {
     __resetUiModeForTest();
     const shell = await renderShell();
     const opts = () =>

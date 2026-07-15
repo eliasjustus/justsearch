@@ -44,7 +44,7 @@ describe('formatDisplayPath (602 R3)', () => {
   });
 });
 
-describe('formatLocationBreadcrumb (Tempdoc 696 C4)', () => {
+describe('formatLocationBreadcrumb (Tempdoc 738 C4)', () => {
   it('drops the drive letter and filename, showing the folder chain', () => {
     expect(formatLocationBreadcrumb('f:\\justsearch-public\\ssot\\docs\\help\\getting-started.md')).toBe(
       'ssot › docs › help',

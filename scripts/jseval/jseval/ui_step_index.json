@@ -18,7 +18,7 @@
     "citation-highlight"
   ],
   "shell-v0/views/UnifiedChatView.ts": [
-    "chat-mode", "qa-response"
+    "chat-mode", "qa-response", "chat-proportion"
   ],
   "shell-v0/components/ContextMenu.ts": ["context-menu"],
 

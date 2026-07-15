@@ -125,7 +125,7 @@ function retrievalModeLabel(mode: string | null | undefined): string | null {
   return mode === 'HYBRID' ? 'Semantic + keyword' : mode === 'VECTOR' ? 'Semantic' : mode === 'TEXT' ? 'Keyword' : null;
 }
 
-/** Tempdoc 696 (C2) — the plain-language retrieval-mode label shown in Simple mode. */
+/** Tempdoc 738 (C2) — the plain-language retrieval-mode label shown in Simple mode. */
 function plainRetrievalModeLabel(mode: string | null | undefined): string | null {
   return mode === 'HYBRID'
     ? 'meaning + words'
@@ -199,7 +199,7 @@ export class ResultsCard extends JfElement {
     this.copyText = (text: string) => copyToClipboard(text);
   }
 
-  /** Tempdoc 696 — re-render the disclosure-gated meta line + result locations on Simple/Detailed change. */
+  /** Tempdoc 738 — re-render the disclosure-gated meta line + result locations on Simple/Detailed change. */
   private uiModeUnsubscribe: (() => void) | null = null;
 
   override connectedCallback(): void {
@@ -337,7 +337,7 @@ export class ResultsCard extends JfElement {
 
   // ---------------------------------------------------------------- render
 
-  /** Tempdoc 696 (C2) — the retrieval-mode label: plain in Simple, technical in Detailed. */
+  /** Tempdoc 738 (C2) — the retrieval-mode label: plain in Simple, technical in Detailed. */
   private modeLabel(mode: string | null | undefined): string | null {
     return isAdvancedMode() ? retrievalModeLabel(mode) : plainRetrievalModeLabel(mode);
   }
@@ -353,7 +353,7 @@ export class ResultsCard extends JfElement {
     return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
   }
 
-  /** Tempdoc 696 (C2) — plain latency for Simple mode ("found in 0.02s"), hiding the raw ms timing. */
+  /** Tempdoc 738 (C2) — plain latency for Simple mode ("found in 0.02s"), hiding the raw ms timing. */
   private static formatLatencyPlain(ms: number): string {
     return `${(ms / 1000).toFixed(2)}s`;
   }
@@ -488,9 +488,9 @@ export class ResultsCard extends JfElement {
             : nothing}
         </div>
         <div class="path" title=${hit.path}>
-          ${/* Tempdoc 696 (C4) — Simple shows the humanized breadcrumb (empty for a root file, which is
+          ${/* Tempdoc 738 (C4) — Simple shows the humanized breadcrumb (empty for a root file, which is
                 fine — the filename is already the row title); Detailed shows the full path. No raw-path
-                fallback in Simple, so a drive-root file can't re-leak the raw path (696 review §1). */ ''}
+                fallback in Simple, so a drive-root file can't re-leak the raw path (728 review §1). */ ''}
           ${isAdvancedMode() ? formatDisplayPath(hit.path) : formatLocationBreadcrumb(hit.path)}
         </div>
         ${view.snippet

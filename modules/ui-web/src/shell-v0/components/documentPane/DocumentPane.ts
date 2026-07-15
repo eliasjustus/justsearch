@@ -166,7 +166,7 @@ export class DocumentPane extends JfElement {
     error: null,
   };
 
-  /** Tempdoc 696 — re-render the disclosure-gated path header on Simple/Detailed change. */
+  /** Tempdoc 738 — re-render the disclosure-gated path header on Simple/Detailed change. */
   private uiModeUnsubscribe: (() => void) | null = null;
 
   override connectedCallback(): void {
@@ -724,7 +724,7 @@ export class DocumentPane extends JfElement {
         ${/* Search Thread Round-2 R5c — the shared formatDisplayPath authority (filename-preserving
               middle truncation), not CSS end-truncation; the full path stays reachable via title. */ ''}
         <div class="path" title=${this.docPath}>
-          ${/* Tempdoc 696 (C4) — Simple shows the humanized folder breadcrumb; Detailed the full path
+          ${/* Tempdoc 738 (C4) — Simple shows the humanized folder breadcrumb; Detailed the full path
                 (the full path stays reachable via the title tooltip in both). */ ''}
           ${isAdvancedMode() ? formatDisplayPath(this.docPath) : formatLocationBreadcrumb(this.docPath)}
         </div>

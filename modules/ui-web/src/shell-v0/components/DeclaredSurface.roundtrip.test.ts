@@ -69,7 +69,7 @@ describe('DeclaredSurface — settings round-trip (569 Fix 5)', () => {
 
     const buttons = deepQueryAll(el, 'button.option-btn');
     expect(buttons.length).toBeGreaterThan(0); // the bespoke renderer actually rendered
-    // Tempdoc 696 — the `advanced` mode's user-facing label is now "Detailed"; the emitted value
+    // Tempdoc 738 — the `advanced` mode's user-facing label is now "Detailed"; the emitted value
     // stays `advanced` (only the display label changed).
     const advanced = buttons.find((b) => b.textContent?.includes('Detailed')) as HTMLButtonElement;
     expect(advanced).toBeTruthy();

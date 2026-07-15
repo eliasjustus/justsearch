@@ -291,7 +291,7 @@ describe('DocumentPane — header path truncation (Search Thread Round-2 R5c)', 
   });
 
   it('Detailed: renders a formatDisplayPath-truncated header text with the full path in title', async () => {
-    setUiMode('advanced'); // Tempdoc 696 (C4) — the full/truncated path is the Detailed form.
+    setUiMode('advanced'); // Tempdoc 738 (C4) — the full/truncated path is the Detailed form.
     const longPath =
       'projects/deeply/nested/folder/structure/that/goes/on/for/a/while/before/reaching/the-actual-filename.md';
     stubFetchOnce({ content: MD_FIXTURE });
@@ -318,7 +318,7 @@ describe('DocumentPane — header path truncation (Search Thread Round-2 R5c)', 
     expect(pathEl?.getAttribute('title')).toBe('notes/thread.md');
   });
 
-  it('Simple (default): renders a humanized folder breadcrumb, not the raw path (Tempdoc 696 C4)', async () => {
+  it('Simple (default): renders a humanized folder breadcrumb, not the raw path (Tempdoc 738 C4)', async () => {
     stubFetchOnce({ content: MD_FIXTURE });
     const el = make();
     el.docPath = 'f:\\justsearch-public\\ssot\\docs\\help\\getting-started.md';

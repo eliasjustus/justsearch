@@ -1,11 +1,11 @@
 ---
 title: "697 — Oversized persistent chrome: root-cause the bugs + a measured shrink-only ratchet so it can't regress"
 type: tempdoc
-status: Part A implemented + live-validated; Part B machinery implemented + unit-tested; gate activation on the two data-dependent elements is a documented follow-up (seeded fixture)
+status: COMPLETE — Part A implemented + live-validated; Part B implemented, unit-tested, and **ACTIVATED** 2026-07-15 (both target elements registered and measuring against a seeded `chat-proportion` fixture step; gate green). Pending merge
 created: 2026-07-08
-updated: 2026-07-08
+updated: 2026-07-15
 related:
-  - 696 (Simple/Detailed disclosure — where this was deferred; §Proportion/density)
+  - 738 (Simple/Detailed disclosure — where this was deferred; §Proportion/density)
   - 615 (the ui-shot `.measure.json` harness + the `ui-a11y-baseline.v1.json` baseline pattern this mirrors)
   - 565 §19 / 559 Authority VI / 569 §19 Seam 4 (the Adaptivity/density lineage this investigates and does NOT extend)
   - docs/explanation/27-frontend-presentation-kernel.md (the Collapse > Generate > Gate ladder + the honest ceiling)
@@ -20,7 +20,7 @@ related:
 A handful of persistent chrome elements render **much taller than the content they hold**, and there
 is no guardrail — so it is caught, if at all, by whoever happens to measure pixels. That review-tier
 catch has a documented failure record: audit-2 (G1) **measured** a banner as heavy chrome:content →
-audit-3 re-examined the same banner minutes later and **missed it** in a prose pass → tempdoc 696
+audit-3 re-examined the same banner minutes later and **missed it** in a prose pass → tempdoc 738
 then **deferred** the whole question, arguing size would "dissolve into the disclosure fix" → a single
 live look immediately **re-found** it. The lesson is not "try harder to eyeball": proportion is a
 *measurement* judgment, and review (doc 27's weakest, ~70% rung) does not reliably measure.
@@ -45,7 +45,7 @@ decides the design below.
 ## Investigation: is this the density authority's coverage gap? (No.)
 
 The tempting reframe — "the app has a Compact/Comfortable/Spacious preference; the oversize is chrome
-not respecting it, the same coverage drift as 696's disclosure gap" — **does not survive source
+not respecting it, the same coverage drift as 738's disclosure gap" — **does not survive source
 investigation**, and it is worth recording *why*, because it changes the design:
 
 - The density **preference** (`DensityVariant`, `renderers/userConfig.ts`) exists, but
@@ -110,6 +110,40 @@ ratchet idiom (`atom-fork` / `style-literal` / `suppression` / `npm-audit`). Cov
 existing `check-ui-step-coverage` gate: a ratcheted element must appear in a ui-shot step to be
 measured, which that gate already keeps honest.
 
+> **Correction (2026-07-15, from activation).** That last sentence is **overstated** and should not be
+> relied on. `check-ui-step-coverage` verifies that each step's mapped **source paths resolve on disk**
+> — it does **not** verify that a step's **selectors still match anything**. A selector can rot silently
+> while the gate stays green (proven this session — see §Activation, the stale-selector finding). What
+> actually protects this ratchet is its own **exit 2 on a missing capture**: if a registered selector
+> stops matching, the gate fails loudly rather than passing green on nothing. That was the right call by
+> construction; the coverage-gate argument above was simply the wrong reason for it.
+
+> **Correction 2 (2026-07-15, from independent review) — the tier claim was wrong.** This tempdoc calls
+> the ratchet doc 27's **Gate** rung and says it "fails the build" (also §Part B.3, §Reach, §Verification,
+> and the sidecar-teardown's "Gate-tier (~100%), automated"). **It is not CI-wired** — like `ui-a11y-gate`,
+> it is **local-first (ADR-0026)**: runnable, real, and green/red honestly, but nothing fails a build on it.
+> Read every "fails the build" in this doc as **"exits 1 when you run it."**
+>
+> The review's sharper point: as originally shipped, *nothing told anyone to run it*. It was absent from
+> `/ui-check`'s verb table and from `ui-shot-hint` — and `views/unifiedChatStyles.ts`, **the very file
+> holding the guarded CSS**, was not mapped in `ui_step_index.json` and failed `styleHints()`'s `styleish`
+> test. A future agent re-inflating the pill would have received **zero** delivery. Since this tempdoc's
+> whole §Problem is that humans do not remember to measure proportion, an undelivered check is nearer ~0%
+> than ~100% — the machinery was mirrored from `ui_a11y_gate` while the two things that make it *fire*
+> were omitted.
+>
+> **Closed at activation** (both verified by runtime probe, not inspection): `ui-proportion-gate` is now a
+> row in `/ui-check`'s verb table, and `ui-shot-hint`'s `styleHints()` emits it on style edits. Fixing that
+> required fixing the hint itself — its `styleish` test used `/\.styles\.ts$/`, but this repo's convention is
+> camelCase `<name>Styles.ts` and it contains **zero** `*.styles.ts` files, so **both** of its style files
+> (`unifiedChatStyles.ts`, `ambientStyles.ts`) fell through all three tests. That hint had never fired for
+> either, which had been silently costing `ui-a11y-gate` its delivery too — a pre-existing bug this tempdoc
+> only found by needing the seam. Now `/styles\.ts$/i`; 6/6 probe cases correct, no over-broadening.
+>
+> **Honest residual:** delivery is now `hook-hint` tier (~85%, the `pipe-mask-hint` precedent — tempdoc 618's
+> residence→delivery conversion), **not** `gate` tier (~100%). CI-wiring it is the remaining step to earn the
+> word "Gate", and is deliberately left as a candidate follow-up rather than claimed here.
+
 ## What this supersedes / orphans (teardown rides along)
 
 - **This tempdoc's own earlier draft** proposed *authored max-height budgets* in a registry. That is
@@ -171,7 +205,7 @@ build a proportion-specific mechanism.
   re-finds oversize, delete it — the recurrence it guards against did not materialize, and a ratchet
   under an impossibility is self-justifying apparatus.
 
-**Second, broader shape (named, explicitly NOT built here):** tempdoc 696 (disclosure) and this
+**Second, broader shape (named, explicitly NOT built here):** tempdoc 738 (disclosure) and this
 tempdoc (proportion) are the *same* system shape — a cross-cutting presentation dimension that ought
 to be one authority with full coverage, currently expressed ad-hoc per component. doc 27's authorities
 table already names several (tone, originator, display-name/fact, availability); disclosure and
@@ -218,7 +252,8 @@ gate's own unit tests green — 10).
   remedy affordance ~42–54px → ~29px. The expanded banner stays ~158px — content-dominated, by design.
   *(Numbers cited to a specific live run — working evidence, not public-facing claims.)* Live capture
   used a standalone Playwright script (the claude-in-chrome extension had disconnected).
-- **Part B — the ratchet (machinery done + unit-tested; activation is a follow-up).** The full
+- **Part B — the ratchet (machinery done + unit-tested; activation was deferred here, then DONE —
+  see §Activation below, which supersedes this bullet's "Follow-up to activate" paragraph).** The full
   `ui_a11y_gate` family is mirrored: `governance/ui-proportion-baseline.v1.json` (+ schema),
   `scripts/jseval/jseval/ui_proportion_gate.py` (shrink-only: exit 1 on growth beyond
   `maxHeightPx + tolerancePx`, exit 2 on a missing capture so a silent miss is never a false pass),
@@ -244,3 +279,87 @@ gate's own unit tests green — 10).
   primary source + passing tests. No blockers, no should-fix items; three cosmetic/defensive nits
   accepted as-is (a no-op `min-height:0`, an unscoped-but-single-use class selector, and `regen`'s
   shrink-only being human-supervised — matching the `ui_a11y_gate` precedent).
+
+## Activation (2026-07-15) — the ratchet is now armed
+
+The deferral above is closed. Both elements are registered and measuring; `jseval ui-proportion-gate`
+exits 0 against real captures.
+
+**Measured, against a deterministic fixture capture:** `.degradation-banner-collapsed` = **42px**,
+`.message.user` = **36px** — matching Part A's live-validated post-fix numbers exactly (not the
+pre-fix 76px / 75px). The baseline records those as the ceilings; with the 2px `tolerancePx` the
+effective ceilings are 44/38, as intended. **No ceiling was widened to obtain green.**
+
+**Why activation was worth doing rather than shipping the machinery inert.** An empty `steps` array is
+a green no-op — a ratchet that cannot bite. This tempdoc's own thesis is that Part A without a
+guardrail is precisely the whack-a-mole its §Problem documents (measured → missed → deferred →
+re-found). Shipping the apparatus without the function would have reproduced the deferral one level up.
+
+### Two corrections to this tempdoc's own plan (both found by doing it)
+
+1. **`qa-response` cannot be part of this** — the §Part B follow-up said to make "`chat-mode`/`qa-response`
+   show the pill/bubble deterministically." `qa-response` drives a real model through `/api/chat/agent`;
+   `ui_fixtures.py`'s docstring explicitly scopes `--fixtures` to structural steps and excludes AI-chain
+   steps, and no SSE-stream fixture route exists. Making it deterministic would mean net-new SSE-mocking
+   harness work against a declared design boundary. Dropped from scope.
+2. **`chat-mode` was not mutated either.** Its job is documenting chat-*input* mode; adding a degraded
+   banner + a rendered turn would change what it documents and disturb its screenshot/a11y baselines.
+   Instead a **new dedicated isolated step, `chat-proportion`**, renders both elements at once. Additive;
+   ten other chain steps' baselines untouched. (Nothing `depends_on` `chat-mode` — verified — so
+   isolating it was *possible*; it just wasn't *right*.)
+
+### What activation actually required (all live-verified, none of it predicted by the plan)
+
+The plan assumed one knob (a degraded verdict). It needed four, each proven necessary by probing:
+a `DEGRADED` `readiness.composites.retrieval` (the pill), `/api/inference/status` reporting the model
+online **and** a non-zero `worker.core.indexedDocuments` (else `askPinned()` blocks Ask on a
+"no documents" gate, so no turn renders), and `/api/settings` `ui.mode: "simple"` — because the captured
+fixture default is `"advanced"`, which force-expands the banner regardless of severity, so the
+*collapsed* pill never renders under the default fixture at all. All four are gated behind the
+`degraded` variant only; `fixture_body()` output for the `default`/`empty` variants was verified
+**byte-identical to pre-change**, so no other step's capture moved. The new variant is deliberately
+**not** added to `VARIANTS`, which is consumed solely by `ui_fuzz.py` — joining it would have silently
+added a fuzzer axis cell.
+
+### The finding that matters most: the measurement harness had silently rotted
+
+`ui_selectors.py` still defines `TID_SEARCH_INPUT = "search-input"` and
+`SEARCH_INPUT = Selector(role="searchbox", name="Search files", …)`. **Those attributes no longer exist
+anywhere in the frontend** — tempdoc 687 (merged 2026-07-07) retired the standalone search box when it
+consolidated search+chat onto one `<jf-composer>`. So `search-results`, and the nine steps chained off
+it, cannot drive the app under `--fixtures`. Logged to the observations inbox; **not fixed here** (it is
+pre-existing, cross-cutting, and out of this tempdoc's scope).
+
+This retro-explains a line in §Implementation status above, written 2026-07-08: *"the ui-shot chat/search
+chain steps additionally failed to capture against the worktree FE this session."* That was read at the
+time as a worktree quirk. **It was not.** It was this bug, seen and misattributed — the same
+symptom-not-cause move §Problem catalogues for the banner.
+
+And it sharpens this tempdoc's own thesis in a way §Reach did not anticipate. The argument was: *a
+rendered-geometry invariant that review cannot reliably hold is enforced by a measured baseline ratchet,
+not by a human lens.* This finding says the measuring instrument needs the same treatment: `ui-shot`'s
+selectors are an invariant nothing measures, so they rotted for eight days behind a green
+`check-ui-step-coverage` — which checks that mapped **paths** resolve, not that **selectors** match.
+"Measurement over vision" only holds while the measurement still points at the thing. **Candidate
+follow-up:** a liveness check that fails when a registered selector matches nothing in any step — the
+selector-level analogue of the path-level check the coverage gate already performs. Not built here; the
+proportion gate's own exit-2-on-missing-capture already protects *this* ratchet, which is why activation
+could proceed honestly despite the rot.
+
+### Verification (2026-07-15, all run and green)
+
+| check | result |
+|---|---|
+| `jseval ui-proportion-gate` | exit 0 — "clean — no registered element grew beyond baseline" |
+| `pytest tests/test_ui_proportion_gate.py` | 10 passed |
+| `node scripts/ci/check-ui-step-coverage.mjs` | exit 0 |
+| `jseval ui-a11y-gate` (6 view surfaces) | exit 0 — no new violations |
+| `chat-proportion.measure.json` axe | **0 violations, 0 console errors** — on the exact state holding the slimmed remedy button, the pill, and the bubble |
+| ui-web typecheck + unit suite | exit 0; 3731 passed |
+
+The `ui-a11y-gate` green is real but **does not** cover this work's changed states — it captures six
+*view* surfaces and never renders a degraded banner or a chat turn. The `chat-proportion` axe result is
+what actually measures them, and it is clean: the remedy button's slimming (~42–54px → ~29px) did not
+trade a proportion win for a WCAG target-size violation. Useful side effect: the fixture step built for
+the ratchet doubles as the measured-audit vehicle for presentation-authority closure on exactly the
+states the a11y gate structurally cannot reach.

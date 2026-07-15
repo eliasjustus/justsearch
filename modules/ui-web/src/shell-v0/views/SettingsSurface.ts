@@ -585,7 +585,7 @@ export class SettingsSurface extends JfElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    // Tempdoc 696 — reflect external Simple/Detailed changes (e.g. the topbar toggle, which writes the
+    // Tempdoc 738 — reflect external Simple/Detailed changes (e.g. the topbar toggle, which writes the
     // same uiModeState store) in the Interface section's selected state; the section renders from the
     // live getUiMode() so the two controls cannot disagree.
     this.uiModeUnsub = subscribeUiMode((m) => {
@@ -927,7 +927,7 @@ export class SettingsSurface extends JfElement {
   }
 
   private renderInterface(): TemplateResult {
-    // Tempdoc 696 — render the selected state from the live uiMode authority (not the local
+    // Tempdoc 738 — render the selected state from the live uiMode authority (not the local
     // this.ui.mode snapshot) so this control stays in sync with the topbar Simple/Detailed toggle.
     const mode: 'simple' | 'advanced' = getUiMode();
     return html`

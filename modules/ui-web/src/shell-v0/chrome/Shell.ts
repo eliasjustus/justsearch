@@ -361,7 +361,7 @@ export class Shell extends JfElement {
     journalCanBack: { state: true },
     journalCanForward: { state: true },
     isBookmarked: { state: true },
-    // Tempdoc 696 — the surfaced Simple/Detailed toggle mirrors the uiMode authority for its active state.
+    // Tempdoc 738 — the surfaced Simple/Detailed toggle mirrors the uiMode authority for its active state.
     uiMode: { state: true },
   };
 
@@ -378,7 +378,7 @@ export class Shell extends JfElement {
   declare journalCanForward: boolean;
   /** Slice 501 — whether the current URL is bookmarked. */
   declare isBookmarked: boolean;
-  /** Tempdoc 696 — app-wide Simple/Detailed mode, mirrored for the topbar toggle's active state. */
+  /** Tempdoc 738 — app-wide Simple/Detailed mode, mirrored for the topbar toggle's active state. */
   declare uiMode: UiMode;
 
   private dragUnsubscribe: (() => void) | null = null;
@@ -649,7 +649,7 @@ export class Shell extends JfElement {
     .topbar .spacer {
       flex: 1;
     }
-    /* Tempdoc 696 — the Simple/Detailed segmented toggle (surfaces the uiMode disclosure authority). */
+    /* Tempdoc 738 — the Simple/Detailed segmented toggle (surfaces the uiMode disclosure authority). */
     .ui-mode-toggle {
       display: inline-flex;
       align-items: center;
@@ -1800,7 +1800,7 @@ export class Shell extends JfElement {
   }
 
   /**
-   * Tempdoc 696 — surface the app-wide Simple/Detailed disclosure authority (uiModeState) as reachable
+   * Tempdoc 738 — surface the app-wide Simple/Detailed disclosure authority (uiModeState) as reachable
    * chrome, so a Simple-mode user can always recover the technical detail the surfaces hide. "Detailed"
    * is the user-facing label for the `advanced` mode.
    */
@@ -1825,7 +1825,7 @@ export class Shell extends JfElement {
 
   private handleUiModeSelect(mode: UiMode): void {
     if (this.uiMode === mode) return;
-    // Immediate, app-wide: drives the rail-trim (586 F-2) + every 696 disclosure consumer via the store.
+    // Immediate, app-wide: drives the rail-trim (586 F-2) + every 728 disclosure consumer via the store.
     setUiMode(mode);
     // Persist best-effort so the choice survives restart, independent of whether SettingsSurface (which
     // owns the jf-save-settings listener) is mounted — the topbar must not depend on it. Same endpoint +

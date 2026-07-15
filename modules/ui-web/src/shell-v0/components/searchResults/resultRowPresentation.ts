@@ -39,7 +39,7 @@ export function formatDisplayPath(p: string): string {
 }
 
 /**
- * Tempdoc 696 (C4) — a humanized location breadcrumb for Simple mode: drop the drive letter and the
+ * Tempdoc 738 (C4) — a humanized location breadcrumb for Simple mode: drop the drive letter and the
  * filename (the filename is already the row title), and render the containing folder chain (last 3
  * segments) with " › " separators instead of the raw drive-lettered, backslashed full path. Detailed
  * mode still shows {@link formatDisplayPath}. Path-derived only — the card's `CardHit` carries no

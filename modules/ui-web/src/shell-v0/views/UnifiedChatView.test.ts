@@ -215,7 +215,7 @@ function mountView(): UnifiedChatView {
   return view;
 }
 
-// Tempdoc 696 — uiMode is a module-level store shared across tests; reset it after every test so a
+// Tempdoc 738 — uiMode is a module-level store shared across tests; reset it after every test so a
 // block that sets Detailed mode cannot leak into a later block that expects the Simple default.
 afterEach(() => __resetUiModeForTest());
 
@@ -288,7 +288,7 @@ describe('UnifiedChatView retrieve-tier degradation banner (ports SearchSurface.
   });
 
   it('600 Design A — a compat-blocked index renders "Reindex required" naming the specific cause + the rebuild remedy', async () => {
-    setUiMode('advanced'); // Tempdoc 696 — the specific cause bullets render in Detailed mode.
+    setUiMode('advanced'); // Tempdoc 738 — the specific cause bullets render in Detailed mode.
     const view = mountView();
     await view.updateComplete;
     // Two reindex causes (Round-2 R1a only dedups a SOLE cause bullet against the headline —
@@ -318,11 +318,11 @@ describe('UnifiedChatView retrieve-tier degradation banner (ports SearchSurface.
   });
 });
 
-// Tempdoc 696 — the degradation banner's disclosure projects from the app-wide Simple/Detailed mode
+// Tempdoc 738 — the degradation banner's disclosure projects from the app-wide Simple/Detailed mode
 // (uiMode), not a per-cause-set seen-hash. Simple (default) is the one-line pill; Detailed shows the
 // raw causes; a severe (error) verdict opens expanded even in Simple; a local "See details" chevron
 // opens a cosmetic notice on demand.
-describe('UnifiedChatView degradation banner disclosure (Tempdoc 696)', () => {
+describe('UnifiedChatView degradation banner disclosure (Tempdoc 738)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetUnifiedChatState();
@@ -526,7 +526,7 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     __resetAutonomyForTest();
   });
 
-  it('C8 (Tempdoc 696) — the run budget-gate state is plain in Simple, technical in Detailed', async () => {
+  it('C8 (Tempdoc 738) — the run budget-gate state is plain in Simple, technical in Detailed', async () => {
     const view = mountView();
     await view.updateComplete;
     view.affordance = 'agent';
@@ -1520,7 +1520,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
     __resetUiModeForTest();
   });
 
-  it('Simple mode (default) omits the model name from the receipt (Tempdoc 696 C7)', async () => {
+  it('Simple mode (default) omits the model name from the receipt (Tempdoc 738 C7)', async () => {
     (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
     const view = mountView();
     await view.updateComplete;
@@ -1534,7 +1534,10 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
     await view.updateComplete;
     const line = view.shadowRoot!.querySelector('.message.assistant[data-item-id="a1"] .answer-frame');
     const text = (line!.textContent ?? '').replace(/\s+/g, ' ').trim();
-    expect(text).toBe('3.2s');
+    // Tempdoc 720 — a settled, zero-citation, chunk-precise answer now classifies as the `sourced`
+    // (provenance) frame rather than `grounded`, so the receipt legitimately carries the honest
+    // grounding badge text ahead of the duration tail (evidenceProjection.ts answerFrameLabel, `sourced` case).
+    expect(text).toBe('Based on your documents — per-sentence grounding not verified · 3.2s');
     expect(text).not.toContain('Llama 3 8B');
     view.remove();
   });
@@ -1584,7 +1587,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
 
   it('a partially-grounded turn keeps its warning text and appends the receipt tail on the SAME line', async () => {
     (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
-    setUiMode('advanced'); // Tempdoc 696 (C7) — the model name renders in Detailed mode.
+    setUiMode('advanced'); // Tempdoc 738 (C7) — the model name renders in Detailed mode.
     const view = mountView();
     await view.updateComplete;
     const v = view as unknown as { affordance: string; thread: unknown[] };
@@ -1642,7 +1645,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
 
   it('omits duration (never fabricates) when the turn carries none — a reloaded turn with no stored durationMs', async () => {
     (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
-    setUiMode('advanced'); // Tempdoc 696 (C7) — the model name renders in Detailed mode.
+    setUiMode('advanced'); // Tempdoc 738 (C7) — the model name renders in Detailed mode.
     const view = mountView();
     await view.updateComplete;
     const v = view as unknown as { affordance: string; thread: unknown[] };
@@ -2041,7 +2044,7 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
   });
 
   it('602 R3 — the retrieve row formats the path + highlights query terms like the Search surface', async () => {
-    setUiMode('advanced'); // Tempdoc 696 (C4) — the middle-ellipsis full path is the Detailed form.
+    setUiMode('advanced'); // Tempdoc 738 (C4) — the middle-ellipsis full path is the Detailed form.
     const view = mountView();
     await view.updateComplete;
     view.affordance = 'retrieve';
