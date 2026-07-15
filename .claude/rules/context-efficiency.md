@@ -3,7 +3,7 @@
 # Project-Specific Agent Guidance
 
 ## Search Strategy
-- **Bound Explore agents**: default to 1; cap synthesis output.
+- **Bound Explore agents**: default to 1; cap synthesis output. Explore now inherits the parent model (opus-capped), not haiku — no longer auto-cheap.
 - **Known large files** (use offset/limit): UnifiedChatView.ts, Shell.ts, SearchSurface.ts, SummaryController.java, LuceneIndexRuntime.java, analyze-session.mjs, docs/observations.md, and any large tempdoc (some exceed 4,000 lines).
 - **Docs index**: docs/llms.txt. Module structure: docs/explanation/01-system-overview.md.
 

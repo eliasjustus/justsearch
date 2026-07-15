@@ -116,6 +116,17 @@ async function main() {
       return;
     }
 
+    // PostToolUseFailure: a bare (unwrapped) build command that exits non-zero
+    // fires this event instead of PostToolUse, with no tool_response.exitCode field
+    // at all — so without this branch, that failure was never counted. Any non-zero
+    // sentinel works: nextFailureState only branches on zero/non-zero/null, not the
+    // exact code, and PostToolUseFailure firing at all already means non-zero.
+    if (input.hook_event_name === 'PostToolUseFailure') {
+      const prev = loadState(sessionId);
+      saveState(sessionId, nextFailureState(prev, 1));
+      return;
+    }
+
     // PreToolUse (default): block once when over the failure threshold.
     const state = loadState(sessionId);
     if (shouldBlock(state)) {
