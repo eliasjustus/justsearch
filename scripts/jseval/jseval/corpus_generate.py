@@ -308,6 +308,14 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None):
     If ``sem`` is a `_SEM` tuple, the HEAD doc describes the entity by a descriptor and
     the QUERY references the head via SYNONYMS (low lexical overlap → grep fails, semantic
     retrieval bridges) — the Issue-A/B fix. The rest of the chain uses names as before.
+
+    NOTE (tempdoc 731 §3.3, issue 14): the emitted ``question_type`` below counts chain
+    *edges*, not behavioral retrieval hops — `f"{len(ents)-1}_hop"` for an N-entity chain
+    means N-1 edges, but answering requires N retrievals (one gold doc per entity). Do not
+    relabel this field: `queries.json` bytes are commitment-bound (`query_gold_sha256` in
+    `corpus_certify.py:107,274,292`), so a relabel invalidates every committed cell
+    signature. The behavioral hop count is already derivable without a relabel:
+    `retrieval_hops = len(evidence_ids)` (edges + 1).
     """
     docs = []
     for i in range(len(ents) - 1):
@@ -351,6 +359,8 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None):
             phrase = f"{rels[i % len(rels)][2]} {phrase}"
         q = f"What is the value associated with {phrase}?"
     evidence = [e.lower() for e in ents]
+    # question_type counts edges (N-1 for an N-entity chain); behavioral retrieval hops =
+    # edges + 1 = len(evidence_ids) — see the docstring above and tempdoc 731 §3.3.
     return docs, {"query": q, "answer": attr, "question_type": f"{len(ents)-1}_hop", "evidence_ids": evidence}
 
 
@@ -361,6 +371,14 @@ def _render_code(ents, attr, target_words, idx, sem=None):
     (sem[0]/sem[2]/sem[4]) and the QUERY references it via SYNONYMS (sem[1]/sem[3]/sem[5])
     without naming the function — so grep/pure-BM25 fail at the entry and dense must bridge
     semantically.
+
+    NOTE (tempdoc 731 §3.3, issue 14): the emitted ``question_type`` below counts chain
+    *edges*, not behavioral retrieval hops — `f"{len(ents)-1}_hop"` for an N-entity chain
+    means N-1 edges, but answering requires N retrievals (one gold doc per entity). Do not
+    relabel this field: `queries.json` bytes are commitment-bound (`query_gold_sha256` in
+    `corpus_certify.py:107,274,292`), so a relabel invalidates every committed cell
+    signature. The behavioral hop count is already derivable without a relabel:
+    `retrieval_hops = len(evidence_ids)` (edges + 1).
     """
     docs = []
     for i in range(len(ents) - 1):
@@ -385,6 +403,8 @@ def _render_code(ents, attr, target_words, idx, sem=None):
              f"{sem[1]} in the {sem[3]}, {sem[5]}?")
     else:
         q = f"What value does the function {ents[0].lower()}() ultimately return when called?"
+    # question_type counts edges (N-1 for an N-entity chain); behavioral retrieval hops =
+    # edges + 1 = len(evidence_ids) — see the docstring above and tempdoc 731 §3.3.
     return docs, {"query": q, "answer": attr, "question_type": f"{len(ents)-1}_hop", "evidence_ids": [e.lower() for e in ents]}
 
 
@@ -394,6 +414,14 @@ def _render_tabular(ents, attr, target_words, idx, sem=None):
     If ``sem`` is set, the head table carries a descriptor caption (sem[0]/sem[2]/sem[4]) and
     the QUERY references it via SYNONYMS (sem[1]/sem[3]/sem[5]) without naming the head entity
     — so grep/pure-BM25 fail and dense must bridge semantically.
+
+    NOTE (tempdoc 731 §3.3, issue 14): the emitted ``question_type`` below counts chain
+    *edges*, not behavioral retrieval hops — `f"{len(ents)-1}_hop"` for an N-entity chain
+    means N-1 edges, but answering requires N retrievals (one gold doc per entity). Do not
+    relabel this field: `queries.json` bytes are commitment-bound (`query_gold_sha256` in
+    `corpus_certify.py:107,274,292`), so a relabel invalidates every committed cell
+    signature. The behavioral hop count is already derivable without a relabel:
+    `retrieval_hops = len(evidence_ids)` (edges + 1).
     """
     docs = []
     for i in range(len(ents) - 1):
@@ -416,6 +444,8 @@ def _render_tabular(ents, attr, target_words, idx, sem=None):
              f"what attribute is recorded for the final entity?")
     else:
         q = f"Following the links starting from {ents[0]}, what attribute is recorded for the final entity?"
+    # question_type counts edges (N-1 for an N-entity chain); behavioral retrieval hops =
+    # edges + 1 = len(evidence_ids) — see the docstring above and tempdoc 731 §3.3.
     return docs, {"query": q, "answer": attr, "question_type": f"{len(ents)-1}_hop", "evidence_ids": [e.lower() for e in ents]}
 
 

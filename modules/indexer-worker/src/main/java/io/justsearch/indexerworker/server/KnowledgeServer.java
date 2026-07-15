@@ -1008,6 +1008,26 @@ public final class KnowledgeServer implements Closeable {
               () -> ingestLifecycle.indexCountOps().docCount());
       ecc.refresh();
       embeddingCompatController = ecc;
+      // Tempdoc 730 A1 REVERTED (post-review): the unconditional EmbeddingFingerprint::get
+      // supplier was refuted by adversarial review. A forced reindex is in-place/incremental
+      // (JobBatchExtractor.java:193-212 — no wipe), so an interrupted BLOCKED_MISMATCH/
+      // BLOCKED_LEGACY -> REBUILDING run can hold a MIXED index (old-model vectors alongside
+      // new-model vectors). Stamping unconditionally on model availability means an ordinary
+      // commit mid-rebuild persists the NEW model's fingerprint over that mixed index; restart
+      // then resolves COMPATIBLE and silently serves the mixture. `ecc::fingerprintToStamp`
+      // (gated on state() == COMPATIBLE or (REBUILDING && rebuildCompleted)) is restored: the
+      // *serving* decision (allowEmbeddingWrites/allowQueryEmbeddings) is unaffected either way
+      // — it was always ECC-state-driven — but the *stamp* must also stay withheld while mixed,
+      // i.e. BLOCKED_MISMATCH is the correct outcome for that case, not a silent COMPATIBLE.
+      // The real gap the original A1 was reacting to (a completed rebuild, or a fresh-COMPATIBLE
+      // index, whose fingerprint stamp never gets a chance to persist because the worker stops
+      // before any further commit) is closed at the completion-guarantee call sites instead:
+      // EmbeddingProviderLifecycle.tryFinalizeRebuild() (already fires the moment
+      // checkRebuildCompletion flips state, via the now-restored gated supplier) and
+      // IndexingLoop.finalizeShutdownCommit() (tempdoc 730 review item 2 — guarantees that call,
+      // plus tryFinalizeFreshCompatibleStamp(), runs at shutdown too, not just on the next
+      // idle/batch iteration). See docs/tempdocs/730-worker-lifecycle-integrity.md's dated
+      // post-review note for the full review finding.
       embeddingFingerprintSupplier.set(ecc::fingerprintToStamp);
       appServices.wireEmbeddingCompatController(ecc);
       maybeAutoStartEmbeddingRebuildForBlockedLegacyBestEffort();

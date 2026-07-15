@@ -69,9 +69,62 @@
         "required": ["name", "status"],
         "properties": {
           "name": {"type": "string"},
-          "status": {"enum": ["ok", "blocked", "disallowed"]}
+          "status": {"enum": ["ok", "blocked", "disallowed", "errored"]}
         }
-      }
+      },
+      "$comment": "tempdoc 736 D10 (issue 10): this ordered, per-attempt sequence is the AUTHORITY for per-call outcome (four states: ok/blocked/disallowed/errored). blocked_tool_call_names below is a name-only convenience projection superseded in authority by this field -- kept for the always-emit contract and existing readers, not deleted; a future reader should reconcile against THIS field, not treat the two as two authorities."
+    },
+    "tool_result_digests": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "content_sha256", "content_len", "content_is_error", "content_shape",
+          "furniture_markers"
+        ],
+        "properties": {
+          "content_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+          "content_len": {"type": ["integer", "null"], "minimum": 0},
+          "content_is_error": {"type": ["boolean", "null"]},
+          "content_shape": {"enum": ["text", "blocks", "empty", "json"]},
+          "furniture_markers": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["rationale", "evidence_pack", "coverage", "degradation"],
+            "properties": {
+              "rationale": {"type": "boolean"},
+              "evidence_pack": {"type": "boolean"},
+              "coverage": {"type": "boolean"},
+              "degradation": {"type": "boolean"}
+            },
+            "$comment": "tempdoc 735 G2: null (not an all-False dict) for a structured-json delivery -- the text-grep tier was never delivered in that case, so there is nothing to grep. Non-null for prose/blocks deliveries (and for all historical pre-735 entries, which are always prose/blocks-shaped dicts)."
+          },
+          "delivered_tier": {
+            "enum": ["structured-json", "prose", "blocks", null],
+            "$comment": "tempdoc 735 G2: which tier the CLI actually delivered to the model for this call, derived from the raw content shape at capture time (agent_utility_inspect._delivered_tier). Absent on pre-735 historical entries -- schema-optional, not required, so old evidence keeps validating."
+          },
+          "delivered_fields": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": [
+              "quality", "matchedTerms", "degradation", "excerpts", "citations", "searchTrace",
+              "results"
+            ],
+            "properties": {
+              "quality": {"type": "boolean"},
+              "matchedTerms": {"type": "boolean"},
+              "degradation": {"type": "boolean"},
+              "excerpts": {"type": "boolean"},
+              "citations": {"type": "boolean"},
+              "searchTrace": {"type": "boolean"},
+              "results": {"type": "boolean"}
+            },
+            "$comment": "tempdoc 735 G2: top-level structured-evidence field presence, populated only for a structured-json delivery (null otherwise). matchedTerms/excerpts are true if present either at the top level OR nested under any results[] entry (McpEvidenceProjection.java:75-93 puts them per-hit for justsearch_search). Absent on pre-735 historical entries -- schema-optional."
+          }
+        }
+      },
+      "$comment": "tempdoc 736 D9 (issue 9, committed tier), extended by tempdoc 735 G2 (delivered_tier/delivered_fields): ONE entry per attempt, same order as tool_call_sequence. A redacted derivation of the tool result content -- hash/len/is_error/structural-shape/product-furniture-marker booleans, plus which tier the CLI actually delivered. additionalProperties:false on each entry and NO raw-content property is permitted anywhere in this schema -- the schema structurally forbids committing raw corpus/result text. Raw content lives only in the ephemeral (gitignored) Inspect log."
     },
     "source": {
       "type": "object",

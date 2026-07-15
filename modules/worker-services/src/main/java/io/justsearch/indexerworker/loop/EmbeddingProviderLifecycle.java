@@ -6,6 +6,7 @@ import io.justsearch.adapters.lucene.runtime.CommitReason;
 import io.justsearch.adapters.lucene.runtime.IndexCountOps;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.embed.EmbeddingCompatibilityController;
+import io.justsearch.indexerworker.embed.EmbeddingFingerprint;
 import io.justsearch.indexerworker.embed.EmbeddingProvider;
 import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexerworker.embed.EmbeddingTelemetryEvents;
@@ -13,6 +14,8 @@ import io.justsearch.indexerworker.embed.NoOpEmbeddingProvider;
 import io.justsearch.indexerworker.embed.NoopEmbeddingTelemetryEvents;
 import io.justsearch.indexerworker.queue.JobQueue;
 import io.justsearch.indexing.SchemaFields;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -274,6 +277,31 @@ public final class EmbeddingProviderLifecycle {
    * persist the updated fingerprint metadata.
    */
   public boolean tryFinalizeRebuild() {
+    return finalizeRebuild(false);
+  }
+
+  /**
+   * One-shot rebuild finalize for the shutdown path — same certification, minus the
+   * two-consecutive-reads debounce.
+   *
+   * <p>The debounce (tempdoc 726 F1) guards a mid-flush race: during a RUNNING loop a document can
+   * be written between the pending count and the stamp, so a lone {@code pending == 0} read is not
+   * yet proof the rebuild drained. That reasoning does not hold at shutdown, where the loop has
+   * stopped consuming and no further documents will be written — and there, requiring a second read
+   * is actively harmful: {@code IndexingLoop.finalizeShutdownCommit()} gets exactly ONE call. A
+   * worker that stops right after rebuild completion (before any further loop iteration) would
+   * leave {@code pendingZeroStreak == 0}, the single debounced call would decline, the stamp would
+   * never persist, and the next boot's {@code refresh()} would re-flag BLOCKED_LEGACY on a rebuild
+   * that genuinely completed — exactly the "no subsequent commit" ratchet hole tempdoc 730 review
+   * item 2 exists to close. Mirrors the existing one-shot precedent {@code
+   * finalizeEmbeddingRebuildBeforeCutover}, which likewise certifies once on an already-drained
+   * green.
+   */
+  public boolean tryFinalizeRebuildAtShutdown() {
+    return finalizeRebuild(true);
+  }
+
+  private boolean finalizeRebuild(boolean oneShot) {
     var controller = embeddingCompatController;
     if (controller == null) return false;
     if (controller.state() != EmbeddingCompatibilityController.State.REBUILDING) {
@@ -318,7 +346,7 @@ public final class EmbeddingProviderLifecycle {
       maybeLogFinalizeWaiting(pendingEmbeddings, queueDepth);
       return false;
     }
-    if (++pendingZeroStreak < 2) {
+    if (!oneShot && ++pendingZeroStreak < 2) {
       maybeLogFinalizeWaiting(pendingEmbeddings, queueDepth);
       return false;
     }
@@ -352,6 +380,92 @@ public final class EmbeddingProviderLifecycle {
           pendingEmbeddings,
           queueDepth);
       lastLoggedWaitPending = pendingEmbeddings;
+    }
+  }
+
+  // ---- A3: fresh-index -> COMPATIBLE stamp guarantee (tempdoc 730) ----
+
+  /**
+   * Tempdoc 730 review hardening (item 3): backoff gate for {@link
+   * #tryFinalizeFreshCompatibleStamp()} so a persistently-failing forced commit does not retry on
+   * every idle/batch drain (as often as once per second). {@code 0} means "no attempt currently
+   * backing off" — either nothing has failed yet, the last attempt succeeded, or the guard's
+   * preconditions stopped holding (state left COMPATIBLE) since the last failure, which resets
+   * this to {@code 0} so a later, genuinely new need to stamp is not stuck behind a stale window.
+   */
+  private final AtomicLong freshStampBackoffUntilMs = new AtomicLong(0L);
+
+  /** At most one retry attempt per this window after a failed fresh-stamp commit. */
+  private static final long FRESH_STAMP_RETRY_BACKOFF_MS = TimeUnit.MINUTES.toMillis(5);
+
+  /**
+   * Tempdoc 730 A3: forces an intentional commit the first time a COMPATIBLE index with existing
+   * documents still lacks a persisted embedding fingerprint, outside the REBUILDING path.
+   *
+   * <p>{@link #tryFinalizeRebuild()} is the only intentional-commit guarantee that exists today,
+   * and it is REBUILDING-only. The fresh-index -> COMPATIBLE path (docCount == 0 at open ->
+   * {@code NEW_INDEX_NO_FINGERPRINT} -> COMPATIBLE) never enters REBUILDING, so — even with A1's
+   * unconditional stamp supplier — its persistence still depends on an *ordinary* commit landing
+   * while the model is actually producing a fingerprint at that instant. If the finalizing commit
+   * lands before the fingerprint is available, the omission can persist indefinitely: ordinary
+   * idle commits only fire when there is new content to commit ({@code indexedSinceCommit > 0}),
+   * so a steady-state index with no further writes never gets another chance. This closes that
+   * window: once the controller reports COMPATIBLE with docs and a model fingerprint, but the
+   * last-known stored fingerprint is still absent, the next idle/post-batch drain fires one
+   * forced commit to persist it.
+   *
+   * @return true iff this call issued the stamp-persisting commit (caller resets its
+   *     commit-driver bookkeeping, mirroring {@link #tryFinalizeRebuild()}).
+   */
+  public boolean tryFinalizeFreshCompatibleStamp() {
+    var controller = embeddingCompatController;
+    if (controller == null) return false;
+    if (controller.state() != EmbeddingCompatibilityController.State.COMPATIBLE) {
+      // Left COMPATIBLE (or never entered it) — any prior backoff no longer applies to whatever
+      // triggers the next genuine need to stamp.
+      freshStampBackoffUntilMs.set(0L);
+      return false;
+    }
+
+    String stored = controller.storedFingerprint();
+    if (stored != null && !stored.isBlank()) return false; // already persisted
+
+    String current = controller.currentFingerprint();
+    if (current == null || current.isBlank()) return false; // model not producing a fp yet
+
+    // Tempdoc 730 review hardening (item 3): also require the LIVE fingerprint, not just the
+    // ECC's cached currentFingerprint() snapshot. The two can diverge (the model going offline
+    // after the ECC last refreshed, without a fresh refresh() to notice); gating on the cache
+    // alone let this method believe stamping was safe and refire its forced commit on every idle
+    // drain instead of correctly declining.
+    if (EmbeddingFingerprint.get().isEmpty()) return false;
+
+    long docCount;
+    try {
+      docCount = indexCountOps.docCount();
+    } catch (Exception e) {
+      return false;
+    }
+    if (docCount <= 0) return false;
+
+    long now = System.currentTimeMillis();
+    long backoffUntil = freshStampBackoffUntilMs.get();
+    if (backoffUntil != 0L && now < backoffUntil) {
+      return false; // a prior attempt failed; not due for retry yet
+    }
+
+    try {
+      commitOps.commitAndTrack(CommitReason.INDEXING_LOOP_FRESH_STAMP);
+      freshStampBackoffUntilMs.set(0L);
+      return true;
+    } catch (RuntimeException e) {
+      if (backoffUntil == 0L) {
+        // First failure since the last success/state-change: log once, then go quiet until the
+        // backoff window elapses instead of logging + retrying every drain.
+        log.error("Failed to commit embedding fingerprint stamp for fresh-compatible index", e);
+      }
+      freshStampBackoffUntilMs.set(now + FRESH_STAMP_RETRY_BACKOFF_MS);
+      return false;
     }
   }
 

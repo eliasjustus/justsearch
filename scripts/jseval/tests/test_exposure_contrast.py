@@ -13,7 +13,11 @@ from __future__ import annotations
 import pytest
 
 from jseval.agent_manifest import agent_cohort_key, build_agent_manifest
-from jseval.exposure_contrast import ExposureContrastError, exposure_contrast
+from jseval.exposure_contrast import (
+    ExposureContrastError,
+    exposure_contrast,
+    exposure_contrast_eligibility,
+)
 
 _FUNNEL_A = {
     "discovery_rate": 0.2,
@@ -49,6 +53,8 @@ def _record(
     omit_funnel=False,
     omit_adoption=False,
     omit_exposure_identity=False,
+    mcp_tool_surface_hash="surface-hash-v1",
+    server_version="1.0.0",
 ):
     cell = {
         "accuracy": {"baseline": 0.9, "with_tool": 0.9},
@@ -80,6 +86,7 @@ def _record(
     cohort = {
         "agent_cohort_key": "cohort-key-placeholder",
         "git_sha": "f" * 40,
+        "mcp_tool_surface_hash": mcp_tool_surface_hash,
     }
     if not omit_exposure_identity:
         cohort["exposure_config"] = {
@@ -88,7 +95,7 @@ def _record(
         }
         cohort["mcp_initialize_identity"] = {
             "instructions": None, "instructions_sha256": instructions_sha256,
-            "server_version": "1.0.0", "protocol_version": "2025-06-18",
+            "server_version": server_version, "protocol_version": "2025-06-18",
         }
     return {
         "schema": "utility-comparison.v1",
@@ -174,6 +181,85 @@ def test_exposure_contrast_rejects_record_missing_exposure_identity():
         exposure_contrast(record_a, record_b)
 
 
+# --- exposure_contrast_eligibility / pre-#605 tombstone (tempdoc 736 D11) -----
+
+
+def test_eligibility_flags_empty_measured():
+    result = exposure_contrast_eligibility({"cohort": {}, "measured": {}})
+
+    assert result["eligible"] is False
+    assert any("measured is empty" in r and "#605" in r for r in result["reasons"])
+
+
+def test_eligibility_flags_missing_measured_key_entirely():
+    result = exposure_contrast_eligibility({"cohort": {}})
+
+    assert result["eligible"] is False
+    assert any("measured is empty" in r for r in result["reasons"])
+
+
+def test_eligibility_distinguishes_b_only_pilot_from_pre_605_defect():
+    """Campaign U/V nit (fixed 2026-07-15): a post-#605 single-condition record
+    (identity captured, measured empty by design) must NOT be diagnosed as the
+    pre-#605 capture defect -- the remedies are opposite (add a contrast arm
+    vs. permanently ineligible)."""
+    record = _record()
+    record["measured"] = {}
+
+    result = exposure_contrast_eligibility(record)
+
+    assert result["eligible"] is False
+    assert any("by design" in r and "not the pre-#605 defect" in r for r in result["reasons"])
+    assert not any("predates the #605" in r for r in result["reasons"])
+
+
+def test_eligibility_flags_absent_exposure_identity():
+    record = _record(omit_exposure_identity=True)
+
+    result = exposure_contrast_eligibility(record)
+
+    assert result["eligible"] is False
+    assert any("exposure identity" in r and "#605" in r for r in result["reasons"])
+    # measured is populated in this fixture -- only the identity reason fires.
+    assert not any("measured is empty" in r for r in result["reasons"])
+
+
+def test_eligibility_reports_both_reasons_when_both_disqualifiers_present():
+    result = exposure_contrast_eligibility({"cohort": {}, "measured": {}})
+
+    assert result["eligible"] is False
+    assert len(result["reasons"]) == 2
+
+
+def test_eligibility_true_for_a_normal_post_605_record():
+    record = _record(exposure_mode="deferred")
+
+    result = exposure_contrast_eligibility(record)
+
+    assert result == {"eligible": True, "reasons": []}
+
+
+def test_exposure_contrast_rejects_pre_605_record_with_tombstone_not_generic_message():
+    """A pre-#605-shaped record (empty `measured`, no cohort exposure identity)
+    must raise the SPECIFIC tombstone reason, not the old generic 'has no
+    measured cells' message -- so a future agent gets a self-describing
+    failure, not a puzzle (tempdoc 736 D11)."""
+    pre_605_record = {
+        "schema": "utility-comparison.v1",
+        "schema_version": 2,
+        "cohort": {"agent_cohort_key": "old-cohort", "git_sha": "f" * 40},
+        "measured": {},
+    }
+    record_b = _record(exposure_mode="eager")
+
+    with pytest.raises(ExposureContrastError, match="not exposure-contrast-eligible") as excinfo:
+        exposure_contrast(pre_605_record, record_b)
+    message = str(excinfo.value)
+    assert "#605" in message
+    assert "record_a" in message
+    assert "has no measured cells" not in message
+
+
 # --- hard validation: mismatched corpus/model ---------------------------------
 
 
@@ -199,6 +285,70 @@ def test_exposure_contrast_rejects_mismatched_query_identity():
 
     with pytest.raises(ExposureContrastError, match="query_identity"):
         exposure_contrast(record_a, record_b)
+
+
+# --- surface-aware guard (tempdoc 725 increment 4 W4) -------------------------
+# A version bump changes `mcp_tool_surface_hash` / `server_version` -- two runs
+# on different tool surfaces must not silently contrast as an exposure effect.
+
+
+def test_exposure_contrast_rejects_mismatched_mcp_tool_surface_hash():
+    record_a = _record(exposure_mode="deferred", mcp_tool_surface_hash="hash-v1")
+    record_b = _record(exposure_mode="eager", mcp_tool_surface_hash="hash-v2")
+
+    with pytest.raises(ExposureContrastError, match="surface_contrast=True") as excinfo:
+        exposure_contrast(record_a, record_b)
+    assert "hash-v1" in str(excinfo.value)
+    assert "hash-v2" in str(excinfo.value)
+
+
+def test_exposure_contrast_rejects_mismatched_server_version():
+    record_a = _record(exposure_mode="deferred", server_version="1.0.0")
+    record_b = _record(exposure_mode="eager", server_version="2.0.0")
+
+    with pytest.raises(ExposureContrastError, match="surface_contrast=True") as excinfo:
+        exposure_contrast(record_a, record_b)
+    assert "1.0.0" in str(excinfo.value)
+    assert "2.0.0" in str(excinfo.value)
+
+
+def test_exposure_contrast_surface_contrast_true_allows_mismatch_and_echoes_identities():
+    record_a = _record(
+        exposure_mode="deferred", mcp_tool_surface_hash="hash-v1", server_version="1.0.0",
+    )
+    record_b = _record(
+        exposure_mode="eager", mcp_tool_surface_hash="hash-v2", server_version="2.0.0",
+    )
+
+    result = exposure_contrast(record_a, record_b, surface_contrast=True)
+
+    assert result["surface_identities"] == {
+        "a": {"mcp_tool_surface_hash": "hash-v1", "server_version": "1.0.0"},
+        "b": {"mcp_tool_surface_hash": "hash-v2", "server_version": "2.0.0"},
+    }
+    # The contrast still computes -- surface_contrast permits, it does not suppress.
+    assert result["funnel"]["discovery_rate"]["a"] == _FUNNEL_A["discovery_rate"]
+
+
+def test_exposure_contrast_surface_contrast_true_same_surface_is_harmless():
+    record_a = _record(exposure_mode="deferred")
+    record_b = _record(exposure_mode="eager")
+
+    result = exposure_contrast(record_a, record_b, surface_contrast=True)
+
+    assert result["surface_identities"] == {
+        "a": {"mcp_tool_surface_hash": "surface-hash-v1", "server_version": "1.0.0"},
+        "b": {"mcp_tool_surface_hash": "surface-hash-v1", "server_version": "1.0.0"},
+    }
+
+
+def test_exposure_contrast_default_surface_contrast_false_omits_echo_on_match():
+    record_a = _record(exposure_mode="deferred")
+    record_b = _record(exposure_mode="eager")
+
+    result = exposure_contrast(record_a, record_b)
+
+    assert "surface_identities" not in result
 
 
 def test_exposure_contrast_rejects_record_with_more_than_one_measured_cell():

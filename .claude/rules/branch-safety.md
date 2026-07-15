@@ -128,7 +128,11 @@ Only one dev stack runs at a time (memory/port). **Multi-agent safety:** before 
 `quick_health`; if another session holds it, get user approval before starting your own or taking it
 over (`OWNER_CONFLICT` / `ownership.verdict: CONTENTION`). A `force` takeover requires explicit user
 direction. The tools return `ownership.verdict` + `recommendedAction` telling you what to do; stop the
-stack when you finish so other agents can use it.
+stack when you finish so other agents can use it. Long measurement campaigns should declare
+`leaseDurationSec` (30-7200s) at start (tempdoc 735 G6) so the shared lease holds through minutes of
+busy-but-session-silent work instead of lapsing on the default 30s passive-expiry window. Convention:
+one Gradle build runs at a time across agents — concurrent Gradle invocations can corrupt shared
+caches (observed 2026-07-14).
 
 The full dev-stack contention model moved to `/dev-stack`; load it before live
 backend work.

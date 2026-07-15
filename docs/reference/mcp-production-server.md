@@ -127,7 +127,9 @@ Streamable HTTP on the existing Javalin server (loopback-only,
 same JVM as the Head process. No Node.js required.
 
 Protocol version: `2025-11-25`. Capabilities: tools, resources,
-prompts.
+prompts. Curated tool-surface version (MCP `serverInfo.version`,
+single-sourced from `McpContractVersions.TOOL_SURFACE_VERSION`):
+`0.4.0`.
 
 ## Available Tools (6, position-bias ordered)
 
@@ -143,6 +145,48 @@ prompts.
 All 6 tools validate their arguments against a declared JSON Schema at the MCP boundary before
 dispatch (tempdoc 655) — a malformed call gets a clean tool error rather than an internal cast
 failure.
+
+## Response shape (tempdoc 725)
+
+The human-readable `content` text on `justsearch_search` and `justsearch_answer` carries several
+descriptive lines beyond the raw results, so an agent can judge a response without a second call:
+
+- **`justsearch_answer` evidence-pack header** — the first line states the passage count, the
+  distinct-document count, the retrieval mode, and that the pack is retrieved evidence, not a
+  synthesized answer (plus a truncation note when the context was cut to fit token limits).
+- **`justsearch_search` match lines** — each hit carries a `Matched:` line naming the distinctive
+  terms that drove the match (or a `Match basis: semantic similarity` line when no term overlap
+  was distinctive), so an agent can tell *why* a hit matched without opening the file.
+- **Degradation and coverage lines** — a once-per-response note when semantic ranking degraded or
+  fell back, and a "showing N of M" line when a response was capped below the total hit count.
+
+**`response_format`** (optional on both tools; default `"detailed"`, which includes preview
+snippets and full evidence passages). `"concise"` returns substantially fewer tokens per call:
+`justsearch_search` results omit the preview line, and `justsearch_answer` packs cap at the 3
+highest-ranked passages; the coverage, match, and header lines are kept in both modes.
+
+### What these tools do and do not do (multi-step lookups)
+
+`justsearch_answer` performs retrieval, not synthesis: it returns relevant passages with source
+attribution, and the calling agent composes the answer. Questions whose answer spans a chain of
+documents (for example, an entity named in one document whose details live in another) require
+the calling agent to issue a follow-up retrieval for each step of the chain — the tools do not
+traverse entity chains on the agent's behalf. In measurement, completion of such multi-step
+lookups varies substantially with the calling agent's model tier; the response furniture above
+(match lines, headers, coverage notes) makes each step's result legible but does not remove the
+need for the follow-up step itself.
+
+### Delivery tiers (tempdoc 735)
+
+Every `justsearch_search`/`justsearch_answer` response is authored in two tiers — the
+human-readable `content` text and the machine-readable `structuredContent` — and the product's
+contract is that they carry **equivalent information**. Which tier a connected client actually
+forwards to its model is a **client-specific behavior that is not documented upstream**:
+observed 2026-07-14 with Claude Code CLI 2.1.209, the client forwards the serialized
+`structuredContent` JSON when present and the text tier otherwise (this client behavior has
+changed without notice before — see anthropics/claude-code issue #9962). Agents connected
+through different clients may therefore receive different representations of the same response;
+nothing here should be read as a guarantee of which tier any client delivers.
 
 ## Structured retrieval evidence (tempdoc 658)
 
@@ -161,6 +205,18 @@ already render (`SearchTrace`, `ContextCitation`); it introduces no new authorit
   `parentDocId`, char/line span, heading, score, excerpt) plus `quality` (chunks found/used, retrieval
   mode + reason code, and the CRAG-style confidence signals: coverage, best-chunk score, score gap,
   chunks considered/included, truncation). Citations are empty on the full-document fallback path.
+
+**Tier equivalence (tempdoc 735 W6).** Both tools' `structuredContent` also carry `hints` (the
+same progressive-disclosure hint strings the text tier's `Hints:` block / `Hint:` lines render),
+`facets` (the same facet-value facts the text tier's facet block renders), `coverage`
+(`justsearch_search`: `totalHits`/`shown`/`tookMs`; `justsearch_answer`: `passages`/`documents`),
+and `truncated` (`justsearch_search`: the response was capped below `totalHits`;
+`justsearch_answer`: `contextTruncated`). These fields close the gap a structured-preferring
+client would otherwise hit: before this increment, hints/facets/coverage/truncation facts existed
+in the `content` text only, so a client that delivers `structuredContent` instead of text (see
+Delivery tiers, above) never received them. Full evidence-passage parity (the text tier's ~10KB
+answer-pack passages vs. the ~2.7KB `citations` excerpts) is explicitly out of scope for this
+increment — metadata parity only.
 
 **Data exposure.** MCP tool responses are **not redacted** — path redaction applies to the diagnostics
 *export* bundle (a shareable artifact), not to live tool output. `citations[].parentDocId` is the

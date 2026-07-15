@@ -2,6 +2,7 @@ package io.justsearch.indexerworker.embed;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.configuration.resolved.ConfigStore;
@@ -134,6 +135,53 @@ final class EmbeddingCompatibilityControllerTest {
     assertTrue(completed);
     assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
     assertEquals("fake-sha256-for-test", controller.fingerprintToStamp().orElse(null));
+  }
+
+  @Test
+  void autoRescueTagsTheDiagnosticReasonForOperators() throws Exception {
+    // Tempdoc 730 A4 telemetry: the corruption signature — completed > 0 (dense vectors already
+    // exist) but no embedding fingerprint was ever persisted — must fire the rescue AND record a
+    // diagnostic tag naming why it fired. That the rescue fires on this distribution is covered by
+    // maybeAutoStartRebuildForBlockedLegacyFiresRegardlessOfDistribution above; what this pins is
+    // the operator-facing tag, which is the surviving half of main's unattested-vectors test.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(Map::of, () -> 5L);
+    controller.refresh();
+
+    assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, controller.state());
+    assertEquals("LEGACY_INDEX_NO_FINGERPRINT", controller.reasonCode());
+
+    boolean started = controller.maybeAutoStartRebuildForBlockedLegacy(5L);
+
+    assertTrue(started);
+    assertEquals(EmbeddingCompatibilityController.State.REBUILDING, controller.state());
+    // The shared, contract-stable reason for query-time degradation messaging is unchanged — only
+    // the diagnostic-only lastAutoRescueReason() tag names the auto-rescue path.
+    assertEquals("REBUILD_IN_PROGRESS", controller.reasonCode());
+    assertEquals("legacy_no_fingerprint", controller.lastAutoRescueReason());
+  }
+
+  @Test
+  void autoRescueDoesNotFireOnProperlyStampedGeneration() throws Exception {
+    // Negative control: a generation whose embedding fingerprint IS already persisted and
+    // matches the current model must resolve COMPATIBLE at refresh() — the auto-rescue must be a
+    // no-op since state() is never BLOCKED_LEGACY in the first place.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(
+            () -> Map.of(
+                EmbeddingCompatibilityController.COMMIT_META_KEY, "fake-sha256-for-test"),
+            () -> 5L);
+    controller.refresh();
+
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
+
+    assertFalse(controller.maybeAutoStartRebuildForBlockedLegacy(5L));
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
+    assertNull(controller.lastAutoRescueReason());
   }
 
   @Test

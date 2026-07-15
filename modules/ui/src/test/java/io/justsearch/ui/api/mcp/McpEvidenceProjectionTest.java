@@ -279,7 +279,9 @@ final class McpEvidenceProjectionTest {
 
     // Intentionally NOT reflectively guarded: KnowledgeSearchResponse.Hit and ContextResult are
     // selective carriers (they surface identity + the nested evidence records above, not every field —
-    // e.g. Hit.matchSpans / ContextResult.sections are not ranking-evidence). Their evidence-bearing
-    // content is the nested records this test already covers.
+    // e.g. ContextResult.sections is not ranking-evidence). Their evidence-bearing content is the
+    // nested records this test already covers. (Tempdoc 725 W1: Hit.matchSpans/excerptRegions ARE now
+    // projected — as matchedTerms/matchedFields/excerpts, see McpSearchTraceLegibilityTest — but Hit
+    // stays a selective, non-reflectively-guarded carrier overall.)
   }
 }

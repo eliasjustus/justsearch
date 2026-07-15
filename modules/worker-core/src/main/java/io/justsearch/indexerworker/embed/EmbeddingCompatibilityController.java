@@ -63,6 +63,7 @@ public final class EmbeddingCompatibilityController {
   private final AtomicReference<String> currentFingerprint = new AtomicReference<>();
   private final AtomicReference<String> storedFingerprint = new AtomicReference<>();
   private final AtomicReference<String> reasonCode = new AtomicReference<>("INITIALIZING");
+  private final AtomicReference<String> lastAutoRescueReason = new AtomicReference<>();
   private volatile boolean rebuildRequested = false;
   private volatile boolean rebuildCompleted = false;
 
@@ -184,6 +185,19 @@ public final class EmbeddingCompatibilityController {
    * is responsible for re-marking such documents PENDING before/around this call so the backfill
    * re-embeds them under the current model.
    *
+   * <p><b>The on-disk signature this rescues (tempdoc 730 A4 §THEORIZE A).</b> A commit finalized
+   * while the ECC was not {@code COMPATIBLE}/{@code REBUILDING}-complete could persist SPLADE's
+   * fingerprint (an unconditional supplier) while silently omitting the embedding one (a
+   * state-gated supplier). Every subsequent restart then re-resolves {@link State#BLOCKED_LEGACY},
+   * {@link #fingerprintToStamp()} never offers a value, and the index is stuck until intervention —
+   * whether the documents are all PENDING or already COMPLETED. This method deliberately does not
+   * distinguish those two distributions: back-stamping would fabricate provenance for vectors we
+   * cannot prove came from the current model (the mixed-provenance risk the tempdoc 730 A1 revert
+   * identified), so the only safe rescue in BOTH cases is a real re-embed, reached via the same
+   * forced-reindex path a user-initiated reindex takes. Safety comes from the caller having
+   * re-marked first — not from inspecting the completed/pending split, which is why this takes no
+   * distribution counts.
+   *
    * @param docCount total (parent) docs in the index
    * @return true if the controller transitioned to REBUILDING
    */
@@ -193,9 +207,12 @@ public final class EmbeddingCompatibilityController {
     if (docCount <= 0) return false;
 
     log.info(
-        "Embedding compatibility: auto-starting REBUILDING (legacy index, no fingerprint; documents"
-            + " will be (re-)embedded under the current model). docCount={}",
+        "Embedding compatibility: auto-starting REBUILDING (reason=legacy_no_fingerprint; legacy"
+            + " index has no persisted embedding fingerprint, so any existing vectors are"
+            + " unattested — re-embedding to earn a verifiable stamp rather than back-stamping"
+            + " unattested vectors). docCount={}",
         docCount);
+    lastAutoRescueReason.set("legacy_no_fingerprint");
     onForcedReindexRequested();
     return state.get() == State.REBUILDING;
   }
@@ -317,6 +334,19 @@ public final class EmbeddingCompatibilityController {
   /** Returns true if a forced reindex has been requested. */
   public boolean isRebuildRequested() {
     return rebuildRequested;
+  }
+
+  /**
+   * Returns a tag naming which auto-rescue path (if any) last triggered a {@link State#REBUILDING}
+   * transition without user-initiated forced reindex — currently only {@code
+   * "legacy_no_fingerprint"} ({@link #maybeAutoStartRebuildForBlockedLegacy}). {@code null} if no
+   * auto-rescue has fired. This is a diagnostic-only tag (tempdoc 730 A4) distinct from {@link
+   * #reasonCode()} — it is deliberately NOT part of the {@code SearchReasonCode} wire contract,
+   * since the auto-rescue path still resolves the shared, contract-stable {@code
+   * "REBUILD_IN_PROGRESS"} reason for query-time degradation messaging.
+   */
+  public String lastAutoRescueReason() {
+    return lastAutoRescueReason.get();
   }
 
   /**

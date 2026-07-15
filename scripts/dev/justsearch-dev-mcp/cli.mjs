@@ -338,7 +338,7 @@ export async function readRunJson({ repoRoot, runId }) {
   return JSON.parse(raw);
 }
 
-export function buildDevRunnerArgsStart({ apiPort, uiPort, clean, dataDir, takeover, skipBuild, hotReload, sessionId }) {
+export function buildDevRunnerArgsStart({ apiPort, uiPort, clean, dataDir, takeover, skipBuild, hotReload, sessionId, leaseDurationSec }) {
   const out = [
     'start',
     '--json',
@@ -351,6 +351,12 @@ export function buildDevRunnerArgsStart({ apiPort, uiPort, clean, dataDir, takeo
   if (skipBuild) out.push('--skip-build');
   if (hotReload) out.push('--hot-reload');
   if (sessionId) out.push(`--session-id=${sessionId}`);
+  // Tempdoc 735 G6: forward whatever finite value the caller gave — dev-runner.cjs's
+  // clampLeaseDurationSec is the single clamp authority (parseArgs), so this layer does not
+  // duplicate the [30, 7200] bound.
+  if (leaseDurationSec != null && Number.isFinite(Number(leaseDurationSec))) {
+    out.push(`--lease-duration-sec=${leaseDurationSec}`);
+  }
   return out;
 }
 
