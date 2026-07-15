@@ -228,6 +228,49 @@ describe('aiStateStore — R1a signal-core conversion', () => {
   });
 });
 
+describe('aiStateStore — runtime-authority engine axis (tempdoc 737 §12b/§12c)', () => {
+  beforeEach(() => __resetAiStateForTest());
+  afterEach(() => __resetAiStateForTest());
+
+  // The authority fields ride on the /api/status inference block (statusSig), preferred over the
+  // legacy /api/inference/status mode (inferenceSig).
+  const feedAuthority = (inf: Record<string, unknown>, legacy?: Record<string, unknown>) =>
+    __feedForTest({
+      status: { inference: inf } as unknown as StatusSnapshot,
+      ...(legacy ? { inference: legacy as unknown as InferenceSnapshot } : {}),
+    });
+
+  it('engineState is preferred over the legacy mode when resolving runtime.mode', () => {
+    // Legacy mode says offline; the authority says Healthy → runtime.mode follows the authority.
+    feedAuthority({ engineState: 'Healthy' }, { mode: 'offline', available: false });
+    expect(getAiState().runtime.mode).toBe('online');
+  });
+
+  it('soft-off: Healthy + chatEnabledSpec=false + procedure → aiEngine "background", chat capability OFF', () => {
+    feedAuthority(
+      { engineState: 'Healthy', chatEnabledSpec: false, procedure: 'VDU_BATCH' },
+      { mode: 'online', available: true },
+    );
+    const s = getAiState();
+    expect(s.aiEngine.kind).toBe('background');
+    // The soft-off guard: even though mode==='online' && available, chat is NOT offered.
+    expect(s.capabilities.chat).toBe(false);
+  });
+
+  it('engineState Down + gpu-yielded-to-indexing → runtime.mode "indexing"', () => {
+    feedAuthority({ engineState: 'Down', engineReason: 'gpu-yielded-to-indexing' });
+    expect(getAiState().runtime.mode).toBe('indexing');
+  });
+
+  it('absent authority fields → legacy mode fallback still resolves runtime.mode', () => {
+    __feedForTest({
+      inference: { mode: 'online', available: true } as unknown as InferenceSnapshot,
+    });
+    expect(getAiState().runtime.mode).toBe('online');
+    expect(getAiState().capabilities.chat).toBe(true); // no chatEnabledSpec → legacy behaviour
+  });
+});
+
 // Tempdoc 595 — the derived verdict + stability axis + their status-bar projection.
 describe('aiStateStore — system-health verdict (595)', () => {
   beforeEach(() => __resetAiStateForTest());

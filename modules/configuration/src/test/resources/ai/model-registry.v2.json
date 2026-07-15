@@ -259,7 +259,7 @@
       "termsUrl": "https://docs.nvidia.com/cuda/eula/index.html",
       "license": "LicenseRef-NVIDIA-CUDA-EULA",
       "tier": "runtime",
-      "minVramBytes": 7500000000,
+      "minVramBytes": 0,
       "variants": [],
       "supportingFiles": [
         {

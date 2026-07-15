@@ -3,7 +3,6 @@ package io.justsearch.agent.api.registry;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
-import java.util.Objects;
 
 /**
  * Backend-side capability required for an Operation to be invocable.
@@ -13,20 +12,17 @@ import java.util.Objects;
  * rather than silent failure.
  *
  * <p>Sealed type permits a closed V1 vocabulary; new variants land additively as
- * subsystems publish capability handles.
+ * subsystems publish capability handles. {@code IndexedRoot} and {@code GpuAvailable} were
+ * removed per tempdoc 737 §8a/§12d: required by no operation anywhere, with resolver arms that
+ * lied about what they resolved (dead vocabulary).
  */
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
 @JsonSubTypes({
     @JsonSubTypes.Type(value = RequiredCapability.WorkerOnline.class, name = "worker-online"),
-    @JsonSubTypes.Type(value = RequiredCapability.InferenceOnline.class, name = "inference-online"),
-    @JsonSubTypes.Type(value = RequiredCapability.IndexedRoot.class, name = "indexed-root"),
-    @JsonSubTypes.Type(value = RequiredCapability.GpuAvailable.class, name = "gpu-available")
+    @JsonSubTypes.Type(value = RequiredCapability.InferenceOnline.class, name = "inference-online")
 })
 public sealed interface RequiredCapability
-    permits RequiredCapability.WorkerOnline,
-        RequiredCapability.InferenceOnline,
-        RequiredCapability.IndexedRoot,
-        RequiredCapability.GpuAvailable {
+    permits RequiredCapability.WorkerOnline, RequiredCapability.InferenceOnline {
 
   /** Operation requires the Worker (Body) process to be reachable via gRPC. */
   record WorkerOnline() implements RequiredCapability {
@@ -36,17 +32,5 @@ public sealed interface RequiredCapability
   /** Operation requires the Inference (Brain) process to be reachable via HTTP. */
   record InferenceOnline() implements RequiredCapability {
     public static final InferenceOnline INSTANCE = new InferenceOnline();
-  }
-
-  /** Operation requires at least one indexed root (e.g., file-system tools). */
-  record IndexedRoot() implements RequiredCapability {
-    public static final IndexedRoot INSTANCE = new IndexedRoot();
-  }
-
-  /** Operation requires a GPU to be available (e.g., GPU-bound inference operations). */
-  record GpuAvailable(String minVendor) implements RequiredCapability {
-    public GpuAvailable {
-      Objects.requireNonNull(minVendor, "minVendor");
-    }
   }
 }

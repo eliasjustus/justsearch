@@ -46,6 +46,12 @@ final class InferenceHandlers {
   // the runtime manifest's ai.pendingReason (the mode-transition path otherwise shows generic
   // "Inference offline"; Tasks 0-5 wired only the RuntimeActivationService path).
   private final InferenceCapability inferenceCapability;
+  // Tempdoc 737 fix pack (fix 4): the ONE runtime-intent authority for the /api/inference/mode
+  // route. When present, handleSetInferenceMode records the chat-enabled intent through it (spec
+  // write + reconciler nudge) instead of a raw onlineAi.switchTo* — removing the second dispatch
+  // authority that bypassed the reconciler (§12b). Nullable for legacy test seams (HeadAssembly
+  // absent); those fall back to the raw path.
+  private final BrainRuntimeService brainRuntimeService;
 
   InferenceHandlers(
       OnlineAiService onlineAiService,
@@ -54,7 +60,8 @@ final class InferenceHandlers {
       EnterprisePolicyService enterprisePolicyService,
       io.justsearch.app.services.settings.UiSettingsStore settingsStore,
       Telemetry telemetry,
-      InferenceCapability inferenceCapability) {
+      InferenceCapability inferenceCapability,
+      BrainRuntimeService brainRuntimeService) {
     this.onlineAiService = onlineAiService;
     this.knowledgeServer = knowledgeServer;
     this.gpuCapabilitiesService = gpuCapabilitiesService;
@@ -62,6 +69,7 @@ final class InferenceHandlers {
     this.settingsStore = settingsStore;
     this.telemetry = telemetry;
     this.inferenceCapability = inferenceCapability;
+    this.brainRuntimeService = brainRuntimeService;
   }
 
   /** Late-binds the Knowledge Server after async Worker startup. */
@@ -362,6 +370,31 @@ final class InferenceHandlers {
       return;
     }
 
+    // Tempdoc 737 fix pack (fix 4): route through the ONE runtime-intent authority. This is an
+    // intent write (chatEnabled spec + reconciler nudge), NOT a raw mode switch — so it never
+    // bypasses the reconciler and cannot re-introduce the §3b circular denial. The engine may still
+    // be transitioning when this returns; report the live mode (unchanged response shape). Policy /
+    // GPU enforcement is a convergence ceiling inside the reconciler, not an intent-time 4xx denial.
+    BrainRuntimeService brainRuntime = this.brainRuntimeService;
+    if (brainRuntime != null) {
+      try {
+        String currentMode = brainRuntime.switchInferenceMode(mode);
+        ctx.json(Map.of("success", true, "mode", currentMode));
+      } catch (IllegalArgumentException e) {
+        ctx.status(400).json(ApiErrorHandler.toResponse(ApiErrorCode.INVALID_REQUEST,
+            e.getMessage() == null ? "Invalid mode" : e.getMessage(), telemetry, ApiErrorHandler.routeOf(ctx)));
+      } catch (Exception e) {
+        log.error("Failed to record inference-mode intent: {}", mode, e);
+        String msg = e.getMessage() != null ? e.getMessage() : e.toString();
+        Map<String, Object> payload = ApiErrorHandler.toResponse(
+            ApiErrorCode.MODE_SWITCH_FAILED, msg, telemetry, ApiErrorHandler.routeOf(ctx));
+        payload.put("mode", mode);
+        ctx.status(500).json(payload);
+      }
+      return;
+    }
+
+    // Legacy/test seam (no BrainRuntimeService wired): retain the raw path + rich failure mapping.
     try {
       if ("online".equalsIgnoreCase(mode)) {
         try {

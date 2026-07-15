@@ -61,6 +61,13 @@
           },
           {
             "path": "governance/operation-surfaces.v1.json"
+          },
+          {
+            "path": "governance/runtime-state.v1.json",
+            "requireGuardedKinds": [
+              "projection",
+              "producer"
+            ]
           }
         ]
       },
@@ -457,6 +464,22 @@
         "registry": "governance/registry.v1.json"
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/execution-surface"
+    },
+    {
+      "id": "runtime-state",
+      "title": "Runtime-state register completeness (tempdoc 737 §12c — AI-runtime fork-killer; sibling of execution-surface)",
+      "enforcer": "scripts/governance/gates/runtime-state/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/runtime-state/rule-descriptions.mjs",
+      "changesetsDir": "gates/runtime-state/.changesets",
+      "baseline": {
+        "kind": "git",
+        "strategy": "git-base",
+        "fallback": "HEAD~1"
+      },
+      "config": {
+        "register": "governance/runtime-state.v1.json",
+        "registry": "governance/registry.v1.json"
+      }
     },
     {
       "id": "operation-surface",

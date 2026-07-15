@@ -57,6 +57,10 @@ export type AiEngineKind =
   | 'starting'
   | 'connecting'
   | 'online'
+  // Tempdoc 737 §15 decision 1 (soft-off): the engine is HEALTHY but the user disabled chat, and a
+  // background procedure (VDU) is holding it up to finish document understanding. Distinct from
+  // 'online' so the UI never shows a green "chat ready" for a state where chat is intentionally off.
+  | 'background'
   | 'indexing';
 
 export interface AiEngineVerdict {
@@ -78,6 +82,18 @@ export interface AiEngineObservedInput {
   /** `aiStateStore.connection.reachable` (tempdoc 649) - the ONE reachability signal, reused rather
    * than re-derived, so the calm "connecting"/stale-poll states degrade honestly under a starved poll. */
   readonly reachable: boolean;
+  /**
+   * Tempdoc 737 §12b/§12c — the runtime-authority engine axis, projected additively onto the
+   * `/api/status` inference block (`engineState`/`chatEnabledSpec`/`procedure`/`engineReason`). When
+   * present, these are the authoritative signals and are PREFERRED over the legacy `runtime.mode`
+   * (which is a coarser projection of the same backend Mode enum). All optional so an older backend
+   * that predates the additive fields falls back to `runtime.mode` — this fallback retires with the
+   * `phase`/`mode` aliases per §12d.
+   */
+  readonly engineState?: string;
+  readonly chatEnabledSpec?: boolean;
+  readonly procedure?: string;
+  readonly engineReason?: string;
 }
 
 /**
@@ -87,7 +103,8 @@ export interface AiEngineObservedInput {
  * instead read the result off `AiState.aiEngine` (optionally overlaid via `applyLocalIntent`).
  */
 export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVerdict {
-  const { installStatus, runtimeStatus, runtime, reachable } = input;
+  const { installStatus, runtimeStatus, runtime, reachable, engineState, chatEnabledSpec, procedure } =
+    input;
 
   if (installStatus?.state === 'running') {
     return {
@@ -105,21 +122,48 @@ export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVe
     };
   }
 
-  // The runtime may be active even if install status is stale - a running/indexing/online mode is
-  // itself proof of an installed, working engine, independent of whether the install poll has
-  // reported back yet (mirrors the original ladder's own reasoning for this ordering).
-  if (runtime.mode === 'online') {
-    return { kind: 'online', stability: { kind: 'settled' }, installFailure: null };
-  }
-  if (runtime.mode === 'indexing') {
-    return { kind: 'indexing', stability: { kind: 'settled' }, installFailure: null };
-  }
-  if (runtime.mode === 'starting') {
-    return {
-      kind: 'starting',
-      stability: { kind: 'provisional', cause: 'starting' },
-      installFailure: null,
-    };
+  // Engine axis (tempdoc 737 §12b/§12c). The runtime-authority `engineState` — when the backend
+  // provides it — is the ONE signal for the engine's lifecycle; PREFER it over the legacy
+  // `runtime.mode`. A running/healthy engine is itself proof of an installed, working engine,
+  // independent of whether the install poll has reported back yet (the original ladder's reasoning).
+  const authored = engineState !== undefined && engineState !== '';
+  if (authored) {
+    if (engineState === 'Healthy') {
+      // Soft-off (§15 decision 1): a background procedure holds the engine up while the user has
+      // chat DISABLED. Chat is intentionally NOT offered — surface it as 'background', never the
+      // green 'online', so the UI is honest about chat being off while work continues.
+      if (chatEnabledSpec === false && !!procedure) {
+        return { kind: 'background', stability: { kind: 'settled' }, installFailure: null };
+      }
+      return { kind: 'online', stability: { kind: 'settled' }, installFailure: null };
+    }
+    if (engineState === 'Starting' || engineState === 'Recovering') {
+      return {
+        kind: 'starting',
+        stability: { kind: 'provisional', cause: 'starting' },
+        installFailure: null,
+      };
+    }
+    // engineState === 'Down' with the GPU yielded to indexing is the INDEXING state; any other
+    // 'Down' reason falls through to the shared installed / connecting / offline logic below.
+    if (engineState === 'Down' && input.engineReason === 'gpu-yielded-to-indexing') {
+      return { kind: 'indexing', stability: { kind: 'settled' }, installFailure: null };
+    }
+  } else {
+    // Legacy fallback (pre-authority backends). Retires with the phase/mode aliases (§12d).
+    if (runtime.mode === 'online') {
+      return { kind: 'online', stability: { kind: 'settled' }, installFailure: null };
+    }
+    if (runtime.mode === 'indexing') {
+      return { kind: 'indexing', stability: { kind: 'settled' }, installFailure: null };
+    }
+    if (runtime.mode === 'starting') {
+      return {
+        kind: 'starting',
+        stability: { kind: 'provisional', cause: 'starting' },
+        installFailure: null,
+      };
+    }
   }
 
   const installed =
@@ -141,7 +185,8 @@ export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVe
     return { kind: 'not_installed', stability: { kind: 'settled' }, installFailure: null };
   }
 
-  if (runtime.mode === 'transitioning') {
+  // Legacy transitioning (pre-authority): the authored path already mapped Starting/Recovering above.
+  if (!authored && runtime.mode === 'transitioning') {
     return {
       kind: 'starting',
       stability: { kind: 'provisional', cause: 'starting' },
@@ -226,12 +271,14 @@ import type { NoticeTone } from '../components/SystemNotice.js';
 /**
  * The ONE human headline for the AI-engine verdict (the footer pill + a11y announcer read this).
  *
- * Wording note: `BrainSurface.ts`'s OWN `statusConfig` table (its status card, a DIFFERENT consumer)
- * independently says "AI Online" for both `online`/`indexing` and carries the online-vs-indexing
- * distinction in its separate SUB-text ("Indexing embeddings…"), not its label. This function serves a
- * DIFFERENT consumer (the footer pill, which has no sub-text slot) that has its own, pre-existing,
- * terser convention ("Online"/"Indexing" as distinct bare words) predating this change — preserved here
- * deliberately, not an oversight or a drift from `statusConfig`. `not_installed`/`installing`/
+ * Wording note: `BrainSurface.ts`'s `statusConfig` table (its status card) used to keep its OWN copy of
+ * this wording, saying "AI Online" for both `online`/`indexing` and carrying the online-vs-indexing
+ * distinction only in its separate SUB-text ("Indexing embeddings…"). That second authority drifted
+ * exactly as forks do — the card showed a green "AI Online" for a state where chat is unavailable, while
+ * this function's footer pill said "Indexing" (0.2.0 F-6b). `statusConfig` now projects THIS function for
+ * both kinds and keeps only its `sub` (the footer has no sub-text slot). The terser bare words
+ * ("Online"/"Indexing") are the footer's pre-existing convention, now the one convention.
+ * `not_installed`/`installing`/
  * `install_failed`/`connecting` had NO prior footer wording (the old code collapsed all of them to a
  * bare, inconsistently-cased "offline"/"Offline") — those four reuse `statusConfig`'s established text
  * verbatim, since there is no prior footer convention to preserve for them.
@@ -256,6 +303,9 @@ export function aiEngineHeadline(v: AiEngineVerdict): string {
       return 'Connecting…';
     case 'online':
       return 'Online';
+    case 'background':
+      // Soft-off (tempdoc 737 §15 decision 1): engine up for background work, chat off.
+      return 'Background processing';
     case 'indexing':
       return 'Indexing';
   }
@@ -264,16 +314,17 @@ export function aiEngineHeadline(v: AiEngineVerdict): string {
 /**
  * The ONE tone projection. Mirrors the footer's OWN pre-existing tone convention (`indexing`/`starting`
  * kept deliberately amber/"in-flux", distinct from settled `online`'s green — 595's own comment on the
- * code this replaces: "settled indexing/starting keep their prior amber in-flux tone") — NOT
- * `BrainSurface.ts`'s `brainDotTone`, which collapses `online`/`indexing` to the same dot color because
- * its sub-text already carries the distinction. Same reasoning as `aiEngineHeadline` above: this
- * function serves the footer, which has no sub-text slot, so the tone itself must carry the distinction.
+ * code this replaces: "settled indexing/starting keep their prior amber in-flux tone"). `BrainSurface.ts`'s
+ * `brainDotTone` used to collapse `online`/`indexing` to the same green dot on the theory that its
+ * sub-text carried the distinction; in practice that read as "everything is fine" for a degraded state,
+ * so those two dot words now project this function too (0.2.0 F-6b).
  */
 export function aiEngineTone(kind: AiEngineKind): NoticeTone {
   switch (kind) {
     case 'online':
       return 'success';
     case 'indexing':
+    case 'background':
     case 'starting':
     case 'connecting':
       return 'warning';
@@ -312,6 +363,9 @@ export function aiEngineBody(v: AiEngineVerdict): string {
       return 'Checking AI status…';
     case 'online':
       return 'Chat and summaries ready.';
+    case 'background':
+      // §15 decision 1 copy — honest about chat being off while the engine finishes background work.
+      return 'AI engine is finishing document understanding — chat is off.';
     case 'indexing':
       return 'Indexing embeddings…';
   }

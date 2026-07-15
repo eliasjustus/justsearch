@@ -148,7 +148,7 @@ final class AdminInferenceReloadEndpointTest {
 
   private static InferenceRuntimeView viewOffline() {
     return new InferenceRuntimeView(
-        "OFFLINE", null, false, null, new LifecycleCounters(0L, 0L, 0L));
+        "OFFLINE", null, false, null, new LifecycleCounters(0L, 0L, 0L), false, "", "", "", "");
   }
 
   private static InferenceRuntimeView viewWithIdentity(
@@ -158,6 +158,11 @@ final class AdminInferenceReloadEndpointTest {
         new RuntimeIdentityView(generationId, modelId, port, 1_700_000_000_000L),
         false,
         null,
-        new LifecycleCounters(0L, 0L, generationId));
+        new LifecycleCounters(0L, 0L, generationId),
+        false,
+        "",
+        "",
+        "",
+        "");
   }
 }

@@ -144,6 +144,89 @@ describe('computeAiEngineVerdict (observed axes only — no local intent)', () =
   });
 });
 
+describe('computeAiEngineVerdict — runtime-authority engine axis (tempdoc 737 §12b/§12c)', () => {
+  it('engineState Healthy + chat enabled → "online" (preferred over runtime.mode)', () => {
+    // runtime.mode deliberately DISAGREES (offline) to prove the authority is preferred.
+    const v = computeAiEngineVerdict(
+      input({ engineState: 'Healthy', chatEnabledSpec: true, runtime: runtime({ mode: 'offline' }) }),
+    );
+    expect(v.kind).toBe('online');
+    expect(v.stability).toEqual({ kind: 'settled' });
+  });
+
+  it('soft-off: engineState Healthy + chatEnabledSpec=false + procedure active → "background", NOT "online"', () => {
+    const v = computeAiEngineVerdict(
+      input({
+        engineState: 'Healthy',
+        chatEnabledSpec: false,
+        procedure: 'VDU_BATCH',
+        runtime: runtime({ mode: 'online' }),
+      }),
+    );
+    expect(v.kind).toBe('background');
+    expect(v.kind).not.toBe('online');
+    expect(v.stability).toEqual({ kind: 'settled' });
+  });
+
+  it('chat disabled but NO procedure running → plain "online" (not the background state)', () => {
+    const v = computeAiEngineVerdict(
+      input({ engineState: 'Healthy', chatEnabledSpec: false, procedure: '' }),
+    );
+    expect(v.kind).toBe('online');
+  });
+
+  it('engineState Down + gpu-yielded-to-indexing → "indexing"', () => {
+    const v = computeAiEngineVerdict(
+      input({ engineState: 'Down', engineReason: 'gpu-yielded-to-indexing' }),
+    );
+    expect(v.kind).toBe('indexing');
+  });
+
+  it('engineState Down (other reason) + installed + reachable → "offline" (falls through to shared logic)', () => {
+    const installStatus: InstallStatus = { state: 'idle', phase: 'idle', installedFully: true };
+    const v = computeAiEngineVerdict(
+      input({ engineState: 'Down', engineReason: 'engine-down', installStatus, reachable: true }),
+    );
+    expect(v.kind).toBe('offline');
+    expect(v.stability).toEqual({ kind: 'settled' });
+  });
+
+  it('engineState Starting → "starting", provisional', () => {
+    const v = computeAiEngineVerdict(input({ engineState: 'Starting' }));
+    expect(v.kind).toBe('starting');
+    expect(v.stability).toEqual({ kind: 'provisional', cause: 'starting' });
+  });
+
+  it('engineState Recovering → "starting", provisional (crash-recovery reads as in-flux)', () => {
+    const v = computeAiEngineVerdict(input({ engineState: 'Recovering' }));
+    expect(v.kind).toBe('starting');
+  });
+
+  it('install axis still wins over the engine axis (installing beats a stale Healthy)', () => {
+    const installStatus: InstallStatus = { state: 'running', phase: 'downloading' };
+    const v = computeAiEngineVerdict(
+      input({ installStatus, engineState: 'Healthy', chatEnabledSpec: true }),
+    );
+    expect(v.kind).toBe('installing');
+  });
+
+  it('absent engineState → legacy runtime.mode fallback (defensive for old backends)', () => {
+    const v = computeAiEngineVerdict(input({ runtime: runtime({ mode: 'online' }) }));
+    expect(v.kind).toBe('online');
+  });
+
+  it('background verdict presents an honest headline/body (chat is off, engine working)', () => {
+    const p = presentAiEngineVerdict({
+      kind: 'background',
+      stability: { kind: 'settled' },
+      installFailure: null,
+    });
+    expect(p.headline).toBe('Background processing');
+    expect(p.body).toContain('chat is off');
+    expect(p.tone).toBe('warning');
+  });
+});
+
 describe('applyLocalIntent (surface-local optimistic overlay — BrainSurface only)', () => {
   const settledOffline: AiEngineVerdict = {
     kind: 'offline',

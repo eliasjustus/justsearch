@@ -231,6 +231,13 @@ final class ResourceApiModule implements ApiModule {
             headAssembly.substrate().advisory().changes(),
             telemetry);
     // Tempdoc 655 long-term design pass: the third advisory class (a pending approval waiting).
+    // Fix: the AdvisoryLog ring buffer only ever APPENDS (creation-time projection); it is
+    // never reconciled against PendingAuthorizationStore's live set when a pending is
+    // approved/consumed or lazily swept as expired. Without a liveness filter, a late or
+    // reconnecting subscriber's snapshot replays "Approval requested" for pendings that are
+    // already resolved. PendingAuthorizationStore stays the single source of truth for
+    // liveness — peek() already fails closed on consumed/unknown/expired ids (§DEFAULT_TTL),
+    // so the filter needs no independent notion of "resolved."
     this.authorizationPendingAdvisoryStreamController =
         new AdvisoryStreamController(
             io.justsearch.app.observability.advisory.PendingAuthorizationAdvisoryProjector
@@ -239,7 +246,11 @@ final class ResourceApiModule implements ApiModule {
                 io.justsearch.app.observability.advisory.PendingAuthorizationAdvisoryProjector
                     .CLASS_ID),
             headAssembly.substrate().advisory().changes(),
-            telemetry);
+            telemetry,
+            (io.justsearch.app.observability.advisory.AdvisoryRecord record) -> {
+              Object pendingId = record.classExtras().get("pendingId");
+              return pendingId instanceof String id && pendingAuthorizationStore.peek(id).isPresent();
+            });
     // Slice 447-impl-D: derived inverse Resource — Operation → Conditions referencing it.
     this.conditionRecoveryIndexController =
         new ConditionRecoveryIndexController(
@@ -309,8 +320,19 @@ final class ResourceApiModule implements ApiModule {
     // AgentService) — joined by conversationId. No new store.
     this.interactionThreadController =
         new InteractionThreadController(
+            // Tempdoc 727 (fix): the live cipher — a projection of StoreCatalog.CONVERSATIONS's
+            // recoverability class (AUTHORED), same as ConversationApiAssembly's build (:204-209),
+            // NOT the single-arg ctor's disabled() default. The single-arg ctor permanently disables
+            // the cipher (key.enabled() always false), so StoreCipher.open throws KeyLockedException
+            // on the FIRST sealed line unconditionally — once encryption is enabled this 500'd
+            // GET /api/thread/{id} for EVERY read, unlock or not. ConversationApiAssembly builds its
+            // own correctly-ciphered FileConversationStore instance over the same conversationsPath;
+            // consolidating the two instances into one is a follow-up (bigger diff/risk than this
+            // release-branch fix — see LocalApiServer :198/:242 construction order).
             new io.justsearch.app.services.conversation.FileConversationStore(
-                indexBasePath.resolveSibling("conversations")),
+                indexBasePath.resolveSibling("conversations"),
+                headAssembly.storeCipher(
+                    io.justsearch.agent.api.encryption.StoreCatalog.CONVERSATIONS.recoverability())),
             headAssembly.core().agent() != null
                 ? headAssembly.core().agent()
                 : io.justsearch.agent.api.AgentService.unavailable());

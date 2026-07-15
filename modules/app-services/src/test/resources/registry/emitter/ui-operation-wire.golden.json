@@ -716,6 +716,59 @@
   "audience" : "USER",
   "consumers" : [ ]
 }, {
+  "id" : "core.set-chat-enabled",
+  "type" : "operation",
+  "presentation" : {
+    "labelKey" : "ops.set-chat-enabled.label",
+    "descriptionKey" : "ops.set-chat-enabled.description"
+  },
+  "intf" : {
+    "inputs" : {
+      "type" : "object",
+      "properties" : {
+        "enabled" : {
+          "type" : "boolean"
+        }
+      },
+      "required" : [ "enabled" ]
+    },
+    "result" : {
+      "type" : "object",
+      "properties" : {
+        "chatEnabled" : {
+          "type" : "boolean"
+        },
+        "engineState" : {
+          "type" : "string"
+        }
+      }
+    },
+    "errors" : [ ],
+    "uiHints" : { }
+  },
+  "policy" : {
+    "risk" : "LOW",
+    "confirm" : {
+      "kind" : "NONE"
+    },
+    "audit" : "METADATA_ONLY",
+    "undoSupported" : false,
+    "inverseOperationId" : null
+  },
+  "availability" : { },
+  "lineage" : {
+    "affects" : [ ],
+    "supersedes" : [ "core.switch-inference-mode" ]
+  },
+  "provenance" : {
+    "tier" : "CORE",
+    "contributorId" : "core",
+    "version" : "1.0"
+  },
+  "executors" : [ "AGENT", "UI" ],
+  "audience" : "USER",
+  "consumers" : [ ]
+}, {
   "id" : "core.trigger-offline-processing",
   "type" : "operation",
   "presentation" : {

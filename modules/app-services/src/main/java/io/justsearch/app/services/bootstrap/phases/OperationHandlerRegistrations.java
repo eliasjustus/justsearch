@@ -38,9 +38,12 @@ import io.justsearch.app.services.registry.operations.handlers.ResetSettingsHand
 import io.justsearch.app.services.registry.operations.handlers.ResolvePathHashHandler;
 import io.justsearch.app.services.registry.operations.handlers.RestartWorkerHandler;
 import io.justsearch.app.services.registry.operations.handlers.RetryIndexingJobHandler;
+import io.justsearch.app.services.registry.operations.handlers.SetChatEnabledHandler;
 import io.justsearch.app.services.registry.operations.handlers.StartAiInstallHandler;
 import io.justsearch.app.services.registry.operations.handlers.SwitchInferenceModeHandler;
 import io.justsearch.app.services.registry.operations.handlers.TriggerOfflineProcessingHandler;
+import io.justsearch.app.services.runtimestate.RuntimeReconciler;
+import io.justsearch.app.services.runtimestate.RuntimeSpecStore;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import io.justsearch.app.services.worker.WorkerServiceImpl;
 import java.util.function.Supplier;
@@ -72,6 +75,11 @@ public final class OperationHandlerRegistrations {
       Supplier<PackImportService> packImportServiceSupplier,
       Supplier<BrainInstallService> brainInstallServiceSupplier,
       Supplier<PolicyService> policyServiceSupplier,
+      // Tempdoc 737 §12b — the runtime-authority handles for the chat-enabled intent write
+      // (core.set-chat-enabled + the core.switch-inference-mode alias). Both pull from the held
+      // ServiceGraph at dispatch time.
+      Supplier<RuntimeSpecStore> runtimeSpecStoreSupplier,
+      Supplier<RuntimeReconciler> runtimeReconcilerSupplier,
       // Tempdoc 542 Phase 3 — long-op handlers register op-leases via this SPI.
       io.justsearch.app.api.OperationLeaseService operationLeaseService) {
     final WorkerServiceImpl workerService = new WorkerServiceImpl(knowledgeServerBootstrapSupplier);
@@ -118,9 +126,14 @@ public final class OperationHandlerRegistrations {
     handlers.register(
         CoreOperationCatalog.RELOAD_INFERENCE,
         new ReloadInferenceHandler(brainRuntimeServiceSupplier));
+    // Tempdoc 737 §12b: the intent-write op (no preconditions) and the superseded
+    // switch-inference-mode alias both converge on the one spec-write path.
+    handlers.register(
+        CoreOperationCatalog.SET_CHAT_ENABLED,
+        new SetChatEnabledHandler(runtimeSpecStoreSupplier, runtimeReconcilerSupplier));
     handlers.register(
         CoreOperationCatalog.SWITCH_INFERENCE_MODE,
-        new SwitchInferenceModeHandler(brainRuntimeServiceSupplier));
+        new SwitchInferenceModeHandler(runtimeSpecStoreSupplier, runtimeReconcilerSupplier));
     handlers.register(
         CoreOperationCatalog.TRIGGER_OFFLINE_PROCESSING,
         new TriggerOfflineProcessingHandler(brainRuntimeServiceSupplier));

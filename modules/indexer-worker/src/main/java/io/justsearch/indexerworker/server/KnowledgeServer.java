@@ -1030,7 +1030,7 @@ public final class KnowledgeServer implements Closeable {
       // post-review note for the full review finding.
       embeddingFingerprintSupplier.set(ecc::fingerprintToStamp);
       appServices.wireEmbeddingCompatController(ecc);
-      maybeAutoStartEmbeddingRebuildAllPendingBestEffort();
+      maybeAutoStartEmbeddingRebuildForBlockedLegacyBestEffort();
 
       // NER — surface-provided assembly wraps in NerService.
       var nerConfig = io.justsearch.indexerworker.ner.NerConfig.fromEnv();
@@ -1286,37 +1286,9 @@ public final class KnowledgeServer implements Closeable {
     JvmRuntimeGauges.register(telemetry, "worker");
   }
 
-  private void maybeAutoStartEmbeddingRebuildAllPendingBestEffort() {
-    try {
-      if (embeddingCompatController == null || ingestLifecycle == null) return;
-      if (embeddingCompatController.state() != EmbeddingCompatibilityController.State.BLOCKED_LEGACY) return;
-      if (!"LEGACY_INDEX_NO_FINGERPRINT".equals(embeddingCompatController.reasonCode())) return;
-
-      // Phase 6 fix: docCount() includes chunks, but embedding_status is only on parent docs.
-      // Exclude chunks to prevent the heuristic from always failing when chunks exist.
-      var countOps = ingestLifecycle.indexCountOps();
-      long totalDocs = countOps.docCount();
-      int chunkDocs = countOps.countByField(SchemaFields.IS_CHUNK, "true");
-      long docs = totalDocs - chunkDocs;
-      if (docs <= 0) return;
-
-      int pending = countOps.countByField(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
-      int completed = countOps.countByField(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
-      int failed = countOps.countByField(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_FAILED);
-
-      if (embeddingCompatController.maybeAutoStartRebuildForLegacyAllPending(docs, pending, completed, failed)) {
-        return;
-      }
-      // Tempdoc 730 A4: the "all pending" rescue above only proves safety when NOTHING has been
-      // embedded yet (completed == 0 by design — see that method's scope note). Its complement is
-      // the corruption-signature case reproduced from g-20260714-134648: dense vectors already
-      // exist (completed > 0) but the generation's embedding fingerprint was never persisted, a
-      // legacy victim of the pre-fix asymmetric-stamping-gate ratchet (§THEORIZE A). We cannot
-      // back-stamp those vectors' provenance, so the only safe rescue is a real re-embed.
-      embeddingCompatController.maybeAutoStartRebuildForLegacyUnattestedVectors(docs, completed);
-    } catch (Exception ignored) {
-      // Best-effort: never block worker startup on auto-rebuild heuristics.
-    }
+  private void maybeAutoStartEmbeddingRebuildForBlockedLegacyBestEffort() {
+    io.justsearch.indexerworker.loop.ops.EmbeddingRecoveryOps.rescueBlockedLegacyIndex(
+        embeddingCompatController, ingestLifecycle, 1000, log);
   }
 
   private long safeJobQueueDepth() {

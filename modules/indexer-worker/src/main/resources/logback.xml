@@ -82,8 +82,17 @@
   <logger name="org.apache.lucene" level="WARN" />
   <logger name="org.sqlite" level="WARN" />
 
-  <!-- Application loggers -->
-  <logger name="io.justsearch" level="DEBUG" />
+  <!--
+    Application loggers.
+    io.justsearch defaults to INFO (not DEBUG): several call sites intentionally log
+    raw user query/chat text at DEBUG/TRACE per the WARN/DEBUG split in
+    docs/reference/contributing/logging-conventions.md ("Query Text Redaction"). The
+    diagnostics export bundles this file (DiagnosticsServiceImpl#addDirectoryRedacted)
+    with path-only redaction — no query/content redaction — so query text must not be
+    written at INFO or above. Set JUSTSEARCH_LOG_LEVEL=DEBUG to restore verbose local
+    debugging (e.g. indexing-loop diagnostics); do not lower this default instead.
+  -->
+  <logger name="io.justsearch" level="${JUSTSEARCH_LOG_LEVEL:-INFO}" />
   <logger name="io.justsearch.indexerworker" level="INFO" />
   <logger name="io.justsearch.indexerworker.loop" level="INFO" />
   <logger name="io.justsearch.indexerworker.coordination" level="INFO" />

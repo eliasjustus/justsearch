@@ -61,6 +61,18 @@ function stop(): void {
   lastSnapshot = null;
 }
 
+/**
+ * Tempdoc 727 F-8 — force an immediate `/api/status` fetch, bypassing the interval wait. A caller
+ * that just performed an action the backend reflects in this snapshot (e.g. unlocking chat
+ * encryption) can call this so dependent projections (the DATA PROTECTION row) catch up to the
+ * fresh truth immediately instead of waiting up to `INTERVAL_MS` for the next scheduled poll. A
+ * no-op (resolves immediately) when no subscriber is currently polling.
+ */
+export function refreshStatusNow(): Promise<void> {
+  if (listeners.size === 0) return Promise.resolve();
+  return fetchOnce();
+}
+
 export function subscribeStatus(listener: Listener): () => void {
   listeners.add(listener);
   if (lastSnapshot !== null) listener(lastSnapshot);

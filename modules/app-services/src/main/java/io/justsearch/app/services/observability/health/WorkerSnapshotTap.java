@@ -100,9 +100,17 @@ public final class WorkerSnapshotTap {
   /**
    * Maps verbatim {@code embeddingCompatState} values produced by
    * {@code EmbeddingCompatibilityController.State.name()} to catalog conditions.
-   * {@code COMPATIBLE} / empty → healthy. {@code REBUILDING} / {@code UNAVAILABLE} →
-   * unmapped (preserve prior + WARN-once); REBUILDING is conceptually covered by the
-   * EMBEDDING readiness dim's {@code embedding.not-ready} from Phase 5.
+   * {@code COMPATIBLE} / empty → healthy. {@code BLOCKED_LEGACY} / {@code BLOCKED_MISMATCH} →
+   * {@code embedding.blocked} (ERROR). {@code REBUILDING} / {@code UNAVAILABLE} / {@code
+   * INITIALIZING} → {@code embedding.not-ready} (WARNING) — made explicit (tempdoc 726 F5;
+   * {@code INITIALIZING} added tempdoc 734) so these known, non-healthy states swap/clear the
+   * prior assertion instead of hitting the unmapped-WARN branch and FREEZING a stale {@code
+   * embedding.blocked} on the Head side. {@code INITIALIZING} is {@code
+   * IndexStatusOps.safeEmbeddingCompatState}'s boot-window sentinel (worker up, controller not
+   * yet wired) — not an {@code EmbeddingCompatibilityController.State} name. The subject is
+   * {@code worker.embedding} (distinct from the readiness dim's {@code inference.embedding}
+   * {@code embedding.not-ready} instance, so the two producers do not contend on one store entry).
+   * A genuinely-unknown future value still falls through to the unmapped-WARN/preserve branch.
    */
   private static final Map<String, ConditionMapping> EMBEDDING_COMPAT_TABLE;
 
@@ -123,6 +131,21 @@ public final class WorkerSnapshotTap {
     embedding.put(
         "BLOCKED_MISMATCH",
         new ConditionMapping("embedding.blocked", "worker.embedding", Severity.ERROR));
+    // Tempdoc 726 F5: REBUILDING (rebuild in progress) and UNAVAILABLE (no current model) are known
+    // not-ready states — map them explicitly to embedding.not-ready so they clear/swap a prior
+    // embedding.blocked assertion instead of freezing it via the unmapped-WARN branch.
+    embedding.put(
+        "REBUILDING",
+        new ConditionMapping("embedding.not-ready", "worker.embedding", Severity.WARNING));
+    embedding.put(
+        "UNAVAILABLE",
+        new ConditionMapping("embedding.not-ready", "worker.embedding", Severity.WARNING));
+    // Tempdoc 734: INITIALIZING is IndexStatusOps.safeEmbeddingCompatState's boot-window sentinel
+    // (worker up, embeddingCompatController not yet wired) — map it the same as REBUILDING/
+    // UNAVAILABLE so the boot window swaps/clears instead of hitting the unmapped-WARN branch.
+    embedding.put(
+        "INITIALIZING",
+        new ConditionMapping("embedding.not-ready", "worker.embedding", Severity.WARNING));
     EMBEDDING_COMPAT_TABLE = Map.copyOf(embedding);
   }
 

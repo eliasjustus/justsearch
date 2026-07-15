@@ -106,6 +106,7 @@ export class ActivitySurface extends JfElement {
         <jf-resource
           context="list-item"
           resource-id="core.operation-history"
+          api-base=${this.apiBase}
           data-testid="activity-surface-resource-view"
         ></jf-resource>
       </div>

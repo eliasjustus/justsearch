@@ -85,7 +85,9 @@ final class RegistryControllerTest {
     // (single canonical declaration), so the core catalog alone now seeds 28 (the production wire
     // still emits navigate-to-surface — it comes from the agent-tools catalog the full boot composes).
     // Tempdoc 626 §Recency: core.reconcile-root added to CoreOperationCatalog; total 29.
-    assertEquals(29, envelope.get("entries").size());
+    // Tempdoc 737 §12b: core.set-chat-enabled added (intent write superseding
+    // switch-inference-mode); total 30.
+    assertEquals(30, envelope.get("entries").size());
   }
 
   @Test

@@ -40,6 +40,15 @@ public final class UiSettings {
   private boolean trustLoopNudgeSeen = false;
   private List<String> excludePatterns = new ArrayList<>();
 
+  // Tempdoc 737 Phase 1 — RuntimeSpec desired-state bit: does the user want the chat engine on?
+  // Nullable by design: {@code null} means "never explicitly persisted" (distinct from an explicit
+  // {@code false}), which the boot autostart-seed and the reconciler's precedence logic depend on
+  // (RuntimeSpecStore). Jackson round-trips it safely (whole-file POJO, additive,
+  // FAIL_ON_UNKNOWN_PROPERTIES=false). Effective default is FALSE (null resolves to false in
+  // RuntimeSpec), matching today's autostart-default-false — a true default would surprise-start
+  // engines at boot.
+  private Boolean chatEnabled = null;
+
 
   public int getVersion() {
     return version;
@@ -160,6 +169,18 @@ public final class UiSettings {
 
   public void setTrustLoopNudgeSeen(boolean trustLoopNudgeSeen) {
     this.trustLoopNudgeSeen = trustLoopNudgeSeen;
+  }
+
+  /**
+   * Nullable desired-state chat bit (tempdoc 737). {@code null} = never explicitly set;
+   * {@code true}/{@code false} = explicit user/policy intent. Read via {@code RuntimeSpec}.
+   */
+  public Boolean getChatEnabled() {
+    return chatEnabled;
+  }
+
+  public void setChatEnabled(Boolean chatEnabled) {
+    this.chatEnabled = chatEnabled;
   }
 
   public List<String> getExcludePatterns() {

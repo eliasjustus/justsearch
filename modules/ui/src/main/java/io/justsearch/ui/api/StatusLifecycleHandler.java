@@ -1062,7 +1062,12 @@ final class StatusLifecycleHandler implements io.justsearch.app.api.StatusSnapsh
           null,
           false,
           null,
-          new io.justsearch.app.api.status.LifecycleCounters(0L, 0L, 0L));
+          new io.justsearch.app.api.status.LifecycleCounters(0L, 0L, 0L),
+          false,
+          "",
+          "",
+          "",
+          "");
     }
     return inferenceSnapshotSupplier.get();
   }

@@ -1,8 +1,11 @@
 package io.justsearch.telemetry;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
@@ -12,6 +15,7 @@ import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -217,5 +221,58 @@ class TracingLocalExportTest {
     assertTrue(content.contains("\"name\":\"workflow.resource.test\""));
     assertTrue(content.contains("\"justsearch.workflow.run_id\":\"workflow-run-123\""));
     assertTrue(content.contains("\"justsearch.workflow.family\":\"beir-gate\""));
+  }
+
+  @Test
+  void escapesControlCharactersSoEveryLineIsIndependentlyValidJson() throws Exception {
+    // Regression for the empirically-observed corruption: a real captured traces.ndjson had
+    // 422/10,494 lines (~4%) fail json.loads, in 24 contiguous ranges, because a
+    // search/cross_encoder (search/rerank) span's reranker.output_documents.*.document.content
+    // attribute carried multi-paragraph document text with raw, unescaped newlines — splitting one
+    // logical JSON record across many physical lines. The prior NdjsonSpanExporter#json(String)
+    // only escaped `\` and `"`. This test emits a span whose attribute value contains every
+    // JSON-special character (newline, CR, tab, quote, backslash, and a raw control char) and
+    // asserts the exported file still parses line-by-line as independent JSON objects, with the
+    // value round-tripping exactly.
+    String poisoned = "line1\nline2\r\ttab\"quote\\backslashcontrol-char";
+    Path tmp = Files.createTempDirectory("telemetry-ndjson-escaping");
+    GlobalOpenTelemetry.resetForTest();
+    try (var ignored = new TracingBootstrap(tmp)) {
+      Tracer tracer = GlobalOpenTelemetry.get().getTracer("test");
+      var before = tracer.spanBuilder("before.poison").setSpanKind(SpanKind.INTERNAL).startSpan();
+      before.end();
+      var poisonSpan =
+          tracer
+              .spanBuilder("search/rerank")
+              .setSpanKind(SpanKind.INTERNAL)
+              // Exact same attribute key CrossEncoderReranker.rerank / OpenInferenceSpans.reranker
+              // uses for per-document content (reranker.output_documents.<i>.document.content),
+              // matched by the exporter's ALLOWED_ATTR_PREFIXES dynamic-key allowlist.
+              .setAttribute("reranker.output_documents.0.document.content", poisoned)
+              .startSpan();
+      poisonSpan.end();
+      var after = tracer.spanBuilder("after.poison").setSpanKind(SpanKind.INTERNAL).startSpan();
+      after.end();
+      ignored.flush();
+    }
+    String content = Files.readString(tmp.resolve("telemetry").resolve("traces.ndjson"));
+    List<String> lines = content.lines().filter(l -> !l.isBlank()).toList();
+    assertEquals(3, lines.size(), "expected exactly 3 NDJSON lines, one per span: " + content);
+
+    ObjectMapper mapper = new ObjectMapper();
+    JsonNode poisonedRecord = null;
+    for (String line : lines) {
+      // Every physical line must independently parse as one JSON object — this is exactly what a
+      // per-line NDJSON consumer (e.g. the sandbox coverage checker) does.
+      JsonNode node = mapper.readTree(line);
+      if ("search/rerank".equals(node.path("name").asText())) {
+        poisonedRecord = node;
+      }
+    }
+    assertTrue(poisonedRecord != null, "search/rerank span line missing or failed to parse");
+    assertEquals(
+        poisoned,
+        poisonedRecord.path("attrs").path("reranker.output_documents.0.document.content").asText(),
+        "escaped/re-parsed attribute value must round-trip exactly");
   }
 }

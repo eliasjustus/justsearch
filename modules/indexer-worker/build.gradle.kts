@@ -75,6 +75,10 @@ dependencies {
   testImplementation(libs.lucene.core)
   testImplementation(testFixtures(project(":modules:configuration")))
   testImplementation(testFixtures(project(":modules:ort-common"))) // §14.28 U1 helper
+  // logback.classic is runtimeOnly above (main code stays decoupled from the Logback API);
+  // WorkerLogbackConfigurationTest asserts the effective io.justsearch level from
+  // src/main/resources/logback.xml, which needs the Logback classic types at test compile time.
+  testImplementation(libs.logback.classic)
 }
 
 configurations.configureEach {

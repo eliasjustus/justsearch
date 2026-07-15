@@ -214,4 +214,54 @@ describe('ResourceView (jf-resource-view) — placeholders', () => {
     expect(el.shadowRoot?.textContent ?? '').toContain('Resource not found');
     el.remove();
   });
+
+  it('727 F-4 — opens the api-base-prefixed EventSource for an operation-history-shaped resource', async () => {
+    // Mirrors "prefixes SSE resource endpoints with api-base" above, for the exact
+    // EVENT_STREAM×SSE_STREAM shape of core.operation-history. This isolated component-level
+    // check passed even before the 727 F-4 fix — <jf-resource-view> itself was never buggy;
+    // the bug was one layer up (the (Resource, list-item) strategy dropping `apiBase` before
+    // it ever reached this element — see resourceListItem.test.ts + ActivitySurface.render.test.ts
+    // for the tests that fail on the pre-fix code). This test guards the element's own contract
+    // so a future regression at either layer is caught somewhere.
+    const opHistory: Resource = {
+      id: 'core.operation-history',
+      presentation: {
+        labelKey: 'registry-resource.operation-history.label',
+        descriptionKey: 'registry-resource.operation-history.description',
+        iconHint: null,
+        category: null,
+      },
+      schema: 'https://ssot.justsearch/v1/schemas/operation-history-entry.v1.json',
+      category: 'EVENT_STREAM',
+      subscriptionMode: 'SSE_STREAM',
+      endpoint: '/api/operation-history/stream',
+      kind: 'operation-history',
+      history: null,
+      recovery: null,
+      provenance: { tier: 'CORE', contributorId: 'core', version: '1.0' },
+      privacy: { pathPolicy: 'NO_PATHS', loopbackOnly: false, resolver: null },
+      itemOperations: [],
+      collectionOperations: [],
+      primaryKey: '',
+      audience: 'USER',
+      consumers: [],
+      role: 'PRODUCT',
+    };
+    seedResourceCatalog(catalogOf(opHistory));
+    const el = document.createElement('jf-resource-view') as ResourceView;
+    el.resourceId = 'core.operation-history';
+    el.apiBase = 'http://127.0.0.1:33221';
+    document.body.appendChild(el);
+    await Promise.resolve();
+    await el.updateComplete;
+
+    expect(NoopEventSource.urls).toContain(
+      'http://127.0.0.1:33221/api/operation-history/stream',
+    );
+    // 'connecting' here (not 'connected') is expected and correct: NoopEventSource never fires
+    // 'open'/'frame'. The property under test is that the stream-open attempt happened at all,
+    // against the right URL — 'error' would mean bind() rejected before reaching that point.
+    expect(el.connectionState).not.toBe('error');
+    el.remove();
+  });
 });

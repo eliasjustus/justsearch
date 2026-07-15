@@ -1,6 +1,8 @@
 package io.justsearch.app.services.ai.install;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.app.api.AiInstallStatus;
 import java.lang.reflect.Field;
@@ -56,5 +58,88 @@ final class AiInstallServicePackageStateTest {
     assertEquals("failed", pkg.state);
     assertEquals("Download failed for splade/naver-splade-v3/idf.json", pkg.error);
     assertEquals(10, pkg.bytesDownloaded);
+  }
+
+  /**
+   * INS-005 regression: a multi-package run where one asset fails but the rest succeed must report
+   * {@code state == "completed"} with an honest count and {@code installedFully == false} — never
+   * {@code failed}, and no package left {@code pending}. Exercises the extracted
+   * {@code applyCompletionState()} terminal decision.
+   */
+  @Test
+  void partialFailure_reportsCompletedNotFailed_andHonestCount() throws Exception {
+    AiInstallService svc = new AiInstallService(null, null, null, null, tmp);
+    AiInstallStatus status = statusOf(svc);
+    for (int i = 0; i < 23; i++) {
+      addPackage(status, "pkg-" + i, "installed");
+    }
+    addPackage(status, "reranker-fp16", "failed");
+
+    invoke(svc, "applyCompletionState", new Class<?>[] {});
+
+    assertEquals("completed", status.state);
+    assertFalse(status.installedFully);
+    assertTrue(status.message.contains("23/24"), "message should report 23/24: " + status.message);
+    assertTrue(status.message.contains("1 failed"), "message should name the failure count");
+  }
+
+  /**
+   * A package left in a non-terminal state (pending/downloading/verifying) must NOT read as a clean
+   * install — {@code installedFully} is computed from the positive "installed" count, so a run that
+   * failed to terminalize every package cannot lie. Guards the leftover-pending honesty gap.
+   */
+  @Test
+  void nonTerminalPackage_isNotCountedAsInstalled() throws Exception {
+    AiInstallService svc = new AiInstallService(null, null, null, null, tmp);
+    AiInstallStatus status = statusOf(svc);
+    addPackage(status, "embedding", "installed");
+    addPackage(status, "reranker", "pending");
+
+    invoke(svc, "applyCompletionState", new Class<?>[] {});
+
+    assertEquals("completed", status.state);
+    assertFalse(
+        status.installedFully, "a leftover pending package must not report a fully-installed run");
+  }
+
+  /** All packages installed → clean completion, installedFully true. */
+  @Test
+  void allInstalled_reportsFullyInstalled() throws Exception {
+    AiInstallService svc = new AiInstallService(null, null, null, null, tmp);
+    AiInstallStatus status = statusOf(svc);
+    addPackage(status, "embedding", "installed");
+    addPackage(status, "reranker", "installed");
+
+    invoke(svc, "applyCompletionState", new Class<?>[] {});
+
+    assertEquals("completed", status.state);
+    assertTrue(status.installedFully);
+    assertEquals("AI installed.", status.message);
+  }
+
+  /** A hardware-skipped package (not failed) → completed with limitations, installedFully false. */
+  @Test
+  void skippedPackage_distinguishedFromFailed() throws Exception {
+    AiInstallService svc = new AiInstallService(null, null, null, null, tmp);
+    AiInstallStatus status = statusOf(svc);
+    addPackage(status, "embedding", "installed");
+    var chat = addPackage(status, "chat", "skipped");
+    chat.label = "Chat model";
+
+    invoke(svc, "applyCompletionState", new Class<?>[] {});
+
+    assertEquals("completed", status.state);
+    assertFalse(status.installedFully);
+    assertTrue(
+        status.message.contains("limitations"), "skipped path should read as limitations, not failure");
+  }
+
+  private static AiInstallStatus.PackageStatus addPackage(
+      AiInstallStatus status, String id, String state) {
+    var ps = new AiInstallStatus.PackageStatus();
+    ps.packageId = id;
+    ps.state = state;
+    status.packages.add(ps);
+    return ps;
   }
 }

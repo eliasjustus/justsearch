@@ -22,7 +22,37 @@ JustSearch enforces a strict **Single-tenant GPU Policy** across processes:
 * The **Main Process** owns Online inference (`llama-server.exe`) via `modules/app-inference` and `InferenceLifecycleManager`.
 * The **Worker Process** owns indexing + Worker-side ONNX Runtime encoders, and cooperates via the MMF `main_gpu_active` flag (offset `24`, `MmfWorkerSignalLayoutV1.OFFSET_MAIN_GPU_ACTIVE`).
 
-### Modes
+### The Runtime Authority (desired state, status, procedures)
+
+Since tempdoc 737, who runs on the GPU is governed by one Head-side authority
+(`io.justsearch.app.services.runtimestate`), not by callers switching modes
+directly:
+
+* **Desired state (spec):** the persisted user intent `chatEnabled`
+  (`UiSettings`; written by the `core.set-chat-enabled` operation, the
+  Settings API, and on successful runtime activation). "Shut Down AI" writes
+  intent — it does not command a transition.
+* **Observed status:** Condition-shaped per-axis state (ENGINE
+  `Down/Starting/Healthy/Recovering` with a reason code, ADOPTION, GPU LEASE
+  holder, and any in-flight PROCEDURE), exposed additively on `/api/status`
+  (`engineState`, `chatEnabledSpec`, `engineReason`, `procedure`,
+  `leaseHolder`; the older `phase` string is a deprecated alias).
+* **Reconciler:** a single-writer, level-triggered loop converges the engine
+  toward `spec ∧ policy`. It is the only permitted caller of the mode-switch
+  primitives (ArchUnit-enforced). Autonomous work (e.g. the VDU batch) runs
+  inside a declared **procedure**; when the procedure ends, the engine
+  returns to spec — the system can no longer park itself in a state the user
+  didn't ask for.
+* **Soft-off semantics:** with `chatEnabled=false`, background procedures may
+  still run the engine (idle/energy-gated); status carries the reason
+  `engine-up-for-background-processing`, and the chat capability is NOT
+  offered while it does.
+
+### Modes (internal machinery)
+
+The `Mode` enum remains the internal FSM vocabulary of
+`InferenceLifecycleManager` beneath the authority; externally the Worker only
+ever sees the one-bit GPU lease (`main_gpu_active`).
 
 | Mode | Active Model | Purpose | Process |
 | :--- | :--- | :--- | :--- |

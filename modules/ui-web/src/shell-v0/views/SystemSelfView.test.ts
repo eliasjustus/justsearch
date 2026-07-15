@@ -103,4 +103,44 @@ describe('visibleIndexQueueCount', () => {
       }),
     ).toBeNull();
   });
+
+  // Tempdoc 727 F-2: sandbox-round repro — worker.core.indexState=IDLE, pending/queue_depth/
+  // processing_jobs_count all 0, yet the "Now" strip's INDEXING row showed "Processing 10 items /
+  // running" (10 = embeddingPending(2) + embeddingQueueSize(3) + vduQueueSize(5)). On pre-fix code
+  // this test FAILS (returns 10, not null): the embedding/VDU counters were trusted as "busy" even
+  // though the worker had already authoritatively settled to IDLE — the same truth the Queue card
+  // (`pendingJobs`) and the Index-state row already derive from.
+  it('does not show stale embedding/VDU residue as busy once the worker has settled to IDLE', () => {
+    expect(
+      visibleIndexQueueCount({
+        index: {
+          ...baseIndex,
+          pendingJobs: known(0),
+          embeddingPending: known(2),
+          embeddingQueueSize: known(3),
+          vduQueueSize: known(5),
+        },
+        status: {
+          worker: { core: { indexState: 'IDLE' } },
+        } as unknown as import('../state/aiStateStore.js').StatusSnapshot,
+      }),
+    ).toBeNull();
+  });
+
+  it('still surfaces the embedding/VDU fallback when the worker is genuinely INDEXING', () => {
+    expect(
+      visibleIndexQueueCount({
+        index: {
+          ...baseIndex,
+          pendingJobs: known(0),
+          embeddingPending: known(2),
+          embeddingQueueSize: known(3),
+          vduQueueSize: known(5),
+        },
+        status: {
+          worker: { core: { indexState: 'INDEXING' } },
+        } as unknown as import('../state/aiStateStore.js').StatusSnapshot,
+      }),
+    ).toBe(10);
+  });
 });

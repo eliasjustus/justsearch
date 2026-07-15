@@ -245,7 +245,12 @@
       "softRestarts" : 0,
       "hardRestarts" : 0,
       "transitionsTotal" : 1
-    }
+    },
+    "chatEnabledSpec" : true,
+    "engineState" : "Healthy",
+    "engineReason" : "engine-healthy",
+    "procedure" : "",
+    "leaseHolder" : "CHAT"
   },
   "readiness" : {
     "schemaVersion" : 1,

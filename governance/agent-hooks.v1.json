@@ -60,6 +60,24 @@
       "file": "pipe-mask-hint.mjs",
       "role": "advisory"
     },
+    "merge-full-suite-hint": {
+      "file": "merge-full-suite-hint.mjs",
+      "role": "advisory",
+      "bite": {
+        "kind": "command-signal",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git merge origin/main"
+          }
+        },
+        "expect": {
+          "stdoutIncludes": "subset-isnt-the-suite"
+        },
+        "note": "tempdoc 734; advisory role so hook-integrity's blocking-only bite loop doesn't require this, but it proves the hook actually EMITS on a real `git merge` stdin rather than merely existing as a test file — the `unit`-kind weakness (existsSync(testPath) alone) this tempdoc's own evidence names one layer up"
+      }
+    },
     "dataset-cache-hint": {
       "file": "dataset-cache-hint.mjs",
       "role": "advisory"
@@ -100,6 +118,10 @@
     },
     "lockfile-hint": {
       "file": "lockfile-hint.mjs",
+      "role": "advisory"
+    },
+    "mcpb-repack-hint": {
+      "file": "mcpb-repack-hint.mjs",
       "role": "advisory"
     },
     "observation-shard-hint": {
@@ -393,6 +415,15 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "hookId": "merge-full-suite-hint",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write",
         "hooks": [
           {
@@ -421,6 +452,10 @@
           {
             "hookId": "search-engine-hint",
             "if": "Edit(modules/adapters-lucene/src/**)|Write(modules/adapters-lucene/src/**)|Edit(modules/reranker/src/**)|Write(modules/reranker/src/**)|Edit(modules/worker-services/src/**)|Write(modules/worker-services/src/**)|Edit(modules/app-services/src/**)|Write(modules/app-services/src/**)|Edit(modules/search/src/**)|Edit(modules/app-search/src/**)"
+          },
+          {
+            "hookId": "mcpb-repack-hint",
+            "if": "Edit(packaging/mcpb/server/**)|Write(packaging/mcpb/server/**)|Edit(packaging/mcpb/manifest.json)|Write(packaging/mcpb/manifest.json)"
           }
         ]
       },

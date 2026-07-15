@@ -14,24 +14,71 @@ retrieve context, browse folders, ingest files, and check status.
 
 **Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java`
 
+## Which port?
+
+The MCP endpoint lives on the same loopback HTTP API as everything else, so "which port is the
+MCP server on?" is exactly "which port is the API on?":
+
+- **Default: `8080`.** The API port resolves through `justsearch.api.port` /
+  `JUSTSEARCH_API_PORT` (`modules/configuration/.../EnvRegistry.java`); when nothing sets it,
+  the built-in default is `8080` (`ResolvedConfigBuilder.buildPorts()`). The packaged desktop
+  app sets no port override, so an installed app binds `http://127.0.0.1:8080`.
+- **Ephemeral fallback.** If the configured port is already in use, the server logs a warning
+  and rebinds on a random free port instead of failing
+  (`modules/ui/src/main/java/io/justsearch/ui/api/LocalApiServer.java` — bind-failure fallback).
+  Setting the port to `0` requests an ephemeral port explicitly.
+- **Pin it:** set the `JUSTSEARCH_API_PORT` environment variable (or the
+  `-Djustsearch.api.port=` system property for source runs) before launching. Note that a pin
+  is a *preference*: if that port is taken, the ephemeral fallback above still applies.
+- **Discover the actual port:** the backend writes it to
+  `<data dir>\runtime\api-port.txt` — for the installed desktop app that is
+  `%APPDATA%\io.justsearch.shell\runtime\api-port.txt`. It also prints
+  `JUSTSEARCH_API_PORT=<port>` to stdout (captured in `logs\headless-backend.log`) and serves
+  `GET /api/health` once up. (Gradle dev tasks like `runHeadless`/`devAll` default to `33221`,
+  which is why older docs and scripts mention that number — the installed app does not use it.)
+
 ## Setup
 
-### Claude Desktop
+### Claude Desktop one-click (MCPB) — available from the next release
 
-Add to `claude_desktop_config.json`:
+An MCPB bundle (`justsearch-mcp.mcpb`, sources in
+[`packaging/mcpb/`](../../packaging/mcpb/README.md)) will be attached to
+JustSearch releases **starting with the next release** — it is not on any
+published release yet, and the v0.1.0 app predates the `/mcp` endpoint, so
+the bundle cannot work against it. Once shipped: download the `.mcpb` from
+the release page and open it with Claude Desktop (Settings → Extensions) —
+one click, no JSON editing. The bundle is a thin local stdio bridge to the
+running app's `/mcp` endpoint; it handles port discovery via `api-port.txt`
+automatically. Until then, use the connector flow below.
+
+### Claude Desktop in ~2 minutes, starting from "launch the app"
+
+1. **Launch JustSearch** (Start menu). Wait for the window to load — the API is up when
+   `http://127.0.0.1:8080/api/health` answers in a browser. If it doesn't, read the actual
+   port from `%APPDATA%\io.justsearch.shell\runtime\api-port.txt` and use that below.
+2. **Claude Desktop → Settings → Connectors → Add custom connector**, URL:
+
+   ```text
+   http://127.0.0.1:8080/mcp
+   ```
+
+3. **Done.** Ask Claude something about your indexed files; it will call `justsearch_answer` /
+   `justsearch_search`. (First useful answers require having pointed JustSearch at a folder and
+   letting it finish indexing.)
+
+If your Claude Desktop version has no Connectors UI, bridge stdio→HTTP with `mcp-remote`
+(needs Node.js) in `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "justsearch": {
-      "url": "http://127.0.0.1:33221/mcp"
+      "command": "npx",
+      "args": ["mcp-remote", "http://127.0.0.1:8080/mcp"]
     }
   }
 }
 ```
-
-Replace `33221` with the actual port if JustSearch uses an ephemeral
-port. Check the JustSearch window or `GET /api/health` to find it.
 
 ### Cursor / Windsurf / VS Code
 
@@ -41,7 +88,7 @@ Add to `.cursor/mcp.json` or equivalent:
 {
   "mcpServers": {
     "justsearch": {
-      "url": "http://127.0.0.1:33221/mcp"
+      "url": "http://127.0.0.1:8080/mcp"
     }
   }
 }
@@ -50,8 +97,12 @@ Add to `.cursor/mcp.json` or equivalent:
 ### Claude Code
 
 ```bash
-claude mcp add justsearch --transport http http://127.0.0.1:33221/mcp
+claude mcp add justsearch --transport http http://127.0.0.1:8080/mcp
 ```
+
+In all three: replace `8080` with the port from
+`%APPDATA%\io.justsearch.shell\runtime\api-port.txt` if `8080` was taken on your machine
+(see [Which port?](#which-port)).
 
 ### Claude Code: headless / non-interactive approval
 
@@ -278,7 +329,7 @@ The previous TypeScript MCP server (`scripts/prod/justsearch-mcp/server.mjs`)
 is **deprecated**. It ran as a separate Node.js process via stdio
 transport with 4 tools. The Java MCP handler supersedes it with
 better transport (Streamable HTTP, no separate process), more tools
-(5 vs 4, adds browse), and direct service-layer dispatch.
+(6 vs 4), and direct service-layer dispatch.
 
 The old server remains in the codebase for reference — its tool
 descriptions and data from a tool-interface-design eval (tempdoc 366)
