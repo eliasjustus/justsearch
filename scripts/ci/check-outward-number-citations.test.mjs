@@ -6,10 +6,14 @@
  * Run: `node scripts/ci/check-outward-number-citations.test.mjs` (exits non-zero on failure)
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   collectReleaseNumbers,
   matchesReleaseValue,
   findUncitedNumbers,
+  listOutwardFiles,
 } from './check-outward-number-citations.mjs';
 
 let passed = 0;
@@ -90,6 +94,18 @@ ok('4-digit numbers before % are out of scope (2-3 digit rule)', () => {
 });
 ok('years/plain integers near corpus tokens do not trip (need a % sign)', () => {
   return findUncitedNumbers('SciFact (2020) has 5183 docs.', CTX).length === 0;
+});
+
+ok('root RESEARCH.md is part of the outward surface', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'outward-files-'));
+  try {
+    fs.writeFileSync(path.join(root, 'README.md'), '# readme');
+    fs.writeFileSync(path.join(root, 'RESEARCH.md'), '# research');
+    const names = listOutwardFiles(root).map((file) => path.basename(file)).sort();
+    return JSON.stringify(names) === JSON.stringify(['README.md', 'RESEARCH.md']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // --- summary ---

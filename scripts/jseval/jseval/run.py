@@ -12,6 +12,7 @@ import httpx
 
 from . import ann_proof as ann_proof_mod
 from . import artifacts as artifacts_mod
+from . import chunk_completeness as chunk_completeness_mod
 from . import comparability as comparability_mod
 from . import corpora
 from . import history as history_mod
@@ -302,12 +303,22 @@ def execute_run(
     # 4. Build summary + run manifest (tempdoc 400 LR1-a)
     search_config = _snapshot_search_config(base_url)
     state_snapshots = manifest_mod.capture_state_snapshots(base_url)
-    # Phase 2.2b: point compute_manifest at the data dir so calibrated
+    # Phase 2.2b: point compute_manifest at the envelope root so calibrated
     # envelopes (written by `jseval calibrate`) are auto-embedded when the
-    # run's cohort_hash matches a sidecar in
-    # <data_dir>/non_determinism_envelopes/.
-    envelope_data_dir_env = os.environ.get("JUSTSEARCH_DATA_DIR")
-    envelope_data_dir = Path(envelope_data_dir_env) if envelope_data_dir_env else None
+    # run's cohort_hash matches. Tempdoc 716: envelopes are filed under the
+    # jseval-owned data root (read_envelope falls back to the pre-716
+    # legacy roots, incl. env JUSTSEARCH_DATA_DIR, with a WARN). The worker
+    # data dir stays a separate concern — it is where the Worker writes
+    # telemetry/, which write_run copies into the run dir.
+    from ._paths import DEFAULT_BACKEND_DATA_DIR, DEFAULT_JSEVAL_DATA_DIR
+    envelope_data_dir = DEFAULT_JSEVAL_DATA_DIR
+    worker_data_dir_env = os.environ.get("JUSTSEARCH_DATA_DIR")
+    # Default to the eval-mode backend dir so a defaults-only
+    # `run --start-backend` still gets its telemetry copied (write_run
+    # skips missing files, so a foreign/dev data dir is harmless).
+    worker_data_dir = (
+        Path(worker_data_dir_env) if worker_data_dir_env else DEFAULT_BACKEND_DATA_DIR
+    )
     # Phase 6 / 6.5: manifest override for LR5-d synthetic bisection.
     # When JUSTSEARCH_MANIFEST_OVERRIDE is set AND the
     # JUSTSEARCH_MANIFEST_OVERRIDE_DANGEROUS safety flag is "1", skip
@@ -348,13 +359,14 @@ def execute_run(
     summary = _build_summary(dataset_name, modes, mode_results, meta, qrels,
                              ingest_summary, pipeline_summary, models_snapshot,
                              search_config, env_overrides, env_fingerprint,
-                             run_manifest=run_manifest, base_dir=base_dir)
+                             run_manifest=run_manifest, base_dir=base_dir,
+                             status_snapshot=state_snapshots.get("/api/status"))
 
     # 5. Write artifacts + append history
     if output_dir:
         run_dir = artifacts_mod.write_run(
             summary, mode_results, qrels, Path(output_dir), query_records,
-            data_dir=envelope_data_dir,
+            data_dir=worker_data_dir,
         )
         log.info("Artifacts written to %s", run_dir)
 
@@ -446,6 +458,7 @@ def _build_summary(
     env_fingerprint: dict | None = None,
     run_manifest: dict | None = None,
     base_dir: Path | None = None,
+    status_snapshot: dict | None = None,
 ) -> dict:
     summary: dict = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -499,7 +512,58 @@ def _build_summary(
         summary["env_fingerprint"] = env_fingerprint
     if run_manifest:
         summary["manifest"] = run_manifest
+    summary["chunk_completeness"] = _compute_chunk_completeness(
+        dataset_name, mode_results, status_snapshot, base_dir,
+    )
     return summary
+
+
+def _compute_chunk_completeness(
+    dataset_name: str,
+    mode_results: dict,
+    status_snapshot: dict | None,
+    base_dir: Path | None,
+) -> dict:
+    """The tempdoc-718 chunk-completeness block: attach to every run so it self-documents,
+    sibling of `manifest`/`corpus_identity`. Enforcement lives at the gate seam
+    (`ratchet_kernel.assert_chunk_completeness`); this is the advisory half (644 idiom: both
+    an embedded verdict AND a fail-closed gate assertion).
+
+    Offline expectation is read from the run's `corpus.jsonl` (golden/mixed self-demo corpora
+    only — a BEIR dataset has no local corpus.jsonl, so `expected_chunk_docs` gracefully
+    returns 0 and this resolves to the harmless `chunk-free` verdict, never gating a BEIR run).
+    """
+    dataset_dir = (base_dir or corpora._default_base_dir()) / dataset_name
+    expected = chunk_completeness_mod.expected_chunk_docs(dataset_dir / "corpus.jsonl")
+
+    # Observed: worker.enrichment.chunk.* from the run-completion /api/status snapshot
+    # (readiness.py already reads this same nested path — flatten_status merges it to the
+    # top level; jseval.readiness is already imported for the readiness-poll machinery).
+    flat_status = readiness.flatten_status(dict(status_snapshot)) if status_snapshot else {}
+    observed_chunk_doc_count = flat_status.get("chunkDocCount", 0)
+    observed_coverage_pct = flat_status.get("chunkVectorCoveragePercent")
+
+    # chunk_merge corroborator: only meaningful when `vector` mode actually ran this run (it's
+    # a query-time signal from vector-mode retrieval). A run that only exercises e.g. `lexical`
+    # never fires chunk_merge regardless of index health, so its absence must not be read as a
+    # strike when vector mode wasn't part of this run — pass True (not applicable, not a strike).
+    vector_mr = mode_results.get("vector")
+    if vector_mr is not None:
+        chunk_merge_observed = "chunk_merge" in (
+            (vector_mr.get("pipeline_tracking") or {}).get("observed") or []
+        )
+    else:
+        chunk_merge_observed = True
+
+    result = chunk_completeness_mod.chunk_completeness_verdict(
+        expected, observed_chunk_doc_count, observed_coverage_pct, chunk_merge_observed,
+    )
+    return {
+        "expected": result.expected,
+        "observed": result.observed,
+        "verdict": result.verdict,
+        "reasons": result.reasons,
+    }
 
 
 def _compute_latency_stats(raw_responses: list[dict]) -> dict:

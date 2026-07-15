@@ -35,7 +35,15 @@ import numpy as np
 import onnx
 from onnx import TensorProto, helper, numpy_helper
 
-from _common import get_tool_versions, posix_relpath, resolve_hf_commit, sha256_file, verify_model
+from _common import (
+    get_tool_versions,
+    load_manifest_capabilities,
+    posix_relpath,
+    resolve_hf_commit,
+    sha256_file,
+    stamp_capabilities,
+    verify_model,
+)
 
 
 def export_onnx_mlm(hf_model_id: str, output_path: Path):
@@ -263,6 +271,21 @@ def main():
     verify_model(cpu_path)
     verify_model(gpu_path)
 
+    # Stamp declared capabilities into ONNX metadata_props (tempdoc 711 Item 3) — a
+    # build-time projection of model_manifest.json's `capabilities` section, if the
+    # manifest has one yet. Legacy dirs without a manifest capabilities section are
+    # skipped, not crashed.
+    manifest_capabilities = load_manifest_capabilities(output_dir)
+    if manifest_capabilities:
+        cpu_stamped_keys = stamp_capabilities(cpu_path, manifest_capabilities)
+        gpu_stamped_keys = stamp_capabilities(gpu_path, manifest_capabilities)
+        print(f"  Stamped {len(cpu_stamped_keys)} metadata_props key(s) into {cpu_path.name}")
+        print(f"  Stamped {len(gpu_stamped_keys)} metadata_props key(s) into {gpu_path.name}")
+    else:
+        print(f"  No model_manifest.json capabilities section in {output_dir} — skipping metadata_props stamping")
+        cpu_stamped_keys = []
+        gpu_stamped_keys = []
+
     # Compute hashes and write build.json
     cpu_sha = sha256_file(cpu_path)
     gpu_sha = sha256_file(gpu_path)
@@ -285,6 +308,7 @@ def main():
                     f"Declare outputs: output_idx (INT64, [B,{args.top_k}]), output_weights (FLOAT32, [B,{args.top_k}])",
                 ],
                 "output_sha256": cpu_sha,
+                "stamped_metadata_keys": cpu_stamped_keys,
             },
             "model_fp16.onnx": {
                 "description": "GPU — FP16 baked-PRESPARSE",
@@ -297,6 +321,7 @@ def main():
                     f"Declare outputs: output_idx (INT64, [B,{args.top_k}]), output_weights (FLOAT32, [B,{args.top_k}])",
                 ],
                 "output_sha256": gpu_sha,
+                "stamped_metadata_keys": gpu_stamped_keys,
             },
         },
         "build_command": f"python scripts/models/build-splade.py --hf-model {args.hf_model} --output-dir {posix_relpath(args.output_dir)}",

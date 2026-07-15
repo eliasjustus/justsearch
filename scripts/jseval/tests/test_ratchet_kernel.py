@@ -113,3 +113,62 @@ def test_assert_cohort_engines_allow_mismatch_overrides(tmp_path):
     p = _baseline_with_release(tmp_path, ["dense", "reranker", "splade"])
     rd = _run_dir(tmp_path, ["dense", "splade"])
     rk.assert_cohort_engines(rd, p, allow_mismatch=True)  # no raise
+
+
+# --- tempdoc 718: chunk-completeness validity guard --------------------------
+
+def _run_dir_with_chunk_completeness(tmp_path, verdict, name="run", **extra_fields):
+    rd = tmp_path / name
+    rd.mkdir()
+    block = {"expected": 50, "observed": 0, "verdict": verdict,
+             "reasons": ["expected_chunk_docs=50 > 0 but observed chunk_doc_count == 0"]}
+    block.update(extra_fields)
+    (rd / "summary.json").write_text(
+        json.dumps({"chunk_completeness": block}), encoding="utf-8")
+    return rd
+
+
+def test_assert_chunk_completeness_degenerate_exits_2(tmp_path):
+    rd = _run_dir_with_chunk_completeness(tmp_path, "degenerate")
+    with pytest.raises(SystemExit) as exc:
+        rk.assert_chunk_completeness(rd)
+    assert exc.value.code == 2
+
+
+def test_assert_chunk_completeness_ok_is_silent(tmp_path):
+    rd = _run_dir_with_chunk_completeness(tmp_path, "ok")
+    rk.assert_chunk_completeness(rd)  # no raise
+
+
+def test_assert_chunk_completeness_chunk_free_is_silent(tmp_path):
+    rd = _run_dir_with_chunk_completeness(tmp_path, "chunk-free")
+    rk.assert_chunk_completeness(rd)  # no raise
+
+
+def test_assert_chunk_completeness_missing_block_skips(tmp_path):
+    # A run predating the guard (no chunk_completeness block at all) — backward-compatible.
+    rd = tmp_path / "old_run"
+    rd.mkdir()
+    (rd / "summary.json").write_text(json.dumps({"dataset": "d"}), encoding="utf-8")
+    rk.assert_chunk_completeness(rd)  # no raise
+
+
+def test_assert_chunk_completeness_missing_summary_skips(tmp_path):
+    rd = tmp_path / "no_summary"
+    rd.mkdir()
+    rk.assert_chunk_completeness(rd)  # no raise -- no summary.json at all
+
+
+def test_assert_chunk_completeness_flag_override_passes_with_warning(tmp_path, capsys):
+    rd = _run_dir_with_chunk_completeness(tmp_path, "degenerate")
+    rk.assert_chunk_completeness(rd, allow_incomplete=True)  # no raise
+    captured = capsys.readouterr()
+    assert "overridden" in captured.err
+
+
+def test_assert_chunk_completeness_env_var_override_passes_with_warning(tmp_path, monkeypatch, capsys):
+    rd = _run_dir_with_chunk_completeness(tmp_path, "degenerate")
+    monkeypatch.setenv("JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS", "1")
+    rk.assert_chunk_completeness(rd)  # no raise -- env var alone is enough
+    captured = capsys.readouterr()
+    assert "overridden" in captured.err

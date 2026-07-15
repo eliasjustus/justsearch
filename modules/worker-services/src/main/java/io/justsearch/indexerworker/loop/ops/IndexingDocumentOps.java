@@ -388,8 +388,42 @@ public final class IndexingDocumentOps {
         }
       }
     }
+    if (parentTokenCount == null) {
+      // Tempdoc 717: the SPLADE encoder loads asynchronously, so on a fresh build a small corpus can
+      // be fully indexed before it is ready — leaving parent_token_count null. The corpus-profile
+      // short/long classifier (CorpusProfile) then sees median 0, mis-classifies a long corpus as
+      // "short", and the chunk_merge search leg is silently skipped (intermittent quality halving).
+      // Fall back to a cheap, always-available character-based estimate so the field is NEVER null
+      // and never race-dependent; the exact SPLADE count is still used whenever the encoder is
+      // ready. The corpus-profile buckets are coarse (256/512/1024/…), so a ~4-chars/token estimate
+      // is sufficient to classify long-vs-short correctly.
+      parentTokenCount = estimateTokenCount(extraction.content());
+    }
 
     return new ParentIndexMetadata(mime, mimeBase, fileKind, language, parentTokenCount);
+  }
+
+  /**
+   * Cheap, always-available token-count estimate (tempdoc 717) used as a fallback for {@code
+   * parent_token_count} when the SPLADE encoder isn't ready at index time — so the corpus-profile
+   * short/long classifier is never fed a null/zero token count due to a startup race. Returns 0 for
+   * null/blank content.
+   *
+   * <p>Divisor 3 (not 4) is deliberate (tempdoc 717 review, Finding 2): the property that matters is
+   * that any document long enough to have been <em>chunked</em> (≥ {@link #CHUNK_THRESHOLD_CHARS} =
+   * 2000 chars) estimates <em>above</em> the 512-token short threshold, so a chunked corpus is never
+   * mis-classified short. 2000/3 ≈ 666 &gt; 512 with margin; 2000/4 = 500 would fall just under. The
+   * estimate is language-uniform (a fixed chars/token ratio, not a per-language lever — invariant
+   * #6): CJK packs more tokens per char, so a chars/3 estimate under-counts CJK, but a chunked CJK
+   * doc still has ≥ 2000 chars → ≥ 666 → long. Erring toward "long" is the safe direction (running
+   * chunk-merge on a short corpus is hybrid-neutral, F-036; skipping it on a long one halves
+   * quality). The exact SPLADE count is still used whenever the encoder is ready.
+   */
+  static long estimateTokenCount(String content) {
+    if (content == null || content.isBlank()) {
+      return 0L;
+    }
+    return Math.max(1L, content.length() / 3L);
   }
 
   public static String contentPreview(String content, boolean isMarkdown) {

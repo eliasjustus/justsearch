@@ -1,0 +1,202 @@
+[
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Kraftwerk, oberes Feuchtgebiet, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "crimson lansk 0003",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "olmstone1",
+   "zeldell2",
+   "rellpost3"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Beobachtungsstation, Höhenzug im Osten, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "azure quartzine 0006",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "kanker4",
+   "pellthorn5",
+   "cavric6"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Getreidemühle, Krümmung des Flusses, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "ochre skack 0009",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "limven7",
+   "pellgrove8",
+   "faldell9"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Aktenlager, früheres Justizgebäude, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "azure perrin 0012",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "druvale10",
+   "mirholt11",
+   "wendash12"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Metallwerk, Viertel im Westen, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "umber vellum 0015",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "quenwick13",
+   "limpost14",
+   "limdac15"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Fernrohr, Karpaten-Bergland, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "indigo ferrolite 0018",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "quenby16",
+   "druash17",
+   "quenpost18"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Trambahn, Stadt an den Hängen, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "russet grist 0021",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "zelthorn19",
+   "nuthpost20",
+   "olmholt21"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Wasserleitung, Hügel im Süden, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "russet quartzine 0024",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vexker22",
+   "olmven23",
+   "tasric24"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Verlagshaus, zentrales Marktviertel, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "pallid quartzine 0027",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "tasmond25",
+   "wendvale26",
+   "olmholt27"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Küstenfeuer, steiniges Vorgebirge, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "ochre perrin 0030",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "limric28",
+   "vexpost29",
+   "limric30"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Weinanbaugebiet, lichtdurchflutete Senke, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "azure perrin 0033",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "rellgrove31",
+   "mirmire32",
+   "vexmire33"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Thermalbad, Steilküste am Ufer, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "umber lansk 0036",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "pellmire34",
+   "rellgrove35",
+   "falcrag36"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Kraftwerk, immergrüner Forst, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "umber lansk 0039",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "vexdell37",
+   "vorfen38",
+   "mirker39"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Beobachtungsstation, salzhaltiges Flachland, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "verdant brannik 0042",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "olmvale40",
+   "druvale41",
+   "limcrag42"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Getreidemühle, Steingrube, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "azure perrin 0045",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "harnric43",
+   "tasmond44",
+   "vorreach45"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Aktenlager, Zugang zum Hafen, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "umber brannik 0048",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "rellvale46",
+   "zelpost47",
+   "drufen48"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Metallwerk, trockene Mulde, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "umber lansk 0051",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "falholt49",
+   "tasven50",
+   "skovale51"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Fernrohr, vereister Bergsee, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "crimson lansk 0054",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "falholt52",
+   "vorstone53",
+   "vorcrag54"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Trambahn, eingefriedete Anlage, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "pallid quartzine 0057",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "brelby55",
+   "orrstone56",
+   "wendby57"
+  ]
+ },
+ {
+  "query": "Folgt man den Verknüpfungen ausgehend vom Standort Wasserleitung, Glockenturm, mit welchem Wert ist die letzte Entität verbunden?",
+  "answer": "ochre grist 0060",
+  "question_type": "2_hop",
+  "evidence_ids": [
+   "kanric58",
+   "zelmire59",
+   "skodac60"
+  ]
+ }
+]

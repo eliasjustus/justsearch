@@ -336,6 +336,8 @@ public final class ResolvedConfigBuilder {
     putYamlInt("index.ocr.limits.max_image_dimension", root,
         "index.ocr.limits.max_image_dimension");
     putYamlInt("index.ocr.limits.max_image_pixels", root, "index.ocr.limits.max_image_pixels");
+    putYamlInt("index.ocr.limits.render_dpi", root, "index.ocr.limits.render_dpi");
+    putYamlInt("index.ocr.workers", root, "index.ocr.workers");
     // OCR languages is a list — stored as comma-joined string
     JsonNode langs = root.path("index").path("ocr").path("languages");
     if (langs.isArray()) {
@@ -407,6 +409,7 @@ public final class ResolvedConfigBuilder {
     putYamlInt("rag.mmr.max_candidates", root, "rag.mmr.max_candidates");
     putYamlBoolean("rag.context.include_surrounding", root, "rag.context.include_surrounding");
     putYamlBoolean("rag.chunk_vectors.enabled", root, "rag.chunk_vectors.enabled");
+    putYamlBoolean("rag.chunk_splade.enabled", root, "rag.chunk_splade.enabled");
     // 347: RAG env/sysprop overrides now handled by EnvRegistry entries.
   }
 
@@ -983,7 +986,32 @@ public final class ResolvedConfigBuilder {
         buildBgeM3(),
         buildProfiling(),
         resolveString("justsearch.sparse_model", "splade"),
-        resolveBoolean("justsearch.dev.hotreload", false));
+        resolveBoolean("justsearch.dev.hotreload", false),
+        buildBackfillPacing(),
+        resolveBoolean("justsearch.models.capability_contract_strict", false));
+  }
+
+  /**
+   * Builds {@link ResolvedConfig.Ai.BackfillPacing} from the {@code justsearch.backfill.*} config
+   * surface (tempdoc 710 Wave-1.5 Move 4). Defaults are byte-identical to the pre-Move-4 literals
+   * in {@code LoopPacingPolicy} / {@code BackfillScheduler} / {@code
+   * CombinedEnrichmentBackfillOps} — see {@link ResolvedConfig.Ai.BackfillPacing} for per-field
+   * derivation notes.
+   */
+  private ResolvedConfig.Ai.BackfillPacing buildBackfillPacing() {
+    return new ResolvedConfig.Ai.BackfillPacing(
+        resolveInt("justsearch.backfill.poll_batch_size", 16),
+        resolveInt("justsearch.backfill.embedding_batch_size", 100),
+        resolveInt("justsearch.backfill.ner_batch_size", 100),
+        resolveInt("justsearch.backfill.disambiguation_batch_size", 500),
+        resolveInt("justsearch.backfill.splade_batch_size", 200),
+        resolveInt("justsearch.backfill.splade_interleave_batch_size", 10),
+        resolveLong("justsearch.backfill.splade_interleave_interval_ms", 5_000L),
+        resolveLong("justsearch.backfill.commit_interval_ms", 10_000L),
+        resolveInt("justsearch.backfill.max_docs_before_commit", 1000),
+        resolveInt("justsearch.backfill.chunk_slots_per_batch", 50),
+        resolveInt("justsearch.backfill.bge_m3_batch_size", 50),
+        resolveInt("justsearch.backfill.bge_m3_interleave_batch_size", 10));
   }
 
   /**
@@ -1008,18 +1036,43 @@ public final class ResolvedConfigBuilder {
   }
 
   private ResolvedConfig.Ai.Embedding buildEmbedding() {
+    int contextLength = resolveInt("justsearch.embed.context_length", 2048);
     return new ResolvedConfig.Ai.Embedding(
         resolveNullableBoolean("justsearch.ai.embed.enabled"),
         resolveString("justsearch.embed.backend", "auto"),
         resolveEmbedGpuEnabled(),
         resolveInt("justsearch.embed.gpu.device_id", 0),
-        // 391/E-J-N8: raised from 2048 → 3072 to accommodate
-        // gte-multilingual-base (628 MB FP16, post-358) activations —
-        // 2048 MB fragments under the larger MLP intermediate tensors
-        // (10 BFCArena failures observed in 391's 2026-04-19 re-measurement).
-        // Must match OnnxEmbeddingEncoder.DEFAULT_GPU_MEM_MB.
-        resolveInt("justsearch.embed.gpu_mem_mb", 3072),
-        resolveInt("justsearch.embed.context_length", 2048));
+        // History: 2048 → 3072 (391/E-J-N8: gte-multilingual-base FP16 MLP activations
+        // fragmented 2048); 3072 → 6144 (691 §N / F-031, founder decision 2026-07-11: the
+        // default-on batch-1 long-doc single-pass (≤8192 tokens) fragments a 3072 arena —
+        // ~20 OOM-fallbacks on legal-clerc, 33 double-pays on enron; 6144 measured zero-OOM
+        // and recovers vector nDCG@10 0.2967 → 0.3401. Caps are per-session budgets, not
+        // pre-allocations (F-010); GPU mutual exclusion + arena shrinkage + windowed fallback
+        // keep smaller-VRAM boxes degrading gracefully).
+        // This is the single source of truth for the embed GPU arena limit — EmbeddingConfig.from
+        // reads justsearch.embed.gpu_mem_mb via ai().embedding().gpuMemMb() directly, with no
+        // other compiled-in default to keep in sync (the dead "OnnxEmbeddingEncoder.
+        // DEFAULT_GPU_MEM_MB" pointer this comment used to carry no longer resolves to any
+        // constant in that class).
+        resolveInt("justsearch.embed.gpu_mem_mb", 6144),
+        contextLength,
+        // Tempdoc 691 Phase 4: long-doc single-pass VECTOR — DEFAULT ON since §Phase N
+        // (default-off → measured → default-on; gates green, see 691 §N-6/N-7).
+        resolveBoolean("justsearch.embed.late_chunking_enabled", true),
+        resolveLateChunkingContextLength(contextLength));
+  }
+
+  /**
+   * Tempdoc 691 Phase 2: single-pass whole-doc VECTOR limit for the late-chunking path. Clamped
+   * to a max of 8192 — gte-multilingual-base's trained context ceiling (checkpoint
+   * {@code config.json max_position_embeddings}; {@code sentence_bert_config.json
+   * max_seq_length}) is hardcoded here until the model-capability contract (tempdoc 710 Move 1)
+   * owns it — and to a min of {@code contextLength} so the late-chunking path is never MORE
+   * restrictive than the base batch path.
+   */
+  private int resolveLateChunkingContextLength(int contextLength) {
+    int raw = resolveInt("justsearch.embed.late_chunking_context_length", 8192);
+    return Math.max(Math.min(raw, 8192), contextLength);
   }
 
   /**
@@ -1289,7 +1342,9 @@ public final class ResolvedConfigBuilder {
         resolveNullableInt("index.ocr.limits.per_file_timeout_ms"),
         resolveNullableInt("index.ocr.limits.max_pages"),
         resolveNullableInt("index.ocr.limits.max_image_dimension"),
-        resolveNullableInt("index.ocr.limits.max_image_pixels"));
+        resolveNullableInt("index.ocr.limits.max_image_pixels"),
+        resolveNullableInt("index.ocr.limits.render_dpi"),
+        resolveNullableInt("index.ocr.workers"));
   }
 
   private ResolvedConfig.Index buildIndex() {
@@ -1464,6 +1519,7 @@ public final class ResolvedConfigBuilder {
         Math.max(1, Math.min(200, resolveInt("rag.mmr.max_candidates", 20))),
         resolveBoolean("rag.context.include_surrounding", false),
         resolveBoolean("rag.chunk_vectors.enabled", true),
+        resolveBoolean("rag.chunk_splade.enabled", false),
         resolveInt("justsearch.rag.top_k", 5),
         resolveString("justsearch.citation.match_threshold", ""),
         Math.max(1, Math.min(10, resolveInt("rag.max_chunks_per_article", 2))));
@@ -1478,7 +1534,9 @@ public final class ResolvedConfigBuilder {
         Math.max(1, resolveInt("index.hybrid.vector_candidate_multiplier", 10)),
         Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.vector_rrf_weight", 0.75))),
         Math.max(0.0, resolveDouble("index.hybrid.bm25_score_boost_weight", 0.002)),
-        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.vector_low_signal_top_score_threshold", 0.40))),
+        // Default is in EUCLIDEAN score space (0.294 = 1/3.4), not the cosine-score space the field
+        // was originally calibrated for (tempdoc 702); explicit user overrides keep their value.
+        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.vector_low_signal_top_score_threshold", 0.294))),
         Math.max(0.0, resolveDouble("index.hybrid.bm25_low_signal_top_score_threshold", 0.0)),
         Math.max(0, resolveInt("index.hybrid.bm25_low_signal_total_hits_threshold", 0)),
         Math.max(0, resolveInt("index.hybrid.vector_only_cap_low_signal", 3)),

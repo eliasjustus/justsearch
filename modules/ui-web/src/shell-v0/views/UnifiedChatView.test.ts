@@ -1273,6 +1273,42 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     __resetAgentSessionStore();
   });
 
+  it('720: a SETTLED CHUNK-PRECISE agent answer with ZERO cites shows provenance, NOT "Grounded · 0 of N"', async () => {
+    __resetAgentSessionStore();
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent'; // currentShapeId → core.agent-run (grounded-index)
+    // A persisted (settled) agent answer whose sources ARE chunk-precise (real chunkIndex >= 0) but whose
+    // matcher tied NO sentence to a passage (empty citations). Pre-720 this fell through to the default
+    // branch and rendered the self-contradictory "Grounded · 0 of N sentences". 720: the settled render
+    // states provenance instead — the frame is `sourced`, never over-confident.
+    (view as unknown as { unifiedEvents: unknown[] }).unifiedEvents = [
+      { id: 'u1', occurredAt: '2026-01-01T00:00:01Z', kind: 'USER_MESSAGE', originator: 'user', content: 'q', attributes: {} },
+      {
+        id: 'a1', occurredAt: '2026-01-01T00:00:03Z', kind: 'ASSISTANT_MESSAGE', originator: 'agent',
+        content: 'The Head process hosts the UI. The Worker owns the index.',
+        attributes: {
+          sources: [
+            { parentDocId: 'docs/a.md', chunkIndex: 0, path: 'docs/a.md', title: 'a.md', excerpt: 'x', startLine: 1, endLine: 5, headingText: '' },
+            { parentDocId: 'docs/b.md', chunkIndex: 1, path: 'docs/b.md', title: 'b.md', excerpt: 'y', startLine: 1, endLine: 5, headingText: '' },
+          ],
+          citations: [],
+        },
+      },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+
+    const text = (view.shadowRoot!.textContent ?? '').replace(/\s+/g, ' ');
+    // The self-contradictory over-confidence must NOT appear.
+    expect(text).not.toContain('Grounded · 0');
+    // Provenance is stated honestly for the chunk-precise-but-unmatched settled case.
+    expect(text).toContain('Based on 2 sources');
+    expect(text).toContain('per-sentence grounding not verified');
+    expect(view.shadowRoot!.querySelector('.grounding-badge-sourced')).not.toBeNull();
+    __resetAgentSessionStore();
+  });
+
   it('renders the projection as the single read-model: reconciled live turns dedupe, in-flight turns overlay (Pillar 2)', async () => {
     const view = mountView();
     await view.updateComplete;
@@ -1518,6 +1554,10 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
         shapeId: 'core.rag-ask',
         id: 'a1',
         sources: [chunkCitation(0)],
+        // Tempdoc 720 — a genuinely grounded turn carries a per-sentence claim-match. A source WITHOUT
+        // any matched cite is now the `sourced` (provenance) frame once settled, not silently "grounded";
+        // this fixture tests the receipt tail on a GROUNDED answer, so it must actually be grounded.
+        claims: [{ sentenceIndex: 0, sentenceText: 'a', score: 0.9, sourceRefs: [0] }],
         durationMs: 3200,
       },
     ];
@@ -1615,6 +1655,8 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
         shapeId: 'core.rag-ask',
         id: 'a1',
         sources: [chunkCitation(0)],
+        // Tempdoc 720 — grounded fixture needs a matched cite (see the receipt-tail test above).
+        claims: [{ sentenceIndex: 0, sentenceText: 'a', score: 0.9, sourceRefs: [0] }],
         // no durationMs — the reload case
       },
     ];
@@ -1636,7 +1678,8 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
     v.affordance = 'documents';
     v.thread = [
       { role: 'user', content: 'q', shapeId: 'core.rag-ask', id: 'u1' },
-      { role: 'assistant', content: 'a', shapeId: 'core.rag-ask', id: 'a1', sources: [chunkCitation(0)] },
+      // Tempdoc 720 — grounded fixture needs a matched cite; a bare source is now `sourced` once settled.
+      { role: 'assistant', content: 'a', shapeId: 'core.rag-ask', id: 'a1', sources: [chunkCitation(0)], claims: [{ sentenceIndex: 0, sentenceText: 'a', score: 0.9, sourceRefs: [0] }] },
     ];
     view.requestUpdate();
     await view.updateComplete;

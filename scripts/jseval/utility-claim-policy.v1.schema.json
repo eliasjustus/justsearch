@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "utility-claim-policy.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "policy_id", "status", "primary_estimand", "required_strata", "thresholds", "requirements", "unresolved"],
+  "properties": {
+    "schema": {"const": "utility-claim-policy.v1"},
+    "schema_version": {"const": 1},
+    "policy_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["draft", "active", "retired"]},
+    "primary_estimand": {"const": "addition_b"},
+    "required_strata": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stratum_id", "corpus_member", "dataset", "size", "query_variant", "requested_model", "query_count", "seed_ids"],
+        "properties": {
+          "stratum_id": {"type": "string", "minLength": 1},
+          "corpus_member": {"type": "string", "minLength": 1},
+          "dataset": {"type": "string", "minLength": 1},
+          "size": {"type": "integer", "enum": [1000, 10000]},
+          "query_variant": {"enum": ["verbose", "short-natural"]},
+          "requested_model": {"type": "string", "minLength": 1},
+          "query_count": {"type": "integer", "minimum": 1},
+          "seed_ids": {
+            "type": "array", "minItems": 1, "uniqueItems": true,
+            "items": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum_seeds", "minimum_paired_observations", "maximum_exclusion_rate", "minimum_paired_retention", "minimum_excluded_jaccard", "significance_alpha", "minimum_adoption_rate", "accuracy_noninferiority_margin", "provider_token_equivalence_margin", "cost_equivalence_margin_usd"],
+      "properties": {
+        "minimum_seeds": {"type": "integer", "minimum": 1},
+        "minimum_paired_observations": {"type": "integer", "minimum": 1},
+        "maximum_exclusion_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "minimum_paired_retention": {"type": "number", "minimum": 0, "maximum": 1},
+        "minimum_excluded_jaccard": {"type": "number", "minimum": 0, "maximum": 1},
+        "significance_alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "minimum_adoption_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "accuracy_noninferiority_margin": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "provider_token_equivalence_margin": {"type": ["number", "null"], "minimum": 0},
+        "cost_equivalence_margin_usd": {"type": ["number", "null"], "minimum": 0}
+      }
+    },
+    "requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_identity_complete", "clean_source_checkout", "computed_corpus_signature", "corpus_certification", "resolved_provider_model", "captured_search_config", "verified_tool_surface", "verified_exposure_mode", "no_leak_suspect_cells", "contamination_classes", "judge_calibration", "accuracy_delta_interval", "intention_to_treat", "per_protocol_is_secondary", "per_stratum_promotion"],
+      "properties": {
+        "source_identity_complete": {"const": true},
+        "clean_source_checkout": {"const": true},
+        "computed_corpus_signature": {"const": true},
+        "corpus_certification": {"const": true},
+        "resolved_provider_model": {"const": true},
+        "captured_search_config": {"const": true},
+        "verified_tool_surface": {"const": true},
+        "verified_exposure_mode": {"const": true},
+        "no_leak_suspect_cells": {"const": true},
+        "contamination_classes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+        "judge_calibration": {"const": true},
+        "accuracy_delta_interval": {"const": true},
+        "intention_to_treat": {"const": true},
+        "per_protocol_is_secondary": {"const": true},
+        "per_stratum_promotion": {"const": "all_required_strata_pass"}
+      }
+    },
+    "unresolved": {"type": "array", "items": {"type": "string"}}
+  }
+}

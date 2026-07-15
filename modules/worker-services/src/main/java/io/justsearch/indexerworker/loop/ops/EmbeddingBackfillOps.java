@@ -29,10 +29,17 @@ public final class EmbeddingBackfillOps {
       int batchSize,
       Logger log) {}
 
-  public static void processEmbeddingBackfill(BackfillContext context) {
+  /**
+   * Processes one batch of parent-doc embedding backfill.
+   *
+   * @return the batch outcome (tempdoc 710 Move 2 item 4) — {@link BackfillScheduler} records
+   *     per-stage timing/counts from this instead of relying on a metrics call inside the op.
+   */
+  public static StageOutcome processEmbeddingBackfill(BackfillContext context) {
+    long methodStart = System.nanoTime();
     if (!context.allowEmbeddingWritesSupplier().getAsBoolean()) {
       context.log().trace("Embedding backfill skipped: writes blocked by compatibility controller");
-      return;
+      return StageOutcome.none();
     }
 
     try {
@@ -43,7 +50,7 @@ public final class EmbeddingBackfillOps {
               context.batchSize());
 
       if (pendingIds.isEmpty()) {
-        return;
+        return StageOutcome.none();
       }
 
       context.log().info("Processing embedding backfill for {} documents", pendingIds.size());
@@ -54,7 +61,7 @@ public final class EmbeddingBackfillOps {
       // Check for interruption before batch work
       EmbeddingProvider embeddingProvider = context.embeddingProviderSupplier().get();
       if (checkInterrupt(context, embeddingProvider, "Backfill")) {
-        return;
+        return StageOutcome.elapsedSince(methodStart);
       }
 
       // Phase 1: Batch-fetch content for all pending docs (single searcher acquisition)
@@ -79,14 +86,14 @@ public final class EmbeddingBackfillOps {
 
       if (batchContents.isEmpty()) {
         commitIfNeeded(context, processed, failed, markedFailed);
-        return;
+        return new StageOutcome(true, processed, (System.nanoTime() - methodStart) / 1_000_000);
       }
 
       long t1 = System.nanoTime();
 
       // Re-check interruption after content collection
       if (checkInterrupt(context, context.embeddingProviderSupplier().get(), "Backfill")) {
-        return;
+        return new StageOutcome(true, processed, (System.nanoTime() - methodStart) / 1_000_000);
       }
 
       // Phase 2: Batch embed all collected content
@@ -102,9 +109,18 @@ public final class EmbeddingBackfillOps {
       }
       long t2 = System.nanoTime();
 
-      // Phase 3: Update docs with results (fallback to sequential if batch failed)
-      if (vectors == null) {
-        context.log().warn("Backfill: Batch embedding returned null, falling back to per-doc");
+      // Phase 3: Update docs with results (fallback to sequential if batch failed or
+      // misaligned — trusting a batch result's length to match the request is what caused
+      // the chunk-backfill AIOOBE crash-loop below; guard both null and size-mismatch here too).
+      if (vectors == null || vectors.size() != batchDocIds.size()) {
+        if (vectors == null) {
+          context.log().warn("Backfill: Batch embedding returned null, falling back to per-doc");
+        } else {
+          context.log().warn(
+              "Backfill: Batch embedding size mismatch (expected {}, got {}), falling back to per-doc",
+              batchDocIds.size(),
+              vectors.size());
+        }
         for (int i = 0; i < batchDocIds.size(); i++) {
           int[] counts =
               embedAndUpdateSingle(
@@ -136,7 +152,7 @@ public final class EmbeddingBackfillOps {
         }
         long tListEnd = System.nanoTime();
         if (!batchUpdates.isEmpty()) {
-          var result = context.indexingCoordinator().updateDocumentsBatch(batchUpdates, true);
+          var result = context.indexingCoordinator().updateDocumentsBatch(batchUpdates);
           processed += result.updatedCount();
         }
         long tWriteEnd = System.nanoTime();
@@ -158,9 +174,11 @@ public final class EmbeddingBackfillOps {
           (t3 - t0) / 1_000_000);
 
       commitIfNeeded(context, processed, failed, markedFailed);
+      return new StageOutcome(true, processed, (System.nanoTime() - methodStart) / 1_000_000);
 
     } catch (Exception e) {
       context.log().error("Error during embedding backfill", e);
+      return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
     }
   }
 
@@ -222,7 +240,7 @@ public final class EmbeddingBackfillOps {
         updates.put(SchemaFields.VECTOR, vector);
         updates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
         updates.put(SchemaFields.EMBEDDING_RETRY_COUNT, "0");
-        context.indexingCoordinator().updateDocument(docId, updates, true);
+        context.indexingCoordinator().updateDocument(docId, updates);
         processed = 1;
       } else {
         markedFailed =
@@ -243,33 +261,22 @@ public final class EmbeddingBackfillOps {
       DocumentFieldOps documentFieldOps, IndexingCoordinator indexingCoordinator, String docId, String reason, Logger log) {
     try {
       String retryCountStr = documentFieldOps.getDocumentField(docId, SchemaFields.EMBEDDING_RETRY_COUNT);
-      int retryCount = 0;
-      if (retryCountStr != null && !retryCountStr.isBlank()) {
-        try {
-          retryCount = Integer.parseInt(retryCountStr);
-        } catch (NumberFormatException ignored) {
-          // Default to 0 if unparseable
-        }
-      }
+      int currentRetryCount = parseRetryCountOrZero(retryCountStr);
+      Map<String, Object> updates = computeEmbeddingFailureUpdate(currentRetryCount);
+      int retryCount = currentRetryCount + 1;
 
-      retryCount++;
-      Map<String, Object> updates = new HashMap<>();
-
-      if (retryCount >= SchemaFields.EMBEDDING_MAX_RETRIES) {
-        updates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_FAILED);
-        updates.put(SchemaFields.EMBEDDING_RETRY_COUNT, String.valueOf(retryCount));
+      if (updates.containsKey(SchemaFields.EMBEDDING_STATUS)) {
         log.warn("Embedding permanently FAILED for {} after {} retries: {}", docId, retryCount, reason);
-        indexingCoordinator.updateDocument(docId, updates, true);
+        indexingCoordinator.updateDocument(docId, updates);
         return 1;
       } else {
-        updates.put(SchemaFields.EMBEDDING_RETRY_COUNT, String.valueOf(retryCount));
         log.debug(
             "Embedding retry {}/{} for {}: {}",
             retryCount,
             SchemaFields.EMBEDDING_MAX_RETRIES,
             docId,
             reason);
-        indexingCoordinator.updateDocument(docId, updates, true);
+        indexingCoordinator.updateDocument(docId, updates);
         return 0;
       }
 
@@ -279,11 +286,39 @@ public final class EmbeddingBackfillOps {
     }
   }
 
-  /** @return true if any chunks were processed (for tight-loop control) */
-  public static boolean processChunkEmbeddingBackfill(BackfillContext context) {
+  /**
+   * Pure computation of the retry-count/status update for a parent-doc embedding failure — no I/O.
+   * Used by both {@link #handleEmbeddingFailure} (immediate single-doc write) and the combined
+   * enrichment path ({@code CombinedEnrichmentBackfillOps}, which merges the result into its own
+   * single batched write), so the two paths stay in escalation-parity by construction rather than
+   * via a hand-ported copy that can drift (tempdoc 700).
+   *
+   * @param currentRetryCount the doc's retry count *before* this failure
+   * @return field updates: always {@code EMBEDDING_RETRY_COUNT}; additionally {@code
+   *     EMBEDDING_STATUS=FAILED} once the incremented count reaches {@code EMBEDDING_MAX_RETRIES}
+   */
+  public static Map<String, Object> computeEmbeddingFailureUpdate(int currentRetryCount) {
+    int retryCount = currentRetryCount + 1;
+    Map<String, Object> updates = new HashMap<>();
+    updates.put(SchemaFields.EMBEDDING_RETRY_COUNT, String.valueOf(retryCount));
+    if (retryCount >= SchemaFields.EMBEDDING_MAX_RETRIES) {
+      updates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_FAILED);
+    }
+    return updates;
+  }
+
+  /**
+   * Processes one batch of chunk-doc embedding backfill.
+   *
+   * @return outcome whose {@code success()} preserves the original "any chunks processed"
+   *     tight-loop-control signal (tempdoc 710 Move 2 item 4 — the record also carries
+   *     docsProcessed/elapsedMs for {@link BackfillScheduler}'s per-stage metrics recording)
+   */
+  public static StageOutcome processChunkEmbeddingBackfill(BackfillContext context) {
+    long methodStart = System.nanoTime();
     if (!context.allowEmbeddingWritesSupplier().getAsBoolean()) {
       context.log().trace("Chunk embedding backfill skipped: writes blocked by compatibility controller");
-      return false;
+      return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
     }
 
     try {
@@ -294,7 +329,7 @@ public final class EmbeddingBackfillOps {
               context.batchSize());
 
       if (pendingChunkIds.isEmpty()) {
-        return false;
+        return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
       }
 
       context
@@ -306,7 +341,7 @@ public final class EmbeddingBackfillOps {
 
       EmbeddingProvider embeddingProvider = context.embeddingProviderSupplier().get();
       if (checkInterrupt(context, embeddingProvider, "Chunk backfill")) {
-        return false;
+        return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
       }
 
       // Phase 1: Collect chunk content
@@ -341,19 +376,31 @@ public final class EmbeddingBackfillOps {
 
       if (batchContents.isEmpty()) {
         commitChunkIfNeeded(context, processed, failed, markedFailed);
-        return failed > 0;
+        return new StageOutcome(
+            failed > 0, processed, (System.nanoTime() - methodStart) / 1_000_000);
       }
 
       if (checkInterrupt(context, context.embeddingProviderSupplier().get(), "Chunk backfill")) {
-        return false;
+        return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
       }
 
       // Phase 2: Batch embed
       List<float[]> vectors = embeddingProvider.embedDocumentBatch(batchContents);
 
-      // Phase 3: Update chunks with results
-      if (vectors == null) {
-        context.log().warn("Chunk backfill: Batch embedding returned null, falling back to per-chunk");
+      // Phase 3: Update chunks with results (fallback to sequential if batch failed or
+      // misaligned — a null-only guard here let a short/empty `vectors` result reach the
+      // index-aligned loop below and throw AIOOBE before any chunk was marked failed, which
+      // crash-looped the whole enrichment cycle forever since the scheduler just refetched
+      // the same still-PENDING batch).
+      if (vectors == null || vectors.size() != batchChunkIds.size()) {
+        if (vectors == null) {
+          context.log().warn("Chunk backfill: Batch embedding returned null, falling back to per-chunk");
+        } else {
+          context.log().warn(
+              "Chunk backfill: Batch embedding size mismatch (expected {}, got {}), falling back to per-chunk",
+              batchChunkIds.size(),
+              vectors.size());
+        }
         for (int i = 0; i < batchChunkIds.size(); i++) {
           String chunkId = batchChunkIds.get(i);
           try {
@@ -363,7 +410,7 @@ public final class EmbeddingBackfillOps {
               updates.put(SchemaFields.CHUNK_VECTOR, vector);
               updates.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
               updates.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, "0");
-              context.indexingCoordinator().updateDocument(chunkId, updates, true);
+              context.indexingCoordinator().updateDocument(chunkId, updates);
               processed++;
             } else {
               markedFailed +=
@@ -400,17 +447,18 @@ public final class EmbeddingBackfillOps {
           }
         }
         if (!batchUpdates.isEmpty()) {
-          var result = context.indexingCoordinator().updateDocumentsBatch(batchUpdates, true);
+          var result = context.indexingCoordinator().updateDocumentsBatch(batchUpdates);
           processed += result.updatedCount();
         }
       }
 
       commitChunkIfNeeded(context, processed, failed, markedFailed);
-      return processed > 0 || failed > 0;
+      return new StageOutcome(
+          processed > 0 || failed > 0, processed, (System.nanoTime() - methodStart) / 1_000_000);
 
     } catch (Exception e) {
       context.log().error("Error during chunk embedding backfill", e);
-      return false;
+      return new StageOutcome(false, 0, (System.nanoTime() - methodStart) / 1_000_000);
     }
   }
 
@@ -436,42 +484,63 @@ public final class EmbeddingBackfillOps {
     try {
       String retryCountStr =
           documentFieldOps.getDocumentField(chunkId, SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT);
-      int retryCount = 0;
-      if (retryCountStr != null && !retryCountStr.isBlank()) {
-        try {
-          retryCount = Integer.parseInt(retryCountStr);
-        } catch (NumberFormatException ignored) {
-          // Default to 0 if unparseable
-        }
-      }
+      int currentRetryCount = parseRetryCountOrZero(retryCountStr);
+      Map<String, Object> updates = computeChunkEmbeddingFailureUpdate(currentRetryCount);
+      int retryCount = currentRetryCount + 1;
 
-      retryCount++;
-      Map<String, Object> updates = new HashMap<>();
-
-      if (retryCount >= SchemaFields.EMBEDDING_MAX_RETRIES) {
-        updates.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_FAILED);
-        updates.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, String.valueOf(retryCount));
+      if (updates.containsKey(SchemaFields.CHUNK_EMBEDDING_STATUS)) {
         log.warn(
             "Chunk embedding permanently FAILED for {} after {} retries: {}",
             chunkId,
             retryCount,
             reason);
-        indexingCoordinator.updateDocument(chunkId, updates, true);
+        indexingCoordinator.updateDocument(chunkId, updates);
         return 1;
       } else {
-        updates.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, String.valueOf(retryCount));
         log.debug(
             "Chunk embedding retry {}/{} for {}: {}",
             retryCount,
             SchemaFields.EMBEDDING_MAX_RETRIES,
             chunkId,
             reason);
-        indexingCoordinator.updateDocument(chunkId, updates, true);
+        indexingCoordinator.updateDocument(chunkId, updates);
         return 0;
       }
 
     } catch (Exception e) {
       log.error("Failed to update chunk retry count for {}", chunkId, e);
+      return 0;
+    }
+  }
+
+  /**
+   * Pure computation of the retry-count/status update for a chunk-doc embedding failure — no I/O.
+   * Mirrors {@link #computeEmbeddingFailureUpdate} for the {@code CHUNK_*} field pair; shared by
+   * {@link #handleChunkEmbeddingFailure} and the combined enrichment path (tempdoc 700).
+   *
+   * @param currentRetryCount the chunk's retry count *before* this failure
+   * @return field updates: always {@code CHUNK_EMBEDDING_RETRY_COUNT}; additionally {@code
+   *     CHUNK_EMBEDDING_STATUS=FAILED} once the incremented count reaches {@code
+   *     EMBEDDING_MAX_RETRIES} (chunk embedding shares the parent-doc threshold — there is no
+   *     separate {@code CHUNK_EMBEDDING_MAX_RETRIES} constant)
+   */
+  public static Map<String, Object> computeChunkEmbeddingFailureUpdate(int currentRetryCount) {
+    int retryCount = currentRetryCount + 1;
+    Map<String, Object> updates = new HashMap<>();
+    updates.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, String.valueOf(retryCount));
+    if (retryCount >= SchemaFields.EMBEDDING_MAX_RETRIES) {
+      updates.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_FAILED);
+    }
+    return updates;
+  }
+
+  private static int parseRetryCountOrZero(String retryCountStr) {
+    if (retryCountStr == null || retryCountStr.isBlank()) {
+      return 0;
+    }
+    try {
+      return Integer.parseInt(retryCountStr);
+    } catch (NumberFormatException ignored) {
       return 0;
     }
   }

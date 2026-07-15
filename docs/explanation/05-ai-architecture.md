@@ -361,7 +361,7 @@ JustSearch uses a **two-pronged citation strategy** (see ADR-0006) to attribute 
 
 ### Prong 1: LLM-generated citations (primary)
 
-RAG prompts instruct the LLM to place `[N]` markers inline. Source chunks are wrapped in numbered `<passage id="N" source="file">` XML (Q&A) or prefixed with `[N]` (summarization). The `meta` SSE event delivers `ContextCitation[]` with rich metadata:
+RAG Q&A prompts inject the retrieved source chunks as a plain `Documents:` / `Question:` user message (`RAGContext`), and instruct the LLM to place `[N]` citation markers inline. (The earlier numbered `<passage id="N" source="file">` XML wrapper is retired.) The `rag.citations` SSE event delivers the citation metadata (`ContextCitation[]`):
 
 - `parentDocId`, `chunkIndex`, `chunkTotal` — chunk identity
 - `startChar`, `endChar` — character offsets for click-to-jump
@@ -389,12 +389,12 @@ Fallback chain in `matchCitations()`:
 
 ### Frontend rendering
 
-The frontend (`useAppAI.ts`) handles both prongs:
+The RAG-citation event orchestration lives in `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts` (`onRagCitationMatches` / `onRagCitationDelta`), consuming the streaming callbacks in `modules/ui-web/src/api/streams.ts` and feeding a resolved citation model (`shell-v0/components/chat/citationResolve.ts` / `citationTypes.ts`) to the presentational components under `shell-v0/components/chat/`. It handles both prongs:
 
-- `onCitationMatches` **enriches** existing RAG citations with cross-encoder scores — preserves excerpts, offsets, and headings from the `meta` event, only updates `score`
-- `injectCitationMarkers` strips any LLM-generated `[N]` markers before injecting cross-encoder markers (prevents duplication)
-- `CitationHoverCard` displays document name, excerpt preview, score badge (hidden for BM25 scores >1.0), and section metadata
-- `MarkdownRenderer` parses `[N]` syntax into clickable citation buttons
+- Cross-encoder scores **refine** the RAG citations — excerpts, offsets, and headings from the `meta` event are preserved; only the citation's `score` is updated.
+- LLM-generated `[N]` markers are reconciled against the resolved citations before render (prevents duplication).
+- `CitationHoverCard` displays document name, excerpt preview, score badge (hidden for BM25 scores >1.0), and section metadata.
+- `MarkdownBlock` parses `[N]` syntax into clickable citation buttons.
 
 ### Citation Parsing and Attribution Contract (RAG Eval)
 

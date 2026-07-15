@@ -236,6 +236,21 @@ describe('answerFrame — the epistemic frame (declared class × actual outcome)
     expect(answerFrame('core.agent-run', 2, cov, false)).toBe('partially-grounded');
   });
 
+  it('720: chunk-precise sources, zero cites — grounded while streaming, SOURCED once settled', () => {
+    // The regression the settled path never had a test for: a chunk-precise answer whose matcher tied NO
+    // sentence to a passage. Mid-stream (settled=false / omitted) marks may still arrive ⇒ grounded.
+    expect(answerFrame('core.agent-run', 2, groundingCoverage([], 'A. B.'), true)).toBe('grounded');
+    expect(answerFrame('core.agent-run', 2, groundingCoverage([], 'A. B.'), true, false)).toBe('grounded');
+    // Once SETTLED the matcher has finished and matched nothing ⇒ provenance, NOT "Grounded · 0 of N".
+    expect(answerFrame('core.agent-run', 2, groundingCoverage([], 'A. B.'), true, true)).toBe('sourced');
+    // Document-level stays `sourced` regardless of settle state (the matcher can never run there).
+    expect(answerFrame('core.agent-run', 2, groundingCoverage([], 'A. B.'), false, true)).toBe('sourced');
+    expect(answerFrame('core.agent-run', 2, groundingCoverage([], 'A. B.'), false, false)).toBe('sourced');
+    // Settled does NOT override partial coverage (some sentences DID cite).
+    const cov = groundingCoverage([{ similarity: 0.9 }], 'Alpha. Beta. Gamma.');
+    expect(answerFrame('core.agent-run', 2, cov, true, true)).toBe('partially-grounded');
+  });
+
   it('index-grounded where some sentences cite and others do not is partially-grounded', () => {
     // 1 cited of 3 sentences ⇒ partial.
     const cov = groundingCoverage([{ similarity: 0.9 }], 'Alpha. Beta. Gamma.');

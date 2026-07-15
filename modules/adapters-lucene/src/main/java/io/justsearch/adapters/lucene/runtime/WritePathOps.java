@@ -18,8 +18,10 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.NumericDocValuesField;
 import org.apache.lucene.document.SortedNumericDocValuesField;
 import org.apache.lucene.index.DocValues;
+import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexableField;
+import org.apache.lucene.index.KnnVectorValues;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.NumericDocValues;
 import org.apache.lucene.index.ReaderUtil;
@@ -46,6 +48,11 @@ import org.slf4j.LoggerFactory;
 @ThreadSafe
 public final class WritePathOps {
   private static final Logger log = LoggerFactory.getLogger(WritePathOps.class);
+
+  // Shared lifecycle-status vocabulary driving the reset-status RMW lane (tempdoc 711). Every
+  // *_status field in the catalog uses this same COMPLETED/PENDING token set.
+  private static final String STATUS_COMPLETED = "COMPLETED";
+  private static final String STATUS_PENDING = "PENDING";
 
   private final RuntimeSession session;
   private final String idField;
@@ -246,34 +253,25 @@ public final class WritePathOps {
   }
 
   /**
-   * Read-modify-write: loads existing stored fields, merges with updates, and re-indexes. The caller
-   * provides a leased searcher (via ReadPathOps.withSearcher) to ensure the searcher stays valid for
-   * the duration of the read and subsequent write.
+   * Read-modify-write: loads existing stored fields, applies the caller's updates, and re-indexes.
+   * Non-stored, non-docValues data-bearing fields the caller omits (vectors, SPLADE) are preserved
+   * per their declared {@code rmwPolicy} in the field catalog (tempdoc 711) — a subset-field RMW can
+   * no longer silently destroy the rest. The caller provides a leased searcher (via
+   * ReadPathOps.withSearcher) so it stays valid for the read and the subsequent write.
    *
    * @return true if the document was found and updated, false if not found
    */
   boolean readModifyWrite(IndexSearcher searcher, String docId, Map<String, Object> updates)
-      throws IOException {
-    return readModifyWrite(searcher, docId, updates, false);
-  }
-
-  /**
-   * Read-modify-write with optional SPLADE preservation. When {@code preserveSplade} is true, the
-   * guard that resets SPLADE_STATUS to PENDING is skipped. Use this for writes that don't affect
-   * document content (retry counters, lifecycle status changes) where existing SPLADE vectors should
-   * be preserved. See tempdoc 334 Phase 15 item 36.
-   */
-  boolean readModifyWrite(
-      IndexSearcher searcher, String docId, Map<String, Object> updates, boolean preserveSplade)
       throws IOException {
     var topDocs = searcher.search(new TermQuery(new Term(idField, docId)), 1);
     if (topDocs.scoreDocs.length == 0) {
       log.debug("readModifyWrite: document not found: {}", docId);
       return false;
     }
+    int globalDocId = topDocs.scoreDocs[0].doc;
 
     // Load all stored fields from existing document, accumulating multi-valued fields into Lists
-    Document oldDoc = searcher.storedFields().document(topDocs.scoreDocs[0].doc);
+    Document oldDoc = searcher.storedFields().document(globalDocId);
     Map<String, Object> fields = new HashMap<>();
     for (IndexableField field : oldDoc.getFields()) {
       String name = field.name();
@@ -297,66 +295,14 @@ public final class WritePathOps {
       }
     }
 
-    // Non-stored doc-values-only status fields (splade_status, splade_retry_count) are
-    // invisible to storedFields().document() above. Restore them from doc-values so RMW
-    // preserves lifecycle metadata regardless of preserveSplade. Without this, any caller
-    // passing preserveSplade=true (e.g., NerBackfillOps) silently drops splade_status —
-    // the doc disappears from both the PENDING backfill query and the COMPLETED counter,
-    // and SPLADE coverage stalls below 100% forever.
-    if (!updates.containsKey(SchemaFields.SPLADE_STATUS)) {
-      String existingStatus =
-          readKeywordDocValue(
-              searcher, topDocs.scoreDocs[0].doc, SchemaFields.SPLADE_STATUS);
-      if (existingStatus != null) {
-        fields.put(SchemaFields.SPLADE_STATUS, existingStatus);
-      }
-    }
-    if (!updates.containsKey(SchemaFields.SPLADE_RETRY_COUNT)) {
-      Long existingRetry =
-          readNumericDocValue(
-              searcher, topDocs.scoreDocs[0].doc, SchemaFields.SPLADE_RETRY_COUNT);
-      if (existingRetry != null) {
-        fields.put(SchemaFields.SPLADE_RETRY_COUNT, Long.toString(existingRetry));
-      }
-    }
+    // RMW preservation engine (tempdoc 711): stored-field reconstruction above cannot see
+    // non-stored, non-docValues data-bearing fields (KnnFloatVectorField vectors, SPLADE
+    // FeatureFields). For each catalog field that declares an rmwPolicy and is absent from the
+    // caller's update map, apply its declared disposition so the rewrite preserves it structurally
+    // instead of relying on per-call-site discipline.
+    applyRmwPolicies(searcher, globalDocId, updates, fields);
 
-    // Non-stored fields (SPLADE FeatureFields) are also invisible to storedFields().document().
-    // If the caller doesn't supply SPLADE fields in the update map AND didn't ask to preserve,
-    // reset the status to PENDING so the backfill re-encodes. See tempdoc 312 Phase 8 BUG-1.
-    // When preserveSplade=true, skip this guard — the caller is writing non-content fields
-    // (retry counters, lifecycle status) and the existing SPLADE vector should be preserved.
-    // See tempdoc 334 Phase 15 item 36.
-    if (!preserveSplade
-        && !updates.containsKey(SchemaFields.SPLADE_STATUS)
-        && !updates.containsKey(SchemaFields.SPLADE)) {
-      fields.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
-      fields.put(SchemaFields.SPLADE_RETRY_COUNT, "0");
-    }
-
-    // Final safety net: if after all of the above the doc still has no splade_status
-    // (e.g., corrupted by a prior RMW before this fix was deployed), mark it PENDING
-    // so the backfill can recover it. Without this, existing broken docs stay invisible
-    // to both the backfill query and the counters forever.
-    if (!fields.containsKey(SchemaFields.SPLADE_STATUS)) {
-      // Observability: tempdoc 393 item 1.2. Under current code paths this branch
-      // should not fire — every ingest path sets SPLADE_STATUS and the doc-values
-      // read above restores it across RMW. A fire here signals either a pre-fix
-      // corrupted doc (expected one-time heal) or a new ingest path that forgot
-      // to initialize the field (regression — investigate).
-      log.debug("splade_status safety-net fired for doc {}", docId);
-      fields.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
-      if (!fields.containsKey(SchemaFields.SPLADE_RETRY_COUNT)) {
-        fields.put(SchemaFields.SPLADE_RETRY_COUNT, "0");
-      }
-    }
-
-    // NER entity text fields are stored (326), so they survive RMW without a guard.
-    // Unlike SPLADE FeatureFields (non-stored, invisible to storedFields()), entity
-    // text fields are TextField(Store.YES) and are recovered from the old document.
-    // An unconditional NER guard would create an infinite NER↔SPLADE reset loop
-    // (NER RMW resets SPLADE → SPLADE RMW resets NER → repeat).
-
-    // Apply updates (overwrites existing values)
+    // Apply updates (overwrites existing values, including anything the engine restored)
     fields.putAll(updates);
 
     // Re-index with updated fields
@@ -371,6 +317,109 @@ public final class WritePathOps {
   }
 
   /**
+   * Applies each catalog field's declared RMW disposition (tempdoc 711) for fields the caller
+   * omitted: {@link FieldMapper#RMW_PRESERVE_REREAD} re-reads and carries the field forward;
+   * {@code reset-status:<statusField>} drives the named status field so a backfill re-derives data
+   * that cannot be cheaply re-read.
+   */
+  private void applyRmwPolicies(
+      IndexSearcher searcher, int globalDocId, Map<String, Object> updates, Map<String, Object> fields)
+      throws IOException {
+    for (FieldMapper.FieldDef def : session.fieldMapper.rmwPolicyFields()) {
+      if (updates.containsKey(def.id)) {
+        continue; // caller supplied the field itself — its own value is authoritative
+      }
+      String policy = def.rmwPolicy;
+      if (FieldMapper.RMW_PRESERVE_REREAD.equals(policy)) {
+        float[] existing = readFloatVector(searcher, globalDocId, def.id);
+        if (existing != null) {
+          fields.put(def.id, existing);
+        }
+        // null => the doc has no vector for this field (common mid-ingest) — nothing to preserve.
+      } else if (policy != null
+          && policy.startsWith(FieldMapper.RMW_PRESERVE_REREAD_OR_RESET_PREFIX)) {
+        // Tempdoc 717: preserve-reread with a reset-status fallback. Re-read the vector; if present,
+        // carry it forward. If the re-read is null AND the paired status reads COMPLETED, that is a
+        // genuine "status lies" state (F-032 class) — downgrade it to PENDING so a backfill
+        // re-derives, instead of leaving a COMPLETED status pointing at a vector that is gone (the
+        // hole plain preserve-reread left, tempdoc 714 §Reach). A null / PENDING / FAILED status is
+        // deliberately NOT healed: a doc that never claimed to be embedded (mid-ingest, VDU
+        // rejected/empty) must not be spuriously enrolled — so this lane does NOT reuse the
+        // reset-status lane's null->PENDING healing (that is SPLADE's semantics, tempdoc 717 review).
+        float[] existing = readFloatVector(searcher, globalDocId, def.id);
+        if (existing != null) {
+          fields.put(def.id, existing);
+        } else {
+          String statusField =
+              policy.substring(FieldMapper.RMW_PRESERVE_REREAD_OR_RESET_PREFIX.length());
+          if (!updates.containsKey(statusField)
+              && STATUS_COMPLETED.equals(readKeywordDocValue(searcher, globalDocId, statusField))) {
+            applyResetStatus(searcher, globalDocId, statusField, updates, fields);
+          }
+        }
+      } else if (policy != null && policy.startsWith(FieldMapper.RMW_RESET_STATUS_PREFIX)) {
+        applyResetStatus(
+            searcher,
+            globalDocId,
+            policy.substring(FieldMapper.RMW_RESET_STATUS_PREFIX.length()),
+            updates,
+            fields);
+      }
+    }
+  }
+
+  /**
+   * reset-status lane: the field's data cannot be cheaply re-read (SPLADE weights live in postings),
+   * so on drop we drive its declared status field. A COMPLETED status is downgraded to PENDING (the
+   * data was just dropped; a backfill must re-derive it) and its retry counter reset; a missing
+   * status is healed to PENDING; a non-terminal / FAILED status is preserved as-is (resurrecting
+   * FAILED as PENDING would mask real failures). A caller-supplied status always wins.
+   */
+  private void applyResetStatus(
+      IndexSearcher searcher,
+      int globalDocId,
+      String statusField,
+      Map<String, Object> updates,
+      Map<String, Object> fields)
+      throws IOException {
+    if (updates.containsKey(statusField)) {
+      return; // caller-supplied status always wins
+    }
+    String retryField = deriveRetryField(statusField);
+    boolean callerSuppliedRetry = retryField != null && updates.containsKey(retryField);
+    String existingStatus = readKeywordDocValue(searcher, globalDocId, statusField);
+    if (existingStatus == null || STATUS_COMPLETED.equals(existingStatus)) {
+      // Data just dropped (or the doc never carried a status) — force (re-)derivation.
+      fields.put(statusField, STATUS_PENDING);
+      if (retryField != null && !callerSuppliedRetry) {
+        fields.put(retryField, "0");
+      }
+    } else {
+      // Preserve a non-terminal / FAILED status; don't resurrect FAILED as PENDING.
+      fields.put(statusField, existingStatus);
+      if (retryField != null && !callerSuppliedRetry) {
+        Long existingRetry = readNumericDocValue(searcher, globalDocId, retryField);
+        if (existingRetry != null) {
+          fields.put(retryField, Long.toString(existingRetry));
+        }
+      }
+    }
+  }
+
+  /**
+   * Derives the retry-counter field paired with a status field by the {@code <prefix>_status} ->
+   * {@code <prefix>_retry_count} convention, or null if the catalog has no such field.
+   */
+  private String deriveRetryField(String statusField) {
+    if (!statusField.endsWith("_status")) {
+      return null;
+    }
+    String candidate =
+        statusField.substring(0, statusField.length() - "_status".length()) + "_retry_count";
+    return session.fieldMapper.fieldDef(candidate) != null ? candidate : null;
+  }
+
+  /**
    * Batch read-modify-write: executes {@link #readModifyWrite} for each entry against the same
    * point-in-time searcher snapshot. The caller provides a leased searcher (via {@link
    * ReadPathOps#withSearcher}) with a single NRT refresh covering all writes.
@@ -380,21 +429,18 @@ public final class WritePathOps {
    *
    * @param searcher the leased IndexSearcher (point-in-time snapshot for all reads)
    * @param batchUpdates list of (docId, updates) pairs
-   * @param preserveSplade preserve SPLADE sparse-vector fields during the write
    * @return result with counts of updated and not-found documents
    * @throws IOException if any IndexWriter write fails (batch is partially applied)
    */
   LuceneRuntimeTypes.BatchUpdateResult readModifyWriteBatch(
-      IndexSearcher searcher,
-      List<Map.Entry<String, Map<String, Object>>> batchUpdates,
-      boolean preserveSplade)
+      IndexSearcher searcher, List<Map.Entry<String, Map<String, Object>>> batchUpdates)
       throws IOException {
     int updated = 0;
     int notFound = 0;
     long minNs = Long.MAX_VALUE, maxNs = 0, sumNs = 0;
     for (Map.Entry<String, Map<String, Object>> entry : batchUpdates) {
       long t0 = System.nanoTime();
-      if (readModifyWrite(searcher, entry.getKey(), entry.getValue(), preserveSplade)) {
+      if (readModifyWrite(searcher, entry.getKey(), entry.getValue())) {
         updated++;
       } else {
         notFound++;
@@ -430,9 +476,9 @@ public final class WritePathOps {
    */
   int updateDocumentPaths(IndexSearcher searcher, String oldPath, String newPath)
       throws IOException {
-    // 1. Update parent document: DOC_ID, PATH, FILENAME + re-queue for embedding/NER
-    // Vector embeddings and NER status are non-stored fields that are lost during
-    // readModifyWrite. Setting status to PENDING triggers backfill pipelines to re-process.
+    // 1. Update parent document: DOC_ID, PATH, FILENAME. A MOVE/RENAME does not change content, so
+    // the vector, SPLADE, and NER enrichment stay valid; the RMW preservation engine (tempdoc 711)
+    // carries the vector forward and the stored NER fields survive — no re-queue needed.
     // OS-independent: newPath may carry Windows (\) or POSIX (/) separators regardless of the
     // host OS. Paths.get() would treat a Windows path as a single segment on Linux (tempdoc 668;
     // same pattern as LuceneRuntimeUtils).
@@ -445,11 +491,7 @@ public final class WritePathOps {
             Map.ofEntries(
                 Map.entry(SchemaFields.DOC_ID, newPath),
                 Map.entry(SchemaFields.PATH, newPath),
-                Map.entry(SchemaFields.FILENAME, newFilename),
-                Map.entry(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING),
-                Map.entry(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING),
-                Map.entry(SchemaFields.EMBEDDING_RETRY_COUNT, "0"),
-                Map.entry(SchemaFields.NER_RETRY_COUNT, "0")));
+                Map.entry(SchemaFields.FILENAME, newFilename)));
     if (!parentUpdated) {
       log.debug("updateDocumentPaths: parent document not found: {}", oldPath);
       return 0;
@@ -467,8 +509,8 @@ public final class WritePathOps {
             .build();
     var chunkDocs = searcher.search(chunkQuery, 10_000);
 
-    // 3. Update each chunk's PARENT_DOC_ID and PATH (chunk DOC_ID stays as UUID)
-    // Re-queue chunks for embedding since vector data is lost during readModifyWrite
+    // 3. Update each chunk's PARENT_DOC_ID and PATH (chunk DOC_ID stays as UUID). The chunk_vector
+    // is carried forward by the RMW preservation engine (tempdoc 711); no re-embed re-queue needed.
     int count = 1; // parent
     for (var sd : chunkDocs.scoreDocs) {
       String chunkId = searcher.storedFields().document(sd.doc).get(SchemaFields.DOC_ID);
@@ -477,9 +519,7 @@ public final class WritePathOps {
           chunkId,
           Map.of(
               SchemaFields.PARENT_DOC_ID, newPath,
-              SchemaFields.PATH, newPath,
-              SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING,
-              SchemaFields.EMBEDDING_RETRY_COUNT, "0"));
+              SchemaFields.PATH, newPath));
       count++;
     }
 
@@ -514,11 +554,10 @@ public final class WritePathOps {
   // race fix (393 § 1.4) is enforced.
 
   /**
-   * Update a document with optional SPLADE preservation. When {@code preserveSplade} is true, the
-   * guard that resets SPLADE_STATUS to PENDING is skipped — use for non-content writes (retry
-   * counters, lifecycle status) where existing SPLADE vectors should be preserved.
+   * Update a document via read-modify-write. Non-stored data-bearing fields the caller omits are
+   * preserved per their catalog {@code rmwPolicy} (tempdoc 711).
    */
-  boolean updateDocument(String docId, Map<String, Object> updates, boolean preserveSplade) {
+  boolean updateDocument(String docId, Map<String, Object> updates) {
     guardWritable();
     if (docId == null || docId.isBlank() || updates == null || updates.isEmpty()) {
       return false;
@@ -528,20 +567,16 @@ public final class WritePathOps {
       if (refreshSnap != null && refreshSnap.searcherManager() != null) {
         refreshSnap.searcherManager().maybeRefreshBlocking();
       }
-      return bridge.withSearcher(
-          searcher -> readModifyWrite(searcher, docId, updates, preserveSplade));
+      return bridge.withSearcher(searcher -> readModifyWrite(searcher, docId, updates));
     } catch (IOException e) {
       log.error("Failed to update document {}", docId, e);
       throw new IndexRuntimeIOException(classifyIOException(e), "Failed to update document", e);
     }
   }
 
-  /**
-   * Batch update with optional SPLADE preservation. See {@link #updateDocument(String, Map,
-   * boolean)}.
-   */
+  /** Batch update via read-modify-write. See {@link #updateDocument(String, Map)}. */
   LuceneRuntimeTypes.BatchUpdateResult updateDocumentsBatch(
-      List<Map.Entry<String, Map<String, Object>>> batchUpdates, boolean preserveSplade) {
+      List<Map.Entry<String, Map<String, Object>>> batchUpdates) {
     guardWritable();
     if (batchUpdates == null || batchUpdates.isEmpty()) {
       return new LuceneRuntimeTypes.BatchUpdateResult(0, 0);
@@ -553,9 +588,7 @@ public final class WritePathOps {
         refreshSnap.searcherManager().maybeRefreshBlocking();
       }
       long tRefreshEnd = System.nanoTime();
-      var result =
-          bridge.withSearcher(
-              searcher -> readModifyWriteBatch(searcher, batchUpdates, preserveSplade));
+      var result = bridge.withSearcher(searcher -> readModifyWriteBatch(searcher, batchUpdates));
       long tWriteEnd = System.nanoTime();
       log.info(
           "updateDocumentsBatch: refresh={}ms, withSearcher+RMW={}ms, total={}ms",
@@ -651,6 +684,31 @@ public final class WritePathOps {
       log.debug("docValues read failed for field={} doc={}: {}", field, globalDocId, e.getMessage());
     }
     return null;
+  }
+
+  /**
+   * Re-reads a doc's stored float vector for {@code field} at the given global doc ID, returning a
+   * defensive copy (Lucene may reuse the backing buffer), or {@code null} if the doc has no vector
+   * for this field. Lucene 10.4 exposes ordinal-based read-back: resolve the leaf via docBase, then
+   * {@code getFloatVectorValues(field)} -> iterator advance -> {@code vectorValue(ord)} (derisk E1,
+   * tempdoc 711). Used by the {@code preserve-reread} RMW lane.
+   */
+  private static float[] readFloatVector(IndexSearcher searcher, int globalDocId, String field)
+      throws IOException {
+    List<LeafReaderContext> leaves = searcher.getIndexReader().leaves();
+    int leafIndex = ReaderUtil.subIndex(globalDocId, leaves);
+    LeafReaderContext leaf = leaves.get(leafIndex);
+    int docInLeaf = globalDocId - leaf.docBase;
+    FloatVectorValues values = leaf.reader().getFloatVectorValues(field);
+    if (values == null) {
+      return null; // no float-vector field in this segment (doc indexed without a vector)
+    }
+    KnnVectorValues.DocIndexIterator iter = values.iterator();
+    if (iter.advance(docInLeaf) != docInLeaf) {
+      return null; // this doc has no vector for the field
+    }
+    float[] v = values.vectorValue(iter.index());
+    return v == null ? null : v.clone();
   }
 
   /** Pre-classified document for batch operations. */

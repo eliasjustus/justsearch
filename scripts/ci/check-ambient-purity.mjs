@@ -24,13 +24,14 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { stripComments as stripCommentsShared } from '../lib/strip-comments.mjs';
 
 const CATALOG = 'governance/ambient-facets.v1.json';
 const ROOT = 'modules/ui-web/src/shell-v0';
 
 /** Strip block + line comments so prose mentioning the banned tokens does not trip the gate. */
 function stripComments(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  return stripCommentsShared(src, { withHtml: false });
 }
 
 /** repo-relative key (`modules/ui-web/src/...`) regardless of absolute scan root. */

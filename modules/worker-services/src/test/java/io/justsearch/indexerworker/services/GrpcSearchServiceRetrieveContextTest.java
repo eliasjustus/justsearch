@@ -9,6 +9,7 @@ import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexApi.IndexDocument;
 import io.justsearch.ipc.ChunkRef;
+import io.justsearch.ipc.ContextFormat;
 import io.justsearch.ipc.RetrieveContextRequest;
 import io.justsearch.ipc.RetrieveContextResponse;
 import java.nio.file.Path;
@@ -468,6 +469,71 @@ class GrpcSearchServiceRetrieveContextTest {
       var resp = callRetrieveContext(request);
       assertFalse(resp.getContext().contains("SECRETMARKER"),
           "A doc with all chunks hidden must NOT reappear via the whole-document fallback");
+    }
+  }
+
+  @Nested
+  @DisplayName("Tempdoc 725 W2b: contextFormat is a genuine no-op end-to-end (LABELED always renders)")
+  class ContextFormatIsIgnored {
+
+    /**
+     * Ground-truth regression for the W2b format wrong-gate fix: {@code RagContextOps} never
+     * reads {@code request.getContextFormat()} (grep-verified: no call site in the module), and
+     * {@link io.justsearch.indexing.rag.ContextBudgeter} has only one rendering — {@code "[From:
+     * label]\n" + content} (LABELED) — with no XML/PLAIN branch at all. This test drives the REAL
+     * production path (this class's {@code GrpcSearchService}, backed by a real Lucene runtime,
+     * exactly as {@link ChunkVsFallback#returnsChunkContextWhenChunksExist()} above) and proves
+     * that requesting {@code CONTEXT_FORMAT_XML} on the wire still yields LABELED-shaped output —
+     * grounding {@code McpToolSurface.callAnswer}'s decision to request LABELED explicitly
+     * (tempdoc 725 orphan #5) in the actual renderer, not just in a mocked call site.
+     */
+    @Test
+    @DisplayName("requesting CONTEXT_FORMAT_XML still renders LABELED \"[From: ...]\" sections")
+    void xmlFormatRequestStillRendersLabeled() throws Exception {
+      String parentDocId = "d:/docs/report.pdf";
+
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+          SchemaFields.DOC_ID, parentDocId,
+          SchemaFields.DOC_UID, parentDocId + "#0",
+          SchemaFields.PATH, parentDocId,
+          SchemaFields.CONTENT, "This is the full document about machine learning and neural networks.",
+          SchemaFields.MIME, "application/pdf")));
+
+      final int chunk0Start = 0;
+      final String chunk0Text = "Machine learning is a subset of artificial intelligence.";
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+          SchemaFields.DOC_ID, "chunk:xml-001",
+          SchemaFields.DOC_UID, "chunk:xml-001#0",
+          SchemaFields.PATH, parentDocId,
+          SchemaFields.PARENT_DOC_ID, parentDocId,
+          SchemaFields.IS_CHUNK, "true",
+          SchemaFields.CHUNK_INDEX, "0",
+          SchemaFields.CHUNK_TOTAL, "1",
+          SchemaFields.CHUNK_CONTENT, chunk0Text,
+          SchemaFields.CHUNK_START_CHAR, String.valueOf(chunk0Start),
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(chunk0Start + chunk0Text.length()))));
+
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      RetrieveContextRequest request = RetrieveContextRequest.newBuilder()
+          .setQuestion("What is machine learning?")
+          .addDocIds(parentDocId)
+          .setTopK(5)
+          .setContextFormat(ContextFormat.CONTEXT_FORMAT_XML)
+          .build();
+
+      var response = callRetrieveContext(request);
+
+      assertTrue(response.getUsedChunks(), "Should use chunks when they exist");
+      assertTrue(
+          response.getContext().contains("[From: "),
+          "LABELED is the only format ContextBudgeter renders, regardless of what was requested: "
+              + response.getContext());
+      assertFalse(
+          response.getContext().contains("<source "),
+          "No XML rendering exists yet — the request must not silently produce XML-shaped output: "
+              + response.getContext());
     }
   }
 

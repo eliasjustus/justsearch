@@ -222,9 +222,9 @@ final class ResolvedConfigBuilderTest {
       assertTrue(config.ai().llmEnabled());
       assertEquals("bm25", config.search().profile());
       assertTrue(config.policy().prodMode());
-      // 391/E-J-N8: embed GPU mem default raised from 2048 → 3072 to
+      // 691 §N/F-031: embed GPU mem default raised 3072 → 6144 to
       // accommodate gte-multilingual-base FP16 activations (post-358).
-      assertEquals(3072, config.ai().embedding().gpuMemMb());
+      assertEquals(6144, config.ai().embedding().gpuMemMb());
       // 691: NER GPU mem default raised from 512 → 2048 — the fp16 NER variant's attention
       // intermediates OOM a 512MB arena, silently degrading batched NER to per-doc fallback.
       assertEquals(2048, config.ai().ner().gpuMemMb());
@@ -272,6 +272,128 @@ final class ResolvedConfigBuilderTest {
       ResolvedConfig config = builder.build();
 
       assertEquals(2048, config.ai().embedding().gpuMemMb());
+    }
+
+    @Test
+    @DisplayName(
+        "late-chunking defaults from EnvRegistry: ENABLED (default-on since 691 Phase N), context"
+            + " length defaults to 8192")
+    void lateChunkingDefaultsFromEnvRegistry() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeEnvRegistry();
+      ResolvedConfig config = builder.build();
+
+      assertEquals(
+          Boolean.parseBoolean(EnvRegistry.EMBED_LATE_CHUNKING_ENABLED.defaultValue()),
+          config.ai().embedding().lateChunkingEnabled());
+      assertTrue(config.ai().embedding().lateChunkingEnabled());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.EMBED_LATE_CHUNKING_CONTEXT_LENGTH.defaultValue()),
+          config.ai().embedding().lateChunkingContextLength());
+      assertEquals(8192, config.ai().embedding().lateChunkingContextLength());
+    }
+
+    @Test
+    @DisplayName(
+        "late-chunking context length clamps to a max of 8192 (gte-multilingual-base's trained"
+            + " context ceiling)")
+    void lateChunkingContextLengthClampsToMax8192() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.putDefault("justsearch.embed.late_chunking_context_length", "32000");
+
+      ResolvedConfig config = builder.build();
+
+      assertEquals(8192, config.ai().embedding().lateChunkingContextLength());
+    }
+
+    @Test
+    @DisplayName(
+        "late-chunking context length never falls below the base embed.context_length")
+    void lateChunkingContextLengthClampsToMinContextLength() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.putDefault("justsearch.embed.context_length", "6000");
+      builder.putDefault("justsearch.embed.late_chunking_context_length", "2048");
+
+      ResolvedConfig config = builder.build();
+
+      assertEquals(6000, config.ai().embedding().lateChunkingContextLength());
+    }
+
+    @Test
+    @DisplayName(
+        "backfill pacing defaults from EnvRegistry are byte-identical to the pre-Move-4"
+            + " hardcoded literals (tempdoc 710 Wave-1.5 Move 4)")
+    void backfillPacingDefaultsFromEnvRegistry() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeEnvRegistry();
+      ResolvedConfig config = builder.build();
+      ResolvedConfig.Ai.BackfillPacing pacing = config.ai().backfillPacing();
+
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_POLL_BATCH_SIZE.defaultValue()),
+          pacing.pollBatchSize());
+      assertEquals(16, pacing.pollBatchSize());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_EMBEDDING_BATCH_SIZE.defaultValue()),
+          pacing.embeddingBackfillBatchSize());
+      assertEquals(100, pacing.embeddingBackfillBatchSize());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_NER_BATCH_SIZE.defaultValue()),
+          pacing.nerBackfillBatchSize());
+      assertEquals(100, pacing.nerBackfillBatchSize());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_DISAMBIGUATION_BATCH_SIZE.defaultValue()),
+          pacing.disambiguationBackfillBatchSize());
+      assertEquals(500, pacing.disambiguationBackfillBatchSize());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_SPLADE_BATCH_SIZE.defaultValue()),
+          pacing.spladeBackfillBatchSize());
+      assertEquals(200, pacing.spladeBackfillBatchSize());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_SPLADE_INTERLEAVE_BATCH_SIZE.defaultValue()),
+          pacing.spladeInterleaveBatchSize());
+      assertEquals(10, pacing.spladeInterleaveBatchSize());
+      assertEquals(
+          Long.parseLong(EnvRegistry.BACKFILL_SPLADE_INTERLEAVE_INTERVAL_MS.defaultValue()),
+          pacing.spladeInterleaveIntervalMs());
+      assertEquals(5_000L, pacing.spladeInterleaveIntervalMs());
+      assertEquals(
+          Long.parseLong(EnvRegistry.BACKFILL_COMMIT_INTERVAL_MS.defaultValue()),
+          pacing.commitIntervalMs());
+      assertEquals(10_000L, pacing.commitIntervalMs());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_MAX_DOCS_BEFORE_COMMIT.defaultValue()),
+          pacing.maxDocsBeforeCommit());
+      assertEquals(1000, pacing.maxDocsBeforeCommit());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_CHUNK_SLOTS_PER_BATCH.defaultValue()),
+          pacing.chunkSlotsPerBatch());
+      assertEquals(50, pacing.chunkSlotsPerBatch());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_BGE_M3_BATCH_SIZE.defaultValue()),
+          pacing.bgeM3BackfillBatchSize());
+      assertEquals(50, pacing.bgeM3BackfillBatchSize());
+      assertEquals(
+          Integer.parseInt(EnvRegistry.BACKFILL_BGE_M3_INTERLEAVE_BATCH_SIZE.defaultValue()),
+          pacing.bgeM3InterleaveBatchSize());
+      assertEquals(10, pacing.bgeM3InterleaveBatchSize());
+
+      // The DEFAULTS sentinel (used as the null-supplier fallback in IndexingLoop/
+      // BackfillScheduler) must match the config-resolved defaults exactly.
+      assertEquals(ResolvedConfig.Ai.BackfillPacing.DEFAULTS, pacing);
+    }
+
+    @Test
+    @DisplayName("backfill pacing honors explicit overrides")
+    void backfillPacingExplicitOverride() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.putDefault("justsearch.backfill.chunk_slots_per_batch", "128");
+      builder.putDefault("justsearch.backfill.commit_interval_ms", "20000");
+
+      ResolvedConfig config = builder.build();
+
+      assertEquals(128, config.ai().backfillPacing().chunkSlotsPerBatch());
+      assertEquals(20_000L, config.ai().backfillPacing().commitIntervalMs());
     }
 
     @Test
@@ -458,6 +580,8 @@ final class ResolvedConfigBuilderTest {
                 min_image_pixels: 10000
               limits:
                 max_pages: 50
+                render_dpi: 220
+              workers: 4
           """;
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
       builder.contributeYaml(parseYaml(yaml));
@@ -467,6 +591,8 @@ final class ResolvedConfigBuilderTest {
       assertEquals(java.util.List.of("eng", "deu"), config.ocr().languages());
       assertEquals(10000, config.ocr().triggerMinImagePixels());
       assertEquals(50, config.ocr().maxPages());
+      assertEquals(220, config.ocr().renderDpi());
+      assertEquals(4, config.ocr().workers());
     }
 
     @Test

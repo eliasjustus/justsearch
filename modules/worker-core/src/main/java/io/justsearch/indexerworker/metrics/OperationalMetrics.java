@@ -182,7 +182,17 @@ public final class OperationalMetrics {
     ragRetrievalsFallback.increment();
   }
 
-  /** Records enrichment backfill doc-count completions, keyed by stage (354 Phase 2). */
+  /**
+   * Records enrichment backfill doc-count completions, keyed by stage (354 Phase 2).
+   *
+   * <p>Units: {@code count} is a document count (documents completed this call), NOT a batch/call
+   * count — contrast {@link #recordStageTiming}'s {@code batchTimingCount} accumulator below,
+   * which counts calls/cycles, not documents (tempdoc 691 A-5 ambiguity; see {@link
+   * #getBatchTimingCount} for the full unit note). Tempdoc 710 Move 2 item 4: as of this move, the
+   * caller is {@link io.justsearch.indexerworker.loop.BackfillScheduler} for every path (combined
+   * AND individual) — previously only the combined pass called this, so individual-mode counters
+   * froze (710 S-B3 finding).
+   */
   public void recordEnrichmentCompleted(String stage, int count) {
     if (count > 0) {
       enrichmentCompleted.computeIfAbsent(stage, k -> new LongAdder()).add(count);
@@ -192,6 +202,15 @@ public final class OperationalMetrics {
   /**
    * Record timing for a per-stage operation that may be skipped (354). Only accumulates when
    * docsProcessed > 0, so totalMs / batchCount gives meaningful per-batch averages.
+   *
+   * <p>Units (tempdoc 691 A-5): {@code ms} is added to {@code batchTimingMs} directly (a document
+   * count is never summed into it — the timing is per CALL, i.e. per batch/cycle), while {@code
+   * batchTimingCount} increments by exactly 1 per call regardless of how many documents that call
+   * processed. So {@code batchTimingMs / batchTimingCount} is "average ms per batch-cycle", NOT
+   * "average ms per document" — divide by {@link #getEnrichmentCompleted}'s count for the latter.
+   * Tempdoc 710 Move 2 item 4: as of this move, called by {@link
+   * io.justsearch.indexerworker.loop.BackfillScheduler} after every stage call (combined and
+   * individual paths alike) — see {@link #recordEnrichmentCompleted}'s note.
    */
   public void recordStageTiming(String stage, int docsProcessed, long ms) {
     if (docsProcessed > 0) {
@@ -202,10 +221,31 @@ public final class OperationalMetrics {
 
   /**
    * Record timing for a whole-batch operation that always runs (354). Unconditionally accumulates.
+   * Same batch-cycle unit convention as {@link #recordStageTiming} — see that method's note.
    */
   public void recordBatchTiming(String key, long ms) {
     batchTimingMs.computeIfAbsent(key, k -> new LongAdder()).add(ms);
     batchTimingCount.computeIfAbsent(key, k -> new LongAdder()).increment();
+  }
+
+  // Tempdoc 710 Move 2 item 4: last-known backfill mode ("combined" | "individual" | "idle"),
+  // written once per BackfillScheduler.runIdleCycle() call. Exposed on the enrichment status
+  // surface (EnrichmentProgressView.backfillMode) so operators can see WHICH pass is running
+  // without grepping worker.log — previously observable nowhere (710 S-B3 finding).
+  private volatile String backfillMode = "idle";
+
+  /** Records which backfill pass ran this idle cycle. See {@link #getBackfillMode}. */
+  public void recordBackfillMode(String mode) {
+    this.backfillMode = mode == null ? "idle" : mode;
+  }
+
+  /**
+   * The most recently observed backfill mode: {@code "combined"} (single-RMW-per-doc pass across
+   * embed+SPLADE+NER), {@code "individual"} (per-stage passes), or {@code "idle"} (no backfill
+   * work was available/eligible last cycle, or no cycle has run yet).
+   */
+  public String getBackfillMode() {
+    return backfillMode;
   }
 
   /** Records when HYBRID mode fell back to TEXT (e.g., embeddings blocked). */
@@ -313,19 +353,33 @@ public final class OperationalMetrics {
     return result;
   }
 
-  /** Snapshot of cumulative enrichment doc counts, keyed by stage (354 Phase 2). */
+  /**
+   * Snapshot of cumulative enrichment DOCUMENT counts, keyed by stage (354 Phase 2). Units:
+   * documents completed — NOT batch/call counts (contrast {@link #getBatchTimingCount}, tempdoc
+   * 691 A-5).
+   */
   public Map<String, Long> getEnrichmentCompleted() {
     return enrichmentCompleted.entrySet().stream()
         .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum()));
   }
 
-  /** Snapshot of cumulative batch timing in milliseconds, keyed by BatchTimingKeys (354). */
+  /**
+   * Snapshot of cumulative batch timing in milliseconds, keyed by BatchTimingKeys (354). Units:
+   * total wall-clock ms summed across every recorded CALL (batch/cycle) for that key — divide by
+   * {@link #getBatchTimingCount} for "ms per batch-cycle", or by {@link #getEnrichmentCompleted}
+   * for "ms per document" (these are different denominators; 691 A-5).
+   */
   public Map<String, Long> getBatchTimingMs() {
     return batchTimingMs.entrySet().stream()
         .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum()));
   }
 
-  /** Snapshot of cumulative batch counts, keyed by BatchTimingKeys (354). */
+  /**
+   * Snapshot of cumulative BATCH-CYCLE counts, keyed by BatchTimingKeys (354). Units: number of
+   * {@link #recordStageTiming}/{@link #recordBatchTiming} calls — NOT documents processed
+   * (tempdoc 691 A-5: this is the field that was previously easy to misread as a document count
+   * because it sits next to {@link #getEnrichmentCompleted}, which IS a document count).
+   */
   public Map<String, Long> getBatchTimingCount() {
     return batchTimingCount.entrySet().stream()
         .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().sum()));
@@ -515,6 +569,7 @@ public final class OperationalMetrics {
     enrichmentCompleted.clear();
     batchTimingMs.clear();
     batchTimingCount.clear();
+    backfillMode = "idle";
 
     // Gauges
     queueDepth.set(0);

@@ -1,0 +1,9 @@
+{
+  "method": "ir_datasets-sample",
+  "source": "miracl/de/dev",
+  "source_revision": "miracl-v1.0",
+  "ir_datasets_version": "0.5.11",
+  "seed": 707,
+  "n_docs": 30000,
+  "n_queries": 305
+}

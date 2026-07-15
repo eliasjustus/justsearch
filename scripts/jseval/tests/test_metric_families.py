@@ -8,7 +8,7 @@ from jseval import metric_families as mf
 def test_registry_covers_the_families():
     names = {f.name for f in mf.REGISTRY}
     assert names == {
-        "quality", "perf-latency", "perf-throughput", "perf-footprint", "leak",
+        "quality", "perf-latency", "perf-throughput", "perf-footprint", "leak", "union-recall",
         "judge-low-cost-weight", "llm-gen",
     }
 

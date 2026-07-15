@@ -20,12 +20,23 @@ import {
   repoRoot, loadEvents, groupBySession, loadCostsFromOtlp,
 } from './lib/telemetry-io.mjs';
 
-// Pricing per 1M tokens (Feb 2026, from platform.claude.com/docs/en/about-claude/pricing).
-// cache_write uses the 5-minute tier (1.25x input); transcripts don't distinguish tiers.
+// Pricing per 1M tokens (per platform.claude.com/docs pricing; current-model table refreshed 2026-07).
+// cache_write uses the 5-minute tier (1.25x input); cache_read ~0.1x input; transcripts don't distinguish tiers.
+// Keys are matched exact-first, then by prefix (findPricing), so a suffixed id like
+// `claude-opus-4-8[1m]` resolves via the bare `claude-opus-4-8` entry.
 const PRICING = {
+  'claude-fable-5':             { input: 10.0, output: 50.0, cache_write: 12.5,  cache_read: 1.00 },
+  'claude-opus-4-8':            { input: 5.0,  output: 25.0, cache_write: 6.25,  cache_read: 0.50 },
+  'claude-opus-4-7':            { input: 5.0,  output: 25.0, cache_write: 6.25,  cache_read: 0.50 },
   'claude-opus-4-6':            { input: 5.0,  output: 25.0, cache_write: 6.25,  cache_read: 0.50 },
   'claude-opus-4-20250514':     { input: 15.0, output: 75.0, cache_write: 18.75, cache_read: 1.50 },
+  // Standard rate shown; Sonnet-5 has a $2/$10 intro discount through 2026-08-31, so
+  // this slightly OVERstates Sonnet-5 spend during the intro window (accepted — a
+  // date-branch isn't worth it for a cost-report script, and Sonnet-5 is rare here).
+  'claude-sonnet-5':            { input: 3.0,  output: 15.0, cache_write: 3.75,  cache_read: 0.30 },
+  'claude-sonnet-4-6':          { input: 3.0,  output: 15.0, cache_write: 3.75,  cache_read: 0.30 },
   'claude-sonnet-4-5-20250929': { input: 3.0,  output: 15.0, cache_write: 3.75,  cache_read: 0.30 },
+  'claude-haiku-4-5':           { input: 1.0,  output: 5.0,  cache_write: 1.25,  cache_read: 0.10 },
   'claude-haiku-4-5-20251001':  { input: 1.0,  output: 5.0,  cache_write: 1.25,  cache_read: 0.10 },
 };
 const DEFAULT_PRICING = PRICING['claude-sonnet-4-5-20250929'];
@@ -105,8 +116,10 @@ function findPricing(model) {
   if (!model) return DEFAULT_PRICING;
   // Exact match
   if (PRICING[model]) return PRICING[model];
-  // Prefix match (e.g. 'claude-opus-4-6' matches 'claude-opus-4-6-...')
-  for (const [key, pricing] of Object.entries(PRICING)) {
+  // Prefix match (e.g. 'claude-opus-4-6' matches 'claude-opus-4-6-...'), longest key
+  // first so a specific dated id (`claude-haiku-4-5-20251001`) is not shadowed by its
+  // bare prefix (`claude-haiku-4-5`) when the two ever diverge in price.
+  for (const [key, pricing] of Object.entries(PRICING).sort((a, b) => b[0].length - a[0].length)) {
     if (model.startsWith(key)) return pricing;
   }
   return DEFAULT_PRICING;
@@ -349,6 +362,12 @@ function main() {
       reportIds.add(f.replace('.json', ''));
     }
   } catch { /* no reports dir */ }
+  if (reportIds.size === 0) {
+    console.error(
+      `cost-session: no session reports under ${path.relative(repoRoot, reportsDir)} — ` +
+        '--all will cost 0 sessions. Generate reports first, or check TELEMETRY_DIR/SESSIONS_DIR.',
+    );
+  }
 
   // Load existing costs so we can preserve records for sessions whose transcripts
   // have rotated out of events.ndjson or been deleted by Claude Code.

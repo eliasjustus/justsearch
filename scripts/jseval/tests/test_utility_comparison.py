@@ -7,6 +7,9 @@ Proves the cohort-identity, pairing, McNemar, and composer machinery.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from jseval import agent_manifest, compare_runs, utility_comparison
@@ -74,6 +77,26 @@ def test_cohort_key_differs_on_harness_identity():
         _mfst(prompt_template="different"))
 
 
+def test_cohort_key_differs_on_exposure_mode_and_instructions():
+    """tempdoc 725 increment 2: exposure_mode / instructions_sha256 join
+    agent_cohort_key's key_surface -- a config or MCP-server-instructions
+    change must split the cohort, same bar as CLI/tool-surface/judge/prompt
+    above."""
+    base = _mfst()
+    assert agent_manifest.agent_cohort_key(base) != agent_manifest.agent_cohort_key(
+        _mfst(exposure_mode="deferred"))
+    assert agent_manifest.agent_cohort_key(base) != agent_manifest.agent_cohort_key(
+        _mfst(instructions_sha256="d" * 64))
+    assert agent_manifest.agent_cohort_key(
+        _mfst(exposure_mode="deferred")
+    ) != agent_manifest.agent_cohort_key(_mfst(exposure_mode="eager"))
+    # A manifest that never captured exposure identity at all (both None, the
+    # pre-725 shape) must hash IDENTICALLY to before this field existed --
+    # excluded, not added as a bare `null` (digest-preservation requirement).
+    assert agent_manifest.agent_cohort_key(base) == agent_manifest.agent_cohort_key(
+        _mfst(exposure_mode=None, instructions_sha256=None))
+
+
 def test_pairing_key_pairs_A_and_C_excludes_condition_and_search_config():
     """A and C with same (corpus, model, seed) pair; differ only on condition (R2)."""
     a = _mfst(condition="A", search_config_cohort_key=None)
@@ -81,6 +104,30 @@ def test_pairing_key_pairs_A_and_C_excludes_condition_and_search_config():
     assert agent_manifest.pairing_key(a) == agent_manifest.pairing_key(c)
     # different seed -> different pair
     assert agent_manifest.pairing_key(a) != agent_manifest.pairing_key(_mfst(seed=1))
+
+
+def test_pairing_key_still_pairs_A_and_C_when_exposure_identity_is_shared():
+    """tempdoc 725 increment 2: exposure_mode/instructions_sha256 join
+    agent_cohort_key's key_surface, and pairing_key's first element already IS
+    agent_cohort_key -- so pairing_key is NOT given exposure as a SEPARATE
+    explicit tuple element (that would be redundant), and two manifests whose
+    exposure identity genuinely DIFFERS correctly fail to pair (they are not
+    one harness cohort at all, exercised by compose_utility's coarser check).
+    What must keep working is the real scenario: a coherent record where BOTH
+    arms share the SAME captured exposure identity (as they must, since it is
+    a whole-campaign property) -- condition and search_config_cohort_key still
+    correctly drop out of the pair."""
+    a = _mfst(condition="A", search_config_cohort_key=None,
+              exposure_mode="deferred", instructions_sha256="d" * 64)
+    c = _mfst(condition="C", search_config_cohort_key="search-XYZ",
+              exposure_mode="deferred", instructions_sha256="d" * 64)
+    assert agent_manifest.pairing_key(a) == agent_manifest.pairing_key(c)
+
+
+def test_pairing_key_uses_resolved_provider_model_not_alias():
+    base = _mfst(agent_model="haiku", agent_model_version="claude-haiku-4-5-20251001")
+    changed = _mfst(agent_model="haiku", agent_model_version="claude-haiku-4-5-20260701")
+    assert agent_manifest.pairing_key(base) != agent_manifest.pairing_key(changed)
 
 
 def test_tool_surface_hash_order_independent():
@@ -92,6 +139,32 @@ def test_tool_surface_hash_order_independent():
          {"name": "b", "description": "", "inputSchema": {}}])
     assert h1 == h2
     assert h1 != agent_manifest.mcp_tool_surface_hash(None)  # arm A sentinel differs
+
+
+def test_tool_surface_hash_covers_output_schema_and_annotations():
+    base = [{"name": "search", "inputSchema": {"type": "object"},
+             "outputSchema": {"type": "string"},
+             "annotations": {"readOnlyHint": True}}]
+    changed_output = [{**base[0], "outputSchema": {"type": "integer"}}]
+    changed_annotations = [{**base[0], "annotations": {"readOnlyHint": False}}]
+    assert agent_manifest.mcp_tool_surface_hash(base) != agent_manifest.mcp_tool_surface_hash(
+        changed_output
+    )
+    assert agent_manifest.mcp_tool_surface_hash(base) != agent_manifest.mcp_tool_surface_hash(
+        changed_annotations
+    )
+
+
+def test_configured_alpha_changes_bootstrap_interval():
+    run_a = {"per_query_metrics": {str(i): {"m": 0.0} for i in range(8)}}
+    values = [0.0, 0.0, 0.1, 0.2, 0.4, 0.8, 1.2, 2.0]
+    run_b = {"per_query_metrics": {str(i): {"m": value} for i, value in enumerate(values)}}
+    qrels = {str(i): {} for i in range(8)}
+    wide = compare_runs.compare(run_a, run_b, qrels, metrics=["m"], alpha=0.01)
+    narrow = compare_runs.compare(run_a, run_b, qrels, metrics=["m"], alpha=0.20)
+    assert wide["m"]["ci"][0] <= narrow["m"]["ci"][0]
+    assert wide["m"]["ci"][1] >= narrow["m"]["ci"][1]
+    assert wide["m"]["confidence_level"] == 0.99
 
 
 # --- McNemar (R3) -----------------------------------------------------------
@@ -294,7 +367,7 @@ def test_end_to_end_agent_result_leak_flag_reaches_composed_cell():
 
 def _pq_entry(*, correct=True, tool_calls=None, disallowed=None, leak_tool_calls=None,
               leak_suspect=None, mcp_tools_offered=None, mcp_surface_unverified=None,
-              mcp_tools_deferred=None):
+              mcp_tools_deferred=None, toolsearch_targets=None, tool_call_sequence=None):
     entry = {"correct": correct, "cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3}
     if tool_calls is not None or disallowed is not None or leak_tool_calls is not None:
         entry["tool_calls"] = tool_calls
@@ -308,6 +381,10 @@ def _pq_entry(*, correct=True, tool_calls=None, disallowed=None, leak_tool_calls
         entry["mcp_surface_unverified"] = mcp_surface_unverified
     if mcp_tools_deferred is not None:
         entry["mcp_tools_deferred"] = mcp_tools_deferred
+    if toolsearch_targets is not None:
+        entry["toolsearch_targets"] = toolsearch_targets
+    if tool_call_sequence is not None:
+        entry["tool_call_sequence"] = tool_call_sequence
     return entry
 
 
@@ -621,6 +698,299 @@ def test_adoption_all_none_yields_null_metrics_not_zero():
     }
 
 
+# --- Adoption FUNNEL (tempdoc 725 increment 3) ------------------------------
+#
+# offered -> discovered (a `select:` ToolSearch call named a justsearch tool)
+# -> invoked (>=1 of those names was actually called) -> reinforced (durable,
+# not a one-off). Pure-function tests over `_funnel_metrics` directly, plus an
+# end-to-end `compose_utility` cell-level check and the committed-fixture
+# byte-preservation guarantee.
+
+def test_funnel_metrics_absent_when_no_cell_carries_funnel_data():
+    """Pre-tempdoc-725 evidence (or a `None` triple everywhere) -> the null +
+    explicit marker state, never a fabricated zero."""
+    result = utility_comparison._funnel_metrics([None, None], [None, None], [None, None])
+    assert result == {
+        "discovery_rate": None, "post_discovery_invocation_rate": None,
+        "first_discovery_turn": None, "reinforced_proxy_rate": None,
+        "reinforced_rate": None, "funnel_fields_absent": True,
+    }
+
+
+def test_funnel_metrics_reproduces_pilot_shape_offered14_discovered2_invoked1_reinforced_proxy1():
+    """Synthetic campaign reproducing the pilot's observed funnel shape:
+    offered 14 -> discovered 2 -> invoked 1 -> reinforced-proxy 1."""
+    tool_calls = []
+    toolsearch_targets = []
+    tool_call_sequences = []
+
+    # Cell 0: discovered, invoked, and reinforced (2 successful mcp calls; the
+    # LAST justsearch-related event also succeeds -> strictly reinforced too).
+    tool_calls.append([
+        {"tool": "mcp__justsearch__search"}, {"tool": "mcp__justsearch__search"},
+    ])
+    toolsearch_targets.append(["mcp__justsearch__search"])
+    tool_call_sequences.append([
+        {"name": "ToolSearch", "status": "ok"},
+        {"name": "mcp__justsearch__search", "status": "ok"},
+        {"name": "mcp__justsearch__search", "status": "ok"},
+    ])
+
+    # Cell 1: discovered but never invoked (ToolSearch found it, agent never
+    # actually called it).
+    tool_calls.append([])
+    toolsearch_targets.append(["mcp__justsearch__search"])
+    tool_call_sequences.append([{"name": "ToolSearch", "status": "ok"}])
+
+    # Cells 2-13 (12 cells): never discovered at all -- offered, checked, but
+    # ToolSearch was never called with a justsearch-resolving query.
+    for _ in range(12):
+        tool_calls.append([])
+        toolsearch_targets.append([])
+        tool_call_sequences.append([{"name": "Read", "status": "ok"}])
+
+    assert len(tool_calls) == 14  # offered
+    result = utility_comparison._funnel_metrics(tool_calls, toolsearch_targets, tool_call_sequences)
+
+    assert result["funnel_fields_absent"] is False
+    assert result["discovery_rate"] == round(2 / 14, 4)  # discovered 2
+    assert result["post_discovery_invocation_rate"] == 0.5  # invoked 1 of 2 discovered
+    assert result["first_discovery_turn"] == 1.0  # both discoveries were the cell's 1st call
+    assert result["reinforced_proxy_rate"] == 1.0  # reinforced-proxy 1 of 1 invoked
+    assert result["reinforced_rate"] == 1.0  # the invoked cell's last mcp event also succeeded
+
+
+def test_funnel_metrics_strict_reinforced_excludes_a_cell_ending_on_a_blocked_call():
+    """A cell invoked successfully once, then its LAST justsearch-related
+    interaction was blocked -- reinforced_proxy_rate still counts it as
+    reinforced (>1 successful call total: `_mcp_call_count` on the EXECUTED
+    tool_calls list only ever contains successes, so a single blocked retry
+    does not raise the count past 1), but the STRICT reinforced_rate must not,
+    because the cell's use of the tool ended on a failure note."""
+    tool_calls = [[{"tool": "mcp__justsearch__search"}]]  # exactly one executed success
+    toolsearch_targets = [["mcp__justsearch__search"]]
+    tool_call_sequences = [[
+        {"name": "ToolSearch", "status": "ok"},
+        {"name": "mcp__justsearch__search", "status": "ok"},
+        {"name": "mcp__justsearch__search", "status": "blocked"},  # last justsearch event fails
+    ]]
+
+    result = utility_comparison._funnel_metrics(tool_calls, toolsearch_targets, tool_call_sequences)
+
+    assert result["post_discovery_invocation_rate"] == 1.0
+    assert result["reinforced_proxy_rate"] == 0.0  # only 1 EXECUTED mcp call -> not >1
+    assert result["reinforced_rate"] == 0.0  # last justsearch event was blocked
+
+
+def test_funnel_metrics_none_entries_excluded_from_every_denominator():
+    """The same tri-state discipline as `_adoption_metrics`: a `None` triple
+    for one cell (no funnel capture) must not count in ANY funnel denominator,
+    even when other cells in the same record do carry real data."""
+    tool_calls = [[{"tool": "mcp__justsearch__search"}], None]
+    toolsearch_targets = [["mcp__justsearch__search"], None]
+    tool_call_sequences = [
+        [{"name": "ToolSearch", "status": "ok"}, {"name": "mcp__justsearch__search", "status": "ok"}],
+        None,
+    ]
+    result = utility_comparison._funnel_metrics(tool_calls, toolsearch_targets, tool_call_sequences)
+    assert result["discovery_rate"] == 1.0  # 1 of 1 CHECKED cell, not 1 of 2
+
+
+def test_compose_utility_cell_has_no_funnel_key_when_no_cell_carries_funnel_data():
+    """End-to-end: a comparison composed entirely from pre-tempdoc-725-shaped
+    per_query entries (no toolsearch_targets/tool_call_sequence anywhere) must
+    have NO "funnel" key on the cell at all -- digest-preservation requirement
+    (tempdoc 725 increment 3), same discipline as the cohort-level exposure
+    fields."""
+    c_pq = _adoption_pq([[{"tool": "mcp__justsearch__search_query", "input": {}}]])
+    a_pq = {f"q{i}": _pq_entry() for i in range(1)}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert "funnel" not in cell
+
+
+def test_compose_utility_cell_carries_funnel_when_any_cell_has_funnel_data():
+    c_pq = {
+        "q0": _pq_entry(
+            tool_calls=[{"tool": "mcp__justsearch__search"}],
+            toolsearch_targets=["mcp__justsearch__search"],
+            tool_call_sequence=[
+                {"name": "ToolSearch", "status": "ok"},
+                {"name": "mcp__justsearch__search", "status": "ok"},
+            ],
+        ),
+    }
+    a_pq = {"q0": _pq_entry()}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert cell["funnel"]["baseline"]["funnel_fields_absent"] is True
+    assert cell["funnel"]["with_tool"]["discovery_rate"] == 1.0
+
+
+# --- Denominators / seed floor / eligibility stamp (tempdoc 736 B2/B3/B1) ---
+
+def test_compose_utility_denominators_block_names_primary_and_secondary():
+    """D13: the top-level `denominators` block names n_attempted as the
+    PRIMARY (ITT) denominator and n_checked/n_excluded as SECONDARY
+    (funnel-conditional), each with a declarative one-sentence `question`."""
+    summaries = [_summary("A", {"q0": _pq_entry()}), _summary("C", {"q0": _pq_entry()}, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    denominators = rec["denominators"]
+    assert denominators["n_attempted"]["tier"] == "primary"
+    assert denominators["n_checked"]["tier"] == "secondary"
+    assert denominators["n_excluded"]["tier"] == "secondary"
+    for entry in denominators.values():
+        assert entry["question"]  # a non-empty declarative sentence
+        assert entry["source"]
+
+
+def test_compose_utility_denominators_block_does_not_perturb_existing_metrics(tmp_path):
+    """U4: adding the `denominators` block is pure reporting -- no existing
+    metric numerator/denominator changes value. Reuses the funnel-carrying
+    fixture and asserts its funnel rates are untouched by the new block."""
+    c_pq = {
+        "q0": _pq_entry(
+            tool_calls=[{"tool": "mcp__justsearch__search"}],
+            toolsearch_targets=["mcp__justsearch__search"],
+            tool_call_sequence=[
+                {"name": "ToolSearch", "status": "ok"},
+                {"name": "mcp__justsearch__search", "status": "ok"},
+            ],
+        ),
+    }
+    a_pq = {"q0": _pq_entry()}
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+
+    assert cell["funnel"]["with_tool"]["discovery_rate"] == 1.0
+    assert "denominators" in rec
+    assert "denominator_note" in cell["funnel"]
+    assert "SECONDARY" in cell["funnel"]["denominator_note"]
+
+
+def test_compose_utility_comparability_carries_denominator_note():
+    from jseval.utility_governance import ArmLoss, paired_comparability
+
+    full = {0: {"q0"}}
+    A = ArmLoss("A", 1, 1, 1, n_error_cells=0, excluded_query_ids=set(), ok_by_seed=full)
+    C = ArmLoss("C", 1, 1, 1, n_error_cells=0, excluded_query_ids=set(), ok_by_seed=full)
+    verdict, metrics = paired_comparability({"A": A, "C": C})
+    governance = {
+        "comparable": verdict.comparable, "reasons": verdict.reasons,
+        "metrics": metrics,
+        "per_arm_loss": {
+            "A": {"n_attempted": A.n_attempted, "n_excluded": A.n_excluded},
+            "C": {"n_attempted": C.n_attempted, "n_excluded": C.n_excluded},
+        },
+    }
+    summaries = [_summary("A", {"q0": _pq_entry()}), _summary("C", {"q0": _pq_entry()}, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t", governance=governance)
+
+    assert "PRIMARY" in rec["comparability"]["denominator_note"]
+    assert "denominators" in rec["comparability"]["denominator_note"]
+
+
+def test_compose_utility_seed_floor_met_true_at_the_floor():
+    summaries = [
+        _summary("A", {"q0": _pq_entry()}, seed=s) for s in range(utility_comparison.SEED_FLOOR)
+    ] + [
+        _summary("C", {"q0": _pq_entry()}, search_key="s", seed=s)
+        for s in range(utility_comparison.SEED_FLOOR)
+    ]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    assert rec["seed_count"] == utility_comparison.SEED_FLOOR
+    assert rec["seed_floor_met"] is True
+
+
+def test_compose_utility_seed_floor_met_false_below_the_floor():
+    summaries = [_summary("A", {"q0": _pq_entry()}, seed=0),
+                 _summary("C", {"q0": _pq_entry()}, search_key="s", seed=0)]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    assert rec["seed_count"] == 1
+    assert rec["seed_count"] < utility_comparison.SEED_FLOOR
+    assert rec["seed_floor_met"] is False
+
+
+def test_compose_utility_stamps_exposure_contrast_ineligible_when_pre_605_shaped():
+    """D11: a record composed without exposure identity anywhere (the shape
+    of every pre-#605 evidence) self-describes as exposure-contrast-ineligible
+    directly on the composed record, not only when a contrast is attempted."""
+    summaries = [_summary("A", {"q0": _pq_entry()}), _summary("C", {"q0": _pq_entry()}, search_key="s")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+
+    assert "exposure_contrast_ineligible" in rec
+    assert rec["exposure_contrast_ineligible"]["since"] == "#605"
+    assert any("exposure identity" in r for r in rec["exposure_contrast_ineligible"]["reasons"])
+
+
+def test_compose_utility_omits_exposure_contrast_ineligible_when_eligible():
+    """Conditional-omission discipline (tempdoc 725 precedent): an eligible
+    record never carries the marker at all, not even as a `null`/false value --
+    a post-#605 record stays byte-identical to a record composed before this
+    stamp existed."""
+    manifest_over = {
+        "exposure_config": {"enable_tool_search": None, "always_load": False, "exposure_mode": "deferred"},
+        "mcp_initialize_identity": {"instructions": None, "instructions_sha256": "a" * 64,
+                                     "server_version": "1.0.0", "protocol_version": "2025-06-18"},
+        "exposure_mode": "deferred",
+        "instructions_sha256": "a" * 64,
+    }
+    summaries = [
+        _summary("A", {"q0": _pq_entry()}, **manifest_over),
+        _summary("C", {"q0": _pq_entry(
+            tool_calls=[{"tool": "mcp__justsearch__search"}],
+            toolsearch_targets=["mcp__justsearch__search"],
+            tool_call_sequence=[{"name": "mcp__justsearch__search", "status": "ok"}],
+        )}, search_key="s", **manifest_over),
+    ]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    assert "exposure_contrast_ineligible" not in rec
+
+
+def test_real_2026_07_12_rejected_fixture_funnel_is_absent_not_null_marker():
+    """The immutable committed fixture predates toolsearch_targets/
+    tool_call_sequence entirely -- `finalize_evidence` over it must produce a
+    record with NO "funnel" key ANYWHERE (cells or ITT strata), preserving the
+    fixture's semantic_digest byte-for-byte. Calling `_funnel_metrics` directly
+    on the fixture's own (all-None) derived lists independently proves the
+    underlying computation legitimately resolves to the null+marker state,
+    not merely "happens to be omitted."""
+    from pathlib import Path as _Path
+
+    from jseval.utility_evidence import read_evidence
+    from jseval.utility_recompose import finalize_evidence
+
+    path = (
+        _Path(__file__).parent / "fixtures" / "agent-utility-rejected-2026-07-12"
+        / "observations.v1.jsonl"
+    )
+    observations = read_evidence(path)
+    assert all(obs.get("toolsearch_targets") is None for obs in observations)
+    assert all(obs.get("tool_call_sequence") is None for obs in observations)
+
+    direct = utility_comparison._funnel_metrics(
+        [obs.get("tool_calls") for obs in observations],
+        [obs.get("toolsearch_targets") for obs in observations],
+        [obs.get("tool_call_sequence") for obs in observations],
+    )
+    assert direct == {
+        "discovery_rate": None, "post_discovery_invocation_rate": None,
+        "first_discovery_turn": None, "reinforced_proxy_rate": None,
+        "reinforced_rate": None, "funnel_fields_absent": True,
+    }
+
+    record = finalize_evidence([path], composed_at="fixture")
+    for cells in record["measured"].values():
+        for cell in cells.values():
+            assert "funnel" not in cell
+    for stratum in record["estimands"]["intention_to_treat"]["strata"]:
+        assert "funnel" not in stratum
+
+
 # --- Stratified capability-coverage (tempdoc 624 §T.4 / §M.8 item 7) --------
 
 def test_stratified_breakdown_reveals_offsetting_substrata_signal():
@@ -665,43 +1035,26 @@ def test_stratified_breakdown_reveals_offsetting_substrata_signal():
         _summary("A", a1, seed=1, corpus=sig_new),
         _summary("C", c1, seed=1, corpus=sig_new, search_key="s"),
     ]
-    rec = utility_comparison.compose_utility(summaries, composed_at="t")
-    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    with pytest.raises(utility_comparison.UtilityComposeError, match="mixes corpus/resolved-model"):
+        utility_comparison.compose_utility(summaries, composed_at="t")
 
-    # Pooled: the two strata offset exactly -> looks like NO effect at all.
-    assert cell["accuracy"]["delta"] == 0.0
-    assert cell["accuracy"]["mcnemar_p"] == 1.0
-    assert cell["n_paired_observations"] == 8
 
-    strata = cell["stratified"]["by_stratum"]
-    old_label = "mixed/multihop-rag:sig-old"
-    new_label = "mixed/multihop-rag:sig-new"
-    assert set(strata) == {old_label, new_label}
-
-    old, new = strata[old_label], strata[new_label]
-
-    # Each stratum independently reveals the real, OPPOSITE-sign signal the
-    # pooled delta hides — same shape (accuracy/tokens_unique/cost_usd/turns/
-    # n_paired_observations) as the pooled block.
-    assert old["accuracy"]["delta"] == 0.5
-    assert new["accuracy"]["delta"] == -0.5
-    assert old["n_paired_observations"] == 4
-    assert new["n_paired_observations"] == 4
-
-    # §M.8 item 7: each stratum's significance test is its OWN, computed on its
-    # own n — NOT inherited/borrowed from the pooled result (pooled p=1.0 above;
-    # both strata resolve to a different, independently-derived p-value).
-    assert old["accuracy"]["mcnemar_p"] == 0.5
-    assert new["accuracy"]["mcnemar_p"] == 0.5
-    assert old["accuracy"]["mcnemar_p"] != cell["accuracy"]["mcnemar_p"]
-
-    # Cost/token blocks are independently computed per stratum too (sig-old is
-    # cheaper+fewer-tokens with the tool; sig-new has no cost/token difference
-    # at all — the pooled cost/token deltas would average these together):
-    assert old["cost_usd"]["delta_mean"] < 0
-    assert new["cost_usd"]["delta_mean"] == 0.0
-    assert old["tokens_unique"]["delta_mean"] < 0
-    assert new["tokens_unique"]["delta_mean"] == 0.0
+def test_mix_guard_also_catches_mixed_exposure_identity():
+    """tempdoc 725 increment 2: exposure_mode/instructions_sha256 additively
+    join the mix-guard identity tuple. Since exposure_mode ALSO joins
+    agent_cohort_key's key_surface, a genuine exposure mismatch would already
+    be caught by the coarser whole-record 'agent_cohort_key differs' check
+    (§1) before compose_utility ever reaches the per-cell mix-guard (§3) --
+    so this test forges matching cohort keys to isolate and exercise the
+    mix-guard specifically, proving it independently catches the mismatch
+    too (belt-and-suspenders, same as several existing identity fields that
+    are NOT part of the cohort key at all)."""
+    pq = {"q0": {"correct": True, "cost_usd": 0.1, "unique_tokens": 100, "num_turns": 3}}
+    eager = _summary("A", pq, exposure_mode="eager")
+    deferred = _summary("C", pq, search_key="s", exposure_mode="deferred")
+    deferred["manifest"]["agent_cohort_key"] = eager["manifest"]["agent_cohort_key"]
+    with pytest.raises(utility_comparison.UtilityComposeError, match="mixes corpus/resolved-model"):
+        utility_comparison.compose_utility([eager, deferred], composed_at="t")
 
 
 def test_no_stratify_field_when_cell_is_single_corpus():
@@ -753,12 +1106,13 @@ def test_inspect_path_roundtrip(tmp_path):
     # also what gives A2 config-change log segregation).
     @task
     def mock_task(condition="A", wrong_q0=False, cost=0.10, tok=4000):
-        samples = [Sample(id=f"q{i}", input=f"Q{i}", target=f"ANS{i}",
-                          metadata={"echo": ("WRONG" if (wrong_q0 and i == 0) else f"ANS{i}"),
+        samples = [Sample(id=f"{condition}|q{i}", input=f"Q{i}", target=f"ANS{i}",
+                          metadata={"condition": condition,
+                                    "echo": ("WRONG" if (wrong_q0 and i == 0) else f"ANS{i}"),
                                     "cost": cost, "tokens": tok})
                    for i in range(4)]
         return Task(dataset=samples, solver=mock_solver(), scorer=substring_scorer(),
-                    metadata={"condition": condition, "model": "haiku",
+                    metadata={"model": "haiku",
                               "corpus": {"dataset": "mixed/multihop-rag", "signature": "sig"},
                               "cohort": cohort})
 
@@ -767,7 +1121,7 @@ def test_inspect_path_roundtrip(tmp_path):
               mock_task(condition="C", wrong_q0=False, cost=0.06, tok=2000)],
              log_dir=log_dir, epochs=2, model="mockllm/model", log_format="json")
 
-    summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log_dir)
     rec = utility_comparison.compose_utility(
         summaries, composed_at="t", contamination_class="private-synthetic")
     cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
@@ -828,10 +1182,11 @@ def test_inspect_path_leak_detection_needs_a_known_signal_shape(tmp_path):
 
     @task
     def mock_task(condition="A"):
-        samples = [Sample(id="q0", input="Q0", target="ANS0", metadata={"echo": "ANS0"})]
+        samples = [Sample(id=f"{condition}|q0", input="Q0", target="ANS0",
+                          metadata={"condition": condition, "echo": "ANS0"})]
         return Task(dataset=samples, solver=mock_solver_with_suspicious_response(),
                     scorer=substring_scorer(),
-                    metadata={"condition": condition, "model": "haiku",
+                    metadata={"model": "haiku",
                               "corpus": {"dataset": "mixed/multihop-rag", "signature": "sig"},
                               "cohort": cohort})
 
@@ -839,7 +1194,7 @@ def test_inspect_path_leak_detection_needs_a_known_signal_shape(tmp_path):
     eval_set([mock_task(condition="A"), mock_task(condition="C")],
              log_dir=log_dir, epochs=1, model="mockllm/model", log_format="json")
 
-    summaries = aur.eval_logs_to_summaries(log_dir, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log_dir)
     rec = utility_comparison.compose_utility(summaries, composed_at="t")
     cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
     assert cell["leak_suspect_cells"] == []  # signal sat in a key neither scan reads
@@ -937,13 +1292,128 @@ def test_governance_end_to_end(tmp_path):
     verdict, metrics = paired_comparability(arms)
     assert verdict.comparable is False                  # C ~30% + asymmetric exclusion
 
-    summaries = aur.eval_logs_to_summaries(log, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log)
     gov = {"comparable": verdict.comparable, "reasons": verdict.reasons, "metrics": metrics,
            "per_arm_loss": {c: {"n_excluded": l.n_excluded} for c, l in arms.items()}}
     rec = utility_comparison.compose_utility(
         summaries, composed_at="t", governance=gov, confidence_tier="A")
     assert rec["comparability"]["comparable"] is False
     assert rec["confidence_tier"] == "C"                # DERIVED, overrides the passed "A"
+
+
+def test_composer_rejects_hidden_corpus_or_resolved_model_mix():
+    per_query = {"q0": {"correct": True, "cost_usd": 0.1,
+                         "unique_tokens": 100, "num_turns": 1}}
+    a = _summary("A", per_query, corpus={"dataset": "mixed/multihop-rag", "signature": "s1"},
+                 agent_model_version="provider-v1")
+    c = _summary("C", per_query, search_key="sc",
+                 corpus={"dataset": "mixed/multihop-rag", "signature": "s2"},
+                 agent_model_version="provider-v1")
+    with pytest.raises(utility_comparison.UtilityComposeError, match="mixes corpus/resolved-model"):
+        utility_comparison.compose_utility([a, c], composed_at="t")
+
+    c_same_corpus_new_model = _summary(
+        "C", per_query, search_key="sc",
+        corpus={"dataset": "mixed/multihop-rag", "signature": "s1"},
+        agent_model_version="provider-v2",
+    )
+    with pytest.raises(utility_comparison.UtilityComposeError, match="mixes corpus/resolved-model"):
+        utility_comparison.compose_utility([a, c_same_corpus_new_model], composed_at="t")
+
+
+def test_composer_rejects_duplicate_seed_summaries():
+    per_query = {"q0": {"correct": True, "cost_usd": 0.1,
+                         "unique_tokens": 100, "num_turns": 1}}
+    a = _summary("A", per_query)
+    c = _summary("C", per_query, search_key="sc")
+    with pytest.raises(utility_comparison.UtilityComposeError, match="duplicate summaries"):
+        utility_comparison.compose_utility([a, dict(a), c], composed_at="t")
+
+
+def test_governance_reads_sample_conditions_from_one_consolidated_log(tmp_path):
+    """Regression: executor-v2 stores every arm in one task/log.
+
+    Loss accounting must use each sample's condition, normalize ``A|qid`` IDs,
+    and retain failed attempts that the valid-cell composer projection omits.
+    """
+    pytest.importorskip("inspect_ai")
+    from inspect_ai import Task, eval_set, task
+    from inspect_ai.dataset import Sample
+    from inspect_ai.solver import solver
+
+    from jseval import agent_utility_run as aur
+    from jseval.agent_utility_inspect import substring_scorer
+    from jseval.utility_governance import compute_loss_accounting
+
+    @solver
+    def consolidated_solver():
+        async def solve(state, generate):
+            metadata = state.metadata or {}
+            if metadata.get("force_error"):
+                state.metadata["error"] = "forced timeout"
+                return state
+            state.output.completion = metadata["answer"]
+            state.metadata.update({"cost_usd": 0.1, "unique_tokens": 2000, "num_turns": 3})
+            return state
+        return solve
+
+    @task
+    def consolidated_task():
+        samples = []
+        for condition in ("A", "C"):
+            for index in range(4):
+                samples.append(Sample(
+                    id=f"{condition}|q{index}",
+                    input=f"Q{index}",
+                    target=f"ANS{index}",
+                    metadata={
+                        "condition": condition,
+                        "answer": f"ANS{index}",
+                        "force_error": condition == "C" and index < 2,
+                    },
+                ))
+        return Task(
+            dataset=samples,
+            solver=consolidated_solver(),
+            scorer=substring_scorer(),
+            metadata={
+                "model": "haiku",
+                "corpus": {"dataset": "mixed/multihop-rag", "signature": "s"},
+                "cohort": {
+                    "model": "haiku",
+                    "cli_version": "v",
+                    "mcp_tool_surface_hash": "h",
+                    "judge_kind": "substring-em",
+                    "prompt_template_hash": "p",
+                },
+            },
+        )
+
+    log_dir = (tmp_path / "consolidated").as_posix()
+    eval_set(
+        [consolidated_task()],
+        log_dir=log_dir,
+        epochs=2,
+        model="mockllm/model",
+        log_format="json",
+    )
+
+    arms = compute_loss_accounting(log_dir)
+    assert set(arms) == {"A", "C"}
+    assert arms["A"].n_completed == 8
+    assert arms["A"].excluded_query_ids == set()
+    assert arms["C"].n_completed == 4
+    assert arms["C"].n_excluded == 4
+    assert arms["C"].excluded_query_ids == {"q0", "q1"}
+    assert arms["C"].ok_by_seed == {0: {"q2", "q3"}, 1: {"q2", "q3"}}
+
+    summaries = aur.eval_logs_to_summaries(log_dir)
+    by_condition_seed = {
+        (summary["condition"], summary["manifest"]["seed"]): set(summary["per_query"])
+        for summary in summaries
+    }
+    assert by_condition_seed[("A", 0)] == {"q0", "q1", "q2", "q3"}
+    assert by_condition_seed[("C", 0)] == {"q2", "q3"}
 
 
 # --- Condition B separation + LLM-judge (tempdoc 624 C-4 / C-6) ---------------
@@ -967,15 +1437,18 @@ def _graded_logs(tmp_path, conds_through):
             idx, tgt = md.get("idx", 0), md.get("tgt", "")
             state.output.completion = tgt if idx <= correct_through else "wrong"
             state.metadata.update({"cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3})
+            if md.get("condition") == "B":
+                state.metadata["observed_mcp_tool_surface_hash"] = "h"
             return state
         return solve
 
     @task
     def gt(condition="A", correct_through=99):
-        samples = [Sample(id=f"q{i}", input=f"Q{i}", target=f"ANS{i}",
-                          metadata={"idx": i, "tgt": f"ANS{i}"}) for i in range(4)]
+        samples = [Sample(id=f"{condition}|q{i}", input=f"Q{i}", target=f"ANS{i}",
+                          metadata={"condition": condition, "idx": i, "tgt": f"ANS{i}"})
+                   for i in range(4)]
         return Task(dataset=samples, solver=graded(correct_through), scorer=substring_scorer(),
-                    metadata={"condition": condition, "model": "haiku",
+                    metadata={"model": "haiku",
                               "corpus": {"dataset": "mixed/multihop-rag", "signature": "s"},
                               "cohort": _COHORT})
 
@@ -985,12 +1458,64 @@ def _graded_logs(tmp_path, conds_through):
     return log
 
 
+def test_pure_recomposition_digest_ignores_only_composed_at(tmp_path):
+    from jseval.utility_recompose import finalize_logs, semantic_digest
+
+    log = _graded_logs(tmp_path, {"A": 1, "B": 2})
+    first = finalize_logs([log], composed_at="2026-01-01T00:00:00Z")
+    replay = finalize_logs([log], composed_at="2026-02-01T00:00:00Z")
+
+    assert first["schema_version"] == 2
+    assert first["semantic_digest"] == replay["semantic_digest"]
+    assert semantic_digest(first) == first["semantic_digest"]
+    assert first["comparability"]["per_arm_loss"]["A"]["n_attempted"] == 4
+
+    changed = dict(replay)
+    changed["confidence_tier"] = "A"
+    assert semantic_digest(changed) != first["semantic_digest"]
+
+
+def test_semantic_digest_excludes_tempdoc_729_self_description_fields(tmp_path):
+    """Cross-chain finding (tempdoc 736 U1): `denominators`, `seed_floor_met`,
+    `exposure_contrast_ineligible`, and their nested `denominator_note`/
+    claim-policy-gate mirrors are pure self-description -- either a fixed
+    constant or a deterministic re-derivation of an already-digested field
+    -- so they must NOT move `semantic_digest`. Regression-locks
+    `semantic_projection`'s declared exclusion (utility_recompose.py)."""
+    import copy
+
+    from jseval.utility_recompose import finalize_logs, semantic_digest
+
+    log = _graded_logs(tmp_path, {"A": 1, "B": 2})
+    real = finalize_logs([log], composed_at="t")
+    assert "denominators" in real
+    assert "seed_floor_met" in real
+
+    stripped = copy.deepcopy(real)
+    del stripped["denominators"]
+    del stripped["seed_floor_met"]
+    stripped.pop("exposure_contrast_ineligible", None)
+    if isinstance(stripped.get("comparability"), dict):
+        stripped["comparability"].pop("denominator_note", None)
+    for by_model in (stripped.get("measured") or {}).values():
+        for cell in by_model.values():
+            if isinstance(cell.get("funnel"), dict):
+                cell["funnel"].pop("denominator_note", None)
+    stripped["claim_verdict"]["gates"] = [
+        g for g in stripped["claim_verdict"]["gates"] if g["name"] != "seed_floor_met"
+    ]
+    for stratum in stripped["claim_verdict"]["stratum_outcomes"]:
+        stratum["gates"].pop("seed_floor_met", None)
+
+    assert semantic_digest(stripped) == real["semantic_digest"]
+
+
 def test_composer_separates_addition_b_and_substitution_c(tmp_path):
     pytest.importorskip("inspect_ai")
     from jseval import agent_utility_run as aur
     # A correct q0-1 (0.5); B correct q0-2 (0.75); C correct all (1.0).
     log = _graded_logs(tmp_path, {"A": 1, "B": 2, "C": 3})
-    summaries = aur.eval_logs_to_summaries(log, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log)
     rec = utility_comparison.compose_utility(summaries, composed_at="t")
     cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
     assert cell["primary_arm"] == "addition_b"                   # REALISTIC arm headlines, never C (C-4)
@@ -1004,7 +1529,7 @@ def test_substitution_only_cell_is_flagged_not_headlined(tmp_path):
     pytest.importorskip("inspect_ai")
     from jseval import agent_utility_run as aur
     log = _graded_logs(tmp_path, {"A": 1, "C": 3})               # no B -> substitution-only
-    summaries = aur.eval_logs_to_summaries(log, search_config_cohort_key="sc")
+    summaries = aur.eval_logs_to_summaries(log)
     cell = utility_comparison.compose_utility(summaries, composed_at="t")["measured"]["mixed/multihop-rag"]["haiku"]
     assert cell["primary_arm"] == "substitution_c"               # only C available
     assert "headline_caveat" in cell                             # ...but flagged as NOT a deployment headline
@@ -1027,16 +1552,18 @@ def test_judge_hybrid_overlay_dual_order(tmp_path, monkeypatch):
     @solver
     def fixed():
         async def solve(state, generate):
-            state.output.completion = answers[str(state.sample_id)]
+            qid = str(state.sample_id).split("|", 1)[-1]
+            state.output.completion = answers[qid]
             state.metadata.update({"cost_usd": 0.1, "unique_tokens": 1000, "num_turns": 3})
             return state
         return solve
 
     @task
     def ct():
-        samples = [Sample(id=f"q{i}", input=f"Q{i}", target=f"ANS{i}") for i in range(4)]
+        samples = [Sample(id=f"C|q{i}", input=f"Q{i}", target=f"ANS{i}",
+                          metadata={"condition": "C"}) for i in range(4)]
         return Task(dataset=samples, solver=fixed(), scorer=substring_scorer(),
-                    metadata={"condition": "C", "model": "haiku",
+                    metadata={"model": "haiku",
                               "corpus": {"dataset": "d", "signature": "s"}, "cohort": _COHORT})
 
     log = (tmp_path / "j").as_posix()
@@ -1139,6 +1666,15 @@ def _xcorpus_fixture():
 def test_cross_corpus_pooled_offsets_but_strata_reveal_signal():
     rec = utility_comparison.compose_utility_cross_corpus(
         _xcorpus_fixture(), composed_at="t", contamination_class="private-synthetic")
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(
+        (Path(__file__).parents[1] / "utility-comparison-cross-corpus.v1.schema.json")
+        .read_text(encoding="utf-8")
+    )
+    identity_schema = schema["properties"]["measured"]["additionalProperties"][
+        "properties"
+    ]["identity"]
+    jsonschema.validate(rec["measured"]["haiku"]["identity"], identity_schema)
 
     assert rec["schema"] == "utility-comparison-cross-corpus.v1"
     assert rec["corpora"] == [
@@ -1194,6 +1730,12 @@ def test_cross_corpus_no_seed_or_qid_collision():
     # index-0-only bug) and not fewer due to qid overwrite.
     assert cell["n_paired_observations"] == 12
     assert rec["seed_count"] == 1                      # one REAL seed (0), reported honestly
+    assert "git_dirty" in rec["cohort"]
+    assert "environment" in rec["cohort"]
+    assert set(cell["identity"]["corpus_signatures"]) == {
+        "golden/battlefield-en-v1", "golden/battlefield-de-v1", "golden/synth-scan-v1",
+    }
+    assert cell["identity"]["resolved_provider_model"] == "4.5"
 
 
 def test_cross_corpus_requires_two_or_more_corpora():
@@ -1286,3 +1828,17 @@ def test_build_revision_rejects_non_string_changed_field():
             reason="leak_correction",
             changed_fields=["cohort.judge", 42],
         )
+
+
+def test_non_semantic_digest_exclusion_list_is_exactly_pinned():
+    """Tempdoc 736 hardening (refute-first review finding): the digest-exclusion
+    frozenset must be an exact, test-visible contract -- adding ANY field to it
+    silently removes that field from semantic_digest coverage, so growth must be
+    a deliberate act that fails this pin first. Do not extend the set without a
+    tempdoc-recorded justification that the new field is a pure re-derivation of
+    already-digested content."""
+    from jseval.utility_recompose import _NON_SEMANTIC_TOP_LEVEL_FIELDS
+
+    assert _NON_SEMANTIC_TOP_LEVEL_FIELDS == frozenset(
+        {"denominators", "seed_floor_met", "exposure_contrast_ineligible"}
+    )

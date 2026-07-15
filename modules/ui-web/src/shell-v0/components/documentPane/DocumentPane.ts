@@ -372,6 +372,24 @@ export class DocumentPane extends JfElement {
         return 'VDU processing';
       case 'vdu_failed':
         return 'VDU failed';
+      // Tempdoc 677: VDU ran and found no text on the page(s) — previously fell through
+      // silently to the base extraction label, hiding that VDU ran at all.
+      case 'vdu_empty':
+        return 'VDU: no text found';
+      // Tempdoc 677 abstention gate: VDU output was judged untrustworthy (or the call was
+      // skipped on an illegible input) — baseline extraction is shown instead.
+      case 'vdu_rejected':
+        return 'VDU: unreliable, not used';
+      default:
+        return null;
+    }
+  }
+
+  /** Tempdoc 677: an explanatory tooltip for provenance values a bare label doesn't fully convey. */
+  private previewProvenanceTooltip(): string | null {
+    switch ((this.provenance ?? '').toLowerCase()) {
+      case 'vdu_rejected':
+        return 'The automatic reader could not produce trustworthy text for this document, so search uses the original extraction.';
       default:
         return null;
     }
@@ -628,9 +646,10 @@ export class DocumentPane extends JfElement {
     const label = this.previewProvenanceLabel();
     if (!label) return nothing;
     const detail = this.previewEvidenceDetail();
+    const tooltip = this.previewProvenanceTooltip();
     return html`
       <div class="preview-source">
-        <span>Text source <strong>${label}</strong></span>
+        <span title=${tooltip ?? nothing}>Text source <strong>${label}</strong></span>
         ${detail ? html`<span class="preview-source-detail">${detail}</span>` : nothing}
       </div>
     `;

@@ -50,6 +50,11 @@ def load(
 # ---------------------------------------------------------------------------
 
 def _load_beir(name: str) -> tuple[dict[str, QueryRecord], dict[str, dict[str, int]], CorpusMeta]:
+    # tempdoc 709: share ir_datasets' own download cache across worktrees (config-only --
+    # see dataset_cache.apply_ir_datasets_home()'s docstring).
+    from . import dataset_cache
+
+    dataset_cache.apply_ir_datasets_home()
     dataset = ir_datasets.load(BEIR_DATASETS[name])
     queries = {q.query_id: QueryRecord(text=q.text) for q in dataset.queries_iter()}
     qrels = dataset.qrels_dict()

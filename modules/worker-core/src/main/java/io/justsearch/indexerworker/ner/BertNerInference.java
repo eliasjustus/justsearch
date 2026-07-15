@@ -23,8 +23,6 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 
 /**
  * ONNX Runtime wrapper for NER inference with optional GPU acceleration.
@@ -87,6 +85,10 @@ public final class BertNerInference implements Closeable {
         useTokenTypeIds);
     io.justsearch.indexerworker.metrics.OperationalMetrics.getInstance()
         .registerEncoder("ner", profiler);
+    // Tempdoc 710 Move 2: bind the choke-point recorder so every session.run() invocation
+    // through this SessionHandle's leases records itself — call sites can no longer forget
+    // (the class of gap that shipped as tempdoc 691 B-5).
+    sessions.setOrtRunRecorder(profiler::recordOrtCall);
   }
 
   /**
@@ -96,16 +98,33 @@ public final class BertNerInference implements Closeable {
    * {@link NerService} fallback (dev-mode path). Loads manifest, tokenizer, and label mapping
    * eagerly; reads input names from the session to populate {@link NerShape}.
    *
+   * @param capabilityContractStrict when {@code true}, an undeclared/ambiguous model-capability
+   *     fact throws instead of degrading with a WARN — {@code
+   *     justsearch.models.capability_contract_strict} (tempdoc 710 Wave 2 Move 1)
    * @throws OrtException if session input-name probe fails
    * @throws UncheckedIOException if tokenizer load fails
+   * @throws IllegalStateException if {@code capabilityContractStrict} and a capability fact is
+   *     undeclared/ambiguous
    */
   public static NerAssembly buildAssembly(
-      SessionHandle sessions, Path modelDir, int maxSequenceLength) throws OrtException {
+      SessionHandle sessions, Path modelDir, int maxSequenceLength, boolean capabilityContractStrict)
+      throws OrtException {
     ModelManifest manifest = ModelManifest.loadOrDefault(modelDir);
     Path tokenizerPath = modelDir.resolve(manifest.tokenizer());
     HuggingFaceTokenizer tokenizer;
     try {
-      tokenizer = HuggingFaceTokenizer.newInstance(tokenizerPath);
+      // Tempdoc 710 Move 3: explicit truncation=false/padding=false (matches SpladeEncoder /
+      // OnnxEmbeddingEncoder's tokenizer construction). Without this, DJL's batchEncode(List)
+      // applies its own default padding-to-batch-max regardless of this model's tokenizer.json
+      // declaring "padding": null — discovered via BertNerInferenceBoundedTokenizeTest failing
+      // with a short text's tokens padded from 11 to 512 once inferBatch's Phase 1 started using
+      // batchEncode (previously only single-text encode() was ever called, which already behaved
+      // unpadded/untruncated, so the inconsistency was latent). Explicit false on both keeps
+      // batchEncode's per-text output equivalent to encode()'s, and Java-side truncation (below)
+      // remains the sole truncation point, as already documented for maxSequenceLength.
+      tokenizer =
+          HuggingFaceTokenizer.newInstance(
+              tokenizerPath, Map.of("truncation", "false", "padding", "false"));
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to load NER tokenizer from " + tokenizerPath, e);
     }
@@ -127,45 +146,35 @@ public final class BertNerInference implements Closeable {
         io.justsearch.ort.OrtSessionAssembler.probeModelNames(sessions.environment(), probePath);
     boolean needsTokenTypeIds = probed.inputs().contains("token_type_ids");
     NerShape shape = new NerShape(maxSequenceLength, needsTokenTypeIds);
-    BioTagDecoder.LabelMapping labelMapping = loadLabelMapping(modelDir, manifest.labelConfig());
-    return new NerAssembly(sessions, shape, tokenizer, labelMapping);
+    // Tempdoc 710 Wave 2 Move 1: capabilities resolved ONCE here (the composition choke point) —
+    // label mapping is no longer parsed independently by this encoder; ModelCapabilityResolver
+    // already read the manifest-declared label config file's id2label and WARNed if absent.
+    io.justsearch.ort.ModelCapabilities capabilities =
+        io.justsearch.ort.ModelCapabilityResolver.resolve(
+            "ner",
+            modelDir,
+            manifest,
+            io.justsearch.ort.CapabilityRequirements.NER,
+            capabilityContractStrict);
+    BioTagDecoder.LabelMapping labelMapping = toLabelMapping(capabilities.labelMapping());
+    return new NerAssembly(sessions, shape, tokenizer, labelMapping, capabilities);
   }
 
   /**
-   * Loads label mapping from the manifest-declared config file's {@code id2label} field, falling
-   * back to the legacy dslim/bert-base-NER default if the config file is absent. Moved from
-   * {@link NerService} in tempdoc 397 §14.24 FD-NER so {@link #buildAssembly} can populate the
-   * {@link NerAssembly} in a single pass.
+   * Projects the ort-common capability contract's raw {@code id -> label} map into this module's
+   * {@link BioTagDecoder.LabelMapping} type. Empty (undeclared — {@link
+   * ModelCapabilityResolver} already logged a WARN naming the gap at the choke point) falls back
+   * to the legacy dslim/bert-base-NER default, loud at WARN here too since this is the last
+   * fallback actually taken (was silent {@code log.debug} pre-Wave-2 — tempdoc 710 orphan #6).
    */
-  private static BioTagDecoder.LabelMapping loadLabelMapping(
-      Path modelDir, String labelConfigFile) {
-    Path configFile = modelDir.resolve(labelConfigFile);
-    if (!java.nio.file.Files.exists(configFile)) {
-      log.debug(
-          "No {} in NER model dir, using legacy default label mapping", labelConfigFile);
+  private static BioTagDecoder.LabelMapping toLabelMapping(Map<String, String> id2label) {
+    if (id2label == null || id2label.isEmpty()) {
+      log.warn("NER label mapping undeclared — using legacy dslim/bert-base-NER default mapping");
       return BioTagDecoder.LabelMapping.bertBaseNer();
     }
-    try {
-      JsonNode root = new ObjectMapper().readTree(configFile.toFile());
-      JsonNode id2label = root.get("id2label");
-      if (id2label == null || !id2label.isObject()) {
-        log.debug("No id2label in {}, using default label mapping", labelConfigFile);
-        return BioTagDecoder.LabelMapping.bertBaseNer();
-      }
-      Map<String, String> mapping = new HashMap<>();
-      for (var entry : id2label.properties()) {
-        mapping.put(entry.getKey(), entry.getValue().asText());
-      }
-      BioTagDecoder.LabelMapping result = BioTagDecoder.LabelMapping.fromId2Label(mapping);
-      log.info(
-          "NER label mapping loaded from {}: {} labels",
-          labelConfigFile,
-          result.id2label().length);
-      return result;
-    } catch (Exception e) {
-      log.warn("Failed to load NER label mapping from {}, using default", labelConfigFile, e);
-      return BioTagDecoder.LabelMapping.bertBaseNer();
-    }
+    BioTagDecoder.LabelMapping result = BioTagDecoder.LabelMapping.fromId2Label(id2label);
+    log.info("NER label mapping resolved: {} labels", result.id2label().length);
+    return result;
   }
 
   /**
@@ -196,8 +205,6 @@ public final class BertNerInference implements Closeable {
     long[] shape = {1, seqLen};
 
     try (var lease = sessions.acquire()) {
-      OrtSession activeSession = lease.session();
-
       try (OnnxTensor inputIdsTensor =
               OnnxTensor.createTensor(sessions.environment(), LongBuffer.wrap(inputIds), shape);
           OnnxTensor attentionMaskTensor =
@@ -234,19 +241,19 @@ public final class BertNerInference implements Closeable {
           ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
           try {
             try (Scope _ = ortSpan.makeCurrent();
-                 OrtSession.Result result = activeSession.run(inputs, lease.runOptions())) {
+                 OrtSession.Result result = lease.run(inputs)) {
             long t3 = System.nanoTime();
             // NER output shape: [1, seqLen, numLabels]
             float[][][] output3d = (float[][][]) result.get(0).getValue();
             float[][] logits = output3d[0]; // Remove batch dimension
             long t4 = System.nanoTime();
 
-            // Aggregate profiling
+            // Aggregate profiling. ORT-call timing is now recorded at the Lease choke point
+            // (tempdoc 710 Move 2) via the recorder bound in the constructor; t2/t3 stay only
+            // as the extract-phase boundary.
             profiler.addPhaseNs("tokenize", t1 - t0);
             profiler.addPhaseNs("tensor", t2 - t1);
-            long ortElapsed = t3 - t2;
             profiler.addPhaseNs("extract", t4 - t3);
-            profiler.recordOrtCall(ortElapsed);
             // callCount() is approximate — concurrent threads may skip or double-fire
             // at interval boundaries. Acceptable for periodic diagnostic logging.
             long calls = profiler.callCount();
@@ -294,6 +301,19 @@ public final class BertNerInference implements Closeable {
   }
 
   /**
+   * Upper bound on total input CHARS per native {@code batchEncode} call in {@link #inferBatch}'s
+   * tokenize phase. Mirrors {@code SpladeEncoder.TOKENIZE_GROUP_CHAR_BUDGET} (tempdoc 686 crash
+   * fix; ported here by tempdoc 710 Move 3). NER inputs are typically pre-chunked to a few hundred
+   * tokens by the caller, but (a) this tokenizer's {@code tokenizer.json} has {@code truncation:
+   * null} — no tokenizer-level cap — so one mis-chunked/oversized text still produces an unbounded
+   * native encoding, and (b) the caller LIST itself is unbounded, so tokenizing it upfront in one
+   * unbounded scan before any inference sub-batching held the same class of landmine SPLADE hit.
+   * Grouping by input chars bounds peak per-call native materialization to one group regardless
+   * of caller list size, while preserving exact per-text tokenization results.
+   */
+  private static final long TOKENIZE_GROUP_CHAR_BUDGET = 512_000;
+
+  /**
    * Runs batched NER inference on multiple text chunks. Sorts by token count, groups into
    * sub-batches by sequence length bucket, pads to bucket boundary (not max-in-batch) to minimize
    * padding waste while keeping consistent tensor shapes for ORT caching.
@@ -310,7 +330,10 @@ public final class BertNerInference implements Closeable {
       return List.of(infer(texts.get(0)));
     }
 
-    // Tokenize all texts
+    // Tokenize in memory-bounded groups (tempdoc 686/710 crash-fix port — see
+    // TOKENIZE_GROUP_CHAR_BUDGET). Groups are processed in original order and written into the
+    // same per-index arrays a single upfront scan would have produced, so grouping changes only
+    // native-call granularity, not output order or values.
     int n = texts.size();
     long[][] allInputIds = new long[n][];
     long[][] allAttentionMask = new long[n][];
@@ -318,14 +341,28 @@ public final class BertNerInference implements Closeable {
     long[][] allWordIds = new long[n][];
     int[] tokenCounts = new int[n];
 
-    for (int i = 0; i < n; i++) {
-      Encoding enc = tokenizer.encode(texts.get(i));
-      int seqLen = Math.min(enc.getIds().length, maxSequenceLength);
-      allInputIds[i] = truncate(enc.getIds(), seqLen);
-      allAttentionMask[i] = truncate(enc.getAttentionMask(), seqLen);
-      allTokens[i] = truncateStr(enc.getTokens(), seqLen);
-      allWordIds[i] = truncate(enc.getWordIds(), seqLen);
-      tokenCounts[i] = seqLen;
+    int groupStart = 0;
+    while (groupStart < n) {
+      int groupEnd = groupStart;
+      long groupChars = 0;
+      while (groupEnd < n
+          && (groupEnd == groupStart
+              || groupChars + texts.get(groupEnd).length() <= TOKENIZE_GROUP_CHAR_BUDGET)) {
+        groupChars += texts.get(groupEnd).length();
+        groupEnd++;
+      }
+      Encoding[] groupEncodings = tokenizer.batchEncode(texts.subList(groupStart, groupEnd));
+      for (int j = 0; j < groupEncodings.length; j++) {
+        int idx = groupStart + j;
+        Encoding enc = groupEncodings[j];
+        int seqLen = Math.min(enc.getIds().length, maxSequenceLength);
+        allInputIds[idx] = truncate(enc.getIds(), seqLen);
+        allAttentionMask[idx] = truncate(enc.getAttentionMask(), seqLen);
+        allTokens[idx] = truncateStr(enc.getTokens(), seqLen);
+        allWordIds[idx] = truncate(enc.getWordIds(), seqLen);
+        tokenCounts[idx] = seqLen;
+      }
+      groupStart = groupEnd;
     }
 
     // Sort by token count (ascending) to group similar-length sequences
@@ -363,8 +400,6 @@ public final class BertNerInference implements Closeable {
       long[] shape = {batchSize, padLen};
 
       try (var lease = sessions.acquire()) {
-        OrtSession activeSession = lease.session();
-
         try (OnnxTensor inputIdsTensor =
                 OnnxTensor.createTensor(sessions.environment(), LongBuffer.wrap(flatIds), shape);
             OnnxTensor attentionMaskTensor =
@@ -391,13 +426,13 @@ public final class BertNerInference implements Closeable {
                 ORT_TRACER, "ner", batchSize, padLen);
             ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
             try {
-              // Tempdoc 691 B-5: mirror the single-doc path's encoder-profile recording —
-              // without it, batched-healthy runs report ortP50 from a handful of stray
-              // batch=1 calls, silently corrupting NER attribution.
-              long ortStart = System.nanoTime();
+              // Tempdoc 710 Move 2: ORT-call timing is recorded at the Lease choke point
+              // (lease.run below) via the recorder bound in the constructor — no per-call-site
+              // recordOrtCall needed here (this is the exact NER batched-path gap tempdoc 691
+              // B-5 shipped under the old per-call-site regime; the choke point makes it
+              // structurally impossible to omit again).
               try (Scope _ = ortSpan.makeCurrent();
-                   OrtSession.Result result = activeSession.run(inputs, lease.runOptions())) {
-                profiler.recordOrtCall(System.nanoTime() - ortStart);
+                   OrtSession.Result result = lease.run(inputs)) {
                 float[][][] output3d = (float[][][]) result.get(0).getValue();
                 for (int j = 0; j < batchSize; j++) {
                   int origIdx = sortedIndices[batchStart + j];

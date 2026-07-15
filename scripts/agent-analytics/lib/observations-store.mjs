@@ -205,13 +205,89 @@ export function readStore(file) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Significant-token set for the anchorless title-similarity fallback. Keeps the
+ * *contents* of backtick-quoted identifiers (a file/symbol name is the most
+ * discriminating part of a note — stripping it made different-artifact notes with
+ * a shared template collide, tempdoc 721 review); drops dates, tempdoc/issue
+ * numbers, §refs, and sub-4-char tokens as noise.
+ */
+function sigTokens(s) {
+  return new Set(
+    String(s)
+      .toLowerCase()
+      .replace(/\(\d{4}-\d{2}-\d{2}\)|tempdoc\s*\d+|#?\d{2,4}|§[\w.\d-]+/g, ' ')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 4),
+  );
+}
+/**
+ * Whole backtick-quoted identifiers (normalized), the discriminating nouns of a
+ * note (`package.json`, `SqliteJobQueue.foo`). The anchorless fuzzy-merge path
+ * activates ONLY when an entry names such an identifier AND shares one with the
+ * candidate — so free-prose notes that share a template but differ in a content
+ * word (e.g. "ingest" vs "summary" pipeline) can never over-merge on boilerplate
+ * Jaccard alone (tempdoc 721 independent review).
+ */
+function identTokens(s) {
+  const out = new Set();
+  for (const m of String(s).matchAll(/`([^`]{2,})`/g)) {
+    const norm = m[1].toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (norm.length >= 3) out.add(norm);
+  }
+  return out;
+}
+function shares(a, b) {
+  for (const x of a) if (b.has(x)) return true;
+  return false;
+}
+function jaccard(a, b) {
+  let inter = 0;
+  for (const x of a) if (b.has(x)) inter += 1;
+  return inter / (a.size + b.size - inter || 1);
+}
+export const ANCHORLESS_MERGE_THRESHOLD = 0.6;
+
+/**
  * Find the condition a raw entry line belongs to, or null.
  * Conservative by design: primary-anchor equality, and when several groups share
  * that anchor, the entry's symptom class must match too (no transitive merging).
+ *
+ * Anchorless fallback (tempdoc 721): an entry with no extractable anchor used to
+ * ALWAYS open a new condition, so every re-observation of the same anchorless note
+ * minted a fresh `unanchored-*` slug instead of bumping `seen` — the backlog-inflating
+ * fold leak. Such an entry now merges into an existing *anchorless* condition of the
+ * same symptom class when their significant-token Jaccard clears the threshold (single
+ * best match only — never transitive, mirroring the same-anchor guard).
  */
 export function matchGroup(groups, entryLine) {
   const anchors = extractAnchors(entryLine);
-  if (anchors.length === 0) return null;
+  if (anchors.length === 0) {
+    const idents = identTokens(entryLine);
+    // No backtick identifier to key on → don't fuzzy-merge free prose. Two notes that
+    // share a boilerplate template but differ only in a content word ("ingest" vs
+    // "summary" pipeline) clear a high Jaccard yet are different conditions; with no
+    // shared named artifact we cannot tell them apart, so open a new condition rather
+    // than risk collapsing distinct signal (tempdoc 721 review). Fragmenting an
+    // identifier-less re-observation is recoverable noise; over-merging is signal loss.
+    if (idents.size === 0) return null;
+    const sym = symptomClass(entryLine);
+    const toks = sigTokens(entryLine);
+    if (toks.size < 3) return null; // too little signal to match safely
+    let best = null;
+    let bestScore = 0;
+    for (const g of groups) {
+      if (isParked(g)) continue; // never absorb a recurrence into a dismissed (parked) condition — let it resurface (tempdoc 721 review)
+      const a = String(g.fields.anchor || '').toLowerCase();
+      if (a && a !== 'none') continue; // only merge into other anchorless conditions
+      if ((g.fields.symptom || symptomClass(g.title)) !== sym) continue;
+      const gText = `${g.title} ${g.occurrences[0] || ''}`;
+      if (!shares(idents, identTokens(gText))) continue; // require a SHARED named artifact before a fuzzy text match
+      const score = jaccard(toks, sigTokens(gText));
+      if (score > bestScore) { bestScore = score; best = g; }
+    }
+    return bestScore >= ANCHORLESS_MERGE_THRESHOLD ? best : null;
+  }
   const primary = anchors[0].toLowerCase();
   const short = primary.split('/').pop();
   const candidates = groups.filter((g) => {

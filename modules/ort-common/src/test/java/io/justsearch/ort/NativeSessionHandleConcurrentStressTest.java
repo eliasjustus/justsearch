@@ -85,7 +85,14 @@ final class NativeSessionHandleConcurrentStressTest {
   @Timeout(value = 180, unit = TimeUnit.SECONDS)
   void stressTenThreads() throws Exception {
     Path modelDir = findModelDir();
-    assumeTrue(modelDir != null, "No embedding model on disk; skipping stress test");
+    assumeTrue(
+        modelDir != null,
+        "No embedding model on disk under models/onnx/embedding or"
+            + " models/onnx/gte-multilingual-base — walked "
+            + io.justsearch.ort.testing.ModelDirTestResolver.MAX_WALK_DEPTH
+            + " parent director(ies) up from "
+            + System.getProperty("user.dir")
+            + "; skipping stress test");
     Path cpuModelPath = modelDir.resolve("model.onnx");
     assumeTrue(Files.exists(cpuModelPath), "model.onnx not found at " + cpuModelPath);
 
@@ -323,24 +330,21 @@ final class NativeSessionHandleConcurrentStressTest {
   // Helpers.
   // =========================================================================
 
+  // Tempdoc 710 Move 6: shared walker (obs:spladebatchsweeptest) — this used to walk only 5
+  // parent dirs, silently skipping in every worktree session. Tries "models/onnx/embedding"
+  // first, then falls back to "models/onnx/gte-multilingual-base" (this repo's real embedding
+  // model directory).
   private static Path findModelDir() {
-    Path repoRoot = Path.of(System.getProperty("user.dir"));
-    Path candidate = repoRoot;
-    for (int i = 0; i < 5; i++) {
-      Path modelsDir = candidate.resolve("models/onnx/embedding");
-      if (Files.exists(modelsDir.resolve("model.onnx"))) {
-        return modelsDir;
-      }
-      Path gteDir = candidate.resolve("models/onnx/gte-multilingual-base");
-      if (Files.exists(gteDir.resolve("model.onnx"))) {
-        return gteDir;
-      }
-      candidate = candidate.getParent();
-      if (candidate == null) {
-        return null;
-      }
+    io.justsearch.ort.testing.ModelDirTestResolver.Discovery embedding =
+        io.justsearch.ort.testing.ModelDirTestResolver.discover(
+            "models/onnx/embedding", null, "model.onnx");
+    if (embedding.modelDir() != null) {
+      return embedding.modelDir();
     }
-    return null;
+    io.justsearch.ort.testing.ModelDirTestResolver.Discovery gte =
+        io.justsearch.ort.testing.ModelDirTestResolver.discover(
+            "models/onnx/gte-multilingual-base", null, "model.onnx");
+    return gte.modelDir();
   }
 
   private static String summarize(AtomicInteger... counters) {

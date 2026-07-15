@@ -52,6 +52,19 @@ triaged into this register's sections or retired to `decisions.md`.
 Reference metadata. Every slug is a valid `dataset_name` argument to jseval.
 Query variants of the same corpus get distinct slugs.
 
+**Hop-count vocabulary note (tempdoc 731 §3.3, issue 14).** For the procedurally-generated
+`golden/*` chain corpora (`scripts/jseval/jseval/corpus_generate.py`; `golden/battlefield-en-v1`,
+`golden/battlefield-de-v1` below, and the `hops=N` generator parameter cited in the provenance
+notes under Findings) and the 707 fabricated-chain-injection family built on the same generator:
+the `hops=N` parameter and the emitted `question_type: "N_hop"` label count planted-chain
+relation *edges*, not behavioral retrieval hops. An N-entity chain has `hops = N-1` edges but
+requires **N retrievals** to answer (one gold doc per entity) — behavioral hops = edges + 1.
+Both vocabularies are internally consistent within their own contexts; the collision is only at
+the reader. Do not relabel `question_type` on committed corpora — `queries.json` bytes are
+digest-bound (`query_gold_sha256`, `corpus_certify.py:107,274,292`) and a relabel invalidates
+every committed cell signature. The behavioral count is already derivable without a relabel:
+`retrieval_hops = len(evidence_ids)`.
+
 | Slug | Domain | Lang | Docs | Queries | Query Form | Last Validated | Validated By | Notes |
 |------|--------|------|------|---------|------------|---------------|-------------|-------|
 | beir/scifact | academic | en | 5183 | 300 | factoid | 2026-06-13 | 580 | BEIR standard; 580 revalidated hybrid on-baseline at HEAD |
@@ -70,6 +83,8 @@ Query variants of the same corpus get distinct slugs.
 | mixed/ohr-bench-tika-pdf | multi-domain | en | 999 | 962 | extractive | 2026-03-20 | 252 | OHR-Bench original PDFs through Tika StructuredContentExtractor. |
 | mixed/multihop-rag-2556 | news/multi-hop | en | 609 | 2556 | multi-hop inference/comparison/temporal/null | 2026-04-07 | 366 §9d | Retrieval eval, filter-bearing |
 | golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json`. **Content regenerated 2026-07-01 (tempdoc 664)** — see Corpus provenance note under Findings. |
+| golden/battlefield-en-v1 | synthetic/2-hop chains | en | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | Certified in-band 624 (hybrid 0.4143 "hard", pre-F-031). **Out of band at HEAD defaults post-F-031** (711 re-measure: hybrid 0.9517, vector 1.0000 — saturated in BOTH modes) — no longer a difficulty discriminator in any mode; still valid for throughput profiling (691). Difficulty successor: 704 Pillar 1. Source `scripts/jseval/624-corpora/battlefield-en-v1`; re-measure: `jseval corpus-fidelity --dataset battlefield-en-v1 --modes hybrid,vector --embedding --start-backend --clean`. |
+| golden/battlefield-de-v1 | synthetic/2-hop chains | de | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | In-band at HEAD defaults (711 re-measure: hybrid 0.5924 — exact match to the 624 certification — vector 0.58, "moderate") — remains a valid difficulty corpus in both modes. Source `scripts/jseval/624-corpora/battlefield-de-v1`; same re-measure command shape as en-v1. |
 
 ---
 
@@ -84,8 +99,11 @@ legs confirmed active (from pipeline_tracking.observed). `conf` — confidence
 tier. `git` — git_sha from summary.json. `src` — tempdoc citation.
 
 **Cross-run noise vs signal** — before flagging a nDCG@10 change as a
-regression, consult the cohort envelope: `<data_dir>/cohort_baselines/
-<hash>/envelope.json` gives σ per metric (tempdoc 400 LR1-b). Deltas
+regression, consult the cohort envelope: `scripts/jseval/tmp/
+cohort_baselines/<hash>/envelope.json` — the jseval-owned data root where
+calibration state is filed since tempdoc 716 (readers fall back to a
+pre-716 backend data dir with a WARN) — gives σ per metric (tempdoc 400
+LR1-b). Deltas
 inside ±2σ are noise. For encoder-level latency distribution drift
 (different question — "did ORT session.run() durations shift even
 without a nDCG change?"), use `jseval calibrate-drift-baseline` + the
@@ -221,13 +239,46 @@ catalog — see Corpus provenance note above)*
 | (HEAD default) | (default) | (default) | lexical | 0.686 | — | — | bm25 | A | 84b305b | 666 |
 | (HEAD default) | (default) | (default) | splade | 0.059 | — | — | splade | A | 84b305b | 666 |
 | (HEAD default) | (default) | (default) | hybrid | **0.521** | — | — | cross_encoder+dense+hybrid+query_classification | A | 84b305b | 666 |
+| (HEAD default, late-chunking ON = new default) | (default) | (default) | vector | **0.2967** | 0.220 | 0.365 | dense | A | e83653a | 691 §N |
+| (HEAD default, late-chunking ON) | (default) | (default) | lexical | 0.6888 | — | 0.855 | bm25 | A | e83653a | 691 §N |
+| (HEAD default, late-chunking ON) | (default) | (default) | splade | 0.0591 | — | 0.150 | splade | A | e83653a | 691 §N |
+| (HEAD default, late-chunking ON) | (default) | (default) | hybrid | **0.5497** | 0.415 | 0.695 | cross_encoder+dense+hybrid+query_classification | A | e83653a | 691 §N |
+| (late-chunking ON + `JUSTSEARCH_EMBED_GPU_MEM_MB=6144`) | (default) | (default) | vector | **0.3401** | 0.240 | 0.430 | dense | A | e83653a | 691 §N |
+| (HEAD default, RMW preservation = F-032) | (default) | (default) | lexical | 0.6891 | 0.510 | — | bm25+chunk_merge | A | b88e76e | 711 |
+| (HEAD default, RMW preservation) | (default) | (default) | splade | 0.0591 | 0.005 | — | splade+chunk_merge | A | b88e76e | 711 |
+| (HEAD default, RMW preservation) | (default) | (default) | vector | **0.6184** | 0.410 | — | dense+chunk_merge | A | b88e76e | 711 |
+| (HEAD default, RMW preservation) | (default) | (default) | hybrid | **0.5609** | 0.425 | — | cross_encoder+dense+hybrid+chunk_merge | A | b88e76e | 711 |
+| (HEAD default re-verify, FRESH build, chunk vectors probe-verified 4293/4293) | (default) | (default) | vector | 0.6185 | 0.410 | 0.825 | branch_fusion+chunk_merge+dense | A | bc4bcd8 | 713 §M-5 |
+| (HEAD default re-verify, FRESH build) | (default) | (default) | hybrid | 0.5588 | 0.425 | 0.700 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid | A | bc4bcd8 | 713 §M-5 |
+| (single-pass OFF: `late_chunking_enabled=false`, chunks ON — the F-031-less cell) | (default) | (default) | vector | **0.4147** | 0.150 | 0.725 | branch_fusion+chunk_merge+dense | B | 7b7c485 | 713 |
+| (single-pass OFF, chunks ON) | (default) | (default) | hybrid | 0.5339 | 0.375 | 0.690 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid | B | 7b7c485 | 713 |
 
-**Best known:** (HEAD default) / hybrid = **0.521** (first measurement — no ablations run yet).
+**Best known:** (HEAD default, RMW preservation) / hybrid = **0.5609**; vector = **0.6184** (711,
+2026-07-11 — supersedes 691 §N's 0.5497/0.3401: those were measured against an index whose 4,293
+chunk vectors were ALL silently destroyed post-write, F-032; all pre-711 vector/hybrid rows above
+are now dead-chunk-vector ablations). Union recall 0.925 (> 0.87 baseline); relevance + leak gates
+green at b88e76e.
 **Note:** BM25-dominant on this corpus too (lexical 0.686 vs vector/splade ~0.06) — consistent with the
 retired courtlistener-200's own BM25-dominance-on-long-legal-docs finding, though this is a fresh
 observation on the new corpus, not an inherited assumption (the new corpus has its own citation-style query
 form, `queries/test.single-removed.direct.tsv`, distinct from the old known-item task — see Corpus
 provenance note above). No cc/encoder ablation pass has been run yet.
+**Note (691, 2026-07-11):** the long-doc single-pass VECTOR path (default-on since 691 Phase 4)
+revives the dense leg 5.0× at shipped defaults (0.060→0.2967; 0.3401 with a 6144MB embed arena —
+the residual gap is ~20 near-8k-token docs OOM-falling-back to windowed at the 3072 default). See
+F-031. Union-recall 0.890 (> the 0.87 pin) on the same run; leak + relevance gates green.
+**Note (712, 2026-07-11):** the `splade` rows (0.059/0.0591) are substantially a 512-token
+truncation artifact — offline, per-chunk SPLADE covering the whole doc revives the sparse leg to
+0.327 (max-pool merge) / 0.545 (chunk-MaxP), the sparse sibling of F-031/F-032. See F-033 + Q-017.
+No engine-integrated chunk-splade row exists yet.
+**Note (713, 2026-07-11):** the single-pass-OFF rows are the missing (chunks-alive × no-F-031)
+cell — see F-035: the parent single-pass is NOT redundant (−0.204 vector without it). Conf B: the
+arm reused the prior run's index via jseval `--clean`'s then-protected set (retired by 716) —
+incremental rebuild, cell content probe-verified (4293/4293 chunk vectors live, `singlePass=0` in
+all 94 batches). The fresh-build re-verify rows confirm the 711 defaults pin (0.6185 ≈ 0.6184)
+with a direct on-disk vector-count probe. A separate same-session fresh-build defaults run scored
+0.3403/chunks-dead (the F-032-control signature, with the fix present) — unreproduced on the
+immediate probe-instrumented re-run, quarantined as a C-confidence anomaly in tempdoc 713 §M-3/M-5.
 
 ### mixed/miracl-de-2k
 
@@ -584,6 +635,324 @@ above)*
     deferred); the **leg-recall / candidate-set** side is tempdoc **639** (ANN recall + dedup, measurement
     deferred). The one-command cross-corpus profile that produced this finding is `jseval recall-profile`
     (tempdoc 636 §IMPLEMENTED — **note: uncommitted at time of writing, working-tree only**).
+
+### F-031: long-doc whole-doc dense death is substantially WINDOW-MEAN DILUTION — one long-context pass revives the vector leg 5-6×; SHIPPED default-on (tempdoc 691 Phases J-N, 2026-07-11; settles the 691 Q-016 draft; refines F-030(678)'s scope)
+
+- **Answer:** the production whole-doc `VECTOR` for chunked (>2000-char) docs was a mean of
+  512-token-window CLS vectors; embedding the whole doc in ONE batch-1 pass (up to 8192 tokens,
+  `OnnxEmbeddingEncoder.embedWithSpans`, `justsearch.embed.late_chunking_*`) lifts legal-clerc-200
+  `vector` nDCG@10 **0.060 → 0.2967 at shipped defaults (5.0×) / 0.3401 with a 6144MB embed arena
+  (5.7×)**, hybrid 0.523→0.5497, union-recall 0.890 (> the 0.87 pin), leak + relevance gates green.
+  Controls: enron-qa +7% vector / +1.3% hybrid (no BM25-dominant regression); scifact neutral.
+  **Default ON since 691 Phase 4** (D-004 template completed). Measured cost: background enrichment
+  slower on long-doc corpora (enron 7.7→4.5 docs/s, measured at a 3072MB arena). **Update
+  2026-07-11 (founder decision): the embed arena default is now 6144MB** — shipped defaults
+  deliver the full 0.3401 ceiling with zero OOM-fallbacks; the 0.2967 row documents the
+  3072-arena ablation.
+- **Scope reconciliation with F-030(678):** 678's elimination campaign tested gating, query shape,
+  granularity, and naturalness — context length was NOT a tested axis. This finding does not
+  overturn the encoder-domain-mismatch verdict; it SPLITS the deficit: roughly half the dense death
+  was the window-mean representation (recovered here: 0.06→0.34), the remainder (vector 0.34 vs
+  lexical 0.69) stays with the encoder-domain question (708's lane). Supporting offline datapoint
+  (691 §Phase M): pure chunk-CLS exact-NN MaxP reaches nDCG@10 0.64 / R@10 0.85 on this corpus —
+  the encoder separates legal content at chunk granularity far better than any whole-doc
+  representation, evidence 708 should weigh.
+- **What did NOT ship (measured against):** deriving `CHUNK_VECTOR`s from the same pass (canonical
+  late chunking, arXiv:2409.04701) — on this CLS-pooled model, span-mean chunk vectors regress
+  hard (offline: nDCG@10 0.640→0.407; the method's authors state CLS models are incompatible).
+  Chunk docs keep their per-chunk CLS path.
+- **Structural caveat (for any future enrichment pass):** `KnnFloatVectorField` is non-stored and
+  silently destroyed by any later read-modify-write; the combined pass's one-RMW-per-doc bundling
+  is the invariant that keeps vectors alive (691 §N-5 — a separate VECTOR-writing pass gets erased
+  by the next stage's RMW with status still COMPLETED). Logged for tempdoc 710.
+- **Evidence:** tempdoc 691 §Phase J/M/N (arm tables, five-defect forensic chain, gate reports);
+  artifacts `tmp/691-ab2/` (per-arm summary.json + worker.log copies); reproduction commands in
+  691 §K-5.
+
+### F-032: ALL chunk vectors were silently destroyed post-write at shipped HEAD — catalog-declared RMW preservation recovers them, legal vector 0.3401 → 0.6180 (tempdoc 711 Item 1, 2026-07-11; supersedes F-031's "structural caveat" with the structural fix)
+
+- **Answer:** `WritePathOps.readModifyWrite` rebuilt docs from stored fields only, so every
+  non-stored field absent from an update map was destroyed on rewrite. Live probe over the
+  on-disk index at base `f12ded5` after a defaults pipeline run on legal-clerc-200: parent
+  `vector` = 198 present, **`chunk_vector` = 0 of 4,293 present** — the `chunk_merge` leg of
+  vector mode had zero chunk vectors to merge. A second confirmed loss: SPLADE FeatureField
+  data destroyed while `splade_status` stayed COMPLETED (`preserveSplade=true` preserved the
+  status of data it could not preserve). Fix (711 Item 1): every non-stored/non-docValues
+  data-bearing field declares an `rmwPolicy` in `fields.v1.json` (`preserve-reread` for
+  vector/chunk_vector via Lucene ordinal read-back at the held searcher snapshot;
+  `reset-status:splade_status` with COMPLETED→PENDING downgrade for splade), enforced once
+  inside `readModifyWrite` with startup fail-fast for undeclared fragile fields;
+  `preserveSplade` threading deleted (36 sites).
+- **Measured (same-day A/B, byte-identical corpus sha256 630f5376…, shipped defaults):**
+  CONTROL `f12ded5` vector nDCG@10 **0.3401** (reproduces the F-031 pin to 4 decimals) /
+  hybrid 0.5446, chunk_vector docs 0; ENGINE vector **0.6180** / hybrid **0.5592**,
+  chunk_vector docs 4,293/4,293; wall 141.2 s vs 130.8 s (no throughput cost). New best-known
+  legal-clerc defaults: vector 0.6180, hybrid 0.5592.
+- **Reframes F-031:** the "0.3401 ceiling" was measured against an index with all chunk
+  vectors dead; §J-B's offline parent-only replication (0.3403) agreed with it precisely
+  *because* chunks contributed nothing. The remaining vector-vs-lexical gap for 708's
+  encoder-domain question is now 0.618 vs 0.686, not 0.34 vs 0.69.
+- **Gates (full-mode run at b88e76e, publish step):** lexical 0.6891 / splade 0.0591 / vector
+  0.6184 / hybrid 0.5609; union recall **0.925** (baseline 0.87, floor 0.82), relevance gate
+  (floor 0.4964) and leak gate (ceiling 0.255) both green. Baseline rows updated in the
+  legal-clerc block above.
+- **Evidence:** tempdoc 711 (§Item 1 implementation log + §live verification: A/B tables,
+  vector-count probe, Step-0 characterization tests); branch `worktree-711-rmw`.
+
+### F-035: the parent single-pass VECTOR is NOT redundant post-F-032 — removing it costs legal vector −0.204 even with all chunk vectors alive; KEEP BOTH representations (tempdoc 713, 2026-07-11; answers the F-032-opened missing cell; F-031's lever survives the landscape change)
+
+- **Answer:** the never-measured (chunks-alive × parent-without-single-pass) cell on
+  `mixed/legal-clerc-200` (byte-identical corpus sha256 `630f5376…`, zero-code arm
+  `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED=false`, chunk vectors on): **vector nDCG@10 0.4147 /
+  hybrid 0.5339**, vs same-session fresh-build defaults **0.6185 / 0.5588** (which re-verifies the
+  711 pin 0.6184/0.5609 with a direct on-disk probe — 4293/4293 chunk vectors live). Delta:
+  **vector −0.204 (−33%), hybrid −0.025**. Chunk-MaxP + `chunk_merge` does NOT substitute for a
+  good parent vector. **Mechanism:** the whole-doc branch participates in branch fusion regardless
+  of its quality — with the single-pass OFF, window-mean parents inject 0.060-quality noise that
+  dilutes the healthy chunk branch (the cell sits between window-mean-only 0.060 and the offline
+  chunk ceiling ~0.64). Verdict: **keep both** — the dense parent/chunk pair is a governed
+  dual-representation (parent = whole-doc gist consumed by branch fusion; chunks = best-passage
+  evidence), not a redundant fork. F-031's machinery stays; no config/default change.
+- **Cell validity:** arm probe `live_chunk_vector=4293/4293`, `singlePass=0` in all 94
+  combined-pass batches (flag took effect), `fail=0` (enrichment complete), 200 queries.
+  Conf B: the arm was an incremental rebuild over the prior run's index (jseval `--clean`
+  protected set, retired by 716) — content probe-verified, build-shape deviation noted.
+- **Honest framing:** this *confirms* (not reverses) 691's shipped F-031 lever under the F-032
+  landscape change — the charter's consolidation hypothesis is measurement-rejected.
+- **Anomaly quarantined (713 §M-3/M-5):** one same-session fresh-build defaults run scored
+  0.3403/chunks-dead (the exact F-032-control signature, with #139 verifiably in the running
+  code); the immediate probe-instrumented fresh re-run reproduced 0.6185/chunks-alive instead.
+  Unresolved one-off (C confidence, quarantined); the fresh-ingest path is NOT implicated —
+  re-open only if a chunks-dead signature (vector ≈0.34 + missing `chunk_merge` leg) recurs.
+- **Feeds 712/Q-017:** the structural argument (branch fusion always consumes the parent leg)
+  applies to the SPLADE parent too, but 712 should measure, not inherit.
+- **Evidence:** tempdoc 713 (§Takeover T-1..T-5, §Measurement M-1..M-5, probe outputs, counter
+  tables); runs `tmp/eval-results/20260711T135127/T135536/T161445_mixed_legal-clerc-200`
+  (713-dense worktree); reproduction commands in 713 §Measurement.
+
+### F-034: offline encoder bake-off on legal-clerc-200 — NO MODEL SWAP; the incumbent was never domain-limited, and no eligible multilingual candidate significantly beats it (tempdoc 708, 2026-07-11; closes the encoder-choice question F-030(678) spawned)
+
+- **Answer:** a Gate-0-anchored offline exact-NN bake-off (42 runs, byte-identical register corpus
+  `90d4300d…baf1`, harness `scripts/jseval/experiments/encoder_bakeoff_708.py`, run JSONs with
+  per-query gold ranks in the 708 worktree's `tmp/eval-results/708-bakeoff/`) screened 6 eligible
+  general-multilingual encoders (D-003-screened, Apache/MIT: Qwen3-Embedding-0.6B,
+  arctic-embed-{m,l}-v2.0, bge-m3, multilingual-e5-large, granite-278m) against the incumbent
+  `gte-multilingual-base` across three doc-side constructions (W1 production-mirror window-mean /
+  W2 single-pass long-context / C chunk-MaxP 500-50) × two query shapes (verbose, kw). **Gate 0
+  PASSED** — the harness reproduces the engine's F-030(678) dense numbers to Δ0.005 (W1 0.105/0.150
+  vs engine 0.100/0.145; nDCG 0.061 ≈ vector-mode 0.060), so deltas are engine-meaningful.
+  **Verdict: NO MODEL SWAP.** The incumbent itself clears the pre-registered FIX band once the
+  production construction is bypassed (verbose R@10: W2@2048 0.655, W2@8192 0.745, chunk-MaxP
+  **0.855** = BM25-verbose parity, nDCG 0.643); at chunk granularity no candidate is significantly
+  better (paired sign tests vs anchor-C on per-query gold ranks: arctic-l 0.865/0.671, p=0.085;
+  arctic-m 0.860/0.659, p=0.488; bge-m3 0.860/0.639, p=1.0; me5 0.770; granite 0.715; arctic-l's
+  +0.028 nDCG costs ~2× footprint + ~1.7× encode slowdown). Branch FIX was realized by the
+  691/711 construction fixes (F-031 + F-032) — shipped legal vector nDCG@10 0.6180 captures ~96%
+  of the incumbent's offline chunk-granularity ceiling (0.643).
+- **Attribution completed (the anchor-fav control):** production W1's 0.105 is dominated by
+  **CLS-pooling raw id-slice windows without a [CLS] token** (windows 2+ in
+  `OnnxEmbeddingEncoder.createChunks`) — the same model, same window-mean construction, with proper
+  per-window special tokens scores **0.745** (= W2@8192). Mean-pool dilution and granularity account
+  for the rest (0.745 → 0.855). Logged for any residual >8192-token window-mean path.
+- **Secondary findings:** (1) **kw-shape queries are weak for dense across every model and
+  condition** (max R@10 0.400) — dense needs sentence-shaped queries; the dense-side mirror of
+  F-030(678)'s BM25-verbosity monotonicity. (2) SPLADE on legal remains unrecovered (0.0591 at
+  b88e76e) and was deliberately not reopened — the eligible multilingual learned-sparse field is
+  effectively one model deep. (3) License/eligibility record: jina-v3/v4 (CC-BY-NC/Qwen-Research),
+  voyage-law-2 + Isaacus Kanon 2 (legal-specialized, proprietary API) named-and-excluded per D-003.
+- **Conditions/caveats:** offline torch fp16 exact-NN screen, not engine runs (Gate 0 is the
+  bridge); 198-doc corpus (no 4k stress — Phase 5 re-scoped to nothing since no swap ships);
+  qwen3-0.6b W2/C skipped (founder-ratified: dominated at W1 0.530, ~6× slower, 60+ min W2 run
+  killed). Candidate C/W-conditions used per-model-favorable recipes (own prefixes/pooling, proper
+  special tokens) — biased FOR candidates, strengthening the no-swap conclusion.
+- **Evidence:** tempdoc 708 (final table, protocol application, sign tests, run pointers); F-030(678)
+  refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
+  was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
+
+### F-037: the MCP evidence pack's document universe came from a DEPRECATED sparse-only pre-search while `justsearch_search` ran hybrid — a two-retrievals fork at the pack's first stage; universe fixed, curation-stage disagreement remains open (tempdoc 731, 2026-07-14)
+
+- **Answer:** `RemoteDocumentService.preSearchForDocIds` (the stage that selects the evidence
+  pack's candidate documents for `justsearch_answer`) sent a bare `SearchRequest`, which the
+  worker resolved via the deprecated-mode fallback to sparse-only+expansion, while
+  `justsearch_search` runs the hybrid preset — so a document that hybrid ranks #1 could be
+  structurally absent from the pack's 20-doc universe (observed live: the same verbatim query's
+  search-#1 missing from its pack). Rank order was additionally discarded into a `HashSet`.
+  **Fixed (731 I1):** the pre-search now single-sources the same hybrid `PipelineConfig` the MCP
+  search path builds (`SearchPipelinePresets.expandPreset(SEARCH_MODE_HYBRID, …)`), order
+  preserved end-to-end (`LinkedHashSet` + an order-preserving `RetrieveContextParams`), pinned by
+  a wire-shape regression test.
+- **Post-fix live measurement (honest):** top1-in-pack agreement on the 7 hop-doc probe queries
+  (mixed/en-legal-clerc-1k-verbose) was still **0/7** — the residual disagreement is the
+  **chunk-level curation stage** (chunk fusion selecting different parents within the aligned
+  universe), plus hybrid rank instability across index rebuilds (same corpus, rebuilt index: a
+  doc moved rank 1 → outside top-10). Universe alignment was necessary, not sufficient — the
+  curation half is 731 I6(b)'s pre-registered $0 eval (agreement metric + gold-in-context), open.
+- **Ranking-instability piece (issue 4):** two gratuitous nondeterminism sources fixed
+  (job-claim order tie-break; SQLite RETURNING-order dependence removed); HNSW rebuild variance
+  is inherent; the H4-B hypothesis (low-signal gating threshold amplifying small ANN variance
+  into large rank swings) has a committed instrument
+  (`scripts/jseval/experiments/determinism_instrument_731.py`) and awaits its two-pass live run.
+- **Evidence:** tempdoc 731 (DESIGN 3.1/3.2 with file:line, PLAN); live probes in
+  `scripts/jseval/tmp/725-ab/725-forensics/lease-probes-agreement-p0-p1.v1.json`; commits
+  `b7c2fc2`, `fd2c98e` (branch `worktree-725-response-legibility`).
+
+### F-036: live chunk-SPLADE revives the sparse leg 4.4× in isolation but is hybrid-NEUTRAL at +108% enrichment cost on legal-clerc-200 → default stays OFF (tempdoc 712, 2026-07-11; the live-tier answer to F-033/Q-017)
+
+- **Answer:** the `rag.chunk_splade.enabled` flag realizes F-033's offline revival on the live
+  engine's *isolated* sparse leg but the gain does not survive fusion. Clean same-session A/B on
+  legal-clerc-200, both arms health-verified (`chunk_merge` leg active, dense identical 0.6187 vs
+  0.6184 confirming comparability): `splade` mode 0.0591 → **0.2588** (4.4×); **`hybrid` (production)
+  0.5625 → 0.5592** — flat, within noise, marginally negative; enrichment wall 132 s → 275 s
+  (**+108%**). Short-doc control (battlefield-en-v1) flag-on hybrid 0.9517 = baseline, no regression.
+- **Mechanism:** on this corpus the dense + cross-encoder signals already rank the relevant long
+  docs, so the revived sparse leg overlaps rather than adds at the fusion stage — the same
+  isolated-win-doesn't-fuse pattern as F-004 (mode optimality is corpus-dependent) and CE-hurts-enron.
+- **Decision:** default **OFF**; the flag is a corpus-specific lever for a future sparse-dominant
+  workload. The 712 foundation (the flag + the fix for chunk docs being silently marked
+  splade-COMPLETED without encoding) shipped in #145 regardless of the default.
+- **Evidence:** tempdoc 712 §Step-4 live A/B (two runs — one confounded by the tempdoc-717
+  anomaly, one clean); reproduction commands + per-arm summaries/worker-logs archived. First-tier
+  offline result is F-033; this is its live-tier resolution.
+
+### F-033: the SPLADE (sparse) leg's ~0.059 on legal-clerc-200 is substantially a 512-token TRUNCATION artifact — per-chunk SPLADE revives it 6–10× offline; the sparse sibling of F-031/F-032 (tempdoc 712, 2026-07-11; refines F-030(678) for the sparse leg)
+
+- **Answer:** production SPLADE hard-truncates every document to `maxSeqLen=512` tokens
+  (`SpladeEncoder.encode`/batch paths: `seqLen = min(len, maxSeqLen)`; the `SpladeTruncationEvidence`
+  sidecar only *records* the loss, never windows). On legal-clerc-200, 194/198 docs exceed 512
+  tokens (median 6,615 → the encoder sees ~7.7% of the median case doc). An offline A/B on the
+  **byte-identical** corpus (corpus.jsonl sha256 `630f5376…`, same as F-032) using the
+  production-shipped ONNX model (`models/splade/naver-splade-v3` = opensearch-neural-sparse-encoding-
+  multilingual-v1) measured: **A truncated whole-doc nDCG@10 0.0539** (reproduces the shipped
+  splade-mode 0.0591 — fidelity anchor), **B per-term max-pool chunk-merge 0.3274 (6.1×)**,
+  **B chunk-level MaxP 0.5445 (10.1×)**. Recall drives it: R@10 0.14→0.775, R@100 0.69→0.945.
+  Anti-dilution signature: `sum`-merge (0.089) ≪ `max`-merge — the relevant terms are in *some*
+  chunk, not diluted across all. Per-query B beats A 104–15 (max) / 154–6 (MaxP).
+- **Refines F-030(678):** 678's granularity arm was a product-RAG A/B on dense+BM25 chunks and
+  never measured chunk-level SPLADE, so its "encoder-domain mismatch at any granularity" verdict did
+  not cover this. The multilingual SPLADE encoder *does* separate legal content at chunk
+  granularity; the deadness was representation (truncation). Consistent with the dense sibling
+  (chunk-CLS MaxP 0.64, 691 §M). The residual gap (sparse chunk-MaxP 0.545 vs lexical 0.686) stays
+  with the encoder-domain question (708's lane).
+- **Caveat (offline ceiling):** B numbers are offline exact-retrieval ceilings (no ANN / Lucene
+  saturation / fusion), same treatment as the dense 0.64 datapoint; the load-bearing result is the
+  **A/B delta**. The engine-integrated number is unmeasured (see Q-017).
+- **Reproduction:** `PYTHONUTF8=1 python scripts/jseval/experiments/splade_chunk_truncation_check_712.py
+  --dataset-dir datasets/mixed/legal-clerc-200 --model-dir <models>/splade/naver-splade-v3
+  --out tmp/712-splade-check --device cuda --batch-size 8`; artifact `tmp/712-splade-check/results.json`.
+  Evidence: tempdoc 712 §Takeover experiment.
+
+### F-030: scanned-PDF OCR execution engine replaced (tempdoc 706, 2026-07-10) — extraction-content comparability boundary
+
+- **Finding:** Tika-internal serial per-page tesseract OCR was replaced by an owned parallel engine
+  (`PdfOcrEngine`: 300 DPI GRAY, bounded pool, one spawn/page, per-document budget, forceful child
+  kill). Measured on 686-corpus scans: 77p stall doc 113.9s → 16.8s (6.8×) with **100% of the
+  before-run's unique word vocabulary retained** (strict superset — the new path also merges the
+  baseline text layer where the old primary path replaced it, and recovers documents the old
+  Tika-internal pass silently failed on). Config defect fixed alongside: absent OCR config
+  (eval/headless + likely packaged installs) previously meant NO page cap or image guards; now
+  absent = safe defaults (30s/50p), yaml+code unified.
+- **Measurement relevance:** extraction-quality or agent-utility measurements over scanned/mixed
+  PDFs are **not content-comparable across this commit boundary** — OCR'd documents can gain
+  substantial content (text-layer merge + recovered pages). Retrieval-side analysis and
+  `extraction_method`/reason-code semantics are unchanged (671 classifiers green unmodified).
+- **Evidence:** tempdoc 706 §Execution log (before/after harness, word-overlap parity).
+
+### F-030: dense/SPLADE death on legal-shaped retrieval is an ENCODER-DOMAIN MISMATCH — not gating, not query length, not granularity, not query naturalness (tempdoc 678 §Pillar-5 campaign, 2026-07-10; answers Q-015)
+
+- **REFINEMENT (2026-07-11, tempdoc 708 closure — original text below kept intact; annotate-don't-rewrite):**
+  the "encoder-domain mismatch" verdict is **superseded in mechanism** by F-031 + F-032 + F-034: the
+  encoder (gte-multilingual-base) was never domain-limited on legal text. The dense death this finding
+  attributed to the representation decomposes into (a) **window-mean whole-doc construction dilution**
+  (F-031: one long-context pass lifts legal vector 5-6×, shipped default-on) and (b) **chunk vectors
+  silently destroyed post-write** (F-032: `chunk_vector` 0/4,293 present at the HEAD every pillar-5 probe
+  ran against; RMW-policy fix ships legal vector nDCG@10 0.6180). In particular, this finding's "chunk
+  granularity adds only +3.0 pts" clause is an **artifact of F-032** (the chunk-hybrid arm had zero chunk
+  vectors) — the corrected measurements are offline chunk-MaxP **R@10 0.855 / nDCG@10 0.643** with the
+  same incumbent encoder (708 bake-off, Gate-0-anchored) and shipped post-fix vector **0.6180** (F-032).
+  A dated correction annotation sits on tempdoc 678 §E5-D itself. What SURVIVES of this finding: the raw
+  measurements (accurate for that HEAD), the gate/fusion exoneration (702), the BM25-verbosity
+  monotonicity, the SPLADE profile (still unrecovered — splade 0.0591 at b88e76e), and the RAG-surface
+  product finding. The encoder-choice question it spawned (708) closed **NO MODEL SWAP** — see F-034.
+- **Answer:** a four-stage elimination campaign on `mixed/legal-clerc-200` (198 docs / 200 queries,
+  fixed qrels throughout, all runs `comparable=True`, staged-recall reconciliation 0 mismatches)
+  attributed F-029's dead semantic legs. Raw pre-fusion R@10 by query shape: dense **0.100**
+  (verbose citing sentences) / **0.145** (deterministic keyword top-8) / **0.145** (LLM-reduced
+  natural short phrases, Qwen3.5-9B temp=0, 0 fallbacks); SPLADE ≤0.165 at every shape. Chunk
+  granularity adds only **+3.0 pts** (product RAG surface A/B via `JUSTSEARCH_RAG_RETRIEVE_MODE`:
+  chunk-hybrid 0.710 vs chunk-bm25 0.680 gold-in-context, probe validated against jseval's own
+  hybrid number first). Gate/fusion was exonerated first: tempdoc 702's EUCLIDEAN/COSINE threshold
+  recalibration (bytecode-confirmed real, shipped PR #121) changed NOTHING measurable on four
+  corpora — the miscalibration was latent (dense top-1 clears even the wrong gate where dense
+  works), and post-fix legal hybrid is unchanged (0.517 ≈ 0.521). **What remains is the
+  representation: gte-multilingual (and the multilingual SPLADE encoder, same profile) does not
+  separate legal case documents by citation-relevant content, at any query shape or granularity.**
+- **Secondary findings:** (1) BM25 is **monotonic in query verbosity** on CLERC — R@10 0.630
+  (keyword) → 0.780 (natural short) → 0.855 (verbose): the citing sentence's context is
+  load-bearing for the lexical leg, so query reduction is NOT a free lever; any query-side
+  mechanism must be per-leg (constrains 678's lever design and 707's query construction).
+  (2) Positive product finding: the chunk-first RAG surface reaches **0.68 gold-in-context within
+  ~2.9 documents** on legal text via lexical chunks alone — the ICP shape is served today, riding
+  BM25. (3) CLERC docs are extreme-length (median 28.5k chars, 97% chunked) — maximal whole-doc
+  mean-pool dilution conditions, yet granularity still wasn't the lever.
+- **Conditions/caveats:** one corpus family (CLERC citation-retrieval); one encoder family tested.
+  The verdict routes to a model/representation investigation (704 names it a new unowned piece;
+  636/580-adjacent) — NOT to corpus design (707 proceeds on its Branch B: measure the engine
+  as-is, no design flatters dense), NOT to 678's query lever (which remains live for corpora where
+  dense works), NOT to 639/ANN (ruled out, 701 E2). Evidence: tempdoc 678 §Pillar-5 (E5-A..E5-C-v2
+  results tables + run-dir pointers), tempdoc 702 §B.7, tempdoc 707.
+- **Reusable instrument:** `jseval corpus-query-variant` (deterministic `keyword` + recorded-params
+  `llm-reduced` transforms) — query-shape sweeps on any local dataset are now a one-command
+  operation (PRs #123/#125).
+
+### F-029: size-robustness is CORPUS-DEPENDENT — repetitive-real legal text degrades where diverse Wikipedia is flat; dense+SPLADE near-dead on CLERC at every size (tempdoc 701 probe, 2026-07-10)
+
+- **Finding:** an E4-style fixed-query volume sweep on REAL legal text (CLERC, byte-identical 200
+  queries, 198 → 4,000 docs via the new `corpus-fetch-clerc --n-docs` distractor sampling) measured
+  `leg_union_recall` **0.875 → 0.705** (LEG_MISS 0.10 → 0.295), final_recall 0.865 → 0.685, full nDCG
+  0.681 → 0.507. This **scopes F-028's provenance claim**: "size-robust on realistic corpora" holds for
+  *diverse* text (MIRACL flat 3k→10k) but NOT for repetitive/domain boilerplate — the paying-ICP shape.
+  Mechanism differs from both synthetic mechanisms: fusion holds (leak ≤0.035); the loss is
+  **completeness decay via BM25 dilution**, because on this corpus the engine de facto rides the lexical
+  leg alone — **dense R@10 0.10→0.03, SPLADE 0.15→0.005 at BOTH sizes** ("hybrid" is effectively
+  BM25-only on CLERC-shaped legal retrieval). Working hypothesis for the dead semantic legs: CLERC's
+  long citing-sentence queries = FW-003/678's verbose-query dilution at its extreme, compounded by very
+  long case docs — needs its own attribution pass (678-adjacent; deliberately not opened in 701).
+  Caveat: the 4k full-mode number is `comparable=False` (`ann_proof` dense-evidence 0.455), but the drop
+  is carried by the lexical leg (no vectors involved) and the 198-doc point is fully comparable.
+- **Gate significance:** legal-clerc-200 pins the union floor at 0.87; the same family at 4k measures
+  0.705 — live proof of the completeness-floor's sensitivity design (F-028).
+- **Bycatch (fixed on the 701 branch):** first contact with this corpus at 4k live-reproduced a worker
+  enrichment **crash-loop** — `EmbeddingBackfillOps` + 4 sibling batch paths trusted batch-result
+  length; an empty result (backfill racing provider init after a worker restart) threw AIOOBE before
+  any failure-marking → eternal batch refetch, 199/199 doc embeddings starved. Guarded (null-or-mismatch
+  → per-item fallback), 5 sites, new test fixture, module suite green.
+- **Runs:** `tmp/eval-results/20260709T235522_mixed_legal-clerc-200` + `20260710T001438_mixed_legal-clerc-4k`
+  (regenerable; recipes committed). Probe design + full table: tempdoc 701 §Repetitive-real probe.
+
+### F-028: recall-survival's completeness half now has a FLOOR gate — the guard triad is complete (tempdoc 701, 2026-07-08)
+
+- **Finding:** F-025 gated the recall funnel's *leak* half (`leak-gate`, a ceiling on cascade-leak). Its
+  first stage — **representation completeness** (`leg_union_recall`: did ANY retrieval leg surface the gold
+  before fusion/ranking; the LEG_MISS bucket) — was measured by `staged_recall_accounting` and profiled by
+  `recall-profile`, but **gated by nothing**; `leak-gate` structurally cannot catch it (fewer golds retrieved
+  does not *raise* `leak_rate` — it can lower it). Tempdoc 701 added **`jseval union-recall-gate`**: the
+  floor-shaped sibling of `leak-gate` (fails when `leg_union_recall < pinned floor − tolerance`), reading the
+  same projection. This completes the **recall-survival guard triad** — quality floor (relevance/nDCG) ·
+  **completeness floor (union-recall)** · leak ceiling — and makes union the **fourth** engine ratchet on the
+  `search-engine-hint`. Floors are measured-derived (`union-recall-gate-baselines.v1.json`, pointer+fallback
+  like leak's), pinned on reproducible corpora **mixed/legal-clerc-200 0.87 + beir/scifact 0.96 +
+  golden/needle-burial-v1 1.0** (tol 0.05).
+  Non-redundant with nDCG: on hard corpora a completeness collapse compresses into nDCG's near-zero range
+  (~14× sensitivity gap, tempdoc 701 §U1), so `relevance-gate` can miss what `union-recall-gate` catches.
+- **Provenance / context:** the 624 "retrieval collapses at scale" signal was investigated and resolved as a
+  **synthetic-corpus artifact** — the engine is *measured* size-robust on realistic corpora 3k→10k (MIRACL/de
+  recall flat, `final_recall` 0.967→0.967) while only the adversarial near-identical synthetic corpus collapses
+  — so no size-dependent product defect exists in the tested range; the completeness gate is the durable
+  standing-guard deliverable, not a fix. ANN recall decay was empirically ruled out as the mechanism (§E2).
+- **Deferred (documented in 701):** growing the pin set (legal-clerc / enron-qa) via further
+  `union-recall-gate-derive` runs; release-projection compose plumbing exists but is inert until a deliberate
+  release recompose; a **user-visible low-confidence signal** and a **large-N (10⁵–10⁶) standing guard** are
+  parked (the latter is impractical as a routine ratchet — a 639-owned periodic one-off).
 
 ### F-027: ARM-INVALIDATED (2026-07-03) — the "certified null" was an A-vs-A replication: condition B never received the MCP tools (dead config, silently dropped by the CLI); the true U0 question is REOPENED
 
@@ -1149,9 +1518,16 @@ above)*
 - **Recommendation (636 §Adjacent-work-coordination, not yet a decision):** 639's design should **extend** `staged_recall_accounting` (a per-leg ANN-recall sub-measure + a dedup/redundancy measure over the same returned set), reusing the projection + reconciliation seam; 636's dropped `ann_proof FAIL` comparability flag is the natural input. **Status:** 639 is a no-implementation stub — flagged here so its design phase conforms rather than forks.
 - **Coupling with 643 found during the 643 investigation (2026-07-01):** the "symmetric siblings" framing (639 = candidate-set, 643 = judge) under-states a real coupling — a doc that out-ranks the gold in the `JUDGE_RANK_LOW` bucket is often a **near-duplicate distractor**, which is 639's dedup half, not a judge defect. 639's design should attribute how much of `judge_low` is near-dup-driven (→ fixed by 639's dedup, for free) vs genuine mis-rank (→ 643's territory) before either stub commits further design effort on an assumed split.
 
-### Q-015: Why do the dense and SPLADE legs collapse on the legal corpus (nDCG@10 ≈ 0.06), and what engine change recovers them?
+### Q-015: Why do the dense and SPLADE legs collapse on the legal corpus (nDCG@10 ≈ 0.06), and what engine change recovers them? → ANSWERED → F-030
 
-- **Question:** On `mixed/legal-clerc-200`, `vector` scores 0.060 and `splade` 0.059 while `lexical`
+- **Answered (2026-07-10, tempdoc 678 §Pillar-5, campaign E5-A..E5-C-v2):** the collapse is an
+  **encoder-domain mismatch** — see F-030. Eliminated in order: gate/fusion capping (E5-A/B, with
+  tempdoc 702's threshold recalibration eval-gated and shipped as correctness-only, PR #121), query
+  length (E5-C keyword control), doc granularity (E5-D: dense adds only +3.0 pts at chunk level),
+  query naturalness (E5-C-v2 LLM-reduced). No engine change recovers the legs short of the encoder/
+  representation itself — a model-level question, flagged in 704 as a new unowned piece. ANN was
+  already ruled out separately (701 E2).
+- **Original question (retained):** On `mixed/legal-clerc-200`, `vector` scores 0.060 and `splade` 0.059 while `lexical`
   scores 0.686 (register baselines, 666) — two of three legs are effectively dead on a real,
   citable legal-retrieval benchmark, and the production `hybrid` (0.516-0.521) underperforms plain
   BM25 there. Is this an embedding-truncation/long-document representation failure, a
@@ -1167,6 +1543,58 @@ above)*
   whether gold docs are even embedded/indexed at useful granularity (doc length vs encoder window);
   compare chunk-granularity retrieval; then route the fix to its owner (639 for ANN/dedup, a new doc
   for representation/granularity if that's the finding).
+- **Refinement (2026-07-11, tempdoc 712 → F-033):** the SPLADE half of F-030's "encoder-domain
+  mismatch at any granularity" is narrowed — 678 never measured chunk-level SPLADE, and per-chunk
+  SPLADE revives the sparse leg 6–10× offline. The sparse deadness is substantially truncation, not
+  domain. The dense half stands as F-031/F-032 scoped it.
+
+### Q-017: Does the offline chunk-SPLADE revival (F-033) hold once integrated into the live engine (ANN + Lucene FeatureField saturation + fusion), and at what enrichment cost? → ANSWERED (tempdoc 712, F-036; verdict: keep default-OFF)
+
+- **Question:** F-033 measured, offline, that per-chunk SPLADE lifts legal-clerc-200 sparse nDCG@10
+  from 0.054 (production-mirror truncated) to 0.327 (max-pool doc-merge) / 0.545 (chunk-MaxP). Those
+  are exact-retrieval ceilings. Does the engine-integrated chunk-sparse sub-leg realize a comparable
+  gain in `splade` and `hybrid` mode against live gates, and what is the enrichment-throughput cost
+  of the ~19× SPLADE forward-pass multiplier once amortized over already-enriched chunk docs?
+  As-built shape (712 steps 1–3, 2026-07-11): the search side already existed
+  (`searchChunksSplade` over the existing `splade` FeatureField on chunk docs, fused via
+  `chunk_merge`); the fix is producer enrollment — the combined pass now encodes chunk docs'
+  `chunk_content` instead of silently marking them COMPLETED — behind
+  `rag.chunk_splade.enabled` / `JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED`, **default OFF**.
+- **Why it matters:** it is the truth-tier confirmation of F-033 (`static-green ≠ live-working`) and
+  the go/no-go for the default-on flip of the chunk-sparse flag. It also feeds (with tempdoc 713's
+  parent-representation verdict) whether the parent whole-doc `splade` encode on chunked docs still
+  earns its place.
+- **713 verdict delivered (2026-07-11, F-035):** the dense parent earns its place — branch fusion
+  always consumes the whole-doc branch, so a degraded parent representation actively dilutes the
+  chunk branch (−0.204 vector without the single-pass). The same structural argument plausibly
+  applies to the sparse parent, but 712 should measure it, not inherit the dense result.
+- **ANSWER (2026-07-11, live A/B on legal-clerc-200, both arms health-verified chunk_merge-active
+  → F-036):** the flag revives the sparse leg in isolation but does NOT improve production hybrid,
+  at more than double the enrichment cost. Clean same-session arms (both healthy): `splade`
+  0.0591 → **0.2588** (4.4×, real); `vector` 0.6187 → 0.6184 (unchanged — flag doesn't touch dense,
+  which cross-validates arm comparability); **`hybrid` 0.5625 → 0.5592 (flat/noise-negative)**;
+  enrichment wall 132 s → 275 s (**+108%**). Short-doc control (battlefield-en-v1, flag-on) hybrid
+  0.9517 — matches its baseline, no regression. **Verdict: keep default-OFF.** The isolated 4.4×
+  sparse-leg gain is fully absorbed by the dense+CE signals in fusion on this corpus (the
+  F-004/CE-hurts-enron pattern); the flag stays an available corpus-specific lever. The 712
+  foundation (flag + the silent data-less-COMPLETED fix) is already shipped (#145).
+- **Caveat surfaced:** the first (confounded) A/B arm and 713's control both hit an INTERMITTENT
+  fresh-build anomaly where the whole `chunk_merge` leg is silently absent (vector 0.34 not 0.62).
+  Chartered separately as **tempdoc 717** — it is a defect on the shipped default path, unrelated to
+  this flag. **717 resolution (live probe, 2026-07-11) — NOT vector loss:** the probe reproduced the
+  degenerate build and proved the chunks + `chunk_vector`s are 100% healthy; the `chunk_merge` leg is
+  skipped at query time via `SKIPPED_SHORT_CORPUS` because a SPLADE-load race at index time leaves
+  `parent_token_count` unpopulated on a small fast-indexed corpus → `CorpusProfile` sees median 0 →
+  a long corpus is mis-classified "short". Fixed by always-populating `parent_token_count` (an
+  index-time estimate fallback so it never depends on the SPLADE-load race) + making `isShortCorpus`
+  fail-open for chunks on unreliable token data. Live-validated: 3/3 fresh builds healthy (vector
+  ≈0.62, `chunk_merge` present). This retires the 712/713 hand-checked `chunk_merge`-leg convention
+  (the anomaly can no longer arise). The `chunk_vector` presence-truthful readiness/coverage/serve
+  gates that shipped alongside are **complementary F-032-class hardening** (they close a latent
+  "status lies" gap), NOT the fix for this bug — they read 100% vector coverage on the degenerate
+  build and cannot catch a short-corpus leg-skip.
+- **Design/plan:** tempdoc 712 (§Mechanism correction + §Implementation log; steps 1–3 landed
+  flag-gated default-off on branch `worktree-712-sparse`).
 
 ### Q-014: Does any procedurally-generated `golden/` corpus clear the descriptor-collision gate, and is any of them suitable for an agent-utility (not just retrieval-quality) measurement?
 
@@ -1295,7 +1723,7 @@ query-time stages search against.
 | 3   | **Text Analysis**        | `SsotAnalyzerRegistry`         | `ICUTokenizer → NFC → LowerCase` — locale-invariant, no per-language analyzer ([ADR-0043](../decisions/0043-multilingual-by-construction-no-per-language-levers.md))  |
 | 4   | **Chunking**             | `ChunkDocumentWriter`          | Splits docs >2,000 chars into 500-token chunks (50-token overlap); linked via `parent_doc_id` |
 | 5   | **BM25 Indexing**        | `FieldMapper` / `WritePathOps` | `content` as analyzed text; `content_preview` (first ~4 KB) for snippets                      |
-| 6   | **Dense Embedding**      | `EmbeddingService` (llama.cpp) | gte-multilingual-base, 768-dim; `vector` (whole-doc) + `chunk_vector` (per-chunk)             |
+| 6   | **Dense Embedding**      | `EmbeddingService` (ONNX Runtime, `OnnxEmbeddingEncoder`) | gte-multilingual-base, 768-dim; `vector` (whole-doc) + `chunk_vector` (per-chunk). Chunked (>2,000-char) docs get `vector` from a single long-context pass (≤8,192 tokens, batch-1, default-on — tempdoc 691/F-031; window-mean fallback for over-limit/arena-OOM docs and when `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED=false`) |
 | 7   | **SPLADE Encoding**      | `SpladeEncoder`                | opensearch-neural-sparse-encoding-multilingual-v1 (12L BERT-multilingual, 105K vocab) → Lucene `FeatureField` entries |
 | 8a  | **NER Backfill**         | `NerBackfillOps`               | Writes `entity_persons_raw`, `entity_organizations_raw`, `entity_locations_raw` (keyword) and `entity_persons_text`, `entity_organizations_text`, `entity_locations_text` (ICU-analyzed) fields (326) |
 | 8   | **HNSW Vector Indexing** | `JustSearchCodec`              | M=16, efConstruction=200; Int8 quantization optional (~75% storage reduction)                 |
@@ -1334,13 +1762,13 @@ via virtual threads, then converge at the fusion stage.
 | 3   | **QPP Computation**                   | `maxIdf`, `avgIctf`, `queryScope` per query term; O(1) via IndexReader; forwarded but not yet used for routing                                                      |
 | 4   | **Filter Parsing + Entity Expansion** | gRPC filters → Lucene queries; entity facet filters expanded via disambiguation cluster snapshot                                                                    |
 | 5   | **Staged Retrieval Dispatch**         | Dispatches to enabled legs; standard combos use optimized methods (`searchHybrid`, `searchHybridSplade`); novel combos use pairwise RRF fusion via `fuseLegs()`     |
-| 6   | **BM25 Search** ‖                     | Lucene `Query`-based retrieval; fetches 3× limit for over-retrieval                                                                                                 |
-| 7   | **Dense KNN Search** ‖                | `KnnFloatVectorQuery`; fetches 2× limit; pre-filtered by runtime filters                                                                                            |
+| 6   | **BM25 Search** ‖                     | Lucene `Query`-based retrieval; fetches 10× limit for over-retrieval (capped at `candidate_limit_max`, default 100)                                                  |
+| 7   | **Dense KNN Search** ‖                | `KnnFloatVectorQuery`; fetches 10× limit (capped at 100); pre-filtered by runtime filters                                                                           |
 | 8   | **SPLADE Search** ‖                   | `FeatureField` query with learned sparse weights                                                                                                                    |
 | 9   | **CC / RRF Fusion**                   | **CC** (default): min-max normalized convex combination with per-leg weights; **RRF** (alternative): `score = Σ(weight / (K + rank)) + bm25_boost × raw_score` (K=60, vectorWeight=0.75). 3-way variant (`fuseWithCC3`) available when SPLADE is active |
 | 10  | **Low-Signal Gating**                 | Caps vector-only results (default 3) when vector top score <0.40; prevents semantic hijack                                                                          |
 | 11  | **Stop-Word Short-Circuit**           | Skips vector search for trivial queries (<4 chars or single stop words)                                                                                             |
-| 12  | **Fuzzy Correction** (zero-hit retry) | Two-stage: (a) full Levenshtein fuzzy retry, (b) per-term replacement of zero-docFreq terms; only when zero hits on SIMPLE queries                                  |
+| 12  | **Fuzzy Correction**                  | Two-stage on SIMPLE queries: (a) full Levenshtein fuzzy retry fires when the query returns **zero** hits; (b) per-term augmentation of zero-`docFreq` terms fires when the query returns **nonzero** hits (can still change which document ranks first) |
 
 ‖ = parallel execution
 
@@ -1354,7 +1782,7 @@ RRF chunk merge.
 | #    | Stage                                      | What It Does                                                                                                                                                                                                                                                |
 | ---- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 13a  | **Chunk Branch Retrieval** (Stage 3a)      | Parallel chunk-level BM25 (`searchChunksText`), KNN (`searchChunkVector`), and SPLADE (`searchChunksSplade`) within `executeChunkBranchFusion`. Budget starts at `limit × CHUNK_INITIAL_CANDIDATE_MULTIPLIER`; retries at higher budget if any leg saturates |
-| 13b  | **Chunk 3-Way CC Fusion + Parent Collapse** | `fuseWithCC3` combines the three chunk legs via min-max normalized convex combination. SPLADE weight is modulated by `parent_token_count` (full weight ≤1,024 tokens, zero ≥4,096 tokens — compensates for SPLADE's 256-token truncation). Results are collapsed to parent doc ID: best chunk score wins; evidence debug scores (`chunk_sparse`, `chunk_vector`, `chunk_splade`) aggregate by max across sibling chunks |
+| 13b  | **Chunk 3-Way CC Fusion + Parent Collapse** | `fuseWithCC3` combines the three chunk legs via min-max normalized convex combination. SPLADE weight is modulated by `parent_token_count` (full weight ≤1,024 tokens, zero ≥4,096 tokens — compensates for SPLADE's 512-token truncation). Results are collapsed to parent doc ID: best chunk score wins; evidence debug scores (`chunk_sparse`, `chunk_vector`, `chunk_splade`) aggregate by max across sibling chunks |
 | 13c  | **Branch Fusion** (Stage 3b)               | Merges whole-doc branch with collapsed chunk-parent branch. Default strategy is CC (`fuseWithCCNamed`): chunk branch weight is modulated by parent length (short docs trust whole branch, long docs trust chunk branch; `chunkMinMultiplier` default 0.25). Alternative: RRF (`fuseWithRRFNamed`) when `branchFusionStrategy=rrf` |
 | 14   | **Match Spans + Excerpts + Facets**        | Character-offset spans for UI highlighting; IDF-weighted excerpt regions (top 3); DocValues facets first page only; entity canonical merge                                                                                                                 |
 
@@ -1377,8 +1805,9 @@ share the same Lucene index but have their own orchestration:
 **RAG Retrieval** (`RagContextOps`, `indexer-worker`): Used by AI chat.
 Retrieves chunks using BM25 or hybrid (BM25 + vector) search, then
 optionally reranks with a cross-encoder (GPU-aware, with deadline and VRAM
-arbitration). Applies MMR diversification to avoid redundant passages, then
-assembles context within a token budget. Falls back to full-document
+arbitration). Optionally applies MMR diversification (opt-in via
+`rag.diversify.mode=mmr`; positional diversification is the default) to reduce
+redundant passages, then assembles context within a token budget. Falls back to full-document
 retrieval with virtual chunking when no indexed chunks exist. Unlike the
 interactive pipeline, RAG retrieval is chunk-first (optimized for passage
 extraction) and runs entirely in the Worker process.
@@ -1480,6 +1909,8 @@ Contract tests live in `KnowledgeHttpApiAdapterHarmfulCombinationsTest.java`.
 | FilterNormalization | Search vs answer path | Fires on both paths when enabled | `FilterNormalizationService` runs async on both `KnowledgeHttpApiAdapter` (search) and `RetrieveContextController` (answer) when `JUSTSEARCH_FILTER_NORM_ENABLED=true` (366) |
 | Entity/metadata filters | Chunk documents | Never applied to chunks directly | Two-stage pre-filter: parent-doc ID lookup first, then chunk search scoped to matching parent IDs. `buildChunkFilterQuery()` excludes these; `buildFilterQueryOnly()` includes them (362) |
 | Entity facet keys | MCP layer | `_raw` suffix stripped before agent response | Backend uses `_raw`-suffixed field names; MCP server strips `_raw` suffix before returning to agents (366) |
+
+> **Note on "stemming":** the "stemming fallback" row above is a legacy label for the SIMPLE-syntax BM25 text-query path, **not** a linguistic stemmer. The analyzer chain is `ICUTokenizer → ICUNormalizer2Filter → LowerCaseFilter` with no stemming step (ADR-0043: locale-invariant analysis — no per-language stemmer exists in the codebase).
 
 ### Why HYBRID blocks expansion
 

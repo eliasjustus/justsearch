@@ -600,6 +600,13 @@ final class IndexStatusOps {
         ingestCountOps != null ? ingestCountOps.querySpladeFeatureCounts() : null;
     LuceneRuntimeTypes.ChunkEmbeddingCounts chk =
         ingestCountOps != null ? ingestCountOps.queryChunkEmbeddingCounts() : null;
+    // Tempdoc 717: coverage/readiness must verify the actual chunk_vector artifact, not the
+    // chunk_embedding_status bookkeeping field (which can read COMPLETED while the vector is
+    // absent — the F-032 "status lies" class). completed/pending/failed below stay status-derived
+    // as enrichment-progress telemetry; the divergence between "completed" and "coverage" is the
+    // diagnostic signal.
+    LuceneRuntimeTypes.ChunkVectorPresence chkVec =
+        ingestCountOps != null ? ingestCountOps.queryChunkVectorPresenceCount() : null;
 
     return EnrichmentCoverage.newBuilder()
         .setEmbedding(
@@ -624,8 +631,9 @@ final class IndexStatusOps {
                 .setCompletedCount(chk == null ? 0L : chk.completed())
                 .setPendingCount(chk == null ? 0L : chk.pending())
                 .setFailedCount(chk == null ? 0L : chk.failed())
-                .setCoveragePercent(chk == null ? 0.0 : chk.coveragePercent())
-                .setVectorsReady(chk != null && chk.isReady(95.0))
+                // Presence-truthful coverage/readiness (tempdoc 717), not status-derived.
+                .setCoveragePercent(chkVec == null ? 0.0 : chkVec.coveragePercent())
+                .setVectorsReady(chkVec != null && chkVec.isReady(95.0))
                 .build())
         .setPendingNerCount(
             countPendingByStatus(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING))
@@ -641,6 +649,8 @@ final class IndexStatusOps {
                 .putAllTotalMs(metrics.getBatchTimingMs())
                 .build())
         .putAllEncoderProfiles(buildEncoderProfilesProto())
+        // Tempdoc 710 Move 2 item 4: which backfill pass ran last idle cycle.
+        .setBackfillMode(metrics.getBackfillMode())
         .build();
   }
 

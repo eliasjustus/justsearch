@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent-utility-publication.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "publication_id", "created_at", "lifecycle_state", "record", "observations", "policy", "sanitizer_version", "replay_command", "supersedes"],
+  "properties": {
+    "schema": {"const": "agent-utility-publication.v1"},
+    "schema_version": {"const": 1},
+    "publication_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]+$"},
+    "created_at": {"type": "string"},
+    "lifecycle_state": {"const": "accepted"},
+    "record": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "semantic_digest"],
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "semantic_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "observations": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "id", "sha256", "status"],
+      "properties": {
+        "path": {"type": "string"},
+        "id": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "status": {"const": "active"}
+      }
+    },
+    "sanitizer_version": {"const": "agent-utility-observation.v1"},
+    "replay_command": {"type": "string"},
+    "supersedes": {"type": ["string", "null"]}
+  }
+}

@@ -1,0 +1,240 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent-utility-observation.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "condition", "seed", "qid", "attempted", "excluded",
+    "error_class", "attempts", "first_error_class", "correct", "cost_usd",
+    "provider_usage", "provider_model_usage", "provider_cache_creation_input_tokens",
+    "resolved_provider_model", "num_turns", "tool_call_names",
+    "blocked_tool_call_names", "disallowed_tool_call_names", "leak_suspect",
+    "mcp_server_statuses", "mcp_tools_offered", "mcp_surface_unverified",
+    "mcp_tools_deferred", "source"
+  ],
+  "properties": {
+    "schema": {"const": "agent-utility-observation.v1"},
+    "condition": {"enum": ["A", "B", "C"]},
+    "seed": {"type": "integer", "minimum": 0},
+    "qid": {"type": "string", "minLength": 1},
+    "attempted": {"const": true},
+    "excluded": {"type": "boolean"},
+    "error_class": {"type": ["string", "null"]},
+    "attempts": {"type": ["integer", "null"], "minimum": 0},
+    "first_error_class": {"type": ["string", "null"]},
+    "correct": {"type": "boolean"},
+    "cost_usd": {"type": ["number", "null"], "minimum": 0},
+    "provider_usage": {"type": "object"},
+    "provider_model_usage": {"type": "object"},
+    "provider_cache_creation_input_tokens": {"type": ["integer", "number", "null"], "minimum": 0},
+    "resolved_provider_model": {"type": ["string", "null"]},
+    "num_turns": {"type": ["integer", "null"], "minimum": 0},
+    "tool_call_names": {"type": ["array", "null"], "items": {"type": "string"}},
+    "blocked_tool_call_names": {"type": ["array", "null"], "items": {"type": "string"}},
+    "disallowed_tool_call_names": {"type": ["array", "null"], "items": {"type": "string"}},
+    "leak_suspect": {"type": "boolean"},
+    "mcp_server_statuses": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {"name": {"type": "string"}, "status": {"type": "string"}}
+      }
+    },
+    "mcp_tools_offered": {"type": ["integer", "null"], "minimum": 0},
+    "mcp_tool_names_offered": {
+      "type": ["array", "null"],
+      "items": {"type": "string"},
+      "uniqueItems": true
+    },
+    "observed_mcp_tool_surface_hash": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "mcp_surface_unverified": {"type": "boolean"},
+    "mcp_tools_deferred": {
+      "type": ["boolean", "null"],
+      "$comment": "Protocol-level end-of-session echo (was the justsearch server connected but its tools reachable only via ToolSearch). Superseded as AUTHORITY by source.exposure_config.exposure_mode (tempdoc 725 increment 2, config-derived, never inferred from the SDK) -- this field stays for its own record, no longer the last word on eager-vs-deferred."
+    },
+    "toolsearch_targets": {
+      "type": ["array", "null"],
+      "items": {"type": "string", "pattern": "^mcp__justsearch__[A-Za-z0-9_]+$"}
+    },
+    "tool_call_sequence": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": {"type": "string"},
+          "status": {"enum": ["ok", "blocked", "disallowed", "errored"]}
+        }
+      },
+      "$comment": "tempdoc 736 D10 (issue 10): this ordered, per-attempt sequence is the AUTHORITY for per-call outcome (four states: ok/blocked/disallowed/errored). blocked_tool_call_names below is a name-only convenience projection superseded in authority by this field -- kept for the always-emit contract and existing readers, not deleted; a future reader should reconcile against THIS field, not treat the two as two authorities."
+    },
+    "tool_result_digests": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "content_sha256", "content_len", "content_is_error", "content_shape",
+          "furniture_markers"
+        ],
+        "properties": {
+          "content_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+          "content_len": {"type": ["integer", "null"], "minimum": 0},
+          "content_is_error": {"type": ["boolean", "null"]},
+          "content_shape": {"enum": ["text", "blocks", "empty", "json"]},
+          "furniture_markers": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["rationale", "evidence_pack", "coverage", "degradation"],
+            "properties": {
+              "rationale": {"type": "boolean"},
+              "evidence_pack": {"type": "boolean"},
+              "coverage": {"type": "boolean"},
+              "degradation": {"type": "boolean"}
+            },
+            "$comment": "tempdoc 735 G2: null (not an all-False dict) for a structured-json delivery -- the text-grep tier was never delivered in that case, so there is nothing to grep. Non-null for prose/blocks deliveries (and for all historical pre-735 entries, which are always prose/blocks-shaped dicts)."
+          },
+          "delivered_tier": {
+            "enum": ["structured-json", "prose", "blocks", null],
+            "$comment": "tempdoc 735 G2: which tier the CLI actually delivered to the model for this call, derived from the raw content shape at capture time (agent_utility_inspect._delivered_tier). Absent on pre-735 historical entries -- schema-optional, not required, so old evidence keeps validating."
+          },
+          "delivered_fields": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": [
+              "quality", "matchedTerms", "degradation", "excerpts", "citations", "searchTrace",
+              "results"
+            ],
+            "properties": {
+              "quality": {"type": "boolean"},
+              "matchedTerms": {"type": "boolean"},
+              "degradation": {"type": "boolean"},
+              "excerpts": {"type": "boolean"},
+              "citations": {"type": "boolean"},
+              "searchTrace": {"type": "boolean"},
+              "results": {"type": "boolean"}
+            },
+            "$comment": "tempdoc 735 G2: top-level structured-evidence field presence, populated only for a structured-json delivery (null otherwise). matchedTerms/excerpts are true if present either at the top level OR nested under any results[] entry (McpEvidenceProjection.java:75-93 puts them per-hit for justsearch_search). Absent on pre-735 historical entries -- schema-optional."
+          }
+        }
+      },
+      "$comment": "tempdoc 736 D9 (issue 9, committed tier), extended by tempdoc 735 G2 (delivered_tier/delivered_fields): ONE entry per attempt, same order as tool_call_sequence. A redacted derivation of the tool result content -- hash/len/is_error/structural-shape/product-furniture-marker booleans, plus which tier the CLI actually delivered. additionalProperties:false on each entry and NO raw-content property is permitted anywhere in this schema -- the schema structurally forbids committing raw corpus/result text. Raw content lives only in the ephemeral (gitignored) Inspect log."
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "$comment": "source_git_state, mcp_tool_surface, corpus_certification, query_identity, and campaign_identity are intentionally NOT required: sanitize_observation() always emits them (as null when unavailable) for freshly captured evidence, but pre-existing evidence captured before these fields existed (e.g. tests/fixtures/agent-utility-rejected-2026-07-12/observations.v1.jsonl) omits the keys entirely. Required-ness is relaxed here to admit that historical evidence rather than to invite new omissions; additionalProperties:false still rejects anything misspelled or unknown, and each key's declared type still applies whenever the key is present.",
+      "required": [
+        "model_alias", "corpus", "packages", "source_git_sha", "source_git_dirty",
+        "cli_version", "mcp_tool_surface_hash", "judge_kind", "prompt_template_hash",
+        "decoding", "eval_limits", "search_config_cohort_key", "environment",
+        "corpus_identity"
+      ],
+      "properties": {
+        "model_alias": {"type": ["string", "null"]},
+        "corpus": {"type": "object"},
+        "packages": {"type": ["object", "array"]},
+        "source_git_sha": {"type": ["string", "null"]},
+        "source_git_dirty": {"type": ["boolean", "null"]},
+        "source_git_state": {"type": ["object", "null"]},
+        "cli_version": {"type": ["string", "null"]},
+        "mcp_tool_surface_hash": {"type": ["string", "null"]},
+        "mcp_tool_surface": {"type": ["array", "null"], "items": {"type": "object"}},
+        "judge_kind": {"type": ["string", "null"]},
+        "prompt_template_hash": {"type": ["string", "null"]},
+        "decoding": {"type": "object"},
+        "eval_limits": {"type": "object"},
+        "search_config_cohort_key": {"type": ["string", "null"]},
+        "environment": {"type": ["object", "null"]},
+        "corpus_identity": {"type": ["object", "null"]},
+        "corpus_certification": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["schema", "member", "dataset", "size", "query_variant", "query_count", "query_gold_sha256", "corpus_signature", "certification_sha256", "certification_base64", "scientific_gates", "fully_certified"],
+              "properties": {
+                "schema": {"const": "707-corpus-certification-snapshot.v1"},
+                "member": {"type": "string", "minLength": 1},
+                "dataset": {"type": "string", "minLength": 1},
+                "size": {"type": "integer", "minimum": 1},
+                "query_variant": {"enum": ["verbose", "short-natural"]},
+                "query_count": {"type": "integer", "minimum": 1},
+                "query_gold_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "corpus_signature": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "certification_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "certification_base64": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9+/]+={0,2}$"},
+                "scientific_gates": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["closed_book", "retrieval_calibration", "union_recall", "leak_floor"],
+                  "properties": {
+                    "closed_book": {"$ref": "#/$defs/scientificGate"},
+                    "retrieval_calibration": {"$ref": "#/$defs/scientificGate"},
+                    "union_recall": {"$ref": "#/$defs/scientificGate"},
+                    "leak_floor": {"$ref": "#/$defs/scientificGate"}
+                  }
+                },
+                "fully_certified": {"const": true}
+              }
+            }
+          ]
+        },
+        "query_identity": {"type": ["object", "null"]},
+        "campaign_identity": {"type": ["object", "null"]},
+        "exposure_config": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["enable_tool_search", "always_load", "exposure_mode"],
+              "properties": {
+                "enable_tool_search": {"type": ["string", "null"]},
+                "always_load": {"type": ["boolean", "null"]},
+                "exposure_mode": {"enum": ["eager", "deferred", "unknown"]}
+              }
+            }
+          ]
+        },
+        "mcp_initialize_identity": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["instructions", "instructions_sha256", "server_version", "protocol_version"],
+              "properties": {
+                "instructions": {"type": ["string", "null"]},
+                "instructions_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+                "server_version": {"type": ["string", "null"]},
+                "protocol_version": {"type": ["string", "null"]}
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "scientificGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "status", "sha256", "artifact_base64", "observed", "threshold"],
+      "properties": {
+        "passed": {"const": true},
+        "status": {"const": "passed"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "artifact_base64": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9+/]+={0,2}$"},
+        "observed": {"type": "object"},
+        "threshold": {"type": "object"}
+      }
+    }
+  }
+}

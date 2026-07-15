@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent-utility-publication-pointer.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "current", "previous", "reason", "selected_at"],
+  "oneOf": [
+    {
+      "properties": {
+        "current": {"type": "null"},
+        "previous": {"type": "null"},
+        "selected_at": {"type": "null"}
+      }
+    },
+    {
+      "properties": {
+        "current": {"type": "null"},
+        "previous": {"$ref": "#/definitions/ref"},
+        "selected_at": {"type": "string", "minLength": 1}
+      }
+    },
+    {
+      "properties": {
+        "current": {"$ref": "#/definitions/ref"},
+        "selected_at": {"type": "string", "minLength": 1}
+      }
+    }
+  ],
+  "properties": {
+    "schema": {"const": "agent-utility-publication-pointer.v1"},
+    "schema_version": {"const": 1},
+    "current": {"oneOf": [{"type": "null"}, {"$ref": "#/definitions/ref"}]},
+    "previous": {"oneOf": [{"type": "null"}, {"$ref": "#/definitions/ref"}]},
+    "reason": {"type": "string", "minLength": 1},
+    "selected_at": {"type": ["string", "null"]}
+  },
+  "definitions": {
+    "ref": {
+      "type": "object", "additionalProperties": false,
+      "required": ["publication_id", "path", "manifest_sha256"],
+      "properties": {
+        "publication_id": {"type": "string"},
+        "path": {"type": "string"},
+        "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

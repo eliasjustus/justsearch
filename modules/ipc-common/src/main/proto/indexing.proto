@@ -770,7 +770,11 @@ message EnrichmentCoverage {
   bool embedding_enabled = 12;
   bool splade_enabled = 13;
   bool ner_enabled = 14;
-  // Next available field number: 15
+  // Which backfill pass ran last idle cycle: "combined" | "individual" | "idle" (tempdoc 710
+  // Move 2 item 4 — previously unobservable; batchTiming/enrichmentCompleted counters froze in
+  // individual mode with no signal explaining why).
+  string backfill_mode = 15;
+  // Next available field number: 16
 }
 
 // Reusable ORT CUDA probe result for per-subsystem GPU diagnostics.
@@ -947,6 +951,12 @@ enum VduUpdateOutcome {
   VDU_UPDATE_OUTCOME_SUCCESS_TEXT = 1;   // VDU succeeded and extracted non-empty text
   VDU_UPDATE_OUTCOME_SUCCESS_EMPTY = 2;  // VDU succeeded but no text was extractable (e.g., blank image)
   VDU_UPDATE_OUTCOME_FAILED = 3;         // VDU processing failed (error or timeout)
+  // Tempdoc 677: the abstention gate judged the extraction untrustworthy — either the model's
+  // non-empty output failed a post-call confidence check (suspected confabulation), or the
+  // input-legibility gate skipped the model call entirely (no page carried any textual signal).
+  // Worker must RETAIN the baseline content — no overwrite, no re-chunk, no re-embed — and
+  // record the honest rejected state either way.
+  VDU_UPDATE_OUTCOME_REJECTED_SUSPECT_TEXT = 4;
 }
 
 message UpdateVduResultRequest {

@@ -92,6 +92,45 @@ Re-pin after a deliberate change: `perf-gate --update-baseline` (re-pins from th
 `scripts/jseval/{relevance,perf,llm-gen,utility-ratchet}-baselines.v1.json` + `leak-gate-baselines.v1.json`.
 Exit codes: 0 = within band, 1 = regression, 2 = data/projection missing.
 
+### Chunk-completeness validity guard (tempdoc 718)
+
+A fresh `--clean` index build can silently ship with its chunk (RAG passage) sub-system absent
+(tempdoc 717) — the run reports `COMPLETED`, gates pass, and vector-mode nDCG is simply worse (a
+measured case: 0.34 instead of a healthy 0.62), with no error anywhere. This is a
+**measurement-integrity** hole distinct from 717's enrichment-correctness bug: any consumer that
+reads the degenerate index (release scorecard, ratchets, a founder A/B) scores it as healthy.
+
+Every `run` embeds a `chunk_completeness` block in `summary.json` (sibling of `manifest` /
+`corpus_identity`): `{"expected": N, "observed": M, "verdict": "ok"|"chunk-free"|"degenerate",
+"reasons": [...]}`. `expected` is computed OFFLINE from the corpus's `corpus.jsonl` — a count of
+docs whose materialized content (`title + "\n\n" + text`) reaches the 2000-char chunk threshold —
+before/independent of any ingest, so a degenerate enrichment pipeline can never move it (the
+anti-spoof property: a build that suppresses chunk-doc *creation* still can't fake the *offline*
+expectation). `observed` is `chunkDocCount`/`chunkVectorCoveragePercent` from the run-completion
+`/api/status`, corroborated by `chunk_merge` in vector mode's `pipeline_tracking.observed`. A
+`chunk-free` verdict (`expected == 0`, e.g. a short-doc BEIR/golden corpus) is a legitimate pass,
+distinguished from a `degenerate` verdict (`expected > 0` but the index shows none/incomplete
+chunk docs) — the two 0-chunk cases that are otherwise bit-identical at the pipeline-output layer.
+
+All four ratchet gates (`relevance-gate`, `perf-gate`, `leak-gate`, `union-recall-gate`) refuse an
+un-overridden `degenerate` run before evaluating anything, exit code 2:
+
+```bash
+python -m jseval relevance-gate --data-dir <dir> --dataset golden/legal-clerc
+# {"exit_code": 2, "error": "chunk-completeness guard: ...", "expected": 340, "observed": 0, ...}
+```
+
+Escape hatch (deliberate chunk-incomplete certification only): `--allow-chunk-incompleteness` per
+gate command, or `JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1` — mirrors `--allow-engine-mismatch` /
+`JUSTSEARCH_ALLOW_CROSS_CHECKOUT_JSEVAL`. A run predating the guard (no `chunk_completeness` block)
+is treated as `ok` — backward-compatible. Implementation: `jseval/chunk_completeness.py`
+(`expected_chunk_docs`, `chunk_completeness_verdict`) + `ratchet_kernel.assert_chunk_completeness`.
+
+**Known dual-source-of-truth risk:** the 2000-char threshold is pinned in
+`jseval/chunk_completeness.py` as a mirror of `ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS`
+(Java) and will silently drift if the Java constant ever changes — see the follow-up observation
+proposing `/api/status` expose the threshold so the oracle reads it instead of mirroring it.
+
 ### Diagnostics
 
 ```bash
@@ -119,29 +158,58 @@ python -m jseval search --query "vitamin D" [--mode hybrid] [--ce] [--json]
 python -m jseval logs [--source worker|head] [--filter rerank] [--tail] [--level WARN]
 ```
 
+### Long detached runs (Windows)
+
+A long pipeline run launched through the Bash tool's `run_in_background` gets
+**killed mid-run** (observed repeatedly, e.g. mid-enrichment). Launch it fully
+detached instead, and stamp a `.done` marker with the exit code on completion:
+
+```powershell
+# Runs in a PowerShell that outlives the tool call; writes the exit code to a marker.
+Start-Process powershell -WindowStyle Hidden -ArgumentList @(
+  '-Command',
+  'python -m jseval run --dataset scifact --output-dir tmp/run1; $LASTEXITCODE | Out-File tmp/run1.done'
+)
+```
+
+Then wait on the `tmp/run1.done` marker with the `Monitor` tool, and read results
+from the run's `--output-dir` (`tmp/run1`) — do **not** parse the process's
+redirected stdout/stderr: PowerShell 5.1 writes those UTF-16 and wraps stderr
+lines, so the run's own JSON artifacts are the reliable source.
+
+> **`--clean` caveat:** `jseval run --clean` does **not** reliably wipe the index /
+> `watched_roots` (observations-logged defect). When a clean state matters between
+> arms, wipe `tmp/headless-eval-data` manually.
+
 ### Observability (tempdoc 400 Layer 1/4/5)
 
 Post-§23 closure, jseval is the single CLI surface for every piece of
-tempdoc 400 observability. Every subcommand below writes to the
-configured eval-results / cohort_baselines layout; see
-`docs/explanation/08-observability.md` for the data-dir schema.
+tempdoc 400 observability. Every subcommand below reads/writes the
+jseval-owned data root (tempdoc 716): `--data-dir` defaults to
+`scripts/jseval/tmp/`, which hosts both `eval-results/` (where a defaults
+`run` writes) and `cohort_baselines/` (where `calibrate` files envelopes) —
+defaults-only invocations compose without path flags. Pre-716 calibration
+state left inside a backend data dir still resolves read-only, with a
+deprecation WARN. See `docs/explanation/08-observability.md` for the schema.
 
 ```bash
-# Calibrate cross-run non-determinism envelope (LR1-b)
+# Calibrate cross-run non-determinism envelope (LR1-b).
+# --data-dir = where the envelope is FILED (default: jseval data root);
+# --backend-data-dir = isolated Worker dir the sub-runs execute against.
 python -m jseval calibrate --dataset scifact --modes full --runs 5 \
-  --max-queries 50 --data-dir <path>
+  --max-queries 50 [--backend-data-dir <path>]
 
 # Capture drift baseline from N warm runs (LR4-g, Phase 6/6.2 opt-in)
 # Requires >= 3 runs at stable SHA; blocks cold-start outliers
 python -m jseval calibrate-drift-baseline --cohort-hash H \
-  --data-dir <path> --from-runs R1 R2 R3
+  --from-runs R1 R2 R3
 
 # Extract sigma from an existing envelope for nightly-baseline refresh
-python -m jseval recalibrate-nightly-baseline --data-dir <path> \
+python -m jseval recalibrate-nightly-baseline \
   --cohort-hash H [--output env.txt]
 
 # Nightly-style quality gate (Phase 6/6.13; was scripts/ci/phase3_*)
-python -m jseval gate --data-dir <path> --baseline-stdev 0.00108 \
+python -m jseval gate --baseline-stdev 0.00108 \
   --tolerance-pct 10 [--report-out <json>]
 
 # Layer-5 experiment runners
@@ -212,7 +280,24 @@ modes (like `hybrid`) send a mode string for backend resolution.
 - **Result comparison**: A/B diff with per-query rank analysis and
   pipeline timing comparison
 - **Backend lifecycle**: `--start-backend` starts runHeadlessEval,
-  `--clean` wipes data dir, auto-stops via taskkill on completion.
+  `--clean` wipes the whole data dir, auto-stops via taskkill on
+  completion. `--clean` is **fail-closed** (tempdoc 711 item 4) and,
+  since tempdoc 716, **unconditional**: calibration state
+  (`cohort_baselines/`, `non_determinism_envelopes/`) is filed under the
+  jseval data root (`scripts/jseval/tmp/`), never inside the backend
+  data dir, so nothing in the backend dir is protected from the wipe.
+  Because the Worker JVM (spawned by the Head as a grandchild of the
+  Gradle process) has been observed to survive the process-tree
+  `taskkill` and keep the Lucene index open, the wipe runs a
+  double-keyed orphan-Worker sweep (matched by the index lock file's
+  recorded PID/start-time **and** by the process command line's
+  `-Djustsearch.data.dir=` value, so it can never target another
+  session's process on a shared machine) before retrying any failed
+  deletion. If a survivor remains after the sweep and retry, the run
+  raises a hard error naming the survivor and the last-known holder
+  PID/cmdline instead of silently proceeding on a dirty data dir. This
+  also runs on `stop_backend()` after every `--start-backend` run, not
+  only under `--clean`.
   `--llm` enables Brain/llama-server with autostart and extended
   health timeout (waits for model load + inference readiness).
   Auto-detects llama-server from the dev layout; override with
@@ -242,7 +327,7 @@ modes (like `hybrid`) send a mode string for backend resolution.
 | `--splade` | Wait for SPLADE coverage ≥ 99.9% |
 | `--start-backend` | Start runHeadlessEval, stop when done |
 | `--llm` | Enable LLM/llama-server in backend (requires `--start-backend`) |
-| `--clean` | Clean data dir before start (requires `--start-backend`) |
+| `--clean` | Clean data dir before start (requires `--start-backend`); fail-closed — wipes the WHOLE backend data dir (tempdoc 716: calibration state lives under `scripts/jseval/tmp/`, not here), sweeps orphan Worker processes on a delete failure, raises rather than proceeding if a survivor remains (711 item 4) |
 | `--reset` | Reset index via API before ingestion (eval mode, no restart) |
 | `--timeline PATH` | Record status snapshots to TSV during wait |
 | `--config PATH` | Load YAML run configuration file |
@@ -257,11 +342,18 @@ modes (like `hybrid`) send a mode string for backend resolution.
 
 ## Output Structure
 
+The jseval data root (`scripts/jseval/tmp/`; tempdoc 716) hosts every
+durable jseval artifact — run results and calibration state — so every
+gate/calibrate reader's `--data-dir` defaults compose with `run`'s
+default `--output-dir`:
+
 ```text
-tmp/eval-results/<timestamp>_<dataset>/
-  summary.json            # Metrics, config, git SHA, pipeline timing
-  <mode>_per_query.json   # Per-query scores and ranks
-  <mode>_run.trec         # TREC-format run file
+scripts/jseval/tmp/                        # DEFAULT_JSEVAL_DATA_DIR
+  eval-results/<timestamp>_<dataset>/      # `run` default --output-dir
+    summary.json            # Metrics, config, git SHA, pipeline timing
+    <mode>_per_query.json   # Per-query scores and ranks
+    <mode>_run.trec         # TREC-format run file
+  cohort_baselines/<hash>/  # `calibrate` envelopes + drift baselines
 ```
 
 `summary.json` fields agents typically need:

@@ -309,34 +309,79 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
 
       long now = System.currentTimeMillis();
 
-      // Atomic claim using UPDATE...RETURNING (SQLite 3.35+)
-      // This atomically selects and marks jobs as PROCESSING in a single statement,
-      // preventing race conditions and avoiding partial progress on crashes.
-      // Note: attempts is NOT incremented here - it's incremented on failure in markFailed()
-      String atomicClaimSql = """
-          UPDATE jobs
-          SET state = 'PROCESSING', last_updated = ?
-          WHERE path IN (
-            SELECT path FROM jobs
-            WHERE state = 'PENDING' AND (retry_after IS NULL OR retry_after <= ?)
-            ORDER BY last_updated ASC
-            LIMIT ?
-          )
-          RETURNING path, collection
-          """;
+      // Local carrier for a candidate row selected before any mutation happens.
+      record ClaimedRow(String path, String collection) {}
 
-      List<IndexJob> result = new ArrayList<>();
-      try (PreparedStatement stmt = connection.prepareStatement(atomicClaimSql)) {
-        stmt.setLong(1, now);
-        stmt.setLong(2, now);
-        stmt.setInt(3, limit);
-        // Use executeQuery() for UPDATE...RETURNING to get the result set
-        try (ResultSet rs = stmt.executeQuery()) {
-          while (rs.next()) {
-            result.add(new IndexJob(Path.of(rs.getString(1)), rs.getString(2)));
-          }
-        }
-      }
+      // Claim is atomic via an explicit transaction (BEGIN/COMMIT through the existing
+      // inTransaction() helper), not a single UPDATE...RETURNING statement: SQLite's RETURNING
+      // clause (a) may only reference columns of the table being updated - not a joined CTE - and
+      // (b) its row order is documented as unspecified and empirically does NOT follow an
+      // ORDER BY used to select the candidate set (verified: it follows the UPDATE's own
+      // row-visitation order instead). So the SELECT below - not RETURNING - is the single
+      // source of both the claimed set AND its order; the follow-up UPDATE only flips state for
+      // exactly those paths. Wrapping both statements in one transaction preserves the original
+      // atomicity/crash-safety intent (either the whole claim commits or none of it does; no
+      // partial-progress window is visible to another connection).
+      //
+      // Tempdoc 731 §3.2 / PLAN I2: `last_updated ASC, path ASC` makes claim order deterministic
+      // even when a batch shares one enqueue-time timestamp (the fixable determinism gap).
+      List<IndexJob> result =
+          inTransaction(
+              () -> {
+                String selectSql = """
+                    SELECT path, collection FROM jobs
+                    WHERE state = 'PENDING' AND (retry_after IS NULL OR retry_after <= ?)
+                    ORDER BY last_updated ASC, path ASC
+                    LIMIT ?
+                    """;
+
+                List<ClaimedRow> claimedRows = new ArrayList<>();
+                try (PreparedStatement selectStmt = connection.prepareStatement(selectSql)) {
+                  selectStmt.setLong(1, now);
+                  selectStmt.setInt(2, limit);
+                  try (ResultSet rs = selectStmt.executeQuery()) {
+                    while (rs.next()) {
+                      claimedRows.add(new ClaimedRow(rs.getString(1), rs.getString(2)));
+                    }
+                  }
+                }
+
+                if (claimedRows.isEmpty()) {
+                  return List.<IndexJob>of();
+                }
+
+                StringBuilder placeholders = new StringBuilder();
+                for (int i = 0; i < claimedRows.size(); i++) {
+                  if (i > 0) {
+                    placeholders.append(',');
+                  }
+                  placeholders.append('?');
+                }
+                // Tempdoc 730 review Scope-3 (defense-in-depth): guard the claim UPDATE with
+                // `state = 'PENDING'` too, not just the upstream SELECT. Today this connection
+                // holds `lock` for the whole SELECT+UPDATE transaction, so there is no real
+                // window for another consumer to have moved a claimed path off PENDING between
+                // the two statements — but a future multi-consumer/multi-connection change should
+                // not silently regress into re-claiming (and thus double-processing) a row a
+                // concurrent claim already moved to PROCESSING/DONE/FAILED.
+                String updateSql =
+                    "UPDATE jobs SET state = 'PROCESSING', last_updated = ? WHERE state = 'PENDING' AND path IN ("
+                        + placeholders
+                        + ")";
+                try (PreparedStatement updateStmt = connection.prepareStatement(updateSql)) {
+                  updateStmt.setLong(1, now);
+                  for (int i = 0; i < claimedRows.size(); i++) {
+                    updateStmt.setString(i + 2, claimedRows.get(i).path());
+                  }
+                  updateStmt.executeUpdate();
+                }
+
+                List<IndexJob> claimed = new ArrayList<>(claimedRows.size());
+                for (ClaimedRow row : claimedRows) {
+                  claimed.add(new IndexJob(Path.of(row.path()), row.collection()));
+                }
+                return claimed;
+              });
 
       if (!result.isEmpty()) {
         log.debug("Claimed {} jobs for processing", result.size());
@@ -1389,6 +1434,17 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
   }
 
   /**
+   * Exclusive upper bound for a half-open prefix range: the normalized prefix with its final
+   * character incremented, so {@code path >= lower AND path < upper} selects exactly the paths
+   * under {@code lower} without SQL {@code LIKE} wildcard hazards. Callers must pass a non-empty
+   * normalized prefix ({@link PathNormalizer#normalizePathPrefix} guarantees a trailing separator,
+   * so the last char is well-defined and never a high sentinel).
+   */
+  private static String upperBoundExclusive(String lower) {
+    return lower.substring(0, lower.length() - 1) + (char) (lower.charAt(lower.length() - 1) + 1);
+  }
+
+  /**
    * Lists FAILED jobs whose path is under the given prefix (tempdoc 599 §16/B1). Combines the
    * {@link #listFailedJobs(int)} projection with the half-open range predicate from
    * {@link #countByPathPrefix(String)} — same normalization + PK-index-friendly, wildcard-safe
@@ -1405,8 +1461,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
         log.warn("listFailedJobsByPathPrefix called with empty prefix, refusing");
         return List.of();
       }
-      String upper =
-          lower.substring(0, lower.length() - 1) + (char) (lower.charAt(lower.length() - 1) + 1);
+      String upper = upperBoundExclusive(lower);
       int effectiveLimit = limit > 0 ? Math.min(limit, 1000) : 100;
 
       String sql = """
@@ -1511,10 +1566,16 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
         return 0;
       }
 
-      String sql = "DELETE FROM jobs WHERE path LIKE ? || '%'";
+      // Half-open range on the PK-indexed path (path >= lower AND path < upper) instead of
+      // LIKE 'prefix%', so `_`/`%` inside a normalized path are treated literally rather than
+      // as SQL wildcards (which would over-delete unrelated jobs) — mirrors the wildcard-safe
+      // listFailedJobsByPathPrefix/countByPathPrefix range queries.
+      String upper = upperBoundExclusive(normalized);
+      String sql = "DELETE FROM jobs WHERE path >= ? AND path < ?";
 
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
         stmt.setString(1, normalized);
+        stmt.setString(2, upper);
         int deleted = stmt.executeUpdate();
         if (deleted > 0) {
           log.info("deleteByPathPrefix: deleted {} jobs for prefix: {}", deleted, normalized);
@@ -1557,10 +1618,7 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
         log.warn("countByPathPrefix called with empty prefix, refusing");
         return new JobQueue.JobStateCounts(0L, 0L, 0L, 0L, 0L);
       }
-      // Half-open upper bound: same string with the final char incremented. normalizePathPrefix
-      // guarantees a trailing separator, so the last char is well-defined and not a high sentinel.
-      String upper =
-          lower.substring(0, lower.length() - 1) + (char) (lower.charAt(lower.length() - 1) + 1);
+      String upper = upperBoundExclusive(lower);
 
       String sql = "SELECT state, COUNT(*) FROM jobs WHERE path >= ? AND path < ? GROUP BY state";
 

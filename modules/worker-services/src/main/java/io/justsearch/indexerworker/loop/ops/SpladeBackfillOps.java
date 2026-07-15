@@ -41,13 +41,17 @@ public final class SpladeBackfillOps {
       Logger log) {}
 
   /**
-   * Processes a batch of SPLADE backfill documents. Returns {@code true} on success (or partial
-   * success), {@code false} when the entire batch failed systemically (e.g., GPU OOM). The caller
-   * should back off on consecutive {@code false} returns.
+   * Processes a batch of SPLADE backfill documents.
+   *
+   * @return outcome whose {@code success()} preserves the original "not a systemic failure"
+   *     signal ({@code true} on success or partial success, {@code false} when the entire batch
+   *     failed systemically e.g. GPU OOM — the caller backs off on consecutive {@code false}); the
+   *     record also carries docsProcessed/elapsedMs for {@link BackfillScheduler}'s per-stage
+   *     metrics recording (tempdoc 710 Move 2 item 4).
    */
-  public static boolean processSpladeBackfill(BackfillContext context) {
+  public static StageOutcome processSpladeBackfill(BackfillContext context) {
+    long t0 = System.nanoTime();
     try {
-      long t0 = System.nanoTime();
       List<String> pendingIds =
           context
               .documentFieldOps()
@@ -58,13 +62,13 @@ public final class SpladeBackfillOps {
       long queryMs = (System.nanoTime() - t0) / 1_000_000;
 
       if (pendingIds.isEmpty()) {
-        return true;
+        return StageOutcome.none();
       }
 
       SpladeEncoder encoder = context.spladeEncoderSupplier().get();
       if (encoder == null) {
         context.log().debug("SPLADE backfill: encoder unavailable, stopping batch");
-        return true;
+        return StageOutcome.none();
       }
 
       context.log().info("Processing SPLADE backfill for {} documents", pendingIds.size());
@@ -74,7 +78,7 @@ public final class SpladeBackfillOps {
 
       // Check for interruption before batch work
       if (shouldInterrupt(context)) {
-        return true;
+        return StageOutcome.elapsedSince(t0);
       }
 
       // Phase 1: Collect content for all pending docs
@@ -112,12 +116,12 @@ public final class SpladeBackfillOps {
 
       if (batchContents.isEmpty()) {
         commitIfNeeded(context, processed, failed, markedFailed);
-        return true;
+        return new StageOutcome(true, processed, (System.nanoTime() - t0) / 1_000_000);
       }
 
       // Re-check interruption after content collection
       if (shouldInterrupt(context)) {
-        return true;
+        return new StageOutcome(true, processed, (System.nanoTime() - t0) / 1_000_000);
       }
 
       // Phase 2: Batch encode with SPLADE
@@ -125,6 +129,18 @@ public final class SpladeBackfillOps {
       List<Map<String, Float>> sparseVecs;
       try {
         sparseVecs = encoder.encodeBatch(batchContents);
+        // A short/empty result is as unusable as null for the index-aligned loop in Phase 3 —
+        // trusting its length to match batchDocIds is what crash-loops the embedding-chunk
+        // sibling of this method (EmbeddingBackfillOps#processChunkEmbeddingBackfill). Route
+        // it into the same per-doc fallback below instead of indexing out of bounds.
+        if (sparseVecs == null || sparseVecs.size() != batchDocIds.size()) {
+          throw new IllegalStateException(
+              "SPLADE batch result size mismatch (expected "
+                  + batchDocIds.size()
+                  + ", got "
+                  + (sparseVecs == null ? "null" : sparseVecs.size())
+                  + ")");
+        }
       } catch (Exception e) {
         context.log().error("SPLADE batch encoding failed: {}", e.getMessage());
         // Fallback to per-doc encoding
@@ -157,9 +173,9 @@ public final class SpladeBackfillOps {
                   "SPLADE encoding unavailable: entire batch of {} docs failed — {}",
                   failed,
                   e.getMessage());
-          return false;
+          return new StageOutcome(false, processed, (System.nanoTime() - t0) / 1_000_000);
         }
-        return true;
+        return new StageOutcome(true, processed, (System.nanoTime() - t0) / 1_000_000);
       }
 
       long encodeMs = (System.nanoTime() - t2) / 1_000_000;
@@ -198,11 +214,11 @@ public final class SpladeBackfillOps {
               writeMs,
               commitMs,
               docs > 0 ? totalMs / docs : 0);
-      return true;
+      return new StageOutcome(true, processed, totalMs);
 
     } catch (Exception e) {
       context.log().error("Error during SPLADE backfill", e);
-      return false;
+      return new StageOutcome(false, 0, (System.nanoTime() - t0) / 1_000_000);
     }
   }
 
@@ -243,21 +259,11 @@ public final class SpladeBackfillOps {
     try {
       String retryCountStr =
           documentFieldOps.getDocumentField(docId, SchemaFields.SPLADE_RETRY_COUNT);
-      int retryCount = 0;
-      if (retryCountStr != null && !retryCountStr.isBlank()) {
-        try {
-          retryCount = Integer.parseInt(retryCountStr);
-        } catch (NumberFormatException ignored) {
-          // Default to 0
-        }
-      }
+      int currentRetryCount = parseRetryCountOrZero(retryCountStr);
+      Map<String, Object> updates = computeSpladeFailureUpdate(currentRetryCount);
+      int retryCount = currentRetryCount + 1;
 
-      retryCount++;
-      Map<String, Object> updates = new HashMap<>();
-
-      if (retryCount >= SchemaFields.SPLADE_MAX_RETRIES) {
-        updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_FAILED);
-        updates.put(SchemaFields.SPLADE_RETRY_COUNT, String.valueOf(retryCount));
+      if (updates.containsKey(SchemaFields.SPLADE_STATUS)) {
         log.warn(
             "SPLADE permanently FAILED for {} after {} retries: {}",
             docId,
@@ -266,19 +272,49 @@ public final class SpladeBackfillOps {
         indexingCoordinator.updateDocument(docId, updates);
         return 1;
       } else {
-        updates.put(SchemaFields.SPLADE_RETRY_COUNT, String.valueOf(retryCount));
         log.debug(
             "SPLADE retry {}/{} for {}: {}",
             retryCount,
             SchemaFields.SPLADE_MAX_RETRIES,
             docId,
             reason);
-        indexingCoordinator.updateDocument(docId, updates, true);
+        indexingCoordinator.updateDocument(docId, updates);
         return 0;
       }
 
     } catch (Exception e) {
       log.error("Failed to update SPLADE retry count for {}", docId, e);
+      return 0;
+    }
+  }
+
+  /**
+   * Pure computation of the retry-count/status update for a SPLADE failure — no I/O. Shared by
+   * {@link #handleSpladeFailure} (immediate single-doc write) and the combined enrichment path
+   * (merges the result into its own single batched write), so the two stay in escalation-parity
+   * by construction (tempdoc 700).
+   *
+   * @param currentRetryCount the doc's retry count *before* this failure
+   * @return field updates: always {@code SPLADE_RETRY_COUNT}; additionally {@code
+   *     SPLADE_STATUS=FAILED} once the incremented count reaches {@code SPLADE_MAX_RETRIES}
+   */
+  static Map<String, Object> computeSpladeFailureUpdate(int currentRetryCount) {
+    int retryCount = currentRetryCount + 1;
+    Map<String, Object> updates = new HashMap<>();
+    updates.put(SchemaFields.SPLADE_RETRY_COUNT, String.valueOf(retryCount));
+    if (retryCount >= SchemaFields.SPLADE_MAX_RETRIES) {
+      updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_FAILED);
+    }
+    return updates;
+  }
+
+  private static int parseRetryCountOrZero(String retryCountStr) {
+    if (retryCountStr == null || retryCountStr.isBlank()) {
+      return 0;
+    }
+    try {
+      return Integer.parseInt(retryCountStr);
+    } catch (NumberFormatException ignored) {
       return 0;
     }
   }

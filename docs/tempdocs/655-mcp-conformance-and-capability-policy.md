@@ -69,6 +69,15 @@ related:
 3. **Adoption measurement (the reason the layer exists)** — NOT yet done; the decisive result is still
    open. See "next agent" below.
 
+4. **Ownership transfer (2026-07-14)** — the adoption/discoverability lever — including the "Next lever
+   (owned here)" backlog at the bottom of this file (decision-to-retrieve gap: tool naming/annotations,
+   instructions strengthening, answer-first framing) — TRANSFERS to tempdoc 725. 725 has since run the
+   takeover/research/design/derisk sequence: its deferral-by-default finding (the current Claude CLI/SDK
+   cohort defers ALL MCP tools by default, so tool descriptions are invisible pre-search) reframes the gap
+   this file quantified, and the funnel vocabulary (offered → discovered → invoked → reinforced) and the
+   resulting lever order now live in 725, not here. 655 KEEPS: MCP conformance, capability policy, and the
+   open Q2 client-fixture decision — those remain this file's scope.
+
 **For the next agent — remaining work, deferred checks, and unverified assumptions:**
 - **Deferred (external dependency, the main open work):** the decisive **two-corpus adoption contrast**
   — re-run 624's Step-1 pilot on a headroom corpus and show adoption rising where the index wins while
@@ -1825,3 +1834,120 @@ proxy-optimization trap this tempdoc warned about from the start. So the discipl
 we do with this?" is: optionally apply R1 (it stands on token-efficiency grounds alone), and otherwise
 **wait for the adoption measurement before investing further in the surface** — there is no evidence-backed
 feature or UX extension to build here yet, and that is an acceptable outcome.
+
+## Operational notes & session provenance (2026-07-07) — so this tempdoc stands without any chat transcript
+
+Noncanonical working history. Verify against `main` + canonical docs before trusting. This block exists
+so a future agent (or an external reader) can continue the work without the private session it came from.
+
+**Public provenance of the shipped agent-legibility layer:**
+- Merged via **PR #87** (squash commit `5779c48`), title *"feat(655): MCP agent-legibility layer —
+  connect-time instructions + comparative response hints"*. Source branch `worktree-td655-investigation`
+  (deleted after merge). Touched files: `McpContractVersions.java`, `McpProtocolHandler.java`,
+  `McpToolSurface.java`, `McpProtocolHandlerTest.java`, `docs/reference/mcp-production-server.md`, this tempdoc.
+- Post-merge **main CI: green** — run `https://github.com/eliasjustus/justsearch/actions/runs/28871397310`
+  (Build, unit tests app-ui / platform-contracts / search-worker, Windows-native tests, Secret scan,
+  Public claims, License and notices, CI wall-clock attribution).
+- The out-of-scope `docsUsed=0` finding (see the research-fix section) was folded into
+  `docs/observations.md` via **PR #92** (`17c31f7`) and is also recorded above; its per-session shard is
+  therefore already durable — do not re-commit a stray copy.
+
+**Exact validation commands (reproducible; no persisted `capture_evidence` bundle exists — see gotchas):**
+- Full backend suite: `JAVA_HOME=<jdk17+> ./gradlew.bat build -PskipWebBuild=true` (unit + integration +
+  ArchUnit + PMD + check).
+- MCP unit tests: `./gradlew.bat :modules:ui:test --tests "*McpProtocolHandlerTest*"`.
+- Live surface (needs a running stack): `POST http://127.0.0.1:<apiPort>/mcp` with an `initialize`
+  JSON-RPC body → expect `serverInfo.version:"0.2.0"` and a non-empty `instructions` field; then a
+  `tools/call` for `justsearch_answer` / `justsearch_search` to see the comparative response hints.
+- Real-agent plumbing check: point the `claude` CLI at the running `/mcp` via
+  `--mcp-config '{"mcpServers":{"justsearch":{"type":"http","url":"http://127.0.0.1:<apiPort>/mcp"}}}'`
+  and confirm the model receives the `instructions`.
+- Conformance: `node scripts/ci/check-mcp-conformance.mjs --url http://127.0.0.1:<apiPort>/mcp` → expect
+  *"All 11 protocol-conformance scenarios pass."*
+
+**Environment/tooling gotchas that cost real time this session (fix at the tooling layer, not per-agent):**
+- **JDK mismatch (repeated cost):** the ambient `JAVA_HOME` was JDK 8 (scoop `temurin8`), but Gradle needs
+  17+. Every gradle/dev-runner call required `export JAVA_HOME=<jdk17+>` first, and the `justsearch-dev`
+  MCP `justsearch_dev_start` failed with *"Gradle assemble failed"* for the same reason. Already logged
+  cross-session in the observations conditions store (dev-runner JDK-8 root-cause). Workaround used:
+  `node scripts/dev/dev-runner.cjs start --skip-build --json` under a correct `JAVA_HOME`. **Recommended
+  fix:** `gradlew`/`dev-runner` should resolve a 17+ toolchain themselves rather than inheriting a JDK-8
+  ambient env.
+- **Dev MCP server staleness:** the `justsearch-dev` MCP server reported `sourceChangedSinceBoot` for the
+  whole session and could neither start nor manage the stack; consequently `capture_evidence` was
+  unusable, so the live evidence above is command+output (reproducible), not a stored bundle.
+- **CRLF phantom-dirty (repeated cost):** `./gradlew.bat build` rewrites `SSOT/**` schema JSON and
+  `modules/ui-web/src/api/__fixtures__/*.json` with LF, surfacing ~40 files as modified (line-ending only,
+  zero content diff — they do not appear in `git diff --stat`). Restore before staging with
+  `git checkout -- SSOT modules/ui/src/main/resources/SSOT modules/app-api/src/main/resources/schemas modules/ui-web/src/api/__fixtures__`.
+  Always stage your own paths explicitly; never `git add -A` here. **Recommended fix:** normalize these
+  paths in `.gitattributes` so `processResources` stops producing phantom line-ending diffs.
+
+**Known unrelated dirty state in the shared main checkout (NOT this work — leave it):**
+- Untracked LFS models `models/**/*.onnx` (pre-existing).
+- Other sessions' untracked shards under `docs/observations.d/` (each belongs to its own session).
+- Local `main` is many commits diverged from `origin/main` (team-wide; squash-merges land on `origin`
+  under different SHAs). **Before opening a PR from a `baseRef:head` worktree, merge `origin/main` (or
+  reset the worktree to it) and confirm `git diff origin/main...HEAD --stat` shows only your files** — the
+  initial PR diff here wrongly included the 624 pilot artifacts (incl. a 5552-line eval log) until
+  `origin/main` was merged in. This is the tempdoc-618-§1 base-ref trap.
+
+**Adjacent work to reconcile (coordination):** **PR #88** *"feat(658): project retrieval evidence onto the
+MCP agent surface"* landed on the **same MCP agent surface** around the same time. No conflict was observed
+(both merges' main CI green), but a future agent should confirm 655's `instructions`/response-hints compose
+cleanly with 658's evidence projection.
+
+**Private/ephemeral caveats (do not treat as canonical):** session-specific ports (e.g. `63703`) are
+throwaway; the `ZANZIBAR-QUILL-7734` token in the risk register was a disposable probe string used to prove
+the CLI injects a server's `instructions`, not a repo artifact.
+
+**One reusable process finding:** for a long-lived tempdoc that accumulates many dated passes (this one is
+~1800 lines), a **top-of-file "STATUS SUMMARY … read this first"** block — carrying current state, per-claim
+evidence pointers, and forward-looking risks — is what makes it usable on handoff. Treat that as the
+convention for any tempdoc past a few passes, not an ad-hoc addition.
+
+---
+
+# Scale-corpus re-test of the agent-legibility layer (2026-07-08) — answer-first usage moved off zero; adoption still low+late (joint effect with scale)
+
+> Source: tempdoc 624 pass 26 (scale-corpus matrix, battlefield-en-scale-v1, 2736 docs / 380 queries).
+> Success metric this section is accountable for (pre-registered in "Adoption-zero finding"): the
+> before/after adoption delta on a re-run of the pilot through the shipped legibility layer.
+
+| Metric | Before (390-doc, pre-655, pilot pass 25) | After (2736-doc, post-655, pass 26) |
+|---|---|---|
+| `instructions` field + comparative hints | absent | present (TOOL_SURFACE_VERSION 0.2.0) |
+| `adoption_rate` (B, offered) | **0.0** | **16.7%** (5/30) |
+| `first_mcp_call_index` (median, B) | null (no calls) | **21st tool call** (late) |
+| `justsearch_answer` calls (any arm, any run on record) | **0 — never** | **27 cells** (4 B + 23 C) |
+| answer-first usage rate (C, forced) | undefined | **76.7%** |
+| habit-prior signal | not measured | **18/30 C cells** attempted a disallowed file tool (blocked) |
+
+## Reading
+
+The shipped agent-legibility layer's designated primary tool, `justsearch_answer`, went from
+**never called in the campaign's entire history** to called in 27 cells — and when the agent is forced
+onto the MCP surface (C), it uses answer-first 76.7% of the time. That is the clearest evidence to date
+that the connect-time `instructions` + answer-first steering reached the model. **But offered-arm
+adoption is still only 16.7% and arrives on the ~21st tool call** — the agent grep-flails first and
+reaches for the tool late, and 18/30 forced cells still reflexively try grep. So the layer moved
+*answer-tool choice once retrieval is used*, but did **not** close the *decision-to-retrieve* gap.
+
+## The confound, stated honestly
+
+Both the corpus scale AND the 655 layer changed between the two measurement points, so the adoption
+delta (0.0→16.7%) is a **joint effect**, not an isolated 655 effect — more docs to grep raises the
+brute-force cost independent of any wording change. No ablation (post-655 code on the 390-doc corpus, or
+pre-655 code on the scale corpus) was run, so the two are not separable from this run alone. What *is*
+attributable more cleanly to 655: `justsearch_answer` usage (the layer specifically promotes it, and it
+was never called pre-655 across many runs on other corpora).
+
+## Next lever (owned here)
+
+> TRANSFERRED to tempdoc 725 (2026-07-14) — see 725's settled design; this list is retained as history.
+
+The decision-to-retrieve gap is now quantified (adoption 16.7%, median 21st call, 18/30 habit-prior
+grep attempts) — this is the concrete target for the still-open 655 steering candidates (tool
+naming/annotations, `initialize.instructions` strengthening, an answer-first framing that fires before
+the agent commits to grep). The model-tier sweep (624 Step-2) discriminates whether the residual gap is
+capability-driven or rational.

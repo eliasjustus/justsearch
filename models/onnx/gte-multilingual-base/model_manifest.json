@@ -2,5 +2,15 @@
   "cpu": "model_fp16.onnx",
   "gpu": "model_fp16.onnx",
   "tokenizer": "tokenizer.json",
-  "pooling_config": "pooling_config.json"
+  "pooling_config": "pooling_config.json",
+  "capabilities": {
+    "pooling_mode": "cls",
+    "context_length": 8192,
+    "embedding_dimension": 768,
+    "cpu_precision": "fp16",
+    "gpu_precision": "fp16",
+    "document_prefix": "",
+    "query_prefix": "",
+    "_comment": "Alibaba-NLP/gte-multilingual-base. pooling_mode matches this dir's own pooling_config.json ({\"pooling_mode\":\"cls\"}). context_length/embedding_dimension verified against the real HF repo's config.json (max_position_embeddings=8192, hidden_size=768 — tempdoc 710 S-C.R; this repo copy ships no local config.json, so the fact is declared here rather than read locally). precision: only one file variant exists (model_fp16.onnx serves both cpu and gpu roles), so both are fp16 — no separate fp32 CPU build. prefixes match this dir's own prefix_config.json (both empty — gte-multilingual-base uses no task-instruction prefix). Tempdoc 710 Wave 2 Move 1 manifest authoring pass."
+  }
 }

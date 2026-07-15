@@ -744,17 +744,22 @@ for the Q1 finding that drove this separation.
 1. Run `jseval calibrate --dataset <name> --modes <list> --runs N`
    — repeats N identical `--clean --pipeline` smokes, captures
    mean + sample-stdev per mode per metric, and writes a facet file
-   at `<dataDir>/cohort_baselines/<cohort_hash>/envelope.json`
-   (Phase 3 layout per §26.6 Decision 2; see `docs/tempdocs/400-*.md`).
-   Calibrated metrics: nDCG@10, P@1, R@10, RR@10, AP@10,
-   latency.mean_ms, latency.p50_ms. Excluded: p95/p99/max (cold-
-   start-dominated, cv ≥ 64% on N=3 runs — would inflate the
-   envelope to uselessness). Default `--runs 5` (~20 min cost);
-   override for cheaper/richer calibration.
+   at `<data-dir>/cohort_baselines/<cohort_hash>/envelope.json`,
+   where `--data-dir` defaults to the jseval-owned data root
+   `scripts/jseval/tmp/` since tempdoc 716 — physically outside the
+   Worker's `JUSTSEARCH_DATA_DIR`, so a backend `--clean` can never
+   destroy calibration state (Phase 3 layout per §26.6 Decision 2;
+   see `docs/tempdocs/400-*.md`). Calibrated metrics: nDCG@10, P@1,
+   R@10, RR@10, AP@10, latency.mean_ms, latency.p50_ms. Excluded:
+   p95/p99/max (cold-start-dominated, cv ≥ 64% on N=3 runs — would
+   inflate the envelope to uselessness). Default `--runs 5` (~20 min
+   cost); override for cheaper/richer calibration.
 
 2. Subsequent `jseval run` invocations with matching cohort identity
    auto-embed the envelope into their `manifest.json` (via
-   `compute_manifest`'s registry lookup against JUSTSEARCH_DATA_DIR).
+   `compute_manifest`'s registry lookup against the jseval data root;
+   pre-716 envelopes inside a backend data dir still resolve read-only,
+   with a deprecation WARN).
    Consumers (Phase 3's LR4-b bootstrap CI, Phase 4+ LR5-d bisection)
    can distinguish noise (±2·stdev inside the envelope) from signal
    (outside) by definition rather than by hope. Envelopes written at

@@ -71,6 +71,98 @@ final class JobQueueTest {
     assertEquals(1, jobQueue.queueDepth());
   }
 
+  // Tempdoc 731 §3.2 / PLAN I2 (job-queue claim-order tie-break): SqliteJobQueue.enqueue()
+  // stamps a single System.currentTimeMillis() for the whole batch, so a multi-path enqueue
+  // always produces same-timestamp PENDING rows in production — mirroring that real batch
+  // shape here (not a synthetic same-millis seed) is what makes this test's determinism claim
+  // trustworthy (unreachable-seed-green). Before the `, path ASC` secondary sort, pollPending's
+  // `ORDER BY last_updated ASC` alone left claim order among those ties undefined by SQL
+  // semantics. Assert the claim order is deterministic and path-lexicographic across repeated,
+  // independent enqueue/poll cycles.
+  @Test
+  void pollPendingClaimsSameTimestampBatchInDeterministicPathOrder() throws Exception {
+    List<Path> batch = List.of(
+        Path.of("/tmp/tie-break/c.txt"),
+        Path.of("/tmp/tie-break/a.txt"),
+        Path.of("/tmp/tie-break/e.txt"),
+        Path.of("/tmp/tie-break/b.txt"),
+        Path.of("/tmp/tie-break/d.txt"));
+    List<String> expectedOrder =
+        batch.stream()
+            .map(p -> PathNormalizer.normalizePath(p.toAbsolutePath().toString()))
+            .sorted()
+            .toList();
+
+    // Repeat across fresh, independent queue instances (own DB file each trial) so the
+    // assertion is about the SQL tie-break contract, not one connection's incidental state.
+    for (int trial = 0; trial < 3; trial++) {
+      Path trialDbPath = tempDir.resolve("jobs-tiebreak-" + trial + ".db");
+      SqliteJobQueue trialQueue = new SqliteJobQueue(trialDbPath);
+      trialQueue.open();
+      try {
+        assertEquals(
+            batch.size(), trialQueue.enqueue(batch), "trial " + trial + ": batch fully accepted");
+        var claimed = trialQueue.pollPending(batch.size());
+        List<String> claimedOrder =
+            claimed.stream().map(job -> job.path().toString()).toList();
+        assertEquals(
+            expectedOrder,
+            claimedOrder,
+            "trial " + trial + ": claim order among same-timestamp jobs must be deterministic"
+                + " path-ascending order");
+      } finally {
+        trialQueue.close();
+      }
+    }
+  }
+
+  // Tempdoc 730 review Scope-3 (defense-in-depth): pollPending's claim UPDATE now guards with
+  // `WHERE state = 'PENDING' AND path IN (...)`, not just the upstream SELECT filter. There is no
+  // real concurrent-consumer window to trigger this from black-box pollPending() calls (this
+  // connection holds `lock` for the whole SELECT+UPDATE transaction) — this is a tiny, direct
+  // assert on the exact UPDATE shape SqliteJobQueue issues, proving the guard clause itself
+  // behaves correctly if a future multi-consumer change ever removes the single-connection lock.
+  @Test
+  void pollPendingClaimUpdateGuardsAgainstNonPendingRows() throws Exception {
+    jobQueue.enqueue(List.of(Path.of("/tmp/guard/a.txt"), Path.of("/tmp/guard/b.txt")));
+    String pathA =
+        PathNormalizer.normalizePath(Path.of("/tmp/guard/a.txt").toAbsolutePath().toString());
+    String pathB =
+        PathNormalizer.normalizePath(Path.of("/tmp/guard/b.txt").toAbsolutePath().toString());
+
+    try (Connection raw = DriverManager.getConnection("jdbc:sqlite:" + dbPath)) {
+      // Simulate a row already claimed elsewhere (e.g. a concurrent consumer, or simply a state
+      // this claim UPDATE should never touch) by moving `a` out of PENDING directly.
+      try (PreparedStatement mark =
+          raw.prepareStatement("UPDATE jobs SET state = 'PROCESSING' WHERE path = ?")) {
+        mark.setString(1, pathA);
+        mark.executeUpdate();
+      }
+
+      // The exact claim-UPDATE shape SqliteJobQueue.pollPending issues (state='PROCESSING'
+      // guarded by state='PENDING'), run directly against both paths.
+      try (PreparedStatement claim =
+          raw.prepareStatement(
+              "UPDATE jobs SET state = 'PROCESSING', last_updated = ? "
+                  + "WHERE state = 'PENDING' AND path IN (?,?)")) {
+        claim.setLong(1, System.currentTimeMillis());
+        claim.setString(2, pathA);
+        claim.setString(3, pathB);
+        int updated = claim.executeUpdate();
+        assertEquals(
+            1, updated, "only the still-PENDING row (b) may be claimed; a was already PROCESSING");
+      }
+
+      try (PreparedStatement check = raw.prepareStatement("SELECT state FROM jobs WHERE path = ?")) {
+        check.setString(1, pathA);
+        try (ResultSet rs = check.executeQuery()) {
+          assertTrue(rs.next());
+          assertEquals("PROCESSING", rs.getString(1), "a's state must be untouched by the claim UPDATE");
+        }
+      }
+    }
+  }
+
   // Tempdoc 550 Thesis II (liveness reaper): the age-bounded recoverStuckJobs(olderThanMs) re-queues
   // ONLY genuinely-stale PROCESSING rows (worker died mid-process), never jobs actively draining.
   @Test
@@ -964,6 +1056,21 @@ final class JobQueueTest {
     assertEquals(0, jobQueue.deleteByPathPrefix(""), "Blank prefix must be rejected");
     assertEquals(0, jobQueue.deleteByPathPrefix("   "), "Whitespace-only prefix must be rejected");
     assertEquals(1, jobQueue.queueDepth(), "Nothing should be deleted");
+  }
+
+  @Test
+  void deleteByPathPrefix_treatsUnderscoreLiterally_noWildcardOverDelete() {
+    // '_' is a LIKE single-char wildcard: the old `path LIKE 'foo_bar%'` also matched
+    // sibling 'fooXbar'. The half-open range query must treat '_' literally so only the
+    // intended prefix is deleted.
+    Path underscoreDir = tempDir.resolve("foo_bar"); // the prefix we delete
+    Path wildcardSibling = tempDir.resolve("fooXbar"); // matched by LIKE, must survive
+    jobQueue.enqueue(
+        List.of(underscoreDir.resolve("job.txt"), wildcardSibling.resolve("job.txt")));
+
+    int deleted = jobQueue.deleteByPathPrefix(underscoreDir.toAbsolutePath().toString());
+    assertEquals(1, deleted, "Only the literal foo_bar/ job may be deleted");
+    assertEquals(1, jobQueue.queueDepth(), "The fooXbar/ job must survive the '_' prefix delete");
   }
 
   @Test

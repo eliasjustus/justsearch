@@ -135,6 +135,9 @@ import {
 import { createRequire } from 'node:module';
 const _ownReq = createRequire(import.meta.url);
 const { computeOwnershipVerdict, readSessionActivity, computeDisplacedNotice, recommendedTakeoverFor } = _ownReq('../lib/ownership-verdict.cjs');
+// Tempdoc 696: resolve a >= 24 JDK (Temurin 25) for hot-swap's java + gradle compile,
+// so a stale JDK-8 JAVA_HOME/PATH can't break `--source 25` hot-swap. Reuses _ownReq (CJS interop).
+const { resolveJavaExe, resolveJdkHome } = _ownReq('../lib/resolve-jdk.cjs');
 
 function _pidAlive(pid) {
   if (typeof pid !== 'number' || pid <= 0) return false;
@@ -207,8 +210,16 @@ async function buildOwnershipProjection({ mainRepoRoot, callerRepoRoot, callerSe
     ...(leaseProv ? { provenance: leaseProv } : {}),
   };
   if (active.lease) {
-    ownership.lease = active.lease;
-    ownership.leaseFresh = new Date(active.lease.expiresAt) > new Date();
+    // Tempdoc 735 G6: surface remaining-hold as a computed, additive field so quick_health /
+    // status callers don't each redo the expiresAt-minus-now arithmetic to see how much of a
+    // declared campaign-length hold is left.
+    // A dead supervisor makes any advertised hold moot (verdict short-circuits to RECLAIM_DEAD),
+    // so liveness-qualify the advisory fields rather than showing hours of remaining hold on a
+    // crashed stack.
+    const remainingMs = supervisorAlive
+        ? new Date(active.lease.expiresAt).getTime() - Date.now() : 0;
+    ownership.lease = { ...active.lease, remainingSec: Math.max(0, Math.round(remainingMs / 1000)) };
+    ownership.leaseFresh = supervisorAlive && new Date(active.lease.expiresAt) > new Date();
   }
   if (opLeases.active.length > 0) ownership.opLeases = opLeases.active;
   // Tempdoc 606 3a: pull-at-next-action notification. Did THIS caller previously own a
@@ -611,6 +622,10 @@ export async function main() {
         'Then call reload after code changes to compile + push bytecode + restart services (~2-3s).',
         'Without hotReload on start, reload still pushes bytecode (method-body changes only).',
         '',
+        'Long campaigns: start with leaseDurationSec (30-7200) to hold ownership without frequent',
+        'renewals — avoids a mid-campaign takeover when the agent is busy (jseval/gradle) for minutes',
+        'with no session activity. quick_health/status report remaining hold via ownership.lease.remainingSec.',
+        '',
         'Prerequisites: ./gradlew.bat build must succeed before start.',
         'After compaction: call quick_health to re-orient.',
         '',
@@ -705,7 +720,11 @@ export async function main() {
         effDevRunnerPath = cand;
       }
 
-      const args = buildDevRunnerArgsStart({ apiPort, uiPort, clean, dataDir, takeover, skipBuild, hotReload, sessionId: input.sessionId });
+      const args = buildDevRunnerArgsStart({
+        apiPort, uiPort, clean, dataDir, takeover, skipBuild, hotReload,
+        sessionId: input.sessionId,
+        leaseDurationSec: input.leaseDurationSec,
+      });
       maybeAppendNdjson(mainRepoRoot, { event: 'tool_start', tool: 'justsearch.dev.start', args: { apiPort, uiPort, clean, distFrom: input.distFrom ?? null } });
 
       let json;
@@ -2542,7 +2561,9 @@ export async function main() {
       const debugPort = input.debugPort || 5005;
       const skipCompile = input.skipCompile === true;
       const gradleCmd = path.join(repoRoot, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
-      const javaCmd = 'java';
+      // Tempdoc 696: absolute >= 24 java (not bare PATH `java`, which may be JDK 8) for `--source 25`.
+      const javaCmd = resolveJavaExe();
+      const jdkEnv = { ...process.env, JAVA_HOME: resolveJdkHome() };
 
       const result = { ok: true, compileMs: null, hotSwapOutput: null, hotSwapOk: null, structuralChangeDetected: false, signalWritten: false };
 
@@ -2568,7 +2589,7 @@ export async function main() {
           const compileResult = await execFileP(
             gradleCmd,
             [`:modules:${module}:compileJava`],
-            { cwd: repoRoot, timeout: 60_000, windowsHide: true, shell: process.platform === 'win32' },
+            { cwd: repoRoot, timeout: 60_000, windowsHide: true, shell: process.platform === 'win32', env: jdkEnv },
           );
           result.compileMs = Date.now() - compileStart;
           // Check for compilation errors in output
@@ -2586,7 +2607,7 @@ export async function main() {
         const hsResult = await execFileP(
           javaCmd,
           ['--add-modules', 'jdk.jdi', '--source', '25', hotSwapScript, String(debugPort), classesDir],
-          { cwd: repoRoot, timeout: 15_000, windowsHide: true },
+          { cwd: repoRoot, timeout: 15_000, windowsHide: true, env: jdkEnv },
         );
         result.hotSwapOutput = (hsResult.stdout || '').trim();
         result.hotSwapOk = true;

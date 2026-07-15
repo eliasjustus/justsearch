@@ -1,0 +1,9 @@
+{
+  "schema": "707-corpus-commitment.v1",
+  "files": {
+    "recipe.json": "f1048feb70abe8080a2573ee0e52a28f99d9d05df3b4fcc7db0eb2e0f8f8b498",
+    "fabricated-docs.jsonl": "2223bd9bed627cbfb94c2bc99f9cb137b8551248666f4bbd20b4bf498d1f0bf7",
+    "fabricated-queries.json": "8e573490be99b8007ea04e185e7c20c4c52330acb3f7f241f84ddc1311a02641",
+    "fabricated-meta.json": "16dba847da936dc15f82dcb1be7cef30d732fd752c770bf855b1275a1c7acc3d"
+  }
+}

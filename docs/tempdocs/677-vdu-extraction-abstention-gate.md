@@ -1,9 +1,9 @@
 ---
 title: "VDU extraction abstention gate: the vision model hallucinates plausible text on scans it cannot read, and that text is indexed as real document content with no confidence check anywhere on the output path"
 type: tempdocs
-status: "open — STUB, no design or implementation. A live-observed production correctness defect, not a speculative improvement: the evidence run is documented and reproducible (tempdoc 624, twenty-second pass, 2026-07-03). Register check at filing: 607 owns extraction ROUTING (which path a document takes), 671 owned OCR-skip reason-code truth, 672 owned VDU bootstrap wiring — no existing tempdoc owns extraction OUTPUT quality/abstention; this one does."
+status: "DONE — MERGED to main 2026-07-11 as PR #147 (squash 07d841b), CI-green + live-verified. Three-band abstention cascade (Stage 0 input-legibility; Stage 1 calibrated logprob/finish_reason floors; Stage 2 seed-varied agreement probe) + REJECTED_SUSPECT_TEXT outcome retaining baseline + FE provenance (vdu_rejected/vdu_empty). Calibration: 30/30 sampled confabulations rejected, 0/16 legible false-abstains; gate seam 100% mutation strength. Live smoke: 5/5 confabulation docs kept out of the index. (Status corrected 2026-07-12: the pre-merge status-update regex silently no-op'd on a pattern mismatch, so the merged header wrongly read 'IN PROGRESS / remaining FE+live-stack' — both were in fact complete.) Open tuning follow-up recorded in §Live-stack verification: Stage-2 probe token cap so long-confab docs REJECT rather than time out to FAILED. Original filing context: a live-observed production correctness defect (624 twenty-second pass, 2026-07-03); 607 owns routing, 671 reason-code truth, 672 wiring — this doc owns extraction OUTPUT quality/abstention."
+updated: 2026-07-12
 created: 2026-07-03
-updated: 2026-07-03
 author: agent retrospective (624 scan-battlefield session), filed by agent — STUB
 category: vdu / extraction-quality / indexing-correctness / worker
 related:
@@ -64,3 +64,223 @@ Not extraction routing (607), not reason-code plumbing (671), not VDU lifecycle/
 the separate research question of constructing scans that are pipeline-readable but agent-unreadable
 (that stays with 624/the register). Not a general OCR-quality program — the scope is the honesty of
 the output path when reading fails.
+
+## Corpus availability note (2026-07-10, from 686)
+
+A real binary-document corpus now exists: `mixed/realdocs-v1` (620 real PDF/office files incl.
+scanned gov PDFs with genuine low-legibility pages; pinned manifest at
+`scripts/jseval/666-corpora/realdocs-v1/`, rebuild via `scripts/search/fetch-realdocs-corpus.py`).
+Complements `golden/synth-scan-v1` (adversarial synthetic) with REAL scan-quality diversity for
+whatever abstention gate this doc designs.
+
+## Investigation + design pass (2026-07-10, takeover session; design only — no implementation)
+
+Two evidence legs: a full code map of the VDU output path (file:line) and a survey of 2024-26
+VLM-OCR abstention practice (per this doc's own "survey, don't invent" note). Load-bearing findings:
+
+### What the code map established
+
+- **The only output check anywhere is blank/non-blank** (`VduBatchProcessor.java:239`, duplicated
+  worker-side `GrpcIngestService.java:669-676`). Confabulated fluent text passes trivially.
+- **No confidence signal crosses any hand-off**: logprobs are never requested from llama-server
+  (`OnlineModeOps.java:774-798` builds the request without `logprobs`; response parsing reads only
+  `message.content`, `:828`); `finish_reason` is not inspected on the non-streaming VDU path; no
+  image-legibility measure is computed pre-send (`ImagePreparer` is resize-only).
+- **The reusable evidence vocabulary exists and is never consulted post-VDU**:
+  `visual_extraction_evidence` (ocrMeanConfidence, low-confidence word counts, textQualityScore,
+  pagesMissingReadableText…) is persisted per-doc at routing time and read only by
+  `VisualRoutingDecision` — write-once, never re-read when VDU's output is accepted.
+- **`SUCCESS_TEXT` overwrites unconditionally** (content, preview, language, re-chunk, re-embed) —
+  there is NO outcome for "VDU attempted, output rejected, baseline retained"; `COMPLETED_EMPTY`
+  is reachable only when the model itself returns blank. The baseline a rejected output would fall
+  back to is the honest low/empty pre-VDU text — exactly this doc's "degrade to absence".
+- **Sampling is temperature-0 deterministic** (`SamplingParams.VDU`) — a naive re-sample repeats
+  the same hallucination; a consistency probe must vary seed/temperature explicitly.
+- **Pass 2 is not a check**: it summarizes Pass 1's own output, trusting it unconditionally.
+- **FE gap**: `PreviewController.computeTextProvenance` has no `COMPLETED_EMPTY` case — docs where
+  VDU ran-and-found-nothing silently display the pre-VDU provenance.
+
+### What the practice survey established
+
+- Instructed sentinel abstention ("output UNREADABLE") is a documented weak lever (AbstentionBench:
+  models confidently answer rather than abstain) — acceptable only as a free extra layer.
+- llama-server exposes per-token probabilities (`n_probs`; OAI-compat `logprobs` since PR #10783) —
+  near-zero marginal cost on the same call — but **behavior with mmproj/vision requests is
+  undocumented**; must be probed live before the design leans on it.
+- Cheap input gates are standard practice: Laplacian-variance blur scoring (ms-scale; a dedicated
+  2026 pre-VLM blur-gate paper reports F1≈0.98) and tesseract-confidence-as-proxy with
+  area-weighted aggregation.
+- Two-sample agreement (CE-OCR pattern: pairwise edit-distance entropy over re-extractions,
+  threshold ≈0.5, ~7% escalation rate reported) is the only surveyed signal that directly measures
+  confabulation rather than proxying for it; cost 2× inference, so reserve for the ambiguous band.
+- No open-source VLM-OCR pipeline ships a runtime confidence gate today (olmOCR defends input-side
+  via text-layer anchoring — inapplicable to pure scans); per-span confidence is a cloud-commercial
+  feature (Azure `logprobsConfidence`). This gate is ours to design; nothing to copy wholesale.
+
+### Proposed design: three-stage cheap-first cascade + an honest reject outcome
+
+**Stage 0 — input legibility gate (pre-send, ~ms):** compute Laplacian variance + contrast in
+`ImagePreparer` (already touches every pixel; near-free) and consult the persisted
+`visual_extraction_evidence`. CAUTION: OCR-failed-is-why-we're-here — the gate must key on
+"no textual signal present for anything" (blur/contrast floor), not "OCR confidence low", or it
+would defeat VDU's purpose. Below floor → do not call the model; record honest can't-read.
+
+**Stage 1 — same-call signals (free, on every VDU call):** request `logprobs` on the vision
+completion (first implementation step: live-probe that llama-server returns them for mmproj
+requests — undocumented); compute mean logprob + fraction-of-low-confidence-tokens; parse
+`finish_reason` (truncation ≠ clean completion). Also cross-check against the baseline when OCR
+produced words (word-overlap between VDU text and baseline OCR text — near-free, already on
+disk; wild disagreement where OCR read *something* is suspicious). Thresholds calibrated, not
+borrowed: `golden/synth-scan-v1` (360 docs, ~100% known-confabulated) vs the readable fixtures +
+`mixed/realdocs-v1` real scans (known-legible).
+
+**Stage 2 — agreement probe (2× cost, ambiguous band only):** re-run Pass 1 once with varied
+seed/temperature; normalized edit-distance agreement (CE-OCR); low agreement → reject. Expected
+to run on a small fraction of documents (survey anchor: ~7%).
+
+**Reject path (the vocabulary home):** new `VduUpdateOutcome.REJECTED_SUSPECT_TEXT` → worker
+branch that RETAINS baseline content (no overwrite, no re-chunk/re-embed), sets a new
+`VDU_STATUS` value (e.g. `REJECTED`), keeps the honest evidence trail (which stage rejected, the
+scores), and does not re-queue (poison-pill discipline as with PROCESSING). Prompt-level sentinel
+("UNREADABLE") added as a free extra signal feeding Stage 1, never load-bearing. Also fix the FE
+`COMPLETED_EMPTY` provenance fall-through as part of the same change (and give `REJECTED` a case
+from day one).
+
+**Verification plan:** synth-scan-v1 expect ≥~95% rejected (today: 0%); legible set expect
+low single-digit % false-abstain (product decision on the exact bar); reason-code/classifier
+tests in the 671 style (outcome injectivity); live-stack pass per `static-green ≠ live-working`.
+
+**Open questions for owner review:** (a) mmproj logprob support — probe first; the cascade
+degrades gracefully to Stages 0+2 if absent; (b) whether `REJECTED` warrants FE surfacing beyond
+provenance; (c) threshold governance — config (OcrRoutingConfig-style) vs constants with
+derivation comments.
+
+## Probe result (2026-07-11, implementation step 0): mmproj logprobs CONFIRMED
+
+Live probe against the shipped cuda12 llama-server (Qwen3.5-9B-Q4_K_M + mmproj-F16, `-np 1
+--cache-ram 0`, direct `/v1/chat/completions`): **per-token logprobs populate for vision/mmproj
+requests** (`"logprobs": true` in the request body; `choices[0].logprobs.content[]` in the
+response). `chat_template_kwargs: {"enable_thinking": false}` confirmed required — with thinking
+on, reasoning tokens consume max_tokens and `content` comes back empty.
+
+First separation datum (VDU-shape prompt, temperature 0):
+- legible test image → exact transcription; mean logprob **-0.058**, min -0.27, 0% tokens < -1.0
+- noise image → model refused/described (did not transcribe); mean **-0.442**, min -1.79,
+  **14% tokens < -1.0**
+
+Stage 1 of the cascade is therefore fully viable; no degraded-mode fallback needed. Caveat for
+calibration: the noise image produced REFUSAL-shaped output, not the fluent confabulation this
+doc's defect exhibits — thresholds must be calibrated on `golden/synth-scan-v1` (known ~100%
+fluent-confabulation) vs legible real scans, not on refusal cases. Probe scripts in the session
+scratchpad; numbers above are the durable record.
+
+## Implementation log (2026-07-11, worktree impl-677)
+
+Slices, each committed separately on this branch:
+- **Step 0 (probe)**: mmproj logprobs confirmed (§Probe result above).
+- **S2-core**: `VDU_UPDATE_OUTCOME_REJECTED_SUSPECT_TEXT` + `VDU_STATUS_REJECTED` + worker
+  branch retaining baseline (no overwrite/re-embed/re-chunk; evidence in vdu_enrichment).
+  Regression: fabricated non-blank text cannot reach the index.
+- **S1**: `visionCompletionDetailed` → `VisionCompletionResult(content, finishReason,
+  tokenCount, meanLogprob, lowConfidenceFraction)`; logprobs requested for the vision path ONLY
+  (scope-isolation test); per-token arrays reduced then discarded.
+- **S3**: `ImageLegibility` (Laplacian variance + RMS contrast, 512px-bounded, conjunctive
+  floors) — standalone, calibration-free.
+- **S2-wire**: `VduAbstentionGate` stages 0+1 wired into VduProcessor/VduBatchProcessor;
+  PROVISIONAL thresholds pending calibration.
+- **S5** (this slice): Stage-1 floors recalibrated from PROVISIONAL to CALIBRATED per
+  §Calibration below (three-band REJECT/AMBIGUOUS/PASS logic — `GateVerdict.Band`, extending
+  the prior binary `rejected`). Stage 2 (agreement probe) implemented: on an AMBIGUOUS Stage-1
+  verdict, `VduProcessor` re-samples the single worst-signal page once at `SamplingParams.VDU_PROBE`
+  (temp 0.8) + a fixed seed (`OnlineAiService.visionCompletionDetailed`'s new sampling/seed
+  overload — `OnlineModeOps`/`InferenceLifecycleManager`/`OnlineAiServiceImpl` plumbed through,
+  llama-server's `seed` request field added to `sendChatRequestDetailed`), computes Jaccard
+  word-set agreement (`VduAbstentionGate.jaccardAgreement`) against the page's own Pass 1 text,
+  and rejects (stage=`agreement`) below `AGREEMENT_FLOOR` (0.5). Gate evidence gains `agreement` +
+  `probedPage` fields (`VduBatchProcessor.buildGateRejectionEnrichment`, nulls omitted).
+  Interactive chat/summarize/Q&A/Pass 2 untouched — the new overload is vision-only and every
+  existing caller keeps passing a null seed. 42/42 mutation-covered mutants killed on the
+  `vdu-abstention-gate` seam (`report-pit-strength.mjs`); `check-logic-seams.mjs --mode gate` and
+  the `test-efficacy` gate both pass.
+
+**Design refinement vs the original sketch (recorded, not silent):** Stage-0 pre-call skips use
+the same `REJECTED` status as post-call output rejection — the gate evidence's `stage` field
+(`input_legibility` vs `logprob`) carries the distinction. Rationale: `REJECTED` = "the
+abstention gate stopped this (before or after the call)"; `COMPLETED_EMPTY` keeps its
+established meaning "the model itself found nothing". One honest umbrella beats a third status
+value's wire/FE ripple. Additional S2-wire decisions: partial-legibility documents still send
+their legible pages; pass-2 enrichment is skipped for rejected documents (never summarize
+suspect text); truncation (finish_reason=length) alone does not reject. S5 adds: Stage 2 probes
+only the single worst-signal page (lowest per-page meanLogprob among pages sent; a page with no
+logprob signal is never picked over one that reported a value) rather than every page — one
+extra inference per ambiguous document, not N; an AMBIGUOUS Stage-1 band is never itself the
+document-level verdict handed to `VduBatchProcessor` — `VduProcessor` always resolves it to PASS
+or REJECT via Stage 2 before returning.
+
+**Remaining after S5:** FE provenance cases (`COMPLETED_EMPTY` fall-through fix + `REJECTED`) and
+the live-stack pass (static-green ≠ live-working) — both still open, out of this slice's scope.
+
+## Calibration (2026-07-11, direct llama-server harness — durable record)
+
+Harness: 47 vision completions against the shipped cuda12 llama-server (Qwen3.5-9B + mmproj,
+temp 0, thinking off, same request shape + reduction arithmetic as the shipped S1 code).
+Sets: 16 legible pages (rendered text + probe images) and 30 sampled `golden/synth-scan-v1`
+degraded scans with ground-truth word-overlap scoring.
+
+**Confabulation reconfirmed at 100%**: all 30 scans produced output with <0.30 ground-truth
+overlap. Two distinct modes:
+- **Short-confab (22/30)**: 150-360 chars, meanLogprob ≤ -0.41, lowConfFraction ≥ 0.07.
+- **Long/confident-confab (8/30)**: 2,276-3,547 chars of fluent fabrication at meanLogprob
+  -0.049..-0.25, lowConfFraction 0.013-0.048 — statistically near-legible; the original 624
+  bibliography-style failure. **Stage 1 cannot catch this mode with production-safe margins.**
+- Legible: meanLogprob ∈ [-0.058, -0.006], lowConfFraction = 0.000 on all 16.
+
+**The PROVISIONAL floors (mean<-1.0, frac>0.35) caught 0/30** — they were derived from the
+probe's REFUSAL-shaped noise response; fluent confabulation is far more confident. Falsified
+before shipping, exactly what calibration was for.
+
+**Stage-2 agreement probe validated** (re-sample at temp 0.8, fixed seed; Jaccard word-set
+agreement vs the temp-0 pass): legible = 1.000 on all 6 tested; long-confab 0.047-0.239;
+short-confab 0.231-0.379. Enormous margin around a 0.5 floor.
+
+**Calibrated cascade (encoded in VduAbstentionGate, S5 slice):**
+- Stage-1 REJECT: meanLogprob < -0.35 OR lowConfFraction > 0.06 OR anomalous finish_reason.
+- AMBIGUOUS → Stage 2: lowConfFraction > 0.005 OR meanLogprob < -0.09 (null signals pass).
+- Stage-2 REJECT: agreement < 0.5 (one extra inference, ambiguous band only — on the sample
+  the band routes exactly the 8 long-confabs and zero legible docs).
+- Sample confusion: 30/30 confabulations rejected, 0/16 legible false-abstains.
+
+Caveats recorded honestly: legible set is synthetic clean renders (real-world legible scans
+will show nonzero lowConfFraction — the ambiguity band costs them one extra inference, not a
+rejection; the live-stack pass should spot-check this); sample n=30/360; thresholds cite this
+section as their derivation.
+
+## Live-stack verification (2026-07-11 — static-green ≠ live-working closed)
+
+Stack launched FROM this branch's dist (`distFrom` worktree impl-677); AI runtime activated
+(cuda12 + Qwen3.5-9B + mmproj). Five `golden/synth-scan-v1` scans (both confab modes) ingested
+via a real watched root, routed to VDU demand (pendingVduCount=5), processed by the real
+offline pipeline (`core.trigger-offline-processing` operation + the 672 auto-trigger's second
+cycle). Terminal states, read from the live index:
+
+- `zelash106`, `mirric82`, `brelven179` → **`vdu_status=REJECTED`** with gate evidence in
+  `vdu_enrichment` (e.g. `{"gate":{"stage":"agreement","agreement":0.062,"probedPage":1}}`);
+  preview `textProvenance="vdu_rejected"` confirmed via the real `/api/preview`.
+- `vordell125`, `druthorn119` (the long-confab pair) → honest **`FAILED` ("VDU timeout
+  exceeded")** — the Stage-2 probe doubled their inference (~700-token pass-1 + probe) past the
+  per-document VDU timeout. Safe outcome (nothing indexed), but a tuning item (below).
+- **Net: 5/5 confabulation documents kept out of the index; zero fabricated content indexed;
+  baseline retained everywhere.** Before this branch, all five would have been indexed as real
+  content (677's original evidence run: 100% confabulation indexed).
+
+Evidence durability: worker-log updateVduResult lines + live index reads recorded here;
+session-output-grade beyond that. Ops notes hit on the way (for the next live pass): the MCP
+dev-ingest resolves repo-relative paths against the MAIN checkout; `distFrom` worktree runs
+need the cuda12 variant + `.dev-data` model settings seeded before `ai_activate`; a folder-files
+read can race NRT refresh mid-VDU-cycle (poll to terminal states before concluding).
+
+**Tuning follow-up (open, small):** cap the Stage-2 probe's max_tokens (~256) and make the
+agreement metric truncation-robust (overlap coefficient or compare first-N words), and/or
+extend the per-doc VDU budget when a probe runs — so long-confab docs get REJECTED (with
+evidence) rather than timing out to FAILED. Both terminal states are safe; REJECTED is the
+more informative one.

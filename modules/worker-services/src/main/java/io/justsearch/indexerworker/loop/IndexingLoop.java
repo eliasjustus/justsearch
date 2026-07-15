@@ -84,19 +84,20 @@ public class IndexingLoop implements Closeable {
   /** Pause duration when user is active (breath holding). */
   private static final long BREATH_HOLD_MS = LoopPacingPolicy.breathHoldMs();
 
-  /** Batch size for polling jobs. */
-  private static final int POLL_BATCH_SIZE = LoopPacingPolicy.pollBatchSize();
-
   private static final long ERROR_BACKOFF_MS = 1000; // back-off after a recovered error (tempdoc 588)
 
   // Tempdoc 516 Slice 4d (W6): backfill batch-size constants moved to BackfillScheduler.
 
   private final JobQueue jobQueue;
   private final CommitOps commitOps;
-  // Tempdoc 516 Slice 4d (W6): indexingCoordinator / documentFieldOps / indexCountOps /
-  // resolvedConfigSupplier are now consumed only by the extracted collaborators (writer,
-  // extractor, backfillScheduler, embeddingLifecycle). Local ctor params pass them through
-  // directly — no IndexingLoop field needed.
+  // Tempdoc 516 Slice 4d (W6): indexingCoordinator / documentFieldOps / indexCountOps are
+  // consumed only by the extracted collaborators (writer, extractor, backfillScheduler,
+  // embeddingLifecycle). Local ctor params pass them through directly — no IndexingLoop field
+  // needed for those. resolvedConfigSupplier IS kept as a field (tempdoc 710 Wave-1.5 Move 4):
+  // this loop's own poll/commit pacing (pollBatchSize, commitIntervalMs, maxDocsBeforeCommit)
+  // now reads live from it, the same way BackfillScheduler already reads chunkVectorsEnabled /
+  // lateChunkingEnabled from its copy.
+  private final Supplier<ResolvedConfig> resolvedConfigSupplier;
   private final WorkerSignalBus signalBus;
   private final TimeboxedContentExtractor contentExtractor;
   // Tempdoc 516 Slice 4c: embeddingProvider / embeddingServiceForLifecycle / embeddingEvents
@@ -295,6 +296,7 @@ public class IndexingLoop implements Closeable {
       IndexingLoopOptions options) {
     this.jobQueue = jobQueue;
     this.commitOps = commitOps;
+    this.resolvedConfigSupplier = resolvedConfigSupplier;
     this.signalBus = signalBus;
     this.encoderBindings =
         encoderBindings != null
@@ -402,6 +404,17 @@ public class IndexingLoop implements Closeable {
             this.encoderBindings::disambiguationService);
   }
 
+  /**
+   * Resolves the current enrichment-backfill pacing snapshot (tempdoc 710 Wave-1.5 Move 4).
+   * Falls back to {@link ResolvedConfig.Ai.BackfillPacing#DEFAULTS} — byte-identical to the
+   * pre-Move-4 hardcoded literals — when no config is available, e.g. a test double supplying
+   * {@code () -> null} for {@code resolvedConfigSupplier}.
+   */
+  private ResolvedConfig.Ai.BackfillPacing pacing() {
+    ResolvedConfig config = resolvedConfigSupplier.get();
+    return config != null ? config.ai().backfillPacing() : ResolvedConfig.Ai.BackfillPacing.DEFAULTS;
+  }
+
   /** Returns a real span when tracing is enabled, or a no-op singleton when disabled. */
   private Span maybeSpan(String name) {
     if (!detailedTracing) return Span.getInvalid();
@@ -453,6 +466,21 @@ public class IndexingLoop implements Closeable {
    */
   private void tryFinalizeEmbeddingRebuild() {
     if (embeddingLifecycle.tryFinalizeRebuild()) {
+      metrics.recordCommit();
+      lastCommitTime = System.currentTimeMillis();
+      indexedSinceCommit = 0;
+    }
+  }
+
+  /**
+   * Tempdoc 730 A3: wraps {@link EmbeddingProviderLifecycle#tryFinalizeFreshCompatibleStamp()}
+   * with the same commit-driver counter reset {@link #tryFinalizeEmbeddingRebuild()} performs.
+   * Belt-and-suspenders alongside A1 (the unconditional stamp supplier) — closes the window
+   * where the fresh-index -> COMPATIBLE path's finalizing commit landed before the embedding
+   * model was producing a fingerprint.
+   */
+  private void tryFinalizeFreshCompatibleEmbeddingStamp() {
+    if (embeddingLifecycle.tryFinalizeFreshCompatibleStamp()) {
       metrics.recordCommit();
       lastCommitTime = System.currentTimeMillis();
       indexedSinceCommit = 0;
@@ -519,7 +547,7 @@ public class IndexingLoop implements Closeable {
         }
 
         // Poll for pending jobs
-        List<JobQueue.IndexJob> jobs = jobQueue.pollPending(POLL_BATCH_SIZE);
+        List<JobQueue.IndexJob> jobs = jobQueue.pollPending(pacing().pollBatchSize());
 
         if (jobs.isEmpty()) {
           // No work to do - log batch summary if we just finished one
@@ -555,6 +583,9 @@ public class IndexingLoop implements Closeable {
 
           // If a forced reindex is in progress, check whether rebuild has completed.
           tryFinalizeEmbeddingRebuild();
+          // Tempdoc 730 A3: fresh-index -> COMPATIBLE path has no REBUILDING to complete; check
+          // whether it still needs its stamp-persisting commit.
+          tryFinalizeFreshCompatibleEmbeddingStamp();
 
           boolean wasRunning = currentState == LoopState.RUNNING;
           transitionToIdle();
@@ -579,9 +610,13 @@ public class IndexingLoop implements Closeable {
         // Time-based commit strategy (every 10s or when buffer is full)
         long now = System.currentTimeMillis();
         long timeSinceCommit = now - lastCommitTime;
+        ResolvedConfig.Ai.BackfillPacing pacing = pacing();
         boolean timeTriggered =
-            LoopPacingPolicy.isTimeCommitTriggered(timeSinceCommit, indexedSinceCommit);
-        boolean bufferTriggered = LoopPacingPolicy.isBufferCommitTriggered(indexedSinceCommit);
+            LoopPacingPolicy.isTimeCommitTriggered(
+                timeSinceCommit, indexedSinceCommit, pacing.commitIntervalMs());
+        boolean bufferTriggered =
+            LoopPacingPolicy.isBufferCommitTriggered(
+                indexedSinceCommit, pacing.maxDocsBeforeCommit());
 
         if (timeTriggered || bufferTriggered) {
           try {
@@ -610,6 +645,9 @@ public class IndexingLoop implements Closeable {
 
         // If a forced reindex is in progress, check whether rebuild has completed.
         tryFinalizeEmbeddingRebuild();
+        // Tempdoc 730 A3: fresh-index -> COMPATIBLE path has no REBUILDING to complete; check
+        // whether it still needs its stamp-persisting commit.
+        tryFinalizeFreshCompatibleEmbeddingStamp();
 
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
@@ -640,7 +678,32 @@ public class IndexingLoop implements Closeable {
       }
     }
 
-    // Final commit on shutdown
+    finalizeShutdownCommit();
+
+    log.info("Indexing loop stopped");
+  }
+
+  /**
+   * Tempdoc 730 review item 2 (the "no subsequent commit" ratchet hole): a rebuild-completion or
+   * fresh-compatible fingerprint stamp that becomes due right as the loop is stopping previously
+   * had exactly one retry path — the next idle/batch iteration's {@link
+   * #tryFinalizeEmbeddingRebuild()} / {@link #tryFinalizeFreshCompatibleEmbeddingStamp()} calls.
+   * If the loop never reaches that next iteration (a plain worker restart stops the loop right
+   * after completion), the old shutdown commit below — gated on {@code indexedSinceCommit > 0} —
+   * skipped entirely, so the fingerprint was never persisted; the next boot's {@code refresh()}
+   * then saw {@code storedFp == null} with {@code docCount > 0} and re-flagged BLOCKED_LEGACY,
+   * even though the rebuild had genuinely completed in memory. Calling the two finalizers here,
+   * unconditionally, closes that window: both self-gate on ECC state (REBUILDING-completed /
+   * COMPATIBLE-with-docs-and-no-stored-fp respectively) and issue their own commit independent of
+   * {@code indexedSinceCommit}, so invoking them is a no-op when there is nothing to stamp and the
+   * guaranteed persisting commit otherwise when there is. This is the SAME wiring
+   * {@code tryFinalizeEmbeddingRebuild}/{@code tryFinalizeFreshCompatibleEmbeddingStamp} already
+   * use every idle/batch iteration — no parallel mechanism, just one more call site.
+   */
+  private void finalizeShutdownCommit() {
+    tryFinalizeEmbeddingRebuild();
+    tryFinalizeFreshCompatibleEmbeddingStamp();
+
     try {
       if (indexedSinceCommit > 0) {
         long commitStart = System.currentTimeMillis();
@@ -653,8 +716,6 @@ public class IndexingLoop implements Closeable {
     } catch (RuntimeException e) {
       log.error("Failed final commit", e);
     }
-
-    log.info("Indexing loop stopped");
   }
 
   /**

@@ -1,9 +1,5 @@
 [
   {
-    "name": "agent-eval",
-    "group": "eval"
-  },
-  {
     "name": "bench-concurrency",
     "group": "bench"
   },
@@ -44,6 +40,10 @@
     "group": "corpus"
   },
   {
+    "name": "corpus-certify-member",
+    "group": "corpus"
+  },
+  {
     "name": "corpus-fetch-clerc",
     "group": "corpus"
   },
@@ -56,7 +56,23 @@
     "group": "corpus"
   },
   {
+    "name": "corpus-inject-real",
+    "group": "corpus"
+  },
+  {
     "name": "corpus-probe",
+    "group": "corpus"
+  },
+  {
+    "name": "corpus-query-stratum-build",
+    "group": "corpus"
+  },
+  {
+    "name": "corpus-query-variant",
+    "group": "corpus"
+  },
+  {
+    "name": "corpus-scientific-evidence-build",
     "group": "corpus"
   },
   {
@@ -256,6 +272,14 @@
     "group": "ui"
   },
   {
+    "name": "union-recall-gate",
+    "group": "gates"
+  },
+  {
+    "name": "union-recall-gate-derive",
+    "group": "gates"
+  },
+  {
     "name": "utility-calibrate",
     "group": "utility"
   },
@@ -265,6 +289,10 @@
   },
   {
     "name": "utility-compose-cross-corpus",
+    "group": "utility"
+  },
+  {
+    "name": "utility-evidence-export",
     "group": "utility"
   },
   {
@@ -285,6 +313,22 @@
   },
   {
     "name": "utility-judge-local-swap-smoketest",
+    "group": "utility"
+  },
+  {
+    "name": "utility-publication-build",
+    "group": "utility"
+  },
+  {
+    "name": "utility-publication-select",
+    "group": "utility"
+  },
+  {
+    "name": "utility-recompose",
+    "group": "utility"
+  },
+  {
+    "name": "utility-replay",
     "group": "utility"
   },
   {

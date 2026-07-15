@@ -214,14 +214,14 @@ final class OnnxEmbeddingEncoderTest {
   class GpuMemoryConfig {
 
     @Test
-    @DisplayName("defaults to 3072 MB via EmbeddingConfig")
-    void defaultsTo3072Mb() {
-      // 391/E-J-N8: raised from 2048 → 3072 to accommodate gte-multilingual-base
+    @DisplayName("defaults to 6144 MB via EmbeddingConfig (691 §N/F-031)")
+    void defaultsTo6144Mb() {
+      // History: 2048 → 3072 (391/E-J-N8) → 6144 (691 §N/F-031: long-doc single-pass fragments 3072)
       // FP16 activations (post-358 model swap). 2048 MB fragments under the
       // larger MLP intermediate tensors.
       ConfigStore.setGlobal(new ConfigStore(TestResolvedConfigHelper.withDefaults()));
       EmbeddingConfig config = EmbeddingConfig.fromEnv();
-      assertEquals(3072L * 1024 * 1024, config.gpuMemLimitBytes());
+      assertEquals(6144L * 1024 * 1024, config.gpuMemLimitBytes());
     }
 
     @Test

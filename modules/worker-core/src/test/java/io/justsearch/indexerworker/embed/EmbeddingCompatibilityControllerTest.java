@@ -71,9 +71,79 @@ final class EmbeddingCompatibilityControllerTest {
     assertFalse(controller.maybeAutoStartRebuildForLegacyAllPending(5L, 4, 0, 0));
     assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, controller.state());
 
-    // Completed exists => should not start
+    // Completed exists => should not start (this is the complement signature, handled by
+    // maybeAutoStartRebuildForLegacyUnattestedVectors instead — see the test below).
     assertFalse(controller.maybeAutoStartRebuildForLegacyAllPending(5L, 5, 1, 0));
     assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, controller.state());
+  }
+
+  @Test
+  void maybeAutoStartRebuildForLegacyUnattestedVectorsTransitionsToRebuilding() throws Exception {
+    // Tempdoc 730 A4: the corruption-signature complement of the all-pending case above —
+    // completed > 0 (dense vectors already exist/attested) but no embedding fingerprint was ever
+    // persisted. maybeAutoStartRebuildForLegacyAllPending refuses this (completed != 0 guard);
+    // this dedicated method must fire instead.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(
+            Map::of,
+            () -> 5L);
+    controller.refresh();
+
+    assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, controller.state());
+    assertEquals("LEGACY_INDEX_NO_FINGERPRINT", controller.reasonCode());
+    assertFalse(controller.maybeAutoStartRebuildForLegacyAllPending(5L, 0, 5, 0));
+
+    boolean started = controller.maybeAutoStartRebuildForLegacyUnattestedVectors(5L, 5);
+
+    assertTrue(started);
+    assertEquals(EmbeddingCompatibilityController.State.REBUILDING, controller.state());
+    // The shared, contract-stable reason for query-time degradation messaging is unchanged —
+    // only the diagnostic-only lastAutoRescueReason() tag distinguishes the two rescue paths.
+    assertEquals("REBUILD_IN_PROGRESS", controller.reasonCode());
+    assertEquals("embedding_legacy_unattested_vectors", controller.lastAutoRescueReason());
+  }
+
+  @Test
+  void maybeAutoStartRebuildForLegacyUnattestedVectorsIsConservative() throws Exception {
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(
+            Map::of,
+            () -> 5L);
+    controller.refresh();
+
+    // No completed embeddings => no "vectors exist" evidence => should not start.
+    assertFalse(controller.maybeAutoStartRebuildForLegacyUnattestedVectors(5L, 0));
+    assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, controller.state());
+
+    // docCount <= 0 => should not start regardless of completed.
+    assertFalse(controller.maybeAutoStartRebuildForLegacyUnattestedVectors(0L, 5));
+    assertEquals(EmbeddingCompatibilityController.State.BLOCKED_LEGACY, controller.state());
+  }
+
+  @Test
+  void maybeAutoStartRebuildForLegacyUnattestedVectorsDoesNotFireOnProperlyStampedGeneration()
+      throws Exception {
+    // Negative control: a generation whose embedding fingerprint IS already persisted and
+    // matches the current model must resolve COMPATIBLE at refresh() — the auto-rescue must be a
+    // no-op since state() is never BLOCKED_LEGACY in the first place.
+    EmbeddingFingerprint.setForTesting("fake-sha256-for-test");
+
+    EmbeddingCompatibilityController controller =
+        new EmbeddingCompatibilityController(
+            () -> Map.of(
+                EmbeddingCompatibilityController.COMMIT_META_KEY, "fake-sha256-for-test"),
+            () -> 5L);
+    controller.refresh();
+
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
+
+    assertFalse(controller.maybeAutoStartRebuildForLegacyUnattestedVectors(5L, 5));
+    assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, controller.state());
+    assertEquals(null, controller.lastAutoRescueReason());
   }
 
   @Test

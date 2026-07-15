@@ -424,7 +424,7 @@ public final class KnowledgeServerMigrationOps {
               Map<String, Object> updates = new HashMap<>();
               updates.put(SchemaFields.VDU_STATUS, SchemaFields.VDU_STATUS_PROCESSING);
               updates.put(SchemaFields.VDU_RETRY_COUNT, String.valueOf(retryCount));
-              boolean updated = context.ingestLifecycle().indexingCoordinator().updateDocument(docId, updates, true);
+              boolean updated = context.ingestLifecycle().indexingCoordinator().updateDocument(docId, updates);
               if (!updated) {
                 context.log().warn("Buffered VDU_MARK_PROCESSING: document not found: {}", docId);
               }
@@ -448,7 +448,7 @@ public final class KnowledgeServerMigrationOps {
               Map<String, Object> updates = new HashMap<>();
               updates.put(SchemaFields.VDU_STATUS, SchemaFields.VDU_STATUS_FAILED);
               updates.put(SchemaFields.VDU_ENRICHMENT, "{\"error\": \"Max retries exceeded\"}");
-              boolean updated = context.ingestLifecycle().indexingCoordinator().updateDocument(docId, updates, true);
+              boolean updated = context.ingestLifecycle().indexingCoordinator().updateDocument(docId, updates);
               if (!updated) {
                 context.log().warn("Buffered VDU_MARK_FAILED: document not found: {}", docId);
               }

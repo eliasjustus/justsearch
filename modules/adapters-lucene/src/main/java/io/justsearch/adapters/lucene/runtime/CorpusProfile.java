@@ -49,9 +49,24 @@ public record CorpusProfile(
   /**
    * Returns true if the corpus is predominantly short documents, meaning chunk-aware merge is
    * unlikely to help (chunks ≈ documents, branch fusion injects noise).
+   *
+   * <p>Tempdoc 717: the token-median test only fires when token data actually exists
+   * ({@code docsWithTokenCount > 0}). {@link #medianTokenCount()} returns 0 when there is NO token
+   * data — that means <em>unknown</em>, not <em>short</em>. Treating unknown as short mis-classified
+   * a genuinely long corpus whose {@code parent_token_count} was left unpopulated by a SPLADE-load
+   * race at index time, causing the {@code chunk_merge} leg to be skipped and dense quality to
+   * halve. Fail OPEN for chunks on missing data: a corpus that produced chunks (high
+   * {@link #chunkRate()}) is not short. Running chunk-merge on a genuinely short corpus is
+   * hybrid-neutral (F-036); skipping it on a long one is the catastrophic case.
    */
   public boolean isShortCorpus() {
-    return medianTokenCount() < 512 || chunkRate() < 0.05;
+    // Trust the token-median only when token data covers a MAJORITY of parents. A small covered
+    // subset can drag the reported median under 512 and mis-classify a large corpus as short
+    // (tempdoc 717 review, Finding 1) — the histogram median is computed only over the covered docs.
+    // Below majority coverage, fail OPEN for chunks (only the chunkRate gate can classify short).
+    boolean tokenDataReliable = docsWithTokenCount * 2 >= parentDocCount;
+    boolean shortByTokens = tokenDataReliable && medianTokenCount() < 512;
+    return shortByTokens || chunkRate() < 0.05;
   }
 
   /**

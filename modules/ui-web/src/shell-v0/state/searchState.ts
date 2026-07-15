@@ -576,8 +576,11 @@ async function runSearch(q: string, stage: SearchPassStage, gen: number): Promis
     const data = (await res.json()) as SearchResponse;
     if (gen !== generation) return;
     const hits: SearchHit[] = (data.results ?? []).map((r) => {
-      const path = r.fields?.path ?? r.id;
-      const filename = path.split(/[\\/]/).pop() ?? path;
+      // A pure-dense hit whose chunk-merge was skipped has no fields.path; r.id is then a raw
+      // `chunk:<uuid>` — don't surface that scheme as the displayed title/path (searchState chunk-id leak).
+      const rawPath = r.fields?.path ?? r.id ?? '';
+      const path = rawPath.startsWith('chunk:') ? '' : rawPath;
+      const filename = path.split(/[\\/]/).pop() || 'Untitled';
       return {
         id: r.id,
         title: filename,

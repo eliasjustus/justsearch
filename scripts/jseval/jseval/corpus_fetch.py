@@ -29,6 +29,13 @@ Two sources:
   from CLERC is ever committed here — this module only ever writes to the gitignored `datasets/` tree,
   fetching fresh each time, the same "fetch, never commit" policy this project already applies to every
   BEIR corpus (SciFact, NFCorpus, etc. are never committed either).
+
+CLERC's raw fetch (qrels/queries text + the several-GB document collection) goes through
+`dataset_cache.cached_dir` (tempdoc 709): a shared, cross-worktree, gitignored, integrity-verified
+on-disk cache of the raw upstream bytes under the MAIN checkout, so the GB-scale collection stream
+isn't re-downloaded once per worktree per day. This is purely a network-trip dedupe of the same
+"fetch fresh, never commit/redistribute" bytes this module already only ever writes to a gitignored
+tree — it changes nothing about the licensing posture above.
 """
 
 from __future__ import annotations
@@ -38,8 +45,11 @@ import gzip
 import io
 import json
 import random
+import shutil
 from pathlib import Path
 from urllib.request import Request, urlopen
+
+from . import dataset_cache
 
 _USER_AGENT = "justsearch-jseval/corpus_fetch (tempdoc-666)"
 
@@ -103,6 +113,11 @@ def fetch_miracl_sample(out_dir: Path | str, *, lang: str, seed: int, n_docs: in
     """
     import ir_datasets  # deferred: only this function's caller pays the import/network cost
 
+    # tempdoc 709: point ir_datasets' own download cache at the shared, cross-worktree
+    # dataset-fetch cache root (config-only -- ir_datasets already does its own on-disk
+    # caching + verification once IR_DATASETS_HOME is set).
+    dataset_cache.apply_ir_datasets_home()
+
     with _utf8_default_text_io():
         ds = ir_datasets.load(f"miracl/{lang}/{split}")
         queries = list(ds.queries_iter())
@@ -155,6 +170,8 @@ def fetch_miracl_sample(out_dir: Path | str, *, lang: str, seed: int, n_docs: in
         "contamination_class": "public-benchmark",
         "generation_provenance": {
             "method": "ir_datasets-sample", "source": f"miracl/{lang}/{split}",
+            "source_revision": "miracl-v1.0",
+            "ir_datasets_version": getattr(ir_datasets, "__version__", None),
             "seed": seed, "n_docs": len(doc_list), "n_queries": len(query_list),
         },
     })
@@ -166,20 +183,88 @@ def _fetch_text(url: str) -> str:
         return resp.read().decode("utf-8")
 
 
-def fetch_clerc_sample(out_dir: Path | str, *, seed: int, n_queries: int) -> dict:
+_CLERC_QRELS_FILE = "qrels-doc.test.direct.tsv"
+_CLERC_QUERIES_FILE = "test.single-removed.direct.tsv"
+_CLERC_COLLECTION_FILE = "collection.doc.tsv.gz"
+_CLERC_RAW_FILES = [_CLERC_QRELS_FILE, _CLERC_QUERIES_FILE, _CLERC_COLLECTION_FILE]
+_CLERC_REVISION = "ef042f8ab436f78704f17faa0a866d1b2b862f6f"
+
+
+def _populate_clerc_raw(dest: Path, *, base: str) -> None:
+    """Fetch CLERC's three raw upstream artifacts into `dest` (tempdoc 709's `dataset_cache`
+    `populate` callback) -- the qrels/queries text files, plus the (several-GB, gzip-compressed)
+    document collection, downloaded whole to disk. Independent of seed/n_queries/n_docs: the raw
+    bytes are the same regardless of how a caller later samples them, so this is cache-keyed on
+    `base` alone -- caching at this layer serves every future seed/sample-size combination, not
+    just the one that happened to trigger the first fetch.
+    """
+    (dest / _CLERC_QRELS_FILE).write_text(
+        _fetch_text(f"{base}/qrels/qrels-doc.test.direct.tsv"), encoding="utf-8")
+    (dest / _CLERC_QUERIES_FILE).write_text(
+        _fetch_text(f"{base}/queries/test.single-removed.direct.tsv"), encoding="utf-8")
+    req = Request(f"{base}/collection/collection.doc.tsv.gz", headers={"User-Agent": _USER_AGENT})
+    with urlopen(req, timeout=None) as raw, (dest / _CLERC_COLLECTION_FILE).open("wb") as out:  # noqa: S310
+        shutil.copyfileobj(raw, out)
+
+
+def fetch_clerc_sample(out_dir: Path | str, *, seed: int, n_queries: int, n_docs: int | None = None) -> dict:
     """Fetch CLERC's test-split qrels + queries + document collection via plain HTTP (CLERC is not
-    `ir_datasets`-registered), sample `n_queries` deterministically, and pull only their qrelled documents
-    from the (large — several GB) document collection via a single streaming decompress pass, never
-    materializing the full collection to disk or holding it fully in memory.
+    `ir_datasets`-registered), sample `n_queries` deterministically, and pull their qrelled documents
+    from the (large — several GB) document collection.
+
+    The raw fetch of all three artifacts goes through `dataset_cache.cached_dir` (tempdoc 709): a
+    shared, cross-worktree, integrity-verified on-disk cache keyed on `base` alone (independent of
+    `seed`/`n_queries`/`n_docs` — the raw bytes don't depend on how they're later sampled), so a
+    same-day rerun in a different worktree (or a different seed/sample-size in the same worktree)
+    reuses the already-downloaded collection instead of re-streaming several GB over the network
+    again. When the shared cache is disabled (`JUSTSEARCH_DATASET_CACHE=0`) or unavailable, this
+    falls back to a direct, uncached, ephemeral fetch — identical to this function's pre-709 behavior.
+
+    `n_docs=None` (default) keeps the original qrelled-only behavior byte-compatible (including the
+    early `break` once every wanted doc is found, now scanning the locally-cached collection file
+    rather than a live network stream) so existing callers and the committed
+    `666-corpora/legal-clerc-200/recipe.json` reproduction path are unaffected. When `n_docs` is set,
+    mirrors `fetch_miracl_sample`'s pattern: the qrelled docs are kept, and `n_docs - len(wanted)`
+    additional distractor documents are deterministically reservoir-sampled from the rest of the same
+    pass (so the early break must NOT fire — the full collection needs to be seen for the
+    reservoir sample to be uniform). Distractor sampling uses its own `random.Random(seed)` instance,
+    separate from the `rng` used for query sampling above, so the sampled qrelled-doc set is identical
+    across every `n_docs` value at a given `(seed, n_queries)` — verified in
+    `test_fetch_clerc_sample_qrel_set_is_invariant_to_n_docs`.
 
     Uses the "single-removed/direct" task variant (the citing sentence with its citation redacted, as
     the query text; direct citation as the qrel) — the most standard of CLERC's four retrieval-task
     variants. See this module's docstring for the licensing note this design already accounts for.
     """
-    base = "https://huggingface.co/datasets/jhu-clsp/CLERC/resolve/main"
-    qrels_lines = _fetch_text(f"{base}/qrels/qrels-doc.test.direct.tsv").splitlines()
-    queries_lines = _fetch_text(f"{base}/queries/test.single-removed.direct.tsv").splitlines()
+    base = f"https://huggingface.co/datasets/jhu-clsp/CLERC/resolve/{_CLERC_REVISION}"
+    with dataset_cache.cached_dir(
+        "clerc-raw",
+        {"base": base, "task_variant": "single-removed/direct"},
+        filenames=_CLERC_RAW_FILES,
+        populate=lambda dest: _populate_clerc_raw(dest, base=base),
+    ) as raw_dir:
+        from .corpus_identity import corpus_signature
 
+        qrels_lines = (raw_dir / _CLERC_QRELS_FILE).read_text(encoding="utf-8").splitlines()
+        queries_lines = (raw_dir / _CLERC_QUERIES_FILE).read_text(encoding="utf-8").splitlines()
+        collection_path = raw_dir / _CLERC_COLLECTION_FILE
+        return _sample_clerc_from_raw(
+            out_dir, qrels_lines=qrels_lines, queries_lines=queries_lines,
+            collection_path=collection_path, seed=seed, n_queries=n_queries, n_docs=n_docs,
+            raw_source_signature=corpus_signature(
+                raw_dir, files=[raw_dir / name for name in _CLERC_RAW_FILES]
+            ),
+        )
+
+
+def _sample_clerc_from_raw(
+    out_dir: Path | str, *, qrels_lines: list[str], queries_lines: list[str], collection_path: Path,
+    seed: int, n_queries: int, n_docs: int | None,
+    raw_source_signature: str | None = None,
+) -> dict:
+    """Deterministic sampling over already-fetched raw CLERC artifacts -- split out from
+    `fetch_clerc_sample` so the (cache-eligible) raw fetch and the (seed-dependent) sampling are two
+    separate concerns; this function has no network access of its own."""
     qrels_by_query: dict[str, list[str]] = {}
     for line in qrels_lines:
         if not line.strip():
@@ -200,19 +285,45 @@ def fetch_clerc_sample(out_dir: Path | str, *, seed: int, n_queries: int) -> dic
     sampled_qids = set(rng.sample(eligible, min(n_queries, len(eligible))))
     wanted_doc_ids = {did for qid in sampled_qids for did in qrels_by_query[qid]}
 
+    # A separate rng instance (not `rng` above) so distractor reservoir sampling never perturbs the
+    # query-sampling draw -- the qrelled-doc set stays byte-identical across every `n_docs` value.
+    distractor_rng = random.Random(seed)
+    n_distractors = max(0, n_docs - len(wanted_doc_ids)) if n_docs is not None else 0
+    target_pool = max(n_distractors, 1)
+    seen_candidates = 0
+    reservoir: list[str] = []
+    reservoir_texts: dict[str, str] = {}
+
     docs_by_id: dict[str, str] = {}
-    req = Request(f"{base}/collection/collection.doc.tsv.gz", headers={"User-Agent": _USER_AGENT})
-    with urlopen(req, timeout=None) as raw, gzip.GzipFile(fileobj=raw) as gz:  # noqa: S310
-        text_stream = io.TextIOWrapper(gz, encoding="utf-8", errors="replace")
+    with gzip.open(collection_path, "rt", encoding="utf-8", errors="replace") as text_stream:
         for line in text_stream:
-            if len(docs_by_id) >= len(wanted_doc_ids):
+            # The early break only applies to the qrelled-only (n_docs=None) path -- distractor
+            # reservoir sampling needs the full stream to be uniform.
+            if n_docs is None and len(docs_by_id) >= len(wanted_doc_ids):
                 break
             tab = line.find("\t")
             if tab < 0:
                 continue
             doc_id = line[:tab]
+            text = line[tab + 1:].rstrip("\n")
             if doc_id in wanted_doc_ids:
-                docs_by_id[doc_id] = line[tab + 1:].rstrip("\n")
+                docs_by_id[doc_id] = text
+                continue
+            if not n_distractors:
+                continue
+            seen_candidates += 1
+            if len(reservoir) < target_pool:
+                reservoir.append(doc_id)
+                reservoir_texts[doc_id] = text
+            else:
+                j = distractor_rng.randrange(seen_candidates)
+                if j < target_pool:
+                    del reservoir_texts[reservoir[j]]
+                    reservoir[j] = doc_id
+                    reservoir_texts[doc_id] = text
+
+    for did in reservoir:
+        docs_by_id[did] = reservoir_texts[did]
 
     missing = wanted_doc_ids - docs_by_id.keys()
     if missing:
@@ -227,12 +338,21 @@ def fetch_clerc_sample(out_dir: Path | str, *, seed: int, n_queries: int) -> dic
         for qid in sorted(sampled_qids)
     ]
 
+    provenance = {
+        "method": "huggingface-direct-sample",
+        "source": "jhu-clsp/CLERC (test split, single-removed/direct task variant)",
+        "seed": seed, "n_docs": len(doc_list), "n_queries": len(query_list),
+    }
+    if n_docs is not None:
+        # Only added when n_docs is set -- keeps the n_docs=None provenance dict (and thus any
+        # committed recipe.json reproducing it, e.g. 666-corpora/legal-clerc-200) byte-compatible.
+        provenance["n_docs_requested"] = n_docs
+        provenance["n_distractors"] = len(reservoir)
+        provenance["source_revision"] = _CLERC_REVISION
+        provenance["raw_source_signature"] = raw_source_signature
+
     return _write_source(out_dir, docs=doc_list, queries=query_list, meta={
         "version": "1.0", "type_axis": "legal",
         "contamination_class": "public-benchmark",
-        "generation_provenance": {
-            "method": "huggingface-direct-sample",
-            "source": "jhu-clsp/CLERC (test split, single-removed/direct task variant)",
-            "seed": seed, "n_docs": len(doc_list), "n_queries": len(query_list),
-        },
+        "generation_provenance": provenance,
     })

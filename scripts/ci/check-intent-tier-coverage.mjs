@@ -27,15 +27,12 @@
  * Lighter scripts/ci tier; wired as a ci.yml step + the CLAUDE.md pre-merge list.
  */
 import { readFileSync } from 'node:fs';
+import { stripComments as stripCommentsShared } from '../lib/strip-comments.mjs';
 
 const REGISTER = 'governance/intent-tier-coverage.v1.json';
 const reg = JSON.parse(readFileSync(REGISTER, 'utf8'));
 
-const stripComments = (s) =>
-  s
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\*.*$/gm, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+const stripComments = (s) => stripCommentsShared(s, { withHtml: false });
 
 const failures = [];
 

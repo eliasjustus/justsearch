@@ -35,6 +35,7 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
+import { stripComments } from '../lib/strip-comments.mjs';
 
 const SRC = 'modules/ui-web/src';
 const EMIT_OWNER = 'shell-v0/components/advisory/ephemeralToast.ts';
@@ -60,14 +61,6 @@ const files = [];
 
 const rel = (p) => p.slice(SRC.length + 1);
 const failures = [];
-
-// Scan code, not prose — a doc-comment naming the retired channel is not a use.
-const stripComments = (s) =>
-  s
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\*.*$/gm, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
 for (const f of files) {
   const r = rel(f);

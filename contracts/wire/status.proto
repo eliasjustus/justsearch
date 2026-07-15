@@ -240,6 +240,7 @@ message EnrichmentProgressView {
   bool embedding_enabled = 17 [json_name = "embeddingEnabled"];
   bool splade_enabled = 18 [json_name = "spladeEnabled"];
   bool ner_enabled = 19 [json_name = "nerEnabled"];
+  string backfill_mode = 20 [json_name = "backfillMode"];
 }
 
 message ChunkCoverageView {

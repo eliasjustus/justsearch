@@ -74,6 +74,11 @@ export function declaredGroundingClass(shapeId: CoreInteractionShapeId): AnswerG
  * PEER of `grounded`, not a degraded form: provenance is real, sentence-precision is absent. This is the
  * honest middle the binary (grounded ↔ ungrounded) lacked — it is why a doc-level answer must NOT read
  * "Grounded · 0 of N" (the over-confidence) NOR "found nothing to cite" (the over-conservatism, 603 D-1).
+ *
+ * <p>Tempdoc 720 — `sourced` also covers a SETTLED, CHUNK-PRECISE answer whose matcher tied NO sentence
+ * to a passage (zero cites). Mid-stream that is "marks pending ⇒ grounded"; but once the run has finished
+ * (`settled`) the matcher has run and matched nothing, so provenance-without-verification is the honest
+ * frame — the same "Grounded · 0 of N" over-confidence, previously reachable only via this settled path.
  */
 export type AnswerFrame = 'grounded' | 'partially-grounded' | 'sourced' | 'ungrounded' | 'transform';
 
@@ -107,6 +112,11 @@ export function answerFrame(
   // (provenance only). Defaults TRUE so every existing caller (the Documents/RAG tier, always chunk-native)
   // keeps its behavior; the agent tier passes the real predicate so doc-level sources frame as `sourced`.
   chunkPrecise = true,
+  // Tempdoc 720 — has the run FINISHED (no more citation-matches coming)? Defaults FALSE so a mid-stream
+  // render still treats a zero-cite chunk-precise answer as "marks pending ⇒ grounded". A SETTLED render
+  // can no longer make that excuse: the matcher has run and matched nothing, so it is
+  // provenance-without-verification (`sourced`), never "grounded" over zero cited sentences.
+  settled = false,
 ): AnswerFrame {
   const declared = declaredGroundingClass(shapeId);
   if (declared === 'transform') return 'transform';
@@ -114,14 +124,17 @@ export function answerFrame(
   // grounded-index: refine by the actual outcome.
   // No citable sources at all ⇒ honestly ungrounded (the agent zero-sources case, §2.9 V1).
   if (sourceCount === 0) return 'ungrounded';
-  // Sources attached but SOME sentences cite and others do not ⇒ partially grounded. When no
-  // sentence cites yet (cited===0), the per-sentence matcher has not run/matched — that is "marks
-  // pending", not "partial"; the answer is grounded (the badge carries the coverage refinement).
+  // Sources attached but SOME sentences cite and others do not ⇒ partially grounded.
   if (coverage.cited > 0 && coverage.cited < coverage.total) return 'partially-grounded';
-  // Tempdoc 603 D-4 — "marks pending ⇒ grounded" holds only when chunk-precise matching is POSSIBLE
-  // (the marks are coming). For DOCUMENT-LEVEL sources the matcher can NEVER run, so cited===0 is not
-  // "pending" — it is provenance without per-sentence verification: the `sourced` frame, not `grounded`.
-  if (coverage.cited === 0 && !chunkPrecise) return 'sourced';
+  if (coverage.cited === 0) {
+    // Tempdoc 603 D-4 — DOCUMENT-LEVEL sources: the matcher can NEVER run (no chunk identity), so
+    // cited===0 is provenance, not "pending" — the `sourced` frame regardless of settle state.
+    if (!chunkPrecise) return 'sourced';
+    // Tempdoc 720 — CHUNK-PRECISE, cited===0: mid-stream this is "marks pending ⇒ grounded"; but once
+    // SETTLED the matcher has finished and tied no sentence to a passage — provenance without
+    // per-sentence verification (`sourced`), never the self-contradictory "Grounded · 0 of N".
+    return settled ? 'sourced' : 'grounded';
+  }
   return 'grounded';
 }
 

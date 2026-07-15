@@ -106,9 +106,10 @@ class StrayWatchedRootError(RuntimeError):
     """A live eval run detected a watched root broader than its own `corpus_dir`.
 
     Raised by `assert_watched_roots_scoped` — the automatic-prevention call site wired
-    directly into `run_utility_eval` (agent_utility_inspect.py) and `run_agent_eval`
-    (agent_retrieval_eval.py), the two functions that actually EXECUTE an eval. Before
-    this, `check_watched_roots_scoped` was only reachable via the separate, optional
+    directly into `run_utility_eval` (agent_utility_inspect.py), the record-grade
+    function that actually EXECUTEs an eval (the classic `run_agent_eval` that also
+    shared this gate was retired in tempdoc 675). Before this,
+    `check_watched_roots_scoped` was only reachable via the separate, optional
     `utility-calibrate` CLI — an eval could run (and silently leak) without ever going
     through it. See `check_watched_roots_scoped`'s docstring for the underlying
     mechanism (tempdoc 624 As-built #7).
@@ -130,9 +131,9 @@ def assert_watched_roots_scoped(base_url: str, corpus_dir: str, *, timeout_sec: 
 def base_url_from_mcp_config(mcp_config_path: str) -> str | None:
     """Derive the JustSearch backend's base_url from an eval's `--mcp-config` file.
 
-    Neither `run_utility_eval` nor `run_agent_eval` takes its own `--base-url` option —
-    the backend address they actually need for the watched-roots safety check is already
-    carried by the `--mcp-config` file the `claude` subprocess uses for its own MCP
+    `run_utility_eval` does not take its own `--base-url` option — the backend address
+    it actually needs for the watched-roots safety check is already
+    carried by the `--mcp-config` file the agent session uses for its own MCP
     transport: `{"mcpServers":{"justsearch":{"type":"http","url":"http://127.0.0.1:PORT/mcp"}}}`
     (see `util-smoke/README.md`). **The `"type":"http"` field is mandatory** — a `url`-only
     entry is silently DROPPED by the `claude` CLI (see `assert_mcp_config_http_typed`), so an
@@ -167,6 +168,22 @@ class McpConfigMissingTypeError(ValueError):
     """
 
 
+class McpConfigInvalidAlwaysLoadError(ValueError):
+    """A `--mcp-config` server entry's `alwaysLoad` key is present but not a JSON boolean.
+
+    `alwaysLoad` (tempdoc 725 increment 2/4) is the harness-side signal
+    `_derive_exposure_mode` reads to decide eager vs. deferred exposure —
+    `agent_utility_inspect._capture_exposure_config` reads it straight off the parsed
+    config with `bool(raw_always_load) if raw_always_load is not None else None`, and
+    `_derive_exposure_mode`'s own check is `always_load is True` (an identity check, not
+    a truthiness check upstream of that cast). A string `"true"`, an int `1`, or any
+    other non-bool JSON value would silently take a DIFFERENT path through that logic
+    than a real `true` literal — the exposure identity recorded for the campaign could
+    disagree with what the config author intended, undetected. Fail closed instead of
+    letting a typo mismeasure the eager/deferred arm.
+    """
+
+
 def assert_mcp_config_http_typed(mcp_config_path: str) -> None:
     """Raise `McpConfigMissingTypeError` if `mcp_config_path` carries an `mcpServers` entry
     with a `url` but no `type` — the exact shape the `claude` CLI silently drops (see
@@ -175,10 +192,15 @@ def assert_mcp_config_http_typed(mcp_config_path: str) -> None:
     config aborts the run immediately instead of producing 0-tool-call cells that read as
     healthy.
 
+    Also raises `McpConfigInvalidAlwaysLoadError` (tempdoc 725 increment 4) if any server
+    entry carries an `alwaysLoad` key whose value is not a JSON boolean — see that error's
+    docstring for why a non-bool value must fail closed rather than degrade.
+
     A missing/malformed config file, a config with no `mcpServers` key, an empty
     `mcpServers` (condition A's `{"mcpServers":{}}`), or a command-style entry
     (`{"command": ..., "args": [...]}`, no `url`) is NOT an error here — this guards only
-    the specific silent-drop shape (`url` present, `type` absent).
+    the specific silent-drop shape (`url` present, `type` absent) plus the `alwaysLoad`
+    type check above.
     """
     try:
         cfg = json.loads(Path(mcp_config_path).read_text(encoding="utf-8"))
@@ -190,6 +212,14 @@ def assert_mcp_config_http_typed(mcp_config_path: str) -> None:
     for name, entry in servers.items():
         if not isinstance(entry, dict):
             continue
+        if "alwaysLoad" in entry and not isinstance(entry["alwaysLoad"], bool):
+            raise McpConfigInvalidAlwaysLoadError(
+                f"mcp_config {mcp_config_path!r} server {name!r} has a non-boolean "
+                f"`alwaysLoad` ({entry['alwaysLoad']!r}, type "
+                f"{type(entry['alwaysLoad']).__name__}) -- alwaysLoad must be a JSON "
+                "boolean (true/false) or omitted entirely. Fix: set it to `true`/`false`, "
+                f"e.g. {{\"mcpServers\":{{{name!r}:{{\"alwaysLoad\":true}}}}}}."
+            )
         if "url" in entry and "type" not in entry:
             raise McpConfigMissingTypeError(
                 f"mcp_config {mcp_config_path!r} server {name!r} has a `url` but no `type` "
@@ -322,7 +352,7 @@ def calibrate(*, base_url: str, queries: list[dict], corpus_dir: str, mcp_config
     from jseval.utility_governance import compute_loss_accounting
     pilot_arms = compute_loss_accounting(pilot_dir)
     per_cell_cost = 0.12  # fallback
-    summ = aur.eval_logs_to_summaries(pilot_dir, search_config_cohort_key=cck)
+    summ = aur.eval_logs_to_summaries(pilot_dir)
     costs = [v["cost_usd"] for s in summ for v in s["per_query"].values() if v.get("cost_usd")]
     if costs:
         per_cell_cost = sum(costs) / len(costs)

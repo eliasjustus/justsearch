@@ -122,7 +122,7 @@ Settled empirical facts. Each was an open question that got answered.
 
 - **GPU:** ~2.2s for top-20 documents at seq=512, 2048MB arena, RTX 4070. Default: `gpu=true, mem=2048MB, seq=512`.
 - **CPU:** ~42s for top-20 documents at seq=2048 on RTX 4070 host CPU.
-- **VRAM budget (all ORT consumers):** embed ~2GB + SPLADE ~1GB + NER ~0.5GB + reranker ~2GB = ~5.5GB total (leaves ~6.5GB for LLM on 12GB GPU). *Updated by tempdoc 691:* NER's arena cap is now 2GB (see F-013) — caps are per-session budgets, not pre-allocations, and enrichment backfill yields the GPU when Main claims it, so LLM coexistence is unaffected; measured total VRAM peak during full-corpus enrichment (no LLM): 7.7GB of 12GB.
+- **VRAM budget (all ORT consumers):** embed ~2GB + SPLADE ~1GB + NER ~0.5GB + reranker ~2GB = ~5.5GB total (leaves ~6.5GB for LLM on 12GB GPU). *Updated by tempdoc 691:* NER's arena cap is now 2GB (see F-013) — caps are per-session budgets, not pre-allocations, and enrichment backfill yields the GPU when Main claims it, so LLM coexistence is unaffected; measured total VRAM peak during full-corpus enrichment (no LLM): 7.7GB of 12GB. *Further 691 Phase-N note (2026-07-11):* the default-on long-doc single-pass embed (batch-1, up to 8192 tokens) can BFC-OOM inside the 3072MB embed arena on near-8k docs (fragmentation from varying seq lengths; ~1.3-1.5GB BiasSoftmax requests) — it falls back to windowed cleanly, but `JUSTSEARCH_EMBED_GPU_MEM_MB=6144` removes the double-pay and recovers the last ~0.04 nDCG on legal-clerc (0.2967→0.3401). **6144 is the shipped default since 2026-07-11 (founder decision; history 2048→3072 (391)→6144 (691/F-031))** — worst-case cap sum across lanes now exceeds 12GB on paper, but caps are per-session budgets, not pre-allocations, and GPU mutual exclusion + shrinkage + the windowed fallback bound the realized peak (measured 7.7GB at the old caps; re-measure at next full-corpus enrichment profiling).
 - **Evidence:** tempdoc 360 (Worker migration), tempdoc 361 I9; tempdoc 691 Phase C (NER cap update).
 
 ### F-011: JAR-bundled CUDA defeats native-path-based GPU-failure-reproduction
@@ -148,6 +148,28 @@ Settled empirical facts. Each was an open question that got answered.
 - **Evidence:** tempdoc 691 Phases A-C (attribution runs, root-cause chain, C-series A/B verification, all artifacts + provenance).
 
 ---
+
+### F-014: 708 offline encoder screen — candidate footprint/throughput record + two runtime facts (tempdoc 708, 2026-07-11)
+
+- **Context:** the 708 bake-off (search-quality F-034: NO MODEL SWAP) measured candidate encoders
+  offline in torch fp16 on the RTX 4070 — a screen, NOT ORT production baselines (the Canonical
+  Baselines table above stays ORT-only). Doc-side encode throughput at chunk granularity
+  (500-token chunks, includes tokenize+forward+pool), fp16 size estimates:
+  incumbent gte-multilingual-base 628 MB / 9.7 docs/s; arctic-embed-m-v2.0 ~610 MB / 10.0;
+  granite-278m ~556 MB / 12.9; arctic-embed-l-v2.0 ~1.1 GB / 5.6; bge-m3 ~1.1 GB / 6.2;
+  multilingual-e5-large ~1.1 GB / 6.0; Qwen3-Embedding-0.6B ~1.2 GB / 1.35 (W1; ~6× slower than
+  same-size peers — decoder-style embedder; its W2 8k-context run exceeded 60 min for 198 docs and
+  was abandoned).
+- **Runtime fact 1 (production-relevant):** `OnnxEmbeddingEncoder.createChunks` raw id-slice
+  windows CLS-pool a non-[CLS] token on windows 2+ — offline A/B isolates this as the dominant
+  share of the old whole-doc dense death (0.105 vs 0.745 R@10 with proper per-window special
+  tokens, same model/windowing). F-031's single-pass path moots it up to 8192 tokens; any residual
+  >8192-token window-mean path still carries it (observations inbox).
+- **Runtime fact 2 (tooling):** Snowflake arctic-embed-m-v2.0's HF remote code (mGTE family)
+  hard-requires `xformers` on CUDA (`AssertionError: please install xformers`); the incumbent's
+  Alibaba remote code does not. `xformers` 0.0.35 installs clean against torch 2.13.0+cu126
+  (`--no-deps`; triton warnings non-fatal).
+- **Evidence:** tempdoc 708 §Execution log (final table + run JSON pointers).
 
 ## Decisions
 
@@ -608,7 +630,7 @@ JustSearch uses a **two-pronged citation strategy** (see ADR-0006) to attribute 
 
 ### Prong 1: LLM-generated citations (primary)
 
-RAG prompts instruct the LLM to place `[N]` markers inline. Source chunks are wrapped in numbered `<passage id="N" source="file">` XML (Q&A) or prefixed with `[N]` (summarization). The `meta` SSE event delivers `ContextCitation[]` with rich metadata:
+RAG Q&A prompts inject the retrieved source chunks as a plain `Documents:` / `Question:` user message (`RAGContext`), and instruct the LLM to place `[N]` citation markers inline. (The earlier numbered `<passage id="N" source="file">` XML wrapper is retired.) The `rag.citations` SSE event delivers the citation metadata (`ContextCitation[]`):
 
 - `parentDocId`, `chunkIndex`, `chunkTotal` — chunk identity
 - `startChar`, `endChar` — character offsets for click-to-jump
@@ -636,12 +658,12 @@ Fallback chain in `matchCitations()`:
 
 ### Frontend rendering
 
-The frontend (`useAppAI.ts`) handles both prongs:
+The RAG-citation event orchestration lives in `modules/ui-web/src/shell-v0/views/UnifiedChatView.ts` (`onRagCitationMatches` / `onRagCitationDelta`), consuming the streaming callbacks in `modules/ui-web/src/api/streams.ts` and feeding a resolved citation model (`shell-v0/components/chat/citationResolve.ts` / `citationTypes.ts`) to the presentational components under `shell-v0/components/chat/`. It handles both prongs:
 
-- `onCitationMatches` **enriches** existing RAG citations with cross-encoder scores — preserves excerpts, offsets, and headings from the `meta` event, only updates `score`
-- `injectCitationMarkers` strips any LLM-generated `[N]` markers before injecting cross-encoder markers (prevents duplication)
-- `CitationHoverCard` displays document name, excerpt preview, score badge (hidden for BM25 scores >1.0), and section metadata
-- `MarkdownRenderer` parses `[N]` syntax into clickable citation buttons
+- Cross-encoder scores **refine** the RAG citations — excerpts, offsets, and headings from the `meta` event are preserved; only the citation's `score` is updated.
+- LLM-generated `[N]` markers are reconciled against the resolved citations before render (prevents duplication).
+- `CitationHoverCard` displays document name, excerpt preview, score badge (hidden for BM25 scores >1.0), and section metadata.
+- `MarkdownBlock` parses `[N]` syntax into clickable citation buttons.
 
 ### Citation Parsing and Attribution Contract (RAG Eval)
 

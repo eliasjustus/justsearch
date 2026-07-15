@@ -3,7 +3,7 @@ title: "Five-minute agent/runtime onramp: the runtime foundation is shipped (GPU
 type: tempdocs
 status: "FOUNDATION + ONRAMP IMPLEMENTED (live + browser verified 2026-07-01, §Implementation twelfth pass): the doctor (scripts/dev/doctor.mjs), demo corpus (examples/onramp-corpus), runnable proof (scripts/dev/test-onramp-first-success.mjs), the manifest-reason polish, and the tier-honest CONTRIBUTING onramp section all shipped and verified. Earlier: Two things are done + live/browser-verified: the AI-readiness diagnosability substrate (Tasks 0-5) and the GPU-only shared dev runtime (Move 1 + Move 2, ninth pass). §Onramp design (tenth pass, 2026-07-01) then returns to the tempdoc's ORIGINAL purpose (the five-minute onramp) and settles its long-term shape: it is an ASSEMBLY problem — the ingredients (ingest/search endpoints, MCP connect surface, the preflight endpoint, the runtime manifest, a tiny corpus candidate) already exist scattered; the remaining core is composing them into a tiered, evidence-producing first-success path (O1 tier ladder — Tier 0 zero-model search proven; O2 doctor extending AiPreflightService as a projection of manifest+status; O3 demo corpus; O4 a runnable proof; O5 minimal honest discoverability), plus fixing the deferred manifest-reason polish inside the doctor. NOT yet built. Explicitly NOT the whole 'five-minute onramp': the identity/MCP-matrix/tier-naming framing is coupled to the unstarted 654/655/657 and is handed to them. Detail on the implemented foundation follows. --- Move 1 + Move 2 shipped as a Node-only change to scripts/dev/dev-runner.cjs (+ prepare-worktree.cjs, the MCP readiness message, and a new regression test): dev inference is now GPU-only with a shared, acquire-once cuda12 runtime. dev-runner no longer stages a CPU llama-server baseline (removing the silent 9B-on-CPU fallback that DOSed concurrent worktrees, per the settled GPU-primary direction, tempdoc 381); it resolves JUSTSEARCH_SERVER_EXE to the shared main-checkout cuda12 (worktree-own first), and one-time-populates that shared location from the Gradle cuda stage — every worktree then references one copy, zero per-worktree download (the property models already have via JUSTSEARCH_MODELS_DIR). When no cuda12 is resolvable, inference fails CLOSED (truthful 'unavailable'; search still works) instead of silently degrading. Live-verified: the running llama-server was the SHARED main-checkout exe (-ngl 99) resolved by the new logic, a real API query + a browser Document Q&A both answered coherently on GPU ('Online — Qwen Qwen3.5-9B'). Production bundling (bundleSidecarResources) untouched. Deferred (optional, documented): the mode-transition manifest-reason polish + ORT-CUDA GPU-embedding sharing. Earlier: diagnosability substrate (Tasks 0-5) shipped; passes 6-8 traced the acquisition gap, reframed the goal, settled the design, and live-proved viability."
 created: 2026-06-28
-updated: 2026-07-01
+updated: 2026-07-08
 category: developer-experience / activation / mcp / diagnostics
 related:
   - 618-agent-developer-velocity-friction
@@ -35,6 +35,12 @@ related:
 
 > NOTE: Noncanonical working tempdoc. Verify against canonical docs and code before
 > treating any claim as current truth.
+>
+> **Handoff (2026-07-08 takeover):** the onramp CI proof-lane (`onramp-smoke.yml`) was red-since-inception;
+> it is now root-caused, fixed, and green, and the §K follow-ons **K1/K2/K4 shipped** (K3 deferred). The
+> **frontmatter `status:` blob predates this takeover** — a continuing agent should read **§17 onward**, and
+> start from **§K.7 (Handoff)** at the foot of this doc for current state, verification evidence pointers,
+> unverified assumptions, and remaining work.
 
 # 656 - Five-minute agent/runtime onramp
 
@@ -2123,3 +2129,357 @@ The deferred tier projection / declared ladder / UI-MCP renderers (wait for the 
 `dev-runner --no-frontend` flag (future trim of the CI frontend spawn); an `ubuntu-latest` lane
 (dev-runner has Linux paths but the stack is only *proven* on Windows).
 
+## §Takeover investigation + verdict (seventeenth pass, 2026-07-08)
+
+Takeover pass in a dedicated worktree (`worktree-656-onramp-takeover`), verified against `main` @
+`5c718fd`. Full re-read of this tempdoc + live checks of what shipped, whether the deferred work's
+promotion trigger has fired, and what actually broke in the CI proof-lane. Investigation only — no
+feature code / design changed. Purpose: an explicit "should this be done at all, and now?" verdict,
+since the tempdoc reads as IMPLEMENTED but its one continuous proof (the CI smoke) has never gone green.
+
+### A. What is verifiably shipped on `main` (confirmed, not assumed)
+Confirmed by `git log` + on-disk presence at this base:
+- **PR #44** `feat(656)` — GPU-only shared dev runtime (Moves 1+2), truthful AI-readiness diagnosis
+  (Tasks 0-5), tiered first-success path. **PR #50** `fix(656/657)` — post-merge review batch.
+- Artifacts present: `scripts/dev/doctor.mjs`, `examples/onramp-corpus/{README,cinnamon,clockwork-garden,
+  lighthouse,telescope}.md`, `scripts/dev/test-onramp-first-success.mjs`, `.github/workflows/onramp-smoke.yml`,
+  the `npm run doctor` / `dev-runner doctor` discoverability, and the CONTRIBUTING onramp section.
+- **The adjacencies 656 handed off have since shipped independently:** **654** runtime-contract v1
+  (`feat(654)` #47, status IMPLEMENTED 2026-07-02); **657** install-intent axis + model-pack tiers +
+  runtime-mode projection (`feat(657)` #49, substrate implemented & live-verified 2026-07-02). So 656's
+  own buildable-now scope AND the neighbours it was blocked-behind are done.
+
+### B. The deferred tier-projection's promotion trigger has NOT fired (checked live)
+The fourteenth pass deferred promoting `deriveTier` out of the CLI into a canonical Head projection +
+declared `capability-tiers` catalog + FE/MCP renderers, gated on **"the FIRST second-renderer."**
+Checked directly: `grep -rniE "deriveTier|nextRemedy|capability-tiers"` across `scripts/`,
+`modules/ui-web/src/`, `modules/app-services/` returns **only `scripts/dev/doctor.mjs`** — still exactly
+one consumer. Crucially, **654 and 657 shipping did not create a second renderer of the onramp tier:**
+654 shipped a runtime *contract* descriptor; 657 shipped an install-*mode* projection (Full Desktop /
+Headless Runtime / MCP Lite) and an *intent*-tier-coverage register (`governance/intent-tier-coverage.v1.json`
+— conversation-intent tiers, a different axis). None render the model/runtime *capability tier* the
+doctor derives. So the trigger genuinely has not fired, and per the codebase's "a second consumer
+justifies the projection" + YAGNI discipline, promoting it now would be abstraction-for-one-reader — the
+exact premature move the fourteenth pass foreclosed. **Correctly still deferred.**
+
+### C. The one live, in-scope defect: the CI proof-lane has never been green (root cause found)
+`Onramp Smoke` (the sixteenth pass's idea-B6 continuous proof-lane) has run **once**, on 2026-07-02
+(`workflow_dispatch`, run `28607534344`), and **failed**; as of 2026-07-08 no re-dispatch, so it is past
+its `staleDays: 7` freshness line (`workflow-signal-policy.v1.json`). Pulled the failed-run log — the
+failure is **not** a product regression and **not** the Tier-0 path itself:
+- Every step passed *except* `Onramp first-success smoke (Tier 0)`, which died at **`FAIL stack start
+  timed out`** — before ingest/query ever ran.
+- Timeline: `starting dev stack` at 17:01:57 → `[dev-runner] Ensuring distribution is up-to-date
+  (assemble)...` → still compiling Java at 17:05:52 → timeout at 17:05:57. That is **exactly 240 s**,
+  matching `startStack`'s `startTimeoutMs = 240000` (`scripts/dev/lib/stage-reference-corpus.mjs:29`).
+- **Root cause:** the workflow does not pre-build the distribution, so on a cold public runner
+  `dev-runner start` triggers a from-scratch Gradle `assemble` that alone consumes the entire 240 s
+  stack-start budget, leaving zero time for the stack to come up. This is precisely the "the lane pays a
+  full dev-stack bootstrap (Java `assemble` + `npm ci` + Vite spawn)" cost the **fifteenth pass flagged
+  as a known cost** — it was recorded but not guarded against. The smoke's own script header even says it
+  "needs installDist"; the workflow never runs it.
+- **Fix shape (small; NOT implemented this pass):** add a `:modules:ui:installDist
+  :modules:indexer-worker:installDist` (or `assemble`) build step to `onramp-smoke.yml` *before* the
+  smoke — so `dev-runner`'s up-to-date check is near-instant — and/or raise `startTimeoutMs` for the CI
+  invocation. Mirrors how the smoke is run locally (dist pre-built).
+
+### D. External-currency check (fast-moving ground only)
+The tempdoc's prior research (flutter/brew doctor, TTFV, sample-corpus) is settled practice. The one
+genuinely moving input — the **MCP spec RC finalizing 2026-07-28** (session/handshake removal; the
+fourteenth pass logged it) — is **owed to 655, not 656**: the onramp deliberately composes over the MCP
+*connect surface* and hands transport mechanics to 655, so the spec churn does not move 656's verdict. No
+new research warranted; no external assets used.
+
+### E. Verdict (explicit)
+**Should this tempdoc be done at all, and now? — It is already done; do NOT re-open it for new
+implementation.** 656's entire buildable-now scope shipped and merged (§A). What remains is exactly two
+categories, both of which correctly resolve to "not now":
+1. **The deferred tier-projection architecture** — correctly gated on a second tier-renderer that still
+   does not exist (§B). Building it now duplicates `deriveTier` for one reader; wait for the trigger.
+2. **Hand-offs** (655 MCP matrix/attach; the FE first-run empty-state per 654; retrieval "why this
+   result" per 658) — other tempdocs' work; 654/657 have already advanced on their own.
+
+The **only** action this pass finds warranted under 656's own name is a **small CI fix** to the
+proof-lane 656 shipped (§C) — making an already-built thing green, not new capability. That is a bounded
+bug-fix, not a "take over and implement the tempdoc" effort. Recommend closing 656 as **DONE (scope
+complete)** once the proof-lane is green, with the tier-projection recorded as a trigger-gated future
+item (already is).
+
+- **Cheapest evidence that validates/invalidates the remaining work:**
+  - For the deferred tier-projection — *the appearance of a second renderer of the capability tier* (an
+    FE first-run screen or an MCP `justsearch_status` tier field). It **does not exist today** (§B grep,
+    single consumer) → the work is correctly not-yet-needed. This evidence is cheap and already gathered.
+  - For the CI fix — *the failed-run log*, which **already exists** and pinpoints the cause (§C). No
+    further experiment needed; a local repro would not even hit the cold-assemble path (local dist is
+    pre-built).
+- **What it displaces / duplicates:** nothing new to build. The deferred piece, if built prematurely,
+  would *duplicate* the single `deriveTier` into a 2nd/3rd renderer — the representation-drift class the
+  tempdoc itself guards against. Its hand-offs *overlap* 654 (runtime contract, shipped), 657 (install
+  modes/tiers, shipped), 655, 658 — already de-conflicted via the tempdoc's ownership seams.
+
+### F. Not done in this pass (initial state)
+No feature code, no design, no CI edit — the proof-lane fix (§C) and any tempdoc-status change were
+left for explicit go-ahead. This section is investigation history (dated), not current-truth canon.
+
+### G. §C proof-lane fix applied + iterated to green (2026-07-08, on user go-ahead)
+On the user's "run it," applied the §C fix and validated it with real `workflow_dispatch` runs against
+the branch — which usefully corrected a wrong first guess (interrogate-results discipline):
+- **Attempt 1** (`installDist` of ui+worker only) → **still timed out** (run `28905787720`). The log
+  showed dev-runner recompiling `benchmarks`/`test-support` — because `dev-runner start`'s up-to-date
+  gate is `assemble -PskipWebBuild=true` (whole project, `dev-runner.cjs:1010-1013`), which installDist
+  of two modules does not satisfy. Lesson: match dev-runner's *exact* task+flag, not a subset.
+- **Attempt 2** (corrected): pre-run `./gradlew.bat assemble :modules:ui:installDist
+  :modules:indexer-worker:installDist -PskipWebBuild=true` — the whole-project `assemble` (same
+  task+flag dev-runner runs, so its later check is UP-TO-DATE ~seconds) plus installDist for the launch
+  dir. **This fixed the assemble timeout** (run `28906396989`: dev-runner's `assemble` UP-TO-DATE in
+  ~6s) — but the smoke *still* failed "stack start timed out", exposing a **deeper, previously-hidden
+  problem**.
+
+### H. Deeper root cause — the model-less stack comes up but dev-runner never reports it ready (2026-07-08)
+Added an `if:failure()` log-dump step (runs `28906957740`/`28907510627`; first dump looked at repo-root
+`.dev-data` — wrong: dev-runner's data dir is `modules/ui-web/.dev-data`, `dev-runner.cjs:251`). With
+the correct path, the CI stack logs show the stack **fully comes up** on the GPU-less/model-less runner:
+- `publishHead apiPort=53091`, `publishWorkerReady grpcPort=53097 lifecycle=DEGRADED`,
+  `publishAi phase=PENDING`, `publishMode intent=full-desktop realized=retrieval-only`, and the worker
+  **indexed 5 docs** — all within ~4s of launch. Search is fully functional; `/api/status` route is up.
+- Yet the smoke's `startStack` never saw dev-runner's `{"ok":true,"apiPort":…}` stdout line (emitted at
+  `dev-runner.cjs:1376`) and timed out at 240s. So dev-runner launched a working stack but **hung in its
+  own readiness gate** — before line 1376 — for the whole window.
+
+**Two concrete defects, both real:**
+1. **Timeout inversion.** The smoke's `startStack` hardcodes `startTimeoutMs = 240000`
+   (`stage-reference-corpus.mjs:29`), but dev-runner's *own* CI readiness timeouts are **300 000**
+   (`process.env.CI ? 300_000`, `dev-runner.cjs:1146`/`1154`). The outer waiter is shorter than the
+   inner one, so the smoke kills dev-runner before dev-runner's own specific error can surface — which
+   is also why every failure reads as the generic "stack start timed out".
+2. **A genuine readiness-gate stall in full degradation.** dev-runner hangs in either the port-wait
+   (`:1198`, discovers the port from `runtime/manifest.json` — which *is* present with the port) or the
+   HTTP-200 gate on `/api/status` (`waitForBackendReady`, `:1220`). Because the stack was up + indexed
+   at ~4s but dev-runner still hadn't emitted readiness at 240s, it is **stuck, not merely slow** — the
+   likeliest cause is `/api/status` not returning 200 under `lifecycle=DEGRADED` (GPU-less, model-less).
+   The exact gate (port-wait vs status-200) is **not yet pinned** — one more diagnostic run (raise the
+   smoke timeout >300s so dev-runner's own error surfaces, or curl `/api/status` in the failure dump)
+   would settle it.
+
+**Significance.** This is *not* a CI-config tweak — it is the proof-lane doing its job: it caught that
+the model-less onramp does not reach a "ready" verdict on a stock GPU-less runner, despite search
+working. [Both degraded-503 and the 654/657-regression hypotheses below were subsequently FALSIFIED —
+see §I for the proven root cause.]
+
+### I. PROVEN root cause — a latent port-wait loop bug in dev-runner (2026-07-08, run `28909380542`)
+A decisive diagnostic run (force dev-runner's own timeouts to 120s < the smoke's 240s; `cat manifest.json`)
+**passed** — and a *shorter* timeout making a hang "pass" is the signature of a loop that always runs to
+its deadline. Passing timeline: launch 01:00:15 → "stack up" 01:02:17 (**~122s**, i.e. exactly the injected
+120s), then query → 1 result, TEXT, tier 0. Traced to source, airtight:
+
+- `apiPortRequested = opts.apiPort` = **0** (ephemeral; the smoke requests no `--api-port`).
+  `apiPortActual` inits to 0 (`dev-runner.cjs:1063`).
+- The port-wait loop (`:1198`): `while ((apiPortRequested <= 0 || apiPortActual <= 0) && Date.now() <
+  waitForPortDeadline)`. `apiPortRequested` is a `const 0`, so **`apiPortRequested <= 0` is permanently
+  true** → the loop can never exit early. It *does* discover the real port mid-loop (`apiPortActual = p`,
+  `:1204`) but ignores it and spins until `portEmitTimeoutMs` elapses.
+
+**So dev-runner always burns the entire `portEmitTimeoutMs` before emitting ready whenever an ephemeral
+port is used (the default).** Effect by env (`:1146`/`:1154`): local non-CI = 15s (this is exactly why the
+fifteenth pass measured "18s" — startup was never fast, the loop wasted 15s); **CI = 300s**, which exceeds
+the smoke's 240s `startStack` budget (`stage-reference-corpus.mjs:29`) → killed first → "stack start timed
+out", deterministically, every run.
+
+**Falsified:** degraded-503 (`/api/status` is always 200; `/api/health` maps DEGRADED→200); the 654/657
+regression (the bug predates them — it's just masked locally as "~15s startup"); flakiness (it's fully
+deterministic). GPU/model-less-ness is irrelevant except that CI happens to set `CI=1` (→ the 300s branch).
+
+**Fix (one line, real):** `:1198` → `while (apiPortActual <= 0 && Date.now() < waitForPortDeadline)` —
+drop the wrong `apiPortRequested <= 0` term; exit the moment the actual port is discovered. This makes
+every dev-stack start ~10s faster (exit at ~4s, not the full timeout) *and* makes the smoke pass on CI
+comfortably under budget — a strict improvement, shared dev-runner core (verify no other caller depends
+on the full-wait behavior; none should — the loop's purpose is "wait until the port is known"). The §H
+timeout-inversion is then moot, but aligning them (smoke budget ≥ dev-runner's) is worth doing as defence.
+**APPLIED (2026-07-08, on go-ahead).** Fixed `dev-runner.cjs:1198` to `while (apiPortActual <= 0 && …)`
+(the specific-port case is unchanged — `apiPortActual` inits to the requested port, so the loop is skipped
+as before; only the ephemeral default is corrected). Removed the diagnostic cruft from `onramp-smoke.yml`
+(the forced-timeout env vars), keeping a slim failure-only log-dump as standing diagnostics for this heavy
+lane. Verified locally: `node -c` clean; **all four** dev-runner test suites green
+(`runtime-resolution`/`admission`/`gate-integration`/`pruning`). The live smoke run is the regression test
+(the loop lives inside the big async `start()`; the proof-lane exercises it end-to-end). Final green CI run
+recorded at commit time.
+
+
+### J. Second latent bug the fix uncovered — ingest races worker warmup (2026-07-08, run `28910099366`)
+With the §I port-wait fix in, the stack now reports "stack up" in **~5s** (was 122s+ / never) — which
+immediately surfaced the *next* masked issue: `POST /api/knowledge/ingest → HTTP 503`. Cause: dev-runner's
+"stack up" fires when the **Head** answers `/api/status` (200), but the **Worker** that serves ingest is
+still warming up and 503s for a beat. The old full-timeout startup (§I) masked this by handing the worker
+~minutes before the smoke ever ingested; the diagnostic 120s run passed for the same accidental reason.
+Fix: `stage-reference-corpus.mjs::stageAndVerify` now **retries the ingest on transient failure** within
+its existing bounded poll budget (shared with the 669 demo-corpus staging — both get the robustness).
+This is a genuine masked-by-slowness race, not a product defect (ingest works model-less once the worker
+is ready — proven by the 120s run's 1-result pass). Noted follow-up (not done here): dev-runner's readiness
+(`waitForBackendReady`, Head `/api/status` 200 only) arguably should include worker-ready — a broader
+dev-runner change left for its own scope.
+
+## §K. Post-implementation research — what to do with the proof-lane + startup fixes (2026-07-08)
+
+Docs-only research round on the takeover's implemented changes (§I port-wait fix, §J ingest-retry, §G/H
+assemble pre-build). Every item names its **evidence of need**; ideas without evidence are quarantined in
+the speculative list. Public alpha, **no real users yet** → user-friction evidence is thin; the honest
+beneficiaries are developers/agents (as the thirteenth pass already found). External research (k8s readiness
+probes; CI smoke-test hygiene) was **confirmatory-only** — those patterns are settled and already cited in
+this tempdoc; the real signal is this session's live-debugging evidence.
+
+### K.1 Evidence-backed (recommendation candidates)
+- **K1 — Readiness should mean "worker ready," not just "Head up."** *Evidence:* the §J HTTP 503 (ingest
+  raced worker warmup on CI). dev-runner's `waitForBackendReady` gates on Head `/api/status` 200 only —
+  a *liveness/process-up* check, not a *readiness* check (k8s: readiness verifies dependencies). The smoke
+  is patched (retry); the general gap remains for any consumer that immediately hits worker endpoints. Fix
+  path is cheap — `/api/status` already exposes `worker.core.indexState`. *Practicality:* removes a class of
+  flaky "worker not ready" startup errors for all dev-stack users. Shared-infra change — verify scope.
+- **K2 — Align outer/inner startup timeouts (smoke budget ≥ dev-runner's).** *Evidence:* the inversion
+  (smoke 240s < dev-runner CI 300s) masked dev-runner's *specific* error behind the generic
+  "stack start timed out," costing a diagnostic cycle to disambiguate. Cheap defence-in-depth for
+  debuggability.
+- **K3 — The proof-lane rots silently; add a freshness-surfacing loop (external routine, NOT a cron —
+  ADR-0026).** *Evidence:* the lane was red-since-inception and unnoticed ~5 days — the exact silent rot O4
+  exists to prevent, happening to the proof *itself*. `workflow-signal-health.mjs` + `staleDays:7` exist but
+  nothing runs/surfaces them. External literature has no named fix (confirmed). *Practicality:* a proof
+  nobody runs isn't a guarantee — this is what makes O4 *real* rather than theoretical. Most consequential
+  candidate to the tempdoc's own intent.
+- **K4 — Assert stack-up *latency* in the smoke, not just an eventual timeout.** *Evidence:* the §I bug hid
+  for a long time because nothing asserted startup *speed* — 15s locally sailed under any budget; only CI's
+  300s tipped it into failure. A "stack up in <N s" assertion catches this silent-regression class that a
+  generous 240s budget misses. Cheap; guards exactly what was just fixed.
+
+### K.2 Evidence-backed negatives (deliberately don't do)
+- **K5 — No generalized wait-loop guard/lint.** *Evidence:* audit of all three deadline-loops in
+  `dev-runner.cjs` — the §I bug is a **singleton** (`:608` returns on success; `:1635` re-evaluates and exits
+  on port-close). One instance ≠ a class; YAGNI.
+- **K6 — Don't extend the CI lane to Tier 1/2.** No evidence of need; real cost (GPU runners, multi-GB model
+  downloads); the tempdoc deliberately scoped the CI lane to Tier 0 (fifteenth pass).
+
+### K.3 Speculative (no current evidence of need — no real users)
+- **K7 — Extend the proof-lane to prove the MCP/agent onramp** (the named "wedge"). Coupled to 655; the MCP
+  spec finalizes 2026-07-28 (~3 weeks out) — premature to bake in.
+- **K8 — User-facing onramp UX** (empty-state onboarding, in-UI tier panel — the thirteenth pass's C-group).
+  654 has since shipped (which *unblocks* it), but with no real users there is no evidence of need. The
+  tier-projection promotion trigger is **still unfired** (`deriveTier` remains single-consumer, re-verified
+  this session even after 654/657 merged), so the substrate correctly stays deferred.
+
+### K.4 Net
+The one clearly-worthwhile, **already-delivered** outcome is the §I port-wait fix: every dev-stack start
+~10s faster, daily, for all developers/agents — the highest-practicality result of the whole takeover, and
+it benefits everyone regardless of the onramp. Of the *new* candidates: K3 (rot-surfacing) matters most to
+O4's intent; K1/K2/K4 are small, evidence-backed robustness/debuggability wins. Everything user-facing (K7,
+K8) stays speculative — consistent with "no real users yet." **"Nothing more is strictly required" is a
+defensible read:** 656's scope is delivered and the proof-lane is green; K1–K4 are improvements, not gaps —
+worth doing only if/when a developer actually trips over them (K1/K2 already have one trip each: this
+session).
+
+### K.5 Confidence pass — K1–K4 surprise-reduction (2026-07-08, read-only)
+Pre-implementation investigation only (no feature code). Closed the K1–K4 uncertainties:
+
+- **K1 signal + necessity — RESOLVED, and reframed *down*.** The ingest 503 is a **deliberate gate**, not a
+  bug: `KnowledgeSearchController.handleIngest`/`handleSearch` sit behind a WorkerCapability before-handler
+  that returns `503 "Knowledge Server not ready"` when `WorkerCapability.available()` is false (line ~223,
+  ~714). The readiness signal is simply "worker available." The correct consumer behaviour is to *wait for
+  the gate to open* — which the §J smoke retry already does. The MCP dev server **already** treats
+  "worker ready" as a distinct readiness level ("~15s HTTP / ~40s worker ready … blocks until readiness
+  level reached"). ⇒ **A dev-runner readiness change is NOT necessary** (the necessary fix shipped in §J).
+  Remaining K1 is at most a one-line docs note (Head-ready ≠ worker-ready); the dev-runner worker-gate is
+  optional polish with shared-infra blast radius — recommend *not* doing it.
+- **K2 — RESOLVED (trivial).** `startStack` 240s vs dev-runner CI 300s confirmed. With the §I fix dev-runner
+  reports ready in ~5s, so 300s is essentially never hit — K2 is pure defence-in-depth (align the two;
+  1-line).
+- **K3 — RESOLVED as a *decision*, not code.** `workflow-signal-health.mjs` produces a fresh/stale report
+  but **nothing runs it** (no scheduler, no consumer). Surfacing needs a periodic external dispatcher.
+  ADR-0026's no-schedule rule targets the *self-hosted* runner's uptime; onramp-smoke is GitHub-hosted, so
+  an external routine is policy-consistent and carries no boot-execution risk — but standing up a scheduled
+  agent is an **owner/infra/billing decision**, not something to implement autonomously. The code glue is
+  small once that decision is made.
+- **K4 — RESOLVED (easy, low flake risk).** Post-fix CI stack-up latency measured ~5s (two consistent runs:
+  `28910099366`, `28910511992`). A threshold of ~60–90s clears 5s by 12–18× yet still trips on the
+  regression class (timeout-burning ≥120s). Only residual: two data points, cold-runner variance not swept —
+  but the margin absorbs it.
+
+**Confidence for the remaining K1–K4 work: 8/10.** No technical surprises left; the biggest unknown (K1's
+signal + whether a core change is needed) resolved *favourably* (already fixed; signal known). The only
+residuals are non-technical: K3 is decision-gated (owner must choose the scheduling mechanism), and K1's
+recommendation is downgraded to docs/optional. **Difficulty: LOW.** K1(docs)+K2+K4 are small, mechanical,
+well-specified edits → **Sonnet at low–medium effort**; not Opus (no hard design remains). K3 is an owner
+decision first, then trivial glue; the optional K1 dev-runner worker-gate (not recommended) would be the
+only moderate-care item if ever pursued.
+
+### K.6 Implementation — K1/K2/K4 shipped, K3 deferred (2026-07-08)
+Implemented the warranted §K.5 subset (dev/CI infra only; no product code):
+- **K1 (docs-only):** comment at `dev-runner.cjs::waitForBackendReady` recording "ready = Head up, NOT
+  worker-ready; consumers must tolerate the WorkerCapability 503 gate — see §J retry." No core change (the
+  functional fix shipped in §J; the dev-runner worker-gate stays out, as recommended).
+- **K2:** `stage-reference-corpus.mjs` `startStack` default `startTimeoutMs` 240000 → **330000** (≥ dev-runner
+  CI 300000 + margin) so the outer waiter never masks dev-runner's specific error (§H).
+- **K4:** `test-onramp-first-success.mjs` now measures launch→stack-up and **fails if > `MAX_STACKUP_MS`**
+  (env `JUSTSEARCH_ONRAMP_MAX_STACKUP_MS`, default 90000 — ~18× the observed ~5s, below the ≥120s regression
+  class). Boundary logic unit-sanity-checked; four dev-runner suites green; `node -c` clean.
+- **K3 (deferred):** logged an observation — cadence/surfacing needs a standing external dispatcher, an
+  owner/infra decision (not autonomously implementable). No scheduler added.
+
+Verification evidence (per claim):
+- `node -c` on the three edited scripts → clean (command run 2026-07-08).
+- Four dev-runner suites green → `test-dev-runner-{admission,gate-integration,pruning,runtime-resolution}.mjs`
+  all PASS (command run 2026-07-08).
+- K4 boundary logic → isolated `node -e` check: `5.0s→pass`, `89.999s→pass`, `90.001s→FAIL`, `130s→FAIL`.
+- **End-to-end green `Onramp Smoke` dispatch → run `28950317619` (see §K.7 for outcome; PENDING at the time
+  this line was written).** The K4 *failure path* (assertion actually fires in a live run with the env set
+  low) was NOT exercised end-to-end — only the isolated arithmetic above.
+
+## §K.7 Handoff — current state, evidence, unverified assumptions, remaining work (2026-07-08)
+
+Written for a continuing agent who has NOT read the takeover chat. Everything below points to durable,
+public artifacts (public-repo `file:line`; public GitHub Actions run-ids under
+`github.com/eliasjustus/justsearch/actions/runs/<id>`) — no private/internal-only context is required.
+
+### Current state (one paragraph)
+The onramp CI proof-lane (`.github/workflows/onramp-smoke.yml`) had never passed since it was added. This
+takeover root-caused and fixed it (three layered defects — §G/H assemble timeout, §I dev-runner port-wait
+loop, §J worker-warmup ingest 503), then shipped the §K.5-warranted follow-ons K1/K2/K4 and deferred K3.
+All work is on branch **`worktree-656-onramp-takeover`** (pushed; **NOT merged** — awaiting owner go-ahead).
+656's original feature scope was already shipped/merged pre-takeover; nothing in the original scope was
+reopened.
+
+### What shipped this takeover (with evidence pointers)
+| Change | File | Evidence |
+|---|---|---|
+| §I port-wait loop exits on discovery (root fix) | `scripts/dev/dev-runner.cjs:1203` | run `28909380542` (green); 4 dev-runner suites PASS |
+| §J ingest retry (worker-warmup 503) | `scripts/dev/lib/stage-reference-corpus.mjs` `stageAndVerify` | run `28910511992` (green, 1 result TEXT tier 0) |
+| assemble pre-build | `.github/workflows/onramp-smoke.yml` | build step green in runs `28906396989`+ |
+| K1 docs comment (ready≠worker-ready) | `scripts/dev/dev-runner.cjs:605` | code + §K.5 trace (`KnowledgeSearchController` ~223/~714 = 503 gate) |
+| K2 startStack budget 240→330s | `scripts/dev/lib/stage-reference-corpus.mjs:29` | code; rationale §H |
+| K4 stack-up latency assertion | `scripts/dev/test-onramp-first-success.mjs` | `node -e` boundary check (§K.6); e2e = run `28950317619` |
+
+### Unverified assumptions / deferred checks (do NOT treat as done)
+1. **RESOLVED — end-to-end green.** Run `28950317619` passed: `stack up … in 10.6s` (K4 latency line present,
+   under the 90s budget), `OK onramp first-success … 1 result(s) TEXT tier 0`. (The 5.1s→10.6s spread across
+   runs confirms cold-runner variance exists but the 90s threshold keeps ~8× margin.)
+2. **K4 failure-path never exercised live** — only isolated arithmetic (§K.6). A real run with
+   `JUSTSEARCH_ONRAMP_MAX_STACKUP_MS=1` to confirm the assertion actually fires was not done.
+3. **K4 90s threshold rests on two CI data points (~5s each)** — cold-runner variance not swept. If a
+   legitimate cold runner ever nears 90s, raise the env/default (do not tighten).
+4. **K1 worker-available signal is code-traced, not live-probed.** The live 503→200 experiment (planned in
+   T1) was skipped as low-value once the code answered it; the WorkerCapability-gate reading
+   (`KnowledgeSearchController.isWorkerReady()` → `WorkerCapability.available()`) is high-confidence but not
+   empirically observed this session.
+
+### Remaining / follow-up work (must not be forgotten)
+- **K3 (freshness cadence) — OWNER DECISION.** `scripts/ci/workflow-signal-health.mjs` reports staleness but
+  nothing runs it; real cadence needs a standing external dispatcher (a scheduled cloud agent), a billing/infra
+  call. Logged to the observations inbox this session. Not autonomously implementable.
+- **Optional K1 dev-runner worker-gate — deliberately NOT done** (recommended against, §K.5: unnecessary +
+  shared-infra blast radius). Only revisit if a non-smoke consumer trips the same 503 race.
+- **Merge:** the branch is green-and-ready (pending check #1 above); squash-merge collapses the iteration/
+  diagnostic commits per ADR-0045. Do not merge without owner go-ahead.
+- **Deferred tier-projection (fourteenth pass)** remains correctly gated on a second tier-renderer; re-verified
+  this session that `deriveTier` is still single-consumer (`scripts/dev/doctor.mjs`) even after 654/657 merged.
+
+### Stale-doc note
+The frontmatter `status:` blob still reads "IMPLEMENTED … 2026-07-01" and does not mention the proof-lane
+saga — it predates this takeover. Left as dated history (per the append-only convention); the top-of-doc
+Handoff note + §17→§K.7 supersede it. No canonical (`docs/{explanation,reference,how-to,decisions}`) doc was
+found stale or edited by this takeover — all changes were to `scripts/dev/**` + this tempdoc + the workflow.

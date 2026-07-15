@@ -121,6 +121,7 @@ final class ComponentsFactory {
       }
 
       fieldMapper.validatePrimaryKeySupport();
+      fieldMapper.validateRmwPolicies();
       // Guardrail: Detect Lucene field-schema mismatches early (before opening a writer).
       //
       // Without this, schema changes can manifest as "reindex does nothing" in the UI because jobs

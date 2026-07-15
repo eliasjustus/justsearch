@@ -106,7 +106,10 @@ This is not advisory — the hook prevents execution.
 
 **Allowed in the main worktree:** `git status`, `git log`, `git diff`,
 `git add`, `git commit`, `git push`, `git merge`, `git worktree`,
-`git fetch`, `git pull`, `git stash`.
+`git fetch`, `git pull`, `git stash`. Branch protection can reject a direct
+`git push` to `main` (confirmed 2026-07, tempdoc 695) — route the change
+through a worktree + PR instead. `git commit` on `main` stays possible
+regardless, so a rejected push can strand local commits ahead of `origin`.
 
 **Warning — `git stash` with staged changes:** Never use `git stash` (especially
 `--keep-index`) to inspect the staging area. Use `git diff --cached --stat`
@@ -125,18 +128,31 @@ Only one dev stack runs at a time (memory/port). **Multi-agent safety:** before 
 `quick_health`; if another session holds it, get user approval before starting your own or taking it
 over (`OWNER_CONFLICT` / `ownership.verdict: CONTENTION`). A `force` takeover requires explicit user
 direction. The tools return `ownership.verdict` + `recommendedAction` telling you what to do; stop the
-stack when you finish so other agents can use it.
+stack when you finish so other agents can use it. Long measurement campaigns should declare
+`leaseDurationSec` (30-7200s) at start (tempdoc 735 G6) so the shared lease holds through minutes of
+busy-but-session-silent work instead of lapsing on the default 30s passive-expiry window. Convention:
+one Gradle build runs at a time across agents — concurrent Gradle invocations can corrupt shared
+caches (observed 2026-07-14).
 
 The full dev-stack contention model moved to `/dev-stack`; load it before live
 backend work.
 
 ## Merge Workflow
 
+**Never merge or publish a PR without an explicit, per-action go-ahead.** <!-- rule:no-merge-without-authorization -->
+Authorization to *do the work* (implement a design, open a PR) is not authorization
+to merge it — merging is a separate, consequential action. Take the PR to
+green-and-ready, then stop and wait for an explicit "merge it"; the one exception is
+when the user names the merge in the same instruction. Predictable evasion: treating
+an upstream "do X" as covering the whole downstream merge/publish chain.
+
 1. **Branch verification (required):** In your worktree, run <!-- rule:pre-merge-gradle-build -->
    `./gradlew.bat build -x test` before marking a PR ready.
 2. Open/update a PR; title/body, review, CI are the durable record.
 3. Squash after required checks pass. Use the PR title/body; keep checkpoint,
    investigation, and retry commits off `main`.
+   If `origin/main` moves after push, catch up with `git merge`, not
+   `git rebase` (agent-lessons.md; tempdoc 695).
 4. After merge, update local `main` and run `./gradlew.bat build -x test`.
    Also fold any pending observation shards: `node scripts/agent-analytics/fold-observations.mjs --apply`
    (tempdoc 618 §P1.2's proposed boundary, tempdoc 665 wires it — the natural point since the agent is
@@ -169,6 +185,15 @@ The `docs-granularity-hint` hook surfaces this at `git push` when a branch
 changes only working history; it never blocks. Rationale and the worked example
 live in `docs/reference/contributing/agent-guide.md` (History publication).
 
+### Verifying whether squash-merged work already landed <!-- rule:squash-merge-verify-content-not-ancestry -->
+
+Since ADR-0045 squash-merges every PR into one commit, a squashed branch's original commits
+never appear in `main`'s history. **Do not conclude a branch's work is "unmerged" from
+`git log` / branch-ancestry alone** — that is exactly the signal squash-merging invalidates.
+The reliable check is content, not ancestry: `git diff <branch> main -- <paths>` (empty output
+= that content already landed under some other, differently-titled squashed commit). Verify
+this way before a conclusion like "X isn't on main yet" feeds a user-facing decision.
+
 ### Working on shared `main` safely (multi-agent)
 
 The main checkout routinely holds other agents' uncommitted WIP. Keep PR
@@ -177,6 +202,10 @@ publication and cleanup scoped to your branch:
 - Do not use local merge/fast-forward as the normal public path; publish by PR
   squash, then update `main`.
 - Stage your own files explicitly (`git add <paths>`), not `git add -A`.
+- The four orchestration skills tracked on public `main`
+  (`.claude/skills/{design,plan,takeover,theorize}`) were leaked once by a
+  `git add -A` and the owner has since **accepted them as tracked** — never open a
+  PR to remove them (repeated removal PRs, e.g. #151, are unwanted). <!-- rule:accepted-tracked-skills-no-removal -->
 - For inbox notes, use `node scripts/agent-analytics/note-observation.mjs "…"`
   (618 Seam C) — it writes to *your* per-session shard under `docs/observations.d/`,
   not the shared `observations.md`, so a neighbour's commit can no longer reset out

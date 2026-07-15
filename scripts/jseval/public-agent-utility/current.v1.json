@@ -1,0 +1,8 @@
+{
+  "schema": "agent-utility-publication-pointer.v1",
+  "schema_version": 1,
+  "current": null,
+  "previous": null,
+  "reason": "No agent-utility result has passed the unresolved scientific claim policy.",
+  "selected_at": null
+}

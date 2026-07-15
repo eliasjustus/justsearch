@@ -97,6 +97,41 @@ def make_span():
     return _factory
 
 
+@pytest.fixture(autouse=True)
+def _isolate_pre716_legacy_roots(monkeypatch, tmp_path):
+    """Point the tempdoc-716 legacy-root read fallback away from the real machine.
+
+    `cohort_baselines.candidate_roots` consults env `JUSTSEARCH_DATA_DIR` and
+    `_paths.DEFAULT_BACKEND_DATA_DIR` as read fallbacks for pre-716
+    calibration state. Un-isolated, a developer machine's real
+    `tmp/headless-eval-data` (or an exported JUSTSEARCH_DATA_DIR) could leak
+    envelopes into tests that expect a miss. Tests that exercise the fallback
+    re-point these explicitly (their monkeypatch writes win — same
+    function-scoped monkeypatch, later write).
+    """
+    import jseval._paths as _paths
+
+    monkeypatch.delenv("JUSTSEARCH_DATA_DIR", raising=False)
+    monkeypatch.setattr(
+        _paths, "DEFAULT_BACKEND_DATA_DIR", tmp_path / "no-legacy-root-in-tests",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _disable_shared_dataset_cache_by_default(monkeypatch):
+    """Default every test to `dataset_cache`'s pre-709 (cache-disabled) behavior.
+
+    `dataset_cache.cache_root()` defaults to a directory under the MAIN checkout when
+    `JUSTSEARCH_DATASET_CACHE` is unset -- exactly what a real worktree run wants, but never
+    what a test run wants: an un-opted-in test would otherwise write real cache-entry
+    directories into the actual main checkout on disk merely by running the unit suite from
+    a worktree. `tests/test_dataset_cache.py`'s own tests opt back in explicitly by setting
+    `JUSTSEARCH_DATASET_CACHE` to a `tmp_path` (monkeypatch's last write for a given test wins
+    over this autouse fixture, since both share the same function-scoped `monkeypatch`).
+    """
+    monkeypatch.setenv("JUSTSEARCH_DATASET_CACHE", "0")
+
+
 @pytest.fixture
 def clean_projection_registry():
     """Reset the projection registry around each test that opts in.

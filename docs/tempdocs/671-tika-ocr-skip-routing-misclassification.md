@@ -1230,3 +1230,10 @@ not fixed, per this repo's "log pre-existing issues, don't fix them" discipline)
 verification against a real ingest confirms both the backend fields and the real browser UI.
 
 No PR opened — implementation stops here per instructions.
+
+## Corpus availability note (2026-07-10, from 686)
+
+A real binary-document corpus now exists: `mixed/realdocs-v1` (620 real PDF/office files incl.
+scanned gov PDFs; pinned manifest at `scripts/jseval/666-corpora/realdocs-v1/`, rebuild via
+`scripts/search/fetch-realdocs-corpus.py`). The OCR-skip routing this doc fixed can now be
+exercised against a distribution of real documents instead of the handful of fixtures.

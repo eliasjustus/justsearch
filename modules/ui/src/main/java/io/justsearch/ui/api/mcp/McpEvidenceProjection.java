@@ -40,14 +40,87 @@ public final class McpEvidenceProjection {
   private McpEvidenceProjection() {}
 
   /**
+   * Tempdoc 735 W6 — {@code justsearch_search}'s structured evidence PLUS the tier-equivalence
+   * fields ({@code hints}/{@code facets}/{@code coverage}/{@code truncated}) sourced from the
+   * SAME {@link McpSearchResponseContent} instance the text renderer consumes, so the two tiers
+   * cannot silently diverge. Per-hit {@code matchedTerms}/{@code matchedFields} are also read
+   * from {@code content} rather than independently re-derived (the pre-735 duplication with
+   * {@code McpToolSurface}'s own {@code filterInformative} call). This is the overload production
+   * code ({@code McpToolSurface#callSearch}) calls; the single-arg overload below is kept for the
+   * reflective-totality guard ({@code McpEvidenceProjectionTest}), which asserts the projection's
+   * coverage of the canonical evidence record independent of the response-level content-model
+   * fields this increment adds.
+   */
+  public static Map<String, Object> searchEvidence(
+      KnowledgeSearchResponse resp, McpSearchResponseContent content) {
+    Map<String, Object> out = new LinkedHashMap<>();
+    SearchTrace trace = resp.searchTrace();
+    if (trace != null) {
+      out.put("searchTrace", projectTrace(trace));
+      SearchTrace.Degradation degradation = trace.degradation();
+      if (degradation != null) {
+        out.put("degradation", projectDegradationSummary(degradation));
+      }
+    }
+    List<Map<String, Object>> results = new ArrayList<>();
+    List<KnowledgeSearchResponse.Hit> respHits = resp.results();
+    List<McpSearchResponseContent.HitContent> hitContents = content.hits();
+    for (int i = 0; i < respHits.size(); i++) {
+      KnowledgeSearchResponse.Hit hit = respHits.get(i);
+      McpSearchResponseContent.HitContent hc = hitContents.get(i);
+      Map<String, Object> h = new LinkedHashMap<>();
+      h.put("id", hit.id());
+      if (!hc.title().isBlank()) {
+        h.put("title", hc.title());
+      }
+      if (!hc.path().isBlank()) {
+        h.put("path", hc.path());
+      }
+      h.put("score", hit.score());
+      if (!hc.matchedTerms().isEmpty()) {
+        h.put("matchedTerms", hc.matchedTerms());
+      }
+      if (!hc.matchedFields().isEmpty()) {
+        h.put("matchedFields", hc.matchedFields());
+      }
+      projectHitExcerptsAndTrace(hit, h);
+      results.add(h);
+    }
+    out.put("results", results);
+
+    // Tempdoc 735 W6: the tier-equivalence additions — previously text-only facts, now delivered
+    // on structuredContent too, from the SAME content instance the text renderer consumed.
+    out.put("hints", content.hints());
+    out.put("facets", content.facets());
+    Map<String, Object> coverage = new LinkedHashMap<>();
+    coverage.put("totalHits", content.totalHits());
+    coverage.put("shown", content.shownCount());
+    coverage.put("tookMs", content.tookMs());
+    out.put("coverage", coverage);
+    out.put("truncated", content.truncated());
+    return out;
+  }
+
+  /**
    * Structured evidence for {@code justsearch_search}: the query-level {@link SearchTrace} plus per-hit
    * ranking provenance (stage participation + fusion-leg scores).
+   *
+   * <p>Kept for {@code McpEvidenceProjectionTest}'s reflective totality guard over the canonical
+   * {@link SearchTrace} record; production calls {@link #searchEvidence(KnowledgeSearchResponse,
+   * McpSearchResponseContent)} (tempdoc 735 W6).
    */
   public static Map<String, Object> searchEvidence(KnowledgeSearchResponse resp) {
     Map<String, Object> out = new LinkedHashMap<>();
     SearchTrace trace = resp.searchTrace();
     if (trace != null) {
       out.put("searchTrace", projectTrace(trace));
+      // Tempdoc 725 W1: a response-level summary of SearchTrace.Degradation, alongside the
+      // structural detail already nested under searchTrace.degradation — the agent-legible
+      // "was this degraded" answer without navigating the full trace.
+      SearchTrace.Degradation degradation = trace.degradation();
+      if (degradation != null) {
+        out.put("degradation", projectDegradationSummary(degradation));
+      }
     }
     List<Map<String, Object>> results = new ArrayList<>();
     for (KnowledgeSearchResponse.Hit hit : resp.results()) {
@@ -62,21 +135,55 @@ public final class McpEvidenceProjection {
         h.put("path", path);
       }
       h.put("score", hit.score());
-      List<SearchTrace.HitStage> hitTrace = hit.trace();
-      if (hitTrace != null && !hitTrace.isEmpty()) {
-        h.put("trace", projectHitStages(hitTrace));
-        SearchTrace.LegScores legs = SearchTrace.legScores(hitTrace, (float) hit.score());
-        Map<String, Object> ls = new LinkedHashMap<>();
-        ls.put("sparse", legs.sparse());
-        ls.put("dense", legs.dense());
-        ls.put("splade", legs.splade());
-        ls.put("fused", legs.fused());
-        h.put("legScores", ls);
+
+      // Tempdoc 725 W1: the same informative-term filter that drives the text-block "Matched:"
+      // line, projected onto structuredContent — matchedTerms/matchedFields/excerpts.
+      List<KnowledgeSearchResponse.MatchSpan> informative =
+          McpSearchResultFormatter.filterInformative(hit.matchSpans());
+      if (!informative.isEmpty()) {
+        h.put("matchedTerms", McpSearchResultFormatter.informativeTerms(informative));
       }
+      if (hit.matchedFields() != null && !hit.matchedFields().isEmpty()) {
+        h.put("matchedFields", hit.matchedFields());
+      }
+      projectHitExcerptsAndTrace(hit, h);
       results.add(h);
     }
     out.put("results", results);
     return out;
+  }
+
+  /**
+   * Per-hit excerpt + ranking-provenance projection shared by both {@code searchEvidence}
+   * overloads — the mechanically identical half of the two per-hit loops, extracted so the
+   * legacy single-arg overload (test-only) and the production content-model overload cannot
+   * drift on excerpt/trace/legScores shape (tempdoc 735 W6 review MINOR-3).
+   */
+  private static void projectHitExcerptsAndTrace(
+      KnowledgeSearchResponse.Hit hit, Map<String, Object> h) {
+    if (hit.excerptRegions() != null && !hit.excerptRegions().isEmpty()) {
+      List<Map<String, Object>> excerpts = new ArrayList<>();
+      for (KnowledgeSearchResponse.ExcerptRegion region : hit.excerptRegions()) {
+        Map<String, Object> e = new LinkedHashMap<>();
+        e.put("text", region.text());
+        e.put("startChar", region.startChar());
+        e.put("endChar", region.endChar());
+        excerpts.add(e);
+      }
+      h.put("excerpts", excerpts);
+    }
+
+    List<SearchTrace.HitStage> hitTrace = hit.trace();
+    if (hitTrace != null && !hitTrace.isEmpty()) {
+      h.put("trace", projectHitStages(hitTrace));
+      SearchTrace.LegScores legs = SearchTrace.legScores(hitTrace, (float) hit.score());
+      Map<String, Object> ls = new LinkedHashMap<>();
+      ls.put("sparse", legs.sparse());
+      ls.put("dense", legs.dense());
+      ls.put("splade", legs.splade());
+      ls.put("fused", legs.fused());
+      h.put("legScores", ls);
+    }
   }
 
   /**
@@ -120,6 +227,49 @@ public final class McpEvidenceProjection {
     quality.put("chunksIncluded", r.quality().chunksIncluded());
     out.put("quality", quality);
     return out;
+  }
+
+  /**
+   * Tempdoc 735 W6 — {@code justsearch_answer}'s structured evidence PLUS the tier-equivalence
+   * fields ({@code hints}/{@code facets}/{@code coverage}/{@code truncated}) sourced from the
+   * SAME {@link McpAnswerResponseContent} instance the text renderer consumes. This is the
+   * overload production code ({@code McpToolSurface#callAnswer}) calls; {@link
+   * #answerEvidence(ContextResult)} is reused internally for the citation/quality projection.
+   */
+  public static Map<String, Object> answerEvidence(ContextResult r, McpAnswerResponseContent content) {
+    Map<String, Object> out = answerEvidence(r);
+    out.put("hints", content.hints());
+    out.put("facets", content.facets());
+    Map<String, Object> coverage = new LinkedHashMap<>();
+    coverage.put("passages", content.passages());
+    coverage.put("documents", content.distinctDocs());
+    out.put("coverage", coverage);
+    out.put("truncated", content.contextTruncated());
+    return out;
+  }
+
+  /**
+   * Tempdoc 725 W1: response-level {vectorBlocked, hybridFallback, reasons} summary of {@link
+   * SearchTrace.Degradation}. {@code reasons} collects vectorBlockedReason/hybridFallbackReason
+   * only for the flags that are actually {@code true} (gated the same way as the text-block
+   * degradation note in {@code McpToolSurface#appendDegradationNote}), so this summary never lists
+   * a reason for a degradation mode that did not occur.
+   */
+  private static Map<String, Object> projectDegradationSummary(SearchTrace.Degradation d) {
+    Map<String, Object> deg = new LinkedHashMap<>();
+    deg.put("vectorBlocked", d.vectorBlocked());
+    deg.put("hybridFallback", d.hybridFallback());
+    List<String> reasons = new ArrayList<>();
+    if (d.vectorBlocked() && d.vectorBlockedReason() != null && !d.vectorBlockedReason().isBlank()) {
+      reasons.add(d.vectorBlockedReason());
+    }
+    if (d.hybridFallback()
+        && d.hybridFallbackReason() != null
+        && !d.hybridFallbackReason().isBlank()) {
+      reasons.add(d.hybridFallbackReason());
+    }
+    deg.put("reasons", reasons);
+    return deg;
   }
 
   private static Map<String, Object> projectTrace(SearchTrace t) {

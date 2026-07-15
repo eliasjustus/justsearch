@@ -49,7 +49,7 @@ class OpsAbsorbedLogicTest {
 
     IllegalStateException ex = assertThrows(
         IllegalStateException.class,
-        () -> ops.updateDocument("doc-1", Map.of("title", "hello"), false));
+        () -> ops.updateDocument("doc-1", Map.of("title", "hello")));
     assertTrue(ex.getMessage().contains("not writable"), "ISE should mention not writable: " + ex.getMessage());
   }
 
@@ -68,7 +68,7 @@ class OpsAbsorbedLogicTest {
 
     IllegalStateException ex = assertThrows(
         IllegalStateException.class,
-        () -> ops.updateDocument("doc-1", Map.of("title", "hello"), false));
+        () -> ops.updateDocument("doc-1", Map.of("title", "hello")));
     // Either "read-only" or "not ready" are acceptable ISE messages
     assertNotNull(ex.getMessage());
   }

@@ -133,7 +133,6 @@ class UnreferencedCodeTest {
           Map.entry("EmbeddingProviderLifecycle.unloadEmbeddingService", "invoked via reflection by IndexingLoopUnloadTelemetryEmitTest (worker-services)"),
           Map.entry("SearchPipelinePresets.toProtoPipelineConfig", "1-arg convenience overload; production uses the 2-arg form via KnowledgeSearchEngine; 1-arg exercised by PipelineConfigPresetExpansionTest"),
           Map.entry("ExcludeMatcher.isExcluded", "test-only (ExcludeMatcherBarePatternTest); production exclusion uses ExcludeGlobs.isExcludedDirectory/isExcludedPath — suspected dead, flagged for owner (638 F6)"),
-          Map.entry("OcrConfidenceExtractor.extractPlainText", "test-only (OcrConfidenceExtractorTest, PolicyDrivenTikaExtractorTest); production uses extractPlainTextBounded — suspected dead, flagged for owner (638 F6)"),
           Map.entry("SyncOps.getScheduler", "no caller found in any source — suspected dead, flagged for SyncOps owner (638 F6); not deleted (another agent's just-merged code)"),
           Map.entry("AgentController.shutdown", "heartbeat-scheduler stop method ('Call on shutdown'); lifecycle wiring not located — flagged for owner (638 F6), not deleted"));
 

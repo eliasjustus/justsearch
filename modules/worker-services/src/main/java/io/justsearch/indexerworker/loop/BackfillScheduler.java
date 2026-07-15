@@ -17,6 +17,9 @@ import io.justsearch.indexerworker.loop.ops.EmbeddingBackfillOps;
 import io.justsearch.indexerworker.loop.ops.LoopPacingPolicy;
 import io.justsearch.indexerworker.loop.ops.NerBackfillOps;
 import io.justsearch.indexerworker.loop.ops.SpladeBackfillOps;
+import io.justsearch.indexerworker.loop.ops.StageOutcome;
+import io.justsearch.indexerworker.metrics.BatchTimingKeys;
+import io.justsearch.indexerworker.metrics.OperationalMetrics;
 import io.justsearch.indexerworker.ner.NerService;
 import io.justsearch.indexerworker.splade.SpladeEncoder;
 import io.justsearch.indexing.SchemaFields;
@@ -48,15 +51,12 @@ public final class BackfillScheduler {
 
   private static final Logger log = LoggerFactory.getLogger(BackfillScheduler.class);
 
-  static final int EMBEDDING_BACKFILL_BATCH_SIZE = LoopPacingPolicy.embeddingBackfillBatchSize();
-  private static final int NER_BACKFILL_BATCH_SIZE = LoopPacingPolicy.nerBackfillBatchSize();
-  private static final int DISAMBIGUATION_BACKFILL_BATCH_SIZE =
-      LoopPacingPolicy.disambiguationBackfillBatchSize();
-  private static final int SPLADE_BACKFILL_BATCH_SIZE = LoopPacingPolicy.spladeBackfillBatchSize();
-  private static final int SPLADE_INTERLEAVE_BATCH_SIZE =
-      LoopPacingPolicy.spladeInterleaveBatchSize();
-  private static final int BGE_M3_BACKFILL_BATCH_SIZE = 50;
-  private static final int BGE_M3_INTERLEAVE_BATCH_SIZE = 10;
+  // Tempdoc 710 Wave-1.5 Move 4: the per-stage backfill batch sizes (formerly static fields
+  // computed once from LoopPacingPolicy, plus the BGE-M3 pair which bypassed LoopPacingPolicy
+  // entirely as bare literals here) all moved onto ResolvedConfig.Ai.BackfillPacing
+  // (justsearch.backfill.* config surface). See the pacing() helper below — call sites read the
+  // live snapshot the same way resolvedConfigSupplier.get().rag().chunkVectorsEnabled() already
+  // does elsewhere in this class.
 
   private final DocumentFieldOps documentFieldOps;
   private final IndexingCoordinator indexingCoordinator;
@@ -105,6 +105,17 @@ public final class BackfillScheduler {
   }
 
   /**
+   * Resolves the current enrichment-backfill pacing snapshot (tempdoc 710 Wave-1.5 Move 4). Falls
+   * back to {@link ResolvedConfig.Ai.BackfillPacing#DEFAULTS} — byte-identical to the pre-Move-4
+   * hardcoded literals — when no config is available, e.g. a test double supplying {@code () ->
+   * null} for {@code resolvedConfigSupplier}.
+   */
+  private ResolvedConfig.Ai.BackfillPacing pacing() {
+    ResolvedConfig config = resolvedConfigSupplier.get();
+    return config != null ? config.ai().backfillPacing() : ResolvedConfig.Ai.BackfillPacing.DEFAULTS;
+  }
+
+  /**
    * Runs one backfill cycle from the idle branch. Returns {@code true} if any backfill stage
    * (combined or individual) reported progress, so the caller can pick the active-vs-truly-idle
    * sleep duration.
@@ -121,8 +132,14 @@ public final class BackfillScheduler {
             signalBus.isEnergyReduced(),
             embeddingLifecycle.embeddingProvider());
     if (runBackfill) {
-      boolean useCombined = processCombinedBackfillIfApplicable();
+      CombinedEnrichmentBackfillOps.CombinedOutcome outcome = processCombinedBackfillIfApplicable();
+      recordCombinedOutcome(outcome);
+      boolean useCombined = outcome.anyWorkDone();
       if (useCombined) {
+        // Tempdoc 710 Move 2 item 4: this cycle used the combined pass — the only path taken
+        // between here and the next runIdleCycle() call (the tight loop below stays combined
+        // until it drains or is interrupted), so the mode is settled at this point.
+        OperationalMetrics.getInstance().recordBackfillMode("combined");
         // 334 Phase 8/10: tight loop with persistent pending-ID caches across iterations.
         var parentIdCache = new ArrayDeque<String>();
         var chunkIdCache = new ArrayDeque<String>();
@@ -138,9 +155,11 @@ public final class BackfillScheduler {
                 if (!running.get() || Thread.currentThread().isInterrupted()) break;
                 if (signalBus.isUserActive()) break;
                 if (signalBus.shouldYieldGpuBackfill()) break; // tempdoc 630: GPU-claimed OR energy-reduced
-                useCombinedRef[0] =
+                CombinedEnrichmentBackfillOps.CombinedOutcome tightLoopOutcome =
                     processCombinedBackfillIfApplicable(
                         parentIdCache, chunkIdCache, batchCommitCounter);
+                recordCombinedOutcome(tightLoopOutcome);
+                useCombinedRef[0] = tightLoopOutcome.anyWorkDone();
                 if (useCombinedRef[0]) tightLoopBatches[0]++;
               }
               if (batchCommitCounter[0] > 0) {
@@ -151,13 +170,51 @@ public final class BackfillScheduler {
           log.debug("Tight backfill loop: {} consecutive batches", tightLoopBatches[0]);
         }
       } else {
+        OperationalMetrics.getInstance().recordBackfillMode("individual");
         backfillDidWork = runIndividualBackfills();
       }
+    } else {
+      OperationalMetrics.getInstance().recordBackfillMode("idle");
     }
 
     // Disambiguation is gated on no-other-work-this-cycle and never flips backfillDidWork.
     runDisambiguationIfReady(backfillDidWork);
     return backfillDidWork;
+  }
+
+  /**
+   * Records one {@link CombinedEnrichmentBackfillOps.CombinedOutcome}'s per-stage counts/timing
+   * into {@link OperationalMetrics} (tempdoc 710 Move 2 item 4 — replaces the {@code finally}
+   * block that used to live inside {@code CombinedEnrichmentBackfillOps.processCombinedBackfill}).
+   * A no-op when {@code outcome.recordTiming()} is false (nothing ran this call).
+   */
+  private static void recordCombinedOutcome(CombinedEnrichmentBackfillOps.CombinedOutcome outcome) {
+    if (!outcome.recordTiming()) {
+      return;
+    }
+    OperationalMetrics metrics = OperationalMetrics.getInstance();
+    metrics.recordEnrichmentCompleted(BatchTimingKeys.EMBED, outcome.embedProcessed());
+    metrics.recordEnrichmentCompleted(BatchTimingKeys.SPLADE, outcome.spladeProcessed());
+    metrics.recordEnrichmentCompleted(BatchTimingKeys.NER, outcome.nerProcessed());
+    metrics.recordStageTiming(BatchTimingKeys.EMBED, outcome.embedProcessed(), outcome.embedMs());
+    metrics.recordStageTiming(
+        BatchTimingKeys.SPLADE, outcome.spladeProcessed(), outcome.spladeMs());
+    metrics.recordStageTiming(BatchTimingKeys.NER, outcome.nerProcessed(), outcome.nerMs());
+    metrics.recordBatchTiming(BatchTimingKeys.FETCH, outcome.fetchMs());
+    metrics.recordBatchTiming(BatchTimingKeys.WRITE, outcome.writeMs());
+    metrics.recordBatchTiming(BatchTimingKeys.TOTAL, outcome.totalMs());
+  }
+
+  /**
+   * Records one {@link StageOutcome}'s doc-count/timing into {@link OperationalMetrics} under the
+   * given {@link BatchTimingKeys} key (tempdoc 710 Move 2 item 4 — individual-mode counters
+   * previously froze because none of the individual {@code *BackfillOps} classes recorded
+   * anything; only the combined pass did, 710 S-B3 finding).
+   */
+  private static void recordStageOutcome(String stageKey, StageOutcome outcome) {
+    OperationalMetrics metrics = OperationalMetrics.getInstance();
+    metrics.recordEnrichmentCompleted(stageKey, outcome.docsProcessed());
+    metrics.recordStageTiming(stageKey, outcome.docsProcessed(), outcome.elapsedMs());
   }
 
   /**
@@ -168,11 +225,12 @@ public final class BackfillScheduler {
   public void runInterleavedSplade(long now) {
     if (spladeEncoderSupplier.get() == null && bgeM3EncoderSupplier.get() == null) return;
     if (now < nextSpladeRetryTime) return;
-    long spladeIntervalMs = LoopPacingPolicy.spladeInterleaveIntervalMs();
+    long spladeIntervalMs = pacing().spladeInterleaveIntervalMs();
     if (now - lastSpladeInterleaveTime < spladeIntervalMs) return;
-    boolean success = processSpladeBackfillInterleaved();
+    StageOutcome outcome = processSpladeBackfillInterleaved();
+    recordStageOutcome(BatchTimingKeys.SPLADE, outcome);
     lastSpladeInterleaveTime = System.currentTimeMillis();
-    recordSpladeBackfillResult(success);
+    recordSpladeBackfillResult(outcome.success());
   }
 
   /** Resets backoff/latch state. Called from {@code resetForProfiling}. */
@@ -187,7 +245,8 @@ public final class BackfillScheduler {
   private boolean runIndividualBackfills() {
     boolean backfillDidWork = false;
     if (embeddingLifecycle.embeddingProvider().isAvailable()) {
-      processEmbeddingBackfill();
+      StageOutcome outcome = processEmbeddingBackfill();
+      recordStageOutcome(BatchTimingKeys.EMBED, outcome);
     }
     // Chunk vectors after parent embedding completes. 334 Phase 8 tight loop.
     if (resolvedConfigSupplier.get().rag().chunkVectorsEnabled()) {
@@ -195,13 +254,17 @@ public final class BackfillScheduler {
           indexCountOps.countByField(
               SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
       if (pendingDocEmbeddings == 0) {
-        boolean chunkDidWork = processChunkEmbeddingBackfill();
+        StageOutcome chunkOutcome = processChunkEmbeddingBackfill();
+        recordStageOutcome(BatchTimingKeys.EMBED, chunkOutcome);
+        boolean chunkDidWork = chunkOutcome.success();
         while (chunkDidWork) {
           backfillDidWork = true;
           if (!running.get() || Thread.currentThread().isInterrupted()) break;
           if (signalBus.isUserActive()) break;
           if (signalBus.shouldYieldGpuBackfill()) break; // tempdoc 630: GPU-claimed OR energy-reduced
-          chunkDidWork = processChunkEmbeddingBackfill();
+          chunkOutcome = processChunkEmbeddingBackfill();
+          recordStageOutcome(BatchTimingKeys.EMBED, chunkOutcome);
+          chunkDidWork = chunkOutcome.success();
         }
       }
     }
@@ -224,7 +287,8 @@ public final class BackfillScheduler {
         embeddingsReady = pendingEmbeddings == 0 && !chunksPending;
       }
       if (embeddingsReady) {
-        processNerBackfill();
+        StageOutcome outcome = processNerBackfill();
+        recordStageOutcome(BatchTimingKeys.NER, outcome);
       }
     }
     // SPLADE after embedding nearly completes (tempdoc 312 item 39, relaxed 334 item 37).
@@ -235,11 +299,13 @@ public final class BackfillScheduler {
               ? indexCountOps.countByField(
                   SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING)
               : 0;
-      if (pendingEmbedForSplade < EMBEDDING_BACKFILL_BATCH_SIZE) {
+      if (pendingEmbedForSplade < pacing().embeddingBackfillBatchSize()) {
         int spladePendingBefore =
             indexCountOps.countByField(
                 SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
-        boolean success = processSpladeBackfill();
+        StageOutcome outcome = processSpladeBackfill();
+        recordStageOutcome(BatchTimingKeys.SPLADE, outcome);
+        boolean success = outcome.success();
         recordSpladeBackfillResult(success);
         if (success && spladePendingBefore > 0) {
           backfillDidWork = true;
@@ -290,11 +356,11 @@ public final class BackfillScheduler {
 
   // ==================== Backfill delegates ====================
 
-  private boolean processCombinedBackfillIfApplicable() {
+  private CombinedEnrichmentBackfillOps.CombinedOutcome processCombinedBackfillIfApplicable() {
     return processCombinedBackfillIfApplicable(null, null, null);
   }
 
-  private boolean processCombinedBackfillIfApplicable(
+  private CombinedEnrichmentBackfillOps.CombinedOutcome processCombinedBackfillIfApplicable(
       ArrayDeque<String> parentIdCache,
       ArrayDeque<String> chunkIdCache,
       int[] batchesSinceCommit) {
@@ -308,9 +374,10 @@ public final class BackfillScheduler {
 
     int availCount = (embedAvail ? 1 : 0) + (spladeAvail ? 1 : 0) + (nerAvail ? 1 : 0);
     if (availCount < 2) {
-      return false;
+      return CombinedEnrichmentBackfillOps.CombinedOutcome.none();
     }
 
+    ResolvedConfig.Ai.BackfillPacing pacing = pacing();
     return CombinedEnrichmentBackfillOps.processCombinedBackfill(
         new CombinedEnrichmentBackfillOps.BackfillContext(
             documentFieldOps,
@@ -322,21 +389,24 @@ public final class BackfillScheduler {
             nerServiceSupplier,
             running::get,
             embeddingLifecycle::allowEmbeddingWrites,
-            EMBEDDING_BACKFILL_BATCH_SIZE,
+            pacing.embeddingBackfillBatchSize(),
             log,
             resolvedConfigSupplier.get().rag().chunkVectorsEnabled(),
+            resolvedConfigSupplier.get().rag().chunkSpladeEnabled(),
+            resolvedConfigSupplier.get().ai().embedding().lateChunkingEnabled(),
+            pacing.chunkSlotsPerBatch(),
             parentIdCache != null ? parentIdCache : new ArrayDeque<>(),
             chunkIdCache != null ? chunkIdCache : new ArrayDeque<>(),
             batchesSinceCommit != null ? batchesSinceCommit : new int[] {0}));
   }
 
-  private void processEmbeddingBackfill() {
+  private StageOutcome processEmbeddingBackfill() {
     // BGE-M3 handles dense embeddings in its unified backfill pass — skip separate embedding
     if (bgeM3EncoderSupplier.get() != null) {
       log.debug("Embedding backfill skipped: BGE-M3 handles dense embeddings");
-      return;
+      return StageOutcome.none();
     }
-    EmbeddingBackfillOps.processEmbeddingBackfill(
+    return EmbeddingBackfillOps.processEmbeddingBackfill(
         new EmbeddingBackfillOps.BackfillContext(
             documentFieldOps,
             indexingCoordinator,
@@ -345,11 +415,11 @@ public final class BackfillScheduler {
             embeddingLifecycle::embeddingProvider,
             running::get,
             embeddingLifecycle::allowEmbeddingWrites,
-            EMBEDDING_BACKFILL_BATCH_SIZE,
+            pacing().embeddingBackfillBatchSize(),
             log));
   }
 
-  private boolean processChunkEmbeddingBackfill() {
+  private StageOutcome processChunkEmbeddingBackfill() {
     return EmbeddingBackfillOps.processChunkEmbeddingBackfill(
         new EmbeddingBackfillOps.BackfillContext(
             documentFieldOps,
@@ -359,12 +429,12 @@ public final class BackfillScheduler {
             embeddingLifecycle::embeddingProvider,
             running::get,
             embeddingLifecycle::allowEmbeddingWrites,
-            EMBEDDING_BACKFILL_BATCH_SIZE,
+            pacing().embeddingBackfillBatchSize(),
             log));
   }
 
-  private void processNerBackfill() {
-    NerBackfillOps.processNerBackfill(
+  private StageOutcome processNerBackfill() {
+    return NerBackfillOps.processNerBackfill(
         new NerBackfillOps.BackfillContext(
             documentFieldOps,
             indexingCoordinator,
@@ -372,11 +442,11 @@ public final class BackfillScheduler {
             signalBus,
             nerServiceSupplier,
             running::get,
-            NER_BACKFILL_BATCH_SIZE,
+            pacing().nerBackfillBatchSize(),
             log));
   }
 
-  private boolean processSpladeBackfill() {
+  private StageOutcome processSpladeBackfill() {
     BgeM3Encoder bge = bgeM3EncoderSupplier.get();
     if (bge != null) {
       return BgeM3BackfillOps.processBgeM3Backfill(
@@ -387,7 +457,7 @@ public final class BackfillScheduler {
               signalBus,
               () -> bge,
               running::get,
-              BGE_M3_BACKFILL_BATCH_SIZE,
+              pacing().bgeM3BackfillBatchSize(),
               true,
               log));
     }
@@ -399,12 +469,12 @@ public final class BackfillScheduler {
             signalBus,
             spladeEncoderSupplier,
             running::get,
-            SPLADE_BACKFILL_BATCH_SIZE,
+            pacing().spladeBackfillBatchSize(),
             true,
             log));
   }
 
-  private boolean processSpladeBackfillInterleaved() {
+  private StageOutcome processSpladeBackfillInterleaved() {
     BgeM3Encoder bge = bgeM3EncoderSupplier.get();
     if (bge != null) {
       return BgeM3BackfillOps.processBgeM3Backfill(
@@ -415,7 +485,7 @@ public final class BackfillScheduler {
               signalBus,
               () -> bge,
               running::get,
-              BGE_M3_INTERLEAVE_BATCH_SIZE,
+              pacing().bgeM3InterleaveBatchSize(),
               false,
               log));
     }
@@ -427,7 +497,7 @@ public final class BackfillScheduler {
             signalBus,
             spladeEncoderSupplier,
             running::get,
-            SPLADE_INTERLEAVE_BATCH_SIZE,
+            pacing().spladeInterleaveBatchSize(),
             false,
             log));
   }
@@ -439,7 +509,7 @@ public final class BackfillScheduler {
             signalBus,
             disambiguationServiceSupplier,
             running::get,
-            DISAMBIGUATION_BACKFILL_BATCH_SIZE,
+            pacing().disambiguationBackfillBatchSize(),
             log));
   }
 }

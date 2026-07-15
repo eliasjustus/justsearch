@@ -30,6 +30,11 @@ public final class NoOpEmbeddingProvider implements EmbeddingProvider {
   }
 
   @Override
+  public EmbeddingService.ChunkedEmbedding embedWithSpans(String content, int[][] charSpans) {
+    return null;
+  }
+
+  @Override
   public int dimension() {
     return 0;
   }

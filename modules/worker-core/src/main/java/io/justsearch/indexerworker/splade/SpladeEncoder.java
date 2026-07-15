@@ -168,6 +168,10 @@ public final class SpladeEncoder implements Closeable {
         outputFormat, vocabulary.size(), maxSeqLen);
     io.justsearch.indexerworker.metrics.OperationalMetrics.getInstance()
         .registerEncoder("splade", profiler);
+    // Tempdoc 710 Move 2: bind the choke-point recorder so every session.run()/runPinned()
+    // invocation through this SessionHandle's leases records itself, including CPU-retry
+    // sub-batches — call sites can no longer forget.
+    sessions.setOrtRunRecorder(profiler::recordOrtCall);
   }
 
   /**
@@ -313,6 +317,17 @@ public final class SpladeEncoder implements Closeable {
     return MAX_SPLADE_BATCH_SIZE_CPU;
   }
 
+  /**
+   * Upper bound on total input CHARS per native batchEncode call in {@link
+   * #encodeBatchTokenBudget}. With truncation disabled, materialized Encoding memory scales with
+   * input length (~2 chars/token for OCR-grade text, ~100 bytes/token materialized incl. char
+   * spans and token strings), so 512k chars ≈ ~256k tokens ≈ a few tens of MB peak — bounded
+   * regardless of caller batch size. A single text longer than the budget forms its own group
+   * (~200k chars max via the extraction char cap → ~10-25 MB, safe). Derivation: tempdoc 686
+   * full-corpus crash forensics, 2026-07-10.
+   */
+  private static final long TOKENIZE_GROUP_CHAR_BUDGET = 512_000;
+
   public List<Map<String, Float>> encodeBatch(List<String> texts) throws OrtException {
     if (texts.size() <= 1) {
       return encodeBatchInternal(texts);
@@ -333,24 +348,51 @@ public final class SpladeEncoder implements Closeable {
     int maxBatch = getMaxBatchSize();
     int tokenBudget = maxBatch * maxSeqLen;
 
-    // Phase 1: Batch tokenize (native parallel via DJL)
+    // Phase 1: Tokenize in memory-bounded groups (tempdoc 686 crash fix). The tokenizer runs
+    // with truncation DISABLED (truncation-evidence contract), so one full-document text can
+    // materialize an Encoding of ~100k+ tokens (ids + tokens + char spans ≈ tens of MB). The
+    // previous single batchEncode(texts) call materialized ALL encodings simultaneously —
+    // ~100 doc-level contents ≈ up to ~1 GB of short-lived Java allocations, which exhausted
+    // the 1g worker heap and killed the JVM natively (JNI allocation failure inside DJL's
+    // getTokenCharSpans surfaced as EXCEPTION_UNCAUGHT_CXX_EXCEPTION in tokenizers.dll; three
+    // identical hs_err dumps, heap 99.8% full). Grouping by input chars bounds peak
+    // materialization to one group; only the truncated (≤ maxSeqLen) arrays are retained.
+    int n = texts.size();
+    long[][] idsByText = new long[n][];
+    long[][] maskByText = new long[n][];
+    long[][] typesByText = new long[n][];
+    int[] tokenCounts = new int[n];
     long tTok = System.nanoTime();
-    Encoding[] encodings = tokenizer.batchEncode(texts);
-    profiler.addPhaseNs("tokenize", System.nanoTime() - tTok);
-
-    // Record truncation evidence for all texts
-    for (Encoding enc : encodings) {
-      truncationEvidence.record(enc.getIds().length);
+    int groupStart = 0;
+    while (groupStart < n) {
+      int groupEnd = groupStart;
+      long groupChars = 0;
+      while (groupEnd < n
+          && (groupEnd == groupStart
+              || groupChars + texts.get(groupEnd).length() <= TOKENIZE_GROUP_CHAR_BUDGET)) {
+        groupChars += texts.get(groupEnd).length();
+        groupEnd++;
+      }
+      Encoding[] groupEncodings = tokenizer.batchEncode(texts.subList(groupStart, groupEnd));
+      for (int i = 0; i < groupEncodings.length; i++) {
+        int idx = groupStart + i;
+        Encoding enc = groupEncodings[i];
+        truncationEvidence.record(enc.getIds().length);
+        int seqLen = Math.min(enc.getIds().length, maxSeqLen);
+        tokenCounts[idx] = seqLen;
+        idsByText[idx] = truncate(enc.getIds(), seqLen);
+        maskByText[idx] = truncate(enc.getAttentionMask(), seqLen);
+        typesByText[idx] = truncate(enc.getTypeIds(), seqLen);
+      }
+      groupStart = groupEnd;
     }
+    profiler.addPhaseNs("tokenize", System.nanoTime() - tTok);
     truncationEvidence.flushIfNeeded(truncationEvidencePath, config.modelPath());
 
     // Phase 2: Build index array sorted by effective token count (ascending)
-    int n = texts.size();
     Integer[] sortedIndices = new Integer[n];
-    int[] tokenCounts = new int[n];
     for (int i = 0; i < n; i++) {
       sortedIndices[i] = i;
-      tokenCounts[i] = Math.min(encodings[i].getIds().length, maxSeqLen);
     }
     Arrays.sort(sortedIndices, Comparator.comparingInt(i -> tokenCounts[i]));
 
@@ -371,7 +413,7 @@ public final class SpladeEncoder implements Closeable {
         pos++;
       }
 
-      // Build pre-tokenized arrays for this sub-batch
+      // Build pre-tokenized arrays for this sub-batch (already truncated in phase 1)
       int batchSize = pos - batchStart;
       long[][] batchIds = new long[batchSize][];
       long[][] batchMask = new long[batchSize][];
@@ -380,9 +422,9 @@ public final class SpladeEncoder implements Closeable {
       for (int j = 0; j < batchSize; j++) {
         int origIdx = sortedIndices[batchStart + j];
         int seqLen = tokenCounts[origIdx];
-        batchIds[j] = truncate(encodings[origIdx].getIds(), seqLen);
-        batchMask[j] = truncate(encodings[origIdx].getAttentionMask(), seqLen);
-        batchTypes[j] = truncate(encodings[origIdx].getTypeIds(), seqLen);
+        batchIds[j] = idsByText[origIdx];
+        batchMask[j] = maskByText[origIdx];
+        batchTypes[j] = typesByText[origIdx];
         maxLen = Math.max(maxLen, seqLen);
       }
 
@@ -493,7 +535,6 @@ public final class SpladeEncoder implements Closeable {
       long[][] allInputIds, long[][] allAttentionMask, long[][] allTokenTypeIds, int batch, int len)
       throws OrtException {
     try (var lease = sessions.acquire()) {
-      OrtSession session = lease.session();
       if (!firstEncodeLogged) {
         firstEncodeLogged = true;
         log.info(
@@ -506,7 +547,7 @@ public final class SpladeEncoder implements Closeable {
 
       if (outputFormat == OutputFormat.PRESPARSE) {
         return runSparseOutputInference(
-            session, lease.runOptions(), allInputIds, allAttentionMask, allTokenTypeIds, batch);
+            lease, allInputIds, allAttentionMask, allTokenTypeIds, batch);
       }
 
       // When using pinned outputs, pad inputs to the bucketed seqLen so model output shape matches
@@ -551,8 +592,8 @@ public final class SpladeEncoder implements Closeable {
             // BertForMaskedLM output seqLen == input seqLen (padded to bucketed length)
             ensurePinnedOutput(batch, inferLen, vocabSize);
             Map<String, OnnxValue> pinnedOutputs = Map.of(outputName, pinnedOutputTensor);
-            // Run and immediately close Result; pinned tensor is NOT closed (caller-managed)
-            session.run(inputs, Collections.emptySet(), pinnedOutputs, lease.runOptions()).close();
+            // Run into the pinned tensor (caller-managed; not closed here).
+            lease.runPinned(inputs, pinnedOutputs);
             pinnedOutputBuffer.clear();
             buf = pinnedOutputBuffer;
           } catch (OrtException e) {
@@ -567,19 +608,18 @@ public final class SpladeEncoder implements Closeable {
               // active encoder.ort_run span.
               EncoderOrtRunSpans.emitCpuFallbackEvent("gpu_bfc_arena", "splade");
               try (var cpuLease = sessions.acquireCpu()) {
-                buf = runHeapFallback(
-                    cpuLease.session(), cpuLease.runOptions(), inputs, batch, inferLen);
+                buf = runHeapFallback(cpuLease, inputs, batch, inferLen);
               }
             } else {
               log.warn(
                   "Pinned output inference failed, falling back to heap copy: {}", e.getMessage());
               pinnedOutputsSupported = false;
-              buf = runHeapFallback(session, lease.runOptions(), inputs, batch, inferLen);
+              buf = runHeapFallback(lease, inputs, batch, inferLen);
             }
           }
         } else {
           try {
-            buf = runHeapFallback(session, lease.runOptions(), inputs, batch, inferLen);
+            buf = runHeapFallback(lease, inputs, batch, inferLen);
           } catch (OrtException e) {
             if (!lease.isCpu() && NativeSessionHandle.isBfcArenaFailure(e)) {
               log.info(
@@ -590,8 +630,7 @@ public final class SpladeEncoder implements Closeable {
               // active encoder.ort_run span.
               EncoderOrtRunSpans.emitCpuFallbackEvent("gpu_bfc_arena", "splade");
               try (var cpuLease = sessions.acquireCpu()) {
-                buf = runHeapFallback(
-                    cpuLease.session(), cpuLease.runOptions(), inputs, batch, inferLen);
+                buf = runHeapFallback(cpuLease, inputs, batch, inferLen);
               }
             } else {
               throw e;
@@ -603,8 +642,10 @@ public final class SpladeEncoder implements Closeable {
         }
 
       long t1 = System.nanoTime();
+      // ortElapsed spans the primary attempt + any CPU-retry fallback (diagnostic log only,
+      // below) — the choke point (tempdoc 710 Move 2) already recorded each actual ORT call
+      // (lease.run/runPinned inside runHeapFallback / the pinned branch above) individually.
       long ortElapsed = t1 - t0;
-      profiler.recordOrtCall(ortElapsed);
 
       List<Map<String, Float>> processed =
           postProcessBuffer(buf, batch, inferLen, vocabSize, allAttentionMask);
@@ -647,7 +688,6 @@ public final class SpladeEncoder implements Closeable {
   private Map<String, Float> runOnnxInferenceSingle(
       long[] inputIds, long[] attentionMask, long[] tokenTypeIds) throws OrtException {
     try (var lease = sessions.acquire()) {
-      OrtSession session = lease.session();
       if (!firstEncodeLogged) {
         firstEncodeLogged = true;
         log.info(
@@ -660,8 +700,7 @@ public final class SpladeEncoder implements Closeable {
 
       // PRESPARSE format: delegate to existing single-doc sparse path
       if (outputFormat == OutputFormat.PRESPARSE) {
-        return runSingleSparseInference(
-            session, lease.runOptions(), inputIds, attentionMask, tokenTypeIds);
+        return runSingleSparseInference(lease, inputIds, attentionMask, tokenTypeIds);
       }
 
       // MLM_LOGITS format: heap-only path (no pinned output)
@@ -682,10 +721,9 @@ public final class SpladeEncoder implements Closeable {
         if (tokenTypeIdsTensor != null) {
           inputs.put("token_type_ids", tokenTypeIdsTensor);
         }
-        long t0 = System.nanoTime();
         FloatBuffer buf;
         try {
-          buf = runHeapFallback(session, lease.runOptions(), inputs, 1, seqLen);
+          buf = runHeapFallback(lease, inputs, 1, seqLen);
         } catch (OrtException e) {
           if (!lease.isCpu() && NativeSessionHandle.isBfcArenaFailure(e)) {
             log.info("SPLADE GPU arena allocation failed (single, seqLen={}), using CPU fallback",
@@ -693,15 +731,14 @@ public final class SpladeEncoder implements Closeable {
             // Tempdoc 400 LR2-c.
             EncoderOrtRunSpans.emitCpuFallbackEvent("gpu_bfc_arena", "splade");
             try (var cpuLease = sessions.acquireCpu()) {
-              buf = runHeapFallback(
-                  cpuLease.session(), cpuLease.runOptions(), inputs, 1, seqLen);
+              buf = runHeapFallback(cpuLease, inputs, 1, seqLen);
             }
           } else {
             throw e;
           }
         }
+        // ORT-call timing recorded at the Lease choke point (tempdoc 710 Move 2).
         long t1 = System.nanoTime();
-        profiler.recordOrtCall(t1 - t0);
 
         int vocabSize = (int) vocabulary.size();
         long[][] singleMask = {attentionMask};
@@ -739,8 +776,7 @@ public final class SpladeEncoder implements Closeable {
    * fallback.
    */
   private List<Map<String, Float>> runSparseOutputInference(
-      OrtSession session,
-      OrtSession.RunOptions runOptions,
+      SessionHandle.Lease lease,
       long[][] allInputIds,
       long[][] allAttentionMask,
       long[][] allTokenTypeIds,
@@ -787,18 +823,14 @@ public final class SpladeEncoder implements Closeable {
         inputs.put("token_type_ids", tokenTypeIdsTensor);
       }
 
-      long tOrt = System.nanoTime();
       // Tempdoc 400 LR2-a: per-ORT-call span (sparse-output batched path).
-      // runOptions != null ⇒ GPU lease per NativeSessionHandle invariant.
       Span ortSpan = EncoderOrtRunSpans.maybeOrtRun(
           ORT_TRACER, "splade", batch, maxLen);
-      ortSpan.setAttribute("encoder.gpu", runOptions != null);
+      ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
       try (Scope _ = ortSpan.makeCurrent()) {
-      try (OrtSession.Result result =
-          runOptions != null ? session.run(inputs, runOptions) : session.run(inputs)) {
+      try (OrtSession.Result result = lease.run(inputs)) {
         long tPost = System.nanoTime();
-        long ortElapsed = tPost - tOrt;
-        profiler.recordOrtCall(ortElapsed);
+        // ORT-call timing recorded at the Lease choke point (tempdoc 710 Move 2).
 
         OnnxTensor indexTensor =
             (OnnxTensor)
@@ -856,10 +888,9 @@ public final class SpladeEncoder implements Closeable {
     } catch (OrtException e) {
       // GPU BFC arena failure → retry the whole batch on the CPU session.
       // Matches the MLM_LOGITS path's batched-CPU-fallback strategy at lines ~537-548.
-      // Tempdoc 397 §14.9: the "was this GPU?" check uses the caller's runOptions (non-null iff
-      // GPU per the lease-construction invariant in NativeSessionHandle); acquireCpu() provides
-      // the fallback lease.
-      boolean wasGpu = runOptions != null;
+      // Tempdoc 397 §14.9: the "was this GPU?" check uses lease.isCpu() (§14.5 W3); acquireCpu()
+      // provides the fallback lease.
+      boolean wasGpu = !lease.isCpu();
       if (wasGpu && NativeSessionHandle.isBfcArenaFailure(e)) {
         log.info(
             "SPLADE GPU arena allocation failed for batched sparse output (batch={}, seqLen={}),"
@@ -869,25 +900,16 @@ public final class SpladeEncoder implements Closeable {
         EncoderOrtRunSpans.emitCpuFallbackEvent("gpu_bfc_arena", "splade");
         try (var cpuLease = sessions.acquireCpu()) {
           return runSparseOutputInference(
-              cpuLease.session(),
-              cpuLease.runOptions(),
-              allInputIds,
-              allAttentionMask,
-              allTokenTypeIds,
-              batch);
+              cpuLease, allInputIds, allAttentionMask, allTokenTypeIds, batch);
         }
       }
       throw e;
     }
   }
 
-  /** Runs a single sparse-output inference on the given session. */
+  /** Runs a single sparse-output inference on the given lease. */
   private Map<String, Float> runSingleSparseInference(
-      OrtSession session,
-      OrtSession.RunOptions runOptions,
-      long[] inputIds,
-      long[] attentionMask,
-      long[] tokenTypeIds)
+      SessionHandle.Lease lease, long[] inputIds, long[] attentionMask, long[] tokenTypeIds)
       throws OrtException {
     int seqLen = inputIds.length;
     long[] shape = {1, seqLen};
@@ -906,17 +928,14 @@ public final class SpladeEncoder implements Closeable {
       if (tokenTypeIdsTensor != null) {
         inputs.put("token_type_ids", tokenTypeIdsTensor);
       }
-      long tOrt = System.nanoTime();
       // Tempdoc 400 LR2-a: per-ORT-call span (single sparse-output path, batch=1).
       Span ortSpan = EncoderOrtRunSpans.maybeOrtRun(
           ORT_TRACER, "splade", 1, seqLen);
-      ortSpan.setAttribute("encoder.gpu", runOptions != null);
+      ortSpan.setAttribute("encoder.gpu", !lease.isCpu());
       try (Scope _ = ortSpan.makeCurrent()) {
-      try (OrtSession.Result result =
-          runOptions != null ? session.run(inputs, runOptions) : session.run(inputs)) {
+      try (OrtSession.Result result = lease.run(inputs)) {
         long tPost = System.nanoTime();
-        long ortElapsed = tPost - tOrt;
-        profiler.recordOrtCall(ortElapsed);
+        // ORT-call timing recorded at the Lease choke point (tempdoc 710 Move 2).
         OnnxTensor indexTensor =
             (OnnxTensor)
                 result
@@ -957,14 +976,9 @@ public final class SpladeEncoder implements Closeable {
   /** Fallback: run inference with heap-backed getFloatBuffer() (pre-pinned-outputs path). */
   @SuppressWarnings("PMD.UnusedFormalParameter") // batch/len kept for API consistency with pinned-output path
   private FloatBuffer runHeapFallback(
-      OrtSession session,
-      OrtSession.RunOptions runOptions,
-      Map<String, OnnxTensor> inputs,
-      int batch,
-      int len)
+      SessionHandle.Lease lease, Map<String, OnnxTensor> inputs, int batch, int len)
       throws OrtException {
-    try (OrtSession.Result result =
-        runOptions != null ? session.run(inputs, runOptions) : session.run(inputs)) {
+    try (OrtSession.Result result = lease.run(inputs)) {
       OnnxTensor outputTensor = (OnnxTensor) result.get(0);
       long[] outShape = outputTensor.getInfo().getShape();
       if (outShape.length != 3) {

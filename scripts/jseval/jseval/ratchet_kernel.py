@@ -16,6 +16,7 @@ The pure helpers (`load_baselines_doc`, `build_summary`) are unit-testable; `res
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -127,6 +128,63 @@ def assert_cohort_engines(
             "baseline_engines": sorted(baseline_engine_set(baselines_path) or []),
         }, indent=2), err=True)
         sys.exit(2)
+
+
+def assert_chunk_completeness(
+    run_dir: str | Path,
+    *,
+    allow_incomplete: bool = False,
+) -> None:
+    """Refuse a ratchet comparison when the run's index shipped without its chunk sub-system
+    despite the corpus needing one (tempdoc 718 -- the 717 degenerate-build containment).
+
+    Reads the run's already-embedded ``chunk_completeness`` block from ``summary.json``
+    (computed once, at run-build time, by ``run._compute_chunk_completeness`` -- this
+    function does not recompute the verdict, it enforces the one the run already carries).
+    On an un-overridden ``degenerate`` verdict: echoes a legible error + remedy and
+    ``sys.exit(2)`` (the infra-issue code, matching ``assert_cohort_engines``).
+    ``ok``/``chunk-free`` return silently. A run predating this guard (no
+    ``chunk_completeness`` block, or no ``summary.json`` at all) has no verdict to enforce and
+    is treated as ``ok`` -- backward-compatible, matches ``compare_engine_sets``'s "skip when
+    unrecorded" precedent.
+
+    Override with ``allow_incomplete=True`` (the CLI's ``--allow-chunk-incompleteness`` flag)
+    or the ``JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1`` env var (checked here, once, so all four
+    call sites get the env escape hatch without repeating the check) -- mirrors
+    ``--allow-engine-mismatch`` / ``JUSTSEARCH_ALLOW_CROSS_CHECKOUT_JSEVAL``. Never silent: the
+    override still fires, it just downgrades the refusal to a warning.
+    """
+    summary_path = Path(run_dir) / "summary.json"
+    summary = (json.loads(summary_path.read_text(encoding="utf-8"))
+               if summary_path.is_file() else {})
+    block = summary.get("chunk_completeness") or {}
+    verdict = block.get("verdict")
+    if verdict != "degenerate":
+        return
+
+    overridden = allow_incomplete or os.environ.get("JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS") == "1"
+    if overridden:
+        click.echo(json.dumps({
+            "warning": "chunk-completeness guard overridden (--allow-chunk-incompleteness / "
+                       "JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1)",
+            "expected": block.get("expected"), "observed": block.get("observed"),
+            "reasons": block.get("reasons"),
+        }, indent=2), err=True)
+        return
+
+    click.echo(json.dumps({
+        "exit_code": 2,
+        "error": f"chunk-completeness guard: this corpus has {block.get('expected')} doc(s) "
+                 f"expected to chunk, but the index observed {block.get('observed')} chunk "
+                 f"doc(s) -- {'; '.join(block.get('reasons') or [])}. The index likely shipped "
+                 f"with its chunk sub-system missing (tempdoc 717). Re-ingest (--clean) and "
+                 f"re-run, or pass --allow-chunk-incompleteness / set "
+                 f"JUSTSEARCH_ALLOW_CHUNK_INCOMPLETENESS=1 to certify anyway.",
+        "expected": block.get("expected"),
+        "observed": block.get("observed"),
+        "reasons": block.get("reasons"),
+    }, indent=2), err=True)
+    sys.exit(2)
 
 
 def resolve_run_dir(run_dir: str | None, data_dir: str | Path) -> Path:
