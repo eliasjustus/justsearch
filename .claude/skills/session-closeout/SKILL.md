@@ -1,0 +1,5 @@
+---
+description: "Before ending the session, commit outstanding work and verify the tempdoc/evidence/remaining-work notes are sufficient for another agent to continue."
+---
+
+Before ending this agent session, first check git status in your worktree and in main if you touched it — don't leave anything uncommitted for someone else to discover hours later; commit it. Then critically check whether the tempdoc, implementation state, verification evidence, and remaining-work notes are good enough for another agent to continue without reading this chat. Update the tempdoc and relevant documentation if needed. Verification claims recorded in the tempdoc must each carry their evidence pointer (test name, command output, screenshot, evidence-bundle run-id); a claim without one gets listed under unverified assumptions instead. Identify any unverified assumptions, deferred checks, stale docs discovered, or follow-up work that should not be forgotten. Since this tempdoc may become public history once merged, make sure it doesn't depend on private/internal-only context that wouldn't make sense to an outside reader. Then summarise the session state for me in simple terms.
