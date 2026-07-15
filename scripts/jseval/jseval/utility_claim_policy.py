@@ -6,12 +6,14 @@ import hashlib
 import json
 from pathlib import Path
 
+from jseval.utility_comparison import SEED_FLOOR
+
 _HEX = frozenset("0123456789abcdef")
 
 SUPPORTED_REQUIREMENTS = frozenset({
     "source_identity_complete", "clean_source_checkout",
     "computed_corpus_signature", "corpus_certification", "resolved_provider_model",
-    "captured_search_config", "verified_tool_surface",
+    "captured_search_config", "verified_tool_surface", "verified_exposure_mode",
     "no_leak_suspect_cells", "contamination_classes",
     "judge_calibration", "accuracy_delta_interval",
     "intention_to_treat", "per_protocol_is_secondary",
@@ -237,6 +239,23 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
         bool(per_stratum_seeds)
         and min(per_stratum_seeds) >= thresholds.get("minimum_seeds", 1),
     )
+    # tempdoc 736 D15: the SEED_FLOOR code constant (3) is a decision-grade
+    # accuracy-claim floor, distinct from `thresholds.minimum_seeds` (an
+    # owner-configurable, generally-stricter policy knob already gated
+    # above). Like `minimum_adoption_rate` below, this gate is reported for
+    # observability but EXCLUDED from `validity_gate_names` -- it does not
+    # block `accepted`/`validity_passed` on its own. The actual enforcement
+    # is at the per-stratum OUTCOME level (below): a stratum under the floor
+    # can never resolve to "benefit"/"null" (an accuracy-based claim), but
+    # CAN still resolve to "harm" or "adoption-only" -- a single-seed
+    # campaign remains publishable as exploratory/smoke or as a harmful
+    # finding, just never as a promoted accuracy decision.
+    gate(
+        "seed_floor_met",
+        min(per_stratum_seeds) if per_stratum_seeds else 0,
+        SEED_FLOOR,
+        bool(per_stratum_seeds) and min(per_stratum_seeds) >= SEED_FLOOR,
+    )
     stratum_losses = [
         loss
         for cell in cells
@@ -302,6 +321,14 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
         and (cohort.get("source_git_state") or {}).get("dirty") is False
         and _is_sha256(cohort.get("mcp_tool_surface_hash"))
         and environment_complete
+        # tempdoc 725 increment 2: exposure-mode + MCP-server-identity capture is
+        # part of source identity now -- a record whose exposure mode never
+        # resolved past "unknown" (or wasn't captured at all) is not a
+        # source-identity-complete record, same bar as the git/environment checks
+        # above.
+        and (cohort.get("exposure_config") or {}).get("exposure_mode") in ("eager", "deferred")
+        and bool((cohort.get("mcp_initialize_identity") or {}).get("instructions_sha256"))
+        and bool((cohort.get("mcp_initialize_identity") or {}).get("server_version"))
     )
     gate("source_identity_complete", identity_complete, True, identity_complete)
     certifications = [cell.get("corpus_certification") or {} for cell in cells]
@@ -369,6 +396,40 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
         == (with_tool_assertions.get("observed_mcp_tool_surface_hashes") or [None])[0]
     )
     gate("verified_tool_surface", verified_surface, True, verified_surface)
+
+    # tempdoc 725 increment 2: only add this gate when the record actually
+    # captured exposure identity somewhere (`cohort.exposure_config` is present
+    # -- itself conditionally excluded, never emitted as a bare `null`, for
+    # evidence that never captured it). Evidence composed entirely from
+    # pre-725 observations must project to a BYTE-IDENTICAL record to before
+    # this gate existed -- appending a gate that could only ever read as
+    # "not applicable" would silently change every historical record's
+    # claim_verdict shape and semantic_digest for no signal gained (there is
+    # nothing to verify when nothing was captured). Once ANY exposure identity
+    # is present, the gate always fires -- same as verified_tool_surface -- and
+    # legitimately fails on genuinely incomplete/inconsistent 725-era evidence.
+    if cohort.get("exposure_config") is not None:
+        declared_exposure_mode = (cohort.get("exposure_config") or {}).get("exposure_mode")
+        # Same shape as verified_tool_surface above: every with-tool attempted
+        # cell must carry the SAME exposure_mode, and it must match the
+        # cohort's declared value. exposure_mode is a cohort-level constant
+        # (derived from config, never a per-cell SDK signal), so this is
+        # primarily a mix-detection check -- it catches evidence assembled
+        # from two differently-configured campaigns, not per-cell variance
+        # (there is none to observe).
+        verified_exposure = (
+            with_tool_assertions.get("cells_total", 0) > 0
+            and with_tool_assertions.get("cells_total") == attempted_with_tool
+            and with_tool_assertions.get("cells_with_exposure_mode_verified")
+            == with_tool_assertions.get("cells_total")
+            and with_tool_assertions.get("observed_exposure_mode_consistent") is True
+            and len(with_tool_assertions.get("observed_exposure_modes") or []) == 1
+            and declared_exposure_mode in ("eager", "deferred")
+            and declared_exposure_mode
+            == (with_tool_assertions.get("observed_exposure_modes") or [None])[0]
+        )
+        gate("verified_exposure_mode", verified_exposure, True, verified_exposure)
+
     leak_count = sum(item.get("cells_with_leak_suspect", 0) for item in assertions.values())
     gate("no_leak_suspect_cells", leak_count, 0, leak_count == 0)
     disallowed_count = sum(
@@ -406,7 +467,13 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
 
     # Adoption is an outcome/promotion threshold, not a scientific-validity fact.
     # A valid harmful result must remain publishable even when adoption is low.
-    validity_gate_names = {item["name"] for item in gates} - {"minimum_adoption_rate"}
+    # Same reasoning for `seed_floor_met` (tempdoc 736 D15/U5): a valid harmful
+    # finding must remain publishable even below the seed floor -- the floor
+    # is enforced at the per-stratum OUTCOME level below (accuracy-based
+    # outcomes only), never via this overall validity check.
+    validity_gate_names = (
+        {item["name"] for item in gates} - {"minimum_adoption_rate", "seed_floor_met"}
+    )
     validity_passed = bool(gates) and all(
         item["passed"] for item in gates if item["name"] in validity_gate_names
     )
@@ -439,6 +506,12 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
             and adoption_value is not None
             and adoption_value >= adoption_threshold
         )
+        # tempdoc 736 D15/U5: a stratum below SEED_FLOOR can never back an
+        # ACCURACY-based claim (benefit/null) -- a single-seed campaign
+        # remains publishable as exploratory/smoke ("adoption-only") or as a
+        # harmful finding ("harm", checked below and NEVER gated on this),
+        # just never as a promoted accuracy decision.
+        stratum_seed_floor_met = cell.get("seed_count", 0) >= SEED_FLOOR
         accuracy_harm = (
             margin is not None and len(accuracy_interval) == 2
             and accuracy_interval[1] < -margin
@@ -466,9 +539,9 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
         )
         if accuracy_harm or efficiency_harm:
             cell_outcome = "harm"
-        elif stratum_adoption and noninferior and efficiency_benefit:
+        elif stratum_adoption and stratum_seed_floor_met and noninferior and efficiency_benefit:
             cell_outcome = "benefit"
-        elif stratum_adoption and accuracy_equivalent and efficiency_equivalent:
+        elif stratum_adoption and stratum_seed_floor_met and accuracy_equivalent and efficiency_equivalent:
             cell_outcome = "null"
         elif stratum_adoption:
             cell_outcome = "adoption-only"
@@ -535,6 +608,11 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
                     "observed": adoption_value,
                     "threshold": adoption_threshold,
                     "passed": stratum_adoption,
+                },
+                "seed_floor_met": {
+                    "observed": cell.get("seed_count", 0),
+                    "threshold": SEED_FLOOR,
+                    "passed": stratum_seed_floor_met,
                 },
                 "outcome_resolved": {
                     "observed": cell_outcome,

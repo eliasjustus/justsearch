@@ -78,6 +78,8 @@ public final class HeadAssembly implements AutoCloseable {
   // sidecar I/O does not add user-visible transition latency. Closed during teardown.
   private io.justsearch.app.inference.AsyncInferenceTransitionLog asyncTransitionLog;
   private final io.justsearch.app.api.ModeChangeListener gpuBroadcastListener;
+  // Tempdoc 737 Phase 1 — the single-writer runtime authority; closed on teardown with the manager.
+  private final io.justsearch.app.services.runtimestate.RuntimeReconciler runtimeReconciler;
   // §10 Phase A: InfraPhase.Output holds the gRPC server + capabilities handler.
   private io.justsearch.app.services.bootstrap.phases.InfraPhase.Output infraOut;
   private final AtomicBoolean closed = new AtomicBoolean(false);
@@ -403,7 +405,8 @@ public final class HeadAssembly implements AutoCloseable {
     this.brainAssembly =
         BrainAssembly.project(this.inferenceManager, t_service_0, t_service_1);
     OnlineAiService onlineAiService = serviceOut.onlineAiService();
-    this.gpuBroadcastListener = serviceOut.gpuBroadcastListener();
+    this.gpuBroadcastListener = serviceOut.inferenceRuntimeHandles().gpuBroadcastListener();
+    this.runtimeReconciler = serviceOut.inferenceRuntimeHandles().runtimeReconciler();
     this.offlineCoordinator = serviceOut.offlineCoordinator();
     this.agentSearchAdapter = serviceOut.agentSearchAdapter();
     this.excludes = serviceOut.excludes();
@@ -509,6 +512,12 @@ public final class HeadAssembly implements AutoCloseable {
             () -> this.serviceOut.packImport(),
             () -> this.serviceOut.brainInstall(),
             () -> this.serviceOut.policy(),
+            // Tempdoc 737 §12b: runtime-authority handles for the chat-enabled intent write.
+            () ->
+                this.serviceOut.inferenceRuntimeHandles() == null
+                    ? null
+                    : this.serviceOut.inferenceRuntimeHandles().runtimeSpecStore(),
+            () -> this.runtimeReconciler,
                     searchToolFinal,
                     browseToolFinal,
                     ingestToolFinal,
@@ -610,7 +619,8 @@ public final class HeadAssembly implements AutoCloseable {
                         serviceOut.brainRuntime(),
                         serviceOut.runtimeVariant(),
                         serviceOut.packImport(),
-                        serviceOut.brainInstall())))
+                        serviceOut.brainInstall(),
+                        serviceOut.inferenceRuntimeHandles().runtimeReconciler())))
             .orThrow();
     this.services = orchestrationOut.initialServices();
     this.orchestration = orchestrationOut.orchestrationHandles();
@@ -740,6 +750,7 @@ public final class HeadAssembly implements AutoCloseable {
         this.infraOut == null ? null : this.infraOut.infraHealthGrpcServer(),
         this.inferenceManager,
         this.gpuBroadcastListener,
+        this.runtimeReconciler,
         this.services == null ? null : this.services.worker().indexing(),
         this.services == null ? null : this.services.worker().documents(),
         this.substrateOut.resourceOut() == null ? null : this.substrateOut.resourceOut().diagnosticChannelAppenderInstaller(),
@@ -776,6 +787,7 @@ public final class HeadAssembly implements AutoCloseable {
     this.knowledgeClient = null;
     this.inferenceManager = null;
     this.gpuBroadcastListener = null;
+    this.runtimeReconciler = null;
     this.offlineCoordinator = null;
     this.agentSearchAdapter = null;
     this.excludes = null;
@@ -850,7 +862,7 @@ public final class HeadAssembly implements AutoCloseable {
   /** §5/F1 snapshot accessor — projects the live inference manager into a status record. */
   public InferenceRuntimeView inferenceSnapshot() {
     return io.justsearch.app.services.bootstrap.phases.BootstrapProjections
-        .projectInferenceSnapshot(this.inferenceManager);
+        .projectInferenceSnapshot(this.inferenceManager, this.runtimeReconciler);
   }
 
   /**
@@ -1201,6 +1213,15 @@ public final class HeadAssembly implements AutoCloseable {
     return substrateOut.indexingJobsBridge();
   }
 
+  /**
+   * Tempdoc 737 Phase 1: the runtime authority's reconciler (null in test paths without the
+   * service graph). Exposed so the settings write path can nudge {@code specChanged()} — a spec
+   * write must converge now, not at next boot.
+   */
+  public io.justsearch.app.services.runtimestate.RuntimeReconciler runtimeReconciler() {
+    return this.runtimeReconciler;
+  }
+
   private java.util.function.Function<
           io.justsearch.agent.api.registry.RequiredCapability, Boolean>
       buildCapabilityResolver() {
@@ -1210,9 +1231,6 @@ public final class HeadAssembly implements AutoCloseable {
               this.capabilities.worker().available();
           case io.justsearch.agent.api.registry.RequiredCapability.InferenceOnline i ->
               this.capabilities.inference().available();
-          case io.justsearch.agent.api.registry.RequiredCapability.IndexedRoot r ->
-              this.capabilities.worker().available();
-          case io.justsearch.agent.api.registry.RequiredCapability.GpuAvailable g -> true;
         };
   }
 }

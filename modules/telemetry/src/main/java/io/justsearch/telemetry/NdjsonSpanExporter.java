@@ -284,8 +284,34 @@ final class NdjsonSpanExporter implements SpanExporter {
     return false;
   }
 
+  // Tempdoc 727-followup: escape the full JSON string-escape set (RFC 8259 §7), not just
+  // backslash/quote. A prior version only escaped `\` and `"`; any attribute value containing a raw
+  // newline (e.g. multi-paragraph document content captured by OpenInferenceSpans.reranker on
+  // search/rerank spans) split one logical NDJSON record across multiple physical lines, breaking
+  // per-line JSON parsing downstream (422/10,494 lines unparseable in a captured traces.ndjson,
+  // in 24 contiguous ranges — all attributable to unescaped control characters).
   private static String json(String s) {
-    return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    StringBuilder out = new StringBuilder(s.length() + 16);
+    for (int i = 0; i < s.length(); i++) {
+      char c = s.charAt(i);
+      switch (c) {
+        case '\\' -> out.append("\\\\");
+        case '"' -> out.append("\\\"");
+        case '\n' -> out.append("\\n");
+        case '\r' -> out.append("\\r");
+        case '\t' -> out.append("\\t");
+        case '\b' -> out.append("\\b");
+        case '\f' -> out.append("\\f");
+        default -> {
+          if (c < 0x20) {
+            out.append(String.format("\\u%04x", (int) c));
+          } else {
+            out.append(c);
+          }
+        }
+      }
+    }
+    return out.toString();
   }
 
   private void rotateIfNeeded() {

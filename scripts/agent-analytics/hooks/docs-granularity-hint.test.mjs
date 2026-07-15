@@ -12,7 +12,8 @@
  */
 
 import assert from 'node:assert/strict';
-import { isGitPush, isArchaeologyOnly } from './docs-granularity-hint.mjs';
+import { isAbsolute } from 'node:path';
+import { isGitPush, isArchaeologyOnly, gitPushCwd } from './docs-granularity-hint.mjs';
 
 let passed = 0;
 const failures = [];
@@ -46,6 +47,92 @@ run('non-git / empty is not a push', () => {
   assert.equal(isGitPush('npm run push'), false);
   assert.equal(isGitPush(''), false);
   assert.equal(isGitPush(undefined), false);
+});
+
+// --- isGitPush: argument-position mentions are NOT pushes ---
+// Regression cases mined verbatim from session transcripts, where the pre-fix
+// whole-string regex fired the hint on commands that were not pushes at all.
+// A hint that cries wolf gets discounted — these keep its signal true.
+run('a "git push" inside a quoted --reason argument is NOT a push', () => {
+  assert.equal(
+    isGitPush(
+      'node scripts/ci/check-always-loaded-budget.mjs --bump .claude/rules/branch-safety.md ' +
+        '--reason "tempdoc 695: correct a stale claim that git push is unconditionally allowed on main"',
+    ),
+    false,
+  );
+});
+run('a "git push" inside a commit message is NOT a push', () => {
+  assert.equal(isGitPush('git commit -m "correct the stale git push allowed on main claim"'), false);
+});
+run('a "git push" inside a heredoc commit body is NOT a push', () => {
+  const cmd = [
+    "git commit -m \"$(cat <<'EOF'",
+    'docs(rules): correct a stale claim',
+    '',
+    'git push to main is not unconditionally allowed — branch protection rejects it.',
+    'EOF',
+    ')"',
+  ].join('\n');
+  assert.equal(isGitPush(cmd), false);
+});
+
+// --- isGitPush: branch deletions publish no content ---
+run('a branch-delete push is NOT a content push', () => {
+  assert.equal(isGitPush('git push origin --delete worktree-662-mux docs/653-axis2-record'), false);
+  assert.equal(isGitPush('git push origin :old-branch'), false);
+  assert.equal(isGitPush('git push -d origin br'), false);
+});
+// The delete test keys on a colon in ARGUMENT position (` :branch`). A colon is
+// also common in content pushes and in Windows paths, so pin that the deletion
+// check does not swallow them — a false negative here would silence the hint on
+// exactly the worktree pushes it exists to catch.
+run('a colon in a refspec or Windows path is still a content push', () => {
+  assert.equal(isGitPush('git push origin HEAD:refs/heads/foo'), true);
+  assert.equal(isGitPush('git -C C:/Users/x/wt push -u origin br'), true);
+});
+run('a real push after a heredoc body is still detected', () => {
+  const cmd = ["gh pr create --body \"$(cat <<'EOF'", 'body text', 'EOF', ')" && git push -u origin b'].join('\n');
+  assert.equal(isGitPush(cmd), true);
+});
+
+// --- gitPushCwd: diff the tree being PUSHED ---
+// The dominant real-world misfire: `git -C <worktree> push` diffed the main
+// checkout (whatever `input.cwd` was) instead of the worktree being pushed, so
+// the hint's claim contradicted the actual push content.
+run('gitPushCwd extracts an absolute -C target', () => {
+  assert.equal(
+    gitPushCwd('git -C /f/js/.claude/worktrees/x push -u origin b', '/f/js'),
+    '/f/js/.claude/worktrees/x',
+  );
+});
+run('gitPushCwd resolves a relative -C target against the fallback', () => {
+  // Platform-agnostic: assert the SEMANTIC (a relative -C becomes an absolute
+  // path under the fallback), not a hardcoded path shape — on Windows a
+  // POSIX-style fixture root would be drive-relative and resolve differently.
+  const fallback = process.cwd();
+  const out = gitPushCwd('git -C .claude/worktrees/x push -u origin b', fallback);
+  assert.ok(isAbsolute(out), `expected an absolute path, got ${out}`);
+  assert.ok(out.startsWith(fallback), `expected a path under ${fallback}, got ${out}`);
+  assert.ok(
+    out.replace(/\\/g, '/').endsWith('/.claude/worktrees/x'),
+    `expected the -C target suffix, got ${out}`,
+  );
+});
+run('gitPushCwd handles a quoted -C path with spaces', () => {
+  assert.equal(
+    gitPushCwd('git -C "/f/my repo/wt" push origin b', '/f/js'),
+    '/f/my repo/wt',
+  );
+});
+run('gitPushCwd follows a `cd <path> && git push` chain', () => {
+  assert.equal(
+    gitPushCwd('cd /f/js/.claude/worktrees/y && git push -u origin b', '/f/js'),
+    '/f/js/.claude/worktrees/y',
+  );
+});
+run('gitPushCwd falls back when the push names no directory', () => {
+  assert.equal(gitPushCwd('git push -u origin b', '/f/js'), '/f/js');
 });
 
 // --- isArchaeologyOnly ---

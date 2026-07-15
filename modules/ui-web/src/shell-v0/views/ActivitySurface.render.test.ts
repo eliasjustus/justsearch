@@ -1,0 +1,80 @@
+// @vitest-environment happy-dom
+
+/**
+ * ActivitySurface render test — 727 F-4.
+ *
+ * Pre-fix, the "Operations (structured)" panel's `<jf-resource>` element was mounted with
+ * no `api-base` attribute at all, so it (and the `resourceListItemStrategy` it dispatches
+ * through) fell back to relative URLs for the `core.operation-history` SSE stream — wrong
+ * whenever the FE and backend are served from different origins. The sibling
+ * `<jf-action-ledger>` panel was never affected because it always set `api-base` explicitly.
+ * This test pins that `<jf-resource>` now receives the same `api-base` ActivitySurface itself
+ * was given, mirroring `<jf-action-ledger>`.
+ */
+
+import { describe, expect, it, afterEach, beforeAll, vi } from 'vitest';
+
+// Stub EventSource before ActivitySurface's transitive imports (ActionLedgerView,
+// jf-resource-view) try to open real streams against a non-existent backend.
+class NoopEventSource extends EventTarget {
+  readyState = 0;
+  url: string;
+  CONNECTING = 0;
+  OPEN = 1;
+  CLOSED = 2;
+  withCredentials = false;
+  onopen: ((this: EventSource, ev: Event) => unknown) | null = null;
+  onmessage: ((this: EventSource, ev: MessageEvent) => unknown) | null = null;
+  onerror: ((this: EventSource, ev: Event) => unknown) | null = null;
+  constructor(url: string | URL) {
+    super();
+    this.url = String(url);
+  }
+  close(): void {
+    this.readyState = this.CLOSED;
+  }
+}
+
+beforeAll(() => {
+  vi.stubGlobal(
+    'EventSource',
+    function StubES(url: string | URL) {
+      return new NoopEventSource(url) as unknown as EventSource;
+    },
+  );
+});
+
+import './ActivitySurface.js';
+import type { ActivitySurface } from './ActivitySurface.js';
+
+async function mount(apiBase: string): Promise<ActivitySurface> {
+  const el = document.createElement('jf-activity-surface') as ActivitySurface;
+  el.apiBase = apiBase;
+  document.body.appendChild(el);
+  await el.updateComplete;
+  return el;
+}
+
+describe('ActivitySurface (jf-activity-surface) — api-base forwarding (727 F-4)', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('passes its own api-base down to both the action-ledger and resource panels', async () => {
+    const el = await mount('http://127.0.0.1:33221');
+
+    const ledger = el.shadowRoot?.querySelector('jf-action-ledger');
+    const resource = el.shadowRoot?.querySelector('jf-resource');
+
+    expect(ledger?.getAttribute('api-base')).toBe('http://127.0.0.1:33221');
+    // Pre-fix: this attribute was absent entirely (getAttribute returned null),
+    // leaving <jf-resource-view> to resolve its stream URL against the wrong origin.
+    expect(resource?.getAttribute('api-base')).toBe('http://127.0.0.1:33221');
+  });
+
+  it('still declares resource-id="core.operation-history" on the structured-operations panel', async () => {
+    const el = await mount('http://127.0.0.1:33221');
+    const resource = el.shadowRoot?.querySelector('jf-resource');
+    expect(resource?.getAttribute('resource-id')).toBe('core.operation-history');
+  });
+});

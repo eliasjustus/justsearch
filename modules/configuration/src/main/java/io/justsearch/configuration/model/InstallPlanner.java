@@ -91,6 +91,20 @@ public final class InstallPlanner {
         continue;
       }
 
+      // Runtime-tier packages (the CUDA DLLs) are a hardware-support payload, not a capability:
+      // include them iff the profile uses CUDA — the same axis selectVariant uses to pick the
+      // FP16/CUDA model variants those DLLs make runnable — independent of the GGUF VRAM floor.
+      // Gating them on the chat threshold wrongly skipped them for GPU_LITE (CUDA functional,
+      // VRAM < 7.5 GB), silently downgrading CUDA ONNX inference to CPU.
+      if (pkg.tier() == CapabilityTier.RUNTIME && !profile.usesCuda()) {
+        skipped.add(
+            new InstallPlan.SkippedPackage(
+                pkg.id(),
+                String.format(
+                    "%s requires a CUDA-capable GPU (none detected on this system).", pkg.label())));
+        continue;
+      }
+
       // GGUF packages (chat) require GPU on this build — tempdoc 381 §"GPU-Primary"
       // direction. The skip reason names the actual constraint instead of the
       // misleading "CUDA not available" so the UI can surface why honestly.
@@ -136,7 +150,7 @@ public final class InstallPlanner {
 
       if (variant != null) {
         Path targetFile = installBaseDir.resolve(variant.filename());
-        if (isAlreadyInstalled(targetFile)) {
+        if (isAlreadyInstalled(targetFile, variant.sizeBytes())) {
           // Already installed with correct hash — skip download
         } else {
           String targetPath = useAbsoluteTargetPath
@@ -154,7 +168,7 @@ public final class InstallPlanner {
       // Supporting files are always downloaded (profile-independent)
       for (SupportingFile sf : pkg.supportingFiles()) {
         Path targetFile = installBaseDir.resolve(sf.filename());
-        if (isAlreadyInstalled(targetFile)) {
+        if (isAlreadyInstalled(targetFile, sf.sizeBytes())) {
           continue;
         }
         String targetPath = useAbsoluteTargetPath
@@ -182,13 +196,25 @@ public final class InstallPlanner {
   }
 
   /**
-   * Checks whether a file is already correctly installed. Planning phase only checks existence
-   * (multi-GB hashing would be wasteful here); full SHA-256 verification happens during the
-   * install execution phase. Callers therefore do not pass the expected hash — they pass it later
-   * to the execution step.
+   * Checks whether a file is already correctly installed. Planning stays cheap (O(1)): it checks
+   * existence and, when the expected size is known ({@code expectedSize > 0}), that the on-disk size
+   * matches — this catches a truncated or wrong file without the multi-GB hashing the pure planner
+   * must avoid. Full SHA-256 verification of freshly-downloaded files still happens during the
+   * install execution phase ({@code DownloadExecutor.verify}); a same-size byte-flip in an
+   * already-present file is not caught here by design.
    */
-  private static boolean isAlreadyInstalled(Path file) {
-    return Files.isRegularFile(file);
+  private static boolean isAlreadyInstalled(Path file, long expectedSize) {
+    if (!Files.isRegularFile(file)) {
+      return false;
+    }
+    if (expectedSize <= 0) {
+      return true;
+    }
+    try {
+      return Files.size(file) == expectedSize;
+    } catch (java.io.IOException e) {
+      return false;
+    }
   }
 
   /**

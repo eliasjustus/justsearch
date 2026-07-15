@@ -10,6 +10,9 @@ import io.justsearch.app.inference.RuntimeIdentity;
 import io.justsearch.app.observability.health.ConditionRecoveryIndex;
 import io.justsearch.app.observability.health.ConditionRecoveryIndexBuilder;
 import io.justsearch.app.observability.health.ConditionStore;
+import io.justsearch.app.services.runtimestate.RuntimeReconciler;
+import io.justsearch.app.services.runtimestate.RuntimeSpec;
+import io.justsearch.app.services.runtimestate.RuntimeStatus;
 
 /**
  * Tempdoc 519 §10 final-push: extracted static projection helpers from
@@ -32,11 +35,19 @@ public final class BootstrapProjections {
    * Tempdoc 412 Phase 3: projects the {@link InferenceLifecycleManager}'s typed accessor surface
    * into the API status record {@link InferenceRuntimeView}. Returns the OFFLINE/unavailable
    * view when {@code mgr} is null (AI disabled).
+   *
+   * <p>Tempdoc 737 §12c Phase 2a: {@code reconciler} additively feeds the runtime-authority
+   * fields ({@code chatEnabledSpec}/{@code engineState}/{@code engineReason}/{@code procedure}/
+   * {@code leaseHolder}) from the reconciler's live {@link RuntimeSpec} + {@link RuntimeStatus}.
+   * Nullable — an absent reconciler (mgr null, or the rare pre-reconciler-attach boot window)
+   * projects them at their empty/default value; {@code phase} and every pre-existing field's
+   * derivation is byte-identical to before this projection.
    */
-  public static InferenceRuntimeView projectInferenceSnapshot(InferenceLifecycleManager mgr) {
+  public static InferenceRuntimeView projectInferenceSnapshot(
+      InferenceLifecycleManager mgr, RuntimeReconciler reconciler) {
     if (mgr == null) {
       return new InferenceRuntimeView(
-          "OFFLINE", null, false, null, new LifecycleCounters(0L, 0L, 0L));
+          "OFFLINE", null, false, null, new LifecycleCounters(0L, 0L, 0L), false, "", "", "", "");
     }
     String phase = mgr.getCurrentMode().name();
     boolean usingExternal = mgr.isUsingExternalLlamaServer();
@@ -53,7 +64,53 @@ public final class BootstrapProjections {
             .orElse(null);
     long transitionsTotal = mgr.identity().map(RuntimeIdentity::generationId).orElse(0L);
     LifecycleCounters counters = new LifecycleCounters(0L, 0L, transitionsTotal);
-    return new InferenceRuntimeView(phase, identityView, usingExternal, failureView, counters);
+
+    boolean chatEnabledSpec = false;
+    String engineState = "";
+    String engineReason = "";
+    String procedure = "";
+    String leaseHolder = "";
+    if (reconciler != null) {
+      RuntimeSpec spec = reconciler.currentSpec();
+      if (spec != null) {
+        chatEnabledSpec = spec.chatEnabled();
+      }
+      RuntimeStatus status = reconciler.current();
+      if (status != null) {
+        engineState =
+            status
+                .condition(RuntimeStatus.Axis.ENGINE)
+                .map(RuntimeStatus.Condition::status)
+                .orElse("");
+        engineReason =
+            status
+                .condition(RuntimeStatus.Axis.ENGINE)
+                .map(RuntimeStatus.Condition::reason)
+                .orElse("");
+        procedure =
+            status
+                .condition(RuntimeStatus.Axis.PROCEDURE)
+                .map(RuntimeStatus.Condition::status)
+                .filter(s -> !"none".equals(s))
+                .orElse("");
+        leaseHolder =
+            status
+                .condition(RuntimeStatus.Axis.LEASE)
+                .map(RuntimeStatus.Condition::status)
+                .orElse("");
+      }
+    }
+    return new InferenceRuntimeView(
+        phase,
+        identityView,
+        usingExternal,
+        failureView,
+        counters,
+        chatEnabledSpec,
+        engineState,
+        engineReason,
+        procedure,
+        leaseHolder);
   }
 
   /**

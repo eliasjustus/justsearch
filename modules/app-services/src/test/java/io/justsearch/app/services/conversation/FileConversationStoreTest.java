@@ -96,6 +96,74 @@ final class FileConversationStoreTest {
   }
 
   @Test
+  @DisplayName(
+      "629 LAYER regression (tempdoc 727) — an UNLOCKED live cipher decrypts sealed messages back to"
+          + " plaintext, proving a disabled() cipher (the pre-fix ResourceApiModule bug) could never do"
+          + " this")
+  void unlockedLiveCipherDecryptsSealedMessages(@TempDir Path tmp) {
+    var key = new FakeKey();
+    var cipher = new io.justsearch.agent.api.encryption.StoreCipher(key);
+    var store = new FileConversationStore(tmp, cipher);
+    store.appendMessage("s1", "core.free-chat", userMsg("SENSITIVE-content"));
+
+    // The line on disk is ciphertext, not plaintext — proves the message was actually sealed.
+    String raw = readMessagesJsonl(tmp, "s1");
+    assertTrue(raw.startsWith("JSEv1:"), "the persisted line is sealed");
+    assertFalse(raw.contains("SENSITIVE-content"), "plaintext is not on disk");
+
+    // A disabled() cipher (pre-fix: ResourceApiModule's single-arg ctor) can NEVER open this line —
+    // StoreCipher.open throws KeyLockedException unconditionally because DISABLED.enabled() == false
+    // (StoreCipher.java :95-97), regardless of lock state. The live, UNLOCKED cipher used here is the
+    // only one that can decrypt it back.
+    List<Map<String, Object>> history = store.loadHistory("s1");
+    assertEquals(1, history.size());
+    assertEquals("SENSITIVE-content", history.get(0).get("content"), "unlocked reads decrypt");
+    assertEquals("user", history.get(0).get("role"));
+    assertNull(history.get(0).get("locked"), "an unlocked, successfully-opened message has no locked marker");
+  }
+
+  @Test
+  @DisplayName(
+      "629 LAYER regression (tempdoc 727) — loadHistory on a LOCKED store degrades per-message"
+          + " (keeps the position, hides the content) instead of throwing / 500ing the whole session")
+  void loadHistoryDegradesOnLockedInsteadOfThrowing(@TempDir Path tmp) {
+    var key = new FakeKey();
+    var cipher = new io.justsearch.agent.api.encryption.StoreCipher(key);
+    var store = new FileConversationStore(tmp, cipher);
+    store.appendMessage("s1", "core.free-chat", userMsg("q1"));
+    store.appendMessage("s1", "core.free-chat", assistantMsg("a1"));
+
+    key.locked = true;
+
+    // Pre-fix: loadOwnMessages caught only IOException, so cipher.open's KeyLockedException (a
+    // RuntimeException) propagated out of loadHistory uncaught — the caller (e.g.
+    // InteractionThreadController.handleGet, whose catch-all is `catch (Exception e)`) turned that
+    // into an HTTP 500 for the WHOLE unified thread, not just this session's chat turns.
+    List<Map<String, Object>> history = store.loadHistory("s1");
+
+    assertEquals(2, history.size(), "both messages stay in the transcript (not dropped, not thrown)");
+    for (Map<String, Object> msg : history) {
+      assertEquals("locked", msg.get("role"), "role is opaque while locked (the whole line is sealed)");
+      assertEquals("", msg.get("content"), "content is hidden, not fabricated");
+      assertEquals(Boolean.TRUE, msg.get("locked"), "the locked marker distinguishes this from a real empty message");
+      assertNotNull(msg.get("id"), "the position-preserving id lets the transcript keep its order");
+    }
+
+    // Unlocking restores the real content — proves the locked reads above were a degrade, not data loss.
+    key.locked = false;
+    List<Map<String, Object>> unlocked = store.loadHistory("s1");
+    assertEquals(List.of("q1", "a1"), unlocked.stream().map(m -> m.get("content")).toList());
+  }
+
+  private static String readMessagesJsonl(Path tmp, String sessionId) {
+    try {
+      return Files.readString(tmp.resolve(sessionId).resolve("messages.jsonl"), StandardCharsets.UTF_8).strip();
+    } catch (java.io.IOException e) {
+      throw new java.io.UncheckedIOException(e);
+    }
+  }
+
+  @Test
   @DisplayName("loadHistory synthesizes id + hash for legacy messages without them")
   void loadBackfillsLegacyMessages(@TempDir Path tmp) throws Exception {
     // Write a JSONL file directly, simulating pre-513 storage (no id, no hash).

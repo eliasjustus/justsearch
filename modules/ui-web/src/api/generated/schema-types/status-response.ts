@@ -127,11 +127,14 @@ export interface StatusResponse {
   indexBasePath?: string;
   indexStatusReason?: string;
   inference?: {
+    chatEnabledSpec?: boolean;
     counters?: {
       hardRestarts?: number;
       softRestarts?: number;
       transitionsTotal?: number;
     };
+    engineReason?: string;
+    engineState?: string;
     identity?: {
       generationId?: number;
       loadedAtEpochMs?: number;
@@ -142,7 +145,9 @@ export interface StatusResponse {
       code?: string;
       detail?: string;
     };
+    leaseHolder?: string;
     phase?: string;
+    procedure?: string;
     usingExternal?: boolean;
   };
   knowledgeServerStartError?: string;
@@ -448,11 +453,14 @@ export const statusResponseSchema = z.strictObject({
   "indexBasePath": z.string().optional(),
   "indexStatusReason": z.string().optional(),
   "inference": z.strictObject({
+    "chatEnabledSpec": z.boolean().optional(),
     "counters": z.strictObject({
       "hardRestarts": z.number().int().optional(),
       "softRestarts": z.number().int().optional(),
       "transitionsTotal": z.number().int().optional(),
     }).optional(),
+    "engineReason": z.string().optional(),
+    "engineState": z.string().optional(),
     "identity": z.strictObject({
       "generationId": z.number().int().optional(),
       "loadedAtEpochMs": z.number().int().optional(),
@@ -463,7 +471,9 @@ export const statusResponseSchema = z.strictObject({
       "code": z.string().optional(),
       "detail": z.string().optional(),
     }).optional(),
+    "leaseHolder": z.string().optional(),
     "phase": z.string().optional(),
+    "procedure": z.string().optional(),
     "usingExternal": z.boolean().optional(),
   }).optional(),
   "knowledgeServerStartError": z.string().optional(),

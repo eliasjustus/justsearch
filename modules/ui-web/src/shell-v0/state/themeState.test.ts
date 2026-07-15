@@ -134,8 +134,36 @@ describe('themeState — §2.C / C5 single appearance writer', () => {
   afterEach(() => {
     document.documentElement.removeAttribute('data-theme');
     document.documentElement.classList.remove('high-contrast');
+    vi.restoreAllMocks();
     __resetThemeStateForTest();
   });
+
+  /**
+   * Stubs `window.matchMedia('(prefers-color-scheme: dark)')` and returns a `fireChange` hook
+   * so a test can simulate the OS flipping its preference live, mirroring the
+   * `DocumentPane.test.ts` `stubReducedMotion` pattern for a `change`-capable mock.
+   */
+  function stubOsColorScheme(isDark: boolean): { fireChange: (nowDark: boolean) => void } {
+    let changeHandler: ((e: { matches: boolean }) => void) | null = null;
+    let matches = isDark;
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) =>
+        ({
+          matches,
+          media: query,
+          addEventListener: (_type: string, handler: (e: { matches: boolean }) => void) => {
+            changeHandler = handler;
+          },
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+    return {
+      fireChange: (nowDark: boolean) => {
+        matches = nowDark;
+        changeHandler?.({ matches: nowDark });
+      },
+    };
+  }
 
   it('applyAppearance sets data-theme=light and toggles high-contrast', () => {
     applyAppearance({ theme: 'light', highContrast: true });
@@ -143,11 +171,44 @@ describe('themeState — §2.C / C5 single appearance writer', () => {
     expect(document.documentElement.classList.contains('high-contrast')).toBe(true);
   });
 
-  it('applyAppearance removes data-theme for system and clears high-contrast', () => {
+  it('applyAppearance resolves system to light on a light-mode OS (tempdoc 727 F-5)', () => {
+    stubOsColorScheme(false);
     applyAppearance({ theme: 'light', highContrast: true });
     applyAppearance({ theme: 'system', highContrast: false });
-    expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
+    // Pre-fix this removed the attribute and left tokens.css's hardcoded-dark :root default —
+    // "Follow OS" silently meant "app default (dark)" even when the OS was light.
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
     expect(document.documentElement.classList.contains('high-contrast')).toBe(false);
+  });
+
+  it('applyAppearance resolves system to dark on a dark-mode OS (tempdoc 727 F-5)', () => {
+    stubOsColorScheme(true);
+    applyAppearance({ theme: 'system' });
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+  });
+
+  it('system live-follows an OS preference change without re-calling applyAppearance (tempdoc 727 F-5)', () => {
+    const os = stubOsColorScheme(false);
+    applyAppearance({ theme: 'system' });
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+
+    // OS flips to dark while "system" is still the active choice — the round observed exactly
+    // this happening spontaneously mid-session, with no user action.
+    os.fireChange(true);
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+  });
+
+  it('an explicit light/dark choice stops following subsequent OS preference changes', () => {
+    const os = stubOsColorScheme(false);
+    applyAppearance({ theme: 'system' });
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+
+    applyAppearance({ theme: 'dark' }); // explicit choice — must not track the OS anymore
+    os.fireChange(true); // OS "changes" to dark too, but that's incidental here
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+
+    os.fireChange(false); // OS flips back to light — explicit dark must hold
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
   });
 
   it('applyAppearance sets data-surface-mode=solid and removes it for glass (§9.4)', () => {

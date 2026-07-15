@@ -9,8 +9,6 @@ import io.javalin.http.Context;
 import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.telemetry.Telemetry;
 import io.justsearch.app.services.ai.runtime.RuntimeActivationService;
-import io.justsearch.app.api.EnterprisePolicyService;
-import io.justsearch.app.api.EffectivePolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,6 +17,9 @@ import org.slf4j.LoggerFactory;
  * {@code RuntimeVariantService} lives in
  * {@code io.justsearch.app.services.runtimevariant.RuntimeVariantServiceImpl}
  * (tempdoc 519 §9 Step 3).
+ *
+ * <p>Tempdoc 737 (task 3): no longer holds its own {@code EnterprisePolicyService} — admin-policy
+ * enforcement is the single {@link RuntimeActivationService#enforceActivationPolicy()} site.
  */
 public final class AiRuntimeController {
   private static final Logger log = LoggerFactory.getLogger(AiRuntimeController.class);
@@ -26,12 +27,10 @@ public final class AiRuntimeController {
       JsonMapper.builder().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).build();
 
   private final RuntimeActivationService service;
-  private final EnterprisePolicyService policyService;
   private final Telemetry telemetry;
 
-  public AiRuntimeController(RuntimeActivationService service, EnterprisePolicyService policyService, Telemetry telemetry) {
+  public AiRuntimeController(RuntimeActivationService service, Telemetry telemetry) {
     this.service = service;
-    this.policyService = policyService;
     this.telemetry = telemetry;
   }
 
@@ -54,33 +53,22 @@ public final class AiRuntimeController {
       return;
     }
 
-    // v3 enforcement: block activation when policy disables Online AI or GPU acceleration.
+    // Tempdoc 737 (task 3): the policy predicate itself lives once on
+    // RuntimeActivationService.enforceActivationPolicy (same site runActivate's async path and
+    // RuntimeVariantServiceImpl's operation-handler path call) — this stays a synchronous
+    // fast-fail adapter so the HTTP caller gets an immediate 403 instead of having to poll
+    // status to discover an async policy denial.
     try {
-      EffectivePolicy p = policyService != null ? policyService.snapshot() : null;
-      if (p != null) {
-        if (!p.onlineAiEnabled()) {
-          ctx.status(403)
-              .json(
-                  ApiErrorHandler.toResponse(
-                      ApiErrorCode.POLICY_ONLINE_AI_DISABLED,
-                      "Online AI is disabled by administrator policy.",
-                      telemetry,
-                      "/api/ai/runtime/activate"));
-          return;
-        }
-        if (!p.gpuAccelerationEnabled()) {
-          ctx.status(403)
-              .json(
-                  ApiErrorHandler.toResponse(
-                      ApiErrorCode.POLICY_GPU_DISABLED,
-                      "GPU acceleration is disabled by administrator policy.",
-                      telemetry,
-                      "/api/ai/runtime/activate"));
-          return;
-        }
-      }
-    } catch (Exception ignored) {
-      // best-effort: enforcement also exists in RuntimeActivationService
+      service.enforceActivationPolicy();
+    } catch (IllegalStateException e) {
+      String msg = e.getMessage() == null ? "" : e.getMessage();
+      ApiErrorCode code =
+          msg.contains("GPU acceleration")
+              ? ApiErrorCode.POLICY_GPU_DISABLED
+              : ApiErrorCode.POLICY_ONLINE_AI_DISABLED;
+      ctx.status(403)
+          .json(ApiErrorHandler.toResponse(code, msg, telemetry, "/api/ai/runtime/activate"));
+      return;
     }
 
     try {

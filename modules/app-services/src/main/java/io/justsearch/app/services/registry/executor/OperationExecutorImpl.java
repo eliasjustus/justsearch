@@ -314,7 +314,7 @@ public final class OperationExecutorImpl implements OperationDispatcher {
       var missingCap = checkCapabilities(op);
       if (missingCap != null) {
         Instant t = clock.instant();
-        String msg = "Required capability unavailable: " + missingCap;
+        String msg = capabilityUnavailableMessage(missingCap);
         OperationResult denied =
             OperationResult.failure(msg, "CAPABILITY_UNAVAILABLE", Map.of("capability", missingCap), true);
         emitHistory(op, t, OperationOutcome.FAILURE, msg, provenance, Optional.empty());
@@ -438,12 +438,27 @@ public final class OperationExecutorImpl implements OperationDispatcher {
         return switch (req) {
           case RequiredCapability.WorkerOnline w -> "worker-online";
           case RequiredCapability.InferenceOnline i -> "inference-online";
-          case RequiredCapability.IndexedRoot r -> "indexed-root";
-          case RequiredCapability.GpuAvailable g -> "gpu-available";
         };
       }
     }
     return null;
+  }
+
+  // Tempdoc 737 §12b: denials name the unblocking action instead of just the missing
+  // capability id (conforms to 725's actionable-errors shape). The error CODE and Map
+  // payload ("capability" -> capability id) are unchanged for wire compat — only this
+  // human/agent-facing message text improves.
+  private static String capabilityUnavailableMessage(String missingCap) {
+    return switch (missingCap) {
+      case "worker-online" ->
+          "Required capability unavailable: worker-online. The knowledge worker is not "
+              + "reachable; it restarts automatically — retry shortly, or run core.restart-worker.";
+      case "inference-online" ->
+          "Required capability unavailable: inference-online. Inference is not running; call "
+              + "core.set-chat-enabled {\"enabled\":true} (or core.activate-runtime-variant "
+              + "after install) to bring it up, then retry.";
+      default -> "Required capability unavailable: " + missingCap;
+    };
   }
 
   /**
@@ -496,7 +511,7 @@ public final class OperationExecutorImpl implements OperationDispatcher {
       var missingCap = checkCapabilities(op);
       if (missingCap != null) {
         return OperationResult.failure(
-            "Required capability unavailable for undo: " + missingCap,
+            capabilityUnavailableMessage(missingCap) + " (undo)",
             "CAPABILITY_UNAVAILABLE",
             Map.of("capability", missingCap),
             true);

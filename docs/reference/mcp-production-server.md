@@ -14,24 +14,71 @@ retrieve context, browse folders, ingest files, and check status.
 
 **Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java`
 
+## Which port?
+
+The MCP endpoint lives on the same loopback HTTP API as everything else, so "which port is the
+MCP server on?" is exactly "which port is the API on?":
+
+- **Default: `8080`.** The API port resolves through `justsearch.api.port` /
+  `JUSTSEARCH_API_PORT` (`modules/configuration/.../EnvRegistry.java`); when nothing sets it,
+  the built-in default is `8080` (`ResolvedConfigBuilder.buildPorts()`). The packaged desktop
+  app sets no port override, so an installed app binds `http://127.0.0.1:8080`.
+- **Ephemeral fallback.** If the configured port is already in use, the server logs a warning
+  and rebinds on a random free port instead of failing
+  (`modules/ui/src/main/java/io/justsearch/ui/api/LocalApiServer.java` — bind-failure fallback).
+  Setting the port to `0` requests an ephemeral port explicitly.
+- **Pin it:** set the `JUSTSEARCH_API_PORT` environment variable (or the
+  `-Djustsearch.api.port=` system property for source runs) before launching. Note that a pin
+  is a *preference*: if that port is taken, the ephemeral fallback above still applies.
+- **Discover the actual port:** the backend writes it to
+  `<data dir>\runtime\api-port.txt` — for the installed desktop app that is
+  `%APPDATA%\io.justsearch.shell\runtime\api-port.txt`. It also prints
+  `JUSTSEARCH_API_PORT=<port>` to stdout (captured in `logs\headless-backend.log`) and serves
+  `GET /api/health` once up. (Gradle dev tasks like `runHeadless`/`devAll` default to `33221`,
+  which is why older docs and scripts mention that number — the installed app does not use it.)
+
 ## Setup
 
-### Claude Desktop
+### Claude Desktop one-click (MCPB) — available from the next release
 
-Add to `claude_desktop_config.json`:
+An MCPB bundle (`justsearch-mcp.mcpb`, sources in
+[`packaging/mcpb/`](../../packaging/mcpb/README.md)) will be attached to
+JustSearch releases **starting with the next release** — it is not on any
+published release yet, and the v0.1.0 app predates the `/mcp` endpoint, so
+the bundle cannot work against it. Once shipped: download the `.mcpb` from
+the release page and open it with Claude Desktop (Settings → Extensions) —
+one click, no JSON editing. The bundle is a thin local stdio bridge to the
+running app's `/mcp` endpoint; it handles port discovery via `api-port.txt`
+automatically. Until then, use the connector flow below.
+
+### Claude Desktop in ~2 minutes, starting from "launch the app"
+
+1. **Launch JustSearch** (Start menu). Wait for the window to load — the API is up when
+   `http://127.0.0.1:8080/api/health` answers in a browser. If it doesn't, read the actual
+   port from `%APPDATA%\io.justsearch.shell\runtime\api-port.txt` and use that below.
+2. **Claude Desktop → Settings → Connectors → Add custom connector**, URL:
+
+   ```text
+   http://127.0.0.1:8080/mcp
+   ```
+
+3. **Done.** Ask Claude something about your indexed files; it will call `justsearch_answer` /
+   `justsearch_search`. (First useful answers require having pointed JustSearch at a folder and
+   letting it finish indexing.)
+
+If your Claude Desktop version has no Connectors UI, bridge stdio→HTTP with `mcp-remote`
+(needs Node.js) in `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "justsearch": {
-      "url": "http://127.0.0.1:33221/mcp"
+      "command": "npx",
+      "args": ["mcp-remote", "http://127.0.0.1:8080/mcp"]
     }
   }
 }
 ```
-
-Replace `33221` with the actual port if JustSearch uses an ephemeral
-port. Check the JustSearch window or `GET /api/health` to find it.
 
 ### Cursor / Windsurf / VS Code
 
@@ -41,7 +88,7 @@ Add to `.cursor/mcp.json` or equivalent:
 {
   "mcpServers": {
     "justsearch": {
-      "url": "http://127.0.0.1:33221/mcp"
+      "url": "http://127.0.0.1:8080/mcp"
     }
   }
 }
@@ -50,8 +97,28 @@ Add to `.cursor/mcp.json` or equivalent:
 ### Claude Code
 
 ```bash
-claude mcp add justsearch --transport http http://127.0.0.1:33221/mcp
+claude mcp add justsearch --transport http http://127.0.0.1:8080/mcp
 ```
+
+In all three: replace `8080` with the port from
+`%APPDATA%\io.justsearch.shell\runtime\api-port.txt` if `8080` was taken on your machine
+(see [Which port?](#which-port)).
+
+### Claude Code: headless / non-interactive approval
+
+Project-scope MCP servers in Claude Code (added with `claude mcp add` at the default project
+scope, or picked up from a shared `.mcp.json`) require a one-time **interactive** approval per
+project directory before Claude Code will actually connect to them. In a non-interactive context
+— `claude -p`, or an Agent SDK session — launched from a directory where the server has never
+been approved, the server is silently dropped: there is no error, it just does not connect.
+`claude mcp list` shows it as **"Pending approval"** rather than connected.
+
+Remedies:
+
+- Run `claude` interactively once in that project directory and approve the server when
+  prompted; subsequent non-interactive runs from the same directory pick it up.
+- Or skip the project-scope approval flow entirely: pass the server programmatically via SDK
+  options (Agent SDK), or via `--mcp-config <file> --strict-mcp-config` on the CLI.
 
 ## Transport
 
@@ -60,7 +127,9 @@ Streamable HTTP on the existing Javalin server (loopback-only,
 same JVM as the Head process. No Node.js required.
 
 Protocol version: `2025-11-25`. Capabilities: tools, resources,
-prompts.
+prompts. Curated tool-surface version (MCP `serverInfo.version`,
+single-sourced from `McpContractVersions.TOOL_SURFACE_VERSION`):
+`0.4.0`.
 
 ## Available Tools (6, position-bias ordered)
 
@@ -76,6 +145,48 @@ prompts.
 All 6 tools validate their arguments against a declared JSON Schema at the MCP boundary before
 dispatch (tempdoc 655) — a malformed call gets a clean tool error rather than an internal cast
 failure.
+
+## Response shape (tempdoc 725)
+
+The human-readable `content` text on `justsearch_search` and `justsearch_answer` carries several
+descriptive lines beyond the raw results, so an agent can judge a response without a second call:
+
+- **`justsearch_answer` evidence-pack header** — the first line states the passage count, the
+  distinct-document count, the retrieval mode, and that the pack is retrieved evidence, not a
+  synthesized answer (plus a truncation note when the context was cut to fit token limits).
+- **`justsearch_search` match lines** — each hit carries a `Matched:` line naming the distinctive
+  terms that drove the match (or a `Match basis: semantic similarity` line when no term overlap
+  was distinctive), so an agent can tell *why* a hit matched without opening the file.
+- **Degradation and coverage lines** — a once-per-response note when semantic ranking degraded or
+  fell back, and a "showing N of M" line when a response was capped below the total hit count.
+
+**`response_format`** (optional on both tools; default `"detailed"`, which includes preview
+snippets and full evidence passages). `"concise"` returns substantially fewer tokens per call:
+`justsearch_search` results omit the preview line, and `justsearch_answer` packs cap at the 3
+highest-ranked passages; the coverage, match, and header lines are kept in both modes.
+
+### What these tools do and do not do (multi-step lookups)
+
+`justsearch_answer` performs retrieval, not synthesis: it returns relevant passages with source
+attribution, and the calling agent composes the answer. Questions whose answer spans a chain of
+documents (for example, an entity named in one document whose details live in another) require
+the calling agent to issue a follow-up retrieval for each step of the chain — the tools do not
+traverse entity chains on the agent's behalf. In measurement, completion of such multi-step
+lookups varies substantially with the calling agent's model tier; the response furniture above
+(match lines, headers, coverage notes) makes each step's result legible but does not remove the
+need for the follow-up step itself.
+
+### Delivery tiers (tempdoc 735)
+
+Every `justsearch_search`/`justsearch_answer` response is authored in two tiers — the
+human-readable `content` text and the machine-readable `structuredContent` — and the product's
+contract is that they carry **equivalent information**. Which tier a connected client actually
+forwards to its model is a **client-specific behavior that is not documented upstream**:
+observed 2026-07-14 with Claude Code CLI 2.1.209, the client forwards the serialized
+`structuredContent` JSON when present and the text tier otherwise (this client behavior has
+changed without notice before — see anthropics/claude-code issue #9962). Agents connected
+through different clients may therefore receive different representations of the same response;
+nothing here should be read as a guarantee of which tier any client delivers.
 
 ## Structured retrieval evidence (tempdoc 658)
 
@@ -94,6 +205,18 @@ already render (`SearchTrace`, `ContextCitation`); it introduces no new authorit
   `parentDocId`, char/line span, heading, score, excerpt) plus `quality` (chunks found/used, retrieval
   mode + reason code, and the CRAG-style confidence signals: coverage, best-chunk score, score gap,
   chunks considered/included, truncation). Citations are empty on the full-document fallback path.
+
+**Tier equivalence (tempdoc 735 W6).** Both tools' `structuredContent` also carry `hints` (the
+same progressive-disclosure hint strings the text tier's `Hints:` block / `Hint:` lines render),
+`facets` (the same facet-value facts the text tier's facet block renders), `coverage`
+(`justsearch_search`: `totalHits`/`shown`/`tookMs`; `justsearch_answer`: `passages`/`documents`),
+and `truncated` (`justsearch_search`: the response was capped below `totalHits`;
+`justsearch_answer`: `contextTruncated`). These fields close the gap a structured-preferring
+client would otherwise hit: before this increment, hints/facets/coverage/truncation facts existed
+in the `content` text only, so a client that delivers `structuredContent` instead of text (see
+Delivery tiers, above) never received them. Full evidence-passage parity (the text tier's ~10KB
+answer-pack passages vs. the ~2.7KB `citations` excerpts) is explicitly out of scope for this
+increment — metadata parity only.
 
 **Data exposure.** MCP tool responses are **not redacted** — path redaction applies to the diagnostics
 *export* bundle (a shareable artifact), not to live tool output. `citations[].parentDocId` is the
@@ -206,7 +329,7 @@ The previous TypeScript MCP server (`scripts/prod/justsearch-mcp/server.mjs`)
 is **deprecated**. It ran as a separate Node.js process via stdio
 transport with 4 tools. The Java MCP handler supersedes it with
 better transport (Streamable HTTP, no separate process), more tools
-(5 vs 4, adds browse), and direct service-layer dispatch.
+(6 vs 4), and direct service-layer dispatch.
 
 The old server remains in the codebase for reference — its tool
 descriptions and data from a tool-interface-design eval (tempdoc 366)

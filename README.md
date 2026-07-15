@@ -1,53 +1,108 @@
 # JustSearch
 
-**A private retrieval backend for your AI agents — and a neural search engine with a cited, on-device AI assistant for your own files. Cloud-grade hybrid search (BM25 + dense vectors + learned-sparse + reranking) plus grounded Q&A, summarization, and extraction over your documents — 100% on your machine, in 70+ languages.**
+**A private retrieval backend for your AI agents — and a neural search engine with a cited, on-device AI assistant for your own files. Hybrid search (BM25 + dense vectors + learned-sparse + reranking) plus grounded Q&A, summarization, and extraction over your documents — 100% on your machine. Windows-only for now.**
 
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-<!-- badges: <<build status>> · <<latest release>> · <<nDCG benchmark badge>> -->
+[![CI](https://github.com/eliasjustus/justsearch/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/eliasjustus/justsearch/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/eliasjustus/justsearch?include_prereleases&label=release)](https://github.com/eliasjustus/justsearch/releases)
+<!-- badges: <<nDCG benchmark badge>> — deferred: no workflow publishes a benchmark badge yet -->
+<!-- mcp-name: io.github.eliasjustus/justsearch -->
+<!-- ^ Official MCP Registry ownership marker (modelcontextprotocol.io/registry/package-types);
+     must match "name" in packaging/mcpb/server.json. Do not remove. -->
 
-JustSearch is local-first: it indexes your local documents — PDF, email, Office, and hundreds of formats — and answers questions
-over them with cited passages, **without anything leaving your machine.** It combines three retrieval paradigms
-(keyword, dense-vector, learned-sparse) with a cross-encoder reranker, and exposes that retrieval over the
-**Model Context Protocol (MCP)** so any AI agent — local or cloud — can use it as a **private retrieval
-backend**: your files stay on your device; only the model's answer leaves your agent.
+<!-- HERO VISUAL PLACEHOLDER (m1-shippability):
+     Add a hero screenshot + short demo GIF here. Exact shots to take and how:
+     docs/m1-screenshot-instructions.md
+     Suggested markup once assets exist in docs/assets/:
+     <p align="center"><img src="docs/assets/hero-search.png" width="820" alt="JustSearch: hybrid search over a local folder, with cited AI answers"></p>
+-->
+
+JustSearch is local-first: it indexes your local documents — PDF, email, Office, and most common document
+formats (text extraction is backed by [Apache Tika](https://tika.apache.org/), plus OCR for scanned PDFs and
+images) — and answers questions over them with cited passages, **without anything leaving your machine.**
+It combines three retrieval paradigms (keyword, dense-vector, learned-sparse) with a cross-encoder reranker,
+and exposes that retrieval over the **Model Context Protocol (MCP)** so any AI agent — local or cloud — can
+use it as a **private retrieval backend**: your files stay on your device; only the model's answer leaves
+your agent.
+
+It is multilingual by construction: the embedding model
+([gte-multilingual-base](https://huggingface.co/Alibaba-NLP/gte-multilingual-base)) supports 70+ languages;
+retrieval quality is benchmarked on English, German, and French (see [Benchmarks](#benchmarks)).
+
+## Install (Windows)
+
+1. **Download** [`JustSearch_0.1.0_x64-setup.exe`](https://github.com/eliasjustus/justsearch/releases/download/v0.1.0/JustSearch_0.1.0_x64-setup.exe)
+   (853 MB) from the [v0.1.0 release](https://github.com/eliasjustus/justsearch/releases/tag/v0.1.0).
+2. **Run it.** Windows SmartScreen will warn "Windows protected your PC" — click **More info → Run anyway**.
+   That warning appears because the installer is unsigned (solo-dev alpha; code signing is planned — see
+   [Status](#status)); it says nothing else about the binary. The install is per-user; no admin rights needed.
+3. **Launch JustSearch** and point it at a folder. On first launch the app asks consent to download its AI
+   models (**~9 GB**, one time, from GitHub Releases + Hugging Face) — after that it runs **fully offline**.
+
+Installer SHA-256 (also in [`SHA256SUMS`](SHA256SUMS)):
+
+```text
+f6336a668b8f6abd66b1ff483def6ae17ac34f64d406a8edab16b45d2b61ae38  JustSearch_0.1.0_x64-setup.exe
+```
+
+<!-- hash verified 2026-07-14 against the asset downloaded from the v0.1.0 GitHub release
+     (identical to the local build). -->
+
+## System requirements
+
+| | |
+|---|---|
+| **OS** | **Windows 10 or 11, 64-bit (x64) only** — macOS/Linux are not in the current scope ([NON-GOALS](NON-GOALS.md)). Verified on Windows 11; Windows 10 x64 is the expected WebView2 baseline but is not yet explicitly tested. WebView2, the VC++ runtime, and a Java runtime are bundled by the installer; there is nothing to install first. |
+| **Disk** | 853 MB installer + ~0.7 GB installed + **~9 GB one-time model download** + the search index (grows with your corpus). Plan for **≥ 15 GB free**. |
+| **RAM** | **16 GB recommended.** 8 GB is a conservative floor for keyword/semantic search only (not a benchmarked minimum). The on-device chat model (~5.9 GB file) is loaded into RAM when answering on CPU. |
+| **GPU** | **Optional.** Everything runs on CPU by default. An NVIDIA GPU with **≥ 8 GB VRAM** enables CUDA acceleration for chat and reranking (the app requires ~7.5 GB free VRAM before it will run the chat model on GPU; below that it stays on CPU). |
+| **Network** | Only for the one-time model download. Nothing else, ever — see [Privacy](#privacy). |
 
 ## Two ways to use it
 
 **As a private MCP retrieval backend for agents** *(the fast path for developers)*
 JustSearch exposes its retrieval over MCP at `POST /mcp` — **in-process Streamable HTTP** on the loopback API
-(no separate process, no Node.js). The port is shown in the app (or `GET /api/health`). Connect your agent:
+(no separate process, no Node.js). The desktop app listens on **`http://127.0.0.1:8080`** by default; if 8080
+is already taken it falls back to a random free port. To pin a port, set the `JUSTSEARCH_API_PORT` environment
+variable before launching; the actual port in use is always written to
+`%APPDATA%\io.justsearch.shell\runtime\api-port.txt`. Details + a 2-minute Claude Desktop walkthrough:
+[`docs/reference/mcp-production-server.md`](docs/reference/mcp-production-server.md). Connect your agent:
 
-- **Claude Code:** `claude mcp add justsearch --transport http http://127.0.0.1:<PORT>/mcp`
+- **Claude Code:** `claude mcp add justsearch --transport http http://127.0.0.1:8080/mcp`
 - **Cursor / VS Code** (clients that accept an HTTP `url` directly — e.g. `.cursor/mcp.json`):
   ```json
-  { "mcpServers": { "justsearch": { "url": "http://127.0.0.1:<PORT>/mcp" } } }
+  { "mcpServers": { "justsearch": { "url": "http://127.0.0.1:8080/mcp" } } }
   ```
 - **Claude Desktop** — add it as a **Connector** (Settings → Connectors → Add custom connector → the URL above),
   or bridge stdio→HTTP with `mcp-remote` in `claude_desktop_config.json`:
   ```json
-  { "mcpServers": { "justsearch": { "command": "npx", "args": ["mcp-remote", "http://127.0.0.1:<PORT>/mcp"] } } }
+  { "mcpServers": { "justsearch": { "command": "npx", "args": ["mcp-remote", "http://127.0.0.1:8080/mcp"] } } }
   ```
 
-Five tools: `justsearch_answer` (RAG, primary), `justsearch_search`, `justsearch_browse`, `justsearch_ingest`,
-`justsearch_status`. Your documents never leave the machine — only the agent's answer does.
+Six tools: `justsearch_answer` (RAG, primary), `justsearch_search`, `justsearch_browse`, `justsearch_ingest`,
+`justsearch_status`, `justsearch_runtime_manifest`. Your documents never leave the machine — only the agent's
+answer does.
 
-<!-- agent-utility:generated:start - run: node scripts/docs/gen-public-agent-utility.mjs -->
-
-No agent-utility result is currently accepted for publication. No agent-utility result has passed the unresolved scientific claim policy. The checked-in policy has no required campaign matrix and intentionally leaves its model cohort and scientific margins unresolved. CLERC and MIRACL-DE also lack the complete closed-book, retrieval-calibration, union-recall, and leak certificates required for promotion. Those owner decisions, certifications, and any paid run require separate authorization; the harness does not invent them.
-
-<!-- agent-utility:generated:end -->
+Does wiring an agent to these tools measurably improve its answers? We benchmark that under a fail-closed
+publication policy, and no result currently meets the bar for publication — see the
+[status note](#agent-utility-publication-status) below and
+[`docs/reference/benchmarks/agent-utility.md`](docs/reference/benchmarks/agent-utility.md).
 
 **As a desktop app** *(for non-developers)*
-Download the installer, point it at a folder, and search. → **https://github.com/eliasjustus/justsearch/releases/latest**
+Follow [Install (Windows)](#install-windows) above, point it at a folder, and search.
 *(Windows; alpha; currently unsigned — see [Status](#status).)*
 
 ## Why JustSearch
 
-Local file search is either **fast-but-literal** (Everything, Recoll — private, but vocabulary-bound) or
-**smart-but-cloud** (NotebookLM, Copilot — capable, but your files leave your machine). JustSearch is the
-missing cell: **semantic *and* fully offline.** No surveyed alternative occupies
-**{true hybrid retrieval × fully offline × multilingual × OCR}** at once.
+Desktop file search is either **fast-but-lexical** (Everything — filenames, instantly; Recoll — full-text and
+even OCR, but keyword matching only) or **smart-but-cloud** (NotebookLM, Copilot — capable, but your files
+leave your machine). Self-hosted server stacks (RAGFlow, Open WebUI, QAnything) can combine semantic retrieval,
+offline operation, multilingual models, and OCR — if you deploy and configure a Docker stack yourself.
+JustSearch aims at the gap between those worlds: as far as we know, the only **single-install desktop app**
+that ships **{true hybrid retrieval × fully offline × multilingual × OCR}** out of the box — here is the
+[sourced comparison](docs/comparison.md) behind that sentence, and if we've missed a tool, please
+[open an issue](https://github.com/eliasjustus/justsearch/issues) and we'll list it.
 
 - **Hybrid retrieval, not single-model RAG** — BM25 + dense vectors + SPLADE learned-sparse, fused and reranked
   by a cross-encoder. Most local RAG tools use one embedding model and basic chunking.
@@ -89,6 +144,17 @@ projected from `scripts/jseval/release.v1.json` (the canonical 2026-07-01 releas
 For the broader research angle — open questions, what's deferred, and how to get involved — see
 [`RESEARCH.md`](RESEARCH.md).
 
+### Agent-utility publication status
+
+Separate from retrieval quality above, we also measure *agent utility* (does an agent with JustSearch tools
+answer better than one without?) under a fail-closed publication policy:
+
+<!-- agent-utility:generated:start - run: node scripts/docs/gen-public-agent-utility.mjs -->
+
+No agent-utility result is currently accepted for publication. No agent-utility result has passed the unresolved scientific claim policy. The checked-in policy has no required campaign matrix and intentionally leaves its model cohort and scientific margins unresolved. CLERC and MIRACL-DE also lack the complete closed-book, retrieval-calibration, union-recall, and leak certificates required for promotion. Those owner decisions, certifications, and any paid run require separate authorization; the harness does not invent them.
+
+<!-- agent-utility:generated:end -->
+
 ## Quickstart (build from source)
 
 > Prereqs to **build + test**: **JDK 25** (the Gradle toolchain auto-resolves it) and **Node.js** (for the
@@ -100,7 +166,7 @@ git clone https://github.com/eliasjustus/justsearch && cd justsearch
 ./gradlew.bat build              # build (Windows; use ./gradlew on *nix once cross-platform)
 ```
 
-To **run** the full desktop app, the easy path is the [installer](#two-ways-to-use-it) above; running the
+To **run** the full desktop app, the easy path is the [installer](#install-windows) above; running the
 three-process stack from source is a developer workflow — see [`CONTRIBUTING.md`](CONTRIBUTING.md). First run
 downloads the models once (**~9 GB** — the ~5.9 GB local chat model dominates; fetched from GitHub Releases +
 HuggingFace), then runs fully offline.
@@ -143,4 +209,3 @@ what's deferred, collaboration) rather than contributing code? See [`RESEARCH.md
 ## License
 
 [Apache-2.0](LICENSE). Bundled model and dependency licenses: [`NOTICE`](NOTICE) / [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES).
-</content>

@@ -32,12 +32,54 @@ from jseval.utility_governance import (
 
 _VOLATILE_SEMANTIC_FIELDS = frozenset({"composed_at", "semantic_digest"})
 
+# tempdoc 736 D13/B2 (cross-chain finding, U1 discipline): these fields are
+# PURE self-description, never new discriminating information --
+# `denominators` (and its mirrored `denominator_note` strings) is a FIXED
+# constant, byte-identical across every record regardless of content;
+# `seed_floor_met` and `exposure_contrast_ineligible` are deterministic
+# re-derivations of fields ALREADY covered by the digest (`seed_count`;
+# `measured` emptiness / `cohort.exposure_config` + `mcp_initialize_identity`
+# absence, respectively) -- two records that differ in either of these
+# necessarily already differ in an already-digested field, so excluding them
+# from digest coverage loses no discriminating power. Declared here (a
+# coverage rule, not ad hoc per-callsite guessing) so historical-record
+# recomposition stays digest-STABLE (tempdoc 725 precedent / tempdoc 736 U1)
+# even though the record SHAPE gains these fields -- the digest fingerprints
+# the MEASUREMENT, not its self-description.
+_NON_SEMANTIC_TOP_LEVEL_FIELDS = frozenset({
+    "denominators", "seed_floor_met", "exposure_contrast_ineligible",
+})
+
 
 def semantic_projection(record: dict) -> dict:
-    """Return the record with only the explicit volatile transport set removed."""
+    """Return the record with the volatile transport set (`_VOLATILE_SEMANTIC_FIELDS`)
+    AND tempdoc 736's purely-declarative self-description fields
+    (`_NON_SEMANTIC_TOP_LEVEL_FIELDS` plus their nested `denominator_note`
+    mirrors, plus the `seed_floor_met` claim-policy gate -- same
+    deterministic-re-derivation rationale, this time of `evaluate_claim`'s
+    own gate list rather than of `compose_utility`'s output) removed."""
     projected = copy.deepcopy(record)
-    for field in _VOLATILE_SEMANTIC_FIELDS:
+    for field in _VOLATILE_SEMANTIC_FIELDS | _NON_SEMANTIC_TOP_LEVEL_FIELDS:
         projected.pop(field, None)
+    comparability = projected.get("comparability")
+    if isinstance(comparability, dict):
+        comparability.pop("denominator_note", None)
+    for by_model in (projected.get("measured") or {}).values():
+        for cell in (by_model or {}).values():
+            funnel = cell.get("funnel") if isinstance(cell, dict) else None
+            if isinstance(funnel, dict):
+                funnel.pop("denominator_note", None)
+    claim_verdict = projected.get("claim_verdict")
+    if isinstance(claim_verdict, dict):
+        gates = claim_verdict.get("gates")
+        if isinstance(gates, list):
+            claim_verdict["gates"] = [
+                g for g in gates
+                if not (isinstance(g, dict) and g.get("name") == "seed_floor_met")
+            ]
+        for stratum in claim_verdict.get("stratum_outcomes") or []:
+            if isinstance(stratum, dict) and isinstance(stratum.get("gates"), dict):
+                stratum["gates"].pop("seed_floor_met", None)
     return projected
 
 
@@ -74,6 +116,13 @@ def _intention_to_treat_estimand(
             corpus.get("dataset"), corpus.get("signature"), source.get("model_alias"),
             observation.get("resolved_model"),
             canonical_bytes(cohort.get("corpus_certification")),
+            # tempdoc 725 increment 2: additively join exposure/instructions
+            # identity into the stratum grouping key, the same discipline as
+            # agent_cohort_key/the compose_utility mix-guard tuple -- evidence
+            # from two differently-configured campaigns must never silently
+            # share one ITT stratum.
+            (cohort.get("exposure_config") or {}).get("exposure_mode"),
+            (cohort.get("mcp_initialize_identity") or {}).get("instructions_sha256"),
         )
         condition = observation.get("condition")
         if condition not in {"A", "B"}:
@@ -83,9 +132,10 @@ def _intention_to_treat_estimand(
         ] = observation
 
     strata = []
-    for (dataset, signature, model, resolved_model, certification_bytes), arms in sorted(
-        grouped.items(), key=lambda item: str(item[0])
-    ):
+    for (
+        dataset, signature, model, resolved_model, certification_bytes,
+        _exposure_mode, _instructions_sha256,
+    ), arms in sorted(grouped.items(), key=lambda item: str(item[0])):
         shared = sorted(set(arms.get("A", {})) & set(arms.get("B", {})))
         pairs = {}
         adopted = 0
@@ -121,6 +171,8 @@ def _intention_to_treat_estimand(
                 "c_turns": with_tool.get("num_turns"),
                 "a_tool_calls": baseline.get("tool_calls"),
                 "c_tool_calls": with_tool.get("tool_calls"),
+                "c_toolsearch_targets": with_tool.get("toolsearch_targets"),
+                "c_tool_call_sequence": with_tool.get("tool_call_sequence"),
             }
         stats = (
             _stats_from_pairs(pairs, statistical_alpha=statistical_alpha)
@@ -211,7 +263,7 @@ def _intention_to_treat_estimand(
             len(excluded["A"] & excluded["B"]) / len(excluded_union)
             if excluded_union else 1.0
         )
-        strata.append({
+        stratum = {
             "stratum_id": stratum_id,
             "corpus_member": member,
             "corpus": dataset,
@@ -250,7 +302,18 @@ def _intention_to_treat_estimand(
                     "adoption_rate": adopted / len(shared) if shared else None,
                 }
             },
-        })
+        }
+        # Adoption funnel (tempdoc 725 increment 3): `_stats_from_pairs` computes
+        # this from the SAME `pairs` dict built above (which now also carries
+        # `c_toolsearch_targets`/`c_tool_call_sequence`), so it is never a second,
+        # divergent adoption computation. `_stats_from_pairs` itself OMITS
+        # "funnel" (rather than emitting a null-marker dict) when none of this
+        # stratum's paired cells carry funnel data at all, so a stratum composed
+        # purely from pre-725 evidence has no "funnel" key at all -- byte-identical
+        # to before this key existed.
+        if stats and "funnel" in stats:
+            stratum["funnel"] = stats["funnel"]
+        strata.append(stratum)
     return {
         "primary": "intention_to_treat",
         "intention_to_treat": {"strata": strata},

@@ -38,6 +38,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -167,20 +169,149 @@ def _capture_canonical_mcp_surface(mcp_config: str) -> list[dict]:
     return canonical
 
 
+def _capture_mcp_initialize_identity(mcp_config: str) -> dict:
+    """Fetch the authoritative MCP ``initialize`` response for source-time cohort
+    identity (tempdoc 725 increment 2): the server's advertised ``instructions``
+    (verbatim + hashed), ``serverInfo.version``, and the negotiated
+    ``protocolVersion``. Nothing captures the ``initialize`` response anywhere
+    today (`_capture_canonical_mcp_surface` only speaks ``tools/list``); this is
+    that missing capture, at the same source-time point.
+
+    Fail-closed like `_capture_canonical_mcp_surface`: a JSON-RPC/HTTP/transport
+    failure RAISES -- it never returns a silently-empty identity block, which
+    would let a run proceed with an unverified 'None' identity that reads as
+    healthy. A missing (optional, per the MCP spec) ``instructions`` field is NOT
+    a failure -- it lawfully hashes to `None`.
+    """
+    servers = _mcp_servers_from_config(mcp_config)
+    server = servers.get("justsearch") or {}
+    url = server.get("url")
+    if not url:
+        raise ValueError("justsearch MCP config is missing its HTTP url")
+    body = json.dumps({
+        "jsonrpc": "2.0", "id": "jseval-source-identity-initialize",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "jseval-agent-utility-source-identity", "version": "1"},
+        },
+    }).encode("utf-8")
+    request = Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "User-Agent": "jseval-agent-utility-source-identity/1",
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=30) as response:  # noqa: S310 - configured MCP URL
+        payload = json.loads(response.read().decode("utf-8"))
+    if payload.get("error"):
+        raise RuntimeError(f"MCP initialize failed: {payload['error']}")
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("MCP initialize returned a malformed result")
+    instructions = result.get("instructions")
+    instructions = instructions if isinstance(instructions, str) else None
+    server_info = result.get("serverInfo") or {}
+    return {
+        "instructions": instructions,
+        "instructions_sha256": (
+            hashlib.sha256(instructions.encode("utf-8")).hexdigest()
+            if instructions is not None else None
+        ),
+        "server_version": server_info.get("version") if isinstance(server_info, dict) else None,
+        "protocol_version": result.get("protocolVersion"),
+    }
+
+
+def _derive_exposure_mode(*, enable_tool_search: str | None, always_load: bool | None) -> str:
+    """Config-only exposure-mode derivation (tempdoc 725 derisk): NEVER inferred
+    from the SDK's init/`mcp_status` response -- purely a function of the
+    ``ENABLE_TOOL_SEARCH`` harness env var and the justsearch MCP server entry's
+    ``alwaysLoad`` flag.
+
+    - ``always_load is True`` OR ``enable_tool_search == "false"`` -> ``"eager"``
+      (the tool surface is exposed directly, ToolSearch gating is off).
+    - no ``always_load`` and ``enable_tool_search`` in ``(None, "", "true")`` ->
+      ``"deferred"`` (tools are reachable only via ToolSearch).
+    - anything else (e.g. ``"auto"``) -> ``"unknown"``.
+    """
+    normalized_search = enable_tool_search if enable_tool_search is None else str(enable_tool_search)
+    if always_load is True or normalized_search == "false":
+        return "eager"
+    if not always_load and normalized_search in (None, "", "true"):
+        return "deferred"
+    return "unknown"
+
+
+def _capture_exposure_config(
+    mcp_config: str | None,
+    *,
+    enable_tool_search: str | None = None,
+    always_load: bool | None = None,
+) -> dict | None:
+    """Cohort-level ``exposure_config`` block (tempdoc 725 increment 2): how the
+    justsearch MCP tool surface was made available to the agent this campaign --
+    directly offered ("eager") vs. reachable only via ToolSearch ("deferred").
+
+    ``enable_tool_search``/``always_load`` are explicit parameters (not hidden
+    env/config reads) so a later agent can thread per-campaign values; they
+    default to the harness process's own ``ENABLE_TOOL_SEARCH`` env var and the
+    ``mcp_config``'s ``justsearch`` server entry's ``alwaysLoad`` key,
+    respectively. Returns ``None`` when there is no with-tool arm at all
+    (``mcp_config`` falsy) -- mirrors the empty ``mcp_tool_surface`` convention.
+    """
+    if not mcp_config:
+        return None
+    if enable_tool_search is None:
+        enable_tool_search = os.environ.get("ENABLE_TOOL_SEARCH")
+    if always_load is None:
+        servers = _mcp_servers_from_config(mcp_config)
+        server = servers.get("justsearch") or {}
+        raw_always_load = server.get("alwaysLoad")
+        always_load = bool(raw_always_load) if raw_always_load is not None else None
+    return {
+        "enable_tool_search": enable_tool_search,
+        "always_load": always_load,
+        "exposure_mode": _derive_exposure_mode(
+            enable_tool_search=enable_tool_search, always_load=always_load),
+    }
+
+
 async def _mcp_surface(client: ClaudeSDKClient) -> tuple[list | None, list[str], list[dict]]:
     """Return server status, offered names, and canonical full tool definitions.
 
     Replaces the CLI init-event parse (tempdoc 675 finding 2: `query()`'s
     `SystemMessage` init does not list the offered tools). Defensive across the
-    `McpStatusResponse` shape: returns `(None, [])` if status is unavailable so the
-    caller can flag "unverified" rather than conflate unknown with healthy."""
+    `McpStatusResponse` shape: returns `(None, [], [])` if status is unavailable so
+    the caller can flag "unverified" rather than conflate unknown with healthy.
+
+    Tri-state on `servers` (tempdoc 725 A/B smoke fix 2): `[]` (known-empty --
+    status WAS available and reported zero servers) and `None` (unknown -- status
+    unavailable) are distinct and must be captured deterministically. The prior
+    `status.get("servers") or status.get("mcp_servers") or status.get("mcpServers")`
+    `or`-chain returns the LAST operand when all are falsy, so an empty list under
+    the FIRST present key silently collapsed to the NEXT key's value (or None) --
+    inconsistent depending on which key the SDK happened to populate. First
+    NON-NULL key lookup fixes this: the first key holding a non-None value wins,
+    empty list and all; an explicit `null` is treated as absent (typed serializers
+    commonly emit every alternative key with null padding for the unused ones)."""
     try:
         status = await client.get_mcp_status()
     except Exception:
         return None, [], []
     if not isinstance(status, dict):
         return None, [], []
-    servers = status.get("servers") or status.get("mcp_servers") or status.get("mcpServers")
+    servers = None
+    for key in ("servers", "mcp_servers", "mcpServers"):
+        value = status.get(key)
+        if value is not None:
+            servers = value
+            break
     if servers is None:
         return None, [], []
     js_tools: list[str] = []
@@ -211,7 +342,7 @@ async def _mcp_surface(client: ClaudeSDKClient) -> tuple[list | None, list[str],
 def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                         model: str = "haiku", max_budget: str = "0.50",
                         timeout_s: int = 180, max_turns: int = _DEFAULT_MAX_TURNS,
-                        mcp_tool_surface_json: str = "[]"):
+                        mcp_tool_surface_json: str = "[]", agent_env_json: str = "{}"):
     """Per-sample solver: run one query as an in-process Claude Agent SDK cell.
 
     `condition` is read from `state.metadata["condition"]` (the single-pool sample
@@ -228,8 +359,18 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
     without `use_float`), so `task_identifier` re-hashes the resumed task to a
     different id than the persisted log and raises PrerequisiteError. A str
     round-trips identically. Converted to float only at the point of use below. Do
-    NOT reintroduce any float into the task/solver arg surface."""
+    NOT reintroduce any float into the task/solver arg surface.
+
+    `agent_env_json` (tempdoc 725 increment 4 — exposure A/B wiring): a JSON-encoded
+    ``{str: str}`` env-var overlay threaded into every cell's `ClaudeAgentOptions.env`
+    (e.g. ``{"ENABLE_TOOL_SEARCH": "false"}`` for the eager arm). A STR for the same
+    resume reason as `max_budget` above — a dict is fine (no floats), but keeping every
+    solver identity arg JSON-string-shaped is the established pattern here. Empty
+    (``"{}"``, the default) round-trips to `env={}`, which the SDK's
+    `default_factory=dict` makes byte-identical to omitting `env` entirely — today's
+    behavior is preserved when no `--agent-env` is passed."""
     mcp_servers = _mcp_servers_from_config(mcp_config)
+    agent_env = json.loads(agent_env_json) if agent_env_json else {}
     declared_mcp_tool_surface = json.loads(mcp_tool_surface_json)
     from jseval.agent_manifest import mcp_tool_surface_hash
     declared_mcp_tool_surface_hash = (
@@ -260,6 +401,7 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
             disallowed_tools=disallowed,
             mcp_servers=(mcp_servers if condition in _WITH_TOOL else {}),
             strict_mcp_config=True,
+            env=agent_env,
         )
         try:
             async with ClaudeSDKClient(options=opts) as client:
@@ -276,7 +418,17 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                     elif isinstance(msg, UserMessage):
                         for b in (getattr(msg, "content", None) or []):
                             if isinstance(b, ToolResultBlock):
-                                capture["results"][b.tool_use_id] = {"is_error": bool(b.is_error)}
+                                # tempdoc 736 D9 (issue 9): stash raw content alongside
+                                # is_error. `b.content` is `str | list[dict] | None`
+                                # (SDK-confirmed). This is the EPHEMERAL tier only --
+                                # it lives in `capture`/`state.metadata` and never
+                                # reaches the committed record directly; `_record_cell`
+                                # derives a redacting digest (hash/len/shape/flags,
+                                # never raw text) from it for the committed tier.
+                                capture["results"][b.tool_use_id] = {
+                                    "is_error": bool(b.is_error),
+                                    "content": b.content,
+                                }
                     elif isinstance(msg, ResultMessage):
                         capture["rmsg"] = msg
                 (capture["mcp_servers"], capture["justsearch_tools"],
@@ -337,6 +489,256 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
     return solve
 
 
+_TOOL_SEARCH_TOOL_NAME = "ToolSearch"
+_MCP_JUSTSEARCH_PREFIX = "mcp__justsearch"
+_MCP_JUSTSEARCH_NAME_RE = re.compile(r"^mcp__justsearch__[A-Za-z0-9_]+$")
+
+
+def _toolsearch_targets(attempts: dict) -> list[str]:
+    """Ordered, deduplicated ``mcp__justsearch__*`` tool names referenced by a
+    ``select:...`` ToolSearch call input in this cell (tempdoc 725 increment 3).
+
+    ONLY the resolved tool names named after a ``select:`` prefix are extracted
+    -- a keyword/free-text ToolSearch query (e.g. ``"notification jira slack"``)
+    is a search string, not a resolved-tool declaration, and must NEVER leak
+    into this field (the redaction contract this field exists under: raw query
+    text is never public evidence).
+
+    A comma-segment is captured ONLY if it FULLMATCHES the tool-name grammar
+    ``^mcp__justsearch__[A-Za-z0-9_]+$`` -- a prefix check alone (tempdoc 725
+    review finding #1) lets a segment like
+    ``mcp__justsearch__search /etc/passwd bob@evil.com`` (a space-joined
+    ``select:`` list whose first token happens to start with the prefix) leak
+    the trailing free text verbatim into durable sanitized evidence. A segment
+    that fails the fullmatch is dropped entirely; it is simply not evidence
+    that a well-formed tool name was referenced there."""
+    seen: list[str] = []
+    for entry in attempts.values():
+        if entry.get("tool") != _TOOL_SEARCH_TOOL_NAME:
+            continue
+        query = (entry.get("input") or {}).get("query")
+        if not isinstance(query, str) or not query.startswith("select:"):
+            continue
+        for raw_name in query[len("select:"):].split(","):
+            name = raw_name.strip()
+            if _MCP_JUSTSEARCH_NAME_RE.fullmatch(name) and name not in seen:
+                seen.append(name)
+    return seen
+
+
+# tempdoc 736 D9/U2: product-emitted CONSTANT text prefixes (never corpus text) --
+# detecting their presence in tool-result content is leak-safe by construction.
+# Verbatim grep sources (2026-07-14):
+#   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:523
+#     sb.append("Evidence pack: ")...                          -> evidence_pack
+#   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:725
+#     sb.append("    Matched: ").append(quoted);                -> rationale
+#   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:549
+#     sb.append("\n\n--- Quality ---\n");                        -> coverage
+#   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java:878
+#     sb.append("\nNote: semantic ranking degraded (")...        -> degradation
+_FURNITURE_MARKERS: dict[str, str] = {
+    "rationale": "Matched: ",
+    "evidence_pack": "Evidence pack: ",
+    "coverage": "--- Quality ---",
+    "degradation": "semantic ranking degraded (",
+}
+
+
+def _content_text(content) -> str:
+    """Concatenated text view of a `ToolResultBlock.content` payload, used ONLY for
+    leak-safe furniture-marker detection -- never stored or returned verbatim."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return ""
+
+
+def _content_shape(content) -> str:
+    """Coarse structural tag derived from type/first-block -- NEVER the text."""
+    if content is None:
+        return "empty"
+    if isinstance(content, str):
+        return "empty" if content == "" else "text"
+    if isinstance(content, list):
+        if not content:
+            return "empty"
+        first = content[0]
+        if isinstance(first, dict) and first.get("type") == "json":
+            return "json"
+        return "blocks"
+    return "json"
+
+
+def _content_len(content) -> int | None:
+    if content is None:
+        return None
+    if isinstance(content, (str, list)):
+        return len(content)
+    return None
+
+
+def _content_sha256(content) -> str | None:
+    if content is None:
+        return None
+    canonical = json.dumps(content, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _furniture_marker_flags(content) -> dict[str, bool]:
+    text = _content_text(content)
+    return {key: (marker in text) for key, marker in _FURNITURE_MARKERS.items()}
+
+
+# tempdoc 735 G2: which tier the CLI actually DELIVERED to the model for this call --
+# a fact distinct from what the server authored (the settled-design principle: "what
+# the model is delivered is a cohort fact ... capture it, never assume it"). A
+# raw-SDK debug probe (tempdoc 735, CLI 2.1.209) proved the delivery rule is
+# structured-if-present, text-otherwise: when the tool response carries
+# `structuredContent`, the CLI hands the model that JSON serialized as a `content`
+# STRING (not the human-readable text tier, and not a `type":"json"` block) --
+# `justsearch_answer`/`justsearch_search` both observed this way. When the tool
+# response has no `structuredContent` (e.g. `justsearch_status`,
+# McpToolSurface.java:939-940 emits only a `type":"text"` block), the CLI forwards
+# the SDK's own block-list `ToolResultBlock.content` shape.
+_DELIVERED_TIER_STRUCTURED = "structured-json"
+_DELIVERED_TIER_PROSE = "prose"
+_DELIVERED_TIER_BLOCKS = "blocks"
+
+
+def _delivered_tier(content) -> str | None:
+    """Classify the raw delivered `content` into one of three tiers (never a
+    fourth value -- `None` only means "nothing to classify", e.g. the call never
+    executed): `"blocks"` for the SDK's list-of-block shape (`ToolResultBlock`,
+    `claude_agent_sdk`: `content: str | list[dict[str, Any]] | None`); a `str`
+    that parses (after stripping) as a JSON **object** is `"structured-json"` (a
+    JSON array/number/etc. does not count -- every real structuredContent payload
+    this surface emits is a top-level object, `McpEvidenceProjection.searchEvidence`/
+    `answerEvidence` both return `Map<String,Object>`); any other `str` is
+    `"prose"`."""
+    if content is None:
+        return None
+    if isinstance(content, list):
+        return _DELIVERED_TIER_BLOCKS
+    if isinstance(content, str):
+        try:
+            parsed = json.loads(content.strip())
+        except (ValueError, TypeError):
+            return _DELIVERED_TIER_PROSE
+        return _DELIVERED_TIER_STRUCTURED if isinstance(parsed, dict) else _DELIVERED_TIER_PROSE
+    return None
+
+
+# tempdoc 735 G2: the top-level structured-evidence fields worth knowing the
+# presence of, replacing the text-grep furniture markers for structured-json
+# deliveries. `matchedTerms`/`excerpts` are verified nested PER-HIT under
+# `results[]` for `justsearch_search`
+# (McpEvidenceProjection.java:75-93 -- `h.put("matchedTerms", ...)` /
+# `h.put("excerpts", ...)` inside the per-hit loop, never at the top level);
+# `quality`/`citations` are top-level-only, produced by `answerEvidence`
+# (McpEvidenceProjection.java:136,151); `searchTrace`/`degradation` are
+# top-level-only, produced by `searchEvidence` (McpEvidenceProjection.java:50-58).
+# `results` itself is the top-level array `searchEvidence` always emits
+# (McpEvidenceProjection.java:108).
+# tempdoc 735 W6 (tool-surface 0.4.0) added the tier-equivalence fields
+# `hints`/`facets`/`coverage`/`truncated` to both tools' structured tier --
+# tracked here so structured-delivery cohorts' exposure to the formerly
+# text-only furniture is measurable per call. Absent on <=0.3.1 responses
+# (presence booleans just read False -- no schema impact).
+_DELIVERED_FIELD_KEYS = (
+    "quality", "matchedTerms", "degradation", "excerpts", "citations", "searchTrace", "results",
+    "hints", "facets", "coverage", "truncated",
+)
+
+
+def _delivered_fields(content) -> dict[str, bool] | None:
+    """Top-level structured-evidence field presence for a structured-json
+    delivery. `None` for prose/blocks deliveries (or content that no longer
+    parses) -- never a fabricated all-False dict standing in for "not
+    applicable"; `_furniture_marker_flags` remains the signal for those tiers."""
+    if _delivered_tier(content) != _DELIVERED_TIER_STRUCTURED:
+        return None
+    parsed = json.loads(content.strip())
+    results = parsed.get("results")
+    results = results if isinstance(results, list) else []
+    _nested_ok_keys = ("matchedTerms", "excerpts")
+
+    def _present(key: str) -> bool:
+        if key in parsed:
+            return True
+        if key in _nested_ok_keys:
+            return any(isinstance(r, dict) and key in r for r in results)
+        return False
+
+    return {key: _present(key) for key in _DELIVERED_FIELD_KEYS}
+
+
+def _tool_result_digest_entry(result: dict | None) -> dict:
+    """Redacted, committed-safe derivation of one tool result (tempdoc 736 D9,
+    extended by tempdoc 735 G2 with `delivered_tier`/`delivered_fields`):
+    hash/len/is_error/shape/furniture-marker booleans plus the delivered-tier
+    classification -- NEVER the raw content, which stays in the ephemeral
+    (gitignored) log only. `result` is None when the call never executed
+    (blocked/disallowed) -- honest nulls throughout, never a fabricated
+    zero/empty for the size/hash/is_error fields.
+
+    `furniture_markers` is computed (as before) for `prose`/`blocks` deliveries;
+    for `structured-json` deliveries it is `None` and `delivered_fields` carries
+    the signal instead -- text-grepping a delivered JSON string for product
+    furniture strings is measuring the wrong tier (this is the exact bug this
+    increment fixes: tempdoc 735's 0/153 furniture-marker mystery was caused by
+    grepping content that was never delivered as text in the first place)."""
+    if result is None:
+        return {
+            "content_sha256": None,
+            "content_len": None,
+            "content_is_error": None,
+            "content_shape": "empty",
+            "furniture_markers": _furniture_marker_flags(None),
+            "delivered_tier": None,
+            "delivered_fields": None,
+        }
+    content = result.get("content")
+    tier = _delivered_tier(content)
+    return {
+        "content_sha256": _content_sha256(content),
+        "content_len": _content_len(content),
+        "content_is_error": bool(result.get("is_error")),
+        "content_shape": _content_shape(content),
+        "furniture_markers": (
+            _furniture_marker_flags(content) if tier != _DELIVERED_TIER_STRUCTURED else None
+        ),
+        "delivered_tier": tier,
+        "delivered_fields": _delivered_fields(content),
+    }
+
+
+def _call_status(tid: str, entry: dict, results: dict, denied: set, disallowed: list[str]) -> str:
+    """tempdoc 736 D10 (issue 10): the four-state per-call status authority for
+    `tool_call_sequence` -- DISTINCT from `_blocked()` below, whose executed/blocked
+    split for `tool_calls`/`tool_calls_blocked` stays deliberately UNCHANGED (an
+    errored call is still "not executed" for that side-array's purposes; only this
+    ordered-sequence status gains the new `errored` state). Partition, in order:
+    disallowed (name in the campaign's disallowed set) > blocked (no result arrived,
+    OR a permission denial -- the call never executed) > errored (a result arrived
+    with is_error=True -- executed and returned an error) > ok."""
+    if entry["tool"] in disallowed:
+        return "disallowed"
+    r = results.get(tid)
+    if r is None or entry["tool"] in denied:
+        return "blocked"
+    if r["is_error"]:
+        return "errored"
+    return "ok"
+
+
 def _record_cell(state: TaskState, got: dict, condition: str,
                  disallowed: list[str], mcp_config: str | None,
                  declared_mcp_tool_surface_hash: str | None = None,
@@ -373,6 +775,28 @@ def _record_cell(state: TaskState, got: dict, condition: str,
     state.metadata["tool_calls_blocked"] = blocked  # tempdoc 675 forensic bonus (objects)
     state.metadata["disallowed_tool_calls"] = find_disallowed_tool_calls(executed, disallowed)
     state.metadata["leak_suspect_tool_calls"] = find_leak_suspect_tool_calls(executed)
+
+    # Adoption-funnel fields (tempdoc 725 increment 3): `toolsearch_targets` is the
+    # ONLY resolved mcp__justsearch__* names a `select:` ToolSearch call named in
+    # this cell (never free text); `tool_call_sequence` is the FULL ordered
+    # attempts sequence (unlike `tool_calls` above, which is executed-only) with a
+    # per-attempt ok/blocked/disallowed status, so funnel metrics can see e.g. a
+    # blocked-then-abandoned mcp call that `tool_calls` alone would hide entirely.
+    state.metadata["toolsearch_targets"] = _toolsearch_targets(attempts)
+    state.metadata["tool_call_sequence"] = [
+        {
+            "name": entry["tool"],
+            "status": _call_status(tid, entry, results, denied, disallowed),
+        }
+        for tid, entry in attempts.items()
+    ]
+    # tempdoc 736 D9 (issue 9, committed tier): one redacted digest entry per
+    # attempt, in the same order as `tool_call_sequence` -- `content_is_error`
+    # here and the `errored` status above are cross-consistent BY CONSTRUCTION
+    # (both derive from the same `results[tid]["is_error"]`).
+    state.metadata["tool_result_digests"] = [
+        _tool_result_digest_entry(results.get(tid)) for tid in attempts
+    ]
 
     # Offered MCP surface from the SDK's own status (tempdoc 675 finding 2).
     servers = got["mcp_servers"]
@@ -414,13 +838,23 @@ def _record_cell(state: TaskState, got: dict, condition: str,
             if servers is not None and justsearch_surface else None
         )
     state.metadata["observed_mcp_tool_surface_hash"] = observed_surface_hash
-    if (declared_mcp_tool_surface_hash and observed_surface_hash
+    # Condition A (baseline) is exempt by construction: `_one_attempt` passes
+    # `mcp_servers={}` for any condition not in `_WITH_TOOL` (line ~386), so an A
+    # cell never offers the campaign-declared surface and must not be compared
+    # against it. Without this gate, A cells were voided at record time against
+    # the declared 6-tool surface -- 17/20 A-cells errored in the 2026-07-14
+    # exposure A/B smoke (tempdoc 725) because the SDK's `get_mcp_status()`
+    # legitimately returned `servers == []` (empty list, not None) for a cell
+    # that was never given any MCP servers to begin with.
+    with_tool_cell = condition in _WITH_TOOL and bool(mcp_config)
+    if (with_tool_cell and declared_mcp_tool_surface_hash and observed_surface_hash
             and declared_mcp_tool_surface_hash != observed_surface_hash):
         state.metadata.setdefault(
             "error",
             "declared MCP tool-surface hash disagrees with observed tools/list",
         )
-    if declared_names and servers is not None and observed_names != declared_names:
+    if (with_tool_cell and declared_names and servers is not None
+            and observed_names != declared_names):
         state.metadata.setdefault(
             "error",
             "offered MCP tool names disagree with captured canonical tools/list",
@@ -434,7 +868,7 @@ def _record_cell(state: TaskState, got: dict, condition: str,
 
     # With-tool surface assertion (condition A exempt by construction). Preserve the
     # tri-state: status unavailable -> "unverified" (never conflated with healthy).
-    if condition in _WITH_TOOL and mcp_config:
+    if with_tool_cell:
         if servers is None:
             state.metadata["mcp_surface_unverified"] = True
         elif not justsearch_tools:
@@ -457,6 +891,17 @@ def _record_cell(state: TaskState, got: dict, condition: str,
                 "resolved provider model changed within one cell: "
                 f"{sorted(resolved_models)!r}",
             )
+        # tempdoc 736 D12 (issue 12): `total_cost_usd`/`num_turns` are fields of
+        # EVERY ResultMessage, independent of `is_error` (SDK-confirmed via
+        # `inspect.getsource(ResultMessage)`) -- populate them here, BEFORE the
+        # is_error early-return below, so an errored cell's incremental spend/turn
+        # count is not silently dropped. Only the no-ResultMessage `else` branch
+        # below leaves them null -- genuinely unknowable there, an honest null
+        # rather than a fabricated zero (P3 tri-state).
+        state.metadata.update({
+            "cost_usd": getattr(rmsg, "total_cost_usd", None),
+            "num_turns": getattr(rmsg, "num_turns", None),
+        })
         if getattr(rmsg, "is_error", False):
             # Forensically complete (tempdoc 675): a bare "result error: None" is
             # unactionable — carry the SDK's own error signals (subtype/stop_reason
@@ -472,11 +917,7 @@ def _record_cell(state: TaskState, got: dict, condition: str,
                 "error", (f"result error: {str(getattr(rmsg, 'result', ''))[:200]} | {err_bits}")[:600])
             return
         state.output.completion = getattr(rmsg, "result", "") or ""
-        state.metadata.update({
-            "cost_usd": getattr(rmsg, "total_cost_usd", None),
-            "unique_tokens": usage.get("cache_creation_input_tokens"),
-            "num_turns": getattr(rmsg, "num_turns", None),
-        })
+        state.metadata["unique_tokens"] = usage.get("cache_creation_input_tokens")
     else:
         state.metadata.setdefault(
             "error", "no ResultMessage (stream ended without a terminal result)")
@@ -514,7 +955,8 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
                        mcp_tool_surface_json: str = "[]",
                        judge_kind: str = "substring-em", prompt_template_hash: str | None = None,
                        corpus_dataset: str = "", corpus_signature: str = "",
-                       source_identity_json: str = "{}") -> Task:
+                       source_identity_json: str = "{}",
+                       agent_env_json: str = "{}") -> Task:
     """ONE Inspect task over the whole matrix (tempdoc 675 single pool).
 
     Samples are the flat `condition × query` cross-product; `condition` is a sample
@@ -536,7 +978,7 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
         dataset=samples,
         solver=claude_agent_solver(
             corpus_dir, mcp_config, model, max_budget, timeout_s, max_turns,
-            mcp_tool_surface_json,
+            mcp_tool_surface_json, agent_env_json,
         ),
         scorer=substring_scorer(),
         metadata={
@@ -561,6 +1003,8 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
                 "corpus_certification": source_identity.get("corpus_certification"),
                 "query_identity": source_identity.get("queries"),
                 "campaign_identity": source_identity.get("campaign"),
+                "exposure_config": source_identity.get("exposure_config"),
+                "mcp_initialize_identity": source_identity.get("mcp_initialize_identity"),
             },
         },
     )
@@ -634,6 +1078,8 @@ def _capture_or_load_source_identity(
     max_queries: int | None = None,
     mcp_tool_surface: list[dict] | None = None,
     corpus_certification: str | Path | None = None,
+    exposure_config: dict | None = None,
+    mcp_initialize_identity: dict | None = None,
 ) -> dict:
     """Persist source-time identity and fail closed when resumed inputs drift."""
     from jseval.corpus_identity import corpus_signature
@@ -717,6 +1163,8 @@ def _capture_or_load_source_identity(
         "queries": query_identity,
         "campaign": campaign,
         "environment": safe_environment_identity(),
+        "exposure_config": exposure_config,
+        "mcp_initialize_identity": mcp_initialize_identity,
     }
     path = Path(log_dir) / "source-identity.v1.json"
     if path.is_file():
@@ -742,13 +1190,24 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
                      cli_version: str | None = None,
                      corpus_dataset: str = "", corpus_signature: str = "",
                      search_config_cohort_key: str | None = None,
-                     corpus_certification: str | Path | None = None) -> str:
+                     corpus_certification: str | Path | None = None,
+                     agent_env: dict[str, str] | None = None) -> str:
     """Run the matrix through Inspect `eval_set` (resumable). seeds → `epochs`.
 
     Returns the log_dir; re-invoking with the same log_dir resumes (skips done
     samples). condition A uses no MCP; B/C use the JustSearch one. Executor v2
     (tempdoc 675): ONE task, one concurrency pool at `max_samples` (no `max_tasks=1`
-    condition serialization)."""
+    condition serialization).
+
+    `agent_env` (tempdoc 725 increment 4 — exposure A/B wiring): an optional
+    ``{str: str}`` env-var overlay threaded into every cell's child Agent SDK
+    session (e.g. ``{"ENABLE_TOOL_SEARCH": "false"}`` for the eager arm). `None`/empty
+    is today's behavior byte-for-byte. Its `ENABLE_TOOL_SEARCH` entry (if present) is
+    also the EFFECTIVE value fed to the exposure-config capture below — the child
+    session sees `agent_env` merged OVER the harness process's own env (the SDK's
+    `subprocess_cli.py` does `{**inherited_env, **options.env}`), so an `agent_env`
+    override, not just the parent process's own `os.environ`, is what the recorded
+    `exposure_config` must describe to match the child's actual config."""
     # Dead-config fail-fast (tempdoc 624 battlefield retrospective): a `url`-only
     # `mcpServers` entry (no `"type":"http"`) is silently DROPPED — the run would
     # otherwise complete "successfully" with zero MCP tool calls per cell. Checked
@@ -774,6 +1233,23 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
     captured_mcp_surface_hash = (
         _surface_hash(captured_mcp_surface) if captured_mcp_surface else None
     )
+    # tempdoc 725 increment 2: the missing `initialize` capture + the config-only
+    # exposure-mode derivation, at the same source-time point as the tools/list
+    # capture above. Both fail closed (raise) rather than degrade to a silent None.
+    captured_mcp_initialize_identity = (
+        _capture_mcp_initialize_identity(mcp_config) if mcp_config else None
+    )
+    # Effective ENABLE_TOOL_SEARCH the child session will actually see: `agent_env`'s
+    # entry wins (it is applied OVER the harness process env by the SDK), falling back
+    # to the harness process's own env only when `agent_env` doesn't set it — so the
+    # capture below describes the child's real config, not merely this parent process.
+    effective_enable_tool_search = (
+        agent_env.get("ENABLE_TOOL_SEARCH")
+        if agent_env and "ENABLE_TOOL_SEARCH" in agent_env
+        else os.environ.get("ENABLE_TOOL_SEARCH")
+    )
+    captured_exposure_config = _capture_exposure_config(
+        mcp_config, enable_tool_search=effective_enable_tool_search)
 
     # The prompt template is identical across conditions → its hash is a cohort field.
     prompt_template_hash = _sha256_canonical(_PROMPT)
@@ -789,6 +1265,8 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
         max_queries=max_queries,
         mcp_tool_surface=captured_mcp_surface,
         corpus_certification=corpus_certification,
+        exposure_config=captured_exposure_config,
+        mcp_initialize_identity=captured_mcp_initialize_identity,
     )
     source_identity_json = json.dumps(source_identity, sort_keys=True, separators=(",", ":"))
     # Pin a DETERMINISTIC eval_set_id (default is random per-process): without it,
@@ -820,6 +1298,7 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
                 prompt_template_hash=prompt_template_hash, corpus_dataset=corpus_dataset,
                 corpus_signature=corpus_signature,
                 source_identity_json=source_identity_json,
+                agent_env_json=json.dumps(agent_env or {}, sort_keys=True, separators=(",", ":")),
             )
         ]
         # log_format="json": the .eval (zip) recorder breaks on Windows fsspec paths

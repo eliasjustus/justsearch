@@ -189,6 +189,10 @@ const threadResponseEnvelopeSchema = z
 
 const EMPTY: ThreadResponse = { events: [], lifecycles: [] };
 
+/** Why {@link fetchUnifiedThread} fell back to {@link EMPTY} — passed to the optional `onFailure`
+ *  signal (tempdoc 727 F-8) so a caller CAN surface the failure without the return contract changing. */
+export type ThreadFetchFailureReason = 'http-error' | 'malformed-envelope' | 'network';
+
 /**
  * Fetch a conversation's canonical thread (events + the agent runs' typed lifecycles). Returns empty
  * on any failure (offline, non-200, malformed envelope) so the caller falls back to its live state.
@@ -197,19 +201,33 @@ const EMPTY: ThreadResponse = { events: [], lifecycles: [] };
  * (or a known kind that fails its own strict schema) is dropped with a single console.warn naming the
  * count; an event with an unrecognized `kind` string degrades to a generic `UNKNOWN` item rather than
  * blanking the whole thread (see {@link parseThreadEvent}).
+ *
+ * <p>Tempdoc 727 F-8 — the EMPTY-on-failure contract is deliberate (the projector must never become an
+ * authority; a failed refresh must not wipe the caller's live render — pinned by
+ * `unifiedThreadClient.test.ts`'s "returns EMPTY on a non-ok response" case). What was missing was any
+ * signal that the fallback happened at all, so a caller silently rendered an empty thread with no hint
+ * anything was wrong. `onFailure` is an OPTIONAL out-of-band channel, alongside the unchanged EMPTY
+ * return — existing callers that omit it see no behavior change.
  */
 export async function fetchUnifiedThread(
   apiBase: string,
   conversationId: string,
   signal?: AbortSignal,
+  onFailure?: (reason: ThreadFetchFailureReason, detail?: string) => void,
 ): Promise<ThreadResponse> {
   try {
     const res = await fetch(`${apiBase}/api/thread/${encodeURIComponent(conversationId)}`, {
       signal,
     });
-    if (!res.ok) return EMPTY;
+    if (!res.ok) {
+      onFailure?.('http-error', String(res.status));
+      return EMPTY;
+    }
     const parsed = threadResponseEnvelopeSchema.safeParse(await res.json());
-    if (!parsed.success) return EMPTY;
+    if (!parsed.success) {
+      onFailure?.('malformed-envelope');
+      return EMPTY;
+    }
 
     const events: ThreadEvent[] = [];
     let droppedCount = 0;
@@ -231,7 +249,12 @@ export async function fetchUnifiedThread(
       events,
       lifecycles: (parsed.data.lifecycles ?? []) as ThreadLifecycle[],
     };
-  } catch {
+  } catch (e) {
+    // AbortError is a deliberate cancellation (Slice 516 FIX-T1: a new loadConversation aborts the
+    // in-flight fetch), not a failure worth surfacing to the user.
+    if (!(e instanceof DOMException && e.name === 'AbortError')) {
+      onFailure?.('network', e instanceof Error ? e.message : String(e));
+    }
     return EMPTY;
   }
 }

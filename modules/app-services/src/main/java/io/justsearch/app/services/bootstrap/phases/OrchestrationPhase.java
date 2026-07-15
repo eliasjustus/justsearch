@@ -70,7 +70,9 @@ public final class OrchestrationPhase {
       io.justsearch.app.api.BrainRuntimeService brainRuntime,
       io.justsearch.app.api.RuntimeVariantService runtimeVariant,
       io.justsearch.app.api.PackImportService packImport,
-      io.justsearch.app.api.BrainInstallService brainInstall) {}
+      io.justsearch.app.api.BrainInstallService brainInstall,
+      // Tempdoc 737 Phase 1 — closed alongside the inference manager on teardown (nullable).
+      io.justsearch.app.services.runtimestate.RuntimeReconciler runtimeReconciler) {}
 
   /** Bundled outputs. */
   public record Output(
@@ -211,6 +213,7 @@ public final class OrchestrationPhase {
             in.infraHealthGrpcServer(),
             in.inferenceManager(),
             in.gpuBroadcastListener(),
+            in.runtimeReconciler(),
             initialServices.worker().indexing(),
             initialServices.worker().documents(),
             in.substrateOut().resourceOut() == null

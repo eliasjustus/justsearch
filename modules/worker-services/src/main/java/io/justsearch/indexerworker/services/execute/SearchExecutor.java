@@ -160,8 +160,10 @@ public final class SearchExecutor {
         // Tempdoc 517 narrowed SensitiveQuery to the Head HTTP boundary, so the raw queryString
         // is unwrapped inside Worker. Drop to TRACE so the failure-diagnosis affordance survives
         // for ad-hoc debugging while staying out of any reasonable production log level. The
-        // diagnostics-ZIP path (DiagnosticsServiceImpl.addTelemetryFiles) doesn't bundle slf4j
-        // logs, so this leak is bounded to local file-system readers with TRACE enabled.
+        // diagnostics export DOES bundle this Logback-written log file — DiagnosticsServiceImpl's
+        // addDirectoryRedacted(zos, logsDir, "logs") zips worker.log with path-only redaction, no
+        // query/content redaction — so staying at TRACE (below the Worker's default INFO level) is
+        // what keeps this text out of exported diagnostics, not any exemption of logs from the ZIP.
         // Observations.md item #205 follow-up: typed in-process SafeQueryString wrapper deferred.
         log.trace("Failed query text: {}", queryString);
         luceneQuery = null;

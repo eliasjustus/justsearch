@@ -3,6 +3,8 @@ package io.justsearch.app.services.vdu;
 
 import io.justsearch.app.api.ModeTransitionException;
 import io.justsearch.app.api.OnlineAiLifecycleControl;
+import io.justsearch.app.services.runtimestate.RuntimeReconciler;
+import io.justsearch.app.services.runtimestate.RuntimeStatus;
 import io.justsearch.app.services.worker.RemoteKnowledgeClient;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
@@ -17,12 +19,26 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>Architecture:</b> Queries Worker (via gRPC) for pending work counts.
  * Does not access Lucene directly - Worker owns the index.
+ *
+ * <p><b>Tempdoc 737 (task 3):</b> this coordinator no longer drives inference modes directly.
+ * The whole run is bracketed by {@link RuntimeReconciler#beginProcedure}/{@link
+ * RuntimeReconciler#endProcedure}, and each engine-state need (Phase A "engine up", Phase B "park
+ * to indexing") is a procedure-scoped request through {@link
+ * RuntimeReconciler#procedureRequireEngine(boolean)}. When the procedure ends, the reconciler
+ * returns the engine to spec — so the §3d never-switch-back bug is inexpressible: after Phase B
+ * parks the engine, spec (not this class) decides whether it comes back online. The
+ * {@link OnlineAiLifecycleControl} handle is retained for <b>read-only realized-state checks</b>
+ * ({@code isOnline()}), never for transitions (R4).
  */
 public class OfflineCoordinator {
     private static final Logger LOG = LoggerFactory.getLogger(OfflineCoordinator.class);
 
-    // Tempdoc 518 Appendix F W4.2 — role-typed interface; off the concrete ILM.
+    // Tempdoc 518 Appendix F W4.2 — role-typed interface; off the concrete ILM. Tempdoc 737 R4:
+    // used ONLY for realized-state reads (isOnline()), never to drive transitions.
     private final OnlineAiLifecycleControl inferenceManager;
+    // Tempdoc 737: the single-writer authority. Procedure-scoped engine control routes here. May be
+    // null in minimal/test constructions that never exercise the engine phases.
+    private final RuntimeReconciler reconciler;
     private final VduBatchProcessor vduBatchProcessor;
     // Tempdoc 672: live supplier, not a captured value — the Worker client is null at Head
     // bootstrap (async connect) and must be re-read at use-time, never frozen at construction.
@@ -33,14 +49,23 @@ public class OfflineCoordinator {
     public OfflineCoordinator(OnlineAiLifecycleControl inferenceManager,
                               VduBatchProcessor vduBatchProcessor,
                               Supplier<RemoteKnowledgeClient> knowledgeClientSupplier) {
-        this(inferenceManager, vduBatchProcessor, knowledgeClientSupplier, new VduCapabilityState());
+        this(inferenceManager, null, vduBatchProcessor, knowledgeClientSupplier, new VduCapabilityState());
     }
 
     public OfflineCoordinator(OnlineAiLifecycleControl inferenceManager,
                               VduBatchProcessor vduBatchProcessor,
                               Supplier<RemoteKnowledgeClient> knowledgeClientSupplier,
                               VduCapabilityState vduCapabilityState) {
+        this(inferenceManager, null, vduBatchProcessor, knowledgeClientSupplier, vduCapabilityState);
+    }
+
+    public OfflineCoordinator(OnlineAiLifecycleControl inferenceManager,
+                              RuntimeReconciler reconciler,
+                              VduBatchProcessor vduBatchProcessor,
+                              Supplier<RemoteKnowledgeClient> knowledgeClientSupplier,
+                              VduCapabilityState vduCapabilityState) {
         this.inferenceManager = inferenceManager;
+        this.reconciler = reconciler;
         this.vduBatchProcessor = vduBatchProcessor;
         this.knowledgeClientSupplier = knowledgeClientSupplier;
         this.vduCapabilityState =
@@ -65,6 +90,13 @@ public class OfflineCoordinator {
             return;
         }
 
+        // Tempdoc 737 (task 3): the entire run is a reconciler procedure. Engine states held during
+        // the run are the procedure's business; endProcedure returns the engine to spec.
+        boolean procedureBegun = false;
+        if (reconciler != null) {
+            reconciler.beginProcedure(RuntimeStatus.ProcedureKind.VDU_BATCH, "offline-processing");
+            procedureBegun = true;
+        }
         try {
             RemoteKnowledgeClient knowledgeClient = knowledgeClientSupplier.get();
             if (knowledgeClient == null) {
@@ -97,7 +129,7 @@ public class OfflineCoordinator {
             // Re-query count - VDU sets embedding_status to PENDING for re-embedding
             pendingEmbeddings = knowledgeClient.countPendingEmbeddings();
             if (pendingEmbeddings > 0) {
-                LOG.info("Phase B: Switching to Indexing Mode for {} pending embeddings",
+                LOG.info("Phase B: Parking engine to Indexing Mode for {} pending embeddings",
                     pendingEmbeddings);
                 processEmbeddingPhase();
             } else {
@@ -106,23 +138,37 @@ public class OfflineCoordinator {
 
             LOG.info("Offline processing complete");
         } finally {
+            // endProcedure BEFORE clearing the processing flag: the reconciler returns the engine to
+            // spec now, so chatEnabled=true → engine returns ONLINE even after Phase B parked it;
+            // chatEnabled=false → it stays down. THIS is what kills §3d.
+            if (procedureBegun) {
+                reconciler.endProcedure(RuntimeStatus.ProcedureKind.VDU_BATCH);
+            }
             processing.set(false);
         }
     }
 
     private void processVduPhase() {
-        // Ensure LLM is loaded (Online Mode)
+        // R4: gate on REALIZED state (mode==ONLINE), never spec. inferenceManager.isOnline() reads
+        // the FSM phase, so a chat session or a prior procedure that already brought the engine up
+        // is honored and we don't restart it.
         if (!inferenceManager.isOnline()) {
+            if (reconciler == null) {
+                LOG.warn("Skipping VDU phase: no reconciler to bring the engine up");
+                vduCapabilityState.block(VduCapabilityState.REASON_AI_OFFLINE);
+                return;
+            }
             try {
-                LOG.info("Switching to Online Mode for VDU processing");
-                inferenceManager.switchToOnlineMode();
+                LOG.info("Requesting engine UP for VDU processing (procedure-scoped)");
+                reconciler.procedureRequireEngine(true);
             } catch (ModeTransitionException e) {
-                LOG.error("Failed to switch to Online Mode for VDU", e);
+                LOG.error("Failed to bring engine up for VDU", e);
                 vduCapabilityState.block(VduCapabilityState.REASON_AI_OFFLINE);
                 return;  // Skip VDU phase
             }
         }
 
+        // R4: re-read REALIZED state after the request.
         if (inferenceManager.isOnline()) {
             vduCapabilityState.clear(VduCapabilityState.REASON_AI_OFFLINE);
             int processed = vduBatchProcessor.processPendingFiles();
@@ -134,13 +180,17 @@ public class OfflineCoordinator {
     }
 
     private void processEmbeddingPhase() {
+        if (reconciler == null) {
+            LOG.warn("Skipping embedding phase: no reconciler to park the engine");
+            return;
+        }
         try {
-            inferenceManager.switchToIndexingMode();
-            // Worker will automatically process pending embeddings
-            // because isMainGpuActive() will return false
+            // Procedure-scoped park to Indexing Mode. Worker will automatically process pending
+            // embeddings because isMainGpuActive() will return false.
+            reconciler.procedureRequireEngine(false);
             LOG.info("Indexing Mode active, Worker will process embeddings");
         } catch (ModeTransitionException e) {
-            LOG.error("Failed to switch to Indexing Mode", e);
+            LOG.error("Failed to park engine to Indexing Mode", e);
         }
     }
 

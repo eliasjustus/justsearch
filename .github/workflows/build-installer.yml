@@ -156,10 +156,21 @@ jobs:
         # tooling + a running backend — machinery designed for a more mature
         # CI context. For manually dispatched alpha releases, "the installer
         # built" is signal enough; verify can run separately.
+        #
+        # -AssembleReleaseAssets: stage the full release asset set into
+        # dist/installer — installer + SHA256SUMS + the committed
+        # justsearch-mcp.mcpb — with a fail-closed MCPB consistency gate. The
+        # release-attach step below then uploads all of dist/installer/*.
+        # (Tempdoc 726.)
         env:
           ORG_GRADLE_PROJECT_includeCuda: "false"
           ORG_GRADLE_PROJECT_skipOnnxModels: "true"
-        run: ./scripts/ci/package-installer-win.ps1 -OutDir dist/installer -SkipVerify
+        run: |
+          # On a v* tag ref (a real release cut) also verify server.json version/URL match the
+          # tag; skip on non-tag dry-runs where gradle.properties may not match yet. (Tempdoc 726.)
+          $extra = @()
+          if ($env:GITHUB_REF -like 'refs/tags/v*') { $extra += '-VerifyReleaseVersion' }
+          ./scripts/ci/package-installer-win.ps1 -OutDir dist/installer -SkipVerify -AssembleReleaseAssets @extra
 
       # Diagnostic: log modules/ui/build contents + sizes so we can see what the
       # Post Cache step will save. Tempdoc 374 speed investigation: the cache
@@ -196,21 +207,22 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: windows-installer
-          path: dist/installer/*.exe
+          path: dist/installer/*
           # 7d, not 30: this artifact has no downstream consumer (the release attaches the
           # .exe from disk), so a 741 MB build only needs a short manual-download window.
           # Curbs the artifact-storage entropy that blocked an earlier build. (tempdoc 562 item 4.)
           retention-days: 7
 
-      # Manual dispatches against v* tag refs attach the installer to a GitHub Release.
+      # Manual dispatches against v* tag refs attach the release asset set
+      # (installer + SHA256SUMS + justsearch-mcp.mcpb) to a GitHub Release.
       # The release becomes the permanent download URL (closes G3 alongside G2).
       # prerelease is auto-detected from SemVer pre-release identifiers —
       # alpha / beta / rc tags are marked prerelease, bare vX.Y.Z tags are GA.
-      - name: Attach installer to GitHub Release
+      - name: Attach release asset set to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/installer/*.exe
+          files: dist/installer/*
           prerelease: ${{ contains(github.ref, '-alpha.') || contains(github.ref, '-beta.') || contains(github.ref, '-rc.') }}
           generate_release_notes: true
           fail_on_unmatched_files: true

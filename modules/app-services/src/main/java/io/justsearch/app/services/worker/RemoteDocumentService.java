@@ -10,8 +10,8 @@ import io.justsearch.ipc.RetrieveContextResponse;
 import io.justsearch.indexing.rag.ContextBudgeter;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -316,6 +316,17 @@ public final class RemoteDocumentService implements DocumentService {
           .setQuery(params.question())
           .setLimit(Math.min(limit, 20));
 
+      // Tempdoc 731 I1: a bare request (no pipeline/mode) previously hit the Worker's
+      // deprecated-mode fallback and resolved to a sparse-only+expansion+LambdaMART pipeline
+      // (SearchPlanner's `deprecated_mode_fallback` WARN, modeToDefaultPipeline default branch) —
+      // a different leg set than justsearch_search's default hybrid preset (sparse+dense RRF).
+      // That divergence forked the evidence pack's document universe from the doc-ranking surface
+      // `justsearch_search` exposes. Tempdoc 735 G5: single-sourced via
+      // SearchPipelinePresets#defaultHybridProtoConfig (the shared factory both this call site and
+      // KnowledgeSearchEngine#doSearch's default-hybrid resolution are anchored to), rather than
+      // each call site re-deriving the hybrid+denseAuto=false combination independently.
+      searchBuilder.setPipeline(SearchPipelinePresets.defaultHybridProtoConfig());
+
       // Apply filters from the RAG params
       boolean hasFilters = !params.pathPrefix().isEmpty()
           || !params.fileKind().isEmpty()
@@ -368,7 +379,10 @@ public final class RemoteDocumentService implements DocumentService {
       }
 
       var searchResponse = clientSupplier.get().search(searchBuilder.build());
-      Set<String> docIds = new HashSet<>();
+      // Tempdoc 731 I1: preserve rank order (LinkedHashSet, not HashSet) so the discovered doc
+      // universe forwarded to the downstream RetrieveContextRequest reflects the pipeline's
+      // ranking, not an arbitrary hash order.
+      Set<String> docIds = new LinkedHashSet<>();
       for (var result : searchResponse.getResultsList()) {
         String path = result.getFieldsMap().get("path");
         if (path != null && !path.isEmpty()) {

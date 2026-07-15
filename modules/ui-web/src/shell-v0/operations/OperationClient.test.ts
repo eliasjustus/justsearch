@@ -76,6 +76,10 @@ describe('OperationClient', () => {
   });
 
   // Slice 3a-2-c Phase B/G: typed-error fields surface on OperationError.
+  // Tempdoc 737 §12b: re-pinned from the retired core.switch-inference-mode onto its successor
+  // core.set-chat-enabled. This test's intent is the CLIENT's error-payload passthrough (errorCode/
+  // errorDetails/retryable → OperationError), not the op's own behaviour — the op is the vehicle, so
+  // the assertion carries the new op's {enabled} arg shape.
   it('parses typed errorCode + errorDetails + retryable from wire shape', async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -83,26 +87,26 @@ describe('OperationClient', () => {
         Promise.resolve(
           fakeResponse({
             success: false,
-            message: 'Online AI is disabled by administrator policy.',
+            message: 'Runtime authority unavailable',
             errorClass: 'HANDLER_FAILURE',
-            errorCode: 'POLICY_ONLINE_AI_DISABLED',
-            errorDetails: { mode: 'online' },
-            retryable: false,
+            errorCode: 'RUNTIME_UNAVAILABLE',
+            errorDetails: { enabled: true },
+            retryable: true,
           }),
         ),
       );
 
     const client = new OperationClient({ apiBase: 'http://localhost:33221', fetchImpl });
     try {
-      await client.invoke('core.switch-inference-mode', { args: { mode: 'online' } });
+      await client.invoke('core.set-chat-enabled', { args: { enabled: true } });
       throw new Error('expected throw');
     } catch (err) {
       expect(err).toBeInstanceOf(OperationError);
       const opErr = err as OperationError;
       expect(opErr.errorClass).toBe('HANDLER_FAILURE');
-      expect(opErr.errorCode).toBe('POLICY_ONLINE_AI_DISABLED');
-      expect(opErr.errorDetails).toEqual({ mode: 'online' });
-      expect(opErr.retryable).toBe(false);
+      expect(opErr.errorCode).toBe('RUNTIME_UNAVAILABLE');
+      expect(opErr.errorDetails).toEqual({ enabled: true });
+      expect(opErr.retryable).toBe(true);
     }
   });
 
@@ -286,6 +290,58 @@ describe('OperationClient', () => {
       pendingId: 'pa-42',
       allowAlways: true,
     });
+  });
+
+  // ── Smoke-round 2026-07-14 HIGH finding (734): a live GUI smoke pass on an OLD build found
+  // an expired-pending approval ceremony that silently no-op'd (Approve/Deny did nothing,
+  // undismissable). Verified fixed at HEAD — approveByPendingId throws on the backend's 410,
+  // and invokeWithConsent lets that throw propagate rather than swallowing it. These two tests
+  // pin that on the FE side.
+
+  it('approveByPendingId throws OperationError CAPSULE_MINT_FAILED with the status attached on a 410 (expired/unknown pending)', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(fakeResponse({ error: 'pending authorization not found or expired' }, 410));
+    const client = new OperationClient({ apiBase: 'http://localhost:33221', fetchImpl });
+
+    await expect(client.approveByPendingId('pa-expired')).rejects.toMatchObject({
+      errorClass: 'CAPSULE_MINT_FAILED',
+      httpStatus: 410,
+    });
+  });
+
+  it('invokeWithConsent: an expired pending (approve POSTs 410) propagates CAPSULE_MINT_FAILED to the caller, not swallowed', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/authorizations/approve')) {
+        return Promise.resolve(
+          fakeResponse({ error: 'pending authorization not found or expired' }, 410),
+        );
+      }
+      return Promise.resolve(
+        fakeResponse({ success: false, errorClass: 'CONFIRMATION_REQUIRED', pendingId: 'pa-expired' }, 428),
+      );
+    });
+    const client = new OperationClient({ apiBase: 'http://localhost:33221', fetchImpl });
+
+    // The user approved (consented: true) — the ceremony did its part. The propagated error
+    // must carry the SAME precise code/status a swallow-and-hang bug would have hidden.
+    await expect(
+      client.invokeWithConsent('core.bulk-reindex', { args: { x: 1 } }, { consented: true }),
+    ).rejects.toMatchObject({
+      errorClass: 'CAPSULE_MINT_FAILED',
+      httpStatus: 410,
+    });
+
+    // No re-invoke-with-capsule was attempted — proves the flow didn't fabricate/reuse a
+    // capsule and silently proceed as if the approval had succeeded.
+    const reinvokeWithCapsule = fetchImpl.mock.calls.some((c) => {
+      const init = c[1] as RequestInit | undefined;
+      if (!init?.body) return false;
+      const body = JSON.parse(init.body as string);
+      return typeof body.confirmationToken === 'string';
+    });
+    expect(reinvokeWithCapsule).toBe(false);
   });
 
   it('invokeWithConsent (invoke-first): a 428 routes the prompt to requestConsent; approve → re-invoke', async () => {

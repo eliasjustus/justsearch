@@ -797,6 +797,19 @@ export function registerShellActions(deps: ShellActionDeps): void {
   navigateAction('core.action.shell.go-to-chat', 'Go to Chat', 'core.unified-chat-surface');
   navigateAction('core.action.shell.go-to-browse', 'Go to Browse', 'core.browse-surface');
 
+  // 727 F-1 — `core.start-ai-install` / `core.repair-ai-install` are deliberately excluded from
+  // `canProjectOperationAsZeroArgAction` below: both require `acceptTerms: true`
+  // (AiInstallService#startInstall throws TERMS_REQUIRED otherwise), and the zero-arg operation
+  // projection never supplies args, so a bare palette invoke of either op could only ever fail.
+  // That exclusion is correct (see the "does not project model-terms install operations" test),
+  // but it also silently dropped both from being *listed* in the palette at all — leaving only
+  // their zero-arg sibling `core.cancel-ai-install` (no terms gate) reachable, which is the F-1
+  // symptom. Fix: give them navigate-only palette entries (same "distinct label, shared target"
+  // pattern as go-to-search/go-to-chat above) that route to the Brain surface, where
+  // BrainSurface's `hostConfirm` collects the actual terms acceptance before invoking.
+  navigateAction('core.action.shell.go-to-brain-install', 'Start AI Install', 'core.brain-surface');
+  navigateAction('core.action.shell.go-to-brain-repair', 'Repair AI Install', 'core.brain-surface');
+
   shellAction(
     'core.action.shell.toggle-inspector',
     'Toggle Inspector',

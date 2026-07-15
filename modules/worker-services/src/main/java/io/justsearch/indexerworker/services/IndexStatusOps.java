@@ -902,19 +902,37 @@ final class IndexStatusOps {
     return fp == null ? "" : fp;
   }
 
+  /**
+   * Returns the worker's embedding compatibility state, or {@code "INITIALIZING"} during the
+   * boot window before {@code embeddingCompatController} is wired.
+   *
+   * <p>{@code INITIALIZING} is a deliberate sentinel, not an {@link
+   * io.justsearch.indexerworker.embed.EmbeddingCompatibilityController.State} name — it means
+   * "worker booting, controller not wired yet," distinct from the controller's own real states
+   * (e.g. {@code UNAVAILABLE}, which means the controller ran and found no model). Previously this
+   * returned {@code ""} for the null-controller case, which the 0.2.0 sandbox round observed and
+   * misread as a broken/unknown state; the sentinel makes the boot window legible. Any consumer
+   * that maps this state string by value (e.g. {@code WorkerSnapshotTap}) must carry a matching
+   * {@code INITIALIZING} mapping so the boot window doesn't hit an unmapped-WARN branch.
+   */
   private String safeEmbeddingCompatState() {
     var controller = embeddingCompatController;
     if (controller == null) {
-      return "";
+      return "INITIALIZING";
     }
     var state = controller.state();
     return state == null ? "" : state.name();
   }
 
+  /**
+   * Returns the worker's embedding compatibility reason code, or {@code "CONTROLLER_NOT_WIRED"}
+   * during the boot window before {@code embeddingCompatController} is wired — the reason-code
+   * sibling of {@link #safeEmbeddingCompatState()}'s {@code INITIALIZING} sentinel.
+   */
   private String safeEmbeddingCompatReason() {
     var controller = embeddingCompatController;
     if (controller == null) {
-      return "";
+      return "CONTROLLER_NOT_WIRED";
     }
     String reason = controller.reasonCode();
     return reason == null ? "" : reason;

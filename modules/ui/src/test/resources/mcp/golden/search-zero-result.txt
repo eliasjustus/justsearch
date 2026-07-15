@@ -1,0 +1,3 @@
+Found 0 results (took 3ms).
+Hints:
+- No results found. Try broader terms, or use justsearch_status to check what's indexed.

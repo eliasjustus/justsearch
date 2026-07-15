@@ -38,6 +38,9 @@ import io.justsearch.app.services.lifecycle.InferenceCapability;
 import io.justsearch.app.services.packimport.PackImportServiceImpl;
 import io.justsearch.app.services.policy.EnterprisePolicyServiceImpl;
 import io.justsearch.app.services.policy.PolicyServiceImpl;
+import io.justsearch.app.services.runtimestate.RuntimeGpuLease;
+import io.justsearch.app.services.runtimestate.RuntimeReconciler;
+import io.justsearch.app.services.runtimestate.RuntimeSpecStore;
 import io.justsearch.app.services.runtimevariant.RuntimeVariantServiceImpl;
 import io.justsearch.app.services.settings.SettingsServiceImpl;
 import io.justsearch.app.services.settings.UiSettingsStore;
@@ -93,11 +96,26 @@ public final class ServicePhase {
       // rationale as knowledgeClientSupplier above.
       Supplier<KnowledgeServerBootstrap> knowledgeServerBootstrapSupplier) {}
 
+  /**
+   * Inference-manager teardown handles (tempdoc 737 Phase 1). Bundles the GPU-broadcast listener
+   * and the single-writer runtime reconciler — both closed together with the manager on teardown —
+   * into one Output component, keeping the composition-root god-record ceiling (CompositionRoot
+   * GuardrailsTest 4a) flat rather than growing the Output record.
+   */
+  public record InferenceRuntimeHandles(
+      io.justsearch.app.api.ModeChangeListener gpuBroadcastListener,
+      RuntimeReconciler runtimeReconciler,
+      // Tempdoc 737 §12b: the spec writer, exposed so the core.set-chat-enabled /
+      // core.switch-inference-mode(alias) operation handlers can record the chat-enabled intent
+      // through the one authority (write via this store, then reconciler.specChanged()). Nullable
+      // when inference is not configured.
+      RuntimeSpecStore runtimeSpecStore) {}
+
   /** Bundled output — all services every downstream phase consumes. */
   public record Output(
       InferenceLifecycleManager inferenceManager,
       OnlineAiService onlineAiService,
-      io.justsearch.app.api.ModeChangeListener gpuBroadcastListener,
+      InferenceRuntimeHandles inferenceRuntimeHandles,
       OfflineCoordinator offlineCoordinator,
       KnowledgeHttpApiAdapter agentSearchAdapter,
       FileOperationLog fileOperationLog,
@@ -154,6 +172,11 @@ public final class ServicePhase {
     OnlineAiService onlineAiService;
     io.justsearch.app.api.ModeChangeListener gpuListener = null;
     OfflineCoordinator offlineCoordinator = null;
+    RuntimeReconciler runtimeReconciler = null;
+    RuntimeSpecStore runtimeSpecStore = null;
+    // §31 Phase 1.A: EnterprisePolicyService impl in app-services. Tempdoc 737: constructed up-front
+    // (moved from below) so the runtime reconciler can read the online-AI policy ceiling.
+    EnterprisePolicyService enterprisePolicy = new EnterprisePolicyServiceImpl();
     if (in.inferenceManager() != null) {
       onlineAiService = new OnlineAiServiceImpl(in.inferenceManager());
       gpuListener = InferenceWiring.wireGpuStatusBroadcast(in.inferenceManager(), in.knowledgeServer());
@@ -171,16 +194,44 @@ public final class ServicePhase {
             return io.justsearch.app.services.vdu.VduPacingPolicy.shouldInterrupt(
                 msSinceActivity, energyReduced);
           };
+      // Tempdoc 737 Phase 1/2: the single-writer runtime authority. Constructed BEFORE the offline
+      // coordinator (which now routes procedure-scoped engine control through it) and pre-start so
+      // its mode listener attaches (mirror-initial-then-forward) before the first boot convergence.
+      // The env autostart flag seeds the persisted spec (item 1); the reconciler then converges the
+      // engine toward spec — replacing the former direct InferenceWiring.tryStartOnlineMode switch.
+      runtimeSpecStore = new RuntimeSpecStore(in.settingsStore());
+      RuntimeGpuLease runtimeGpuLease = new RuntimeGpuLease();
+      InferenceLifecycleManager manager = in.inferenceManager();
+      runtimeReconciler =
+          new RuntimeReconciler(
+              manager, // OnlineAiLifecycleControl (ILM implements it)
+              manager::getCurrentMode,
+              () -> manager.view().usingExternalLlamaServer(),
+              manager::detachExternalServer, // DetachAction — throws ModeTransitionException
+              enterprisePolicy,
+              runtimeSpecStore,
+              runtimeGpuLease,
+              // Tempdoc 737 (task 5): reason-bearing switches — reconciler/procedure transitions
+              // carry AUTO_START/VDU_* reasons into TransitionRunner.run instead of USER_SWITCH.
+              // Wired here at the composition root because the app-api OnlineAiLifecycleControl
+              // interface cannot reference the app-inference TransitionReason type.
+              manager::switchToOnlineMode,
+              manager::switchToIndexingMode);
+
       offlineCoordinator =
           OfflineCoordinatorBuilder.build(
               in.inferenceManager(),
+              runtimeReconciler,
               onlineAiService,
               in.knowledgeClientSupplier(),
               in.telemetry(),
               shouldInterruptVduBatch);
       InferenceCapabilityWiring.attachInferenceModeListener(
-          in.inferenceManager(), in.inferenceCapability());
-      InferenceWiring.tryStartOnlineMode(in.inferenceManager());
+          in.inferenceManager(), in.inferenceCapability(), runtimeSpecStore, runtimeReconciler);
+
+      runtimeReconciler.start();
+      InferenceWiring.seedAutostartSpec(runtimeSpecStore);
+      runtimeReconciler.requestBootConvergence();
     } else {
       onlineAiService = OnlineAiService.unavailable();
     }
@@ -204,13 +255,16 @@ public final class ServicePhase {
     // §31 Step 1.1: ExcludesService constructed via supplier-aware IndexingService.
     ExcludesService excludes = new ExcludesServiceImpl(in.indexingServiceSupplier());
 
-    // §31 Phase 1.A: EnterprisePolicyService impl in app-services — constructible here.
-    EnterprisePolicyService enterprisePolicy = new EnterprisePolicyServiceImpl();
-
     // §31 Phase 1.B-D: helper impls in app-services.
     AiInstallService aiInstallHelper =
         new AiInstallService(
-            onlineAiService, in.settingsStore(), in.knowledgeServer(), enterprisePolicy);
+            onlineAiService,
+            in.settingsStore(),
+            in.knowledgeServer(),
+            enterprisePolicy,
+            // Tempdoc 737 fix pack (fix 3): the post-install smoke test brackets its engine use in an
+            // INSTALL_SMOKE_TEST procedure via this reconciler (null in the no-inference branch).
+            runtimeReconciler);
     PackAllowlistService packAllowlistService = new PackAllowlistService();
     AiPackImportService aiPackImportHelper =
         new AiPackImportService(
@@ -233,7 +287,12 @@ public final class ServicePhase {
             gpuCapabilitiesService,
             enterprisePolicy,
             workerFeatureCache,
-            in.inferenceCapability());
+            in.inferenceCapability(),
+            aiInstallHelper,
+            // Tempdoc 737 fix pack (fix 2): brackets the activation engine-online + intent-write
+            // window in an ACTIVATION procedure and nudges specChanged (null in the no-inference
+            // branch).
+            runtimeReconciler);
 
     // §31 Phase 3: 7 controller-services constructed here.
     // SettingsService: callable wraps the late-bound resetFn (set by LocalApiServer after
@@ -268,16 +327,25 @@ public final class ServicePhase {
     BrainInstallService brainInstall = new BrainInstallServiceImpl(aiInstallHelper);
     BrainRuntimeService brainRuntime =
         new BrainRuntimeServiceImpl(
-            onlineAiService, in.settingsStore(), enterprisePolicy, offlineProcessingTrigger);
-    RuntimeVariantService runtimeVariant =
-        new RuntimeVariantServiceImpl(runtimeActivationHelper, enterprisePolicy);
+            onlineAiService,
+            in.settingsStore(),
+            enterprisePolicy,
+            offlineProcessingTrigger,
+            // Tempdoc 737 fix pack (fix 4): switchInferenceMode records the chat-enabled intent
+            // through the one authority (spec write + reconciler nudge); null in the no-inference
+            // branch keeps the graceful-degradation IllegalStateException path.
+            runtimeSpecStore,
+            runtimeReconciler);
+    // Tempdoc 737 (task 3): RuntimeVariantServiceImpl no longer takes its own
+    // EnterprisePolicyService — policy enforcement is now solely on runtimeActivationHelper.
+    RuntimeVariantService runtimeVariant = new RuntimeVariantServiceImpl(runtimeActivationHelper);
     PackImportService packImport = new PackImportServiceImpl(aiPackImportHelper);
     PolicyService policy = new PolicyServiceImpl(enterprisePolicy);
 
     return new Output(
         in.inferenceManager(),
         onlineAiService,
-        gpuListener,
+        new InferenceRuntimeHandles(gpuListener, runtimeReconciler, runtimeSpecStore),
         offlineCoordinator,
         agentTools.agentSearchAdapter(),
         agentTools.fileOperationLog(),

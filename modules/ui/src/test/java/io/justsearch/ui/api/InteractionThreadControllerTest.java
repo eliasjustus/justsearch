@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
@@ -141,6 +142,94 @@ final class InteractionThreadControllerTest {
     // The producer-owned calibration is projected too (rendered FROM the record, not re-derived).
     JsonNode cal = ev.get("attributes").get("calibration");
     assertEquals(0.91, cal.get("bestChunkScore").asDouble());
+  }
+
+  /** A test {@code DataKeyState} with a fixed key whose lock state the test toggles (mirrors
+   * FileConversationStoreTest's FakeKey). */
+  private static final class FakeDataKeyState implements io.justsearch.agent.api.encryption.DataKeyState {
+    private final byte[] dek = new byte[32];
+    private boolean locked;
+
+    @Override
+    public boolean enabled() {
+      return true;
+    }
+
+    @Override
+    public boolean locked() {
+      return locked;
+    }
+
+    @Override
+    public byte[] dek() {
+      if (locked) throw new io.justsearch.agent.api.encryption.KeyLockedException();
+      return dek;
+    }
+  }
+
+  @Test
+  @DisplayName(
+      "629 LAYER regression (tempdoc 727) — GET /api/thread/{id} over a REAL locked"
+          + " FileConversationStore returns 200 with the action-plane events intact, NOT a 500 for"
+          + " the whole thread (pre-fix: loadHistory's KeyLockedException hit handleGet's"
+          + " catch-all Exception handler and 500'd everything, including the unencrypted agent"
+          + " activity)")
+  void lockedConversationStoreDoesNotFiveHundredTheThread(@TempDir java.nio.file.Path tmp) {
+    var key = new FakeDataKeyState();
+    var cipher = new io.justsearch.agent.api.encryption.StoreCipher(key);
+    var conversationStore =
+        new io.justsearch.app.services.conversation.FileConversationStore(tmp, cipher);
+    conversationStore.appendMessage(
+        "conv-locked", "core.free-chat", Map.of("role", "user", "content", "q1"));
+    key.locked = true;
+
+    AgentService agentService = mock(AgentService.class);
+    when(agentService.threadEvents("conv-locked"))
+        .thenReturn(
+            List.of(
+                new InteractionEvent(
+                    "c1:completed",
+                    "conv-locked",
+                    Instant.parse("2026-01-01T00:00:02Z"),
+                    InteractionEventKind.TOOL_ACTIVITY,
+                    "agent",
+                    "",
+                    Map.of("callId", "c1", "toolName", "core_search_index", "status", "completed"))));
+
+    Context ctx = mock(Context.class);
+    when(ctx.pathParam("id")).thenReturn("conv-locked");
+    when(ctx.contentType(anyString())).thenReturn(ctx);
+    AtomicInteger status = new AtomicInteger(200);
+    when(ctx.status(anyInt()))
+        .thenAnswer(
+            inv -> {
+              status.set(inv.getArgument(0, Integer.class));
+              return ctx;
+            });
+    AtomicReference<byte[]> captured = new AtomicReference<>();
+    doAnswer(
+            inv -> {
+              captured.set(inv.getArgument(0, byte[].class));
+              return ctx;
+            })
+        .when(ctx)
+        .result(any(byte[].class));
+
+    new InteractionThreadController(conversationStore, agentService).handleGet(ctx);
+
+    assertEquals(200, status.get(), "a locked conversation store must not 500 the whole unified thread");
+    JsonNode body;
+    try {
+      body = MAPPER.readTree(captured.get());
+    } catch (Exception e) {
+      throw new IllegalStateException("could not parse thread response", e);
+    }
+    JsonNode events = body.get("events");
+    // The locked chat message is filtered by chatTurn (role "locked" isn't user/assistant, same as
+    // the existing system-message filter) but the action-plane agent-run event — which is NOT
+    // encrypted — still renders, proving the thread degrades instead of going blank.
+    assertEquals(1, events.size());
+    assertEquals("TOOL_ACTIVITY", events.get(0).get("kind").asString());
   }
 
   /** Invokes {@code POST /api/thread/{id}/events}, capturing the response status + JSON body. */

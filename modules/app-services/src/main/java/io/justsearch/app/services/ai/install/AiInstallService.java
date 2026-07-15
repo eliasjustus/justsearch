@@ -7,6 +7,8 @@ import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.InstallPlanPreview;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
+import io.justsearch.app.services.runtimestate.RuntimeReconciler;
+import io.justsearch.app.services.runtimestate.RuntimeStatus;
 import io.justsearch.configuration.PlatformPaths;
 import io.justsearch.configuration.SystemPropertyUtils;
 import io.justsearch.configuration.model.CapabilityTier;
@@ -73,6 +75,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   // Install AI invocation.
   private volatile KnowledgeServerBootstrap knowledgeServer;
   private final EnterprisePolicyService policyService;
+  // Tempdoc 737 fix pack (fix 3): the single-writer runtime authority. When present, the post-
+  // install smoke test brackets its engine use in an INSTALL_SMOKE_TEST procedure and requests the
+  // engine through the reconciler instead of a raw switchToOnlineMode() — so the reconciler does not
+  // fight the smoke test's engine-up (spec is still false during a fresh install: install ≠ enable).
+  // Nullable; the legacy raw path is retained for test / non-configured constructions.
+  private final RuntimeReconciler reconciler;
   // Tempdoc 374 alpha.27: VramDetector dependency removed; HardwareProfile build
   // now uses GpuCapabilitiesService (NVML-first) directly.
 
@@ -108,10 +116,22 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       KnowledgeServerBootstrap knowledgeServer,
       EnterprisePolicyService policyService,
       Path aiHomeDir) {
+    this(onlineAi, settingsStore, knowledgeServer, policyService, aiHomeDir, null);
+  }
+
+  /** Tempdoc 737 fix pack (fix 3): canonical constructor threading the nullable reconciler. */
+  public AiInstallService(
+      OnlineAiService onlineAi,
+      UiSettingsStore settingsStore,
+      KnowledgeServerBootstrap knowledgeServer,
+      EnterprisePolicyService policyService,
+      Path aiHomeDir,
+      RuntimeReconciler reconciler) {
     this.onlineAi = onlineAi;
     this.settingsStore = settingsStore;
     this.knowledgeServer = knowledgeServer;
     this.policyService = policyService;
+    this.reconciler = reconciler;
     this.homeDir = aiHomeDir;
     // Honor JUSTSEARCH_MODELS_DIR (env or sysprop) so Install AI checks the
     // operator-supplied dir for already-present models. When all required
@@ -139,7 +159,20 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       UiSettingsStore settingsStore,
       KnowledgeServerBootstrap knowledgeServer,
       EnterprisePolicyService policyService) {
-    this(onlineAi, settingsStore, knowledgeServer, policyService, resolveHomeDir());
+    this(onlineAi, settingsStore, knowledgeServer, policyService, resolveHomeDir(), null);
+  }
+
+  /**
+   * Tempdoc 737 fix pack (fix 3): production constructor resolving AI Home and threading the nullable
+   * {@link RuntimeReconciler} used to bracket the post-install smoke test.
+   */
+  public AiInstallService(
+      OnlineAiService onlineAi,
+      UiSettingsStore settingsStore,
+      KnowledgeServerBootstrap knowledgeServer,
+      EnterprisePolicyService policyService,
+      RuntimeReconciler reconciler) {
+    this(onlineAi, settingsStore, knowledgeServer, policyService, resolveHomeDir(), reconciler);
   }
 
   /**
@@ -483,17 +516,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       // Verify
       updatePackageState(dl.packageId(), "verifying");
       try {
-        if (dl.sizeBytes() > 0) {
-          long size = Files.size(partialFile);
-          if (size != dl.sizeBytes()) {
-            throw new IllegalStateException(
-                "Size mismatch: expected " + dl.sizeBytes() + ", got " + size);
-          }
-        }
-        String got = DownloadExecutor.sha256(partialFile);
-        if (!got.equalsIgnoreCase(dl.sha256())) {
-          throw new IllegalStateException("SHA-256 mismatch");
-        }
+        DownloadExecutor.verify(partialFile, dl.sizeBytes(), dl.sha256());
       } catch (Exception e) {
         failPackage(dl.packageId(), "Verification failed: " + e.getMessage());
         continue;
@@ -573,8 +596,26 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       }
     }
 
+    applyCompletionState();
+  }
+
+  /**
+   * Terminal honesty decision, extracted so a regression test can pin the INS-005 property (a
+   * multi-package run where some assets fail must still report {@code state == "completed"} with an
+   * accurate count, never {@code failed}) without staging real downloads — mirroring why {@link
+   * #applyInstalledFromPlan} was made package-private. Reads the already-populated {@code
+   * status.packages}: a per-package {@code failed} keeps {@code installedFully} false but the run
+   * completed; {@code skipped} (hardware/policy) is distinguished from {@code failed}.
+   */
+  void applyCompletionState() {
+    long failedCount = countPackagesByState("failed");
     long skippedCount = countPackagesByState("skipped");
-    boolean fullyInstalled = failedCount == 0 && skippedCount == 0;
+    long totalCount = status.packages.size();
+    // installedFully is true only when every package actually reached "installed" — computed from
+    // the positive state rather than "no failed && no skipped", so a package left in a non-terminal
+    // state (pending/downloading/verifying, e.g. a loop that aborted early) can never read as a
+    // clean install. The download loop terminalizes every package today, so this is defense in depth.
+    boolean fullyInstalled = countPackagesByState("installed") == totalCount;
 
     if (failedCount > 0) {
       long installed = totalCount - failedCount - skippedCount;
@@ -963,10 +1004,32 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     }
   }
 
+  /**
+   * Post-install smoke test: bring the engine up, ask one question, confirm a non-empty reply.
+   *
+   * <p>Tempdoc 737 fix pack (fix 3): when a {@link RuntimeReconciler} is wired, the engine use is a
+   * reconciler procedure ({@code INSTALL_SMOKE_TEST}) and the engine is requested via {@link
+   * RuntimeReconciler#procedureRequireEngine(boolean)} rather than a raw {@code switchToOnlineMode()}.
+   * This stops the reconciler from converging the freshly-started engine straight back DOWN while
+   * the procedure is answering (spec is {@code chatEnabled=false} during a fresh install — the user
+   * has not enabled chat yet). When the procedure ends, the reconciler returns the engine to spec:
+   * with chat still disabled the engine converges DOWN, which is correct — <b>install is not
+   * enable</b>. When no reconciler is wired (test / non-configured constructions) the legacy raw
+   * {@code switchToOnlineMode()} path is kept.
+   */
   private boolean smokeTestBestEffort() {
     OnlineAiService onlineAi = this.onlineAi;
+    RuntimeReconciler reconciler = this.reconciler;
+    boolean procedureBegun = false;
     try {
-      onlineAi.switchToOnlineMode();
+      if (reconciler != null) {
+        reconciler.beginProcedure(
+            RuntimeStatus.ProcedureKind.INSTALL_SMOKE_TEST, "post-install-smoke-test");
+        procedureBegun = true;
+        reconciler.procedureRequireEngine(true);
+      } else {
+        onlineAi.switchToOnlineMode(); // LEGACY-FALLBACK: no reconciler wired (test/non-configured)
+      }
       String result = onlineAi.askQuestion("Reply with exactly OK.", "OK").get(60, TimeUnit.SECONDS);
       if (result == null || result.isBlank()) {
         fail("SMOKE_TEST_FAILED", "Smoke test failed: empty response");
@@ -976,6 +1039,10 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     } catch (Exception e) {
       fail("SMOKE_TEST_FAILED", "Smoke test failed: " + e.getMessage());
       return false;
+    } finally {
+      if (procedureBegun) {
+        reconciler.endProcedure(RuntimeStatus.ProcedureKind.INSTALL_SMOKE_TEST);
+      }
     }
   }
 
@@ -1175,9 +1242,15 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
         }
         if (Files.exists(resolved)) continue; // idempotent re-extract
         Files.createDirectories(resolved.getParent());
+        // Extract to a sibling .partial then atomically rename, so a crash mid-copy never leaves a
+        // half-written file at the final path (which the existence-skip above would then trust
+        // forever). Mirrors the download path's partial-then-moveAtomicBestEffort discipline.
+        Path partial = resolved.resolveSibling(resolved.getFileName() + ".partial");
+        Files.deleteIfExists(partial);
         try (var in = zip.getInputStream(entry)) {
-          Files.copy(in, resolved);
+          Files.copy(in, partial);
         }
+        DownloadExecutor.moveAtomicBestEffort(partial, resolved);
         extracted++;
       }
     }

@@ -1,0 +1,15 @@
+Evidence pack: 2 passages from 2 documents (retrieval mode: FULLTEXT_FALLBACK). No synthesized answer is included. Context was truncated to fit limits.
+
+[From: doc-a.txt]
+content-a
+
+---
+
+[From: doc-b.txt]
+content-b
+
+--- Quality ---
+Sources found: 0, coverage 0.00, mode FULLTEXT_FALLBACK
+Note: context was truncated to fit token budget.
+
+Hint: No results. Try different terms or check justsearch_status.

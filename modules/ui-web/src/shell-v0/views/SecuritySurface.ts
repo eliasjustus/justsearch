@@ -16,7 +16,7 @@ import { JfElement } from '../primitives/JfElement.js';
 import { surfaceScrollLayoutStyles } from '../primitives/surfaceLayout.js';
 import { icon } from '../components/Icon.js';
 import { readAutoLockMinutes, writeAutoLockMinutes } from '../utils/autoLock.js';
-import { subscribeAiState, type StatusSnapshot } from '../state/aiStateStore.js';
+import { subscribeAiState, refreshStatusNow, type StatusSnapshot } from '../state/aiStateStore.js';
 import type { PluginHostApi } from '../plugin-api/plugin-types.js';
 import { renderAtRestCard, atRestCardStyles } from './security/atRestCard.js';
 import '../components/Button.js';
@@ -245,6 +245,11 @@ export class SecuritySurface extends JfElement {
         return;
       }
       this.encState = data.state ?? 'unlocked';
+      // Tempdoc 727 F-8: the DATA PROTECTION row (shared `renderAtRestCard`) derives its
+      // "Conversations: … unlocked/locked" text from the aiStateStore's POLLED /api/status
+      // snapshot, not this response — without this, it disagreed with this panel until the next
+      // scheduled poll (up to statusPoll's INTERVAL_MS) caught up.
+      void refreshStatusNow();
     } finally {
       this.encBusy = false;
     }
@@ -256,6 +261,9 @@ export class SecuritySurface extends JfElement {
       const res = await this.encPost('lock', {});
       if (res.ok) {
         this.encState = ((await res.json()) as { state?: string }).state ?? 'locked';
+        // Tempdoc 727 F-8: same state-source refresh as unlockEncryption — the symmetric
+        // transition has the identical staleness mechanism.
+        void refreshStatusNow();
       }
     } finally {
       this.encBusy = false;
@@ -374,7 +382,8 @@ export class SecuritySurface extends JfElement {
     } else if (this.encState === 'not_configured') {
       body = html`
         <p class="help" style="margin-top:0">
-          Encrypt your chat history with a passphrase so it can't be read without unlocking.
+          Encrypt new chat messages with a passphrase so they can't be read without unlocking. This only
+          applies going forward — messages already saved stay unencrypted.
           <strong>If you forget the passphrase, your chat history is lost for good</strong> — your
           search index is unaffected (it rebuilds from your files). You'll save a recovery key next.
         </p>
@@ -391,7 +400,7 @@ export class SecuritySurface extends JfElement {
     } else if (this.encState === 'locked') {
       body = html`
         <p class="help" style="margin-top:0">
-          Your chat history is <strong>locked</strong>. Enter your passphrase to unlock it.
+          Your new chat messages are <strong>locked</strong>. Enter your passphrase to unlock them.
         </p>
         <div style=${row}>
           <input id="enc-pass" type="password" placeholder="Passphrase" style=${inputStyle} />
@@ -406,7 +415,7 @@ export class SecuritySurface extends JfElement {
     } else if (this.encState === 'unlocked') {
       body = html`
         <p class="help" style="margin-top:0">
-          Your chat history is <strong>encrypted and unlocked</strong>.
+          Your new chat messages are <strong>encrypted and unlocked</strong>.
         </p>
         ${this.encRecoveryUnsaved
           ? html`<div

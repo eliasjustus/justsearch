@@ -521,6 +521,36 @@ Two `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
   failed merge. Confirm with `gh pr view <N> --json
   state,mergedAt,mergeCommit` instead of retrying the merge.
 
+**Batch-publishing several PRs at once — expect serial re-CI (tempdoc 721).**
+Branch protection here is *"require branches up to date before merging"* with **no
+merge queue**. So the moment the first PR merges, every other open PR goes
+out-of-date and its merge is blocked until re-synced — and each re-sync
+(`gh pr update-branch`) creates a new merge commit whose **full CI must re-run**
+(~7–10 min; the Windows-native lane dominates). N PRs therefore cost N serial
+`update-branch → wait-for-CI → merge` cycles **even when the PRs touch fully
+disjoint files**; there is no shortcut, and `gh pr merge --admin` does **not** skip
+it (it reports `"N of N required status checks are expected"` because the checks
+haven't run against the *updated* base — admin only helps once the branch is
+already up-to-date and green). Practical sequence:
+
+- **Verify disjointness first** — `git diff --name-only origin/main...<branch>`
+  across all the branches, checking for overlaps. Disjoint branches make the
+  serial re-CI genuinely redundant (safe to trust) and guarantee no merge
+  conflicts.
+- **After each `update-branch`, tolerate a registration race** — the new head's
+  checks take a few seconds to appear. `gh pr checks <N> --watch` called
+  immediately can return `"no checks reported"` (nonzero exit — **not** a CI
+  failure; keep waiting) or watch the *old* head's already-green checks and merge
+  too early. Wait a few seconds, then poll tolerating "no checks reported", and
+  merge only once states show no pending **and** no fail.
+- **Confirm the merge landed before any cleanup** — `gh pr view <N> --json state`
+  must read `MERGED` before you remove a worktree or branch. A merge rejected for
+  a stale base prints a suggestion rather than failing loudly inside a compound
+  command, so cleanup run after a silent rejection loses work.
+- **Check main's *final* HEAD is green** — after the last merge, watch the push-CI
+  on main's newest commit (`gh run watch`), not just the per-PR checks; superseded
+  push runs show `cancelled` (concurrency), only the newest matters.
+
 **Axis 2 — whether a change deserves its own PR (judgment, your call).** Squash
 fixes *intra*-PR noise; it does nothing about *inter*-PR noise — one trivial PR
 per edit still produces one standalone public commit each. The convention (rule

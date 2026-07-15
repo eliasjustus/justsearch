@@ -37,6 +37,7 @@ import {
 import {
   subscribeStatus,
   setStatusApiBase,
+  refreshStatusNow as refreshStatusPollNow,
   type StatusSnapshot,
 } from '../utils/statusPoll.js';
 import {
@@ -316,7 +317,11 @@ function friendlyModel(id: string | null | undefined): string | null {
 function computeCapabilities(): AiCapabilities {
   const inference = inferenceSig.get();
   const status = statusSig.get();
-  const chat = inference?.mode === 'online' && inference?.available === true;
+  // Tempdoc 737 §12b/§15 soft-off: a background procedure may hold the engine 'online' while the user
+  // has DISABLED chat (chatEnabledSpec=false) — chat is NOT available then, even though mode==='online'.
+  // `chatEnabledSpec` undefined (older backend) leaves the legacy behaviour unchanged.
+  const chatDisabledBySpec = status?.inference?.chatEnabledSpec === false;
+  const chat = inference?.mode === 'online' && inference?.available === true && !chatDisabledBySpec;
   const docs = status?.worker?.core?.indexedDocuments ?? 0;
   return {
     chat,
@@ -399,9 +404,22 @@ function computeConnection(): AiConnection {
 function computeRuntime(): AiRuntime {
   const inference = inferenceSig.get();
   const installState = installStateSig.get();
+  // Tempdoc 737 §12c: the runtime-authority engine axis is projected additively onto the /api/status
+  // inference block; PREFER it over the legacy /api/inference/status `mode`. Fall back to `mode` when
+  // absent (older backend) — the fallback retires with the phase/mode aliases (§12d).
+  const authInf = statusSig.get()?.inference;
+  const engineState = authInf?.engineState;
   const mode = inference?.mode;
   let resolvedMode: AiRuntime['mode'] = 'unknown';
-  if (mode === 'online') resolvedMode = 'online';
+  if (engineState) {
+    if (engineState === 'Healthy') resolvedMode = 'online';
+    else if (engineState === 'Down')
+      resolvedMode = authInf?.engineReason === 'gpu-yielded-to-indexing' ? 'indexing' : 'offline';
+    // Starting/Recovering: keep the live-load 'starting' UI (ETA sub-text) when the load signal is
+    // set, else the generic 'transitioning'.
+    else if (engineState === 'Starting' || engineState === 'Recovering')
+      resolvedMode = inference?.starting ? 'starting' : 'transitioning';
+  } else if (mode === 'online') resolvedMode = 'online';
   else if (mode === 'indexing') resolvedMode = 'indexing';
   else if (mode === 'offline') resolvedMode = 'offline';
   // `starting` (an explicit live-load signal) takes priority over the raw 'transitioning' mode —
@@ -664,6 +682,11 @@ function buildSnapshot(): AiState {
     runtimeStatus,
     runtime,
     reachable: connection.reachable,
+    // Tempdoc 737 §12b/§12c — the runtime-authority engine axis (preferred over runtime.mode when present).
+    engineState: status?.inference?.engineState,
+    chatEnabledSpec: status?.inference?.chatEnabledSpec,
+    procedure: status?.inference?.procedure,
+    engineReason: status?.inference?.engineReason,
   });
   const statusLabel = computeStatusLabel(verdict, runtime, activity, aiEngine);
   const statusTier = computeStatusTier(verdict, runtime);
@@ -881,6 +904,18 @@ export function subscribeAiState(listener: (s: AiState) => void): () => void {
 
 export function getAiState(): AiState {
   return aiState.get();
+}
+
+/**
+ * Tempdoc 727 F-8 — force the shared `/api/status` snapshot to refresh immediately, so a caller
+ * that just performed a backend-reflected action (e.g. unlocking chat encryption) doesn't leave
+ * dependent projections (the DATA PROTECTION row's `conversationProtection.state`) waiting out the
+ * poll interval while a sibling panel driven by that action's own direct response has already
+ * updated. Resolves once the fresh snapshot has been applied to `statusSig` (subscribers are
+ * notified synchronously within the same call).
+ */
+export function refreshStatusNow(): Promise<void> {
+  return refreshStatusPollNow();
 }
 
 export function setAiActivity(patch: Partial<AiActivity>): void {

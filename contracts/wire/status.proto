@@ -329,6 +329,13 @@ message InferenceRuntimeView {
   bool using_external = 3 [json_name = "usingExternal"];
   InferenceFailureView last_failure = 4 [json_name = "lastFailure"];
   LifecycleCounters counters = 5;
+  // Tempdoc 737 §12c Phase 2a: additive projection of the Head-side runtime authority
+  // (RuntimeSpec/RuntimeStatus). `phase` above is retained as a deprecated alias.
+  bool chat_enabled_spec = 6 [json_name = "chatEnabledSpec"];
+  string engine_state = 7 [json_name = "engineState"];
+  string engine_reason = 8 [json_name = "engineReason"];
+  string procedure = 9;
+  string lease_holder = 10 [json_name = "leaseHolder"];
 }
 
 message RuntimeIdentityView {

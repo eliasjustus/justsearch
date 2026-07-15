@@ -71,11 +71,10 @@ def _empty_catalog(primitive: str) -> str:
 _BODY_INDEXED_ROOTS = json.dumps({"items": [], "count": 0})
 
 
-# Path substring -> fixture body. First match wins.
+# Path substring -> fixture body. First match wins. `/api/status`, `/api/knowledge/search`,
+# `/api/inference/status`, and `/api/settings` are NOT here — all four have a per-variant
+# transform and are dispatched explicitly in `fixture_body()` before this table is consulted.
 _ROUTES: tuple[tuple[str, str], ...] = (
-    ("/api/status", _BODY_STATUS),
-    ("/api/knowledge/search", _BODY_SEARCH),
-    ("/api/settings", _BODY_SETTINGS),
     ("/api/indexing-roots/substrate", _BODY_INDEXED_ROOTS),
     ("/api/registry/operations", _empty_catalog("Operation")),
     ("/api/registry/resources", _empty_catalog("Resource")),
@@ -105,6 +104,13 @@ def is_api_path(url: str) -> bool:
 # "data-extreme" axis becomes a fixture transform — not a backend state — because the
 # whole point of route-mock is that data is a deterministic fixture. Minimal-viable set;
 # add `huge`/`long-names`/`error` here as the set grows.
+#
+# NOTE (tempdoc 697 activation): `degraded` (the `_status_body` transform below) is
+# DELIBERATELY NOT added here. `VARIANTS` is consumed ONLY by the GENERATE fuzzer
+# (`ui_fuzz.py`), which crosses it with {viewport x theme} as a data-extreme axis for the
+# search surface — adding `degraded` here would silently add a fuzzer cell. `degraded` is
+# reachable only via an explicit `install_fixtures(ctx, variant="degraded")` call, made by
+# the isolated `chat-proportion` ui-shot step alone (`ui_check.py`'s `Step.fixtures_variant`).
 VARIANTS = ("default", "empty")
 
 
@@ -119,9 +125,91 @@ def _search_body(variant: str) -> str:
     return _BODY_SEARCH
 
 
+def _status_body(variant: str) -> str:
+    """The status response for a variant. 'degraded' (tempdoc 697 activation) flips
+    `readiness.composites.retrieval` to DEGRADED with a real `LifecycleReasonCode`
+    (`worker.health.embedding_not_ready` — LifecycleReasonCode.java:29) so the chat
+    window's collapsed degradation pill (`.degradation-banner-collapsed`,
+    UnifiedChatView.renderCollapsedDegradationBanner) renders deterministically. The
+    reason code carries 'warn' severity (verdict.ts severityForCodes), not 'error', so
+    severity alone does not force the banner open (UnifiedChatView.ts:2123
+    `forcedExpanded = isAdvancedMode() || verdict.severity === 'error'` — the other half,
+    Simple-mode disclosure, is `_settings_body`'s job below). Also bumps
+    `worker.core.indexedDocuments` off zero: LIVE-VERIFIED (headless
+    probe) that `availability.ts:110-125`'s `no_documents` gate — not just AI-online —
+    pins the composer's Ask/Delegate escalation to plain search (askPinned() reads
+    `projectAvailability('documents', aiState)`, which short-circuits to `unavailable` on a
+    zero document count regardless of AI capability); with docs > 0 the SAME projection
+    instead returns `{kind:'degraded', caveat}` off this step's own degraded verdict
+    (availability.ts:134-143), which does NOT pin Ask. NOT a fuzzer axis — see the
+    `VARIANTS` note above."""
+    if variant == "degraded":
+        d = json.loads(_BODY_STATUS)
+        d["readiness"]["composites"]["retrieval"] = {
+            "state": "DEGRADED",
+            "reasonCodes": ["worker.health.embedding_not_ready"],
+        }
+        d["worker"]["core"]["indexedDocuments"] = 1
+        return json.dumps(d)
+    return _BODY_STATUS
+
+
+def _inference_body(variant: str) -> str:
+    """The `/api/inference/status` response for a variant (tempdoc 697 activation).
+    LIVE-VERIFIED (headless probe): this endpoint is UNMAPPED for every other variant
+    (falls through to `fixture_body`'s generic `{}`), which reads as `available: undefined`
+    -> `aiStateStore.computeCapabilities().chat = false` -> the composer's Ask/Delegate
+    escalation is pinned to plain search (`UnifiedChatView.askPinned()` via
+    `availability.ts:104-106`) for EVERY existing structural step under `--fixtures` — the
+    correct behavior for those (AI genuinely offline with no dev stack). 'degraded' reports
+    the model ONLINE so the `chat-proportion` step can actually submit a turn (escalateAsk()
+    -> send()). Kept variant-gated (NOT added to `_ROUTES`) so no other step's rendering
+    changes."""
+    if variant == "degraded":
+        return json.dumps({
+            "mode": "online",
+            "available": True,
+            "starting": False,
+            "embeddingQueueSize": 0,
+            "vduQueueSize": 0,
+            "llmContextTokens": 4096,
+            "configuredContextTokens": 4096,
+            "tier": "default",
+            "activeModelId": "fixture-model",
+            "generation": 1,
+            "lastStartupDurationMs": 1000,
+            "gpu": {"cudaAvailable": True, "totalVramBytes": 8_000_000_000, "vramDescription": "8 GB"},
+        })
+    return "{}"
+
+
+def _settings_body(variant: str) -> str:
+    """The `/api/settings` response for a variant (tempdoc 697 activation). The captured
+    `_BODY_SETTINGS` fixture carries `ui.mode: "advanced"` (whatever the live capture's
+    disclosure was set to at capture time). LIVE-VERIFIED (headless probe): Advanced mode
+    force-expands the chat window's degradation banner regardless of severity
+    (UnifiedChatView.ts:2123 `forcedExpanded = isAdvancedMode() || verdict.severity ===
+    'error'`), so `.degradation-banner-collapsed` never renders under the captured default —
+    only the wider expanded `.degradation-banner` form does. 'degraded' flips `ui.mode` to
+    "simple" so the collapsed pill (the element this ratchet tracks) renders. Every other
+    variant keeps the captured `advanced` default unchanged (no other step reads disclosure
+    mode from its screenshot)."""
+    if variant == "degraded":
+        d = json.loads(_BODY_SETTINGS)
+        d["ui"]["mode"] = "simple"
+        return json.dumps(d)
+    return _BODY_SETTINGS
+
+
 def fixture_body(url: str, variant: str = "default") -> str:
     """The deterministic body for a given /api URL under a data variant. Unmapped
     endpoints get an empty object (the structural steps don't depend on their contents)."""
+    if "/api/inference/status" in url:
+        return _inference_body(variant)
+    if "/api/status" in url:
+        return _status_body(variant)
+    if "/api/settings" in url:
+        return _settings_body(variant)
     if "/api/knowledge/search" in url:
         return _search_body(variant)
     for needle, body in _ROUTES:
@@ -133,8 +221,9 @@ def fixture_body(url: str, variant: str = "default") -> str:
 async def install_fixtures(ctx, variant: str = "default") -> None:
     """Make a browser context deterministic: seed the dismissed walkthrough and
     serve fixtures for every `/api/*` call (so the no-backend 502 storm can't occur).
-    ``variant`` selects a data-extreme transform (GENERATE). Call once on a fresh
-    context, before `new_page`."""
+    ``variant`` selects a per-route transform: `_search_body` (GENERATE data-extreme,
+    'empty') and `_status_body` (readiness state, 'degraded' — tempdoc 697) both key off
+    the same ``variant`` string. Call once on a fresh context, before `new_page`."""
     await ctx.add_init_script(WALKTHROUGH_SEED)
 
     async def _handler(route):

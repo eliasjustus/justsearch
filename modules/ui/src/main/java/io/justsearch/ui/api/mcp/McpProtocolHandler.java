@@ -62,7 +62,12 @@ public final class McpProtocolHandler {
     try {
       var node = MAPPER.readTree(body);
       String method = node.has("method") ? node.get("method").asText() : null;
-      var id = node.has("id") ? node.get("id") : null;
+      // JSON-RPC 2.0 §4.1: a Notification is a Request object WITHOUT an "id" MEMBER. Presence of
+      // the member is what matters, not its value — an explicit "id":null is a (malformed, but
+      // still a) Request, not a Notification, and must not be conflated with the absent case; it
+      // falls through to the normal request path below like any other request.
+      boolean isNotification = !node.has("id");
+      var id = isNotification ? null : node.get("id");
       var params = node.has("params") ? node.get("params") : MAPPER.createObjectNode();
 
       if (method == null) {
@@ -70,11 +75,25 @@ public final class McpProtocolHandler {
         return;
       }
 
+      if (isNotification) {
+        // "The Server MUST NOT reply to a Notification, including those that are within a batch
+        // request" (JSON-RPC 2.0 §4.1) — this holds even for an unrecognized method name, so
+        // notifications never flow through the method-dispatch switch/error path below.
+        // `notifications/initialized` is the mandatory post-initialize lifecycle notification
+        // every MCP client sends (this codebase's own McpClient#initialize sends the identical
+        // string); the others are the MCP spec's remaining standard client->server notifications.
+        // None currently require server-side state changes, so all are accept-and-discard.
+        handleNotification(method);
+        // Streamable HTTP: 202 Accepted + empty body is what the MCP spec prescribes for a POST
+        // carrying only notifications/responses. The shipped MCPB bridge
+        // (packaging/mcpb/server/index.js postToServer) special-cases status 202/204 by resolving
+        // immediately without attempting to parse a body, so this is bridge-safe by construction.
+        ctx.status(202);
+        return;
+      }
+
       Object result = switch (method) {
         case "initialize" -> handleInitialize(ctx, params);
-        case "initialized" -> {
-          yield null;
-        }
         case "tools/list" -> surface.listTools();
         case "tools/call" -> handleToolsCall(params, sessionId);
         case "resources/list" -> surface.listResources(resourceCatalogs);
@@ -92,12 +111,27 @@ public final class McpProtocolHandler {
 
       if (result != null) {
         writeResult(ctx, id, result);
-      } else if ("initialized".equals(method)) {
-        ctx.status(204);
       }
     } catch (Exception e) {
       log.warn("MCP protocol error", e);
       writeError(ctx, null, -32603, "Internal error: " + e.getMessage());
+    }
+  }
+
+  /**
+   * Accept-and-discard for client->server notifications. None of the MCP spec's standard
+   * notifications currently require server-side state (no in-flight-request cancellation table,
+   * no progress tracking, no dynamic roots), so this is deliberately a no-op beyond logging — the
+   * correctness requirement is entirely upstream, in {@link #handlePost} never treating a
+   * notification as something to reply to.
+   */
+  private void handleNotification(String method) {
+    switch (method) {
+      case "notifications/initialized",
+          "notifications/cancelled",
+          "notifications/progress",
+          "notifications/roots/list_changed" -> log.debug("Received MCP notification: {}", method);
+      default -> log.debug("Received unrecognized MCP notification (accepted, no-op): {}", method);
     }
   }
 

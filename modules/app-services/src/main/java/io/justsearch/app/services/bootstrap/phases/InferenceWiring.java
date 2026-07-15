@@ -2,7 +2,7 @@
 package io.justsearch.app.services.bootstrap.phases;
 
 import io.justsearch.app.inference.InferenceLifecycleManager;
-import io.justsearch.app.services.bootstrap.BootstrapInferenceFactory;
+import io.justsearch.app.services.runtimestate.RuntimeSpecStore;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,11 +60,20 @@ public final class InferenceWiring {
   }
 
   /**
-   * Attempts to start the llama-server in Online Mode by delegating to
-   * {@link BootstrapInferenceFactory#tryStartOnlineMode}. Logs warnings on failure but does
-   * not throw. Reads the auto-start flags from system properties + environment variables.
+   * Tempdoc 737 Phase 1: replaces the former {@code tryStartOnlineMode} direct-switch autostart.
+   * The env autostart flags now SEED the persisted {@link RuntimeSpecStore} desired-state rather
+   * than driving {@code switchToOnlineMode} directly — the {@code RuntimeReconciler} then converges
+   * the engine toward spec at boot. This is the env read (allowlisted here per
+   * {@code AppServicesWorkerGuardrailsTest}); the actual transition is owned by the reconciler.
+   *
+   * <p>Semantics preserved: {@code JUSTSEARCH_AI_AUTOSTART_DISABLED=true} is an explicit operator
+   * off (no seed); {@code JUSTSEARCH_AI_AUTOSTART_ENABLED=true} seeds {@code chatEnabled=true} only
+   * when the user has never persisted an explicit choice (§12a — env at most seeds the spec).
    */
-  public static void tryStartOnlineMode(InferenceLifecycleManager manager) {
+  public static void seedAutostartSpec(RuntimeSpecStore specStore) {
+    if (specStore == null) {
+      return;
+    }
     boolean autoStartEnabled =
         Boolean.parseBoolean(
             System.getProperty(
@@ -75,6 +84,22 @@ public final class InferenceWiring {
             System.getProperty(
                 "justsearch.ai.autostart.disabled",
                 System.getenv().getOrDefault("JUSTSEARCH_AI_AUTOSTART_DISABLED", "false")));
-    BootstrapInferenceFactory.tryStartOnlineMode(manager, autoStartEnabled, autoStartDisabled, log);
+    if (autoStartDisabled) {
+      log.info(
+          "AI auto-start explicitly disabled by operator (JUSTSEARCH_AI_AUTOSTART_DISABLED=true);"
+              + " runtime spec not seeded.");
+      return;
+    }
+    if (!autoStartEnabled) {
+      log.info(
+          "AI auto-start not configured; engine follows the persisted runtime spec. Set"
+              + " JUSTSEARCH_AI_AUTOSTART_ENABLED=true to seed chat-on for a fresh profile.");
+      return;
+    }
+    boolean seeded = specStore.seedAutostartIfUnset();
+    log.info(
+        seeded
+            ? "AI auto-start seeded runtime spec chatEnabled=true (fresh profile)."
+            : "AI auto-start requested but user already has an explicit chat preference; not overriding.");
   }
 }

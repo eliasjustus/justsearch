@@ -12,6 +12,7 @@ import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.registry.SourceTier;
 import io.justsearch.app.services.intent.ConsentCapsuleService;
+import io.justsearch.app.services.intent.DurableGrantStore;
 import io.justsearch.app.services.intent.PendingAuthorizationStore;
 import io.justsearch.app.services.registry.operations.AgentToolsOperationCatalog;
 import java.time.Clock;
@@ -76,6 +77,18 @@ class AuthorizationControllerTest {
     verify(ctx, atLeastOnce()).result(captor.capture());
     byte[] last = captor.getAllValues().get(captor.getAllValues().size() - 1);
     return MAPPER.readValue(last, Map.class);
+  }
+
+  /**
+   * The error-body branches of {@code handleApprove} (400/410) write via the {@code
+   * result(String)} overload (a hand-built JSON literal), not {@code result(byte[])} (the
+   * success path's {@code ObjectMapper}-serialized payload) — a distinct overload {@link
+   * #capturedJson} does not match. This captures that overload instead.
+   */
+  private String capturedErrorResult(Context ctx) {
+    ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+    verify(ctx, atLeastOnce()).result(captor.capture());
+    return captor.getValue();
   }
 
   @Test
@@ -173,6 +186,109 @@ class AuthorizationControllerTest {
     assertNotNull(body.get("capsule"));
     assertEquals(Boolean.FALSE, body.get("executed"));
     assertTrue(((String) body.get("executeMessage")).contains("disk full"));
+  }
+
+  // ── Smoke-round 2026-07-14 HIGH finding (734): the 410-expired approval branch had no
+  // regression coverage on either side. Verified fixed at HEAD (AuthorizationHost.decide
+  // closes/advances synchronously; approveByPendingId throws on non-2xx; this 410 is the
+  // backend half) — these two tests pin it so a future regression fails loudly here instead
+  // of only in a live GUI smoke pass.
+
+  @Test
+  void approve_unknownPendingId_returns410WithErrorBody_noCapsuleMintedNoDispatch() throws Exception {
+    ConsentCapsuleService mockCapsuleService = mock(ConsentCapsuleService.class);
+    DurableGrantStore durableGrantStore = mock(DurableGrantStore.class);
+    OperationDispatcher dispatcher = mock(OperationDispatcher.class);
+    var controller =
+        new AuthorizationController(
+            mockCapsuleService, pendingStore, durableGrantStore, dispatcher, catalogs, FIXED_CLOCK);
+
+    Context ctx = mockContextWithBody("{\"pendingId\":\"pa-does-not-exist\"}");
+    controller.handleApprove(ctx);
+
+    // If handleApprove ever regressed to returning 200 with an empty/placeholder capsule for
+    // an id that doesn't resolve, this assertion fails: it pins the actual status code, not
+    // just "some error happened".
+    verify(ctx).status(410);
+    String body = capturedErrorResult(ctx);
+    assertTrue(body.contains("\"error\""), "410 body must carry an error message: " + body);
+    assertFalse(body.contains("capsule"), "no capsule minted for an unknown pendingId: " + body);
+    verifyNoInteractions(mockCapsuleService);
+    verifyNoInteractions(dispatcher);
+    verifyNoInteractions(durableGrantStore);
+  }
+
+  @Test
+  void approve_expiredPendingId_returns410WithErrorBody_noCapsuleMintedNoDispatch() throws Exception {
+    MutableClock mutableClock = new MutableClock(Instant.parse("2026-07-02T12:00:00Z"), ZoneId.of("UTC"));
+    PendingAuthorizationStore expiringStore =
+        new PendingAuthorizationStore(mutableClock, Duration.ofMinutes(5));
+    String pendingId =
+        expiringStore.create(
+            "core.ingest-files",
+            "{\"paths\":[\"C:/tmp\"]}",
+            SourceTier.UNTRUSTED,
+            RiskTier.MEDIUM,
+            GateBehavior.TYPED_CONFIRM,
+            "Confirmation required for operation core.ingest-files");
+    // Advance the SAME clock instance the store consults past its 5-minute TTL — this is the
+    // real expiry path (PendingAuthorizationStore#consume's isExpired check), not a stand-in
+    // for "unknown id".
+    mutableClock.advance(Duration.ofMinutes(6));
+
+    ConsentCapsuleService mockCapsuleService = mock(ConsentCapsuleService.class);
+    DurableGrantStore durableGrantStore = mock(DurableGrantStore.class);
+    OperationDispatcher dispatcher = mock(OperationDispatcher.class);
+    var controller =
+        new AuthorizationController(
+            mockCapsuleService, expiringStore, durableGrantStore, dispatcher, catalogs, mutableClock);
+
+    Context ctx = mockContextWithBody("{\"pendingId\":\"" + pendingId + "\"}");
+    controller.handleApprove(ctx);
+
+    verify(ctx).status(410);
+    String body = capturedErrorResult(ctx);
+    assertTrue(body.contains("\"error\""), "410 body must carry an error message: " + body);
+    assertFalse(body.contains("capsule"), "no capsule minted for an expired pendingId: " + body);
+    verifyNoInteractions(mockCapsuleService);
+    verifyNoInteractions(dispatcher);
+    verifyNoInteractions(durableGrantStore);
+
+    // A retry with the same id also 410s — the ceremony can't be "revived" by re-clicking
+    // Approve on the same expired pendingId (the finding's exact undismissable-modal shape).
+    Context retryCtx = mockContextWithBody("{\"pendingId\":\"" + pendingId + "\"}");
+    controller.handleApprove(retryCtx);
+    verify(retryCtx).status(410);
+  }
+
+  /** Mutable {@link Clock} so a test can create a pending, then advance time past its TTL. */
+  private static final class MutableClock extends Clock {
+    private Instant instant;
+    private final ZoneId zone;
+
+    MutableClock(Instant instant, ZoneId zone) {
+      this.instant = instant;
+      this.zone = zone;
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return zone;
+    }
+
+    @Override
+    public Clock withZone(ZoneId zone) {
+      return new MutableClock(instant, zone);
+    }
+
+    @Override
+    public Instant instant() {
+      return instant;
+    }
+
+    void advance(Duration d) {
+      instant = instant.plus(d);
+    }
   }
 
   @Test

@@ -35,11 +35,26 @@ function knownPositive(value: Maybe<number>): number {
   return isKnown(value) && value.value > 0 ? value.value : 0;
 }
 
-export function visibleIndexQueueCount(aiState: Pick<AiState, 'index'> | null): number | null {
+/**
+ * Tempdoc 727 F-2 — the embedding/VDU queue counters are a heuristic fallback for background work
+ * that has no explicit job row (`pendingJobs`). They are polled from a DIFFERENT subsystem
+ * (`/api/inference/status`) than the worker's own job queue, so they can independently retain a
+ * stale positive residue after the worker itself has settled — the observed defect: the "Now" strip
+ * kept claiming "Processing 10 items / running" for minutes after `worker.core.indexState` had
+ * already gone IDLE (10 = embeddingPending(2) + embeddingQueueSize(3) + vduQueueSize(5) in the
+ * captured repro; no single API field ever held the literal value 10). The worker's `indexState` is
+ * the SAME authoritative truth the "Index state" row and the Queue card already trust (HealthSurface
+ * §renderConnection / §renderStats) — once it has authoritatively settled to IDLE, a residual counter
+ * from the other subsystem is stale, not live, so it must not override that truth.
+ */
+export function visibleIndexQueueCount(
+  aiState: (Pick<AiState, 'index'> & Partial<Pick<AiState, 'status'>>) | null,
+): number | null {
   if (aiState === null) return null;
   const index = aiState.index;
   const pendingJobs = knownPositive(index.pendingJobs);
   if (pendingJobs > 0) return pendingJobs;
+  if (aiState.status?.worker?.core?.indexState === 'IDLE') return null;
   const queued =
     knownPositive(index.embeddingPending) +
     knownPositive(index.embeddingQueueSize) +

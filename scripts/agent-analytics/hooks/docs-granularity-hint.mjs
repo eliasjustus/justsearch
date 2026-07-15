@@ -26,13 +26,65 @@
  * `docs-ride-along` (tier-register row 36) at its moment of relevance.
  */
 
+import { resolve as resolvePath, isAbsolute } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { readJsonStdin, hooksDisabled, isDirectRun } from '../lib/hook-base.mjs';
 
-/** `git [ -C <path> ] push [...]` — not `git log --grep=push` etc. */
+/**
+ * Strip heredoc bodies (`-m "$(cat <<'EOF' … EOF)"` — this repo's commit-message
+ * style). A heredoc body is prose: a `git push` inside it is a mention, not a
+ * command, and `^`-anchored lines inside it would otherwise read as command
+ * position. Tempdoc 653 follow-up (transcript-mined false positive).
+ */
+function stripHeredocs(cmd) {
+  return cmd.replace(/<<-?\s*(['"]?)(\w+)\1[\s\S]*?^\s*\2\s*$/gm, ' ');
+}
+
+/**
+ * A real push has `git … push` in COMMAND position — at the start, or after a
+ * shell separator. Testing the raw string instead (the pre-fix behaviour) also
+ * matched `push` in ARGUMENT position, so
+ * `git commit -m "fix the git push claim"` and
+ * `node check.mjs --reason "… git push is allowed …"` both fired the hint.
+ */
+const PUSH_AT_COMMAND_POSITION =
+  /(?:^|[\n;|]|&&|\|\|)\s*git\b(?:\s+-C\s+(?:"[^"]*"|'[^']*'|\S+))?\s+push(?:\s|$)/i;
+
+/**
+ * A branch deletion (`--delete`/`-d`, or a `:branch` refspec) publishes no
+ * content, so granularity guidance is meaningless for it.
+ */
+const IS_BRANCH_DELETE = /\s(?:--delete\b|-d\b|:\S+)/i;
+
+/** `git [ -C <path> ] push [...]` — not `git log --grep=push`, not a mention. */
 export function isGitPush(cmd) {
   if (!cmd) return false;
-  return /\bgit\b(?:\s+-C\s+\S+)?\s+push(?:\s|$)/i.test(cmd);
+  const bare = stripHeredocs(cmd);
+  if (!PUSH_AT_COMMAND_POSITION.test(bare)) return false;
+  return !IS_BRANCH_DELETE.test(bare);
+}
+
+/**
+ * Resolve the repo the push actually targets.
+ *
+ * The hint reads the branch diff, so it must diff the tree being PUSHED. The
+ * pre-fix code trusted `input.cwd` alone and never parsed `-C` — so every
+ * `git -C <worktree> push` issued from elsewhere diffed the WRONG repo (usually
+ * the main checkout, sitting on unrelated commits), producing hints whose claim
+ * contradicted the actual push. This codebase pushes from worktrees constantly,
+ * so that was the dominant misfire. Handles `-C <path>` and `cd <path> && …`;
+ * relative paths resolve against `fallback`.
+ */
+export function gitPushCwd(cmd, fallback) {
+  const bare = stripHeredocs(cmd || '');
+  const dashC =
+    /(?:^|[\n;|]|&&|\|\|)\s*git\s+-C\s+(?:"([^"]+)"|'([^']+)'|(\S+))\s+push\b/i.exec(bare);
+  const cd = /(?:^|[\n;]|&&|\|\|)\s*cd\s+(?:"([^"]+)"|'([^']+)'|(\S+))\s*(?:&&|;)/i.exec(bare);
+  const hit = dashC || cd;
+  if (!hit) return fallback;
+  const p = hit[1] || hit[2] || hit[3];
+  if (!p) return fallback;
+  return isAbsolute(p) ? p : resolvePath(fallback || process.cwd(), p);
 }
 
 /** Dated working history that should ride along / batch, not stand alone. */
@@ -78,11 +130,13 @@ async function main() {
   if (hooksDisabled()) return;
   const input = await readJsonStdin();
   if (!input || input.tool_name !== 'Bash') return;
-  if (!isGitPush(input.tool_input?.command)) return;
+  const command = input.tool_input?.command;
+  if (!isGitPush(command)) return;
 
   let files;
   try {
-    files = branchChangedFiles(input.cwd || process.cwd());
+    // Diff the tree being PUSHED, not the tree we happen to be standing in.
+    files = branchChangedFiles(gitPushCwd(command, input.cwd || process.cwd()));
   } catch {
     return; // fail-open
   }

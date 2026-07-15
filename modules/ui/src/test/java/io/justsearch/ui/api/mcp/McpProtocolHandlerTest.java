@@ -141,6 +141,26 @@ class McpProtocolHandlerTest {
   }
 
   @Test
+  void instructions_stayUnderClientTruncationBudget() {
+    // Tempdoc 732 item 3(b): TOOL_SELECTION_GUIDANCE gained one sentence naming the
+    // response_format token-size tradeoff. Some MCP clients truncate the connect-time
+    // `instructions` field around 2KB, so this pins the byte length under that budget rather than
+    // relying on eyeballing the string during review.
+    var surface =
+        new McpToolSurface(
+            List.of(OperationCatalog.of("core", List.of())),
+            dispatcher,
+            () -> null,
+            () -> null,
+            FIXED_CLOCK);
+    int byteLength = surface.instructions().getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+    assertTrue(
+        byteLength < 2048,
+        "instructions() must stay under the ~2KB client truncation budget, was " + byteLength
+            + " bytes");
+  }
+
+  @Test
   void comparativeAnswerHint_countsDistinctDocuments_notChunks() {
     // Regression (review finding F1): the hint must key on DISTINCT cited documents, not chunksFound
     // — multiple chunks from ONE document must NOT produce a "spanning multiple documents" claim.
@@ -208,6 +228,120 @@ class McpProtocolHandlerTest {
     Map<String, Object> searchProps =
         (Map<String, Object>) searchInputSchema.get("properties");
     assertTrue(searchProps.containsKey("detail"), "search tool advertises the detail arg");
+
+    // Tempdoc 725: tools/list must serialize with a byte-stable key order across JVM restarts —
+    // the MCP draft spec SHOULDs deterministic ordering for client-side cache hits. Jackson
+    // deserializes JSON objects into LinkedHashMap, so the parsed key order here mirrors exactly
+    // what was serialized; asserting it matches the documented source-literal order catches a
+    // regression back to JDK Map.of (whose 2+-entry iteration order is salted per JVM run and
+    // would only reveal itself as flakiness across separate process launches, not within one
+    // test run).
+    assertEquals(
+        List.of("query", "limit", "mode", "filters", "detail", "response_format"),
+        List.copyOf(searchProps.keySet()),
+        "search inputSchema properties must serialize in declared source order");
+
+    // Tempdoc 725 W2c: the opt-in `response_format` argument is part of the published
+    // answer-tool contract too (sibling of the search-tool assertion above).
+    @SuppressWarnings("unchecked")
+    Map<String, Object> answerInputSchema =
+        (Map<String, Object>) tools.get(0).get("inputSchema");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> answerProps =
+        (Map<String, Object>) answerInputSchema.get("properties");
+    assertEquals(
+        List.of("query", "top_k", "filters", "response_format"),
+        List.copyOf(answerProps.keySet()),
+        "answer inputSchema properties must serialize in declared source order");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> answerResponseFormat =
+        (Map<String, Object>) answerProps.get("response_format");
+    assertEquals(
+        List.of("concise", "detailed"), answerResponseFormat.get("enum"),
+        "answer response_format is a concise/detailed enum");
+    // Tempdoc 732 item 3: the response_format schema description states the concise/detailed
+    // token-size tradeoff explicitly — the shared RESPONSE_FORMAT_SCHEMA constant, so pinning it
+    // once here covers both tools (search's copy is asserted identical below).
+    assertEquals(
+        "Response verbosity. \"detailed\" (default) includes preview snippets and full evidence"
+            + " passages. \"concise\" returns substantially fewer tokens per call: search results"
+            + " omit the preview line and answer packs cap at the 3 highest-ranked passages; the"
+            + " coverage, match, and header lines are kept in both modes.",
+        answerResponseFormat.get("description"),
+        "response_format schema description must state the per-call token-size tradeoff");
+    // Tempdoc 655's single-sourced RESPONSE_FORMAT_SCHEMA is shared by both tools (655 "projection,
+    // not fork") — search's copy must carry the identical description, not a drifted duplicate.
+    @SuppressWarnings("unchecked")
+    Map<String, Object> searchResponseFormat =
+        (Map<String, Object>) searchProps.get("response_format");
+    assertEquals(
+        answerResponseFormat.get("description"),
+        searchResponseFormat.get("description"),
+        "search and answer must share the identical response_format description (single-sourced)");
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> searchFilters = (Map<String, Object>) searchProps.get("filters");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> searchFilterProps = (Map<String, Object>) searchFilters.get("properties");
+    assertEquals(
+        List.of(
+            "path_prefix",
+            "meta_source",
+            "meta_author",
+            "meta_category",
+            "entity_persons",
+            "entity_organizations",
+            "entity_locations"),
+        List.copyOf(searchFilterProps.keySet()),
+        "filters schema properties must serialize in declared source order");
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> browseInputSchema =
+        (Map<String, Object>) tools.get(2).get("inputSchema");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> browseProps = (Map<String, Object>) browseInputSchema.get("properties");
+    assertEquals(
+        List.of("parent_path", "list_files"),
+        List.copyOf(browseProps.keySet()),
+        "browse inputSchema properties must serialize in declared source order");
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> ingestAnnotations =
+        (Map<String, Object>) tools.get(3).get("annotations");
+    assertEquals(
+        List.of("readOnlyHint", "idempotentHint"),
+        List.copyOf(ingestAnnotations.keySet()),
+        "ingest tool annotations must serialize in declared source order");
+  }
+
+  @Test
+  void resourcesList_returnsDeterministicKeyOrder() throws Exception {
+    // Tempdoc 732 issue 8: resource() used a 4-entry Map.of, the same JDK-salted-iteration-order
+    // defect already fixed for tool()/schema()/propStringArray()/propEnum() via orderedMap(...).
+    // Mirrors the tools/list order assertion above for the resources/list response.
+    Context ctx = mock(Context.class);
+    when(ctx.header("Mcp-Session-Id")).thenReturn("s1");
+    when(ctx.body())
+        .thenReturn(
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"resources/list\",\"params\":{}}");
+    ArgumentCaptor<String> resultCaptor = ArgumentCaptor.forClass(String.class);
+    when(ctx.result(resultCaptor.capture())).thenReturn(ctx);
+    when(ctx.contentType(anyString())).thenReturn(ctx);
+
+    handler.handlePost(ctx);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> response = MAPPER.readValue(resultCaptor.getValue(), Map.class);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> result = (Map<String, Object>) response.get("result");
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> resources = (List<Map<String, Object>>) result.get("resources");
+
+    assertFalse(resources.isEmpty());
+    assertEquals(
+        List.of("uri", "name", "description", "mimeType"),
+        List.copyOf(resources.get(0).keySet()),
+        "resource entries must serialize in declared source order");
   }
 
   @Test
@@ -644,5 +778,74 @@ class McpProtocolHandlerTest {
     List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
     String text = (String) content.get(0).get("text");
     assertTrue(text.contains("Invalid arguments"), "must be the boundary-validation error: " + text);
+  }
+
+  // Live-verified defect (2026-07): a real client speaking the shipped MCPB stdio bridge over
+  // /mcp sent `{"jsonrpc":"2.0","method":"notifications/initialized"}` (the mandatory
+  // post-initialize lifecycle notification) and got back HTTP 200 with a JSON-RPC error body
+  // (`{"id":null,"error":{"code":-32601,"message":"Method not found: notifications/initialized"}}`).
+  // Two distinct spec violations: (1) the method wasn't recognized at all — the pre-fix switch
+  // only matched the never-sent bare string "initialized"; (2) the server replied to a
+  // Notification at all, which JSON-RPC 2.0 §4.1 forbids regardless of whether the method is
+  // known. A spec-correct client that (correctly) expects no reply desyncs its read loop and
+  // hangs — reproduced by scripts/sandbox/mcp-typed-confirm.ps1.
+
+  @Test
+  void notificationsInitialized_noErrorBody_noResponsePayload() throws Exception {
+    Context ctx = mock(Context.class);
+    when(ctx.header("Mcp-Session-Id")).thenReturn(null);
+    when(ctx.body())
+        .thenReturn("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");
+    when(ctx.status(anyInt())).thenReturn(ctx);
+
+    handler.handlePost(ctx);
+
+    // Pre-fix: this method wasn't recognized (only bare "initialized" was), so it fell into the
+    // switch's default branch and called writeError -> ctx.result(...) with a -32601 body. A
+    // Notification must never get a JSON-RPC reply body of any kind, error or otherwise.
+    verify(ctx, never()).result(anyString());
+    verify(ctx).status(202);
+  }
+
+  @Test
+  void unrecognizedNotification_stillNoResponsePayload() throws Exception {
+    // A notification (no "id" member) with a method the server doesn't specifically recognize.
+    // Pre-fix: any unrecognized *method name* -> -32601 error body, with no branch that first
+    // checked "is this a notification" before deciding to reply. JSON-RPC 2.0 §4.1's "MUST NOT
+    // reply to a Notification" applies independently of whether the method is known.
+    Context ctx = mock(Context.class);
+    when(ctx.header("Mcp-Session-Id")).thenReturn(null);
+    when(ctx.body())
+        .thenReturn("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/some_future_thing\"}");
+    when(ctx.status(anyInt())).thenReturn(ctx);
+
+    handler.handlePost(ctx);
+
+    verify(ctx, never()).result(anyString());
+    verify(ctx).status(202);
+  }
+
+  @Test
+  void unknownRequestWithId_stillReturnsMethodNotFound() throws Exception {
+    // Regression guard for the fix above: an unknown method that IS a request (carries an "id"
+    // member) must keep getting a real JSON-RPC error reply — the notification short-circuit must
+    // key off "id" member presence, not off any-unrecognized-method, or this would go silent too.
+    Context ctx = mock(Context.class);
+    when(ctx.header("Mcp-Session-Id")).thenReturn(null);
+    when(ctx.body())
+        .thenReturn("{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"totally/unknown\"}");
+    ArgumentCaptor<String> resultCaptor = ArgumentCaptor.forClass(String.class);
+    when(ctx.result(resultCaptor.capture())).thenReturn(ctx);
+    when(ctx.contentType(anyString())).thenReturn(ctx);
+
+    handler.handlePost(ctx);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> response = MAPPER.readValue(resultCaptor.getValue(), Map.class);
+    assertEquals(99, ((Number) response.get("id")).intValue());
+    @SuppressWarnings("unchecked")
+    Map<String, Object> error = (Map<String, Object>) response.get("error");
+    assertNotNull(error, "an unknown REQUEST (has id) must still get a JSON-RPC error, unlike a notification");
+    assertEquals(-32601, ((Number) error.get("code")).intValue());
   }
 }

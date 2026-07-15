@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { render } from 'lit';
 import {
   RESOURCE_LIST_ITEM_ROLES,
   resourceListItemStrategy,
@@ -122,5 +123,30 @@ describe('(Resource, list-item) canonical strategy — Pass-8 mirror', () => {
     const host = { apiBase: '', viewerAudience: 'USER' as const };
     const result = resourceListItemStrategy(operatorOnly, {}, host);
     expect(typeof result).toBe('symbol');
+  });
+
+  // 727 F-4 — pre-fix, the strategy rendered `<jf-resource-view resource-id=...>` with no
+  // `api-base` attribute at all, regardless of `host.apiBase`. `<jf-resource-view>` uses its
+  // own `apiBase` property (default `''`) to build its SSE-stream / REST-snapshot URLs, so a
+  // dropped api-base makes every Resource consumed through `<jf-resource>` (the one sanctioned
+  // consumption point; `core.operation-history` on ActivitySurface is its only V1 caller)
+  // resolve those URLs against the wrong origin whenever the FE and backend are served from
+  // different origins — the stream never opens, with no error, and the connection badge is
+  // stuck at "connecting" forever (727 F-4's exact symptom). This test fails on pre-fix code
+  // because the rendered HTML has no `api-base` attribute — `toContain` finds neither string.
+  it('forwards host.apiBase to the inner jf-resource-view (727 F-4)', () => {
+    const host = { apiBase: 'http://127.0.0.1:33221', viewerAudience: 'USER' as const };
+    const result = resourceListItemStrategy(REFERENCE_RESOURCE, {}, host);
+    const container = document.createElement('div');
+    render(result, container);
+    expect(container.innerHTML).toContain('api-base="http://127.0.0.1:33221"');
+  });
+
+  it('forwards an empty host.apiBase explicitly (no attribute silently dropped)', () => {
+    const host = { apiBase: '', viewerAudience: 'USER' as const };
+    const result = resourceListItemStrategy(REFERENCE_RESOURCE, {}, host);
+    const container = document.createElement('div');
+    render(result, container);
+    expect(container.querySelector('jf-resource-view')?.getAttribute('api-base')).toBe('');
   });
 });

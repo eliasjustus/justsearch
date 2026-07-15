@@ -269,6 +269,9 @@
     "inference" : {
       "type" : "object",
       "properties" : {
+        "chatEnabledSpec" : {
+          "type" : "boolean"
+        },
         "counters" : {
           "type" : "object",
           "properties" : {
@@ -282,6 +285,12 @@
               "type" : "integer"
             }
           }
+        },
+        "engineReason" : {
+          "type" : "string"
+        },
+        "engineState" : {
+          "type" : "string"
         },
         "identity" : {
           "type" : "object",
@@ -311,7 +320,13 @@
             }
           }
         },
+        "leaseHolder" : {
+          "type" : "string"
+        },
         "phase" : {
+          "type" : "string"
+        },
+        "procedure" : {
           "type" : "string"
         },
         "usingExternal" : {

@@ -159,4 +159,4 @@ For detailed architecture, see [System Overview](docs/explanation/01-system-over
 
 ## Questions?
 
-Open a [GitHub Discussion](https://github.com/eliasjustus/justsearch/discussions) for questions or ideas that aren't bug reports or feature requests.
+[Open an issue](https://github.com/eliasjustus/justsearch/issues/new/choose) for questions or ideas that aren't bug reports or feature requests — GitHub Discussions is not enabled on this repo.

@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.ai.runtime;
 
+import io.justsearch.app.api.AiInstallService;
+import io.justsearch.app.api.AiInstallStatus;
 import io.justsearch.app.api.AiRuntimeStatusResponse;
 import io.justsearch.app.api.AiRuntimeActivationStatus;
 import tools.jackson.databind.DeserializationFeature;
@@ -15,6 +17,9 @@ import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
 import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import io.justsearch.app.services.lifecycle.InferenceCapability;
+import io.justsearch.app.services.runtimestate.RuntimeReconciler;
+import io.justsearch.app.services.runtimestate.RuntimeSpecStore;
+import io.justsearch.app.services.runtimestate.RuntimeStatus;
 import io.justsearch.app.services.worker.OnnxModelStatus;
 import io.justsearch.app.services.worker.WorkerFeatureCache;
 import io.justsearch.configuration.EnvRegistry;
@@ -42,6 +47,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
@@ -105,6 +112,13 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
   private final EnterprisePolicyService policyService;
   private final WorkerFeatureCache workerFeatureCache; // nullable
   private final InferenceCapability inferenceCapability; // nullable — tempdoc 656 Task 2
+  private final AiInstallService aiInstallService; // nullable — tempdoc 727 F-3
+  // Tempdoc 737 fix pack (fix 2): the single-writer runtime authority. When present, runActivate
+  // brackets the engine-online + desired-state-write window in an ACTIVATION procedure so the
+  // reconciler does not drift-converge the freshly-started engine DOWN before recordUserEnabled has
+  // persisted the intent — and nudges specChanged() so the persisted intent is honored
+  // deterministically, not via a racy mode-drift event. Nullable for graceful degradation / tests.
+  private final RuntimeReconciler runtimeReconciler;
 
   private final Path aiHome;
   private final Path statusPath;
@@ -113,6 +127,12 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
   private final Object lock = new Object();
   private final AtomicBoolean running = new AtomicBoolean(false);
   private final AiRuntimeActivationStatus status = new AiRuntimeActivationStatus();
+
+  // Tempdoc 727 F-3: dedup for the "leftover variant directory" WARN below — listInstalledVariants()
+  // runs on every GET /api/ai/runtime/status poll (~1/sec from the FE while activation/install is in
+  // progress), so an un-deduped WARN spams once per second for as long as the condition holds, even
+  // for a genuine leftover directory. Logged at most once per directory per process lifetime.
+  private final Set<String> warnedLeftoverVariantDirs = ConcurrentHashMap.newKeySet();
 
   // Effective VRAM flags from last self-test (for status exposure)
   private volatile List<String> lastSelfTestEffectiveFlags = List.of();
@@ -148,12 +168,65 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       EnterprisePolicyService policyService,
       WorkerFeatureCache workerFeatureCache,
       InferenceCapability inferenceCapability) {
+    this(
+        onlineAi,
+        settingsStore,
+        gpuCapabilitiesService,
+        policyService,
+        workerFeatureCache,
+        inferenceCapability,
+        null);
+  }
+
+  /**
+   * Tempdoc 727 F-3: {@code aiInstallService} lets {@link #listInstalledVariants} distinguish a
+   * variant directory that is a genuine leftover from a prior build from one that is the
+   * currently-running Install AI flow's own in-flight download (the flow extracts the cuda-runtime
+   * package into {@code variants/cuda12} before {@code llama-server.exe} is fully staged). Nullable
+   * for graceful degradation and existing test compatibility, matching {@code workerFeatureCache}.
+   */
+  public RuntimeActivationService(
+      OnlineAiService onlineAi,
+      UiSettingsStore settingsStore,
+      GpuCapabilitiesService gpuCapabilitiesService,
+      EnterprisePolicyService policyService,
+      WorkerFeatureCache workerFeatureCache,
+      InferenceCapability inferenceCapability,
+      AiInstallService aiInstallService) {
+    this(
+        onlineAi,
+        settingsStore,
+        gpuCapabilitiesService,
+        policyService,
+        workerFeatureCache,
+        inferenceCapability,
+        aiInstallService,
+        null);
+  }
+
+  /**
+   * Tempdoc 737 fix pack (fix 2): adds the nullable {@link RuntimeReconciler} so {@link
+   * #runActivate} can bracket the engine-online + intent-write window in an {@code ACTIVATION}
+   * procedure and nudge {@code specChanged()}. Nullable for graceful degradation / existing test
+   * compatibility, matching {@code workerFeatureCache}/{@code inferenceCapability}.
+   */
+  public RuntimeActivationService(
+      OnlineAiService onlineAi,
+      UiSettingsStore settingsStore,
+      GpuCapabilitiesService gpuCapabilitiesService,
+      EnterprisePolicyService policyService,
+      WorkerFeatureCache workerFeatureCache,
+      InferenceCapability inferenceCapability,
+      AiInstallService aiInstallService,
+      RuntimeReconciler runtimeReconciler) {
     this.onlineAi = Objects.requireNonNull(onlineAi, "onlineAi");
     this.settingsStore = Objects.requireNonNull(settingsStore, "settingsStore");
     this.gpuCapabilitiesService = gpuCapabilitiesService == null ? new GpuCapabilitiesService() : gpuCapabilitiesService;
     this.policyService = policyService; // may be null (best-effort)
     this.workerFeatureCache = workerFeatureCache; // may be null (graceful degradation)
     this.inferenceCapability = inferenceCapability; // may be null (graceful degradation)
+    this.aiInstallService = aiInstallService; // may be null (graceful degradation)
+    this.runtimeReconciler = runtimeReconciler; // may be null (graceful degradation)
     this.aiHome = resolveAiHome();
     this.statusPath = aiHome.resolve("ai").resolve(STATUS_FILE);
     this.variantsRoot = resolveVariantsRoot();
@@ -367,24 +440,46 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
   // -------------------- Implementation --------------------
 
-  private void runActivate(String variantId) {
+  /**
+   * Tempdoc 737 (task 3): the ONE authoritative admin-policy check for runtime activation.
+   * {@link #runActivate} (this class's async path), {@code AiRuntimeController.handleActivate}
+   * (HTTP fast-fail), and {@code RuntimeVariantServiceImpl.activate} (operation-handler
+   * fast-fail) all call this — no independent copies of the {@code onlineAiEnabled} / {@code
+   * gpuAccelerationEnabled} predicate exist elsewhere. A no-op when no policy is configured.
+   *
+   * @throws IllegalStateException with the canonical policy-denial message when blocked; callers
+   *     needing a machine code derive it from the message text (the convention already used by
+   *     {@code ActivateRuntimeVariantHandler}).
+   */
+  @Override
+  public void enforceActivationPolicy() {
     EffectivePolicy effective;
     try {
       effective = policyService != null ? policyService.snapshot() : null;
     } catch (Exception ignored) {
       effective = null;
     }
-    if (effective != null) {
-      // v3 enforcement: block activation when Online AI or GPU acceleration is disabled by policy.
-      if (!effective.onlineAiEnabled()) {
-        fail("POLICY_ONLINE_AI_DISABLED", "Online AI is disabled by administrator policy.", null);
-        return;
-      }
-      if (!effective.gpuAccelerationEnabled()) {
-        fail("POLICY_GPU_DISABLED", "GPU acceleration is disabled by administrator policy.", null);
-        return;
-      }
-      // snapshot() already bridged policy sysprops to app-services enforcement points.
+    if (effective == null) {
+      return;
+    }
+    // v3 enforcement: block activation when Online AI or GPU acceleration is disabled by policy.
+    if (!effective.onlineAiEnabled()) {
+      throw new IllegalStateException("Online AI is disabled by administrator policy.");
+    }
+    if (!effective.gpuAccelerationEnabled()) {
+      throw new IllegalStateException("GPU acceleration is disabled by administrator policy.");
+    }
+    // snapshot() already bridged policy sysprops to app-services enforcement points.
+  }
+
+  private void runActivate(String variantId) {
+    try {
+      enforceActivationPolicy();
+    } catch (IllegalStateException e) {
+      String msg = e.getMessage() == null ? "" : e.getMessage();
+      String code = msg.contains("GPU acceleration") ? "POLICY_GPU_DISABLED" : "POLICY_ONLINE_AI_DISABLED";
+      fail(code, msg, null);
+      return;
     }
 
     Path exe = variantsRoot.resolve(variantId).resolve("llama-server.exe");
@@ -462,10 +557,42 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
         throw new IllegalStateException("Server executable override is locked by operator config");
       }
 
-      applyRuntimeOverridesBestEffort(next);
+      // Tempdoc 737 fix pack (fix 2): bracket the engine-online + intent-write window in an
+      // ACTIVATION procedure. applyRuntimeOverrides(RESTART_ALWAYS) brings the engine ONLINE (its
+      // mode listener fires) BEFORE recordUserEnabled persists the intent; without the bracket the
+      // reconciler would see mode-up with spec still false and drift-converge the engine straight
+      // back DOWN. The procedure suppresses that drift; recordUserEnabled writes the intent;
+      // specChanged() nudges; endProcedure returns to the now-true spec — deterministically online,
+      // no spurious down/up flicker.
+      boolean activationProcedureBegun = false;
+      if (runtimeReconciler != null) {
+        runtimeReconciler.beginProcedure(
+            RuntimeStatus.ProcedureKind.ACTIVATION, "runtime-variant-activation");
+        activationProcedureBegun = true;
+      }
+      try {
+        applyRuntimeOverridesBestEffort(next);
 
-      // Rebuild ConfigStore so readers see updated server EXE / GPU layers.
-      ConfigStoreRebuilder.rebuild(ConfigStore.globalOrNull(), next);
+        // Rebuild ConfigStore so readers see updated server EXE / GPU layers.
+        ConfigStoreRebuilder.rebuild(ConfigStore.globalOrNull(), next);
+
+        // Tempdoc 737 Phase 1: a user who successfully activated a GPU runtime wants AI on across
+        // restarts — persist the desired-state so the reconciler brings it back at boot (fixes the
+        // documented "AI offline after reopen" confusion). Null-safe; idempotent.
+        if (settingsStore != null) {
+          new RuntimeSpecStore(settingsStore).recordUserEnabled();
+        }
+        // Nudge the reconciler so the persisted intent is honored via specChanged (an explicit
+        // convergence), not only via the racy mode-drift event. Deferred while the procedure is
+        // active; applied at endProcedure below.
+        if (runtimeReconciler != null) {
+          runtimeReconciler.specChanged();
+        }
+      } finally {
+        if (activationProcedureBegun) {
+          runtimeReconciler.endProcedure(RuntimeStatus.ProcedureKind.ACTIVATION);
+        }
+      }
 
       updateState("completed", "done", "GPU runtime activated.", null);
     } catch (Exception e) {
@@ -989,16 +1116,23 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
                         new AiRuntimeStatusResponse.InstalledVariant(
                             dir.getFileName().toString(),
                             exe.toAbsolutePath().toString()));
-                  } else {
+                  } else if (!isLikelyInFlightInstall(dir)) {
                     // Tempdoc 374 sandbox round 2 finding #4.5: a variant dir
                     // without llama-server.exe means a prior install with the
                     // CUDA variant left DLLs behind, but the current build
                     // skipped staging the exe (e.g., -PincludeCuda=false).
                     // Log so drift is visible without polluting the API
                     // response with a non-executable path.
-                    log.warn(
-                        "Variant directory present without llama-server.exe: {} (likely leftover from a previous build)",
-                        dir);
+                    //
+                    // Tempdoc 727 F-3: only log once per directory per process
+                    // lifetime (see warnedLeftoverVariantDirs) — this method runs
+                    // on every status poll (~1/sec from the FE), so an un-deduped
+                    // WARN spams even for a genuine leftover directory.
+                    if (warnedLeftoverVariantDirs.add(dir.toString())) {
+                      log.warn(
+                          "Variant directory present without llama-server.exe: {} (likely leftover from a previous build)",
+                          dir);
+                    }
                   }
                 });
       } catch (Exception ignored) {
@@ -1006,6 +1140,45 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       }
     }
     return out;
+  }
+
+  /**
+   * Tempdoc 727 F-3: a variant directory that exists without {@code llama-server.exe} yet is not
+   * necessarily stale — the Install AI flow creates {@code variants/&lt;id&gt;} and extracts
+   * package contents into it (e.g. the {@code cuda-runtime} package into {@code variants/cuda12})
+   * before the final executable is staged, so a fresh install's own in-flight download briefly
+   * looks identical to a "leftover from a previous build" on disk.
+   *
+   * <p>Two independent signals suppress the false positive, either sufficient on its own:
+   *
+   * <ol>
+   *   <li>The authoritative signal: {@link AiInstallService#getStatus()} reports the install run
+   *       is still {@code "running"} (covers the whole preflight → download → apply lifecycle, not
+   *       just the download phase, since extraction can start before a package flips to
+   *       "downloading").
+   *   <li>A filesystem fallback: a {@code *.tmp} file is present directly in the directory (e.g. a
+   *       Windows BITS in-progress transfer temp file). Covers the case where {@code
+   *       aiInstallService} is unavailable (older constructor overloads, tests) or a race just
+   *       outside the "running" window.
+   * </ol>
+   */
+  private boolean isLikelyInFlightInstall(Path dir) {
+    if (aiInstallService != null) {
+      try {
+        AiInstallStatus installStatus = aiInstallService.getStatus();
+        if (installStatus != null && "running".equals(installStatus.state)) {
+          return true;
+        }
+      } catch (Exception ignored) {
+        // best-effort
+      }
+    }
+    try (var files = Files.list(dir)) {
+      return files.anyMatch(
+          p -> p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".tmp"));
+    } catch (Exception ignored) {
+      return false;
+    }
   }
 
   private static String resolveVariantIdFromExePath(String exePath) {

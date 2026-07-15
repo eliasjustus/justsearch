@@ -41,7 +41,13 @@ import {
 } from '../state/aiStateStore.js';
 // Tempdoc 657 — pre-install per-tier weight breakdown (GET /api/ai/install/plan-preview).
 import type { InstallPlanPreview } from '../utils/aiInstallPoll.js';
-import { applyLocalIntent, type AiEngineVerdict, type AiStability } from '../state/aiVerdict.js';
+import {
+  aiEngineHeadline,
+  aiEngineTone,
+  applyLocalIntent,
+  type AiEngineVerdict,
+  type AiStability,
+} from '../state/aiVerdict.js';
 import { unavailableBecause, AVAILABLE } from '../state/availability.js';
 // Tempdoc 613 — coherence: the compat callout words its cause from the ONE canonical reindex
 // vocabulary (the same `reasonFor`/CAUSE_ROWS the Chat degradation banner + 595 verdict use),
@@ -187,8 +193,14 @@ function brainDotTone(dot: string): {
   live: boolean;
 } {
   switch (dot) {
+    // `aiEngineTone` (state/aiVerdict.ts) is the ONE tone authority for the AI-engine kinds; these
+    // two words project it rather than re-stating it. `indexing` used to be collapsed into `online`'s
+    // green here (and into an "AI Online" label) while chat was in fact unavailable — the contradiction
+    // the 0.2.0 round caught as F-6b.
     case 'online':
-      return { tone: 'success', live: false };
+      return { tone: aiEngineTone('online'), live: false };
+    case 'indexing':
+      return { tone: aiEngineTone('indexing'), live: false };
     case 'starting':
       return { tone: 'warning', live: true };
     case 'installing':
@@ -805,10 +817,17 @@ export class BrainSurface extends JfElement {
 
   // ---------- Inference mode ----------
 
-  private async switchInference(mode: 'online' | 'indexing'): Promise<void> {
+  /**
+   * Tempdoc 737 §12b: the chat-engine buttons write the user's INTENT via `core.set-chat-enabled`
+   * ({@code enabled:true|false}) — an intent write with no preconditions — instead of the superseded
+   * `core.switch-inference-mode`. The reconciler converges the engine toward spec; a soft-off
+   * background procedure may keep the engine up with a visible reason. `enabled:true` is always a
+   * legal escape action from every state (offline / indexing / background), so there is no dead button.
+   */
+  private async setChatEnabled(enabled: boolean): Promise<void> {
     await this.withBusy('inference-switch', async () => {
       this.runtimeError = null;
-      await this.invokeOp('core.switch-inference-mode', { mode });
+      await this.invokeOp('core.set-chat-enabled', { enabled });
       // Tempdoc 586 §3 — one-shot post-action refresh (not a poll) for immediate
       // feedback; the shared store's 5s poll reconciles too. Typed as the store snapshot.
       const fresh = await this.fetchJson<NonNullable<UnifiedAiState['inference']>>(
@@ -1016,10 +1035,16 @@ export class BrainSurface extends JfElement {
           this._unifiedAiState?.runtime?.loadStartedAtMs,
         ),
       },
-      online: { dot: 'online', label: 'AI Online', sub: 'Chat and summaries ready.' },
+      // The `label` for these two is a PROJECTION of `aiEngineHeadline` (state/aiVerdict.ts) — the one
+      // authority the footer pill already reads — not a second, hand-maintained copy. The fork it
+      // replaces said "AI Online" for BOTH kinds, so this panel rendered a green "AI Online" headline
+      // while the footer said "Indexing" and /api/health reported `inference.offline` (0.2.0 F-6b).
+      // Only the `sub` stays BrainSurface's own: the footer has no sub-text slot.
+      // Each row is only ever selected when `aiState` equals its key, so `aiVerdict` is exact here.
+      online: { dot: 'online', label: aiEngineHeadline(aiVerdict), sub: 'Chat and summaries ready.' },
       // Tempdoc 663 — indexing is now a distinct, named state (the original ladder had no explicit
       // branch for `runtime.mode === 'indexing'` and fell through to 'offline').
-      indexing: { dot: 'online', label: 'AI Online', sub: 'Indexing embeddings…' },
+      indexing: { dot: 'indexing', label: aiEngineHeadline(aiVerdict), sub: 'Indexing embeddings…' },
       connecting: { dot: 'starting', label: 'Connecting…', sub: 'Checking AI status…' },
     };
     const sc = statusConfig[aiState] ?? statusConfig.offline!;
@@ -1064,7 +1089,7 @@ export class BrainSurface extends JfElement {
           return {
             label: 'Start AI',
             iconName: 'check-circle-2' as const,
-            onClick: () => void this.switchInference('online'),
+            onClick: () => void this.setChatEnabled(true),
             availability: onlineDisabled
               ? unavailableBecause('Online AI is disabled by administrator policy.')
               : this.busy['inference-switch']
@@ -1076,7 +1101,7 @@ export class BrainSurface extends JfElement {
           return {
             label: 'Cancel',
             iconName: 'x' as const,
-            onClick: () => void this.switchInference('indexing'),
+            onClick: () => void this.setChatEnabled(false),
             availability: AVAILABLE,
             primary: false,
           };
@@ -1088,13 +1113,42 @@ export class BrainSurface extends JfElement {
             availability: { kind: 'blocked' } as const,
             primary: false,
           };
-        case 'online':
+        // `indexing` (engine down, GPU yielded) needs a way back to chat. The intent write
+        // `core.set-chat-enabled {enabled:true}` has no precondition, so this is always legal
+        // (0.2.0 F-6; mirrors `IndexingOverlay`'s "Go Online" escape hatch).
         case 'indexing':
+          return {
+            label: 'Resume Chat AI',
+            iconName: 'check-circle-2' as const,
+            onClick: () => void this.setChatEnabled(true),
+            availability: onlineDisabled
+              ? unavailableBecause('Online AI is disabled by administrator policy.')
+              : this.busy['inference-switch']
+                ? ({ kind: 'blocked' } as const)
+                : AVAILABLE,
+            primary: true,
+          };
+        // Soft-off background (tempdoc 737 §15 decision 1): the engine is up finishing background
+        // work while chat is disabled. The primary action is NEVER dead — offer to start chat
+        // (enabled:true is legal and converges during/after the procedure per backend semantics).
+        case 'background':
+          return {
+            label: 'Start Chat AI',
+            iconName: 'check-circle-2' as const,
+            onClick: () => void this.setChatEnabled(true),
+            availability: onlineDisabled
+              ? unavailableBecause('Online AI is disabled by administrator policy.')
+              : this.busy['inference-switch']
+                ? ({ kind: 'blocked' } as const)
+                : AVAILABLE,
+            primary: true,
+          };
+        case 'online':
         default:
           return {
             label: 'Shut Down AI',
             iconName: 'x' as const,
-            onClick: () => void this.switchInference('indexing'),
+            onClick: () => void this.setChatEnabled(false),
             availability: this.busy['inference-switch'] ? ({ kind: 'blocked' } as const) : AVAILABLE,
             primary: false,
           };
@@ -1874,7 +1928,7 @@ export class BrainSurface extends JfElement {
                 : this.busy['inference-switch']
                   ? { kind: 'blocked' }
                   : AVAILABLE}
-              .onActivate=${() => void this.switchInference('online')}
+              .onActivate=${() => void this.setChatEnabled(true)}
             >
               Online
             </jf-button>
@@ -1882,7 +1936,7 @@ export class BrainSurface extends JfElement {
               variant=${this.inference?.mode === 'indexing' ? 'primary' : 'secondary'}
               label="Indexing"
               ?disabled=${!!this.busy['inference-switch']}
-              .onActivate=${() => void this.switchInference('indexing')}
+              .onActivate=${() => void this.setChatEnabled(false)}
             >
               Indexing
             </jf-button>

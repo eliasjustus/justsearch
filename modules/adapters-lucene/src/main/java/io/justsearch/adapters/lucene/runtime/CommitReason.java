@@ -24,6 +24,7 @@ public enum CommitReason {
   GRPC_UPDATE_PATHS("grpc/updatePaths"),
   INDEXING_LOOP_IDLE("indexing-loop/idle"),
   INDEXING_LOOP_REBUILD_STAMP("indexing-loop/rebuild-stamp"),
+  INDEXING_LOOP_FRESH_STAMP("indexing-loop/fresh-stamp"),
   INDEXING_LOOP_SHUTDOWN("indexing-loop/shutdown"),
   INDEXING_LOOP_TIME("indexing-loop/time"),
   INDEXING_LOOP_BUFFER("indexing-loop/buffer"),

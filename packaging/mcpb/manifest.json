@@ -1,0 +1,72 @@
+{
+  "$schema": "https://github.com/anthropics/mcpb/raw/main/dist/mcpb-manifest-v0.4.schema.json",
+  "manifest_version": "0.4",
+  "name": "justsearch-mcp",
+  "display_name": "JustSearch",
+  "version": "0.1.0",
+  "description": "A private retrieval backend for your AI agents — hybrid search and cited answers over your own files, 100% on your machine.",
+  "long_description": "Connects this MCP client to the JustSearch desktop app's built-in MCP server. JustSearch indexes your local documents (PDF, email, Office, and most common formats) and answers questions over them with cited passages, without anything leaving your machine — hybrid retrieval (BM25 + dense vectors + learned-sparse + reranking) plus grounded Q&A.\n\n**Requires the JustSearch desktop app (Windows) to be installed and running** — download it from https://github.com/eliasjustus/justsearch/releases. This bundle is only a thin, dependency-free stdio bridge to the app's loopback MCP endpoint (`http://127.0.0.1:<port>/mcp`); it makes no network connections beyond 127.0.0.1 and never downloads anything.\n\nFive of the six tools are read-only. The one mutating tool, `justsearch_ingest` (adds files to the search index), is additionally gated behind an explicit approval prompt shown in the JustSearch app itself.",
+  "author": {
+    "name": "eliasjustus",
+    "url": "https://github.com/eliasjustus"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eliasjustus/justsearch"
+  },
+  "homepage": "https://github.com/eliasjustus/justsearch",
+  "documentation": "https://github.com/eliasjustus/justsearch/blob/main/docs/reference/mcp-production-server.md",
+  "support": "https://github.com/eliasjustus/justsearch/issues",
+  "license": "Apache-2.0",
+  "keywords": [
+    "search",
+    "local-first",
+    "offline",
+    "rag",
+    "retrieval",
+    "knowledge-base",
+    "hybrid-search",
+    "windows"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"]
+    }
+  },
+  "tools": [
+    {
+      "name": "justsearch_answer",
+      "description": "Read-only. RAG retrieval over the local index: assembled passages with per-source citations. Primary tool for answering questions about indexed content."
+    },
+    {
+      "name": "justsearch_search",
+      "description": "Read-only. Exploratory hybrid search (keyword + dense + learned-sparse, reranked) with facets and filters, for discovery and browsing."
+    },
+    {
+      "name": "justsearch_browse",
+      "description": "Read-only. Explore the folder structure of indexed locations."
+    },
+    {
+      "name": "justsearch_ingest",
+      "description": "MUTATING — adds files/folders to the search index. Not read-only. Gated behind an approval prompt in the JustSearch app: the call returns immediately and a human approves (or denies) in the app window."
+    },
+    {
+      "name": "justsearch_status",
+      "description": "Read-only. Index health: document count, enrichment coverage, readiness."
+    },
+    {
+      "name": "justsearch_runtime_manifest",
+      "description": "Read-only. Redacted runtime manifest (identity, lifecycle, AI runtime state) for identity-aware caching."
+    }
+  ],
+  "tools_generated": false,
+  "compatibility": {
+    "platforms": ["win32"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

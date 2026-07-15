@@ -28,12 +28,13 @@ import java.util.Set;
  *
  * <p>Mapping:
  * <ul>
- *   <li>{@code WorkerOnline}, {@code IndexedRoot} → {@code worker.capability} (the executor's
- *       resolver also backs both with worker readiness).
+ *   <li>{@code WorkerOnline} → {@code worker.capability} (the executor's resolver also backs it
+ *       with worker readiness).
  *   <li>{@code InferenceOnline} → {@code inference.capability}.
- *   <li>{@code GpuAvailable} → no condition is published for GPU, so it contributes nothing to the
- *       availability hint (it remains enforced at dispatch by the capability resolver).
  * </ul>
+ *
+ * <p>{@code IndexedRoot} and {@code GpuAvailable} were removed per tempdoc 737 §8a/§12d: required
+ * by no operation anywhere, and their resolver arms lied about what they resolved.
  *
  * <p>An op's own hand-authored availability expression always wins — derivation only fills ops
  * that declared capabilities but no explicit availability (e.g. {@code core.search-index} keeps
@@ -48,9 +49,7 @@ public final class CapabilityAvailability {
   private static String conditionFor(RequiredCapability cap) {
     return switch (cap) {
       case RequiredCapability.WorkerOnline ignored -> "worker.capability";
-      case RequiredCapability.IndexedRoot ignored -> "worker.capability";
       case RequiredCapability.InferenceOnline ignored -> "inference.capability";
-      case RequiredCapability.GpuAvailable ignored -> null;
     };
   }
 

@@ -24,9 +24,11 @@ import org.slf4j.LoggerFactory;
  * </ul>
  *
  * <p>The retrieval tiers ({@link CapabilityTier#RETRIEVAL_CORE},
- * {@link CapabilityTier#RETRIEVAL_ENRICHMENT}) are wanted by every intent — every mode does search. The
- * only tier axis an intent gates is the LLM stack ({@link CapabilityTier#LLM} + its
- * {@link CapabilityTier#RUNTIME} support), so the distinction is captured by a single flag.
+ * {@link CapabilityTier#RETRIEVAL_ENRICHMENT}) are wanted by every intent — every mode does search. So
+ * is {@link CapabilityTier#RUNTIME} (the CUDA DLLs): it is hardware-support the planner gates on
+ * {@code profile.usesCuda()}, not a product-shape choice, because those DLLs back CUDA retrieval as
+ * well as the LLM. The only tier axis an intent actually gates is the {@link CapabilityTier#LLM} chat
+ * stack, so the distinction is captured by a single flag.
  */
 public enum InstallIntent {
   FULL_DESKTOP("full-desktop", true),
@@ -62,8 +64,13 @@ public enum InstallIntent {
       return true;
     }
     return switch (tier) {
-      case RETRIEVAL_CORE, RETRIEVAL_ENRICHMENT -> true;
-      case LLM, RUNTIME -> includesLlmTier;
+      // RUNTIME (the CUDA DLLs) is a hardware-support payload wanted by every intent, not a
+      // product-shape choice: it ships the ORT CUDA EP + cuDNN DLLs that ANY wanted CUDA retrieval
+      // variant needs, not just the LLM's llama-server DLLs. Whether it actually downloads is a pure
+      // hardware question the planner decides via profile.usesCuda(); gating it on the LLM flag here
+      // wrongly skipped it for mcp-lite on GPU, silently downgrading CUDA ONNX retrieval to CPU.
+      case RETRIEVAL_CORE, RETRIEVAL_ENRICHMENT, RUNTIME -> true;
+      case LLM -> includesLlmTier;
     };
   }
 

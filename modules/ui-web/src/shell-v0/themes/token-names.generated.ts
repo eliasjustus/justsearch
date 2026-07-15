@@ -132,6 +132,7 @@ export type TokenName =
   | '--font-size-xs'
   | '--glass-blur'
   | '--glass-blur-elevated'
+  | '--glass-blur-scale'
   | '--glass-border'
   | '--glass-border-hover'
   | '--glass-border-strong'
@@ -204,6 +205,7 @@ export type TokenName =
   | '--text-danger'
   | '--text-ghost'
   | '--text-highlight'
+  | '--text-info'
   | '--text-link'
   | '--text-muted'
   | '--text-primary'
@@ -352,6 +354,7 @@ export const TOKEN_NAMES: readonly TokenName[] = [
   '--font-size-xs',
   '--glass-blur',
   '--glass-blur-elevated',
+  '--glass-blur-scale',
   '--glass-border',
   '--glass-border-hover',
   '--glass-border-strong',
@@ -424,6 +427,7 @@ export const TOKEN_NAMES: readonly TokenName[] = [
   '--text-danger',
   '--text-ghost',
   '--text-highlight',
+  '--text-info',
   '--text-link',
   '--text-muted',
   '--text-primary',

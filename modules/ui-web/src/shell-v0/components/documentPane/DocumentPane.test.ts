@@ -2,6 +2,7 @@
 // @vitest-environment happy-dom
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { setUiMode, __resetUiModeForTest } from '../../state/uiModeState.js';
 import './DocumentPane.js';
 import type { DocumentPane } from './DocumentPane.js';
 
@@ -286,9 +287,11 @@ describe('DocumentPane — header path truncation (Search Thread Round-2 R5c)', 
   beforeEach(() => {
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+    __resetUiModeForTest();
   });
 
-  it('renders a formatDisplayPath-truncated header text with the full path in title', async () => {
+  it('Detailed: renders a formatDisplayPath-truncated header text with the full path in title', async () => {
+    setUiMode('advanced'); // Tempdoc 738 (C4) — the full/truncated path is the Detailed form.
     const longPath =
       'projects/deeply/nested/folder/structure/that/goes/on/for/a/while/before/reaching/the-actual-filename.md';
     stubFetchOnce({ content: MD_FIXTURE });
@@ -299,19 +302,32 @@ describe('DocumentPane — header path truncation (Search Thread Round-2 R5c)', 
     const pathEl = el.shadowRoot?.querySelector('.path');
     expect(pathEl?.getAttribute('title')).toBe(longPath);
     expect(pathEl?.textContent).toContain('the-actual-filename.md');
-    expect(pathEl?.textContent).not.toBe(longPath);
+    expect(pathEl?.textContent?.trim()).not.toBe(longPath);
     expect(pathEl?.textContent).toContain('…');
   });
 
-  it('renders a short path verbatim (no truncation needed)', async () => {
+  it('Detailed: renders a short path verbatim (no truncation needed)', async () => {
+    setUiMode('advanced');
     stubFetchOnce({ content: MD_FIXTURE });
     const el = make();
     el.docPath = 'notes/thread.md';
     await flush(el);
 
     const pathEl = el.shadowRoot?.querySelector('.path');
-    expect(pathEl?.textContent).toBe('notes/thread.md');
+    expect(pathEl?.textContent?.trim()).toBe('notes/thread.md');
     expect(pathEl?.getAttribute('title')).toBe('notes/thread.md');
+  });
+
+  it('Simple (default): renders a humanized folder breadcrumb, not the raw path (Tempdoc 738 C4)', async () => {
+    stubFetchOnce({ content: MD_FIXTURE });
+    const el = make();
+    el.docPath = 'f:\\justsearch-public\\ssot\\docs\\help\\getting-started.md';
+    await flush(el);
+
+    const pathEl = el.shadowRoot?.querySelector('.path');
+    expect(pathEl?.textContent?.trim()).toBe('ssot › docs › help');
+    // The full path stays reachable via the title tooltip.
+    expect(pathEl?.getAttribute('title')).toBe('f:\\justsearch-public\\ssot\\docs\\help\\getting-started.md');
   });
 });
 

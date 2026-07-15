@@ -68,12 +68,12 @@ class InstallPlannerTest {
     ModelRegistry registry = registryWithEmbeddingOnly();
     HardwareProfile hw = HardwareProfile.cpuOnly();
 
-    // Pre-create the files
+    // Pre-create the files at their registry-declared sizes (isAlreadyInstalled now checks size).
     Path modelFile = tempDir.resolve("onnx/embed/model.onnx");
     Path tokenizerFile = tempDir.resolve("onnx/embed/tokenizer.json");
     Files.createDirectories(modelFile.getParent());
-    Files.writeString(modelFile, "model data");
-    Files.writeString(tokenizerFile, "tokenizer data");
+    Files.write(modelFile, new byte[1_000_000]);
+    Files.write(tokenizerFile, new byte[10_000]);
 
     InstallPlan plan = InstallPlanner.plan(registry, hw, tempDir);
 
@@ -88,10 +88,10 @@ class InstallPlannerTest {
     ModelRegistry registry = registryWithEmbeddingOnly();
     HardwareProfile hw = HardwareProfile.cpuOnly();
 
-    // Pre-create only the tokenizer (model is missing)
+    // Pre-create only the tokenizer at its declared size (model is missing).
     Path tokenizerFile = tempDir.resolve("onnx/embed/tokenizer.json");
     Files.createDirectories(tokenizerFile.getParent());
-    Files.writeString(tokenizerFile, "tokenizer data");
+    Files.write(tokenizerFile, new byte[10_000]);
 
     InstallPlan plan = InstallPlanner.plan(registry, hw, tempDir);
 
@@ -127,6 +127,136 @@ class InstallPlannerTest {
     HardwareProfile hw = HardwareProfile.gpuFull(12_000_000_000L);
     InstallPlan lite = InstallPlanner.plan(registry, hw, InstallIntent.MCP_LITE, tempDir, tempDir);
     assertTrue(lite.downloads().stream().anyMatch(d -> d.packageId().equals("chat")));
+  }
+
+  @Test
+  void gpuLiteProfile_includesCudaRuntime_notGatedOnGgufVramFloor() {
+    // Regression for the miswired cuda-runtime gate: a CUDA-functional GPU with < 7.5 GB VRAM
+    // (GPU_LITE) must still download the runtime-tier CUDA DLLs, because it downloads the FP16
+    // CUDA ONNX variants that need them. Previously the runtime package reused the GGUF VRAM
+    // floor and was wrongly skipped for GPU_LITE.
+    ModelRegistry registry = registryWithRuntime();
+    HardwareProfile hw = new HardwareProfile(true, true, 6_000_000_000L);
+
+    InstallPlan plan = InstallPlanner.plan(registry, hw, tempDir);
+
+    assertEquals(DownloadProfile.GPU_LITE, plan.profile());
+    assertTrue(
+        plan.downloads().stream().anyMatch(d -> d.packageId().equals("cuda-runtime")),
+        "GPU_LITE must download the CUDA runtime");
+    assertTrue(plan.skipped().stream().noneMatch(s -> s.packageId().equals("cuda-runtime")));
+  }
+
+  @Test
+  void cpuProfile_skipsCudaRuntime() {
+    ModelRegistry registry = registryWithRuntime();
+    HardwareProfile hw = HardwareProfile.cpuOnly();
+
+    InstallPlan plan = InstallPlanner.plan(registry, hw, tempDir);
+
+    assertEquals(DownloadProfile.CPU, plan.profile());
+    assertTrue(plan.downloads().stream().noneMatch(d -> d.packageId().equals("cuda-runtime")));
+    assertTrue(plan.skipped().stream().anyMatch(s -> s.packageId().equals("cuda-runtime")));
+  }
+
+  @Test
+  void wrongSizeFile_isNotTreatedAsAlreadyInstalled() throws Exception {
+    ModelRegistry registry = registryWithEmbeddingOnly();
+    HardwareProfile hw = HardwareProfile.cpuOnly();
+
+    // A truncated/wrong file at the right path (size != declared) must be re-planned, not trusted.
+    Path modelFile = tempDir.resolve("onnx/embed/model.onnx");
+    Files.createDirectories(modelFile.getParent());
+    Files.write(modelFile, new byte[42]); // declared size is 1_000_000
+    Files.write(tempDir.resolve("onnx/embed/tokenizer.json"), new byte[10_000]);
+
+    InstallPlan plan = InstallPlanner.plan(registry, hw, tempDir);
+
+    assertTrue(
+        plan.downloads().stream()
+            .anyMatch(d -> d.isModelVariant() && d.targetPath().equals("onnx/embed/model.onnx")),
+        "wrong-size model must be scheduled for re-download");
+  }
+
+  @Test
+  void mcpLiteIntent_onGpu_includesCudaRuntime_butStillSkipsChat() {
+    // Option A (owner decision): the CUDA runtime is hardware-support wanted by every intent, because
+    // mcp-lite still downloads the CUDA FP16 retrieval variants that need it. So mcp-lite on a GPU
+    // must download cuda-runtime — while STILL skipping the LLM chat tier. Reverting the
+    // wants(RUNTIME) change makes the intent gate skip cuda-runtime for mcp-lite → this goes red.
+    ModelRegistry registry = registryWithRuntimeAndChat();
+    HardwareProfile hw = HardwareProfile.gpuFull(12_000_000_000L);
+
+    InstallPlan plan = InstallPlanner.plan(registry, hw, InstallIntent.MCP_LITE, tempDir, tempDir);
+
+    assertTrue(
+        plan.downloads().stream().anyMatch(d -> d.packageId().equals("cuda-runtime")),
+        "mcp-lite on GPU must download the CUDA runtime for GPU retrieval");
+    assertTrue(
+        plan.downloads().stream().noneMatch(d -> d.packageId().equals("chat")),
+        "mcp-lite must still skip the LLM chat tier");
+    assertTrue(
+        plan.skipped().stream()
+            .anyMatch(s -> s.packageId().equals("chat") && s.reason().contains("mcp-lite")));
+  }
+
+  @Test
+  void mcpLiteIntent_onCpu_skipsCudaRuntime() {
+    // No CUDA → no runtime, for every intent. The planner's usesCuda() gate is the sole authority.
+    ModelRegistry registry = registryWithRuntimeAndChat();
+    HardwareProfile hw = HardwareProfile.cpuOnly();
+
+    InstallPlan plan = InstallPlanner.plan(registry, hw, InstallIntent.MCP_LITE, tempDir, tempDir);
+
+    assertTrue(plan.downloads().stream().noneMatch(d -> d.packageId().equals("cuda-runtime")));
+    assertTrue(plan.skipped().stream().anyMatch(s -> s.packageId().equals("cuda-runtime")));
+  }
+
+  private ModelRegistry registryWithRuntimeAndChat() {
+    ModelPackage embedding = new ModelPackage(
+        "embedding", "Embedding", "Semantic search", "onnx/embed",
+        List.of(
+            new ModelVariant("model.onnx", ModelPrecision.FP32, ExecutionProvider.CPU,
+                "AAAA", 1_000_000, "https://example.com/fp32"),
+            new ModelVariant("model_fp16.onnx", ModelPrecision.FP16, ExecutionProvider.CUDA,
+                "BBBB", 500_000, "https://example.com/fp16")),
+        List.of(new SupportingFile("tokenizer.json", "CCCC", 10_000, "https://example.com/tok")),
+        0, null, null, null, CapabilityTier.RETRIEVAL_CORE);
+    ModelPackage cudaRuntime = new ModelPackage(
+        "cuda-runtime", "GPU runtime libraries", "CUDA DLLs", "cuda12",
+        List.of(),
+        List.of(
+            new SupportingFile(
+                "cuda.zip", "FFFF", 200_000_000L, "https://example.com/cuda.zip", true)),
+        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME);
+    ModelPackage chat = new ModelPackage(
+        "chat", "Chat", "Conversational AI", "gguf",
+        List.of(
+            new ModelVariant("model.gguf", ModelPrecision.GGUF, ExecutionProvider.LLAMA_SERVER,
+                "DDDD", 5_000_000_000L, "https://example.com/gguf")),
+        List.of(),
+        HardwareProfile.MINIMUM_VRAM_FOR_GGUF, null, null, null, CapabilityTier.LLM);
+    return new ModelRegistry(2, "test registry", List.of(embedding, cudaRuntime, chat));
+  }
+
+  private ModelRegistry registryWithRuntime() {
+    ModelPackage embedding = new ModelPackage(
+        "embedding", "Embedding", "Semantic search", "onnx/embed",
+        List.of(
+            new ModelVariant("model.onnx", ModelPrecision.FP32, ExecutionProvider.CPU,
+                "AAAA", 1_000_000, "https://example.com/fp32"),
+            new ModelVariant("model_fp16.onnx", ModelPrecision.FP16, ExecutionProvider.CUDA,
+                "BBBB", 500_000, "https://example.com/fp16")),
+        List.of(new SupportingFile("tokenizer.json", "CCCC", 10_000, "https://example.com/tok")),
+        0, null, null, null, CapabilityTier.RETRIEVAL_CORE);
+    ModelPackage cudaRuntime = new ModelPackage(
+        "cuda-runtime", "GPU runtime libraries", "CUDA DLLs", "cuda12",
+        List.of(),
+        List.of(
+            new SupportingFile(
+                "cuda.zip", "FFFF", 200_000_000L, "https://example.com/cuda.zip", true)),
+        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME);
+    return new ModelRegistry(2, "test registry", List.of(embedding, cudaRuntime));
   }
 
   private ModelRegistry registryWithTiers() {

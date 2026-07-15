@@ -18,12 +18,14 @@ _OBSERVATION_KEYS = {
     "disallowed_tool_call_names", "leak_suspect", "mcp_server_statuses",
     "mcp_tools_offered", "mcp_surface_unverified", "mcp_tools_deferred", "source",
     "mcp_tool_names_offered", "observed_mcp_tool_surface_hash",
+    "toolsearch_targets", "tool_call_sequence", "tool_result_digests",
 }
 _SOURCE_KEYS = {
     "model_alias", "corpus", "packages", "source_git_sha", "source_git_dirty", "source_git_state",
     "cli_version", "mcp_tool_surface_hash", "mcp_tool_surface", "judge_kind", "prompt_template_hash",
     "decoding", "eval_limits", "search_config_cohort_key", "environment", "corpus_identity",
     "corpus_certification", "query_identity", "campaign_identity",
+    "exposure_config", "mcp_initialize_identity",
 }
 
 
@@ -74,6 +76,97 @@ def _mcp_statuses(servers: Any) -> list[dict] | None:
     ]
 
 
+def _toolsearch_targets(names: Any) -> list[str] | None:
+    if names is None:
+        return None
+    return [str(name) for name in names]
+
+
+def _tool_call_sequence(sequence: Any) -> list[dict] | None:
+    if sequence is None:
+        return None
+    return [
+        {"name": str(item.get("name")), "status": str(item.get("status"))}
+        for item in sequence
+        if isinstance(item, dict)
+    ]
+
+
+_DELIVERED_TIERS = {"structured-json", "prose", "blocks"}
+_DELIVERED_FIELD_KEYS = (
+    "quality", "matchedTerms", "degradation", "excerpts", "citations", "searchTrace", "results",
+)
+
+
+def _tool_result_digests(value: Any) -> list[dict] | None:
+    """tempdoc 736 D9 (extended by tempdoc 735 G2): pass through only the seven
+    declared digest fields, never a raw-content key, even if one were ever
+    (mistakenly) present upstream -- this projection is itself part of the leak
+    boundary, not just the schema.
+
+    `furniture_markers` and `delivered_fields` are each either a dict of the
+    declared booleans OR `None` -- `None` is preserved as-is (never coerced to an
+    all-False dict), because for a `structured-json` delivery `furniture_markers`
+    is genuinely not-applicable (the text-grep tier was never delivered) and for
+    a `prose`/`blocks` delivery `delivered_fields` is genuinely not-applicable
+    (nothing was parsed). Historical entries captured before tempdoc 735 lack
+    `delivered_tier`/`delivered_fields` entirely (`item.get(...)` -> `None`),
+    which is the schema-optional case, not an error."""
+    if value is None:
+        return None
+    digests: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        markers = item.get("furniture_markers")
+        markers_out = (
+            {
+                "rationale": bool(markers.get("rationale")),
+                "evidence_pack": bool(markers.get("evidence_pack")),
+                "coverage": bool(markers.get("coverage")),
+                "degradation": bool(markers.get("degradation")),
+            }
+            if isinstance(markers, dict) else None
+        )
+        delivered_fields = item.get("delivered_fields")
+        delivered_fields_out = (
+            {key: bool(delivered_fields.get(key)) for key in _DELIVERED_FIELD_KEYS}
+            if isinstance(delivered_fields, dict) else None
+        )
+        tier = item.get("delivered_tier")
+        digests.append({
+            "content_sha256": item.get("content_sha256"),
+            "content_len": item.get("content_len"),
+            "content_is_error": item.get("content_is_error"),
+            "content_shape": item.get("content_shape"),
+            "furniture_markers": markers_out,
+            "delivered_tier": tier if tier in _DELIVERED_TIERS else None,
+            "delivered_fields": delivered_fields_out,
+        })
+    return digests
+
+
+def _exposure_config(value: Any) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "enable_tool_search": value.get("enable_tool_search"),
+        "always_load": value.get("always_load"),
+        "exposure_mode": value.get("exposure_mode"),
+    }
+
+
+def _mcp_initialize_identity(value: Any) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "instructions": value.get("instructions"),
+        "instructions_sha256": value.get("instructions_sha256"),
+        "server_version": value.get("server_version"),
+        "protocol_version": value.get("protocol_version"),
+    }
+
+
 def sanitize_observation(observation: dict) -> dict:
     source = observation.get("source") or {}
     cohort = source.get("cohort") or {}
@@ -104,6 +197,9 @@ def sanitize_observation(observation: dict) -> dict:
         "observed_mcp_tool_surface_hash": observation.get("observed_mcp_tool_surface_hash"),
         "mcp_surface_unverified": bool(observation.get("mcp_surface_unverified")),
         "mcp_tools_deferred": observation.get("mcp_tools_deferred"),
+        "toolsearch_targets": _toolsearch_targets(observation.get("toolsearch_targets")),
+        "tool_call_sequence": _tool_call_sequence(observation.get("tool_call_sequence")),
+        "tool_result_digests": _tool_result_digests(observation.get("tool_result_digests")),
         "source": {
             "model_alias": source.get("model_alias"),
             "corpus": source.get("corpus") or {},
@@ -124,6 +220,8 @@ def sanitize_observation(observation: dict) -> dict:
             "corpus_certification": cohort.get("corpus_certification"),
             "query_identity": cohort.get("query_identity"),
             "campaign_identity": cohort.get("campaign_identity"),
+            "exposure_config": _exposure_config(cohort.get("exposure_config")),
+            "mcp_initialize_identity": _mcp_initialize_identity(cohort.get("mcp_initialize_identity")),
         },
     }
 
@@ -174,6 +272,7 @@ def read_evidence(path: str | Path) -> list[dict]:
                 "environment", "corpus_identity",
                 "corpus_certification",
                 "query_identity", "campaign_identity",
+                "exposure_config", "mcp_initialize_identity",
             )
         }
         observations.append({
@@ -214,5 +313,8 @@ def read_evidence(path: str | Path) -> list[dict]:
             "observed_mcp_tool_surface_hash": item.get("observed_mcp_tool_surface_hash"),
             "mcp_surface_unverified": bool(item.get("mcp_surface_unverified")),
             "mcp_tools_deferred": item.get("mcp_tools_deferred"),
+            "toolsearch_targets": item.get("toolsearch_targets"),
+            "tool_call_sequence": item.get("tool_call_sequence"),
+            "tool_result_digests": item.get("tool_result_digests"),
         })
     return observations

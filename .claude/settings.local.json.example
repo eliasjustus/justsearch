@@ -149,6 +149,30 @@
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/docs-granularity-hint.mjs"
             ],
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/pipe-mask-hint.mjs"
+            ],
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/dataset-cache-hint.mjs"
+            ],
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/known-state-hint.mjs"
+            ],
+            "timeout": 5
           }
         ]
       },
@@ -187,6 +211,19 @@
             "command": "node",
             "args": [
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/mcp-session-inject.mjs"
+            ],
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "TaskCreate",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/taskcreate-guard.mjs"
             ],
             "timeout": 5
           }
@@ -279,6 +316,14 @@
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/search-engine-hint.mjs"
             ],
             "if": "Edit(modules/adapters-lucene/src/**)|Write(modules/adapters-lucene/src/**)|Edit(modules/reranker/src/**)|Write(modules/reranker/src/**)|Edit(modules/worker-services/src/**)|Write(modules/worker-services/src/**)|Edit(modules/app-services/src/**)|Write(modules/app-services/src/**)|Edit(modules/search/src/**)|Edit(modules/app-search/src/**)"
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/mcpb-repack-hint.mjs"
+            ],
+            "if": "Edit(packaging/mcpb/server/**)|Write(packaging/mcpb/server/**)|Edit(packaging/mcpb/manifest.json)|Write(packaging/mcpb/manifest.json)"
           }
         ]
       },
@@ -314,6 +359,19 @@
             "if": "Edit(scripts/ci/npm-audit-ratchet-baseline.v1.json)|Edit(.claude/rules/tier-register.md)|Edit(gates/**)"
           }
         ]
+      },
+      {
+        "matcher": "EnterWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/worktree-base-hint.mjs"
+            ],
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUseFailure": [
@@ -328,6 +386,33 @@
             ],
             "timeout": 5,
             "async": true
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/edit-reread-hint.mjs"
+            ],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "CwdChanged": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/cwd-hint.mjs"
+            ],
+            "timeout": 5
           }
         ]
       }
@@ -452,6 +537,18 @@
             "command": "node",
             "args": [
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/maintain-doc-hint.mjs"
+            ],
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/observation-shard-hint.mjs"
             ],
             "timeout": 5
           }

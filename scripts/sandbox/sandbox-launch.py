@@ -64,6 +64,107 @@ def find_installer(explicit_path: str | None) -> Path:
     sys.exit("No installer found. Build one first or pass --installer.")
 
 
+def resolve_main_checkout_root() -> Path:
+    """Resolve the main checkout root even when this script runs from a git
+    worktree, mirroring scripts/dev/dev-runner.cjs's resolveMainRepoRoot()
+    (tempdoc 618 SS2). A worktree's models/ dir holds only tracked
+    config/tokenizer JSON — the real ~11.5 GB of model weights are untracked
+    and live only in the MAIN checkout, so resolving from the current
+    checkout silently maps a weightless dir.
+
+    Prefers `git rev-parse --git-common-dir` (robust to worktree nesting and
+    symlinks); falls back to manual .git-file parsing (a worktree's .git is a
+    file pointing at <main>/.git/worktrees/<name>); falls back to REPO_ROOT
+    itself if git is unavailable or this isn't a worktree."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        common_dir = result.stdout.strip()
+        if common_dir:
+            p = Path(common_dir)
+            if not p.is_absolute():
+                p = REPO_ROOT / p
+            return p.resolve().parent
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        pass
+
+    git_path = REPO_ROOT / ".git"
+    try:
+        if git_path.is_file():
+            content = git_path.read_text(encoding="utf-8").strip()
+            if content.startswith("gitdir:"):
+                git_dir = Path(content.split(":", 1)[1].strip())
+                if not git_dir.is_absolute():
+                    git_dir = REPO_ROOT / git_dir
+                return git_dir.resolve().parent.parent.parent
+    except OSError:
+        pass
+
+    return REPO_ROOT
+
+
+def dir_has_model_weights(d: Path) -> bool:
+    """True if d contains at least one *.onnx or *.gguf file anywhere beneath
+    it. A dir with only tracked config/tokenizer JSON (a worktree's models/)
+    is weightless and must not be mapped as pre-staged-models."""
+    if not d.is_dir():
+        return False
+    return any(d.rglob("*.onnx")) or any(d.rglob("*.gguf"))
+
+
+def resolve_models_dir(explicit_path: str | None) -> tuple[Path | None, str | None]:
+    """Resolve the host models directory to map into the sandbox, refusing to
+    map a directory that holds no model weights.
+
+    Returns (resolved_dir, gap_message). resolved_dir is None whenever no
+    weight-bearing directory was found — including when an explicit
+    --models-dir was weightless (refused, not mapped). gap_message is a
+    staging-gaps.md entry explaining why, or None when a weight-bearing dir
+    was found and will be mapped."""
+    main_root = resolve_main_checkout_root()
+
+    if explicit_path:
+        p = Path(explicit_path)
+        if not p.is_absolute():
+            p = REPO_ROOT / p
+        if not p.is_dir():
+            sys.exit(f"--models-dir not found: {p}")
+        if dir_has_model_weights(p):
+            return p, None
+        return None, (
+            f"--models-dir {p} has no model weights (no *.onnx/*.gguf found "
+            "under it) — refusing to map it and claim pre-staged-models. The "
+            f"real ~11.5 GB of weights live only in the main checkout at "
+            f"{main_root / 'models'}. Remedy: pass --models-dir "
+            f"{main_root / 'models'}, or --no-models for a true fresh-install round."
+        )
+
+    for candidate in (main_root / "models", REPO_ROOT / "models"):
+        if candidate.is_dir() and dir_has_model_weights(candidate):
+            return candidate, None
+
+    # Auto-detect found a models/ dir but it had no weights (the worktree
+    # case) — report it explicitly rather than falling through to "no models
+    # directory found at all", which understates what actually happened.
+    for candidate in (main_root / "models", REPO_ROOT / "models"):
+        if candidate.is_dir():
+            return None, (
+                f"Auto-detected models dir {candidate} has no model weights "
+                "(no *.onnx/*.gguf found under it) — refusing to map it and "
+                "claim pre-staged-models. This is a worktree checkout, which "
+                "holds only tracked config/tokenizer JSON; the real weights "
+                f"live only in the main checkout at {main_root / 'models'}. "
+                f"Remedy: pass --models-dir {main_root / 'models'} explicitly, "
+                "or --no-models for a true fresh-install round."
+            )
+    return None, None
+
+
 def clean_dir(path: Path):
     """Remove a directory tree, handling read-only files. Best-effort: a
     Hyper-V worker (vmwp.exe) holds VHDX overlays on a sandbox's mapped
@@ -80,6 +181,86 @@ def clean_dir(path: Path):
             except OSError:
                 pass
     shutil.rmtree(path)
+
+
+def archive_existing_evidence(stage_root: Path) -> Path | None:
+    """Archive a previous round's captured evidence before staging can clobber it.
+
+    A later round overwriting the mapped `share/` folder destroyed rounds 1-2's
+    raw evidence (screenshots, traces, logs, findings) with no way to recover
+    it afterward -- an audit could not verify that round's claims against
+    them, permanently. Rounds 3-4 survived only because a human hand-copied
+    `share/evidence/` out before relaunch (and, separately, once by luck: a
+    Hyper-V lock blocked resolve_share_dir()'s clean_dir() and it fell back
+    to a fresh timestamped dir instead of deleting). This function makes that
+    hand-copy automatic and load-bearing, called from main() BEFORE
+    resolve_share_dir() so the canonical `share` dir is moved aside -- never
+    deleted -- whenever it holds evidence.
+
+    Returns the archive destination when something was archived, or None
+    when there was nothing to archive: no canonical `share` dir yet (first
+    run), or a `share` dir whose evidence/ is absent or has zero files (a
+    staged-but-never-launched round, or a round that never reached
+    collect-evidence.ps1) -- both are the normal first-run case, not an
+    error, per this function's contract.
+
+    FAILS CLOSED: if the move itself raises, this exits the whole staging
+    run non-zero rather than falling through to let resolve_share_dir()'s
+    clean_dir() proceed and delete the unarchived evidence. The likely cause
+    is the same Hyper-V VHDX-overlay lock class documented on clean_dir()'s
+    docstring (a just-closed sandbox's vmwp.exe can hold handles on the
+    mapped folder for a while) -- but whatever the cause, losing evidence
+    must be impossible here, not unlikely, so no fallback path is offered.
+    """
+    canonical = stage_root / "share"
+    if not canonical.exists():
+        return None  # nothing staged yet -- first run
+
+    evidence_dir = canonical / "evidence"
+    has_evidence = evidence_dir.is_dir() and any(f.is_file() for f in evidence_dir.rglob("*"))
+    if not has_evidence:
+        print(f"No captured evidence under {evidence_dir} -- nothing to archive (first run or empty round).")
+        return None
+
+    archive_root = stage_root / "archive"
+    archive_root.mkdir(parents=True, exist_ok=True)
+    round_num = len([p for p in archive_root.iterdir() if p.is_dir()]) + 1
+
+    # Ground the archive name in the evidence's own recorded mtimes, not
+    # "now": archiving can run long after a round actually captured its
+    # evidence (a staged share dir can sit for hours before the next
+    # relaunch), so the newest file mtime inside evidence/ is the honest
+    # "when did this round happen" stamp -- not wall-clock-at-archive-time.
+    # The round_num prefix guarantees ordering/uniqueness even if two rounds'
+    # evidence happens to share a timestamp.
+    import time as _time
+
+    newest_mtime = max(
+        (f.stat().st_mtime for f in evidence_dir.rglob("*") if f.is_file()),
+        default=canonical.stat().st_mtime,
+    )
+    stamp = _time.strftime("%Y%m%d-%H%M%S", _time.localtime(newest_mtime))
+    dest = archive_root / f"round-{round_num:03d}-{stamp}"
+
+    try:
+        shutil.move(str(canonical), str(dest))
+    except OSError as e:
+        sys.exit(
+            f"FAILED to archive previous round's evidence: could not move "
+            f"{canonical} -> {dest} ({e.__class__.__name__}: {e}).\n"
+            "Refusing to continue staging -- proceeding would let the next "
+            "step (resolve_share_dir's clean_dir) delete this round's "
+            "un-archived evidence (screenshots, traces, logs, findings), "
+            "which is unrecoverable once gone. This is most likely the "
+            "Hyper-V VHDX-overlay lock documented in clean_dir()'s "
+            "docstring: a just-closed sandbox's vmwp.exe process can hold "
+            "file handles on the mapped folder for a while after the "
+            "window closes. Wait for the lock to clear (check Task Manager "
+            "for vmwp.exe), or archive the evidence manually, then re-run."
+        )
+
+    print(f"Archived previous round's evidence: {canonical} -> {dest}")
+    return dest
 
 
 def resolve_share_dir(stage_root: Path) -> Path:
@@ -121,18 +302,163 @@ def stage_docs(share_dir: Path):
     print("Staged docs (explanation, reference, how-to, decisions, tempdocs)")
 
 
-def stage_scifact(share_dir: Path):
+def stage_scifact(share_dir: Path) -> str | None:
     """Copy the SciFact eval corpus into the sandbox so the validation agent
     can ingest it via POST /api/knowledge/ingest and run search-quality
-    assertions. ~5,184 .txt docs, ~11 MB."""
+    assertions. ~5,184 .txt docs, ~11 MB.
+
+    Returns a staging-gap message if the host corpus isn't materialized (in
+    which case nothing is staged and search-quality verification cannot run
+    this round), or None if it staged successfully."""
     src = REPO_ROOT / "scripts" / "jseval" / "tmp" / "eval-corpora" / "scifact"
     if not src.is_dir():
         print(f"SciFact corpus not found at {src} — skipping (run jseval to materialize)")
-        return
+        return (
+            f"SciFact corpus not staged — not found at {src}. Search-quality "
+            "assertions (POST /api/knowledge/ingest + query verification) cannot "
+            "run this round. Remedy: from scripts/jseval, run "
+            "`python -m jseval run --dataset scifact --modes lexical,hybrid --pipeline` "
+            "to materialize the corpus, then re-run sandbox-launch.py."
+        )
     dst = share_dir / "scifact"
     shutil.copytree(src, dst, dirs_exist_ok=True)
     file_count = sum(1 for _ in dst.iterdir() if _.is_file())
     print(f"Staged SciFact corpus ({file_count} files)")
+    return None
+
+
+def stage_golden_parity(share_dir: Path) -> str | None:
+    """Stage the golden-parity search-quality harness (parity-with-dev, owner
+    design): the fixed golden-queries.json query set always ships (it's
+    checked in), plus the per-candidate golden-parity.json baseline when the
+    operator has generated one for THIS candidate build.
+
+    golden-parity.json is not committed — it's generated per candidate via
+    `gen_golden_parity.py` against a running dev stack on the same build +
+    corpus, and is looked for at its default output location next to this
+    script (scripts/sandbox/golden-parity.json) for simplicity. An operator
+    who wrote it elsewhere can drop/copy it there before staging.
+
+    Returns a staging-gap message if the baseline is absent (in which case
+    the round still stages the query set — the sandbox agent can capture
+    responses via collect-evidence.ps1 — but has no baseline to check parity
+    against at finalize), or None if the baseline staged successfully.
+    """
+    queries_src = SCRIPT_DIR / "golden-queries.json"
+    if queries_src.exists():
+        shutil.copy2(queries_src, share_dir / "golden-queries.json")
+        print("Staged golden-queries.json")
+    else:
+        print(f"golden-queries.json not found at {queries_src} — golden-query capture will not run this round")
+
+    baseline_src = SCRIPT_DIR / "golden-parity.json"
+    if baseline_src.exists():
+        shutil.copy2(baseline_src, share_dir / "golden-parity.json")
+        print("Staged golden-parity.json (per-candidate baseline)")
+        return None
+
+    print(f"golden-parity.json not found at {baseline_src} — no per-candidate search-parity baseline for this round")
+    return (
+        "golden-parity baseline not generated for this candidate — run "
+        "`python scripts/sandbox/gen_golden_parity.py --api-port <port> --corpus scifact` "
+        "against the dev stack on this build with scifact ingested, then re-run sandbox-launch.py. "
+        "Without it, the round can still capture golden-query responses via collect-evidence.ps1 but "
+        "check_golden_parity.py has nothing to compare them against at finalize."
+    )
+
+
+def check_node_installer_staged(tools_cache: Path) -> str | None:
+    """Check whether a Node.js Windows installer is present in the host tools
+    cache. `collect-evidence.ps1`'s in-sandbox MCP Inspector check needs `npx`
+    (Node) on PATH; if nothing is staged, that check silently depends on a
+    mid-session internet download instead of a reproducible staged asset.
+
+    Returns a staging-gap message if no installer is found, or None if one is
+    already present."""
+    if tools_cache.is_dir():
+        found = list(tools_cache.glob("node*.msi")) + list(tools_cache.glob("node*.exe"))
+        if found:
+            return None
+    return (
+        f"No Node.js installer found in {tools_cache} — the in-sandbox MCP "
+        "Inspector check (npx @modelcontextprotocol/inspector) has no staged "
+        "Node runtime, so it depends on a mid-session download instead of a "
+        "reproducible staged asset. Remedy: drop a Node LTS Windows installer "
+        "(e.g. node-v*-x64.msi) into that directory before launching."
+    )
+
+
+def write_staging_gaps(share_dir: Path, gaps: list[str]):
+    """Write the collected staging gaps to <share>/staging-gaps.md.
+
+    Gaps do NOT abort staging — the fail-closed abort stays reserved for the
+    coverage-brief step (an unclassified shipped surface). This file is the
+    in-sandbox agent's authoritative record of assets the host failed to
+    stage, so each entry must be recorded as a round-level coverage gap
+    rather than silently absorbed. Future gap types append another string to
+    the `gaps` list passed in — no format change needed here."""
+    lines = ["# Staging Gaps", ""]
+    if gaps:
+        for gap in gaps:
+            lines.append(f"- {gap}")
+    else:
+        lines.append("None — all documented assets staged.")
+    lines.append("")
+    lines.append(
+        "The in-sandbox agent must read this file and record each listed gap "
+        "as a round-level coverage gap, not silently absorb it."
+    )
+    (share_dir / "staging-gaps.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if gaps:
+        print()
+        print("WARNING: staging gaps detected — see staging-gaps.md")
+        for gap in gaps:
+            print(f"  - {gap}")
+        print()
+    else:
+        print("Staged staging-gaps.md (no gaps)")
+
+
+def _assert_no_dangling_hook_refs(settings: dict, claude_dst: Path):
+    """Fail loudly if any hook command path in `settings` (the staged, already-
+    sanitized settings dict) resolves outside the staged tree.
+
+    Walks settings.get("hooks", {}) — a dict of event name -> list of matcher
+    groups -> list of {command, args} entries, per Claude Code's hooks schema
+    — and resolves every ${CLAUDE_PROJECT_DIR}-prefixed path in `args` against
+    `claude_dst.parent` (the staged share dir, which stands in for the
+    sandbox's project dir). Exits the whole staging run non-zero on the first
+    dangling reference: a hook wired to a script that was never staged throws
+    a module-resolution error on every tool call all round (the defect this
+    guards against), so this must abort staging, not warn."""
+    hooks = settings.get("hooks")
+    if not hooks:
+        return
+    share_dir = claude_dst.parent
+    dangling: list[str] = []
+    for event_name, groups in hooks.items():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            for entry in group.get("hooks", []) if isinstance(group, dict) else []:
+                if not isinstance(entry, dict):
+                    continue
+                for arg in entry.get("args", []):
+                    if not isinstance(arg, str) or "${CLAUDE_PROJECT_DIR}" not in arg:
+                        continue
+                    rel = arg.replace("${CLAUDE_PROJECT_DIR}", "").lstrip("/\\")
+                    resolved = share_dir / rel
+                    if not resolved.exists():
+                        dangling.append(f"{event_name}: {arg} -> {resolved} (missing)")
+    if dangling:
+        sys.exit(
+            "Staged .claude/settings.json references hook script(s) that were "
+            "never staged into the sandbox share — every tool call would throw "
+            "a module-resolution error all round:\n"
+            + "\n".join(f"  - {d}" for d in dangling)
+            + "\nEither stage the referenced scripts, or strip the hooks key "
+            "for this settings block."
+        )
 
 
 def stage_claude_settings(share_dir: Path):
@@ -174,13 +500,36 @@ def stage_claude_settings(share_dir: Path):
             settings.pop("enabledPlugins", None)
             settings["enableAllProjectMcpServers"] = False
             settings.pop("enabledMcpjsonServers", None)
+            # Strip the hooks block entirely. It wires every PreToolUse/
+            # PostToolUse hook to ${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/
+            # hooks/*.mjs, but this function never stages scripts/agent-analytics/
+            # (there is no git repo or dev tooling in the sandbox for those hooks
+            # to act on anyway — the git-safety guards are meaningless without a
+            # repo, and build-counter/ssot-hint/etc. have no gradle/SSOT to react
+            # to). Left in place, every tool call in the round would throw a
+            # module-resolution error, all round — desensitizing the agent to
+            # hook noise and creating a false belief that a safety net is active
+            # when none is. Matches this function's existing philosophy: skills
+            # are staged as only the sandbox-aware subset, not the raw project
+            # set, for the same "would mislead the agent" reason.
+            settings.pop("hooks", None)
             # Sandbox is ephemeral and isolated — start Claude in bypass mode
             # so the user is not prompted for every tool call.
             settings.setdefault("permissions", {})["defaultMode"] = "bypassPermissions"
+
+            # Fail-closed ratchet: assert no *staged* settings reference a hook
+            # command path outside the staged tree. This is trivially satisfied
+            # today (hooks are stripped above) but guards against a future edit
+            # re-introducing a hooks block (or any other settings key that names
+            # a ${CLAUDE_PROJECT_DIR}-relative script) without staging the
+            # scripts it points at — turning a silent dead-hook regression back
+            # into this exact defect instead of a loud staging failure.
+            _assert_no_dangling_hook_refs(settings, claude_dst)
+
             (claude_dst / "settings.json").write_text(
                 json.dumps(settings, indent=2), encoding="utf-8"
             )
-            print("Staged .claude/settings.json (sanitized + bypassPermissions)")
+            print("Staged .claude/settings.json (sanitized + bypassPermissions, hooks stripped)")
         except Exception as e:
             shutil.copy2(settings_src, claude_dst / "settings.json")
             print(f"Staged .claude/settings.json (raw copy, sanitization failed: {e})")
@@ -235,6 +584,135 @@ def write_validation_mode(share_dir: Path, installer: Path, models_dir: Path | N
     print(f"Staged validation-mode.md ({mode})")
 
 
+def stage_coverage_brief(share_dir: Path):
+    """Generate the per-candidate must-touch coverage brief (tempdoc 728, Part B1).
+
+    Derives the surfaces this candidate must exercise from committed artifacts
+    (route-manifest cohorts, CorePlugin.ts surfaces, interaction shapes) against
+    governance/sandbox-coverage.v1.json. FAILS CLOSED: if the candidate ships a
+    surface not yet classified in the register, the generator exits non-zero and
+    we abort staging rather than validate against a silently-incomplete brief —
+    that is the whole point (a new surface can no longer be forgotten).
+    """
+    gen = SCRIPT_DIR / "gen_coverage_brief.py"
+    result = subprocess.run(
+        [sys.executable, str(gen), "--out-dir", str(share_dir)],
+        capture_output=True,
+        text=True,
+    )
+    sys.stdout.write(result.stdout)
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        sys.exit(
+            "Coverage-brief generation FAILED (a shipped surface is unclassified in "
+            "governance/sandbox-coverage.v1.json). Classify it there before validating."
+        )
+    print("Staged coverage-brief.md + coverage-manifest.json")
+
+
+def stage_round_plan(share_dir: Path):
+    """Derive round-plan.md from the just-staged coverage-manifest.json
+    (tempdoc 729-followup, mechanical brief-to-plan derivation).
+
+    A round previously built its task list from the operator's prose instead
+    of from the generated coverage-brief.md, and missed a whole mandatory
+    cohort plus 4 of 5 required shapes — caught only by luck at finalize.
+    Deriving this checklist automatically at staging time (rather than
+    leaving it as a script the round must remember to invoke) is what makes
+    the round's plan actually DERIVED from the authority instead of merely
+    read alongside it. Non-fatal by design: coverage-manifest.json's own
+    generation (stage_coverage_brief, just above) is the fail-closed step —
+    if that succeeded, deriving a checklist from its output should not itself
+    be able to abort staging.
+    """
+    manifest_path = share_dir / "coverage-manifest.json"
+    if not manifest_path.exists():
+        print("WARNING: coverage-manifest.json not staged — skipping round-plan.md derivation")
+        return
+    derive = SCRIPT_DIR / "derive_round_plan.py"
+    out_path = share_dir / "round-plan.md"
+    result = subprocess.run(
+        [sys.executable, str(derive), "--manifest", str(manifest_path), "--out", str(out_path)],
+        capture_output=True,
+        text=True,
+    )
+    sys.stdout.write(result.stdout)
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        print("WARNING: round-plan.md derivation FAILED (non-fatal — coverage-brief.md/coverage-manifest.json remain the authority)")
+    else:
+        print("Staged round-plan.md (mechanically derived checklist)")
+
+
+def stage_evidence_harness(share_dir: Path):
+    """Copy the in-sandbox capture harness (tempdoc 728, cross-cutting)."""
+    harness = SCRIPT_DIR / "collect-evidence.ps1"
+    if harness.exists():
+        shutil.copy2(harness, share_dir / "collect-evidence.ps1")
+        print("Staged collect-evidence.ps1")
+
+
+def stage_gui_harness(share_dir: Path):
+    """Copy the native PowerShell GUI capture/input harness (tempdoc
+    727-followup). This is the resolved-negative-on-Chrome, working-native
+    alternative for surface-tier (screenshot) coverage: it drives the real
+    Tauri WebView2 shell via CopyFromScreen/SendKeys/mouse_event, needs no
+    computer-use tool, extension, pairing, or network. Staged next to
+    collect-evidence.ps1 so no round has to reconstruct it from scratch."""
+    gui_src = SCRIPT_DIR / "gui"
+    if not gui_src.is_dir():
+        return
+    gui_dst = share_dir / "gui"
+    gui_dst.mkdir(parents=True, exist_ok=True)
+    count = 0
+    for f in gui_src.iterdir():
+        if f.is_file():
+            shutil.copy2(f, gui_dst / f.name)
+            count += 1
+    print(f"Staged gui/ ({count} files — native PowerShell GUI capture/input harness)")
+
+
+def stage_mcp_client_harness(share_dir: Path):
+    """Copy the TYPED_CONFIRM MCP-client harness (D2, tempdoc 728-followup).
+
+    The MCP Inspector CLI's `--tool-arg` string-coerces every value and cannot
+    express `justsearch_ingest`'s `paths: string[]` argument, so the mutating
+    -tool step of the cohort:mcp procedure cannot be driven through it
+    (verified against a real round). Rather than promoting a second, divergent
+    HTTP client, this stages the REAL shipped MCPB stdio bridge
+    (packaging/mcpb/server/index.js, copied verbatim) plus a thin Node driver
+    (mcp-typed-confirm.mjs) that spawns it and speaks JSON-RPC over its
+    stdin/stdout -- exactly how a real MCP host drives it. That means the
+    round validates the actual artifact JustSearch ships, not a parallel
+    bespoke client. (A PowerShell predecessor was removed 2026-07-15: it hung
+    waiting on the tools/call response even though the server and bridge were
+    independently verified working -- Node is already a sandbox requirement
+    via the MCP Inspector CLI's npx dependency, so a Node driver for the Node
+    bridge is the natural, proven-working shape.)"""
+    dst = share_dir / "mcp-client"
+    dst.mkdir(parents=True, exist_ok=True)
+    count = 0
+
+    bridge_src = REPO_ROOT / "packaging" / "mcpb" / "server" / "index.js"
+    if bridge_src.exists():
+        shutil.copy2(bridge_src, dst / "index.js")
+        count += 1
+    else:
+        print(f"WARNING: MCPB bridge not found at {bridge_src} -- mcp-client/ will be incomplete")
+
+    driver_src = SCRIPT_DIR / "mcp-typed-confirm.mjs"
+    if driver_src.exists():
+        shutil.copy2(driver_src, dst / "mcp-typed-confirm.mjs")
+        count += 1
+
+    readme_src = SCRIPT_DIR / "mcp-client-README.md"
+    if readme_src.exists():
+        shutil.copy2(readme_src, dst / "README.md")
+        count += 1
+
+    print(f"Staged mcp-client/ ({count} files — real MCPB stdio bridge + TYPED_CONFIRM driver)")
+
+
 def generate_wsb(wsb_path: Path, share_dir: Path, memory_mb: int, models_dir: Path | None = None):
     """Generate the .wsb configuration file with proper XML escaping.
 
@@ -242,7 +720,31 @@ def generate_wsb(wsb_path: Path, share_dir: Path, memory_mb: int, models_dir: Pa
     can launch installers and docs manually. Claude Code, Git, and any other
     tools are installed by the user from inside the sandbox.
     """
-    logon_cmd = rf"explorer.exe {SANDBOX_FOLDER}"
+    # Enable per-request tracing for the round (JUSTSEARCH_HEAD_TRACING_LEVEL=detailed
+    # → telemetry/traces.ndjson records every endpoint the round exercises, the
+    # empirical input to the finalize coverage check — tempdoc 728). setx sets a
+    # persistent USER env var inherited by the app the operator launches afterwards.
+    # Restore the unofficial SAC-disable workaround that was dropped in the
+    # 2026-04-28 bootstrap refactor (INS-001; tempdoc 374:646). A fresh Windows
+    # Sandbox boots with Smart App Control enforcing and HARD-blocks the unsigned
+    # installer (no "Run anyway") — confirmed still current behaviour (mid-2026).
+    # This registry edit + CiTool refresh disables SAC at boot so a validation
+    # round can reach the installed app (/mcp, Install AI, search).
+    # NOTE: externally reported UNRELIABLE (Microsoft Q&A #5641557 — "didn't seem
+    # to have an effect" for several users). If the block persists despite this,
+    # it is NOT a JustSearch regression — the real fix is code-signing (374 G4),
+    # deferred by owner budget. The block itself remains valid first-run evidence
+    # (tempdoc 728): capture it before relying on this bypass.
+    sac_disable = (
+        r'reg add "HKLM\SYSTEM\CurrentControlSet\Control\CI\Policy" '
+        r'/v VerifiedAndReputablePolicyState /t REG_DWORD /d 0 /f >nul 2>&1 & '
+        r'CiTool.exe -r >nul 2>&1 & '
+    )
+    logon_cmd = (
+        rf'cmd /c "{sac_disable}'
+        rf'setx JUSTSEARCH_HEAD_TRACING_LEVEL detailed >nul & '
+        rf'explorer.exe {SANDBOX_FOLDER}"'
+    )
 
     config = ET.Element("Configuration")
     ET.SubElement(config, "vGPU").text = "Default"
@@ -310,6 +812,13 @@ def main():
     if not stage_dir.is_absolute():
         stage_dir = REPO_ROOT / stage_dir
     stage_dir.mkdir(parents=True, exist_ok=True)
+
+    # Archive any previous round's evidence before staging can clobber it.
+    # Must run before resolve_share_dir()'s clean_dir() -- never destructive:
+    # fails the whole staging run rather than risk overwriting unarchived
+    # evidence (see archive_existing_evidence()'s docstring).
+    archive_existing_evidence(stage_dir)
+
     share_dir = resolve_share_dir(stage_dir)
     share_dir.mkdir(parents=True, exist_ok=True)
 
@@ -322,8 +831,21 @@ def main():
     # Copy docs
     stage_docs(share_dir)
 
+    # Collect staging gaps as we go — surfaced loudly (WARNING block) and
+    # written to staging-gaps.md so a gap fails loud instead of silently
+    # dropping round coverage (e.g. the round that lost all search-quality
+    # verification because the SciFact corpus was silently missing).
+    gaps: list[str] = []
+
     # Stage SciFact corpus for ingest-and-quality validation
-    stage_scifact(share_dir)
+    scifact_gap = stage_scifact(share_dir)
+    if scifact_gap:
+        gaps.append(scifact_gap)
+
+    # Stage the golden-parity search-quality harness (query set + per-candidate baseline)
+    golden_parity_gap = stage_golden_parity(share_dir)
+    if golden_parity_gap:
+        gaps.append(golden_parity_gap)
 
     # Copy sandbox-specific CLAUDE.md
     sandbox_claude_md = SCRIPT_DIR / "sandbox-CLAUDE.md"
@@ -356,36 +878,51 @@ def main():
         if staged:
             print(f"Staged tools/ from tools-cache ({staged} files)")
 
+    node_gap = check_node_installer_staged(tools_cache)
+    if node_gap:
+        gaps.append(node_gap)
+
+    # 3. Resolve models dir. Never map a weightless directory: a worktree's
+    # own models/ holds only tracked config/tokenizer JSON (~42 MB) — the
+    # real ~11.5 GB of *.onnx/*.gguf weights are untracked and live only in
+    # the MAIN checkout. Mapping a weightless dir used to silently claim
+    # pre-staged-models while the app found no models and the round died
+    # with NO_EMBEDDING_MODEL. Resolved before write_staging_gaps below so a
+    # refused/weightless dir surfaces through the same gap plumbing as every
+    # other staging gap, rather than a second ad hoc mechanism.
+    models_dir = None
+    if args.no_models:
+        print("Models directory: SKIPPED (--no-models, Rule 14 — true fresh install)")
+        print("  Install AI in the sandbox will do the full ~10 GB clean download.")
+    else:
+        models_dir, models_gap = resolve_models_dir(args.models_dir)
+        if models_gap:
+            gaps.append(models_gap)
+        if models_dir:
+            model_size = sum(f.stat().st_size for f in models_dir.rglob("*") if f.is_file()) // (1024 * 1024)
+            print(f"Models directory: {models_dir} ({model_size} MB)")
+            print(f"  Mapped into sandbox at: {SANDBOX_MODELS_FOLDER}")
+        else:
+            print("No models directory with real weights found — models will need to be downloaded in sandbox")
+
+    # Write the collected staging gaps now that staging (short of the
+    # fail-closed coverage-brief step below) is complete.
+    write_staging_gaps(share_dir, gaps)
+
     # Report share size
     total_bytes = sum(f.stat().st_size for f in share_dir.rglob("*") if f.is_file())
     print(f"\nShare directory: {share_dir}")
     print(f"Share size: {total_bytes // (1024 * 1024)} MB")
 
-    # 3. Resolve models dir
-    models_dir = None
-    if args.no_models:
-        print("Models directory: SKIPPED (--no-models, Rule 14 — true fresh install)")
-        print("  Install AI in the sandbox will do the full ~10 GB clean download.")
-    elif args.models_dir:
-        models_dir = Path(args.models_dir)
-        if not models_dir.is_absolute():
-            models_dir = REPO_ROOT / models_dir
-    else:
-        # Default: use repo models/ if it has ONNX models
-        default_models = REPO_ROOT / "models"
-        if (default_models / "onnx").is_dir():
-            models_dir = default_models
-
-    if models_dir and models_dir.is_dir():
-        model_size = sum(f.stat().st_size for f in models_dir.rglob("*") if f.is_file()) // (1024 * 1024)
-        print(f"Models directory: {models_dir} ({model_size} MB)")
-        print(f"  Mapped into sandbox at: {SANDBOX_MODELS_FOLDER}")
-    elif not args.no_models:
-        models_dir = None
-        print("No models directory — models will need to be downloaded in sandbox")
-
-    # 4. Stamp actual validation mode, then generate .wsb
+    # 4. Stamp actual validation mode, generate the per-candidate coverage brief
+    #    (fail-closed on an unclassified shipped surface), stage the capture
+    #    harness, then generate .wsb (tempdoc 728).
     write_validation_mode(share_dir, installer, models_dir, args.no_models)
+    stage_coverage_brief(share_dir)
+    stage_round_plan(share_dir)
+    stage_evidence_harness(share_dir)
+    stage_gui_harness(share_dir)
+    stage_mcp_client_harness(share_dir)
     wsb_path = stage_dir / "JustSearch-Validation.wsb"
     generate_wsb(wsb_path, share_dir, args.memory, models_dir)
     print(f"Sandbox RAM: {args.memory} MB")

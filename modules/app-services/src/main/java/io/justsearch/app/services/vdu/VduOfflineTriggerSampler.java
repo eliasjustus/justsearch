@@ -94,6 +94,9 @@ public final class VduOfflineTriggerSampler {
       long msSinceActivity =
           ks != null ? ks.msSinceLastUserActivity(System.currentTimeMillis()) : Long.MAX_VALUE;
       boolean energyReduced = ks != null && ks.energyState().reduced();
+      // Tempdoc 737 R4: llmOnline MUST be REALIZED state (mode==ONLINE / lease holder==CHAT), never
+      // spec — conflating desired with realized would break the exclusivity mutex. The supplier is
+      // wired to inferenceManager().isOnline() (the FSM phase) at CoreApiAssembly.
       boolean llmOnline = llmOnlineSupplier.getAsBoolean();
       if (VduPacingPolicy.shouldTrigger(msSinceActivity, energyReduced, llmOnline)) {
         log.info(

@@ -3,9 +3,8 @@
 # Project-Specific Agent Guidance
 
 ## Search Strategy
-- **Worker floor: sonnet; haiku only where wrong output is self-evident** (CLAUDE.md rule).
 - **Bound Explore agents**: default to 1; cap synthesis output.
-- **Known large files** (use offset/limit): UnifiedChatView.ts, Shell.ts, SearchSurface.ts, SummaryController.java, LuceneIndexRuntime.java, analyze-session.mjs.
+- **Known large files** (use offset/limit): UnifiedChatView.ts, Shell.ts, SearchSurface.ts, SummaryController.java, LuceneIndexRuntime.java, analyze-session.mjs, docs/observations.md, and any large tempdoc (some exceed 4,000 lines).
 - **Docs index**: docs/llms.txt. Module structure: docs/explanation/01-system-overview.md.
 
 ## Editing
