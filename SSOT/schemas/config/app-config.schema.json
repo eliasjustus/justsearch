@@ -953,9 +953,6 @@
                                                                                                                    },
                                                                                                 "zero_hit_retry_enabled":  {
                                                                                                                                "type":  "boolean"
-                                                                                                                           },
-                                                                                                "index_fallback_enabled":  {
-                                                                                                                               "type":  "boolean"
                                                                                                                            }
                                                                                             }
                                                                          },

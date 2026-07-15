@@ -329,13 +329,8 @@ Precedence note:
 | search.chunk_aware.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.corrections.df_threshold | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.corrections.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| search.corrections.index_fallback_enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.corrections.max_edit_distance | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.corrections.zero_hit_retry_enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| search.cursor.legacy_enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| search.paging.pit_ttl_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| search.paging.strategy | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| search.paging.tiebreak_field | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | worker.limits.max_batch_size | JUSTSEARCH_WORKER_MAX_BATCH_SIZE | worker.limits.max_batch_size | WORKER_MAX_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_content_length | JUSTSEARCH_WORKER_MAX_CONTENT_LENGTH | worker.limits.max_content_length | WORKER_MAX_CONTENT_LENGTH | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_file_size | JUSTSEARCH_WORKER_MAX_FILE_SIZE | worker.limits.max_file_size | WORKER_MAX_FILE_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |

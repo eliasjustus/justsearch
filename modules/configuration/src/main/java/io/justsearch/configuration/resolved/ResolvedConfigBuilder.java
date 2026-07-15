@@ -477,16 +477,6 @@ public final class ResolvedConfigBuilder {
   private void contributeYamlSearch(JsonNode root) {
     JsonNode searchRoot = root.path("search");
     if (searchRoot.isMissingNode()) return;
-    putYamlFromNode("search.cursor.legacy_enabled", searchRoot, "cursor.legacy_enabled");
-    putYamlFromNodeLower("search.paging.strategy", searchRoot, "paging.strategy");
-    putYamlLongClampedFromNode("search.paging.pit_ttl_ms", searchRoot, "paging.pit_ttl_ms", 1L);
-    putYamlFromNode("search.paging.tiebreak_field", searchRoot, "paging.tiebreak_field");
-    // Also check top-level tiebreak_field as fallback
-    String tiebreak = readYamlText(searchRoot, "tiebreak_field");
-    if (tiebreak != null && resolve("search.paging.tiebreak_field").value() == null) {
-      put("search.paging.tiebreak_field", ORDINAL_YAML, "yaml", "search.tiebreak_field",
-          tiebreak);
-    }
     putYamlIntFromNode("search.hybrid.bm25_k", searchRoot, "hybrid.bm25_k");
     putYamlIntFromNode("search.hybrid.ann_k", searchRoot, "hybrid.ann_k");
     putYamlFromNode("search.hybrid.auto_embed", searchRoot, "hybrid.auto_embed");
@@ -1261,8 +1251,7 @@ public final class ResolvedConfigBuilder {
         resolveDouble("justsearch.search.entity_boost", 0.0),
         resolveBoolean("search.chunk_aware.enabled", true),
         resolveBoolean("justsearch.lambdamart.enabled", false),
-        buildSearchCorrections(),
-        buildSearchPaging());
+        buildSearchCorrections());
   }
 
   private ResolvedConfig.Search.Corrections buildSearchCorrections() {
@@ -1270,16 +1259,7 @@ public final class ResolvedConfigBuilder {
         resolveBoolean("search.corrections.enabled", false),
         resolveInt("search.corrections.df_threshold", 1),
         resolveInt("search.corrections.max_edit_distance", 1),
-        resolveBoolean("search.corrections.zero_hit_retry_enabled", false),
-        resolveBoolean("search.corrections.index_fallback_enabled", false));
-  }
-
-  private ResolvedConfig.Search.Paging buildSearchPaging() {
-    return new ResolvedConfig.Search.Paging(
-        resolveBoolean("search.cursor.legacy_enabled", false),
-        resolveString("search.paging.strategy", "search_after"),
-        resolveLong("search.paging.pit_ttl_ms", 60_000L),
-        resolveString("search.paging.tiebreak_field", null));
+        resolveBoolean("search.corrections.zero_hit_retry_enabled", false));
   }
 
   private ResolvedConfig.Telemetry buildTelemetry() {

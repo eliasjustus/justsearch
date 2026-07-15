@@ -472,23 +472,14 @@ public record ResolvedConfig(
       double entityBoost,
       boolean chunkAwareEnabled,
       boolean lambdamartEnabled,
-      Corrections corrections,
-      Paging paging) {
+      Corrections corrections) {
 
     /** Spelling/fuzzy correction settings. */
     public record Corrections(
         boolean enabled,
         int dfThreshold,
         int maxEditDistance,
-        boolean zeroHitRetryEnabled,
-        boolean indexFallbackEnabled) {}
-
-    /** Cursor paging strategy and PIT settings. */
-    public record Paging(
-        boolean cursorLegacyEnabled,
-        String strategy,
-        long pitTtlMs,
-        String tiebreakField) {}
+        boolean zeroHitRetryEnabled) {}
   }
 
   /**
