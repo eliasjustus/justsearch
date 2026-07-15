@@ -1141,3 +1141,39 @@ step leaves two ungated authorities. Recommended split per CLAUDE.md routing:
 - Effort: high on the opus chunks; medium elsewhere. The implementer must load
   `/inference-runtime` before starting and update that register before closing
   this tempdoc.
+
+---
+
+## 15. Implementation (2026-07-15, plan approved — log)
+
+**Owner decisions recorded before first code:**
+1. **"Shut Down AI" = soft off + visible reason.** `chatEnabled=false` disables
+   the chat *service*; background procedures (VDU) may still use the engine
+   under idle+energy gates, with an honest status reason rendered in the UI.
+   No hard-off toggle.
+2. **Start now on this worktree** (based on the release branch), accepting
+   merge-time conflict resolution with 0.2.0 (hot files:
+   `RuntimeActivationService.java`, `BrainSurface.ts`, the 4 catalog lines if
+   a minimal unblock ships — this work supersedes it). No PR until the owner
+   says.
+
+**Plan digest** (full plan in session record): Phase 1 authority
+(`RuntimeSpec` on `UiSettings.chatEnabled` + Condition-shaped `RuntimeStatus`
+with reason codes joining the `LifecycleReasonCode` register +
+`RuntimeGpuLease` (named to avoid colliding with ort-common's Worker-side
+`GpuArbiter`) + single-thread level-triggered `RuntimeReconciler` +
+bootstrap at CapabilityPhase/ServicePhase replacing `tryStartOnlineMode` +
+ArchUnit caller-forcing + `governance/runtime-state.v1.json` register) →
+live Checkpoint 1 → Phase 2 projection migration (capability rekey, additive
+wire fields with deprecated `phase`/`starting` aliases, ndjson log v2, VDU
+reroute onto realized-lease + reconciler procedures) → Phase 3 FE (aiVerdict/
+aiStateStore as thin renderers; intent-write buttons; browser validation) →
+Phase 4 operation surface (spec-write op; de-circularize the 4 ops; delete
+dead capability vocabulary; unify activation dispatch; remedy-bearing
+denials; always-list lifecycle ops) → Phase 5 teardown (§12d orphans + fossil
+tests → model-agnostic acceptance tests) → Phase 6 full verification + live
+E2E with real model + docs/register updates. Routing: opus for authority/VDU/
+FE, sonnet for mechanical chunks and ceremony.
+
+**Log:** (appended as work lands)
+- Plan approved; `/inference-runtime` loaded; §15 opened.
