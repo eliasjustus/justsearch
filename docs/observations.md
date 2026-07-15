@@ -329,8 +329,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] logger.ts uses CSS `var(--text-*)` inside console `%c` style strings, which don't resolve in devtools console — colors silently fall back to default — `modules/ui-web/src/utils/logger.ts:63` (2026-06-15)
 
 ### obs:ui-shot-cleanup — ui-shot-cleanup.mjs exists on disk but is not wired in .claude/settings.local.json (hooks-reference.
-`kind: defect?` `anchor: scripts/agent-analytics/hooks/ui-shot-cleanup.mjs` `seen: 1` `first: 2026-06-16` `last: 2026-06-16`
+`kind: defect?` `anchor: scripts/agent-analytics/hooks/ui-shot-cleanup.mjs` `seen: 2` `first: 2026-06-16` `last: 2026-07-15`
 - [ ] ui-shot-cleanup.mjs exists on disk but is not wired in .claude/settings.local.json (hooks-reference.md documents it as a SessionEnd hook) — `scripts/agent-analytics/hooks/ui-shot-cleanup.mjs` (2026-06-16)
+- [ ] ui-shot's worktree auto-serve Vite (port 5174) survives the capture and breaks a later `./gradlew.bat build` in the same session: it holds handles under modules/ui-web, so `:modules:ui:installWebDependencies` fails with npm exit -4048 (libuv UV_EPERM on Windows) — looks like a build defect, is a live file lock. Reproduced 2026-07-15; killing the pid made the same build green. `ui-shot-cleanup` only fires at SessionEnd, so ANY capture-then-build session hits this. Remedy: stop the 5174 vite before building (pid via its `vite.js --port 5174` cmdline), or teach the build/hook to reap it — `scripts/agent-analytics/hooks/ui-shot-cleanup.mjs` (2026-07-15)
 
 ### obs:presentation-demo — presentation-demo §7 chip strip drifts from the real HEALTH_STATS_BODY strip — demo shows Indexed/Qu
 `kind: defect?` `anchor: modules/ui-web/src/shell-v0/demo/presentation-demo.ts` `seen: 1`
@@ -928,6 +929,26 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: follow-up?` `anchor: dev-runner.cjs` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
 - [ ] Backend-death root cause substantially resolved: deaths coincide with other sessions' lease takeovers (30s lease not renewed during long-running probes/campaigns that make no MCP dev-tool calls; observed live — session f3e41644 reclaimed mid-probe, stale_reclaim written by ITS runner). Issue 6 reframes from product crash to contention semantics; candidate fix: lease renewal heartbeat during utility-run/long ops — `scripts/dev/dev-runner.cjs lease model` (2026-07-14)
 
+### obs:check-tempdoc-numbers — check-tempdoc-numbers has a blind spot: it only reports a number claimed by 2+ IN-FLIGHT worktrees, 
+`kind: defect?` `anchor: scripts/ci/check-tempdoc-numbers.mjs` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+- [ ] check-tempdoc-numbers has a blind spot: it only reports a number claimed by 2+ IN-FLIGHT worktrees, excluding any basename already on origin (`newBasenames` filter). So an in-flight tempdoc colliding with one already merged to main passes green — reproduced live: branch worktree-ui-audit-density-review's 696-simple-detailed-disclosure vs main's 696-dev-tooling-jdk-resolution went undetected while the check flagged an unrelated 720 collision in the same run — `scripts/ci/check-tempdoc-numbers.mjs:117` (2026-07-15)
+
+### obs:expected-state-v1 — Possible stale expected-state entry: [ui-web-typecheck-ts5101] declares ui-web `npm run typecheck` R
+`kind: environment?` `anchor: expected-state.v1.json` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+- [ ] Possible stale expected-state entry: [ui-web-typecheck-ts5101] declares ui-web `npm run typecheck` RED repo-wide (TS5101 baseUrl vs pinned typescript 6.x) 'pre-existing on main since ~2026-07-01', but it exits 0 green in a worktree merged up to origin/main (2026-07-15, verified twice). A known-failure entry that no longer reproduces is worse than none — it invites dismissing a REAL typecheck failure as the known one. Verify against main and retire if fixed — `scripts/**/expected-state.v1.json` (2026-07-15)
+
+### obs:ui-selectors — ui_selectors.py SEARCH_INPUT/TID_SEARCH_INPUT/CSS_SEARCH_INPUT_TEXTAREA are stale post-tempdoc-687: 
+`kind: defect?` `anchor: scripts/jseval/jseval/ui_selectors.py` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+- [ ] ui_selectors.py SEARCH_INPUT/TID_SEARCH_INPUT/CSS_SEARCH_INPUT_TEXTAREA are stale post-tempdoc-687: the live composer textarea has no role=searchbox, no aria-label, no data-testid=search-input, so _type_and_search (and every ui-shot step chained off search-results, e.g. chat-mode, qa-response, filters-chips) fails under --fixtures in this worktree. Live-verified fix: locate via 'jf-composer textarea' instead. — `scripts/jseval/jseval/ui_selectors.py:14-15,45-46,90` (2026-07-15)
+
+### obs:token-names-generated — origin/main is RED on `gen-token-names --check`: `tokens.css` gained `--glass-blur-scale` + `--text-
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/themes/token-names.generated.ts` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+- [ ] origin/main is RED on `gen-token-names --check`: `tokens.css` gained `--glass-blur-scale` + `--text-info` without a matching regen, so `token-names.generated.ts` is stale ON MAIN (verified 2026-07-15: token sources byte-identical between origin/main and a branch that never touched them, yet a clean regen adds 4 lines). Blocks the ui-web gate set for ANY branch touching ui-web, not just the one that finds it. Fix = `node scripts/ci/gen-token-names.mjs` — `modules/ui-web/src/shell-v0/themes/token-names.generated.ts` (2026-07-15)
+
+### obs:consult-register-v1 — The `ui-web-gates` recipe documents a kernel-gate command that does not work: `node scripts/governan
+`kind: defect?` `anchor: governance/consult-register.v1.json` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+- [ ] The `ui-web-gates` recipe documents a kernel-gate command that does not work: `node scripts/governance/run.mjs --gate ambient-purity,style-literal-ratchet,... --mode gate` (comma-separated) exits 2 with "gate id 'ambient-purity,style-literal-ratchet' not found" — run.mjs takes ONE gate id per invocation (verified 2026-07-15: comma form exit 2, single form exit 0). Risk is a silent skip of all 6 kernel gates, or exit 2 misread as a gate FAILURE. This recipe is the authority CLAUDE.md's pre-merge table defers to for every `modules/ui-web/src/**` edit — `governance/consult-register.v1.json:28` (2026-07-15)
+
 ## Parked
 
 ### obs:actionledgerprojection — ActionLedgerProjection.deterministicId `:`-join is injection-safe only because all-but-last discrimi
@@ -974,8 +995,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] 564 Phase 5 follow-up: migrate the remaining indexing FE surfaces off raw casts — the substrate failed-jobs/roots variants (`handleListFailedJobsSubstrate`/`handleRootsSubstrate`, which carry the pathHash→path resolution), `suggested-roots`, and `excludes/apply` — to record→schema→Zod parse-boundary validation; only the legacy `/api/indexing/failed-jobs` surface was migrated this pass — `modules/ui-web/src/api/domains/indexing.ts` (2026-06-03)
 
 ### obs:evidenceprojection — 565 ⑤ grounding-coverage indicator (design-feature, specified — the "presentation can outrun groundi
-`kind: follow-up?` `anchor: evidenceProjection.ts` `seen: 1` `first: 2026-06-05` `last: 2026-06-05` `status: parked (deferred — revisit per condition note (triage 2026-07-12))`
+`kind: follow-up?` `anchor: evidenceProjection.ts` `seen: 2` `first: 2026-06-05` `last: 2026-07-15` `status: parked (deferred — revisit per condition note (triage 2026-07-12))`
 - [ ] 565 ⑤ grounding-coverage indicator (design-feature, specified — the "presentation can outrun grounding" answer): surface "M of T sentences grounded" so polish can't lend false confidence to thin grounding. HONEST approach (avoid FE/​backend sentence-split inconsistency): have `AgentCitationResolver` (which already splits the answer into sentences to match) return the TOTAL sentence count; carry it on `AgentDone` (a `groundedSentenceTotal` field) alongside the existing `citations`; FE shows `answerCitations.length` / total. The RAG path already computes `sentencesMatched/sentencesTotal` (`CitationMatchResult`) + a tiered `EvidenceScore` (`evidenceProjection.ts`) to mirror. (2026-06-05)
+- [ ] Disclosure leak (tempdoc 728-class): `answerFrameLabel()` renders 'Based on your documents — per-sentence grounding not verified' unconditionally — it never consults uiMode, so Simple-mode users see technical vocabulary. Introduced into the settled zero-cite path by tempdoc 720 / PR #171 reclassifying grounded->sourced. Out of 728's declared scope (evidence surface was deemed conformant); is live evidence FOR 728's thesis that disclosure needs a gate, not review — `modules/ui-web/src/shell-v0/components/chat/evidenceProjection.ts:182` (2026-07-15)
 
 ### obs:tokeneditorplugin-general — Token Editor nudge + role 'fail' badge are near-unreachable at WCAG-AA floor 4.5: deriveForeground p
 `kind: follow-up?` `anchor: modules/ui-web/src/shell-v0/plugins/token-editor/TokenEditorPlugin.ts` `seen: 1` `first: 2026-06-15` `last: 2026-06-15` `status: parked (deferred — revisit per condition note (triage 2026-07-12))`
