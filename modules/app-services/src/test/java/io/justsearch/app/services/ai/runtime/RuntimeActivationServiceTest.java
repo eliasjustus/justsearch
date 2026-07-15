@@ -3,9 +3,18 @@ package io.justsearch.app.services.ai.runtime;
 import io.justsearch.app.api.AiRuntimeStatusResponse;
 import io.justsearch.app.api.AiRuntimeActivationStatus;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import io.justsearch.app.api.AiInstallException;
+import io.justsearch.app.api.AiInstallService;
+import io.justsearch.app.api.AiInstallStatus;
+import io.justsearch.app.api.InstallPlanPreview;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.services.worker.OnnxModelStatus;
 import io.justsearch.app.services.worker.WorkerFeatureCache;
@@ -13,6 +22,7 @@ import io.justsearch.app.services.ai.runtime.RuntimeActivationService;
 import io.justsearch.app.api.EnterprisePolicyService;
 import io.justsearch.app.services.policy.EnterprisePolicyServiceImpl;
 import io.justsearch.app.services.settings.UiSettingsStore;
+import io.justsearch.configuration.model.ModelRegistry;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,6 +32,7 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
 
 class RuntimeActivationServiceTest {
 
@@ -216,6 +227,168 @@ class RuntimeActivationServiceTest {
         OnlineAiService.unavailable(),
         new UiSettingsStore(UiSettingsStore.PersistenceMode.READ_WRITE),
         null, null, cache);
+  }
+
+  // --------------- Tempdoc 727 F-3: leftover-variant WARN false positive ---------------
+
+  /**
+   * Reproduces the round's evidence: a fresh install's own in-flight cuda-runtime extraction
+   * creates {@code variants/cuda12} before {@code llama-server.exe} is staged, which pre-fix
+   * code misdiagnosed as "leftover from a previous build" — and, because {@code
+   * listInstalledVariants()} runs on every status poll, logged it once per poll (~1/sec).
+   */
+  @Test
+  void leftoverVariantWarnSuppressedWhileInstallServiceReportsRunning() throws Exception {
+    setHome(tmp);
+    Path variantDir = createEmptyVariantDir("cuda12");
+
+    FakeAiInstallService installService = new FakeAiInstallService("running");
+    RuntimeActivationService svc = createServiceWithInstallHelper(installService);
+
+    List<ILoggingEvent> events = captureLogsDuring(() -> svc.getStatus());
+
+    assertFalse(
+        events.stream().anyMatch(e -> e.getLevel() == Level.WARN && leftoverMessage(e, variantDir)),
+        "must not warn while the AI install run is still \"running\" — the directory is this"
+            + " install's own in-flight extraction, not a leftover");
+  }
+
+  /**
+   * Filesystem fallback guard: even with no {@code AiInstallService} wired (e.g. an older
+   * composition path), a {@code *.tmp} file directly in the variant directory — the on-disk
+   * signature of a Windows BITS in-progress transfer — must suppress the WARN too.
+   */
+  @Test
+  void leftoverVariantWarnSuppressedWhileTmpFilePresent() throws Exception {
+    setHome(tmp);
+    Path variantDir = createEmptyVariantDir("cuda12");
+    Files.writeString(variantDir.resolve("BITAA6D.tmp"), "partial-download", StandardCharsets.UTF_8);
+
+    RuntimeActivationService svc =
+        new RuntimeActivationService(
+            OnlineAiService.unavailable(),
+            new UiSettingsStore(UiSettingsStore.PersistenceMode.READ_WRITE),
+            null, null);
+
+    List<ILoggingEvent> events = captureLogsDuring(() -> svc.getStatus());
+
+    assertFalse(
+        events.stream().anyMatch(e -> e.getLevel() == Level.WARN && leftoverMessage(e, variantDir)),
+        "must not warn while a *.tmp file is present in the variant dir");
+  }
+
+  /**
+   * A genuine leftover (no install running, no *.tmp) must still be logged — but only once per
+   * process lifetime, not once per status poll. Pre-fix code logged a fresh WARN on every one of
+   * the 3 {@code getStatus()} calls below (the round observed ~1/sec spam); this asserts exactly
+   * one line survives across repeated polling.
+   */
+  @Test
+  void genuineLeftoverVariantWarnLoggedOnceNotPerPoll() throws Exception {
+    setHome(tmp);
+    Path variantDir = createEmptyVariantDir("cuda12");
+
+    FakeAiInstallService installService = new FakeAiInstallService("idle");
+    RuntimeActivationService svc = createServiceWithInstallHelper(installService);
+
+    List<ILoggingEvent> events =
+        captureLogsDuring(
+            () -> {
+              svc.getStatus();
+              svc.getStatus();
+              svc.getStatus();
+            });
+
+    long warnCount =
+        events.stream().filter(e -> e.getLevel() == Level.WARN && leftoverMessage(e, variantDir)).count();
+    assertEquals(
+        1,
+        warnCount,
+        "genuine leftover must warn exactly once across repeated polls, not once per poll");
+  }
+
+  private Path createEmptyVariantDir(String variantId) throws Exception {
+    Path variantsRoot = tmp.resolve("native-bin").resolve("llama-server").resolve("variants");
+    Path variantDir = variantsRoot.resolve(variantId);
+    Files.createDirectories(variantDir);
+    return variantDir;
+  }
+
+  private RuntimeActivationService createServiceWithInstallHelper(AiInstallService installService) {
+    return new RuntimeActivationService(
+        OnlineAiService.unavailable(),
+        new UiSettingsStore(UiSettingsStore.PersistenceMode.READ_WRITE),
+        null,
+        null,
+        null,
+        null,
+        installService);
+  }
+
+  private static boolean leftoverMessage(ILoggingEvent e, Path variantDir) {
+    return e.getFormattedMessage().contains("likely leftover from a previous build")
+        && e.getFormattedMessage().contains(variantDir.toString());
+  }
+
+  /** Attaches a ListAppender to RuntimeActivationService's logger for the duration of {@code action}. */
+  private static List<ILoggingEvent> captureLogsDuring(ThrowingRunnable action) throws Exception {
+    Logger logger = (Logger) LoggerFactory.getLogger(RuntimeActivationService.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      action.run();
+      return List.copyOf(appender.list);
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
+  }
+
+  @FunctionalInterface
+  private interface ThrowingRunnable {
+    void run() throws Exception;
+  }
+
+  /** Minimal stub of {@link AiInstallService} — only {@link #getStatus()} is exercised. */
+  private static final class FakeAiInstallService implements AiInstallService {
+    private final String state;
+
+    FakeAiInstallService(String state) {
+      this.state = state;
+    }
+
+    @Override
+    public ModelRegistry getManifest() {
+      throw new UnsupportedOperationException("not used by this test");
+    }
+
+    @Override
+    public AiInstallStatus getStatus() {
+      AiInstallStatus status = new AiInstallStatus();
+      status.state = state;
+      return status;
+    }
+
+    @Override
+    public InstallPlanPreview previewInstallPlan() {
+      throw new UnsupportedOperationException("not used by this test");
+    }
+
+    @Override
+    public void startInstall(boolean acceptTerms) {
+      throw new UnsupportedOperationException("not used by this test");
+    }
+
+    @Override
+    public void cancel() {
+      throw new UnsupportedOperationException("not used by this test");
+    }
+
+    @Override
+    public void repair(boolean acceptTerms) throws AiInstallException {
+      throw new UnsupportedOperationException("not used by this test");
+    }
   }
 
   /** Sets a system property and records the previous value for cleanup. */

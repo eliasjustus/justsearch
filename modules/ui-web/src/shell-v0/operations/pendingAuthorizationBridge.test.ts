@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const requestAuthorizationMock = vi.fn();
 const approveAndExecutePendingMock = vi.fn();
 const peekPendingMock = vi.fn();
+const emitEphemeralToastMock = vi.fn();
 
 vi.mock('./authorizationBroker.js', () => ({
   requestAuthorization: (...args: unknown[]) => requestAuthorizationMock(...args),
@@ -24,6 +25,13 @@ vi.mock('./OperationClient.js', () => ({
     approveAndExecutePending: (...args: unknown[]) => approveAndExecutePendingMock(...args),
     peekPending: (...args: unknown[]) => peekPendingMock(...args),
   }),
+}));
+
+// Fix pass: the bridge reports an approved-but-failed pending through the single client-originated
+// message channel (559 Authority III) — mock it directly rather than asserting on the DOM
+// CustomEvent it dispatches, mirroring how the sibling deps above are mocked.
+vi.mock('../components/advisory/ephemeralToast.js', () => ({
+  emitEphemeralToast: (...args: unknown[]) => emitEphemeralToastMock(...args),
 }));
 
 import { startPendingAuthorizationBridge } from './pendingAuthorizationBridge.js';
@@ -97,14 +105,13 @@ function detailFor(pendingId: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-// A microtask flush — presentAndExecute awaits peekPending, then requestAuthorization, then the
-// client call.
+// A microtask flush — presentAndExecute awaits peekPending, then requestAuthorization, then (fix
+// pass) a re-peek, then the client call. Generous tick count so the extra re-peek await hop has
+// headroom (each await can cost more than one microtask tick through the mock promise chain).
 async function flush(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let i = 0; i < 10; i++) {
+    await Promise.resolve();
+  }
 }
 
 describe('pendingAuthorizationBridge (tempdoc 655)', () => {
@@ -115,6 +122,7 @@ describe('pendingAuthorizationBridge (tempdoc 655)', () => {
     requestAuthorizationMock.mockReset();
     approveAndExecutePendingMock.mockReset();
     peekPendingMock.mockReset();
+    emitEphemeralToastMock.mockReset();
   });
 
   afterEach(() => {
@@ -227,5 +235,137 @@ describe('pendingAuthorizationBridge (tempdoc 655)', () => {
     const stop = startPendingAuthorizationBridge('http://test', {});
     expect(() => stop()).not.toThrow();
     expect(requestAuthorizationMock).not.toHaveBeenCalled();
+  });
+
+  // ── Fix pass: a validation round typed the confirm phrase on an already-dead pending, clicked
+  // Approve, and got no grant + no error message — the backend answered 410 Gone and the bridge's
+  // catch reduced it to a console.warn nobody sees. These tests pin the fix: the failure reaches
+  // the user via the same client-originated toast channel Shell.ts's sibling gated-dispatch path
+  // (`invoke-operation`) already uses, and a re-peek immediately before the POST catches a pending
+  // that died in the (arbitrarily long) window while the human was reading/typing the ceremony.
+
+  it('reports the failure to the user (not just console) when approveAndExecutePending rejects with a 410-shaped error', async () => {
+    peekPendingMock.mockResolvedValue(detailFor('pa-410'));
+    requestAuthorizationMock.mockResolvedValue({ approved: true, allowAlways: false });
+    const err410 = Object.assign(new Error('Failed to approve pending pa-410 (HTTP 410)'), {
+      errorClass: 'CAPSULE_MINT_FAILED',
+      httpStatus: 410,
+    });
+    approveAndExecutePendingMock.mockRejectedValue(err410);
+
+    const stop = startPendingAuthorizationBridge('http://test', { multiplex: multiplexOn(fakeEs) });
+    fakeEs.emitFrame(pendingFrame(1, 'pa-410'));
+    await flush();
+
+    // Re-peek happened right before the POST (once before presenting, once before approving).
+    expect(peekPendingMock).toHaveBeenCalledTimes(2);
+    expect(approveAndExecutePendingMock).toHaveBeenCalledWith('pa-410', false);
+
+    // The core defect: the failure must reach the user, not just a console.warn.
+    expect(emitEphemeralToastMock).toHaveBeenCalledTimes(1);
+    const toast = emitEphemeralToastMock.mock.calls[0]?.[0] as {
+      message: string;
+      severity: string;
+    };
+    expect(toast.severity).toBe('error');
+    expect(toast.message).toContain('core.ingest-files');
+    expect(toast.message).toContain('HTTP 410');
+
+    stop();
+  });
+
+  it('reports the failure when approveAndExecutePending resolves 200 OK but executed:false (server declined/failed silently)', async () => {
+    peekPendingMock.mockResolvedValue(detailFor('pa-soft-fail'));
+    requestAuthorizationMock.mockResolvedValue({ approved: true, allowAlways: false });
+    approveAndExecutePendingMock.mockResolvedValue({
+      executed: false,
+      executeMessage: 'Operation not available: core.ingest-files',
+    });
+
+    const stop = startPendingAuthorizationBridge('http://test', { multiplex: multiplexOn(fakeEs) });
+    fakeEs.emitFrame(pendingFrame(1, 'pa-soft-fail'));
+    await flush();
+
+    expect(approveAndExecutePendingMock).toHaveBeenCalledWith('pa-soft-fail', false);
+    expect(emitEphemeralToastMock).toHaveBeenCalledTimes(1);
+    const toast = emitEphemeralToastMock.mock.calls[0]?.[0] as {
+      message: string;
+      severity: string;
+    };
+    expect(toast.severity).toBe('error');
+    expect(toast.message).toContain('Operation not available: core.ingest-files');
+
+    stop();
+  });
+
+  it('reports the failure when approveAndExecutePending resolves executed:true, executeSuccess:false', async () => {
+    peekPendingMock.mockResolvedValue(detailFor('pa-exec-fail'));
+    requestAuthorizationMock.mockResolvedValue({ approved: true, allowAlways: false });
+    approveAndExecutePendingMock.mockResolvedValue({
+      executed: true,
+      executeSuccess: false,
+      executeMessage: 'Approved, but execution failed: disk full',
+    });
+
+    const stop = startPendingAuthorizationBridge('http://test', { multiplex: multiplexOn(fakeEs) });
+    fakeEs.emitFrame(pendingFrame(1, 'pa-exec-fail'));
+    await flush();
+
+    expect(emitEphemeralToastMock).toHaveBeenCalledTimes(1);
+    const toast = emitEphemeralToastMock.mock.calls[0]?.[0] as { message: string };
+    expect(toast.message).toContain('disk full');
+
+    stop();
+  });
+
+  it('does NOT report a failure on a genuinely successful approve+execute (no false positives)', async () => {
+    peekPendingMock.mockResolvedValue(detailFor('pa-ok'));
+    requestAuthorizationMock.mockResolvedValue({ approved: true, allowAlways: false });
+    approveAndExecutePendingMock.mockResolvedValue({ executed: true, executeSuccess: true });
+
+    const stop = startPendingAuthorizationBridge('http://test', { multiplex: multiplexOn(fakeEs) });
+    fakeEs.emitFrame(pendingFrame(1, 'pa-ok'));
+    await flush();
+
+    expect(emitEphemeralToastMock).not.toHaveBeenCalled();
+
+    stop();
+  });
+
+  it('re-peeks immediately before POSTing and skips the doomed POST when the pending died during the ceremony', async () => {
+    // Alive when first fetched (peek-before-present) — the human takes a while to decide — then
+    // gone by the time the re-peek runs right before the POST.
+    peekPendingMock.mockResolvedValueOnce(detailFor('pa-died-midflight'));
+    peekPendingMock.mockResolvedValueOnce(null);
+    requestAuthorizationMock.mockResolvedValue({ approved: true, allowAlways: false });
+
+    const stop = startPendingAuthorizationBridge('http://test', { multiplex: multiplexOn(fakeEs) });
+    fakeEs.emitFrame(pendingFrame(1, 'pa-died-midflight'));
+    await flush();
+
+    expect(peekPendingMock).toHaveBeenCalledTimes(2);
+    // The POST is never attempted once the re-peek confirms the pending is gone.
+    expect(approveAndExecutePendingMock).not.toHaveBeenCalled();
+    expect(emitEphemeralToastMock).toHaveBeenCalledTimes(1);
+    const toast = emitEphemeralToastMock.mock.calls[0]?.[0] as { message: string };
+    expect(toast.message.toLowerCase()).toContain('expired');
+
+    stop();
+  });
+
+  it('proceeds with the POST when the re-peek itself fails transiently (network blip), instead of blocking the approval', async () => {
+    peekPendingMock.mockResolvedValueOnce(detailFor('pa-flaky-repeek'));
+    peekPendingMock.mockRejectedValueOnce(new Error('network blip'));
+    requestAuthorizationMock.mockResolvedValue({ approved: true, allowAlways: false });
+    approveAndExecutePendingMock.mockResolvedValue({ executed: true, executeSuccess: true });
+
+    const stop = startPendingAuthorizationBridge('http://test', { multiplex: multiplexOn(fakeEs) });
+    fakeEs.emitFrame(pendingFrame(1, 'pa-flaky-repeek'));
+    await flush();
+
+    expect(approveAndExecutePendingMock).toHaveBeenCalledWith('pa-flaky-repeek', false);
+    expect(emitEphemeralToastMock).not.toHaveBeenCalled();
+
+    stop();
   });
 });

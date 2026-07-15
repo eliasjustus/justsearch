@@ -473,6 +473,20 @@ public class IndexingLoop implements Closeable {
   }
 
   /**
+   * Shutdown-path variant of {@link #tryFinalizeEmbeddingRebuild()}, using the lifecycle's one-shot
+   * finalize: the shutdown block gets a single call, so the loop-path's two-consecutive-reads
+   * debounce would decline a genuinely-complete rebuild and drop the stamp. See {@link
+   * EmbeddingProviderLifecycle#tryFinalizeRebuildAtShutdown()}.
+   */
+  private void tryFinalizeEmbeddingRebuildAtShutdown() {
+    if (embeddingLifecycle.tryFinalizeRebuildAtShutdown()) {
+      metrics.recordCommit();
+      lastCommitTime = System.currentTimeMillis();
+      indexedSinceCommit = 0;
+    }
+  }
+
+  /**
    * Tempdoc 730 A3: wraps {@link EmbeddingProviderLifecycle#tryFinalizeFreshCompatibleStamp()}
    * with the same commit-driver counter reset {@link #tryFinalizeEmbeddingRebuild()} performs.
    * Belt-and-suspenders alongside A1 (the unconditional stamp supplier) — closes the window
@@ -696,12 +710,17 @@ public class IndexingLoop implements Closeable {
    * unconditionally, closes that window: both self-gate on ECC state (REBUILDING-completed /
    * COMPATIBLE-with-docs-and-no-stored-fp respectively) and issue their own commit independent of
    * {@code indexedSinceCommit}, so invoking them is a no-op when there is nothing to stamp and the
-   * guaranteed persisting commit otherwise when there is. This is the SAME wiring
-   * {@code tryFinalizeEmbeddingRebuild}/{@code tryFinalizeFreshCompatibleEmbeddingStamp} already
-   * use every idle/batch iteration — no parallel mechanism, just one more call site.
+   * guaranteed persisting commit otherwise when there is.
+   *
+   * <p>The rebuild half calls the lifecycle's ONE-SHOT finalize rather than the loop-path one: the
+   * loop path requires two consecutive {@code pending == 0} reads (tempdoc 726 F1's mid-flush-race
+   * guard), which this block — having exactly one call — could never satisfy on a worker that stops
+   * right after rebuild completion. That is the precise window this method exists to close, so the
+   * debounce is bypassed here on the grounds that a stopped loop writes no further documents. See
+   * {@link EmbeddingProviderLifecycle#tryFinalizeRebuildAtShutdown()}.
    */
   private void finalizeShutdownCommit() {
-    tryFinalizeEmbeddingRebuild();
+    tryFinalizeEmbeddingRebuildAtShutdown();
     tryFinalizeFreshCompatibleEmbeddingStamp();
 
     try {

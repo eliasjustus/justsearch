@@ -41,7 +41,13 @@ import {
 } from '../state/aiStateStore.js';
 // Tempdoc 657 — pre-install per-tier weight breakdown (GET /api/ai/install/plan-preview).
 import type { InstallPlanPreview } from '../utils/aiInstallPoll.js';
-import { applyLocalIntent, type AiEngineVerdict, type AiStability } from '../state/aiVerdict.js';
+import {
+  aiEngineHeadline,
+  aiEngineTone,
+  applyLocalIntent,
+  type AiEngineVerdict,
+  type AiStability,
+} from '../state/aiVerdict.js';
 import { unavailableBecause, AVAILABLE } from '../state/availability.js';
 // Tempdoc 613 — coherence: the compat callout words its cause from the ONE canonical reindex
 // vocabulary (the same `reasonFor`/CAUSE_ROWS the Chat degradation banner + 595 verdict use),
@@ -187,8 +193,14 @@ function brainDotTone(dot: string): {
   live: boolean;
 } {
   switch (dot) {
+    // `aiEngineTone` (state/aiVerdict.ts) is the ONE tone authority for the AI-engine kinds; these
+    // two words project it rather than re-stating it. `indexing` used to be collapsed into `online`'s
+    // green here (and into an "AI Online" label) while chat was in fact unavailable — the contradiction
+    // the 0.2.0 round caught as F-6b.
     case 'online':
-      return { tone: 'success', live: false };
+      return { tone: aiEngineTone('online'), live: false };
+    case 'indexing':
+      return { tone: aiEngineTone('indexing'), live: false };
     case 'starting':
       return { tone: 'warning', live: true };
     case 'installing':
@@ -1016,10 +1028,16 @@ export class BrainSurface extends JfElement {
           this._unifiedAiState?.runtime?.loadStartedAtMs,
         ),
       },
-      online: { dot: 'online', label: 'AI Online', sub: 'Chat and summaries ready.' },
+      // The `label` for these two is a PROJECTION of `aiEngineHeadline` (state/aiVerdict.ts) — the one
+      // authority the footer pill already reads — not a second, hand-maintained copy. The fork it
+      // replaces said "AI Online" for BOTH kinds, so this panel rendered a green "AI Online" headline
+      // while the footer said "Indexing" and /api/health reported `inference.offline` (0.2.0 F-6b).
+      // Only the `sub` stays BrainSurface's own: the footer has no sub-text slot.
+      // Each row is only ever selected when `aiState` equals its key, so `aiVerdict` is exact here.
+      online: { dot: 'online', label: aiEngineHeadline(aiVerdict), sub: 'Chat and summaries ready.' },
       // Tempdoc 663 — indexing is now a distinct, named state (the original ladder had no explicit
       // branch for `runtime.mode === 'indexing'` and fell through to 'offline').
-      indexing: { dot: 'online', label: 'AI Online', sub: 'Indexing embeddings…' },
+      indexing: { dot: 'indexing', label: aiEngineHeadline(aiVerdict), sub: 'Indexing embeddings…' },
       connecting: { dot: 'starting', label: 'Connecting…', sub: 'Checking AI status…' },
     };
     const sc = statusConfig[aiState] ?? statusConfig.offline!;
@@ -1088,8 +1106,24 @@ export class BrainSurface extends JfElement {
             availability: { kind: 'blocked' } as const,
             primary: false,
           };
-        case 'online':
+        // There is no `offline` inference mode on the wire (`core.switch-inference-mode` accepts only
+        // `online`/`indexing`), so before this branch existed `indexing` fell into the `online`/default
+        // case below and its only button re-POSTed the mode it was already in — a no-op that left a
+        // Simple-mode user with no way back to chat (0.2.0 F-6). Mirrors `IndexingOverlay`'s "Go Online"
+        // escape hatch, which Advanced mode has had all along.
         case 'indexing':
+          return {
+            label: 'Resume Chat AI',
+            iconName: 'check-circle-2' as const,
+            onClick: () => void this.switchInference('online'),
+            availability: onlineDisabled
+              ? unavailableBecause('Online AI is disabled by administrator policy.')
+              : this.busy['inference-switch']
+                ? ({ kind: 'blocked' } as const)
+                : AVAILABLE,
+            primary: true,
+          };
+        case 'online':
         default:
           return {
             label: 'Shut Down AI',

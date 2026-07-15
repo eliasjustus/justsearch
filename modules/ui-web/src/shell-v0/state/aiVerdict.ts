@@ -226,12 +226,14 @@ import type { NoticeTone } from '../components/SystemNotice.js';
 /**
  * The ONE human headline for the AI-engine verdict (the footer pill + a11y announcer read this).
  *
- * Wording note: `BrainSurface.ts`'s OWN `statusConfig` table (its status card, a DIFFERENT consumer)
- * independently says "AI Online" for both `online`/`indexing` and carries the online-vs-indexing
- * distinction in its separate SUB-text ("Indexing embeddings…"), not its label. This function serves a
- * DIFFERENT consumer (the footer pill, which has no sub-text slot) that has its own, pre-existing,
- * terser convention ("Online"/"Indexing" as distinct bare words) predating this change — preserved here
- * deliberately, not an oversight or a drift from `statusConfig`. `not_installed`/`installing`/
+ * Wording note: `BrainSurface.ts`'s `statusConfig` table (its status card) used to keep its OWN copy of
+ * this wording, saying "AI Online" for both `online`/`indexing` and carrying the online-vs-indexing
+ * distinction only in its separate SUB-text ("Indexing embeddings…"). That second authority drifted
+ * exactly as forks do — the card showed a green "AI Online" for a state where chat is unavailable, while
+ * this function's footer pill said "Indexing" (0.2.0 F-6b). `statusConfig` now projects THIS function for
+ * both kinds and keeps only its `sub` (the footer has no sub-text slot). The terser bare words
+ * ("Online"/"Indexing") are the footer's pre-existing convention, now the one convention.
+ * `not_installed`/`installing`/
  * `install_failed`/`connecting` had NO prior footer wording (the old code collapsed all of them to a
  * bare, inconsistently-cased "offline"/"Offline") — those four reuse `statusConfig`'s established text
  * verbatim, since there is no prior footer convention to preserve for them.
@@ -264,10 +266,10 @@ export function aiEngineHeadline(v: AiEngineVerdict): string {
 /**
  * The ONE tone projection. Mirrors the footer's OWN pre-existing tone convention (`indexing`/`starting`
  * kept deliberately amber/"in-flux", distinct from settled `online`'s green — 595's own comment on the
- * code this replaces: "settled indexing/starting keep their prior amber in-flux tone") — NOT
- * `BrainSurface.ts`'s `brainDotTone`, which collapses `online`/`indexing` to the same dot color because
- * its sub-text already carries the distinction. Same reasoning as `aiEngineHeadline` above: this
- * function serves the footer, which has no sub-text slot, so the tone itself must carry the distinction.
+ * code this replaces: "settled indexing/starting keep their prior amber in-flux tone"). `BrainSurface.ts`'s
+ * `brainDotTone` used to collapse `online`/`indexing` to the same green dot on the theory that its
+ * sub-text carried the distinction; in practice that read as "everything is fine" for a degraded state,
+ * so those two dot words now project this function too (0.2.0 F-6b).
  */
 export function aiEngineTone(kind: AiEngineKind): NoticeTone {
   switch (kind) {

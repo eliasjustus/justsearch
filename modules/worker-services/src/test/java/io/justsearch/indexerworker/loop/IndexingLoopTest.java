@@ -1096,7 +1096,8 @@ class IndexingLoopTest {
       when(ecc.state())
           .thenReturn(
               io.justsearch.indexerworker.embed.EmbeddingCompatibilityController.State.REBUILDING);
-      when(ecc.checkRebuildCompletion(0L, 0)).thenReturn(true);
+      // Tempdoc 726 F1: queueDepth no longer gates certification, so match any depth.
+      when(ecc.checkRebuildCompletion(anyLong(), eq(0))).thenReturn(true);
       loop.getEmbeddingLifecycle().setEmbeddingCompatController(ecc);
 
       // Pre-set indexedSinceCommit > 0 so we can assert it resets.
@@ -1106,10 +1107,14 @@ class IndexingLoopTest {
 
       // Tempdoc 516 Slice 4c: maybeFinalize is now a wrapper that delegates to the
       // lifecycle's tryFinalizeRebuild() and resets the commit-driver counters on true.
+      // Tempdoc 726 F1: the lifecycle debounces certification with a two-consecutive-reads guard
+      // (pendingEmbeddings==0 twice — indexCountOps is a mock defaulting countByField()→0), so the
+      // first invocation confirms and the second certifies + commits.
       Method finalize =
           IndexingLoop.class.getDeclaredMethod("tryFinalizeEmbeddingRebuild");
       finalize.setAccessible(true);
-      finalize.invoke(loop);
+      finalize.invoke(loop); // first pending==0 read — no commit yet
+      finalize.invoke(loop); // second consecutive read — certifies
 
       verify(commitOps)
           .commitAndTrack(io.justsearch.adapters.lucene.runtime.CommitReason.INDEXING_LOOP_REBUILD_STAMP);

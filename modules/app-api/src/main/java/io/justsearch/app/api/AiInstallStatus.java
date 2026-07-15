@@ -8,7 +8,10 @@ import java.util.List;
  * v2 install progress state — package-oriented (not per-asset).
  *
  * <p>Mutable, synchronized externally by the install service. Serialized to JSON for the
- * {@code GET /api/ai/install/status} endpoint and persisted to disk for crash recovery.
+ * {@code GET /api/ai/install/status} endpoint. This object is <em>session-ephemeral</em> — it is
+ * NOT persisted to disk. After a restart, "is installed" is recomputed from on-disk model presence
+ * by {@code AiInstallService.maybeRecomputeInstalledFromDisk} (tempdoc 562): install state is a
+ * function of what is on disk, not a remembered event.
  *
  * <p>Moved from {@code io.justsearch.ui.ai.install} to {@code app-api} as part of tempdoc 519 §9
  * Block B2. The {@link AiInstallService} interface returns this type; the DTO must be reachable

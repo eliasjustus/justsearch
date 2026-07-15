@@ -483,17 +483,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       // Verify
       updatePackageState(dl.packageId(), "verifying");
       try {
-        if (dl.sizeBytes() > 0) {
-          long size = Files.size(partialFile);
-          if (size != dl.sizeBytes()) {
-            throw new IllegalStateException(
-                "Size mismatch: expected " + dl.sizeBytes() + ", got " + size);
-          }
-        }
-        String got = DownloadExecutor.sha256(partialFile);
-        if (!got.equalsIgnoreCase(dl.sha256())) {
-          throw new IllegalStateException("SHA-256 mismatch");
-        }
+        DownloadExecutor.verify(partialFile, dl.sizeBytes(), dl.sha256());
       } catch (Exception e) {
         failPackage(dl.packageId(), "Verification failed: " + e.getMessage());
         continue;
@@ -573,8 +563,26 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       }
     }
 
+    applyCompletionState();
+  }
+
+  /**
+   * Terminal honesty decision, extracted so a regression test can pin the INS-005 property (a
+   * multi-package run where some assets fail must still report {@code state == "completed"} with an
+   * accurate count, never {@code failed}) without staging real downloads — mirroring why {@link
+   * #applyInstalledFromPlan} was made package-private. Reads the already-populated {@code
+   * status.packages}: a per-package {@code failed} keeps {@code installedFully} false but the run
+   * completed; {@code skipped} (hardware/policy) is distinguished from {@code failed}.
+   */
+  void applyCompletionState() {
+    long failedCount = countPackagesByState("failed");
     long skippedCount = countPackagesByState("skipped");
-    boolean fullyInstalled = failedCount == 0 && skippedCount == 0;
+    long totalCount = status.packages.size();
+    // installedFully is true only when every package actually reached "installed" — computed from
+    // the positive state rather than "no failed && no skipped", so a package left in a non-terminal
+    // state (pending/downloading/verifying, e.g. a loop that aborted early) can never read as a
+    // clean install. The download loop terminalizes every package today, so this is defense in depth.
+    boolean fullyInstalled = countPackagesByState("installed") == totalCount;
 
     if (failedCount > 0) {
       long installed = totalCount - failedCount - skippedCount;
@@ -1175,9 +1183,15 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
         }
         if (Files.exists(resolved)) continue; // idempotent re-extract
         Files.createDirectories(resolved.getParent());
+        // Extract to a sibling .partial then atomically rename, so a crash mid-copy never leaves a
+        // half-written file at the final path (which the existence-skip above would then trust
+        // forever). Mirrors the download path's partial-then-moveAtomicBestEffort discipline.
+        Path partial = resolved.resolveSibling(resolved.getFileName() + ".partial");
+        Files.deleteIfExists(partial);
         try (var in = zip.getInputStream(entry)) {
-          Files.copy(in, resolved);
+          Files.copy(in, partial);
         }
+        DownloadExecutor.moveAtomicBestEffort(partial, resolved);
         extracted++;
       }
     }

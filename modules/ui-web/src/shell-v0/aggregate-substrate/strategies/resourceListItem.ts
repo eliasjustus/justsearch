@@ -84,7 +84,18 @@ export const resourceListItemStrategy: AggregateStrategy<
   // Field-classification annotations live in RESOURCE_LIST_ITEM_CONSUMED
   // (above); the behavioral Pass-8 test verifies actual consumption
   // by mutating each field and asserting output diff.
-  return html`<jf-resource-view resource-id=${res.id}></jf-resource-view>`;
+  //
+  // 727 F-4 — `host.apiBase` MUST be forwarded. `<jf-resource-view>` uses its own
+  // `apiBase` property (default `''`) to build both its SSE stream URL
+  // (`composeEndpointUrl`) and its ONE_SHOT fetch URL; without it, those URLs are
+  // relative and resolve against whatever origin *this* document happens to be
+  // served from, not the caller's declared backend. `<jf-resource>` is the one
+  // sanctioned consumption point (this strategy is its only V1 wiring) — dropping
+  // apiBase here silently breaks every Resource consumed through it whenever the
+  // FE and backend origins differ (e.g., a split dev-server/backend setup), with
+  // no error: the stream just never opens and the connection badge is stuck at
+  // "connecting" forever.
+  return html`<jf-resource-view resource-id=${res.id} api-base=${host.apiBase}></jf-resource-view>`;
 };
 
 export function registerResourceListItemStrategy(): () => void {

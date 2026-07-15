@@ -233,7 +233,8 @@ public final class ServicePhase {
             gpuCapabilitiesService,
             enterprisePolicy,
             workerFeatureCache,
-            in.inferenceCapability());
+            in.inferenceCapability(),
+            aiInstallHelper);
 
     // §31 Phase 3: 7 controller-services constructed here.
     // SettingsService: callable wraps the late-bound resetFn (set by LocalApiServer after
