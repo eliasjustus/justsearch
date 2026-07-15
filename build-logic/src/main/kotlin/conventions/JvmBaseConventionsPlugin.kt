@@ -11,7 +11,6 @@ import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.testing.Test
 import org.gradle.kotlin.dsl.configure
 import org.gradle.kotlin.dsl.withType
-import org.gradle.api.artifacts.VersionCatalogsExtension
 
 class JvmBaseConventionsPlugin : Plugin<Project> {
   override fun apply(project: Project) {
@@ -151,38 +150,23 @@ class JvmBaseConventionsPlugin : Plugin<Project> {
       }
     }
 
-    // Version catalog access (optional for formatter version)
-    val catalogs = project.extensions.findByType(VersionCatalogsExtension::class.java)
-    val libsCatalog = catalogs?.named("libs")
-    val gjfVersionStr: String? =
-        libsCatalog?.findVersion("googleJavaFormat")?.map { it.requiredVersion }?.orElse(null)
-
-    // Spotless formatting for Java sources in each module
+    // Spotless: whitespace/newline hygiene for Java sources. JustSearch deliberately does NOT
+    // auto-format Java — google-java-format was removed, not deferred (tempdoc 729, owner
+    // decision 2026-07-15). Do not re-add a formatter without reading that doc: the benefits
+    // (ending style debates, onboarding, reviewer load) are ~zero in an agent-authored,
+    // single-reviewer repo, and enabling one costs a reformat of every Java file.
+    //
+    // This block is the ONLY thing enforcing trailing-whitespace/final-newline hygiene — the
+    // repo has no .editorconfig, and agents writing through file tools never pass through an
+    // editor. It is the cheap slice of the one benefit that mattered (diff noise).
+    //
+    // The task name `spotlessJavaSources` is load-bearing: build.gradle.kts wires it into a
+    // mustRunAfter set. Renaming this format block silently breaks that ordering.
     project.extensions.configure(SpotlessExtension::class.java) {
-      val currentMajor = org.gradle.api.JavaVersion.current().majorVersion.toIntOrNull() ?: 0
-      val enableGjf =
-          project.providers.gradleProperty("enableGjf")
-              .map { it.equals("true", ignoreCase = true) }
-              .orElse(false)
-              .get()
-      if (enableGjf || currentMajor < 23) {
-        java {
-          // Use catalog-pinned Google Java Format when available
-          if (gjfVersionStr != null) {
-            googleJavaFormat(gjfVersionStr)
-          } else {
-            // Fallback to a safe default version if catalog missing
-            googleJavaFormat("1.25.2")
-          }
-          target("src/**/*.java")
-        }
-      } else {
-        // Minimal hygiene fallback for newer JDK until GJF compatibility lands
-        format("javaSources") {
-          target("src/**/*.java")
-          trimTrailingWhitespace()
-          endWithNewline()
-        }
+      format("javaSources") {
+        target("src/**/*.java")
+        trimTrailingWhitespace()
+        endWithNewline()
       }
     }
 
