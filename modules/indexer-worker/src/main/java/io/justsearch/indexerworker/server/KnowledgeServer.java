@@ -1267,54 +1267,8 @@ public final class KnowledgeServer implements Closeable {
   }
 
   private void maybeAutoStartEmbeddingRebuildForBlockedLegacyBestEffort() {
-    try {
-      if (embeddingCompatController == null || ingestLifecycle == null) return;
-      if (embeddingCompatController.state() != EmbeddingCompatibilityController.State.BLOCKED_LEGACY) return;
-      if (!"LEGACY_INDEX_NO_FINGERPRINT".equals(embeddingCompatController.reasonCode())) return;
-
-      // Phase 6 fix: docCount() includes chunks, but embedding_status is only on parent docs.
-      // Exclude chunks to prevent the heuristic from always failing when chunks exist.
-      var countOps = ingestLifecycle.indexCountOps();
-      long totalDocs = countOps.docCount();
-      int chunkDocs = countOps.countByField(SchemaFields.IS_CHUNK, "true");
-      long docs = totalDocs - chunkDocs;
-      if (docs <= 0) return;
-
-      // Tempdoc 726 F3: a BLOCKED_LEGACY index has no stored embedding fingerprint, so any vectors
-      // on documents already marked COMPLETED/FAILED have unknowable provenance. Re-mark them PENDING
-      // so the backfill re-embeds them under the current model; then enter REBUILDING regardless of
-      // the completed/pending distribution (the pre-fix all-pending-only trigger left a
-      // fully-embedded-but-never-stamped index stuck here forever). The re-mark needs the write-side
-      // coordinator, which only a RunningRuntime exposes — without it, do NOT transition: entering
-      // REBUILDING with completed>0 and pending==0 un-re-marked would let the loop certify and stamp
-      // provenance-unknown vectors (the unsound certification this fix exists to prevent).
-      // BLOCKED_LEGACY is the safe state; the next boot with a RunningRuntime recovers.
-      if (!(ingestLifecycle instanceof RunningRuntime running)) {
-        log.warn(
-            "Embedding recovery: BLOCKED_LEGACY index detected but the write-side coordinator is"
-                + " unavailable (runtime phase {}); recovery deferred to a boot with a running"
-                + " writer",
-            ingestLifecycle.getClass().getSimpleName());
-        return;
-      }
-
-      int remarked =
-          io.justsearch.indexerworker.loop.ops.EmbeddingRecoveryOps.remarkEmbeddedParentDocsPending(
-              running.documentFieldOps(), running.indexingCoordinator(), 1000, log);
-
-      boolean started = embeddingCompatController.maybeAutoStartRebuildForBlockedLegacy(docs);
-      log.warn(
-          "Embedding recovery: BLOCKED_LEGACY index with no fingerprint (parentDocs={},"
-              + " reMarkedPending={}) -> auto-started rebuild={}. Dense/hybrid retrieval will be"
-              + " restored once the backfill re-embeds and the fingerprint is stamped.",
-          docs,
-          remarked,
-          started);
-    } catch (Exception e) {
-      // Best-effort: never block worker startup on auto-rebuild recovery, but make the failure
-      // visible instead of silently swallowing it (tempdoc 726 F3).
-      log.warn("Embedding recovery: BLOCKED_LEGACY auto-rebuild attempt failed (best-effort)", e);
-    }
+    io.justsearch.indexerworker.loop.ops.EmbeddingRecoveryOps.rescueBlockedLegacyIndex(
+        embeddingCompatController, ingestLifecycle, 1000, log);
   }
 
   private long safeJobQueueDepth() {

@@ -172,6 +172,129 @@ class InPlaceEmbeddingRebuildRecoveryTest {
     }
   }
 
+  @Test
+  @DisplayName(
+      "the production rescue seam re-marks COMPLETED docs PENDING before entering REBUILDING —"
+          + " a rescue that transitioned without re-marking (PR #185's"
+          + " maybeAutoStartRebuildForLegacyUnattestedVectors shape) would find pending==0 already"
+          + " true, certify instantly, and stamp a fingerprint over never-re-embedded vectors")
+  void rescueSeamReMarksPendingBeforeCertifying_neverFabricatesProvenance() throws Exception {
+    EmbeddingFingerprint.setForTesting(FP);
+    Path dir = Files.createTempDirectory("in-place-recovery-fabrication");
+    int docCount = 3;
+
+    // Build 1: a legacy generation — parent docs marked embedding COMPLETED, committed WITHOUT a
+    // stamped fingerprint. Their vector provenance is unknowable.
+    Supplier<CommitMetadataSource> noStamp =
+        EmbeddingMetadataOverlay.createSupplier(Optional::empty);
+    try (var r1 = openRuntime(dir, noStamp)) {
+      for (int i = 0; i < docCount; i++) {
+        r1.indexingCoordinator()
+            .indexSingle(
+                new IndexDocument(
+                    Map.of(
+                        SchemaFields.DOC_ID, "f" + i,
+                        SchemaFields.DOC_UID, "f" + i + "#0",
+                        SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED)));
+      }
+      r1.commitOps().commitAndTrack();
+    }
+
+    // Build 2: "restart".
+    AtomicReference<Supplier<Optional<String>>> fpHolder =
+        new AtomicReference<>(Optional::empty);
+    Supplier<CommitMetadataSource> stamping =
+        EmbeddingMetadataOverlay.createSupplier(() -> fpHolder.get().get());
+
+    try (var r2 = openRuntime(dir, stamping);
+        SqliteJobQueue jobQueue = new SqliteJobQueue(dir.resolve("jobs.db"))) {
+      jobQueue.open();
+
+      var ecc =
+          new EmbeddingCompatibilityController(
+              r2::latestCommitUserDataBestEffort, () -> r2.indexCountOps().docCount());
+      ecc.refresh();
+      assertEquals(
+          EmbeddingCompatibilityController.State.BLOCKED_LEGACY,
+          ecc.state(),
+          "populated index with no stored fingerprint must land BLOCKED_LEGACY after restart");
+      fpHolder.set(ecc::fingerprintToStamp);
+
+      // The trap: every parent doc is already COMPLETED, not PENDING. A rescue that transitioned
+      // straight to REBUILDING here would see pendingEmbeddingCount==0 and certify on the very next
+      // check — stamping a fingerprint over vectors nobody re-embedded under the current model.
+      assertEquals(
+          0,
+          r2.indexCountOps()
+              .countByField(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING),
+          "pre-rescue: nothing is PENDING yet — the trap an unsound rescue would fall into");
+
+      // The PRODUCTION seam — the same call KnowledgeServer's
+      // maybeAutoStartEmbeddingRebuildForBlockedLegacyBestEffort delegates to, so this test
+      // exercises the real ordering rather than re-implementing it.
+      var outcome = EmbeddingRecoveryOps.rescueBlockedLegacyIndex(ecc, r2, 1000, LOG);
+      assertEquals(docCount, outcome.reMarkedPending(), "the rescue re-marks every COMPLETED doc");
+      assertTrue(outcome.rebuildStarted(), "the rescue transitions to REBUILDING");
+      assertEquals(EmbeddingCompatibilityController.State.REBUILDING, ecc.state());
+      // Commit so the re-marked state is durably visible to count/query reads (the real backfill
+      // commits periodically).
+      r2.commitOps().commitAndTrack();
+      r2.commitOps().maybeRefreshBlocking();
+
+      // Observable effect #1: the documents are actually re-queued for real re-embedding, not just
+      // a bare state flip.
+      assertEquals(
+          docCount,
+          r2.indexCountOps()
+              .countByField(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING),
+          "after the rescue, every previously-COMPLETED doc must be PENDING again — real work"
+              + " queued");
+
+      var lifecycle =
+          new EmbeddingProviderLifecycle(
+              null /* signalBus unused by tryFinalizeRebuild */,
+              jobQueue,
+              r2.indexCountOps(),
+              r2.commitOps());
+      lifecycle.setEmbeddingCompatController(ecc);
+
+      // Observable effect #2 — the central invariant: while real re-embed work is outstanding, NO
+      // number of certification reads may certify. Probing twice matters: tryFinalizeRebuild
+      // debounces with a two-consecutive-pending==0 guard, so a single assertFalse would pass on
+      // the debounce alone even for a rescue that re-marked nothing — i.e. pass for the wrong
+      // reason. Two consecutive reads defeat the debounce and leave only the invariant.
+      assertFalse(
+          lifecycle.tryFinalizeRebuild(),
+          "must not certify while re-embed work is still pending — certifying would stamp a"
+              + " fingerprint over vectors nobody has re-embedded under the current model");
+      assertFalse(
+          lifecycle.tryFinalizeRebuild(),
+          "must still not certify on a second consecutive read — with docs genuinely PENDING no"
+              + " read count may certify; if this passes only via the debounce, the rescue never"
+              + " re-marked and provenance is about to be fabricated");
+      assertEquals(EmbeddingCompatibilityController.State.REBUILDING, ecc.state());
+      assertTrue(
+          ecc.fingerprintToStamp().isEmpty(),
+          "no fingerprint may be stamped before re-embedding actually completes");
+
+      // Only once the backfill has actually re-embedded every re-marked doc does certification
+      // (two confirming pending==0 reads) legitimately proceed and stamp the fingerprint.
+      simulateBackfillEmbedAllPending(r2);
+      r2.commitOps().commitAndTrack();
+      r2.commitOps().maybeRefreshBlocking();
+      assertFalse(
+          lifecycle.tryFinalizeRebuild(), "first pending==0 read must not certify (debounce)");
+      assertTrue(
+          lifecycle.tryFinalizeRebuild(),
+          "second confirming pending==0 read, reached only after real re-embedding, may certify");
+      assertEquals(EmbeddingCompatibilityController.State.COMPATIBLE, ecc.state());
+      assertTrue(
+          ecc.fingerprintToStamp().isPresent(),
+          "fingerprint may only be stamped after documents were actually re-marked and"
+              + " re-embedded");
+    }
+  }
+
   private static io.justsearch.adapters.lucene.runtime.RunningRuntime openRuntime(
       Path dir, Supplier<CommitMetadataSource> commitMetadata) {
     return io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(

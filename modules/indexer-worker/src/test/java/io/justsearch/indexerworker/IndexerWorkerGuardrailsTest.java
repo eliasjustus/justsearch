@@ -2,10 +2,15 @@ package io.justsearch.indexerworker;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
+import com.tngtech.archunit.base.DescribedPredicate;
+import com.tngtech.archunit.core.domain.JavaCall;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
+import io.justsearch.indexerworker.embed.EmbeddingCompatibilityController;
+import io.justsearch.indexerworker.loop.ops.EmbeddingRecoveryOps;
+import io.justsearch.indexerworker.services.GrpcIngestService;
 
 @AnalyzeClasses(packages = "io.justsearch.indexerworker", importOptions = ImportOption.DoNotIncludeTests.class)
 class IndexerWorkerGuardrailsTest {
@@ -126,6 +131,113 @@ class IndexerWorkerGuardrailsTest {
           .orShould()
           .dependOnClassesThat()
           .haveSimpleName("CommitOps");
+
+  // ============================================================
+  // Tempdoc 726 F3 — the embedding auto-rescue must go through EmbeddingRecoveryOps.
+  //
+  // A BLOCKED_LEGACY index has no stored embedding fingerprint, so vectors on documents already
+  // marked COMPLETED have unknowable provenance. The backfill only picks up PENDING documents and
+  // certification fires on pending==0, so a rescue that transitions to REBUILDING WITHOUT first
+  // re-marking those documents PENDING certifies instantly, re-embeds nothing, and stamps a
+  // fingerprint attesting to vectors no one re-embedded. EmbeddingRecoveryOps.rescueBlockedLegacyIndex
+  // is the one place that orders re-mark-then-transition correctly.
+  //
+  // This has been written wrong twice by two independent authors, which is why it is a rule and not
+  // a comment: the ordering is invisible at the call site, and calling the controller directly
+  // compiles fine.
+  // ============================================================
+
+  /**
+   * A call to an ECC auto-rescue entry point ({@code maybeAutoStartRebuildFor*}) from anywhere but
+   * the seam. The controller's own internals are exempt (today {@code
+   * maybeAutoStartRebuildForBlockedLegacy} delegates to {@code onForcedReindexRequested}).
+   *
+   * <p>Matched by method-name prefix, not exact name, so a NEW auto-rescue variant is caught the day
+   * it lands rather than needing this rule updated to know about it.
+   */
+  private static final DescribedPredicate<JavaCall<?>> AUTO_RESCUE_CALL_OUTSIDE_THE_SEAM =
+      new DescribedPredicate<>(
+          "call an EmbeddingCompatibilityController auto-rescue entry point"
+              + " (maybeAutoStartRebuildFor*) from outside EmbeddingRecoveryOps") {
+        @Override
+        public boolean test(JavaCall<?> call) {
+          if (!call.getTargetOwner()
+              .getName()
+              .equals(EmbeddingCompatibilityController.class.getName())) {
+            return false;
+          }
+          if (!call.getName().startsWith("maybeAutoStartRebuildFor")) {
+            return false;
+          }
+          String origin = call.getOriginOwner().getName();
+          return !origin.equals(EmbeddingRecoveryOps.class.getName())
+              && !origin.equals(EmbeddingCompatibilityController.class.getName());
+        }
+      };
+
+  /**
+   * A call to the raw forced-reindex trigger from outside the allowlist. Without this, the rule
+   * above is trivially bypassed: a rescue can skip the {@code maybeAutoStartRebuildFor*} family and
+   * flip the state machine straight through {@code onForcedReindexRequested}.
+   *
+   * <p>{@code GrpcIngestService} is deliberately legal — it triggers on a user-initiated forced
+   * reindex, where the re-embed work comes from the surrounding ingest request that rewrites
+   * documents to PENDING, not from the flag flip. That is the criterion for any future addition
+   * here: real pending work must already be guaranteed by the caller's own context.
+   */
+  private static final DescribedPredicate<JavaCall<?>> FORCED_REINDEX_TRIGGER_OUTSIDE_ALLOWLIST =
+      new DescribedPredicate<>(
+          "call EmbeddingCompatibilityController.onForcedReindexRequested from outside"
+              + " EmbeddingRecoveryOps / GrpcIngestService") {
+        @Override
+        public boolean test(JavaCall<?> call) {
+          if (!call.getTargetOwner()
+              .getName()
+              .equals(EmbeddingCompatibilityController.class.getName())) {
+            return false;
+          }
+          if (!call.getName().equals("onForcedReindexRequested")) {
+            return false;
+          }
+          String origin = call.getOriginOwner().getName();
+          return !origin.equals(EmbeddingRecoveryOps.class.getName())
+              && !origin.equals(EmbeddingCompatibilityController.class.getName())
+              && !origin.equals(GrpcIngestService.class.getName());
+        }
+      };
+
+  @ArchTest
+  static final ArchRule embeddingAutoRescueMustGoThroughEmbeddingRecoveryOps =
+      noClasses()
+          .should()
+          .callMethodWhere(AUTO_RESCUE_CALL_OUTSIDE_THE_SEAM)
+          .because(
+              "tempdoc 726 F3 — an embedding auto-rescue must re-mark the unknown-provenance"
+                  + " COMPLETED/FAILED parent docs PENDING BEFORE transitioning to REBUILDING,"
+                  + " otherwise pending==0 is already true, certification fires instantly, nothing"
+                  + " is re-embedded, and the current fingerprint is stamped over vectors it does"
+                  + " not attest to. Call"
+                  + " EmbeddingRecoveryOps.rescueBlockedLegacyIndex(ecc, ingestLifecycle,"
+                  + " batchSize, log) instead of driving the controller directly — it is the one"
+                  + " place that orders re-mark-then-transition correctly, and it returns the"
+                  + " re-marked count so the caller can log it. If you are adding a NEW rescue"
+                  + " trigger, put its condition inside that method rather than calling the"
+                  + " controller from a new site");
+
+  @ArchTest
+  static final ArchRule forcedReindexTriggerMustNotBypassTheRescueSeam =
+      noClasses()
+          .should()
+          .callMethodWhere(FORCED_REINDEX_TRIGGER_OUTSIDE_ALLOWLIST)
+          .because(
+              "tempdoc 726 F3 — onForcedReindexRequested only flips the state machine; it queues no"
+                  + " re-embed work. It is safe from GrpcIngestService because a user-initiated"
+                  + " forced reindex rides an ingest request that rewrites documents to PENDING"
+                  + " itself. Anywhere else it is the same unsound shortcut as calling the"
+                  + " auto-rescue entry points directly: use"
+                  + " EmbeddingRecoveryOps.rescueBlockedLegacyIndex, which re-marks first. Adding a"
+                  + " caller here requires showing that real PENDING work is guaranteed by the"
+                  + " caller's own context");
 
   // NOTE — a third tempdoc-517 rule ("encoder imports confined to input-capture")
   // was considered but dropped. Peer classes outside the search-execution

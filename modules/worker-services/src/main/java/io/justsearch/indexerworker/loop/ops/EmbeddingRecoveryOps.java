@@ -3,6 +3,9 @@ package io.justsearch.indexerworker.loop.ops;
 
 import io.justsearch.adapters.lucene.runtime.DocumentFieldOps;
 import io.justsearch.adapters.lucene.runtime.IndexingCoordinator;
+import io.justsearch.adapters.lucene.runtime.LuceneRuntime;
+import io.justsearch.adapters.lucene.runtime.RunningRuntime;
+import io.justsearch.indexerworker.embed.EmbeddingCompatibilityController;
 import io.justsearch.indexing.SchemaFields;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -28,6 +31,91 @@ import org.slf4j.Logger;
  */
 public final class EmbeddingRecoveryOps {
   private EmbeddingRecoveryOps() {}
+
+  private static final String LEGACY_REASON_CODE = "LEGACY_INDEX_NO_FINGERPRINT";
+
+  /**
+   * Outcome of a {@link #rescueBlockedLegacyIndex} attempt.
+   *
+   * @param reMarkedPending parent documents re-marked PENDING for re-embed
+   * @param rebuildStarted whether the controller transitioned to REBUILDING
+   */
+  public record LegacyRescueOutcome(int reMarkedPending, boolean rebuildStarted) {
+    static final LegacyRescueOutcome SKIPPED = new LegacyRescueOutcome(0, false);
+  }
+
+  /**
+   * The whole BLOCKED_LEGACY rescue decision, as ONE atomic step: count the parent docs → re-mark
+   * the unknown-provenance COMPLETED/FAILED parents PENDING → and only then transition to
+   * REBUILDING.
+   *
+   * <p>The ordering is the invariant, and it is why this lives here rather than inline at the call
+   * site. The embedding backfill only ever picks up {@code PENDING} documents, and {@code
+   * EmbeddingCompatibilityController.checkRebuildCompletion} certifies on {@code
+   * pendingEmbeddingCount == 0}. So a rescue that enters REBUILDING <b>without</b> re-marking first
+   * finds {@code pending == 0} already true, certifies instantly, re-embeds nothing, and stamps the
+   * current fingerprint onto vectors of unknowable provenance — fabricating the very attestation the
+   * fingerprint exists to provide. Exposing the sequence as a single entry point means a caller
+   * cannot reach the transition without the re-mark having happened.
+   *
+   * <p>Best-effort by contract: never throws, so worker startup cannot be blocked by recovery.
+   *
+   * @param ecc the compatibility controller to transition (no-op if not BLOCKED_LEGACY)
+   * @param ingestLifecycle the write-side runtime; re-marking needs a {@link RunningRuntime}
+   * @param batchSize re-mark batch size
+   * @param log the caller's logger, so recovery lines stay attributed to the calling class
+   */
+  public static LegacyRescueOutcome rescueBlockedLegacyIndex(
+      EmbeddingCompatibilityController ecc, LuceneRuntime ingestLifecycle, int batchSize,
+      Logger log) {
+    try {
+      if (ecc == null || ingestLifecycle == null) return LegacyRescueOutcome.SKIPPED;
+      if (ecc.state() != EmbeddingCompatibilityController.State.BLOCKED_LEGACY) {
+        return LegacyRescueOutcome.SKIPPED;
+      }
+      if (!LEGACY_REASON_CODE.equals(ecc.reasonCode())) return LegacyRescueOutcome.SKIPPED;
+
+      // docCount() includes chunks, but embedding_status is only on parent docs. Exclude chunks to
+      // prevent the heuristic from always failing when chunks exist.
+      var countOps = ingestLifecycle.indexCountOps();
+      long totalDocs = countOps.docCount();
+      int chunkDocs = countOps.countByField(SchemaFields.IS_CHUNK, "true");
+      long docs = totalDocs - chunkDocs;
+      if (docs <= 0) return LegacyRescueOutcome.SKIPPED;
+
+      // The re-mark needs the write-side coordinator, which only a RunningRuntime exposes — without
+      // it, do NOT transition: entering REBUILDING with completed>0 and pending==0 un-re-marked
+      // would let the loop certify and stamp provenance-unknown vectors. BLOCKED_LEGACY is the safe
+      // state; the next boot with a RunningRuntime recovers.
+      if (!(ingestLifecycle instanceof RunningRuntime running)) {
+        log.warn(
+            "Embedding recovery: BLOCKED_LEGACY index detected but the write-side coordinator is"
+                + " unavailable (runtime phase {}); recovery deferred to a boot with a running"
+                + " writer",
+            ingestLifecycle.getClass().getSimpleName());
+        return LegacyRescueOutcome.SKIPPED;
+      }
+
+      int remarked =
+          remarkEmbeddedParentDocsPending(
+              running.documentFieldOps(), running.indexingCoordinator(), batchSize, log);
+
+      boolean started = ecc.maybeAutoStartRebuildForBlockedLegacy(docs);
+      log.warn(
+          "Embedding recovery: BLOCKED_LEGACY index with no fingerprint (parentDocs={},"
+              + " reMarkedPending={}) -> auto-started rebuild={}. Dense/hybrid retrieval will be"
+              + " restored once the backfill re-embeds and the fingerprint is stamped.",
+          docs,
+          remarked,
+          started);
+      return new LegacyRescueOutcome(remarked, started);
+    } catch (Exception e) {
+      // Best-effort: never block worker startup on auto-rebuild recovery, but make the failure
+      // visible instead of silently swallowing it (tempdoc 726 F3).
+      log.warn("Embedding recovery: BLOCKED_LEGACY auto-rebuild attempt failed (best-effort)", e);
+      return LegacyRescueOutcome.SKIPPED;
+    }
+  }
 
   /**
    * Re-marks every parent document currently {@code COMPLETED} or {@code FAILED} back to
