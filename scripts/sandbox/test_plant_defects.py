@@ -20,7 +20,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PIL import Image
+try:
+    from PIL import Image
+
+    _HAS_PIL = True
+except ImportError:  # pragma: no cover - exercised only on a host without Pillow
+    Image = None  # type: ignore[assignment]
+    _HAS_PIL = False
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
@@ -56,6 +62,7 @@ def _make_source_evidence(evidence_dir: Path) -> None:
         _write_source_png(evidence_dir / name, color=(10 * i % 255, 20 * i % 255, 30 * i % 255))
 
 
+@unittest.skipUnless(_HAS_PIL, "Pillow (PIL) not installed — plant_defects image ops unavailable")
 class GroundTruthLocationGuardTests(unittest.TestCase):
     """tempdoc 734 F.7: "ground-truth bookkeeping must ... never be staged
     into the sandbox." A reader who can reach the answer key is not being
@@ -101,6 +108,7 @@ class GroundTruthLocationGuardTests(unittest.TestCase):
             assert_ground_truth_outside_output(ground_truth, output_dir)
 
 
+@unittest.skipUnless(_HAS_PIL, "Pillow (PIL) not installed — plant_defects image ops unavailable")
 class MislabeledCaptureAntiContaminationTests(unittest.TestCase):
     """The whole reason build_mislabeled() re-encodes instead of byte-copying:
     a byte-copy would make the plant indistinguishable (by hash) from its
@@ -156,6 +164,7 @@ class MislabeledCaptureAntiContaminationTests(unittest.TestCase):
             self.assertEqual(donor_pixels, plant_pixels)
 
 
+@unittest.skipUnless(_HAS_PIL, "Pillow (PIL) not installed — plant_defects image ops unavailable")
 class RegisterDriftTests(unittest.TestCase):
     """Enforces the register's own registrationRule mechanically at the
     tool/register boundary: the plan and the register must name the exact
@@ -185,6 +194,7 @@ class RegisterDriftTests(unittest.TestCase):
         self.assertIn("invented-class-nobody-observed", str(ctx.exception))
 
 
+@unittest.skipUnless(_HAS_PIL, "Pillow (PIL) not installed — plant_defects image ops unavailable")
 class MainEndToEndTests(unittest.TestCase):
     """Round-trip main() against a small synthetic evidence set (hermetic --
     does not touch tmp/sandbox-evidence/**) and assert the ground-truth
