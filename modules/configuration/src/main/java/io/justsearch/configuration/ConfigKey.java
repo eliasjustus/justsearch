@@ -68,11 +68,6 @@ public enum ConfigKey {
     SEARCH_CORRECTIONS_DF_THRESHOLD("search.corrections.df_threshold"),
     SEARCH_CORRECTIONS_MAX_EDIT_DISTANCE("search.corrections.max_edit_distance"),
     SEARCH_CORRECTIONS_ZERO_HIT_RETRY("search.corrections.zero_hit_retry_enabled"),
-    SEARCH_CORRECTIONS_INDEX_FALLBACK("search.corrections.index_fallback_enabled"),
-    SEARCH_CURSOR_LEGACY_ENABLED("search.cursor.legacy_enabled"),
-    SEARCH_PAGING_STRATEGY("search.paging.strategy"),
-    SEARCH_PAGING_PIT_TTL_MS("search.paging.pit_ttl_ms"),
-    SEARCH_PAGING_TIEBREAK_FIELD("search.paging.tiebreak_field"),
 
     // -- Worker indexer --
     INDEXER_BACKPRESSURE_MODE("workers.indexer.backpressure_mode"),

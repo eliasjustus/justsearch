@@ -490,8 +490,6 @@ public final class ResolvedConfigBuilder {
         "corrections.max_edit_distance", 0, 2);
     putYamlFromNode("search.corrections.zero_hit_retry_enabled", searchRoot,
         "corrections.zero_hit_retry_enabled");
-    putYamlFromNode("search.corrections.index_fallback_enabled", searchRoot,
-        "corrections.index_fallback_enabled");
     putYamlFromNode("search.chunk_aware.enabled", searchRoot, "chunk_aware.enabled");
     putDefault("search.chunk_aware.enabled", "true");
     // Facet fields list
