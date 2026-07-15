@@ -158,6 +158,42 @@ def cmd_ui_a11y_gate(ctx, ui_url, output_dir, timeout_ms):
     sys.exit(report["exit_code"])
 
 
+@click.command("ui-proportion-gate")
+@click.option("--ui-url", default="http://localhost:5173", show_default=True)
+@click.option("--output-dir", type=click.Path(), default=None)
+@click.option("--timeout-ms", default=30_000, show_default=True)
+@click.pass_context
+def cmd_ui_proportion_gate(ctx, ui_url, output_dir, timeout_ms):
+    """Chrome-proportion shrink-only ratchet gate (tempdoc 697).
+
+    Captures every step in governance/ui-proportion-baseline.v1.json in the
+    deterministic --fixtures state and compares each registered persistent-chrome
+    element's measured height to its baseline maxHeightPx (+ tolerancePx). Shrinking
+    is always allowed; growth beyond tolerance is a violation. Exit 0 = clean, 1 = a
+    GROWN element, 2 = capture error. Local-first (ADR-0026): a runnable gate, not
+    CI-wired.
+    """
+    from .. import ui_proportion_gate, ui_shot
+
+    def _capture(step: str) -> dict:
+        return ui_shot.execute_ui_shot(
+            step, ui_url=ui_url, output_dir=output_dir,
+            demo=False, timeout_ms=timeout_ms, measure=True, fixtures=True,
+        )
+
+    report = ui_proportion_gate.evaluate(_capture)
+    for row in report["rows"]:
+        if row.get("status") == "GROWN":
+            click.echo(
+                f"GROWN: step={row['step']} selector={row['selector']} "
+                f"measured={row['measuredHeight']}px > baseline={row['maxHeightPx']}px "
+                f"(+{row['tolerancePx']}px tolerance)",
+                err=True,
+            )
+    click.echo(json.dumps(report, indent=2, default=str), err=True)
+    sys.exit(report["exit_code"])
+
+
 @click.command("ui-diff")
 @click.argument("before", type=click.Path(exists=True))
 @click.argument("after", type=click.Path(exists=True))
@@ -242,4 +278,5 @@ def _step_surface_map() -> dict:
     return {s["uiShotStep"]: s["surface"] for s in ui_a11y_gate.load_register_surfaces() if s.get("uiShotStep")}
 
 
-COMMANDS = [cmd_ui_perf, cmd_ui_check, cmd_ui_shot, cmd_ui_a11y_gate, cmd_ui_diff, cmd_ui_critic, cmd_ui_fuzz]
+COMMANDS = [cmd_ui_perf, cmd_ui_check, cmd_ui_shot, cmd_ui_a11y_gate, cmd_ui_proportion_gate,
+            cmd_ui_diff, cmd_ui_critic, cmd_ui_fuzz]

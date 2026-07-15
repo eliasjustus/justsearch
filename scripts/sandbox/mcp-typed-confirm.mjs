@@ -108,6 +108,23 @@ const HEALTH_TIMEOUT_MS = 2500;
 const APPDATA = process.env.APPDATA || '';
 const PORT_FILE = path.join(APPDATA, 'io.justsearch.shell', 'runtime', 'api-port.txt');
 
+// The advisory record's classExtras.operationId is the WIRE operation id, not
+// the MCP tool name -- these differ. McpToolSurface.callTool dispatches
+// `justsearch_ingest` via `callOperation("core.ingest-files", ...)`
+// (modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java), and
+// PendingAuthorizationAdvisoryProjector.project() stamps classExtras with
+// `event.operationId()` -- the operation ref's id, i.e. "core.ingest-files" --
+// never the tool name that triggered it. Passing the tool name here as
+// wantOperationId used to make findPendingId's operationId-match condition
+// never succeed, so it fell through to the recursive null-return path and
+// every PASS run printed "WARN: could not resolve pendingId" instead of
+// resolving it. Kept as a real filter (not dropped) because AdvisoryLog.recent()
+// replays the whole recent snapshot, which can contain more than one pending
+// advisory in the same session -- matching the correct id, not skipping the
+// check, is what keeps this resolving the RIGHT pending rather than the most
+// recent unrelated one.
+export const INGEST_OPERATION_ID = 'core.ingest-files';
+
 function readPortFile() {
   try {
     const raw = fs.readFileSync(PORT_FILE, 'utf8').trim();
@@ -155,7 +172,7 @@ async function discoverApiPort(explicitPort) {
  * wantOperationId is given, prefers a match whose sibling operationId agrees;
  * accepts the id regardless once no operationId is present to check.
  */
-function findPendingId(node, wantOperationId) {
+export function findPendingId(node, wantOperationId) {
   if (node === null || typeof node !== 'object') return null;
   if (Array.isArray(node)) {
     for (const item of node) {
@@ -438,7 +455,7 @@ async function main() {
         log(
           `Resolving pendingId via GET http://127.0.0.1:${resolvedPort}/api/advisory/authorization-pending/stream ...`,
         );
-        const pendingId = await resolvePendingId(resolvedPort, 'justsearch_ingest', Math.min(args.timeout, 15));
+        const pendingId = await resolvePendingId(resolvedPort, INGEST_OPERATION_ID, Math.min(args.timeout, 15));
         if (pendingId) {
           process.stdout.write(`\nPENDING_ID=${pendingId}\n`);
           process.stdout.write(
@@ -505,4 +522,6 @@ async function main() {
   process.exit(exitCode);
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}

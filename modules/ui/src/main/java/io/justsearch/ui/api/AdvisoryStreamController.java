@@ -5,6 +5,7 @@ import io.javalin.http.sse.SseClient;
 import io.justsearch.app.observability.advisory.AdvisoryChangeRegistry;
 import io.justsearch.app.observability.advisory.AdvisoryClassId;
 import io.justsearch.app.observability.advisory.AdvisoryLog;
+import io.justsearch.app.observability.advisory.AdvisoryRecord;
 import io.justsearch.telemetry.Telemetry;
 import java.time.Clock;
 import java.util.LinkedHashMap;
@@ -12,6 +13,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.function.Predicate;
 
 /**
  * Generic SSE controller for any advisory class. Per slice 494: replaces the old
@@ -36,12 +38,23 @@ public final class AdvisoryStreamController {
   private final ScheduledExecutorService heartbeatScheduler;
   private final Clock clock;
 
+  /**
+   * Filters the ring-buffer snapshot before it is replayed to a new subscriber — see {@link
+   * #snapshotExtras()}. Defaults to accept-all: {@link AdvisoryLog} is a pure append-only log
+   * of past projection events with no notion of "still live", so most advisory classes (e.g.
+   * {@code operation.completed}, {@code health.recoverable}) have nothing to filter against —
+   * a completed operation or a health recovery doesn't stop being true. Only a class whose
+   * projected fact can be superseded by a later action (e.g. {@code authorization.pending} —
+   * a pending gets approved/expires) needs a non-trivial filter, supplied by the caller.
+   */
+  private final Predicate<AdvisoryRecord> liveFilter;
+
   public AdvisoryStreamController(
       AdvisoryClassId classId,
       AdvisoryLog log,
       AdvisoryChangeRegistry changes,
       Telemetry telemetry) {
-    this(classId, log, changes, telemetry, Clock.systemUTC());
+    this(classId, log, changes, telemetry, Clock.systemUTC(), record -> true);
   }
 
   public AdvisoryStreamController(
@@ -50,11 +63,36 @@ public final class AdvisoryStreamController {
       AdvisoryChangeRegistry changes,
       Telemetry telemetry,
       Clock clock) {
+    this(classId, log, changes, telemetry, clock, record -> true);
+  }
+
+  /**
+   * Tempdoc-driven fix: a consumed/expired advisory must not be replayed to a new subscriber.
+   * {@code liveFilter} is applied to every record in {@link #snapshotExtras()}'s ring-buffer
+   * snapshot; a record for which it returns {@code false} is omitted.
+   */
+  public AdvisoryStreamController(
+      AdvisoryClassId classId,
+      AdvisoryLog log,
+      AdvisoryChangeRegistry changes,
+      Telemetry telemetry,
+      Predicate<AdvisoryRecord> liveFilter) {
+    this(classId, log, changes, telemetry, Clock.systemUTC(), liveFilter);
+  }
+
+  public AdvisoryStreamController(
+      AdvisoryClassId classId,
+      AdvisoryLog log,
+      AdvisoryChangeRegistry changes,
+      Telemetry telemetry,
+      Clock clock,
+      Predicate<AdvisoryRecord> liveFilter) {
     this.classId = Objects.requireNonNull(classId, "classId");
     this.log = Objects.requireNonNull(log, "log");
     this.changes = Objects.requireNonNull(changes, "changes");
     this.telemetry = telemetry;
     this.clock = Objects.requireNonNull(clock, "clock");
+    this.liveFilter = Objects.requireNonNull(liveFilter, "liveFilter");
     this.heartbeatScheduler =
         Executors.newSingleThreadScheduledExecutor(
             r -> {
@@ -85,7 +123,7 @@ public final class AdvisoryStreamController {
    */
   Map<String, Object> snapshotExtras() {
     Map<String, Object> extras = new LinkedHashMap<>();
-    extras.put("advisories", log.recent());
+    extras.put("advisories", log.recent().stream().filter(liveFilter).toList());
     return extras;
   }
 

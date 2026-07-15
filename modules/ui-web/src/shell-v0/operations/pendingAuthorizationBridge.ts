@@ -39,6 +39,7 @@ import type { SseEnvelope } from '../streaming/envelope-types.js';
 import { SHELL_EVENT_STREAM_IDS } from '../streaming/shellEventStreamIds.js';
 import { requestAuthorization, type AuthorizationPrompt } from './authorizationBroker.js';
 import { getOperationClient } from './OperationClient.js';
+import { emitEphemeralToast } from '../components/advisory/ephemeralToast.js';
 
 /** Wire shape of the SLIMMED `PendingAuthorizationEvent` — routing info only, no decision content. */
 interface PendingAuthorizationPayload {
@@ -149,13 +150,65 @@ async function presentAndExecute(
     // is no separate "reject" round trip to make for an MCP-originated pending.
     return;
   }
+
+  // Fix pass: `requestAuthorization` can take an arbitrarily long time to resolve (the human has
+  // to read the prompt and, for TYPED_CONFIRM, type the operation id) — long enough for the
+  // pending to die (consumed by another caller, or past its server-side TTL) between the peek
+  // above and the decision landing here. Re-peek right before POSTing so that case is caught with
+  // the same "gone" signal already used before presenting, instead of only surfacing as a raw
+  // approve-endpoint failure. A transient re-peek failure (network blip) doesn't block the
+  // approval — the POST below has its own error handling and is the arbiter in that case.
+  let stillPending: typeof detail | null = detail;
   try {
-    await client.approveAndExecutePending(pendingId, decision.allowAlways);
+    stillPending = await client.peekPending(pendingId);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('Tempdoc 655 fix pass: re-peek before approve failed, proceeding anyway', err);
+  }
+  if (!stillPending) {
+    reportExecutionFailure(prompt, 'the request expired before the approval could be completed');
+    return;
+  }
+
+  try {
+    const result = await client.approveAndExecutePending(pendingId, decision.allowAlways);
+    // Tempdoc 655 fix pass: `execute:true` can come back 200 OK with the dispatch itself having
+    // failed or been skipped server-side (`executed: false`, e.g. no dispatcher wired, the
+    // operation wasn't found, or the dispatch threw — see AuthorizationController
+    // .executeApprovedPending's doc comment, which already names `executeMessage` as the intended
+    // user-facing explanation for exactly this case) or having run but reported failure
+    // (`executed: true, executeSuccess: false`). Both outcomes were previously dropped on the
+    // floor entirely (never even logged) — the same silent-failure shape as the swallowed throw
+    // below, just on the 200-OK path instead of the 410 path.
+    if (!result.executed || result.executeSuccess === false) {
+      reportExecutionFailure(prompt, result.executeMessage ?? 'the action did not complete');
+    }
   } catch (err) {
     // Best-effort: the approval ceremony already resolved (the human said yes), so there's no
     // live caller awaiting this promise to report a failure to, unlike the REST-triggered path
-    // (invokeWithConsent), which throws back into its own call stack.
-    // eslint-disable-next-line no-console
-    console.warn('Tempdoc 655: pending authorization approved but execution failed', err);
+    // (invokeWithConsent), which throws back into its own call stack. Unlike before the fix pass,
+    // the failure is no longer console-only — it reaches the user via the same ephemeral-toast
+    // channel Shell.ts's sibling gated-dispatch path (`invoke-operation` effect) already uses for
+    // exactly this "nobody is synchronously awaiting this promise" shape.
+    reportExecutionFailure(prompt, err instanceof Error ? err.message : String(err));
   }
+}
+
+/**
+ * Fix pass: surface an approved-but-failed pending authorization to the user. Reuses the single
+ * client-originated message channel ({@link emitEphemeralToast}, tempdoc 559 Authority III) rather
+ * than inventing a new presentation surface — the same channel Shell.ts's `invoke-operation` effect
+ * handler already uses for the structurally identical "gated dispatch failed with no live caller to
+ * throw back to" case. `severity: 'error'` makes the toast sticky (no auto-dismiss) per the
+ * severity→presentation projection in `messageClasses.ts` — an error must not silently auto-vanish,
+ * which is exactly the failure mode this closes (the modal had already advanced past this pending by
+ * the time the outcome is known).
+ */
+function reportExecutionFailure(prompt: AuthorizationPrompt, reason: string): void {
+  // eslint-disable-next-line no-console
+  console.warn('Tempdoc 655 fix pass: pending authorization approved but execution failed', reason);
+  emitEphemeralToast({
+    message: `Approval for '${prompt.operationId}' failed: ${reason}`,
+    severity: 'error',
+  });
 }

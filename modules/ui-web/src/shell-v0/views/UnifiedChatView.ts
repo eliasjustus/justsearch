@@ -65,8 +65,9 @@ import { orElse } from '../state/known.js';
 import { readinessNotice, reasonFor, isReindexCause, type ReadinessNoticeView } from '../state/readinessNotice.js';
 import { verdictTone, type SystemHealthVerdict } from '../state/verdict.js';
 import { projectAvailability, unavailableBecause } from '../state/availability.js';
-// Search Thread Round-2 R1a — the degradation banner's persisted "seen cause-set" bookmark.
-import { getUserConfig, setSeenDegradationCauseHash } from '../state/userConfigState.js';
+// Tempdoc 738 — the degradation banner's disclosure now projects from the app-wide Simple/Detailed
+// authority (uiMode), replacing tempdoc 687's per-cause-set "seen-hash" bookmark.
+import { subscribeUiMode, isAdvancedMode } from '../state/uiModeState.js';
 import '../components/SystemNotice.js';
 import '../components/OpButton.js';
 import '../components/Control.js';
@@ -326,17 +327,6 @@ function makeCommittedSearchId(): string {
 }
 
 /**
- * Search Thread Round-2 R1a — a stable, order-independent identity for a verdict's cause-set, so a
- * repeat sighting of the SAME degradation (reasons re-arriving in a different order across polls)
- * still collapses, while a genuinely different cause-set re-expands. Empty reasons hash to the same
- * '' identity regardless of verdict kind — intentional: "no specific cause known" is one
- * undifferentiated situation, not one per verdict kind.
- */
-function degradationCauseHash(reasons: readonly string[]): string {
-  return [...reasons].sort().join('|');
-}
-
-/**
  * Search Thread Round-2 R1a — drop a single cause bullet that only restates the headline+body (the
  * live-audit finding: the "Reindex required." headline already names the rebuild story, so the sole
  * `index.*_legacy`/`index.schema_mismatch`/`index.embedding_mismatch` cause bullet is a duplicate).
@@ -570,15 +560,14 @@ export class UnifiedChatView extends JfElement {
   declare historyLocked: boolean;
   /** Tempdoc 577 §2.13 #17 — the agent authority-space ("what can it do") panel is open. */
   declare showAbilities: boolean;
-  /** Search Thread Round-2 R1a — the degradation banner's expand/collapse disclosure. */
-  declare degradationBannerExpanded: boolean;
   /**
-   * Search Thread Round-2 R1a — plain (non-reactive) bridge field: the cause-set hash the
-   * expand/collapse default has already been ARMED for this mount (guards {@link
-   * syncDegradationBannerExpansion} from re-deciding the default on every unrelated re-render — only
-   * a genuinely new cause-set re-arms). Mirrors `ResultsCard.wasSettling`'s willUpdate-bridge shape.
+   * Tempdoc 738 — the degradation banner's LOCAL "See details" expand toggle. Default collapsed; the
+   * render derives the effective state from disclosure (isAdvancedMode) + severity (see
+   * renderDegradationBanner). Tempdoc 687's per-cause-set seen-hash default machinery is removed.
    */
-  private armedDegradationCauseHash: string | null = null;
+  declare degradationBannerExpanded: boolean;
+  /** Tempdoc 738 — re-render the disclosure-gated banner when the Simple/Detailed mode changes. */
+  private uiModeUnsubscribe: (() => void) | null = null;
   declare pinnedDocIds: string[];
   declare parentFirstMessagePreview: string | null;
   // Tempdoc 565 §12.3.C + multi-turn fix (A) — the run-trace collapse is PER-SEGMENT: a multi-turn
@@ -698,6 +687,7 @@ export class UnifiedChatView extends JfElement {
   constructor() {
     super();
     this.apiBase = '';
+    this.degradationBannerExpanded = false;
     this.inputDraft = '';
     this.steerDraft = '';
     this.forkEditing = false;
@@ -763,6 +753,9 @@ export class UnifiedChatView extends JfElement {
     super.connectedCallback();
     // Tempdoc 565 §12.3.E — re-render when the cross-surface source selection changes (chip highlight).
     this.selectedSourceUnsub = subscribeSelectedSource(() => this.requestUpdate());
+    // Tempdoc 738 — re-render the disclosure-gated banner when the Simple/Detailed mode changes; the
+    // render reads isAdvancedMode() live, so a bare requestUpdate is all that is needed.
+    this.uiModeUnsubscribe = subscribeUiMode(() => this.requestUpdate());
     // Tempdoc 565 fix F / 574 F1 — re-render the rail mount when the wide breakpoint is crossed,
     // via the shared responsiveState authority (fires once immediately with the current value).
     this.unsubWide = subscribeWide((wide) => {
@@ -859,13 +852,7 @@ export class UnifiedChatView extends JfElement {
       this.showResumePrompt = false;
       void this.loadConversation(lastViewed, 'core.free-chat');
     }
-    this.aiStateUnsubscribe = subscribeAiState((s) => {
-      // S5a (decision B14) — the old auto-upgrade-to-'documents' on rag capability is DELETED:
-      // the user's tier is sticky-explicit or derived from what they hold; a model coming
-      // online changes availability chrome (route chip unpins), never the standing view.
-      this.aiState = s;
-      this.maybeAutoRun();
-    });
+    this.aiStateUnsubscribe = subscribeAiState((s) => this.applyAiState(s));
     // Tempdoc 561 C-2: the dial change only re-grades chrome (placeholder / send label / rail
     // posture); it touches no record and no in-flight run.
     this.autonomyUnsubscribe = subscribeAutonomy(() => this.requestUpdate());
@@ -955,6 +942,36 @@ export class UnifiedChatView extends JfElement {
   }
 
   /**
+   * Tempdoc 734 §"Locked thread stays readable after lock" (629 authored `renderHistoryLocked` /
+   * the initial 423 gate this follows up on) — the ONE subscribeAiState callback (connectedCallback)
+   * already receives the polled `/api/status` snapshot on every tick; this derives `historyLocked` from its
+   * `conversationProtection.state` instead of leaving it a write-once value from the initial
+   * `loadConversation()` 423. No new store/subscription — a lock taken elsewhere (idle/auto-lock,
+   * another tab) now clears the rendered transcript instead of leaving it readable forever.
+   *
+   * KNOWN BOUND: this only catches up on the next scheduled poll — `statusPoll.ts`'s `INTERVAL_MS` is
+   * 10s (`subscribeStatus`/`fetchOnce`, `modules/ui-web/src/shell-v0/utils/statusPoll.ts:27,76-84`). A
+   * lock triggered elsewhere is reflected within ~10s, not immediately — better than forever (the prior
+   * defect), but do not read this as instant. `SecuritySurface.ts` shortens ITS OWN window by calling
+   * `refreshStatusNow()` right after its own lock/unlock POST (tempdoc 727 F-8); that only helps the
+   * in-app-initiated case, and is out of scope here — see report for a candidate follow-up.
+   *
+   * S5a (decision B14) — the old auto-upgrade-to-'documents' on rag capability is DELETED: the user's
+   * tier is sticky-explicit or derived from what they hold; a model coming online changes availability
+   * chrome (route chip unpins), never the standing view.
+   */
+  private applyAiState(s: AiState): void {
+    this.aiState = s;
+    const convState = s.status?.conversationProtection?.state;
+    if (convState === 'locked') {
+      this.historyLocked = true;
+    } else if (convState === 'unlocked') {
+      this.historyLocked = false;
+    }
+    this.maybeAutoRun();
+  }
+
+  /**
    * 548 §4.5 — one-shot auto-send for the `answer` verb. Fires `send()` exactly
    * once when an `answer` intent activated this surface AND the prompt is
    * prefilled AND the AI is chat-capable. Idempotent: clears the flag before
@@ -996,11 +1013,9 @@ export class UnifiedChatView extends JfElement {
     this.reasoning.reset();
     // Close transient panels/editors so they don't reopen on return.
     this.showAbilities = false;
-    // Search Thread Round-2 R1a — the degradation banner's disclosure resets on hide; a return
-    // re-arms the default from the persisted seen-hash (armedDegradationCauseHash reset so the next
-    // update re-decides rather than skipping on a stale guard).
+    // Tempdoc 738 — the banner's local "See details" toggle resets on hide; the effective expand
+    // state is re-derived from disclosure + severity on the next render.
     this.degradationBannerExpanded = false;
-    this.armedDegradationCauseHash = null;
     this.forkEditing = false;
     this.forkDraft = '';
     this.steerDraft = '';
@@ -1018,6 +1033,8 @@ export class UnifiedChatView extends JfElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.uiModeUnsubscribe?.();
+    this.uiModeUnsubscribe = null;
     // Tempdoc 609 §R (T1.4) — instance-retention keeps the composer draft across navigation; surface that
     // reassurance once (per session) when leaving with a non-empty draft. settleTransients keeps inputDraft
     // (recoverable), so it's intact here.
@@ -1575,30 +1592,6 @@ export class UnifiedChatView extends JfElement {
   private openContextInspector(): void {
     setContextInspectorView(this.buildInspectorView());
     toggleContextInspector();
-  }
-
-  /**
-   * Search Thread Round-2 R1a — arm the degradation banner's default expand state exactly once per
-   * distinct cause-set this mount observes (the `armedDegradationCauseHash` guard stops an unrelated
-   * re-render from re-deciding the default after the user has toggled the chevron). A cause-set never
-   * recorded as seen (a first sighting, or a CHANGED cause-set) defaults to expanded and is
-   * immediately marked seen; an already-seen cause-set defaults to collapsed. Runs pre-render
-   * (willUpdate) so the persistence write sits outside render() proper.
-   */
-  protected override willUpdate(_changed: Map<string, unknown>): void {
-    this.syncDegradationBannerExpansion();
-  }
-
-  private syncDegradationBannerExpansion(): void {
-    const verdict = this.aiState?.verdict;
-    const notice = verdict ? readinessNotice(verdict) : null;
-    if (!verdict || !notice) return;
-    const hash = degradationCauseHash(verdict.reasons);
-    if (hash === this.armedDegradationCauseHash) return;
-    this.armedDegradationCauseHash = hash;
-    const seenBefore = getUserConfig().seenDegradationCauseHash === hash;
-    this.degradationBannerExpanded = !seenBefore;
-    if (!seenBefore) setSeenDegradationCauseHash(hash);
   }
 
   /** Tempdoc 610 §K — keep the shell-mounted inspector's view fresh while it is open (e.g. a new turn). */
@@ -2160,7 +2153,13 @@ export class UnifiedChatView extends JfElement {
     if (!verdict) return nothing;
     const notice = readinessNotice(verdict);
     if (!notice) return nothing;
-    if (!this.degradationBannerExpanded) {
+    // Tempdoc 738 — disclosure decides how much banner. Simple (default) is the one-line pill
+    // (headline + remedy, raw causes hidden); Detailed shows the causes. A severe (`error`) verdict
+    // opens expanded even in Simple so a genuine failure is never a single ellipsized line. The local
+    // "See details" toggle (degradationBannerExpanded) lets a Simple user open a cosmetic notice on
+    // demand; nothing is remembered per cause-set (687's seen-hash machinery is gone).
+    const forcedExpanded = isAdvancedMode() || verdict.severity === 'error';
+    if (!forcedExpanded && !this.degradationBannerExpanded) {
       return this.renderCollapsedDegradationBanner(verdict, notice);
     }
     const causes = dedupDegradationCauses(notice, verdict);
@@ -2173,20 +2172,23 @@ export class UnifiedChatView extends JfElement {
       <span class="notice-row"
         >${icon({ name: 'alert-triangle', size: 13 })}
         <span class="degradation-summary"><strong>${notice.headline}</strong> ${notice.body}</span>
-        ${/* Round-2 R1a — a seen notice defaults collapsed; this chevron lets the user re-collapse
-              an expanded (first-sighting or re-opened) banner without waiting for the next visit. */ ''}
-        <button
-          type="button"
-          class="degradation-collapse"
-          data-testid="chat-degradation-collapse"
-          aria-expanded="true"
-          title="Collapse"
-          @click=${() => {
-            this.degradationBannerExpanded = false;
-          }}
-        >
-          ⌃
-        </button></span
+        ${/* Tempdoc 738 — the collapse ("See less") chevron shows only when the expansion is
+              user-driven; a forced expansion (Detailed mode or a severe verdict) has nothing to
+              collapse to, so hide the dead control. */ ''}
+        ${forcedExpanded
+          ? nothing
+          : html`<button
+              type="button"
+              class="degradation-collapse"
+              data-testid="chat-degradation-collapse"
+              aria-expanded="true"
+              title="See less"
+              @click=${() => {
+                this.degradationBannerExpanded = false;
+              }}
+            >
+              ⌃
+            </button>`}</span
       >
       ${causes.length > 0
         ? html`<ul class="notice-causes" data-testid="chat-degradation-causes">
@@ -2198,10 +2200,9 @@ export class UnifiedChatView extends JfElement {
   }
 
   /**
-   * Round-2 R1a — the collapsed one-line form: severity icon + "N causes — <headline>" + the
-   * strongest remedy + an expand chevron. Rendered once a cause-set has been seen before (a repeat
-   * degradation the user already read); a genuinely new cause-set never reaches this branch (see
-   * {@link syncDegradationBannerExpansion}).
+   * The collapsed one-line form: severity icon + "N causes — <headline>" + the strongest remedy + an
+   * expand ("See details") chevron. Tempdoc 738 — this is the DEFAULT form in Simple mode (raw causes
+   * hidden); {@link renderDegradationBanner} decides expanded-vs-collapsed from disclosure + severity.
    */
   private renderCollapsedDegradationBanner(
     verdict: SystemHealthVerdict,
@@ -3156,9 +3157,17 @@ export class UnifiedChatView extends JfElement {
           This run${agentMode && approvalPosture
             ? html` · <span class="posture-policy">Policy: ${approvalPosture}</span>`
             : nothing}${this.agentCtrl?.budgetGate
-            ? html` · <span class="over-budget">Paused — awaiting budget</span>`
+            ? html` · <span class="over-budget"
+                >${/* Tempdoc 738 (C8) — plain in Simple, technical in Detailed. */ ''}${isAdvancedMode()
+                  ? 'Paused — awaiting budget'
+                  : 'Paused — waiting to continue'}</span
+              >`
             : budget?.overBudget
-              ? html` · <span class="over-budget">Over budget +${budget.overBy} tokens</span>`
+              ? html` · <span class="over-budget"
+                  >${isAdvancedMode()
+                    ? html`Over budget +${budget.overBy} tokens`
+                    : 'Paused — needs more room'}</span
+                >`
               : nothing}
         </summary>
         ${/* Tempdoc 577 Move 2 — the HELD budget gate: the run is genuinely parked and waiting, so
@@ -4493,7 +4502,9 @@ export class UnifiedChatView extends JfElement {
           : `${receipt.durationMs}ms`,
       );
     }
-    if (receipt.modelLabel) parts.push(receipt.modelLabel);
+    // Tempdoc 738 (C7) — the model name is a technical fact; show it only in Detailed mode. The
+    // duration (a plain "how long it took") stays in both.
+    if (receipt.modelLabel && isAdvancedMode()) parts.push(receipt.modelLabel);
     return parts.join(' · ');
   }
 

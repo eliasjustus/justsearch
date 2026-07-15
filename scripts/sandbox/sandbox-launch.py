@@ -183,6 +183,86 @@ def clean_dir(path: Path):
     shutil.rmtree(path)
 
 
+def archive_existing_evidence(stage_root: Path) -> Path | None:
+    """Archive a previous round's captured evidence before staging can clobber it.
+
+    A later round overwriting the mapped `share/` folder destroyed rounds 1-2's
+    raw evidence (screenshots, traces, logs, findings) with no way to recover
+    it afterward -- an audit could not verify that round's claims against
+    them, permanently. Rounds 3-4 survived only because a human hand-copied
+    `share/evidence/` out before relaunch (and, separately, once by luck: a
+    Hyper-V lock blocked resolve_share_dir()'s clean_dir() and it fell back
+    to a fresh timestamped dir instead of deleting). This function makes that
+    hand-copy automatic and load-bearing, called from main() BEFORE
+    resolve_share_dir() so the canonical `share` dir is moved aside -- never
+    deleted -- whenever it holds evidence.
+
+    Returns the archive destination when something was archived, or None
+    when there was nothing to archive: no canonical `share` dir yet (first
+    run), or a `share` dir whose evidence/ is absent or has zero files (a
+    staged-but-never-launched round, or a round that never reached
+    collect-evidence.ps1) -- both are the normal first-run case, not an
+    error, per this function's contract.
+
+    FAILS CLOSED: if the move itself raises, this exits the whole staging
+    run non-zero rather than falling through to let resolve_share_dir()'s
+    clean_dir() proceed and delete the unarchived evidence. The likely cause
+    is the same Hyper-V VHDX-overlay lock class documented on clean_dir()'s
+    docstring (a just-closed sandbox's vmwp.exe can hold handles on the
+    mapped folder for a while) -- but whatever the cause, losing evidence
+    must be impossible here, not unlikely, so no fallback path is offered.
+    """
+    canonical = stage_root / "share"
+    if not canonical.exists():
+        return None  # nothing staged yet -- first run
+
+    evidence_dir = canonical / "evidence"
+    has_evidence = evidence_dir.is_dir() and any(f.is_file() for f in evidence_dir.rglob("*"))
+    if not has_evidence:
+        print(f"No captured evidence under {evidence_dir} -- nothing to archive (first run or empty round).")
+        return None
+
+    archive_root = stage_root / "archive"
+    archive_root.mkdir(parents=True, exist_ok=True)
+    round_num = len([p for p in archive_root.iterdir() if p.is_dir()]) + 1
+
+    # Ground the archive name in the evidence's own recorded mtimes, not
+    # "now": archiving can run long after a round actually captured its
+    # evidence (a staged share dir can sit for hours before the next
+    # relaunch), so the newest file mtime inside evidence/ is the honest
+    # "when did this round happen" stamp -- not wall-clock-at-archive-time.
+    # The round_num prefix guarantees ordering/uniqueness even if two rounds'
+    # evidence happens to share a timestamp.
+    import time as _time
+
+    newest_mtime = max(
+        (f.stat().st_mtime for f in evidence_dir.rglob("*") if f.is_file()),
+        default=canonical.stat().st_mtime,
+    )
+    stamp = _time.strftime("%Y%m%d-%H%M%S", _time.localtime(newest_mtime))
+    dest = archive_root / f"round-{round_num:03d}-{stamp}"
+
+    try:
+        shutil.move(str(canonical), str(dest))
+    except OSError as e:
+        sys.exit(
+            f"FAILED to archive previous round's evidence: could not move "
+            f"{canonical} -> {dest} ({e.__class__.__name__}: {e}).\n"
+            "Refusing to continue staging -- proceeding would let the next "
+            "step (resolve_share_dir's clean_dir) delete this round's "
+            "un-archived evidence (screenshots, traces, logs, findings), "
+            "which is unrecoverable once gone. This is most likely the "
+            "Hyper-V VHDX-overlay lock documented in clean_dir()'s "
+            "docstring: a just-closed sandbox's vmwp.exe process can hold "
+            "file handles on the mapped folder for a while after the "
+            "window closes. Wait for the lock to clear (check Task Manager "
+            "for vmwp.exe), or archive the evidence manually, then re-run."
+        )
+
+    print(f"Archived previous round's evidence: {canonical} -> {dest}")
+    return dest
+
+
 def resolve_share_dir(stage_root: Path) -> Path:
     """Pick a share directory under stage_root, sidestepping locks left by a
     prior sandbox's Hyper-V worker. Tries the canonical 'share' first; if it
@@ -732,6 +812,13 @@ def main():
     if not stage_dir.is_absolute():
         stage_dir = REPO_ROOT / stage_dir
     stage_dir.mkdir(parents=True, exist_ok=True)
+
+    # Archive any previous round's evidence before staging can clobber it.
+    # Must run before resolve_share_dir()'s clean_dir() -- never destructive:
+    # fails the whole staging run rather than risk overwriting unarchived
+    # evidence (see archive_existing_evidence()'s docstring).
+    archive_existing_evidence(stage_dir)
+
     share_dir = resolve_share_dir(stage_dir)
     share_dir.mkdir(parents=True, exist_ok=True)
 

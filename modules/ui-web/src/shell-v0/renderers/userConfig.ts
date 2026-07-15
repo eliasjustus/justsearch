@@ -163,17 +163,4 @@ export interface RendererUserConfig {
    * so it survives reload, mirroring `activeLayoutId`'s persistence shape.
    */
   railExpanded?: boolean;
-
-  /**
-   * Search Thread Round-2 R1a — the degradation banner's "seen" bookmark: an order-independent
-   * hash of the LAST readiness-notice cause-set (`verdict.reasons`) the user has been shown
-   * expanded. A render whose current cause-set hashes to this value collapses to one line (R1a);
-   * a different hash (a genuinely new degradation, or a changed cause-set) re-expands once and
-   * overwrites this field. Recoverable/reconstructable (worst case: a repeat notice re-expands
-   * once more than necessary) — the same "cheap to lose" tier as `railExpanded`, mirroring the
-   * `hasSeenTrustLoopNudge` one-time-teaching-moment precedent (`api/domains/settings.ts`) but
-   * kept in this local userConfig document rather than the backend-synced AppSettings, since it is
-   * presentation bookkeeping for one surface, not a cross-device preference.
-   */
-  seenDegradationCauseHash?: string;
 }

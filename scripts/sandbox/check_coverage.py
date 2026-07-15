@@ -114,6 +114,157 @@ def check_retrospective(evidence_dir: str | None) -> tuple[bool, str]:
 
 
 # --------------------------------------------------------------------------
+# Evidence review check: a required READER gate, not a product surface.
+#
+# Measured, not assumed (tempdoc 735-followup): known-bad artefacts were
+# planted into a copy of a real round's evidence. A "mislabeled-capture"
+# defect (right bytes, wrong claim -- e.g. a command-palette screenshot
+# named/credited as the logs surface) was caught 0/4 by check_coverage's own
+# filename-token match (check_surface/check_shape structurally can only see
+# the name, never the pixels), while three independent blind readers caught
+# it 4/4, 4/4, 4/4. Four such plants alone flip the gate from a correct FAIL
+# to a clean exit-0 -- each uncovered surface gets "credited" by a screenshot
+# of something else entirely. No content hash can catch this (a
+# mislabeled-capture is real, correctly-sized, non-duplicate bytes); only a
+# reader who looks at the pixels can. This makes that reader step a required,
+# mechanically fail-closed tier instead of an optional judgment call.
+#
+# Modeled directly on check_retrospective above: file presence, a substance
+# check, a clear PRESENT/BLOCKING report, AND-ed into the same fail-closed
+# exit in main(). See scripts/sandbox/evidence-review.schema.json for the
+# documented shape and scripts/sandbox/sandbox-CLAUDE.md 'Writing results' ->
+# 'Evidence review' for the authoring procedure.
+# --------------------------------------------------------------------------
+
+EVIDENCE_REVIEW_FILENAME = "evidence-review.v1.json"
+
+
+def _load_evidence_review_json(evidence_dir: str) -> tuple[dict | None, str | None]:
+    """Load evidence/evidence-review.v1.json. Returns (data, error_reason).
+
+    Exactly one of the two is non-None. Mirrors check_retrospective's
+    warn-and-continue style: I/O and parse failures are reported as normal
+    failure reasons, not raised.
+    """
+    path = os.path.join(evidence_dir, EVIDENCE_REVIEW_FILENAME)
+    if not os.path.isfile(path):
+        return None, f"{EVIDENCE_REVIEW_FILENAME} not found in evidence dir {evidence_dir!r}"
+
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except OSError as exc:
+        return None, f"{EVIDENCE_REVIEW_FILENAME} could not be read: {exc}"
+    except json.JSONDecodeError as exc:
+        return None, f"{EVIDENCE_REVIEW_FILENAME} is not valid JSON: {exc}"
+
+    if not isinstance(data, dict):
+        return None, (
+            f"{EVIDENCE_REVIEW_FILENAME} must contain a JSON object, got "
+            f"{type(data).__name__}"
+        )
+
+    return data, None
+
+
+def check_evidence_review(evidence_dir: str | None, screenshots: set[str]) -> tuple[bool, str]:
+    """Check evidence/evidence-review.v1.json: presence, shape, and the two
+    fail-closed assertions (missing-examined, non-empty mismatches).
+
+    `screenshots` is the caller's credit-eligible set (post-size-floor,
+    image-only, lowercased filenames) -- exactly the set check_surface/
+    check_shape can award coverage credit against, and therefore exactly the
+    set a reader must have looked at for a clean pass to mean anything.
+
+    Returns (ok, reason). Does not raise on I/O or shape errors -- reported
+    as a normal failure reason, matching check_retrospective's style.
+    """
+    if not evidence_dir:
+        return False, "no --evidence-dir given; cannot check for evidence/evidence-review.v1.json"
+
+    data, err = _load_evidence_review_json(evidence_dir)
+    if err:
+        return False, err
+    assert data is not None  # narrowed by the err check above
+
+    examined_raw = data.get("examined")
+    if not isinstance(examined_raw, list):
+        return False, (
+            f"{EVIDENCE_REVIEW_FILENAME} 'examined' must be a list, got "
+            f"{type(examined_raw).__name__}"
+        )
+
+    mismatches = data.get("mismatches")
+    if not isinstance(mismatches, list):
+        return False, (
+            f"{EVIDENCE_REVIEW_FILENAME} 'mismatches' must be a list, got "
+            f"{type(mismatches).__name__}"
+        )
+
+    uncertain = data.get("uncertain")
+    if not isinstance(uncertain, list):
+        return False, (
+            f"{EVIDENCE_REVIEW_FILENAME} 'uncertain' must be a list, got "
+            f"{type(uncertain).__name__}"
+        )
+
+    examined = {str(f).lower() for f in examined_raw}
+
+    # THE load-bearing assertion (735-followup): every credit-eligible
+    # screenshot must appear in the reviewer's examined list. Fail closed on
+    # any omission -- a reader that stopped partway through and reported only
+    # what it managed to open would otherwise be indistinguishable from a
+    # clean pass on the un-opened remainder ("no mismatches" in the 40% it
+    # never looked at is not a finding, it's silence). This is the exact
+    # "absence of signal is not evidence of absence" trap the reader step was
+    # added to close, so it cannot be allowed to recur inside the reader step
+    # itself.
+    missing = screenshots - examined
+    if missing:
+        return False, (
+            f"{EVIDENCE_REVIEW_FILENAME} does not list {len(missing)} credit-eligible "
+            f"screenshot(s) as examined: {sorted(missing)!r} -- every screenshot this round "
+            "could receive coverage credit for must be opened and judged by a reader. A "
+            "partial review (budget exhausted mid-set, sharded and not reconciled, etc.) "
+            "must fail closed here, not report a clean pass on the screenshots it never "
+            "opened. See sandbox-CLAUDE.md 'Writing results' -> 'Evidence review' for the "
+            "sharding procedure on large evidence sets."
+        )
+
+    # F-735: fail closed when the review reports a mismatch. A review that
+    # finds a lie and passes anyway is decoration, not a review.
+    if mismatches:
+        details = "; ".join(
+            f"{m.get('file', '<no file>')!r} claims {m.get('claims', '<no claims>')!r} but "
+            f"shows {m.get('shows', '<no shows>')!r}"
+            for m in mismatches
+            if isinstance(m, dict)
+        )
+        return False, (
+            f"{EVIDENCE_REVIEW_FILENAME} reports {len(mismatches)} mismatch(es) -- a filename "
+            "claiming something the pixels do not support is BLOCKING, not advisory: "
+            f"{details}"
+        )
+
+    if uncertain:
+        details = "; ".join(
+            f"{u.get('file', '<no file>')!r}: {u.get('reason', '<no reason>')}"
+            for u in uncertain
+            if isinstance(u, dict)
+        )
+        return True, (
+            f"{EVIDENCE_REVIEW_FILENAME} present, all {len(screenshots)} credit-eligible "
+            f"screenshot(s) examined, no mismatches -- but {len(uncertain)} flagged uncertain "
+            f"(non-blocking, needs human follow-up): {details}"
+        )
+
+    return True, (
+        f"{EVIDENCE_REVIEW_FILENAME} present, all {len(screenshots)} credit-eligible "
+        "screenshot(s) examined, no mismatches, none uncertain"
+    )
+
+
+# --------------------------------------------------------------------------
 # Data model
 # --------------------------------------------------------------------------
 
@@ -724,7 +875,24 @@ def main(argv: list[str] | None = None) -> int:
         )
         print("=" * 72)
 
-    return 0 if (all_covered and retrospective_ok and not collisions) else 1
+    evidence_review_ok, evidence_review_reason = check_evidence_review(args.evidence_dir, screenshots)
+    print("=" * 72)
+    print("Evidence review check (735-followup -- a reader gate, filenames are claims not proof)")
+    print("=" * 72)
+    print(f"[{'PRESENT' if evidence_review_ok else 'BLOCKING'}] evidence/{EVIDENCE_REVIEW_FILENAME}")
+    print(f"    reason: {evidence_review_reason}")
+    if not evidence_review_ok:
+        print("=" * 72)
+        print(f"BLOCKING: evidence/{EVIDENCE_REVIEW_FILENAME} is required and must be complete.")
+        print(
+            "Every credit-eligible screenshot must be opened by a reader and listed in "
+            "'examined'; any reported 'mismatches' fails the round closed. See "
+            "scripts/sandbox/sandbox-CLAUDE.md 'Writing results' -> 'Evidence review' and "
+            "scripts/sandbox/evidence-review.schema.json for the required shape."
+        )
+        print("=" * 72)
+
+    return 0 if (all_covered and retrospective_ok and evidence_review_ok and not collisions) else 1
 
 
 if __name__ == "__main__":

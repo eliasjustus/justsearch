@@ -1,0 +1,22 @@
+{
+  "$schema": "./ui-proportion-baseline.schema.json",
+  "version": 1,
+  "description": "Chrome proportion shrink-only ratchet baseline (tempdoc 697). ONE authority for the per-ui-shot-step persistent-chrome elements whose rendered HEIGHT must not GROW beyond a recorded ceiling (maxHeightPx). Shrinking is always allowed; growth beyond maxHeightPx + tolerancePx is a violation, enforced by `jseval ui-proportion-gate` (which reuses the ui-shot `.measure.json` geometry — see scripts/jseval/jseval/ui_measure.py). Regenerate via scripts/jseval/experiments/regen_proportion_baseline.py. ACTIVE (tempdoc 697 activation): both target elements were DATA-DEPENDENT (a degraded readiness verdict for the collapsed pill; a rendered turn for the one-line user bubble) and are now captured deterministically by the dedicated isolated `chat-proportion` ui-shot step (scripts/jseval/jseval/ui_check.py), which installs the `degraded` fixtures variant (ui_fixtures._status_body — flips `readiness.composites.retrieval` to DEGRADED with `worker.health.embedding_not_ready`, a 'warn'-severity LifecycleReasonCode so the banner renders collapsed) and actually submits a chat turn (a `?`-bearing draft + Enter, escalating to UnifiedChatView.send()). `chat-mode` (the shared chain step) is untouched — it documents chat-INPUT mode only and never submits, so it was not repurposed. Both elements' `maxHeightPx` were filled in by regen_proportion_baseline.py from this step's live `--fixtures` capture; with the top-level `tolerancePx` of 2px folded in, the effective ceilings are 44px (pill) and 38px (bubble).",
+  "captureState": "ui-shot --fixtures (deterministic); the `chat-proportion` isolated step (degraded status fixture + a submitted chat turn) — see tempdoc 697",
+  "tolerancePx": 2,
+  "steps": [
+    {
+      "uiShotStep": "chat-proportion",
+      "elements": [
+        {
+          "selector": ".degradation-banner-collapsed",
+          "maxHeightPx": 42
+        },
+        {
+          "selector": ".message.user",
+          "maxHeightPx": 36
+        }
+      ]
+    }
+  ]
+}
