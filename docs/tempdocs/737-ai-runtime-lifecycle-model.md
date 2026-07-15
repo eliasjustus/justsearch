@@ -647,3 +647,147 @@ problem) — declarations without a witness are how both §3b and §3e-2 happene
   empty-requirements + internal validation (the install-ops pattern) over
   corrected-but-still-declared requirements, so rung 1 doesn't need re-doing
   under any of A/B/C.
+
+---
+
+## 11. Research pass (2026-07-15) — external prior art for the §10 candidates
+
+Three questions researched (reconciler canon; local-LLM GPU arbitration; MCP
+dynamic tool availability), each mapping to a §10 candidate or an §8a defect.
+Concept research only — no external code copied or adapted; short quotes below
+are attributed (K8s docs CC-BY-4.0; Ollama and llama.cpp are MIT; quotes are
+fair-use-scale). Citations inline; fast-moving items carry dates.
+
+### 11a. Reconciler canon (Candidate B) — the pattern is mature and its pitfalls are documented
+
+- **Spec/status separation** is the load-bearing convention: desired state
+  (`spec`) owned by the user, observed state (`status`) owned by controllers
+  (k8s api-conventions). The **`Condition`** shape — `type / status /
+  reason / message / observedGeneration / lastTransitionTime`, with *"use of
+  the `Reason` field is required"* — is a directly importable explainability
+  contract, and KEP-1623's standard condition vocabulary
+  (`Ready / Progressing / Available / Degraded`) maps almost 1:1 onto our
+  `CapabilityHealth` values — evidence the existing health enum survives as the
+  status vocabulary of a B-model. `observedGeneration` answers "is this status
+  about the *current* desired state or a stale one" — the tri-state trap
+  (`slice-execution`'s "don't conflate unknown with healthy") solved as data.
+- **Fighting controllers** (our five §10b controllers) is the named failure
+  mode; canon fix is **field ownership** — one writer per field. K8s enforces
+  it with Server-Side Apply machinery; in-process, ownership-by-architecture
+  (one controller class per state field) suffices — the distributed machinery
+  does NOT transfer, the discipline does.
+- **Level-triggered + idempotent reconcile** ("wake, re-read, diff, converge")
+  beats edge-triggered event replay for exactly our failure shape: missed
+  events, restarts, autonomous transitions. K8s v1.36 (2026-04-28,
+  kubernetes.io blog "Staleness Mitigation") frames stale observed-state reads
+  as the root of "reconciliation storms and oscillating behavior."
+- **HCI literature** (smart-home explainability, arXiv 2412.09813): unexplained
+  autonomous action is the trust-killer; explainability + predictability are
+  the levers. Confirms §10b's "haunted system" risk as a hard requirement:
+  every controller-initiated transition carries a rendered `reason`. In-repo
+  prior art: `LifecycleReasonCode` + `readinessNotice.ts` + their drift gate.
+- **Statecharts** (statecharts.dev; Harel): orthogonal regions grow linearly
+  where a flat enum grows as the product of axes — the formal version of §8c.
+  Practical guidance: in-flight procedures that are scoped to one state and
+  cancel on exit = `invoke`-style nested; procedures independent of another
+  axis's transitions = parallel region. Chat-engine axis vs GPU-work axis is
+  the textbook two-region case. Desktop prior art for desired-state exists
+  (systemd unit files, PowerShell DSC's Get/Test/Set = observe/diff/converge)
+  but none of it surfaces *reasons* — the Condition import is the differentiator.
+
+### 11b. Local-LLM GPU arbitration (Candidate C) — the ecosystem consensus IS the lease arbiter
+
+- **Ollama's scheduler** (`server/sched.go`, MIT) is the closest production
+  analogue of Candidate C: loaded models are holders with tracked VRAM sizes,
+  admission = "does the incoming model fit alongside residents," eviction =
+  LRU-idle, `keep_alive` TTLs, and **embedding models are special-cased**
+  (loaded with `parallel=1`) — i.e. chat + embeddings co-resident *when the
+  arithmetic fits*, not a mode toggle. A 2025-09-23 rewrite moved from
+  estimated to exact memory accounting (ollama.com/blog/new-model-scheduling);
+  its open VRAM-accounting issues (#13250, #12922, #10359) are a cost warning,
+  not a direction warning.
+- **llama.cpp's own server** grew router mode with `--models-max` (default 4)
+  + LRU eviction (HF blog 2025-12-11); **llama-swap** (MIT) models *groups* —
+  some exclusive-swap, some co-resident (`swap: false`) — a lease policy
+  language. **KoboldCpp** runs chat + embeddings + draft models concurrently
+  via per-role GPU-layer flags. **No surveyed tool models a binary mode.**
+- **The 10d-1 assumption resolves precisely**: "chat and embeddings can never
+  share the GPU" is false as a rule, true as the common *outcome* on 8 GB
+  cards. Ecosystem answer per tier: 8 GB → arbiter that in practice grants
+  exclusive-sized leases; 12 GB → small embedder + KV-quantized chat model
+  genuinely co-resident; 16 GB+ → multi-grant routine. Only a lease-with-size
+  model expresses all three tiers with one concept.
+- **Windows-specific hard requirement**: since driver 536.40, NVIDIA's
+  "sysmem fallback" means VRAM oversubscription on consumer GeForce does NOT
+  fail — it silently spills to system RAM and collapses throughput (the
+  driver default). **The arbiter must do its own size-aware admission
+  control; the OS will not fail loudly for us.** This also retroactively
+  justifies the existing 2 s VRAM-flush conservatism.
+- **Swap-cost framing**: 4-8B GGUF cold load is ~10-45 s on NVMe (ecosystem
+  reports; llama-swap's docs treat >60 s as expected for large models). So the
+  arbiter's long-term value is not shaving our 2 s flush — it is *avoiding
+  unnecessary full evictions* (seconds-to-a-minute each) that the current
+  boolean forces, e.g. killing the chat model to run an embedding backfill a
+  2 GB grant could have satisfied. Relevant local caveat for any co-residency
+  design: ORT's CUDA arena does not return freed memory to the OS
+  (onnxruntime docs; issues #22146/#26610 on multi-session fragility) — our
+  `ort-common` sessions and llama.cpp's allocator are two independent CUDA
+  consumers, so co-residency admission must budget the arena high-water mark,
+  not current usage.
+
+### 11c. MCP dynamic tool availability (§8a agent-palette inversion) — hide is wrong per spec AND practice
+
+- Spec status (checked 2026-07-15): current revision **2025-11-25**; the
+  2026-07-28 RC (locked 2026-05-21) adds a stateless core, Tasks, MCP Apps —
+  and **no tool-availability state**. A `Tool` is listed or absent; the four
+  annotations (`readOnlyHint` etc.) describe behavior, not availability.
+- The 2025-11-25 spec *affirmatively directs* the alternative: tool-execution
+  errors "contain actionable feedback that language models can use to
+  self-correct"; clients "SHOULD provide tool execution errors to language
+  models." The canonical example is remedy-bearing ("must be in the future.
+  Current date is 08/08/2025"), not a bare denial.
+- The one spec-track precedent for hiding (SEP-1881, scope-filtered discovery,
+  2025-11-24, no maintainer engagement) targets **permanent authorization**
+  unavailability. Ours is the opposite: transient, health-based, and the
+  hidden tool is *the lever that fixes the precondition*.
+- **`notifications/tools/list_changed` is unreliable in real clients**: Claude
+  Code shipped without a handler for it for an extended period (issue #13646,
+  closed as dup of #4118; reportedly fixed ~2.1.0), Cursor and VS Code have
+  open gaps. A recovery tool revealed only by list mutation can stay invisible
+  after the subsystem heals. Independent, empirical argument against
+  hide-and-reveal regardless of spec position.
+- Practitioner convergence (Anthropic "writing effective tools for agents"
+  2025-09-11; AWS MCP tool-design 2026-07-09; arXiv 2603.13417's SERF
+  `suggested_actions` shape): errors name what's wrong + the correcting action
+  ("call `list_projects` first" pattern).
+- **Concrete verdict for our defect**: recovery operations stay **always
+  listed** on the agent surface; the derived-availability hiding
+  (`OperationCatalogComposition` → `AgentOperationEmitter`, §8a) is replaced
+  by remedy-bearing execution errors —
+  `"inference is offline; call core.switch-inference-mode {mode:'online'} to
+  restore it, then retry"` — structured (SERF-style) inside the error content
+  if we want more than prose. This holds under ANY §10 candidate and is
+  probably the most immediately actionable research result.
+
+### 11d. What the research changes about §10
+
+1. **B and C compose into a known, named architecture**: desired state (spec)
+   + Condition-shaped status with mandatory reasons + a size-aware resource
+   arbiter is exactly the control-plane shape the two strongest external
+   ecosystems converged on independently (K8s; Ollama). Candidate A gains no
+   external support beyond generic precondition modeling — the research
+   strengthens the B+C composition relative to A.
+2. **The lease needs a size, not just a holder** (11b) — §10c as originally
+   sketched (binary holders) under-specifies; grant-size admission control is
+   what unlocks the 12 GB+ tiers and defends against the Windows silent-thrash
+   cliff.
+3. **The Condition import is the explainability answer** §10b demanded, and
+   the existing `CapabilityHealth` values map onto KEP-1623's standard
+   vocabulary — more evidence the health enum is a keeper (projection), while
+   the Mode enum is not.
+4. **The agent-surface fix (11c) is candidate-independent and cheap** — it can
+   ride rung 1 (the interim fix) rather than waiting for the ontology
+   decision: stop hiding, add remedy-bearing denial text.
+5. New risk registered: ORT arena high-water-mark budgeting (11b) — any
+   co-residency admission logic must account for it; this is a
+   JustSearch-specific constraint no external scheduler shares.
