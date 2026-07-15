@@ -9,7 +9,8 @@
     "pauseIndexingDuringAi" : true,
     "mode" : "advanced",
     "hasSeenTrustLoopNudge" : true,
-    "excludePatterns" : [ "*.tmp", "node_modules/**" ]
+    "excludePatterns" : [ "*.tmp", "node_modules/**" ],
+    "chatEnabled" : true
   },
   "llm" : {
     "serverExecutable" : "llama-server.exe",

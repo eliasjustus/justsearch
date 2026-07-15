@@ -17,6 +17,7 @@ import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
 import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import io.justsearch.app.services.lifecycle.InferenceCapability;
+import io.justsearch.app.services.runtimestate.RuntimeSpecStore;
 import io.justsearch.app.services.worker.OnnxModelStatus;
 import io.justsearch.app.services.worker.WorkerFeatureCache;
 import io.justsearch.configuration.EnvRegistry;
@@ -503,6 +504,13 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
       // Rebuild ConfigStore so readers see updated server EXE / GPU layers.
       ConfigStoreRebuilder.rebuild(ConfigStore.globalOrNull(), next);
+
+      // Tempdoc 737 Phase 1: a user who successfully activated a GPU runtime wants AI on across
+      // restarts — persist the desired-state so the reconciler brings it back at boot (fixes the
+      // documented "AI offline after reopen" confusion). Null-safe; idempotent.
+      if (settingsStore != null) {
+        new RuntimeSpecStore(settingsStore).recordUserEnabled();
+      }
 
       updateState("completed", "done", "GPU runtime activated.", null);
     } catch (Exception e) {

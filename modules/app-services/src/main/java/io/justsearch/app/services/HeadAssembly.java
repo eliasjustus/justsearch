@@ -78,6 +78,8 @@ public final class HeadAssembly implements AutoCloseable {
   // sidecar I/O does not add user-visible transition latency. Closed during teardown.
   private io.justsearch.app.inference.AsyncInferenceTransitionLog asyncTransitionLog;
   private final io.justsearch.app.api.ModeChangeListener gpuBroadcastListener;
+  // Tempdoc 737 Phase 1 — the single-writer runtime authority; closed on teardown with the manager.
+  private final io.justsearch.app.services.runtimestate.RuntimeReconciler runtimeReconciler;
   // §10 Phase A: InfraPhase.Output holds the gRPC server + capabilities handler.
   private io.justsearch.app.services.bootstrap.phases.InfraPhase.Output infraOut;
   private final AtomicBoolean closed = new AtomicBoolean(false);
@@ -403,7 +405,8 @@ public final class HeadAssembly implements AutoCloseable {
     this.brainAssembly =
         BrainAssembly.project(this.inferenceManager, t_service_0, t_service_1);
     OnlineAiService onlineAiService = serviceOut.onlineAiService();
-    this.gpuBroadcastListener = serviceOut.gpuBroadcastListener();
+    this.gpuBroadcastListener = serviceOut.inferenceRuntimeHandles().gpuBroadcastListener();
+    this.runtimeReconciler = serviceOut.inferenceRuntimeHandles().runtimeReconciler();
     this.offlineCoordinator = serviceOut.offlineCoordinator();
     this.agentSearchAdapter = serviceOut.agentSearchAdapter();
     this.excludes = serviceOut.excludes();
@@ -610,7 +613,8 @@ public final class HeadAssembly implements AutoCloseable {
                         serviceOut.brainRuntime(),
                         serviceOut.runtimeVariant(),
                         serviceOut.packImport(),
-                        serviceOut.brainInstall())))
+                        serviceOut.brainInstall(),
+                        serviceOut.inferenceRuntimeHandles().runtimeReconciler())))
             .orThrow();
     this.services = orchestrationOut.initialServices();
     this.orchestration = orchestrationOut.orchestrationHandles();
@@ -740,6 +744,7 @@ public final class HeadAssembly implements AutoCloseable {
         this.infraOut == null ? null : this.infraOut.infraHealthGrpcServer(),
         this.inferenceManager,
         this.gpuBroadcastListener,
+        this.runtimeReconciler,
         this.services == null ? null : this.services.worker().indexing(),
         this.services == null ? null : this.services.worker().documents(),
         this.substrateOut.resourceOut() == null ? null : this.substrateOut.resourceOut().diagnosticChannelAppenderInstaller(),
@@ -776,6 +781,7 @@ public final class HeadAssembly implements AutoCloseable {
     this.knowledgeClient = null;
     this.inferenceManager = null;
     this.gpuBroadcastListener = null;
+    this.runtimeReconciler = null;
     this.offlineCoordinator = null;
     this.agentSearchAdapter = null;
     this.excludes = null;

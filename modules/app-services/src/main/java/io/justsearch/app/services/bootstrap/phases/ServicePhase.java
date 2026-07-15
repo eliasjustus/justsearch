@@ -38,6 +38,9 @@ import io.justsearch.app.services.lifecycle.InferenceCapability;
 import io.justsearch.app.services.packimport.PackImportServiceImpl;
 import io.justsearch.app.services.policy.EnterprisePolicyServiceImpl;
 import io.justsearch.app.services.policy.PolicyServiceImpl;
+import io.justsearch.app.services.runtimestate.RuntimeGpuLease;
+import io.justsearch.app.services.runtimestate.RuntimeReconciler;
+import io.justsearch.app.services.runtimestate.RuntimeSpecStore;
 import io.justsearch.app.services.runtimevariant.RuntimeVariantServiceImpl;
 import io.justsearch.app.services.settings.SettingsServiceImpl;
 import io.justsearch.app.services.settings.UiSettingsStore;
@@ -93,11 +96,21 @@ public final class ServicePhase {
       // rationale as knowledgeClientSupplier above.
       Supplier<KnowledgeServerBootstrap> knowledgeServerBootstrapSupplier) {}
 
+  /**
+   * Inference-manager teardown handles (tempdoc 737 Phase 1). Bundles the GPU-broadcast listener
+   * and the single-writer runtime reconciler — both closed together with the manager on teardown —
+   * into one Output component, keeping the composition-root god-record ceiling (CompositionRoot
+   * GuardrailsTest 4a) flat rather than growing the Output record.
+   */
+  public record InferenceRuntimeHandles(
+      io.justsearch.app.api.ModeChangeListener gpuBroadcastListener,
+      RuntimeReconciler runtimeReconciler) {}
+
   /** Bundled output — all services every downstream phase consumes. */
   public record Output(
       InferenceLifecycleManager inferenceManager,
       OnlineAiService onlineAiService,
-      io.justsearch.app.api.ModeChangeListener gpuBroadcastListener,
+      InferenceRuntimeHandles inferenceRuntimeHandles,
       OfflineCoordinator offlineCoordinator,
       KnowledgeHttpApiAdapter agentSearchAdapter,
       FileOperationLog fileOperationLog,
@@ -154,6 +167,10 @@ public final class ServicePhase {
     OnlineAiService onlineAiService;
     io.justsearch.app.api.ModeChangeListener gpuListener = null;
     OfflineCoordinator offlineCoordinator = null;
+    RuntimeReconciler runtimeReconciler = null;
+    // §31 Phase 1.A: EnterprisePolicyService impl in app-services. Tempdoc 737: constructed up-front
+    // (moved from below) so the runtime reconciler can read the online-AI policy ceiling.
+    EnterprisePolicyService enterprisePolicy = new EnterprisePolicyServiceImpl();
     if (in.inferenceManager() != null) {
       onlineAiService = new OnlineAiServiceImpl(in.inferenceManager());
       gpuListener = InferenceWiring.wireGpuStatusBroadcast(in.inferenceManager(), in.knowledgeServer());
@@ -180,7 +197,26 @@ public final class ServicePhase {
               shouldInterruptVduBatch);
       InferenceCapabilityWiring.attachInferenceModeListener(
           in.inferenceManager(), in.inferenceCapability());
-      InferenceWiring.tryStartOnlineMode(in.inferenceManager());
+
+      // Tempdoc 737 Phase 1: the single-writer runtime authority. Constructed pre-start so its
+      // mode listener attaches (mirror-initial-then-forward) before the first boot convergence.
+      // The env autostart flag seeds the persisted spec (item 1); the reconciler then converges the
+      // engine toward spec — replacing the former direct InferenceWiring.tryStartOnlineMode switch.
+      RuntimeSpecStore runtimeSpecStore = new RuntimeSpecStore(in.settingsStore());
+      RuntimeGpuLease runtimeGpuLease = new RuntimeGpuLease();
+      InferenceLifecycleManager manager = in.inferenceManager();
+      runtimeReconciler =
+          new RuntimeReconciler(
+              manager, // OnlineAiLifecycleControl (ILM implements it)
+              manager::getCurrentMode,
+              () -> manager.view().usingExternalLlamaServer(),
+              manager::detachExternalServer, // DetachAction — throws ModeTransitionException
+              enterprisePolicy,
+              runtimeSpecStore,
+              runtimeGpuLease);
+      runtimeReconciler.start();
+      InferenceWiring.seedAutostartSpec(runtimeSpecStore);
+      runtimeReconciler.requestBootConvergence();
     } else {
       onlineAiService = OnlineAiService.unavailable();
     }
@@ -203,9 +239,6 @@ public final class ServicePhase {
 
     // §31 Step 1.1: ExcludesService constructed via supplier-aware IndexingService.
     ExcludesService excludes = new ExcludesServiceImpl(in.indexingServiceSupplier());
-
-    // §31 Phase 1.A: EnterprisePolicyService impl in app-services — constructible here.
-    EnterprisePolicyService enterprisePolicy = new EnterprisePolicyServiceImpl();
 
     // §31 Phase 1.B-D: helper impls in app-services.
     AiInstallService aiInstallHelper =
@@ -278,7 +311,7 @@ public final class ServicePhase {
     return new Output(
         in.inferenceManager(),
         onlineAiService,
-        gpuListener,
+        new InferenceRuntimeHandles(gpuListener, runtimeReconciler),
         offlineCoordinator,
         agentTools.agentSearchAdapter(),
         agentTools.fileOperationLog(),

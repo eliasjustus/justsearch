@@ -44,6 +44,7 @@ public final class OrchestrationAssembly {
       Server grpcServer,
       InferenceLifecycleManager manager,
       io.justsearch.app.api.ModeChangeListener gpuListener,
+      io.justsearch.app.services.runtimestate.RuntimeReconciler runtimeReconciler,
       IndexingService indexing,
       DocumentService documents,
       DiagnosticChannelAppenderInstaller appender,
@@ -59,7 +60,9 @@ public final class OrchestrationAssembly {
         guProducer == null ? null : (AutoCloseable) guProducer::stop,
         gmProducer == null ? null : (AutoCloseable) gmProducer::stop,
         grpcServer == null ? null : (AutoCloseable) () -> stopGrpc(grpcServer),
-        manager == null ? null : (AutoCloseable) () -> stopManager(manager, gpuListener),
+        manager == null
+            ? null
+            : (AutoCloseable) () -> stopManager(manager, gpuListener, runtimeReconciler),
         (indexing instanceof AutoCloseable ic) ? ic : null,
         (documents instanceof AutoCloseable dc) ? dc : null,
         appender == null ? null : (AutoCloseable) appender::detach,
@@ -94,7 +97,18 @@ public final class OrchestrationAssembly {
   }
 
   private static void stopManager(
-      InferenceLifecycleManager manager, io.justsearch.app.api.ModeChangeListener listener) {
+      InferenceLifecycleManager manager,
+      io.justsearch.app.api.ModeChangeListener listener,
+      io.justsearch.app.services.runtimestate.RuntimeReconciler runtimeReconciler) {
+    // Tempdoc 737: stop the reconciler thread first so it cannot drive a transition while the
+    // manager is closing.
+    if (runtimeReconciler != null) {
+      try {
+        runtimeReconciler.close();
+      } catch (RuntimeException e) {
+        log.warn("RuntimeReconciler close failed: {}", e.getMessage());
+      }
+    }
     if (listener != null) {
       manager.removeModeChangeListener(listener);
     }
