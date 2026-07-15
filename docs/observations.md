@@ -950,6 +950,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: governance/consult-register.v1.json` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
 - [ ] The `ui-web-gates` recipe documents a kernel-gate command that does not work: `node scripts/governance/run.mjs --gate ambient-purity,style-literal-ratchet,... --mode gate` (comma-separated) exits 2 with "gate id 'ambient-purity,style-literal-ratchet' not found" — run.mjs takes ONE gate id per invocation (verified 2026-07-15: comma form exit 2, single form exit 0). Risk is a silent skip of all 6 kernel gates, or exit 2 misread as a gate FAILURE. This recipe is the authority CLAUDE.md's pre-merge table defers to for every `modules/ui-web/src/**` edit — `governance/consult-register.v1.json:28` (2026-07-15)
 
+### obs:unanchored-flake-3 — Flaky test on public main: `:modules:app-inference:test` failed the 'Unit tests (platform-contracts)
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+- [ ] Flaky test on public main: `:modules:app-inference:test` failed the 'Unit tests (platform-contracts)' CI lane on main at 646465a7 — a DOCS-ONLY commit (observations.md + a shard deletion) that cannot causally touch Java. Conclusive: 58a82275 contains every change from 646465a7 plus one line and PASSED the same lane, and add9d620 (the real code change) passed it too — so the tree is not the cause. Effect is a transiently RED public main from an unrelated docs merge, which erodes the 'is main green?' signal the publish workflow depends on. Worth identifying + quarantining the specific flaky test (report is runner-local HTML; not in the fetchable log) — `modules/app-inference/src/test/java/io/justsearch/app/inference/` (2026-07-15)
+
 ## Parked
 
 ### obs:actionledgerprojection — ActionLedgerProjection.deterministicId `:`-join is injection-safe only because all-but-last discrimi
