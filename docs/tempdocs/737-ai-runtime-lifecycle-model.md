@@ -967,3 +967,177 @@ lease abstraction.
 Public-claims note: nothing in this design feeds public-facing quantitative or
 compliance claims; if any future README/business text cites the lease model or
 "predictable AI runtime", it must wait for the shipped, measured behavior.
+
+---
+
+## 14. Derisk (2026-07-15) — probes, findings, corrections, confidence
+
+Nine uncertainties probed (R1–R9; plan on file). Method: load-bearing reads
+inline (R1/R2/R3/R6), two delegated censuses (R4+R5, R7+R8), all read-only.
+Every §12 assumption survived; four probes produced design refinements, one
+produced an owner decision, none invalidated the design.
+
+### R1 — Spec semantics vs autonomous engine use → precedence rule + 1 owner decision
+
+Confirmed from source: `VduPacingPolicy.shouldTrigger` fires only when the
+engine is DOWN (`VduPacingPolicy.java:41-49`; `llmOnline` is documented as an
+exclusivity signal, `:20-27`), and the sampler then starts llama-server for VDU
+— i.e. today, after "Shut Down AI" (a bare ✕-icon button whose label promises a
+shutdown, `BrainSurface.ts:1129`), the system silently brings the engine back
+for background work. It cannot respect user intent because intent is not
+stored. **Precedence rule adopted into §12a**: admin policy is a hard ceiling
+(no engine, matching `POLICY_ONLINE_AI_DISABLED` behavior); user spec
+`chatEnabled` governs the chat *service* (chat is not offered when false);
+controllers may still use the engine as a *tool* for procedures (VDU) under
+idle+energy gates, with a mandatory legible status reason ("engine running for
+background document understanding; chat disabled"), and the reconciler returns
+to spec afterward. **Owner decision (open, does not block implementation)**:
+whether Simple mode also needs a "hard off" — no background AI processing at
+all — as a user-facing setting; privacy-positioned users may read "Shut Down
+AI" as exactly that. Either answer fits the same reconciler input set.
+
+### R2 — Reconciler re-entrancy → resolved favorably; integration shape fixed
+
+`TransitionRunner.run` holds the monitor for the whole transition body and
+fires listeners under it; re-entrant `run()` from a listener throws
+`IllegalStateException` ("Already transitioning") — documented as the canonical
+failure mode, regression-pinned, with the contract explicitly delegating
+"debounced or queued behavior" to callers and deferring queue-on-busy "until a
+named consumer demands it" (`TransitionRunner.java:273-304`). The reconciler is
+that named consumer. **Integration shape fixed by this finding**: the
+reconciler is a level-triggered dirty-flag loop on its own single thread —
+listeners, spec writes, and pending-work signals only mark dirty; reconcile
+never runs inside a listener callback. This is also §11a's canon shape, so
+design and existing contract agree.
+
+### R3 — Bootstrap ordering → clean insertion points; one discipline
+
+Phases map cleanly: authority construction at `CapabilityPhase` (where
+`InferenceCapability` already builds, pre-manager); reconciler start +
+listener attach at `ServicePhase:181`; the first reconcile-toward-spec replaces
+`InferenceWiring.tryStartOnlineMode` (`InferenceWiring.java:67-79` — the
+env-var autostart site). Discipline to carry: every new projection follows the
+mirror-initial-state-then-forward pattern already used at
+`InferenceWiring.java:51-53` (`standalone-capability-stays-stuck` medicine).
+
+### R4 — Listener census → mostly trivial; two semantic consumers; one new orphan
+
+Full census (delegated; file:line in session record): the MMF broadcast and
+telemetry rekeys are trivial (telemetry is already string-keyed). Two
+consumers are semantic and now named in the migration plan:
+
+- **The ndjson forensic transition log** (`AsyncInferenceTransitionLog` wired
+  at `HeadAssembly.java:359-368`) exists for replaying recorded transitions
+  through a fresh FSM — it consumes the *state enumeration itself*. The
+  migration must version the log schema (v2 record shape) rather than rename
+  fields, or replay of pre-migration logs silently breaks.
+- **VDU's exclusivity mutex** (`isOnline()` via `CoreApiAssembly.java:213-224`)
+  must be re-derived from *realized* lease state, never from `chatEnabled` —
+  conflating desired with realized would break the self-interrupt-avoidance
+  logic documented at `VduPacingPolicy.java:51-64`.
+
+New orphan for §12d: `OnlineAiLifecycleControl.addModeChangeListener`
+passthrough (`OnlineAiServiceImpl.java:423-424`) has **no production caller**
+— retire with the listener rekey.
+
+### R5 — Spec persistence → settled: `UiSettings.chatEnabled`
+
+`UiSettings` (whole-file Jackson JSON at `$JUSTSEARCH_HOME/ui/settings.json`,
+`FAIL_ON_UNKNOWN_PROPERTIES=false` → additive fields free) is outside
+`<dataDir>` and outside `StoreCatalog`/`check-store-recoverability` scope —
+zero gate ceremony. No existing field collides ("no semantic collision found";
+autostart is env-only and never persisted, confirming the gap §12a closes).
+Composition point for the effective bit already half-exists:
+`BrainRuntimeServiceImpl.switchInferenceMode:79` already ANDs
+`policy.onlineAiEnabled()`. Companion edits if user-facing: `UiSettingsV2`
+mirror + `SettingsController` mapping. The higher-ceremony alternative (new
+`<dataDir>` store) is rejected — a desired-state bit is not AUTHORED/DERIVED
+content.
+
+### R6 — External adoption → detach, never kill
+
+`chatEnabled=false` with an adopted external llama-server resolves to the
+existing detach semantics (`detachExternalServer`, requires adopted+healthy):
+the reconciler releases the adoption and the lease; it never terminates a
+process it does not own.
+
+### R7 — Gate/contract map → surprise in our favor + exact obligations
+
+- **The FE single-authority gates already exist**: shell-v0's gate set includes
+  `check-ai-verdict-derivation` (fails if any file but `aiVerdict.ts` reads the
+  raw install/feature fields), `check-capability-availability`, and
+  `check-realized-capability` (each with its own governance register). §12c's
+  FE fork-gate is therefore an *extension of live mechanisms*, not new
+  machinery — and the realized-vs-desired distinction (R4) is already a named
+  concept in this repo's FE gate vocabulary.
+- The `operation-surface` gate does NOT cover `CoreOperationCatalog`
+  capability sets (scoped to indexing-job lifecycle + 4 named siblings) — the
+  catalog changes carry no register obligation today; the new circularity
+  protection is genuinely net-new (§12c).
+- Wire: `phase` is a proto `string` (`status.proto:326-332`) so the Mode
+  retirement is not buf-breaking; the real guards are
+  `StatusWireContractConformanceTest` + TWO schema pipelines
+  (`:modules:app-api:updateSchemas` AND the SSOT `WireRecordSchemaGenTest`
+  baselines) — both must be regenerated; wire changeset + VERSION bump for new
+  fields.
+- Reason codes: `check-readiness-reason-codes` mechanics confirmed
+  (bidirectional Java↔`readinessNotice.ts` via
+  `governance/readiness-reason-codes.v1.json`, with `feDerived` /
+  `noWordingExempt` escape hatches for one-sided codes).
+- New register: must land in the SAME PR as its `registry.v1.json` entry +
+  `register-guard-resolution` registration (dangling paths fail the
+  meta-gate); set `expectedMinPopulation` to avoid a vacuous-scan pass. Judge
+  at `/plan` whether runtime-state is a *sibling record* of an existing
+  register (`siblingRecords[]` pattern) before creating a new file.
+- ArchUnit: `app-inference` has NO GuardrailsTest yet (dependency present,
+  zero files) — the caller-forcing seam there is a new test class following
+  `AppServicesWorkerGuardrailsTest`'s convention.
+
+### R8 — Test friction → bounded and bucketed
+
+23 files: **7 mechanical** (Mode as incidental setup/assertion), **6 semantic**
+(deepest: `TransitionRunnerTest` 577 lines and `ModeStateMachineTest` — both
+largely survive IF the envelope is kept, which §12a does; real rewrites:
+`OfflineCoordinatorTest` + its stub, `aiStateStore.test.ts`,
+`aiVerdict.test.ts`), **2 fossil** (`BrainSurface.indexing-escape.test.ts` —
+its own docstring names the design gap it works around;
+`CapabilityAvailabilityTest.java:43-53` circular pin; plus
+`OperationClient.test.ts` paired to the fossil operation contract). One grep
+false-positive noted (`folderStatus.test.ts` — folder indexing, different
+domain).
+
+### R9 — Sequencing
+
+No minimal unblock landed on `origin/worktree-release-asset-set` as of this
+session. Re-verify at implementation start; branch from post-release `main`.
+
+### Confidence: 8/10
+
+Everything load-bearing was probed and held; four refinements and one open
+owner decision resulted, no invalidations. Docked two points for: (a) the
+reconciler thread is genuinely new concurrency code in the one subsystem with
+a documented history of punishing confident authors — the §12d acceptance
+tests and the R2 contract reduce but do not eliminate this; (b) static
+derisking cannot see live boot-ordering behavior (listener attach vs first
+transition) — the first implementation phase should include a live-stack
+verification checkpoint before the projection migration begins.
+
+### Difficulty and model routing recommendation
+
+Implementation difficulty: **high-moderate** — not conceptually hard anymore
+(the design and its integration points are fully mapped), but wide: 2 backend
+modules + FE + wire fixtures + 2 gate registers + ~15 test files, staged so no
+step leaves two ungated authorities. Recommended split per CLAUDE.md routing:
+
+- **Opus** for: the authority + reconciler + bootstrap integration (new
+  concurrency in the punishing subsystem), the FE derivation rewrite
+  (`aiVerdict`/`aiStateStore` against a dense gate set), and the
+  OfflineCoordinator/VDU rerouting (R1/R4 semantics).
+- **Sonnet** for: projection rekeys (MMF, telemetry, wire aliases), catalog
+  requirement-set edits + remedy-bearing denial text, mechanical test bucket,
+  register/changeset ceremony, schema regeneration.
+- Orchestrator (main loop) holds briefs, staging order, and evidence judgment;
+  live-stack checkpoints after the authority phase and after the FE phase.
+- Effort: high on the opus chunks; medium elsewhere. The implementer must load
+  `/inference-runtime` before starting and update that register before closing
+  this tempdoc.
