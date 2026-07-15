@@ -50,12 +50,13 @@ public class SettingsController {
   private final Path defaultIndexBasePath;
   private final Telemetry telemetry;
   private final ConfigStore configStore;
+  private final Runnable chatEnabledChanged; // nullable — tempdoc 737 Phase 1 spec-write nudge
 
   public SettingsController(
       UiSettingsStore settingsStore,
       Path defaultIndexBasePath,
       Telemetry telemetry) {
-    this(settingsStore, defaultIndexBasePath, telemetry, null);
+    this(settingsStore, defaultIndexBasePath, telemetry, null, null);
   }
 
   public SettingsController(
@@ -63,10 +64,25 @@ public class SettingsController {
       Path defaultIndexBasePath,
       Telemetry telemetry,
       ConfigStore configStore) {
+    this(settingsStore, defaultIndexBasePath, telemetry, configStore, null);
+  }
+
+  /**
+   * Tempdoc 737 Phase 1: {@code chatEnabledChanged} fires after a persisted settings write
+   * changes {@code chatEnabled} — the runtime reconciler's spec-write nudge. A persisted intent
+   * must converge now, not at next boot. Nullable (tests / paths without the runtime authority).
+   */
+  public SettingsController(
+      UiSettingsStore settingsStore,
+      Path defaultIndexBasePath,
+      Telemetry telemetry,
+      ConfigStore configStore,
+      Runnable chatEnabledChanged) {
     this.settingsStore = settingsStore;
     this.defaultIndexBasePath = defaultIndexBasePath;
     this.telemetry = telemetry;
     this.configStore = configStore;
+    this.chatEnabledChanged = chatEnabledChanged;
   }
 
   // ==================== v2 Canonical Settings API ====================
@@ -95,6 +111,8 @@ public class SettingsController {
       return;
     }
     UiSettings current = settingsStore.load();
+    // Tempdoc 737: capture BEFORE mergeV2Into — it mutates `current` in place.
+    Boolean chatEnabledBefore = current.getChatEnabled();
     try {
       SettingsV2 incoming = MAPPER.readValue(ctx.body(), SettingsV2.class);
       UiSettings merged = mergeV2Into(current, incoming);
@@ -111,6 +129,10 @@ public class SettingsController {
       maybeApplyGpuLayersSysProp(merged);
       maybeApplyContextSizeSysProp(merged);
       rebuildConfigStore(merged);
+      if (chatEnabledChanged != null
+          && !java.util.Objects.equals(chatEnabledBefore, merged.getChatEnabled())) {
+        chatEnabledChanged.run();
+      }
       ctx.json(toSettingsV2(merged));
       log.info("Settings updated via API v2");
     } catch (Exception e) {

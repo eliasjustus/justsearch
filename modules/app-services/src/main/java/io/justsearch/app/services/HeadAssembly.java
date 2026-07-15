@@ -1207,6 +1207,15 @@ public final class HeadAssembly implements AutoCloseable {
     return substrateOut.indexingJobsBridge();
   }
 
+  /**
+   * Tempdoc 737 Phase 1: the runtime authority's reconciler (null in test paths without the
+   * service graph). Exposed so the settings write path can nudge {@code specChanged()} — a spec
+   * write must converge now, not at next boot.
+   */
+  public io.justsearch.app.services.runtimestate.RuntimeReconciler runtimeReconciler() {
+    return this.runtimeReconciler;
+  }
+
   private java.util.function.Function<
           io.justsearch.agent.api.registry.RequiredCapability, Boolean>
       buildCapabilityResolver() {

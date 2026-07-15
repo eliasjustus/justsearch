@@ -147,12 +147,22 @@ public class LocalApiServer {
         b.telemetry instanceof io.justsearch.telemetry.LocalTelemetry lt0
             ? new HeadApiMetricCatalog(lt0.registry())
             : HeadApiMetricCatalog.noop();
+    // Tempdoc 737 Phase 1: settings writes that change chatEnabled nudge the runtime
+    // reconciler (specChanged) so the persisted intent converges now, not at next boot.
+    // Lazily resolved at fire time — null-safe for test paths without a HeadAssembly.
+    final io.justsearch.app.services.HeadAssembly haForSpecNudge = b.HeadAssembly;
     this.settingsController =
         new SettingsController(
             b.settingsStore,
             b.indexBasePath,
             this.telemetry,
-            ConfigStore.globalOrNull());
+            ConfigStore.globalOrNull(),
+            () -> {
+              var reconciler = haForSpecNudge != null ? haForSpecNudge.runtimeReconciler() : null;
+              if (reconciler != null) {
+                reconciler.specChanged();
+              }
+            });
     // Tempdoc 560 §28: the plugin-trust allowlist is persisted as a sibling of settings.json so an
     // operator approval of a URL-loaded plugin survives restarts (otherwise it silently falls back
     // to UNTRUSTED). Mode follows settings (IN_MEMORY for prod/CI isolation; READ_WRITE for use).
