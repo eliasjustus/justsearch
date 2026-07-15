@@ -37,6 +37,7 @@ public final class OfflineCoordinatorBuilder {
 
   public static OfflineCoordinator build(
       InferenceLifecycleManager manager,
+      io.justsearch.app.services.runtimestate.RuntimeReconciler reconciler,
       io.justsearch.app.api.OnlineAiService onlineAiService,
       Supplier<RemoteKnowledgeClient> clientSupplier,
       Telemetry telemetry,
@@ -79,7 +80,7 @@ public final class OfflineCoordinatorBuilder {
               vduCapabilityState,
               shouldInterruptBatch);
       OfflineCoordinator coordinator =
-          new OfflineCoordinator(manager, batchProcessor, clientSupplier, vduCapabilityState);
+          new OfflineCoordinator(manager, reconciler, batchProcessor, clientSupplier, vduCapabilityState);
       log.info("OfflineCoordinator created for VDU batch processing");
       return coordinator;
     } catch (Exception e) {

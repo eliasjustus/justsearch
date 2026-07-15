@@ -26,6 +26,8 @@ final class RecordingLifecycleControl implements OnlineAiLifecycleControl {
   volatile Thread lastSwitchThread;
   final CountDownLatch firstOnlineSwitch = new CountDownLatch(1);
   final CountDownLatch firstIndexingSwitch = new CountDownLatch(1);
+  /** Ordered log of switch primitives, for exact-call-sequence assertions (§3d regression). */
+  final java.util.List<String> switchLog = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
 
   private volatile ModeChangeListener listener;
 
@@ -85,6 +87,7 @@ final class RecordingLifecycleControl implements OnlineAiLifecycleControl {
   @Override
   public void switchToOnlineMode() throws ModeTransitionException {
     lastSwitchThread = Thread.currentThread();
+    switchLog.add("online");
     onlineSwitchCount.incrementAndGet();
     if (failOnline) {
       throw new ModeTransitionException(
@@ -99,6 +102,7 @@ final class RecordingLifecycleControl implements OnlineAiLifecycleControl {
   @Override
   public void switchToIndexingMode() throws ModeTransitionException {
     lastSwitchThread = Thread.currentThread();
+    switchLog.add("indexing");
     indexingSwitchCount.incrementAndGet();
     Mode from = currentMode;
     currentMode = Mode.INDEXING;

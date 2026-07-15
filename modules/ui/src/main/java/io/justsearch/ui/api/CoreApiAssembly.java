@@ -217,6 +217,9 @@ final class CoreApiAssembly {
                     ? headForVduSampler.headInfraRegistry().offlineCoordinator()
                     : null,
             () -> headForVduSampler != null ? headForVduSampler.currentKnowledgeServer() : null,
+            // Tempdoc 737 R4: keep this the REALIZED-state read — inferenceManager().isOnline() is
+            // the FSM phase (mode==ONLINE), never spec/chatEnabled. The VDU exclusivity mutex
+            // depends on realized state; feeding it spec would break self-interrupt-avoidance.
             () ->
                 headForVduSampler != null
                     && headForVduSampler.serviceOut() != null

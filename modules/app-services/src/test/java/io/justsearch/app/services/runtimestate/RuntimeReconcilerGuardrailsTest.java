@@ -21,6 +21,10 @@ import io.justsearch.app.api.OnlineAiLifecycleControl;
  * that go through the {@code OnlineAiService}-declared default methods (e.g. the user-facing
  * {@code switchInferenceMode} operation, the install self-test) are a separate surface, migrated in
  * Phase 4 when {@code core.switch-inference-mode} is superseded by a spec write.
+ *
+ * <p><b>Tempdoc 737 Phase 2:</b> {@code OfflineCoordinator} was rerouted through the reconciler
+ * (its Phase A/B engine control now goes through {@code procedureRequireEngine}), so it came OFF
+ * the PHASE-2-REMOVE allowlist. {@link RuntimeReconciler} is now the sole permitted caller.
  */
 @AnalyzeClasses(
     packages = "io.justsearch.app.services",
@@ -35,10 +39,6 @@ class RuntimeReconcilerGuardrailsTest {
           // The permanent single writer.
           .and()
           .doNotHaveFullyQualifiedName("io.justsearch.app.services.runtimestate.RuntimeReconciler")
-          // PHASE-2-REMOVE: OfflineCoordinator's phase-sequencing still drives switchTo* directly.
-          // Tempdoc 737 §12a reroutes it through the reconciler as a procedure request in Phase 2.
-          .and()
-          .doNotHaveFullyQualifiedName("io.justsearch.app.services.vdu.OfflineCoordinator")
           .should()
           .callMethod(OnlineAiLifecycleControl.class, "switchToOnlineMode")
           .orShould()

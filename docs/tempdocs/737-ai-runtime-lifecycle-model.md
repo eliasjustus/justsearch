@@ -1207,3 +1207,55 @@ FE, sonnet for mechanical chunks and ceremony.
   available:true — full persist→nudge→reconciler→transition chain live;
   (4) chatEnabled:false → mode indexing, llama-server.exe process gone
   (tasklist-verified). Stack stopped after.
+- **Phase 2b landed (VDU reroute + procedures + continuous return-to-spec)** —
+  static-verified (build -x test green; app-services + app-inference full suites
+  green; ArchUnit negative-probe confirmed the shrunk rule still bites). Live
+  Checkpoint 2 (real VDU batch under soft-off) still owed before closure.
+  - **Procedure overlay** on the authority: `RuntimeStatus` gains a `PROCEDURE`
+    axis (`ProcedureKind.VDU_BATCH`; `Procedure{kind,startedAt,phase,reason}`).
+    `RuntimeReconciler.beginProcedure/endProcedure/procedureRequireEngine(boolean)`
+    are the ONLY sanctioned machine-actor engine hold.
+  - **Continuous return-to-spec**: the Phase-1 scope limit is removed. On any
+    foreign mode change with no procedure active and observed≠spec, the reconciler
+    thread converges back (never on the listener thread; TRANSITIONING defers;
+    failure-backoff kept). New anti-flap guard: >`FLAP_MAX`(3) foreign flips in
+    `FLAP_WINDOW_MS`(5m) → hold + WARN + ENGINE reason `convergence-held-flap-suspected`,
+    released on the next spec/procedure input. **`awaitQuiescent` now waits on
+    `dirty`** too (drift convergence marks dirty without `convergePending`).
+    **Critical-analysis fix**: explicit spec-writes mid-procedure are now also
+    deferred (previously the loop ran explicit convergence even with a procedure
+    active → second-writer hazard); endProcedure re-arms convergence to the
+    then-current spec, so the write is honored, not lost. Regression test added.
+  - **OfflineCoordinator rerouted**: whole run bracketed by begin/endProcedure;
+    Phase A/B engine control goes through `procedureRequireEngine`; zero direct
+    `switchTo*` calls (grep-verified); came OFF the ArchUnit PHASE-2-REMOVE
+    allowlist (reconciler is now the sole permitted caller). §3d killed by
+    construction — regression test asserts exact sequence `[online,indexing,online]`.
+  - **Soft-off legibility** (§15 decision 1): procedure holds engine up while
+    spec disables chat → ENGINE reason `engine-up-for-background-processing`.
+  - **R4 realized-state**: `VduPacingPolicy.shouldTrigger` llmOnline supplier and
+    `OfflineCoordinator.isOnline()` reads documented as realized (mode==ONLINE),
+    `CoreApiAssembly:220-224` supplier confirmed realized.
+  - **Task 5 reason threading**: `InferenceLifecycleManager.switchToOnlineMode/
+    switchToIndexingMode(TransitionReason)` overloads added (no-arg delegates with
+    USER_SWITCH); reconciler/procedure transitions carry AUTO_START / VDU_ENTER /
+    VDU_EXIT into `TransitionRunner.run(reason)` → telemetry + ndjson log. **Design
+    deviation**: the reason-bearing method could NOT go on the `app-api`
+    `OnlineAiLifecycleControl` interface as the brief's literal "default methods"
+    wording assumed — `app-inference` depends on `app-api`, so the interface cannot
+    reference the `app-inference` `TransitionReason`. Threaded instead via nullable
+    `ReasonedSwitch` functional fields on the reconciler, wired at the ServicePhase
+    composition root to `manager::switchTo*(reason)`. Same telemetry outcome,
+    respects module layering, adds no enum values. (Promoting `TransitionReason` to
+    `app-api` — the Mode/ModeChangeListener precedent — was the faithful alternative
+    but out of scope: touches ~16 telemetry files.)
+  - **Task 6 preVduConfig judgment**: KEPT (not deleted). §12d's "subsumed by
+    spec-return" conflated two levels — the reconciler return-to-spec is MODE-level
+    (ONLINE/INDEXING via switchTo*); the `preVduConfig` stash restores INFERENCE
+    CONFIG (context length, vision-safe flags) the mode-level reconciler does not
+    model. Genuinely distinct → documented as procedure-scoped config restore.
+  - **Phase-3 finding (reported, NOT fixed)**: `InferenceCapabilityWiring
+    .attachInferenceModeListener:58` transitions InferenceCapability→READY purely
+    on mode==ONLINE without consulting spec — so VDU-engine-up under soft-off would
+    project chat as available to users. §12c projection concern; logged to
+    observations.

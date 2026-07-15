@@ -188,18 +188,9 @@ public final class ServicePhase {
             return io.justsearch.app.services.vdu.VduPacingPolicy.shouldInterrupt(
                 msSinceActivity, energyReduced);
           };
-      offlineCoordinator =
-          OfflineCoordinatorBuilder.build(
-              in.inferenceManager(),
-              onlineAiService,
-              in.knowledgeClientSupplier(),
-              in.telemetry(),
-              shouldInterruptVduBatch);
-      InferenceCapabilityWiring.attachInferenceModeListener(
-          in.inferenceManager(), in.inferenceCapability());
-
-      // Tempdoc 737 Phase 1: the single-writer runtime authority. Constructed pre-start so its
-      // mode listener attaches (mirror-initial-then-forward) before the first boot convergence.
+      // Tempdoc 737 Phase 1/2: the single-writer runtime authority. Constructed BEFORE the offline
+      // coordinator (which now routes procedure-scoped engine control through it) and pre-start so
+      // its mode listener attaches (mirror-initial-then-forward) before the first boot convergence.
       // The env autostart flag seeds the persisted spec (item 1); the reconciler then converges the
       // engine toward spec — replacing the former direct InferenceWiring.tryStartOnlineMode switch.
       RuntimeSpecStore runtimeSpecStore = new RuntimeSpecStore(in.settingsStore());
@@ -213,7 +204,25 @@ public final class ServicePhase {
               manager::detachExternalServer, // DetachAction — throws ModeTransitionException
               enterprisePolicy,
               runtimeSpecStore,
-              runtimeGpuLease);
+              runtimeGpuLease,
+              // Tempdoc 737 (task 5): reason-bearing switches — reconciler/procedure transitions
+              // carry AUTO_START/VDU_* reasons into TransitionRunner.run instead of USER_SWITCH.
+              // Wired here at the composition root because the app-api OnlineAiLifecycleControl
+              // interface cannot reference the app-inference TransitionReason type.
+              manager::switchToOnlineMode,
+              manager::switchToIndexingMode);
+
+      offlineCoordinator =
+          OfflineCoordinatorBuilder.build(
+              in.inferenceManager(),
+              runtimeReconciler,
+              onlineAiService,
+              in.knowledgeClientSupplier(),
+              in.telemetry(),
+              shouldInterruptVduBatch);
+      InferenceCapabilityWiring.attachInferenceModeListener(
+          in.inferenceManager(), in.inferenceCapability());
+
       runtimeReconciler.start();
       InferenceWiring.seedAutostartSpec(runtimeSpecStore);
       runtimeReconciler.requestBootConvergence();
