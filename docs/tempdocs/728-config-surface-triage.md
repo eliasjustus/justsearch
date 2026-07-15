@@ -218,6 +218,95 @@ particular is likely to orphan more than it removes, since `LocalIntentTranslato
 exists largely to serve those keys. `EnvRegistryTest` samples `LLM_ALLOW_REMOTE` and
 `LLM_TEMPLATE_ROOT`, so it will break again when that cluster lands.
 
+## Derisk pass (2026-07-15, before the remaining 6 clusters)
+
+Six probes run against the remaining ~31 components. Net: **cascade fear was unfounded, one
+trap confirmed and mapped, the weakest cluster upgraded, one new dead-scaffold found.**
+
+### Cascade radius ≈ 0 for every remaining cluster (was the top fear)
+
+- **`ai-backend` is disconnected from `ResolvedConfig` — zero references** in
+  `modules/ai-backend/src/main/`. Deleting the 7 `Llm.*` fossil keys therefore *cannot*
+  orphan `LocalIntentTranslatorConfig`/`BackendRegistry`. Those are a **separate, pre-existing**
+  dead-code problem.
+- Independent confirmation from a gate no subagent consulted: `BackendRegistry` is **already
+  baselined** as whole-program dead (`gates/dead-code-jvm/baseline.txt:41`). `LocalIntentTranslatorConfig`
+  is absent from that baseline only because the gate finds dead *roots*, not dead *subgraphs*
+  (`getDirectDependenciesToSelf()` is non-empty — its dependent, `BackendRegistry`, is itself dead).
+- **Why Paging cascaded and nothing else will:** Paging was the last caller of two *specialized*
+  helpers (`putYamlFromNodeLower`, `putYamlLongClampedFromNode` — 1 caller each). Every remaining
+  cluster uses high-traffic generic helpers: `putYaml` (23 callers), `putYamlInt` (41),
+  `putYamlBoolean` (16), `resolveString/Int/Boolean/Double`. The surviving single-caller helpers
+  belong to KEEP keys.
+- **Predictor for future passes:** a cluster cascades iff it is the last caller of a helper.
+
+### Teardown rule table — the bypassed category is a real trap
+
+`build()` resolves **every contributed key** (`ResolvedConfigBuilder.java:796-799`:
+`for (String key : entries.keySet()) allResolutions.put(key, resolve(key))`) — independent of any
+`buildX()` accessor. Two consequences: `contributeEnvRegistryRegistersAll`
+(`ResolvedConfigBuilderTest.java:1229`) passes whether or not the `resolve()` call is removed, and
+**the effective-config payload is contribution-driven, not component-driven** — removing an
+accessor alone does not remove a key from the surface.
+
+| Component | EnvRegistry entry | Live direct readers | Entry | Doc row |
+|---|---|---|---|---|
+| `Telemetry.metricsMaxMb` / `metricsRetentionDays` / `exemplarsEnabled` | yes | **none** (`NdjsonMetricExporter.java:116` uses raw `System.getProperty`/`getenv` string literals) | **delete** | n/a |
+| `Index.tracingLevel` | yes | **3** — `KnowledgeServer.java:352`, `NativeSessionHandle.java:67`, `EncoderOrtRunSpans.java:34` | **KEEP** | **KEEP** (`environment-variables.md:49`) |
+| `Ui.settingsMode` | yes | **1** — `UiSettingsStore.java:124` | **KEEP** | n/a |
+
+> Applying the add-config-key recipe's inverse blindly here would **delete a live EnvRegistry
+> entry with 3 readers**. The recipe does not know about the bypassed category. (The subagent found
+> 2 of the 3 readers — another reason verdicts get re-probed, not trusted.)
+
+### The miss category, enumerated up front
+
+`ConfigKey.java` (YAML-only keys — the file missed in the Paging batch, see 204e8973) holds **8
+entries** for remaining clusters: `INDEX_WATCHER_{STRATEGY,DEBOUNCE_MS,RESCAN_ON_OVERFLOW,
+POLLING_INTERVAL_MS,QUEUE_MAX_ENTRIES}` (:21-25), `INDEX_OCR_MIN_IMAGE_PIXELS` (:30),
+`INDEX_COMMIT_{DEBOUNCE_MS,POLICY}` (:42-43). Of these, `RESCAN_ON_OVERFLOW` and
+`COMMIT_DEBOUNCE_MS` are **UNWIRED-shadowed ⇒ keep** (logged, not deleted); the other 6 go with
+their clusters.
+
+`ResolvedConfigBuilderTest` assertions that will break, enumerated so they are teardown, not
+surprises: `:562-565` (Watcher×4), `:592` (Ocr), `:645`/`:765` (retrieveTopK), `:667-669`/`:771`
+(Worker×3), `:699-700` (commitPolicy/DebounceMs), `:728` (llmMode).
+
+### Weakest cluster upgraded: Summary (medium → verified)
+
+`SummaryRejection` is constructed **only** inside its own builder (`SummaryRejection.java:92`) and
+its test; production never calls `newBuilder()`. All four accessors (`maxCharacters`,
+`queueFullMessageKey`, `executionThreads`, `executionQueueCapacity`) have **0 hits anywhere** —
+confirming both the OBSOLETE verdict and the earlier `(T)` mis-attribution.
+
+### No compile-invisible NPE risk
+
+The codebase contains exactly **one** keyed lookup into the map —
+`KnowledgeServer.java:1479`: `resolutions().get("search.chunk_aware.enabled")` — and that key is
+**KEEP**. No delete-list key is looked up by string literal anywhere, so no deletion can produce a
+runtime null that compiles clean.
+
+### New finding: `app-config.schema.json` is itself unenforced scaffolding
+
+**Nothing validates it** — zero references across Java/mjs/Kotlin. Proof it has already drifted:
+`config/application.yaml:14` sets `llm.backend: llama`, and `llama` is **not in the schema's own
+enum** `["auto","cpu","metal","cuda","vulkan"]` (`app-config.schema.json:253`). A 990-line schema,
+unenforced, already contradicted by the config it describes — the same pattern as this tempdoc's
+subject, one layer up. Out of scope here; logged for triage.
+
+Also confirmed: `application.yaml` sets 4 delete-list keys (`llm.mode` :12, `llm.backend` :14,
+`search.default_language_policy` :55, `index.default_language` :77) — yaml teardown required.
+
+### Live tier: deliberately skipped, with reasoning
+
+`quick_health` shows no stack running and no owner conflict, so it was *available* — this is a
+judgment call, not an unavailability claim (`ai-offline-isnt-a-wall`). It was replaced with a
+**more targeted** probe: the only compile-invisible risk was a keyed lookup of a deleted key, and
+that is now proven absent. Accessor usage is compiler-covered; the payload is contribution-driven;
+`/api/debug/effective-config` is a debug-cohort API with no component consuming it. A cold stack
+start for near-zero marginal information was not a good trade. **Reverse this if a cluster ever
+touches a key with a keyed lookup or a live FE consumer.**
+
 ## Reach — and what NOT to generalize
 
 The tempting generalization is "extend the `dead-code-jvm` gate to member level so this
