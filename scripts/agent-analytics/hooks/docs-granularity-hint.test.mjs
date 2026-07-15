@@ -13,7 +13,12 @@
 
 import assert from 'node:assert/strict';
 import { isAbsolute } from 'node:path';
-import { isGitPush, isArchaeologyOnly, gitPushCwd } from './docs-granularity-hint.mjs';
+import {
+  isGitPush,
+  isArchaeologyOnly,
+  isStandaloneNote,
+  gitPushCwd,
+} from './docs-granularity-hint.mjs';
 
 let passed = 0;
 const failures = [];
@@ -162,6 +167,53 @@ run('empty / blank file list is not archaeology-only', () => {
 run('a path merely containing docs/tempdocs deeper down does not match', () => {
   // anchored at start: a code file that references the path is not a tempdoc
   assert.equal(isArchaeologyOnly(['scripts/x/docs/tempdocs/y.md']), false);
+});
+
+// --- isStandaloneNote: the single-file threshold (tempdoc 739 §6) ---
+// isArchaeologyOnly is necessary but not sufficient — the rule permits batches,
+// and a batch is archaeology-only too. Only a LONE note is forbidden.
+run('one tempdoc file alone IS a standalone note', () => {
+  assert.equal(isStandaloneNote(['docs/tempdocs/739-x.md']), true);
+});
+run('one observation shard alone IS a standalone note', () => {
+  assert.equal(isStandaloneNote(['docs/observations.d/abc.md']), true);
+});
+run('several tempdoc edits are a BATCH — the rule permits it, so no hint', () => {
+  assert.equal(
+    isStandaloneNote(['docs/tempdocs/712-x.md', 'docs/tempdocs/713-y.md']),
+    false,
+  );
+});
+run('a shard fold is a BATCH — the step-4 case that had no compliant path', () => {
+  // Real shape of `fold-observations.mjs --apply`: shards consumed + store updated.
+  assert.equal(
+    isStandaloneNote([
+      'docs/observations.md',
+      'docs/observations.d/4bd6a45f.md',
+      'docs/observations.d/54d5b430.md',
+      'docs/observations.d/a37ec555.md',
+    ]),
+    false,
+  );
+});
+run('a lone note riding along with code is NOT standalone', () => {
+  assert.equal(
+    isStandaloneNote(['docs/tempdocs/739-x.md', 'scripts/x.mjs']),
+    false,
+  );
+});
+run('one canonical doc alone is NOT a working-history note (durable unit)', () => {
+  assert.equal(isStandaloneNote(['docs/decisions/0045-x.md']), false);
+  assert.equal(isStandaloneNote(['docs/explanation/27-x.md']), false);
+});
+run('empty / blank is not a standalone note', () => {
+  assert.equal(isStandaloneNote([]), false);
+  assert.equal(isStandaloneNote(['', '  ']), false);
+});
+run('blank entries do not inflate the count past the threshold', () => {
+  // A trailing '' from splitting git output must not make a lone note look
+  // like a 2-file batch — that would silently un-fire the whole rule.
+  assert.equal(isStandaloneNote(['docs/tempdocs/739-x.md', '']), true);
 });
 
 // --- Report ---
