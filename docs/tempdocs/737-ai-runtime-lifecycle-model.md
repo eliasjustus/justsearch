@@ -425,3 +425,80 @@ Route from here (per §7, unchanged): `/theorize` is substantially discharged by
 §8d; next is `/design` (canonical-source choice + gate mechanism + minimal-fix
 interim), then `/derisk`, then `/plan`. Stop at plan; owner's word before
 implementation.
+
+---
+
+## 9. Rewrite panel (2026-07-15, owner-directed): is a full rewrite best long-term?
+
+Owner context: the inference-switch concept predates the current docs — it likely
+dates to the project's first (no-longer-existing) documents. Question posed:
+regardless of feasibility, is a full rewrite the best *long-term* outcome? Four
+independent analysts (opus), deliberately opposed lenses, each required to
+disclose evidence against its own position, all read-only against this branch.
+
+### 9a. The four verdicts
+
+| Lens | Verdict | Conf. | Core of the case |
+|---|---|---|---|
+| Prosecution (rewrite advocate) | REWRITE the ontology | 8/10 | The real state space already leaked out of the 4-value enum into a **10-value `TransitionReason` telemetry tag** (`telemetry/TransitionReason.java:9-29`: VDU_ENTER/EXIT, EXTERNAL_DETACH, CRASH_RECOVERY, AUTO_START…) and into nullable side-fields (`preVduConfig` `InferenceLifecycleManager.java:111`, external flag `:1170` — whose missing hand-clear was a real silent bug pre-518, `:472-475`). The capability algebra is name-pattern with no semantics (the same file's install/pack ops correctly require nothing while every "inference/runtime"-named op got `InferenceOnline`). Every in-place repair is an edit inside one of the five forks and inherits the locally-right/globally-wrong property that produced 75bebc99 and PR #185. Disclosed counter: if the transition to one-canonical-source can be staged continuously, "rewrite vs repair" is a labeling choice and confidence falls to ~6. |
+| Defense (repair advocate) | HYBRID, lean REPAIR | 7/10 | The 518 decomposition already produced sound machinery (transition envelope w/ rollback, immutable view snapshots, listener fan-out). Dense inventory of **operational Chesterton fences** a rewrite risks silently dropping: VRAM flush ordering (`:114,468-470`), Windows `taskkill` hung-process reap (`LlamaServerOps.java:354-356`), external-adoption identity validation + health-only-adoption override (`:78,88,440-474`), crash counters/caps, isolated-port GPU self-test with INCONCLUSIVE handling (`RuntimeActivationService.java:456-464,101-102`), config rollback distinguishing set-vs-baseline. A staged path (fix 4 requirement sets → add `establishes` + gate → derive availability → split enum behind alias → retire alias) reaches the identical end state, each step shippable. Sharpest point: **the clean two-axis rewrite target is already refuted by §8c** (the real space is >2-dimensional: VDU, adoption, in-flight procedures) — a confident rewrite risks being the third confidently-wrong careful-reader artifact. Conceded: the circular algebra, five-forks-no-derivation, and internal-bypass are real and indefensible. Disclosed counter: a stalled incremental migration leaves TWO authorities coexisting — per the 553 class, worse than either endpoint. |
+| Greenfield architect | Model: REWRITE. Subsystem: HYBRID ("rewrite the model, keep the machinery") | 8/10 | Extracted the real requirements from source: 6 orthogonal variables (install / engineProcess / adoption / gpuGrant / procedure-overlay / policy) + one resolver with declared pre- AND postconditions; the §4 invariant becomes "required ∩ establishes = ∅", mechanically gateable. Distance table: large SURVIVES-AS-IS bucket (envelope, process ops, MMF bus, install/activation trackers) but the model layer is dominated by CONTRADICTS (linear enum as canonical axis, capability-as-precondition, surface-only gate, lying resolver arms, dual authorities) + MISSING (postcondition vocabulary, single resolver, backend orthogonal variables, fork gate). Decisive observation: **`aiVerdict.ts:44-67` already implements the target decomposition** — 8 kinds separating install/process/indexing + `AiStability` as procedure-overlay — in the wrong layer, derived from raw snapshots instead of being canonical. INDEXING-vs-OFFLINE searched for a behavioral consumer: none exists; it is presentation-provenance, belongs as a down-*reason* field, not a peer mode. Highest-value experiment: if `establishes` can be **derived from handler signatures** (`RestartPolicy` constants, `switchTo*` call sites), the canonical resolver can be code-generated and the model-verdict tips from REWRITE to additive-REPAIR. |
+| Coupling analyst | HYBRID (bounded rewrite of the derivation core) | 7/10 | The census refutes both extremes. Blast radius is small: `Mode.X` in main src = **2 modules** (app-inference 9 files, app-services 2); `InferenceOnline` in 6 files total. **The wire does NOT freeze the vocabulary**: `phase`/`mode` are proto `string` fields (`status.proto:327`), the `wire` gate is buf-breaking with additive classifications — old values are pinned by fixtures/consumers, not structure. **The Worker is 1-bit-decoupled**: the only mode-derived cross-process signal is `main_gpu_active` MMF byte [24]; no gRPC field carries Head-mode (knowledge.proto's `effective_mode` is SearchTrace vocabulary; `backfill_mode` is worker-loop vocabulary). Zero leakage into search/jobs/settings/telemetry/reason-code registries. Test entrenchment: 11 files pin Mode semantics, of which two sets are **pure fossils pinning documented-bug behavior** (`CapabilityAvailabilityTest.java:43-53` pins the circular-denial derivation; `BrainSurface.indexing-escape.test.ts`'s 5 tests pin the dead escape branch) — replaced under either path. Whichever path is chosen, the old vocabulary is fully retirable; neither path touches the Worker. |
+
+### 9b. Convergence — what all four agree on
+
+1. **A full *subsystem* rewrite is wrong** (unanimous, including the prosecution).
+   The machinery beneath the model — transition envelope, `LlamaServerOps`
+   process/adoption/recovery, immutable view snapshots, MMF bus,
+   install/activation procedure trackers — is correct, dense with accreted
+   incident-fixes, and would be re-derived identically at maximum regression risk.
+2. **The conceptual model must be replaced, not evolved** (unanimous; the defense
+   concedes it). The linear mode line + hand-assigned capability symbols is the
+   bug-generator; keeping it as the canonical axis reproduces the fork mess
+   regardless of how many instances are repaired.
+3. **The end state is the same under every lens**: one canonical authority
+   (orthogonal state variables + a single `state × action → outcome` resolver
+   with declared pre/postconditions), consulted by internal callers AND the
+   operation surface, with wire/UI/agent-palette as derived, gate-checked
+   projections, and the old five vocabularies retired.
+4. **The replacement is structurally cheap**: 2-module blast radius, 1-bit
+   process boundary, string-soft wire, zero cross-subsystem leakage, and the
+   target decomposition already prototyped in `aiVerdict.ts`.
+
+### 9c. Divergence — the one real disagreement, surfaced not averaged
+
+Sequencing risk. The prosecution argues any repair-framed path keeps authors
+inside the forks (the documented failure mode); the defense argues a big-bang
+commitment to a target ontology repeats the confident-commitment failure mode at
+maximum scale (and shows the naive two-axis target is already wrong), while a
+stalled staged path risks a permanent two-authority state (553's class). These
+are the same underlying observation — **this subsystem punishes confident
+commitment** — pointed at opposite plans. The panel's implicit resolution, which
+§Design should adopt as a constraint: the new authority must land as a
+*replacement of authority, not a bolt-on* (prosecution's requirement), staged in
+independently-verifiable steps that never leave two live authorities without a
+build-failing fork gate and a consumer-retirement deadline (defense's
+requirement), with the ontology derived from observed behavior rather than
+declared up front where possible (both requirements at once — hence the spike).
+
+### 9d. Panel answer to the owner's question
+
+**Is a full rewrite best long-term? For the concept, yes; for the code, no.**
+The inherited inference-switch idea — one linear mode you switch along — is dead
+as a model: its own telemetry needed 10 states where the enum has 4, its two
+"down" states are behaviorally identical, its capability grammar is
+name-pattern, and it demonstrably converts careful maintainers into confident
+bug-authors. It should be replaced by the orthogonal-variables + single-resolver
+model (§9a greenfield row), which the frontend already discovered independently.
+But the *code* mass of the subsystem — process management, transitions,
+recovery, signaling — is not what's wrong, and no lens found long-term value in
+rewriting it. Bounded ontology rewrite, machinery kept: this is what `/design`
+should design.
+
+Decision input for `/design`, sharpened by the panel: run the §8f spike first —
+whether `establishes` sets are derivable from handler signatures decides
+code-generated-resolver-over-existing-machinery (cheapest) vs hand-declared
+register (needs LiveWitness-style cross-validation to be trustworthy). The two
+fossil test sets (`CapabilityAvailabilityTest.java:43-53`,
+`BrainSurface.indexing-escape.test.ts`) are replaced under any path and should
+not be treated as behavior to preserve.
