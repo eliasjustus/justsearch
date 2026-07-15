@@ -72,6 +72,15 @@ run('3 failures → 4th PreToolUse blocks (no off-by-one)', () => {
   assert.equal(shouldBlock(s), true);
 });
 
+// --- PostToolUseFailure coverage gap (bare unwrapped command exits non-zero,
+// no tool_response.exitCode field — build-counter must still count it) ---
+run('PostToolUseFailure counts as a failure via sentinel exitCode=1', () => {
+  assert.deepEqual(nextFailureState({ consecutiveFailures: 0, advisoryShown: false }, 1), {
+    consecutiveFailures: 1,
+    advisoryShown: false,
+  });
+});
+
 // --- Report ---
 if (failures.length > 0) {
   console.error(`build-counter.test: ${failures.length} FAILED, ${passed} passed`);

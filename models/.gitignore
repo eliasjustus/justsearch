@@ -1,3 +1,18 @@
+# Model weights. This is the PUBLIC repo: it has never tracked a single model
+# blob (0 in all of history) and CI builds without them ("Build (no model
+# blobs)"); operators download them at first run. The private repo LFS-tracks
+# these same files — do NOT copy this ignore there.
+#
+# Without these lines the weights sit untracked-AND-unignored, so one `git add
+# -A` stages ~2.6 GB into public history through the *.onnx LFS filter in
+# .gitattributes. That is not hypothetical: the same move already leaked the
+# orchestration skills (branch-safety.md, accepted-tracked-skills-no-removal).
+*.onnx
+*.gguf
+*onnx_data
+*.int8-backup
+*.fp32-backup
+
 # OnnxSessionCache artifacts (generated at runtime, machine-specific)
 *.onnx.optimized
 *.onnx.opt-meta

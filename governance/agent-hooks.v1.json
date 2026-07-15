@@ -193,6 +193,24 @@
       "file": "subagent-guide.mjs",
       "role": "advisory"
     },
+    "subagent-model-guard": {
+      "file": "subagent-model-guard.mjs",
+      "role": "blocking",
+      "bite": {
+        "kind": "command-signal",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "tool_name": "Agent",
+          "tool_input": {
+            "prompt": "probe"
+          }
+        },
+        "expect": {
+          "exitCode": 2
+        },
+        "note": "an Agent spawn with no explicit `model` inherits the parent's (claude-code#74788) -> exit 2; unit test covers the fable + explicit-model arms"
+      }
+    },
     "tempdoc-age-hint": {
       "file": "tempdoc-age-hint.mjs",
       "role": "advisory"
@@ -388,6 +406,15 @@
         "hooks": [
           {
             "hookId": "taskcreate-guard",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "hookId": "subagent-model-guard",
             "timeout": 5
           }
         ]
