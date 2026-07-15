@@ -24,4 +24,12 @@ public interface RuntimeActivationService {
 
   /** Begin deactivating the currently-active variant (return to default). */
   void startDeactivate();
+
+  /**
+   * Tempdoc 737 (task 3): the ONE authoritative admin-policy check for runtime activation
+   * (Online AI / GPU acceleration policy). A no-op when no policy is configured.
+   *
+   * @throws IllegalStateException with a canonical policy-denial message when blocked.
+   */
+  void enforceActivationPolicy();
 }

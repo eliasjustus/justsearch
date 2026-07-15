@@ -800,7 +800,10 @@ public final class CoreOperationCatalog implements OperationCatalog {
             AuditPolicy.METADATA_ONLY,
             RetryPolicy.noRetry(),
             Optional.empty(),
-            Set.of(RequiredCapability.InferenceOnline.INSTANCE),
+            // Tempdoc 737 §8a: requiring InferenceOnline here was circular — the
+            // online-bound direction of this op requires the postcondition it
+            // establishes. Validation of the requested mode is internal to the handler.
+            Set.of(),
             false),
         OperationAvailability.empty(),
         OperationLineage.empty(),
@@ -820,9 +823,11 @@ public final class CoreOperationCatalog implements OperationCatalog {
             AuditPolicy.METADATA_ONLY,
             RetryPolicy.noRetry(),
             Optional.empty(),
-            Set.of(
-                RequiredCapability.WorkerOnline.INSTANCE,
-                RequiredCapability.InferenceOnline.INSTANCE),
+            // Tempdoc 737 §8a: InferenceOnline was circular — this op's own Phase A
+            // brings inference online when it isn't (OfflineCoordinator); requiring it
+            // up front blocked exactly that case. WorkerOnline stays: it is not
+            // established by this op.
+            Set.of(RequiredCapability.WorkerOnline.INSTANCE),
             false),
         OperationAvailability.empty(),
         OperationLineage.empty(),
@@ -844,7 +849,10 @@ public final class CoreOperationCatalog implements OperationCatalog {
             AuditPolicy.METADATA_ONLY,
             RetryPolicy.noRetry(),
             Optional.empty(),
-            Set.of(RequiredCapability.InferenceOnline.INSTANCE),
+            // Tempdoc 737 §8a: requiring InferenceOnline here was circular — activation
+            // self-tests on an isolated port and is designed to work from cold/OFFLINE;
+            // success is what ESTABLISHES ONLINE. Validation is internal to the handler.
+            Set.of(),
             false),
         OperationAvailability.empty(),
         OperationLineage.empty(),
@@ -864,7 +872,11 @@ public final class CoreOperationCatalog implements OperationCatalog {
             AuditPolicy.METADATA_ONLY,
             RetryPolicy.noRetry(),
             Optional.empty(),
-            Set.of(RequiredCapability.InferenceOnline.INSTANCE),
+            // Tempdoc 737 §8a: requiring InferenceOnline here was circular — this is
+            // the designed escape hatch for a GPU variant that failed to come online;
+            // gating the escape hatch on being online defeats its purpose. Validation
+            // is internal to the handler.
+            Set.of(),
             false),
         OperationAvailability.empty(),
         OperationLineage.empty(),

@@ -405,24 +405,46 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
   // -------------------- Implementation --------------------
 
-  private void runActivate(String variantId) {
+  /**
+   * Tempdoc 737 (task 3): the ONE authoritative admin-policy check for runtime activation.
+   * {@link #runActivate} (this class's async path), {@code AiRuntimeController.handleActivate}
+   * (HTTP fast-fail), and {@code RuntimeVariantServiceImpl.activate} (operation-handler
+   * fast-fail) all call this — no independent copies of the {@code onlineAiEnabled} / {@code
+   * gpuAccelerationEnabled} predicate exist elsewhere. A no-op when no policy is configured.
+   *
+   * @throws IllegalStateException with the canonical policy-denial message when blocked; callers
+   *     needing a machine code derive it from the message text (the convention already used by
+   *     {@code ActivateRuntimeVariantHandler}).
+   */
+  @Override
+  public void enforceActivationPolicy() {
     EffectivePolicy effective;
     try {
       effective = policyService != null ? policyService.snapshot() : null;
     } catch (Exception ignored) {
       effective = null;
     }
-    if (effective != null) {
-      // v3 enforcement: block activation when Online AI or GPU acceleration is disabled by policy.
-      if (!effective.onlineAiEnabled()) {
-        fail("POLICY_ONLINE_AI_DISABLED", "Online AI is disabled by administrator policy.", null);
-        return;
-      }
-      if (!effective.gpuAccelerationEnabled()) {
-        fail("POLICY_GPU_DISABLED", "GPU acceleration is disabled by administrator policy.", null);
-        return;
-      }
-      // snapshot() already bridged policy sysprops to app-services enforcement points.
+    if (effective == null) {
+      return;
+    }
+    // v3 enforcement: block activation when Online AI or GPU acceleration is disabled by policy.
+    if (!effective.onlineAiEnabled()) {
+      throw new IllegalStateException("Online AI is disabled by administrator policy.");
+    }
+    if (!effective.gpuAccelerationEnabled()) {
+      throw new IllegalStateException("GPU acceleration is disabled by administrator policy.");
+    }
+    // snapshot() already bridged policy sysprops to app-services enforcement points.
+  }
+
+  private void runActivate(String variantId) {
+    try {
+      enforceActivationPolicy();
+    } catch (IllegalStateException e) {
+      String msg = e.getMessage() == null ? "" : e.getMessage();
+      String code = msg.contains("GPU acceleration") ? "POLICY_GPU_DISABLED" : "POLICY_ONLINE_AI_DISABLED";
+      fail(code, msg, null);
+      return;
     }
 
     Path exe = variantsRoot.resolve(variantId).resolve("llama-server.exe");

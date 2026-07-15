@@ -382,7 +382,7 @@ final class CoreApiAssembly {
                 resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability),
                 aiInstallHelper);
     AiRuntimeController aiRuntimeController =
-        new AiRuntimeController(runtimeActivationHelper, enterprisePolicyService, telemetry);
+        new AiRuntimeController(runtimeActivationHelper, telemetry);
     // Tempdoc 656 Task 4: read-only reconciliation of the model registry against on-disk
     // presence — reuses aiInstallHelper + runtimeActivationHelper, no new resolution logic.
     AiModelsController aiModelsController =
