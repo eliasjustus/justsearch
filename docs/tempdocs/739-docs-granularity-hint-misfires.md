@@ -102,7 +102,9 @@ F-3 recurs.
 | Deletion check does not swallow refspecs / Windows paths | `git push origin HEAD:refs/heads/foo` and `git -C C:/Users/x/wt push` both still detected — pinned as tests |
 | Hook suite green | `node scripts/agent-analytics/hooks/docs-granularity-hint.test.mjs` → 23/23 |
 | No neighbouring hook broken | All 15 `scripts/agent-analytics/hooks/*.test.mjs` suites green |
-| Gates green | `--gate hook-integrity` pass; `--gate prose-tier-register` pass |
+| Full gate kernel green | `node scripts/governance/run.mjs --mode gate` → 34 gates, 0 fail |
+| JVM suite not perturbed | `./gradlew.bat build` → BUILD SUCCESSFUL. **Scope:** 33 test tasks FROM-CACHE, 27 UP-TO-DATE, 2 executed — this diff has no Java/TS inputs so the cache keys are unchanged. Evidences "does not perturb the JVM suite", NOT a fresh full run |
+| Single-file vs batch counts | `git log` scan over `origin/main` @193 commits — 54 archaeology-only, 22 single-file, 32 batched (§6) |
 | F-3 skill text | Read directly at `.claude/skills/publish/SKILL.md:7` (not via audit) |
 | F-6 quotes are real | Grepped verbatim from transcript `f9baeb69` |
 
@@ -119,10 +121,20 @@ claim is a hypothesis until checked, and it went into a rule before it was.
 
 **Should the hint fire only on single-file archaeology branches?** F-5 says it
 currently fires on compliant batches, which is why agents learned to dismiss it.
-A single-file threshold would target precisely the ~22 commits at issue and stop
-crying wolf on the ~32 legitimate batched ones. This changes what the rule
-*means* (policy), not just whether the hook is correct (a bug), so it was not
-done unilaterally.
+
+Measured on `origin/main` at 193 commits (scan: commits whose every changed file
+is under `docs/tempdocs/**` or `docs/observations*`):
+
+| | count |
+|---|---|
+| archaeology-only commits | 54 (28%) |
+| — of which **single-file** (the violations) | **22** |
+| — of which multi-file (a compliant batch) | **32** |
+
+So the hint is currently wrong about 32 of the 54 branches it fires on — it is
+right 41% of the time. A single-file threshold would target precisely the 22 and
+stop crying wolf on the 32. This changes what the rule *means* (policy), not just
+whether the hook is correct (a bug), so it was not done unilaterally.
 
 Sequenced deliberately: **do not raise `docs-ride-along` from `hook-hint` to a
 blocking tier until this lands and the signal is true.** Blocking on a hook with
@@ -141,9 +153,14 @@ itself and driven agents to `JUSTSEARCH_DISABLE_HOOKS=1`.
   in-flight work would be destructive.
 - **PR #169** (`docs/obs-shard-pilot-724`) appears still open/unmerged with a
   live worktree — the F-4 casualty. Worth closing out.
-- **`./gradlew.bat build -x test` not run.** No Java/TS touched, and
-  `branch-safety.md` warns only one Gradle build should run at a time across
-  agents; ~11 worktrees were live. Required before marking the PR ready.
+- **A third instance of the F-3 contradiction class, found live while running
+  `/publish`.** `.claude/skills/publish/SKILL.md` says "strongly consider just
+  delegating all of the mechanical/overview work of the PR/merge to a subagent";
+  `CLAUDE.md`'s model-routing rule says "Never delegate: … merge/publish,
+  irreversible actions, main-checkout writes". Following either violates the
+  other. Same blast radius as F-3 (the skill is untracked, so no in-repo fix).
+  Logged to the inbox. Suggests the skill layer and `CLAUDE.md` need a
+  reconciliation pass — the two instances found here were both found by accident.
 
 ## 8. Unverified assumptions
 
