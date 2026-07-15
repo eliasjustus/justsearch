@@ -180,6 +180,12 @@ question of whether a change should be its **own** public PR at all (tempdoc 653
 - A **canonical-doc** update (`docs/{explanation,reference,how-to,decisions}`) is
   durable current truth and may stand alone as its own PR/commit.
 - A branch mixing docs with code is already a ride-along — publish it normally.
+- The **step-4 post-merge fold** *is* that periodic batch (many sessions' shards at
+  once) and publishes as its own `chore(observations): fold …` PR. One shard alone
+  is not — let it wait for the next fold.
+- **A prior standalone tempdoc PR is not a precedent.** Predictable evasion (653
+  follow-up): citing an earlier single-file `docs(NNN)` PR as licence chains one
+  non-ideal PR into a series. Re-qualify each push on this rule's own terms.
 
 The `docs-granularity-hint` hook surfaces this at `git push` when a branch
 changes only working history; it never blocks. Rationale and the worked example
