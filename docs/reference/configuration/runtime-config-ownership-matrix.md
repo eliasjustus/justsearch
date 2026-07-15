@@ -301,10 +301,6 @@ Precedence note:
 | - | JUSTSEARCH_TELEMETRY_METRICS_RETENTION_DAYS | justsearch.telemetry.metrics.retention.days | TELEMETRY_METRICS_RETENTION_DAYS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_TESSDATA_PATH | justsearch.tessdata.path | TESSDATA_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_TESSERACT_PATH | justsearch.tesseract.path | TESSERACT_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_TRANSLATOR_PIPELINE_CLASSIFY | justsearch.translator.pipeline.classify | TRANSLATOR_PIPELINE_CLASSIFY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_TRANSLATOR_PIPELINE_EMBED | justsearch.translator.pipeline.embed | TRANSLATOR_PIPELINE_EMBED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_TRANSLATOR_PIPELINE_INTENT | justsearch.translator.pipeline.intent | TRANSLATOR_PIPELINE_INTENT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_TRANSLATOR_REPO_ROOT | justsearch.translator.repoRoot | TRANSLATOR_REPO_ROOT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_UI_AUTOMATION | justsearch.ui.automation.enabled | UI_AUTOMATION_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_UI_AUTOMATION_FORCE_DIAGNOSTICS | justsearch.ui.automation.forceDiagnostics | UI_AUTOMATION_FORCE_DIAGNOSTICS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_UI_AUTOMATION_REQUIRE_TRANSLATOR | justsearch.ui.automation.requireTranslator | UI_AUTOMATION_REQUIRE_TRANSLATOR | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -340,9 +336,6 @@ Precedence note:
 | search.paging.pit_ttl_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.paging.strategy | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.paging.tiebreak_field | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| translator.health.maxBackoffMs | JUSTSEARCH_TRANSLATOR_MAX_BACKOFF_MS | translator.health.maxBackoffMs | TRANSLATOR_MAX_BACKOFF_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| translator.health.refreshIntervalMs | JUSTSEARCH_TRANSLATOR_REFRESH_INTERVAL_MS | translator.health.refreshIntervalMs | TRANSLATOR_REFRESH_INTERVAL_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| translator.health.stalenessAlertSeconds | JUSTSEARCH_TRANSLATOR_STALENESS_ALERT_SECONDS | translator.health.stalenessAlertSeconds | TRANSLATOR_STALENESS_ALERT_SECONDS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_batch_size | JUSTSEARCH_WORKER_MAX_BATCH_SIZE | worker.limits.max_batch_size | WORKER_MAX_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_content_length | JUSTSEARCH_WORKER_MAX_CONTENT_LENGTH | worker.limits.max_content_length | WORKER_MAX_CONTENT_LENGTH | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_file_size | JUSTSEARCH_WORKER_MAX_FILE_SIZE | worker.limits.max_file_size | WORKER_MAX_FILE_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |

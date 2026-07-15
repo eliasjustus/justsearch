@@ -12,9 +12,6 @@ class EnvRegistryTest {
         assertEquals("justsearch.data.dir", EnvRegistry.DATA_DIR.sysProp());
         assertEquals("justsearch.ssot.path", EnvRegistry.SSOT_PATH.sysProp());
         assertEquals("justsearch.llm.model_sha256", EnvRegistry.LLM_MODEL_SHA256.sysProp());
-        assertEquals(
-            "justsearch.translator.pipeline.intent",
-            EnvRegistry.TRANSLATOR_PIPELINE_INTENT.sysProp());
         assertEquals("justsearch.summary.pipeline", EnvRegistry.SUMMARY_PIPELINE.sysProp());
         assertEquals(
             "justsearch.embed.dimension", EnvRegistry.EMBED_DIMENSION_OVERRIDE.sysProp());
@@ -28,9 +25,6 @@ class EnvRegistryTest {
         assertEquals("JUSTSEARCH_DATA_DIR", EnvRegistry.DATA_DIR.envVar());
         assertEquals("JUSTSEARCH_SSOT_PATH", EnvRegistry.SSOT_PATH.envVar());
         assertEquals("JUSTSEARCH_LLM_MODEL_SHA256", EnvRegistry.LLM_MODEL_SHA256.envVar());
-        assertEquals(
-            "JUSTSEARCH_TRANSLATOR_PIPELINE_INTENT",
-            EnvRegistry.TRANSLATOR_PIPELINE_INTENT.envVar());
         assertEquals("JUSTSEARCH_SUMMARY_PIPELINE", EnvRegistry.SUMMARY_PIPELINE.envVar());
         assertEquals("JUSTSEARCH_EMBED_DIM", EnvRegistry.EMBED_DIMENSION_OVERRIDE.envVar());
         assertEquals("JUSTSEARCH_VRAM_THRESHOLD_12GB", EnvRegistry.VRAM_THRESHOLD_12GB.envVar());

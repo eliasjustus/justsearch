@@ -23,12 +23,6 @@ workers:
       embed: true
       classify: true
 
-translator:
-  health:
-    refreshIntervalMs: 300000
-    maxBackoffMs: 30000
-    stalenessAlertSeconds: 1800
-
 telemetry:
   metrics:
     flush_ms: 15000

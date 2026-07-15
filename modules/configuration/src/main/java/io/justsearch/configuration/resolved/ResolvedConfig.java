@@ -36,7 +36,6 @@ import java.util.TreeMap;
  *   <li>{@link Llm} — LLM runtime tuning (sampling, VRAM, templates, deadlines)
  *   <li>{@link Agent} — agent tool configuration (limits, compression)
  *   <li>{@link Summary} — summary pipeline configuration
- *   <li>{@link Translator} — translator pipeline identifiers
  *   <li>{@link Search} — search pipeline configuration
  *   <li>{@link Telemetry} — telemetry flush and retention settings
  *   <li>{@link Policy} — enterprise policy flags
@@ -52,7 +51,6 @@ public record ResolvedConfig(
     Llm llm,
     Agent agent,
     Summary summary,
-    Translator translator,
     Search search,
     Telemetry telemetry,
     Policy policy,
@@ -77,7 +75,6 @@ public record ResolvedConfig(
     Objects.requireNonNull(llm, "llm");
     Objects.requireNonNull(agent, "agent");
     Objects.requireNonNull(summary, "summary");
-    Objects.requireNonNull(translator, "translator");
     Objects.requireNonNull(search, "search");
     Objects.requireNonNull(telemetry, "telemetry");
     Objects.requireNonNull(policy, "policy");
@@ -455,18 +452,6 @@ public record ResolvedConfig(
       String queueFullMessageKey,
       int executionThreads,
       int executionQueueCapacity) {}
-
-  /** Translator pipeline identifiers, model asset root, and health check tuning. */
-  public record Translator(
-      String pipelineIntent,
-      String pipelineEmbed,
-      String pipelineClassify,
-      String repoRoot,
-      Health health) {
-
-    /** Translator health check tuning. */
-    public record Health(long refreshIntervalMs, long maxBackoffMs, long stalenessAlertSeconds) {}
-  }
 
   /**
    * Search pipeline configuration.

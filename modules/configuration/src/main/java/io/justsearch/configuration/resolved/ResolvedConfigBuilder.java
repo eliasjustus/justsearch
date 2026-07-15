@@ -547,12 +547,6 @@ public final class ResolvedConfigBuilder {
     putYamlInt("justsearch.indexer.queueSize", root, "workers.indexer.queueSize");
     putYamlInt("justsearch.indexer.maxInFlightBytes", root, "workers.indexer.maxInFlightBytes");
     putYaml("workers.indexer.backpressure_mode", root, "workers.indexer.backpressure_mode");
-
-    // translator.health.*
-    putYamlLong("translator.health.refreshIntervalMs", root, "translator.health.refreshIntervalMs");
-    putYamlLong("translator.health.maxBackoffMs", root, "translator.health.maxBackoffMs");
-    putYamlLong("translator.health.stalenessAlertSeconds", root,
-        "translator.health.stalenessAlertSeconds");
   }
 
   private void contributeYamlCollections(JsonNode root) {
@@ -837,7 +831,6 @@ public final class ResolvedConfigBuilder {
     ResolvedConfig.Llm llm = buildLlm();
     ResolvedConfig.Agent agent = buildAgent();
     ResolvedConfig.Summary summary = buildSummary();
-    ResolvedConfig.Translator translator = buildTranslator();
     ResolvedConfig.Search search = buildSearch();
     ResolvedConfig.Telemetry telemetry = buildTelemetry();
     ResolvedConfig.Policy policy = buildPolicy();
@@ -856,7 +849,7 @@ public final class ResolvedConfigBuilder {
 
     ResolvedConfig config =
         new ResolvedConfig(
-            paths, ports, ai, llm, agent, summary, translator,
+            paths, ports, ai, llm, agent, summary,
             search, telemetry, policy, ui,
             watcher, ocr, index, rag, hybridSearch, worker,
             collections, workerAi, workerIndexer,
@@ -1258,15 +1251,6 @@ public final class ResolvedConfigBuilder {
         resolveInt("justsearch.summary.execution_queue_capacity", 0));
   }
 
-  private ResolvedConfig.Translator buildTranslator() {
-    return new ResolvedConfig.Translator(
-        resolveString("justsearch.translator.pipeline.intent", ""),
-        resolveString("justsearch.translator.pipeline.embed", ""),
-        resolveString("justsearch.translator.pipeline.classify", ""),
-        resolveString("justsearch.translator.repoRoot", ""),
-        buildTranslatorHealth());
-  }
-
   private ResolvedConfig.Search buildSearch() {
     return new ResolvedConfig.Search(
         resolveString("justsearch.search.pipeline.profile", null),
@@ -1455,13 +1439,6 @@ public final class ResolvedConfigBuilder {
         resolveString(EnvRegistry.INFRA_HEALTH_HOST.sysProp(), "127.0.0.1"),
         Math.max(0, Math.min(65535, resolveInt(
             EnvRegistry.INFRA_HEALTH_PORT.sysProp(), 7443))));
-  }
-
-  private ResolvedConfig.Translator.Health buildTranslatorHealth() {
-    return new ResolvedConfig.Translator.Health(
-        Math.max(1, resolveLong("translator.health.refreshIntervalMs", 300_000L)),
-        Math.max(1, resolveLong("translator.health.maxBackoffMs", 30_000L)),
-        Math.max(1, resolveLong("translator.health.stalenessAlertSeconds", 1_800L)));
   }
 
   private static List<ResolvedConfig.Index.IndexSortItem> parseIndexSort(String json) {

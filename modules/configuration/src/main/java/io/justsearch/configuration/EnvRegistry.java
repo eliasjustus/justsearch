@@ -254,18 +254,6 @@ public enum EnvRegistry {
     /** Comma-separated backend task capability overrides. */
     LLM_BACKEND_SUPPORTS("justsearch.llm.backend_supports", "JUSTSEARCH_LLM_BACKEND_SUPPORTS"),
 
-    /** Translator intent pipeline identifier. */
-    TRANSLATOR_PIPELINE_INTENT(
-        "justsearch.translator.pipeline.intent", "JUSTSEARCH_TRANSLATOR_PIPELINE_INTENT"),
-
-    /** Translator embedding pipeline identifier. */
-    TRANSLATOR_PIPELINE_EMBED(
-        "justsearch.translator.pipeline.embed", "JUSTSEARCH_TRANSLATOR_PIPELINE_EMBED"),
-
-    /** Translator classify pipeline identifier. */
-    TRANSLATOR_PIPELINE_CLASSIFY(
-        "justsearch.translator.pipeline.classify", "JUSTSEARCH_TRANSLATOR_PIPELINE_CLASSIFY"),
-
     /** Summary pipeline identifier. */
     SUMMARY_PIPELINE("justsearch.summary.pipeline", "JUSTSEARCH_SUMMARY_PIPELINE"),
 
@@ -498,9 +486,6 @@ public enum EnvRegistry {
     /** 343: enable/disable chunk-aware merge in search (default: true via builder). */
     SEARCH_CHUNK_AWARE_ENABLED(
         "search.chunk_aware.enabled", "JUSTSEARCH_SEARCH_CHUNK_AWARE_ENABLED"),
-
-    /** Translator repo root override (for local/dev model assets). */
-    TRANSLATOR_REPO_ROOT("justsearch.translator.repoRoot", "JUSTSEARCH_TRANSLATOR_REPO_ROOT"),
 
     /** UI automation mode enabled flag. */
     UI_AUTOMATION_ENABLED("justsearch.ui.automation.enabled", "JUSTSEARCH_UI_AUTOMATION"),
@@ -970,20 +955,6 @@ public enum EnvRegistry {
     /** Indexer worker max in-flight bytes. */
     INDEXER_MAX_INFLIGHT_BYTES(
         "justsearch.indexer.maxInFlightBytes", "JUSTSEARCH_INDEXER_MAX_INFLIGHT_BYTES"),
-
-    // ==================== Translator Health (tempdoc 314 C1) ====================
-
-    /** Translator health check refresh interval (ms). */
-    TRANSLATOR_REFRESH_INTERVAL_MS(
-        "translator.health.refreshIntervalMs", "JUSTSEARCH_TRANSLATOR_REFRESH_INTERVAL_MS"),
-
-    /** Translator health check max backoff (ms). */
-    TRANSLATOR_MAX_BACKOFF_MS(
-        "translator.health.maxBackoffMs", "JUSTSEARCH_TRANSLATOR_MAX_BACKOFF_MS"),
-
-    /** Translator health check staleness alert threshold (seconds). */
-    TRANSLATOR_STALENESS_ALERT_SECONDS(
-        "translator.health.stalenessAlertSeconds", "JUSTSEARCH_TRANSLATOR_STALENESS_ALERT_SECONDS"),
 
     // ==================== Infra Health (tempdoc 314 Phase F) ====================
 

@@ -134,9 +134,6 @@ Scope:
 | `JUSTSEARCH_LLM_REMOTE_AUTH_TOKEN` | `justsearch.llm.remote_auth_token` | String | Remote backend auth token. |
 | `JUSTSEARCH_LLM_BACKEND_SUPPORTS` | `justsearch.llm.backend_supports` | CSV List | Backend capability override list (comma-separated). |
 | **Pipeline ids** | | | |
-| `JUSTSEARCH_TRANSLATOR_PIPELINE_INTENT` | `justsearch.translator.pipeline.intent` | String | Intent pipeline id (default `intent_v1`). |
-| `JUSTSEARCH_TRANSLATOR_PIPELINE_EMBED` | `justsearch.translator.pipeline.embed` | String | Embed pipeline id (default `embed_v1`). |
-| `JUSTSEARCH_TRANSLATOR_PIPELINE_CLASSIFY` | `justsearch.translator.pipeline.classify` | String | Classify pipeline id (default `classify_v1`). |
 | **RAG** | | | |
 | `JUSTSEARCH_RAG_TOP_K` | `justsearch.rag.top_k` | Int | Number of chunks to retrieve for RAG context (default 5). |
 | **GPU / VRAM thresholds** | | | |
