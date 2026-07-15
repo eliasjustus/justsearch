@@ -1210,12 +1210,7 @@ public final class ResolvedConfigBuilder {
   private ResolvedConfig.Summary buildSummary() {
     return new ResolvedConfig.Summary(
         resolveString("justsearch.summary.pipeline", ""),
-        resolveInt("justsearch.summary.max_characters", 0),
-        resolveInt("justsearch.summary.max_tokens", 0),
-        resolveString("justsearch.summary.message_key", ""),
-        resolveString("justsearch.summary.queue_full_message_key", ""),
-        resolveInt("justsearch.summary.execution_threads", 0),
-        resolveInt("justsearch.summary.execution_queue_capacity", 0));
+        resolveInt("justsearch.summary.max_tokens", 0));
   }
 
   private ResolvedConfig.Search buildSearch() {

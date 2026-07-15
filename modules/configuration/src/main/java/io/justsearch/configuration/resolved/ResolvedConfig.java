@@ -437,14 +437,7 @@ public record ResolvedConfig(
       int contextCompressionKeepLastResults) {}
 
   /** Summary pipeline configuration. */
-  public record Summary(
-      String pipeline,
-      int maxCharacters,
-      int maxTokens,
-      String messageKey,
-      String queueFullMessageKey,
-      int executionThreads,
-      int executionQueueCapacity) {}
+  public record Summary(String pipeline, int maxTokens) {}
 
   /**
    * Search pipeline configuration.

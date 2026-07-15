@@ -91,12 +91,7 @@ Scope:
 | `JUSTSEARCH_AGENT_MAX_TOOL_RESULT_CHARS` | `justsearch.agent.max_tool_result_chars` | Int | Maximum characters preserved per tool result before truncation. Default `900`, min `100`. |
 | `JUSTSEARCH_RERANK_GPU_MEM_MB` | `justsearch.rerank.gpu_mem_mb` | Int | GPU memory arena size (MB) for the Worker-side ONNX reranker CUDA execution provider. Default `2048`. Minimum for GTE-ModernBERT at seq=512. See `docs/explanation/05-ai-architecture.md` §Reranker GPU Coordination. |
 | **Summary runtime** | | | |
-| `JUSTSEARCH_SUMMARY_MAX_CHARACTERS` | `justsearch.summary.max_characters` | Int | Max summary input characters before rejection (default `200000`, clamped `>= 1`). |
 | `JUSTSEARCH_SUMMARY_MAX_TOKENS` | `justsearch.summary.max_tokens` | Int | Max summary estimated tokens before rejection (default `20000`, clamped `>= 1`). |
-| `JUSTSEARCH_SUMMARY_MESSAGE_KEY` | `justsearch.summary.message_key` | String | i18n key for the summary-too-large toast. |
-| `JUSTSEARCH_SUMMARY_QUEUE_FULL_MESSAGE_KEY` | `justsearch.summary.queue_full_message_key` | String | i18n key for summary queue saturation toast. |
-| `JUSTSEARCH_SUMMARY_EXECUTION_THREADS` | `justsearch.summary.execution_threads` | Int | Summary execution thread override (default from `llm.max_sessions`, clamped `>= 1`). |
-| `JUSTSEARCH_SUMMARY_EXECUTION_QUEUE_CAPACITY` | `justsearch.summary.execution_queue_capacity` | Int | Summary execution queue capacity (default `max(llm.queue_capacity, threads)`, clamped `>= 1`). |
 | `JUSTSEARCH_SUMMARY_PIPELINE` | `justsearch.summary.pipeline` | String | Summary pipeline id (default `summary_mapreduce_v1` after sanitize). |
 | **LLM runtime tuning** | | | |
 | `JUSTSEARCH_LLM_MODEL_SHA256` | `justsearch.llm.model_sha256` | String | Expected model SHA-256 metadata (default `unknown`). |

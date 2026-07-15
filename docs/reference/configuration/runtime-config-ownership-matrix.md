@@ -281,13 +281,8 @@ Precedence note:
 | - | JUSTSEARCH_SPLADE_MODEL_PATH | justsearch.splade.model_path | SPLADE_MODEL_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SPLADE_QUERY_MODE | justsearch.splade.query_mode | SPLADE_QUERY_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SSOT_PATH | justsearch.ssot.path | SSOT_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_SUMMARY_EXECUTION_QUEUE_CAPACITY | justsearch.summary.execution_queue_capacity | SUMMARY_EXECUTION_QUEUE_CAPACITY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_SUMMARY_EXECUTION_THREADS | justsearch.summary.execution_threads | SUMMARY_EXECUTION_THREADS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_SUMMARY_MAX_CHARACTERS | justsearch.summary.max_characters | SUMMARY_MAX_CHARACTERS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SUMMARY_MAX_TOKENS | justsearch.summary.max_tokens | SUMMARY_MAX_TOKENS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_SUMMARY_MESSAGE_KEY | justsearch.summary.message_key | SUMMARY_MESSAGE_KEY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SUMMARY_PIPELINE | justsearch.summary.pipeline | SUMMARY_PIPELINE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_SUMMARY_QUEUE_FULL_MESSAGE_KEY | justsearch.summary.queue_full_message_key | SUMMARY_QUEUE_FULL_MESSAGE_KEY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_TELEMETRY_FLUSH_MS | justsearch.telemetry.flushMs | TELEMETRY_FLUSH_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_TELEMETRY_METRICS_EXEMPLARS | justsearch.telemetry.metrics.exemplars | TELEMETRY_METRICS_EXEMPLARS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_TELEMETRY_METRICS_MAX_MB | justsearch.telemetry.metrics.max_mb | TELEMETRY_METRICS_MAX_MB | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |

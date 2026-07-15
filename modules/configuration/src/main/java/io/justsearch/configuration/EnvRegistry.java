@@ -235,27 +235,8 @@ public enum EnvRegistry {
     /** Summary pipeline identifier. */
     SUMMARY_PIPELINE("justsearch.summary.pipeline", "JUSTSEARCH_SUMMARY_PIPELINE"),
 
-    /** Summary max input characters before rejection. */
-    SUMMARY_MAX_CHARACTERS("justsearch.summary.max_characters", "JUSTSEARCH_SUMMARY_MAX_CHARACTERS"),
-
     /** Summary max estimated tokens before rejection. */
     SUMMARY_MAX_TOKENS("justsearch.summary.max_tokens", "JUSTSEARCH_SUMMARY_MAX_TOKENS"),
-
-    /** Summary too-large message key. */
-    SUMMARY_MESSAGE_KEY("justsearch.summary.message_key", "JUSTSEARCH_SUMMARY_MESSAGE_KEY"),
-
-    /** Summary queue-full message key. */
-    SUMMARY_QUEUE_FULL_MESSAGE_KEY(
-        "justsearch.summary.queue_full_message_key", "JUSTSEARCH_SUMMARY_QUEUE_FULL_MESSAGE_KEY"),
-
-    /** Summary execution threads. */
-    SUMMARY_EXECUTION_THREADS(
-        "justsearch.summary.execution_threads", "JUSTSEARCH_SUMMARY_EXECUTION_THREADS"),
-
-    /** Summary execution queue capacity. */
-    SUMMARY_EXECUTION_QUEUE_CAPACITY(
-        "justsearch.summary.execution_queue_capacity",
-        "JUSTSEARCH_SUMMARY_EXECUTION_QUEUE_CAPACITY"),
 
     /** Embedding dimension override for worker/runtime compatibility. */
     EMBED_DIMENSION_OVERRIDE("justsearch.embed.dimension", "JUSTSEARCH_EMBED_DIM"),
