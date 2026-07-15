@@ -205,8 +205,11 @@ export function evaluateBashCommand(cmd, { isMain = false } = {}) {
     }
   }
 
-  // Layer 2: Sleep hygiene — scans full command including chained commands.
-  if (SLEEP_PATTERN.regex.test(cmd)) {
+  // Layer 2: Sleep hygiene — scans full command including chained commands. Tests
+  // against `unquoted` (quoted string CONTENTS stripped, same as Layer 1) so text
+  // that merely mentions "sleep N" inside an echoed string, comment, or commit
+  // message isn't mistaken for a real sleep invocation.
+  if (SLEEP_PATTERN.regex.test(unquoted)) {
     return { block: true, reason: SLEEP_PATTERN.reason, layer: 'sleep' };
   }
 
