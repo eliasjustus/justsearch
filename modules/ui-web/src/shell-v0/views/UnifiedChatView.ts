@@ -859,13 +859,7 @@ export class UnifiedChatView extends JfElement {
       this.showResumePrompt = false;
       void this.loadConversation(lastViewed, 'core.free-chat');
     }
-    this.aiStateUnsubscribe = subscribeAiState((s) => {
-      // S5a (decision B14) — the old auto-upgrade-to-'documents' on rag capability is DELETED:
-      // the user's tier is sticky-explicit or derived from what they hold; a model coming
-      // online changes availability chrome (route chip unpins), never the standing view.
-      this.aiState = s;
-      this.maybeAutoRun();
-    });
+    this.aiStateUnsubscribe = subscribeAiState((s) => this.applyAiState(s));
     // Tempdoc 561 C-2: the dial change only re-grades chrome (placeholder / send label / rail
     // posture); it touches no record and no in-flight run.
     this.autonomyUnsubscribe = subscribeAutonomy(() => this.requestUpdate());
@@ -952,6 +946,36 @@ export class UnifiedChatView extends JfElement {
         host.search.hitToSelectedItem(primaryHit as unknown as import('../plugin-api/plugin-types.js').SearchHitSnapshot),
       );
     }
+  }
+
+  /**
+   * Tempdoc 734 §"Locked thread stays readable after lock" (629 authored `renderHistoryLocked` /
+   * the initial 423 gate this follows up on) — the ONE subscribeAiState callback (connectedCallback)
+   * already receives the polled `/api/status` snapshot on every tick; this derives `historyLocked` from its
+   * `conversationProtection.state` instead of leaving it a write-once value from the initial
+   * `loadConversation()` 423. No new store/subscription — a lock taken elsewhere (idle/auto-lock,
+   * another tab) now clears the rendered transcript instead of leaving it readable forever.
+   *
+   * KNOWN BOUND: this only catches up on the next scheduled poll — `statusPoll.ts`'s `INTERVAL_MS` is
+   * 10s (`subscribeStatus`/`fetchOnce`, `modules/ui-web/src/shell-v0/utils/statusPoll.ts:27,76-84`). A
+   * lock triggered elsewhere is reflected within ~10s, not immediately — better than forever (the prior
+   * defect), but do not read this as instant. `SecuritySurface.ts` shortens ITS OWN window by calling
+   * `refreshStatusNow()` right after its own lock/unlock POST (tempdoc 727 F-8); that only helps the
+   * in-app-initiated case, and is out of scope here — see report for a candidate follow-up.
+   *
+   * S5a (decision B14) — the old auto-upgrade-to-'documents' on rag capability is DELETED: the user's
+   * tier is sticky-explicit or derived from what they hold; a model coming online changes availability
+   * chrome (route chip unpins), never the standing view.
+   */
+  private applyAiState(s: AiState): void {
+    this.aiState = s;
+    const convState = s.status?.conversationProtection?.state;
+    if (convState === 'locked') {
+      this.historyLocked = true;
+    } else if (convState === 'unlocked') {
+      this.historyLocked = false;
+    }
+    this.maybeAutoRun();
   }
 
   /**
