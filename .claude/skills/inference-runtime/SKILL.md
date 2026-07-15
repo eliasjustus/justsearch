@@ -246,6 +246,41 @@ Design choices in the current inference runtime, with rationale.
 - **Evidence:** tempdoc 322
 - **Revisit when:** model changes or VRAM budget analysis for different GPU tiers.
 
+### D-008: Runtime lifecycle authority — desired-state spec/status + single-writer reconciler — SHIPPED (tempdoc 737)
+
+- **Choice:** Head-side AI-runtime lifecycle is governed by one authority
+  (`io.justsearch.app.services.runtimestate`): persisted desired state
+  (`UiSettings.chatEnabled`, nullable = never-set, default off; set true on
+  successful activation), Condition-shaped `RuntimeStatus`
+  (ENGINE/ADOPTION/LEASE/PROCEDURE axes with reason codes),
+  `RuntimeGpuLease` (binary grants; size-admitting interface for future
+  co-residency), and a single-thread level-triggered `RuntimeReconciler` —
+  the ONLY sanctioned caller of `switchToOnlineMode/switchToIndexingMode`
+  (ArchUnit-forced, `RuntimeReconcilerGuardrailsTest`). Machine actors hold
+  non-spec engine states only inside declared procedures (VDU_BATCH);
+  `endProcedure` returns the engine to spec. User semantics: soft-off —
+  `chatEnabled=false` disables the chat service; procedures may run the
+  engine with reason `engine-up-for-background-processing`, and
+  `InferenceCapability` composes spec so chat is never offered during
+  soft-off background work.
+- **Consequences for runtime agents:** never call `switchTo*` directly
+  (build fails); request engine state via spec writes
+  (`core.set-chat-enabled` operation / `POST /api/settings/v2`) or a
+  procedure. `Mode` is internal FSM machinery projected to the wire; the
+  `/api/status` `phase` field is a deprecated alias of the additive
+  `engineState/chatEnabledSpec/procedure/engineReason/leaseHolder` fields.
+  New representations of runtime state must register in
+  `governance/runtime-state.v1.json` (fork gate fails the build otherwise).
+- **Re-entrancy contract:** listeners fire under the transition lock;
+  reconciliation never runs on a listener thread (level-triggered dirty
+  flag). Anti-flap: repeated foreign flips (>3 in 5 min) hold convergence
+  with reason `convergence-held-flap-suspected`.
+- **Evidence:** tempdoc 737 (§8 diagnosis, §12 design, §14 derisk, §15
+  implementation log; live Checkpoint 1 record).
+- **Revisit when:** sized GPU grants (12 GB+ co-residency) are implemented —
+  the lease interface admits sizes but only binary logic ships; or when the
+  deprecated wire aliases (`phase`, `starting`) retire per §12d.
+
 ---
 
 ## Open Questions
@@ -291,7 +326,37 @@ JustSearch enforces a strict **Single-tenant GPU Policy** across processes:
 * The **Main Process** owns Online inference (`llama-server.exe`) via `modules/app-inference` and `InferenceLifecycleManager`.
 * The **Worker Process** owns indexing + Worker-side ONNX Runtime encoders, and cooperates via the MMF `main_gpu_active` flag (offset `24`, `MmfWorkerSignalLayoutV1.OFFSET_MAIN_GPU_ACTIVE`).
 
-### Modes
+### The Runtime Authority (desired state, status, procedures)
+
+Since tempdoc 737, who runs on the GPU is governed by one Head-side authority
+(`io.justsearch.app.services.runtimestate`), not by callers switching modes
+directly:
+
+* **Desired state (spec):** the persisted user intent `chatEnabled`
+  (`UiSettings`; written by the `core.set-chat-enabled` operation, the
+  Settings API, and on successful runtime activation). "Shut Down AI" writes
+  intent — it does not command a transition.
+* **Observed status:** Condition-shaped per-axis state (ENGINE
+  `Down/Starting/Healthy/Recovering` with a reason code, ADOPTION, GPU LEASE
+  holder, and any in-flight PROCEDURE), exposed additively on `/api/status`
+  (`engineState`, `chatEnabledSpec`, `engineReason`, `procedure`,
+  `leaseHolder`; the older `phase` string is a deprecated alias).
+* **Reconciler:** a single-writer, level-triggered loop converges the engine
+  toward `spec ∧ policy`. It is the only permitted caller of the mode-switch
+  primitives (ArchUnit-enforced). Autonomous work (e.g. the VDU batch) runs
+  inside a declared **procedure**; when the procedure ends, the engine
+  returns to spec — the system can no longer park itself in a state the user
+  didn't ask for.
+* **Soft-off semantics:** with `chatEnabled=false`, background procedures may
+  still run the engine (idle/energy-gated); status carries the reason
+  `engine-up-for-background-processing`, and the chat capability is NOT
+  offered while it does.
+
+### Modes (internal machinery)
+
+The `Mode` enum remains the internal FSM vocabulary of
+`InferenceLifecycleManager` beneath the authority; externally the Worker only
+ever sees the one-bit GPU lease (`main_gpu_active`).
 
 | Mode | Active Model | Purpose | Process |
 | :--- | :--- | :--- | :--- |
