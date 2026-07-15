@@ -637,11 +637,6 @@ public final class ResolvedConfigBuilder {
   }
 
   /** Like {@link #putYamlFromNode} but normalizes the value to lowercase (for enum-like keys). */
-  private void putYamlFromNodeLower(String key, JsonNode node, String yamlPath) {
-    String value = readYamlText(node, yamlPath);
-    if (value != null) put(key, ORDINAL_YAML, "yaml", yamlPath, value.toLowerCase(Locale.ROOT));
-  }
-
   private void putYamlIntFromNode(String key, JsonNode node, String yamlPath) {
     Integer value = readYamlInt(node, yamlPath);
     if (value != null) put(key, ORDINAL_YAML, "yaml", yamlPath, value.toString());
@@ -653,15 +648,6 @@ public final class ResolvedConfigBuilder {
     if (value != null) {
       int clamped = Math.max(min, Math.min(max, value));
       put(key, ORDINAL_YAML, "yaml", yamlPath, Integer.toString(clamped));
-    }
-  }
-
-  private void putYamlLongClampedFromNode(
-      String key, JsonNode node, String yamlPath, long min) {
-    Long value = readYamlLong(node, yamlPath);
-    if (value != null) {
-      long clamped = Math.max(min, value);
-      put(key, ORDINAL_YAML, "yaml", yamlPath, Long.toString(clamped));
     }
   }
 
