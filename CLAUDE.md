@@ -182,7 +182,7 @@ Pre-merge script checks — run the check whose **subject** you edited. Commands
 | Windows env vars unreliable | Pass config via `-D` system properties |
 | Windows memory pressure | Use `-PskipWebBuild=true` for backend-only runs |
 | Flaky IPC tests | Use state polling (`awaitPort`), not `Thread.sleep()` |
-| Large files in `models/` | `*.onnx`, `*.gguf`, `*.int8-backup`, `*.fp32-backup`, and `*onnx_data` are Git LFS-tracked. **Do not gitignore model files.** Runtime caches (`*.optimized`, `*.opt-meta`, `*.sha256`) are already excluded by `models/.gitignore`. |
+| Large files in `models/` | **This public repo never tracks model blobs** (0 `.onnx` in its history; CI builds without them). `models/.gitignore` excludes the weights so `git add -A` can't stage ~2.6 GB via the `*.onnx` LFS filter. The *private* repo LFS-tracks them — "do not gitignore model files" applies there, and was inherited here at v0.1.0 despite never being true of this repo. |
 | Stale index after field changes | Adding fields to `fields.v1.json` or extraction logic in `IndexingDocumentOps` does NOT update existing documents. Existing indices must be rebuilt: `jseval run --reset` (eval mode) or `jseval run --start-backend --clean`. Test corpora indexed before your change will silently lack the new fields. |
 | Classpath catalog drift | `ssot-hint` + the `ssot-catalog-sync` CI gate enforce the SSOT dual-copy sync (`/ssot-catalog`) |
 | Schema/fixture drift after record changes | After field changes on `app-api` records: `./gradlew.bat :modules:app-api:updateSchemas`; `test-edit-hint` re-surfaces the affected test (`/api-record`) |

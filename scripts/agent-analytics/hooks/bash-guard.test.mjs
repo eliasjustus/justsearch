@@ -52,6 +52,8 @@ check('P0b cat > redirect allowed', 'cat tmpl.txt > out.txt', WT, false);
 // Regression: git + sleep safety still fire even inside chains.
 check('P0b force-push in chain still blocked', 'git push --force && echo done', WT, true);
 check('P0b sleep in chain still blocked', 'sleep 5; echo hi', WT, true);
+// Regression: sleep pattern only matches real invocations, not quoted mentions.
+check('sleep text inside quotes not blocked', 'echo "please sleep 5 seconds"', WT, false);
 
 // --- P0c: single-file restore allowed; branch-switch / whole-tree blocked ---
 check('P0c restore one file allowed (main)', 'git checkout -- README.md', MAIN, false);

@@ -1,7 +1,7 @@
 ---
 title: "Pillar-1 in-band utility corpus: real-text distractor mass (legal+email, EN+DE) + fabricated injected gold — the measuring stick for the powered 624 Step-2 run, satisfying all seven 704 requirements at once"
 type: tempdocs
-status: "incomplete — CLERC and MIRACL-DE 1k/10k members exist at verbose and short-natural strata with structural certification, but closed-book, retrieval calibration, union-recall, and leak gates remain. EnronQA is non-claim-eligible until its source license is resolved. No paid run or completion claim is authorized."
+status: "incomplete — CLERC and MIRACL-DE 1k/10k members exist at verbose and short-natural strata with structural certification, but closed-book, retrieval calibration, union-recall, and leak gates remain. EnronQA is non-claim-eligible until its source license is resolved. No paid run or completion claim is authorized. 2026-07-14 takeover: founder GPU-budget + claim-shape decisions recorded and gate-run execution plan set (§Takeover 2); pre-run unblockers in progress."
 created: 2026-07-10
 author: agent (Fable orchestration) — filed at founder request after the pillar-5 attribution campaign; substrate choice founder-ratified same day
 category: eval-infrastructure / corpus-design / agent-utility / search-quality
@@ -374,3 +374,134 @@ dense retrieval beats lexical by ~0.75 nDCG on real professional text, with a he
 substrate is viable; the remaining build work is engineering (per-member calibration, the
 provenance-schema branch for the determinism gate, the CLERC/DE members) plus the founder-gated spend,
 not an open feasibility question.
+
+## Takeover 2 — founder decisions + scientific-gate execution plan (2026-07-14, Fable orchestration)
+
+Second takeover, from a fresh worktree on `origin/main` post-#173 (the 719 merge that landed this
+doc's materialization fold). Inputs: a founder conversation (2026-07-13/14) that set a GPU budget and
+a claim-shape preference, plus a read-only mechanics inventory (Sonnet, this session; load-bearing
+claims re-verified first-hand at `backend.py:23,61` and `commands/corpus.py:347`).
+
+### Founder decisions recorded (binding inputs, 2026-07-13/14)
+
+1. **GPU budget:** total dev-stack takeover for 707's scientific gates is capped at **one to two
+   ~7-hour overnight windows** ("while I'm sleeping"). Daytime shakedown runs of small members are
+   acceptable; the 10k builds go overnight.
+2. **Claim shape: size-trend, not single-point.** The founder prefers a trend claim (fixed queries,
+   grep-headroom opening with scale) over one large-corpus point. **This is already satisfied by the
+   materialized four-cell matrix** ({1k,10k} × {verbose,short-natural}, nesting structurally
+   certified): utility measured at both sizes at fixed queries IS the two-point size trend.
+   **Decision: no intermediate rungs (2.5k/5k) will be added.** A 4-rung ladder was sketched in the
+   founder conversation before #173's materialization was discovered; intermediate rungs would break
+   the 719 exact-matrix promotion policy, cost extra GPU enrichment, and add no claim value (the
+   claim pipeline accepts only the ratified matrix). If finer-grained retrieval-vs-size curves are
+   ever wanted, they are non-claim exploratory runs and ride outside this doc's certification path.
+
+### Execution plan for the four pending scientific gates
+
+**Pre-work (daytime, no GPU takeover):**
+- **(a) Startup-timeout lever.** Both prior gate attempts died at jseval's fixed 120 s backend health
+  boundary (`backend.py:23`; kwarg exists at `:61` but no CLI/env thread-through), root cause
+  undiagnosed. Fix: make the boundary overridable (env `JSEVAL_HEALTH_TIMEOUT_SEC`), then diagnose
+  the real startup cost on the next live run rather than guessing.
+- **(b) Closed-book CLI layout gap.** `corpus-certify` hardcodes `datasets/golden/<name>`
+  (`commands/corpus.py:347`); 707 members live under `datasets/mixed/`. Fix: accept a
+  family-qualified `--dataset mixed/<name>` (legacy bare names keep resolving to `golden/`).
+- **(c) CLERC source re-fetch.** The 6.7 GB CLERC collection is NOT in the 709 shared cache (only an
+  orphaned `.tmp-*` staging dir from a dead fetch — the known resume gap, observations:821). Network
+  cost only; run in background ahead of the overnight window.
+- **(d) Shakedown on the cheapest member.** Validate the full chain (materialize → ingest →
+  retrieval-calibration + union-recall/leak projections → `corpus-scientific-evidence-build` →
+  `corpus-certify-member`) on **MIRACL-DE-1k** end-to-end BEFORE spending an overnight window. This
+  also live-verifies the 700 poison-pill escalation (compile+unit-verified only) and produces the
+  first floor candidates for the draft policy thresholds.
+
+**Overnight window(s) (the founder-budgeted GPU takeover):**
+- Known harness constraint: `corpus-fidelity --start-backend` forces `--clean` (fresh ingest per
+  invocation; `commands/corpus.py:460-468`), and the two query strata of a size share identical
+  corpus bytes but live under different dataset dirs — so the naive path is 8 ingests (2 members × 2
+  sizes × 2 strata). The runbook shares one live backend per (member, size) across both strata via
+  `--base-url` where the harness allows, targeting **4 ingests**: CLERC-10k (dominant, est. ~2-2.5 h
+  at legal-doc enrichment rates per 691; wide error band — 50× extrapolation), CLERC-1k (~15 min),
+  MIRACL-DE-10k + 1k (well under 1 h combined at wiki-doc rates). Estimated total ~4-6 h → fits ONE
+  window; the second window stays in reserve for re-runs/diagnosis.
+- Operational discipline: detached `Start-Process` + done-marker + Monitor (background-shell runs die
+  ~10 min in — 691 lost two A/B runs this way); 718's fail-closed completeness guard is the safety
+  net against a silently degenerate index; executor runs uninterrupted (675 hard-kill resume
+  unsupported).
+- **Closed-book gate is NOT GPU work:** it runs via the `claude` CLI (haiku) against the query sets,
+  no dev stack — but it IS a paid API call (est. low single-digit dollars across cells). Listed in
+  the owner sheet below rather than silently spent.
+
+### Owner-decision sheet (blocks promotion; none agent-decidable — 719 Increment 9)
+
+1. **Ratify the 707 scientific policy** (`scripts/jseval/707-corpus-certification-policy.v1.json`,
+   currently `status:"draft"`, empty `required_cells` — a code-enforced block at
+   `corpus_certify.py:257-282`). Proposed flow: the shakedown + derivation runs
+   (`union-recall-gate-derive`/`leak-gate-derive`) produce per-member floor candidates → founder
+   ratifies cells + thresholds → policy flips `active` → certified runs re-execute under it.
+2. **FW-008 / Int8-Float32 cohort pin** (640) — must land before baselines are pinned.
+3. **Campaign matrix + statistics:** exact members/strata/query count/seed count, the meaning of
+   "n≥100 paired", model cohort (haiku default per jseval cost policy), and numeric grep-headroom /
+   adoption / accuracy-language thresholds.
+4. **EnronQA email member:** resolve the `MichaelR207/enron_qa_0922` license, replace the email
+   source, or run the campaign on an EN-legal + DE two-member matrix. (Note: `claim_eligible:false`
+   is currently data in `member.v1.json`, not a runtime-enforced gate — flagged for 719's boundary.)
+5. **Spend authorizations, in order:** closed-book certification (~$1-3, claude CLI), the capped ~$3
+   adoption smoke, the powered run cap (~$60-90). Smoke must show headroom + adoption replicate
+   before the powered run (unchanged 624 gates).
+
+### Executed pre-work (2026-07-14, same session — all committed on this branch)
+
+1. **Full rematerialization from committed recipes verified cross-session** — the first independent
+   regeneration of the #173 artifacts. CLERC 14k host pool re-fetched (see 3) and MIRACL-DE 30k pool
+   re-fetched (ir_datasets cache hit); pool sha256s match the recipes' `real_source_sha256` pins
+   exactly; all 8 member cells regenerate **byte-exactly** (`assembled_digest` matches every
+   committed recipe; all 8 datasets materialized in this worktree; both members re-certify
+   `structurally-certified` from this checkout, corpus signatures identical to the recorded ones).
+2. **Commitment-manifest CRLF bake-in found and repaired (all 8 cells were broken on origin/main).**
+   `write_commitment`/strata writers used platform-default newlines → CRLF on Windows → the
+   manifests recorded sha256s over CRLF bytes that git's `eol=lf` normalization then rewrote at
+   commit — so `commitment.v1.json` could NEVER verify against a fresh checkout (self-consistency
+   check failed for recipe.json on all 8 cells + fabricated-queries/meta on the 4 short-natural
+   cells). Since 719's source capture rejects byte-drifted certification, this would have hard-failed
+   the campaign at capture time. Fix: `newline="\n"` on every writer of git-committed artifacts
+   (`corpus_inject.py` recipe/commitment, `corpus_query_strata.py` gold outputs,
+   `commands/corpus.py` certification/evidence/666-recipe writers); all 8 commitments + both
+   structural certifications regenerated in place (only hash fields + EOL changed — content and
+   digests are proven identical by 1); regression test
+   `test_commitment_files_are_checkout_stable`.
+3. **CLERC raw source recovered without re-download.** The #173 revision-pinning changed the
+   `clerc-raw` dataset-cache key, orphaning the completed 7.7 GB `resolve/main` entry; a re-fetch now
+   hits HF's anonymous-download 403 (AccessDenied at the CDN hop; no HF token configured on this
+   machine). Recovered by migrating the entry to the pinned key via hardlinks (HF API confirms
+   `main`'s sha == the pinned revision; the entry's content signature `a23d916b…` matches the pool
+   recipe's `raw_source_signature`, and the regenerated pool hash matches `real_source_sha256` —
+   fail-closed layers all verify). Logged to the observations shard; residual: no cache-key
+   migration story on revision bumps, orphaned 6.3 GB `.tmp-*` staging dir still leaks, and a fresh
+   machine cannot re-fetch CLERC anonymously until HF quota/token is addressed (**owner note: a free
+   HF token on this box removes the 403 class**).
+4. **Startup-timeout lever + family-qualified `--dataset` on all four gate CLIs** landed with tests
+   (`corpus-certify`, `corpus-fidelity`, `corpus-probe` were `golden/`-hardcoded — the 719 gate
+   attempts could not even point at a 707 member; this, not only the 120 s boundary, blocked them).
+5. **Live shakedown result (2026-07-14, ~01:10):** the full chain is green — with a warm Gradle the
+   backend is healthy in **8 s** (the 719 "120 s boundary" failures were cold-build, now moot),
+   MIRACL-DE-1k ingests + fully enriches in ~47-60 s, and the diagnostic probe confirms the corpus
+   works as designed: control search rank=1, dense 7/20 / hybrid 8/20 head@top10 (mean rank 1.75),
+   **bm25_splade 0/20** — the DE grep-collapse prediction observed live. Calibration runs must use
+   `--embedding` with `hybrid` as the headline mode; bm25_splade-only reads as a false FAIL.
+   **Gate-run chain HALTED by founder (2026-07-14):** one cell completed (de-miracl-1k-short-natural
+   fidelity, rc=0), chain killed cleanly mid-step-2, GPU released. The runbook
+   (`overnight-707-gates.bat`, session scratchpad) is parked; overnight windows are founder-scheduled
+   only — do not fire the chain without an explicit go.
+6. **Independent refute-first review (opus, reviewer ≠ implementer, 2026-07-14): NO BLOCKERS.**
+   All claims confirmed from primary sources — parent-commit blob-hash mismatch (16/32 files, all 8
+   cells) vs HEAD 0/32; repair commit touched only manifests (recipes/fabricated-* not in the diff);
+   cache migration verified down to hardlink inode identity + fail-closed lookup re-hash; 119
+   focused tests green. One finding, fixed same session: `corpus_generate.py` (the 635 gold writer,
+   upstream of the 707 fabricated-* commitments) still wrote platform-default newlines — now
+   `newline="\n"` + an end-to-end no-CR regression test on the real generator path. **Windows-EOL coupling of `corpus_signature`:** materialized datasets are
+   written with platform-default newlines, so all recorded corpus signatures are Windows-CRLF-locked
+   (a Linux materialization would produce different signatures). Acceptable while the campaign runs
+   on this box; flagged as an owner decision — LF-canonical dataset writers force a one-time
+   signature re-baseline of all 8 cells (cheap: regenerate + re-certify, ~10 min, no GPU).
