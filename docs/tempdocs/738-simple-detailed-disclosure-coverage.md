@@ -168,6 +168,41 @@ both `uiMode` states, and — because this is user-visible — live in-browser v
 search and agent surfaces in both Simple and Detailed, with the local model active for the agent
 run. Independent review (reviewer ≠ implementer) before merge, per the slice-execution rules.
 
+## Verification record (2026-07-15 closeout) — what carries evidence, and what does not
+
+`## Rollout / verification` above is the *plan*. This is the *record*. Split deliberately, because two
+of this tempdoc's claims rest on evidence that was never written down.
+
+**Verified 2026-07-15, each with its evidence:**
+
+| claim | evidence |
+|---|---|
+| the disclosure gating is intact against current `main` | ui-web unit suite **3731 passed / 363 files**, typecheck exit 0 — re-run *after* merging `origin/main`, not on the authoring base |
+| C7 (model name hidden in Simple) is really gated in production, not just in the test | `views/UnifiedChatView.ts` — `if (receipt.modelLabel && isAdvancedMode()) parts.push(receipt.modelLabel);` — read at source by the independent reviewer (reviewer ≠ implementer) |
+| the C7 test-string change is not a masked regression | the `not.toContain('Llama 3 8B')` intent assertion is untouched and passes; `toBe(...)` remains exact-match, tightened to the new upstream string rather than loosened to `contains` |
+| the ~45 renumbered citations changed no meaning | 45 removed / 45 added, symmetric; the reviewer's refutation target held — `scripts/dev/justsearch-dev-mcp/server.mjs:138,2564` cites the *unrelated JDK* 696 and was correctly left alone |
+| no regression across the frontend gate surface | full `ui-web-gates` recipe: **39 checks, none skipped**, green except 3 pre-existing `main` failures in untouched files |
+| build + public CI | `./gradlew.bat build -x test` → `BUILD SUCCESSFUL`; PR #188 → 10/10 CI checks pass, `mergeStateStatus: CLEAN` |
+
+**Unverified assumptions — claims WITHOUT a recorded evidence pointer:**
+
+- **"Live browser validation … the toggle, the banner, the meta line, the breadcrumb, and the Q&A
+  receipt model name all round-trip correctly"** (§Implementation status, 2026-07-08). No screenshot,
+  measure-run, or evidence-bundle id was recorded. It is plausible and consistent with the unit tests,
+  but **it is the original implementer's word, and it was not re-run on 2026-07-15.** The 2026-07-15
+  re-verification is unit-tier + static-review-tier only. Anyone revisiting this should re-run the live
+  pass rather than inherit the claim.
+- **C8 (budget state) was never live-exercised** — explicitly deferred (§Implementation status): a live
+  budget-gate is hard to trigger deterministically. Unit-tested only. Still true.
+- **The a11y evidence for this tempdoc's surfaces is partial.** `ui-a11y-gate` covers six *view*
+  surfaces; it structurally cannot render a degraded banner or a chat turn. Tempdoc 697's
+  `chat-proportion` step covers the chat states (0 axe violations, 0 console errors), but the *search*
+  meta-line/breadcrumb changes have no dedicated measured a11y capture beyond the `search` view step.
+
+**Deferred / not done** is recorded in §Implementation status and remains accurate: the plain-copy pass
+on `readinessNotice` headlines (owner-tunable product copy), and C10 stacked banners (largely subsumed
+by the slim pill; revisit only on a real collision).
+
 ## Renumber: 696 → 728 → 738 (2026-07-15)
 
 This tempdoc was authored as **696** on 2026-07-08 in the `ui-audit-density-review` worktree. In

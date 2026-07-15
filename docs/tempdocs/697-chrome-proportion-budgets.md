@@ -348,14 +348,30 @@ could proceed honestly despite the rot.
 
 ### Verification (2026-07-15, all run and green)
 
-| check | result |
+Every row is a command that was run and its observed result. A claim without one belongs under
+§Unverified assumptions below, not here.
+
+| check | result (evidence) |
 |---|---|
 | `jseval ui-proportion-gate` | exit 0 — "clean — no registered element grew beyond baseline" |
+| **the ratchet BITES** (falsification, by the independent reviewer) | `min-height:120px` forced onto `.degradation-banner-collapsed` → **exit 1**: `GROWN: step=chat-proportion selector=.degradation-banner-collapsed measured=120px > baseline=42px (+2px tolerance)`; the sibling element still read `ok` (precise, not blanket). Reverted → exit 0 restored |
+| **no false green on a missed capture** (falsification) | a registered `.does-not-exist-xyz` → **exit 2**, `"error": "selector not found in captured geometry"` — never exit 0 on nothing measured |
+| **heights are content-hugging, not empty-element artifacts** | live DOM probe: a *two-line* `.message.user` measures **55px** vs **36px** for one line — it grows with content |
+| Part A is a real fix, not a padding tweak | live computed styles: `.message-body` → `pre-wrap`, `.message.user` → `normal`; multi-line DOM text round-trips as `'line one?\nline two'` (newlines preserved) |
 | `pytest tests/test_ui_proportion_gate.py` | 10 passed |
 | `node scripts/ci/check-ui-step-coverage.mjs` | exit 0 |
 | `jseval ui-a11y-gate` (6 view surfaces) | exit 0 — no new violations |
 | `chat-proportion.measure.json` axe | **0 violations, 0 console errors** — on the exact state holding the slimmed remedy button, the pill, and the bubble |
-| ui-web typecheck + unit suite | exit 0; 3731 passed |
+| ui-web typecheck + unit suite | exit 0; **3731 passed / 363 files** |
+| `./gradlew.bat build -x test` | `BUILD SUCCESSFUL` (exit 0 read from `PIPESTATUS`, not the harness's pipeline exit — see §Unverified/notes) |
+| full `ui-web-gates` recipe | **39 checks, none skipped**; green except 3 pre-existing `main` failures in files this branch doesn't touch (`RecentsMenu.ts`, `ActionLedgerView.ts`) |
+| public CI (PR #188) | 10/10 checks pass; `mergeStateStatus: CLEAN` |
+
+**Why the falsification rows matter more than the exit-0 row.** `ui-proportion-gate` exiting 0 proves
+nothing about whether it *can* fail — an armed-but-toothless ratchet is a no-op wearing a badge, and the
+unit tests exercise the gate's logic in isolation, not the end-to-end capture→measure→compare chain. The
+two falsification rows are what license the word "ratchet" in this tempdoc. If a future change touches the
+gate, **re-run those two probes, not just the green one.**
 
 The `ui-a11y-gate` green is real but **does not** cover this work's changed states — it captures six
 *view* surfaces and never renders a degraded banner or a chat turn. The `chat-proportion` axe result is
@@ -363,3 +379,50 @@ what actually measures them, and it is clean: the remedy button's slimming (~42�
 trade a proportion win for a WCAG target-size violation. Useful side effect: the fixture step built for
 the ratchet doubles as the measured-audit vehicle for presentation-authority closure on exactly the
 states the a11y gate structurally cannot reach.
+
+### Unverified assumptions + deferred checks (read this before trusting the above)
+
+- **The ratchet guards two elements at one viewport/theme, in one fixture state.** Nothing says the
+  registered set is *sufficient* — result rows (~113px each, audit-2 G4) are on record as oversized and
+  are **not** registered. The ratchet is born covering the two known offenders, not the class.
+- **`regen_proportion_baseline.py` is shrink-only *by human supervision*, not by construction** — it will
+  happily re-baseline upward if run after a regression. This matches the `ui_a11y_gate` precedent and was
+  accepted as a nit by the independent review, but it is a real hole: a careless regen launders a
+  regression into a new baseline. The gate is the guard; regen is not.
+- **An empty/missing register exits 0 by design** (`test_empty_register_is_clean`). So a `steps: []`
+  regression, or the baseline file being renamed away, is a **silent green** — the same inert state this
+  tempdoc's §Activation exists to escape. Nothing currently detects a re-emptied register.
+- **Delivery is ~85% (hook-hint), not ~100% (gate).** Not CI-wired. See §Correction 2.
+- **The 42px/36px numbers are one machine, one run** (Windows, Playwright, 1× DPI, `--fixtures`). They are
+  working evidence cited to a specific capture — *not* public-facing claims, and nothing here should
+  propagate into README/marketing copy.
+- **Harness caveat that cost a real debugging cycle:** a backgrounded `./gradlew.bat build … | tail`
+  reports the **pipe's** exit code, not the build's — the run that produced this tempdoc's green was
+  preceded by one that reported "exit 0" while `BUILD FAILED` (`piped-exit-masked`, `agent-lessons.md`).
+  Read the real code via `PIPESTATUS`, or assert on `BUILD SUCCESSFUL`. Relatedly: ui-shot's worktree
+  auto-serve Vite (`:5174`) survives the capture and locks `modules/ui-web`, making a later
+  `installWebDependencies` fail with npm `-4048` (UV_EPERM) — kill it before building. Both filed to the
+  observations inbox.
+
+### Follow-ups (named, not built)
+
+1. **CI-wire `ui-proportion-gate`** — the remaining step to honestly earn the word "Gate" (~100%) rather
+   than hook-hint (~85%). Blocked on nothing; deliberately not claimed here.
+2. **A selector-liveness check** — fail when a registered ui-shot selector matches nothing in any step.
+   The selector-level analogue of the path-level check `check-ui-step-coverage` already performs. This is
+   the generalisable fix for the §Activation stale-selector finding.
+3. **Repair the stale `search-input` selectors** (`ui_selectors.py`) retired by tempdoc 687 — currently
+   breaking `search-results` + the nine steps chained off it under `--fixtures`. Pre-existing and
+   cross-cutting; out of scope here, filed to the inbox.
+4. **Register result rows** (audit-2 G4, ~113px) once the density question is decided — the one measured
+   case that genuinely *is* about spacing (§Part A).
+5. **Detect a re-emptied register** so the inert state can't silently return (see §Unverified above).
+
+### Terms used above (this doc may become public history)
+
+- **audit-2 / audit-3** — two prior internal UI review passes over the shell-v0 surfaces; their findings
+  are referenced by their original IDs (G1, G4, D1, D3). The findings themselves are restated inline
+  wherever they matter, so an outside reader does not need the source documents.
+- **the sidecar** (`ui-audit/_process/workflow-density-lens-proposal`) — a private research trail that
+  first proposed a "density lens" review step. Not part of this repository. §Teardown records that this
+  ratchet supersedes its process proposals; nothing in this tempdoc's design depends on reading it.
