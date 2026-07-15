@@ -8,7 +8,7 @@ misled, or scared.
 
 ## Read these first (per-round authority)
 
-Four staged files govern this round. Read them before launching JustSearch:
+Five staged files govern this round. Read them before launching JustSearch:
 
 1. **`coverage-brief.md`** — the generated, per-candidate list of the surfaces
    this release *must* exercise, derived from what the candidate actually ships
@@ -26,6 +26,13 @@ Four staged files govern this round. Read them before launching JustSearch:
 4. **`staging-gaps.md`** — assets the host failed to stage this round (e.g. the
    SciFact corpus, a Node installer). Each entry must be recorded as a
    round-level coverage gap, not silently absorbed.
+5. **This candidate's convergence tempdoc** (`docs/tempdocs/NNN-<version>-sandbox-convergence.md`,
+   staged read-only under `docs/`) — states what this round is *for*: which prior
+   findings it exists to re-confirm fixed, and which are still open. A tempdoc is
+   **dated history, not current truth** — it reflects what was known when it was
+   written, not the state of the build you are running. Use it to know what to
+   verify, not as a substitute for verifying it: check every claim it makes
+   against the running candidate, don't just cite the tempdoc's own words back.
 
 The final validation summary must state the mode explicitly and report coverage
 against `coverage-brief.md`.
@@ -343,6 +350,17 @@ and `readyAt` are nested under `.head`. The restart check in phase 11 above
 reads `instanceId`/`pid` directly off the manifest root (`$j.instanceId`, not
 `$j.head.pid`, which reads empty).
 
+**PowerShell 5.1 hides API errors unless you ask.** Always pass
+`-UseBasicParsing` to `Invoke-WebRequest`/`Invoke-RestMethod` — without it a
+call can silently write a 0-byte evidence file instead of failing loud.
+Separately, `Invoke-RestMethod` throws on any non-2xx response and by default
+**discards the response body** — a JSON error like `{"error":"missing
+pendingId"}` is invisible unless you catch the exception and read
+`$_.Exception.Response`. A prior round burned 15 minutes brute-forcing
+request shapes against a server that was telling it exactly what was wrong
+the whole time. Wrap mutating calls in `try/catch` and print the body on
+failure before concluding the endpoint is broken.
+
 Key API endpoints (no auth needed, `prod=false`):
 
 | Endpoint | Method | Purpose |
@@ -352,7 +370,7 @@ Key API endpoints (no auth needed, `prod=false`):
 | `/api/knowledge/search` | POST | Search (`{"query":"...","limit":5}`) |
 | `/api/knowledge/ingest` | POST | Ingest (`{"paths":["..."]}` — directory inputs return `scanId`) |
 | `/api/knowledge/status` | GET | Index/enrichment progress |
-| `/api/chat/ask` | POST | RAG Q&A (`{"question":"..."}` — NOT `query`) |
+| `/api/chat/ask` | POST | RAG Q&A (`{"question":"..."}` — NOT `query`). **Response is an SSE stream, not JSON** — see below. |
 | `/api/ai/install/start` | POST | Start model download (`{"acceptTerms":true}`) |
 | `/api/ai/install/status` | GET | Download progress. Top-level `state: "completed"` does NOT mean all packages installed; check `installedFully: true` and per-package `state`. |
 | `/api/ai/runtime/status` | GET | Per-feature runtime status (NVML VRAM, ONNX `modelActive` flags) |
@@ -370,11 +388,38 @@ outstanding." Send the header to get the real `text/event-stream` response
 server's silent-200 behavior is tracked separately (see the SSE observation
 note filed against this finding).
 
+**`/api/chat/ask` is a Server-Sent Events stream, not a JSON endpoint** — the
+controller initializes SSE response headers before writing anything
+(`ChatController.java`, its class doc + `initSseHeaders` call sites). Piping
+the raw response through `ConvertFrom-Json` looks exactly like an empty
+answer; it is actually a stream of frames. Consume it as SSE, not as a single
+JSON body.
+
+**Search hits key on `id`, not `path`.** `results[]` in a
+`/api/knowledge/search` response is `id`, `score`, `fields` (a metadata map),
+plus optional `matchedFields`/`matchSpans`/`excerptRegions` — there is no
+`path` field. Guessing `.path` returns empty and looks exactly like "never
+indexed." The full shape is already documented and staged at
+`docs/reference/api-contract-map.md` (search under "Current hit shape in
+`results[]`") — read it before asserting anything about a search response,
+don't guess field names.
+
 **Queue visibility** — `worker.core.pendingJobs` in `/api/status` is the FULL queue
 depth (PENDING+PROCESSING) despite its name. `worker.migration.pendingJobsCount` in
 `/api/knowledge/status` is PENDING-only and can read 0 while a job is stuck in
 PROCESSING — always check its sibling `processingJobsCount` (same payload, also in
 `/api/debug/state`) before concluding the queue is idle.
+
+**Absence of signal is not evidence of absence.** A wrong field name, a genuine
+negative result, a silent no-op click, and a surface that never backfills all
+render as "empty" — and they are indistinguishable from each other until you
+check which one you're looking at. Before filing any negative finding ("X not
+indexed", "Y not shown", "Z never fired"), confirm you are reading the right
+field/endpoint/surface at all — ideally by first proving the positive control
+works (a query you know should return hits, a WARN you know already fired).
+The three traps above (hidden error bodies, the SSE-vs-JSON mismatch, `id` vs
+`path`) are concrete instances of this; treat it as the general case, not just
+those three.
 
 ## Convergence — every finding gets a regression home
 

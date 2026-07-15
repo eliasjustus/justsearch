@@ -14,6 +14,17 @@
 # All in a single invocation so the dialog never resets between steps (see
 # README.md "two mechanical gotchas" — splitting this across two script runs
 # re-focuses the window and clears the field).
+#
+# -Phrase is sent via SendKeys (Send-AppKeys), so it must NOT contain SendKeys
+# metacharacters ({} + ^ % ~ ()) — see README.md gotcha #3. If the phrase you
+# need to type is JSON (or otherwise contains those characters), replace the
+# Send-AppKeys call below with Send-AppText, which pastes via the clipboard
+# instead of typing.
+#
+# Now a thin wrapper over JustSearchGui.psm1: both clicks below go through
+# Invoke-AppClick, so they fail closed (refuse to click, exit 1) if the
+# window ever loses foreground focus between steps — the same fix click.ps1
+# received, inherited here for free by sharing the primitive.
 param(
   [string]$Phrase = "core.ingest-files",
   [int]$ApproveX = 738,
@@ -23,55 +34,31 @@ param(
   [string]$Tag = "gui"
 )
 $ev = "C:\Users\WDAGUtilityAccount\Desktop\JustSearchTest\evidence"
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class G {
-  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
-  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r);
-  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-  [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, IntPtr e);
-  public const uint LEFTDOWN = 0x0002, LEFTUP = 0x0004;
-  public struct R { public int Left, Top, Right, Bottom; }
+Import-Module (Join-Path $PSScriptRoot "JustSearchGui.psm1") -Force
+
+$conn = Connect-App -ProcName JustSearch -FocusDelayMs 900
+if (-not $conn) {
+  Write-Output "NO WINDOW"
+  exit 1
 }
-"@
-function Snap($h, $file) {
-  $r = New-Object G+R; [void][G]::GetWindowRect($h, [ref]$r)
-  $w = $r.Right-$r.Left; $ht = $r.Bottom-$r.Top
-  $b = New-Object System.Drawing.Bitmap($w,$ht); $g = [System.Drawing.Graphics]::FromImage($b)
-  $g.CopyFromScreen((New-Object System.Drawing.Point($r.Left,$r.Top)), [System.Drawing.Point]::Empty, (New-Object System.Drawing.Size($w,$ht)))
-  $b.Save($file, [System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $b.Dispose()
-  Write-Output "  snap -> $(Split-Path -Leaf $file)"
-  return $r
-}
-$p = Get-Process -Name JustSearch -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-if (-not $p) { Write-Output "NO WINDOW"; exit 1 }
-$h = $p.MainWindowHandle
-[void][G]::ShowWindow($h, 9); [void][G]::SetForegroundWindow($h); Start-Sleep -Milliseconds 900
 
 Write-Output "[1] dialog as presented:"
-$r = Snap $h "$ev\$Tag-a-dialog.png"
+[void](Save-AppShot -Handle $conn.Handle -Out "$ev\$Tag-a-dialog.png")
 
 Write-Output "[2a] clicking confirm field at window-rel ($FieldX,$FieldY) to focus it"
-$fx = $r.Left + $FieldX; $fy = $r.Top + $FieldY
-[void][G]::SetCursorPos($fx, $fy); Start-Sleep -Milliseconds 250
-[G]::mouse_event([G]::LEFTDOWN,0,0,0,[IntPtr]::Zero); Start-Sleep -Milliseconds 80
-[G]::mouse_event([G]::LEFTUP,0,0,0,[IntPtr]::Zero)
+if (-not (Invoke-AppClick -Connection $conn -X $FieldX -Y $FieldY -SettleDelayMs 250 -ClickHoldMs 80)) {
+  exit 1
+}
 Start-Sleep -Milliseconds 500
 
 Write-Output "[2b] typing phrase: $Phrase"
-[System.Windows.Forms.SendKeys]::SendWait($Phrase)
-Start-Sleep -Milliseconds 1200
-$r = Snap $h "$ev\$Tag-b-typed.png"
+Send-AppKeys -Keys $Phrase -DelayMs 1200
+[void](Save-AppShot -Handle $conn.Handle -Out "$ev\$Tag-b-typed.png")
 
 Write-Output "[3] clicking Approve at window-rel ($ApproveX,$ApproveY)"
-$sx = $r.Left + $ApproveX; $sy = $r.Top + $ApproveY
-[void][G]::SetCursorPos($sx, $sy); Start-Sleep -Milliseconds 250
-[G]::mouse_event([G]::LEFTDOWN,0,0,0,[IntPtr]::Zero); Start-Sleep -Milliseconds 90
-[G]::mouse_event([G]::LEFTUP,0,0,0,[IntPtr]::Zero)
+if (-not (Invoke-AppClick -Connection $conn -X $ApproveX -Y $ApproveY -SettleDelayMs 250 -ClickHoldMs 90)) {
+  exit 1
+}
 Start-Sleep -Milliseconds 3000
-[void](Snap $h "$ev\$Tag-c-after.png")
+[void](Save-AppShot -Handle $conn.Handle -Out "$ev\$Tag-c-after.png")
 Write-Output "done."

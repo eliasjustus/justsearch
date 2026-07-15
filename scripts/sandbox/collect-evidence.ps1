@@ -120,7 +120,55 @@ else {
         "and report it."
 }
 Write-Log $elevationNote
-$elevationNote | Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "elevation-check.txt")
+
+# Install-state fingerprint (tempdoc 729-followup, extends this same Step-0
+# self-check slot rather than adding a parallel one). A round once relaunched
+# the installer over an already-installed product because nothing checked
+# for a prior install first. Three independent signals a per-user NSIS
+# install leaves behind (bundle.windows.nsis.installMode: currentUser,
+# ADR-0024): the installed binary under %LOCALAPPDATA%\Programs\JustSearch
+# (the actual per-user NSIS install location -- verified against
+# scripts/vmware/offline-installer-vmware-verify.ps1's Find-JustSearchExe
+# candidate list; NOT %LOCALAPPDATA%\JustSearch directly), the app data dir
+# (-DataDir, default %APPDATA%\io.justsearch.shell), and the uninstall
+# registry entry (verified against
+# scripts/ci/verify-installer-nsis-win.ps1's $uninstRegKey). This is
+# informational, not blocking -- a round may deliberately be re-running
+# against an existing install (upgrade/repair scenarios) -- but it must be
+# recorded so a fresh-install round can't silently double-install.
+$installedExePath = Join-Path -Path $env:LOCALAPPDATA -ChildPath "Programs\JustSearch\JustSearch.exe"
+$installedExeFound = Test-Path -LiteralPath $installedExePath
+$dataDirFound = Test-Path -LiteralPath $DataDir
+$uninstallRegKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\JustSearch"
+$uninstallRegFound = Test-Path -LiteralPath $uninstallRegKey
+
+$installStateLines = @(
+    "",
+    "--- Install-state fingerprint (tempdoc 729-followup) ---",
+    "Installed exe ($installedExePath): $(if ($installedExeFound) { 'FOUND' } else { 'not found' })",
+    "App data dir ($DataDir): $(if ($dataDirFound) { 'FOUND' } else { 'not found' })",
+    "Uninstall registry key ($uninstallRegKey): $(if ($uninstallRegFound) { 'FOUND' } else { 'not found' })"
+)
+
+if ($installedExeFound -or $dataDirFound -or $uninstallRegFound) {
+    $installStateLines += ("WARNING: JustSearch already appears to be installed on this system " +
+        "(at least one signal above is FOUND). Relaunching the installer over an " +
+        "existing install is a known round defect. If this round intends a fresh " +
+        "install, uninstall first (or use a clean sandbox); if this round intends " +
+        "to validate upgrade/repair/re-run behavior over an existing install, record " +
+        "that as the deliberate scenario instead of an oversight.")
+    Write-Log "WARNING: install-state fingerprint found an EXISTING install -- see elevation-check.txt"
+}
+else {
+    $installStateLines += "No existing install detected -- clean-install precondition holds."
+}
+
+foreach ($line in $installStateLines) {
+    if ($line) { Write-Log $line }
+}
+
+($elevationNote + "`n" + ($installStateLines -join "`n")) |
+    Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "elevation-check.txt")
 
 # ---------------------------------------------------------------------------
 # Step 1: Port discovery (canonical: runtime manifest.json; tempdoc 501)
@@ -505,13 +553,65 @@ $goldenDir = Join-Path -Path $EvidenceDir -ChildPath "golden"
 $goldenCapturedCount = 0
 $goldenFailedCount = 0
 $goldenSkipped = $false
+$goldenSkipReason = $null
+
+# Corpus-sanity pre-check (tempdoc 729-followup): the docs tell a round to
+# "run it early", which — unguarded — measures search quality against a
+# nearly-empty index and poisons the parity evidence with a false regression
+# signal. Mirrors the SAME baseline (golden-parity.json's `indexedDocuments`)
+# and the SAME 50% floor check_golden_parity.py already enforces host-side
+# (MIN_CORPUS_RATIO in check_golden_parity.py) so "run it early" becomes safe
+# by construction instead of conditionally wrong: if the live docCount isn't
+# there yet, this step auto-skips loudly rather than silently capturing junk.
+# Only runs when a baseline is staged AND Step 2 already captured a live
+# /api/knowledge/status snapshot (evidence/api-api-knowledge-status.json) --
+# with neither signal available, the capture proceeds uncompared, same as
+# before this change.
+$goldenParityBaselinePath = Join-Path -Path $PSScriptRoot -ChildPath "golden-parity.json"
+if ((Test-Path -LiteralPath $goldenQueriesPath) -and (Test-Path -LiteralPath $goldenParityBaselinePath)) {
+    try {
+        $baselineRaw = Get-Content -LiteralPath $goldenParityBaselinePath -Raw -ErrorAction Stop
+        $baselineDoc = $baselineRaw | ConvertFrom-Json -ErrorAction Stop
+        $baselineDocs = $baselineDoc.indexedDocuments
+
+        $knowledgeStatusPath = Join-Path -Path $EvidenceDir -ChildPath "api-api-knowledge-status.json"
+        $liveDocs = $null
+        if (Test-Path -LiteralPath $knowledgeStatusPath) {
+            $liveRaw = Get-Content -LiteralPath $knowledgeStatusPath -Raw -ErrorAction Stop
+            $liveDoc = $liveRaw | ConvertFrom-Json -ErrorAction Stop
+            $liveDocs = $liveDoc.indexedDocuments
+        }
+
+        if ($baselineDocs -and ([double]$baselineDocs -gt 0) -and ($liveDocs -ne $null)) {
+            $ratio = [double]$liveDocs / [double]$baselineDocs
+            if ($ratio -lt 0.5) {
+                $goldenSkipReason = "Golden-query capture AUTO-SKIPPED: live indexedDocuments ($liveDocs) is only " +
+                    "$([math]::Round($ratio * 100, 1))% of the baseline's ($baselineDocs) -- below the 50% corpus-sanity " +
+                    "floor check_golden_parity.py enforces host-side (MIN_CORPUS_RATIO). Capturing now, against a " +
+                    "not-yet-caught-up index, would poison the parity evidence with a false regression signal. " +
+                    "Re-run collect-evidence.ps1 once ingestion has caught up to get a real capture."
+            }
+        }
+        elseif ($baselineDocs -and ([double]$baselineDocs -gt 0) -and ($liveDocs -eq $null)) {
+            Write-Log "Golden corpus-sanity pre-check: could not read live indexedDocuments from $knowledgeStatusPath -- proceeding with capture uncompared."
+        }
+    }
+    catch {
+        Write-Log "Golden corpus-sanity pre-check FAILED to parse baseline/live docCount ($($_.Exception.Message)) -- proceeding with capture uncompared."
+    }
+}
 
 if (-not (Test-Path -LiteralPath $goldenQueriesPath)) {
     $goldenSkipped = $true
-    $note = "Golden-query capture SKIPPED: golden-queries.json not found at $goldenQueriesPath -- " +
+    $goldenSkipReason = "Golden-query capture SKIPPED: golden-queries.json not found at $goldenQueriesPath -- " +
             "no per-candidate search-parity baseline was staged for this round. Recorded as a gap, not a fatal error."
-    Write-Log $note
-    $note | Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "golden-capture-note.txt")
+    Write-Log $goldenSkipReason
+    $goldenSkipReason | Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "golden-capture-note.txt")
+}
+elseif ($goldenSkipReason) {
+    $goldenSkipped = $true
+    Write-Log $goldenSkipReason
+    $goldenSkipReason | Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "golden-capture-note.txt")
 }
 else {
     if (-not (Test-Path -LiteralPath $goldenDir)) {
@@ -604,7 +704,7 @@ else {
 }
 $summaryLines += ""
 if ($goldenSkipped) {
-    $summaryLines += "Golden-query search-parity capture: SKIPPED (golden-queries.json not staged -- recorded gap)"
+    $summaryLines += "Golden-query search-parity capture: SKIPPED ($goldenSkipReason)"
 }
 else {
     $summaryLines += "Golden-query search-parity capture: $goldenCapturedCount captured, $goldenFailedCount failed -> golden/ (host-side check_golden_parity.py input)"

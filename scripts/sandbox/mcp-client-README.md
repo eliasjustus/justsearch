@@ -40,13 +40,52 @@ PASS/FAIL line. Per the published TYPED_CONFIRM trust-gate claim
 indicate a **PENDING authorization** (`isError:true`, "requires your
 approval (gate: TYPED_CONFIRM)"), not a silent/immediate ingest — the script
 distinguishes these explicitly rather than treating any response as a pass,
-since a silent ingest is the actual bug this check exists to catch. Resolve
-the pending authorization:
+since a silent ingest is the actual bug this check exists to catch.
+
+**The gate response text does not carry the pending id** (verified against
+`McpToolSurface.handleConfirmationRequired` — the message says only "A
+request is now showing in the JustSearch app"). Get it from the driver's
+own stdout: `mcp-typed-confirm.mjs` resolves and prints it as
+`PENDING_ID=<id>` right after the gate result (it does this itself by
+opening `GET /api/advisory/authorization-pending/stream` and reading the
+`authorization.pending` advisory's `classExtras.pendingId` — see
+`AuthorizationPendingAdvisoryStreamController` / `PendingAuthorizationAdvisoryProjector`).
+If you need to re-derive it by hand instead (e.g. driving a different
+client), the same id is reachable two ways:
+
+- The SSE advisory stream the driver itself reads:
+  `GET http://127.0.0.1:<port>/api/advisory/authorization-pending/stream`
+  — a snapshot/update frame's `payload.classExtras.pendingId`.
+- Once you have a candidate id, confirm its content with the point-to-point
+  peek endpoint (does not consume/approve it):
+  `GET http://127.0.0.1:<port>/api/authorizations/pending/<id>`.
+
+Resolve the pending authorization with the id (**the body field is
+`pendingId`** — `AuthorizationController.handleApprove` reads
+`body.get("pendingId")`; any other key name for the id 400s):
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:<port>/api/authorizations/approve" `
-  -ContentType "application/json" -Body (@{ authorizationId = "<id from the PENDING response>" } | ConvertTo-Json)
+  -ContentType "application/json" -Body (@{ pendingId = "<id from mcp-typed-confirm.mjs's PENDING_ID= line>"; execute = $true } | ConvertTo-Json)
 ```
+
+**`execute: true` is mandatory here, not optional.** Without it, the call
+mints a consent capsule and returns — it does NOT dispatch the ingest (see
+`AuthorizationController`'s own Javadoc on `handleApprove`, tempdoc 655
+addendum): approving normally only *authorizes* an operation the caller then
+re-invokes itself with the capsule attached, which works for the browser FE
+(it already has the original args to replay) but not for an MCP-originated
+pending — the MCP tool call already returned, so there is no live caller
+left to replay anything. `execute: true` tells the server to complete the
+dispatch itself, server-side, using the SAME args the capsule is bound to. A
+prior round's driving doc named a different (wrong) body key for the id with
+no `execute` flag at all: the wrong key name alone made every approve
+attempt 400, and even a fixed key name without `execute: true` would still
+leave the ingest un-dispatched — this was misdiagnosed as "approve never
+executes the operation," a false HIGH regression against a documentation
+defect, not a product one. `scripts/ci/check-sandbox-authorization-field.mjs`
+now fails the build if that retired key name reappears in this file or in
+`governance/sandbox-coverage.v1.json`'s `cohort:mcp` procedure.
 
 Then re-check `/api/knowledge/status` (or run the driver again with the same
 target) to confirm the ingest actually proceeded after approval.

@@ -61,14 +61,188 @@
  * before the timeout. A PASS/FAIL line names whether that response was the
  * TYPED_CONFIRM gate (isError:true + "requires your approval") or a silent
  * execution -- a silent ingest is the actual bug this check exists to catch.
+ *
+ * On a PASS, the script ALSO resolves and prints the gate's pendingId as a
+ * greppable `PENDING_ID=<id>` line (plus ready-to-use peek/approve URLs).
+ * The gate response text itself never carries this id (verified against
+ * McpToolSurface.handleConfirmationRequired's message text) -- this script
+ * gets it the same way any other out-of-band subscriber would: GET
+ * /api/advisory/authorization-pending/stream, whose snapshot-on-subscribe
+ * frame replays the pending's classExtras.pendingId even when the driver
+ * connects to it after the gate already fired. Best-effort: a failure to
+ * resolve the pendingId prints a WARN but never flips the PASS/FAIL verdict,
+ * which is already decided by the tools/call response above it.
  */
 
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
+import http from 'node:http';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+// ---------------------------------------------------------------------------
+// pendingId resolution (post-TYPED_CONFIRM-gate)
+//
+// The tools/call gate response text does NOT carry the pendingId (verified:
+// McpToolSurface.handleConfirmationRequired's message says only "A request is
+// now showing in the JustSearch app" -- zero hits for pendingId in that file).
+// A prior round hand-scraped SSE with a regex to find it, which this replaces
+// with the same discovery path used generically: GET the per-class advisory
+// SSE stream (GET /api/advisory/authorization-pending/stream) and read the
+// `authorization.pending` advisory's classExtras.pendingId
+// (AuthorizationPendingAdvisoryStreamController / AdvisoryStreamController /
+// PendingAuthorizationAdvisoryProjector). Connecting AFTER the gate already
+// fired still works: the stream's snapshot-on-subscribe frame replays
+// AdvisoryLog.recent(), so there is no race to win against the broadcast.
+//
+// Port discovery mirrors the shipped bridge's own algorithm (index.js
+// discoverPort): --port / JUSTSEARCH_API_PORT env var, then the port file the
+// app writes (%APPDATA%\io.justsearch.shell\runtime\api-port.txt), then the
+// default 8080 -- each candidate is only trusted if GET /api/health answers.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_API_PORT = 8080;
+const HEALTH_TIMEOUT_MS = 2500;
+const APPDATA = process.env.APPDATA || '';
+const PORT_FILE = path.join(APPDATA, 'io.justsearch.shell', 'runtime', 'api-port.txt');
+
+function readPortFile() {
+  try {
+    const raw = fs.readFileSync(PORT_FILE, 'utf8').trim();
+    const port = Number.parseInt(raw, 10);
+    if (Number.isInteger(port) && port > 0 && port < 65536) return port;
+  } catch {
+    /* missing/unreadable file -- fall through */
+  }
+  return null;
+}
+
+function httpGetStatus(port, urlPath, timeoutMs) {
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port, path: urlPath, timeout: timeoutMs }, (res) => {
+      res.resume(); // drain
+      resolve(res.statusCode || 0);
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', () => resolve(0));
+  });
+}
+
+/** Returns a live, health-checked port, or null. Order: --port/env, port file, default 8080. */
+async function discoverApiPort(explicitPort) {
+  const candidates = [];
+  const explicit = Number.parseInt(explicitPort ?? '', 10);
+  if (Number.isInteger(explicit) && explicit > 0) candidates.push(explicit);
+  const envPort = Number.parseInt(process.env.JUSTSEARCH_API_PORT || '', 10);
+  if (Number.isInteger(envPort) && envPort > 0) candidates.push(envPort);
+  const filePort = readPortFile();
+  if (filePort !== null) candidates.push(filePort);
+  candidates.push(DEFAULT_API_PORT);
+  const unique = [...new Set(candidates)];
+  for (const port of unique) {
+    if ((await httpGetStatus(port, '/api/health', HEALTH_TIMEOUT_MS)) === 200) return port;
+  }
+  return null;
+}
+
+/**
+ * Recursively searches a parsed SSE frame payload for classExtras.pendingId
+ * (or a bare pendingId key at any depth, for robustness against nesting
+ * differences between the LIFECYCLE snapshot frame -- payload.advisories: []
+ * -- and an UPDATE frame -- payload IS a single AdvisoryRecord). When
+ * wantOperationId is given, prefers a match whose sibling operationId agrees;
+ * accepts the id regardless once no operationId is present to check.
+ */
+function findPendingId(node, wantOperationId) {
+  if (node === null || typeof node !== 'object') return null;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const hit = findPendingId(item, wantOperationId);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  const extras = node.classExtras && typeof node.classExtras === 'object' ? node.classExtras : node;
+  if (typeof extras.pendingId === 'string' && extras.pendingId) {
+    if (!wantOperationId || !extras.operationId || extras.operationId === wantOperationId) {
+      return extras.pendingId;
+    }
+  }
+  for (const key of Object.keys(node)) {
+    const hit = findPendingId(node[key], wantOperationId);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * Opens GET /api/advisory/authorization-pending/stream and resolves the first
+ * pendingId found (matching wantOperationId when present), or null on
+ * timeout/error. Best-effort: a failure here must never fail the driver's
+ * primary PASS/FAIL verdict, which is already decided by the tools/call
+ * response itself.
+ */
+function resolvePendingId(port, wantOperationId, timeoutSeconds) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let req;
+    const finish = (id) => {
+      if (settled) return;
+      settled = true;
+      try {
+        req.destroy();
+      } catch {
+        /* best effort */
+      }
+      resolve(id);
+    };
+    req = http.get(
+      {
+        host: '127.0.0.1',
+        port,
+        path: '/api/advisory/authorization-pending/stream',
+        headers: { Accept: 'text/event-stream' },
+        timeout: timeoutSeconds * 1000,
+      },
+      (res) => {
+        let buf = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => {
+          buf += chunk;
+          let idx;
+          // eslint-disable-next-line no-cond-assign
+          while ((idx = buf.indexOf('\n\n')) >= 0) {
+            const rawEvent = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            const dataText = rawEvent
+              .split('\n')
+              .filter((l) => l.startsWith('data:'))
+              .map((l) => l.slice(5).trim())
+              .join('\n');
+            if (!dataText) continue;
+            let parsed;
+            try {
+              parsed = JSON.parse(dataText);
+            } catch {
+              continue;
+            }
+            const found = findPendingId(parsed, wantOperationId);
+            if (found) {
+              finish(found);
+              return;
+            }
+          }
+        });
+        res.on('end', () => finish(null));
+      },
+    );
+    req.on('timeout', () => finish(null));
+    req.on('error', () => finish(null));
+    setTimeout(() => finish(null), timeoutSeconds * 1000 + 500);
+  });
+}
 
 function parseArgs(argv) {
   const args = {
@@ -255,6 +429,36 @@ async function main() {
     if (isGate) {
       process.stdout.write('\nPASS: tools/call justsearch_ingest response was received AND is the TYPED_CONFIRM gate (isError:true, "requires your approval").\n');
       exitCode = 0;
+
+      // Resolve the pendingId so the round doesn't have to hand-scrape SSE:
+      // the gate response text itself never carries it (verified against
+      // McpToolSurface.handleConfirmationRequired).
+      const resolvedPort = await discoverApiPort(args.port);
+      if (resolvedPort) {
+        log(
+          `Resolving pendingId via GET http://127.0.0.1:${resolvedPort}/api/advisory/authorization-pending/stream ...`,
+        );
+        const pendingId = await resolvePendingId(resolvedPort, 'justsearch_ingest', Math.min(args.timeout, 15));
+        if (pendingId) {
+          process.stdout.write(`\nPENDING_ID=${pendingId}\n`);
+          process.stdout.write(
+            `Peek (no approval): GET http://127.0.0.1:${resolvedPort}/api/authorizations/pending/${pendingId}\n`,
+          );
+          process.stdout.write(
+            `Approve + execute: POST http://127.0.0.1:${resolvedPort}/api/authorizations/approve  body: {"pendingId":"${pendingId}","execute":true}\n`,
+          );
+        } else {
+          process.stdout.write(
+            '\nWARN: could not resolve pendingId from GET /api/advisory/authorization-pending/stream within the timeout. ' +
+              'Check the JustSearch app UI for the pending approval, or query that endpoint directly.\n',
+          );
+        }
+      } else {
+        process.stdout.write(
+          '\nWARN: could not discover the API port to resolve pendingId (tried --port, JUSTSEARCH_API_PORT, the port file, and default 8080). ' +
+            'Check the JustSearch app UI for the pending approval instead.\n',
+        );
+      }
     } else if (result && result.isError === true) {
       process.stdout.write('\nFAIL: tools/call justsearch_ingest returned an error, but not the expected TYPED_CONFIRM gate shape. See the raw result above.\n');
       exitCode = 1;

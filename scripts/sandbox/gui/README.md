@@ -13,9 +13,10 @@ alongside `collect-evidence.ps1`.
 
 | Script | Purpose |
 |---|---|
+| `JustSearchGui.psm1` | Shared module — P/Invoke boilerplate, window connect/click/capture, and the assert-then-act primitive. The other scripts are thin wrappers over this; import it directly if you're scripting something ad hoc (`Import-Module (Join-Path $PSScriptRoot "JustSearchGui.psm1") -Force`). |
 | `snap.ps1` | Full-desktop capture (`CopyFromScreen`). Use for the Step-0 capability probe and whole-screen evidence. |
 | `win-capture.ps1` | Locate + focus + capture ONE window by process name (`GetWindowRect` + `SetForegroundWindow`). Optional `-Keys` sends keystrokes before capturing. |
-| `click.ps1` | Click at window-relative coordinates in a target window, then capture. |
+| `click.ps1` | Click at window-relative coordinates in a target window, then capture. Fails closed (exits 1, no click sent) if the window did not actually take foreground focus. |
 | `crop.ps1` | Crop + magnify a region of an existing PNG (for illegible small text). |
 | `gui-approve.ps1` | **EXAMPLE**, not a generic tool — see below. |
 
@@ -24,6 +25,24 @@ or `win-capture.ps1`, `Read` it to see the UI, read the target's pixel
 coordinates off the image, act with `click.ps1` / `SendKeys`, then
 re-capture to confirm the action registered. This is functionally what a
 computer-use tool does, assembled from parts native to Windows.
+
+**Crop before you read.** A full-window screenshot easily runs to hundreds
+of KB and burns a large chunk of an agent's context just to check one small
+area (a button label, a status line). If you already know the region you
+need — you just clicked a specific control, or you're re-checking one piece
+of text — run `crop.ps1` on the fresh screenshot first and `Read` the
+cropped, magnified PNG instead of the full-resolution one. A whole round
+reading 74 full-resolution screenshots when `crop.ps1` was staged the entire
+time was the dominant token cost of that round (tempdoc 727-followup);
+don't repeat it.
+
+**Assert, don't guess, that a click landed.** `Assert-AppSurface` (in
+`JustSearchGui.psm1`) checks `GET /api/action-ledger` for the most recent
+navigation and compares its target surface against what you expected. A
+round can otherwise burn a step on a silent no-op click (nothing renders
+differently, and a screenshot alone can't tell you whether that's "no-op"
+or "feature broken") — six of those in one round were the second-largest
+false-finding generator after the missing-crop issue above.
 
 ## `gui-approve.ps1` is a worked EXAMPLE, not a library function
 
@@ -36,7 +55,7 @@ not match a different resolution, a different dialog, or even the same dialog
 after a theme change. Treat it as a template: copy the pattern, re-derive the
 coordinates fresh each round from a screenshot of *that* round's dialog.
 
-## Two mechanical gotchas (cost 3 attempts to discover — don't re-spend the round on them)
+## Three mechanical gotchas (cost 3+ attempts each to discover — don't re-spend the round on them)
 
 1. **Focus is not sticky.** `SendKeys` goes to whatever element currently has
    focus. Click the target field first, *then* type — never assume a field
@@ -46,6 +65,16 @@ coordinates fresh each round from a screenshot of *that* round's dialog.
    window, which can reset the dialog and clear anything already typed. Do
    focus -> type -> click -> capture in **one script, one invocation**
    (`gui-approve.ps1` is the pattern).
+3. **`SendKeys` cannot type JSON.** Its metacharacters (`{}`, `+`, `^`, `%`,
+   `~`, `()`) are control syntax, not literal text — sending a JSON payload
+   through `Send-AppKeys`/`SendKeys::SendWait` mangles or truncates it. Two
+   sandbox surfaces need JSON typed into them (the presentation-editor
+   surface and the skin-import box), so this is a real blocker, not an edge
+   case. Workaround: paste instead of type — stage the text on the clipboard
+   and send `^v`. `Send-AppText` in `JustSearchGui.psm1` does exactly this
+   (`Set-Clipboard -Value $Text; [System.Windows.Forms.SendKeys]::SendWait("^v")`);
+   use it instead of `Send-AppKeys`/raw `SendKeys` for any payload that isn't
+   plain, metacharacter-free text.
 
 ## Pixel-coordinate caveat
 

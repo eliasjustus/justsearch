@@ -339,6 +339,48 @@ def write_staging_gaps(share_dir: Path, gaps: list[str]):
         print("Staged staging-gaps.md (no gaps)")
 
 
+def _assert_no_dangling_hook_refs(settings: dict, claude_dst: Path):
+    """Fail loudly if any hook command path in `settings` (the staged, already-
+    sanitized settings dict) resolves outside the staged tree.
+
+    Walks settings.get("hooks", {}) — a dict of event name -> list of matcher
+    groups -> list of {command, args} entries, per Claude Code's hooks schema
+    — and resolves every ${CLAUDE_PROJECT_DIR}-prefixed path in `args` against
+    `claude_dst.parent` (the staged share dir, which stands in for the
+    sandbox's project dir). Exits the whole staging run non-zero on the first
+    dangling reference: a hook wired to a script that was never staged throws
+    a module-resolution error on every tool call all round (the defect this
+    guards against), so this must abort staging, not warn."""
+    hooks = settings.get("hooks")
+    if not hooks:
+        return
+    share_dir = claude_dst.parent
+    dangling: list[str] = []
+    for event_name, groups in hooks.items():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            for entry in group.get("hooks", []) if isinstance(group, dict) else []:
+                if not isinstance(entry, dict):
+                    continue
+                for arg in entry.get("args", []):
+                    if not isinstance(arg, str) or "${CLAUDE_PROJECT_DIR}" not in arg:
+                        continue
+                    rel = arg.replace("${CLAUDE_PROJECT_DIR}", "").lstrip("/\\")
+                    resolved = share_dir / rel
+                    if not resolved.exists():
+                        dangling.append(f"{event_name}: {arg} -> {resolved} (missing)")
+    if dangling:
+        sys.exit(
+            "Staged .claude/settings.json references hook script(s) that were "
+            "never staged into the sandbox share — every tool call would throw "
+            "a module-resolution error all round:\n"
+            + "\n".join(f"  - {d}" for d in dangling)
+            + "\nEither stage the referenced scripts, or strip the hooks key "
+            "for this settings block."
+        )
+
+
 def stage_claude_settings(share_dir: Path):
     """Copy .claude/ project config, sanitizing for sandbox (no LSP plugins, no MCP).
 
@@ -378,13 +420,36 @@ def stage_claude_settings(share_dir: Path):
             settings.pop("enabledPlugins", None)
             settings["enableAllProjectMcpServers"] = False
             settings.pop("enabledMcpjsonServers", None)
+            # Strip the hooks block entirely. It wires every PreToolUse/
+            # PostToolUse hook to ${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/
+            # hooks/*.mjs, but this function never stages scripts/agent-analytics/
+            # (there is no git repo or dev tooling in the sandbox for those hooks
+            # to act on anyway — the git-safety guards are meaningless without a
+            # repo, and build-counter/ssot-hint/etc. have no gradle/SSOT to react
+            # to). Left in place, every tool call in the round would throw a
+            # module-resolution error, all round — desensitizing the agent to
+            # hook noise and creating a false belief that a safety net is active
+            # when none is. Matches this function's existing philosophy: skills
+            # are staged as only the sandbox-aware subset, not the raw project
+            # set, for the same "would mislead the agent" reason.
+            settings.pop("hooks", None)
             # Sandbox is ephemeral and isolated — start Claude in bypass mode
             # so the user is not prompted for every tool call.
             settings.setdefault("permissions", {})["defaultMode"] = "bypassPermissions"
+
+            # Fail-closed ratchet: assert no *staged* settings reference a hook
+            # command path outside the staged tree. This is trivially satisfied
+            # today (hooks are stripped above) but guards against a future edit
+            # re-introducing a hooks block (or any other settings key that names
+            # a ${CLAUDE_PROJECT_DIR}-relative script) without staging the
+            # scripts it points at — turning a silent dead-hook regression back
+            # into this exact defect instead of a loud staging failure.
+            _assert_no_dangling_hook_refs(settings, claude_dst)
+
             (claude_dst / "settings.json").write_text(
                 json.dumps(settings, indent=2), encoding="utf-8"
             )
-            print("Staged .claude/settings.json (sanitized + bypassPermissions)")
+            print("Staged .claude/settings.json (sanitized + bypassPermissions, hooks stripped)")
         except Exception as e:
             shutil.copy2(settings_src, claude_dst / "settings.json")
             print(f"Staged .claude/settings.json (raw copy, sanitization failed: {e})")
@@ -463,6 +528,40 @@ def stage_coverage_brief(share_dir: Path):
             "governance/sandbox-coverage.v1.json). Classify it there before validating."
         )
     print("Staged coverage-brief.md + coverage-manifest.json")
+
+
+def stage_round_plan(share_dir: Path):
+    """Derive round-plan.md from the just-staged coverage-manifest.json
+    (tempdoc 729-followup, mechanical brief-to-plan derivation).
+
+    A round previously built its task list from the operator's prose instead
+    of from the generated coverage-brief.md, and missed a whole mandatory
+    cohort plus 4 of 5 required shapes — caught only by luck at finalize.
+    Deriving this checklist automatically at staging time (rather than
+    leaving it as a script the round must remember to invoke) is what makes
+    the round's plan actually DERIVED from the authority instead of merely
+    read alongside it. Non-fatal by design: coverage-manifest.json's own
+    generation (stage_coverage_brief, just above) is the fail-closed step —
+    if that succeeded, deriving a checklist from its output should not itself
+    be able to abort staging.
+    """
+    manifest_path = share_dir / "coverage-manifest.json"
+    if not manifest_path.exists():
+        print("WARNING: coverage-manifest.json not staged — skipping round-plan.md derivation")
+        return
+    derive = SCRIPT_DIR / "derive_round_plan.py"
+    out_path = share_dir / "round-plan.md"
+    result = subprocess.run(
+        [sys.executable, str(derive), "--manifest", str(manifest_path), "--out", str(out_path)],
+        capture_output=True,
+        text=True,
+    )
+    sys.stdout.write(result.stdout)
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        print("WARNING: round-plan.md derivation FAILED (non-fatal — coverage-brief.md/coverage-manifest.json remain the authority)")
+    else:
+        print("Staged round-plan.md (mechanically derived checklist)")
 
 
 def stage_evidence_harness(share_dir: Path):
@@ -733,6 +832,7 @@ def main():
     #    harness, then generate .wsb (tempdoc 728).
     write_validation_mode(share_dir, installer, models_dir, args.no_models)
     stage_coverage_brief(share_dir)
+    stage_round_plan(share_dir)
     stage_evidence_harness(share_dir)
     stage_gui_harness(share_dir)
     stage_mcp_client_harness(share_dir)

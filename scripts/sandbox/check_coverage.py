@@ -14,6 +14,7 @@ Pure Python 3 stdlib. No network access.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -246,27 +247,45 @@ def load_exercised_endpoints(path: str | None) -> tuple[set[tuple[str, str]], se
 # --------------------------------------------------------------------------
 
 
-def load_evidence_filenames(path: str | None) -> set[str]:
-    """Collect the set of lowercased evidence filenames in `path`.
+# Minimum byte size for a screenshot to count as coverage evidence (defect
+# F-729-2: check_surface/check_shape credited a screenshot by FILENAME alone,
+# with no inspection of the image at all -- a blank, occluded, or plain wrong
+# capture satisfied coverage silently). This is a cheap first filter, in the
+# same deliberately-dumb spirit as check_retrospective's byte-count-plus-
+# keyword check above: no image decoding, no pixel analysis, just a size
+# floor a solid-colour/near-blank PNG can't clear.
+#
+# Calibrated against the round-4 evidence set
+# (tmp/sandbox-evidence/round4-2026-07-15/, ~74 real captures): the one known-
+# bad file, 02-installer-page2.png, is 8,554 bytes (a near-blank capture).
+# The smallest genuine capture in that same set is 35,131 bytes -- more than
+# 4x the known-bad file. 16,384 bytes (16 KiB) sits with clean margin on both
+# sides (~1.9x the known-bad size, ~2.1x below the smallest real capture),
+# rejecting the known-bad file without risking a legitimate capture.
+MIN_SCREENSHOT_BYTES = 16384
 
-    A missing directory yields an empty set plus a warning.
+
+def load_evidence_files(path: str | None) -> dict[str, int]:
+    """Collect {lowercased evidence filename: size in bytes} in `path`.
+
+    A missing directory yields an empty dict plus a warning.
     """
-    filenames: set[str] = set()
+    files: dict[str, int] = {}
 
     if not path:
         print("WARNING: no --evidence-dir given; evidence set is empty.", file=sys.stderr)
-        return filenames
+        return files
 
     if not os.path.isdir(path):
         print(f"WARNING: evidence dir not found: {path!r} (treating as empty).", file=sys.stderr)
-        return filenames
+        return files
 
     for entry in os.listdir(path):
         full = os.path.join(path, entry)
         if os.path.isfile(full):
-            filenames.add(entry.lower())
+            files[entry.lower()] = os.path.getsize(full)
 
-    return filenames
+    return files
 
 
 # --------------------------------------------------------------------------
@@ -368,6 +387,87 @@ def check_cohort(
         covered=False,
         reason=f"none of routes {item.routes!r} found in exercised endpoints",
     )
+
+
+def required_evidence_tokens(items: list[MustTouchItem]) -> dict[str, list[str]]:
+    """Map each required evidence token -> the requirement id(s) it credits.
+
+    Mirrors exactly what check_surface/check_shape match on: a surface item's
+    evidenceToken, a shape item's shape_token(id). Both lowercased, since the
+    filename match is lowercased. A token can legitimately map to more than
+    one requirement id, hence the list.
+    """
+    tokens: dict[str, list[str]] = {}
+    for item in items:
+        if item.kind == "surface" and item.evidence_token:
+            tokens.setdefault(item.evidence_token.lower(), []).append(f"surface:{item.id}")
+        elif item.kind == "shape":
+            tokens.setdefault(shape_token(item.id).lower(), []).append(f"shape:{item.id}")
+    return tokens
+
+
+def content_hash(path: str) -> str | None:
+    """SHA-256 of a file's raw bytes, or None if unreadable.
+
+    Deliberately dumb, matching this module's house style (check_retrospective's
+    keyword matching, MIN_SCREENSHOT_BYTES' size floor): a plain content hash.
+    No image decoding, no perceptual/near-duplicate similarity, no new
+    dependencies. It answers exactly one question -- "are these the same
+    bytes?" -- and nothing about what the pixels depict.
+    """
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        print(f"WARNING: could not hash evidence file {path!r}: {exc}", file=sys.stderr)
+        return None
+    return digest.hexdigest()
+
+
+def find_duplicate_token_collisions(
+    evidence_dir: str | None,
+    screenshots: set[str],
+    tokens: dict[str, list[str]],
+) -> list[tuple[str, list[str], list[str]]]:
+    """Find byte-identical screenshots that credit DIFFERENT required tokens.
+
+    Returns [(hash, sorted filenames, sorted distinct tokens credited), ...].
+
+    The signal (defect F-729-3): one capture cannot honestly evidence two
+    different requirements. Two byte-identical files whose filenames credit
+    two different tokens means a single image is the sole proof of two
+    distinct things.
+
+    Deliberately scoped to CROSS-token collisions. Byte-identical files that
+    credit the SAME token (or no token at all) are NOT flagged: a round saving
+    one capture under two names for one requirement isn't lying about coverage
+    -- that token is credited once either way. Flagging those would cry wolf on
+    benign duplicates, and a gate that cries wolf gets ignored, which costs
+    more than the bug.
+
+    Only screenshots that can actually credit coverage are considered -- the
+    caller passes the post-size-floor eligible set, so an undersized image
+    (which already credits nothing) can't manufacture a collision.
+    """
+    if not evidence_dir:
+        return []
+
+    by_hash: dict[str, list[str]] = {}
+    for filename in sorted(screenshots):
+        digest = content_hash(os.path.join(evidence_dir, filename))
+        if digest is not None:
+            by_hash.setdefault(digest, []).append(filename)
+
+    collisions: list[tuple[str, list[str], list[str]]] = []
+    for digest, files in by_hash.items():
+        if len(files) < 2:
+            continue
+        credited = {token for token in tokens for f in files if token in f}
+        if len(credited) > 1:
+            collisions.append((digest, sorted(files), sorted(credited)))
+    return sorted(collisions, key=lambda c: c[1][0])
 
 
 def check_surface(item: MustTouchItem, evidence_filenames: set[str]) -> CoverageResult:
@@ -536,17 +636,33 @@ def main(argv: list[str] | None = None) -> int:
     sandbox_items = [item for item in all_items if item.tier == "sandbox"]
 
     exercised_pairs, exercised_paths = load_exercised_endpoints(args.traces)
-    evidence_filenames = load_evidence_filenames(args.evidence_dir)
+    evidence_files = load_evidence_files(args.evidence_dir)
     # F1: only screenshots count as UI-surface/shape evidence — the API-snapshot
     # JSON the harness also writes here must not satisfy a surface token.
-    screenshots = {
-        f for f in evidence_filenames if os.path.splitext(f)[1].lower() in IMAGE_EXTS
+    all_screenshots = {
+        f for f in evidence_files if os.path.splitext(f)[1].lower() in IMAGE_EXTS
     }
-    if evidence_filenames and not screenshots:
+    # F-729-2: drop screenshots under the size floor before they can match a
+    # surface/shape token — a blank, occluded, or near-blank capture must not
+    # silently credit coverage. See MIN_SCREENSHOT_BYTES for calibration.
+    undersized = {
+        f for f in all_screenshots if evidence_files[f] < MIN_SCREENSHOT_BYTES
+    }
+    screenshots = all_screenshots - undersized
+    if undersized:
         print(
-            "WARNING: evidence dir has files but no image/screenshot files; UI "
-            "surfaces are proven by screenshots (not API snapshots) and will read "
-            "UNCOVERED.",
+            f"WARNING: {len(undersized)} screenshot(s) are under the "
+            f"{MIN_SCREENSHOT_BYTES}-byte floor and will NOT count as coverage "
+            "evidence (looks blank/occluded/placeholder):",
+            file=sys.stderr,
+        )
+        for f in sorted(undersized):
+            print(f"    - {f} ({evidence_files[f]} bytes)", file=sys.stderr)
+    if evidence_files and not screenshots:
+        print(
+            "WARNING: evidence dir has files but no image/screenshot files above "
+            f"the {MIN_SCREENSHOT_BYTES}-byte floor; UI surfaces are proven by "
+            "screenshots (not API snapshots) and will read UNCOVERED.",
             file=sys.stderr,
         )
 
@@ -559,6 +675,37 @@ def main(argv: list[str] | None = None) -> int:
         covered_elsewhere=manifest.get("coveredElsewhere", []) or [],
         exempt=manifest.get("exempt", []) or [],
     )
+
+    # F-729-3: a single capture cannot honestly evidence two different
+    # requirements. Fails closed (unlike the size floor's warning) -- see
+    # find_duplicate_token_collisions.
+    collisions = find_duplicate_token_collisions(
+        args.evidence_dir, screenshots, required_evidence_tokens(sandbox_items)
+    )
+    print("=" * 72)
+    print("Duplicate-content check (F-729-3 -- one capture cannot evidence two requirements)")
+    print("=" * 72)
+    if not collisions:
+        print("[OK] no byte-identical screenshots credit different required tokens")
+    else:
+        for digest, files, credited in collisions:
+            print(f"**[COLLISION]** sha256:{digest[:12]} credits {len(credited)} different tokens: {credited}")
+            for filename in files:
+                print(f"    - {filename}")
+        print("=" * 72)
+        print(
+            "BLOCKING: the byte-identical file group(s) above each credit two or more "
+            "DIFFERENT required tokens. One image cannot be honest proof of two distinct "
+            "requirements; at least one of them is credited by a capture of something else."
+        )
+        print(
+            "Remedy: capture each requirement separately. If one screen genuinely does "
+            "evidence both (e.g. a chat-window capture that also shows a cited answer), "
+            "save it ONCE under a single filename containing both tokens -- that credits "
+            "both honestly and makes the sharing visible to a reviewer, instead of hiding "
+            "it behind two copies of the same bytes."
+        )
+        print("=" * 72)
 
     retrospective_ok, retrospective_reason = check_retrospective(args.evidence_dir)
     print("=" * 72)
@@ -577,7 +724,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         print("=" * 72)
 
-    return 0 if (all_covered and retrospective_ok) else 1
+    return 0 if (all_covered and retrospective_ok and not collisions) else 1
 
 
 if __name__ == "__main__":
