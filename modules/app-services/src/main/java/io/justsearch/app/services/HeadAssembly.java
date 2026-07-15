@@ -1210,9 +1210,6 @@ public final class HeadAssembly implements AutoCloseable {
               this.capabilities.worker().available();
           case io.justsearch.agent.api.registry.RequiredCapability.InferenceOnline i ->
               this.capabilities.inference().available();
-          case io.justsearch.agent.api.registry.RequiredCapability.IndexedRoot r ->
-              this.capabilities.worker().available();
-          case io.justsearch.agent.api.registry.RequiredCapability.GpuAvailable g -> true;
         };
   }
 }

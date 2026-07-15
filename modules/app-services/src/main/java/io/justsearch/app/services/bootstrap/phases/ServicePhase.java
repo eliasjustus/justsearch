@@ -270,8 +270,9 @@ public final class ServicePhase {
     BrainRuntimeService brainRuntime =
         new BrainRuntimeServiceImpl(
             onlineAiService, in.settingsStore(), enterprisePolicy, offlineProcessingTrigger);
-    RuntimeVariantService runtimeVariant =
-        new RuntimeVariantServiceImpl(runtimeActivationHelper, enterprisePolicy);
+    // Tempdoc 737 (task 3): RuntimeVariantServiceImpl no longer takes its own
+    // EnterprisePolicyService — policy enforcement is now solely on runtimeActivationHelper.
+    RuntimeVariantService runtimeVariant = new RuntimeVariantServiceImpl(runtimeActivationHelper);
     PackImportService packImport = new PackImportServiceImpl(aiPackImportHelper);
     PolicyService policy = new PolicyServiceImpl(enterprisePolicy);
 
