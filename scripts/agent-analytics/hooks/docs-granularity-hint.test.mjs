@@ -81,6 +81,19 @@ run('a "git push" inside a heredoc commit body is NOT a push', () => {
 run('a branch-delete push is NOT a content push', () => {
   assert.equal(isGitPush('git push origin --delete worktree-662-mux docs/653-axis2-record'), false);
   assert.equal(isGitPush('git push origin :old-branch'), false);
+  assert.equal(isGitPush('git push -d origin br'), false);
+});
+// The delete test keys on a colon in ARGUMENT position (` :branch`). A colon is
+// also common in content pushes and in Windows paths, so pin that the deletion
+// check does not swallow them — a false negative here would silence the hint on
+// exactly the worktree pushes it exists to catch.
+run('a colon in a refspec or Windows path is still a content push', () => {
+  assert.equal(isGitPush('git push origin HEAD:refs/heads/foo'), true);
+  assert.equal(isGitPush('git -C C:/Users/x/wt push -u origin br'), true);
+});
+run('a real push after a heredoc body is still detected', () => {
+  const cmd = ["gh pr create --body \"$(cat <<'EOF'", 'body text', 'EOF', ')" && git push -u origin b'].join('\n');
+  assert.equal(isGitPush(cmd), true);
 });
 
 // --- gitPushCwd: diff the tree being PUSHED ---
