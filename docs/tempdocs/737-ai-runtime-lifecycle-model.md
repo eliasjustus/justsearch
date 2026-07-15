@@ -1177,3 +1177,33 @@ FE, sonnet for mechanical chunks and ceremony.
 
 **Log:** (appended as work lands)
 - Plan approved; `/inference-runtime` loaded; §15 opened.
+- Phase 1 landed (`1eb5c50e`): runtimestate package (Spec/Status/Lease/Reconciler),
+  chatEnabled on UiSettings (nullable, default-off — plan correction: a true
+  default would surprise-start engines; activation success writes true),
+  reconciler scoped to boot+spec-write convergence (fighting-controllers
+  avoidance), ArchUnit caller-forcing with PHASE-2-REMOVE allowlist, autostart
+  env → spec seed, 15 tests.
+- Phase 4 subset landed in parallel via isolated worktree (`172f640b`, merged
+  `22e3da36`): 4 ops de-circularized (reload keeps its legitimate gate), dead
+  IndexedRoot/GpuAvailable vocabulary + lying resolver arms deleted (operation
+  schema baseline recaptured, both SSOT copies), activation policy check
+  unified on `RuntimeActivationService.enforceActivationPolicy`, denials
+  remedy-bearing on dispatch+undo paths, lifecycle ops now always-listed on
+  the agent surface (empty set → no derived availability → offered;
+  verified mechanism in AgentOperationEmitter.isAvailableNow).
+- runtime-state fork-gate register landed (`1db91234`): 6 live referencers +
+  5 projection-pending rows; negative probe verified; register-guard-resolution
+  wired; contract-projection drift was OUR settings-v2 change (agent
+  misattributed as pre-existing) — wire types regenerated.
+- Orchestrator review caught a Phase-1 gap (`b175cf30`, wrong-gate class):
+  `specChanged()` had zero production callers. SettingsController now fires a
+  nudge when a v2 write CHANGES chatEnabled (captured pre-merge — mergeV2Into
+  mutates in place); LocalApiServer threads it from
+  HeadAssembly.runtimeReconciler(). 4 tests.
+- **Checkpoint 1 PASSED live** (stack from this worktree's dist, 2026-07-15):
+  (1) boot honors unset spec — engine down, mode offline, no autostart
+  surprise; (2) /api/status inference block byte-shape unchanged; (3) POST
+  /api/settings/v2 {"ui":{"chatEnabled":true}} → transitioning → online,
+  available:true — full persist→nudge→reconciler→transition chain live;
+  (4) chatEnabled:false → mode indexing, llama-server.exe process gone
+  (tasklist-verified). Stack stopped after.
