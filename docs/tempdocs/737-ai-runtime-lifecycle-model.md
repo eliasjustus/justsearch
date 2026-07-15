@@ -1,7 +1,7 @@
 ---
 title: "AI-runtime lifecycle — why local fixes come out wrong, and the spec/status model that replaces the mode enum"
 type: tempdocs
-status: "IMPLEMENTED on branch worktree-737-ai-runtime (2026-07-15): full arc §8 takeover → §9 panel → §10 theorize → §11 research → §12-13 design → §14 derisk (8/10) → §15 implementation. Authority (spec/status/lease/reconciler) live; 4 circular ops de-circularized + dead capability vocabulary deleted; VDU rerouted through procedures (§3d inexpressible); wire additive fields + deprecated aliases; FE renders the authority (background verdict; intent-write buttons); core.set-chat-enabled supersedes switch-inference-mode; runtime-state fork gate live (first catch already recorded). Full suite + 34-gate kernel green; live E2E: boot-honors-spec, activation→spec-true, real LLM round-trip, browser-verified Shut Down/Resume Chat AI (§3b dead-button class fixed on screen). Remaining (§15 tail): live soft-off VDU observation (unit-covered), alias/Mode retirement per §12d triggers, sized lease grants (future). NOT MERGED — no PR until owner's word; reconcile with 0.2.0 release branch at merge."
+status: "IMPLEMENTED + REVIEWED on branch worktree-737-ai-runtime (2026-07-15, 21 commits): full arc §8→§15 complete incl. refute-first review (F2 HIGH install/activation race found+fixed as multi-kind procedures; REST intent-write; ArchUnit carve-out closed) and tempdoc-fit review. Full suite + 34-gate kernel green; live E2E incl. browser-verified Shut Down/Resume Chat AI and 30s post-activation stability. OPEN (§16): R1 reason-code register join (do before/with merge), R2 lease→MMF derivation, R3-R7 triggered deferrals, R8 merge reconciliation with 0.2.0. NOT MERGED — no PR until owner's word."
 created: 2026-07-15
 updated: 2026-07-15
 author: "agent (opened from the 0.2.0 release round; owner-directed 2026-07-15)"
@@ -1400,3 +1400,60 @@ Review takeaway recorded: the F2 class was predicted by the design's own P3
 ("machine actors hold non-spec state only inside declared procedures") — the
 violation was implementing two machine holds *without* procedures; the
 principle held, the coverage was incomplete.
+
+### §15 tempdoc-fit review (2026-07-15) — conceptual alignment verdict + tracked follow-ups
+
+A goals-level fit review (implementation vs §1/§2/§12) found the design
+substantially satisfied — purpose, done criterion, soft-off semantics, all §3
+symptom classes, orphan teardown, staging constraint — with **two §12 promises
+narrowed in implementation**, now tracked here explicitly (they were
+implementation-level narrowings, not recorded deferrals, until this entry):
+
+1. **Reason-code register join (medium — do before or with merge).** §12a
+   promised RuntimeStatus reasons join the `LifecycleReasonCode` +
+   `check-readiness-reason-codes` register/gate ("same register, same drift
+   gate, NOT a parallel one"). Shipped: free-string reasons
+   (`RuntimeStatus.java:87` — self-documented as pending) flowing to the wire
+   via `engineReason`. That is an ungated second reason vocabulary — the drift
+   class this tempdoc kills. **Fix direction:** promote the RuntimeStatus
+   reason strings to registered codes (LifecycleReasonCode members + FE
+   rows/`feDerived`/`noWordingExempt` entries per the gate's grammar), or
+   extend the readiness-reason-codes register to cover the runtime-state
+   vocabulary with the same Java↔TS drift check.
+2. **Lease→MMF wiring (small).** §12c names the MMF boolean as the lease's
+   projection; shipped, `InferenceWiring.java:40` still derives it from the
+   Mode listener and `RuntimeGpuLease` is a passive mirror with no consumer.
+   Functionally identical today. **Fix direction:** derive the MMF write from
+   lease state (ordering note: the reconciler's listener updates the lease
+   mirror; the MMF writer must observe post-mirror state), or fold into the
+   sized-grants work (P4 trigger) — whichever lands first.
+
+## §16 Remaining work (consolidated; each with trigger + evidence state)
+
+| # | Item | Trigger / when | State |
+|---|---|---|---|
+| R1 | Reason-code register join (fit-review #1) | before/with merge to main | code self-documents the gap; no gate protects the new vocabulary |
+| R2 | Lease→MMF derivation (fit-review #2) | with R1 or at sized grants (P4) | cosmetic today; lease has no consumer |
+| R3 | Live soft-off VDU observation | first live VDU campaign (needs 5-min idle + pending VDU docs) | semantics unit-covered: `RuntimeReconcilerTest` background-reason + return-to-spec tests |
+| R4 | `phase`/`starting` wire alias retirement + `Mode` enum deletion/retype | FE cutover shipped + public runtime-contract deprecation window | aliases `@Deprecated` with trigger note in `InferenceRuntimeView` |
+| R5 | `/api/inference/mode` + `api/domains/status.ts:switchInferenceMode` + `core.switch-inference-mode` alias retirement | same window as R4 (all now intent-write-backed, zero FE callers) | observation shard entry exists |
+| R6 | Sized GPU lease grants (co-residency, §11b tiers) | first co-residency request (12 GB+ tier or second Head-side GPU consumer) | interface admits sizes; binary logic shipped |
+| R7 | General establishes-gate (P1's strong form) | when hand-declared requirement sets recur as a problem; P1 retires when requirements become derived | 4 historic ops pinned by `CapabilityAvailabilityTest.deCircularizedLifecycleOpsDeriveEmptyAvailability`; new ops unprotected |
+| R8 | Merge reconciliation with 0.2.0 release branch | at merge (owner's word pending) | hot files: the 4 catalog lines, `BrainSurface.ts`, `RuntimeActivationService.java` |
+
+**Unverified assumptions (honest list):** (a) soft-off VDU behaves live as
+unit-tested (R3); (b) external llama-server adoption under spec-off detaches
+cleanly live (detach path unit-covered, not live-driven this session); (c) the
+FE poll-lag observed after intent clicks (~seconds, cosmetic) has no deeper
+cause — not investigated; (d) `transitionsTotal: 3` after the F2 live check was
+not decomposed per-transition (stability + spec persistence were the asserted
+evidence, and held).
+
+**Evidence-pointer note for outside readers:** live-verification claims in §15
+cite this branch's test names (all in-repo), gate outputs
+(`node scripts/governance/run.mjs`), and dev-stack API outputs reproducible
+via the §15-described procedure; browser screenshots referenced by session ID
+are agent-session artifacts, not repo files — the durable regression evidence
+is the test suite (`BrainSurface.chat-intent.test.ts`,
+`RuntimeReconcilerTest`, `SettingsControllerSpecNudgeTest`,
+`CapabilityAvailabilityTest`).
