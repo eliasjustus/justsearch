@@ -573,3 +573,43 @@ class TestCleanFailsClosedOnStuckHandle:
         # Attempted the delete twice: once before the sweep, once as the retry.
         assert call_count["n"] == 2
         assert data_dir.is_dir()
+
+
+class TestHealthTimeoutEnvOverride:
+    """707 gate-run unblocker: JSEVAL_HEALTH_TIMEOUT_SEC must reach start_backend
+    without threading a kwarg through every CLI call site — the two prior 707
+    gate attempts died at the fixed 120s boundary (tempdoc 719 deferred-checks),
+    and corpus-fidelity/corpus-probe don't pass health_timeout_sec."""
+
+    def _remaining(self, mock_health):
+        deadline = mock_health.call_args.args[1]
+        return deadline - time.monotonic()
+
+    @patch("jseval.backend.subprocess.Popen")
+    @patch("jseval.backend._wait_for_health", return_value=True)
+    def test_env_var_raises_boundary(self, mock_health, mock_popen, monkeypatch):
+        monkeypatch.setenv("JSEVAL_HEALTH_TIMEOUT_SEC", "300")
+        mock_popen.return_value = MagicMock()
+        start_backend()
+        assert 290 < self._remaining(mock_health) <= 300.5
+
+    @patch("jseval.backend.subprocess.Popen")
+    @patch("jseval.backend._wait_for_health", return_value=True)
+    def test_default_without_env(self, mock_health, mock_popen, monkeypatch):
+        monkeypatch.delenv("JSEVAL_HEALTH_TIMEOUT_SEC", raising=False)
+        mock_popen.return_value = MagicMock()
+        start_backend()
+        assert 110 < self._remaining(mock_health) <= 120.5
+
+    @patch("jseval.backend.subprocess.Popen")
+    @patch("jseval.backend._wait_for_health", return_value=True)
+    def test_explicit_kwarg_beats_env(self, mock_health, mock_popen, monkeypatch):
+        monkeypatch.setenv("JSEVAL_HEALTH_TIMEOUT_SEC", "300")
+        mock_popen.return_value = MagicMock()
+        start_backend(health_timeout_sec=77)
+        assert 67 < self._remaining(mock_health) <= 77.5
+
+    def test_garbage_env_fails_closed(self, monkeypatch):
+        monkeypatch.setenv("JSEVAL_HEALTH_TIMEOUT_SEC", "soon")
+        with pytest.raises(ValueError, match="JSEVAL_HEALTH_TIMEOUT_SEC"):
+            start_backend()
