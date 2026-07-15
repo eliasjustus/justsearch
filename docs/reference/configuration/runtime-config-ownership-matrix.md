@@ -180,13 +180,11 @@ Precedence note:
 | - | JUSTSEARCH_INGESTION_SKIP_PATTERNS | justsearch.ingestion.skip.patterns | INGESTION_SKIP_PATTERNS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LAMBDAMART_ENABLED | justsearch.lambdamart.enabled | LAMBDAMART_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LITE_MODE | justsearch.lite.mode | LITE_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_ALLOW_REMOTE | justsearch.llm.allow_remote | LLM_ALLOW_REMOTE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_BACKEND | justsearch.llm.backend | LLM_BACKEND | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_BACKEND_SELECTOR | justsearch.llm.backend_selector | LLM_BACKEND_SELECTOR | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_BACKEND_SUPPORTS | justsearch.llm.backend_supports | LLM_BACKEND_SUPPORTS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_CONTEXT_LENGTH | justsearch.llm.context_length | LLM_CONTEXT_LENGTH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_DEADLINE_MS | justsearch.llm.deadline_ms | LLM_DEADLINE_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_ENABLE_JSON_GUARD | justsearch.llm.enable_json_guard | LLM_ENABLE_JSON_GUARD | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | justsearch.llm.enabled | JUSTSEARCH_LLM_ENABLED | justsearch.llm.enabled | LLM_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | - | JUSTSEARCH_LLM_GPU_LAYERS | justsearch.llm.gpu_layers | LLM_GPU_LAYERS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_MAX_NEW_TOKENS | justsearch.llm.max_new_tokens | LLM_MAX_NEW_TOKENS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -199,10 +197,6 @@ Precedence note:
 | - | JUSTSEARCH_LLM_MODEL_SHA256 | justsearch.llm.model_sha256 | LLM_MODEL_SHA256 | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_QUEUE_CAPACITY | justsearch.llm.queue_capacity | LLM_QUEUE_CAPACITY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_REASONING_BUDGET | justsearch.llm.reasoning_budget | REASONING_BUDGET | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_REMOTE_AUTH_TOKEN | justsearch.llm.remote_auth_token | LLM_REMOTE_AUTH_TOKEN | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_REMOTE_ENDPOINT | justsearch.llm.remote_endpoint | LLM_REMOTE_ENDPOINT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_REP_PENALTY | justsearch.llm.rep_penalty | LLM_REP_PENALTY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_REP_WINDOW | justsearch.llm.rep_window | LLM_REP_WINDOW | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_RNG_SEED | justsearch.llm.rng_seed | LLM_RNG_SEED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_SESSION_WARMUP_MS | justsearch.llm.session_warmup_ms | LLM_SESSION_WARMUP_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_SIMULATED_LATENCY_MS | justsearch.llm.simulated_latency_ms | LLM_SIMULATED_LATENCY_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -212,7 +206,6 @@ Precedence note:
 | - | JUSTSEARCH_LLM_TEMPLATE_REDUCE | justsearch.llm.template_reduce | LLM_TEMPLATE_REDUCE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_TEMPLATE_ROOT | justsearch.llm.template_root | LLM_TEMPLATE_ROOT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_TEMPLATE_SUMMARY | justsearch.llm.template_summary | LLM_TEMPLATE_SUMMARY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_TEMPLATE_TRANSLATE | justsearch.llm.template_translate | LLM_TEMPLATE_TRANSLATE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_THREADS | justsearch.llm.threads | LLM_THREADS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_TOP_P | justsearch.llm.top_p | LLM_TOP_P | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_USE_THINKING | justsearch.llm.use_thinking | USE_THINKING | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |

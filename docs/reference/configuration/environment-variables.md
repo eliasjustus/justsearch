@@ -118,20 +118,13 @@ Scope:
 | `JUSTSEARCH_LLM_TEMPERATURE` | `justsearch.llm.temperature` | Double | Sampling temperature (finite, non-negative). |
 | `JUSTSEARCH_LLM_TOP_P` | `justsearch.llm.top_p` | Double | Top-p sampling parameter. |
 | `JUSTSEARCH_LLM_MIN_P` | `justsearch.llm.min_p` | Double | Min-p sampling parameter. |
-| `JUSTSEARCH_LLM_REP_PENALTY` | `justsearch.llm.rep_penalty` | Double | Repetition penalty value. |
-| `JUSTSEARCH_LLM_REP_WINDOW` | `justsearch.llm.rep_window` | Int | Repetition penalty window. |
-| `JUSTSEARCH_LLM_ENABLE_JSON_GUARD` | `justsearch.llm.enable_json_guard` | Bool | Enable JSON grammar guard. |
 | `JUSTSEARCH_LLM_TEMPLATE_ROOT` | `justsearch.llm.template_root` | Path | Template root directory (invalid path -> `null`). |
-| `JUSTSEARCH_LLM_TEMPLATE_TRANSLATE` | `justsearch.llm.template_translate` | String | Translation template filename. |
 | `JUSTSEARCH_LLM_TEMPLATE_SUMMARY` | `justsearch.llm.template_summary` | String | Summary map template filename. |
 | `JUSTSEARCH_LLM_TEMPLATE_REDUCE` | `justsearch.llm.template_reduce` | String | Summary reduce template filename. |
 | `JUSTSEARCH_LLM_RNG_SEED` | `justsearch.llm.rng_seed` | Long | RNG seed override. |
 | `JUSTSEARCH_LLM_BACKEND_SELECTOR` | `justsearch.llm.backend_selector` | String | Backend selector profile (`auto` by default). |
 | `JUSTSEARCH_LLM_SUMMARY_CHUNK_TOKENS` | `justsearch.llm.summary_chunk_tokens` | Int | Summary chunk size (clamped `>= 32`). |
 | `JUSTSEARCH_LLM_SUMMARY_CHUNK_OVERLAP` | `justsearch.llm.summary_chunk_overlap` | Int | Summary overlap, bounded to `[0, chunk-1]`. |
-| `JUSTSEARCH_LLM_ALLOW_REMOTE` | `justsearch.llm.allow_remote` | Bool | Allows remote backend use when enabled. |
-| `JUSTSEARCH_LLM_REMOTE_ENDPOINT` | `justsearch.llm.remote_endpoint` | String | Remote backend endpoint URL/base. |
-| `JUSTSEARCH_LLM_REMOTE_AUTH_TOKEN` | `justsearch.llm.remote_auth_token` | String | Remote backend auth token. |
 | `JUSTSEARCH_LLM_BACKEND_SUPPORTS` | `justsearch.llm.backend_supports` | CSV List | Backend capability override list (comma-separated). |
 | **Pipeline ids** | | | |
 | **RAG** | | | |

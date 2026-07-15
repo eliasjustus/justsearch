@@ -164,15 +164,6 @@ public enum EnvRegistry {
     /** Min-p sampling parameter. */
     LLM_MIN_P("justsearch.llm.min_p", "JUSTSEARCH_LLM_MIN_P"),
 
-    /** Repetition penalty value. */
-    LLM_REP_PENALTY("justsearch.llm.rep_penalty", "JUSTSEARCH_LLM_REP_PENALTY"),
-
-    /** Repetition penalty sliding window. */
-    LLM_REP_WINDOW("justsearch.llm.rep_window", "JUSTSEARCH_LLM_REP_WINDOW"),
-
-    /** Enables JSON grammar guard. */
-    LLM_ENABLE_JSON_GUARD("justsearch.llm.enable_json_guard", "JUSTSEARCH_LLM_ENABLE_JSON_GUARD"),
-
     /** Enables thinking mode (reasoning_content parsing, --reasoning-format deepseek). Default true. */
     USE_THINKING("justsearch.llm.use_thinking", "JUSTSEARCH_USE_THINKING"),
 
@@ -218,10 +209,6 @@ public enum EnvRegistry {
     /** Template root directory. */
     LLM_TEMPLATE_ROOT("justsearch.llm.template_root", "JUSTSEARCH_LLM_TEMPLATE_ROOT"),
 
-    /** Intent translation template filename. */
-    LLM_TEMPLATE_TRANSLATE(
-        "justsearch.llm.template_translate", "JUSTSEARCH_LLM_TEMPLATE_TRANSLATE"),
-
     /** Summary map template filename. */
     LLM_TEMPLATE_SUMMARY("justsearch.llm.template_summary", "JUSTSEARCH_LLM_TEMPLATE_SUMMARY"),
 
@@ -241,15 +228,6 @@ public enum EnvRegistry {
     /** Summary chunk overlap in tokens. */
     LLM_SUMMARY_CHUNK_OVERLAP(
         "justsearch.llm.summary_chunk_overlap", "JUSTSEARCH_LLM_SUMMARY_CHUNK_OVERLAP"),
-
-    /** Allows remote LLM backend usage. */
-    LLM_ALLOW_REMOTE("justsearch.llm.allow_remote", "JUSTSEARCH_LLM_ALLOW_REMOTE"),
-
-    /** Remote backend endpoint. */
-    LLM_REMOTE_ENDPOINT("justsearch.llm.remote_endpoint", "JUSTSEARCH_LLM_REMOTE_ENDPOINT"),
-
-    /** Remote backend auth token. */
-    LLM_REMOTE_AUTH_TOKEN("justsearch.llm.remote_auth_token", "JUSTSEARCH_LLM_REMOTE_AUTH_TOKEN"),
 
     /** Comma-separated backend task capability overrides. */
     LLM_BACKEND_SUPPORTS("justsearch.llm.backend_supports", "JUSTSEARCH_LLM_BACKEND_SUPPORTS"),

@@ -63,10 +63,10 @@ class EnvRegistryTest {
 
     @Test
     void getBoolean_parsesConfiguredValues() {
-        withSysProp(EnvRegistry.LLM_ALLOW_REMOTE.sysProp(), "yes", () ->
-            assertTrue(EnvRegistry.LLM_ALLOW_REMOTE.getBoolean(false)));
-        withSysProp(EnvRegistry.LLM_ALLOW_REMOTE.sysProp(), "no", () ->
-            assertFalse(EnvRegistry.LLM_ALLOW_REMOTE.getBoolean(true)));
+        withSysProp(EnvRegistry.PROD_MODE.sysProp(), "yes", () ->
+            assertTrue(EnvRegistry.PROD_MODE.getBoolean(false)));
+        withSysProp(EnvRegistry.PROD_MODE.sysProp(), "no", () ->
+            assertFalse(EnvRegistry.PROD_MODE.getBoolean(true)));
     }
 
     @Test
