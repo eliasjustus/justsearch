@@ -119,7 +119,23 @@ to, both measured:
   repo's entire history** (the initial release). The "stop new blobs" benefit is
   zero.
 
-## 7. Unverified assumptions
+## 7. Evidence
+
+| Claim | How |
+|---|---|
+| 3 corpora sets, sizes + dates (§2) | `git log --diff-filter=A --format=%ad --reverse -- scripts/jseval/<set>` for each; sizes via `git ls-tree -r -l origin/main -- <set>` |
+| Not regenerated in place: 1 modification across 195 commits | `git log --diff-filter=M --oneline -- '*/docs.jsonl' '*/fabricated-docs.jsonl'` → one commit (`853e152b`, tempdoc 664); per-file `--diff-filter=A/M` on three sampled corpora → `A=1 M=0` each |
+| `recipe.json` is a deterministic build spec | `git cat-file -p origin/main:scripts/jseval/707-corpora/de-miracl/1000-short-natural/recipe.json` → `method: real-text-injection-v1`, `seed: 707`, explicit `host_mapping` |
+| Materialize + certify + commitment machinery exists | `corpus_generate.materialize_doc_entry:571`, `corpus_certify.certify_materialized_family:65`, `corpus_certify._validate_commitment:905` |
+| 709 caches source corpora outside git | `CACHE_BACKED = /corpus-fetch-(?:clerc|miracl)/i` in `scripts/agent-analytics/hooks/dataset-cache-hint.mjs:36` |
+| `origin/main` has zero LFS-tracked files | `git ls-tree -r --name-only origin/main \| grep -cE '\.(onnx\|gguf)$\|onnx_data'` → 0 |
+| No byte change from the LFS attempt (§4) | manifest hash, LFS pointer `oid`, and working-tree SHA256 all `2223bd9b…` for `707-corpora/de-miracl/1000-short-natural/fabricated-docs.jsonl` |
+| 8/8 manifests verify after withdrawal | SHA256 of each `fabricated-docs.jsonl` vs its `commitment.v1.json` `files` entry → 8 verified, 0 mismatched |
+| `vc_redist.x64.exe` has one commit (§6) | `git log --oneline --follow -- modules/shell/src-tauri/resources/vc_redist.x64.exe` → 1 (`29579e51`, the initial release) |
+| Installer bundles it without lfs (§6) | `tauri.conf.json` `"resources"` lists `resources/vc_redist.x64.exe`; `.github/workflows/build-installer.yml:25` uses bare `actions/checkout@v7` |
+
+
+## 8. Unverified assumptions
 
 - **Materialization was not run.** §3(a) infers reproducibility from `recipe.json`'s
   determinism (explicit seed + host mapping) and the existence of
