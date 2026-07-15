@@ -542,30 +542,6 @@ final class ResolvedConfigBuilderTest {
     }
 
     @Test
-    @DisplayName("contributeYaml reads watcher config from YAML")
-    void watcherConfig() {
-      String yaml =
-          """
-          index:
-            watcher:
-              strategy: polling
-              debounce_ms: 500
-              polling:
-                interval_ms: 2000
-              queue:
-                max_entries: 1000
-          """;
-      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
-      builder.contributeYaml(parseYaml(yaml));
-      ResolvedConfig config = builder.build();
-
-      assertEquals("polling", config.watcher().strategy());
-      assertEquals(500, config.watcher().debounceMs());
-      assertEquals(2000, config.watcher().pollingIntervalMs());
-      assertEquals(1000, config.watcher().queueMaxEntries());
-    }
-
-    @Test
     @DisplayName("contributeYaml reads OCR config including languages list")
     void ocrConfig() {
       String yaml =

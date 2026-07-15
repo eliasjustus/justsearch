@@ -504,18 +504,9 @@ public record ResolvedConfig(
   /**
    * File-system watcher configuration.
    *
-   * @param strategy watcher strategy (native, polling, none)
-   * @param debounceMs debounce interval in milliseconds
    * @param overflowRescanOnOverflow whether to rescan on watcher overflow
-   * @param pollingIntervalMs polling interval in milliseconds (for polling strategy)
-   * @param queueMaxEntries maximum watcher queue entries
    */
-  public record Watcher(
-      String strategy,
-      Integer debounceMs,
-      Boolean overflowRescanOnOverflow,
-      Integer pollingIntervalMs,
-      Integer queueMaxEntries) {}
+  public record Watcher(Boolean overflowRescanOnOverflow) {}
 
   /**
    * OCR (optical character recognition) pipeline configuration.
@@ -625,7 +616,7 @@ public record ResolvedConfig(
   }
 
   /** Collection configuration from YAML {@code index.collections[]}. */
-  public record CollectionCfg(String name, List<Path> roots, String watcherStrategy) {
+  public record CollectionCfg(String name, List<Path> roots) {
     public CollectionCfg {
       roots = roots != null ? List.copyOf(roots) : List.of();
     }

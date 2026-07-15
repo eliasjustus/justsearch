@@ -382,24 +382,7 @@
                                                                                                                                           "type":  "integer",
                                                                                                                                           "minimum":  0
                                                                                                                                       }
-                                                                                                                        },
-                                                                                                             "watcher":  {
-                                                                                                                             "type":  "object",
-                                                                                                                             "additionalProperties":  false,
-                                                                                                                             "properties":  {
-                                                                                                                                                "strategy":  {
-                                                                                                                                                                 "type":  "string",
-                                                                                                                                                                 "enum":  [
-                                                                                                                                                                              "auto",
-                                                                                                                                                                              "nio",
-                                                                                                                                                                              "windows_native",
-                                                                                                                                                                              "watchman",
-                                                                                                                                                                              "rust_notify",
-                                                                                                                                                                              "polling"
-                                                                                                                                                                          ]
-                                                                                                                                                             }
-                                                                                                                                            }
-                                                                                                                         }
+                                                                                                                        }
                                                                                                          },
                                                                                          "required":  [
                                                                                                           "name",
@@ -543,21 +526,6 @@
                                                                         "type":  "object",
                                                                         "additionalProperties":  false,
                                                                         "properties":  {
-                                                                                           "strategy":  {
-                                                                                                            "type":  "string",
-                                                                                                            "enum":  [
-                                                                                                                         "auto",
-                                                                                                                         "nio",
-                                                                                                                         "windows_native",
-                                                                                                                         "watchman",
-                                                                                                                         "rust_notify",
-                                                                                                                         "polling"
-                                                                                                                     ]
-                                                                                                        },
-                                                                                           "debounce_ms":  {
-                                                                                                               "type":  "integer",
-                                                                                                               "minimum":  0
-                                                                                                           },
                                                                                            "overflow":  {
                                                                                                             "type":  "object",
                                                                                                             "additionalProperties":  false,
@@ -566,27 +534,7 @@
                                                                                                                                                           "type":  "boolean"
                                                                                                                                                       }
                                                                                                                            }
-                                                                                                        },
-                                                                                           "queue":  {
-                                                                                                         "type":  "object",
-                                                                                                         "additionalProperties":  false,
-                                                                                                         "properties":  {
-                                                                                                                            "max_entries":  {
-                                                                                                                                                "type":  "integer",
-                                                                                                                                                "minimum":  1
-                                                                                                                                            }
-                                                                                                                        }
-                                                                                                     },
-                                                                                           "polling":  {
-                                                                                                           "type":  "object",
-                                                                                                           "additionalProperties":  false,
-                                                                                                           "properties":  {
-                                                                                                                              "interval_ms":  {
-                                                                                                                                                  "type":  "integer",
-                                                                                                                                                  "minimum":  1
-                                                                                                                                              }
-                                                                                                                          }
-                                                                                                       }
+                                                                                                        }
                                                                                        }
                                                                     },
                                                         "sort":  {

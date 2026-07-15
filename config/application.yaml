@@ -88,14 +88,8 @@ index:
       days: 7
       # max_versions: 3
   watcher:
-    strategy: auto
-    debounce_ms: 50
     overflow:
       rescan_on_overflow: true
-    queue:
-      max_entries: 2048
-    polling:
-      interval_ms: 2000
   ocr:
     enabled: true
     languages: []

@@ -18,11 +18,7 @@ package io.justsearch.configuration;
 public enum ConfigKey {
 
     // -- File watcher --
-    INDEX_WATCHER_STRATEGY("index.watcher.strategy"),
-    INDEX_WATCHER_DEBOUNCE_MS("index.watcher.debounce_ms"),
     INDEX_WATCHER_RESCAN_ON_OVERFLOW("index.watcher.overflow.rescan_on_overflow"),
-    INDEX_WATCHER_POLLING_INTERVAL_MS("index.watcher.polling.interval_ms"),
-    INDEX_WATCHER_QUEUE_MAX_ENTRIES("index.watcher.queue.max_entries"),
 
     // -- OCR --
     INDEX_OCR_LANGUAGES("index.ocr.languages"),

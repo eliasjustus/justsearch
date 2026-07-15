@@ -85,11 +85,7 @@ Precedence note:
 | index.vector.hnsw.ef_construction | JUSTSEARCH_INDEX_VECTOR_HNSW_EF_CONSTRUCTION | index.vector.hnsw.ef_construction | INDEX_VECTOR_HNSW_EF_CONSTRUCTION | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.vector.hnsw.m | JUSTSEARCH_INDEX_VECTOR_HNSW_M | index.vector.hnsw.m | INDEX_VECTOR_HNSW_M | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.vector.quantization.enabled | JUSTSEARCH_INDEX_VECTOR_QUANTIZATION_ENABLED | index.vector.quantization.enabled | INDEX_VECTOR_QUANTIZATION_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| index.watcher.debounce_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.watcher.overflow.rescan_on_overflow | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| index.watcher.polling.interval_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| index.watcher.queue.max_entries | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| index.watcher.strategy | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.writer.max_buffered_docs | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.writer.ram_buffer_mb | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | - | JUSTSEARCH_INDEXER_WORKER_VERSION | indexer.worker.version | INDEXER_WORKER_VERSION | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |

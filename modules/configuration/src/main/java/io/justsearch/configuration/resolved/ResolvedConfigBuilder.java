@@ -320,12 +320,8 @@ public final class ResolvedConfigBuilder {
   }
 
   private void contributeYamlWatcher(JsonNode root) {
-    putYaml("index.watcher.strategy", root, "index.watcher.strategy");
-    putYamlInt("index.watcher.debounce_ms", root, "index.watcher.debounce_ms");
     putYamlBoolean("index.watcher.overflow.rescan_on_overflow", root,
         "index.watcher.overflow.rescan_on_overflow");
-    putYamlInt("index.watcher.polling.interval_ms", root, "index.watcher.polling.interval_ms");
-    putYamlInt("index.watcher.queue.max_entries", root, "index.watcher.queue.max_entries");
   }
 
   private void contributeYamlOcr(JsonNode root) {
@@ -1256,11 +1252,7 @@ public final class ResolvedConfigBuilder {
 
   private ResolvedConfig.Watcher buildWatcher() {
     return new ResolvedConfig.Watcher(
-        resolveString("index.watcher.strategy", null),
-        resolveNullableInt("index.watcher.debounce_ms"),
-        resolveNullableBoolean("index.watcher.overflow.rescan_on_overflow"),
-        resolveNullableInt("index.watcher.polling.interval_ms"),
-        resolveNullableInt("index.watcher.queue.max_entries"));
+        resolveNullableBoolean("index.watcher.overflow.rescan_on_overflow"));
   }
 
   private ResolvedConfig.Ocr buildOcr() {
@@ -1339,13 +1331,7 @@ public final class ResolvedConfigBuilder {
             }
           }
         }
-        String strategy = null;
-        JsonNode watcherNode = node.path("watcher");
-        if (watcherNode.isObject()) {
-          String s = watcherNode.path("strategy").asText(null);
-          if (s != null && !s.isBlank()) strategy = s;
-        }
-        out.add(new ResolvedConfig.CollectionCfg(name, roots, strategy));
+        out.add(new ResolvedConfig.CollectionCfg(name, roots));
       }
       return new ResolvedConfig.Collections(List.copyOf(out));
     } catch (Exception e) {
