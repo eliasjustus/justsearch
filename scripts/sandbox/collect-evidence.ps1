@@ -80,39 +80,44 @@ Write-Log "EvidenceDir: $EvidenceDir"
 Write-Log "DataDir: $DataDir"
 
 # ---------------------------------------------------------------------------
-# Step 0: Elevation self-check (D3, tempdoc 728-followup)
+# Step 0: Elevation self-check (D3, tempdoc 728-followup; reframed tempdoc 729)
 # ---------------------------------------------------------------------------
-# sandbox-CLAUDE.md's UAC announce-and-attribute protocol relies on the
-# operator being the only sensor for a UAC prompt during the JustSearch
-# install -- but if THIS session's own terminal is already running elevated,
-# no UAC prompt can appear at all regardless of what the installer requests
-# (Windows does not re-prompt an already-elevated process tree). A round
-# running elevated silently produces nothing for that protocol item, which
-# reads indistinguishably from "no prompt appeared, so it passed." Detect
-# and record this so the round reports "structurally unobservable" instead.
-# Same detection pattern as scripts/bench/_lib/launch-elevated.ps1.
+# The README's "no admin rights needed" claim is verified host-side by
+# scripts/ci/check-installer-execution-level.mjs (config + built-artifact
+# manifest) -- this round no longer needs to prove it. What THIS session's
+# elevation state still affects is REALISM, not observability-of-a-claim: an
+# elevated round does not reproduce a normal user's environment and can mask
+# permission defects a real (non-admin) user would hit -- a pass that depends
+# on an environment precondition is not a pass (this repo's
+# green-masked-destructive principle). It also happens to make a UAC prompt
+# unobservable (an already-elevated process tree is never re-prompted), which
+# is a secondary, structural consequence worth recording, not the main reason
+# to avoid running elevated. Same detection pattern as
+# scripts/bench/_lib/launch-elevated.ps1.
 $isElevated = [Security.Principal.WindowsPrincipal]::new(
     [Security.Principal.WindowsIdentity]::GetCurrent()
 ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if ($isElevated) {
     $elevationNote = "ELEVATED: this session's terminal is running with Administrator " +
-        "privileges. The UAC announce-and-attribute protocol (sandbox-CLAUDE.md) CANNOT " +
-        "observe a UAC prompt during the JustSearch install this round -- an already-" +
-        "elevated process tree is never re-prompted by UAC, regardless of whether the " +
-        "installer requests elevation. Record the UAC item as STRUCTURALLY UNOBSERVABLE " +
-        "this round (with this reason), not as a pass or as silence. The structural fact " +
-        "that substitutes for it -- the installer is per-user " +
+        "privileges. This round does NOT reproduce a normal (non-admin) user's " +
+        "environment and can mask permission defects a real user would hit -- a pass " +
+        "obtained under this precondition is not a clean pass. As a structural " +
+        "consequence, no UAC prompt can appear during the JustSearch install this round " +
+        "regardless of what the installer requests (an already-elevated process tree is " +
+        "never re-prompted); record any UAC-observation item as STRUCTURALLY " +
+        "UNOBSERVABLE this round (with this reason), not as a pass or as silence. The " +
+        "no-admin claim itself does not depend on this round: the installer is per-user " +
         "(bundle.windows.nsis.installMode: currentUser, ADR-0024) and requests no " +
-        "elevation -- is asserted mechanically, independent of sandbox elevation state, " +
-        "by scripts/ci/check-installer-execution-level.mjs (proves only that the " +
-        "installer doesn't request elevation; says nothing about SmartScreen/publisher " +
-        "trust)."
+        "elevation, asserted mechanically -- config AND built-artifact manifest -- by " +
+        "scripts/ci/check-installer-execution-level.mjs (proves only that the installer " +
+        "doesn't request elevation; says nothing about SmartScreen/publisher trust)."
 }
 else {
     $elevationNote = "NOT ELEVATED: this session's terminal is running as a standard " +
-        "user. A UAC prompt during the JustSearch install, if one appears, IS observable " +
-        "this round per the announce-and-attribute protocol."
+        "user, reproducing a normal user's install environment. If a UAC prompt appears " +
+        "during the JustSearch install, that is a finding -- record the publisher shown " +
+        "and report it."
 }
 Write-Log $elevationNote
 $elevationNote | Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "elevation-check.txt")
@@ -566,10 +571,10 @@ $summaryLines += "Resolved port: $port (source: $portSource)"
 $summaryLines += "Base URL: $base"
 $summaryLines += ""
 if ($isElevated) {
-    $summaryLines += "Elevation self-check: ELEVATED -- UAC prompt during install is structurally unobservable this round (see elevation-check.txt)"
+    $summaryLines += "Elevation self-check: ELEVATED -- round does not reproduce a normal user's environment (can mask permission defects); UAC prompt during install is also structurally unobservable this round (see elevation-check.txt)"
 }
 else {
-    $summaryLines += "Elevation self-check: not elevated -- UAC prompt during install IS observable this round (see elevation-check.txt)"
+    $summaryLines += "Elevation self-check: not elevated -- round reproduces a normal user's environment; UAC prompt during install IS observable this round (see elevation-check.txt)"
 }
 $summaryLines += ""
 $summaryLines += "API sanity ladder:"

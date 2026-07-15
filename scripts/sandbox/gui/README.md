@@ -68,7 +68,7 @@ Mitigations:
 |---|---|
 | UIA element targeting inside WebView2 (`AutomationElement.FromHandle`) | Web content is **opaque** to UI Automation — the root is `class='Tauri Window'` with only ~17 descendant elements (drag/resize region, a couple of named panes), no DOM tree. Element-based targeting is not available this way. |
 | `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` (e.g. `--force-renderer-accessibility`, `--remote-debugging-port`) | **Ignored.** WebView2 only honours this env var when the host app does not set `AdditionalBrowserArguments` itself, and Tauri does set it. Enabling CDP/accessibility this way needs a build/config change, not an in-sandbox trick — and per the `/start` skill's rule against patching product code in-sandbox, that change belongs in the repo, not the round. |
-| UAC secure desktop | **Still uncapturable by design** — no script here changes that. The operator remains the only sensor for UAC prompts; the announce-and-attribute protocol in `sandbox-CLAUDE.md` stays necessary. |
+| UAC secure desktop | **Still uncapturable by design** — no script here changes that. The no-admin claim itself is now verified host-side (`scripts/ci/check-installer-execution-level.mjs` against the built installer); the round's residual job per `sandbox-CLAUDE.md` is just to report an elevation prompt as a finding if one appears. |
 
 ## Structured alternative (not superseded by this tier)
 

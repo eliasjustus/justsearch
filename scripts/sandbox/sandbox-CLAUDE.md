@@ -264,30 +264,26 @@ against two independently rebuilt dev indexes and diffing them to measure the en
    unsigned-publisher UI, any failure to honour `/S`, and the exact action needed
    to continue. (These Windows-trust prompts cannot be CI-gated — they are the
    Sandbox's unique responsibility; see the must-watch items in `coverage-brief.md`.)
-   **UAC announce-and-attribute protocol:** before any step that legitimately
-   elevates (e.g. the Git/Node MSI), announce it to the operator first with the
-   expected publisher and the fact that it is NOT JustSearch. Before the
-   JustSearch install itself, announce that NO elevation is expected — any UAC
-   prompt during it is a finding (note the publisher shown, report it). UAC
-   renders on the secure desktop, so screenshots cannot capture it; the operator
-   is the only sensor, which is why attribution must be pre-announced, not
-   inferred after the fact. Sequence elevating installs (Git, Node) far from the
-   JustSearch install so a stray prompt can't be misattributed.
-   **Elevated-terminal fallback:** if this session's own terminal is already
-   running elevated (`collect-evidence.ps1` self-checks this at Step 0 and
-   writes `evidence/elevation-check.txt`), NO UAC prompt can appear during the
-   JustSearch install regardless of what the installer requests — an
-   already-elevated process tree is never re-prompted. In that case, observing
-   "no UAC prompt appeared" is not a pass; it is the elevation making the
-   observation impossible. Record it explicitly as **structurally
-   unobservable this round** (state the reason), and substitute the
-   structural facts instead: the installer is per-user
-   (`bundle.windows.nsis.installMode: currentUser`, ADR-0024) and requests no
-   elevation. A host-side check now asserts that structural fact mechanically
-   on every build (`scripts/ci/check-installer-execution-level.mjs`) — it
-   proves only that the installer doesn't request elevation, nothing about
-   SmartScreen or unsigned-publisher warnings (those stay this round's job to
-   observe whenever elevation posture allows it).
+   **The no-admin claim is verified host-side, not by this round.** The
+   README's "no admin rights needed" claim is now asserted mechanically by
+   `scripts/ci/check-installer-execution-level.mjs`, which checks both the
+   source config (`bundle.windows.nsis.installMode: currentUser`, ADR-0024)
+   and — when a built installer is available — the BUILT installer's embedded
+   Windows manifest (`requestedExecutionLevel="asInvoker"`). The round does
+   not need to prove this. Your one residual job: **if any elevation prompt
+   appears during the JustSearch install, that is a finding** — note the
+   publisher shown and report it.
+   **Run this round non-elevated.** UAC renders on the secure desktop, so
+   screenshots can't capture it, and an already-elevated session is never
+   re-prompted (an elevated process tree cannot observe a UAC prompt at all,
+   regardless of what the installer requests). But that is not the reason to
+   run non-elevated: an elevated round does not reproduce a normal user's
+   environment and can mask permission defects a real user would hit — a pass
+   that depends on an environment precondition is not a pass (this repo's
+   `green-masked-destructive` principle). If this session's own terminal is
+   already elevated (`collect-evidence.ps1` self-checks this at Step 0 and
+   writes `evidence/elevation-check.txt`), say so in the round's summary —
+   an elevation prompt was structurally impossible to observe this round.
 2. **First app launch** — does `%LOCALAPPDATA%\JustSearch\JustSearch.exe` start
    and render? Save `evidence/NN-first-paint.png`.
 3. **Backend health** — read the runtime manifest, then save raw `/api/health`,
