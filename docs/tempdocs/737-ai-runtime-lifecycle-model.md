@@ -1,7 +1,7 @@
 ---
 title: "AI-runtime lifecycle — why local fixes come out wrong, and the spec/status model that replaces the mode enum"
 type: tempdocs
-status: "open — takeover (§8), rewrite panel (§9), theorization (§10), research (§11), and DESIGN (§12-13, 2026-07-15) complete: one Head-side runtime authority (desired-state spec + Condition-shaped status + GPU lease arbiter + single-writer reconciler), five existing vocabularies become derived projections, orphan list named. Next: /derisk → /plan. No implementation."
+status: "IMPLEMENTED on branch worktree-737-ai-runtime (2026-07-15): full arc §8 takeover → §9 panel → §10 theorize → §11 research → §12-13 design → §14 derisk (8/10) → §15 implementation. Authority (spec/status/lease/reconciler) live; 4 circular ops de-circularized + dead capability vocabulary deleted; VDU rerouted through procedures (§3d inexpressible); wire additive fields + deprecated aliases; FE renders the authority (background verdict; intent-write buttons); core.set-chat-enabled supersedes switch-inference-mode; runtime-state fork gate live (first catch already recorded). Full suite + 34-gate kernel green; live E2E: boot-honors-spec, activation→spec-true, real LLM round-trip, browser-verified Shut Down/Resume Chat AI (§3b dead-button class fixed on screen). Remaining (§15 tail): live soft-off VDU observation (unit-covered), alias/Mode retirement per §12d triggers, sized lease grants (future). NOT MERGED — no PR until owner's word; reconcile with 0.2.0 release branch at merge."
 created: 2026-07-15
 updated: 2026-07-15
 author: "agent (opened from the 0.2.0 release round; owner-directed 2026-07-15)"
@@ -1321,3 +1321,39 @@ FE, sonnet for mechanical chunks and ceremony.
     the correct patch bump for that classification. Expected to read green immediately once this
     branch is committed.
   - Remaining Phase 2a scope from the brief: none — all four numbered tasks landed.
+
+### §15 closure (2026-07-15) — Phase 6 verification record
+
+- **Phases 3+4-final landed** (`38095e0f`): `core.set-chat-enabled` (LOW/no-confirm,
+  empty requirements, supersedes `switch-inference-mode` via OperationLineage; old op
+  is an alias through the same spec-write); FE renders the authority (new `background`
+  verdict kind — "Background processing … chat is off"; every Brain/overlay button is
+  an intent write; no dead primary action in any state); fossils replaced by
+  model-agnostic acceptance tests. The full suite then caught a count-pin the module
+  subsets missed (`RegistryControllerTest` 29→30 — `subset-isnt-the-suite`, live).
+- **Full verification**: whole-repo `gradlew test` green (unmasked exit 0); FE
+  typecheck + 3773 unit tests green; governance kernel **34 gates, 0 fail**.
+- **Live E2E** (stack from this worktree's dist, real model
+  Qwen3.5-9B Q4 on cuda12): activation success persisted `chatEnabled=true`
+  (Phase-1 rule observed live); **boot convergence** brought the engine online with
+  no activation call (the "AI offline after reopen" confusion, fixed and observed);
+  new wire fields live (`engineState: Healthy`, `leaseHolder: CHAT`,
+  `chatEnabledSpec: true`, `phase` alias intact); real LLM round-trip 1.3 s.
+  **Browser-verified**: Brain Simple panel Online → "Shut Down AI" click → backend
+  spec=false, engine Down (`gpu-yielded-to-indexing`), UI amber "Indexing" with all
+  surfaces agreeing (no §3c fork) → **"Resume Chat AI" click → engine back online,
+  model loaded, gen 3** — the §3b dead-button class fixed on screen. FE poll lag of
+  a few seconds observed between click and panel refresh (cosmetic; logged).
+- **Env facts for future rounds** (logged): raw `git worktree add` skips
+  prepare-worktree — cuda12 staging + FE `npm ci` must be done manually
+  (`variantsRoot` resolves once at boot → restart after staging); the FE
+  `npm install` repair churns `package-lock.json` (restored).
+- **Honest limits**: live soft-off VDU observation not performed (needs 5-min idle
+  + pending VDU docs; semantics unit-covered incl. the background reason and
+  return-to-spec; the InferenceCapability soft-off DEGRADED derivation is
+  unit-covered); `/api/inference/mode` REST endpoint still switches modes directly
+  (foreign to the reconciler — logged as alias-retirement work, §12d).
+- **Deferred per design**: `phase`/`starting` alias retirement + `Mode` deletion
+  (§12d triggers: FE cutover shipped + public deprecation window); sized lease
+  grants (P4 trigger: first co-residency request); the general establishes-gate
+  (P1 retires the simple form when requirements become derived).
