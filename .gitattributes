@@ -27,4 +27,3 @@ modules/adapters-lucene/src/main/resources/SSOT/catalogs/synonyms.*.v1.txt text 
 *.int8-backup filter=lfs diff=lfs merge=lfs -text
 *.fp32-backup filter=lfs diff=lfs merge=lfs -text
 *onnx_data filter=lfs diff=lfs merge=lfs -text
-
