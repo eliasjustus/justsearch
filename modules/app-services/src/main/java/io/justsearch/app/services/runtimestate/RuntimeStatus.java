@@ -31,12 +31,25 @@ public record RuntimeStatus(List<Condition> conditions) {
   }
 
   /**
-   * A machine-actor procedure holding the engine in a non-spec state (§12a). Phase 2 models
-   * {@link ProcedureKind#VDU_BATCH}; install / activation join later. Carries {@code startedAt},
-   * a coarse {@code phase} string, and the internal {@code reason} code.
+   * A machine-actor procedure holding the engine in a non-spec state (§12a). Multiple procedures of
+   * distinct kinds may be active at once; the reconciler suppresses drift convergence while ANY is
+   * active and returns the engine to spec only when the last one ends (tempdoc 737 §12a fix pack).
+   * Carries {@code startedAt}, a coarse {@code phase} string, and the internal {@code reason} code.
+   *
+   * <ul>
+   *   <li>{@link #VDU_BATCH} — the offline VDU→embeddings run.
+   *   <li>{@link #ACTIVATION} — a runtime-variant activation window (engine comes up via
+   *       {@code applyRuntimeOverrides}; the bracket stops the reconciler from fighting it before
+   *       the desired-state write lands).
+   *   <li>{@link #INSTALL_SMOKE_TEST} — the post-install smoke test that briefly needs the engine up
+   *       to answer one question, even when the user's spec still has chat disabled (install ≠
+   *       enable — the engine converges back down when the procedure ends).
+   * </ul>
    */
   public enum ProcedureKind {
-    VDU_BATCH
+    VDU_BATCH,
+    ACTIVATION,
+    INSTALL_SMOKE_TEST
   }
 
   /** In-flight procedure overlay descriptor (immutable). */

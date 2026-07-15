@@ -17,7 +17,9 @@ import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
 import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import io.justsearch.app.services.lifecycle.InferenceCapability;
+import io.justsearch.app.services.runtimestate.RuntimeReconciler;
 import io.justsearch.app.services.runtimestate.RuntimeSpecStore;
+import io.justsearch.app.services.runtimestate.RuntimeStatus;
 import io.justsearch.app.services.worker.OnnxModelStatus;
 import io.justsearch.app.services.worker.WorkerFeatureCache;
 import io.justsearch.configuration.EnvRegistry;
@@ -111,6 +113,12 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
   private final WorkerFeatureCache workerFeatureCache; // nullable
   private final InferenceCapability inferenceCapability; // nullable — tempdoc 656 Task 2
   private final AiInstallService aiInstallService; // nullable — tempdoc 727 F-3
+  // Tempdoc 737 fix pack (fix 2): the single-writer runtime authority. When present, runActivate
+  // brackets the engine-online + desired-state-write window in an ACTIVATION procedure so the
+  // reconciler does not drift-converge the freshly-started engine DOWN before recordUserEnabled has
+  // persisted the intent — and nudges specChanged() so the persisted intent is honored
+  // deterministically, not via a racy mode-drift event. Nullable for graceful degradation / tests.
+  private final RuntimeReconciler runtimeReconciler;
 
   private final Path aiHome;
   private final Path statusPath;
@@ -185,6 +193,32 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       WorkerFeatureCache workerFeatureCache,
       InferenceCapability inferenceCapability,
       AiInstallService aiInstallService) {
+    this(
+        onlineAi,
+        settingsStore,
+        gpuCapabilitiesService,
+        policyService,
+        workerFeatureCache,
+        inferenceCapability,
+        aiInstallService,
+        null);
+  }
+
+  /**
+   * Tempdoc 737 fix pack (fix 2): adds the nullable {@link RuntimeReconciler} so {@link
+   * #runActivate} can bracket the engine-online + intent-write window in an {@code ACTIVATION}
+   * procedure and nudge {@code specChanged()}. Nullable for graceful degradation / existing test
+   * compatibility, matching {@code workerFeatureCache}/{@code inferenceCapability}.
+   */
+  public RuntimeActivationService(
+      OnlineAiService onlineAi,
+      UiSettingsStore settingsStore,
+      GpuCapabilitiesService gpuCapabilitiesService,
+      EnterprisePolicyService policyService,
+      WorkerFeatureCache workerFeatureCache,
+      InferenceCapability inferenceCapability,
+      AiInstallService aiInstallService,
+      RuntimeReconciler runtimeReconciler) {
     this.onlineAi = Objects.requireNonNull(onlineAi, "onlineAi");
     this.settingsStore = Objects.requireNonNull(settingsStore, "settingsStore");
     this.gpuCapabilitiesService = gpuCapabilitiesService == null ? new GpuCapabilitiesService() : gpuCapabilitiesService;
@@ -192,6 +226,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
     this.workerFeatureCache = workerFeatureCache; // may be null (graceful degradation)
     this.inferenceCapability = inferenceCapability; // may be null (graceful degradation)
     this.aiInstallService = aiInstallService; // may be null (graceful degradation)
+    this.runtimeReconciler = runtimeReconciler; // may be null (graceful degradation)
     this.aiHome = resolveAiHome();
     this.statusPath = aiHome.resolve("ai").resolve(STATUS_FILE);
     this.variantsRoot = resolveVariantsRoot();
@@ -522,16 +557,41 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
         throw new IllegalStateException("Server executable override is locked by operator config");
       }
 
-      applyRuntimeOverridesBestEffort(next);
+      // Tempdoc 737 fix pack (fix 2): bracket the engine-online + intent-write window in an
+      // ACTIVATION procedure. applyRuntimeOverrides(RESTART_ALWAYS) brings the engine ONLINE (its
+      // mode listener fires) BEFORE recordUserEnabled persists the intent; without the bracket the
+      // reconciler would see mode-up with spec still false and drift-converge the engine straight
+      // back DOWN. The procedure suppresses that drift; recordUserEnabled writes the intent;
+      // specChanged() nudges; endProcedure returns to the now-true spec — deterministically online,
+      // no spurious down/up flicker.
+      boolean activationProcedureBegun = false;
+      if (runtimeReconciler != null) {
+        runtimeReconciler.beginProcedure(
+            RuntimeStatus.ProcedureKind.ACTIVATION, "runtime-variant-activation");
+        activationProcedureBegun = true;
+      }
+      try {
+        applyRuntimeOverridesBestEffort(next);
 
-      // Rebuild ConfigStore so readers see updated server EXE / GPU layers.
-      ConfigStoreRebuilder.rebuild(ConfigStore.globalOrNull(), next);
+        // Rebuild ConfigStore so readers see updated server EXE / GPU layers.
+        ConfigStoreRebuilder.rebuild(ConfigStore.globalOrNull(), next);
 
-      // Tempdoc 737 Phase 1: a user who successfully activated a GPU runtime wants AI on across
-      // restarts — persist the desired-state so the reconciler brings it back at boot (fixes the
-      // documented "AI offline after reopen" confusion). Null-safe; idempotent.
-      if (settingsStore != null) {
-        new RuntimeSpecStore(settingsStore).recordUserEnabled();
+        // Tempdoc 737 Phase 1: a user who successfully activated a GPU runtime wants AI on across
+        // restarts — persist the desired-state so the reconciler brings it back at boot (fixes the
+        // documented "AI offline after reopen" confusion). Null-safe; idempotent.
+        if (settingsStore != null) {
+          new RuntimeSpecStore(settingsStore).recordUserEnabled();
+        }
+        // Nudge the reconciler so the persisted intent is honored via specChanged (an explicit
+        // convergence), not only via the racy mode-drift event. Deferred while the procedure is
+        // active; applied at endProcedure below.
+        if (runtimeReconciler != null) {
+          runtimeReconciler.specChanged();
+        }
+      } finally {
+        if (activationProcedureBegun) {
+          runtimeReconciler.endProcedure(RuntimeStatus.ProcedureKind.ACTIVATION);
+        }
       }
 
       updateState("completed", "done", "GPU runtime activated.", null);

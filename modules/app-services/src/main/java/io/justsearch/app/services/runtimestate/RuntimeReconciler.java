@@ -41,9 +41,12 @@ import org.slf4j.LoggerFactory;
  *
  * <h3>Procedures (the ONLY sanctioned non-spec hold)</h3>
  *
- * {@link #beginProcedure}/{@link #endProcedure} bracket a machine-actor procedure (VDU batch);
+ * {@link #beginProcedure}/{@link #endProcedure} bracket a machine-actor procedure (VDU batch,
+ * runtime-variant activation, install smoke test);
  * {@link #procedureRequireEngine(boolean)} is procedure-scoped engine control. A procedure is the
- * only sanctioned way for a machine actor to hold the engine in a non-spec state.
+ * only sanctioned way for a machine actor to hold the engine in a non-spec state. Procedures of
+ * distinct kinds may overlap — drift convergence stays suppressed until the <b>last</b> one ends,
+ * at which point the reconciler converges the engine back to the then-current spec.
  *
  * <h3>Anti-flap (item 2)</h3>
  *
@@ -120,8 +123,13 @@ public final class RuntimeReconciler implements AutoCloseable {
   private boolean converging = false; // guarded by lock — a convergence pass is in flight
   private volatile TransitionReason lastConvergenceReason = null;
 
-  // Procedure overlay (guarded by lock). Non-null while a machine-actor procedure holds the engine.
-  private RuntimeStatus.Procedure activeProcedure = null;
+  // Procedure overlay (guarded by lock). One entry per active machine-actor procedure, keyed by
+  // kind — multiple kinds (e.g. an ACTIVATION window overlapping a VDU_BATCH) may hold the engine at
+  // once. Drift convergence is suppressed while this is non-empty; return-to-spec re-arms only when
+  // it empties (tempdoc 737 §12a fix pack). Insertion-ordered so the status overlay can pick a
+  // stable representative (the most-recently-begun distinct kind).
+  private final java.util.Map<RuntimeStatus.ProcedureKind, RuntimeStatus.Procedure> activeProcedures =
+      new java.util.LinkedHashMap<>();
 
   // Anti-flap tracking (guarded by lock).
   private boolean flapHold = false;
@@ -244,13 +252,15 @@ public final class RuntimeReconciler implements AutoCloseable {
   // ==================== Procedures (§12a — the only sanctioned non-spec engine hold) ====================
 
   /**
-   * Begin a machine-actor procedure. While active, the reconciler tolerates foreign engine states
-   * (no drift convergence) — the procedure owns the engine. Resets any flap hold (procedure input
-   * changed). Must be paired with {@link #endProcedure} in a {@code finally}.
+   * Begin a machine-actor procedure of the given {@code kind}. While ANY procedure is active, the
+   * reconciler tolerates foreign engine states (no drift convergence) — the procedure owns the
+   * engine. Resets any flap hold (procedure input changed). Idempotent per kind (a repeat begin of
+   * the same kind replaces its overlay entry). Must be paired with {@link #endProcedure} in a
+   * {@code finally}.
    */
   public void beginProcedure(RuntimeStatus.ProcedureKind kind, String reason) {
     synchronized (lock) {
-      activeProcedure = new RuntimeStatus.Procedure(kind, Instant.now(), "starting", reason);
+      activeProcedures.put(kind, new RuntimeStatus.Procedure(kind, Instant.now(), "starting", reason));
       resetFlapLocked();
       dirty = true; // republish status with the overlay
       lock.notifyAll();
@@ -259,20 +269,40 @@ public final class RuntimeReconciler implements AutoCloseable {
   }
 
   /**
-   * End a machine-actor procedure and converge the engine back to spec (AUTO_START intent). This is
-   * the §3d fix: whatever non-spec state the procedure left the engine in, the reconciler now
-   * returns it to {@code spec ∧ policy}.
+   * End a machine-actor procedure of the given {@code kind}. Removes its overlay entry; only when
+   * that leaves NO procedure active does the reconciler re-arm a return-to-spec convergence
+   * (AUTO_START intent). This is the §3d fix: whatever non-spec state the last procedure left the
+   * engine in, the reconciler then returns it to {@code spec ∧ policy}. Ending one of several
+   * overlapping procedures keeps drift suppressed for the survivors and defers any pending spec
+   * write until the final end.
    */
   public void endProcedure(RuntimeStatus.ProcedureKind kind) {
+    boolean lastEnded;
     synchronized (lock) {
-      activeProcedure = null;
+      activeProcedures.remove(kind);
       resetFlapLocked();
-      convergePending = true; // return to spec now
-      pendingReason = TransitionReason.AUTO_START;
+      lastEnded = activeProcedures.isEmpty();
+      if (lastEnded) {
+        convergePending = true; // last procedure ended — return to spec now
+        pendingReason = TransitionReason.AUTO_START;
+      }
       dirty = true;
       lock.notifyAll();
     }
-    log.info("RuntimeReconciler: procedure {} ended — converging back to spec", kind);
+    if (lastEnded) {
+      log.info("RuntimeReconciler: procedure {} ended (last active) — converging back to spec", kind);
+    } else {
+      log.info("RuntimeReconciler: procedure {} ended — other procedure(s) active, drift stays suppressed", kind);
+    }
+  }
+
+  /** A representative overlay procedure (most-recently-begun distinct kind), or null. Holds lock. */
+  private RuntimeStatus.Procedure representativeProcedureLocked() {
+    RuntimeStatus.Procedure rep = null;
+    for (RuntimeStatus.Procedure p : activeProcedures.values()) {
+      rep = p; // insertion order: last iterated = most recently added distinct kind
+    }
+    return rep;
   }
 
   /**
@@ -301,10 +331,11 @@ public final class RuntimeReconciler implements AutoCloseable {
 
   private void updateProcedurePhase(String phase) {
     synchronized (lock) {
-      if (activeProcedure != null) {
-        activeProcedure =
-            new RuntimeStatus.Procedure(
-                activeProcedure.kind(), activeProcedure.startedAt(), phase, activeProcedure.reason());
+      RuntimeStatus.Procedure rep = representativeProcedureLocked();
+      if (rep != null) {
+        activeProcedures.put(
+            rep.kind(),
+            new RuntimeStatus.Procedure(rep.kind(), rep.startedAt(), phase, rep.reason()));
       }
     }
   }
@@ -416,7 +447,7 @@ public final class RuntimeReconciler implements AutoCloseable {
         explicit = convergePending;
         convergePending = false;
         reason = pendingReason;
-        procActive = activeProcedure != null;
+        procActive = !activeProcedures.isEmpty();
         converging = true; // a pass is in flight — no gap for awaitQuiescent
       }
 
@@ -574,7 +605,7 @@ public final class RuntimeReconciler implements AutoCloseable {
     lease.mirrorFromMode(mode);
     RuntimeStatus.Procedure proc;
     synchronized (lock) {
-      proc = activeProcedure;
+      proc = representativeProcedureLocked();
     }
     RuntimeStatus base =
         RuntimeStatus.derive(mode, external, lease.holder(), proc, specVersion.get(), Instant.now());
@@ -614,7 +645,7 @@ public final class RuntimeReconciler implements AutoCloseable {
     Mode mode = safeMode();
     RuntimeStatus.Procedure proc;
     synchronized (lock) {
-      proc = activeProcedure;
+      proc = representativeProcedureLocked();
     }
     RuntimeStatus base =
         RuntimeStatus.derive(mode, safeExternal(), lease.holder(), proc, specVersion.get(), Instant.now());

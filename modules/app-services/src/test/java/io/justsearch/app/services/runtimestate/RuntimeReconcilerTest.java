@@ -265,4 +265,104 @@ final class RuntimeReconcilerTest {
     assertNotEquals(Mode.ONLINE, control.currentModeValue(), "after the procedure, spec (off) wins → engine down");
     r.close();
   }
+
+  // ==================== Fix pack (tempdoc 737 §12a fix pack — multi-kind procedures) ====================
+
+  // (fix-a) ACTIVATION procedure: the engine comes ONLINE (foreign flip from applyRuntimeOverrides)
+  // while spec is still false — the reconciler must NOT drift-park it down. After the intent lands
+  // (spec true) and the procedure ends, the engine stays ONLINE with no reconciler switch at all.
+  @Test
+  void activationProcedure_specOffEngineOnlineDrift_noDownSwitch_thenStaysOnline() throws Exception {
+    RecordingLifecycleControl control = new RecordingLifecycleControl().withMode(Mode.OFFLINE);
+    RuntimeSpecStore spec = specStore(false);
+    RuntimeReconciler r = reconciler(control, spec, null);
+    r.start();
+
+    r.beginProcedure(RuntimeStatus.ProcedureKind.ACTIVATION, "activation-test");
+    // applyRuntimeOverrides(RESTART_ALWAYS) brings the engine up mid-activation — a foreign-looking
+    // flip the ACTIVATION procedure must absorb while spec is still false.
+    control.fireModeChange(Mode.OFFLINE, Mode.ONLINE);
+    assertTrue(r.awaitQuiescent(5_000));
+    assertEquals(0, control.indexingSwitchCount.get(), "procedure active: no drift down-switch while spec=false");
+    assertEquals(Mode.ONLINE, control.currentModeValue());
+
+    // recordUserEnabled writes spec true; specChanged nudges; endProcedure converges to spec.
+    spec.setChatEnabled(true);
+    r.specChanged();
+    r.endProcedure(RuntimeStatus.ProcedureKind.ACTIVATION);
+    assertTrue(r.awaitQuiescent(5_000));
+    assertEquals(Mode.ONLINE, control.currentModeValue(), "spec true + already online → stays online");
+    assertEquals(
+        java.util.List.of(),
+        control.switchLog,
+        "no reconciler switch at all — the engine was brought up by activation, spec agrees");
+    r.close();
+  }
+
+  // (fix-b) INSTALL_SMOKE_TEST with spec off: procedureRequireEngine(true) brings the engine up and
+  // it is NOT parked during the window; endProcedure returns to spec → exactly one down-switch
+  // (install != enable). Sequence-pinned [online, indexing].
+  @Test
+  void installSmokeTestProcedure_specOff_engineUpNoDown_thenOneDownAtEnd() throws Exception {
+    RecordingLifecycleControl control = new RecordingLifecycleControl().withMode(Mode.OFFLINE);
+    RuntimeReconciler r = reconciler(control, specStore(false), null);
+    r.start();
+
+    r.beginProcedure(RuntimeStatus.ProcedureKind.INSTALL_SMOKE_TEST, "smoke");
+    r.procedureRequireEngine(true);
+    assertEquals(Mode.ONLINE, control.currentModeValue());
+    assertEquals(1, control.onlineSwitchCount.get(), "exactly the procedure's up-switch");
+    // The reconciler gets a chance to (wrongly) park the engine — it must not, procedure active.
+    assertTrue(r.awaitQuiescent(5_000));
+    assertEquals(0, control.indexingSwitchCount.get(), "no down-switch while the procedure holds the engine");
+
+    r.endProcedure(RuntimeStatus.ProcedureKind.INSTALL_SMOKE_TEST);
+    assertTrue(r.awaitQuiescent(5_000));
+    assertNotEquals(Mode.ONLINE, control.currentModeValue(), "spec off: engine returns down (install != enable)");
+    assertEquals(1, control.indexingSwitchCount.get(), "exactly one return-to-spec down-switch");
+    assertEquals(
+        java.util.List.of("online", "indexing"),
+        control.switchLog,
+        "up for the smoke test, then one park back to spec");
+    r.close();
+  }
+
+  // (fix-c) VDU_BATCH + ACTIVATION concurrent: a foreign park is tolerated while BOTH are active AND
+  // while only one remains; drift converges back to spec exactly once, only after the LAST ends.
+  @Test
+  void concurrentProcedures_driftSuppressedUntilBothEnd_thenOneConvergence() throws Exception {
+    RecordingLifecycleControl control = new RecordingLifecycleControl().withMode(Mode.OFFLINE);
+    RuntimeReconciler r = reconciler(control, specStore(true), null);
+    r.start();
+    r.requestBootConvergence();
+    assertTrue(control.firstOnlineSwitch.await(5, TimeUnit.SECONDS));
+    assertTrue(r.awaitQuiescent(5_000));
+    assertEquals(1, control.onlineSwitchCount.get());
+
+    r.beginProcedure(RuntimeStatus.ProcedureKind.VDU_BATCH, "vdu");
+    r.beginProcedure(RuntimeStatus.ProcedureKind.ACTIVATION, "activation");
+
+    // Foreign park while BOTH active — no re-convergence.
+    control.fireModeChange(Mode.ONLINE, Mode.INDEXING);
+    assertTrue(r.awaitQuiescent(5_000));
+    assertEquals(Mode.INDEXING, control.currentModeValue(), "drift suppressed while procedures active");
+    assertEquals(1, control.onlineSwitchCount.get(), "no re-convergence during procedures");
+
+    // End ONE — still suppressed (ACTIVATION holds).
+    r.endProcedure(RuntimeStatus.ProcedureKind.VDU_BATCH);
+    assertTrue(r.awaitQuiescent(5_000));
+    assertEquals(Mode.INDEXING, control.currentModeValue(), "still suppressed: one procedure remains");
+    assertEquals(1, control.onlineSwitchCount.get());
+
+    // End the LAST — converge to spec (online), exactly one up-switch.
+    r.endProcedure(RuntimeStatus.ProcedureKind.ACTIVATION);
+    assertTrue(r.awaitQuiescent(5_000));
+    assertEquals(Mode.ONLINE, control.currentModeValue(), "last procedure ended → converge to spec");
+    assertEquals(2, control.onlineSwitchCount.get(), "exactly one convergence after both ended");
+    assertEquals(
+        java.util.List.of("online", "online"),
+        control.switchLog,
+        "boot up, then one convergence up after the last procedure ends (the foreign park is not a switch call)");
+    r.close();
+  }
 }

@@ -455,7 +455,7 @@ public final class OperationExecutorImpl implements OperationDispatcher {
               + "reachable; it restarts automatically — retry shortly, or run core.restart-worker.";
       case "inference-online" ->
           "Required capability unavailable: inference-online. Inference is not running; call "
-              + "core.switch-inference-mode {\"mode\":\"online\"} (or core.activate-runtime-variant "
+              + "core.set-chat-enabled {\"enabled\":true} (or core.activate-runtime-variant "
               + "after install) to bring it up, then retry.";
       default -> "Required capability unavailable: " + missingCap;
     };

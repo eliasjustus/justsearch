@@ -7,6 +7,8 @@ import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.InstallPlanPreview;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
+import io.justsearch.app.services.runtimestate.RuntimeReconciler;
+import io.justsearch.app.services.runtimestate.RuntimeStatus;
 import io.justsearch.configuration.PlatformPaths;
 import io.justsearch.configuration.SystemPropertyUtils;
 import io.justsearch.configuration.model.CapabilityTier;
@@ -73,6 +75,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   // Install AI invocation.
   private volatile KnowledgeServerBootstrap knowledgeServer;
   private final EnterprisePolicyService policyService;
+  // Tempdoc 737 fix pack (fix 3): the single-writer runtime authority. When present, the post-
+  // install smoke test brackets its engine use in an INSTALL_SMOKE_TEST procedure and requests the
+  // engine through the reconciler instead of a raw switchToOnlineMode() — so the reconciler does not
+  // fight the smoke test's engine-up (spec is still false during a fresh install: install ≠ enable).
+  // Nullable; the legacy raw path is retained for test / non-configured constructions.
+  private final RuntimeReconciler reconciler;
   // Tempdoc 374 alpha.27: VramDetector dependency removed; HardwareProfile build
   // now uses GpuCapabilitiesService (NVML-first) directly.
 
@@ -108,10 +116,22 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       KnowledgeServerBootstrap knowledgeServer,
       EnterprisePolicyService policyService,
       Path aiHomeDir) {
+    this(onlineAi, settingsStore, knowledgeServer, policyService, aiHomeDir, null);
+  }
+
+  /** Tempdoc 737 fix pack (fix 3): canonical constructor threading the nullable reconciler. */
+  public AiInstallService(
+      OnlineAiService onlineAi,
+      UiSettingsStore settingsStore,
+      KnowledgeServerBootstrap knowledgeServer,
+      EnterprisePolicyService policyService,
+      Path aiHomeDir,
+      RuntimeReconciler reconciler) {
     this.onlineAi = onlineAi;
     this.settingsStore = settingsStore;
     this.knowledgeServer = knowledgeServer;
     this.policyService = policyService;
+    this.reconciler = reconciler;
     this.homeDir = aiHomeDir;
     // Honor JUSTSEARCH_MODELS_DIR (env or sysprop) so Install AI checks the
     // operator-supplied dir for already-present models. When all required
@@ -139,7 +159,20 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       UiSettingsStore settingsStore,
       KnowledgeServerBootstrap knowledgeServer,
       EnterprisePolicyService policyService) {
-    this(onlineAi, settingsStore, knowledgeServer, policyService, resolveHomeDir());
+    this(onlineAi, settingsStore, knowledgeServer, policyService, resolveHomeDir(), null);
+  }
+
+  /**
+   * Tempdoc 737 fix pack (fix 3): production constructor resolving AI Home and threading the nullable
+   * {@link RuntimeReconciler} used to bracket the post-install smoke test.
+   */
+  public AiInstallService(
+      OnlineAiService onlineAi,
+      UiSettingsStore settingsStore,
+      KnowledgeServerBootstrap knowledgeServer,
+      EnterprisePolicyService policyService,
+      RuntimeReconciler reconciler) {
+    this(onlineAi, settingsStore, knowledgeServer, policyService, resolveHomeDir(), reconciler);
   }
 
   /**
@@ -971,10 +1004,32 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     }
   }
 
+  /**
+   * Post-install smoke test: bring the engine up, ask one question, confirm a non-empty reply.
+   *
+   * <p>Tempdoc 737 fix pack (fix 3): when a {@link RuntimeReconciler} is wired, the engine use is a
+   * reconciler procedure ({@code INSTALL_SMOKE_TEST}) and the engine is requested via {@link
+   * RuntimeReconciler#procedureRequireEngine(boolean)} rather than a raw {@code switchToOnlineMode()}.
+   * This stops the reconciler from converging the freshly-started engine straight back DOWN while
+   * the procedure is answering (spec is {@code chatEnabled=false} during a fresh install — the user
+   * has not enabled chat yet). When the procedure ends, the reconciler returns the engine to spec:
+   * with chat still disabled the engine converges DOWN, which is correct — <b>install is not
+   * enable</b>. When no reconciler is wired (test / non-configured constructions) the legacy raw
+   * {@code switchToOnlineMode()} path is kept.
+   */
   private boolean smokeTestBestEffort() {
     OnlineAiService onlineAi = this.onlineAi;
+    RuntimeReconciler reconciler = this.reconciler;
+    boolean procedureBegun = false;
     try {
-      onlineAi.switchToOnlineMode();
+      if (reconciler != null) {
+        reconciler.beginProcedure(
+            RuntimeStatus.ProcedureKind.INSTALL_SMOKE_TEST, "post-install-smoke-test");
+        procedureBegun = true;
+        reconciler.procedureRequireEngine(true);
+      } else {
+        onlineAi.switchToOnlineMode(); // LEGACY-FALLBACK: no reconciler wired (test/non-configured)
+      }
       String result = onlineAi.askQuestion("Reply with exactly OK.", "OK").get(60, TimeUnit.SECONDS);
       if (result == null || result.isBlank()) {
         fail("SMOKE_TEST_FAILED", "Smoke test failed: empty response");
@@ -984,6 +1039,10 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     } catch (Exception e) {
       fail("SMOKE_TEST_FAILED", "Smoke test failed: " + e.getMessage());
       return false;
+    } finally {
+      if (procedureBegun) {
+        reconciler.endProcedure(RuntimeStatus.ProcedureKind.INSTALL_SMOKE_TEST);
+      }
     }
   }
 

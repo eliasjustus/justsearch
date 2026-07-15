@@ -1357,3 +1357,46 @@ FE, sonnet for mechanical chunks and ceremony.
   (§12d triggers: FE cutover shipped + public deprecation window); sized lease
   grants (P4 trigger: first co-residency request); the general establishes-gate
   (P1 retires the simple form when requirements become derived).
+
+### §15 post-implementation review (2026-07-15) — /review-changes + refute-first pass
+
+Independent refute-first review over a 10-claim evidence list confirmed the
+implementation's core claims (boot-honors-spec, nudge chain, sequence-pinned
+§3d tests, byte-identical legacy wire fields, always-listed ops, fork-gate
+non-vacuous) and produced four substantive findings, all fixed same-session:
+
+- **F2 (HIGH — the headline): continuous return-to-spec fought legitimate
+  machine engine-holds.** `AiInstallService.smokeTestBestEffort` (raw
+  switch + 60 s ask under spec=false, no procedure) would near-deterministically
+  have its engine killed mid-test by the reconciler — a 737-introduced
+  regression on the fresh-install path; activation had the racy variant
+  (engine ONLINE before `recordUserEnabled`, which also never nudged — N1).
+  The live E2E had won this race by timing (`green-masked-destructive`).
+  **Fix**: procedures are now multi-kind (`ACTIVATION`, `INSTALL_SMOKE_TEST`
+  join `VDU_BATCH`; drift suppressed while any active, return-to-spec when the
+  set empties); activation and the install smoke test run as procedures;
+  `recordUserEnabled` nudges `specChanged()`. Sequence-pinned regression tests
+  for all three (incl. concurrent-procedures overlap). Live-verified:
+  activation from spec-false → online, still online 30 s later, spec true.
+- **F1 (LOW)**: `/api/inference/mode` (`BrainRuntimeServiceImpl` +
+  `InferenceHandlers`) still raw-switched via the `OnlineAiService`-declared
+  methods — the ArchUnit rule's documented carve-out — and the reconciler
+  reverted contradicting switches (endpoint half-worked; zero FE callers).
+  **Fix**: routed through `RuntimeIntentWrite` (one authority with the
+  operation alias); ArchUnit extended to the `OnlineAiService`-declared
+  methods (carve-out removed; sole allowlisted legacy fallback:
+  `AiInstallService` null-reconciler path; negative probe re-verified).
+- **F3 (LOW)**: the remedy-bearing denial named the superseded op — now
+  recommends `core.set-chat-enabled {"enabled":true}`.
+- **N2 (evidence hygiene)**: the earlier closure cited an empty log artifact
+  for "full suite green". Corrected evidence: test-results XML sweep (refuter:
+  zero `<failure|<error` across `modules/*/build/test-results`, all 737 suites
+  `fail=0 err=0`) + fresh post-fix full run `tmp/full-test-review-fixes.log`
+  (non-empty, unmasked EXIT:0, BUILD SUCCESSFUL).
+- **F4 refuted**: live registry count 31 vs test-pinned 30 is seed-vs-composed
+  (agent-tools contributes `navigate-to-surface` at boot) — expected.
+
+Review takeaway recorded: the F2 class was predicted by the design's own P3
+("machine actors hold non-spec state only inside declared procedures") — the
+violation was implementing two machine holds *without* procedures; the
+principle held, the coverage was incomplete.

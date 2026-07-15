@@ -37,7 +37,7 @@
     ],
     "javaInclude": "/src/main/java/",
     "expectedMinPopulation": 3,
-    "expectedMinPopulationNote": "tempdoc 576 §5 vacuous-pass guard: the auto-scan must detect >= this many runtimestate-referencing files, else a renamed scan root would let the undeclared-referencer check pass vacuously. Live count is 14 (2026-07-15 Phase 4: added SetChatEnabledHandler, SwitchInferenceModeHandler, OperationHandlerRegistrations, SubstratePhase for the core.set-chat-enabled intent-write op, growing from Phase 2a's 10: RuntimeActivationService, InferenceWiring, OrchestrationAssembly, OrchestrationPhase, ServicePhase, HeadAssembly, BootstrapProjections, InferenceCapabilityWiring, OfflineCoordinator, OfflineCoordinatorBuilder; the runtimestate package's own 5 files do not self-reference and are declared separately as canonical/carrier surfaces). Floor 3 is a conservative headroom, matching the execution-surface register's convention. Lower this with any change that legitimately shrinks the population."
+    "expectedMinPopulationNote": "tempdoc 576 §5 vacuous-pass guard: the auto-scan must detect >= this many runtimestate-referencing files, else a renamed scan root would let the undeclared-referencer check pass vacuously. Live count is 16 (2026-07-15 fix pack: added AiInstallService + BrainRuntimeServiceImpl for the smoke-test-procedure (fix 3) and switchInferenceMode intent-write (fix 4), growing from Phase 4's 14: SetChatEnabledHandler, SwitchInferenceModeHandler, OperationHandlerRegistrations, SubstratePhase, RuntimeActivationService, InferenceWiring, OrchestrationAssembly, OrchestrationPhase, ServicePhase, HeadAssembly, BootstrapProjections, InferenceCapabilityWiring, OfflineCoordinator, OfflineCoordinatorBuilder; the runtimestate package's own 5 files do not self-reference and are declared separately as canonical/carrier surfaces). Floor 3 is a conservative headroom, matching the execution-surface register's convention. Lower this with any change that legitimately shrinks the population."
   },
   "surfaces": [
     {
@@ -176,6 +176,22 @@
       "path": "modules/app-services/src/main/java/io/justsearch/app/services/bootstrap/phases/SubstratePhase.java",
       "guard": "exempt:consumer threads the RuntimeSpecStore/RuntimeReconciler suppliers through to registerWorker (fully-qualified reference, no import statement); no projection law to mutate-guard",
       "note": "737 §12b Phase 4: passes the runtime-authority suppliers from HeadAssembly down into OperationHandlerRegistrations.registerWorker."
+    },
+    {
+      "id": "ai-install-service-consumer",
+      "kind": "consumer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AiInstallService.java",
+      "guard": "exempt:consumer brackets its post-install smoke test in a RuntimeReconciler INSTALL_SMOKE_TEST procedure and requests the engine via #procedureRequireEngine (nullable — legacy raw fallback kept); no projection law to mutate-guard",
+      "note": "737 fix pack (fix 3): the post-install smoke test no longer raw-switches the engine; when a reconciler is wired it runs inside an INSTALL_SMOKE_TEST procedure so drift-convergence does not tear the engine down mid-answer, and the engine returns to spec (down — install != enable) at endProcedure. Consumes the authority; does not re-model it."
+    },
+    {
+      "id": "brain-runtime-service-consumer",
+      "kind": "consumer",
+      "lang": "java",
+      "path": "modules/app-services/src/main/java/io/justsearch/app/services/brainruntime/BrainRuntimeServiceImpl.java",
+      "guard": "exempt:consumer routes switchInferenceMode through the same RuntimeIntentWrite spec-write path (RuntimeSpecStore write then RuntimeReconciler#specChanged) as the core.set-chat-enabled handler, nullable for graceful degradation; no projection law to mutate-guard",
+      "note": "737 fix pack (fix 4): the /api/inference/mode REST authority — BrainRuntimeServiceImpl.switchInferenceMode became an intent write (online->chatEnabled=true, indexing->false) through the ONE runtime-intent authority instead of a raw onlineAi.switchTo*, removing the second dispatch authority that bypassed the reconciler (§12b). Consumes the authority; does not re-model it."
     },
     {
       "id": "mode-enum-legacy",

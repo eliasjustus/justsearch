@@ -64,12 +64,26 @@ public final class SetChatEnabledHandler implements OperationHandler {
   }
 
   /**
-   * Shared spec-write path for the intent-write op and the {@code core.switch-inference-mode} alias
-   * (tempdoc 737 §12b): write the {@code chatEnabled} bit via {@link RuntimeSpecStore}, nudge the
-   * reconciler via {@link RuntimeReconciler#specChanged()}, and project the observed state back.
+   * Shared spec-write path for the intent-write op, the {@code core.switch-inference-mode} alias,
+   * and the {@code /api/inference/mode} REST endpoint (tempdoc 737 §12b): write the
+   * {@code chatEnabled} bit via {@link RuntimeSpecStore}, nudge the reconciler via
+   * {@link RuntimeReconciler#specChanged()}, and (for the op handlers) project the observed state
+   * back. This is the ONE runtime-intent authority — every "turn chat on/off" surface routes here so
+   * none can re-introduce the §3b circular denial via a raw {@code switchTo*}.
    */
-  static final class RuntimeIntentWrite {
+  public static final class RuntimeIntentWrite {
     private RuntimeIntentWrite() {}
+
+    /**
+     * The raw intent write: persist the {@code chatEnabled} bit and nudge the reconciler to
+     * converge. No preconditions — enforcement is a convergence ceiling inside the reconciler, never
+     * an intent-time denial (§12b). Callers hold the resolved authority objects (both non-null).
+     */
+    public static void writeIntent(
+        RuntimeSpecStore specStore, RuntimeReconciler reconciler, boolean enabled) {
+      specStore.setChatEnabled(enabled);
+      reconciler.specChanged();
+    }
 
     static OperationResult apply(
         Supplier<RuntimeSpecStore> specStoreSupplier,
@@ -90,8 +104,7 @@ public final class SetChatEnabledHandler implements OperationHandler {
             "Runtime authority unavailable (AI runtime not configured)");
       }
 
-      specStore.setChatEnabled(enabled);
-      reconciler.specChanged();
+      writeIntent(specStore, reconciler, enabled);
 
       boolean chatEnabled = reconciler.currentSpec().chatEnabled();
       String engineState = engineStateOf(reconciler);

@@ -144,7 +144,12 @@ final class CoreApiAssembly {
             enterprisePolicyService,
             b.settingsStore,
             telemetry,
-            resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability));
+            resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability),
+            // Tempdoc 737 fix pack (fix 4): the ONE runtime-intent authority for /api/inference/mode.
+            // Null for legacy test seams (HeadAssembly absent) — those keep the raw fallback path.
+            b.HeadAssembly != null && b.HeadAssembly.serviceOut() != null
+                ? b.HeadAssembly.serviceOut().brainRuntime()
+                : null);
     Supplier<String> diskPressureSupplier = null;
     if (telemetry instanceof io.justsearch.telemetry.LocalTelemetry lt) {
       diskPressureSupplier = () -> lt.getHealthState().getDiskPressureLevel().name();

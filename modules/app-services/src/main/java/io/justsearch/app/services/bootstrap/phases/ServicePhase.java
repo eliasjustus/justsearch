@@ -258,7 +258,13 @@ public final class ServicePhase {
     // §31 Phase 1.B-D: helper impls in app-services.
     AiInstallService aiInstallHelper =
         new AiInstallService(
-            onlineAiService, in.settingsStore(), in.knowledgeServer(), enterprisePolicy);
+            onlineAiService,
+            in.settingsStore(),
+            in.knowledgeServer(),
+            enterprisePolicy,
+            // Tempdoc 737 fix pack (fix 3): the post-install smoke test brackets its engine use in an
+            // INSTALL_SMOKE_TEST procedure via this reconciler (null in the no-inference branch).
+            runtimeReconciler);
     PackAllowlistService packAllowlistService = new PackAllowlistService();
     AiPackImportService aiPackImportHelper =
         new AiPackImportService(
@@ -282,7 +288,11 @@ public final class ServicePhase {
             enterprisePolicy,
             workerFeatureCache,
             in.inferenceCapability(),
-            aiInstallHelper);
+            aiInstallHelper,
+            // Tempdoc 737 fix pack (fix 2): brackets the activation engine-online + intent-write
+            // window in an ACTIVATION procedure and nudges specChanged (null in the no-inference
+            // branch).
+            runtimeReconciler);
 
     // §31 Phase 3: 7 controller-services constructed here.
     // SettingsService: callable wraps the late-bound resetFn (set by LocalApiServer after
@@ -317,7 +327,15 @@ public final class ServicePhase {
     BrainInstallService brainInstall = new BrainInstallServiceImpl(aiInstallHelper);
     BrainRuntimeService brainRuntime =
         new BrainRuntimeServiceImpl(
-            onlineAiService, in.settingsStore(), enterprisePolicy, offlineProcessingTrigger);
+            onlineAiService,
+            in.settingsStore(),
+            enterprisePolicy,
+            offlineProcessingTrigger,
+            // Tempdoc 737 fix pack (fix 4): switchInferenceMode records the chat-enabled intent
+            // through the one authority (spec write + reconciler nudge); null in the no-inference
+            // branch keeps the graceful-degradation IllegalStateException path.
+            runtimeSpecStore,
+            runtimeReconciler);
     // Tempdoc 737 (task 3): RuntimeVariantServiceImpl no longer takes its own
     // EnterprisePolicyService — policy enforcement is now solely on runtimeActivationHelper.
     RuntimeVariantService runtimeVariant = new RuntimeVariantServiceImpl(runtimeActivationHelper);
