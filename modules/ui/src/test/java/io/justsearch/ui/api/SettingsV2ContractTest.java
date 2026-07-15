@@ -39,7 +39,7 @@ final class SettingsV2ContractTest {
   void generateFixtureAndVerifyRoundTrip() throws Exception {
     SettingsV2 original = new SettingsV2(
         new UiSettingsV2("dark", true, "compact", true, "reveal", 400,
-            true, "advanced", true, List.of("*.tmp", "node_modules/**")),
+            true, "advanced", true, List.of("*.tmp", "node_modules/**"), true),
         new LlmSettingsV2("llama-server.exe", 8192, 2048, 35, "C:/models/chat.gguf", null),
         List.of("C:/docs", "D:/papers"),
         "read_write");
@@ -70,6 +70,7 @@ final class SettingsV2ContractTest {
     assertEquals(original.ui().mode(), roundTripped.ui().mode());
     assertEquals(original.ui().hasSeenTrustLoopNudge(), roundTripped.ui().hasSeenTrustLoopNudge());
     assertEquals(original.ui().excludePatterns(), roundTripped.ui().excludePatterns());
+    assertEquals(original.ui().chatEnabled(), roundTripped.ui().chatEnabled());
 
     // Verify LLM fields
     assertEquals(original.llm().serverExecutable(), roundTripped.llm().serverExecutable());

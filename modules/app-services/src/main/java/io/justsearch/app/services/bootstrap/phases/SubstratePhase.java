@@ -92,6 +92,8 @@ public final class SubstratePhase {
       Supplier<io.justsearch.app.api.PackImportService> packImportServiceSupplier,
       Supplier<io.justsearch.app.api.BrainInstallService> brainInstallServiceSupplier,
       Supplier<io.justsearch.app.api.PolicyService> policyServiceSupplier,
+      Supplier<io.justsearch.app.services.runtimestate.RuntimeSpecStore> runtimeSpecStoreSupplier,
+      Supplier<io.justsearch.app.services.runtimestate.RuntimeReconciler> runtimeReconcilerSupplier,
       SearchTool searchTool,
       BrowseTool browseTool,
       IngestTool ingestTool,
@@ -114,6 +116,8 @@ public final class SubstratePhase {
               packImportServiceSupplier,
               brainInstallServiceSupplier,
               policyServiceSupplier,
+              runtimeSpecStoreSupplier,
+              runtimeReconcilerSupplier,
               searchTool,
               browseTool,
               ingestTool,
@@ -143,6 +147,8 @@ public final class SubstratePhase {
       Supplier<io.justsearch.app.api.PackImportService> packImportServiceSupplier,
       Supplier<io.justsearch.app.api.BrainInstallService> brainInstallServiceSupplier,
       Supplier<io.justsearch.app.api.PolicyService> policyServiceSupplier,
+      Supplier<io.justsearch.app.services.runtimestate.RuntimeSpecStore> runtimeSpecStoreSupplier,
+      Supplier<io.justsearch.app.services.runtimestate.RuntimeReconciler> runtimeReconcilerSupplier,
       SearchTool searchTool,
       BrowseTool browseTool,
       IngestTool ingestTool,
@@ -164,6 +170,8 @@ public final class SubstratePhase {
         packImportServiceSupplier,
         brainInstallServiceSupplier,
         policyServiceSupplier,
+        runtimeSpecStoreSupplier,
+        runtimeReconcilerSupplier,
         operationLeaseService);
     AgentToolHandlers.registerEager(
         operationHandlers, searchTool, browseTool, ingestTool, fileOperationsTool);

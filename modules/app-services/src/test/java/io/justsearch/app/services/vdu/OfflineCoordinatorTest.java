@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import io.justsearch.app.api.Mode;
+import io.justsearch.app.services.runtimestate.RuntimeGpuLease;
+import io.justsearch.app.services.runtimestate.RuntimeReconciler;
+import io.justsearch.app.services.runtimestate.RuntimeSpecStore;
 import io.justsearch.app.services.worker.RemoteKnowledgeClient;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -16,107 +19,123 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for OfflineCoordinator.
+ * Unit tests for the REAL {@link OfflineCoordinator} (tempdoc 737 task 7f rewrite).
  *
- * <p>Tests orchestration logic: phase sequencing, concurrent guards, recovery.
- * Uses stub dependencies - no real LLM or gRPC calls.
+ * <p>Pre-737 this suite drove a hand-copied {@code TestableOfflineCoordinator} and asserted switch
+ * counts on a bespoke stub — it never exercised the production class. It now drives the real
+ * coordinator through the procedure API: a real (unstarted) {@link RuntimeReconciler} wrapping the
+ * package's {@link StubInferenceLifecycleManager}. The reconciler thread is deliberately NOT started
+ * — {@link RuntimeReconciler#procedureRequireEngine(boolean)} is synchronous, so phase-time engine
+ * control is deterministic; post-procedure return-to-spec (which needs the thread) is covered by
+ * {@code RuntimeReconcilerTest}. Each test's original INTENT is preserved (noted per test); the
+ * observable moved from a copy's counters to the real stub's {@code getOnline/IndexingSwitchCount}
+ * (which the coordinator now reaches only via {@code procedureRequireEngine}).
  */
 @DisplayName("OfflineCoordinator")
 class OfflineCoordinatorTest {
 
     private StubInferenceLifecycleManager inferenceManager;
-    private StubVduBatchProcessor vduBatchProcessor;
-    private StubRemoteKnowledgeClient knowledgeClient;
-    private TestableOfflineCoordinator coordinator;
+    private RuntimeReconciler reconciler;
+    private VduBatchProcessor vduBatchProcessor;
+    private RemoteKnowledgeClient knowledgeClient;
+    private VduCapabilityState capabilityState;
+    private OfflineCoordinator coordinator;
 
     @BeforeEach
     void setUp() {
         inferenceManager = new StubInferenceLifecycleManager();
-        vduBatchProcessor = new StubVduBatchProcessor();
-        knowledgeClient = new StubRemoteKnowledgeClient();
-        coordinator = new TestableOfflineCoordinator(inferenceManager, vduBatchProcessor, knowledgeClient);
+        // Real reconciler, UNSTARTED — procedureRequireEngine is synchronous. spec chatEnabled=false
+        // (null settings store): irrelevant here since post-procedure convergence needs the thread.
+        reconciler =
+            new RuntimeReconciler(
+                inferenceManager,
+                inferenceManager::getCurrentMode,
+                () -> false,
+                null,
+                null,
+                new RuntimeSpecStore(null),
+                new RuntimeGpuLease());
+        vduBatchProcessor = mock(VduBatchProcessor.class);
+        when(vduBatchProcessor.processPendingFiles()).thenReturn(0);
+        knowledgeClient = mock(RemoteKnowledgeClient.class);
+        capabilityState = new VduCapabilityState();
+        coordinator =
+            new OfflineCoordinator(
+                inferenceManager, reconciler, vduBatchProcessor, () -> knowledgeClient, capabilityState);
     }
 
     @Nested
     @DisplayName("Phase Sequencing")
     class PhaseSequencing {
 
+        // INTENT: VDU phase (engine up) runs before the embedding phase (park to indexing).
         @Test
         @DisplayName("runs VDU phase before embedding phase when both have pending work")
         void runsVduBeforeEmbeddings() {
-            knowledgeClient.withPendingVduCount(5);
-            knowledgeClient.withPendingEmbeddingsCount(10);
+            when(knowledgeClient.countPendingVdu()).thenReturn(5);
+            when(knowledgeClient.countPendingEmbeddings()).thenReturn(10);
             inferenceManager.withMode(Mode.OFFLINE);
 
             coordinator.startOfflineProcessing();
 
-            // VDU phase should have run (switched to Online)
-            assertTrue(vduBatchProcessor.wasProcessCalled(), "VDU batch processor should have been called");
-            // Embedding phase should have run (switched to Indexing)
-            assertEquals(1, inferenceManager.getIndexingSwitchCount(), "Should switch to Indexing for embeddings");
+            // VDU phase ran (engine brought up via procedure), then embeddings parked to indexing.
+            verify(vduBatchProcessor).processPendingFiles();
+            assertEquals(1, inferenceManager.getOnlineSwitchCount(), "engine brought up for VDU via procedure");
+            assertEquals(1, inferenceManager.getIndexingSwitchCount(), "parked to indexing for embeddings");
         }
 
+        // INTENT: no VDU work → VDU phase (and its engine-up request) is skipped.
         @Test
         @DisplayName("skips VDU phase when no pending VDU files")
         void skipsVduWhenNoPending() {
-            knowledgeClient.withPendingVduCount(0);
-            knowledgeClient.withPendingEmbeddingsCount(10);
+            when(knowledgeClient.countPendingVdu()).thenReturn(0);
+            when(knowledgeClient.countPendingEmbeddings()).thenReturn(10);
 
             coordinator.startOfflineProcessing();
 
-            assertFalse(vduBatchProcessor.wasProcessCalled(), "VDU batch processor should NOT be called");
-            assertEquals(0, inferenceManager.getOnlineSwitchCount(), "Should NOT switch to Online");
+            verify(vduBatchProcessor, never()).processPendingFiles();
+            assertEquals(0, inferenceManager.getOnlineSwitchCount(), "no engine-up request without VDU work");
         }
 
+        // INTENT: no VDU work clears a stale AI-offline blocker.
         @Test
         @DisplayName("clears VDU capability blocker when no VDU work is pending")
         void clearsVduCapabilityWhenNoPending() {
-            StubInferenceLifecycleManager inference = new StubInferenceLifecycleManager();
-            VduBatchProcessor batchProcessor = mock(VduBatchProcessor.class);
-            RemoteKnowledgeClient client = mock(RemoteKnowledgeClient.class);
-            when(client.recoverVduProcessing()).thenReturn(0);
-            when(client.countPendingVdu()).thenReturn(0);
-            when(client.countPendingEmbeddings()).thenReturn(0);
-            VduCapabilityState state = new VduCapabilityState();
-            state.block(VduCapabilityState.REASON_AI_OFFLINE);
-            OfflineCoordinator realCoordinator =
-                new OfflineCoordinator(inference, batchProcessor, () -> client, state);
+            when(knowledgeClient.recoverVduProcessing()).thenReturn(0);
+            when(knowledgeClient.countPendingVdu()).thenReturn(0);
+            when(knowledgeClient.countPendingEmbeddings()).thenReturn(0);
+            capabilityState.block(VduCapabilityState.REASON_AI_OFFLINE);
 
-            realCoordinator.startOfflineProcessing();
+            coordinator.startOfflineProcessing();
 
-            assertNull(state.snapshot().blockedReason());
-            verify(batchProcessor, never()).processPendingFiles();
+            assertNull(capabilityState.snapshot().blockedReason());
+            verify(vduBatchProcessor, never()).processPendingFiles();
         }
 
+        // INTENT: no embeddings → no park-to-indexing request.
         @Test
         @DisplayName("skips embedding phase when no pending embeddings")
         void skipsEmbeddingsWhenNoPending() {
-            knowledgeClient.withPendingVduCount(0);
-            knowledgeClient.withPendingEmbeddingsCount(0);
+            when(knowledgeClient.countPendingVdu()).thenReturn(0);
+            when(knowledgeClient.countPendingEmbeddings()).thenReturn(0);
 
             coordinator.startOfflineProcessing();
 
-            assertEquals(0, inferenceManager.getIndexingSwitchCount(), "Should NOT switch to Indexing");
+            assertEquals(0, inferenceManager.getIndexingSwitchCount(), "no park-to-indexing request");
         }
 
+        // INTENT: embedding count is re-queried after VDU (VDU marks docs for re-embedding).
         @Test
         @DisplayName("re-queries embedding count after VDU phase")
         void requeriesEmbeddingsAfterVdu() {
-            // VDU processing generates pending embeddings
-            knowledgeClient.withPendingVduCount(5);
-            knowledgeClient.withPendingEmbeddingsCount(0);  // Initially 0
-            vduBatchProcessor.withOnProcess(() -> {
-                // Simulate VDU creating pending embeddings
-                knowledgeClient.withPendingEmbeddingsCount(5);
-            });
+            when(knowledgeClient.countPendingVdu()).thenReturn(5);
+            // First query 0 (before VDU), second 5 (VDU generated re-embeddings).
+            when(knowledgeClient.countPendingEmbeddings()).thenReturn(0, 5);
 
             coordinator.startOfflineProcessing();
 
-            // Should have queried embeddings twice (before and after VDU)
-            assertEquals(2, knowledgeClient.getCountPendingEmbeddingsCalls(),
-                "Should re-query embedding count after VDU phase");
-            assertEquals(1, inferenceManager.getIndexingSwitchCount(),
-                "Should switch to Indexing for newly pending embeddings");
+            verify(knowledgeClient, times(2)).countPendingEmbeddings();
+            assertEquals(1, inferenceManager.getIndexingSwitchCount(), "parks to indexing for newly pending embeddings");
         }
     }
 
@@ -124,26 +143,27 @@ class OfflineCoordinatorTest {
     @DisplayName("Recovery")
     class Recovery {
 
+        // INTENT: recovery of PROCESSING-stuck docs runs exactly once at the start.
         @Test
         @DisplayName("calls recoverVduProcessing at start")
         void callsRecoveryAtStart() {
-            knowledgeClient.withRecoveredCount(3);
+            when(knowledgeClient.recoverVduProcessing()).thenReturn(3);
 
             coordinator.startOfflineProcessing();
 
-            assertEquals(1, knowledgeClient.getRecoverVduProcessingCalls(),
-                "Should call recoverVduProcessing exactly once");
+            verify(knowledgeClient, times(1)).recoverVduProcessing();
         }
 
+        // INTENT: zero recovered does not abort the run.
         @Test
         @DisplayName("continues processing even if recovery finds no stuck documents")
         void continuesWithZeroRecovered() {
-            knowledgeClient.withRecoveredCount(0);
-            knowledgeClient.withPendingVduCount(5);
+            when(knowledgeClient.recoverVduProcessing()).thenReturn(0);
+            when(knowledgeClient.countPendingVdu()).thenReturn(5);
 
             coordinator.startOfflineProcessing();
 
-            assertTrue(vduBatchProcessor.wasProcessCalled(), "Should continue to VDU processing");
+            verify(vduBatchProcessor).processPendingFiles();
         }
     }
 
@@ -151,6 +171,7 @@ class OfflineCoordinatorTest {
     @DisplayName("Concurrent Guard")
     class ConcurrentGuard {
 
+        // INTENT: only one run proceeds when two start concurrently.
         @Test
         @DisplayName("prevents concurrent processing")
         void preventsConcurrentProcessing() throws InterruptedException {
@@ -158,69 +179,63 @@ class OfflineCoordinatorTest {
             CountDownLatch processingStarted = new CountDownLatch(1);
             CountDownLatch canFinish = new CountDownLatch(1);
 
-            vduBatchProcessor.withOnProcess(() -> {
-                startCount.incrementAndGet();
-                processingStarted.countDown();
-                try {
-                    canFinish.await(5, TimeUnit.SECONDS);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            });
-            knowledgeClient.withPendingVduCount(5);
+            when(knowledgeClient.countPendingVdu()).thenReturn(5);
+            when(vduBatchProcessor.processPendingFiles())
+                .thenAnswer(
+                    inv -> {
+                        startCount.incrementAndGet();
+                        processingStarted.countDown();
+                        canFinish.await(5, TimeUnit.SECONDS);
+                        return 0;
+                    });
 
             ExecutorService executor = Executors.newFixedThreadPool(2);
             try {
-                // Start first processing
                 @SuppressWarnings("FutureReturnValueIgnored")
                 var unused1 = executor.submit(coordinator::startOfflineProcessing);
                 assertTrue(processingStarted.await(1, TimeUnit.SECONDS), "First processing should start");
 
-                // Try to start second processing while first is running
                 @SuppressWarnings("FutureReturnValueIgnored")
                 var unused2 = executor.submit(coordinator::startOfflineProcessing);
-                Thread.sleep(100);  // Give time for second call to be blocked
+                Thread.sleep(100);
 
-                // Only one should have started
                 assertEquals(1, startCount.get(), "Only one processing should have started");
 
-                // Let first finish
                 canFinish.countDown();
                 executor.shutdown();
                 assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
-
             } finally {
                 executor.shutdownNow();
             }
         }
 
+        // INTENT: a second run proceeds after the first completes.
         @Test
         @DisplayName("allows sequential processing")
         void allowsSequentialProcessing() {
-            knowledgeClient.withPendingVduCount(5);
+            when(knowledgeClient.countPendingVdu()).thenReturn(5);
 
             coordinator.startOfflineProcessing();
             coordinator.startOfflineProcessing();
 
-            assertEquals(2, vduBatchProcessor.getProcessCallCount(),
-                "Should allow second processing after first completes");
+            verify(vduBatchProcessor, times(2)).processPendingFiles();
         }
 
+        // INTENT: isProcessing reflects an in-flight run.
         @Test
         @DisplayName("isProcessing returns true during processing")
         void isProcessingReturnsTrueDuringProcessing() throws InterruptedException {
             CountDownLatch processingStarted = new CountDownLatch(1);
             CountDownLatch canFinish = new CountDownLatch(1);
 
-            vduBatchProcessor.withOnProcess(() -> {
-                processingStarted.countDown();
-                try {
-                    canFinish.await(5, TimeUnit.SECONDS);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            });
-            knowledgeClient.withPendingVduCount(5);
+            when(knowledgeClient.countPendingVdu()).thenReturn(5);
+            when(vduBatchProcessor.processPendingFiles())
+                .thenAnswer(
+                    inv -> {
+                        processingStarted.countDown();
+                        canFinish.await(5, TimeUnit.SECONDS);
+                        return 0;
+                    });
 
             assertFalse(coordinator.isProcessing(), "Should not be processing initially");
 
@@ -244,53 +259,59 @@ class OfflineCoordinatorTest {
     }
 
     @Nested
-    @DisplayName("Mode Transitions")
-    class ModeTransitions {
+    @DisplayName("Engine Control (procedure-scoped)")
+    class EngineControl {
 
+        // INTENT: engine is brought up for VDU when not already online — now via the procedure.
         @Test
-        @DisplayName("switches to Online mode for VDU when not already online")
-        void switchesToOnlineForVdu() {
+        @DisplayName("requests engine up for VDU when not already online")
+        void requestsEngineUpForVdu() {
             inferenceManager.withMode(Mode.OFFLINE);
-            knowledgeClient.withPendingVduCount(5);
+            when(knowledgeClient.countPendingVdu()).thenReturn(5);
 
             coordinator.startOfflineProcessing();
 
-            assertEquals(1, inferenceManager.getOnlineSwitchCount(), "Should switch to Online");
+            assertEquals(1, inferenceManager.getOnlineSwitchCount(), "procedureRequireEngine(true) drove the switch");
         }
 
+        // INTENT: no redundant engine-up when already online (realized-state read, R4).
         @Test
-        @DisplayName("skips Online switch when already in Online mode")
-        void skipsOnlineSwitchWhenAlreadyOnline() {
+        @DisplayName("skips engine-up request when already in Online mode")
+        void skipsEngineUpWhenAlreadyOnline() {
             inferenceManager.withMode(Mode.ONLINE);
-            knowledgeClient.withPendingVduCount(5);
+            when(knowledgeClient.countPendingVdu()).thenReturn(5);
 
             coordinator.startOfflineProcessing();
 
-            assertEquals(0, inferenceManager.getOnlineSwitchCount(), "Should NOT switch when already Online");
+            assertEquals(0, inferenceManager.getOnlineSwitchCount(), "already online → no engine-up request");
         }
 
+        // INTENT: VDU phase is skipped (blocked) if the engine-up request fails; embeddings still run.
         @Test
-        @DisplayName("skips VDU phase when Online mode transition fails")
-        void skipsVduWhenOnlineTransitionFails() {
+        @DisplayName("skips VDU phase when engine-up request fails")
+        void skipsVduWhenEngineUpFails() {
             inferenceManager.withMode(Mode.OFFLINE);
             inferenceManager.withFailOnlineTransition(true);
-            knowledgeClient.withPendingVduCount(5);
-            knowledgeClient.withPendingEmbeddingsCount(10);
+            when(knowledgeClient.countPendingVdu()).thenReturn(5);
+            when(knowledgeClient.countPendingEmbeddings()).thenReturn(10);
 
             coordinator.startOfflineProcessing();
 
-            assertFalse(vduBatchProcessor.wasProcessCalled(), "VDU should be skipped on transition failure");
-            // But embedding phase should still run
-            assertEquals(1, inferenceManager.getIndexingSwitchCount(), "Embedding phase should still run");
+            verify(vduBatchProcessor, never()).processPendingFiles();
+            assertEquals(
+                VduCapabilityState.REASON_AI_OFFLINE,
+                capabilityState.snapshot().blockedReason(),
+                "engine-up failure blocks VDU with the AI-offline reason");
+            assertEquals(1, inferenceManager.getIndexingSwitchCount(), "embedding phase still runs");
         }
 
+        // INTENT: a park-to-indexing failure is handled gracefully (no throw).
         @Test
-        @DisplayName("handles Indexing mode transition failure gracefully")
-        void handlesIndexingTransitionFailure() {
+        @DisplayName("handles park-to-indexing failure gracefully")
+        void handlesIndexingParkFailure() {
             inferenceManager.withFailIndexingTransition(true);
-            knowledgeClient.withPendingEmbeddingsCount(10);
+            when(knowledgeClient.countPendingEmbeddings()).thenReturn(10);
 
-            // Should not throw
             assertDoesNotThrow(() -> coordinator.startOfflineProcessing());
         }
     }
@@ -302,8 +323,8 @@ class OfflineCoordinatorTest {
         @Test
         @DisplayName("hasPendingWork returns true when VDU pending")
         void hasPendingWorkWithVdu() {
-            knowledgeClient.withPendingVduCount(5);
-            knowledgeClient.withPendingEmbeddingsCount(0);
+            when(knowledgeClient.countPendingVdu()).thenReturn(5);
+            when(knowledgeClient.countPendingEmbeddings()).thenReturn(0);
 
             assertTrue(coordinator.hasPendingWork());
         }
@@ -311,8 +332,8 @@ class OfflineCoordinatorTest {
         @Test
         @DisplayName("hasPendingWork returns true when embeddings pending")
         void hasPendingWorkWithEmbeddings() {
-            knowledgeClient.withPendingVduCount(0);
-            knowledgeClient.withPendingEmbeddingsCount(10);
+            when(knowledgeClient.countPendingVdu()).thenReturn(0);
+            when(knowledgeClient.countPendingEmbeddings()).thenReturn(10);
 
             assertTrue(coordinator.hasPendingWork());
         }
@@ -320,8 +341,8 @@ class OfflineCoordinatorTest {
         @Test
         @DisplayName("hasPendingWork returns false when nothing pending")
         void hasPendingWorkWithNothing() {
-            knowledgeClient.withPendingVduCount(0);
-            knowledgeClient.withPendingEmbeddingsCount(0);
+            when(knowledgeClient.countPendingVdu()).thenReturn(0);
+            when(knowledgeClient.countPendingEmbeddings()).thenReturn(0);
 
             assertFalse(coordinator.hasPendingWork());
         }
@@ -329,129 +350,15 @@ class OfflineCoordinatorTest {
         @Test
         @DisplayName("getPendingVduCount delegates to client")
         void getPendingVduCountDelegates() {
-            knowledgeClient.withPendingVduCount(42);
+            when(knowledgeClient.countPendingVdu()).thenReturn(42);
             assertEquals(42, coordinator.getPendingVduCount());
         }
 
         @Test
         @DisplayName("getPendingEmbeddingCount delegates to client")
         void getPendingEmbeddingCountDelegates() {
-            knowledgeClient.withPendingEmbeddingsCount(99);
+            when(knowledgeClient.countPendingEmbeddings()).thenReturn(99);
             assertEquals(99, coordinator.getPendingEmbeddingCount());
-        }
-    }
-
-    // ========== Test Support Classes ==========
-
-    /**
-     * Testable version of OfflineCoordinator that works with stubs.
-     */
-    static class TestableOfflineCoordinator {
-        private final StubInferenceLifecycleManager inferenceManager;
-        private final StubVduBatchProcessor vduBatchProcessor;
-        private final StubRemoteKnowledgeClient knowledgeClient;
-        private final java.util.concurrent.atomic.AtomicBoolean processing = new java.util.concurrent.atomic.AtomicBoolean(false);
-
-        TestableOfflineCoordinator(StubInferenceLifecycleManager inferenceManager,
-                                   StubVduBatchProcessor vduBatchProcessor,
-                                   StubRemoteKnowledgeClient knowledgeClient) {
-            this.inferenceManager = inferenceManager;
-            this.vduBatchProcessor = vduBatchProcessor;
-            this.knowledgeClient = knowledgeClient;
-        }
-
-        void startOfflineProcessing() {
-            if (!processing.compareAndSet(false, true)) {
-                return;  // Already processing
-            }
-
-            try {
-                // Recovery phase
-                knowledgeClient.recoverVduProcessing();
-
-                int pendingVdu = knowledgeClient.countPendingVdu();
-                knowledgeClient.countPendingEmbeddings();  // First query (value unused - just count call)
-
-                // Phase A: VDU
-                if (pendingVdu > 0) {
-                    processVduPhase();
-                }
-
-                // Phase B: Embeddings (re-query count after VDU - VDU may generate new pending)
-                int pendingEmbeddings = knowledgeClient.countPendingEmbeddings();  // Second query
-                if (pendingEmbeddings > 0) {
-                    processEmbeddingPhase();
-                }
-            } finally {
-                processing.set(false);
-            }
-        }
-
-        private void processVduPhase() {
-            if (!inferenceManager.isOnline()) {
-                try {
-                    inferenceManager.switchToOnlineMode();
-                } catch (Exception e) {
-                    return;  // Skip VDU on failure
-                }
-            }
-
-            if (inferenceManager.isOnline()) {
-                vduBatchProcessor.processPendingFiles();
-            }
-        }
-
-        private void processEmbeddingPhase() {
-            try {
-                inferenceManager.switchToIndexingMode();
-            } catch (Exception e) {
-                // Log and continue
-            }
-        }
-
-        boolean hasPendingWork() {
-            return knowledgeClient.countPendingVdu() > 0 || knowledgeClient.countPendingEmbeddings() > 0;
-        }
-
-        int getPendingVduCount() {
-            return knowledgeClient.countPendingVdu();
-        }
-
-        int getPendingEmbeddingCount() {
-            return knowledgeClient.countPendingEmbeddings();
-        }
-
-        boolean isProcessing() {
-            return processing.get();
-        }
-    }
-
-    /**
-     * Stub VduBatchProcessor for testing OfflineCoordinator.
-     */
-    static class StubVduBatchProcessor {
-        private boolean processCalled = false;
-        private int processCallCount = 0;
-        private Runnable onProcess = () -> {};
-
-        int processPendingFiles() {
-            processCalled = true;
-            processCallCount++;
-            onProcess.run();
-            return 0;
-        }
-
-        boolean wasProcessCalled() {
-            return processCalled;
-        }
-
-        int getProcessCallCount() {
-            return processCallCount;
-        }
-
-        StubVduBatchProcessor withOnProcess(Runnable callback) {
-            this.onProcess = callback;
-            return this;
         }
     }
 }

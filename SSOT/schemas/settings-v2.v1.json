@@ -37,6 +37,9 @@
     "ui" : {
       "type" : [ "object", "null" ],
       "properties" : {
+        "chatEnabled" : {
+          "type" : [ "boolean", "null" ]
+        },
         "defaultAction" : {
           "type" : [ "string", "null" ]
         },

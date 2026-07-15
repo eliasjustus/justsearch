@@ -16,9 +16,11 @@ public record UiSettingsV2(
     Boolean pauseIndexingDuringAi,
     String mode,
     Boolean hasSeenTrustLoopNudge,
-    java.util.List<String> excludePatterns
+    java.util.List<String> excludePatterns,
+    // Tempdoc 737 Phase 1 — desired-state chat bit (RuntimeSpec). Nullable: null = never set.
+    Boolean chatEnabled
 ) {
   public static UiSettingsV2 defaults() {
-    return new UiSettingsV2("system", false, "comfort", false, "open", null, false, "simple", false, java.util.List.of());
+    return new UiSettingsV2("system", false, "comfort", false, "open", null, false, "simple", false, java.util.List.of(), false);
   }
 }

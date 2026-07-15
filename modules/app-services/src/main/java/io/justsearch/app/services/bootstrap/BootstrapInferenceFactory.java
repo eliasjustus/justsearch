@@ -3,7 +3,6 @@ package io.justsearch.app.services.bootstrap;
 
 import io.justsearch.app.inference.InferenceConfig;
 import io.justsearch.app.inference.InferenceLifecycleManager;
-import io.justsearch.app.api.ModeTransitionException;
 import io.justsearch.app.inference.telemetry.InferenceTelemetryEvents;
 import io.justsearch.app.services.inference.InferenceMetricCatalog;
 import io.justsearch.app.services.inference.InferenceTelemetryAdapter;
@@ -132,45 +131,6 @@ public final class BootstrapInferenceFactory {
    */
   public static Path resolveBaseDir(ResolvedConfig resolvedConfig, String userDir) {
     return ResolvedPathResolver.resolveBaseDir(resolvedConfig, userDir);
-  }
-
-  /**
-   * Attempts to start the llama-server in Online Mode.
-   * Logs warning if startup fails but does not throw.
-   */
-  public static void tryStartOnlineMode(
-      // Tempdoc 518 Appendix F W4.2 — role-typed interface, off concrete ILM.
-      io.justsearch.app.api.OnlineAiLifecycleControl manager,
-      boolean autoStartEnabled,
-      boolean autoStartDisabled,
-      Logger log) {
-    if (!autoStartEnabled || autoStartDisabled) {
-      // Tempdoc 374 alpha.20 Bug N: distinguish "explicitly disabled by operator" from
-      // "default behaviour (opt-in auto-start)." Pre-alpha.20 both cases logged
-      // "AI auto-start disabled" — which read as "feature is off" when actually auto-
-      // start is just opt-in. Round-10 evidence: a user closing/reopening JustSearch
-      // saw "AI offline" with this misleading log line as the only hint.
-      if (autoStartDisabled) {
-        log.info(
-            "AI auto-start explicitly disabled by operator (JUSTSEARCH_AI_AUTOSTART_DISABLED=true);"
-                + " llama-server will not start automatically.");
-      } else {
-        log.info(
-            "AI auto-start not configured; llama-server will start on first"
-                + " /api/ai/runtime/activate request. Set JUSTSEARCH_AI_AUTOSTART_ENABLED=true"
-                + " to auto-start chat on cold boot.");
-      }
-      return;
-    }
-
-    try {
-      log.info("Starting llama-server (Online Mode)...");
-      manager.switchToOnlineMode();
-      log.info("llama-server started successfully");
-    } catch (ModeTransitionException e) {
-      log.warn("Failed to start llama-server at startup; AI features may be unavailable", e);
-      // Don't throw - app should still work without AI features
-    }
   }
 
   public static Path getJustSearchHome(ResolvedConfig resolvedConfig, String userDir) {

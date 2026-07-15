@@ -26,6 +26,15 @@ import tools.jackson.databind.ObjectMapper;
  * retention window. If pathological transition rates ever blow this assumption, switch to
  * rolling by size like {@code NdjsonSpanExporter} does.
  *
+ * <p><b>Schema versioning (tempdoc 737 §14 R4 / §15 task 3):</b> every record written by this
+ * class now carries {@code "schemaVersion":2}. Records written before this change (v1) omit the
+ * field entirely — retention naturally ages those out, but the file can still contain a mix of
+ * v1 and v2 lines during the retention window (e.g. right after an upgrade). Readers (the
+ * forensic replay harness in {@link NdjsonInferenceTransitionLogTest}) must keep tolerating a
+ * missing {@code schemaVersion} rather than treating it as a parse error — v2 adds exactly the
+ * one field; every other field ({@code reason} already carries the {@code TransitionReason}
+ * wireValue since tempdoc 737 Phase 2b task 5) is unchanged.
+ *
  * <p>Tempdoc 518 Appendix G Wave B.1.
  */
 public final class NdjsonInferenceTransitionLog implements InferenceTransitionLog {
@@ -129,6 +138,16 @@ public final class NdjsonInferenceTransitionLog implements InferenceTransitionLo
    */
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
+  /**
+   * NDJSON record schema version (tempdoc 737 §14 R4 / §15 task 3). v1 records (written before
+   * this field existed) omit {@code schemaVersion} entirely; the replay/reader path must keep
+   * tolerating its absence — {@link NdjsonInferenceTransitionLogTest} pins this. v2 adds exactly
+   * this one field; {@code reason} already carries the full {@code TransitionReason} wireValue
+   * (threaded in tempdoc 737 Phase 2b task 5) so v2 does not need to add it separately. Deliberately
+   * minimal — versioning + reason, no speculative fields.
+   */
+  private static final int SCHEMA_VERSION = 2;
+
   private static String formatLine(
       long timestampMs,
       String from,
@@ -139,6 +158,7 @@ public final class NdjsonInferenceTransitionLog implements InferenceTransitionLo
       String wireCode,
       long generation) {
     java.util.Map<String, Object> record = new java.util.LinkedHashMap<>();
+    record.put("schemaVersion", SCHEMA_VERSION);
     record.put("timestampMs", timestampMs);
     record.put("ts", Instant.ofEpochMilli(timestampMs).toString());
     record.put("fromMode", from);

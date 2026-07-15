@@ -22,6 +22,7 @@ export interface SettingsV2 {
   } | null;
   settingsMode?: string | null;
   ui?: {
+    chatEnabled?: boolean | null;
     defaultAction?: string | null;
     density?: string | null;
     excludePatterns?: string[] | null;
@@ -46,6 +47,7 @@ export const settingsV2Schema = z.strictObject({
   }).nullable().optional(),
   "settingsMode": z.string().nullable().optional(),
   "ui": z.strictObject({
+    "chatEnabled": z.boolean().nullable().optional(),
     "defaultAction": z.string().nullable().optional(),
     "density": z.string().nullable().optional(),
     "excludePatterns": z.array(z.string()).nullable().optional(),

@@ -144,7 +144,12 @@ final class CoreApiAssembly {
             enterprisePolicyService,
             b.settingsStore,
             telemetry,
-            resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability));
+            resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability),
+            // Tempdoc 737 fix pack (fix 4): the ONE runtime-intent authority for /api/inference/mode.
+            // Null for legacy test seams (HeadAssembly absent) — those keep the raw fallback path.
+            b.HeadAssembly != null && b.HeadAssembly.serviceOut() != null
+                ? b.HeadAssembly.serviceOut().brainRuntime()
+                : null);
     Supplier<String> diskPressureSupplier = null;
     if (telemetry instanceof io.justsearch.telemetry.LocalTelemetry lt) {
       diskPressureSupplier = () -> lt.getHealthState().getDiskPressureLevel().name();
@@ -217,6 +222,9 @@ final class CoreApiAssembly {
                     ? headForVduSampler.headInfraRegistry().offlineCoordinator()
                     : null,
             () -> headForVduSampler != null ? headForVduSampler.currentKnowledgeServer() : null,
+            // Tempdoc 737 R4: keep this the REALIZED-state read — inferenceManager().isOnline() is
+            // the FSM phase (mode==ONLINE), never spec/chatEnabled. The VDU exclusivity mutex
+            // depends on realized state; feeding it spec would break self-interrupt-avoidance.
             () ->
                 headForVduSampler != null
                     && headForVduSampler.serviceOut() != null
@@ -382,7 +390,7 @@ final class CoreApiAssembly {
                 resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability),
                 aiInstallHelper);
     AiRuntimeController aiRuntimeController =
-        new AiRuntimeController(runtimeActivationHelper, enterprisePolicyService, telemetry);
+        new AiRuntimeController(runtimeActivationHelper, telemetry);
     // Tempdoc 656 Task 4: read-only reconciliation of the model registry against on-disk
     // presence — reuses aiInstallHelper + runtimeActivationHelper, no new resolution logic.
     AiModelsController aiModelsController =

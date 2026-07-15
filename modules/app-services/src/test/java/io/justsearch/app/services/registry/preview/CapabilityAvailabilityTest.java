@@ -23,6 +23,7 @@ import io.justsearch.agent.api.registry.Provenance;
 import io.justsearch.agent.api.registry.RequiredCapability;
 import io.justsearch.agent.api.registry.RetryPolicy;
 import io.justsearch.agent.api.registry.RiskTier;
+import io.justsearch.app.services.registry.operations.CoreOperationCatalog;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -65,12 +66,45 @@ final class CapabilityAvailabilityTest {
   }
 
   @Test
-  void gpuAndEmptyDeriveNothing() {
-    assertTrue(
-        CapabilityAvailability.derive(Set.of(new RequiredCapability.GpuAvailable("nvidia")))
-            .isEmpty(),
-        "GPU has no published condition → no availability hint");
+  void emptyCapabilitySetDerivesNothing() {
+    // Tempdoc 737 §8a/§12d: RequiredCapability.GpuAvailable was dead vocabulary (required by no
+    // operation, resolver arm hardcoded true) and has been removed along with IndexedRoot — this
+    // test now covers the one remaining "derives nothing" case: an empty capability set.
     assertTrue(CapabilityAvailability.derive(Set.of()).isEmpty());
+  }
+
+  @Test
+  void deCircularizedLifecycleOpsDeriveEmptyAvailability() {
+    // Tempdoc 737 §8a/§12b: switch-inference-mode, activate-runtime-variant, and
+    // deactivate-runtime-variant used to require InferenceOnline — a postcondition their own
+    // success establishes — which meant they were hidden from the agent surface (via
+    // capability-derived availability) exactly when needed to recover. They now declare no
+    // capabilities at all, so derivation yields no availability expression and the ops are never
+    // hidden. This supersedes the fossil coverage this file previously carried for the circular
+    // InferenceOnline requirement on these ops.
+    CoreOperationCatalog catalog = new CoreOperationCatalog();
+    for (var id :
+        List.of(
+            CoreOperationCatalog.SWITCH_INFERENCE_MODE,
+            CoreOperationCatalog.ACTIVATE_RUNTIME_VARIANT,
+            CoreOperationCatalog.DEACTIVATE_RUNTIME_VARIANT)) {
+      Operation op = catalog.findById(id).orElseThrow();
+      assertTrue(
+          op.policy().requiredCapabilities().isEmpty(),
+          id.value() + " must declare no RequiredCapability (tempdoc 737 §12b)");
+      assertTrue(
+          CapabilityAvailability.derive(op.policy().requiredCapabilities()).isEmpty(),
+          id.value() + " must derive no availability expression");
+    }
+    // trigger-offline-processing keeps WorkerOnline (it is not established by this op) — its
+    // derivation still yields a condition, distinguishing "de-circularized" from "unconditional".
+    Operation triggerOffline =
+        catalog.findById(CoreOperationCatalog.TRIGGER_OFFLINE_PROCESSING).orElseThrow();
+    assertEquals(
+        Set.of(RequiredCapability.WorkerOnline.INSTANCE),
+        triggerOffline.policy().requiredCapabilities());
+    assertTrue(
+        CapabilityAvailability.derive(triggerOffline.policy().requiredCapabilities()).isPresent());
   }
 
   @Test

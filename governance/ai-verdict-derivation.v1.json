@@ -5,12 +5,15 @@
     "file": "modules/ui-web/src/shell-v0/state/aiVerdict.ts"
   },
   "scope": "modules/ui-web/src/shell-v0",
-  "predicatePattern": "installStatus\\?\\.state\\s*[=!]==|onnxFeatures\\?\\.some",
+  "predicatePattern": "installStatus\\?\\.state\\s*[=!]==|onnxFeatures\\?\\.some|\\bchatEnabledSpec\\b|\\bengineState\\b",
+  "predicatePatternNote": "Tempdoc 737 §12c: the runtime-state register (governance/runtime-state.v1.json) delegates FE runtime-state governance to THIS gate. The authority engine-axis fields projected onto the /api/status inference block (engineState/chatEnabledSpec) are added to the predicate so they, too, are read ONLY in the seam (aiVerdict.ts) and the store authority (aiStateStore.ts) — any other shell-v0 site reading them re-forks the AI-engine lifecycle. procedure/engineReason are intentionally NOT guarded (too generic — false-positive risk); guarding chatEnabledSpec+engineState already locks the soft-off / engine-axis derivation to the seam.",
   "allowed": [
     "modules/ui-web/src/shell-v0/state/aiVerdict.ts",
+    "modules/ui-web/src/shell-v0/state/aiStateStore.ts",
     "modules/ui-web/src/shell-v0/views/BrainSurface.ts"
   ],
   "allowedNotes": {
+    "modules/ui-web/src/shell-v0/state/aiStateStore.ts": "Tempdoc 737 §12c: the store authority reads the raw runtime-authority fields (status.inference.engineState/chatEnabledSpec/procedure/engineReason) in exactly two places — computeRuntime (resolves the engine mode, preferring the authority) and buildSnapshot (feeds them into computeAiEngineVerdict) — plus the soft-off chat-capability guard in computeCapabilities. This is the store-level single authority (like 594/595/596), not a re-fork; every OTHER surface consumes AiState.aiEngine / AiState.capabilities, not these raw fields.",
     "modules/ui-web/src/shell-v0/views/BrainSurface.ts": "installStalled() reads installStatus.state === 'running' to detect a STALE in-progress install (paired with isAiInstallLive's staleness window) — a distinct question from the lifecycle KIND computeAiEngineVerdict answers, not a re-derivation of it. Every OTHER read of installStatus.state/onnxFeatures in this file was fixed to consume computeAiEngineVerdict instead (tempdoc 663) before this allow-list entry was added — re-check with a fresh grep before assuming new occurrences are equally legitimate."
   }
 }

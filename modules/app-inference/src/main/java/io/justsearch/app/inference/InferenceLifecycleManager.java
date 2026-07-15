@@ -107,7 +107,13 @@ public class InferenceLifecycleManager
   // Typed observability events. Mirrors the runner's events for the body's own emissions.
   private final InferenceTelemetryEvents events;
 
-  // VDU save/restore
+  // Procedure-scoped config stash (VDU procedure). Tempdoc 737 task 6 judgment: §12d listed this as
+  // "subsumed by spec-return", but that conflated two levels. The reconciler's return-to-spec is
+  // MODE-level (ONLINE/INDEXING/OFFLINE via switchTo*); this stash restores INFERENCE CONFIG —
+  // context length, vision-safe flags (-np 1, --cache-ram 0) — which the mode-level reconciler does
+  // not model. The two are genuinely distinct, so the stash STAYS as a procedure-scoped
+  // enter/exit config restore. The applyConfig(VDU config) call is real behavior (single slot, no
+  // cache) and also stays. Only the *mode* return-to-spec moved to the reconciler.
   private volatile InferenceConfig preVduConfig;
 
   // Configuration constants
@@ -324,9 +330,20 @@ public class InferenceLifecycleManager
 
   // ==================== Mode Transitions ====================
 
+  @Override
   public void switchToOnlineMode() throws ModeTransitionException {
+    switchToOnlineMode(TransitionReason.USER_SWITCH);
+  }
+
+  /**
+   * Tempdoc 737 (task 5): reason-bearing overload so reconciler-/procedure-initiated transitions
+   * carry an appropriate {@link TransitionReason} into {@link TransitionRunner#run} (telemetry +
+   * ndjson forensic log) instead of the hard-coded {@code USER_SWITCH}. The no-arg method delegates
+   * here with {@code USER_SWITCH} for source-compatibility.
+   */
+  public void switchToOnlineMode(TransitionReason reason) throws ModeTransitionException {
     runner.run(
-        TransitionReason.USER_SWITCH,
+        reason,
         events::onStartupFailure,
         priorView -> {
           if (priorView.phase() == Mode.ONLINE) {
@@ -444,9 +461,15 @@ public class InferenceLifecycleManager
         });
   }
 
+  @Override
   public void switchToIndexingMode() throws ModeTransitionException {
+    switchToIndexingMode(TransitionReason.USER_SWITCH);
+  }
+
+  /** Tempdoc 737 (task 5): reason-bearing overload — see {@link #switchToOnlineMode(TransitionReason)}. */
+  public void switchToIndexingMode(TransitionReason reason) throws ModeTransitionException {
     runner.run(
-        TransitionReason.USER_SWITCH,
+        reason,
         events::onStartupFailure,
         priorView -> {
           if (priorView.phase() == Mode.INDEXING) {

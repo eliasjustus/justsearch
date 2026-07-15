@@ -280,25 +280,6 @@
                 }
               },
               "required" : [ "type" ]
-            }, {
-              "type" : "object",
-              "properties" : {
-                "type" : {
-                  "const" : "indexed-root"
-                }
-              },
-              "required" : [ "type" ]
-            }, {
-              "type" : "object",
-              "properties" : {
-                "minVendor" : {
-                  "type" : [ "string", "null" ]
-                },
-                "type" : {
-                  "const" : "gpu-available"
-                }
-              },
-              "required" : [ "type" ]
             } ]
           }
         },

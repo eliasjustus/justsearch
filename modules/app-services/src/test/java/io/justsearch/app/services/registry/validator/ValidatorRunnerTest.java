@@ -118,7 +118,12 @@ final class ValidatorRunnerTest {
     handlers.register(
         CoreOperationCatalog.SWITCH_INFERENCE_MODE,
         new io.justsearch.app.services.registry.operations.handlers.SwitchInferenceModeHandler(
-            () -> null));
+            () -> null, () -> null));
+    // Tempdoc 737 §12b: the intent-write op that supersedes switch-inference-mode.
+    handlers.register(
+        CoreOperationCatalog.SET_CHAT_ENABLED,
+        new io.justsearch.app.services.registry.operations.handlers.SetChatEnabledHandler(
+            () -> null, () -> null));
     handlers.register(
         CoreOperationCatalog.TRIGGER_OFFLINE_PROCESSING,
         new io.justsearch.app.services.registry.operations.handlers.TriggerOfflineProcessingHandler(
