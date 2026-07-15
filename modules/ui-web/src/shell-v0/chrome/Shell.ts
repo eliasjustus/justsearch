@@ -50,7 +50,7 @@ import { unavailableBecause } from '../state/availability.js';
 import '../components/Control.js';
 // 569 §14 — host authorities the global presentation-intent Effect listeners drive.
 import { applyAppearance } from '../state/themeState.js';
-import { setUiMode, getUiMode, subscribeUiMode } from '../state/uiModeState.js';
+import { setUiMode, getUiMode, subscribeUiMode, type UiMode } from '../state/uiModeState.js';
 import { applyPresentation, listPresentations } from '../state/presentationState.js';
 import './OverlayHost.js';
 import '../components/DragOverlay.js';
@@ -361,6 +361,8 @@ export class Shell extends JfElement {
     journalCanBack: { state: true },
     journalCanForward: { state: true },
     isBookmarked: { state: true },
+    // Tempdoc 738 — the surfaced Simple/Detailed toggle mirrors the uiMode authority for its active state.
+    uiMode: { state: true },
   };
 
   declare apiBase: string;
@@ -376,6 +378,8 @@ export class Shell extends JfElement {
   declare journalCanForward: boolean;
   /** Slice 501 — whether the current URL is bookmarked. */
   declare isBookmarked: boolean;
+  /** Tempdoc 738 — app-wide Simple/Detailed mode, mirrored for the topbar toggle's active state. */
+  declare uiMode: UiMode;
 
   private dragUnsubscribe: (() => void) | null = null;
   private userConfigUnsubscribe: (() => void) | null = null;
@@ -555,6 +559,7 @@ export class Shell extends JfElement {
     this.dragKind = null;
     this.userConfig = getUserConfig();
     this.copyUrlFeedback = null;
+    this.uiMode = getUiMode();
   }
 
   static styles = css`
@@ -643,6 +648,33 @@ export class Shell extends JfElement {
     /* Slice 489 T1/G1 — Copy URL topbar affordance. */
     .topbar .spacer {
       flex: 1;
+    }
+    /* Tempdoc 738 — the Simple/Detailed segmented toggle (surfaces the uiMode disclosure authority). */
+    .ui-mode-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 1px;
+      padding: 1px;
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.375rem;
+    }
+    .ui-mode-opt {
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font: inherit;
+      font-size: var(--font-size-xs);
+      padding: 0.125rem 0.5rem;
+      border-radius: 0.3125rem;
+      cursor: pointer;
+      transition: background var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+    }
+    .ui-mode-opt:hover:not(.active) {
+      color: var(--text-primary);
+    }
+    .ui-mode-opt.active {
+      background: var(--surface-2);
+      color: var(--text-primary);
     }
     .copy-url {
       display: inline-flex;
@@ -1320,7 +1352,8 @@ export class Shell extends JfElement {
     // Tempdoc 586 F-2 — re-filter the rail live when the Simple/Advanced mode changes (mirrors the
     // surfaceVisibility re-filter above). subscribeUiMode fires immediately, so this also seeds the
     // initial filtered rail consistently with the persisted mode.
-    this.uiModeUnsubscribe = subscribeUiMode(() => {
+    this.uiModeUnsubscribe = subscribeUiMode((m) => {
+      this.uiMode = m;
       this.refreshSurfaces();
     });
     // Slice 471 / 469 — re-filter rail when SurfaceCatalog mutates
@@ -1766,6 +1799,48 @@ export class Shell extends JfElement {
     }, 1500);
   }
 
+  /**
+   * Tempdoc 738 — surface the app-wide Simple/Detailed disclosure authority (uiModeState) as reachable
+   * chrome, so a Simple-mode user can always recover the technical detail the surfaces hide. "Detailed"
+   * is the user-facing label for the `advanced` mode.
+   */
+  private renderUiModeToggle(): TemplateResult {
+    // Read the authority LIVE (not the cached `this.uiMode`) so the toggle can never desync from what
+    // the surfaces render — e.g. when the async settings seed sets the mode after this component's
+    // constructor ran. `this.uiMode` + the subscription remain only to trigger the re-render.
+    const mode = getUiMode();
+    return html`<div class="ui-mode-toggle" role="group" aria-label="Detail level">
+      ${(['simple', 'advanced'] as const).map(
+        (m) => html`<button
+          type="button"
+          class=${mode === m ? 'ui-mode-opt active' : 'ui-mode-opt'}
+          aria-pressed=${mode === m ? 'true' : 'false'}
+          @click=${() => this.handleUiModeSelect(m)}
+        >
+          ${m === 'simple' ? 'Simple' : 'Detailed'}
+        </button>`,
+      )}
+    </div>`;
+  }
+
+  private handleUiModeSelect(mode: UiMode): void {
+    if (this.uiMode === mode) return;
+    // Immediate, app-wide: drives the rail-trim (586 F-2) + every 728 disclosure consumer via the store.
+    setUiMode(mode);
+    // Persist best-effort so the choice survives restart, independent of whether SettingsSurface (which
+    // owns the jf-save-settings listener) is mounted — the topbar must not depend on it. Same endpoint +
+    // `{ ui: {...} }` body shape SettingsSurface uses (SettingsSurface.saveSettingsListener).
+    void this.hostApi_?.data
+      .fetch('/api/settings/v2', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ui: { mode } }),
+      })
+      .catch(() => {
+        /* best-effort persist; the in-session store update already applied */
+      });
+  }
+
   private toggleBookmarksPopover(): void {
     const popover = this.renderRoot.querySelector(
       '#bookmarks-popover',
@@ -2138,6 +2213,7 @@ export class Shell extends JfElement {
         ></jf-recents-menu>
         <h1 class="surface-title">${active ? present({ kind: 'surface', id: active.id }).label : ''}</h1>
         <span class="spacer"></span>
+        ${this.renderUiModeToggle()}
         <button
           type="button"
           class=${`nav-btn bookmark-btn${this.isBookmarked ? ' active' : ''}`}

@@ -172,6 +172,11 @@ class Step:
     # For isolated steps: browser config overrides
     color_scheme: str = "dark"
     init_scripts: list[str] = field(default_factory=list)
+    # Tempdoc 697 activation — per-step override of the `install_fixtures(ctx, variant=...)`
+    # data variant, applied only when the run passes `fixtures=True`. Defaults to "default"
+    # (unchanged behavior for every existing step); an isolated step that needs a specific
+    # deterministic data/readiness state (e.g. `chat-proportion` needing `degraded`) sets this.
+    fixtures_variant: str = "default"
 
 
 # ---------------------------------------------------------------------------
@@ -584,6 +589,76 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         await page.keyboard.press("Control+Enter")
         await pane.locator("jf-markdown-block").first.wait_for(state="visible", timeout=180_000)
 
+    async def setup_chat_proportion(page):
+        # Tempdoc 697 activation — the ONE capture where BOTH shrink-only-ratchet-tracked
+        # chat-surface elements render together. Registered below with
+        # `fixtures_variant="degraded"`, which turns FOUR knobs in ui_fixtures.py (all
+        # LIVE-VERIFIED necessary via headless probing — the collapsed pill and the
+        # submitted turn each turned out to need more than the one obvious flag):
+        #   - `_status_body`: readiness.composites.retrieval -> DEGRADED with a real
+        #     LifecycleReasonCode, so the pill (`.degradation-banner-collapsed`) has
+        #     something to render; ALSO bumps indexedDocuments off zero, needed below.
+        #   - `_inference_body`: reports the model ONLINE (`/api/inference/status` is
+        #     otherwise unmapped -> capabilities.chat=false for every other step, correctly,
+        #     since there is no dev stack under --fixtures).
+        #   - `_settings_body`: flips `ui.mode` to "simple" — the captured default fixture
+        #     is "advanced", which force-EXPANDS the banner regardless of severity
+        #     (UnifiedChatView.ts:2123), so the pill never renders collapsed without this.
+        # Together: capabilities.chat=true AND documents>0 un-pins Ask from plain search
+        # (UnifiedChatView.askPinned() / availability.ts:104-143), so submitting a
+        # "?"-bearing draft escalates to send() and pushes `.message.user`.
+        #
+        # Deliberately a NEW isolated step, not a `chat-mode` edit — `chat-mode` documents
+        # chat-INPUT mode only (types `??`, never submits) and its own screenshot/a11y
+        # baseline must stay undisturbed.
+        #
+        # CORRECTION vs the original brief: does NOT use `_type_and_search` / `S.SEARCH_INPUT`
+        # / `S.TID_SEARCH_INPUT` / `S.CSS_SEARCH_INPUT_TEXTAREA`. Live-probed (headless
+        # Playwright against this worktree's --fixtures capture): those all target a
+        # `role="searchbox"` / `data-testid="search-input"` that tempdoc 687 ("the Search
+        # Thread interaction model") retired when it consolidated search+chat onto the ONE
+        # `<jf-composer>` — that composer's textarea carries neither attribute (role is the
+        # bare-`<textarea>` default "textbox", no aria-label, no testid). This breaks
+        # `_type_and_search` — and therefore `search-results` and every step chained off it —
+        # under `--fixtures` in this worktree; logged as a pre-existing, cross-cutting harness
+        # finding (out of THIS task's scope to fix broadly). `chat-proportion` instead drives
+        # the rail nav directly and locates the composer via `S.CSS_COMPOSER_TEXTAREA`
+        # (`jf-composer textarea`), confirmed live to resolve to exactly one element and to
+        # drive a real search (fixture rows rendered).
+        await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.wait_for(
+            state="visible", timeout=15_000
+        )
+        try:
+            await page.locator(S.rail_css(S.RAIL_SURFACE_SEARCH)).first.dispatch_event("click")
+        except Exception:
+            await page.evaluate(
+                "() => { location.hash = 'justsearch://surface/core.unified-chat-surface'; }"
+            )
+        ta = page.locator(S.CSS_COMPOSER_TEXTAREA)
+        await ta.wait_for(state="visible", timeout=10_000)
+        await ta.click()
+        await ta.type("justsearch", delay=20)
+        await page.locator(S.CSS_SEARCH_RESULT_ROW).first.wait_for(state="visible", timeout=30_000)
+        # A "?" anywhere in the draft makes routeHeuristic.inferRoute() return 'ask'
+        # (routeHeuristic.ts:75), so submitting escalates to UnifiedChatView.escalateAsk()
+        # rather than a plain search.
+        await ta.fill("?? What is this file about")
+        # The composer's default submit-mode is 'enter' (Composer.ts constructor sets
+        # `this.submitMode = 'enter'`; UnifiedChatView's <jf-composer> does not override it),
+        # so plain Enter — NOT Ctrl+Enter — fires `composer-submit`. In the 'retrieve'
+        # affordance that runs `runRoute(currentRoute())`; currentRoute() is 'ask' (the "?"
+        # above), so this calls escalateAsk() -> send(), which pushes the turn SYNCHRONOUSLY
+        # (UnifiedChatView.ts ~5189 `this.thread = [...this.thread, {role:'user',...}]`)
+        # before any network response. Ctrl+Enter would instead flip to the OPPOSITE route
+        # ('search', via submitSearch()) — which does not push a thread message — so it is
+        # deliberately not used here despite being the gesture `setup_qa` (above) uses for
+        # the unrelated inspector Ask textarea.
+        await ta.press("Enter")
+        await page.locator(S.CSS_MESSAGE_USER).first.wait_for(state="visible", timeout=15_000)
+        await page.locator(S.CSS_DEGRADATION_BANNER_COLLAPSED).first.wait_for(
+            state="visible", timeout=10_000
+        )
+
     async def setup_responsive(page):
         await page.goto(demo, wait_until="domcontentloaded", timeout=timeout_ms)
         await _type_and_search(page)
@@ -805,6 +880,13 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         Step("responsive-collapsed",     setup=setup_responsive,      isolated=True),
         # action-panel-open / action-panel-filtered retired (615 §6.1b) — no shell-v0 equivalent.
 
+        # --- Tempdoc 697 activation: chrome-proportion shrink-only ratchet ---
+        # Isolated (own browser) so the shared `chat-mode` chain step's baseline stays
+        # untouched; captured with `fixtures_variant="degraded"` so `install_fixtures`
+        # serves the DEGRADED status fixture (see ui_fixtures._status_body).
+        Step("chat-proportion", setup=setup_chat_proportion, isolated=True,
+             fixtures_variant="degraded"),
+
         # --- Slice 3a.1 Phase 6: Lit shell-v0 visual verification ---
         # Mounts the standalone shell demo (Lumino DockPanel + Lit panes)
         # via the `?shell-demo=1` query branch in main.jsx. Bypasses the
@@ -918,7 +1000,7 @@ async def _run_isolated_step(
                 color_scheme=step.color_scheme,
             )
             if fixtures:
-                await ui_fixtures.install_fixtures(ctx)
+                await ui_fixtures.install_fixtures(ctx, variant=step.fixtures_variant)
             for script in step.init_scripts:
                 await ctx.add_init_script(script)
             page = await ctx.new_page()

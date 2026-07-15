@@ -50,6 +50,25 @@ CSS_SEARCH_RESULT_ROW = f'[data-testid="{TID_SEARCH_RESULT_ROW}"]'
 # (components/chat/MarkdownBlock.ts). Selection is a row click, so there is no per-row select checkbox.
 CSS_INSPECTOR_PANE = 'jf-inspector-pane'
 CSS_CITATION_HIGHLIGHT = '.cite-ref, [data-cite-key]'
+# Tempdoc 697 activation — LIVE-VERIFIED (headless Playwright probe against this worktree's
+# auto-served Vite, --fixtures) working locator for the ONE composer textarea. `SEARCH_INPUT`
+# / `TID_SEARCH_INPUT` / `CSS_SEARCH_INPUT_TEXTAREA` (above) are STALE: tempdoc 687 ("the Search
+# Thread interaction model", merged 2026-07-07) retired the standalone search box in favor of the
+# ONE `<jf-composer>` used for both instant search and chat, and neither `role="searchbox"` nor
+# `data-testid="search-input"` was carried over onto it (its textarea has role="textbox" — the
+# HTML default for a bare `<textarea>` — no aria-label, no testid; Composer.ts has no `data-testid`
+# attribute at all). This makes `_type_and_search` (and every step that calls it) fail under
+# `--fixtures` capture in this worktree — logged as a pre-existing cross-cutting finding, out of
+# this task's scope to fix broadly. `chat-proportion` (ui_check.py) uses this constant instead of
+# the broken ones so its own capture does not depend on that drift.
+CSS_COMPOSER_TEXTAREA = 'jf-composer textarea'
+# Tempdoc 697 activation — the two persistent-chrome, data-dependent elements the shrink-only
+# proportion ratchet (governance/ui-proportion-baseline.v1.json) tracks on the chat surface.
+# `.degradation-banner-collapsed` is UnifiedChatView.renderCollapsedDegradationBanner's one-line
+# pill (needs a DEGRADED readiness verdict); `.message.user` is a rendered user turn in the
+# thread (UnifiedChatView.ts:5189 `this.thread = [...]`).
+CSS_DEGRADATION_BANNER_COLLAPSED = '.degradation-banner-collapsed'
+CSS_MESSAGE_USER = '.message.user'
 
 @dataclass(frozen=True)
 class Selector:

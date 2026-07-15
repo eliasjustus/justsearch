@@ -50,7 +50,8 @@ import { createMockHostApi } from '../plugin-api/testHostApi.js';
 // Search Thread Round-2 R1a — the degradation banner's persisted "seen cause-set" bookmark lives in
 // the REAL userConfig document (not mocked); tests reset it so each case starts as an unseen (first-
 // sighting) cause-set, matching the pre-round-2 always-expanded assertions these tests carry forward.
-import { __resetUserConfigForTest, getUserConfig } from '../state/userConfigState.js';
+import { __resetUserConfigForTest } from '../state/userConfigState.js';
+import { setUiMode, __resetUiModeForTest } from '../state/uiModeState.js';
 
 // Need to mock aiStateStore so connectedCallback doesn't try to start it
 // against a real api.
@@ -214,6 +215,10 @@ function mountView(): UnifiedChatView {
   return view;
 }
 
+// Tempdoc 738 — uiMode is a module-level store shared across tests; reset it after every test so a
+// block that sets Detailed mode cannot leak into a later block that expects the Simple default.
+afterEach(() => __resetUiModeForTest());
+
 describe('UnifiedChatView — 637 #1 disconnected banner tone (Fix 1)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -250,6 +255,7 @@ describe('UnifiedChatView retrieve-tier degradation banner (ports SearchSurface.
     vi.clearAllMocks();
     resetUnifiedChatState();
     __resetUserConfigForTest();
+    __resetUiModeForTest();
   });
 
   function setVerdict(view: UnifiedChatView, verdict: { kind: string; severity: string; reasons: string[] }): void {
@@ -282,6 +288,7 @@ describe('UnifiedChatView retrieve-tier degradation banner (ports SearchSurface.
   });
 
   it('600 Design A — a compat-blocked index renders "Reindex required" naming the specific cause + the rebuild remedy', async () => {
+    setUiMode('advanced'); // Tempdoc 738 — the specific cause bullets render in Detailed mode.
     const view = mountView();
     await view.updateComplete;
     // Two reindex causes (Round-2 R1a only dedups a SOLE cause bullet against the headline —
@@ -311,13 +318,16 @@ describe('UnifiedChatView retrieve-tier degradation banner (ports SearchSurface.
   });
 });
 
-// Search Thread Round-2 R1a — a seen notice collapses to one line; a cause-set change (or a fresh
-// profile) re-expands once; the chevron toggles either way; the reindex single-cause bullet dedups.
-describe('UnifiedChatView degradation banner collapse (Search Thread Round-2 R1a)', () => {
+// Tempdoc 738 — the degradation banner's disclosure projects from the app-wide Simple/Detailed mode
+// (uiMode), not a per-cause-set seen-hash. Simple (default) is the one-line pill; Detailed shows the
+// raw causes; a severe (error) verdict opens expanded even in Simple; a local "See details" chevron
+// opens a cosmetic notice on demand.
+describe('UnifiedChatView degradation banner disclosure (Tempdoc 738)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetUnifiedChatState();
     __resetUserConfigForTest();
+    __resetUiModeForTest();
   });
 
   function setVerdict(view: UnifiedChatView, verdict: { kind: string; severity: string; reasons: string[] }): void {
@@ -326,76 +336,62 @@ describe('UnifiedChatView degradation banner collapse (Search Thread Round-2 R1a
     view.requestUpdate();
   }
 
-  it('a first sighting renders expanded (multi-bullet) and records the cause-set as seen', async () => {
+  it('Simple mode (default): a warn degradation renders the collapsed pill (headline + remedy, no raw causes)', async () => {
     const view = mountView();
     await view.updateComplete;
     setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
     await view.updateComplete;
-    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
-    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-collapse"]')).not.toBeNull();
-    expect(getUserConfig().seenDegradationCauseHash).toBe('worker.health.embedding_not_ready');
-  });
-
-  it('re-mounting with the SAME cause-set collapses to one line, still naming the headline + remedy', async () => {
-    const view1 = mountView();
-    await view1.updateComplete;
-    setVerdict(view1, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
-    await view1.updateComplete; // first sighting — marks it seen
-
-    const view2 = mountView();
-    await view2.updateComplete;
-    setVerdict(view2, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
-    await view2.updateComplete;
-
-    expect(view2.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
-    const summary = view2.shadowRoot?.querySelector('[data-testid="chat-degradation-summary"]');
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+    const summary = view.shadowRoot?.querySelector('[data-testid="chat-degradation-summary"]');
     expect(summary?.textContent).toContain('1 cause');
     expect(summary?.textContent).toContain('Semantic search degraded');
     // The strongest remedy stays reachable even collapsed.
     expect(
-      view2.shadowRoot?.querySelector('[data-testid="chat-degradation-remedy-op"]')?.getAttribute('operation-id'),
+      view.shadowRoot?.querySelector('[data-testid="chat-degradation-remedy-op"]')?.getAttribute('operation-id'),
     ).toBe('core.trigger-offline-processing');
   });
 
-  it('the expand chevron re-opens a collapsed banner; the collapse chevron re-collapses it', async () => {
-    const view1 = mountView();
-    await view1.updateComplete;
-    setVerdict(view1, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
-    await view1.updateComplete;
-
-    const view2 = mountView();
-    await view2.updateComplete;
-    setVerdict(view2, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
-    await view2.updateComplete;
-    expect(view2.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
-
-    (view2.shadowRoot?.querySelector('[data-testid="chat-degradation-expand"]') as HTMLButtonElement).click();
-    await view2.updateComplete;
-    expect(view2.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
-
-    (view2.shadowRoot?.querySelector('[data-testid="chat-degradation-collapse"]') as HTMLButtonElement).click();
-    await view2.updateComplete;
-    expect(view2.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
-  });
-
-  it('a cause-set CHANGE re-expands even though a different set was already seen', async () => {
+  it('Detailed mode: the same degradation renders expanded with the raw causes', async () => {
+    setUiMode('advanced');
     const view = mountView();
     await view.updateComplete;
     setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
-    await view.updateComplete; // seen: embedding_not_ready
-
-    setVerdict(view, { kind: 'degraded', severity: 'info', reasons: ['lambdamart.not_configured'] });
     await view.updateComplete;
     expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
-    expect(getUserConfig().seenDegradationCauseHash).toBe('lambdamart.not_configured');
   });
 
-  it('drops the single reindex cause bullet (dedup by code) — the headline+body already say it', async () => {
+  it('a severe (error) verdict opens expanded even in Simple, with no collapse chevron', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'error', reasons: ['worker.restart_exhausted'] });
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-collapse"]')).toBeNull();
+  });
+
+  it('the local "See details" chevron opens a collapsed banner; the collapse chevron closes it (Simple)', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['worker.health.embedding_not_ready'] });
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+
+    (view.shadowRoot?.querySelector('[data-testid="chat-degradation-expand"]') as HTMLButtonElement).click();
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).not.toBeNull();
+
+    (view.shadowRoot?.querySelector('[data-testid="chat-degradation-collapse"]') as HTMLButtonElement).click();
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
+  });
+
+  it('drops the single reindex cause bullet (dedup by code) when expanded — the headline already says it', async () => {
+    setUiMode('advanced');
     const view = mountView();
     await view.updateComplete;
     setVerdict(view, { kind: 'degraded', severity: 'warn', reasons: ['index.blocked_legacy'] });
     await view.updateComplete;
-    // First sighting is expanded, but the sole redundant bullet is dropped: no <ul> renders.
+    // Expanded (Detailed), but the sole redundant bullet is dropped: no <ul> renders.
     expect(view.shadowRoot?.querySelector('[data-testid="chat-degradation-causes"]')).toBeNull();
     expect(view.shadowRoot?.querySelector('.degradation-banner')?.textContent).toContain('Reindex required');
   });
@@ -528,6 +524,26 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     // Honest: the AUTO posture says irreversible writes still confirm (the C-4 floor).
     expect(summary?.textContent).toContain('confirming irreversible writes');
     __resetAutonomyForTest();
+  });
+
+  it('C8 (Tempdoc 738) — the run budget-gate state is plain in Simple, technical in Detailed', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'agent';
+    await view.updateComplete; // ensureAgentCtrl creates the real controller
+    const ctrl = (view as unknown as { agentCtrl: { budgetGate: unknown } | null }).agentCtrl;
+    if (ctrl) ctrl.budgetGate = { promptTokens: 200, contextWindow: 4096 };
+    view.requestUpdate();
+    await view.updateComplete;
+    const summary = () => view.shadowRoot?.querySelector('.activity-rail > summary')?.textContent ?? '';
+    // Simple (default): plain language, no "budget"/"tokens" jargon in the always-visible summary.
+    expect(summary()).toContain('Paused — waiting to continue');
+    expect(summary()).not.toContain('awaiting budget');
+    // Detailed: the technical phrasing returns.
+    setUiMode('advanced');
+    view.requestUpdate();
+    await view.updateComplete;
+    expect(summary()).toContain('Paused — awaiting budget');
   });
 
   it('S7 — renders agent search evidence from the RECORD through the shared jf-results-card (live == record, not the raw dump)', async () => {
@@ -1501,10 +1517,34 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
   afterEach(() => {
     // Restore the shared aiState fixture so other describe blocks see the original shape.
     delete (AI_STATE_READY as { runtime?: unknown }).runtime;
+    __resetUiModeForTest();
+  });
+
+  it('Simple mode (default) omits the model name from the receipt (Tempdoc 738 C7)', async () => {
+    (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    const view = mountView();
+    await view.updateComplete;
+    const v = view as unknown as { affordance: string; thread: unknown[] };
+    v.affordance = 'documents';
+    v.thread = [
+      { role: 'user', content: 'q', shapeId: 'core.rag-ask', id: 'u1' },
+      { role: 'assistant', content: 'a', shapeId: 'core.rag-ask', id: 'a1', sources: [chunkCitation(0)], durationMs: 3200 },
+    ];
+    view.requestUpdate();
+    await view.updateComplete;
+    const line = view.shadowRoot!.querySelector('.message.assistant[data-item-id="a1"] .answer-frame');
+    const text = (line!.textContent ?? '').replace(/\s+/g, ' ').trim();
+    // Tempdoc 720 — a settled, zero-citation, chunk-precise answer now classifies as the `sourced`
+    // (provenance) frame rather than `grounded`, so the receipt legitimately carries the honest
+    // grounding badge text ahead of the duration tail (evidenceProjection.ts answerFrameLabel, `sourced` case).
+    expect(text).toBe('Based on your documents — per-sentence grounding not verified · 3.2s');
+    expect(text).not.toContain('Llama 3 8B');
+    view.remove();
   });
 
   it('a grounded turn with duration + model shows ONLY the quiet receipt tail (no warning text), non-italic', async () => {
     (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    setUiMode('advanced');
     const view = mountView();
     await view.updateComplete;
     const v = view as unknown as { affordance: string; thread: unknown[] };
@@ -1547,6 +1587,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
 
   it('a partially-grounded turn keeps its warning text and appends the receipt tail on the SAME line', async () => {
     (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    setUiMode('advanced'); // Tempdoc 738 (C7) — the model name renders in Detailed mode.
     const view = mountView();
     await view.updateComplete;
     const v = view as unknown as { affordance: string; thread: unknown[] };
@@ -1604,6 +1645,7 @@ describe('UnifiedChatView per-turn receipt line (Search Thread S7, tempdoc decis
 
   it('omits duration (never fabricates) when the turn carries none — a reloaded turn with no stored durationMs', async () => {
     (AI_STATE_READY as { runtime?: unknown }).runtime = { modelLabel: 'Llama 3 8B' };
+    setUiMode('advanced'); // Tempdoc 738 (C7) — the model name renders in Detailed mode.
     const view = mountView();
     await view.updateComplete;
     const v = view as unknown as { affordance: string; thread: unknown[] };
@@ -2002,6 +2044,7 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
   });
 
   it('602 R3 — the retrieve row formats the path + highlights query terms like the Search surface', async () => {
+    setUiMode('advanced'); // Tempdoc 738 (C4) — the middle-ellipsis full path is the Detailed form.
     const view = mountView();
     await view.updateComplete;
     view.affordance = 'retrieve';

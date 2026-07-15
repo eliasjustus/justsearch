@@ -26,10 +26,11 @@
  * here unchanged because it directly guards the per-hit rationale grammar the
  * Why-disclosure renders from.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import './ResultsCard.js';
 import type { ResultsCard, CardSnapshot, CardHit } from './ResultsCard.js';
 import { traceChipsFor } from './whyThisResult.js';
+import { setUiMode, __resetUiModeForTest } from '../../state/uiModeState.js';
 
 const BASE: CardSnapshot = {
   query: 'x',
@@ -58,30 +59,93 @@ function trace(effectiveMode: string): unknown {
   return { version: 1, decisionKind: 'multi_leg', effectiveMode, stages: [] };
 }
 
+// Tempdoc 738 — uiMode is a module-level store; reset after every test so a Detailed-mode test cannot
+// leak into a later block (728 review §6 hygiene).
+afterEach(() => __resetUiModeForTest());
+
 describe('ResultsCard — retrieval-mode indicator (ported from SearchSurface.retrievalMode.test, tempdoc 598 R1)', () => {
-  it('reads HYBRID as "Semantic + keyword"', async () => {
+  beforeEach(() => __resetUiModeForTest());
+
+  // Tempdoc 738 (C2) — the technical mode labels render in Detailed mode.
+  it('Detailed: reads HYBRID as "Semantic + keyword"', async () => {
+    setUiMode('advanced');
     const el = await mount({ ...BASE, results: [hit('a')], searchTrace: trace('HYBRID') });
     const modeEl = el.shadowRoot?.querySelector('[data-testid="retrieval-mode"]');
     expect(modeEl?.getAttribute('data-mode')).toBe('HYBRID');
     expect(modeEl?.textContent).toContain('Semantic + keyword');
   });
 
-  it('reads VECTOR as "Semantic"', async () => {
+  it('Detailed: reads VECTOR as "Semantic"', async () => {
+    setUiMode('advanced');
     const el = await mount({ ...BASE, results: [hit('a')], searchTrace: trace('VECTOR') });
     const modeEl = el.shadowRoot?.querySelector('[data-testid="retrieval-mode"]');
     expect(modeEl?.textContent).toContain('Semantic');
   });
 
-  it('reads TEXT as "Keyword" (honest keyword fallback, not semantic)', async () => {
+  it('Detailed: reads TEXT as "Keyword" (honest keyword fallback, not semantic)', async () => {
+    setUiMode('advanced');
     const el = await mount({ ...BASE, results: [hit('a')], searchTrace: trace('TEXT') });
     const modeEl = el.shadowRoot?.querySelector('[data-testid="retrieval-mode"]');
     expect(modeEl?.textContent).toContain('Keyword');
     expect(modeEl?.textContent).not.toContain('Semantic');
   });
 
+  // Tempdoc 738 (C2) — Simple mode (default) shows the plain-language labels.
+  it('Simple (default): reads TEXT as "exact-word search" and VECTOR as "meaning-based"', async () => {
+    const elText = await mount({ ...BASE, results: [hit('a')], searchTrace: trace('TEXT') });
+    expect(elText.shadowRoot?.querySelector('[data-testid="retrieval-mode"]')?.textContent).toContain(
+      'exact-word search',
+    );
+    const elVec = await mount({ ...BASE, results: [hit('b')], searchTrace: trace('VECTOR') });
+    expect(elVec.shadowRoot?.querySelector('[data-testid="retrieval-mode"]')?.textContent).toContain(
+      'meaning-based',
+    );
+  });
+
   it('renders nothing when no trace is present', async () => {
     const el = await mount({ ...BASE, results: [hit('a')] });
     expect(el.shadowRoot?.querySelector('[data-testid="retrieval-mode"]')).toBeNull();
+  });
+
+  // Tempdoc 738 (C2) — the latency form: plain "found in Xs" in Simple, raw "Nms" in Detailed.
+  it('Simple (default): renders a plain latency ("found in …s"), never raw ms', async () => {
+    const el = await mount({ ...BASE, results: [hit('a')], processingTimeMs: 62 });
+    const meta = el.shadowRoot?.querySelector('[data-testid="card-meta"]')?.textContent ?? '';
+    expect(meta).toContain('found in 0.06s');
+    expect(meta).not.toContain('62ms');
+  });
+
+  it('Detailed: renders the raw ms latency', async () => {
+    setUiMode('advanced');
+    const el = await mount({ ...BASE, results: [hit('a')], processingTimeMs: 62 });
+    const meta = el.shadowRoot?.querySelector('[data-testid="card-meta"]')?.textContent ?? '';
+    expect(meta).toContain('62ms');
+  });
+
+  // Tempdoc 738 (C4) — the result location: a humanized breadcrumb in Simple, the full path in Detailed;
+  // a drive-root file never re-leaks the raw path in Simple (728 review §1).
+  it('Simple (default): a result location renders as a folder breadcrumb, not the raw path', async () => {
+    const p = 'f:\\proj\\ssot\\docs\\help\\getting-started.md';
+    const el = await mount({ ...BASE, results: [hit('a', { path: p })] });
+    const pathEl = el.shadowRoot?.querySelector('.row .path');
+    expect(pathEl?.textContent?.trim()).toBe('ssot › docs › help');
+    expect(pathEl?.getAttribute('title')).toBe(p);
+  });
+
+  it('Detailed: a result location renders the full path', async () => {
+    setUiMode('advanced');
+    const p = 'f:\\proj\\ssot\\docs\\help\\getting-started.md';
+    const el = await mount({ ...BASE, results: [hit('a', { path: p })] });
+    const pathEl = el.shadowRoot?.querySelector('.row .path');
+    expect(pathEl?.textContent).toContain('getting-started.md');
+    expect(pathEl?.getAttribute('title')).toBe(p);
+  });
+
+  it('Simple: a drive-root file shows an empty location (no raw-path re-leak — 728 review §1)', async () => {
+    const el = await mount({ ...BASE, results: [hit('a', { path: 'C:\\readme.txt' })] });
+    const pathEl = el.shadowRoot?.querySelector('.row .path');
+    expect(pathEl?.textContent?.trim()).toBe('');
+    expect(pathEl?.textContent).not.toContain('C:');
   });
 });
 
