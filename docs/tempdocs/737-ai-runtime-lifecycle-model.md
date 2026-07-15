@@ -502,3 +502,148 @@ register (needs LiveWitness-style cross-validation to be trustworthy). The two
 fossil test sets (`CapabilityAvailabilityTest.java:43-53`,
 `BrainSurface.indexing-escape.test.ts`) are replaced under any path and should
 not be treated as behavior to preserve.
+
+---
+
+## 10. Theorization (2026-07-15) — the ontology question the panel did not settle
+
+§9 settled *that* one canonical authority must replace the five vocabularies,
+and *that* the machinery stays. It did not settle **what kind of thing the
+authority is**. That choice is prior to `/design` and changes everything
+downstream — the wire shape, the gate, the UI verbs, and which of the §3
+symptoms become impossible by construction versus merely fixed. Three candidate
+ontologies, each with embryonic evidence already in the code.
+
+### 10a. Candidate A — imperative transitions + resolver (the panel's implicit frame)
+
+Operations are actions with declared pre/postconditions; one resolver answers
+`state × action → Allowed | Denied(reason)`; the §4 invariant
+(`required ∩ establishes = ∅`) is the gate. This is §9a's greenfield sketch.
+
+- **Fixes by construction:** the circular class (§8a), the five-fork drift
+  (projections derive from the resolver's state).
+- **Does NOT fix by construction:** §3d. An imperative model has no memory of
+  what the user *wanted*, so an autonomous transition (the sampler parking you
+  in INDEXING) still ends wherever the last writer left it; the fix for
+  never-switch-back remains a convention ("controllers must restore prior
+  state"), i.e. another prose rule.
+- Embryonic evidence: the operation catalog itself; the transition envelope.
+
+### 10b. Candidate B — declarative desired-state + reconciler
+
+The load-bearing observation: **this system is already half a reconciler, and
+its worst bugs are reconciler bugs.** Multiple autonomous controllers each push
+the runtime toward their own implicit goal — `VduOfflineTriggerSampler` (toward
+INDEXING when work pends), crash recovery (toward last mode), watchdogs (toward
+process-up), boot auto-select/auto-start, `OfflineCoordinator` Phase A (toward
+ONLINE for VDU). No declared desired state exists, so conflicts resolve by
+last-writer-wins, and "what should the system return to?" is unanswerable. The
+codebase has already grown *three ad-hoc desired-state memories* to compensate:
+
+- `preVduConfig` (`InferenceLifecycleManager.java:111,539-554`) — a hand-rolled
+  "remember what the user wanted, restore it after the procedure" for exactly
+  one procedure (VDU). The sampler's Phase B has no such memory — hence §3d.
+- `JUSTSEARCH_AI_AUTOSTART_ENABLED` (`BootstrapInferenceFactory.java:149-162`) —
+  boot-time desired state as an env var, with a documented history of confusing
+  even its own log line ("AI auto-start disabled" read as feature-off; the
+  alpha.20 comment records a user seeing "AI offline" with no hint why).
+- The admin policy layer (`onlineAiEnabled`) — a standing "may chat ever be up"
+  bit that every path re-checks by hand.
+
+In this model the user's controls stop being transition commands and become
+intent writes: "Chat AI: on/off" is a *preference*, not an action; the
+reconciler drives actual state toward `desired ∧ policy ∧ resources`, and
+"Resume Chat AI" can never be dead because writing an intent has no
+precondition. §3b and §3d both become **inexpressible**, not fixed. The
+mode-switch operation dissolves rather than getting corrected requirements.
+
+- **Cost/risk:** hidden control loops are hard to debug; every autonomous
+  transition must carry a user-legible reason ("chat paused: embedding backlog,
+  ~4 min") or the system feels haunted. Prior art for that exists in-repo
+  (`LifecycleReasonCode` + `readinessNotice.ts` and their drift gate). Also,
+  reconcilers invert testing: you test convergence properties, not transitions —
+  a bigger test-model change than Candidate A.
+
+### 10c. Candidate C — the GPU as a leased resource (arbiter model)
+
+§8c's deepest fact — the only cross-process truth is `mainGpuActive` — suggests
+the whole "mode" idea is a shadow of a **resource-arbitration** problem: two
+clients (chat engine, embedding backfill) contend for one grant (VRAM). ONLINE
+≡ chat holds the lease; INDEXING ≡ worker holds it; OFFLINE ≡ nobody does.
+Model it as an arbiter with holders, waiters, and a contention policy, and the
+enum vanishes; the MMF boolean becomes the lease's cross-process projection
+(unchanged); "Shut Down AI" becomes "release chat's lease".
+
+- **Why it earns theorizing:** it is the only frame that survives the hidden
+  hardware assumption (§10d-1) breaking, and this repo already operates a
+  lease/ownership model with contention verdicts elsewhere (the shared
+  dev-stack lease). It composes with B rather than competing: desired state
+  says *who should want the lease*; the arbiter says *who holds it*.
+
+### 10d. Hidden assumptions any design must decide on explicitly
+
+1. **"Chat and embeddings can never share the GPU"** is policy fossilized as
+   ontology. On ≥16 GB cards both stacks plausibly fit; the binary grant (and
+   therefore the entire mode concept) encodes a worst-case-hardware decision as
+   the domain model. A lease with a *size* survives this; an enum does not.
+2. **"One engine"**: vision/summary already ride llama-server; a second resident
+   model (e.g. a dedicated embedder or reranker on the Head side) breaks the
+   linear mode permanently. The enum is a 1-engine assumption.
+3. **"Lifecycle operations need capability gating at all."** What concrete harm
+   does dispatching `switch to online` from OFFLINE prevent? The handler
+   validates internally (config, VRAM, policy). The likely honest answer is that
+   requirements were filled in because the field existed — the framework
+   invited a declaration where none was needed (empty-set + internal validation
+   is what the install ops correctly do, §8a). "Every declaration slot will be
+   filled, correctly or not" is a design smell worth naming.
+4. **"The user must manage this at all."** If B is right, Simple mode may need
+   zero runtime controls — only the preference toggle and honest status. The
+   Advanced-mode transition buttons exist partly because the model made users
+   responsible for driving a machine the system already drives autonomously.
+
+### 10e. Risks of the panel's converged direction (self-critique)
+
+- Candidate A is the *least* disruptive and the panel drifted to it partly
+  because it resembles the existing catalog — availability bias, the same
+  force that produced name-pattern requirements. The §2 done-criterion is
+  satisfiable by A, B, or C; A should win only if B's explainability cost and
+  C's generality are genuinely not needed, not because A is nearest.
+- All three candidates still need the fork gate; none removes the "author can
+  mis-declare" trust problem (§8a). B shrinks the declaration surface the most
+  (intents are few; transitions are internal), which may be the strongest
+  gate-adjacent argument for it.
+- Over-engineering risk: the 4 requirement-set fixes are one line each and the
+  0.2.0 unblock may already ship them. The ladder is: (rung 1) fix instances →
+  (rung 2) A's resolver+gate → (rung 3) B/C re-ontology. `/design` should price
+  rungs separately and let the owner choose how far up to go; §9 only
+  establishes that rung 1 alone leaves the generator running.
+
+### 10f. The recurring shape (broader principle, not yet a rule)
+
+This is the third occurrence of the same repo-wide shape: a state space grew
+multiple hand-synced representations until a gate + canonical source collapsed
+them — search execution (SearchTrace / execution-surfaces register), SSOT
+catalogs (dual-copy sync gate), now runtime lifecycle. The generalization worth
+considering *when the third instance ships* (not before): "any state consumed
+by >1 surface needs a declared canonical source and a fork gate" as a
+first-class register pattern, with this tempdoc as the naming instance. A
+second, smaller shape also recurs: **declared metadata must be validated
+against behavior** (LiveWitness; the §8f spike; the `establishes` trust
+problem) — declarations without a witness are how both §3b and §3e-2 happened.
+
+### 10g. Parked ideas (useful later, not load-bearing now)
+
+- Denial-as-schedule: if an action is blocked by a transient condition, offer
+  "do it when possible" (write the intent, reconcile later) instead of a dead
+  error — turns every remaining denial into UX.
+- The executor's existing `undo` becomes meaningful under B (undo = restore
+  prior desired state) where under the current model it is undefined for
+  lifecycle ops.
+- The fossil tests (§9d) invert cleanly into acceptance tests for any candidate:
+  "from INDEXING, the user-visible escape action succeeds" is the regression
+  test all three ontologies must pass — write it once, model-agnostically,
+  before choosing.
+- Interim-fix compatibility: whatever the 0.2.0 unblock ships, prefer
+  empty-requirements + internal validation (the install-ops pattern) over
+  corrected-but-still-declared requirements, so rung 1 doesn't need re-doing
+  under any of A/B/C.
