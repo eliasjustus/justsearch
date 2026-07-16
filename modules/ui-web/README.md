@@ -1,115 +1,66 @@
 # ui-web — JustSearch Frontend
 
-React + TypeScript + Vite frontend for JustSearch.
+TypeScript + [Lit](https://lit.dev/) web components frontend for JustSearch,
+built with Vite. The production UI is the `shell-v0` custom-element chrome
+(`<jf-shell>` + `<jf-rail>` + `<jf-stage>`) mounted from `src/main.jsx` — see
+ADR-0032 (`docs/decisions/0032-fe-lit-web-components.md`) for why the earlier
+React stack was retired.
 
-Architecture: `docs/explanation/07-ui-host-architecture.md`
+Architecture: `docs/explanation/01-system-overview.md`,
+`docs/explanation/07-ui-host-architecture.md`
 Design system: `docs/explanation/10-ui-ux-design.md`
 
-## Scripts
+## Stack
 
-| Command | What it does |
-|---------|-------------|
-| `npm run dev` | Vite dev server (needs backend running) |
-| `npm run dev:mock` | Vite with MSW mock mode (**no backend needed**) |
-| `npm run build` | Production build |
-| `npm run test:unit` | Vitest unit tests |
-| `npm run typecheck` | TypeScript type checking |
-| `npm run lint` | ESLint |
-| `npm run build:analyze` | Production build with bundle visualizer |
+- **TypeScript + Lit** — custom elements (`shell-v0/`), no virtual DOM framework.
+- **Vite** — dev server, production build, and the local dev-stack API proxy
+  (`vite.config.js`) that forwards `/api/*` to the backend.
+- **Vitest** — unit tests (`happy-dom`).
+- **Generated API client + wire types** — `src/api/generated/` is produced by
+  `gen:api-client` / `gen:wire-schema-types` / `gen:shape-handlers` /
+  `gen:liveness-constants` from the backend's wire contracts; the matching
+  `check:*-regen` scripts fail CI if the generated output drifts from source.
+- **Loopback-only backend** — the frontend only ever talks to the Head API on
+  `127.0.0.1` (Hard Invariant: loopback-only network); there is no other
+  network dependency for local dev.
 
-## Development without a backend (MSW mock mode)
+## Source structure
 
-```bash
-npm run dev:mock
-# or: VITE_MSW=true npm run dev
+```
+src/
+  api/           — HTTP client, SSE streams, generated API client + wire types
+  shell-v0/      — the Lit chrome: chrome/, views/, state/, controllers/,
+                   components/, themes/, plugin-api/, substrates/
+  boot/          — API base resolution at app boot
+  i18n/          — backend-served message catalogs (error/resource/surface/...)
+  mocks/         — fixture data shared by tests and evidence capture
+  persistence/   — client-side persistence helpers
+  utils/         — shared utilities
+  main.jsx       — app entry point
 ```
 
-This starts the Vite dev server with [Mock Service Worker](https://mswjs.io/)
-intercepting all API calls. The UI loads with fixture data — no Head, no
-Worker, no JVM needed.
-
-**When to use:** UI component work, styling, layout changes, accessibility
-improvements — anything that doesn't need real search results.
-
-**How it works:** MSW registers a service worker that intercepts `fetch()`
-at the network level. The app code is unchanged — `src/api/http.ts` makes
-real fetch calls, MSW returns fixture responses before they hit the network.
-
-**Mock handlers:** `src/mocks/handlers.ts` — defines responses for:
-- `/api/status` — connection + readiness
-- `/api/settings/v2` — app settings
-- `/api/indexing/roots` — watched folders
-- `/api/inference/status` — AI runtime status
-- `/api/knowledge/search` — 3 fixture search results
-- `/api/preview` — mock document preview
-- `POST /api/ui/ready` — boot handshake
-
-**Adding a new mock handler:** If you add a new API endpoint, add a handler
-in `src/mocks/handlers.ts`:
-```typescript
-import { http, HttpResponse } from 'msw'
-export const handlers = [
-  // ... existing handlers ...
-  http.get('/api/your-endpoint', () => HttpResponse.json({ data: 'fixture' })),
-]
-```
-
-## Development with a real backend
+## Development
 
 ```bash
 npm run dev
 # Backend must be running (default port 33221, or set VITE_JUSTSEARCH_API_PORT)
 ```
 
-The Vite proxy forwards all `/api/*` requests to the backend. Port is
-configurable via `VITE_JUSTSEARCH_API_PORT` or `VITE_API_PORT` env vars.
+The Vite dev-server proxy forwards `/api/*` and `/.well-known/justsearch/*`
+requests to the locally-discovered backend.
 
-## Demo mode
+## Commands
 
-Open `http://localhost:5173?demo=true` — the UI renders with hardcoded
-fixture data and built-in SSE simulation. No backend, no MSW needed. Simpler
-than MSW mode but less realistic (no network-level interception).
+| Command | What it does |
+|---------|-------------|
+| `npm run dev` | Vite dev server (needs backend running) |
+| `npm run build` | Production build |
+| `npm run typecheck` | TypeScript type checking |
+| `npm run test:unit:run` | Vitest unit tests (single run) |
+| `npm run test:unit` | Vitest unit tests (watch mode) |
+| `npm run lint` | ESLint |
+| `npm run knip` | Dead-code / unused-dependency check |
+| `npm run build:analyze` | Production build with bundle visualizer |
 
-## Visual verification with Chrome extension
-
-Agents can use Claude Code's Chrome extension (`/chrome`) to visually inspect
-the UI during development:
-1. Start `npm run dev:mock` (or `npm run dev` with backend)
-2. Enable Chrome: `/chrome` in the Claude Code session
-3. Navigate to `http://localhost:5173`
-4. Take screenshots, click elements, verify layouts
-
-## Source structure
-
-```
-src/
-  api/           — HTTP client, SSE streams, API domain modules
-  app/           — App-level components
-  components/    — UI components (shell, zones, search, preview, etc.)
-  hooks/         — React hooks (useSearch, useApiConnection, etc.)
-  mocks/         — MSW mock handlers and fixtures
-  stores/        — Zustand state stores
-  styles/        — CSS tokens and global styles
-  utils/         — Shared utilities
-```
-
-## Testing
-
-**Unit tests** (Vitest):
-```bash
-npm run test:unit        # watch mode
-npm run test:unit:run    # single run
-```
-
-**Visual regression**:
-```bash
-npm run visual:diff                 # Compare against baseline
-npm run visual:update-baseline      # Update baseline screenshots
-```
-
-**Evidence capture** (screenshots + a11y scans):
-```bash
-npm run capture:evidence -- --scenario ui_screenshots --api-base-url demo
-```
-
-See `docs/how-to/capture-ui-evidence.md` for details.
+For visual/measurement verification of `shell-v0` changes, load the
+`/ui-check` skill (ui-shot harness) rather than a manual screenshot flow.

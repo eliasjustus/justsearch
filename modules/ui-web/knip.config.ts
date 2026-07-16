@@ -12,7 +12,6 @@ const config: KnipConfig = {
     "scripts/**/*.{mjs,cjs,ts}",
   ],
   ignoreDependencies: [
-    "@lingui/cli", // used by lingui extract/compile CLI, not TS imports
     "tailwindcss", // used as PostCSS plugin via @tailwindcss/postcss, not direct import
   ],
 };
