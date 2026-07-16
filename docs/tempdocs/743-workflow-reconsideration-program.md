@@ -366,6 +366,28 @@ this table's history: the pre-fix numbers had survived both the implementer's te
 orchestrator magnitude spot-check — plausibility is not correctness (see review record
 above).
 
+### Cross-validation against ccusage + adopt-vs-build (2026-07-16, founder question)
+
+`npx ccusage@latest daily --json --offline`, same window, claude-model rows only: **$20,543**
+vs our $21,410 — **4.2% apart from a fully independent implementation** (ccusage machine-wide
+scope also includes codex/GPT rows, $999 — filtered out by model family before comparing).
+It would have flagged the pre-fix 2.34× numbers instantly. Two consequences adopted:
+
+- **ccusage becomes the standing independent cross-check** of this instrument (one offline
+  command; run it whenever baseline numbers feed a decision). Known-delta note: ccusage
+  dedups message ids ACROSS transcript files; ours dedups within-file only — the ~4% residual
+  is plausibly resumed/continued sessions re-carrying history lines under a new session id.
+  Root-causing that delta is an open Phase-1 data-quality item (direction: ours slightly high).
+- **Phase-3 proposal (adopt-vs-build, pre-registered):** swap `transcript-cost.mjs`'s parsing
+  for ccusage-as-engine (consume its per-session JSON, keep our merge join / scope filter /
+  orchestrator-worker split / teardown wiring on top) IF it exposes per-session + subagent
+  granularity and pinnable offline pricing. Falsifier for keeping our parser: if a second
+  parsing-class bug is found in our lib within the program's lifetime, adopt ccusage's engine
+  without further debate — we already paid one 2.34× bug that a mature OSS engine had solved.
+  Lesson recorded: the research pass surfaced ccusage BEFORE implementation; we built the
+  parsing layer anyway because the join was novel — the join judgment was right, the
+  parsing-layer judgment cost us the dedup bug (explore-before-implementing, partially missed).
+
 ### Readability verdict (go/no-go input for the founder)
 
 - **Fine effects: unreadable**, as predicted — week-to-week cost/merge noise is 2-2.7×, so a
