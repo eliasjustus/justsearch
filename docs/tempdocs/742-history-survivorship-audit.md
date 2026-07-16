@@ -1,7 +1,7 @@
 ---
 title: "742 — History-survivorship audit: abandoned-intention residue, dead tiers, and two inert gates"
 type: tempdocs
-status: "implementing 2026-07-16 — owner approved dispositions (delete e2e tier; JUNK+RESIDUE+VESTIGIAL batches; delete 2026-01-17 README batch; keep scripts/ui+ops cluster; two PRs). Branch A (worktree 742-residue-removal) DONE: all approved deletions + IndexDocument hoist + AnalyzerRegistry collapse + ADR-0011 banner + OTLP labels + 09-testing-strategy rewrite. D4 SUPERSEDED by a bigger finding (see §Branch-A implementation notes): the ENTIRE lingui catalog (815/815 msgids) is dead — shell-v0 never adopted lingui macros; catalogs left untouched, 'remove Lingui entirely?' added to dispositions. Branch B (kernel gate-input contract + knip revival) next."
+status: "IMPLEMENTED 2026-07-16 (both branches; PRs pending owner go-ahead). Branch A (742-residue-removal): all approved deletions + refactors, full build+test green. Branch B (742-gate-input-contract, from A's tip): D1 runner-enforced gate inputs + D3 self-test-on-full-runs live and E2E-verified (34 gates, 0 fail, test-efficacy honestly skipped, dead-code bites on missing report); D2 knip revived with honest baseline (172 files / 633 findings) + a real enforcer parse bug fixed (knip v6 report shape never matched). D4 superseded (entire 815-msgid lingui catalog is dead — new disposition item 'remove lingui entirely'). Open owner items: PR go-ahead, lingui removal, 367 scripts cluster (kept), input-staleness extension (triggered)."
 created: 2026-07-16
 author: agent session 70bf04ea (Fable 5, orchestrating 3 Sonnet subagents)
 category: substrate hygiene / dead code / gate integrity
@@ -464,6 +464,44 @@ affected module test suites green (A2); ui-web typecheck + 3,779 unit tests
 green (A1); frontend-stack docs lint OK (files=103); language-agnostic gate OK;
 ui-web regen/gate set green except the pre-existing liveness-constants red
 above; full `./gradlew test` + governance warn-run recorded at commit time.
+
+## Branch-B implementation notes (2026-07-16)
+
+Worktree `742-gate-input-contract`, branched from branch A's tip. B1 (opus)
+kernel change + B2 (sonnet) knip revival + orchestrator fixes.
+
+- **D1 shipped as designed**: `config.inputs` (path/producer/class) on the five
+  report-consuming gates; runner-level enforcement in `run.mjs` via a new
+  testable helper `scripts/governance/lib/input-contract.mjs`;
+  `kernel/input-missing` (error, fail) / `kernel/input-skipped` (note,
+  `skipped` verdict); `--produce-inputs`; per-enforcer `report-missing` warn
+  paths deleted; malformed-JSON now fails closed in dead-code, dead-code-jvm,
+  and module-deps (`<gate>/report-malformed`); the false "wired in CI" header
+  comment corrected. D3: full-registry gate-mode runs execute the fixture
+  self-test first (`--skip-self-test` to opt out).
+- **B2 found a second layer of the inert-gate onion**: the dead-code enforcer's
+  `report.issues` parsing NEVER matched what knip v6 actually emits (an array
+  of per-file rows; the code expected `{category:{file:[…]}}`) — so even with a
+  report, counts would have been nonsense. Fixed; the self-test fixtures were
+  regenerated to the real report shape (they had only ever exercised a
+  synthetic shape). The gate was doubly inert: no input, and a parser that had
+  never seen real input.
+- **Producer invocation trap (Windows)**: `NoDefaultCurrentDirectoryInExePath=1`
+  excludes the cwd from cmd.exe's executable search, so a `./gradlew.bat …`
+  producer silently fails "not recognized" even with `cwd` set correctly. The
+  runner resolves `./`-prefixed producer first-tokens to absolute quoted paths;
+  regression-tested (`run.input-contract.test.mjs`, dot-slash case; 11 checks).
+- **Honest baseline**: `gates/dead-code/baseline.txt` = 172 files / 633
+  unused-export findings on the post-cleanup tree; changeset
+  `742-honest-baseline-genesis` (declared-growth). The `knip:report` producer
+  is a node wrapper (`modules/ui-web/scripts/knip-report.mjs`) — knip exit 1
+  (issues found) is producer success; only spawn/parse failure is exit 1.
+- **E2E acceptance**: `run.mjs --mode gate --produce-inputs` → self-test green,
+  4 required inputs produced, **34 gates evaluated, 0 fail**, test-efficacy
+  `skipped`; deleting the knip report flips dead-code to fail exit 1 with the
+  producer command in the message. The bite is demonstrated, not assumed.
+- One more pre-existing vacuous-green specimen logged by B1 (observations):
+  `operation-surface/enforcer.test.mjs` fails but its own harness exits 0.
 
 ## What NOT to do (verified keepers)
 
