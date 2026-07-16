@@ -166,8 +166,31 @@ main CI, teardown).
   >   changes are therefore batched into evaluated rounds (phase 5), not continuous
   >   tinkering — each rule change costs every future session adaptation, so changing less
   >   often but only in verified directions is itself part of "better as a total."
-- **D-2 (guardrail-removal arbitration).** Confirm: proposals that *remove* a safeguard
-  require explicit founder approval regardless of pilot results (per principle 7).
+- **D-2 (guardrail-removal arbitration) — SETTLED (founder, 2026-07-16).** Confirmed: any
+  proposal that removes or weakens a mistake-catching mechanism (blocking hooks, discipline
+  gates, mandatory independent review, full-suite-before-publish, the derisk phase, …)
+  **always escalates to the founder, regardless of pilot results.** Rationale: safeguards
+  defend against rare events — a zero-incident pilot is expected whether the safeguard is
+  dead weight or load-bearing — plus the self-referential conflict of interest (principle 7).
+  Approved removals carry a **re-add trigger** (a defined condition under which the safeguard
+  returns automatically).
+
+### Settled measurement parameters (founder, 2026-07-16)
+
+- **Baseline window**: the last ~4 weeks of developer-agent sessions (≈2026-06-18 →
+  2026-07-16), with two known structural breaks annotated, not filtered out: the 727
+  friction-fix hooks merged 2026-07-14 (PR #180), and the delegation-economics /
+  model-routing change merged 2026-07-15 (CLAUDE.md model-routing paragraph). Rationale: a
+  start-now window would idle the program for a month; month-scale readings tolerate
+  annotated breaks.
+- **Attention proxy: DEFERRED.** Founder judges it too hard to get right now. Phase 1's
+  baseline counts token spend and outcome metrics only; raw attention-adjacent counts
+  (interventions, founder-answered questions, interrupts) may still be *collected* as
+  diagnostics, but no attention term enters the D-1 total until the proxy is settled in a
+  later decision.
+- **Session scope**: inherit 727's scope verbatim — developer-agent sessions only (organic
+  engineering work on this repo); benchmark-harness subjects, personal, and
+  business/research sessions are out.
 
 ## Falsifier for the program itself
 
