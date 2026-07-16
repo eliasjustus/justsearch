@@ -334,6 +334,43 @@ def cmd_corpus_fetch_clerc(ctx, name, seed, n_queries, n_docs, datasets_dir):
                    f"from CLERC (seed={seed})")
 
 
+@click.command("corpus-fetch-enron-raw")
+@click.option("--name", required=True, help="Mixed dataset name (-> datasets/mixed/<name>/).")
+@click.option("--seed", required=True, type=int, help="Deterministic sampling seed (recorded in the recipe).")
+@click.option("--n-docs", required=True, type=int, help="Target sampled email-body document count.")
+@click.option("--min-words", default=60, show_default=True, type=int,
+              help="Minimum body word count to keep a message (drops boilerplate/empty bodies).")
+@click.option("--datasets-dir", default=None, type=click.Path())
+@click.pass_context
+def cmd_corpus_fetch_enron_raw(ctx, name, seed, n_docs, min_words, datasets_dir):
+    """Fetch + deterministically sample the raw CMU Enron maildir corpus into mixed/ (tempdoc 707).
+
+    DISTRACTOR MASS ONLY -- unlike corpus-fetch-clerc/-miracl (which also sample real queries+qrels
+    for a directly-buildable golden/ benchmark), this fetcher samples ONLY real email bodies: there
+    is no --n-queries option here, and no queries.json entries are ever synthesized. The 707
+    en-email member's queries and gold come entirely from its own fabricated 635-corpora source,
+    injected over these real bodies by `jseval corpus-inject-real` -- `corpus_inject.build_source`
+    reads only a real corpus's `corpus.jsonl`, never its `queries.json` (verified against
+    `corpus_inject.py`), so a 0-query pool is the least-forked shape `corpus_build.build_golden`
+    already accepts cleanly (an empty `queries` list -> an empty `queries.jsonl` + header-only
+    `qrels/test.tsv`). See `corpus_fetch.fetch_enron_raw_sample`'s docstring for the full design note.
+
+    Public FERC record, no stated redistribution restriction (the previously-scoped
+    MichaelR207/enron_qa_0922 question/answer annotations are unlicensed and are dropped entirely --
+    tempdoc 707 ratified decision). Nothing fetched here is ever committed (datasets/ is gitignored),
+    only a small recipe."""
+    from .. import corpus_fetch as cf
+
+    meta = _fetch_and_build_mixed(
+        name, datasets_dir,
+        lambda td: cf.fetch_enron_raw_sample(td, seed=seed, n_docs=n_docs, min_words=min_words))
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(meta, indent=2))
+    else:
+        click.echo(f"Fetched mixed/{name}: {meta['corpus_size']} docs (0 queries; distractor-mass "
+                   f"pool) from CMU Enron raw maildir (seed={seed})")
+
+
 @click.command("corpus-certify")
 @click.option("--dataset", required=True,
               help="Dataset name. Bare names resolve under golden/ (e.g. synth-multihop-v1); "
@@ -696,4 +733,5 @@ def cmd_corpus_probe(ctx, dataset, base_url, datasets_dir, modes, embedding, top
 COMMANDS = [cmd_corpus_query_stratum_build, cmd_corpus_certify_member,
             cmd_corpus_scientific_evidence_build, cmd_corpus_inject_real,
             cmd_corpus_build, cmd_corpus_certify, cmd_corpus_fidelity, cmd_corpus_probe,
-            cmd_corpus_fetch_miracl, cmd_corpus_fetch_clerc, cmd_corpus_query_variant]
+            cmd_corpus_fetch_miracl, cmd_corpus_fetch_clerc, cmd_corpus_fetch_enron_raw,
+            cmd_corpus_query_variant]
