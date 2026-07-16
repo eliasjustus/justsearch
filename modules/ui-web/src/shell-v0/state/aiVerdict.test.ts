@@ -182,6 +182,22 @@ describe('computeAiEngineVerdict — runtime-authority engine axis (tempdoc 737 
     expect(v.kind).toBe('indexing');
   });
 
+  it('indexing + chatEnabledSpec false → awaitingChatEnable true (tempdoc 734 round 5 finding 3)', () => {
+    const v = computeAiEngineVerdict(
+      input({ engineState: 'Down', engineReason: 'gpu-yielded-to-indexing', chatEnabledSpec: false }),
+    );
+    expect(v.kind).toBe('indexing');
+    expect(v.awaitingChatEnable).toBe(true);
+  });
+
+  it('indexing + chatEnabledSpec true → awaitingChatEnable false (genuinely still indexing, not awaiting a click)', () => {
+    const v = computeAiEngineVerdict(
+      input({ engineState: 'Down', engineReason: 'gpu-yielded-to-indexing', chatEnabledSpec: true }),
+    );
+    expect(v.kind).toBe('indexing');
+    expect(v.awaitingChatEnable).toBe(false);
+  });
+
   it('engineState Down (other reason) + installed + reachable → "offline" (falls through to shared logic)', () => {
     const installStatus: InstallStatus = { state: 'idle', phase: 'idle', installedFully: true };
     const v = computeAiEngineVerdict(

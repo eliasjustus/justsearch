@@ -68,6 +68,17 @@ export interface AiEngineVerdict {
   readonly stability: AiStability;
   /** Set only when `kind === 'install_failed'` - the install service's own error text. */
   readonly installFailure: string | null;
+  /**
+   * Set only when `kind === 'indexing'`: true when the engine is parked specifically because
+   * `chatEnabledSpec === false` (the user hasn't activated chat yet - "install is not enable"),
+   * as opposed to a genuine in-flight GPU handoff to indexing work. Tempdoc 734 round 5 finding
+   * 3 - a Sandbox round waited 5+ minutes for this state to resolve on its own because the sub-label
+   * read the same either way ("Indexing embeddings...") whether backfill was genuinely still
+   * consuming the GPU or the engine was simply waiting on a click that would never come by itself.
+   * `undefined` when not in the 'indexing' kind, or when the legacy (pre-737) fallback path
+   * computed it (no `chatEnabledSpec` signal available there to distinguish).
+   */
+  readonly awaitingChatEnable?: boolean;
 }
 
 /**
@@ -147,7 +158,12 @@ export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVe
     // engineState === 'Down' with the GPU yielded to indexing is the INDEXING state; any other
     // 'Down' reason falls through to the shared installed / connecting / offline logic below.
     if (engineState === 'Down' && input.engineReason === 'gpu-yielded-to-indexing') {
-      return { kind: 'indexing', stability: { kind: 'settled' }, installFailure: null };
+      return {
+        kind: 'indexing',
+        stability: { kind: 'settled' },
+        installFailure: null,
+        awaitingChatEnable: chatEnabledSpec === false,
+      };
     }
   } else {
     // Legacy fallback (pre-authority backends). Retires with the phase/mode aliases (§12d).
