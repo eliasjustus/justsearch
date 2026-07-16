@@ -326,6 +326,70 @@ class TestAggregateRunEvidence:
         agg = aggregate_run_evidence(evidences)
         assert agg["identity_resolution_error_count"] == 3
 
+    def test_chunk_merge_skip_reason_counts(self):
+        # tempdoc 715 defect 1: the wire "reason" on a skipped chunk-merge stage is the
+        # SearchReasonCode name (SearchTraceProjector.chunkMergeStage) -- aggregate it so a
+        # caller can tell an engine-declared corpus-shape skip (SKIPPED_SHORT_CORPUS /
+        # SKIPPED_NO_CHUNK_DOCS) apart from a real degeneracy without re-deriving it per query.
+        evidences = [
+            {"has_vector_evidence": False, "has_sparse_evidence": False,
+             "has_dense_evidence": False, "effective_mode": "HYBRID",
+             "hybrid_fallback_reason": None, "components": {}, "error": None,
+             "total_hits": 10, "chunk_merge_applied": False,
+             "chunk_merge_reason": "SKIPPED_SHORT_CORPUS",
+             "identity_resolution_errors": 0},
+            {"has_vector_evidence": False, "has_sparse_evidence": False,
+             "has_dense_evidence": False, "effective_mode": "HYBRID",
+             "hybrid_fallback_reason": None, "components": {}, "error": None,
+             "total_hits": 10, "chunk_merge_applied": False,
+             "chunk_merge_reason": "SKIPPED_SHORT_CORPUS",
+             "identity_resolution_errors": 0},
+            {"has_vector_evidence": False, "has_sparse_evidence": False,
+             "has_dense_evidence": False, "effective_mode": "HYBRID",
+             "hybrid_fallback_reason": None, "components": {}, "error": None,
+             "total_hits": 10, "chunk_merge_applied": True,
+             "chunk_merge_reason": None,
+             "identity_resolution_errors": 0},
+        ]
+        agg = aggregate_run_evidence(evidences)
+        assert agg["chunk_merge_skip_reason_counts"] == {"SKIPPED_SHORT_CORPUS": 2}
+
+    def test_chunk_merge_skip_reason_counts_mixed_reasons(self):
+        evidences = [
+            {"has_vector_evidence": False, "has_sparse_evidence": False,
+             "has_dense_evidence": False, "effective_mode": "HYBRID",
+             "hybrid_fallback_reason": None, "components": {}, "error": None,
+             "total_hits": 10, "chunk_merge_applied": False,
+             "chunk_merge_reason": "SKIPPED_SHORT_CORPUS",
+             "identity_resolution_errors": 0},
+            {"has_vector_evidence": False, "has_sparse_evidence": False,
+             "has_dense_evidence": False, "effective_mode": "HYBRID",
+             "hybrid_fallback_reason": None, "components": {}, "error": None,
+             "total_hits": 10, "chunk_merge_applied": False,
+             "chunk_merge_reason": "SKIPPED_VECTOR_BLOCKED",
+             "identity_resolution_errors": 0},
+        ]
+        agg = aggregate_run_evidence(evidences)
+        assert agg["chunk_merge_skip_reason_counts"] == {
+            "SKIPPED_SHORT_CORPUS": 1, "SKIPPED_VECTOR_BLOCKED": 1,
+        }
+
+    def test_chunk_merge_skip_reason_counts_empty_when_no_reason_recorded(self):
+        evidences = [
+            {"has_vector_evidence": False, "has_sparse_evidence": False,
+             "has_dense_evidence": False, "effective_mode": "HYBRID",
+             "hybrid_fallback_reason": None, "components": {}, "error": None,
+             "total_hits": 10, "chunk_merge_applied": False,
+             "chunk_merge_reason": None,
+             "identity_resolution_errors": 0},
+        ]
+        agg = aggregate_run_evidence(evidences)
+        assert agg["chunk_merge_skip_reason_counts"] == {}
+
+    def test_chunk_merge_skip_reason_counts_empty_for_empty_evidences(self):
+        agg = aggregate_run_evidence([])
+        assert agg["chunk_merge_skip_reason_counts"] == {}
+
 
 class TestStageTiming:
     def test_extract_stage_timing(self):

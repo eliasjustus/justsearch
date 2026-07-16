@@ -129,12 +129,14 @@ def aggregate_run_evidence(query_evidences: list[dict]) -> dict:
             "zero_hit_query_rate": 0.0,
             "chunk_merge_applied_count": 0,
             "chunk_merge_applied_rate": 0.0,
+            "chunk_merge_skip_reason_counts": {},
             "identity_resolution_error_count": 0,
         }
 
     mode_counter: Counter = Counter()
     fallback_counter: Counter = Counter()
     component_counters: dict[str, Counter] = {}
+    chunk_merge_skip_reason_counter: Counter = Counter()
     vector_count = 0
     sparse_count = 0
     dense_count = 0
@@ -156,6 +158,16 @@ def aggregate_run_evidence(query_evidences: list[dict]) -> dict:
             zero_hit_count += 1
         if qe.get("chunk_merge_applied"):
             chunk_merge_count += 1
+        else:
+            # tempdoc 715 defect 1: the wire "reason" on a skipped chunk-merge stage is the
+            # SearchReasonCode name (SearchTraceProjector.chunkMergeStage) -- e.g.
+            # SKIPPED_SHORT_CORPUS / SKIPPED_NO_CHUNK_DOCS for an engine-declared corpus-shape
+            # skip (SearchPlanner.java:267/265), vs. SKIPPED_VECTOR_BLOCKED for a real failure.
+            # Aggregating these lets a caller (run._compute_chunk_completeness) tell a
+            # legitimate skip apart from a degeneracy without re-deriving it per query.
+            skip_reason = qe.get("chunk_merge_reason")
+            if skip_reason:
+                chunk_merge_skip_reason_counter[skip_reason] += 1
         id_resolution_errors += qe.get("identity_resolution_errors", 0)
 
         em = qe.get("effective_mode")
@@ -189,6 +201,7 @@ def aggregate_run_evidence(query_evidences: list[dict]) -> dict:
         "zero_hit_query_rate": zero_hit_count / total,
         "chunk_merge_applied_count": chunk_merge_count,
         "chunk_merge_applied_rate": chunk_merge_count / total,
+        "chunk_merge_skip_reason_counts": dict(chunk_merge_skip_reason_counter),
         "identity_resolution_error_count": id_resolution_errors,
         "stage_timing_stats": stage_timing_stats,
     }

@@ -1,9 +1,515 @@
 {
-  "ablations": {},
+  "ablations": {
+    "beir/scifact": [
+      {
+        "ann_proof_status": "NOT_APPLICABLE",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "lexical",
+        "corpus_source": {
+          "dataset": "scifact",
+          "doc_count": 5183,
+          "query_count": 300,
+          "sha256": "3e10ed87358699465122d137cc8479a586a55736df1dbb19901157c86d0ccb7d",
+          "signature": "3e10ed87358699465122d137cc8479a586a55736df1dbb19901157c86d0ccb7d",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.6173267195767196,
+          "P@1": 0.5366666666666666,
+          "R@10": 0.7792777777777777,
+          "RR@10": 0.6299775132275133,
+          "nDCG@10": 0.6610121511870163,
+          "retrieval_p50_ms": 2.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 20.5,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 89.8,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      },
+      {
+        "ann_proof_status": "PASS",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "bm25_splade",
+        "corpus_source": {
+          "dataset": "scifact",
+          "doc_count": 5183,
+          "query_count": 300,
+          "sha256": "3e10ed87358699465122d137cc8479a586a55736df1dbb19901157c86d0ccb7d",
+          "signature": "3e10ed87358699465122d137cc8479a586a55736df1dbb19901157c86d0ccb7d",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.6182179232804231,
+          "P@1": 0.53,
+          "R@10": 0.8072777777777778,
+          "RR@10": 0.6308941798941798,
+          "nDCG@10": 0.6684711710744032,
+          "retrieval_p50_ms": 5.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 20.5,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 89.8,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      },
+      {
+        "ann_proof_status": "PASS",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "vector",
+        "corpus_source": {
+          "dataset": "scifact",
+          "doc_count": 5183,
+          "query_count": 300,
+          "sha256": "3e10ed87358699465122d137cc8479a586a55736df1dbb19901157c86d0ccb7d",
+          "signature": "3e10ed87358699465122d137cc8479a586a55736df1dbb19901157c86d0ccb7d",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.6848474867724866,
+          "P@1": 0.6066666666666667,
+          "R@10": 0.8558888888888888,
+          "RR@10": 0.6963505291005287,
+          "nDCG@10": 0.7305987361604303,
+          "retrieval_p50_ms": 1.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 20.5,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 89.8,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      }
+    ],
+    "mixed/enron-qa": [
+      {
+        "ann_proof_status": "NOT_APPLICABLE",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "lexical",
+        "corpus_source": {
+          "dataset": "mixed/enron-qa",
+          "doc_count": 5485,
+          "query_count": 300,
+          "sha256": "c11e4e0b871ebaaac8aa4ba17b3c6cc02eaf8094b19a59bfb33322ed9d0fe96b",
+          "signature": "c11e4e0b871ebaaac8aa4ba17b3c6cc02eaf8094b19a59bfb33322ed9d0fe96b",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.794771164021164,
+          "P@1": 0.7166666666666667,
+          "R@10": 0.93,
+          "RR@10": 0.7894933862433863,
+          "nDCG@10": 0.8278689018169064,
+          "retrieval_p50_ms": 6.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 6.2,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 64.5,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      },
+      {
+        "ann_proof_status": "PASS",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "bm25_splade",
+        "corpus_source": {
+          "dataset": "mixed/enron-qa",
+          "doc_count": 5485,
+          "query_count": 300,
+          "sha256": "c11e4e0b871ebaaac8aa4ba17b3c6cc02eaf8094b19a59bfb33322ed9d0fe96b",
+          "signature": "c11e4e0b871ebaaac8aa4ba17b3c6cc02eaf8094b19a59bfb33322ed9d0fe96b",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.7777579365079366,
+          "P@1": 0.6933333333333334,
+          "R@10": 0.92,
+          "RR@10": 0.7677579365079366,
+          "nDCG@10": 0.8127858015867555,
+          "retrieval_p50_ms": 8.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 6.2,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 64.5,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      },
+      {
+        "ann_proof_status": "PASS",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "vector",
+        "corpus_source": {
+          "dataset": "mixed/enron-qa",
+          "doc_count": 5485,
+          "query_count": 300,
+          "sha256": "c11e4e0b871ebaaac8aa4ba17b3c6cc02eaf8094b19a59bfb33322ed9d0fe96b",
+          "signature": "c11e4e0b871ebaaac8aa4ba17b3c6cc02eaf8094b19a59bfb33322ed9d0fe96b",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.5275383597883597,
+          "P@1": 0.4066666666666667,
+          "R@10": 0.7733333333333333,
+          "RR@10": 0.525871693121693,
+          "nDCG@10": 0.5867718375910698,
+          "retrieval_p50_ms": 2.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 6.2,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 64.5,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      }
+    ],
+    "mixed/legal-clerc-200": [
+      {
+        "ann_proof_status": "NOT_APPLICABLE",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "lexical",
+        "corpus_source": {
+          "dataset": "mixed/legal-clerc-200",
+          "doc_count": 198,
+          "query_count": 200,
+          "sha256": "90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1",
+          "signature": "90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.6339603174603173,
+          "P@1": 0.51,
+          "R@10": 0.855,
+          "RR@10": 0.6339603174603173,
+          "nDCG@10": 0.6880006610714416,
+          "retrieval_p50_ms": 15.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 1.0,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 29.3,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      },
+      {
+        "ann_proof_status": "PASS",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "bm25_splade",
+        "corpus_source": {
+          "dataset": "mixed/legal-clerc-200",
+          "doc_count": 198,
+          "query_count": 200,
+          "sha256": "90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1",
+          "signature": "90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.632031746031746,
+          "P@1": 0.51,
+          "R@10": 0.845,
+          "RR@10": 0.634531746031746,
+          "nDCG@10": 0.6842934055263225,
+          "retrieval_p50_ms": 24.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 1.0,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 29.3,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      },
+      {
+        "ann_proof_status": "PASS",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "vector",
+        "corpus_source": {
+          "dataset": "mixed/legal-clerc-200",
+          "doc_count": 198,
+          "query_count": 200,
+          "sha256": "90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1",
+          "signature": "90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.5524444444444444,
+          "P@1": 0.41,
+          "R@10": 0.83,
+          "RR@10": 0.5574444444444444,
+          "nDCG@10": 0.6198752823240912,
+          "retrieval_p50_ms": 5.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 1.0,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 29.3,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      }
+    ],
+    "mixed/miracl-de-2k": [
+      {
+        "ann_proof_status": "NOT_APPLICABLE",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "lexical",
+        "corpus_source": {
+          "dataset": "mixed/miracl-de-2k",
+          "doc_count": 3103,
+          "query_count": 305,
+          "sha256": "d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1",
+          "signature": "d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.6468917512360134,
+          "P@1": 0.5081967213114754,
+          "R@10": 0.8754098360655738,
+          "RR@10": 0.6468917512360134,
+          "nDCG@10": 0.7032839564438883,
+          "retrieval_p50_ms": 2.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 33.4,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 97.2,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      },
+      {
+        "ann_proof_status": "PASS",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "bm25_splade",
+        "corpus_source": {
+          "dataset": "mixed/miracl-de-2k",
+          "doc_count": 3103,
+          "query_count": 305,
+          "sha256": "d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1",
+          "signature": "d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.6944782721831902,
+          "P@1": 0.5540983606557377,
+          "R@10": 0.9016393442622951,
+          "RR@10": 0.6944782721831902,
+          "nDCG@10": 0.746491647050696,
+          "retrieval_p50_ms": 8.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 33.4,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 97.2,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      },
+      {
+        "ann_proof_status": "PASS",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "vector",
+        "corpus_source": {
+          "dataset": "mixed/miracl-de-2k",
+          "doc_count": 3103,
+          "query_count": 305,
+          "sha256": "d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1",
+          "signature": "d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.8004918032786886,
+          "P@1": 0.6557377049180327,
+          "R@10": 1.0,
+          "RR@10": 0.8004918032786886,
+          "nDCG@10": 0.8510198341197508,
+          "retrieval_p50_ms": 2.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 33.4,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 97.2,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      }
+    ],
+    "mixed/miracl-fr-2k": [
+      {
+        "ann_proof_status": "NOT_APPLICABLE",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "lexical",
+        "corpus_source": {
+          "dataset": "mixed/miracl-fr-2k",
+          "doc_count": 5407,
+          "query_count": 343,
+          "sha256": "a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297",
+          "signature": "a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.6494261650238328,
+          "P@1": 0.5335276967930029,
+          "R@10": 0.8629737609329446,
+          "RR@10": 0.6494261650238328,
+          "nDCG@10": 0.7016390915245782,
+          "retrieval_p50_ms": 2.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 23.3,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 60.0,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      },
+      {
+        "ann_proof_status": "PASS",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "bm25_splade",
+        "corpus_source": {
+          "dataset": "mixed/miracl-fr-2k",
+          "doc_count": 5407,
+          "query_count": 343,
+          "sha256": "a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297",
+          "signature": "a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.7105187653292611,
+          "P@1": 0.5918367346938775,
+          "R@10": 0.9096209912536443,
+          "RR@10": 0.7105187653292611,
+          "nDCG@10": 0.7599695194193464,
+          "retrieval_p50_ms": 5.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 23.3,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 60.0,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      },
+      {
+        "ann_proof_status": "PASS",
+        "comparable": true,
+        "confidence_tier": "A",
+        "config_mode": "vector",
+        "corpus_source": {
+          "dataset": "mixed/miracl-fr-2k",
+          "doc_count": 5407,
+          "query_count": 343,
+          "sha256": "a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297",
+          "signature": "a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297",
+          "upstream_revision": null
+        },
+        "metrics": {
+          "AP@10": 0.8537970290156877,
+          "P@1": 0.7405247813411079,
+          "R@10": 1.0,
+          "RR@10": 0.8537970290156877,
+          "nDCG@10": 0.8911072696247466,
+          "retrieval_p50_ms": 3.0
+        },
+        "qrels_id": "binary",
+        "run_metrics": {
+          "embed_bytes": 627988827.0,
+          "enrich_docs_s": 23.3,
+          "ner_bytes": 269622486.0,
+          "primary_docs_s": 60.0,
+          "reranker_bytes": 629118152.0,
+          "resident_bytes": 2024327753.0,
+          "splade_bytes": 497598288.0
+        },
+        "tolerance_band": null
+      }
+    ]
+  },
   "cohort": {
-    "config_cohort_key": "109ce2832109bd79a3c876f8f799eb7d3bee2115727e7c7caf598ed613e0c291",
+    "config_cohort_key": "e985404fad7b536d093522042ffa8c238419860ec430c87eeda88c3983226d36",
     "eval_protocol_hash": "24ce3446d4fb0ff5b78c94c53a79f185ee40932dbd8bb379fd6e04cab64df2b6",
-    "git_sha": "84b305b2be79d66de78d29435d49102b3c03e35b",
+    "git_sha": "8aacedc37a5afbd5403c7f9242523765d889e2b4",
     "hardware": {
       "cuda_version": "12",
       "gpu_driver_version": "610.62",
@@ -17,7 +523,7 @@
       "embed_backend": "onnx",
       "embed_compat_state": "COMPATIBLE",
       "embed_fingerprint": "f1d0f4ec988a6c17387d3b256e631deea506a891aed3a6ded4f9bf09386cc38e",
-      "ner_model_path": "",
+      "ner_model_path": "F:\\justsearch-public\\models\\onnx\\ner",
       "realized_engines": [
         "dense",
         "reranker",
@@ -26,14 +532,14 @@
       "reranker_model_path": "F:\\justsearch-public\\models\\onnx\\reranker",
       "splade_model_path": "F:\\justsearch-public\\models\\splade\\naver-splade-v3"
     },
-    "policy_hash": "638e63b74334bd7db2605ec591566de9ea5e60ddbc4ec5c6d1c6e7623a792108",
+    "policy_hash": "1433e44f9a92885556cd341c4e8056ff1f31835f33a6dfd19a1e8a8711161707",
     "realized_engines": [
       "dense",
       "reranker",
       "splade"
     ]
   },
-  "composed_at": "2026-07-01T12:43:54.661290+00:00",
+  "composed_at": "2026-07-16T11:32:57.557410+00:00",
   "coverage": {
     "does_not_measure": "document extraction / OCR / VDU routing quality (see tempdoc 623 §F — extraction-quality sibling)",
     "measures": "retrieval ranking quality (per-corpus metrics above)"
@@ -41,23 +547,145 @@
   "default_mode": "hybrid",
   "external_baselines": {
     "beir/scifact": [
-      { "model": "BM25 (multifield)", "value": 0.665, "source_url": "https://arxiv.org/html/2306.07471v1", "version": "Brewing BEIR (SIGIR 2024) Table 3 / SPLADE++ paper Table 4", "split": "test", "self_reproduced": false, "caveat": "multifield indexing; matches our lexical 0.661 (tempdoc 623 U5). BM25-flat is 0.679. COMPARISON CLASS: single-model retriever — our 0.757 is a full hybrid (BM25+dense+SPLADE)+rerank pipeline, so this is a system-vs-component comparison; hybrid+rerank is expected to exceed single models." },
-      { "model": "SPLADE++ EnsembleDistil", "value": 0.710, "source_url": "https://www.piwowarski.fr/publication/formal_distillation_2022-7YPDA2UJ.pdf", "version": "SPLADE++ (Formal et al., SIGIR 2022) Table 4", "split": "test", "self_reproduced": false, "caveat": "SelfDistil variant = 0.702. COMPARISON CLASS: single-model learned-sparse retriever — our 0.757 is a full hybrid+rerank pipeline (system vs component)." },
-      { "model": "ColBERTv2", "value": 0.693, "source_url": "https://people.eecs.berkeley.edu/~matei/papers/2022/naacl_colbert_v2.pdf", "version": "ColBERTv2 (Santhanam et al., NAACL 2022) Table 5", "split": "test", "self_reproduced": false, "caveat": "confirmed independently in SPLADE++ and Brewing BEIR tables. COMPARISON CLASS: single-model late-interaction retriever — our 0.757 is a full hybrid+rerank pipeline (system vs component)." }
+      {
+        "caveat": "multifield indexing; matches our lexical 0.661 (tempdoc 623 U5). BM25-flat is 0.679. COMPARISON CLASS: single-model retriever — our 0.757 is a full hybrid (BM25+dense+SPLADE)+rerank pipeline, so this is a system-vs-component comparison; hybrid+rerank is expected to exceed single models.",
+        "model": "BM25 (multifield)",
+        "self_reproduced": false,
+        "source_url": "https://arxiv.org/html/2306.07471v1",
+        "split": "test",
+        "value": 0.665,
+        "version": "Brewing BEIR (SIGIR 2024) Table 3 / SPLADE++ paper Table 4"
+      },
+      {
+        "caveat": "SelfDistil variant = 0.702. COMPARISON CLASS: single-model learned-sparse retriever — our 0.757 is a full hybrid+rerank pipeline (system vs component).",
+        "model": "SPLADE++ EnsembleDistil",
+        "self_reproduced": false,
+        "source_url": "https://www.piwowarski.fr/publication/formal_distillation_2022-7YPDA2UJ.pdf",
+        "split": "test",
+        "value": 0.71,
+        "version": "SPLADE++ (Formal et al., SIGIR 2022) Table 4"
+      },
+      {
+        "caveat": "confirmed independently in SPLADE++ and Brewing BEIR tables. COMPARISON CLASS: single-model late-interaction retriever — our 0.757 is a full hybrid+rerank pipeline (system vs component).",
+        "model": "ColBERTv2",
+        "self_reproduced": false,
+        "source_url": "https://people.eecs.berkeley.edu/~matei/papers/2022/naacl_colbert_v2.pdf",
+        "split": "test",
+        "value": 0.693,
+        "version": "ColBERTv2 (Santhanam et al., NAACL 2022) Table 5"
+      }
     ],
-    "mixed/miracl-fr-2k": [
-      { "model": "BM25", "value": 0.183, "source_url": "https://arxiv.org/pdf/2210.09984", "version": "MIRACL (Zhang et al., SIGIR 2023) Table 2", "split": "dev", "self_reproduced": false, "caveat": "DEV split (≠ our test axis); do not mix with BGE-M3's BM25 (fr=0.458, different impl)" },
-      { "model": "mDPR (zero-shot)", "value": 0.435, "source_url": "https://arxiv.org/pdf/2210.09984", "version": "MIRACL Table 2", "split": "dev", "self_reproduced": false, "caveat": "DEV split" },
-      { "model": "Hybrid (BM25+mDPR)", "value": 0.523, "source_url": "https://arxiv.org/pdf/2210.09984", "version": "MIRACL Table 2", "split": "dev", "self_reproduced": false, "caveat": "DEV split" }
-    ],
-    "mixed/miracl-zh-2k": [
-      { "model": "BM25", "value": 0.180, "source_url": "https://arxiv.org/pdf/2210.09984", "version": "MIRACL Table 2", "split": "dev", "self_reproduced": false, "caveat": "DEV split (≠ our test axis)" },
-      { "model": "mDPR (zero-shot)", "value": 0.512, "source_url": "https://arxiv.org/pdf/2210.09984", "version": "MIRACL Table 2", "split": "dev", "self_reproduced": false, "caveat": "DEV split" },
-      { "model": "Hybrid (BM25+mDPR)", "value": 0.526, "source_url": "https://arxiv.org/pdf/2210.09984", "version": "MIRACL Table 2", "split": "dev", "self_reproduced": false, "caveat": "DEV split" }
+    "mixed/legal-clerc-200": [
+      {
+        "caveat": "SCALE MISMATCH, not a comparison class issue: CLERC's own retrieval collection is 1.84M documents / 23.7M passages; our mixed/legal-clerc-200 corpus is a 198-document candidate pool (200 queries, following tempdoc 666's construction: one positive + curated negatives per query, mirroring CLERC's own query+positive+20-negatives record shape). nDCG@10 on a ~200-document pool is structurally far easier than on a 1.84M-document collection, so our 0.516 is NOT 'beating published BM25 (0.054)' — it reflects a much smaller candidate set. Cited to establish CLERC as a real, citable academic legal-retrieval benchmark grounding this corpus, not as a head-to-head score comparison.",
+        "model": "BM25",
+        "self_reproduced": false,
+        "source_url": "https://arxiv.org/abs/2406.17186",
+        "split": "test",
+        "value": 0.054,
+        "version": "CLERC (Hou et al., NAACL 2025) Table 3"
+      },
+      {
+        "caveat": "Same scale-mismatch caveat as the BM25 row above — full 1.84M-doc/23.7M-passage collection vs. our 198-document pool. Listed as the strongest zero-shot dense baseline CLERC reports (ahead of E5 v2 0.0367, BGE En v1.5 0.0343, DPR 0.0224).",
+        "model": "Contriever-MSMarco (zero-shot dense)",
+        "self_reproduced": false,
+        "source_url": "https://arxiv.org/abs/2406.17186",
+        "split": "test",
+        "value": 0.0422,
+        "version": "CLERC (Hou et al., NAACL 2025) Table 3"
+      }
     ],
     "mixed/miracl-de-2k": [
-      { "model": "BGE-M3 Dense", "value": 0.567, "source_url": "https://arxiv.org/html/2402.03216v4", "version": "BGE-M3 (Chen et al., 2024) Table 1", "split": "dev", "self_reproduced": false, "caveat": "NON-CANONICAL: German is a MIRACL surprise language with NO baseline row in the MIRACL paper; this is BGE-M3's own reproduction. DEV split. Flag as resting on a single non-canonical source." }
+      {
+        "caveat": "NON-CANONICAL: German is a MIRACL surprise language with NO baseline row in the MIRACL paper; this is BGE-M3's own reproduction. DEV split. Flag as resting on a single non-canonical source.",
+        "model": "BGE-M3 Dense",
+        "self_reproduced": false,
+        "source_url": "https://arxiv.org/html/2402.03216v4",
+        "split": "dev",
+        "value": 0.567,
+        "version": "BGE-M3 (Chen et al., 2024) Table 1"
+      }
+    ],
+    "mixed/miracl-fr-2k": [
+      {
+        "caveat": "DEV split (≠ our test axis); do not mix with BGE-M3's BM25 (fr=0.458, different impl)",
+        "model": "BM25",
+        "self_reproduced": false,
+        "source_url": "https://arxiv.org/pdf/2210.09984",
+        "split": "dev",
+        "value": 0.183,
+        "version": "MIRACL (Zhang et al., SIGIR 2023) Table 2"
+      },
+      {
+        "caveat": "DEV split",
+        "model": "mDPR (zero-shot)",
+        "self_reproduced": false,
+        "source_url": "https://arxiv.org/pdf/2210.09984",
+        "split": "dev",
+        "value": 0.435,
+        "version": "MIRACL Table 2"
+      },
+      {
+        "caveat": "DEV split",
+        "model": "Hybrid (BM25+mDPR)",
+        "self_reproduced": false,
+        "source_url": "https://arxiv.org/pdf/2210.09984",
+        "split": "dev",
+        "value": 0.523,
+        "version": "MIRACL Table 2"
+      }
+    ],
+    "mixed/miracl-zh-2k": [
+      {
+        "caveat": "DEV split (≠ our test axis)",
+        "model": "BM25",
+        "self_reproduced": false,
+        "source_url": "https://arxiv.org/pdf/2210.09984",
+        "split": "dev",
+        "value": 0.18,
+        "version": "MIRACL Table 2"
+      },
+      {
+        "caveat": "DEV split",
+        "model": "mDPR (zero-shot)",
+        "self_reproduced": false,
+        "source_url": "https://arxiv.org/pdf/2210.09984",
+        "split": "dev",
+        "value": 0.512,
+        "version": "MIRACL Table 2"
+      },
+      {
+        "caveat": "DEV split",
+        "model": "Hybrid (BM25+mDPR)",
+        "self_reproduced": false,
+        "source_url": "https://arxiv.org/pdf/2210.09984",
+        "split": "dev",
+        "value": 0.526,
+        "version": "MIRACL Table 2"
+      }
     ]
+  },
+  "leak": {
+    "beir/scifact": {
+      "leak_rate": 0.023333333333333334,
+      "src": "staged_recall_accounting projection"
+    },
+    "mixed/enron-qa": {
+      "leak_rate": 0.11333333333333333,
+      "src": "staged_recall_accounting projection"
+    },
+    "mixed/legal-clerc-200": {
+      "leak_rate": 0.155,
+      "src": "staged_recall_accounting projection"
+    },
+    "mixed/miracl-de-2k": {
+      "leak_rate": 0.003278688524590164,
+      "src": "staged_recall_accounting projection"
+    },
+    "mixed/miracl-fr-2k": {
+      "leak_rate": 0.0,
+      "src": "staged_recall_accounting projection"
+    }
   },
   "measured": {
     "beir/scifact": {
@@ -70,105 +698,27 @@
         "doc_count": 5183,
         "query_count": 300,
         "sha256": "3e10ed87358699465122d137cc8479a586a55736df1dbb19901157c86d0ccb7d",
-        "signature": "3e10ed87358699465122d137cc8479a586a55736df1dbb19901157c86d0ccb7d"
+        "signature": "3e10ed87358699465122d137cc8479a586a55736df1dbb19901157c86d0ccb7d",
+        "upstream_revision": null
       },
       "metrics": {
-        "AP@10": 0.7085732804232803,
-        "P@1": 0.6266666666666667,
+        "AP@10": 0.7142677248677247,
+        "P@1": 0.6366666666666667,
         "R@10": 0.8875555555555555,
-        "RR@10": 0.7188783068783069,
-        "ce_p50_ms": 167.0,
-        "nDCG@10": 0.7560933805510752
+        "RR@10": 0.7245727513227513,
+        "ce_p50_ms": 171.0,
+        "nDCG@10": 0.7603992000927416,
+        "retrieval_p50_ms": 4.0
       },
       "qrels_id": "binary",
       "run_metrics": {
-        "enrich_docs_s": 25.0,
-        "primary_docs_s": 111.1,
-        "resident_bytes": 1754705267.0
-      },
-      "tolerance_band": null
-    },
-    "mixed/legal-clerc-200": {
-      "ann_proof_status": "PASS",
-      "comparable": true,
-      "confidence_tier": "A",
-      "config_mode": "hybrid",
-      "corpus_source": {
-        "dataset": "mixed/legal-clerc-200",
-        "doc_count": 198,
-        "query_count": 200,
-        "sha256": "90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1",
-        "signature": "90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1"
-      },
-      "metrics": {
-        "AP@10": 0.46860317460317463,
-        "P@1": 0.37,
-        "R@10": 0.665,
-        "RR@10": 0.46860317460317463,
-        "ce_p50_ms": 214.0,
-        "nDCG@10": 0.5164492083288844
-      },
-      "qrels_id": "binary",
-      "run_metrics": {
-        "enrich_docs_s": 1.3,
-        "primary_docs_s": 11.0,
-        "resident_bytes": 1754705267.0
-      },
-      "tolerance_band": null
-    },
-    "mixed/miracl-de-2k": {
-      "ann_proof_status": "PASS",
-      "comparable": true,
-      "confidence_tier": "A",
-      "config_mode": "hybrid",
-      "corpus_source": {
-        "dataset": "mixed/miracl-de-2k",
-        "doc_count": 3103,
-        "query_count": 305,
-        "sha256": "d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1",
-        "signature": "d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1"
-      },
-      "metrics": {
-        "AP@10": 0.803587041373927,
-        "P@1": 0.6688524590163935,
-        "R@10": 0.9934426229508196,
-        "RR@10": 0.8019476971116319,
-        "ce_p50_ms": 168.0,
-        "nDCG@10": 0.8515762996367597
-      },
-      "qrels_id": "binary",
-      "run_metrics": {
-        "enrich_docs_s": 36.7,
-        "primary_docs_s": 73.7,
-        "resident_bytes": 1754705267.0
-      },
-      "tolerance_band": null
-    },
-    "mixed/miracl-fr-2k": {
-      "ann_proof_status": "PASS",
-      "comparable": true,
-      "confidence_tier": "A",
-      "config_mode": "hybrid",
-      "corpus_source": {
-        "dataset": "mixed/miracl-fr-2k",
-        "doc_count": 5407,
-        "query_count": 343,
-        "sha256": "a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297",
-        "signature": "a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297"
-      },
-      "metrics": {
-        "AP@10": 0.8232299042065806,
-        "P@1": 0.7026239067055393,
-        "R@10": 0.9941690962099126,
-        "RR@10": 0.8232299042065806,
-        "ce_p50_ms": 169.0,
-        "nDCG@10": 0.8664115914636191
-      },
-      "qrels_id": "binary",
-      "run_metrics": {
-        "enrich_docs_s": 50.0,
-        "primary_docs_s": 124.6,
-        "resident_bytes": 1754705267.0
+        "embed_bytes": 627988827.0,
+        "enrich_docs_s": 20.5,
+        "ner_bytes": 269622486.0,
+        "primary_docs_s": 89.8,
+        "reranker_bytes": 629118152.0,
+        "resident_bytes": 2024327753.0,
+        "splade_bytes": 497598288.0
       },
       "tolerance_band": null
     },
@@ -182,34 +732,160 @@
         "doc_count": 5485,
         "query_count": 300,
         "sha256": "c11e4e0b871ebaaac8aa4ba17b3c6cc02eaf8094b19a59bfb33322ed9d0fe96b",
-        "signature": "c11e4e0b871ebaaac8aa4ba17b3c6cc02eaf8094b19a59bfb33322ed9d0fe96b"
+        "signature": "c11e4e0b871ebaaac8aa4ba17b3c6cc02eaf8094b19a59bfb33322ed9d0fe96b",
+        "upstream_revision": null
       },
       "metrics": {
-        "AP@10": 0.6778650793650793,
-        "P@1": 0.57,
-        "R@10": 0.8433333333333334,
-        "RR@10": 0.6828650793650793,
-        "ce_p50_ms": 157.0,
-        "nDCG@10": 0.7191944005967136
+        "AP@10": 0.6979854497354498,
+        "P@1": 0.5966666666666667,
+        "R@10": 0.85,
+        "RR@10": 0.6996521164021166,
+        "ce_p50_ms": 161.0,
+        "nDCG@10": 0.7359395146721377,
+        "retrieval_p50_ms": 12.0
       },
       "qrels_id": "binary",
       "run_metrics": {
-        "enrich_docs_s": 7.9,
-        "primary_docs_s": 96.4,
-        "resident_bytes": 2024327753.0
+        "embed_bytes": 627988827.0,
+        "enrich_docs_s": 6.2,
+        "ner_bytes": 269622486.0,
+        "primary_docs_s": 64.5,
+        "reranker_bytes": 629118152.0,
+        "resident_bytes": 2024327753.0,
+        "splade_bytes": 497598288.0
       },
-      "tolerance_band": null,
-      "_cohort_note": "Carried over from a prior release cohort (git_sha bef184e333, config_cohort_key 3f43654963fc...) -- NOT remeasured in this composition (tempdoc 666). mixed/enron-qa has no committed fetch/materialization mechanism in this worktree (datasets/ is gitignored and no corpus-fetch-enron equivalent exists), a sibling gap to what tempdoc 666 fixed for MIRACL/CourtListener -- logged as a pre-existing issue, out of this tempdoc scope."
+      "tolerance_band": null
+    },
+    "mixed/legal-clerc-200": {
+      "ann_proof_status": "PASS",
+      "comparable": true,
+      "confidence_tier": "A",
+      "config_mode": "hybrid",
+      "corpus_source": {
+        "dataset": "mixed/legal-clerc-200",
+        "doc_count": 198,
+        "query_count": 200,
+        "sha256": "90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1",
+        "signature": "90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1",
+        "upstream_revision": null
+      },
+      "metrics": {
+        "AP@10": 0.5456646825396824,
+        "P@1": 0.445,
+        "R@10": 0.765,
+        "RR@10": 0.5456646825396824,
+        "ce_p50_ms": 226.0,
+        "nDCG@10": 0.5981513414670377,
+        "retrieval_p50_ms": 26.0
+      },
+      "qrels_id": "binary",
+      "run_metrics": {
+        "embed_bytes": 627988827.0,
+        "enrich_docs_s": 1.0,
+        "ner_bytes": 269622486.0,
+        "primary_docs_s": 29.3,
+        "reranker_bytes": 629118152.0,
+        "resident_bytes": 2024327753.0,
+        "splade_bytes": 497598288.0
+      },
+      "tolerance_band": null
+    },
+    "mixed/miracl-de-2k": {
+      "ann_proof_status": "PASS",
+      "comparable": true,
+      "confidence_tier": "A",
+      "config_mode": "hybrid",
+      "corpus_source": {
+        "dataset": "mixed/miracl-de-2k",
+        "doc_count": 3103,
+        "query_count": 305,
+        "sha256": "d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1",
+        "signature": "d6f4026b4b25ac0d117353b830022d77ef3b863b15187907d512d645fae607a1",
+        "upstream_revision": null
+      },
+      "metrics": {
+        "AP@10": 0.8161280249804843,
+        "P@1": 0.6852459016393443,
+        "R@10": 0.9967213114754099,
+        "RR@10": 0.8139422326307575,
+        "ce_p50_ms": 175.0,
+        "nDCG@10": 0.8619158879374021,
+        "retrieval_p50_ms": 5.0
+      },
+      "qrels_id": "binary",
+      "run_metrics": {
+        "embed_bytes": 627988827.0,
+        "enrich_docs_s": 33.4,
+        "ner_bytes": 269622486.0,
+        "primary_docs_s": 97.2,
+        "reranker_bytes": 629118152.0,
+        "resident_bytes": 2024327753.0,
+        "splade_bytes": 497598288.0
+      },
+      "tolerance_band": null
+    },
+    "mixed/miracl-fr-2k": {
+      "ann_proof_status": "PASS",
+      "comparable": true,
+      "confidence_tier": "A",
+      "config_mode": "hybrid",
+      "corpus_source": {
+        "dataset": "mixed/miracl-fr-2k",
+        "doc_count": 5407,
+        "query_count": 343,
+        "sha256": "a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297",
+        "signature": "a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297",
+        "upstream_revision": null
+      },
+      "metrics": {
+        "AP@10": 0.8293731778425655,
+        "P@1": 0.7055393586005831,
+        "R@10": 1.0,
+        "RR@10": 0.8293731778425655,
+        "ce_p50_ms": 174.0,
+        "nDCG@10": 0.8726479507271325,
+        "retrieval_p50_ms": 6.0
+      },
+      "qrels_id": "binary",
+      "run_metrics": {
+        "embed_bytes": 627988827.0,
+        "enrich_docs_s": 23.3,
+        "ner_bytes": 269622486.0,
+        "primary_docs_s": 60.0,
+        "reranker_bytes": 629118152.0,
+        "resident_bytes": 2024327753.0,
+        "splade_bytes": 497598288.0
+      },
+      "tolerance_band": null
     }
   },
   "notes": {
     "missing_default_mode": [],
-    "tolerance_semantics": "reproduction tolerance is the within-machine ±2sigma envelope, scoped to equivalent hardware/setup (tempdoc 623 F-alpha)",
-    "enron_qa_stale_cohort": "mixed/enron-qa was NOT remeasured in this composition -- see its entry _cohort_note.",
-    "unpinned_upstream_revision_caveat": "mixed/miracl-de-2k, mixed/miracl-fr-2k, and mixed/legal-clerc-200 are fetched fresh from ir_datasets (MIRACL) and HuggingFace jhu-clsp/CLERC at materialization time (tempdoc 666). Neither fetcher currently pins an upstream revision/commit SHA, so this release's reproducibility guarantee is technically CONDITIONAL on those upstream sources not silently changing between now and a future reproduction attempt. A pinnable commit SHA exists on HuggingFace for both sources; pinning it is identified as real, not-yet-done future work (tempdoc 666 fifth pass) -- disclosed here rather than left implicit, per the project's own no-overclaiming research-channel discipline.",
-    "external_baselines_amendment": "external_baselines, release_id, and this notes block were added by hand-editing this file (tempdoc 667), NOT by re-running `jseval release` -- the `composed_at` timestamp above still reflects tempdoc 666's original compose (2026-07-01T12:43:54Z), not this amendment. The merge replicates release.py's documented `external_baselines` merge behaviour (a verbatim copy of external-baselines.v1.json's `baselines` object) but was not executed through the actual CLI, because no intact eval-results run directories could be located to recompose from. Disclosed here rather than silently backdating or faking a fresh compose timestamp."
+    "tolerance_semantics": "reproduction tolerance is the within-machine ±2sigma envelope, scoped to equivalent hardware/setup (tempdoc 623 F-alpha)"
   },
-  "release_id": "667-external-baselines-2026-07-01",
+  "release_id": "715-rebaseline-2026-07-16",
   "schema": "release.v1",
-  "schema_version": 1
+  "schema_version": 1,
+  "union_recall": {
+    "beir/scifact": {
+      "leg_union_recall": 0.9166666666666666,
+      "src": "staged_recall_accounting projection"
+    },
+    "mixed/enron-qa": {
+      "leg_union_recall": 0.9633333333333334,
+      "src": "staged_recall_accounting projection"
+    },
+    "mixed/legal-clerc-200": {
+      "leg_union_recall": 0.91,
+      "src": "staged_recall_accounting projection"
+    },
+    "mixed/miracl-de-2k": {
+      "leg_union_recall": 1.0,
+      "src": "staged_recall_accounting projection"
+    },
+    "mixed/miracl-fr-2k": {
+      "leg_union_recall": 1.0,
+      "src": "staged_recall_accounting projection"
+    }
+  }
 }
