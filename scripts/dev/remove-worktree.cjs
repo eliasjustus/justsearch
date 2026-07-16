@@ -158,11 +158,81 @@ function deleteTree(p, { attempts = 5, retryDelayMs = 300 } = {}) {
   return !fs.existsSync(p);
 }
 
+/** Read a `--flag <value>` / `--flag=<value>` pair out of argv. */
+function flagValue(argv, name) {
+  const i = argv.indexOf(`--${name}`);
+  if (i !== -1 && argv[i + 1] && !argv[i + 1].startsWith('--')) return argv[i + 1].trim();
+  const eq = argv.find((a) => a.startsWith(`--${name}=`));
+  return eq ? eq.slice(`--${name}=`.length).trim() : null;
+}
+
+/** The branch checked out in the worktree we are about to delete. */
+function worktreeBranch(abs) {
+  const r = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: abs, encoding: 'utf8' });
+  if (r.status !== 0) return null;
+  const b = (r.stdout || '').trim();
+  return b && b !== 'HEAD' ? b : null;
+}
+
+/**
+ * Ask GitHub for the squash commit its merged PR produced. This is the only
+ * cheap source of truth: ADR-0045 squash-merges every PR, so the branch's own
+ * commits never appear in main and ancestry cannot answer this
+ * (`squash-merge-verify-content-not-ancestry`).
+ */
+function mergeCommitFromPr(repoRoot, branch) {
+  const r = spawnSync(
+    'gh',
+    ['pr', 'list', '--head', branch, '--state', 'merged', '--json', 'mergeCommit', '--limit', '1'],
+    { cwd: repoRoot, encoding: 'utf8' },
+  );
+  if (r.status !== 0) return null;
+  try {
+    const rows = JSON.parse(r.stdout || '[]');
+    return rows[0]?.mergeCommit?.oid || null;
+  } catch {
+    return null;
+  }
+}
+
+function recordMergeLink({ repoRoot, abs, mergeCommitArg, sessionIdArg }) {
+  const branch = worktreeBranch(abs);
+  const commit = mergeCommitArg || (branch ? mergeCommitFromPr(repoRoot, branch) : null);
+
+  if (!commit) {
+    // Deliberately NOT falling back to repoRoot HEAD — that is the bug.
+    console.error(
+      '[remove-worktree] record-merge SKIPPED: could not establish this branch\'s merge commit' +
+        (branch ? ` (branch ${branch}: no merged PR found via gh)` : ' (worktree has no branch)') +
+        '.\n[remove-worktree]   The session -> merge link is a FACT-tier row; guessing it would' +
+        ' write a wrong one that cannot be retracted.\n[remove-worktree]   Backfill once you know' +
+        ' the commit:\n[remove-worktree]     node scripts/agent-analytics/record-merge.mjs <merge-commit>' +
+        ' --session-id <id>\n[remove-worktree]   Or re-run with --merge-commit <sha>.',
+    );
+    return;
+  }
+
+  const args = [path.join(repoRoot, 'scripts', 'agent-analytics', 'record-merge.mjs'), commit];
+  if (sessionIdArg) args.push('--session-id', sessionIdArg);
+  try {
+    const rec = spawnSync('node', args, { cwd: repoRoot, encoding: 'utf8' });
+    const out = (rec.stdout || rec.stderr || '').trim();
+    if (out) console.error(`[remove-worktree] ${out}`);
+  } catch (err) {
+    console.error(`[remove-worktree] WARN record-merge: ${err.message}`);
+  }
+}
+
 function main() {
   const target = process.argv[2];
   const deleteBranch = process.argv.includes('--delete-branch');
+  const mergeCommitArg = flagValue(process.argv, 'merge-commit');
+  const sessionIdArg = flagValue(process.argv, 'session-id');
   if (!target || target.startsWith('--')) {
-    fail('usage: node scripts/dev/remove-worktree.cjs <worktree-path> [--delete-branch]');
+    fail(
+      'usage: node scripts/dev/remove-worktree.cjs <worktree-path> [--delete-branch]' +
+        ' [--merge-commit <sha>] [--session-id <id>]',
+    );
   }
 
   const repoRoot = path.resolve(__dirname, '..', '..');
@@ -175,17 +245,23 @@ function main() {
   }
 
   // Tempdoc 622 Layer B (§11 U2): record the session -> merge-commit link before
-  // teardown. This is the merge-time step that closes the weak join key — at this
-  // point HEAD on main is the just-created merge commit and the merging agent's
-  // current-session-id is still set. Best-effort: never blocks teardown.
-  try {
-    const rec = spawnSync('node', [path.join(repoRoot, 'scripts', 'agent-analytics', 'record-merge.mjs')],
-      { cwd: repoRoot, encoding: 'utf8' });
-    const out = (rec.stdout || rec.stderr || '').trim();
-    if (out) console.error(`[remove-worktree] ${out}`);
-  } catch (err) {
-    console.error(`[remove-worktree] WARN record-merge: ${err.message}`);
-  }
+  // teardown. Best-effort: never blocks teardown.
+  //
+  // This used to invoke record-merge.mjs with NO commit, so it defaulted to
+  // `HEAD` resolved in repoRoot, on the assumption "HEAD on main is the
+  // just-created merge commit". That assumption fails routinely, and silently:
+  // the main checkout is often parked on another branch (observed 4x — e.g.
+  // `session d1af1a27 -> 60f4e9d6`, an unrelated branch's tip), and even when
+  // it is on main, a GitHub squash-merge means local main is stale until pulled.
+  // The result was a WRONG row written into outcomes' fact tier — tagged
+  // kind:'fact', indistinguishable downstream from a correct one, outranking the
+  // LLM-judge inference it is designed to override, and unretractable (a
+  // backfill appends the right row but cannot remove the wrong one).
+  //
+  // So: establish the commit, never infer it. `--merge-commit` wins; else ask
+  // GitHub for the branch's merged PR (squash-proof: content, not ancestry);
+  // else SKIP and say so. A legible skip beats a confident wrong fact.
+  recordMergeLink({ repoRoot, abs, mergeCommitArg, sessionIdArg });
 
   if (fs.existsSync(abs)) {
     removeJunctions(abs);

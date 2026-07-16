@@ -1,7 +1,7 @@
 ---
 title: "739 — Why docs-ride-along was ignored: a hint that misfired, and an instruction that contradicted it"
 type: tempdoc
-status: implemented; hook + rule fixes committed on branch `fix/docs-granularity-hint-misfires` (aad467ac, a7a491ff, 1cdd20fc). Unpushed, no PR yet. One owner decision open (§6).
+status: CLOSED. Hook + rule fixes merged as #194 (`1a2eccc8`). The §6 threshold decision was taken (single-file only) and implemented in the follow-up PR, along with the skills-tracking and merge-attribution items from §7. See §9 Resolution. Two items spun out as their own charters (740, 741); both carry open owner decisions.
 created: 2026-07-15
 updated: 2026-07-15
 related:
@@ -176,3 +176,40 @@ itself and driven agents to `JUSTSEARCH_DISABLE_HOOKS=1`.
   fail-open by construction but was not probed.
 - **Whether F-3 recurs** depends on each environment's local `publish` skill;
   unknowable from this repo.
+
+## 9. Resolution (2026-07-15)
+
+**Merged as #194** (`1a2eccc8`): the two hook defects (F-1 argument-position
+matching, F-2 the `-C` cwd gap) and the two rule gaps (F-4 the fold's missing
+compliant path, F-6 precedent-chaining).
+
+**The §6 decision was taken — single-file threshold — and shipped** in the
+follow-up PR, together with two §7 items:
+
+| §6/§7 item | Outcome |
+|---|---|
+| Single-file threshold | **Done.** `isStandaloneNote`; measured 22 of 54 archaeology-only branches are single-file, so the hint went from right-41% to right-by-construction. Tier stays `hook-hint`; blocking still deferred until the signal is observed true in practice. |
+| The untracked skill layer (F-3's blast radius) | **Done.** All 14 local-only skills tracked, so the contradictions are reviewable. Not *resolved* — see below. |
+| `remove-worktree` merge attribution | **Done**, and narrower than §7 implied: `resolveSessionId` already preferred env over the checkout pointer file, so only the *commit* was wrong. Measured contamination: **126 of 211 rows (60%)** point at dangling pre-squash tips. The fix stops new corruption; it does not clean those 126. |
+| `always-loaded-budget` red | **Spun out → tempdoc 740.** The framing in §7 was wrong: it is not "a red gate", it is an unwired script whose enforcement `CLAUDE.md` asserts as fact. |
+| Corpora / blob growth | **Spun out → tempdoc 741.** An LFS fix was built, verified, and withdrawn: the corpora are derived artifacts with a recipe + commitment hash, so LFS was the wrong tool. |
+
+**Two §7 items remain open and are nobody's yet:**
+
+- The **126 bad ledger rows** are still there, still tagged `kind:'fact'`, still
+  outranking the LLM-judge inference they were designed to override. A backfill
+  appends but cannot retract. Quarantining pre-fix rows is the cheap honest move;
+  repairing them means content-matching each dangling commit to its squash.
+- The **skill-vs-`CLAUDE.md` contradiction class** is now visible but not
+  reconciled. Tracking the 14 skills made them reviewable; it did not decide which
+  authority wins when they disagree. Three instances were found in one session,
+  two by accident — which is the argument for a deliberate pass rather than
+  waiting for the fourth.
+
+**Correction recorded (F-6).** §5 already notes the audit claim that went into a
+rule unverified. A second correction belongs here: the LFS proposal in §7 was
+justified with "~73MB joins the ~4.9GB already in LFS". That 4.9GB was measured
+from a local `.git/lfs` store belonging to the gitignored models directory —
+`origin/main` has **zero** LFS-tracked files. The number was plausible, measured
+from the wrong place, and nearly bought an architectural change. It was caught
+only because the claim was re-checked against the repo before merge. See 741 §3(c).

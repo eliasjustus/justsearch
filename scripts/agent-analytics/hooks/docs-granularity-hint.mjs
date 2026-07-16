@@ -101,6 +101,28 @@ export function isArchaeologyOnly(files) {
   return real.every((f) => ARCHAEOLOGY.test(f));
 }
 
+/**
+ * The case the rule actually forbids: ONE working-history file, standing alone.
+ *
+ * `isArchaeologyOnly` is necessary but not sufficient. The rule permits two
+ * shapes — ride along with code, or batch several edits into one periodic PR —
+ * and a batch is archaeology-only too. Firing on every archaeology-only branch
+ * therefore nagged correct work: measured on `main` at 193 commits, 54 branches
+ * were archaeology-only but only 22 were single-file, so the hint was right 41%
+ * of the time. Agents responded rationally, by discounting it ("#160 is exactly
+ * the endorsed batched pattern, so no change needed" — verbatim, 2026-07-14),
+ * which is how a ~85% hook-hint decays toward prose.
+ *
+ * Restricting to exactly one file makes the signal true: a lone note cannot be
+ * a batch and is not riding along with anything. Multi-file archaeology (the
+ * step-4 shard fold, a periodic `docs(tempdocs):` batch) is what the rule asks
+ * for, so it stays silent. Owner decision, 2026-07-15 (tempdoc 739 §6).
+ */
+export function isStandaloneNote(files) {
+  const real = (files || []).map((f) => f.trim()).filter(Boolean);
+  return real.length === 1 && isArchaeologyOnly(real);
+}
+
 function branchChangedFiles(cwd) {
   const base = execFileSync('git', ['merge-base', 'origin/main', 'HEAD'], {
     cwd,
@@ -115,15 +137,17 @@ function branchChangedFiles(cwd) {
 }
 
 export const HINT = [
-  'History hygiene (ADR-0045 axis-2, tempdoc 653): this branch changes ONLY',
-  'dated working history (docs/tempdocs/** or docs/observations*). Public `main`',
-  'is a curated narrative, so a tempdoc-only change should not become its own',
-  'standalone PR/commit. Prefer to either:',
+  'History hygiene (ADR-0045 axis-2, tempdoc 653): this branch changes exactly ONE',
+  'working-history file (docs/tempdocs/** or docs/observations*) and nothing else.',
+  'Public `main` is a curated narrative, so a lone working-history note should not',
+  'become its own standalone PR/commit. Prefer to either:',
   '  - ride it along in the same PR as the code it documents, or',
-  '  - batch tempdoc edits into one periodic `docs(tempdocs): …` PR.',
-  'Canonical-doc updates (docs/{explanation,reference,how-to,decisions}) are',
-  'durable units and may stand alone. Rationale:',
-  'docs/reference/contributing/agent-guide.md (History publication).',
+  '  - batch it into the next periodic `docs(tempdocs): …` /',
+  '    `chore(observations): fold …` PR.',
+  'A prior standalone tempdoc PR is not a precedent — re-qualify on the rule, not',
+  'on what an earlier PR did. Multi-file batches (a shard fold, several tempdoc',
+  'edits) and canonical-doc updates are durable units and do NOT trigger this.',
+  'Rationale: docs/reference/contributing/agent-guide.md (History publication).',
 ].join('\n');
 
 async function main() {
@@ -140,7 +164,7 @@ async function main() {
   } catch {
     return; // fail-open
   }
-  if (!isArchaeologyOnly(files)) return;
+  if (!isStandaloneNote(files)) return;
 
   process.stdout.write(
     JSON.stringify({

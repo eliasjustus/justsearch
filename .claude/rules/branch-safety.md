@@ -189,9 +189,11 @@ question of whether a change should be its **own** public PR at all (tempdoc 653
   chain's root PR carried canonical docs, which this rule lets stand alone).
   Re-qualify each push on this rule's own terms.
 
-The `docs-granularity-hint` hook surfaces this at `git push` when a branch
-changes only working history; it never blocks. Rationale and the worked example
-live in `docs/reference/contributing/agent-guide.md` (History publication).
+The `docs-granularity-hint` hook surfaces this at `git push` when a branch changes
+exactly ONE working-history file; it never blocks. Multi-file batches (a fold,
+several tempdoc edits) are what this rule asks for, so they don't trigger it
+(tempdoc 739 §6). Rationale and the worked example live in
+`docs/reference/contributing/agent-guide.md` (History publication).
 
 ### Verifying whether squash-merged work already landed <!-- rule:squash-merge-verify-content-not-ancestry -->
 
