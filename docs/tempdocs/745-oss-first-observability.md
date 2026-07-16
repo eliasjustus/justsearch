@@ -1,7 +1,7 @@
 ---
 title: "745 — OSS-first agent observability: adopt/keep/retire survey across the analytics stack"
 type: tempdocs
-status: "investigated 2026-07-16 (session 805279a4) — survey COMPLETE, answer is 'adopt almost nothing'. Charter's OSS-first premise REFUTED for the Claude-Code slices (no maintained/licensed OSS in the niche); ccusage swap preconditions FAIL 2 of 3 → keep our engine, adopt ccusage as differential oracle. Three verified parser bugs found (fix exactly known) + a NEW reservoir-retention defect (~6-42min, unknown to 743, higher value than the whole charter). AWAITING FOUNDER: (1) F-8 governance conflict — the standing falsifier fired but the swap's own preconditions failed; (2) 743 go/no-go gates the retire sweep. Recommended reshape: program → 3 correctness items."
+status: "investigated 2026-07-16 (session 805279a4) — survey COMPLETE incl. a discovery sweep + LLM-obs ecosystem survey (founder-raised gap; V-1 partly REFUTED against itself: slices 1-2 ARE well-served OSS, slices 3-4 genuinely empty). Central call CONFIRMED after adversarial re-probe: no tool (ccusage/tokscale/usage-monitor/agents-observe) passes the swap preconditions — the subagent-role blind spot is STRUCTURAL across the ecosystem. KEEP our engine + ccusage as differential oracle; fix 3 (possibly 4) verified parser bugs; fix the sink (F-2 retention, the highest-value item, never in the charter). AWAITING FOUNDER: (1) F-8 — the standing falsifier fired but its remedy does not exist in any tool; (2) 743 go/no-go gates the retire sweep."
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / tooling / observability
@@ -360,6 +360,16 @@ defend our own buggy parser out of NIH pride." It was **right about what it meas
 parser is not trustworthy) and **wrong in its implied premise** (that ccusage's engine is the
 fit remedy). Its finding must be honored; its prescription is unavailable.
 
+**Strengthened by F-10 (2026-07-16, after the discovery sweep).** The obvious objection to the
+amendment — *"you only checked ccusage; find a better tool and just execute the falsifier"* — has
+now been tested and **fails**. Every maintained alternative was probed and **none passes the
+preconditions**, for structural reasons (no tool joins cost to merges, so none exposes a role
+dimension; live-fetched pricing tables fail open by construction). So the falsifier's prescription
+is unavailable **from the entire ecosystem**, not merely from ccusage. That converts the amendment
+from "an agent rationalising around a fired falsifier" into "the prescribed remedy does not exist"
+— which is exactly the distinction `structural-defects-no-repeat` exists to police, and it is why
+this still goes to the founder rather than being settled here.
+
 Per `structural-defects-no-repeat`, an agent must not quietly convert a fired falsifier into a
 cost-benefit discussion — so this is escalated, not resolved here. **Recommended amendment (founder's call):**
 
@@ -427,6 +437,70 @@ join; (3) Collector+otel-tui — only if a maintained viewer is independently wa
 This independently re-derives V-2: adopting Prometheus into a slot with no live consumer would be
 Gen-4 with extra steps.
 
+### F-10. The alternatives probed against the failed preconditions — NONE passes (V-3 survives)
+
+F-3b surfaced two candidates that threatened V-3. Both were probed live against real transcripts.
+**No tool passes (a)+(b)+(c). The engine-swap case does not reopen — and the reason is more
+interesting than "our tool is fine."**
+
+| Tool | (a) per-session | (b) subagent role | (c) offline + fail-closed | Verdict |
+|---|---|---|---|---|
+| **tokscale** v4.5.3 | **PASS** (`--json --group-by session,model`; within 0.16–1.4% of ground truth) | **FAIL** | **FAIL** | strongest candidate, still fails |
+| **Claude-Code-Usage-Monitor** 4.0.0 | **FAIL** | **FAIL** | offline PASS / fail-closed **FAIL** | premise was wrong |
+| **agents-observe** 0.9.11 | N/A | N/A | N/A | **category error** |
+
+- **tokscale (b)**: it *does* parse `isSidechain`/`agentId` and has an "Agents" TUI tab — but
+  `AgentUsage` **does not derive `Serialize`**. Role-aware internally, **invisible in JSON**; it
+  reassigns sidechain lines to the parent `sessionId` and folds them in. Same loss as ccusage.
+- **tokscale (c)**: forced synthetic-model test → `claude-totally-unknown-v99` = **$0.00, exit 0,
+  no warning** (control `claude-opus-4-8` = $30.00, correct). `calculate_cost_with_provider`
+  returns `0.0` on lookup miss — the cost path **fails open**. (Its `pricing` subcommand *does*
+  say "Model not found" — a *different* code path; probing that alone would have produced a false
+  PASS.) **No pinned table at all**: live-fetched from LiteLLM/models.dev/openrouter, 1h TTL, no
+  `include_str!` fallback — strictly *more* network-coupled than ccusage.
+- **tokscale telemetry: NOT disqualified.** Measured egress = 3 pricing hosts only; **zero**
+  `tokscale.ai` contact ever; warm cache = **zero egress**. The leaderboard is double-gated
+  (explicit `submit` **and** prior `login`). The README-based worry in F-3b does not survive
+  measurement — recorded so it isn't repeated.
+- **Usage-Monitor: my brief's premise was factually wrong.** The `official`/`local_estimate`/
+  `experimental` labels are **`PlanConfig.confidence` — subscription *plan limits*, not model
+  pricing**. It is a **quota monitor**: its "session" is a **5-hour billing block**, not a Claude
+  Code session (`sessionId` is parsed at `analyzer.py:373` but no view keys off it) → not joinable
+  to merges. **Zero** subagent awareness (`rglob("*.jsonl")` swallows subagent files unaware). Its
+  `strict=True` path is **unreachable for Claude models**: `normalize_model_name('claude-sonnet-5')`
+  → `'claude-3-sonnet'`, which exists in the dict (so would `claude-sonnet-9-future`).
+- **agents-observe**: hook-driven **lifecycle** attribution (`SubagentStart`/`SubagentStop`
+  timeline), **not tokens or cost**; doesn't parse transcripts; `"private": true` (unpublishable).
+
+**The generalization — this is the real finding.** The subagent-role blind spot is **structural
+across the ecosystem, not a ccusage quirk**: every tool reassigns sidechain lines to the parent and
+reports session totals, and tokscale's source shows this is a *deliberate design choice* ("fix
+inflated session counts"), not an oversight. **None of them are built to join cost to git merges**,
+so none exposes the dimension that join needs. Likewise the silent-$0 is what **live-fetching a
+third-party pricing table** buys you — adopting tokscale would trade our 3 known bugs for an
+*unpinnable* pricing dependency **plus** the lost headline metric, and we would still write the
+role-attribution layer ourselves.
+
+**The data already supports what we need**: `isSidechain`, `agentId`, and the `subagents/` path are
+all present in the transcripts. Only our own layer will ever read them.
+
+**Two items this probe hands to V-4 (fix-the-parser), both new:**
+
+1. **Ground truth for session `4bd6a45f`: 38.4% orchestrator / 61.6% worker** (deduped by
+   `message.id`+`requestId`; a naive tally read 1.04 B tokens vs 399 M deduped — a **2.6×
+   over-count** the prober caught only by chasing a gap against tokscale's 402 M). This is *one
+   delegation-heavy session* (122 subagent files) and is **not** in contradiction with 743's
+   corpus-wide 85.1/14.9 — but it shows how violently the split moves with the dedup key, and
+   reinforces F-7's recompute-before-testing-prediction-1 requirement.
+2. **⚠ A possible 4th defect — the sonnet-5 intro-rate cliff.** Reported (and **NOT yet
+   independently verified — verify before acting**): sonnet-5 is on a **$2/$10 intro rate through
+   2026-08-31**, reverting to **$3/$15 on 2026-09-01**. Our table (`transcript-cost.mjs:23`) has
+   `$3/$15` — the *sticker* rate — so if true we are **overstating sonnet-5 by 50% today** and
+   will be correct only after the cliff. Note the irony for the charter: this is exactly the
+   "pricing chases the market" burden it cites — **and neither OSS tool handles it either**
+   (ccusage silently $0s sonnet-5 offline; Usage-Monitor returns the sticker rate). A dated cliff
+   is worth *encoding* (date-conditional pricing), which no tool surveyed does.
+
 ## Verdict
 
 **As chartered — a stack-wide OSS-first survey producing a standing policy: NO. But the survey
@@ -463,11 +537,16 @@ graveyard is a liveness failure (F-1); OSS changes the implementation and never 
 Adopting into a consumer-less slot yields a dead slot **plus** a dependency — Gen-4 with extra
 steps. This framing is the single most dangerous idea in the charter.
 
-**V-3 — ccusage: KEEP OUR ENGINE, ADOPT ccusage AS A DIFFERENTIAL ORACLE.** Its preconditions
-failed (F-5), but as a cross-check it found **three** real bugs our tests, our reviewer, and our
-orchestrator all missed. That is its demonstrated value, and it is already 743's interim practice
-— formalize it rather than swap engines. Gate: `-O` must never be trusted without a fail-closed
-unknown-model check (it silently zero-rates). **Pending founder resolution of F-8.**
+**V-3 — KEEP OUR ENGINE; ADOPT ccusage AS A DIFFERENTIAL ORACLE. CONFIRMED after the discovery
+sweep tried to overturn it (F-10).** Every candidate fails the preconditions, and the failures are
+**structural, not incidental**: (b) the whole ecosystem deliberately folds subagents into the
+parent because none of it joins cost to git merges; (c) silent-$0 is what live-fetching a
+third-party pricing table buys — tokscale is *more* network-coupled than ccusage (3 hosts, no
+pinned table, no `--offline`). Adoption would cost the headline metric **and** an unpinnable
+pricing dep, and we would still write role attribution ourselves. Meanwhile ccusage as a
+*cross-check* found **three** real bugs our tests, our reviewer, and our orchestrator all missed —
+that is its demonstrated value, and it is already 743's interim practice; formalize it. Gate:
+`-O` must never be trusted without a fail-closed unknown-model check we own.
 
 **V-4 — Fix the parser now; this is the real work and it is not an OSS question.** Three verified
 bugs, and the fix is *exactly known* — variant C (global `(messageId, requestId)` dedup +
