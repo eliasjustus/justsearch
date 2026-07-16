@@ -15,8 +15,6 @@ export const NPM_AUDIT_RULE_DESCRIPTIONS = {
     'Severity counts dropped below baseline; baseline may be rebalanced',
   'npm-audit/rebalanced':
     'Baseline automatically rebalanced (counts updated to current values)',
-  'npm-audit/report-missing':
-    'npm audit report file not found at the configured path (was the npm audit step run?)',
   'npm-audit/baseline-missing':
     'npm-audit baseline file not found (initialize with --rebalance after a clean audit)',
   'npm-audit/schema-mismatch':

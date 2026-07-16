@@ -17,6 +17,8 @@
  *        [--registry governance/registry.v1.json] \
  *        [--gate <id>]            (run only one gate)
  *        [--self-test]            (run gate self-test fixtures + assert verdicts)
+ *        [--skip-self-test]       (skip the self-test pass a full gate-mode run does first; tempdoc 742 D3)
+ *        [--produce-inputs]       (run producers for absent required gate inputs first; tempdoc 742 D1)
  *        [--rebalance]            (apply auto-rebalance writes back to baseline files)
  *
  * Exit codes:
@@ -25,6 +27,7 @@
  *   2 — runner error (missing registry, missing enforcer, shallow clone)
  */
 
+import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -33,6 +36,11 @@ import { emitSarif } from './lib/sarif-emitter.mjs';
 import { isShallowRepository, resolveBaselineRef } from './lib/git-utils.mjs';
 import { assertTruthTableShape } from './lib/truth-table-runner.mjs';
 import { appendRunRecord } from './lib/history.mjs';
+import {
+  evaluateGateInputs,
+  requiredInputsToProduce,
+  KERNEL_INPUT_RULE_DESCRIPTIONS,
+} from './lib/input-contract.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -45,6 +53,8 @@ function parseArgs(argv) {
     registry: 'governance/registry.v1.json',
     gate: null,
     selfTest: false,
+    skipSelfTest: false,
+    produceInputs: false,
     rebalance: false,
     explain: null,
     suggestChangeset: false,
@@ -58,6 +68,8 @@ function parseArgs(argv) {
     else if (a === '--registry') args.registry = argv[++i];
     else if (a === '--gate') args.gate = argv[++i];
     else if (a === '--self-test') args.selfTest = true;
+    else if (a === '--skip-self-test') args.skipSelfTest = true;
+    else if (a === '--produce-inputs') args.produceInputs = true;
     else if (a === '--rebalance') args.rebalance = true;
     else if (a === '--explain') args.explain = argv[++i];
     else if (a === '--suggest-changeset') args.suggestChangeset = true;
@@ -90,10 +102,19 @@ Discipline-gate kernel runner (tempdoc 530).
 Modes:
   --mode warn|gate                gate exits non-zero on any fail (default: warn)
   --self-test                     run each gate's fixture pair
+  --skip-self-test                skip the self-test pass that a full gate-mode run does first (tempdoc 742 D3)
+  --produce-inputs                before evaluating, run the producer for each selected gate's absent required input (tempdoc 742 D1)
   --rebalance                     apply auto-shrink rebalance writes
   --explain <ruleId>              print rule description + changeset template
   --suggest-changeset             walk live state; emit stub changesets for predicted-fail gates
   --preflight [<baselineRef>]     predict which gates would fail given current state vs baselineRef
+
+Gate inputs (tempdoc 742 D1): a gate declares required report artifacts under
+config.inputs. In gate mode a missing 'required' input fails the gate
+(kernel/input-missing) without dispatching the enforcer; a missing 'on-demand'
+input skips the gate (kernel/input-skipped, not a fail). --produce-inputs runs
+the declared producer for absent required inputs; on-demand inputs are never
+auto-produced.
 
 Options:
   --out <path>           SARIF output path (default: tmp/governance-report.sarif)
@@ -208,6 +229,38 @@ async function runSelfTest(gate) {
   return { gate: gate.id, skipped: false, results };
 }
 
+/**
+ * Run the self-test fixture pass over the given gates, logging each outcome.
+ * Returns true if any fixture mismatch was observed (gate machinery is broken).
+ * Shared by the `--self-test` entry path and the D3 full-gate-run precondition.
+ */
+async function runSelfTestPass(gates) {
+  let selfTestFailed = false;
+  for (const gate of gates) {
+    const r = await runSelfTest(gate);
+    if (r.skipped) {
+      console.log(`self-test: ${r.gate}: skipped (${r.reason})`);
+      continue;
+    }
+    for (const fr of r.results) {
+      if (!fr.passed) {
+        selfTestFailed = true;
+        console.error(
+          `self-test mismatch: ${r.gate}/${fr.flavor} expected ${
+            fr.expectFail ? 'fail' : 'pass'
+          }, got ${fr.verdict}`,
+        );
+        for (const f of fr.findings) {
+          console.error(`  - ${f.ruleId} (${f.level}): ${f.message}`);
+        }
+      } else {
+        console.log(`self-test: ${r.gate}/${fr.flavor}: ${fr.verdict} (expected)`);
+      }
+    }
+  }
+  return selfTestFailed;
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const repoRoot = REPO_ROOT;
@@ -247,38 +300,63 @@ async function main() {
 
   const runs = [];
   const verdicts = [];
-  const allRuleDescriptions = {};
+  // Seed the two kernel input-contract rules so they appear in SARIF like gate
+  // rules do (tempdoc 742 D1), whether or not a synthetic input result fires.
+  const allRuleDescriptions = { ...KERNEL_INPUT_RULE_DESCRIPTIONS };
   const allRebalances = [];
 
   if (args.selfTest) {
-    let selfTestFailed = false;
-    for (const gate of gates) {
-      const r = await runSelfTest(gate);
-      if (r.skipped) {
-        console.log(`self-test: ${r.gate}: skipped (${r.reason})`);
-        continue;
-      }
-      for (const fr of r.results) {
-        if (!fr.passed) {
-          selfTestFailed = true;
-          console.error(
-            `self-test mismatch: ${r.gate}/${fr.flavor} expected ${
-              fr.expectFail ? 'fail' : 'pass'
-            }, got ${fr.verdict}`,
-          );
-          for (const f of fr.findings) {
-            console.error(`  - ${f.ruleId} (${f.level}): ${f.message}`);
-          }
-        } else {
-          console.log(`self-test: ${r.gate}/${fr.flavor}: ${fr.verdict} (expected)`);
-        }
-      }
-    }
+    const selfTestFailed = await runSelfTestPass(gates);
     if (selfTestFailed) {
       console.error('self-test failed; gate machinery may be broken');
       process.exit(args.mode === 'gate' ? 1 : 0);
     }
     process.exit(0);
+  }
+
+  // D3 (tempdoc 742): a full registry run in gate mode first verifies gate
+  // machinery via the self-test fixture pass, so fixture rot is caught where it
+  // bites. Skippable with --skip-self-test; a --gate <id> run does not trigger it.
+  if (!args.gate && args.mode === 'gate' && !args.skipSelfTest) {
+    const selfTestFailed = await runSelfTestPass(gates);
+    if (selfTestFailed) {
+      console.error(
+        'self-test failed; gate machinery may be broken - aborting before evaluation',
+      );
+      process.exit(1);
+    }
+  }
+
+  // --produce-inputs (tempdoc 742 D1): run the declared producer for each
+  // selected gate's absent required input before evaluating. On-demand inputs
+  // are never auto-produced. A non-zero producer exit is a runner error.
+  if (args.produceInputs) {
+    for (const gate of gates) {
+      for (const input of requiredInputsToProduce({ gate, repoRoot })) {
+        console.log(`producing input for gate '${gate.id}': ${input.producer}`);
+        // Windows: NoDefaultCurrentDirectoryInExePath excludes the cwd from
+        // cmd.exe's executable search, so a repo-root-relative first token
+        // ("./gradlew.bat ...") must be resolved to an absolute path.
+        let command = input.producer;
+        const dotSlash = command.match(/^\.[\\/]([^ ]+)(.*)$/);
+        if (dotSlash) {
+          command = `"${resolve(REPO_ROOT, dotSlash[1])}"${dotSlash[2]}`;
+        }
+        const res = spawnSync(command, { shell: true, cwd: REPO_ROOT, stdio: 'inherit' });
+        if (res.error) {
+          console.error(
+            `failed to launch producer for gate '${gate.id}' (${input.producer}): ${res.error.message}`,
+          );
+          process.exit(2);
+        }
+        if (res.status !== 0) {
+          console.error(
+            `producer exited ${res.status ?? `signal ${res.signal}`} for gate '${gate.id}': ${input.producer}`,
+          );
+          process.exit(2);
+        }
+      }
+    }
   }
 
   // Resolve baseline refs once. Two cases:
@@ -291,6 +369,23 @@ async function main() {
   // grows code AND raises the pin in the same diff is caught by reading the
   // pin from baselineRef, not the live file.
   for (const gate of gates) {
+    // Input contract (tempdoc 742 D1): the RUNNER owns the missing-input policy,
+    // not each enforcer. A missing required input fails the gate; a missing
+    // on-demand input skips it; either way the enforcer is NOT dispatched.
+    const inputResult = evaluateGateInputs({ gate, repoRoot });
+    if (inputResult) {
+      runs.push({
+        toolName: inputResult.toolName,
+        toolVersion: inputResult.toolVersion,
+        axis: 'discipline-gate',
+        categoryId: gate.id,
+        findings: inputResult.findings,
+      });
+      verdicts.push({ gate: gate.id, verdict: inputResult.verdict });
+      Object.assign(allRuleDescriptions, inputResult.ruleDescriptions ?? {});
+      continue;
+    }
+
     let baselineRef = null;
     const needsGit =
       gate.baseline?.kind === 'git' ||
