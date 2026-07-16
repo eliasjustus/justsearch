@@ -385,6 +385,14 @@ session that measured it** and drifts a few dollars per minute (two runs minutes
 $22,093.35 and $22,100.35). The split and the decomposition below are stable; the last two digits
 of the total are not. Snapshot: 2026-07-16T14:0x UTC.*
 
+*Scope of this correction: every **load-bearing** use of the old figure is revised — the
+frontmatter, the baseline table, prediction-1's anchor, the handoff item, and the readability
+verdict. **Phase 2-4's prose still says "85.1%" in four places** (a capability-map row, two
+"may be structural to coding" asides, a metric note). Those are rounded characterizations, not
+test anchors: 84.0% is equally "most tokens sit in the orchestrator", so the reasoning is
+unaffected and they were left as their author wrote them. If you are testing anything against the
+share, use **84.0%** and re-run the instrument — never a number quoted in prose.*
+
 **The delta decomposes cleanly** (interrogated, not assumed): running the *old* parser on
 *today's* corpus gives $21,868, so **~+2.1% is corpus growth** (one session and four merges landed
 between 743's run and this one) and the remainder is the parser fix. The fix's components: output
