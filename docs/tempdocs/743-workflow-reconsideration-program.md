@@ -200,6 +200,97 @@ with a "workflow was already near its frontier" verdict and its residual value i
 baseline instrumentation. That is an acceptable outcome; an unfalsifiable improvement program
 is not.
 
+## Takeover investigation (2026-07-16, session f7580e17, worktree 743-workflow-program)
+
+### Local findings (file:line-verifiable)
+
+1. **This repo has had three generations of workflow-measurement machinery, and the first two
+   are dead.** Gen-1 (tempdocs 264/274/276/277/285, Feb-Mar 2026): PHI scoring + costs +
+   outcomes + correlations (`scripts/agent-analytics/{score,cost,outcome}-session.mjs`,
+   `correlate-signals.mjs`, `analyze-trends.mjs`, `generate-dashboard.mjs`). Gen-2 (622, Jun
+   2026): native-OTel migration. Gen-3 (695/727, Jul 2026): friction mining — alive.
+   622's own structural verdict: *"the raw stream is alive; every layer built on top is
+   dead"* — events flowed for ~2 months but were aggregated **exactly once, during the
+   investigation that created the scripts**. Verified still true today: `costs.ndjson` = 1
+   row (Jul 5), `outcomes.ndjson` absent, `tmp/agent-telemetry/otlp/` **empty** in main and
+   every worktree even though the sink is listening on 4318 and `otlp-sink-ensure` runs per
+   session (the sink's `--out` default is CWD-relative → worktree-started sinks write to
+   ephemeral worktree `tmp/`; a green-masked accumulation gap).
+2. **The one telemetry layer that survived is the one wired into a workflow moment.**
+   `session-merges.ndjson` has 216 rows across 50 sessions, current to today — because
+   `record-merge.mjs` runs inside worktree teardown. `friction-results/` has 114 mined
+   sessions — because 727 gave it an owner. **Design law for Phase 1: telemetry here
+   survives iff aggregation is wired into an existing workflow moment; standalone "run it
+   manually" layers die.**
+3. **Phase 1 is assembly + backfill, not construction.** The cost parser, the outcome join,
+   the trend/cutoff comparator, the context-attribution taxonomy, and the developer-session
+   scope filter (`friction-excluded-sessions.json`) all exist. Confirmed gaps: (a)
+   `cost-session.mjs` resolves transcripts via the events store and finds **0 worktree-homed
+   sessions** (tested on 50ad1b65) — needs transcript-first discovery over
+   `~/.claude/projects/*`; (b) no per-merge cost join yet (session-level only); (c) no
+   durable OTel reservoir. Data note: session-merges starts 2026-06-30, so the baseline
+   window's effective left edge is ~2.5 weeks, not 4 (annotate, don't pretend).
+4. **Prior local science already validated D-1's shape.** 277/285 found behavioral process
+   signals don't predict outcomes (r=0.064, N=116) and named task-heterogeneity Simpson's
+   paradox — D-1's outcome-side, window-level design is consistent with those lessons.
+
+### Outside evidence (two bounded refute-first research passes; tiered)
+
+5. **"Scaffolding becomes obsolete as models improve" — WEAKENED.** Anthropic's own 2026
+   harness-engineering material shows frontier models still need deliberate scaffolding;
+   arXiv 2507.14447 measured a structured-planning scaffold lifting GPT-4o enterprise
+   tool-calling 41%→96%. BUT arXiv 2605.05716 (cross-component scaffold interference) found
+   the optimal scaffold *subset is capability-dependent* ("at 70B, combinations that hurt at
+   8B provide gains; All-In still trails the best subset") and explicitly recommends periodic
+   task-specific re-evaluation. Net: the program's re-evaluation premise survives, but with
+   **inverted expectation — re-evaluation will more often re-validate or re-tune scaffolds
+   than remove them.** Also: NO published ablation exists on staged plan/review scaffolds for
+   frontier coding agents — the field argues it theoretically; self-measurement would be
+   novel, not redundant.
+6. **"Measurement is actionable at small N" — WEAKENED-TO-REFUTED for fine effects.**
+   Kohavi et al.'s experimentation corpus puts detection of small effects orders of magnitude
+   beyond 20-60 merges/month; METR's Feb-2026 methodology reversal found task-level A/B
+   collapses under selection bias even with paid cohorts — directly warning that phase-5
+   pilots must be **time-windowed (all work in the window uses the variant), never
+   task-selected**, or the founder/agents will route friendlier tasks to the new variant.
+   Consequence adopted: **the D-1 total is a trend dashboard and gross-effect detector
+   (≈2x-class changes), not a hypothesis-testing instrument for fine effects**; fine-grained
+   verdicts remain judgment + mechanism reasoning, with the dashboard as a sanity floor.
+   Goodhart case studies (Facebook sentiment-metric collapse) reinforce D-1's
+   "aspects-as-diagnostics-only" rule.
+7. **"Structured program beats direct fixes" — SURVIVES**, with a sharpened risk: the CMM
+   literature's real finding is ~70% *abandonment before benefit* — matching the local Gen-1/
+   Gen-2 death pattern exactly. Follow-through (finding 2's design law), not structure, is
+   the binding risk. (Also flagged: the oft-cited "70% of process programs fail" Hammer &
+   Champy statistic is a debunked myth — do not cite it in this program.)
+8. **Adopt-vs-build:** OSS transcript-analytics tools exist (ccusage, token-dashboard,
+   claude-session-analyzer, context-analyzer) but none does the per-merge cost join,
+   orchestrator/worker split as a headline metric, or a unified overhead taxonomy — and this
+   repo uniquely already has the merge join. Native Claude Code OTel emits cost/token/
+   commit/PR metrics segmentable by `agent.name` (the authoritative source per 622 §6.3),
+   pending the reservoir fix.
+
+### Takeover verdict
+
+**Do it, now — restructured.** The program's unique value (objective function, evidence-based
+scaffold re-evaluation, per-merge economics) survives adversarial research; its two charter
+errors are corrected above: (a) Phase 1 is *assembly/backfill/reservoir-fix* on the Gen-1+OTel
+substrate, not new construction — roughly one session of work; (b) the measurement bar is
+lowered honestly to gross effects + trends (finding 6), and the program-level falsifier is
+reinterpreted accordingly.
+
+- **Cheapest decisive evidence (does not yet exist, one session to produce):** run the
+  transcript-first cost backfill over the window and join it to `session-merges.ndjson`. If
+  even gross per-merge economics are unreadable noise, phases 2-6 collapse to 727-style
+  targeted fixing and D-1/D-2 remain as decision principles only — that outcome is explicitly
+  acceptable (charter falsifier).
+- **Go/no-go gate added:** after the Phase-1 baseline report, founder reviews readability
+  before phases 2-6 spend anything.
+- **Displaces/duplicates:** consumes (revives) the Gen-1 analytics and the 622 OTel verdict;
+  must not rebuild them. Does not displace 727 (stays running). The named failure mode to
+  avoid is becoming Gen-4 of the measurement graveyard — hence finding 2's design law is a
+  Phase-1 acceptance criterion: every artifact must name the workflow moment that re-runs it.
+
 ## Non-goals
 
 - Re-running 727's tactical fix loop (that instrument keeps running independently).
