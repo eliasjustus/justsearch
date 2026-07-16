@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { i18n } from "@lingui/core";
-import { messages as enMessages } from "./locales/en/messages.mjs";
+// Tempdoc 742: the Lingui bootstrap (locale detection, catalog activation,
+// `src/locales/**` .po/.mjs catalogs) was removed — a verified clean
+// extraction found zero t()/msg()/Trans usage anywhere in src/ (the Lit
+// shell-v0 rewrite never adopted lingui macros). This file now only boots
+// the backend-served message catalogs (error/resource/surface/health-event/
+// operation/workflow), which were always locale-agnostic (`/en`-only,
+// tempdoc 434) and independent of the lingui runtime.
 import { resolveApiEndpoint } from "./api/http";
 import { bootErrorCatalog } from "./i18n/errorCatalog";
 import { bootResourceCatalog, bootSurfaceCatalog, bootHealthEventsCatalog, bootOperationMessageCatalog, bootWorkflowCatalog } from "./i18n/resourceCatalog";
@@ -21,62 +26,6 @@ import { bootConversationShapeRegistry } from "./api/registry/ConversationShapeC
 // before any <jf-operation> mount.
 import { bootstrapAggregateSubstrate } from "./shell-v0/aggregate-substrate/bootstrap";
 bootstrapAggregateSubstrate();
-
-// Always load English as the fallback
-i18n.load("en", enMessages);
-
-/**
- * Detect the user's preferred locale from the browser.
- * Returns the base language code (e.g. "de" from "de-DE").
- * Falls back to "en" if the detected locale has no catalog.
- */
-function detectLocale(): string {
-  const supported = ["en", "de"];
-
-  // Guard for non-browser environments (Node.js tests)
-  if (typeof window === "undefined" || typeof navigator === "undefined") {
-    return "en";
-  }
-
-  // Allow ?lang=de override for testing without changing browser settings
-  const urlLang = new URLSearchParams(window.location.search).get("lang");
-  if (urlLang && supported.includes(urlLang)) return urlLang;
-  const browserLocale = navigator.language ?? "en";
-  const lang = browserLocale.split("-")[0] ?? "en";
-  return supported.includes(lang) ? lang : "en";
-}
-
-/**
- * Dynamically load and activate a locale.
- * English is bundled; other locales are lazy-loaded.
- */
-async function activateLocale(locale: string): Promise<void> {
-  if (locale === "en") {
-    i18n.activate("en");
-    return;
-  }
-
-  if (locale === "de") {
-    const { messages } = await import("./locales/de/messages.mjs");
-    i18n.load("de", messages);
-    i18n.activate("de");
-    return;
-  }
-
-  // Unknown locale — fall back to English
-  i18n.activate("en");
-}
-
-// On module load: detect locale and activate.
-// Start with English synchronously (so the UI renders immediately),
-// then upgrade to the detected locale if different.
-const detectedLocale = detectLocale();
-i18n.activate("en"); // immediate render in English
-
-if (detectedLocale !== "en") {
-  // Load the detected locale async — the UI will re-render via I18nProvider
-  activateLocale(detectedLocale);
-}
 
 // Background-fetch the backend message catalogs. Runs async; UI mounts immediately
 // without waiting. Until each catalog arrives, lookups fall back to the raw key
@@ -123,5 +72,3 @@ if (typeof window !== "undefined") {
       console.debug("[i18n] message catalog boot fetch failed", err);
     });
 }
-
-export { i18n };

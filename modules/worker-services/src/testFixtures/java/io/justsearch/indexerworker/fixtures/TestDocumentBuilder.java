@@ -8,7 +8,7 @@ import io.justsearch.indexerworker.extract.TikaExtractionPolicy;
 import io.justsearch.indexerworker.extract.ValidatedExtractionArtifact;
 import io.justsearch.indexerworker.loop.ops.IndexingDocumentOps;
 import io.justsearch.indexerworker.loop.ops.IndexingDocumentOps.ParentIndexMetadata;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import java.nio.file.Path;
 import org.slf4j.LoggerFactory;
 

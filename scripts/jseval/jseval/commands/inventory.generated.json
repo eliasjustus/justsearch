@@ -48,6 +48,10 @@
     "group": "corpus"
   },
   {
+    "name": "corpus-fetch-enron-raw",
+    "group": "corpus"
+  },
+  {
     "name": "corpus-fetch-miracl",
     "group": "corpus"
   },

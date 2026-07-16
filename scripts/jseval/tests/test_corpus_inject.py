@@ -594,7 +594,7 @@ def test_checked_in_707_member_recipes_are_strict_and_license_fail_closed():
                     "pending-model-run", "pending-backend-run",
                 }
     assert {member["name"] for member in members} == {
-        "en-legal-clerc", "de-miracl", "en-email-enronqa",
+        "en-legal-clerc", "de-miracl", "en-email-enron-raw",
     }
 
 
