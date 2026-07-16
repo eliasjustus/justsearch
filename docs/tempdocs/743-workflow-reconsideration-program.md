@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy"
+status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy. BASELINE RECOMPUTED 2026-07-16 by tempdoc 745 (session 805279a4) after it fixed 7 verified bugs in the cost parser this program was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline SURVIVES; read prediction-1 against 84.0%, not 85.1%). Handoff item 4 ('OTel reservoir is feeding') was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it — no month-scale OTel data predating 2026-07-16 exists."
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -366,6 +366,74 @@ this table's history: the pre-fix numbers had survived both the implementer's te
 orchestrator magnitude spot-check — plausibility is not correctness (see review record
 above).
 
+#### ⚠ SUPERSEDED — recomputed 2026-07-16 after tempdoc 745 fixed the instrument
+
+The table above was computed by `transcript-cost.mjs` **before four verified bugs in it were
+fixed** (745 F-6/F-10/F-11). It is retained as dated history; **these are the current numbers**
+(same flags: `--since 2026-06-18`, no `--until`):
+
+| Metric | 743 published | **Recomputed (fixed parser)** |
+|---|---|---|
+| Total cost (attributed) | $21,410 | **≈$22,100** |
+| Cost/merge (attributed) | $104.95 | **≈$106.25** |
+| Orchestrator / worker split | 85.1% / 14.9% | **84.0% / 16.0%** (24.61B / 4.69B) |
+| Sessions in window | 226 | 227 |
+| Merge rows in window | 216 | 220 |
+
+*Read the totals as ≈, not exact: the window ends today, so the corpus includes the **still-running
+session that measured it** and drifts a few dollars per minute (two runs minutes apart gave
+$22,093.35 and $22,100.35). The split and the decomposition below are stable; the last two digits
+of the total are not. Snapshot: 2026-07-16T14:0x UTC.*
+
+*Scope of this correction: every **load-bearing** use of the old figure is revised — the
+frontmatter, the baseline table, prediction-1's anchor, the handoff item, and the readability
+verdict. **Phase 2-4's prose still says "85.1%" in four places** (a capability-map row, two
+"may be structural to coding" asides, a metric note). Those are rounded characterizations, not
+test anchors: 84.0% is equally "most tokens sit in the orchestrator", so the reasoning is
+unaffected and they were left as their author wrote them. If you are testing anything against the
+share, use **84.0%** and re-run the instrument — never a number quoted in prose.*
+
+**The delta decomposes cleanly** (interrogated, not assumed): running the *old* parser on
+*today's* corpus gives $21,868, so **~+2.1% is corpus growth** (one session and four merges landed
+between 743's run and this one) and the remainder is the parser fix. The fix's components: output
+tokens **+22.3%** (first-vs-last snapshot), sonnet-5 cost **−29.4%** (it was priced at the
+post-cliff $3/$15 when the intro rate is $2/$10 through 2026-08-31), cache-write cost **up**
+(~100% of our cache writes are the 1h tier, previously charged at the 5m rate; and 16.99M of them
+were **invisible** to the old flat-field reader entirely), cross-session dedup **−1.9%** of tokens,
+and **−2.15%** from the post-review fix below.
+
+> **Numbers moved once more after the independent review** ($22,578 → $22,093), and the reason is
+> worth recording rather than quietly restating: the review found the cross-file guard was
+> incomplete, and fixing it *also* aligned "is this snapshot real?" with the tiered cache object.
+> That removed a **double-count** — it is not lost data. Root cause (745 F-13): **1,313 snapshots
+> carry tiered cache writes with the flat field at 0**, so a flat-only reader both misses
+> 16,992,717 cache-write tokens *and* mistakes those snapshots for empty placeholders. The
+> earlier $22,578 was measured before that was understood. This is the third time on this tempdoc
+> that a confidently-held number moved under interrogation.
+
+**The headline datum SURVIVES.** 745 F-7 warned this split was biased toward the orchestrator and
+predicted the magnitude would be small because `cache_read` dominates the token count. Both halves
+confirmed: the direction is right, the size is **0.4pp**. So:
+
+- **Prediction 1 is testable and unharmed.** The 2026-07-15 delegation-policy change should push
+  the orchestrator share below baseline — read it against **84.0%**, not 85.1%. The instrument no
+  longer biases the axis it measures.
+- **The delegation-economics decision (2026-07-15) is unaffected** — a 0.4pp correction does not
+  touch "orchestrator tokens are the scarcest resource."
+- **Cost/merge moved +3.4%**, well inside the 2-2.7× weekly noise finding 6 predicted. Nothing in
+  the readability verdict changes.
+
+Caveat: these are **API-equivalent dollars** (pricing-weighted tokens — the D-1 resource), not
+subscription spend.
+
+~~and Opus **fast mode** bills $10/$50 vs $5/$25 standard. Transcripts appear not to mark it, so a
+fast-mode-heavy session is understated. Unowned (745 §Open).~~
+**RESOLVED, and the caveat was wrong on its facts (745 F-14, 2026-07-16).** Transcripts *do* mark
+it — `message.usage.speed`, on the very object the parser already reads. Measured corpus-wide:
+**59,332 turns, all `"standard"`, zero `"fast"`** (founder confirms fast mode is never used). So
+**no session in this baseline was ever understated by it**, and fast rates are now encoded anyway
+(Opus 4.8 $10/$50, 4.7 $30/$150), so a future `/fast` toggle cannot silently halve the reading.
+
 ### Cross-validation against ccusage + adopt-vs-build (2026-07-16, founder question)
 
 `npx ccusage@latest daily --json --offline`, same window, claude-model rows only: **$20,543**
@@ -393,13 +461,21 @@ It would have flagged the pre-fix 2.34× numbers instantly. Two consequences ado
   trend/gross-effect instrument only.
 - **Gross effects and structural shifts: readable.** Two falsifiable predictions are already
   live: (1) the 2026-07-15 delegation-policy change should visibly LOWER the orchestrator
-  token share below its 85.1% baseline in the next window — if it doesn't, the policy
-  isn't biting;
+  token share below its ~~85.1%~~ **84.0%** baseline in the next window — if it doesn't, the
+  policy isn't biting;
   (2) `costs.ndjson` should now accumulate a row per teardown — if it's still sparse in two
   weeks, the workflow-moment wiring failed and the Gen-4-graveyard risk is realized.
-- **Recommendation: GO for phases 2-6** under the gross-effect bar. The 85/15 orchestrator
-  split is the first actionable baseline datum — it quantifies exactly the delegation-economics
-  concern the founder raised on 2026-07-15 and gives phase-3 proposals a concrete target.
+- **Recommendation: GO for phases 2-6** under the gross-effect bar. The ~~85/15~~ **84/16**
+  orchestrator split is the first actionable baseline datum — it quantifies exactly the
+  delegation-economics concern the founder raised on 2026-07-15 and gives phase-3 proposals a
+  concrete target.
+
+> **The two figures struck through above were corrected 2026-07-16 (745).** They were computed by
+> a parser with 7 verified bugs, biased toward the orchestrator on the very axis prediction 1
+> tests. The *conclusions* are unchanged — the correction moved the split 0.4pp, far inside
+> finding 6's 2-2.7× weekly noise — which is why this verdict and the GO both stand. Retained
+> with the old numbers visible because that is the honest record: this section was argued from
+> them.
 
 ## Publication + live-verification record (2026-07-16, session f7580e17)
 
@@ -423,17 +499,39 @@ It would have flagged the pre-fix 2.34× numbers instantly. Two consequences ado
 1. ~~Pending founder decision~~ **GO on phases 2-6 confirmed by founder 2026-07-16** (same
    session as Phase 1, immediately after the phase-map discussion; Phase-5 pilot mechanics
    remain a designated founder conversation before pilots run).
+   **745 consequence (recorded 2026-07-16 by session 805279a4):** this GO unblocks tempdoc 745's
+   retire sweep — `context-attribution.mjs` is KEPT (Phase 2 names it as overhead-taxonomy
+   substrate), the Gen-1 dashboard/PHI slices retire. Note the GO predates 745's baseline
+   recomputation and did not rest on it; the recompute later confirmed the readability verdict
+   held (split moved 0.4pp, cost/merge +1.2% — far inside finding 6's 2-2.7x weekly noise).
 2. **Phase 2 = two parallel streams:** (a) the full per-layer adversarial research sweep
    (approach principle 4 — bigger than the two bounded takeover probes already recorded);
    (b) first-principles decomposition of the workflow's jobs per layer/deep axis with
    baseline cost attribution (the overhead taxonomy — waiting/ceremony/re-orientation — is
    NOT yet computed; `context-attribution.mjs` covers one slice).
 3. **Check the two live predictions** against fresh data before proposing anything:
-   orchestrator share vs 85.1% baseline (post-2026-07-15 sessions only), and `costs.ndjson`
+   orchestrator share vs the **84.0%** baseline (post-2026-07-15 sessions only), and `costs.ndjson`
    row accumulation per teardown.
-4. **OTel reservoir is feeding now** — from 2026-07-16 onward, native OTel data accumulates
+   **⚠ Read prediction-1 against 84.0%, NOT the 85.1% this line originally cited** — 85.1% was
+   produced by a parser with 7 verified bugs, biased toward the orchestrator on the very axis this
+   prediction tests (745 F-7/F-6). The instrument no longer biases its own measurement. Re-run
+   `baseline-economics.mjs` yourself rather than trusting any number quoted upstream of
+   2026-07-16T14:00Z.
+4. ~~**OTel reservoir is feeding now** — from 2026-07-16 onward, native OTel data accumulates
    in `tmp/agent-telemetry/otlp/` (a richer source than transcript parsing for future
-   windows; 622 §6.3 designates it authoritative).
+   windows; 622 §6.3 designates it authoritative).~~
+   **⚠ FALSE — corrected 2026-07-16 (745 F-2). It fed and then ate itself.** Phase 1 fixed the
+   sink's *plumbing* (worktree-relative `--out`; chunked-encoding parse) so data reached the
+   right file — and that file then **destroyed itself every few minutes**. `rotate_if_big` kept
+   ONE `.prev` generation and `os.remove()`d it on the next rotation. Measured retention:
+   **~6-42 min** (logs), ~7 h (traces), **~25 h (metrics)**; a rotation was directly observed
+   discarding 21 MB mid-measurement. 622's *"firehose with no reservoir"* verdict was never
+   fixed — only relocated. **Do not plan month-scale analysis on OTel data predating
+   2026-07-16: it does not exist.** 745 replaced destruction with timestamped archives +
+   per-stream retention (metrics/traces retained, logs capped), so accumulation starts from
+   *that* fix, not from Phase 1. Transcripts (`~/.claude/projects/*`) remain the only durable
+   month-scale source — which is why `baseline-economics.mjs` parses them. 622's "native OTel is
+   authoritative" holds for capture *fidelity*, not for retention.
 5. Tempdoc 745 (OSS-first observability) runs in parallel under its own agent — coordinate
    only if Phase-2 proposals touch the analytics stack.
 
@@ -852,8 +950,17 @@ recommended dispositions)
 - **P-D — APPROVED, scoped first step** (credential inventory, least-privilege, deny-rule
   Write-gap audit; sandbox half trials on the next overnight campaign) → gets its own
   tempdoc when implementation starts.
-- **P-H — APPROVED for a scoped trial** (agent-task-queue for GPU/dev-stack locks; founder
-  stays router).
+- **P-H — APPROVED for a scoped trial**, then **CLOSED NO-GO after trial-prep diligence
+  (2026-07-16, same session):** Block's agent-task-queue crashes at import on Windows
+  (open unfixed bug block/agent-task-queue#33; last upstream commit 2026-04-27) and its
+  zombie-lock recovery — the entire adoption rationale — is POSIX-only (`ps`, `os.killpg`),
+  so a native trial could only false-positive on the happy path. Supply chain itself was
+  clean (Block org, Apache-2.0, no phone-home). Bonus mapping finding: the dev stack's
+  existing `justsearch_dev_*` ownership model is purpose-built session-scoped locking and
+  strictly better for that surface; gradle-across-worktrees was the only good fit.
+  **Revisit triggers:** a Windows-compatible upstream release, or founder appetite for a
+  WSL2-hosted trial (needs its own cross-boundary diligence). Full prep report (pinned
+  config, exit criteria) preserved in the session record; nothing was installed.
 - **P-F — APPROVED narrow**: exactly one pre-registered lite class (mechanical
   teardown/rename/config-delete tempdocs → derisk→plan), refute-first review mandatory on
   both paths; any escaped defect on a lite tempdoc narrows/kills the class.
