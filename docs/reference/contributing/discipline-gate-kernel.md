@@ -99,15 +99,70 @@ count (no git diff).
 node scripts/governance/run.mjs --mode warn|gate
                                 [--gate <id>]
                                 [--self-test]
+                                [--skip-self-test]
+                                [--produce-inputs]
                                 [--rebalance]
                                 [--out tmp/governance-report.sarif]
                                 [--registry governance/registry.v1.json]
 ```
 
 Exit codes:
-- `0` — pass (or warn-mode regardless of findings)
-- `1` — gate-mode + any gate verdict is `fail`
-- `2` — runner error (missing registry, missing enforcer, shallow clone)
+- `0` - pass (or warn-mode regardless of findings; a gate `skipped` for a
+  missing on-demand input is not a fail)
+- `1` - gate-mode + any gate verdict is `fail`
+- `2` - runner error (missing registry, missing enforcer, shallow clone,
+  producer exited non-zero under `--produce-inputs`)
+
+## Gate inputs (tempdoc 742)
+
+Some gates consume a report artifact from `tmp/` (Knip, npm-audit, module-deps,
+the JVM dead-class scan, PIT strength). Historically each enforcer independently
+treated a missing report as warn-and-pass. Because that choice was copied by
+precedent, the `dead-code` (Knip) gate was **silently inert for its entire life**:
+nothing produced `tmp/knip-report.json`, so the gate always passed vacuously.
+Vacuous green is a failure state - an enforcement mechanism whose precondition is
+absent must fail loudly, not degrade to pass.
+
+**Required inputs are part of the gate contract, enforced by the RUNNER, not each
+enforcer.** A gate declares its inputs under `config.inputs` in
+`governance/registry.v1.json`:
+
+```json
+"config": {
+  "reportPath": "tmp/knip-report.json",
+  "inputs": [
+    { "path": "tmp/knip-report.json",
+      "producer": "npm --prefix modules/ui-web run knip:report",
+      "class": "required" }
+  ]
+}
+```
+
+- `class: "required"` + absent - in **gate** mode the runner fails the gate
+  **without dispatching the enforcer** (verdict `fail`, ruleId
+  `kernel/input-missing`), printing the `producer` command as the remedy. In
+  **warn** mode the same missing input surfaces as an error-level finding but does
+  not gate the build.
+- `class: "on-demand"` + absent - the runner **skips** the gate without
+  dispatching the enforcer (verdict `skipped`, ruleId `kernel/input-skipped`).
+  `skipped` is not a fail and does not gate the build. `test-efficacy` (PIT is
+  expensive, not part of the standard local pre-merge path) is on-demand.
+
+The enforcers no longer carry a report-missing branch; a malformed report now
+fails closed (`<gate>/report-malformed`, error + `fail`) rather than degrading to
+a pass. The single missing-input policy lives in
+`scripts/governance/lib/input-contract.mjs`.
+
+**`--produce-inputs`** - before evaluating, the runner runs the declared
+`producer` for each selected gate's absent **required** input (via a shell), then
+evaluates the gate for real. A producer exiting non-zero is a runner error
+(exit 2). On-demand inputs are never auto-produced.
+
+**Self-test on full gate-mode runs (D3).** A full-registry run in `--mode gate`
+first runs the `--self-test` fixture pass (so fixture rot is caught where it
+bites) and aborts with exit 1 before evaluation if any fixture mismatches. Pass
+`--skip-self-test` to bypass it; a single-gate run (`--gate <id>`) never triggers
+it.
 
 ## Gates currently registered
 
