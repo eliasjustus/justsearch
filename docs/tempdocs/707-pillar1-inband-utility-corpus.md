@@ -1,7 +1,7 @@
 ---
 title: "Pillar-1 in-band utility corpus: real-text distractor mass (legal+email, EN+DE) + fabricated injected gold — the measuring stick for the powered 624 Step-2 run, satisfying all seven 704 requirements at once"
 type: tempdocs
-status: "incomplete — retrieval-calibration floor candidates MEASURED for all 6 planned cells (2026-07-15, §Gate measurement floor candidates): EN-legal in-band at both sizes/strata (policy-ready); DE member FAILS in-band and needs a paraphrase-distance recalibration before its cells can be ratified. Union/leak measured on the two verbose 1k cells (leak 0.0; union 0.75 CLERC / 0.35 DE). Still gated: closed-book certification (small paid call, founder), policy ratification, remaining union/leak cells, EnronQA license, any paid run. No completion claim authorized."
+status: "EN-legal member FULLY CERTIFIED (2026-07-16): pre-run policy ACTIVE (founder-ratified CLERC four-cell matrix), 16/16 scientific gates green, closed-book 0.000 x4 — the U0 measuring stick is a certified artifact (merged #205). DE member: v2 (hops=1) still out-of-band, 1k-only secondary stratum; German-bridging scale collapse routed to the encoder lane. Remaining in this doc: EN-email member build (ratified: raw public-domain Enron text + fabricated gold). Remaining outside it: the founder spend gates ($3 smoke after 725 adoption work, then the powered run)."
 created: 2026-07-10
 author: agent (Fable orchestration) — filed at founder request after the pillar-5 attribution campaign; substrate choice founder-ratified same day
 category: eval-infrastructure / corpus-design / agent-utility / search-quality
@@ -612,3 +612,127 @@ Getting to 16/16 surfaced and fixed three substrate defects (each root-caused, n
 
 **Remaining to U0:** the $3 adoption smoke (founder-gated; waits on 725's adoption work per
 standing note), then the powered run. The corpus side of the critical path is COMPLETE.
+
+## Archived decision memos (2026-07-16 — ratified same day; preserved from session scratchpad)
+
+# Founder memo — FW-008 / Int8-vs-Float32 vector-codec cohort pin
+
+**Decision required before** eval baselines are pinned (tempdoc 719 Increment 9 item 1;
+`docs/tempdocs/719-...md:1549` — "pin the FW-008/Float32 search cohort choice").
+
+## (a) What is being pinned, and why it must precede baseline pinning
+FW-008 is the **Lucene vector-storage quantization codec** — NOT encoder/model precision.
+Two options for how dense vectors are stored in the HNSW index:
+- **Float32** — `Lucene99HnswVectorsFormat`, 768 dims × 4 B = 3,072 B/doc
+  (`JustSearchCodec.java:16,60,73`).
+- **Int8** — `Lucene104HnswScalarQuantizedVectorsFormat`, 7-bit scalar, 768 B/doc,
+  ~75% storage cut (`JustSearchCodec.java:8,17,74,86`; register `search-quality-register.md:1621`).
+- Toggle: config key `index.vector.quantization.enabled` (nullable boolean;
+  `EnvRegistry.java:1071` / env `JUSTSEARCH_INDEX_VECTOR_QUANTIZATION_ENABLED`;
+  resolved `ResolvedConfigBuilder.java:1368`).
+
+Must precede baselines because the codec is **baked into the index at build time and is
+reindex-required** to change, and Int8's recall/nDCG effect is **corpus-dependent**
+(register:1621). Baselines pinned under one codec are invalidated by a later switch —
+you'd be forced to re-run every paid EN/DE cell. Pinning it first keeps the campaign's
+baselines reproducible and cross-member comparable.
+
+## (b) Current default on main (verified)
+**Float32.** Default constructor `JustSearchCodec()` → `float32Format()`
+(`JustSearchCodec.java:39-45`, comment ln 40 "Default to Float32"). Config resolves
+nullable → when unset/false, `ComponentsFactory` builds float32
+(`ComponentsFactoryTest.java:144-148`, "DisabledUsesFloat32Format"). Register confirms
+"default remains Float32" (`search-quality-register.md:1621`).
+
+## (c) Evidence per option
+| Axis | Float32 (current) | Int8 |
+|---|---|---|
+| Storage | 3,072 B/doc | 768 B/doc, ~75% cut — **measured** (register:1621; JustSearchCodec.java:14-17) |
+| nDCG/recall quality | baseline | **UNMEASURED** — single-machine only, corpus-dependent (register:1621) |
+| VRAM/RAM footprint | higher vec memory | ~75% vec memory cut, but vectors are **not** the footprint driver — the LLM is ~75% of the ~7.5 GB resident weights (`tempdoc 640:129,162`) |
+| Query speed | baseline | **UNMEASURED** (no latency A/B on record) |
+| Cross-machine evidence | n/a | **absent** — FW-008's whole blocker: "needs cross-machine benchmark evidence before enabling by default" (register:1621) |
+
+## (d) Recommendation — pin **Float32** (hold the current default)
+Reasoning: the campaign is a *measurement* program; its baselines must isolate the variable
+under test (retrieval utility across EN/DE members), not smuggle in an **unmeasured,
+corpus-dependent recall variable**. Int8 is an efficiency lever (storage/memory), not a
+quality one (register:1621), and it doesn't even relieve the real footprint bottleneck (the
+LLM, not vectors). Float32 is the no-reindex-risk, honest, stable cohort. Keep FW-008 open
+as a separately eval-gated efficiency question **after** the campaign, when its quality cost
+can be measured against a fixed Float32 baseline rather than confounding it.
+
+## (e) One-line action that executes the decision
+Record `FW-008 = Float32` in the 719 campaign policy config and set
+`index.vector.quantization.enabled: false` explicitly (or leave unset — Float32 is already
+the on-main default), then proceed to baseline pinning.
+
+---
+
+# Founder memo — EnronQA email-member source decision (707 EN-email)
+
+**Blocker:** `scripts/jseval/707-corpora/en-email-enronqa/member.v1.json` records
+`license: null` / `license_status: "unresolved"` for HF dataset
+`MichaelR207/enron_qa_0922`, so `claim_eligible: false` and `redistribute: false`
+(member.v1.json:9-11,24). Gate `resolve_source_license_or_replace_email_source` is open.
+
+## Separability (the key framing — verified)
+The 707 design needs **real email-SHAPED distractor text only**; the gold is **fabricated
+and ours**. Tempdoc 707: "the fabricated gold is OURS and committable even though the
+surrounding real text is not" (`tempdoc 707:88`); distractor mass = "real licensed
+documents" (`:73`); EN-email = "Enron (established in-repo acquisition path,
+`convert-enronqa-to-beir.py`)" (`:78`). So the **QA annotations are NOT needed** — only the
+email bodies. The licensing question that actually blocks us is narrower than the dataset card.
+
+## (a) License status today (checked this session)
+- HF card `MichaelR207/enron_qa_0922`: **no license stated** — no license tag, field, or
+  file (WebFetch, unchanged from member.v1.json's "unresolved").
+- arXiv 2505.00263: CC-BY-4.0 covers the *paper PDF*, **not** the QA dataset; paper states
+  no dataset redistribution terms (WebFetch). The QA-annotation layer remains unlicensed.
+
+## (b) Raw Enron corpus legal status vs the QA layer (unverified precedent, web-sourced)
+- **Raw emails:** FERC made the emails public (2003); at investigation close they were
+  "deemed to be in the public domain, to be used for historical research and academic
+  purposes." CMU/CS cleaned+structured the ~500k-message CALO version, widely redistributed
+  (EDRM, Kaggle, LoC, enrondata.org), characterized as "free, legal." (WebSearch: Wikipedia
+  Enron Corpus, enrondata.org, EDRM — treat as precedent, not a formal grant.)
+- **QA annotations** (`enron_qa_0922`): a *derived layer* the paper authors added on top;
+  their license silence is what's unresolved. The raw-email public-domain precedent does
+  **not** automatically extend to these annotations — but we don't need them.
+
+## (c) Options
+1. **Contact authors for license clarification.** Risk: low legal, but slow/uncertain reply;
+   may still decline. Cost: an email + wait. Unblocks: reuse of the exact `enron_qa_0922`
+   text (and, incidentally, annotations we don't use). Weak leverage since we only want text.
+2. **Raw Enron (CMU/CALO) + our own fabricated-gold injection.** Use public-domain raw email
+   bodies as distractor mass; skip `enron_qa_0922` entirely; inject fabricated gold via the
+   existing `needle-burial-v1` / 635 machinery (member.v1.json:13 already points gold at
+   `../../635-corpora/needle-burial-v1`). Risk: low — relies on the strong FERC/CMU
+   public-domain precedent for *email text only*; still worth a one-line owner risk-accept.
+   Cost: swap the acquisition source in `convert-enronqa-to-beir.py`'s input (email text is
+   the same underlying corpus; the QA columns are just dropped). Unblocks: EN-email member
+   fully, cleanly, now. **Best cost/risk ratio.**
+3. **Different licensing-clean email corpus.** Candidates with explicit licenses: Avocado
+   (LDC, paid/restricted — not clean), 20 Newsgroups (public but *not* email-shaped), Apache
+   public mailing-list archives (open, genuinely email-shaped), Debian/FOSS list archives
+   (open). Risk: low-legal but medium-effort (new acquisition recipe, re-calibrate injection
+   knob per tempdoc 707:135). Cost: highest. Unblocks: email member with a cleaner license
+   than public-domain precedent, but throws away the in-repo Enron path.
+4. **Ship two-member (EN-legal + DE), add email later.** Risk: none legal; the campaign loses
+   the email domain axis (707 wanted legal+email × EN+DE). Cost: zero now. Unblocks:
+   baseline pinning immediately; email deferred to a follow-up.
+
+## Recommendation — **Option 2** (raw Enron text + our fabricated gold), Option 4 as fallback
+Because the 707 design already treats gold as fabricated-and-ours and only needs real
+email-shaped distractor text, the `enron_qa_0922` **annotation** license is irrelevant to
+what we consume. Dropping the QA columns and sourcing the same email bodies from the
+public-domain CMU/CALO corpus removes the blocker without changing the corpus's statistical
+character or the existing injection machinery. Record a one-line owner risk-acceptance of the
+FERC/CMU public-domain precedent (email text only), update `member.v1.json` `real_source` to
+the CMU/CALO origin with `license: "public-domain (FERC/CMU precedent)"`, and proceed. If the
+owner wants zero precedent risk this quarter, fall back to Option 4 (ship EN-legal+DE now,
+add an Apache-mailing-list email member — Option 3 — later). Options 1 and 3 are strictly
+higher cost for no benefit given separability.
+
+Sources (web): Wikipedia "Enron Corpus"; enrondata.org CALO/FERC dataset docs; EDRM
+"Retire the Enron Email Corpus" (2025); HF card `MichaelR207/enron_qa_0922`; arXiv 2505.00263.

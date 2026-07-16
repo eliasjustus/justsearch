@@ -124,7 +124,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] **Audit lesson — when probing for hooks, all four scopes must be checked**: `.claude/settings.json` (shared project), `.claude/settings.local.json` (per-machine project, **checked into git for this repo**), `~/.claude/settings.json` (user-scope), and every enabled plugin's `hooks.json` under `~/.claude/plugins/cache/`. Also grep `scripts/` for hook script files independently of settings. Encoded as discipline so future audit subagents don't repeat the same blind spot — `.claude/settings.local.json` (2026-05-18)
 
 ### obs:remove-worktree — Second orphaned worktree dir `.claude/worktrees/597-chat-count` is on disk but unregistered (not in
-`kind: defect?` `anchor: remove-worktree.cjs` `seen: 8` `first: 2026-06-21` `last: 2026-07-15`
+`kind: defect?` `anchor: remove-worktree.cjs` `seen: 10` `first: 2026-06-21` `last: 2026-07-15`
 - [ ] Second orphaned worktree dir `.claude/worktrees/597-chat-count` is on disk but unregistered (not in `git worktree list`) — same failed-removal class as 587; removable via `node scripts/dev/remove-worktree.cjs` with owner approval (618 §15) (2026-06-21)
 - [ ] remove-worktree.cjs: two defects seen 2026-07-07 — (a) its record-merge step attributes the merge to whatever session id happens to sit in the invoking checkout's tmp/agent-telemetry/current-session-id (linked a neighbouring session, then 'link skipped' from a fresh worktree; the tearing-down session cannot pass its own id), and (b) the EPERM long-path delete fallback throws 'filename, directory name, or volume label syntax is incorrect' — the \\?\ fallback path construction is broken, so any held-handle worktree fails removal twice. (2026-07-07)
 - [ ] remove-worktree.cjs record-merge misattribution RE-OBSERVED 2026-07-07 (681 teardown): linked session 20097c0b (neighbour's id in main checkout's current-session-id) to a local merge commit instead of the tearing-down session 06f94413 -> squash f604144; backfilled manually in session-merges.ndjson — `scripts/dev/remove-worktree.cjs` (2026-07-07)
@@ -133,6 +133,8 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] scripts/dev/remove-worktree.cjs intermittently fails to delete a worktree directory with EPERM/'used by another process' even with no obviously-holding process (retry usually succeeds, but not always — hit a case this session requiring git worktree prune + manual rmdir fallback) — scripts/dev/remove-worktree.cjs (2026-07-08)
 - [ ] remove-worktree.cjs cannot remove the CALLING session's own start-worktree — the session's MCP server processes (justsearch-dev server.mjs etc.) hold cwd inside it until session exit; remove-worktree correctly deletes other worktrees (624-step0-campaign removed fine post-684-fix) but self-removal needs a post-session step. Suggest: remove-worktree detect-and-say 'owned by live session <id>, rerun after it exits' instead of a bare EPERM-style failure — `scripts/dev/remove-worktree.cjs` (2026-07-10)
 - [ ] `remove-worktree.cjs`'s record-merge step links the session to the MAIN CHECKOUT's HEAD, not to the branch's actual merge commit — so it silently attributes an unrelated commit whenever the main checkout isn't sitting on an updated `main`. Reproduced 2026-07-15: tearing down worktree-ui-audit-density-review (merged as add9d620) wrote `session 478caa0c -> 6b16b7c9`, i.e. ANOTHER agent's tempdoc-727 commit, because the main checkout was parked on branch `mcpb-packaging`. Corrupts the tempdoc-622 Layer-B outcome join at its keying step, and fails silently (it prints a confident success line naming the wrong subject). Backfilling with `record-merge.mjs <commit> --session-id <id>` appends the correct row but cannot retract the wrong one. Fix: resolve the merge commit from the branch being removed (e.g. its PR's mergeCommit / `origin/main` content match), not from `git log -1` in the main checkout — `scripts/dev/remove-worktree.cjs` (2026-07-15)
+- [ ] remove-worktree.cjs auto record-merge links the session to main's LATEST merge commit, not the session's own — mis-attributed session 25f8ac5d to 6b16b7c9 (another session's 727 merge that landed minutes after PR #179's a8321f6); backfilled correctly + cleaned, but the auto-link races concurrent merges — `scripts/dev/remove-worktree.cjs` (2026-07-14)
+- [ ] remove-worktree.cjs auto-record-merge linked the session to the main checkout's HEAD (4e783bdb, unrelated docs(726) commit) instead of the actual PR squash commit; explicit record-merge.mjs with the oid was needed to correct it — `scripts/dev/remove-worktree.cjs` (2026-07-14)
 
 ### obs:healthsurface-flake — HealthSurface 'Recent events' renders NO ConditionStore conditions: `hs.events` is empty for ALL con
 `kind: defect?` `anchor: HealthSurface.ts` `seen: 1` `first: 2026-06-22` `last: 2026-06-22`
@@ -661,8 +663,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] capture_evidence crashes on Windows with a libuv fail-fast (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src/win/async.c`) after capturing api-status/api-health — blocks durable EvidenceBundle capture; live verification had to fall back to manual /mcp HTTP calls (tempdoc 658) — `scripts/…/capture-evidence` (MCP dev tool) (2026-07-07)
 
 ### obs:record-merge — Dev-tooling test-coverage gap (surfaced by 684): record-merge.mjs has NO dedicated test, and prepare
-`kind: defect?` `anchor: record-merge.mjs` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
+`kind: defect?` `anchor: record-merge.mjs` `seen: 2` `first: 2026-07-07` `last: 2026-07-15`
 - [ ] Dev-tooling test-coverage gap (surfaced by 684): record-merge.mjs has NO dedicated test, and prepare-worktree.cjs's item-3 gradle-spawn fix was verified only by static path-reasoning (no live run of npm-ci + installDist). 684 added the first test for remove-worktree.cjs (test-remove-worktree.cjs); the sibling lifecycle scripts remain a regression-net gap. Task-shaped, not tempdoc-shaped; a real prepare-worktree integration test is heavy (npm ci + installDist) so weigh unit-level spawn-path assertion vs full integration. — scripts/dev/prepare-worktree.cjs, scripts/agent-analytics/record-merge.mjs (2026-07-07)
+- [ ] session-merges.ndjson is fragmented per-worktree: remove-worktree/record-merge resolve repoRoot from __dirname, so a teardown run from inside a worktree appends to THAT worktree's tmp/agent-telemetry/session-merges.ndjson, not the main checkout's (211 rows). Any outcome join reading only one root sees a partial ledger. Observed while testing the attribution fix (tempdoc 739 follow-up) — `scripts/agent-analytics/record-merge.mjs` (2026-07-15)
 
 ### obs:unanchored-general-62 — worker.log: native ORT stderr (ANSI-colored CUDA/BFCArena OOM traces) is captured with NUL-byte-inte
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
@@ -823,8 +826,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] PdfOcrEngineTest.interruptDestroysAllRegisteredChildren flaked on main-push CI AGAIN (run 29155930543, 2026-07-11, PR #145 push, zero OCR overlap; second main-push occurrence after run 29129172631 on 2026-07-10) — recurrence condition fired; needs 706-style state-polling hardening, 706-owner lane — `modules/worker-services PdfOcrEngineTest` (recovered from dead-session worktree 691-takeover) (2026-07-12)
 
 ### obs:dataset-cache — 709 resume gap: an interrupted CLERC raw fetch leaves an orphaned `.tmp-*` staging dir under the cac
-`kind: defect?` `anchor: scripts/jseval/jseval/dataset_cache.py` `seen: 1` `first: 2026-07-12` `last: 2026-07-12`
+`kind: defect?` `anchor: scripts/jseval/jseval/dataset_cache.py` `seen: 2` `first: 2026-07-12` `last: 2026-07-13`
 - [ ] 709 resume gap: an interrupted CLERC raw fetch leaves an orphaned `.tmp-*` staging dir under the cache root (observed: ~6.3GB collection.doc.tsv.gz at scripts/jseval/tmp/dataset-fetch-cache/clerc-raw/.<key>.tmp-*); `store()` neither resumes nor GCs it, so the next fetch re-downloads the full 6.7GB — `scripts/jseval/jseval/dataset_cache.py:150` (2026-07-12)
+- [ ] 709/173 interaction: pinning _CLERC_REVISION changed the clerc-raw dataset-cache key, orphaning the completed 7.7GB resolve/main entry (7df857..) — next fetch re-downloads and now hits HF anonymous-download 403 (AccessDenied at CDN hop, resolver quota fine); migrated entry to pinned key 0f0aba86.. via hardlinks+signature.json this session (content signature a23d916b.. unchanged, HF API confirms main sha == pinned rev). Residual: no cache-key migration/GC story on revision bumps, and the orphaned 6.3GB .tmp-* staging dir from the 07-11 dead fetch still leaks — `scripts/jseval/jseval/dataset_cache.py:150` (2026-07-13)
 
 ### obs:test-correction-probe — Pre-existing: scripts/jseval/tests/test_correction_probe.py default-manifest tests fail on main beca
 `kind: environment?` `anchor: test_correction_probe.py` `seen: 1` `first: 2026-07-13` `last: 2026-07-13`
@@ -835,8 +839,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Empty dir .claude/worktrees/adoption-legibility still not removable (EBUSY, process-held) as of 2026-07-14 — rmdir+PowerShell both fail; retry after reboot or when the holding process exits — `.claude/worktrees/adoption-legibility` (2026-07-14)
 
 ### obs:llamaserveropscrashtelemetrytest-flake — Flaky test: LlamaServerOpsCrashTelemetryTest 'Brain give-up: reaching MAX_CRASHES fires goOfflineFro
-`kind: environment?` `anchor: modules/app-inference/src/test/java/.../LlamaServerOpsCrashTelemetryTest.java` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
+`kind: environment?` `anchor: modules/app-inference/src/test/java/.../LlamaServerOpsCrashTelemetryTest.java` `seen: 2` `first: 2026-07-14` `last: 2026-07-15`
 - [ ] Flaky test: LlamaServerOpsCrashTelemetryTest 'Brain give-up: reaching MAX_CRASHES fires goOfflineFromMaxCrashes' threw java.util.ConcurrentModificationException at line 111 on CI (PR #179 run 29311644690, unrelated Python-only diff) — test-internal race, likely iterating telemetry while crash loop appends — `modules/app-inference/src/test/java/.../LlamaServerOpsCrashTelemetryTest.java:111` (2026-07-14)
+- [ ] FLAKY (4th instance): LlamaServerOpsCrashTelemetryTest 'Brain give-up: reaching MAX_CRASHES fires goOfflineFromMaxCrashes' threw ConcurrentModificationException at line 111 on PR #200 CI (run 29416058201, agent-tooling diff = zero Java — hooks/rules/skills only). 221 tests, 1 failed. Recurring on unrelated diffs since 2026-07-11 (docs-only, Python-only, now hooks-only) — the test-internal race is real and re-run-masked every time; it has now cost 4 sessions a red-CI investigation. Worth the defensive-copy/synchronized-collection fix at line 111 — `modules/app-inference/src/test/java/io/justsearch/app/inference/LlamaServerOpsCrashTelemetryTest.java:111` (2026-07-15)
 
 ### obs:registryentry — Pre-existing: CI 'Build (no model blobs)' emits a MissingOverride annotation for modules/app-agent-a
 `kind: environment?` `anchor: RegistryEntry.java` `seen: 1` `first: 2026-07-13` `last: 2026-07-13`
@@ -972,15 +977,17 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] The installed v0.1.0 app (F:\JustSearch-test, ui jars built 2026-04-28) contains no McpProtocolHandler — POST /mcp is not served by the shipped release, yet docs/reference/mcp-production-server.md's '~2 minutes' flow and the README describe connecting Claude Desktop to the installed app's /mcp. The MCP surface only exists in builds after v0.1.0 — `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpProtocolHandler.java` (2026-07-14)
 
 ### obs:check-tempdoc-numbers-general — Pre-existing cross-worktree tempdoc #720 collision: 720-memory-injector-plan.md (agent-a439b6b675c7d
-`kind: environment?` `anchor: check-tempdoc-numbers` `seen: 2` `first: 2026-07-14` `last: 2026-07-14`
+`kind: environment?` `anchor: check-tempdoc-numbers` `seen: 3` `first: 2026-07-14` `last: 2026-07-15`
 - [ ] Pre-existing cross-worktree tempdoc #720 collision: 720-memory-injector-plan.md (agent-a439b6b675c7d35e5) vs 720-p1a-context-prepend-plan.md (agent-adcdb24cb87068a9c) — check-tempdoc-numbers fails until one is renumbered (2026-07-14)
 - [ ] check-tempdoc-numbers exits 1 on two pre-existing cross-worktree collisions: #720 (agent worktrees) and #729 (725-response-legibility vs sandbox-validation) — neither introduced by the release-asset-set branch; owners of those worktrees need to renumber. (2026-07-14)
+- [ ] Tempdoc number collision on 729, live right now: '729-0.2.0-sandbox-convergence.md' (502 lines, uncommitted in the sandbox-validation worktree, authored 2026-07-14, exists NOWHERE in git) vs '729-java-formatting-not-enforced.md' (worktree 729-gjf-removal, another live session). Neither is on main, so check-tempdoc-numbers can't see the unbacked one — the cross-worktree collision check only compares what is committed. The sandbox doc is at risk of both loss and renumbering — `docs/tempdocs/729-*` (2026-07-15)
 
 ### obs:check-always-loaded-budget-gate-red — always-loaded-budget gate is RED on origin/main (pre-existing, not from this branch): 4 files over c
-`kind: environment?` `anchor: scripts/ci/check-always-loaded-budget.mjs` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+`kind: environment?` `anchor: scripts/ci/check-always-loaded-budget.mjs` `seen: 2` `first: 2026-07-15` `last: 2026-07-15`
 - [ ] always-loaded-budget gate is RED on origin/main (pre-existing, not from this branch): 4 files over ceiling — CLAUDE.md +1604B, branch-safety.md +1892B, hooks-reference.md +99B, tier-register.md +1579B — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-15)
+- [ ] always-loaded-budget ratchet fails on origin/main already: CLAUDE.md (+1604 B over), agent-lessons.md, branch-safety.md, hooks-reference.md, tier-register.md are all OVER their ceilings, and the check isn't wired into the public CI workflow so nothing catches the drift. The ratchet only bites the honest agent who runs it locally — the always-loaded set is ~1.6 KB past its own cap on main today — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-15)
 
-### obs:unanchored-general-56 — Skill-vs-CLAUDE.md contradiction (same class as tempdoc 739 F-3): `.claude/skills/publish/SKILL.md` 
+### obs:unanchored-general-56 — Skill-vs-CLAUDE.md contradiction (same class as tempdoc 739 F-3): `.claude/skills/publish/SKILL.md`
 `kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
 - [ ] Skill-vs-CLAUDE.md contradiction (same class as tempdoc 739 F-3): `.claude/skills/publish/SKILL.md` says 'strongly consider just delegating all of the mechanical/overview work of the PR/merge to a subagent', but CLAUDE.md's model-routing rule says 'Never delegate: ... merge/publish, irreversible actions, main-checkout writes'. An agent following the skill violates CLAUDE.md; following CLAUDE.md ignores the skill. Found live while running /publish. The skill is untracked/local-only, so the fix cannot ride along in-repo — same blast radius as 739 F-3. (2026-07-15)
 
@@ -1069,7 +1076,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: modules/ui-web/src/locales/en/messages.po` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
 - [ ] Locale catalogs still carry React-era msgids whose source refs are retired .tsx paths (ADR-0032), e.g. "AI Online" attributed to BrainSimplePanel.tsx — the Lit shell-v0 views don't use lingui, so these entries are stale/unreachable — `modules/ui-web/src/locales/en/messages.po:442` (2026-07-14)
 
-### obs:chatcontroller — ChatController.handleCompact (loadHistory-based prefix build, :302) no longer 423s immediately on a 
+### obs:chatcontroller — ChatController.handleCompact (loadHistory-based prefix build, :302) no longer 423s immediately on a
 `kind: defect?` `anchor: modules/ui/src/main/java/io/justsearch/ui/api/ChatController.java` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
 - [ ] ChatController.handleCompact (loadHistory-based prefix build, :302) no longer 423s immediately on a locked session now that loadHistory degrades instead of throwing (tempdoc 727 conversation-lock fix) — it now attempts an LLM summarize() call over placeholder/opaque content before failing at the final compactContext() write (cipher.seal still throws KeyLockedException there). Not a correctness/security regression (the write is still blocked), just a wasted LLM call in an edge case (locked + reachable + compact attempted) that's out of scope for this fix — `modules/ui/src/main/java/io/justsearch/ui/api/ChatController.java:302` (2026-07-14)
 
@@ -1077,7 +1084,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: modules/ui-web/src/shell-v0/components/ResourceView.render.test.ts` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
 - [ ] ResourceView.render.test.ts has a scratch/debug probe test literally named 'SCRATCH PROBE ... FORCE-FAIL-TO-SHOW-STATE' that always fails (asserts an object equals a string) — looks like leftover debug scaffolding, not a real assertion — `modules/ui-web/src/shell-v0/components/ResourceView.render.test.ts:250` (2026-07-14)
 
-### obs:mcpprotocolhandlertest — MCP conformance defect (found live 2026-07-15 driving the shipped MCPB bridge against a dev stack): 
+### obs:mcpprotocolhandlertest — MCP conformance defect (found live 2026-07-15 driving the shipped MCPB bridge against a dev stack):
 `kind: environment?` `anchor: McpProtocolHandlerTest` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
 - [ ] MCP conformance defect (found live 2026-07-15 driving the shipped MCPB bridge against a dev stack): POST /mcp answers the mandatory lifecycle NOTIFICATION 'notifications/initialized' with {"jsonrpc":"2.0","id":null,"error":{"code":-32601,"message":"Method not found: notifications/initialized"}}. TWO defects: (1) the method is unimplemented though the MCP lifecycle requires the client to send it after initialize; (2) JSON-RPC 2.0 forbids ANY response to a notification (no id) — responding with id:null is a protocol violation. Real-world bite: a spec-correct client that expects no reply desynchronizes its read loop (reproduced — it hung scripts/sandbox/mcp-typed-confirm.ps1). tools/call + initialize otherwise work and the TYPED_CONFIRM gate fires correctly. Owner: MCP conformance (655); regression home: McpProtocolHandlerTest (modules/ui/src/test/java/io/justsearch/ui/api/mcp/). (2026-07-14)
 
@@ -1114,6 +1121,30 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:734-0-2-0-sandbox-convergence — PR #184 BODY must be corrected before merge (independent review 2026-07-15): (1) surface that #184 s
 `kind: environment?` `anchor: docs/tempdocs/734-0.2.0-sandbox-convergence.md` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
 - [ ] PR #184 BODY must be corrected before merge (independent review 2026-07-15): (1) surface that #184 ships the dead 'Resume Chat AI' button — the undotted A1 band-aid, live-verified non-functional, superseded by 737; (2) disambiguate the A.1/A1 naming trap — dotted 'A.1' (dense/hybrid retrieval) IS fixed and verified across rounds 3-4, undotted 'A1' (BrainSurface indexing→online button, CoreOperationCatalog:803 circular gate) is NOT, and the PR body's 'A.1 blocker fixed' line reads as covering both. A merger skimming the body could ship a prominent dead button believing all AI-runtime work is verified. Mitigation already in plan: no installer is cut in the #184→737 merge window, so the dead button never reaches a user; 737 removes it. — `docs/tempdocs/734-0.2.0-sandbox-convergence.md:744` (2026-07-15)
+
+### obs:719-reproducible-public-agent-utility-benchmark — 719 source-identity prose is behind the implementation: #178 (725) added mcp_initialize_identity + s
+`kind: defect?` `anchor: docs/tempdocs/719-reproducible-public-agent-utility-benchmark.md` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+- [ ] 719 source-identity prose is behind the implementation: #178 (725) added mcp_initialize_identity + session-config exposure mode to the captured surface, and utility-claim-policy.v1.json now requires verified_exposure_mode — 719's boundary section still names only the tools/list hash. Extend the prose when 719 is next touched — `docs/tempdocs/719-reproducible-public-agent-utility-benchmark.md:32` (2026-07-15)
+
+### obs:unanchored-drift-7 — tempdoc 737 status header still says 'NOT MERGED — no PR until owner's word' but PR #193 (f7d8e03f) 
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+- [ ] tempdoc 737 status header still says 'NOT MERGED — no PR until owner's word' but PR #193 (f7d8e03f) is its merge commit — stale status, refresh on next touch — `docs/tempdocs/737*.md:1` (2026-07-15)
+
+### obs:707-pillar1-inband-utility-corpus — 707 chain-2 engine finding candidate: German pure-synonym semantic bridging collapses with corpus si
+`kind: follow-up?` `anchor: docs/tempdocs/707-pillar1-inband-utility-corpus.md` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] 707 chain-2 engine finding candidate: German pure-synonym semantic bridging collapses with corpus size on the current encoder (DE v2 gold, zero lexical overlap: hybrid 0.21-0.27 at 1k -> 0.043 at 10k, union recall 0.40 -> 0.10; CLERC EN same design holds 0.32 at 10k). Routes to the encoder-representation lane (708-successor), not corpus design — `docs/tempdocs/707-pillar1-inband-utility-corpus.md` §Chain-2 (2026-07-16)
+
+### obs:unanchored-drift-10 — Main checkout parked on a stale feature branch (mcpb-packaging, 18 behind origin/main) means EVERY s
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+- [ ] Main checkout parked on a stale feature branch (mcpb-packaging, 18 behind origin/main) means EVERY session starting there loads 18-commit-old CLAUDE.md + .claude/rules/* — this session ran without tier-register rows 38-42 (incl. squash-merge-verify-content-not-ancestry and no-merge-without-authorization) and hit the exact trap row 40 documents. Rules staleness is invisible to the agent — `.claude/rules/` (2026-07-15)
+
+### obs:unanchored-error-8 — CLAUDE.md pitfall says '*.onnx are Git LFS-tracked, do not gitignore model files', but *.onnx was NE
+`kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+- [ ] CLAUDE.md pitfall says '*.onnx are Git LFS-tracked, do not gitignore model files', but *.onnx was NEVER tracked in this repo's history (0 commits), origin/main tracks 0 .onnx, and CI has a 'Build (no model blobs)' job — meanwhile 2.6 GB of untracked+unignored .onnx sits in the main checkout where a 'git add -A' would stage it (the same move that leaked the 4 orchestration skills, rule 39). Pitfall row may be inherited from a context where models are committed — `CLAUDE.md:Common Pitfalls` (2026-07-15)
+
+### obs:unanchored-drift-11 — CLAUDE.md + branch-safety.md still say the main checkout is 'F:\JustSearch' — stale. That private cl
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+- [ ] CLAUDE.md + branch-safety.md still say the main checkout is 'F:\JustSearch' — stale. That private clone (remote eliasjustus/JustSearch, 9 .onnx via LFS) was last committed 2026-06-25 and has 1 worktree; the live repo is F:\justsearch-public (public remote, committed today, 19 worktrees, 487 tempdocs). Consequence: the never-checkout-in-main rule reads as not applying to the checkout it actually governs. Not fixed here — branch-safety.md is being edited by PR #202, so this needs to land without a collision — `CLAUDE.md:Parallel Agents` (2026-07-15)
 
 ## Parked
 
