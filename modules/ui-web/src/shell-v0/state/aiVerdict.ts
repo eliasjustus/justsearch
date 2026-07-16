@@ -75,8 +75,13 @@ export interface AiEngineVerdict {
    * 3 - a Sandbox round waited 5+ minutes for this state to resolve on its own because the sub-label
    * read the same either way ("Indexing embeddings...") whether backfill was genuinely still
    * consuming the GPU or the engine was simply waiting on a click that would never come by itself.
-   * `undefined` when not in the 'indexing' kind, or when the legacy (pre-737) fallback path
-   * computed it (no `chatEnabledSpec` signal available there to distinguish).
+   * Computed identically in both the authored and legacy `runtime.mode` branches (`chatEnabledSpec`
+   * is in scope in both - review pass found a genuinely current backend can land in the legacy
+   * branch during the rare pre-reconciler-attach boot window, per `BootstrapProjections`'s own
+   * javadoc, so this isn't only a deprecated-backend concern). On a truly pre-737 backend that
+   * never sends `chatEnabledSpec` at all, the expression naturally evaluates to `false` (not
+   * `true`, since `undefined !== false`), so it stays safe there too. `undefined` only when not
+   * in the 'indexing' kind at all.
    */
   readonly awaitingChatEnable?: boolean;
 }
@@ -171,7 +176,12 @@ export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVe
       return { kind: 'online', stability: { kind: 'settled' }, installFailure: null };
     }
     if (runtime.mode === 'indexing') {
-      return { kind: 'indexing', stability: { kind: 'settled' }, installFailure: null };
+      return {
+        kind: 'indexing',
+        stability: { kind: 'settled' },
+        installFailure: null,
+        awaitingChatEnable: chatEnabledSpec === false,
+      };
     }
     if (runtime.mode === 'starting') {
       return {

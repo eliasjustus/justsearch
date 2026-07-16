@@ -103,6 +103,22 @@ describe('computeAiEngineVerdict (observed axes only — no local intent)', () =
     expect(v.kind).toBe('indexing');
   });
 
+  it('legacy indexing + chatEnabledSpec false → awaitingChatEnable true (734 round 5 finding 3 fix, extended to the legacy branch: a current backend can land here during the pre-reconciler-attach boot window per BootstrapProjections)', () => {
+    const v = computeAiEngineVerdict(
+      input({ runtime: runtime({ mode: 'indexing' }), chatEnabledSpec: false }),
+    );
+    expect(v.kind).toBe('indexing');
+    expect(v.awaitingChatEnable).toBe(true);
+  });
+
+  it('legacy indexing + chatEnabledSpec true → awaitingChatEnable false (genuinely still indexing, not awaiting a click)', () => {
+    const v = computeAiEngineVerdict(
+      input({ runtime: runtime({ mode: 'indexing' }), chatEnabledSpec: true }),
+    );
+    expect(v.kind).toBe('indexing');
+    expect(v.awaitingChatEnable).toBe(false);
+  });
+
   it('runtime starting (explicit live-load signal) → "starting", provisional cause "starting"', () => {
     const v = computeAiEngineVerdict(input({ runtime: runtime({ mode: 'starting' }) }));
     expect(v.kind).toBe('starting');

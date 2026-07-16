@@ -206,6 +206,19 @@ class WorkflowShapeRunnerTest {
         started.payload().get("workflowId"),
         "an unspecified workflowId must default to the self-contained workflow, not the one that "
             + "needs an optional external MCP server: " + events);
+    // Not just "didn't fail" -- the run must actually complete both of research-brief's nodes
+    // (matching the rigor of the sibling llmStepEmitsNodeOutputInsideTheBracket/
+    // runsAToolOnlyWorkflowEndToEnd tests, which assert the terminal event, not just absence of error).
+    assertEquals("done", order.get(order.size() - 1), "must run to completion: " + order);
+    List<String> completedNodeIds =
+        events.stream()
+            .filter(e -> e.name().equals("node_completed"))
+            .map(e -> String.valueOf(e.payload().get("nodeId")))
+            .toList();
+    assertEquals(
+        List.of("think", "draft"),
+        completedNodeIds,
+        "both of research-brief's LlmSteps must complete: " + events);
   }
 
   @Test
