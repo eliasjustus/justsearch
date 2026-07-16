@@ -5,7 +5,6 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
-import { lingui } from '@lingui/vite-plugin'
 import { visualizer } from 'rollup-plugin-visualizer'
 import { findRunningManifest, isPidAlive } from '../../scripts/lib/platform-paths.mjs'
 
@@ -197,9 +196,9 @@ export default defineConfig(({ command }) => {
   return {
   // Slice 3a.1.4b §B.I Finding 2 fix: in dev mode (`command === 'serve'`), expose the
   // Vite-server's proxy target port to the bundle via `import.meta.env.VITE_JUSTSEARCH_API_PORT`.
-  // Without this, `resolveApiEndpoint()` returns null in plain `npm run dev`, and the i18n
-  // boot's `if (endpoint.baseUrl)` short-circuits — leaving runtime catalogs unfetched and
-  // labels showing raw keys. Production builds (`command === 'build'`) leave the var unset,
+  // Without this, `resolveApiEndpoint()` returns null in plain `npm run dev`, and the message
+  // catalog boot's `if (endpoint.baseUrl)` short-circuits — leaving runtime catalogs unfetched
+  // and labels showing raw keys. Production builds (`command === 'build'`) leave the var unset,
   // preserving the existing Tauri-/runtime-driven endpoint resolution.
   //
   // Tempdoc 501: reads from port file when env var is absent, so all launch paths
@@ -209,7 +208,6 @@ export default defineConfig(({ command }) => {
   } : {},
   plugins: [
     apiProxyPlugin(),
-    lingui(),
     devExamplesMiddleware(),
     isAnalyze && visualizer({
       filename: 'dist/bundle-stats.html',

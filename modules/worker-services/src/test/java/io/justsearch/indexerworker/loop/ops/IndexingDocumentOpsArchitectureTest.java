@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test;
  * Structural defense for the validated-artifact boundary (tempdoc 410 §6 + §10).
  *
  * <p>Production code may only construct an {@link
- * io.justsearch.indexing.api.IndexApi.IndexDocument} via the {@code ValidatedExtractionArtifact}
+ * io.justsearch.indexing.api.IndexDocument} via the {@code ValidatedExtractionArtifact}
  * overload — this prevents future contributors from accidentally re-introducing a public
  * overload that accepts unvalidated parser output. Test fixtures (and tests in the same module)
  * must route through {@link io.justsearch.indexerworker.fixtures.TestDocumentBuilder}, which wraps

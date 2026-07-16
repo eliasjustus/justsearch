@@ -11,7 +11,7 @@ import io.justsearch.indexerworker.embed.EmbeddingCompatibilityController.State;
 import io.justsearch.indexerworker.embed.EmbeddingConfig;
 import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.ipc.RetrieveContextRequest;
 import io.justsearch.ipc.RetrieveContextResponse;
 import io.justsearch.ipc.SearchMode;

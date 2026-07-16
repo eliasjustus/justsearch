@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.RuntimeSearchSort;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.SearchResult;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.indexing.runtime.IndexOpenGuard;
 import java.nio.file.Files;
 import java.nio.file.Path;

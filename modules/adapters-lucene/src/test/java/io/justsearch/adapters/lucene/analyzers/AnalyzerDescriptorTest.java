@@ -1,4 +1,4 @@
-package io.justsearch.core.analyzers;
+package io.justsearch.adapters.lucene.analyzers;
 
 import static org.junit.jupiter.api.Assertions.*;
 
