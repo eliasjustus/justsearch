@@ -19,9 +19,10 @@ from jseval.ingest import (
     _wait_for_backpressure,
     _watcher_settle_timeout,
     add_watched_root,
+    ingest_and_wait,
     prepare_corpus,
 )
-from jseval.types import IngestConfig
+from jseval.types import IngestConfig, ReadinessResult
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +217,81 @@ def test_prepare_corpus_explicit_dir_uses_existing(mock_ingest, tmp_path):
     call_kwargs = mock_ingest.call_args
     # corpus_doc_count is now a keyword arg to ingest_and_wait
     assert call_kwargs.kwargs["corpus_doc_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# ingest_and_wait — embed-compat settle-wait (tempdoc 715 defect 2)
+#
+# A fast small-corpus run (e.g. mixed/legal-clerc-200, 198 docs, ~60s ingest+enrich) can
+# satisfy wait_index_idle/wait_pipeline_complete while embeddingCompatState still reads
+# REBUILDING. ingest_and_wait must settle-wait BEFORE returning to its caller (which proceeds
+# straight to eval + manifest snapshot) -- but only when readiness actually passed, so a
+# genuinely-failed run doesn't additionally block for up to 90s with nothing to gain.
+# ---------------------------------------------------------------------------
+
+@patch("jseval.ingest.wait_embed_compat_settled")
+@patch("jseval.ingest.wait_index_idle")
+@patch("jseval.ingest._wait_for_watcher_activity")
+@patch("jseval.ingest.add_watched_root")
+@patch("jseval.ingest._get_indexed_doc_count")
+def test_ingest_and_wait_settles_embed_compat_after_readiness_passes(
+    mock_doc_count, mock_add_root, mock_watcher, mock_wait_idle, mock_settle, tmp_path,
+):
+    mock_doc_count.return_value = 0
+    mock_watcher.return_value = True
+    mock_wait_idle.return_value = ReadinessResult(
+        passed=True, snapshot={"indexedDocuments": 198, "indexSizeBytes": 1000},
+    )
+    mock_settle.return_value = "COMPATIBLE"
+
+    config = IngestConfig(base_url="http://localhost:33221")
+    summary = ingest_and_wait(config, tmp_path, corpus_doc_count=198)
+
+    mock_settle.assert_called_once_with("http://localhost:33221")
+    assert summary["embed_compat_state_settled"] == "COMPATIBLE"
+
+
+@patch("jseval.ingest.wait_embed_compat_settled")
+@patch("jseval.ingest.wait_index_idle")
+@patch("jseval.ingest._wait_for_watcher_activity")
+@patch("jseval.ingest.add_watched_root")
+@patch("jseval.ingest._get_indexed_doc_count")
+def test_ingest_and_wait_skips_settle_wait_when_readiness_failed(
+    mock_doc_count, mock_add_root, mock_watcher, mock_wait_idle, mock_settle, tmp_path,
+):
+    mock_doc_count.return_value = 0
+    mock_watcher.return_value = True
+    mock_wait_idle.return_value = ReadinessResult(
+        passed=False, failure_reasons=["index_not_idle"], snapshot={},
+    )
+
+    config = IngestConfig(base_url="http://localhost:33221")
+    summary = ingest_and_wait(config, tmp_path, corpus_doc_count=198)
+
+    mock_settle.assert_not_called()
+    assert "embed_compat_state_settled" not in summary
+
+
+@patch("jseval.ingest.wait_embed_compat_settled")
+@patch("jseval.ingest.wait_pipeline_complete")
+@patch("jseval.ingest._wait_for_watcher_activity")
+@patch("jseval.ingest.add_watched_root")
+@patch("jseval.ingest._get_indexed_doc_count")
+def test_ingest_and_wait_settles_embed_compat_on_pipeline_path_too(
+    mock_doc_count, mock_add_root, mock_watcher, mock_wait_pipeline, mock_settle, tmp_path,
+):
+    mock_doc_count.return_value = 0
+    mock_watcher.return_value = True
+    mock_wait_pipeline.return_value = ReadinessResult(
+        passed=True, snapshot={"indexedDocuments": 198, "indexSizeBytes": 1000},
+    )
+    mock_settle.return_value = "REBUILDING"  # timed out, but proceeds honestly
+
+    config = IngestConfig(base_url="http://localhost:33221", pipeline=True)
+    summary = ingest_and_wait(config, tmp_path, corpus_doc_count=198)
+
+    mock_settle.assert_called_once_with("http://localhost:33221")
+    assert summary["embed_compat_state_settled"] == "REBUILDING"
 
 
 # ---------------------------------------------------------------------------

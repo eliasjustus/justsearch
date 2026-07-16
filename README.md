@@ -121,11 +121,11 @@ the **default `hybrid` config** unless noted:
 
 | Corpus | nDCG@10 | Note |
 |---|---|---|
-| BEIR / SciFact | **0.756** | in the range of published single-model retrievers (ColBERTv2 0.693, SPLADE++ 0.71) — but read this as *system vs. component*: ours is a full hybrid+rerank pipeline, theirs are single models |
-| Enron-QA | 0.719 | |
-| MIRACL-de (German) | 0.852 | multilingual — no per-language tuning |
-| MIRACL-fr (French) | 0.866 | |
-| Legal (CLERC case-retrieval) | 0.516 | citation-retrieval task on real US federal case law; replaces an earlier bespoke legal corpus that had no reproducible construction path (tempdoc 666) |
+| BEIR / SciFact | **0.760** | in the range of published single-model retrievers (ColBERTv2 0.693, SPLADE++ 0.71) — but read this as *system vs. component*: ours is a full hybrid+rerank pipeline, theirs are single models |
+| Enron-QA | 0.736 | |
+| MIRACL-de (German) | 0.862 | multilingual — no per-language tuning |
+| MIRACL-fr (French) | 0.873 | |
+| Legal (CLERC case-retrieval) | 0.598 | citation-retrieval task on real US federal case law; replaces an earlier bespoke legal corpus that had no reproducible construction path (tempdoc 666) |
 
 External-baseline figures are cited from published papers (SIGIR/NAACL; sources + split caveats in
 `release.v1.json`) — **not** re-run by us, and not directly apples-to-apples: a hybrid+rerank *system* is
