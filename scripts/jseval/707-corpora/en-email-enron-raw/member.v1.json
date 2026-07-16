@@ -17,10 +17,27 @@
     "seed": 707,
     "host_min_words": 60
   },
-  "sizes": [1000, 10000],
-  "query_variants": ["verbose", "short-natural"],
-  "materialized_datasets": [],
-  "structural_certification": null,
+  "sizes": [
+    1000,
+    10000
+  ],
+  "query_variants": [
+    "verbose",
+    "short-natural"
+  ],
+  "materialized_datasets": [
+    "mixed/en-email-enron-raw-1k-verbose",
+    "mixed/en-email-enron-raw-1k-short-natural",
+    "mixed/en-email-enron-raw-10k-verbose",
+    "mixed/en-email-enron-raw-10k-short-natural"
+  ],
+  "structural_certification": "structural-certification.v1.json",
   "claim_eligible": false,
-  "remaining_gates": ["materialize_member", "member_retrieval_calibration", "closed_book", "descriptor_collision", "union_recall", "leak_floor"]
+  "remaining_gates": [
+    "member_retrieval_calibration",
+    "closed_book",
+    "descriptor_collision",
+    "union_recall",
+    "leak_floor"
+  ]
 }

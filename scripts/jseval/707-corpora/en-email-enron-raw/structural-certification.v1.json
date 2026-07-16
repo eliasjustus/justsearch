@@ -1,0 +1,249 @@
+{
+  "schema": "707-corpus-structural-certification.v1",
+  "member": "en-email-enron-raw",
+  "status": "structurally-certified",
+  "datasets": {
+    "1000": {
+      "short-natural": {
+        "dataset": "mixed/en-email-enron-raw-1k-short-natural",
+        "corpus_signature": "fba5cf691ce88e7689fed5c19b1a68072004beb67a5a964c4e52dea21a8649b7",
+        "query_gold_sha256": "42d5934a0885b3edba0c3f00f23dfdd81d7526585e748bcfb4f19f247455fadc",
+        "query_count": 20,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "0bbf76bd5988ce2efa08e6f316eb47b5364cd141d53231a7642b8844307df036",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "03ff0041f9b513ac84da3612a0fe677c5a90889b0e090500718996c1afd03ddc",
+          "recipe_sha256": "95b3d61be751fe0474de0c26ad21766feed534b9e4e642d3e7470c15951ad02e"
+        },
+        "descriptor_collision": {
+          "n_groups": 14,
+          "n_docs_involved": 64,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      },
+      "verbose": {
+        "dataset": "mixed/en-email-enron-raw-1k-verbose",
+        "corpus_signature": "fba5cf691ce88e7689fed5c19b1a68072004beb67a5a964c4e52dea21a8649b7",
+        "query_gold_sha256": "2c42fad8b7632abf792ada6b64af8fe426b1fea5f0f8bbb2ccaeb8667664dabb",
+        "query_count": 20,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "747545a7e03200c356143edda0536d811e839c3539055ca120195243172c3068",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "1fa58fe2edf8fe6274200f199c92346622975f7a1c1bd67a5b87529eac0e6ada",
+          "recipe_sha256": "ed6c383bc1623bd74c7486ffb60f3dfa5f54a8de58534413c53895b195fe7f1b"
+        },
+        "descriptor_collision": {
+          "n_groups": 14,
+          "n_docs_involved": 64,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      }
+    },
+    "10000": {
+      "short-natural": {
+        "dataset": "mixed/en-email-enron-raw-10k-short-natural",
+        "corpus_signature": "e6b302ea4d0faead72701f7ae15e1753b75a4f9e9f15935ea9e904a54bca528c",
+        "query_gold_sha256": "42d5934a0885b3edba0c3f00f23dfdd81d7526585e748bcfb4f19f247455fadc",
+        "query_count": 20,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "769c27655d646e994420f5bbbe419557e79e732de2507a35588f96440ee304c3",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "d2a4b1994072d85c1c5e6db25b2aa1356b0ab10c47b353e8a408d67e3a24d721",
+          "recipe_sha256": "d1b68d872cf9b06819a16ccf57e9f2a0a22f5481bfaa2ea5062fa8ff13324de5"
+        },
+        "descriptor_collision": {
+          "n_groups": 341,
+          "n_docs_involved": 1217,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      },
+      "verbose": {
+        "dataset": "mixed/en-email-enron-raw-10k-verbose",
+        "corpus_signature": "e6b302ea4d0faead72701f7ae15e1753b75a4f9e9f15935ea9e904a54bca528c",
+        "query_gold_sha256": "2c42fad8b7632abf792ada6b64af8fe426b1fea5f0f8bbb2ccaeb8667664dabb",
+        "query_count": 20,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "76dcf2a9d47f74db96131baf50fc7fc2297a0e6ecafdf04dafe4ac269bfbd603",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "58969e591b38c67f5231e2efd57aa4f03e5c0eacee035ad1cdbcab963299eace",
+          "recipe_sha256": "52edd6c9adcb1b27145b5d32eb96d06d03487100b2ab27c4b733686a149d6814"
+        },
+        "descriptor_collision": {
+          "n_groups": 341,
+          "n_docs_involved": 1217,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      }
+    }
+  },
+  "family_checks": {
+    "verbose": {
+      "queries_identical_across_sizes": true,
+      "qrels_identical_across_sizes": true,
+      "one_k_docs_are_subset_of_ten_k": true
+    },
+    "short-natural": {
+      "queries_identical_across_sizes": true,
+      "qrels_identical_across_sizes": true,
+      "one_k_docs_are_subset_of_ten_k": true
+    },
+    "strata": {
+      "same_family_ids": true,
+      "same_answers_and_evidence": true,
+      "distinct_query_text": true,
+      "same_corpus_and_qrels_per_size": true
+    }
+  },
+  "structural_passed": true,
+  "scientific_gates": {
+    "closed_book": "pending-model-run",
+    "retrieval_calibration": "pending-backend-run",
+    "union_recall": "pending-backend-run",
+    "leak_floor": "pending-backend-run"
+  },
+  "fully_certified": false
+}
