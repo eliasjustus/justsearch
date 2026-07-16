@@ -85,15 +85,23 @@ script already in the pre-merge table): a **policy-independent HARD invariant** 
 `pull_request_review`, `pull_request_review_comment`, `issue_comment`) fails the build if
 any workflow with a self-hosted `runs-on:` carries one. Independence from the per-workflow
 `expectedTriggers` allowlist is the point: editing the workflow AND the policy together
-(which satisfies the existing allowlist match) still fails here. `usesSelfHostedRunner()`
-reads the `runs-on:` VALUE (scalar / inline list / block list), so `ci-walltime-trend.yml`'s
-comment mention of "self-hosted" does not false-positive (verified by test). Regression
-tests added: self-hosted+PR fails even when policy allows it, hosted+PR passes, comment
-mention passes. Real-repo run stays green (`docs-lint.yml` = self-hosted + dispatch-only).
-**Known limitation (recorded, not silently capped):** a self-hosted runner reached via a
-`runs-on: ${{ matrix.os }}` matrix value is not detected — no such usage exists today
-(the one matrix `runs-on` in `ci.yml` is ubuntu/windows-latest); close it if a matrix ever
-includes self-hosted.
+(which satisfies the existing allowlist match) still fails here.
+
+`usesSelfHostedRunner()` is **fail-closed via a hosted-label allowlist** (post-review
+redesign): a `runs-on` value is self-hosted unless every label is a known GitHub-hosted
+label (`ubuntu-*`/`windows-*`/`macos-*`, incl. versioned + `-arm`) or an unresolvable
+`${{ }}` expression. This closes two evasions an independent review reproduced against the
+first (token-only) draft: **A1** custom-label-only targeting (`runs-on: justsearch-perf` —
+the repo's OWN runner label, no literal `self-hosted` token) and **A2** the runner-group /
+block-`labels:` mapping form. Both now caught (regression tests + live re-probe). Comment
+mentions still don't false-positive; hosted arm/versioned runners pass; real-repo run stays
+green (`docs-lint.yml` = self-hosted + dispatch-only).
+
+**Sole remaining documented limit (the one place it does NOT fail closed, because it
+genuinely can't resolve the value):** a self-hosted runner reached via a `runs-on:
+${{ matrix.os }}` expression — no such usage exists today (`ci.yml`'s only matrix `runs-on`
+is ubuntu/windows-latest). If a matrix ever includes a self-hosted value, this needs a
+matrix-aware follow-up.
 
 ### Disposition
 

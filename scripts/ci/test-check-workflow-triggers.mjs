@@ -175,6 +175,105 @@ function writeBaseWorkflows(repoRoot) {
   assert.deepEqual(errors, []);
 }
 
+// EVASION A1 (fail-closed allowlist): custom-label-only targeting — `runs-on:
+// justsearch-perf` with no literal `self-hosted` token still routes to the
+// self-hosted runner and must be caught.
+{
+  const repoRoot = repoFixture();
+  writeBaseWorkflows(repoRoot);
+  write(
+    path.join(repoRoot, '.github/workflows/docs-lint.yml'),
+    [
+      'name: Docs lint',
+      'on:',
+      '  workflow_dispatch: {}',
+      '  pull_request:',
+      'jobs:',
+      '  docs_lint:',
+      '    runs-on: justsearch-perf',
+      '',
+    ].join('\n')
+  );
+  const p = policy();
+  p.workflows.find((w) => w.name === 'Docs lint').expectedTriggers = ['workflow_dispatch', 'pull_request'];
+  const errors = validateWorkflows({ repoRoot, policy: p });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /self-hosted runner job must not use externally-triggerable event 'pull_request'/);
+}
+
+// EVASION A2: block-mapping `labels:` form.
+{
+  const repoRoot = repoFixture();
+  writeBaseWorkflows(repoRoot);
+  write(
+    path.join(repoRoot, '.github/workflows/docs-lint.yml'),
+    [
+      'name: Docs lint',
+      'on:',
+      '  workflow_dispatch: {}',
+      '  issue_comment:',
+      'jobs:',
+      '  docs_lint:',
+      '    runs-on:',
+      '      group: gpu-group',
+      '      labels: [self-hosted, X64]',
+      '',
+    ].join('\n')
+  );
+  const p = policy();
+  p.workflows.find((w) => w.name === 'Docs lint').expectedTriggers = ['workflow_dispatch', 'issue_comment'];
+  const errors = validateWorkflows({ repoRoot, policy: p });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /self-hosted runner job must not use externally-triggerable event 'issue_comment'/);
+}
+
+// Hosted arm/versioned variants must NOT be flagged (allowlist prefix + hyphen).
+{
+  const repoRoot = repoFixture();
+  writeBaseWorkflows(repoRoot);
+  write(
+    path.join(repoRoot, '.github/workflows/docs-lint.yml'),
+    [
+      'name: Docs lint',
+      'on:',
+      '  workflow_dispatch: {}',
+      '  pull_request:',
+      'jobs:',
+      '  docs_lint:',
+      '    runs-on: ubuntu-24.04-arm',
+      '',
+    ].join('\n')
+  );
+  const p = policy();
+  p.workflows.find((w) => w.name === 'Docs lint').expectedTriggers = ['workflow_dispatch', 'pull_request'];
+  const errors = validateWorkflows({ repoRoot, policy: p });
+  assert.deepEqual(errors, [], 'hosted arm/versioned runner must not trip the self-hosted invariant');
+}
+
+// Documented limit: a `${{ matrix.os }}` expression is not statically resolvable
+// and must NOT be flagged (the one place the detector does not fail closed).
+{
+  const repoRoot = repoFixture();
+  writeBaseWorkflows(repoRoot);
+  write(
+    path.join(repoRoot, '.github/workflows/docs-lint.yml'),
+    [
+      'name: Docs lint',
+      'on:',
+      '  workflow_dispatch: {}',
+      '  pull_request:',
+      'jobs:',
+      '  docs_lint:',
+      '    runs-on: ${{ matrix.os }}',
+      '',
+    ].join('\n')
+  );
+  const p = policy();
+  p.workflows.find((w) => w.name === 'Docs lint').expectedTriggers = ['workflow_dispatch', 'pull_request'];
+  const errors = validateWorkflows({ repoRoot, policy: p });
+  assert.deepEqual(errors, [], 'unresolvable expression runs-on is the documented limit, not flagged');
+}
+
 // A bare "self-hosted" mention in a comment must NOT trip the detector
 // (ci-walltime-trend.yml's ADR-0026 note is a real example of this).
 {

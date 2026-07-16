@@ -96,30 +96,76 @@ function parseInlineEvents(rest) {
   return events;
 }
 
-// True if any job's `runs-on:` resolves to a self-hosted runner. Reads the
-// runs-on VALUE (scalar, inline list, or block list) so a bare string mention
-// of "self-hosted" in a comment (as in ci-walltime-trend.yml's ADR-0026 note)
-// does not count — comments are already stripped by stripInlineComment.
-const SELF_HOSTED_TOKEN = /(^|[,[\s'"])self-hosted([,\]\s'"]|$)/;
+// A GitHub-HOSTED runner label. GitHub-hosted labels are name-prefixed
+// `ubuntu-*` / `windows-*` / `macos-*` (incl. versioned + `-arm` variants);
+// GitHub-hosted runners cannot carry arbitrary custom labels, so any label
+// that isn't one of these can only belong to a self-hosted runner.
+const HOSTED_LABEL = /^(ubuntu|windows|macos)-[\w.-]+$/i;
+// A GitHub-Actions expression — cannot be resolved statically (e.g. a
+// `runs-on: ${{ matrix.os }}` matrix). This is the ONE documented limit where
+// the detector does NOT fail closed, because it genuinely can't know the value.
+const EXPRESSION = /\$\{\{/;
 
+function labelIsHosted(rawLabel) {
+  const label = stripOuterQuotes(rawLabel).trim();
+  if (!label) return true; // empty token → ignore
+  if (EXPRESSION.test(label)) return true; // documented matrix limit
+  return HOSTED_LABEL.test(label);
+}
+
+function anyLabelSelfHosted(csv) {
+  return csv.split(',').some((label) => !labelIsHosted(label));
+}
+
+// True if any job's `runs-on:` resolves to a self-hosted runner. FAIL-CLOSED:
+// a value is treated as self-hosted unless every label is a known hosted label
+// (or an unresolvable expression). This catches custom-label-only targeting
+// (`runs-on: justsearch-perf`) and the runner-group / block-`labels:` mapping
+// forms, not just the literal `self-hosted` token. Comments are already
+// stripped by stripInlineComment, so a bare mention in a comment does not count.
 export function usesSelfHostedRunner(lines) {
   let inRunsOnBlock = false;
   let runsOnIndent = -1;
+  let blockSelfHosted = false;
+
+  const finishBlock = () => {
+    const result = inRunsOnBlock && blockSelfHosted;
+    inRunsOnBlock = false;
+    runsOnIndent = -1;
+    blockSelfHosted = false;
+    return result;
+  };
+
   for (let i = 0; i < lines.length; i += 1) {
     const noComment = stripInlineComment(lines[i]).trimEnd();
     if (!noComment.trim()) continue;
     const indent = leadingSpaces(noComment);
     const trimmed = noComment.trim();
 
+    if (inRunsOnBlock && indent <= runsOnIndent) {
+      if (finishBlock()) return true;
+    }
+
     if (inRunsOnBlock) {
-      if (indent <= runsOnIndent) {
-        inRunsOnBlock = false;
-        runsOnIndent = -1;
-      } else {
-        const item = /^-\s*(.*)$/.exec(trimmed);
-        if (item && SELF_HOSTED_TOKEN.test(item[1])) return true;
+      // Inside a block-form runs-on: `- <label>` items, a `group:` key (runner
+      // groups are self-hosted infrastructure), or a `labels:` list.
+      const item = /^-\s*(.*)$/.exec(trimmed);
+      if (item) {
+        if (!labelIsHosted(item[1])) blockSelfHosted = true;
         continue;
       }
+      if (/^group\s*:/.test(trimmed)) {
+        blockSelfHosted = true;
+        continue;
+      }
+      const labels = /^labels\s*:\s*(.*)$/.exec(trimmed);
+      if (labels) {
+        const value = labels[1].trim();
+        const inner = value.startsWith('[') && value.endsWith(']') ? value.slice(1, -1) : value;
+        if (inner && anyLabelSelfHosted(inner)) blockSelfHosted = true;
+        continue;
+      }
+      continue;
     }
 
     const m = /^runs-on\s*:\s*(.*)$/.exec(trimmed);
@@ -128,12 +174,28 @@ export function usesSelfHostedRunner(lines) {
       if (value === '') {
         inRunsOnBlock = true;
         runsOnIndent = indent;
+        blockSelfHosted = false;
         continue;
       }
-      if (SELF_HOSTED_TOKEN.test(value)) return true;
+      if (value.startsWith('[') && value.endsWith(']')) {
+        if (anyLabelSelfHosted(value.slice(1, -1))) return true;
+      } else if (value.startsWith('{')) {
+        // Inline mapping form: a group is self-hosted; else inspect labels: [..];
+        // an opaque mapping fails closed.
+        if (/group\s*:/.test(value)) return true;
+        const lm = /labels\s*:\s*\[([^\]]*)\]/.exec(value);
+        if (lm) {
+          if (anyLabelSelfHosted(lm[1])) return true;
+        } else {
+          return true;
+        }
+      } else if (!labelIsHosted(value)) {
+        return true;
+      }
     }
   }
-  return false;
+
+  return finishBlock();
 }
 
 export function scanWorkflow(file, repoRoot) {
