@@ -200,6 +200,207 @@ with a "workflow was already near its frontier" verdict and its residual value i
 baseline instrumentation. That is an acceptable outcome; an unfalsifiable improvement program
 is not.
 
+## Takeover investigation (2026-07-16, session f7580e17, worktree 743-workflow-program)
+
+### Local findings (file:line-verifiable)
+
+1. **This repo has had three generations of workflow-measurement machinery, and the first two
+   are dead.** Gen-1 (tempdocs 264/274/276/277/285, Feb-Mar 2026): PHI scoring + costs +
+   outcomes + correlations (`scripts/agent-analytics/{score,cost,outcome}-session.mjs`,
+   `correlate-signals.mjs`, `analyze-trends.mjs`, `generate-dashboard.mjs`). Gen-2 (622, Jun
+   2026): native-OTel migration. Gen-3 (695/727, Jul 2026): friction mining — alive.
+   622's own structural verdict: *"the raw stream is alive; every layer built on top is
+   dead"* — events flowed for ~2 months but were aggregated **exactly once, during the
+   investigation that created the scripts**. Verified still true today: `costs.ndjson` = 1
+   row (Jul 5), `outcomes.ndjson` absent, `tmp/agent-telemetry/otlp/` **empty** in main and
+   every worktree even though the sink is listening on 4318 and `otlp-sink-ensure` runs per
+   session (the sink's `--out` default is CWD-relative → worktree-started sinks write to
+   ephemeral worktree `tmp/`; a green-masked accumulation gap).
+2. **The one telemetry layer that survived is the one wired into a workflow moment.**
+   `session-merges.ndjson` has 216 rows across 50 sessions, current to today — because
+   `record-merge.mjs` runs inside worktree teardown. `friction-results/` has 114 mined
+   sessions — because 727 gave it an owner. **Design law for Phase 1: telemetry here
+   survives iff aggregation is wired into an existing workflow moment; standalone "run it
+   manually" layers die.**
+3. **Phase 1 is assembly + backfill, not construction.** The cost parser, the outcome join,
+   the trend/cutoff comparator, the context-attribution taxonomy, and the developer-session
+   scope filter (`friction-excluded-sessions.json`) all exist. Confirmed gaps: (a)
+   `cost-session.mjs` resolves transcripts via the events store and finds **0 worktree-homed
+   sessions** (tested on 50ad1b65) — needs transcript-first discovery over
+   `~/.claude/projects/*`; (b) no per-merge cost join yet (session-level only); (c) no
+   durable OTel reservoir. Data note: session-merges starts 2026-06-30, so the baseline
+   window's effective left edge is ~2.5 weeks, not 4 (annotate, don't pretend).
+4. **Prior local science already validated D-1's shape.** 277/285 found behavioral process
+   signals don't predict outcomes (r=0.064, N=116) and named task-heterogeneity Simpson's
+   paradox — D-1's outcome-side, window-level design is consistent with those lessons.
+
+### Outside evidence (two bounded refute-first research passes; tiered)
+
+5. **"Scaffolding becomes obsolete as models improve" — WEAKENED.** Anthropic's own 2026
+   harness-engineering material shows frontier models still need deliberate scaffolding;
+   arXiv 2507.14447 measured a structured-planning scaffold lifting GPT-4o enterprise
+   tool-calling 41%→96%. BUT arXiv 2605.05716 (cross-component scaffold interference) found
+   the optimal scaffold *subset is capability-dependent* ("at 70B, combinations that hurt at
+   8B provide gains; All-In still trails the best subset") and explicitly recommends periodic
+   task-specific re-evaluation. Net: the program's re-evaluation premise survives, but with
+   **inverted expectation — re-evaluation will more often re-validate or re-tune scaffolds
+   than remove them.** Also: NO published ablation exists on staged plan/review scaffolds for
+   frontier coding agents — the field argues it theoretically; self-measurement would be
+   novel, not redundant.
+6. **"Measurement is actionable at small N" — WEAKENED-TO-REFUTED for fine effects.**
+   Kohavi et al.'s experimentation corpus puts detection of small effects orders of magnitude
+   beyond 20-60 merges/month; METR's Feb-2026 methodology reversal found task-level A/B
+   collapses under selection bias even with paid cohorts — directly warning that phase-5
+   pilots must be **time-windowed (all work in the window uses the variant), never
+   task-selected**, or the founder/agents will route friendlier tasks to the new variant.
+   Consequence adopted: **the D-1 total is a trend dashboard and gross-effect detector
+   (≈2x-class changes), not a hypothesis-testing instrument for fine effects**; fine-grained
+   verdicts remain judgment + mechanism reasoning, with the dashboard as a sanity floor.
+   Goodhart case studies (Facebook sentiment-metric collapse) reinforce D-1's
+   "aspects-as-diagnostics-only" rule.
+7. **"Structured program beats direct fixes" — SURVIVES**, with a sharpened risk: the CMM
+   literature's real finding is ~70% *abandonment before benefit* — matching the local Gen-1/
+   Gen-2 death pattern exactly. Follow-through (finding 2's design law), not structure, is
+   the binding risk. (Also flagged: the oft-cited "70% of process programs fail" Hammer &
+   Champy statistic is a debunked myth — do not cite it in this program.)
+8. **Adopt-vs-build:** OSS transcript-analytics tools exist (ccusage, token-dashboard,
+   claude-session-analyzer, context-analyzer) but none does the per-merge cost join,
+   orchestrator/worker split as a headline metric, or a unified overhead taxonomy — and this
+   repo uniquely already has the merge join. Native Claude Code OTel emits cost/token/
+   commit/PR metrics segmentable by `agent.name` (the authoritative source per 622 §6.3),
+   pending the reservoir fix.
+
+### Takeover verdict
+
+**Do it, now — restructured.** The program's unique value (objective function, evidence-based
+scaffold re-evaluation, per-merge economics) survives adversarial research; its two charter
+errors are corrected above: (a) Phase 1 is *assembly/backfill/reservoir-fix* on the Gen-1+OTel
+substrate, not new construction — roughly one session of work; (b) the measurement bar is
+lowered honestly to gross effects + trends (finding 6), and the program-level falsifier is
+reinterpreted accordingly.
+
+- **Cheapest decisive evidence (does not yet exist, one session to produce):** run the
+  transcript-first cost backfill over the window and join it to `session-merges.ndjson`. If
+  even gross per-merge economics are unreadable noise, phases 2-6 collapse to 727-style
+  targeted fixing and D-1/D-2 remain as decision principles only — that outcome is explicitly
+  acceptable (charter falsifier).
+- **Go/no-go gate added:** after the Phase-1 baseline report, founder reviews readability
+  before phases 2-6 spend anything.
+- **Displaces/duplicates:** consumes (revives) the Gen-1 analytics and the 622 OTel verdict;
+  must not rebuild them. Does not displace 727 (stays running). The named failure mode to
+  avoid is becoming Gen-4 of the measurement graveyard — hence finding 2's design law is a
+  Phase-1 acceptance criterion: every artifact must name the workflow moment that re-runs it.
+
+## Phase 1 — baseline (2026-07-16, session f7580e17)
+
+### Instrument shipped
+
+- `scripts/agent-analytics/lib/transcript-cost.mjs` — pricing table (current: fable-5/opus-4.x/
+  sonnet-5/haiku-4.5, cache tiers) + transcript token parsing, extracted from `cost-session.mjs`
+  (which now imports it; behavior-identical, CLI verified).
+- `scripts/agent-analytics/baseline-economics.mjs` — transcript-first session discovery over
+  `~/.claude/projects/*justsearch*` (fixes the worktree blind spot: the events-store path found
+  0 worktree-homed sessions), per-session cost incl. `subagents/agent-*.jsonl`, orchestrator/
+  worker split, merge join against `session-merges.ndjson`, conventional-commit classing,
+  weekly rollup, JSON+MD report with the three caveats baked into the header. Unknown models
+  are bucketed loudly, never silently priced (only `<synthetic>` 0-token turns appeared).
+- **Workflow-moment wiring (the survival requirement):** `record-merge.mjs` now best-effort
+  upserts the session's cost record into `costs.ndjson` at worktree teardown — the same moment
+  that kept `session-merges.ndjson` alive. Unit-tested; live firing pending the next real
+  teardown (this worktree's own teardown is the first test).
+- OTel reservoir — **two stacked root causes, both fixed and live-verified**:
+  1. `otlp-sink-ensure.mjs` passed no `--out` → CWD-relative → worktree-ephemeral. Fixed
+     (absolute path anchored via `resolveMainRepoRoot`); regression test asserts the resolved
+     path can never contain `.claude/worktrees`.
+  2. `otlp-sink.py` read bodies via `Content-Length` only; Claude Code's bundled OTel JS
+     exporter switched to `Transfer-Encoding: chunked` between client 2.1.190 → 2.1.211, so
+     the sink parsed `b""` per request — 0 records, 0 errors, **100% telemetry loss since
+     2026-06-25** with no symptom (`ParseFromString(b"")` succeeds). Fixed (dechunking +
+     `Content-Length` fallback); a 0-record POST now self-announces to `errors.log`
+     (rate-limited per route) so this failure class can't be invisible again. 8 Python tests
+     incl. a raw-socket chunked-protobuf regression proof.
+     Live-verified: with 5 sessions emitting, `tmp/agent-telemetry/otlp/` grew continuously
+     (331 log / 140 trace / 21 metric lines in ~2 min, real `2.1.211` payloads).
+  - **Recovered history:** `F:\JustSearch\tmp\agent-telemetry\otlp\` holds ~81MB of intact
+    capture (2026-06-20→25, client 2.1.187–190) — the pre-breakage era; left in place.
+- Tests: 67 node assertions + 6 hook checks + 8 Python sink tests, all green.
+
+### Independent refute-first review (reviewer ≠ implementers) — findings & disposition
+
+The adversarial review of the Phase-1 diff found **1 CONFIRMED-BUG + 3 RISKs**, all fixed and
+regression-tested before this baseline was finalized:
+
+1. **CONFIRMED-BUG (ship-blocker): 2.34× token/cost over-count.** Multi-block assistant turns
+   persist as N JSONL lines sharing one `message.id`, each repeating the identical `usage`
+   snapshot; the parser summed every line (a latent `cost-session.mjs` bug propagated into
+   the new lib). Fixed by `message.id` dedup. **Every pre-review number was ~2.3-2.4× too
+   high**; the first published table below is post-fix. This is a live demonstration of the
+   scaffold under re-evaluation paying for itself: the inflated numbers had already survived
+   the implementer's tests AND the orchestrator's magnitude spot-check.
+2. RISK: merges with no discoverable transcript silently dropped → now reported three-way
+   (attributed / excluded-by-scope / unattributable, with ids) + caveat.
+3. RISK: `costs.ndjson` upsert was a non-atomic full-file rewrite → now `atomicWriteFileSync`
+   (documented residual: concurrent-upsert last-writer-wins, self-healing).
+4. RISK: model-less turns escaped the unknown-model surface → now bucketed under
+   `(missing-model)`, never priced.
+
+### Baseline numbers (window 2026-06-18 → 2026-07-16; API-equivalent USD)
+
+Costs are **API-equivalent dollars** (pricing-weighted tokens — the D-1 resource), not
+subscription spend. Scope: 226 developer sessions (31 excluded by the 727 scope filter).
+
+| Metric | Value (post-review-fix; pre-fix values were ~2.34× higher) |
+|---|---|
+| Total cost (attributed sessions) | **$21,410** |
+| Merge rows in window | **216** = 204 attributed + 5 excluded-by-scope + 7 unattributable (no transcript) |
+| Cost/merge (attributed) | $104.95 — still left-edge-inflated (W25/W26 cost with no merge store) |
+| Cost/merge, complete weeks (W27+W28) | **$63.07** ($11,290 / 179 merges) |
+| Orchestrator / worker token split | **85.1% / 14.9%** (25.92B / 4.53B tokens) |
+| Zero-merge sessions | 182 of 226 (left-edge artifact + genuine research/consult/aborted sessions) |
+| Weekly cost/merge | W27 $88 · W28 $43 · W29(partial) $117 |
+
+Interrogation notes: reviewer-predicted corrected magnitudes ($≈22K total, ≈$108/merge,
+worker share >13.8%) all reproduced by the orchestrator's own rerun; weekly cost/merge
+varies ~2-2.7×, confirming finding 6's noise prediction. A cautionary note now attached to
+this table's history: the pre-fix numbers had survived both the implementer's tests and an
+orchestrator magnitude spot-check — plausibility is not correctness (see review record
+above).
+
+### Cross-validation against ccusage + adopt-vs-build (2026-07-16, founder question)
+
+`npx ccusage@latest daily --json --offline`, same window, claude-model rows only: **$20,543**
+vs our $21,410 — **4.2% apart from a fully independent implementation** (ccusage machine-wide
+scope also includes codex/GPT rows, $999 — filtered out by model family before comparing).
+It would have flagged the pre-fix 2.34× numbers instantly. Two consequences adopted:
+
+- **ccusage becomes the standing independent cross-check** of this instrument (one offline
+  command; run it whenever baseline numbers feed a decision). Known-delta note: ccusage
+  dedups message ids ACROSS transcript files; ours dedups within-file only — the ~4% residual
+  is plausibly resumed/continued sessions re-carrying history lines under a new session id.
+  Root-causing that delta is an open Phase-1 data-quality item (direction: ours slightly high).
+- **Adopt-vs-build proposal → MOVED to tempdoc 745** (founder opened the broader OSS-first
+  observability survey, 2026-07-16; single-home rule). 745 now owns the ccusage-as-engine
+  swap, its falsifier, and the 4.2%-delta root-cause item. The interim cross-check practice
+  above stays in force. Lesson stays recorded here: the research pass surfaced ccusage BEFORE
+  implementation; we built the parsing layer anyway because the join was novel — the join
+  judgment was right, the parsing-layer judgment cost us the dedup bug
+  (explore-before-implementing, partially missed).
+
+### Readability verdict (go/no-go input for the founder)
+
+- **Fine effects: unreadable**, as predicted — week-to-week cost/merge noise is 2-2.7×, so a
+  10-30% workflow improvement will never be visible here. Confirmed: the dashboard is a
+  trend/gross-effect instrument only.
+- **Gross effects and structural shifts: readable.** Two falsifiable predictions are already
+  live: (1) the 2026-07-15 delegation-policy change should visibly LOWER the orchestrator
+  token share below its 85.1% baseline in the next window — if it doesn't, the policy
+  isn't biting;
+  (2) `costs.ndjson` should now accumulate a row per teardown — if it's still sparse in two
+  weeks, the workflow-moment wiring failed and the Gen-4-graveyard risk is realized.
+- **Recommendation: GO for phases 2-6** under the gross-effect bar. The 85/15 orchestrator
+  split is the first actionable baseline datum — it quantifies exactly the delegation-economics
+  concern the founder raised on 2026-07-15 and gives phase-3 proposals a concrete target.
+
 ## Non-goals
 
 - Re-running 727's tactical fix loop (that instrument keeps running independently).

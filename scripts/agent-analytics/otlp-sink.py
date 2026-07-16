@@ -142,14 +142,40 @@ def rotate_if_big(filepath):
 
 
 def make_handler(out_dir):
+    # Rate-limit for the zero-record announce (below): first occurrence per
+    # route per sink lifetime only, so a client that legitimately exports an
+    # empty batch on every call can't grow errors.log unboundedly.
+    zero_record_announced = set()
+
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
 
+        def _read_body(self):
+            # OTel-OTLP-Exporter-JavaScript sends chunked bodies with no
+            # Content-Length (tempdoc 743): reading Content-Length alone
+            # silently yields an empty body -> 0 records -> no exception ->
+            # a completely invisible capture failure. Handle both framings.
+            if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+                return self._read_chunked_body()
+            n = int(self.headers.get("Content-Length", 0))
+            return self.rfile.read(n) if n else b""
+
+        def _read_chunked_body(self):
+            chunks = []
+            while True:
+                size_line = self.rfile.readline().strip()
+                size = int(size_line.split(b";", 1)[0], 16)
+                if size == 0:
+                    self.rfile.readline()  # trailing CRLF after the 0-size chunk
+                    break
+                chunks.append(self.rfile.read(size))
+                self.rfile.readline()  # CRLF after each chunk's data
+            return b"".join(chunks)
+
         def do_POST(self):
             route = ROUTES.get(self.path)
-            n = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(n) if n else b""
+            body = self._read_body()
             count = 0
             if route is not None:
                 msg_cls, decode, fname = route
@@ -164,6 +190,13 @@ def make_handler(out_dir):
                         with open(outpath, "a", encoding="utf-8") as f:
                             for r in records:
                                 f.write(json.dumps(r) + "\n")
+                    elif self.path not in zero_record_announced:
+                        zero_record_announced.add(self.path)
+                        with open(os.path.join(out_dir, "errors.log"), "a", encoding="utf-8") as f:
+                            f.write(
+                                f"{self.path}: 0 records decoded from a {len(body)}B body "
+                                "(further zero-record hits on this route are not logged)\n"
+                            )
                 except Exception as e:  # never crash the receiver
                     with open(os.path.join(out_dir, "errors.log"), "a", encoding="utf-8") as f:
                         f.write(f"{self.path}: {e}\n")
