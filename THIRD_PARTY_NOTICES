@@ -218,41 +218,26 @@ Licenses of third-party components redistributed with JustSearch.
 
 == Frontend (npm) dependencies ==
   @babel/code-frame 7.29.7 — MIT
-  @babel/compat-data 7.29.7 — MIT
-  @babel/core 7.29.7 — MIT
   @babel/generator 7.29.7 — MIT
-  @babel/helper-compilation-targets 7.29.7 — MIT
   @babel/helper-globals 7.29.7 — MIT
-  @babel/helper-module-imports 7.29.7 — MIT
-  @babel/helper-module-transforms 7.29.7 — MIT
   @babel/helper-string-parser 7.29.7 — MIT
   @babel/helper-validator-identifier 7.29.7 — MIT
-  @babel/helper-validator-option 7.29.7 — MIT
-  @babel/helpers 7.29.7 — MIT
   @babel/parser 7.28.6 — MIT
   @babel/parser 7.29.7 — MIT
   @babel/template 7.29.7 — MIT
   @babel/traverse 7.28.6 — MIT
-  @babel/traverse 7.29.7 — MIT
   @babel/types 7.28.6 — MIT
   @babel/types 7.29.7 — MIT
   @endo/cache-map 1.1.0 — Apache-2.0
   @endo/env-options 1.1.11 — Apache-2.0
   @endo/immutable-arraybuffer 1.1.2 — Apache-2.0
   @endo/module-source 1.4.1 — Apache-2.0
-  @jest/schemas 29.6.3 — MIT
-  @jest/types 29.6.3 — MIT
   @jridgewell/gen-mapping 0.3.13 — MIT
-  @jridgewell/remapping 2.3.5 — MIT
   @jridgewell/resolve-uri 3.1.2 — MIT
   @jridgewell/sourcemap-codec 1.5.5 — MIT
   @jridgewell/trace-mapping 0.3.31 — MIT
   @jsonforms/core 3.8.0 — MIT
   @juggle/resize-observer 3.4.0 — Apache-2.0
-  @lingui/babel-plugin-lingui-macro 6.4.0 — MIT
-  @lingui/conf 6.4.0 — MIT
-  @lingui/core 6.4.0 — MIT
-  @lingui/message-utils 6.4.0 — MIT
   @lit-labs/signals 0.3.0 — BSD-3-Clause
   @lit-labs/ssr-dom-shim 1.5.1 — BSD-3-Clause
   @lit-labs/virtualizer 2.1.1 — BSD-3-Clause
@@ -270,9 +255,6 @@ Licenses of third-party components redistributed with JustSearch.
   @lumino/signaling 2.1.5 — BSD-3-Clause
   @lumino/virtualdom 2.0.4 — BSD-3-Clause
   @lumino/widgets 2.8.0 — BSD-3-Clause
-  @messageformat/date-skeleton 1.1.0 — MIT
-  @messageformat/parser 5.1.1 — MIT
-  @sinclair/typebox 0.27.10 — MIT
   @tanstack/table-core 8.21.3 — MIT
   @tauri-apps/api 2.11.1 — Apache-2.0 OR MIT
   @tauri-apps/plugin-autostart 2.5.1 — MIT OR Apache-2.0
@@ -280,69 +262,31 @@ Licenses of third-party components redistributed with JustSearch.
   @tauri-apps/plugin-dialog 2.7.1 — MIT OR Apache-2.0
   @tauri-apps/plugin-notification 2.3.3 — MIT OR Apache-2.0
   @types/dompurify 3.2.0 — MIT
-  @types/istanbul-lib-coverage 2.0.6 — MIT
-  @types/istanbul-lib-report 3.0.3 — MIT
-  @types/istanbul-reports 3.0.4 — MIT
   @types/json-schema 7.0.15 — MIT
-  @types/node 25.3.2 — MIT
   @types/trusted-types 2.0.7 — MIT
-  @types/yargs 17.0.35 — MIT
-  @types/yargs-parser 21.0.3 — MIT
   ajv 8.20.0 — MIT
   ajv-formats 2.1.1 — MIT
-  ansi-styles 4.3.0 — MIT
-  ansi-styles 5.2.0 — MIT
-  baseline-browser-mapping 2.10.40 — Apache-2.0
-  browserslist 4.28.4 — MIT
-  camelcase 6.3.0 — MIT
-  caniuse-lite 1.0.30001799 — CC-BY-4.0
-  chalk 4.1.2 — MIT
   clsx 2.1.1 — MIT
-  color-convert 2.0.1 — MIT
-  color-name 1.1.4 — MIT
-  convert-source-map 2.0.0 — MIT
   debug 4.4.3 — MIT
   dompurify 3.4.11 — (MPL-2.0 OR Apache-2.0)
-  electron-to-chromium 1.5.378 — ISC
-  escalade 3.2.0 — MIT
   fast-deep-equal 3.1.3 — MIT
   fast-uri 3.1.2 — BSD-3-Clause
-  gensync 1.0.0-beta.2 — MIT
-  has-flag 4.0.0 — MIT
-  jest-get-type 29.6.3 — MIT
-  jest-validate 29.7.0 — MIT
-  jiti 2.7.0 — MIT
-  js-sha256 0.10.1 — MIT
   js-tokens 4.0.0 — MIT
   jsesc 3.1.0 — MIT
   json-schema-traverse 1.0.0 — MIT
-  json5 2.2.3 — MIT
-  leven 3.1.0 — MIT
-  lilconfig 3.1.3 — MIT
   lit 3.3.3 — BSD-3-Clause
   lit-element 4.2.2 — BSD-3-Clause
   lit-html 3.3.2 — BSD-3-Clause
   lodash 4.18.1 — MIT
-  lru-cache 5.1.1 — ISC
   marked 18.0.5 — MIT
-  moo 0.5.3 — BSD-3-Clause
   ms 2.1.3 — MIT
-  node-releases 2.0.50 — MIT
-  normalize-path 3.0.0 — MIT
   picocolors 1.1.1 — ISC
-  pretty-format 29.7.0 — MIT
-  react-is 18.3.1 — MIT
   require-from-string 2.0.2 — MIT
-  semver 6.3.1 — ISC
   ses 2.2.0 — Apache-2.0
   signal-polyfill 0.2.2 — Apache-2.0
-  supports-color 7.2.0 — MIT
   tslib 2.8.1 — 0BSD
   ui-web 0.0.0 — Apache-2.0
-  undici-types 7.18.2 — MIT
-  update-browserslist-db 1.2.3 — MIT
   virtua 0.49.1 — MIT
-  yallist 3.1.1 — ISC
   zod 4.4.3 — MIT
 
 == Rust / Cargo (desktop shell) dependencies ==
