@@ -852,8 +852,17 @@ recommended dispositions)
 - **P-D — APPROVED, scoped first step** (credential inventory, least-privilege, deny-rule
   Write-gap audit; sandbox half trials on the next overnight campaign) → gets its own
   tempdoc when implementation starts.
-- **P-H — APPROVED for a scoped trial** (agent-task-queue for GPU/dev-stack locks; founder
-  stays router).
+- **P-H — APPROVED for a scoped trial**, then **CLOSED NO-GO after trial-prep diligence
+  (2026-07-16, same session):** Block's agent-task-queue crashes at import on Windows
+  (open unfixed bug block/agent-task-queue#33; last upstream commit 2026-04-27) and its
+  zombie-lock recovery — the entire adoption rationale — is POSIX-only (`ps`, `os.killpg`),
+  so a native trial could only false-positive on the happy path. Supply chain itself was
+  clean (Block org, Apache-2.0, no phone-home). Bonus mapping finding: the dev stack's
+  existing `justsearch_dev_*` ownership model is purpose-built session-scoped locking and
+  strictly better for that surface; gradle-across-worktrees was the only good fit.
+  **Revisit triggers:** a Windows-compatible upstream release, or founder appetite for a
+  WSL2-hosted trial (needs its own cross-boundary diligence). Full prep report (pinned
+  config, exit criteria) preserved in the session record; nothing was installed.
 - **P-F — APPROVED narrow**: exactly one pre-registered lite class (mechanical
   teardown/rename/config-delete tempdocs → derisk→plan), refute-first review mandatory on
   both paths; any escaped defect on a lite tempdoc narrows/kills the class.
