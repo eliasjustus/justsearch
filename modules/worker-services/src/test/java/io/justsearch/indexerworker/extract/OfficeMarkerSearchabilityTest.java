@@ -8,7 +8,7 @@ import io.justsearch.indexerworker.extract.ContentExtractor.ExtractionResult;
 import io.justsearch.indexerworker.fixtures.TestDocumentBuilder;
 import io.justsearch.indexerworker.services.GrpcSearchService;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.ipc.SearchMode;
 import io.justsearch.ipc.SearchRequest;
 import io.justsearch.ipc.SearchResponse;

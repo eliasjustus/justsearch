@@ -8,8 +8,6 @@ import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 import io.justsearch.configuration.JustSearchConfigurationLoader;
-import io.justsearch.core.analyzers.AnalyzerDescriptor;
-import io.justsearch.core.analyzers.AnalyzerRegistry;
 import java.io.File;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -33,8 +31,8 @@ import org.apache.lucene.analysis.icu.ICUNormalizer2Filter;
 import org.apache.lucene.analysis.icu.segmentation.ICUTokenizer;
 import org.apache.lucene.analysis.miscellaneous.PerFieldAnalyzerWrapper;
 
-/** Loads analyzers from SSOT catalogs and exposes them via {@link AnalyzerRegistry}. */
-public final class SsotAnalyzerRegistry implements AnalyzerRegistry {
+/** Loads analyzers from SSOT catalogs. */
+public final class SsotAnalyzerRegistry {
   private static final ObjectMapper M =
       JsonMapper.builder().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).build();
   private static final org.slf4j.Logger log =
@@ -120,7 +118,6 @@ public final class SsotAnalyzerRegistry implements AnalyzerRegistry {
     return new PerFieldAnalyzerWrapper(defaultAnalyzer, perField);
   }
 
-  @Override
   public AnalyzerDescriptor descriptor(String id) {
     String resolved = resolveId(id);
     AnalyzerDescriptor descriptor = descriptorsById.get(resolved);
@@ -235,7 +232,7 @@ public final class SsotAnalyzerRegistry implements AnalyzerRegistry {
     private static final ObjectMapper FP_MAPPER =
         JsonMapper.builder().enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS).build();
 
-    public String fingerprint(AnalyzerRegistry registry, Set<String> analyzerIds) {
+    public String fingerprint(SsotAnalyzerRegistry registry, Set<String> analyzerIds) {
       try {
         List<String> sorted = new ArrayList<>(analyzerIds);
         Collections.sort(sorted);

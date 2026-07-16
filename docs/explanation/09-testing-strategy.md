@@ -88,36 +88,34 @@ Additional high-signal system/contract tests (current):
 * `HttpPagingCursorE2ETest` (end-to-end cursor round-trip semantics over HTTP)
 * `VduBatchProcessorE2ETest` (Tier-2 VDU OCR lane; requires llama-server for scanned-PDF OCR/searchability assertions)
 
-## UI Contract Tests (Playwright E2E)
+## UI Contract Tests
 
-The frontend (`modules/ui-web`) includes Playwright tests that validate the **HTTP contract** and key UX behaviors:
+The frontend (`modules/ui-web`) verification surface is now three tiers, none of which is the
+retired TS e2e tier described below:
 
-* `e2e/search-filters-ui.spec.ts`: filters + projection + facets contract
-* `e2e/search-pagination-ui.spec.ts`: cursor pagination (`nextCursor`/`cursor`) + sort parameter behavior
-* `e2e/preview-highlighting.spec.ts`: preview term highlighting + Markdown/Raw toggle
-* `e2e/auto-discovery.spec.ts`: backend auto-discovery (port scan + `/api/status` payload validation)
-* `e2e/ai-meta-contract.spec.ts`: AI streaming meta contract fields are present and stable
-* `e2e/chunk-vector-status.spec.ts`: chunk vector readiness card contract (`chunkVectorsReady` + coverage)
-* `e2e/vdu-provenance.spec.ts`: preview surfaces `vduStatus` + `textProvenance` and UI renders them
-* `e2e/search-cursor.spec.ts`: cursor vs selection model (Arrow keys browse without opening Inspector; `Enter` commits selection)
-* `e2e/inspector-answer-first.spec.ts`: Inspector renders AI answer above-the-fold after summarize completes (Preview is not above Answer)
-* `e2e/launchpad-actions.spec.ts`: Launchpad setup ladder/query chips and Action Panel entrypoint in demo mode
-* `e2e/brain-flows.spec.ts`: AI install/repair lifecycle flows (stubbed)
-* `e2e/brain-compat.spec.ts`: embedding compatibility card and reindex flow
-* `e2e/citations.spec.ts`: citation click-to-verify + trust-loop nudge
-* `e2e/api-integration.spec.ts`: connection handling, demo-mode bypass, network error recovery
-* `e2e/feature-integration.spec.ts`: ranking, AI summarization, index auto-refresh (live backend only)
+* **Frontend unit tests (Vitest)** — see Tier 1 above; run via `npm run test:unit:run` from
+  `modules/ui-web`. Covers SSE framing, HTTP client behavior, and (per file) component/state logic.
+* **Java module/system-test suites** — see Tiers 1-3 above. HTTP-contract-level coverage
+  (`LocalApiCorsPolicyTest`, `HttpPagingCursorE2ETest`, `GrpcSearchServiceSearchPayloadTest`, etc.)
+  exercises the same `/api/*` contracts the retired tier drove through a browser, at a faster,
+  more deterministic layer.
+* **Visual/measurement verification (`jseval ui-shot` / `ui-check`)** — a **live, Python**
+  Playwright-driven harness (`scripts/jseval/`), distinct from the retired Node/TypeScript tier
+  below. It drives the real Lit `shell-v0` UI (not a mock/demo tree) and produces a screenshot plus
+  a structured `.measure.json` fact-sheet — accessibility tree, axe violations, geometry, console
+  errors — so correctness is judged from facts, not eyeballing a PNG. `jseval ui-shot <step>`
+  captures one surface; `jseval ui-a11y-gate` / `ui-proportion-gate` gate regressions;
+  `jseval ui-diff` / `ui-critic` / `ui-fuzz` are deeper situational passes. Load the `/ui-check`
+  skill for the full reference.
 
-### Selector guard
-
-All E2E specs use `E2E_TEST_IDS` from `e2e/selectors.ts` instead of hardcoded test-id strings. Enforced by `scripts/ci/check-playwright-hardcoded-testids.mjs --mode gate`.
-
-### Skip classification
-
-Skips fall into two accepted categories:
-
-* **Integration-only**: gated by `describeRealBackend`, require `VITE_JUSTSEARCH_API_PORT` and a live backend with indexed data.
-* **Runtime-conditional**: defensive `test.skip(...)` for mode/state-dependent UI elements; each has parallel stub-backed coverage in dedicated specs.
+> **Removed (tempdoc 742):** the TypeScript `@playwright/test` e2e tier — `modules/ui-web/e2e/`
+> (~15 specs covering search filters/pagination, preview highlighting, auto-discovery, AI meta
+> contract, citations, and more), `playwright.config.ts`, the `test` / `test:all` / `test:gate` /
+> `test:mobile` / `test:light` / `test:headed` / `test:debug` / `test:report` npm scripts, and the
+> `check-playwright-hardcoded-testids.mjs` / `check-playwright-sleeps.mjs` guard scripts — was
+> deleted as unwired: zero references in `.github/workflows/`, and nothing invoked the npm scripts
+> that ran it. Do not conflate it with the live `jseval ui-shot` harness above, which is a
+> different Playwright integration (Python, not Node) that remains the canonical visual-check tool.
 
 ## Test Evidence Lanes
 

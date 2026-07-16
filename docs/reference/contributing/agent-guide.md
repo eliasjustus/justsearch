@@ -202,14 +202,6 @@ Regenerate lockfiles after changing versions in `libs.versions.toml`, adding/rem
 ./gradlew.bat --no-configuration-cache resolveAndLockAll --write-locks
 ```
 
-**Playwright selector-literal guard:**
-
-```bash
-node scripts/ci/check-playwright-hardcoded-testids.mjs --mode gate --root modules/ui-web/e2e
-```
-
-Fails when Playwright specs use hardcoded `getByTestId('...')` string literals instead of shared selector constants.
-
 **Unreferenced Code Detection (ArchUnit):**
 
 ```bash

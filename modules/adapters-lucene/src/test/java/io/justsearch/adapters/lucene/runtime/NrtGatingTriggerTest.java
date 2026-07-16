@@ -6,7 +6,7 @@ import io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator;
 import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi;
+import io.justsearch.indexing.api.IndexDocument;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -24,7 +24,7 @@ class NrtGatingTriggerTest {
     try {
       var r = io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(FieldCatalogDef.forTesting(768), new SsotCommitMetadataSource(), new JsonSchemaCommitMetadataValidator()).ephemeral().open();
       r.indexingCoordinator().indexSingle(
-          new IndexApi.IndexDocument(
+          new IndexDocument(
               java.util.Map.of(
                   SchemaFields.DOC_ID, "nrt-trigger",
                   SchemaFields.DOC_UID, "nrt-trigger#0")));
