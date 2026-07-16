@@ -615,7 +615,11 @@ rollout; subagents cap at Opus and inherit extended-thinking (v2.1.198).
 ### T1 — overhead taxonomy (landed 2026-07-16; full detail + limitations in the T1 report,
 script + per-session JSON in the session scratchpad `overhead/` dir)
 
-Window: 220 sessions, 30.63B tokens (matches the baseline instrument within 0.03%).
+Window: 220 sessions, 30.63B tokens — matching a same-bounds re-run of the baseline
+instrument (`--since 2026-06-18 --until 2026-07-16`: 220 sessions, 30.62B) within 0.03%.
+(The Phase-1 table above shows 226 sessions / 30.45B because it ran WITHOUT `--until`,
+i.e. an open right edge on a moving day — a scoping difference between the two runs, not
+instrument drift; the pre-push scan caught the un-caveated comparison.)
 **WAITING 12.465% (3.82B tok, 1,679 turns — task-notification acks + wakeup ticks firing
 against a bloated cache; top-10 sessions lose 29-50% of their entire spend to this)** ·
 HOOK-FRICTION 0.712% (820 events) · RE-ORIENTATION 0.031% (negligible — presumption
