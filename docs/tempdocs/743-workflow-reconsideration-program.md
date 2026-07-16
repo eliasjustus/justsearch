@@ -771,6 +771,74 @@ worktree model (R5; adopt native junction handling opportunistically) · squash 
 existing enforcement guards (R3: relaxation refuted; P-D is additive) · compaction handling
 (T1: cost negligible; our hooks are the documented native pattern).
 
+## Phase 4 — adversarial review of the proposal set (2026-07-16; reviewer ≠ author)
+
+**Verdict: NOT-YET-READY as written; revised dispositions below supersede Phase 3's.**
+Headline structural finding, quoted because it matters: *"the proposals that skip founder
+review are exactly the ones that misclassify themselves into a safe-exception category —
+the self-referential failure principle 7 exists to catch, reproduced inside the very program
+that named it."* The reviewer independently verified the hook source (unconditional
+injection, payload carries only `session_id` — no agent-type field in evidence) and credited
+the probe methodology (the slice-execution.md marker genuinely distinguishes inheritance
+from injection).
+
+### Revised dispositions (v2 — these govern)
+
+- **P-A → split.** P-A1 (Monitor migration + WebSocket source): plumbing, no pilot. P-A2
+  (cheap-ack convention): BEHAVIORAL — an ack that doesn't reason about notification content
+  can acknowledge a red CI as green (the `piped-exit-masked` class) → must preserve pass/fail
+  discrimination and goes to **founder review + pilot**. WAITING-share numbers are revert
+  signals only, never adoption justification (D-1).
+- **P-B → split, and the reviewer's D-2 catch is accepted in full.** This session ships ONLY
+  the factual-correction half: agent-lessons row-27 rewrite to the verified facts + fixing
+  the hook's false "CLAUDE.md is NOT loaded" claim (brief still injected for ALL agent
+  types — nothing skipped). The conditional-skip/slimming half **escalates to the founder
+  per D-2** (it touches the sole Hard-Invariants carrier for Explore/Plan) and is contingent
+  on verifying a reliable agent-type signal in the SubagentStart payload. Re-add trigger
+  replaced with an ACTIVE check: a headless probe script (spawn each agent type, assert
+  Hard-Invariants markers) to be wired to a named workflow moment at implementation.
+  Honest reframe: P-B's value is removing a demonstrated misinformation vector, not tokens.
+- **P-C → sound with fixes (accepted):** label Uno-Orchestra as non-coding-domain evidence;
+  the ~10k break-even is T3 and must be re-derived locally in the pilot, not hardcoded.
+- **P-D → sound with one fix (accepted):** explicitly a **conscious principle-5 override**
+  on rare-event-safety grounds (structural-defects-no-repeat logic); absorb R4's concrete
+  deny-rule gap (`Read` deny blocks `Edit` but NOT `Write`, v2.1.208) as a P-D work item.
+- **P-E → UNSOUND as written; re-normalized before it may be piloted.** Splitting PRs
+  inflates the merge-count denominator of the program's own cost/merge verdict metric — a
+  Goodhart artifact the program's rules exist to prevent. v2: success/falsifier metrics move
+  to **per-tempdoc** cost/throughput (merge count excluded); named dark spot: its primary
+  risk axis (founder attention) is unmeasurable while the proxy is deferred — the founder
+  decides whether to pilot a change whose main risk the instrument cannot see.
+- **P-F → fixes accepted:** GAIA explicitly flagged as cross-domain (QA benchmark →
+  suggestive, not load-bearing); lite-eligible tempdoc classes must be pre-registered
+  narrowly and conservatively; the counterfactual falsifier replaced by class-narrowing as
+  the primary control. Named honestly: both its benefit (latency/attention) and its harm
+  (rare defect escape) sit below the program's instruments — **founder decides whether to
+  pilot the unmeasurable.**
+- **P-G → internal contradiction accepted and fixed:** matched-pairs design violated the
+  program's own finding-6 (METR) rule; v2 redesign is **time-windowed arms** (e.g.
+  alternating windows, all qualifying work in a window uses that window's topology).
+- **NEW P-H — resource-lock automation** (the reviewer's biggest completeness catch: the one
+  evidence-complete answer to headline weakness #6 had generated no proposal). Adopt/trial
+  Block's `agent-task-queue` MCP for gradle/GPU/dev-stack contention; founder stays router
+  for task allocation. Disposition: founder review (it changes multi-agent mechanics), then
+  scoped trial.
+- **NEW P-I — worktree-script native cleanup** (plumbing lane, evidence-complete per R4):
+  delete our junction-unlink logic (native since v2.1.205), evaluate `.worktreeinclude` for
+  copy-seeding; keep template-seeding + holder-cleanup (with the self-match fix from the
+  inbox). No pilot needed.
+- **Non-proposals corrected:** the review-stack entry over-claimed — R1's evidence defends
+  reviewer-independence, NOT the `/review-changes`+`/review-tempdoc-fit` overlap (weakness
+  #5); that overlap plus review-ordering (weakness #4) are reopened as small open items for
+  the founder's proposal review, not shielded. Compaction non-proposal now cites both halves
+  (T1: token cost negligible; R2: quality-loss claim stands unmeasured — P-G probes it).
+
+### What this session implements before stopping (per the above)
+
+Only P-B's factual-correction half (rules + hook wording, full publish protocol). Everything
+else awaits the founder's proposal review; P-A1/P-I are queued as the first plumbing slices
+after it.
+
 ## Non-goals
 
 - Re-running 727's tactical fix loop (that instrument keeps running independently).

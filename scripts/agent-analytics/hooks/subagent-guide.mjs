@@ -22,14 +22,20 @@ function buildGuidance(input = {}) {
     ? 'Windows Git Bash. Use forward slashes and /dev/null, not NUL.'
     : `${process.platform}.`;
 
-  // This hook is the ONLY project-aware context a subagent receives. Subagents
-  // do not see CLAUDE.md, .claude/rules/*.md, or any parent-session hooks
-  // (verified via Piebald-AI prompt-leak repo + live introspection probe,
-  // tempdoc 423 §14.16). Keep this guidance under ~10K chars (hook output cap).
+  // Inheritance is AGENT-TYPE-DEPENDENT (re-verified 2026-07-16, tempdoc 743 Phase-2
+  // probes — supersedes the tempdoc 423 §14.16 "no inheritance" finding, which the
+  // platform obsoleted): general-purpose/custom agents now receive the full CLAUDE.md +
+  // .claude/rules natively; Explore/Plan (and fork) agents receive NONE of it, so for
+  // those this brief is the ONLY project-aware context. The SubagentStart payload carries
+  // no agent-type field (verified), so this hook cannot discriminate and injects for all
+  // types — for inheriting types the brief is redundant-but-harmless; do NOT state that
+  // CLAUDE.md is absent (a probe showed subagents repeat that claim over their own
+  // context contents). Conditional skipping is a founder-gated decision (743 P-B, D-2).
+  // Keep this guidance under ~10K chars (hook output cap).
 
   const sections = [];
 
-  sections.push('## JustSearch — subagent context (parent CLAUDE.md is NOT loaded for you)');
+  sections.push('## JustSearch — subagent baseline brief (injected for every agent type; if the full CLAUDE.md also appears in your context, that copy governs — this is the guaranteed-minimum subset for agent types that do not inherit it)');
 
   // Projected LIVE from CLAUDE.md's Hard Invariants (single authority — never
   // hand-copy; a hand-copy silently drifted to 4-of-6 before tempdoc 620 Part V).
