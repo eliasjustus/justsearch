@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — Phase 1 COMPLETE and merged (PR #209, squash ce4d6de8, main CI green 2026-07-16); BASELINE RECOMPUTED 2026-07-16 after tempdoc 745 fixed 4 verified bugs in the cost parser it was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline survives; read prediction-1 against 84.0%). Handoff item 4 ("OTel reservoir is feeding") was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it. D-1/D-2 settled; founder go/no-go on phases 2-6 pending (GO recommended); next: Phase 2 via /takeover 743 in a fresh session"
+status: "open — Phase 1 COMPLETE and merged (PR #209, squash ce4d6de8, main CI green 2026-07-16); BASELINE RECOMPUTED 2026-07-16 after tempdoc 745 fixed 4 verified bugs in the cost parser it was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline survives; read prediction-1 against 84.0%). Handoff item 4 ("OTel reservoir is feeding") was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it. D-1/D-2 settled; founder GO on phases 2-6 GRANTED 2026-07-16 (after 745 recomputed the baseline on a fixed instrument — the verdict survived the correction); next: Phase 2 via /takeover 743 in a fresh session"
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -480,8 +480,14 @@ It would have flagged the pre-fix 2.34× numbers instantly. Two consequences ado
 
 ## State for the next agent (Phase-2 entry point)
 
-1. **Pending founder decision:** go/no-go on phases 2-6 (GO recommended in the readability
-   verdict above). Get it confirmed at kickoff.
+1. ~~**Pending founder decision:** go/no-go on phases 2-6 (GO recommended in the readability
+   verdict above). Get it confirmed at kickoff.~~
+   **✅ SETTLED — founder: GO on phases 2-6 (2026-07-16).** Granted *after* tempdoc 745 recomputed
+   this program's baseline on a fixed instrument — so the GO rests on numbers that survived the
+   correction (split moved 0.4pp, cost/merge +1.2%, both far inside the 2-2.7x weekly noise finding 6
+   predicted), not on the pre-fix figures the readability verdict was originally argued from.
+   Consequence for 745: its retire sweep is unblocked — `context-attribution.mjs` is KEPT because
+   Phase 2 names it as the overhead-taxonomy substrate; the Gen-1 dashboard/PHI slices retire.
 2. **Phase 2 = two parallel streams:** (a) the full per-layer adversarial research sweep
    (approach principle 4 — bigger than the two bounded takeover probes already recorded);
    (b) first-principles decomposition of the workflow's jobs per layer/deep axis with

@@ -1,7 +1,7 @@
 ---
 title: "745 — OSS-first agent observability: adopt/keep/retire survey across the analytics stack"
 type: tempdocs
-status: "investigated 2026-07-16 (session 805279a4) — survey COMPLETE incl. a discovery sweep + LLM-obs ecosystem survey (founder-raised gap; V-1 partly REFUTED against itself: slices 1-2 ARE well-served OSS, slices 3-4 genuinely empty). Central call CONFIRMED after adversarial re-probe: no tool (ccusage/tokscale/usage-monitor/agents-observe) passes the swap preconditions — the subagent-role blind spot is STRUCTURAL across the ecosystem. KEEP our engine + ccusage as differential oracle; fix 3 (possibly 4) verified parser bugs; fix the sink (F-2 retention, the highest-value item, never in the charter). AWAITING FOUNDER: (1) F-8 — the standing falsifier fired but its remedy does not exist in any tool; (2) 743 go/no-go gates the retire sweep."
+status: "investigated + IMPLEMENTED 2026-07-16 (session 805279a4). Survey COMPLETE: adopt 0 of 7 — the OSS-first premise is refuted for the taxonomy/compaction slices (no maintained, licensed OSS) and the engine swap fails its own preconditions in EVERY tool probed (the subagent-role blind spot is structural: nothing in the ecosystem joins cost to git merges). FOUNDER DECISIONS 2026-07-16: (1) standing falsifier AMENDED — second parsing bug now promotes ccusage to a mandatory MAGNITUDE cross-check, not the engine, with a re-add trigger; (2) no standing OSS-first policy is recorded (V-1); (3) 743 phases 2-6 GO, which unblocks the retire sweep. SHIPPED: sink retention (F-2, was destroying capture every few minutes), 7 verified cost-parser bugs incl. 3 found during implementation/review, analytics tests wired into CI. 743 baseline recomputed (~$22,100, split 84.0/16.0 — headline survives). REMAINING: the retire sweep (slices 2-3 RETIRE, slice 4 KEEP per 743 GO) — next agent's first task, deliberately not ridden along with correctness fixes."
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / tooling / observability
@@ -456,11 +456,36 @@ from "an agent rationalising around a fired falsifier" into "the prescribed reme
 this still goes to the founder rather than being settled here.
 
 Per `structural-defects-no-repeat`, an agent must not quietly convert a fired falsifier into a
-cost-benefit discussion — so this is escalated, not resolved here. **Recommended amendment (founder's call):**
+cost-benefit discussion — so this was escalated, not resolved by an agent.
 
-> Second parsing-class bug → **ccusage becomes a mandatory differential oracle wired to a
-> workflow moment**, not the engine. Engine adoption additionally requires the swap's original
-> preconditions to pass.
+#### ✅ SETTLED — founder decision, 2026-07-16: falsifier AMENDED
+
+The founder accepted the recommendation. **The standing falsifier now reads:**
+
+> **Second parsing-class bug in `transcript-cost.mjs` → ccusage becomes a mandatory *magnitude
+> cross-check*, wired to a workflow moment. NOT the engine.** Engine adoption additionally
+> requires the swap's original preconditions (per-session + subagent granularity + pinnable
+> offline pricing) to pass — they currently fail 2 of 3, and no tool in the ecosystem passes
+> (F-5, F-10).
+
+Recorded honestly, including the conflict of interest: the agent recommending this is the same
+agent that found bugs in the parser it argued to keep — precisely the motivated reasoning the
+falsifier existed to stop. It was escalated for that reason. What carried the decision was not the
+argument but the **measured** evidence: four tools probed live, all failing the preconditions for
+*structural* reasons (nothing in the ecosystem joins cost to git merges, so nothing exposes the
+role dimension), plus F-13 showing our parser is now more correct than the ecosystem on cache
+tiers. Executing the falsifier literally would have cost the orchestrator/worker split — the metric
+743's entire delegation-economics decision rests on — in exchange for silent $0 pricing.
+
+**The amendment preserves the falsifier's teeth, and they bit:** the trigger fired, and the
+consequence (ccusage promoted from optional practice to a mandatory cross-check) landed. What
+changed is only the remedy, because the prescribed one does not exist.
+
+**Re-add trigger** (per D-2's convention for weakened safeguards): if a tool ever passes all three
+preconditions — per-session + **a real subagent/role dimension in machine-readable output** +
+pinnable offline pricing that fails closed — the engine-swap question reopens automatically and
+this amendment is void. `tokscale` is the closest: it already parses `isSidechain`/`agentId` and
+only lacks `Serialize` on `AgentUsage`. **One upstream commit could flip it.**
 
 ### F-9. The LLM-observability ecosystem surveyed (the F-3b scoping gap, closed)
 
@@ -798,8 +823,9 @@ itself is now COMPLETE, and its answer is "adopt almost nothing."** Work-plan st
 above (~1 session). Steps 4–5 largely evaporate because there is almost nothing to adopt.
 This is not "don't do 745" — it is "745 asked a good question and the answer came back negative."
 
-**V-1 — The OSS-first policy: REFUTE, do not record it. ⚠ PROVISIONAL — see the discovery gap
-below.** In this niche "maintained OSS" mostly does not exist (F-3): 2 of 3 named candidates
+**V-1 — The OSS-first policy: REFUTE, do not record it. ✅ SETTLED (founder, 2026-07-16) — no
+CLAUDE.md line is added.** *(The founder opened 745 asking for a standing policy; the survey ran
+and the answer came back negative. Accepted.)* In this niche "maintained OSS" mostly does not exist (F-3): 2 of 3 named candidates
 abandoned ~3 months, 2 carry **no license**, all single-author with zero releases. The policy's
 hidden premise is that maintained OSS *exists* per slice; here it usually doesn't, and stars
 actively mislead (639★, dead since April). A standing CLAUDE.md line would cost always-loaded
@@ -857,8 +883,16 @@ month is affordable). Not an OSS question.
 but it is **downstream of V-5** (a viewer for a 6-minute window is polishing a leak) and rests on
 one unverified fact: `--from-json-file` schema vs our sink's NDJSON. ~10-minute test, not yet run.
 
-**V-7 — All retire/keep decisions for the dead slices: BLOCKED on 743's go/no-go** (F-4). Then
-it is a deletion PR, not a survey.
+**V-7 — Retire/keep for the dead slices: ✅ UNBLOCKED (founder GO on 743 phases 2-6, 2026-07-16).**
+Consequences, per F-4's conditional:
+
+- **Slice 4 (`context-attribution.mjs`) → KEEP.** 743 Phase 2 names it as the overhead-taxonomy
+  substrate (743:226, 743:429), so it now has a live consumer. Do **not** delete it.
+- **Slices 2-3 (`generate-dashboard.mjs`, `score-session.mjs` PHI + the Gen-1 trend/correlate
+  machinery) → RETIRE.** No consumer in any live plan; the OSS question never arises (V-2).
+- **Not in this PR.** The retire sweep is a separate, purely-deletive change and should not ride
+  along with correctness fixes — it needs its own diff to be reviewable, and its own check that
+  743 Phase 2 doesn't reach for something on the list. **Next agent's first task.**
 
 ### Cheapest decisive evidence — and it now exists
 
