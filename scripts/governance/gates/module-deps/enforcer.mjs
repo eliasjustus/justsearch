@@ -1,14 +1,13 @@
 /**
- * module-dependency-budget enforcer — tempdoc 530 §2.8.
+ * module-dependency-budget enforcer - tempdoc 530 sec 2.8 (input contract: tempdoc 742 D1).
  * Wraps `scripts/architecture/module-deps.mjs` JSON output to count per-module
  * cross-module imports; only-shrinks ratchet.
  *
- * Baseline file: `<module> <prod_dep_count> <date>`. Module-deps.mjs must be
- * run separately (e.g., by CI or `node scripts/architecture/module-deps.mjs`);
- * this enforcer reads the cached JSON at `tmp/arch-preflight/module-deps.json`.
- *
- * If the JSON is missing, emits `module-deps/report-missing` (warning, not
- * fail) — matches the npm-audit gate's report-missing UX.
+ * Baseline file: `<module> <prod_dep_count> <date>`. Report presence is the
+ * RUNNER's contract: `tmp/arch-preflight/module-deps.json` is a `required` input
+ * under config.inputs, so a missing report fails at the runner
+ * (kernel/input-missing) before this enforcer is dispatched. Produce it with
+ * `node scripts/architecture/module-deps.mjs`. A malformed report fails closed.
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -25,7 +24,7 @@ export const MODULE_DEPS_RULE_DESCRIPTIONS = {
   'module-deps/declared-growth': 'Module gained dependencies; classification covers',
   'module-deps/rebalance-available': 'Module shed dependencies; ratchet can be rebalanced',
   'module-deps/rebalanced': 'Baseline auto-updated',
-  'module-deps/report-missing': 'module-deps JSON report not present; run `node scripts/architecture/module-deps.mjs` first',
+  'module-deps/report-malformed': 'module-deps JSON report could not be parsed (fail-closed)',
   'module-deps/silent-baseline-shift': 'Baseline raised without a declared changeset',
 };
 
@@ -52,12 +51,13 @@ export async function enforceModuleDeps(options) {
   const findings = [];
   let verdict = 'pass';
 
-  if (!existsSync(reportPath)) {
-    findings.push({ ruleId: 'module-deps/report-missing', level: 'warning', message: `module-deps report not found at ${reportPath}. Run \`node scripts/architecture/module-deps.mjs\` first.`, uri: gate.config?.reportPath });
-    return { toolName: 'justsearch-module-deps', toolVersion: '0.1.0', findings, verdict, ruleDescriptions: MODULE_DEPS_RULE_DESCRIPTIONS };
+  let report;
+  try {
+    report = JSON.parse(readFileSync(reportPath, 'utf8'));
+  } catch {
+    findings.push({ ruleId: 'module-deps/report-malformed', level: 'error', message: `malformed JSON in module-deps report at ${reportPath}`, uri: gate.config?.reportPath });
+    return { toolName: 'justsearch-module-deps', toolVersion: '0.1.0', findings, verdict: 'fail', ruleDescriptions: MODULE_DEPS_RULE_DESCRIPTIONS };
   }
-
-  let report; try { report = JSON.parse(readFileSync(reportPath, 'utf8')); } catch { findings.push({ ruleId: 'module-deps/report-missing', level: 'warning', message: 'malformed JSON in report' }); return { toolName: 'justsearch-module-deps', toolVersion: '0.1.0', findings, verdict, ruleDescriptions: MODULE_DEPS_RULE_DESCRIPTIONS }; }
 
   // module-deps.mjs's output shape: { modules: [ {name, productionDeps: []} ... ] } or similar.
   // Be flexible: support either `productionDeps`/`prodDeps`/`dependencies` arrays.
