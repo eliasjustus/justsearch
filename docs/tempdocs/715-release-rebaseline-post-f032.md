@@ -1,6 +1,6 @@
 # 715 — Release re-baseline + scorecard recompose (post-F-031/F-032)
 
-- **status:** seed — measurement program task, founder-scheduled (chartered 2026-07-11 from
+- **status:** EXECUTED 2026-07-16 (see §Execution record below) — was: seed — measurement program task, founder-scheduled (chartered 2026-07-11 from
   the 711 close-out; deliberately NOT agent-assigned — runs on the shared GPU/dev stack and
   publishes public-facing numbers, so it wants a coordinated single session)
 - **created:** 2026-07-11
@@ -32,3 +32,33 @@ ablations where applicable (the legal-clerc block already has this treatment fro
 - Engine-performance table refresh rides along (same run emits CE p50 / docs/s / resident).
 - Related: tempdoc 623 (scorecard mechanism), 667 (current release), 691/711 (the two findings
   that staled it), F-031/F-032.
+
+
+## Execution record (2026-07-16, session 109145ac — founder "proceed" 2026-07-16)
+
+One cohort-identical run across the five catalog corpora at shipped defaults
+(HEAD content == origin/main post-#207 + the two harness-integrity fixes on this
+branch), composed as release `715-rebaseline-2026-07-16`; scorecard regenerated
+via `register-headline-sync.mjs`; relevance floors re-pin automatically (the
+baselines file is a pointer projecting from `release.v1.json` — no hand edits).
+
+| corpus | hybrid nDCG@10 (new) | old scorecard | R@10 | tier |
+|---|---|---|---|---|
+| mixed/legal-clerc-200 | **0.5982** | 0.516 | 0.765 | A |
+| mixed/enron-qa | **0.7359** | dead-chunk-era (depressed) | 0.850 | A |
+| beir/scifact | 0.7604 | ~parity | 0.888 | A |
+| mixed/miracl-de-2k | 0.8619 | ~parity | 0.997 | A |
+| mixed/miracl-fr-2k | 0.8726 | ~parity | 1.000 | A |
+
+Notable findings from execution (each root-caused, fixed on this branch):
+1. **Manifest embed-compat REBUILDING stamp on fast runs** split the cohort key
+   twice; fixed by a bounded settle-wait in `ingest_and_wait` — and the fix is
+   not cosmetic: legal-clerc hybrid measured 0.5609 on REBUILDING-stamped runs
+   vs **0.5982 settled** (+0.037) — unsettled runs UNDERSTATE retrieval quality.
+2. **False-degenerate chunk-completeness verdict** on corpora the engine
+   legitimately classifies short (SKIPPED_SHORT_CORPUS): the 718 corroborator
+   now honors engine-declared skip reasons (`chunk_merge_skip_reason_counts`).
+3. Perf-family relaxations accepted with recorded causes (`.changesets/
+   release-*-tempdoc715.md`): scifact CE p50 +4 ms (noise scale); scifact
+   primary docs/s 111→90 (the KNOWN 691 primary-indexing drift + session CPU
+   contention). Quality floors relaxed nowhere; every corpus improved or held.
