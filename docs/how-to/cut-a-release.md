@@ -109,7 +109,7 @@ each release's convergence tempdoc + its GitHub Release):
 | Version | Date | Sandbox verdict | Notes | Links |
 |---|---|---|---|---|
 | v0.1.0 | 2026-06-25 | (pre-pipeline) | Prerelease/alpha. **No MCP endpoint.** Installer built locally, not via CI. | [release](https://github.com/eliasjustus/justsearch/releases/tag/v0.1.0) |
-| v0.2.x | pending | rounds 1-4: dense-retrieval fix verified; capability-gate fix on a separate branch; a qualifying GUI round pending | First cut with the MCP endpoint + the hash-consistent asset pipeline. | pending |
+| v0.2.x | pending | rounds 1-5: dense-retrieval + capability-gate fixes confirmed working; round 5 (first GUI-capable) is **DO-NOT-QUALIFY** — `core.workflow-run` broken on every invocation, plus an unexplained golden-query parity regression found only at host-side finalize | First cut with the MCP endpoint + the hash-consistent asset pipeline. | [734](tempdocs/734-0.2.0-sandbox-convergence.md) |
 
 ## See also
 
