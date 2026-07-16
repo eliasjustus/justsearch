@@ -54,7 +54,32 @@ A release **candidate** is qualified before its number is finalized:
    number finalized and the release published.
 
 **Finalize criterion:** a clean whole-product Sandbox round (independent verifier, not the
-committer) with no blocking findings.
+committer) with no blocking findings — or with every remaining blocking finding explicitly
+downgraded to a **known issue** per the policy below. This is not a route to silently lowering the
+bar (`structural-defects-no-repeat` still applies to the defect itself once picked up) — it
+requires the owner naming the specific finding and its tracking tempdoc, not an agent's unilateral
+call, and it does not excuse the finding from eventually needing a real fix with a regression test.
+
+### Known issues at release
+
+A confirmed, reproducible finding may ship as a documented known issue instead of blocking finalize
+when **all** of:
+
+1. **Explicit owner decision**, dated and recorded in the release's convergence tempdoc (not an
+   agent's or round's own call) — e.g. "owner decision YYYY-MM-DD: finding N ships as a known
+   issue, tracked in tempdoc NNN."
+2. **A dedicated tracking tempdoc exists** for the finding, with the problem statement, root-cause
+   understanding so far, and a suggested fix shape — so the fix has a durable home separate from
+   the release record, and isn't lost once the release ships.
+3. **The GitHub Release's notes carry a Known Issues section** linking to that tempdoc, so the
+   limitation is disclosed to users at the point of install, not buried in internal docs.
+4. **The convergence tempdoc's finding is reclassified in place** (not deleted or silently
+   dropped) — the routing column points at the new tracking tempdoc, and the release verdict
+   records that this specific finding no longer blocks finalize, while any *other* still-open
+   blocking findings continue to.
+
+This exists so one non-core defect doesn't hold an entire release hostage, while keeping every
+known defect visible, owned, and headed toward an actual fix rather than indefinite tolerance.
 
 ## The asset set the build produces
 
@@ -109,7 +134,7 @@ each release's convergence tempdoc + its GitHub Release):
 | Version | Date | Sandbox verdict | Notes | Links |
 |---|---|---|---|---|
 | v0.1.0 | 2026-06-25 | (pre-pipeline) | Prerelease/alpha. **No MCP endpoint.** Installer built locally, not via CI. | [release](https://github.com/eliasjustus/justsearch/releases/tag/v0.1.0) |
-| v0.2.x | pending | rounds 1-4: dense-retrieval fix verified; capability-gate fix on a separate branch; a qualifying GUI round pending | First cut with the MCP endpoint + the hash-consistent asset pipeline. | pending |
+| v0.2.x | pending | rounds 1-5: dense-retrieval + capability-gate fixes confirmed working; `core.workflow-run` (broken on every invocation) fixed 2026-07-16 (tempdoc 744); round 5 (first GUI-capable) is **DO-NOT-QUALIFY** — blocked on an unexplained golden-query parity regression found only at host-side finalize; a real contributing cause is fixed but doesn't fully explain the round's magnitude | First cut with the MCP endpoint + the hash-consistent asset pipeline. | tempdoc 734 |
 
 ## See also
 

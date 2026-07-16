@@ -60,9 +60,20 @@ public final class CoreWorkflowCatalog {
 
   private CoreWorkflowCatalog() {}
 
-  /** Build the CORE workflow catalog. */
+  /**
+   * Build the CORE workflow catalog.
+   *
+   * <p>Tempdoc 734 round 5 finding 1 / tempdoc 744 — {@code research-brief} is listed FIRST
+   * deliberately: it is the only workflow guaranteed to run in any stack with the chat model
+   * loaded, while {@code demo-compose} needs the optional {@code vendor.mcphost.*} reference
+   * server most installs don't have. Both the FE picker's default selection ({@code
+   * UnifiedChatView.loadWorkflows}, "defaults the selection to the first entry") and
+   * {@link WorkflowShapeRunner#resolveWorkflowId} (no {@code workflowId} supplied) key off this
+   * ordering — putting the demo first silently handed every unconfigured caller a workflow that
+   * cannot succeed.
+   */
   public static WorkflowCatalog catalog() {
-    return WorkflowCatalog.of(NAMESPACE, List.of(demoCompose(), researchBrief()));
+    return WorkflowCatalog.of(NAMESPACE, List.of(researchBrief(), demoCompose()));
   }
 
   /**

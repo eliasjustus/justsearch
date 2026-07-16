@@ -68,6 +68,22 @@ export interface AiEngineVerdict {
   readonly stability: AiStability;
   /** Set only when `kind === 'install_failed'` - the install service's own error text. */
   readonly installFailure: string | null;
+  /**
+   * Set only when `kind === 'indexing'`: true when the engine is parked specifically because
+   * `chatEnabledSpec === false` (the user hasn't activated chat yet - "install is not enable"),
+   * as opposed to a genuine in-flight GPU handoff to indexing work. Tempdoc 734 round 5 finding
+   * 3 - a Sandbox round waited 5+ minutes for this state to resolve on its own because the sub-label
+   * read the same either way ("Indexing embeddings...") whether backfill was genuinely still
+   * consuming the GPU or the engine was simply waiting on a click that would never come by itself.
+   * Computed identically in both the authored and legacy `runtime.mode` branches (`chatEnabledSpec`
+   * is in scope in both - review pass found a genuinely current backend can land in the legacy
+   * branch during the rare pre-reconciler-attach boot window, per `BootstrapProjections`'s own
+   * javadoc, so this isn't only a deprecated-backend concern). On a truly pre-737 backend that
+   * never sends `chatEnabledSpec` at all, the expression naturally evaluates to `false` (not
+   * `true`, since `undefined !== false`), so it stays safe there too. `undefined` only when not
+   * in the 'indexing' kind at all.
+   */
+  readonly awaitingChatEnable?: boolean;
 }
 
 /**
@@ -147,7 +163,12 @@ export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVe
     // engineState === 'Down' with the GPU yielded to indexing is the INDEXING state; any other
     // 'Down' reason falls through to the shared installed / connecting / offline logic below.
     if (engineState === 'Down' && input.engineReason === 'gpu-yielded-to-indexing') {
-      return { kind: 'indexing', stability: { kind: 'settled' }, installFailure: null };
+      return {
+        kind: 'indexing',
+        stability: { kind: 'settled' },
+        installFailure: null,
+        awaitingChatEnable: chatEnabledSpec === false,
+      };
     }
   } else {
     // Legacy fallback (pre-authority backends). Retires with the phase/mode aliases (§12d).
@@ -155,7 +176,12 @@ export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVe
       return { kind: 'online', stability: { kind: 'settled' }, installFailure: null };
     }
     if (runtime.mode === 'indexing') {
-      return { kind: 'indexing', stability: { kind: 'settled' }, installFailure: null };
+      return {
+        kind: 'indexing',
+        stability: { kind: 'settled' },
+        installFailure: null,
+        awaitingChatEnable: chatEnabledSpec === false,
+      };
     }
     if (runtime.mode === 'starting') {
       return {
