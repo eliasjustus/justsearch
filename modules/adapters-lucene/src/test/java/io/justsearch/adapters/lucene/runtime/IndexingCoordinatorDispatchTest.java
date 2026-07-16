@@ -3,7 +3,7 @@ package io.justsearch.adapters.lucene.runtime;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;

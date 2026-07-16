@@ -11,7 +11,7 @@ import io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator;
 import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi;
+import io.justsearch.indexing.api.IndexDocument;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
@@ -94,7 +94,7 @@ class ConfigWiringTest {
     assertEquals(64.0, a.ramBufferMb(), 0.01);
     assertEquals(123, a.maxBufferedDocs());
     r.indexingCoordinator().indexSingle(
-        new IndexApi.IndexDocument(
+        new IndexDocument(
             java.util.Map.of(
                 SchemaFields.DOC_ID, "mem-doc",
                 SchemaFields.DOC_UID, "mem-doc#0",

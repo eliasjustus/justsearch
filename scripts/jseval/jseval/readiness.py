@@ -116,6 +116,64 @@ def wait_pipeline_complete(
     )
 
 
+_REBUILDING_COMPAT_STATE = "REBUILDING"
+DEFAULT_COMPAT_SETTLE_TIMEOUT_SEC = 90.0
+DEFAULT_COMPAT_SETTLE_POLL_INTERVAL_SEC = 2.0
+
+
+def wait_embed_compat_settled(
+    base_url: str,
+    poll_interval_sec: float = DEFAULT_COMPAT_SETTLE_POLL_INTERVAL_SEC,
+    timeout_sec: float = DEFAULT_COMPAT_SETTLE_TIMEOUT_SEC,
+) -> str | None:
+    """Bounded settle-wait for ``embeddingCompatState`` to leave REBUILDING (tempdoc 715 defect 2).
+
+    A fresh ingest can return from :func:`wait_pipeline_complete` / :func:`wait_index_idle`
+    while the Worker's ``EmbeddingCompatibilityController`` is still mid-transition:
+    ``/api/status``'s ``worker.compatibility.embeddingCompatState`` (flattened to top-level
+    ``embeddingCompatState`` by :func:`flatten_status`) briefly still reads ``REBUILDING`` even
+    though indexing and enrichment have both quiesced. Empirically reproduced twice on
+    ``mixed/legal-clerc-200`` (198 docs, ingest+enrich ~= 60s, 2026-07-16): the run manifest's
+    ``model_fingerprints.embed_compat_state`` captured ``"REBUILDING"``, splitting the release
+    cohort key from every other run of the same corpus/model that happened to finish ingest a
+    little slower. Proof the state genuinely settles (this is not a permanent block): rebooting
+    a backend over the same on-disk index reads ``COMPATIBLE`` immediately at t=0 (probe
+    transcript, 2026-07-16) -- the fingerprint IS compatible, the controller just hadn't
+    finished stamping it yet.
+
+    Polls ``/api/status`` every ``poll_interval_sec`` (default 2s) until the state is no longer
+    ``REBUILDING``, up to ``timeout_sec`` (default 90s). On timeout (or if the backend stays
+    unreachable throughout), logs a warning and returns whatever was last observed rather than
+    raising -- the manifest then honestly records that state instead of this helper masking a
+    genuinely-stuck REBUILDING behind a silent/infinite wait. Never raises: a status-fetch
+    failure is logged and retried like every other readiness poll in this module.
+
+    Returns the final observed ``embeddingCompatState`` (``None`` if every fetch failed).
+    """
+    deadline = time.monotonic() + timeout_sec
+    last_state: str | None = None
+    with httpx.Client(base_url=base_url, timeout=10) as client:
+        while True:
+            try:
+                snapshot = _fetch_status(client)
+            except Exception as e:
+                log.debug("wait_embed_compat_settled: status fetch failed: %s", e)
+            else:
+                last_state = snapshot.get("embeddingCompatState")
+                if last_state != _REBUILDING_COMPAT_STATE:
+                    return last_state
+
+            if time.monotonic() >= deadline:
+                log.warning(
+                    "wait_embed_compat_settled: embeddingCompatState still %r after %.0fs "
+                    "-- proceeding; the manifest will honestly record this state",
+                    last_state, timeout_sec,
+                )
+                return last_state
+
+            time.sleep(poll_interval_sec)
+
+
 def _check_pipeline_complete_conditions(
     snapshot: dict,
     expected_doc_count_min: int,

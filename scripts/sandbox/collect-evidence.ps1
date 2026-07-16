@@ -127,9 +127,8 @@ Write-Log $elevationNote
 # for a prior install first. Three independent signals a per-user NSIS
 # install leaves behind (bundle.windows.nsis.installMode: currentUser,
 # ADR-0024): the installed binary under %LOCALAPPDATA%\Programs\JustSearch
-# (the actual per-user NSIS install location -- verified against
-# scripts/vmware/offline-installer-vmware-verify.ps1's Find-JustSearchExe
-# candidate list; NOT %LOCALAPPDATA%\JustSearch directly), the app data dir
+# (the actual per-user NSIS install location; NOT %LOCALAPPDATA%\JustSearch
+# directly), the app data dir
 # (-DataDir, default %APPDATA%\io.justsearch.shell), and the uninstall
 # registry entry (verified against
 # scripts/ci/verify-installer-nsis-win.ps1's $uninstRegKey). This is

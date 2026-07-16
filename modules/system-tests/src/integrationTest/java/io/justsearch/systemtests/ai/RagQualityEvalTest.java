@@ -16,7 +16,7 @@ import io.justsearch.aibackend.local.LocalIntentTranslatorConfig;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.configuration.JustSearchConfigurationLoader;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.reranker.CitationScorer;
 import io.justsearch.systemtests.aijudge.KeywordPresenceChecker;
 import io.justsearch.systemtests.aijudge.KeywordPresenceChecker.KeywordResult;

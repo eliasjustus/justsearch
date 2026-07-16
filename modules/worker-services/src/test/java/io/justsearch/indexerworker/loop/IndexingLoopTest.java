@@ -26,7 +26,7 @@ import io.justsearch.indexerworker.loop.ops.IndexingDocumentOps;
 import io.justsearch.indexerworker.splade.SpladeEncoder;
 import io.justsearch.indexerworker.queue.JobQueue;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;

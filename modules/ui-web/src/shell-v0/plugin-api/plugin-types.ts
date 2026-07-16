@@ -104,7 +104,9 @@ export interface PluginManifest {
    * defaults; the host catalog is authoritative for shared keys).
    *
    * V1.5 alpha shape: simple flat record. V1.5.1 polish may add
-   * pluralization / interpolation support per Lingui conventions.
+   * pluralization / interpolation support (tempdoc 742: the earlier
+   * Lingui dependency was removed entirely; any future support here
+   * is catalog-native, not Lingui-based).
    */
   translations?: Record<string, Record<string, string>>;
 

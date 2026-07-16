@@ -1,0 +1,182 @@
+[
+ {
+  "query": "What is the value associated with the designer of the power station in the upper wetlands?",
+  "answer": "crimson ferrolite 0002",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "drureach1",
+   "pellstone2"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the stargazing facility in the ridge to the east?",
+  "answer": "verdant brannik 0004",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "harnvale3",
+   "pellash4"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the grain-grinding works in the curve of the river?",
+  "answer": "pallid lansk 0006",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "druash5",
+   "tasdac6"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the records vault in the former justice building?",
+  "answer": "russet grist 0008",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "orrvale7",
+   "drugrove8"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the metal-casting works in the quarter to the west?",
+  "answer": "azure brannik 0010",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "kanfen9",
+   "rellven10"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the optical instrument in the Carpathian uplands?",
+  "answer": "verdant perrin 0012",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "mirwick11",
+   "cavby12"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the streetcar line in the city on the slopes?",
+  "answer": "umber quartzine 0014",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "cavric13",
+   "skowick14"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the water channel in the hills to the south?",
+  "answer": "umber brannik 0016",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "breldell15",
+   "vexfen16"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the publishing works in the central marketplace?",
+  "answer": "ochre vellum 0018",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "olmvale17",
+   "vorwick18"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the coastal beacon in the stony promontory?",
+  "answer": "ochre ferrolite 0020",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "tasgrove19",
+   "rellholt20"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the wine estate in the sunlit dale?",
+  "answer": "azure ferrolite 0022",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "limric21",
+   "limvale22"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the thermal spa in the shoreline bluffs?",
+  "answer": "indigo skack 0024",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "vorby23",
+   "tasreach24"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the grain depot in the evergreen woodland?",
+  "answer": "pallid quartzine 0026",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "orrgrove25",
+   "quendell26"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the vessel works in the saline plains?",
+  "answer": "ochre lansk 0028",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "wendcrag27",
+   "vexvale28"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the ale house in the stone pit?",
+  "answer": "pallid grist 0030",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "tasvale29",
+   "vorthorn30"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the hide-processing works in the port entrance?",
+  "answer": "crimson quartzine 0032",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "brelker31",
+   "skomond32"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the coin-striking works in the arid hollow?",
+  "answer": "ochre ferrolite 0034",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "mirker33",
+   "nuthstone34"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the blacksmith works in the iced-over tarn?",
+  "answer": "pallid quartzine 0036",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "zelfen35",
+   "mirven36"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the glasshouse nursery in the enclosed grounds?",
+  "answer": "pallid brannik 0038",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "skoric37",
+   "brelker38"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the small place of worship in the belfry spire?",
+  "answer": "russet ferrolite 0040",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "brelby39",
+   "cavgrove40"
+  ]
+ }
+]

@@ -8,7 +8,7 @@ import io.justsearch.indexerworker.extract.ContentExtractor;
 import io.justsearch.indexerworker.extract.ContentExtractor.ExtractionResult;
 import io.justsearch.indexerworker.fixtures.TestDocumentBuilder;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;

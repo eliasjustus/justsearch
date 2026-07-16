@@ -35,7 +35,7 @@ The `runtime/` package is the largest. It is organized around focused ops classe
 
 - **Lucene 10.x**: Core search library (IndexWriter, IndexSearcher, HNSW)
 - **configuration**: Field catalog definitions, `ResolvedConfig`/`ConfigStore` (config moved here in tempdoc 239; `RuntimeConfig` later deleted in 314)
-- **indexing**: Schema fields, IndexApi contracts
+- **indexing**: Schema fields, IndexDocument contracts
 - **infra-core**: Telemetry, utilities
 
 ## 2. Lucene 10 Integration

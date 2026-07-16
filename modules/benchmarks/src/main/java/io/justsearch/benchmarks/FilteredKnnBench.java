@@ -8,7 +8,7 @@ import io.justsearch.benchmarks.util.BenchmarkUtils;
 import io.justsearch.benchmarks.util.MachineFingerprint;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;

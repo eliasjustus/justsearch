@@ -34,7 +34,7 @@ import org.apache.lucene.document.TextField;
 import org.apache.lucene.util.BytesRef;
 
 /**
- * Maps IndexApi documents to Lucene Documents using a field catalog.
+ * Maps {@link io.justsearch.indexing.api.IndexDocument} instances to Lucene Documents using a field catalog.
  *
  * <p>This class supports two modes of operation:
  * <ol>

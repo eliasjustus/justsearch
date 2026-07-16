@@ -8,7 +8,7 @@ import io.justsearch.adapters.lucene.commit.JsonSchemaCommitMetadataValidator;
 import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.indexing.runtime.CommitMetadataSource;
 import io.justsearch.indexing.runtime.CommitMetadataValidator;
 import java.nio.file.Files;

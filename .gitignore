@@ -19,7 +19,9 @@ build-logic/bin/
 
 # Launcher runtime artifacts
 modules/app-launcher/app.data_dir_IS_UNDEFINED/
-modules/app-launcher/\$\{user.home/**
+# Unresolved ${user.home} placeholder directory tree accidentally created under any module
+# (unresolved property substitution writes a literal top-level dir named "${user.home")
+modules/*/\$\{user.home/**
 # Launcher smoke profile output outside the repo root
 .justsearch-smoke/
 

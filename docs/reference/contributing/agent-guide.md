@@ -202,14 +202,6 @@ Regenerate lockfiles after changing versions in `libs.versions.toml`, adding/rem
 ./gradlew.bat --no-configuration-cache resolveAndLockAll --write-locks
 ```
 
-**Playwright selector-literal guard:**
-
-```bash
-node scripts/ci/check-playwright-hardcoded-testids.mjs --mode gate --root modules/ui-web/e2e
-```
-
-Fails when Playwright specs use hardcoded `getByTestId('...')` string literals instead of shared selector constants.
-
 **Unreferenced Code Detection (ArchUnit):**
 
 ```bash
@@ -513,7 +505,11 @@ Two `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
   --exit-status` is the equivalent for a specific workflow run. The default
   10s refresh reprints the full check table every tick; `--interval 30` or
   higher cuts output volume substantially on jobs known to run several
-  minutes.
+  minutes. Watching immediately after *any* push (not just the batch case
+  further below) can race check registration and exit on "no checks
+  reported" — see the registration-race bullet in Batch-publishing below,
+  and the `/publish` skill's CI-wait pattern for the condition-poll-first /
+  never-chain-with-merge version of this sequence.
 - **`gh pr merge <N> --squash --delete-branch` can report `failed to run
   git: fatal: 'main' is already used by worktree` even when the remote merge
   succeeded.** That's `gh`'s local post-merge branch-sync step failing
