@@ -392,8 +392,8 @@ It would have flagged the pre-fix 2.34× numbers instantly. Two consequences ado
   10-30% workflow improvement will never be visible here. Confirmed: the dashboard is a
   trend/gross-effect instrument only.
 - **Gross effects and structural shifts: readable.** Two falsifiable predictions are already
-  live: (1) the 2026-07-15 delegation-policy change should visibly LOWER the 86.2%
-  orchestrator token share (85.1% baseline) in the next window — if it doesn't, the policy
+  live: (1) the 2026-07-15 delegation-policy change should visibly LOWER the orchestrator
+  token share below its 85.1% baseline in the next window — if it doesn't, the policy
   isn't biting;
   (2) `costs.ndjson` should now accumulate a row per teardown — if it's still sparse in two
   weeks, the workflow-moment wiring failed and the Gen-4-graveyard risk is realized.
