@@ -1,12 +1,15 @@
 /**
- * dead-code enforcer — tempdoc 530 §2.9.
- * Wraps Knip (already wired in CI: `npm run knip --prefix modules/ui-web`).
- * Reads a Knip JSON report (preferably `--reporter json`) from a configured
- * path, counts per-file unused-export entries, ratchets the totals down.
+ * dead-code enforcer - tempdoc 530 sec 2.9 (input contract: tempdoc 742 D1).
+ * Wraps Knip. Reads a Knip JSON report (preferably `--reporter json`) from
+ * config.reportPath, counts per-file unused-export entries, ratchets the
+ * totals down. Baseline file: `<path> <unused_count> <date>`.
  *
- * Baseline file: `<path> <unused_count> <date>`.
- *
- * If the report is missing, emits dead-code/report-missing (warning).
+ * Report presence is the RUNNER's contract, not this enforcer's:
+ * `tmp/knip-report.json` is declared as a `required` input under the gate's
+ * config.inputs, so a missing report fails at the runner (kernel/input-missing)
+ * before this enforcer is dispatched - produce it with
+ * `npm --prefix modules/ui-web run knip:report`. A malformed report here fails
+ * closed (dead-code/report-malformed).
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -22,8 +25,7 @@ export const DEAD_CODE_RULE_DESCRIPTIONS = {
   'dead-code/declared-growth': 'Dead-code growth; classification covers it',
   'dead-code/rebalance-available': 'Unused-export count shrunk; ratchet can be rebalanced',
   'dead-code/rebalanced': 'Baseline auto-updated',
-  'dead-code/report-missing':
-    'Knip JSON report not found. Run `npm run knip --prefix modules/ui-web -- --reporter json > tmp/knip-report.json`.',
+  'dead-code/report-malformed': 'Knip JSON report could not be parsed (fail-closed)',
 };
 
 function parseBaseline(text) {
@@ -49,15 +51,18 @@ export async function enforceDeadCode(options) {
   const findings = [];
   let verdict = 'pass';
 
-  if (!existsSync(reportPath)) {
-    findings.push({ ruleId: 'dead-code/report-missing', level: 'warning', message: `Knip report not found at ${reportPath}.`, uri: gate.config?.reportPath });
-    return { toolName: 'justsearch-dead-code', toolVersion: '0.1.0', findings, verdict, ruleDescriptions: DEAD_CODE_RULE_DESCRIPTIONS };
+  let report;
+  try {
+    report = JSON.parse(readFileSync(reportPath, 'utf8'));
+  } catch {
+    findings.push({ ruleId: 'dead-code/report-malformed', level: 'error', message: `malformed Knip JSON at ${reportPath}`, uri: gate.config?.reportPath });
+    return { toolName: 'justsearch-dead-code', toolVersion: '0.1.0', findings, verdict: 'fail', ruleDescriptions: DEAD_CODE_RULE_DESCRIPTIONS };
   }
 
-  let report; try { report = JSON.parse(readFileSync(reportPath, 'utf8')); } catch { findings.push({ ruleId: 'dead-code/report-missing', level: 'warning', message: 'malformed Knip JSON' }); return { toolName: 'justsearch-dead-code', toolVersion: '0.1.0', findings, verdict, ruleDescriptions: DEAD_CODE_RULE_DESCRIPTIONS }; }
-
   // Knip --reporter json shape varies by version. Tolerant: walk `files[]` /
-  // `issues{}` / `unusedExports{}`. Default: count entries per file.
+  // `issues[]` (current knip ^6, verified against node_modules/knip/dist/reporters/json.js -
+  // `{ issues: Object.values(json) }`, one row per file with per-category array fields) /
+  // legacy `issues{category:{file:[...]}}`. Default: count entries per file.
   const counts = new Map();
   const collect = (filePath, n) => counts.set(filePath, (counts.get(filePath) ?? 0) + n);
   if (Array.isArray(report.files)) {
@@ -65,6 +70,17 @@ export async function enforceDeadCode(options) {
       const p = f.file ?? f.filePath ?? f.path;
       const issues = (f.unusedExports ?? f.unusedTypes ?? f.exports ?? []).length ?? 0;
       if (p) collect(p, issues);
+    }
+  } else if (Array.isArray(report.issues)) {
+    for (const row of report.issues) {
+      const p = row.file ?? row.filePath ?? row.path;
+      if (!p) continue;
+      let n = 0;
+      for (const [key, val] of Object.entries(row)) {
+        if (key === 'file' || key === 'filePath' || key === 'path' || key === 'owners') continue;
+        if (Array.isArray(val)) n += val.length;
+      }
+      if (n > 0) collect(p, n);
     }
   } else if (report.issues && typeof report.issues === 'object') {
     for (const [category, byFile] of Object.entries(report.issues)) {
