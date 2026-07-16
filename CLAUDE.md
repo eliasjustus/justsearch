@@ -96,6 +96,10 @@ When you notice an issue outside your current task's scope — pre-existing bug,
 - **Do not investigate.** Record and return to your task.
 - Issues caused by your current change don't belong here — fix those.
 
+### Retire With a Sweep <!-- rule:retire-with-a-sweep -->
+
+A PR abandoning or replacing a feature, tier, or approach must sweep the retiree's fingerprints — grep its names/paths across code, config, gates, baselines, ignore-lists, docs — and delete or label every hit in the same PR. Residue outliving its reason becomes false authority (tempdoc 742: ~350 files, two inert gates). Predictable evasion: "a follow-up PR will clean it up" — 742's corpus is follow-ups that never came.
+
 ### Before Appending to CLAUDE.md or `.claude/rules/` <!-- rule:before-appending-to-rules -->
 
 This file is loaded every session; the always-loaded-budget ratchet caps its bytes because bloat makes rules *less* followed (Anthropic: *"Bloated CLAUDE.md files cause Claude to ignore your actual instructions!"*). Before adding a rule, gate it: (1) **Broad applicability** — would a fresh agent on a *different* task need it? Otherwise route it: platform constraint → `agent-lessons.md`; named reference case → `agent-postmortems.md`; domain workflow → a skill; out-of-scope finding → the observations inbox. (2) **Already-said** — grep these files first; edit the existing line, don't duplicate. (3) **Enforcement** — a load-bearing must/never belongs in a hook or gate (~100% adherence), not more prose (~70%). Add what passes to the smallest scope that holds it, and name a new must-rule's predictable evasion inline — pre-empting the specific excuse raises adherence more than restating the rule.
