@@ -1,49 +1,108 @@
-# Shell V0 (Lit-based, slice 3a.0+)
+# Shell V0 (Lit web-components chrome)
 
-This directory holds the Lit / web-components frontend that will
-eventually replace the React UI under `modules/ui-web/src/` (per
-slice 3a.8 decommission, gated on slice 3a.0–3a.7 reaching parity).
+`shell-v0/` is the production frontend UI for JustSearch: a Lit
+custom-elements chrome with no virtual-DOM framework. The earlier React
+stack (`App.tsx`, `GlassShell`, `ActivityRail`, `Stage`, the React
+rail-view components) was decommissioned and fully removed (ADR-0032,
+`docs/decisions/0032-fe-lit-web-components.md`).
 
-During the React-Lit coexistence period (this whole tempdoc 421
-Stage 3a effort), both codebases ship in the same module. Vite
-treats Lit components as ESM modules; React + Lit can coexist
-without integration friction since neither owns the DOM root in this
-package.
+Mount path: `src/main.jsx` side-effect-imports `./shell-v0/index.ts`
+(`src/main.jsx:70`), whose barrel (`index.ts`) registers every `<jf-*>`
+custom element, including the chrome itself: `<jf-shell>`, `<jf-rail>`,
+and `<jf-stage>` are defined in `chrome/Shell.ts`
+(`customElements.define('jf-shell', Shell)` at `chrome/Shell.ts:2397`,
+`'jf-rail'` at `:2674`, `'jf-stage'` at `:2980`). Production boot then
+mounts `<jf-shell>` directly (no React root, no `ReactDOM.render`).
 
 ## Layout
 
 ```
 shell-v0/
-├── README.md          (this file)
-├── renderers/         (slice 3a.0 — JSON Forms Lit renderer set)
-│   ├── controls/      (text, number, boolean, enum, date, time, array, object)
-│   └── layouts/       (vertical, horizontal, group, categorization)
-├── components/        (slice 3a.1 — generic Shell V0 components)
-└── shell/             (slice 3a.1 — Shell V0 entry / layout / theme)
+├── chrome/              — the production chrome: jf-shell / jf-rail / jf-stage
+│                           (chrome/Shell.ts), OverlayHost
+├── views/                — surface views mounted into the stage (ActivitySurface,
+│                           BrainSurface, UnifiedChatView, ApiExplorerView, ...)
+├── state/                — client-persisted state stores (NavigationJournal,
+│                           UserStateDocument)
+├── controllers/          — behavior controllers (AgentSessionController,
+│                           ReasoningController, activeRunPointer, draftPersistence)
+├── components/            — generic reusable Lit components (Form, StatusCard,
+│                           ActionButton, Table, Button, ConfirmDialog, ...)
+├── renderers/             — JSON Forms renderer set (controls/, layouts/) plus
+│                           the resource-view renderer registry; includes the
+│                           AUTO-GENERATED component-vocabulary.generated.ts
+│                           (see below)
+├── themes/                — design tokens, default theme CSS, the
+│                           React-bridge CSS (`app-bridge.css`, retained as the
+│                           semantic-token alias layer), authorable-component /
+│                           presentation-schema validation
+├── display/                — display-layer helpers (authoritySpace, facts,
+│                           format, landmarks)
+├── plugin-api/             — third-party plugin host API contract (HostApiImpl,
+│                           CorePlugin, KernelResolver, capabilities/)
+├── plugins/                — first-party bundled plugins (token-editor/)
+├── substrates/              — kernel substrate primitives ("plugins request,
+│                           kernel renders"); has its own README — see
+│                           `substrates/README.md`
+├── shell/                  — Lumino-backed dock + pane registry (a distinct
+│                           `Shell` class from `chrome/Shell.ts`; exported as
+│                           `Shell`/`LitWidget` from `index.ts`)
+├── layout/                  — declarative layout manifest (LayoutManifest)
+├── commands/                — command palette + context-action / empty-state /
+│                           inspector-tab registries
+├── router/                  — URL projection and intent routing between surfaces
+├── streaming/                — SSE envelope stream handling (EnvelopeStream,
+│                           EnvelopeStreamPool, LivenessWatchdog, MultiplexedStream)
+├── operations/               — operation invocation client + authorization
+│                           broker (ActionLedgerClient, OperationClient)
+├── handshake/                — CapabilitiesHandshake — negotiates `host.*`
+│                           sub-API contract versions with the backend
+├── aggregate-substrate/       — aggregate-surfacing dispatch strategies
+│                           (bootstrapped once at barrel load)
+├── primitives/                — base custom-element class (JfElement) +
+│                           adaptive layout primitives (bar/density/spacing)
+├── projections/               — bounded projection helpers
+├── strategies/                 — diagnostic-channel / subscription strategies
+├── hooks/                       — small reusable hooks (resolvePathLazy)
+├── hover/                       — HoverPreviewHost
+├── demo/                        — standalone debug-route demos gated by
+│                           `main.jsx` URL params (`?shell-demo=1`, etc.)
+├── utils/                       — shell-v0-local shared utilities
+└── __tests__/                    — cross-cutting tests (custom-element tag prefix)
 ```
 
-## Slice authority
+## Key patterns
 
-- Renderer set: see `the renderer set in this directory (historical design: retired 421 draft, in git)`.
-- Shell V0: future slice 3a.1 tempdoc (TBD).
-- Stack pick rationale: `archive/source-tempdocs/421-stack.md`
-  §"Library choices."
+- **Custom-element views.** Each routed surface (`views/*.ts`) is a
+  standalone Lit custom element mounted into `<jf-stage>`. All route
+  surfaces except the default landing surface are lazy-loaded on first
+  navigation (`views/lazySurfaceRegistry.ts`, referenced from
+  `index.ts:52-58`); the default landing surface (`UnifiedChatView`,
+  `views/UnifiedChatView.ts`) is imported eagerly, transitively via
+  `chrome/Shell.ts` (`index.ts:61-65`).
+- **State stores.** Client-persisted state lives in typed documents
+  under `state/` (`NavigationJournal.ts`, `UserStateDocument.ts`), not
+  in component instance fields.
+- **Generated component vocabulary.** `renderers/component-vocabulary.generated.ts`
+  is auto-generated by `scripts/ci/gen-component-vocabulary.mjs` — the
+  closed set of every `jf-*` host element a user-authored Presentation
+  Declaration may reference (file header,
+  `renderers/component-vocabulary.generated.ts:1-8`). Regenerate with
+  `node scripts/ci/gen-component-vocabulary.mjs`; do not hand-edit.
+  `npm run check:component-vocabulary` (`modules/ui-web/package.json:28`)
+  fails CI if it drifts.
+- **Two distinct "Shell" classes.** `chrome/Shell.ts` is the production
+  chrome (`<jf-shell>`). `shell/Shell.ts` is an unrelated Lumino-backed
+  dock + pane registry, exported as `Shell`/`LitWidget` from
+  `index.ts` (`index.ts:100-111`). Don't conflate the two when
+  searching for "Shell".
+- **substrates/ has its own README** (`substrates/README.md`) covering
+  the substrate contract in depth — not duplicated here.
 
-## Coexistence model
+## Pointers
 
-- React app entry (`main.tsx`, `App.tsx`, etc.) continues to ship as
-  the user-facing UI through the entire Stage 3a effort.
-- Shell V0 components are imported but NOT rendered into the React
-  app. They're built as a parallel target.
-- Shell V0 will eventually become the user-facing UI when slice 3a.8
-  ships; at that point, the React directories delete and
-  `shell-v0/` becomes the new root.
-
-## Why no separate module?
-
-Per slice 3a.0 §B.A.1: keeping shell-v0 as a subdirectory in
-`modules/ui-web/` avoids the new-module governance overhead
-(module-arch skill, ArchUnit, build-logic registration). Single Vite
-config, single package.json, single node_modules. Reversible if the
-pattern proves friction-prone (then promote to its own module per
-the module-arch skill).
+- Architecture: `docs/explanation/07-ui-host-architecture.md`
+- Design system: `docs/explanation/10-ui-ux-design.md`
+- Why Lit over React: ADR-0032 (`docs/decisions/0032-fe-lit-web-components.md`)
+- Module-level frontend README (stack, commands, source structure):
+  `modules/ui-web/README.md`
