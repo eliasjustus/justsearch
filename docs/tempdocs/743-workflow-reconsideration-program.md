@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — Phase 1 COMPLETE and merged (PR #209, squash ce4d6de8, main CI green 2026-07-16); D-1/D-2 settled; founder go/no-go on phases 2-6 pending (GO recommended); next: Phase 2 via /takeover 743 in a fresh session"
+status: "open — Phase 1 COMPLETE and merged (PR #209, squash ce4d6de8, main CI green 2026-07-16); BASELINE RECOMPUTED 2026-07-16 after tempdoc 745 fixed 4 verified bugs in the cost parser it was measured with — total $21,410 -> $22,578, cost/merge $104.95 -> $108.55, split 85.1/14.9 -> 84.7/15.3 (headline survives; read prediction-1 against 84.7%). Handoff item 4 ("OTel reservoir is feeding") was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it. D-1/D-2 settled; founder go/no-go on phases 2-6 pending (GO recommended); next: Phase 2 via /takeover 743 in a fresh session"
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -366,6 +366,44 @@ this table's history: the pre-fix numbers had survived both the implementer's te
 orchestrator magnitude spot-check — plausibility is not correctness (see review record
 above).
 
+#### ⚠ SUPERSEDED — recomputed 2026-07-16 after tempdoc 745 fixed the instrument
+
+The table above was computed by `transcript-cost.mjs` **before four verified bugs in it were
+fixed** (745 F-6/F-10/F-11). It is retained as dated history; **these are the current numbers**
+(same flags: `--since 2026-06-18`, no `--until`):
+
+| Metric | 743 published | **Recomputed (fixed parser)** |
+|---|---|---|
+| Total cost (attributed) | $21,410 | **$22,578** |
+| Cost/merge (attributed) | $104.95 | **$108.55** |
+| Orchestrator / worker split | 85.1% / 14.9% | **84.7% / 15.3%** |
+| Sessions in window | 226 | 227 |
+| Merge rows in window | 216 | 220 |
+
+**The delta decomposes cleanly** (interrogated, not assumed): running the *old* parser on
+*today's* corpus gives $21,868, so **+2.1% is corpus growth** (one session and four merges landed
+between 743's run and this one) and **+3.2% is the parser fix**. The fix's components: output
+tokens **+22.3%** (first-vs-last snapshot), sonnet-5 cost **−29.4%** (it was priced at the
+post-cliff $3/$15 when the intro rate is $2/$10 through 2026-08-31), cache-write cost **up**
+(99.99% of our cache writes are the 1h tier, previously charged at the 5m rate), cross-session
+dedup **−1.9%** of tokens.
+
+**The headline datum SURVIVES.** 745 F-7 warned this split was biased toward the orchestrator and
+predicted the magnitude would be small because `cache_read` dominates the token count. Both halves
+confirmed: the direction is right, the size is **0.4pp**. So:
+
+- **Prediction 1 is testable and unharmed.** The 2026-07-15 delegation-policy change should push
+  the orchestrator share below baseline — read it against **84.7%**, not 85.1%. The instrument no
+  longer biases the axis it measures.
+- **The delegation-economics decision (2026-07-15) is unaffected** — a 0.4pp correction does not
+  touch "orchestrator tokens are the scarcest resource."
+- **Cost/merge moved +3.4%**, well inside the 2-2.7× weekly noise finding 6 predicted. Nothing in
+  the readability verdict changes.
+
+Caveat inherited, not fixed: these are **API-equivalent dollars**, and Opus **fast mode** bills
+$10/$50 vs $5/$25 standard. Transcripts appear not to mark it, so a fast-mode-heavy session is
+understated. Unowned (745 §Open).
+
 ### Cross-validation against ccusage + adopt-vs-build (2026-07-16, founder question)
 
 `npx ccusage@latest daily --json --offline`, same window, claude-model rows only: **$20,543**
@@ -430,9 +468,21 @@ It would have flagged the pre-fix 2.34× numbers instantly. Two consequences ado
 3. **Check the two live predictions** against fresh data before proposing anything:
    orchestrator share vs 85.1% baseline (post-2026-07-15 sessions only), and `costs.ndjson`
    row accumulation per teardown.
-4. **OTel reservoir is feeding now** — from 2026-07-16 onward, native OTel data accumulates
+4. ~~**OTel reservoir is feeding now** — from 2026-07-16 onward, native OTel data accumulates
    in `tmp/agent-telemetry/otlp/` (a richer source than transcript parsing for future
-   windows; 622 §6.3 designates it authoritative).
+   windows; 622 §6.3 designates it authoritative).~~
+   **⚠ FALSE — corrected 2026-07-16 (745 F-2). It fed and then ate itself.** Phase 1 fixed the
+   sink's *plumbing* (worktree-relative `--out`; chunked-encoding parse) so data reached the
+   right file — and that file then **destroyed itself every few minutes**. `rotate_if_big` kept
+   ONE `.prev` generation and `os.remove()`d it on the next rotation. Measured retention:
+   **~6-42 min** (logs), ~7 h (traces), **~25 h (metrics)**; a rotation was directly observed
+   discarding 21 MB mid-measurement. 622's *"firehose with no reservoir"* verdict was never
+   fixed — only relocated. **Do not plan month-scale analysis on OTel data predating
+   2026-07-16: it does not exist.** 745 replaced destruction with timestamped archives +
+   per-stream retention (metrics/traces retained, logs capped), so accumulation starts from
+   *that* fix, not from Phase 1. Transcripts (`~/.claude/projects/*`) remain the only durable
+   month-scale source — which is why `baseline-economics.mjs` parses them. 622's "native OTel is
+   authoritative" holds for capture *fidelity*, not for retention.
 5. Tempdoc 745 (OSS-first observability) runs in parallel under its own agent — coordinate
    only if Phase-2 proposals touch the analytics stack.
 
