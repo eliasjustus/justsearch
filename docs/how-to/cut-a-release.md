@@ -13,17 +13,30 @@ that release's own working notes, and the shipped record lives in the GitHub Rel
 is the single living surface — it does not accrete per release (that was the failure mode of the
 old rolling packaging log).
 
-> **Status.** The Sandbox verification *loop* has been exercised across many candidates. The
-> *asset-assembly pipeline* (`build-release-assets.ps1` + the consistency gate) is new and has
-> not yet driven a real CI-dispatched release — `build-installer.yml` has zero runs to date.
+> **Status.** The Sandbox verification *loop* has been exercised across many candidates.
+> `build-installer.yml` has been dispatched successfully against both `main` and a worktree branch
+> (2026-07-15) — dispatching it does **not** require a `v*` tag or create/update a GitHub Release
+> unless the ref dispatched against is one.
 
 ## The release loop
 
 A release **candidate** is qualified before its number is finalized:
 
-1. **Build** the installer (on CI via `build-installer.yml`, or locally via
-   `package-installer-win.ps1`). CPU-only by default; models + GPU variants land on the user
-   machine via the in-app "Install AI" flow (the full model set exceeds the NSIS 32-bit limit).
+1. **Build** the installer via `build-installer.yml` (`gh workflow run build-installer.yml --ref
+   main`, or any branch ref — no tag needed for a validation candidate), then `gh run download
+   <run-id>` to fetch the artifact locally.
+   **Do not attempt a local build via `package-installer-win.ps1` on a dev machine with Windows
+   Smart App Control enforcing** (`Windows Security > App & browser control > Smart App Control`).
+   SAC blocks unsigned cargo build-scripts, so the Tauri/Rust build fails partway through with
+   `os error 4551` — the script's own preflight catches this and refuses to start (rather than
+   burning 10-30 minutes on a build that cannot succeed), and `JUSTSEARCH_SKIP_SAC_CHECK=1` only
+   bypasses the *warning*, not the actual OS-level block, so it still fails later. A local build is
+   viable only on a machine with SAC off; **the CI path above works regardless and is the default**
+   — it has no SAC restriction and produces the identical installer. (First hit + diagnosed
+   2026-07-16, tempdoc 734 round-6 prep — this was previously undocumented and each Sandbox round
+   independently rediscovered it.)
+   CPU-only by default; models + GPU variants land on the user machine via the in-app "Install AI"
+   flow (the full model set exceeds the NSIS 32-bit limit).
 2. **Verify in a clean Windows Sandbox.** Install the candidate in a fresh Sandbox and let an
    independent agent run a **whole-product** verification pass (search, chat/RAG, MCP, Install
    AI, restart cycles — not just the changed slice). The clean Sandbox avoids dev-machine model
