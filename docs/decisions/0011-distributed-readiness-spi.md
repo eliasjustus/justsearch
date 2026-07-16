@@ -8,6 +8,11 @@ date: 2026-03-16
 
 # ADR-0011: Distributed Readiness — Remote Shard SPI
 
+> **Note:** Accepted but **not implemented**. No Remote Shard SPI code exists
+> as of 2026-07 — zero `RemoteShard` references in the tree (verified
+> tempdoc 742). This ADR remains the design of record if/when multi-host
+> lands; readers must not assume an SPI exists today.
+
 ## Status
 
 Accepted
