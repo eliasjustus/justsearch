@@ -351,9 +351,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] IndexingOverlay gating field `ai.index.embeddingQueueSize` does not track the embedding *backfill* queue (that's `embeddingPendingCount` in /api/status); the overlay never surfaces during normal embedding backfill — verify which queue it is meant to reflect (VDU/online-embed vs backfill) — `modules/ui-web/src/shell-v0/components/IndexingOverlay.ts:333` (2026-06-17)
 
 ### obs:server — Dev-stack ownership gates only `start` (spawn); a non-owner agent can POST `/api/knowledge/ingest`,
-`kind: defect?` `anchor: scripts/dev/justsearch-dev-mcp/server.mjs` `seen: 2` `first: 2026-06-17` `last: 2026-07-01`
+`kind: defect?` `anchor: scripts/dev/justsearch-dev-mcp/server.mjs` `seen: 3` `first: 2026-06-17` `last: 2026-07-16`
 - [ ] Dev-stack ownership gates only `start` (spawn); a non-owner agent can POST `/api/knowledge/ingest`, `/api/indexing/reindex|gc|migration`, or `reload` against a peer's running stack with no owner check — ownership grants no exclusivity over the mutating/lifecycle surface — `scripts/dev/justsearch-dev-mcp/server.mjs` (2026-06-17)
 - [ ] Fresh worktree dev-data has no AI chat-model pack imported; POST /api/ai/runtime/activate fails MODEL_PATH_REQUIRED even with llama-server auto-staged. /api/ai/packs/* expects a packaged manifest (end-user Install-AI flow), not a local-file import. Workaround: GET/POST full /api/settings/v2 with llm.modelPath set to a real local GGUF, then retry activate. Worth a documented dev-stack shortcut. — `scripts/dev/justsearch-dev-mcp/server.mjs:2432-2520` (2026-07-01)
+- [ ] MCP dev-tools cannot reach /infra/capabilities or /infra/health (absent from fetch_api_json map + api_call allowlist) and have no raw-gRPC or no-JVM GPU probe — the 4 unique hand-tools covering those niches were owner-deleted (742 followup) so the gap is now uncovered; candidates: add both /infra endpoints to the MCP allowlist, optionally a gpu/nvml preflight probe — `scripts/dev/justsearch-dev-mcp/server.mjs:930` (2026-07-16)
 
 ### obs:searchresultsrenderer — **(602 R3 spillover)** `SearchResultsRenderer` (the `x-ui-renderer='search-results'` declared-surfac
 `kind: defect?` `anchor: modules/ui-web/src/shell-v0/renderers/controls/SearchResultsRenderer.ts` `seen: 1` `first: 2026-06-18` `last: 2026-06-18`
@@ -989,9 +990,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] check-tempdoc-numbers reports live cross-worktree collisions at #729 (729-gjf-removal vs sandbox-validation) and #742 (742-gate-input-contract vs 742-residue-removal) — owners of those worktrees must renumber before merge; not this session's trees (2026-07-16)
 
 ### obs:check-always-loaded-budget-gate-red — always-loaded-budget gate is RED on origin/main (pre-existing, not from this branch): 4 files over c
-`kind: environment?` `anchor: scripts/ci/check-always-loaded-budget.mjs` `seen: 2` `first: 2026-07-15` `last: 2026-07-15`
+`kind: environment?` `anchor: scripts/ci/check-always-loaded-budget.mjs` `seen: 3` `first: 2026-07-15` `last: 2026-07-16`
 - [ ] always-loaded-budget gate is RED on origin/main (pre-existing, not from this branch): 4 files over ceiling — CLAUDE.md +1604B, branch-safety.md +1892B, hooks-reference.md +99B, tier-register.md +1579B — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-15)
 - [ ] always-loaded-budget ratchet fails on origin/main already: CLAUDE.md (+1604 B over), agent-lessons.md, branch-safety.md, hooks-reference.md, tier-register.md are all OVER their ceilings, and the check isn't wired into the public CI workflow so nothing catches the drift. The ratchet only bites the honest agent who runs it locally — the always-loaded set is ~1.6 KB past its own cap on main today — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-15)
+- [ ] check-always-loaded-budget.mjs is red on main (5 files ~9KB over ceilings, predates 742 followups) AND wired to no CI lane or kernel gate — an unenforced ratchet accumulating debt silently; needs an owner editorial trim pass + a decision on wiring it (742-class: unevaluated assertion channel) — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-16)
 
 ### obs:unanchored-general-56 — Skill-vs-CLAUDE.md contradiction (same class as tempdoc 739 F-3): `.claude/skills/publish/SKILL.md`
 `kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
@@ -1234,6 +1236,14 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:unanchored-gate-red-5 — 743 prediction-1 early datum (N=1, do NOT read as confirmation): session 805279a4 (745 implementatio
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
 - [ ] 743 prediction-1 early datum (N=1, do NOT read as confirmation): session 805279a4 (745 implementation, post-2026-07-15 delegation policy) teardown-costed at $148.01 with an orchestrator/worker split of **75.1% / 24.9%** — well below the recomputed 84.0% window baseline, i.e. directionally what prediction 1 expects. Caveats matter more than the number: N=1; this session was atypically delegation-heavy by design (~10 subagents incl. 4 opus workers); and 743 finding 6 says fine effects are unreadable at this scale — one session is an anecdote, not a reading. Recorded because it is the first post-policy session measured on the FIXED instrument (the 84.0% baseline and this row share a parser). Prediction 2 is meanwhile CONFIRMED not pending: costs.ndjson went 1 -> 5 rows, 4 of them record-merge teardowns in one day — 'still sparse in two weeks' did not happen. (2026-07-16)
+
+### obs:unanchored-drift-17 — modules/ui-web/README.md still describes the frontend as React + TypeScript + Vite with Zustand stor
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] modules/ui-web/README.md still describes the frontend as React + TypeScript + Vite with Zustand stores / React hooks (lines 3, 91, 93) — stale vs Hard Invariant #5 (frontend is Lit, ADR-0032); out of scope for tempdoc 742 residue-removal (only touched the Playwright-script rows this pass) — `modules/ui-web/README.md:3` (2026-07-16)
+
+### obs:fold-observations — fold-observations.mjs is NOT idempotent for MERGED entries — re-folding a shard inflates the `seen` 
+`kind: follow-up?` `anchor: scripts/agent-analytics/fold-observations.mjs` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] fold-observations.mjs is NOT idempotent for MERGED entries — re-folding a shard inflates the `seen` ranking signal. Mechanism: an entry that merges into an existing condition has its text rewritten in the store (occurrence appended), so on a later fold of the same shard it no longer matches verbatim, misses the exact-duplicate skip, and merges AGAIN (seen++). Entries that OPEN a condition round-trip fine. Observed live 2026-07-16: shard 70bf04ea was folded, then session 70bf04ea appended 2 entries and restored the file via PR #222; re-folding its 8 entries gave 5 exact-duplicate skips instead of 6, i.e. one already-folded entry double-counted. Impact is small (seen is a ranking signal, not a gate) but it is silent and compounds with every modify/delete shard race — which will recur, since a shard can be appended to after a fold reads it. Candidate fix: key the duplicate check on a stable entry hash rather than the post-merge text. — `scripts/agent-analytics/fold-observations.mjs:107` (2026-07-16)
 
 ## Parked
 
