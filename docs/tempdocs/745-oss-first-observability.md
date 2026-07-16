@@ -917,6 +917,52 @@ is 743's go/no-go, which is already scheduled and costs nothing.
 (V-7). Plus one founder decision (F-8) and one deferred 10-minute test (V-6). Items (a) and (b)
 are both *correctness* work on live layers — neither is an adoption.
 
+## Followups (2026-07-16, post-merge)
+
+**No new tempdoc is warranted.** Every residual is a bounded item under 745 or an inbox note; a
+tempdoc for any of them would be ceremony. Listed in priority order:
+
+1. **`event-writer.mjs` carries the identical defect and is LIVE — the top item.** It rotates
+   `events.ndjson` at 10 MB via `fs.renameSync(filePath, filePath + '.prev')`, silently
+   overwriting the existing `.prev`: the same data loss as F-2's sink bug, only implicit rather
+   than an explicit `os.remove`. Measured at merge time: `events.ndjson` 6.8 MB against a 10 MB
+   trigger, **10.49 MB in `.prev` awaiting destruction**. Written by `dispatch.mjs` (alive), read
+   by `telemetry-io`. Per `structural-defects-no-repeat`, one documented instance proves the
+   class — **745 fixed one instance and left its sibling**, which is an honest gap in this
+   tempdoc's own scope, not a discovery for someone else. Remedy is known and cheap: mirror the
+   archive + per-stream-retention pattern. *Deliberately not bolted onto PR #221 — different
+   subsystem and consumers, and the PR was already independently reviewed and green; an
+   unreviewed add-on would bypass the review that caught F-12.*
+2. **The retire sweep** (V-7, unblocked by 743's GO): slices 2-3 retire, slice 4 (`context-attribution`)
+   is KEPT. A purely-deletive PR with its own reviewable diff, plus a check that 743 Phase 2
+   doesn't reach for anything on the list.
+3. **Canonical doc `21-agent-analytics-pipeline.md` is materially drifted** (logged): it documents
+   zero of the OTel path, lists 8 of ~40 hooks, and its headline *"Content is never stored"* is
+   true only of the hook/input-summarizer path — the OTel path stores full prompts and raw API
+   bodies. Both stay local so the posture holds; the claim is scope-drifted, not a leak. A
+   canonical-doc update may stand alone as its own PR (`docs-ride-along`).
+4. **`RAW_API_BODIES=1` is ~72% of log volume for a stream with no live consumer** (F-15). Not
+   broken, just waste. Turning it off is a config decision, not code.
+5. **`opentelemetry-proto` is the sink's only third-party dependency and is declared nowhere**
+   (logged): a fresh checkout spawns the sink detached with `stdio: 'ignore'`, so an ImportError
+   kills telemetry silently. 745 pins it in CI; a requirements file + a startup check are unowned.
+
+### The question this tempdoc must ask of its own fix
+
+**F-2 retained metrics/traces indefinitely — for whom?** V-2 says do not build or retain for a slot
+with no consumer, and the OTLP readers are all 0-invoker (F-1). Retention would be Gen-4 by 745's
+own argument if nothing reads it. It survives on two grounds, both worth stating rather than
+assuming:
+
+- **Capture cannot be retroactive.** Unlike a derived layer, a reservoir not kept today cannot be
+  reconstructed tomorrow. That asymmetry is exactly why V-2's rule is about *layers*, not capture.
+- **There is now a named, funded consumer.** 743 Phase 2 (GO as of 2026-07-16) owes an overhead
+  taxonomy of waiting/ceremony/re-orientation — and span durations in `traces` are the only place
+  waiting time is recorded. Metrics back the cost side.
+
+**If 743 Phase 2 ships without consuming them, this retention has no consumer and should be
+reconsidered — that is the falsifier, and it is on 745's own fix.**
+
 ## Non-goals
 
 - Building an observability product; this stack remains maintainer-only, local-only tooling.
