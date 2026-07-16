@@ -7,17 +7,14 @@ const config: KnipConfig = {
     "scripts/visual-regression.cjs",
     "scripts/evidence/**/*.mjs",
     "scripts/lib/*.{cjs,mjs}",
-    "e2e/**/*.ts",
   ],
   project: [
     "src/**/*.{ts,tsx,jsx}",
     "scripts/**/*.{mjs,cjs,ts}",
-    "e2e/**/*.ts",
   ],
   ignoreDependencies: [
     "@lingui/cli", // used by lingui extract/compile CLI, not TS imports
     "tailwindcss", // used as PostCSS plugin via @tailwindcss/postcss, not direct import
-    "playwright", // re-exported by @playwright/test; evidence scripts import from 'playwright'
   ],
   ignore: [
     // View files need export default for React.lazy() in Stage.tsx

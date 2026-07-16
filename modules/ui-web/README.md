@@ -12,8 +12,6 @@ Design system: `docs/explanation/10-ui-ux-design.md`
 | `npm run dev` | Vite dev server (needs backend running) |
 | `npm run dev:mock` | Vite with MSW mock mode (**no backend needed**) |
 | `npm run build` | Production build |
-| `npm run test` | Playwright E2E tests (Desktop project) |
-| `npm run test:gate` | Playwright gate smoke test |
 | `npm run test:unit` | Vitest unit tests |
 | `npm run typecheck` | TypeScript type checking |
 | `npm run lint` | ESLint |
@@ -101,13 +99,6 @@ src/
 ```bash
 npm run test:unit        # watch mode
 npm run test:unit:run    # single run
-```
-
-**E2E tests** (Playwright):
-```bash
-npm run test             # Desktop project
-npm run test:gate        # Gate smoke test only
-npm run test:all         # All projects
 ```
 
 **Visual regression**:
