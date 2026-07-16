@@ -19,7 +19,7 @@ import {
   TELEMETRY_DIR, SESSIONS_DIR, COSTS_FILE,
   repoRoot, loadEvents, groupBySession, loadCostsFromOtlp,
 } from './lib/telemetry-io.mjs';
-import { round, parseTranscriptTokens } from './lib/transcript-cost.mjs';
+import { round, parseSessionTokens } from './lib/transcript-cost.mjs';
 
 // --- Session costing ---
 
@@ -44,39 +44,17 @@ function findTranscriptPaths(sessionEvents) {
 function costSession(sessionId, sessionEvents) {
   const { mainPath, subagentPaths } = findTranscriptPaths(sessionEvents);
 
-  // Main session transcript
-  let mainTokens = null;
-  if (mainPath) {
-    mainTokens = parseTranscriptTokens(mainPath);
-  }
-
-  // Subagent transcripts — each priced per-turn using its own model
-  let subFound = 0;
-  let subMissing = 0;
-  let subCostUsd = 0;
-  const subTokens = {
-    input_tokens: 0, output_tokens: 0,
-    cache_write_tokens: 0, cache_read_tokens: 0,
-    turns: 0,
-  };
-
-  for (const tPath of subagentPaths) {
-    const result = parseTranscriptTokens(tPath);
-    if (result.error) {
-      subMissing++;
-      continue;
-    }
-    subFound++;
-    subCostUsd += result.cost_usd;
-    subTokens.input_tokens += result.input_tokens;
-    subTokens.output_tokens += result.output_tokens;
-    subTokens.cache_write_tokens += result.cache_write_tokens;
-    subTokens.cache_read_tokens += result.cache_read_tokens;
-    subTokens.turns += result.turns;
-  }
+  // Main + subagent transcripts, one dedup scope, per-turn pricing per model.
+  // The combine itself lives in transcript-cost.mjs (tempdoc 745 item B, D7) —
+  // this used to be a second, independently-maintained copy of the same loop.
+  const { main, subagents } = parseSessionTokens({ mainPath, subagentPaths });
+  const mainTokens = mainPath ? main : null;
+  const subFound = subagents.found;
+  const subMissing = subagents.missing;
+  const subTokens = subagents.totals;
 
   // Combined totals — cost is sum of per-turn costs (not single-model approximation)
-  const totalCostUsd = (mainTokens?.cost_usd ?? 0) + subCostUsd;
+  const totalCostUsd = (mainTokens?.cost_usd ?? 0) + subTokens.cost_usd;
   const totalTokens = {
     input_tokens: (mainTokens?.input_tokens ?? 0) + subTokens.input_tokens,
     output_tokens: (mainTokens?.output_tokens ?? 0) + subTokens.output_tokens,

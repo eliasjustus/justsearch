@@ -586,6 +586,52 @@ all present in the transcripts. Only our own layer will ever read them.
    (ccusage silently $0s sonnet-5 offline; Usage-Monitor returns the sticker rate). A dated cliff
    is worth *encoding* (date-conditional pricing), which no tool surveyed does.
 
+### F-11. The oracle agrees with a bug — ccusage is wrong, and so was this tempdoc's own spec
+
+Found during implementation (2026-07-16), and it is the sharpest evidence in this tempdoc.
+
+The approved plan's **D4** said: *take the LAST usage snapshot wholesale; last == max for
+monotonic streams.* The premise is **false**. Transcripts also re-carry a turn with an
+**ALL-ZERO** usage snapshot *after* its real one. Verified on the 126-session corpus:
+
+```
+msg_01Qfxz8e8Z542YgWfyDhfxyo|req_011CcbU
+    in=2 out=760 cr=804035 cw=290    (x3)   <- the turn's real usage
+    in=0 out=0   cr=0      cw=0      (x3)   <- naive last-wins takes THIS
+```
+
+**610 keys; 529.8M cache_read (2.02% of corpus) + 8.8M cache_write + 561.9K output** would be
+silently discarded. Zero is a placeholder for "no usage on this line", not a measurement of zero.
+Fixed: an all-zero snapshot never displaces a non-zero one (`transcript-cost.mjs`), pinned by two
+tests — one for the rule, one for its **direction** (a real snapshot must still displace a
+*leading* zero, or "ignore zeros" silently degrades into first-wins: a different bug).
+
+**Why this matters far beyond the bug — three consequences:**
+
+1. **The acceptance gate this tempdoc wrote was invalid.** The plan's gate was *"match ccusage
+   0.00% on every field."* **ccusage makes the identical error** — so that gate would have gone
+   GREEN on wrong code, and a 0.00% match now means we *replicated the oracle's bug*. The gate was
+   restructured: **Gate 1** = guard OFF must match ccusage ~0.00% (proves the rest of our parser is
+   equivalent to a mature independent implementation); **Gate 2** = guard ON must diverge, and the
+   divergence must be explained *entirely* by the all-zero keys. Equivalence is the proof;
+   divergence is the point.
+2. **It is decisive for V-3 / F-8.** The differential oracle is *not* ground truth — it is a
+   second opinion that can be confidently wrong. Had we adopted ccusage's **engine** (the fired
+   falsifier's prescription), this bug would be **unfixable from our side and invisible**: no test
+   we own could catch it, because the thing we'd be testing against is the thing that's wrong. Our
+   own parser is the only artifact that can be *more correct than the ecosystem*. This is the
+   strongest argument yet against the swap — and it was produced by *using* ccusage, which is
+   exactly the oracle role V-3 assigns it.
+3. **`interrogate-results`, working.** The implementing agent predicted ~+30% output from the
+   last-snapshot fix, measured **+22.33%**, and — instead of banking a large confirming number —
+   chased the gap and found this. The expected-result case is the dangerous one; here the
+   discipline paid for itself. It also correctly **shipped the spec as written and escalated**
+   rather than silently "improving" it (`tempdoc-is-your-contract`).
+
+**Standing warning recorded in the code**, so the next agent cannot innocently undo it: the
+ccusage differential *intentionally* does not reach 0.00% with the guard on. Do not delete the
+guard to "fix" the residual.
+
 ## Verdict
 
 **As chartered — a stack-wide OSS-first survey producing a standing policy: NO. But the survey

@@ -31,7 +31,7 @@ import os from 'node:os';
 import readline from 'node:readline';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseTranscriptTokens, isKnownModel, round } from './lib/transcript-cost.mjs';
+import { parseSessionTokens, isKnownModel, mergeByModel, round } from './lib/transcript-cost.mjs';
 
 export const DEFAULT_SINCE = '2026-06-18';
 export const DEFAULT_PROJECTS_ROOT = path.join(os.homedir(), '.claude', 'projects');
@@ -293,38 +293,6 @@ export function findSessionTranscript(sessionId, projectsRoot = DEFAULT_PROJECTS
 
 // --- Per-session cost computation --------------------------------------
 
-function emptyTotals() {
-  return {
-    input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0,
-    cost_usd: 0, turns: 0,
-  };
-}
-
-function addTotals(acc, r) {
-  acc.input_tokens += r.input_tokens;
-  acc.output_tokens += r.output_tokens;
-  acc.cache_write_tokens += r.cache_write_tokens;
-  acc.cache_read_tokens += r.cache_read_tokens;
-  acc.cost_usd += r.cost_usd;
-  acc.turns += r.turns;
-}
-
-function mergeByModel(target, source) {
-  for (const [model, bucket] of Object.entries(source || {})) {
-    if (!target[model]) {
-      target[model] = { input_tokens: 0, output_tokens: 0, cache_write_tokens: 0, cache_read_tokens: 0, turns: 0, cost_usd: 0 };
-    }
-    const t = target[model];
-    t.input_tokens += bucket.input_tokens;
-    t.output_tokens += bucket.output_tokens;
-    t.cache_write_tokens += bucket.cache_write_tokens;
-    t.cache_read_tokens += bucket.cache_read_tokens;
-    t.turns += bucket.turns;
-    t.cost_usd += bucket.cost_usd;
-  }
-  return target;
-}
-
 function tokensSum(t) {
   return t.input_tokens + t.output_tokens + t.cache_write_tokens + t.cache_read_tokens;
 }
@@ -332,26 +300,22 @@ function tokensSum(t) {
 /**
  * Cost one session: main transcript + all subagent transcripts, per-model,
  * with an orchestrator (main-file) vs worker (subagents/) token split and an
- * unknown-model bucket (tokens priced via DEFAULT_PRICING but flagged, per
+ * unknown-model bucket (tokens unpriced at $0 but flagged, per
  * transcript-cost.mjs's isKnownModel).
+ *
+ * `seen` (optional) widens the dedup scope beyond this session — pass the same
+ * map across a chronologically-ordered corpus (see costSessionsChronologically)
+ * so a resumed session's re-carried history is counted once, in the session that
+ * originated it. Omitted, the session is its own dedup scope.
  */
-export function computeSessionCost({ sessionId, projectDir, mainPath, subagentPaths, startTs }) {
-  const main = parseTranscriptTokens(mainPath);
-
-  let subFound = 0;
-  let subMissing = 0;
-  const subTotals = emptyTotals();
-  const subByModel = {};
-  for (const p of subagentPaths || []) {
-    const r = parseTranscriptTokens(p);
-    if (r.error) { subMissing += 1; continue; }
-    subFound += 1;
-    addTotals(subTotals, r);
-    mergeByModel(subByModel, r.by_model);
-  }
+export function computeSessionCost({ sessionId, projectDir, mainPath, subagentPaths, startTs, seen }) {
+  const { main, subagents } = parseSessionTokens({ mainPath, subagentPaths, seen });
+  const subFound = subagents.found;
+  const subMissing = subagents.missing;
+  const subTotals = subagents.totals;
 
   const modelMix = mergeByModel({}, main.by_model);
-  mergeByModel(modelMix, subByModel);
+  mergeByModel(modelMix, subagents.by_model);
 
   const unknownModelTokens = {};
   for (const [model, bucket] of Object.entries(modelMix)) {
@@ -391,6 +355,27 @@ export function computeSessionCost({ sessionId, projectDir, mainPath, subagentPa
     model_mix: modelMix,
     unknown_model_tokens: unknownModelTokens,
   };
+}
+
+/**
+ * Cost a whole corpus of discovered sessions under ONE dedup scope, oldest
+ * first (tempdoc 745 item B, D3). Claude Code re-carries a resumed session's
+ * history into a NEW session id, so the same (message.id, requestId) turns
+ * appear in two session files — measured at 3.42% of corpus tokens across ~11
+ * resumed sessions. Deduping oldest-first makes the ORIGIN session keep those
+ * tokens and the later re-carrying session not double-count them; the scope
+ * cannot be a single session, because the duplication is ACROSS sessions.
+ *
+ * Accepted + documented: a per-session costs.ndjson row written at teardown by
+ * record-merge.mjs still includes re-carried history (it costs one session in
+ * isolation and cannot see the corpus). The window report this function feeds is
+ * the authority; the row is a teardown convenience.
+ */
+export function costSessionsChronologically(discovered) {
+  const seen = new Map();
+  return [...discovered]
+    .sort((a, b) => String(a.startTs).localeCompare(String(b.startTs)))
+    .map((s) => computeSessionCost({ ...s, seen }));
 }
 
 // --- Report assembly -----------------------------------------------------
@@ -681,7 +666,7 @@ async function main() {
   });
   console.error(`baseline-economics: ${discovered.length} sessions in window (${excludedCount} excluded by scope filter)`);
 
-  const costedSessions = discovered.map(computeSessionCost);
+  const costedSessions = costSessionsChronologically(discovered);
   const merges = loadMerges(mergesPath);
 
   const report = buildReport({

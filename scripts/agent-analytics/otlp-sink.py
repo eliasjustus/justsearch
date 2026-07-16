@@ -11,7 +11,7 @@ without Docker or a full collector.
 Usage:  python scripts/agent-analytics/otlp-sink.py [--port 4318] [--out DIR]
 Endpoints (OTLP/HTTP, protobuf): POST /v1/traces, /v1/metrics, /v1/logs
 """
-import argparse, json, os, sys
+import argparse, datetime, json, os, re, sys, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from opentelemetry.proto.trace.v1 import trace_pb2
@@ -124,21 +124,136 @@ ROUTES = {
 
 ROTATE_BYTES = 20 * 1024 * 1024  # rotate a stream file past 20 MB (mirrors event-writer)
 
+# Per-stream archive retention: int = max archived generations kept (oldest
+# pruned first), None = keep every archive forever. metrics is the sole
+# source the cost baseline is computed from (tempdoc 745) and must never be
+# pruned; traces is small enough (~4 GB/month) to also keep in full; logs
+# carries the bulk of the volume (raw API bodies, ~40 GB/month) so only a
+# short window survives locally.
+RETENTION = {"logs": 2, "traces": None, "metrics": None}
 
-def rotate_if_big(filepath):
-    """Rotate filepath -> filepath.prev once it exceeds ROTATE_BYTES, so the
-    full-content NDJSON streams do not grow unbounded (the legacy event-writer
-    rotates at 10 MB; full content here justifies a larger cap)."""
+# Guards rotate-then-prune so two concurrent POSTs to the same route (the
+# server is a ThreadingHTTPServer -- one thread per connection) can't both
+# archive the same oversized file. One lock shared across all three streams
+# (rather than a lock per stream) is deliberate: rotation is a rare,
+# sub-millisecond event relative to POST volume, so the cross-stream
+# serialization it costs is negligible, and it avoids a small per-stream
+# lock dict to maintain.
+_rotate_lock = threading.Lock()
+
+_ARCHIVE_TS_FORMAT = "%Y-%m-%dT%H%M%SZ"
+
+
+def _archive_timestamp():
+    return datetime.datetime.now(datetime.timezone.utc).strftime(_ARCHIVE_TS_FORMAT)
+
+
+def _archive_regex(base):
+    # `<base>.<UTC-compact-timestamp>[_NN].ndjson`, e.g.
+    # `logs.2026-07-16T133648Z.ndjson` or `logs.2026-07-16T133648Z_01.ndjson`
+    # (the `_NN` suffix only appears on a same-second collision). Anchored on
+    # both ends and on the literal base so base="logs" cannot match
+    # `logs-something-else.ndjson` or a different stream's archives.
+    return re.compile(r"^" + re.escape(base) + r"\.\d{4}-\d{2}-\d{2}T\d{6}Z(_\d+)?\.ndjson$")
+
+
+def _reserve_archive_path(out_dir, base, ts):
+    """Return an archive path for (base, ts) guaranteed not to already exist,
+    appending a zero-padded counter on a same-second collision. The counter
+    is introduced with `_` (which sorts after `.` in ASCII), so
+    `logs.<ts>.ndjson` always sorts before `logs.<ts>_01.ndjson` -- archive
+    filenames stay lexicographically == chronologically ordered even across
+    a same-second collision."""
+    candidate = os.path.join(out_dir, f"{base}.{ts}.ndjson")
+    n = 1
+    while os.path.exists(candidate):
+        candidate = os.path.join(out_dir, f"{base}.{ts}_{n:02d}.ndjson")
+        n += 1
+    return candidate
+
+
+def _list_archives(out_dir, base):
+    """Archive paths for `base`, oldest first (filename sort order ==
+    chronological order, see `_reserve_archive_path`)."""
+    pattern = _archive_regex(base)
     try:
-        if os.path.getsize(filepath) > ROTATE_BYTES:
-            prev = filepath[:-len(".ndjson")] + ".prev.ndjson"
-            if os.path.exists(prev):
-                os.remove(prev)
-            os.replace(filepath, prev)
-    except FileNotFoundError:
-        pass
+        names = [n for n in os.listdir(out_dir) if pattern.match(n)]
+    except OSError:
+        return []
+    names.sort()
+    return [os.path.join(out_dir, n) for n in names]
+
+
+def _append_error(out_dir, message):
+    # Mirrors do_POST's own error-write pattern: never let logging a failure
+    # crash the receiver.
+    try:
+        with open(os.path.join(out_dir, "errors.log"), "a", encoding="utf-8") as f:
+            f.write(f"{message}\n")
     except OSError:
         pass
+
+
+def _prune_archives(out_dir, base):
+    """Delete the oldest archives for `base` beyond its RETENTION cap. A cap
+    of None (traces, metrics) means never prune -- metrics in particular is
+    the cost baseline's sole source and must survive indefinitely. A failure
+    to remove one archive is logged (not swallowed) and does not stop the
+    rest of the prune."""
+    cap = RETENTION.get(base)
+    if cap is None:
+        return
+    archives = _list_archives(out_dir, base)
+    excess = len(archives) - cap
+    for old_path in archives[:max(0, excess)]:
+        try:
+            os.remove(old_path)
+        except OSError as e:
+            _append_error(out_dir, f"prune failed to remove {old_path}: {e}")
+
+
+def rotate_if_big(filepath):
+    """Archive filepath -> `<base>.<timestamp>.ndjson` once it exceeds
+    ROTATE_BYTES, then prune that stream's archives per RETENTION. Unlike the
+    old `.prev`-only scheme this replaced, the current file is always renamed
+    (never deleted) and every archive is timestamped and kept unless its
+    stream's RETENTION says otherwise -- so a stream with RETENTION None
+    (metrics, traces) retains its full history instead of losing everything
+    older than one rotation. (tempdoc 745: a rotation was directly observed
+    destroying 21 MB under the old scheme, with metrics -- the cost
+    baseline's sole source -- exposed to the same loss.)
+
+    Rotation/prune failures are caught (never crash the receiver or the
+    write path that follows) but are always logged to errors.log -- this
+    sink has now had two silent-total-loss bugs, so a retention failure must
+    not be invisible a third time."""
+    out_dir = os.path.dirname(filepath) or "."
+    base = os.path.basename(filepath)
+    if base.endswith(".ndjson"):
+        base = base[: -len(".ndjson")]
+    try:
+        size = os.path.getsize(filepath)
+    except OSError:
+        return  # file doesn't exist yet -- nothing to rotate
+    if size <= ROTATE_BYTES:
+        return
+    with _rotate_lock:
+        try:
+            # Re-check under the lock: a concurrent POST to the same route
+            # may have already rotated this file between the unlocked size
+            # check above and acquiring the lock. That is an expected race,
+            # not a failure -- stay silent.
+            size = os.path.getsize(filepath)
+        except OSError:
+            return
+        if size <= ROTATE_BYTES:
+            return
+        try:
+            archive_path = _reserve_archive_path(out_dir, base, _archive_timestamp())
+            os.replace(filepath, archive_path)
+            _prune_archives(out_dir, base)
+        except OSError as e:
+            _append_error(out_dir, f"rotate/prune failed for {base}: {e}")
 
 
 def make_handler(out_dir):

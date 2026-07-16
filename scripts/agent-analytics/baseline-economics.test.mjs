@@ -19,11 +19,12 @@ import {
   isoWeekKey,
   discoverSessions,
   computeSessionCost,
+  costSessionsChronologically,
   buildReport,
   formatMarkdown,
   DEFAULT_SINCE,
 } from './baseline-economics.mjs';
-import { parseTranscriptTokens, isKnownModel, MISSING_MODEL_KEY } from './lib/transcript-cost.mjs';
+import { parseTranscriptTokens, findPricing, isKnownModel, MISSING_MODEL_KEY } from './lib/transcript-cost.mjs';
 
 let passed = 0;
 const failures = [];
@@ -47,6 +48,11 @@ function assistantLine(model, usage) {
 }
 function assistantLineWithId(id, model, usage) {
   return { type: 'assistant', message: { id, model, usage } };
+}
+// Full-fidelity assistant entry: `requestId` and `timestamp` live at ENTRY level
+// (verified against real transcripts, tempdoc 745 item B), not inside `message`.
+function assistantEntry({ id, requestId, model, usage, timestamp }) {
+  return { type: 'assistant', requestId, timestamp, message: { id, model, usage } };
 }
 
 async function main() {
@@ -131,6 +137,226 @@ async function main() {
     assert.equal(r.turns, 2); // no id to dedup on — counted individually (documented fallback)
   });
 
+  // --- 745 item B bug 2: repeated snapshots are streaming partials — LAST wins ---
+  run('parseTranscriptTokens takes the LAST usage snapshot of a repeated turn, not the first', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'lastsnap-'));
+    // Reproduced verbatim from a real subagent transcript: one message id whose
+    // persisted snapshots GROW as the response streams (5,5,5,5,5,291).
+    const partials = [5, 5, 5, 5, 5, 291].map((out) => assistantEntry({
+      id: 'msg_011CcyTURQe2GYCGo9SgEiYt', requestId: 'req_011CcmQpv7hzPv5HVU23u2Dj',
+      model: 'claude-haiku-4-5', timestamp: '2026-07-10T00:00:00.000Z',
+      usage: { input_tokens: 10, output_tokens: out, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+    }));
+    const file = writeTranscript(dir, 'sess-lastsnap', [
+      { timestamp: '2026-07-10T00:00:00.000Z', type: 'file-history-snapshot' },
+      ...partials,
+    ]);
+    const r = parseTranscriptTokens(file);
+    assert.equal(r.turns, 1);
+    assert.equal(r.output_tokens, 291); // NOT 5 (first-wins) and NOT 311 (sum)
+    assert.equal(r.input_tokens, 10);
+    // The snapshot is taken WHOLESALE, and for a monotonic stream last == max —
+    // pinning both halves of the D4 decision (no per-field max, which would
+    // fabricate a snapshot that never existed).
+    assert.equal(r.output_tokens, Math.max(...[5, 5, 5, 5, 5, 291]));
+    // haiku: (10/1M)*1.0 + (291/1M)*5.0 = 0.00001 + 0.001455
+    assert.equal(r.cost_usd.toFixed(6), '0.001465');
+  });
+
+  // --- 745 F-11: an all-zero snapshot must NOT displace a real one ---
+  // The counterexample to D4's "last == max for monotonic streams" premise. Shape
+  // reproduced verbatim from the 126-session corpus (610 keys, 529.8M cache_read
+  // at risk). ccusage has this bug too, so the differential CANNOT catch it — this
+  // test is the only thing standing between us and a silent 2% loss.
+  run('an all-zero trailing snapshot does not displace the real usage (F-11)', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'zerotail-'));
+    const real = { input_tokens: 2, output_tokens: 760, cache_creation_input_tokens: 290, cache_read_input_tokens: 804035 };
+    const zero = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    const mk = (usage) => assistantEntry({
+      id: 'msg_01Qfxz8e8Z542YgWfyDhfxyo', requestId: 'req_011CcbU',
+      model: 'claude-haiku-4-5', timestamp: '2026-07-10T00:00:00.000Z', usage,
+    });
+    const file = writeTranscript(dir, 'sess-zerotail', [
+      mk(real), mk(real), mk(real),   // the turn's real usage
+      mk(zero), mk(zero), mk(zero),   // re-carried placeholders — naive last-wins takes these
+    ]);
+    const r = parseTranscriptTokens(file);
+    assert.equal(r.turns, 1);
+    assert.equal(r.cache_read_tokens, 804035); // NOT 0 — the bug this pins
+    assert.equal(r.output_tokens, 760);
+    assert.equal(r.cache_write_tokens, 290);
+    assert.equal(r.input_tokens, 2);
+  });
+
+  // The rule is directional: a REAL snapshot must still displace an earlier zero,
+  // otherwise "ignore zeros" would silently become "first-wins" for a turn whose
+  // first line is a placeholder — trading one bug for another.
+  run('a real snapshot DOES displace an earlier all-zero one (F-11 is directional)', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'zerohead-'));
+    const zero = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    const real = { input_tokens: 7, output_tokens: 99, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    const mk = (usage) => assistantEntry({
+      id: 'msg_zerohead', requestId: 'req_zerohead',
+      model: 'claude-haiku-4-5', timestamp: '2026-07-10T00:00:00.000Z', usage,
+    });
+    const file = writeTranscript(dir, 'sess-zerohead', [mk(zero), mk(real)]);
+    const r = parseTranscriptTokens(file);
+    assert.equal(r.turns, 1);
+    assert.equal(r.output_tokens, 99); // the real one wins over the leading zero
+    assert.equal(r.input_tokens, 7);
+  });
+
+  // --- 745 item B bug 1 + D3: dedup scope is the caller's, and spans sessions ---
+  run('parseTranscriptTokens dedups across FILES when given a shared seen map, and not without one', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'crossfile-'));
+    const entry = assistantEntry({
+      id: 'msg-shared', requestId: 'req-shared', model: 'claude-haiku-4-5',
+      timestamp: '2026-07-10T00:00:00.000Z',
+      usage: { input_tokens: 1000, output_tokens: 100, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+    });
+    const fileA = writeTranscript(dir, 'sess-A', [entry]);
+    const fileB = writeTranscript(dir, 'sess-B', [entry]); // resumed session re-carries the same turn
+
+    const perFileA = parseTranscriptTokens(fileA);
+    const perFileB = parseTranscriptTokens(fileB);
+    assert.equal(perFileA.turns + perFileB.turns, 2); // per-file scope double-counts (the pre-745 behaviour)
+
+    const seen = new Map();
+    const sharedA = parseTranscriptTokens(fileA, { seen });
+    const sharedB = parseTranscriptTokens(fileB, { seen });
+    assert.equal(sharedA.turns, 1);
+    assert.equal(sharedB.turns, 0); // counted once, in the file that got there first
+    assert.equal(sharedA.input_tokens + sharedB.input_tokens, 1000);
+  });
+  run('costSessionsChronologically counts a re-carried turn in the ORIGIN session, not the resumed one', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'recarry-'));
+    const shared = assistantEntry({
+      id: 'msg-origin', requestId: 'req-origin', model: 'claude-haiku-4-5',
+      timestamp: '2026-07-10T00:00:00.000Z',
+      usage: { input_tokens: 2000, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+    });
+    const ownTurn = assistantEntry({
+      id: 'msg-resumed-own', requestId: 'req-resumed-own', model: 'claude-haiku-4-5',
+      timestamp: '2026-07-11T00:00:00.000Z',
+      usage: { input_tokens: 500, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+    });
+    const originPath = writeTranscript(dir, 'sess-origin', [shared]);
+    const resumedPath = writeTranscript(dir, 'sess-resumed', [shared, ownTurn]);
+
+    // Fed newest-first on purpose — the function must order by startTs itself.
+    const costed = costSessionsChronologically([
+      { sessionId: 'sess-resumed', projectDir: 'p', mainPath: resumedPath, subagentPaths: [], startTs: '2026-07-11T00:00:00.000Z' },
+      { sessionId: 'sess-origin', projectDir: 'p', mainPath: originPath, subagentPaths: [], startTs: '2026-07-10T00:00:00.000Z' },
+    ]);
+    const byId = Object.fromEntries(costed.map((c) => [c.session_id, c]));
+    assert.equal(byId['sess-origin'].total_tokens.input, 2000); // origin keeps the re-carried turn
+    assert.equal(byId['sess-resumed'].total_tokens.input, 500); // resumed keeps only its own
+    const corpusInput = costed.reduce((s, c) => s + c.total_tokens.input, 0);
+    assert.equal(corpusInput, 2500); // NOT 4500 — the shared turn is counted exactly once
+  });
+  run('computeSessionCost dedups a main transcript against its own subagent files', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'sessionscope-'));
+    const dup = assistantEntry({
+      id: 'msg-dup', requestId: 'req-dup', model: 'claude-haiku-4-5',
+      timestamp: '2026-07-10T00:00:00.000Z',
+      usage: { input_tokens: 100, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+    });
+    const mainPath = writeTranscript(dir, 'sess-scope', [dup]);
+    const subPath = writeTranscript(dir, 'agent-dup', [dup]);
+    const rec = computeSessionCost({
+      sessionId: 'sess-scope', projectDir: 'p', mainPath, subagentPaths: [subPath], startTs: '2026-07-10T00:00:00.000Z',
+    });
+    assert.equal(rec.total_tokens.input, 100); // not 200
+    assert.equal(rec.orchestrator_tokens_total, 100);
+    assert.equal(rec.worker_tokens_total, 0); // main got there first; the split definition is unchanged (by file path)
+    assert.equal(rec.subagents.found, 1); // a fully-deduped subagent file is still FOUND, not missing
+  });
+
+  // --- 745 item B bug 3: transcripts DO distinguish ephemeral cache tiers ---
+  run('parseTranscriptTokens prices a 1h cache write at 2.0x input, not the 5m 1.25x', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'cache1h-'));
+    const file = writeTranscript(dir, 'sess-1h', [
+      assistantEntry({
+        id: 'msg-1h', requestId: 'req-1h', model: 'claude-sonnet-4-6',
+        timestamp: '2026-07-10T00:00:00.000Z',
+        usage: {
+          input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 100000, // flat form: the SUM, and what the old code priced at 5m
+          cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 100000 },
+        },
+      }),
+    ]);
+    const r = parseTranscriptTokens(file);
+    assert.equal(r.cache_write_tokens, 100000);
+    // sonnet-4-6 input 3.0 -> 1h write 6.0/1M: 0.1 * 6.0 = 0.60 (the old 5m rate gave 0.375)
+    assert.equal(r.cost_usd.toFixed(4), '0.6000');
+  });
+  run('parseTranscriptTokens prices a 5m cache write at 1.25x input, and a mixed-tier turn per tier', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'cache5m-'));
+    const file = writeTranscript(dir, 'sess-5m', [
+      assistantEntry({
+        id: 'msg-5m', requestId: 'req-5m', model: 'claude-sonnet-4-6',
+        timestamp: '2026-07-10T00:00:00.000Z',
+        usage: {
+          input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 100000,
+          cache_creation: { ephemeral_5m_input_tokens: 100000, ephemeral_1h_input_tokens: 0 },
+        },
+      }),
+      assistantEntry({
+        id: 'msg-mixed', requestId: 'req-mixed', model: 'claude-sonnet-4-6',
+        timestamp: '2026-07-10T00:00:01.000Z',
+        usage: {
+          input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 200000,
+          cache_creation: { ephemeral_5m_input_tokens: 100000, ephemeral_1h_input_tokens: 100000 },
+        },
+      }),
+    ]);
+    const r = parseTranscriptTokens(file);
+    assert.equal(r.cache_write_tokens, 300000);
+    // 5m turn: 0.1*3.75 = 0.375; mixed turn: 0.1*3.75 + 0.1*6.0 = 0.975 -> 1.35
+    assert.equal(r.cost_usd.toFixed(4), '1.3500');
+  });
+  run('parseTranscriptTokens falls back to the flat cache_creation_input_tokens at the 5m rate when no tier object is present', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'cacheflat-'));
+    const file = writeTranscript(dir, 'sess-flat', [
+      assistantLine('claude-sonnet-4-6', {
+        input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 100000, cache_read_input_tokens: 0,
+      }),
+    ]);
+    const r = parseTranscriptTokens(file);
+    assert.equal(r.cache_write_tokens, 100000);
+    assert.equal(r.cost_usd.toFixed(4), '0.3750'); // 0.1 * 3.75
+  });
+
+  // --- 745 item B bug 4: Sonnet-5's dated price cliff ---
+  run('parseTranscriptTokens prices identical Sonnet-5 usage at $2/$10 before the cliff and $3/$15 after', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'cliff-'));
+    const usage = { input_tokens: 1_000_000, output_tokens: 1_000_000, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    const before = writeTranscript(dir, 'sess-intro', [
+      assistantEntry({ id: 'm1', requestId: 'r1', model: 'claude-sonnet-5', timestamp: '2026-07-16T00:00:00.000Z', usage }),
+    ]);
+    const after = writeTranscript(dir, 'sess-standard', [
+      assistantEntry({ id: 'm2', requestId: 'r2', model: 'claude-sonnet-5', timestamp: '2026-09-15T00:00:00.000Z', usage }),
+    ]);
+    assert.equal(parseTranscriptTokens(before).cost_usd.toFixed(2), '12.00'); // $2 + $10 intro
+    assert.equal(parseTranscriptTokens(after).cost_usd.toFixed(2), '18.00');  // $3 + $15 standard
+  });
+  run('findPricing resolves the Sonnet-5 schedule by timestamp and the standard rate when undated', () => {
+    assert.equal(findPricing('claude-sonnet-5', Date.parse('2026-08-31T23:59:59.000Z')).input, 2.0);
+    assert.equal(findPricing('claude-sonnet-5', Date.parse('2026-09-01T00:00:00.000Z')).input, 3.0);
+    assert.equal(findPricing('claude-sonnet-5', null).input, 3.0); // undated -> enduring standard rate
+    assert.equal(findPricing('claude-opus-4-8[1m]').input, 5.0); // suffixed id via longest-prefix match
+    assert.equal(findPricing('claude-opus-4-8[1m]').cache_write_1h, 10.0);
+  });
+
+  // --- 745 item B bug 4 (second half) + D5: unknown models fail CLOSED ---
+  run('findPricing returns null for an unknown model instead of silently falling back to Sonnet', () => {
+    assert.equal(findPricing('claude-made-up-9'), null);
+    assert.equal(findPricing(null), null);
+  });
+
   // --- Finding 4 regression: model-less usage turns must not be priced at DEFAULT ---
   run('parseTranscriptTokens routes a model-less usage turn into MISSING_MODEL_KEY at $0, not DEFAULT_PRICING', () => {
     const dir = fs.mkdtempSync(path.join(tmp, 'missingmodel-'));
@@ -167,7 +393,7 @@ async function main() {
     assert.equal(isKnownModel('claude-opus-4-6-20260101'), true); // prefix match
     assert.equal(isKnownModel(null), true); // absent model is a different failure mode
   });
-  run('computeSessionCost buckets an unknown model loudly instead of pricing it silently', () => {
+  run('computeSessionCost fails CLOSED on an unknown model: $0, bucketed, surfaced (745 item B, D5)', () => {
     const dir = fs.mkdtempSync(path.join(tmp, 'unknown-'));
     const mainPath = writeTranscript(dir, 'sess-unknown', [
       { timestamp: '2026-07-10T00:00:00.000Z', type: 'file-history-snapshot' },
@@ -177,8 +403,12 @@ async function main() {
       sessionId: 'sess-unknown', projectDir: 'p', mainPath, subagentPaths: [], startTs: '2026-07-10T00:00:00.000Z',
     });
     assert.deepEqual(rec.unknown_model_tokens, { 'claude-made-up-9': 1500 });
-    // still priced (via DEFAULT_PRICING fallback), not zeroed out
-    assert.ok(rec.total_cost_usd > 0);
+    // NOT priced at a Sonnet-shaped default — an unpriceable model contributes $0
+    // and is surfaced, rather than hiding behind a plausible-looking figure.
+    assert.equal(rec.total_cost_usd, 0);
+    assert.equal(rec.model_mix['claude-made-up-9'].cost_usd, 0);
+    assert.equal(rec.model_mix['claude-made-up-9'].input_tokens, 1000);
+    assert.equal(rec.main.model, null); // no priced model was seen
   });
   run('computeSessionCost does not flag a known model as unknown', () => {
     const dir = fs.mkdtempSync(path.join(tmp, 'known-'));
