@@ -554,6 +554,33 @@ condition — not just "seems better").
    (Also: #54393's failure classes map onto guards we already ship — local evidence our
    enforcement investment leads community practice.)
 
+### R1 — epistemic scaffolds (landed 2026-07-16; tiered, refute-first)
+
+1. **Full-pipeline-for-everything: TRIM-TO-SUBSET licensed, strip refuted.** GAIA controlled
+   comparison (arXiv 2606.08529, pre-registered, T1): scaffold effects are task- and
+   model-family-conditional — 28pp accuracy swing from scaffold choice alone within one model;
+   and the counter-intuitive headline: **Opus-class gained the MOST from structured scaffolds
+   at the hard level**, directly undercutting "frontier models internalize planning."
+   Compounding-error math (T2): each mandatory phase is failure surface (95%/step → 59.9%
+   end-to-end at 10 steps) — argues for right-sizing, not maximalism. (Unverified lead,
+   flagged: arXiv 2602.04853 "decomposition helps ≤70B, diminishing at frontier" — PDF
+   unreadable, re-verify before citing.)
+2. **Planning/derisk phases: KEEP.** Depth Ceiling (arXiv 2604.06427, T1): frontier models
+   hit a hard ceiling discovering multi-step plans internally — "externally provided planning
+   scaffolds may remain necessary." All vendor spec-driven ROI numbers (3-10×, Spec Kit/Kiro)
+   are uncontrolled T2/T3 — do not cite as proof. **No controlled plan-mode ablation for
+   coding agents exists as of mid-2026** — our Phase-5 pilot (staged chain vs direct /plan on
+   matched tempdocs, blind-scored) would be novel.
+3. **Refute-first independent review: KEEP — the best-evidenced scaffold in the whole sweep.**
+   Self-Correction Illusion (arXiv 2606.05976, T1): relabeling identical error content from
+   self to external role raised correction rates **23-93pp** (10/13 cells p<0.001) — reviewer
+   ≠ implementer has a *mechanistic* basis, not folklore. Naive review agents are low-signal
+   (arXiv 2604.03196: CRA-only merge 45.2% vs human 68.4%; 12/13 reviewers <60% signal) — the
+   ADVERSARIAL/verify-before-report structure is the differentiator (Refute-or-Promote arXiv
+   2604.19049: ~79% false-candidate kill; Anthropic's own /ultrareview converges on the same
+   design). Worth citing 2606.05976 in slice-execution.md's `independent-reviewer-required`
+   rationale.
+
 ## Non-goals
 
 - Re-running 727's tactical fix loop (that instrument keeps running independently).
