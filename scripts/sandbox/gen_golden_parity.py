@@ -117,6 +117,46 @@ def get_knowledge_status(base_url: str) -> dict[str, Any]:
     return json.loads(raw)
 
 
+HELP_DOC_PROBE_QUERY = "keyboard shortcuts"
+HELP_DOC_PROBE_FILENAME = "keyboard-shortcuts.md"
+
+
+def check_help_docs_indexed(base_url: str) -> str | None:
+    """Corpus-comparability precondition (tempdoc 734 finding 5). Returns a
+    REFUSING message, or None if satisfied.
+
+    Every real (non-eval-mode) install auto-ingests 5 bundled help `.md` files
+    under `SSOT/docs/help/` on boot (`KnowledgeServerBootstrap.tryIngestHelpFiles`
+    — skipped ONLY in eval mode). A baseline generated against a dev stack that
+    skipped this ingestion (e.g. started via jseval's `--start-backend`, which
+    sets `justsearch.eval.mode=true`) is not corpus-comparable to any real
+    Sandbox candidate, which always has them. Live-verified 2026-07-16: this
+    corpus difference alone shifts 3 of 10 golden queries' top-10 by one
+    document, even though the help docs never appear in the results
+    themselves (indirect effect, most likely HNSW graph-structure sensitivity
+    to insertion history) — small on its own, but silent and compounds with
+    whatever else varies between the baseline dev stack and a real candidate."""
+    try:
+        response = post_search(base_url, HELP_DOC_PROBE_QUERY, limit=5)
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
+        return f"could not query {base_url} to check for bundled help docs: {exc}"
+
+    for hit in response.get("results") or []:
+        filename = (hit.get("fields") or {}).get("filename", "")
+        if filename == HELP_DOC_PROBE_FILENAME:
+            return None
+
+    return (
+        f"REFUSING: a search for {HELP_DOC_PROBE_QUERY!r} did not surface "
+        f"{HELP_DOC_PROBE_FILENAME!r} — the bundled help docs are not indexed on this dev "
+        "stack. This baseline would not be corpus-comparable to a real Sandbox candidate, "
+        "which always has them (KnowledgeServerBootstrap.tryIngestHelpFiles runs on every "
+        "boot except eval mode). Start the dev stack WITHOUT eval mode (i.e. not via "
+        "jseval's --start-backend / runHeadlessEval) so the 5 help docs get auto-ingested "
+        "before generating this baseline."
+    )
+
+
 def queries_hash(queries: list[dict[str, Any]]) -> str:
     """Stable hash of the query set's (id, query) pairs so a golden baseline can be
     checked against drift in the query set itself, independent of file formatting."""
@@ -160,6 +200,10 @@ def generate(
             "corpus and wait for embeddingCompatState=COMPATIBLE (poll /api/knowledge/status) "
             "before regenerating this baseline."
         )
+
+    help_docs_error = check_help_docs_indexed(base_url)
+    if help_docs_error:
+        sys.exit(help_docs_error)
 
     results: list[dict[str, Any]] = []
     probe_executed_legs: list[str] | None = None
