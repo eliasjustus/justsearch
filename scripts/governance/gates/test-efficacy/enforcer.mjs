@@ -35,23 +35,9 @@ export async function enforceTestEfficacy(options) {
 
   const ruleDescriptions = TEST_EFFICACY_RULE_DESCRIPTIONS;
 
-  if (!existsSync(reportPath)) {
-    return {
-      ...TOOL,
-      findings: [
-        {
-          ruleId: 'test-efficacy/report-missing',
-          level: 'warning',
-          message:
-            `PIT strength report not found at ${reportPath}. ` +
-            `Run \`node scripts/ci/report-pit-strength.mjs --out tmp/pit-strength-report.v1.json\` first.`,
-          uri: gate.config?.reportPath ?? 'tmp/pit-strength-report.v1.json',
-        },
-      ],
-      verdict: 'pass',
-      ruleDescriptions,
-    };
-  }
+  // Report presence is the runner's contract (tempdoc 742 D1): `tmp/pit-strength-report.v1.json`
+  // is an `on-demand` input under config.inputs, so an absent report SKIPS this gate at the runner
+  // (kernel/input-skipped) before this enforcer is dispatched; it is not evaluated vacuously.
   if (!existsSync(baselinePath)) {
     return {
       ...TOOL,
@@ -131,7 +117,8 @@ export async function enforceTestEfficacy(options) {
     if (!(seam in reportSeams)) {
       // F2 (fail-closed): a registered seam absent from an EXISTING report means PIT ran but did
       // not measure a declared seam (typo'd FQCN, module not built, partial run) — that must fail,
-      // not silently pass. (Total report-absence is handled earlier as an advisory report-missing.)
+      // not silently pass. (Total report-absence is handled at the runner: this on-demand input
+      // being absent SKIPS the gate before dispatch (tempdoc 742 D1 kernel/input-skipped).)
       verdict = 'fail';
       findings.push({
         ruleId: 'test-efficacy/seam-not-measured',

@@ -19,7 +19,14 @@
       },
       "config": {
         "reportPath": "tmp/pit-strength-report.v1.json",
-        "registerPath": "governance/logic-seams.v1.json"
+        "registerPath": "governance/logic-seams.v1.json",
+        "inputs": [
+          {
+            "path": "tmp/pit-strength-report.v1.json",
+            "producer": "node scripts/ci/report-pit-strength.mjs --run",
+            "class": "on-demand"
+          }
+        ]
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/test-efficacy"
     },
@@ -91,6 +98,13 @@
         "trackedSeverities": [
           "high",
           "critical"
+        ],
+        "inputs": [
+          {
+            "path": "tmp/npm-audit-report.json",
+            "producer": "node scripts/ci/report-npm-audit.mjs",
+            "class": "required"
+          }
         ]
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/npm-audit"
@@ -286,7 +300,14 @@
         "diffFallback": "HEAD~1"
       },
       "config": {
-        "reportPath": "tmp/arch-preflight/module-deps.json"
+        "reportPath": "tmp/arch-preflight/module-deps.json",
+        "inputs": [
+          {
+            "path": "tmp/arch-preflight/module-deps.json",
+            "producer": "node scripts/architecture/module-deps.mjs",
+            "class": "required"
+          }
+        ]
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/module-deps"
     },
@@ -358,7 +379,14 @@
         "diffFallback": "HEAD~1"
       },
       "config": {
-        "reportPath": "tmp/knip-report.json"
+        "reportPath": "tmp/knip-report.json",
+        "inputs": [
+          {
+            "path": "tmp/knip-report.json",
+            "producer": "npm --prefix modules/ui-web run knip:report",
+            "class": "required"
+          }
+        ]
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/dead-code"
     },
@@ -376,7 +404,14 @@
         "diffFallback": "HEAD~1"
       },
       "config": {
-        "reportPath": "tmp/dead-code-jvm-report.json"
+        "reportPath": "tmp/dead-code-jvm-report.json",
+        "inputs": [
+          {
+            "path": "tmp/dead-code-jvm-report.json",
+            "producer": "./gradlew.bat :modules:dead-code-audit:test",
+            "class": "required"
+          }
+        ]
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/dead-code-jvm"
     },
