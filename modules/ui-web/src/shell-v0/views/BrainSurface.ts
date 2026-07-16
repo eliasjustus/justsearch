@@ -1044,7 +1044,17 @@ export class BrainSurface extends JfElement {
       online: { dot: 'online', label: aiEngineHeadline(aiVerdict), sub: 'Chat and summaries ready.' },
       // Tempdoc 663 — indexing is now a distinct, named state (the original ladder had no explicit
       // branch for `runtime.mode === 'indexing'` and fell through to 'offline').
-      indexing: { dot: 'indexing', label: aiEngineHeadline(aiVerdict), sub: 'Indexing embeddings…' },
+      // Tempdoc 734 round 5 finding 3 — `awaitingChatEnable` distinguishes "the engine is parked
+      // because you haven't clicked Resume yet" from "genuinely still indexing"; both read the same
+      // sub-label before this, and a Sandbox round waited 5+ minutes expecting the first case to
+      // resolve on its own the way the second one does.
+      indexing: {
+        dot: 'indexing',
+        label: aiEngineHeadline(aiVerdict),
+        sub: aiVerdict.awaitingChatEnable
+          ? "Ready — click Resume Chat AI below to start."
+          : 'Indexing embeddings…',
+      },
       connecting: { dot: 'starting', label: 'Connecting…', sub: 'Checking AI status…' },
     };
     const sc = statusConfig[aiState] ?? statusConfig.offline!;
