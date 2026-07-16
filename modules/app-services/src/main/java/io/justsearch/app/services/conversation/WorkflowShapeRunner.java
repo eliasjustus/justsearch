@@ -396,7 +396,14 @@ public final class WorkflowShapeRunner implements ShapeRunner {
     if (raw != null && !raw.toString().isBlank()) {
       return new WorkflowRef(raw.toString().trim());
     }
-    return CoreWorkflowCatalog.DEMO_ID;
+    // Tempdoc 734 round 5 finding 1 / tempdoc 744 — the demo workflow needs the optional
+    // vendor.mcphost.* reference server most installs don't have (see CoreWorkflowCatalog's
+    // demoCompose() javadoc: "unlike demo-compose ... research-brief runs in any stack with the
+    // chat model loaded"). Silently defaulting an unspecified request to the demo meant every
+    // caller who didn't know to pass workflowId explicitly got a guaranteed BAD_REQUEST
+    // ("has dangling delegations") instead of a working run. Default to the one workflow that
+    // is guaranteed to work.
+    return CoreWorkflowCatalog.RESEARCH_BRIEF_ID;
   }
 
   private Operation resolveOperation(String idValue) {

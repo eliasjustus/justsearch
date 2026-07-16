@@ -153,6 +153,61 @@ class WorkflowShapeRunnerTest {
         events.get(0).payload().toString());
   }
 
+  /**
+   * Regression for tempdoc 734 round 5 finding 1 / tempdoc 744: the LIVE {@link
+   * CoreWorkflowCatalog}, no {@code workflowId} supplied (the exact shape of the round's own
+   * repro — {@code shapeId:"core.workflow-run"} with no other selector). Before the fix this
+   * silently defaulted to {@code core.demo-compose}, which needs the optional {@code
+   * vendor.mcphost.*} reference server no test (and most real installs) has, and failed every
+   * time with "has dangling delegations". Uses the real catalog, not a synthetic one, so a
+   * regression here is caught even if a future edit reorders or renames the catalog's entries.
+   */
+  @Test
+  void noWorkflowIdDefaultsToResearchBriefNotTheMcpDemo() {
+    // "core.free-chat" is what CoreWorkflowCatalog.researchBrief()'s LlmSteps delegate to.
+    RecordingRunner freeChat = new RecordingRunner(new ConversationShapeRef("core.free-chat"));
+    ConversationShape freeChatShape =
+        new ConversationShape(
+            freeChat.shapeId(),
+            Presentation.of(new I18nKey("k.l"), new I18nKey("k.d")),
+            Audience.USER,
+            Provenance.core("1.0"),
+            ExecutionMode.SHAPE_DRIVEN,
+            IterationMode.ONE_SHOT,
+            PersistenceMode.EPHEMERAL,
+            List.of(),
+            List.of(),
+            List.of(),
+            null,
+            EventDescriptor.namesOnly(List.of("chunk", "done")));
+    ConversationEngine engine =
+        new ConversationEngine(
+            ConversationShapeCatalog.of("core", List.of(freeChatShape)), List.of(freeChat));
+    WorkflowShapeRunner r =
+        new WorkflowShapeRunner(
+            () -> engine,
+            CoreWorkflowCatalog.catalog(),
+            () -> OperationCatalog.of("vendor.x", List.of()),
+            () -> OperationCatalog.of("core", List.of()),
+            new GatedOperationExecutor(
+                () -> (intent, provenance) -> new IntentDispatchResult.Dispatched(OperationResult.success("x")),
+                () -> null),
+            new WorkflowGateRegistry());
+    List<SseEvent> events = new CopyOnWriteArrayList<>();
+
+    r.run(Map.of(), Audience.USER, events::add);
+
+    List<String> order = names(events);
+    assertFalse(order.contains("error"), "must not fail: " + events);
+    SseEvent started =
+        events.stream().filter(e -> e.name().equals("workflow_started")).findFirst().orElseThrow();
+    assertEquals(
+        CoreWorkflowCatalog.RESEARCH_BRIEF_ID.value(),
+        started.payload().get("workflowId"),
+        "an unspecified workflowId must default to the self-contained workflow, not the one that "
+            + "needs an optional external MCP server: " + events);
+  }
+
   @Test
   void gateStepBlocksThenProceedsOnApproval() throws Exception {
     Workflow wf =
@@ -306,11 +361,20 @@ class WorkflowShapeRunnerTest {
 
   /** A ShapeRunner that records the body it was handed (for the LlmStep body-contract test). */
   private static final class RecordingRunner implements ShapeRunner {
+    private final ConversationShapeRef shapeId;
     private volatile Map<String, Object> lastBody;
+
+    RecordingRunner() {
+      this(new ConversationShapeRef("core.t-record"));
+    }
+
+    RecordingRunner(ConversationShapeRef shapeId) {
+      this.shapeId = shapeId;
+    }
 
     @Override
     public ConversationShapeRef shapeId() {
-      return new ConversationShapeRef("core.t-record");
+      return shapeId;
     }
 
     @Override
