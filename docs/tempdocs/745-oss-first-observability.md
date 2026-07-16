@@ -1,7 +1,7 @@
 ---
 title: "745 — OSS-first agent observability: adopt/keep/retire survey across the analytics stack"
 type: tempdocs
-status: "open — charter drafted 2026-07-16; no investigation started"
+status: "investigated 2026-07-16 (session 805279a4) — survey COMPLETE, answer is 'adopt almost nothing'. Charter's OSS-first premise REFUTED for the Claude-Code slices (no maintained/licensed OSS in the niche); ccusage swap preconditions FAIL 2 of 3 → keep our engine, adopt ccusage as differential oracle. Three verified parser bugs found (fix exactly known) + a NEW reservoir-retention defect (~6-42min, unknown to 743, higher value than the whole charter). AWAITING FOUNDER: (1) F-8 governance conflict — the standing falsifier fired but the swap's own preconditions failed; (2) 743 go/no-go gates the retire sweep. Recommended reshape: program → 3 correctness items."
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / tooling / observability
@@ -223,6 +223,169 @@ So for the DEAD slices the honest answer is *conditional*, and 745 cannot settle
 Deciding now means either deleting 743's Phase-2 substrate or preserving dead code on
 speculation. 743:436-437 anticipated this ("coordinate only if Phase-2 proposals touch the
 analytics stack") — they do.
+
+### F-5. The ccusage probe: the swap's own preconditions FAIL 2 of 3
+
+ccusage **20.0.17** pinned, probed live against 9,620 transcripts (125 sessions + 546 subagent
+files for this project). The migrated proposal is explicitly conditional — *"IF probes confirm
+per-session + subagent granularity and pinnable offline pricing."* Probed:
+
+| Precondition | Verdict | Evidence |
+|---|---|---|
+| Per-session granularity | **CONFIRMED** | `session --json -O` → 6,954 rows; `period` = the Claude Code session UUID. Caveat: 21 duplicate `period` values across projects — a naive `Map(period→row)` silently drops data. |
+| Subagent granularity | **REFUTED** | Subagents are separate nested files (`<session>/subagents/**`), **not** `isSidechain` rows (0 sidechain lines in 125 files). ccusage reads them and folds them into the parent **exactly and invisibly** — token-for-token match with our parent+subs total. **No output mode carries a role dimension.** The orchestrator/worker split — a headline metric — is lost at the ccusage boundary. |
+| Pinnable offline pricing | **REFUTED (silent-failure trap)** | `-O` is genuinely zero-network (proxy-verified: 0 hits vs 7 CONNECTs to `raw.githubusercontent.com` **and `models.dev`** by default). But the pinned table **has no `claude-sonnet-5` entry and fails silently to $0**: 11.38 B sonnet-5 tokens priced at **$0**, corpus total $23,956 offline vs $27,305 online — **12.3% understated, exit=0, stderr empty, no warning in JSON or table mode.** Pinning the version pins a table that silently zero-rates every model newer than the pin. |
+
+So the swap is **self-cancelling on its own pre-registered terms**: 2 of 3 preconditions fail.
+
+### F-6. The 4.2% delta root-caused — and it is THREE bugs in OURS, not one
+
+Applying the token-vs-dollar discriminator (89 cleanly-matched sessions, ccusage *online* pricing
+to remove the $0 artifact): **tokens +4.51%, dollars −0.93%** → a dedup/scope delta.
+**Pricing-table divergence: REFUTED as the cause.** Causal proof by reconstruction, not argument:
+
+```
+ccusage tokens                              10,391,804,505
+A  ours today (first-snap, per-file dedup)  10,860,843,607   +4.51%   output −30.19%
+B  + last-snapshot fix                      10,870,708,781   +4.61%   output  +2.18%
+C  + last-snapshot + GLOBAL dedup           10,391,981,122    0.00%   output   0.00%
+```
+
+Variant C matches ccusage to **0.00% on every field** (residual 0.0017%). That closes it. The
+tempdoc's stated hypothesis was right — but for **incomplete** reasons: the +4.5% is *two
+opposing errors partially cancelling*, which is exactly why the dollar column looked innocuous.
+
+1. **Cross-file dedup (hypothesis CONFIRMED).** `seenMessageIds` is a per-file `Set`
+   (`lib/transcript-cost.mjs:109`); ccusage dedups `(messageId, requestId)` globally. Measured
+   985 turns / 489.8 M tokens = **3.42% of tokens duplicated across files** (+3.54% overcount),
+   concentrated in ~11 resumed sessions (85 of 96 match within 1%).
+2. **First-vs-last snapshot — a NEW bug nobody suspected.** `transcript-cost.mjs:124`
+   (`if (seenMessageIds.has(msgId)) continue;`) keeps the **first** usage snapshot, on the
+   comment's premise that repeated lines carry *"the identical usage snapshot"*. **That premise
+   is false in subagent files** — snapshots are streaming partials that *grow*. Independently
+   reproduced by this session on a fresh subagent transcript:
+   `msg_011CcyTURQe2GYCGo9SgEiYt -> 5, 5, 5, 5, 5, 291` — 9 of 9 multi-line ids vary. Taking the
+   first undercounts that turn **58×**. Corpus-wide: **output tokens −30.19%**;
+   1,465 of 1,640 multi-line subagent ids affected.
+3. **Cache 1h-tier collapse — REAL, and ccusage does NOT fix it.** The comment
+   (`transcript-cost.mjs:11`) *"transcripts don't distinguish tiers"* is **factually wrong**:
+   25,404 of 25,404 turns carry a `cache_creation` breakdown, and **100.000% of cache writes are
+   `ephemeral_1h`** (283.1 M tokens; `ephemeral_5m` = 0). We price all of it at the 5-minute rate
+   (1.25× input) instead of 2.0× → **~$655–$1,091 underpriced on the compared corpus alone**.
+   ccusage's binary parses the same breakdown but its pricing struct carries a single
+   `cache_creation_input_token_cost` with no 1h rate — **adopting ccusage inherits this bug.**
+
+**This is 743's ship-blocker fix being half-wrong.** The review correctly stopped the 2.34×
+double-count, but chose the wrong representative (first, not last/max) on a premise it verified
+by *counting lines vs unique ids* — never by checking whether the snapshots were **equal**.
+Textbook `interrogate-results`: the expected result (dedup kills the overcount) landed, so
+nobody asked why. The 2.34× fix traded an overcount for a −30% output undercount.
+
+### F-7. Consequence for 743's published baseline (cross-tempdoc, needs action)
+
+743's Phase-1 numbers were computed with this parser, so they carry all three defects:
+
+- **Total cost is understated** — the 1h-cache-tier collapse alone underprices ~8–13% of the
+  cache-write column, and cache-write is 290 M tokens of the sample.
+- **The 85.1% / 14.9% orchestrator/worker split is biased toward the orchestrator** in both
+  directions at once: bug 1 inflates *parent* files (resumed sessions), bug 2 deflates *subagent*
+  output. Magnitude is likely small in token share (output is ~0.2% of tokens; `cache_read`
+  dominates) — but **the direction is exactly the axis 743's live prediction 1 tests**
+  ("the 2026-07-15 delegation change should lower orchestrator share below 85.1%"). That
+  prediction is currently being measured by an instrument biased the same way it predicts.
+  **Recompute the baseline after the parser fix before testing prediction 1.** I have not
+  estimated the corrected split — recomputation, not arithmetic, is the honest route.
+- The delegation-economics *decision* (2026-07-15) is unaffected in direction: a biased-high
+  orchestrator share still supports "orchestrator tokens are scarcest."
+
+### F-8. The governance conflict the founder must resolve (do not let an agent settle this)
+
+Two pre-registered commitments, in the same paragraph of this tempdoc, now point opposite ways:
+
+- **The standing falsifier FIRES, twice over**: *"if a second parsing-class bug is found in
+  `transcript-cost.mjs`, adopt ccusage's engine without further debate."* Bugs 1 and 2 are both
+  parsing-class and both verified. The trigger is unambiguously met.
+- **The proposal's preconditions FAIL**: the swap was conditioned on *"IF probes confirm
+  per-session + subagent granularity and pinnable offline pricing"* — and 2 of 3 are refuted
+  (F-5). Executing the falsifier literally would adopt an engine that **loses a headline metric**
+  and **silently zero-rates new models**, to escape bugs whose exact fix is already known.
+
+Reading: the falsifier was written as a guard against *motivated reasoning* — "don't let us
+defend our own buggy parser out of NIH pride." It was **right about what it measured** (our
+parser is not trustworthy) and **wrong in its implied premise** (that ccusage's engine is the
+fit remedy). Its finding must be honored; its prescription is unavailable.
+
+Per `structural-defects-no-repeat`, an agent must not quietly convert a fired falsifier into a
+cost-benefit discussion — so this is escalated, not resolved here. **Recommended amendment (founder's call):**
+
+> Second parsing-class bug → **ccusage becomes a mandatory differential oracle wired to a
+> workflow moment**, not the engine. Engine adoption additionally requires the swap's original
+> preconditions to pass.
+
+## Verdict
+
+**As chartered — a stack-wide OSS-first survey producing a standing policy: NO. But the survey
+itself is now COMPLETE, and its answer is "adopt almost nothing."** Work-plan steps 1–3 are done
+above (~1 session). Steps 4–5 largely evaporate because there is almost nothing to adopt.
+This is not "don't do 745" — it is "745 asked a good question and the answer came back negative."
+
+**V-1 — The OSS-first policy: REFUTE, do not record it.** In this niche "maintained OSS" mostly
+does not exist (F-3): 2 of 3 named candidates abandoned ~3 months, 2 carry **no license**, all
+single-author with zero releases. The policy's hidden premise is that maintained OSS *exists* per
+slice; here it usually doesn't, and stars actively mislead (639★, dead since April). A standing
+CLAUDE.md line would cost always-loaded budget, rest on N=1 evidence, and mostly fire "no."
+`explore-before-implementing` already covers the real lesson.
+
+**V-2 — Withdraw the "OSS replaces the *slot*" framing** (current non-goal, line 96-97). The
+graveyard is a liveness failure (F-1); OSS changes the implementation and never the consumer.
+Adopting into a consumer-less slot yields a dead slot **plus** a dependency — Gen-4 with extra
+steps. This framing is the single most dangerous idea in the charter.
+
+**V-3 — ccusage: KEEP OUR ENGINE, ADOPT ccusage AS A DIFFERENTIAL ORACLE.** Its preconditions
+failed (F-5), but as a cross-check it found **three** real bugs our tests, our reviewer, and our
+orchestrator all missed. That is its demonstrated value, and it is already 743's interim practice
+— formalize it rather than swap engines. Gate: `-O` must never be trusted without a fail-closed
+unknown-model check (it silently zero-rates). **Pending founder resolution of F-8.**
+
+**V-4 — Fix the parser now; this is the real work and it is not an OSS question.** Three verified
+bugs, and the fix is *exactly known* — variant C (global `(messageId, requestId)` dedup +
+last/max snapshot) reproduces ccusage to 0.00%. Add the 1h-cache tier (2.0×), which ccusage
+would **not** have fixed. Then recompute 743's baseline (F-7).
+
+**V-5 — F-2 (reservoir retention) is the highest-value item in this tempdoc and was not in its
+charter.** The reservoir retains ~6–42 min; it is destroying capture every few minutes right now,
+and 743's handoff tells the next agent the opposite. Fix per-stream retention (metrics ≈1.1 GB/
+month is affordable). Not an OSS question.
+
+**V-6 — otel-tui is the one genuine adopt candidate**, in the one slice nobody had surveyed —
+but it is **downstream of V-5** (a viewer for a 6-minute window is polishing a leak) and rests on
+one unverified fact: `--from-json-file` schema vs our sink's NDJSON. ~10-minute test, not yet run.
+
+**V-7 — All retire/keep decisions for the dead slices: BLOCKED on 743's go/no-go** (F-4). Then
+it is a deletion PR, not a survey.
+
+### Cheapest decisive evidence — and it now exists
+
+For the one slice with a live consumer, the decisive evidence was the 4.2%-delta root-cause, and
+**it has been produced today** (F-6): reconstruction to a 0.00% match. It did not merely resolve
+the delta — it **fired the standing falsifier** and simultaneously **refuted the swap's
+preconditions**, which is why F-8 goes to the founder. For everything else, the decisive evidence
+is 743's go/no-go, which is already scheduled and costs nothing.
+
+### What this displaces or duplicates
+
+- **Duplicates 743's governance**: 743 already pre-registered the swap, its falsifier, and the
+  interim cross-check. 745's marginal contribution is the *probe*, not a program.
+- **Risks destabilizing 743**: retiring `context-attribution` would delete Phase-2's named
+  substrate (F-4). The two pre-marked KEEP candidates are confirmed load-bearing and untouched.
+- **The standing policy would duplicate** `explore-before-implementing` at always-loaded cost.
+
+### Recommended reshape
+
+745 shrinks from a program to three items: **(a)** fix the parser + recompute 743's baseline
+(V-4/F-7); **(b)** fix reservoir retention (V-5); **(c)** hold the retire sweep for 743's go/no-go
+(V-7). Plus one founder decision (F-8) and one deferred 10-minute test (V-6). Items (a) and (b)
+are both *correctness* work on live layers — neither is an adoption.
 
 ## Non-goals
 
