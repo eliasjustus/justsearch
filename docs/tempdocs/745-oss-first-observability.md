@@ -740,6 +740,57 @@ flat field" cannot land quietly.
 running session measuring it* — two runs minutes apart gave $22,093.35 and $22,100.35. The split
 and the decomposition are stable; the last two digits of the total are not. Report it as ≈.
 
+### F-14. Fast mode: the "unowned limitation" was closed, not documented
+
+Recorded earlier as a known gap ("Opus fast mode bills $10/$50 vs $5/$25 and transcripts *appear*
+not to mark it"). **The appearance was wrong** — the founder's question prompted a probe instead of
+a restatement:
+
+- **Transcripts DO record it**, at `message.usage.speed` — the exact object the parser already
+  reads. Values: `"standard" | "fast" | null`.
+- **Corpus-wide: 59,332 turns, ALL `"standard"`, zero `"fast"`.** The founder's "I never use it" is
+  now an empirical fact, not a recollection — so nothing in 743's baseline was ever mispriced by it.
+
+So the gap was never costing anything **and** was cheap to close permanently. Implemented rather
+than documented: `findPricing(model, tsMs, speed)` resolves the fast rows (Opus 4.8 $10/$50, Opus
+4.7 $30/$150; caching multipliers stack on top — all verified at the same primary source as the
+rest of the table). Fast mode is Opus-4.8/4.7-only; 4.6 withdrew it 2026-06-29.
+
+**Why implement a table that prices nothing today:** without it, a single `/fast` toggle would
+understate Opus 4.8 by **2× with no symptom** — the cheap-to-add case is exactly the one that goes
+unnoticed for a month. `isFastPricedCorrectly()` keeps the one ambiguous case (a `"fast"` turn on a
+model with no fast row) *surfaceable* rather than silently standard-priced, mirroring the
+`isKnownModel` contract. Three tests, mutation-verified: removing the `speed` argument fails the
+fast-rate test.
+
+`findEntryIn()` is now shared by both tables, so standard and fast resolve model ids by identical
+rules — a second copy of that prefix-matching is exactly where they would silently diverge.
+
+### F-15. `OTEL_LOG_RAW_API_BODIES=file:<dir>` — proposed, then REFUTED by its own docs
+
+F-9 floated this as the survey's headline free win (−72% log volume). Probing the primary source
+(`code.claude.com/docs/en/monitoring-usage`) before recommending it **killed it**:
+
+- **It increases data, not decreases it.** Inline mode (`1`) **truncates at 60 KB**; `file:<dir>`
+  is **untruncated**. `logs.ndjson` shrinks, total bytes grow.
+- **"Cleanup: not documented — no automatic retention or rotation."** Unbounded, unpruned growth —
+  re-introducing, one directory over, the exact defect F-2 spent this tempdoc fixing.
+- **"`<dir>` is used as-is (relative paths are relative to the current working directory)"** — the
+  *precise* CWD-relative bug 743 already fixed in the sink's `--out`, which scattered data into
+  ephemeral worktree dirs. In a **public repo**, that misfire writes full prompts and API bodies
+  somewhere unintended.
+
+**And it was never load-bearing.** F-2's retention crisis was about **metrics** (the stream the
+baseline needs), which the sink fix now retains indefinitely at ~1.1 GB/month. Logs have **no live
+consumer** (F-1: the OTLP readers are all 0-invoker; the viewer is manual), and the **transcripts
+already hold the conversation content durably** — that is what the baseline and friction mining
+actually read. So raw API bodies are a second, un-pruned copy of data we already have.
+
+**Verdict: do not adopt.** The better question is why `RAW_API_BODIES=1` is on at all — it is 72%
+of the log volume for a stream nothing reads. `1` is at least bounded (60 KB cap); leave it.
+Recorded because F-9 published the opposite recommendation, and a research-sourced "free win" that
+dissolves on contact with the docs is worth a tombstone (constraint 4, again).
+
 ## Verdict
 
 **As chartered — a stack-wide OSS-first survey producing a standing policy: NO. But the survey

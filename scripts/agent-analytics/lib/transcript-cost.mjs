@@ -38,6 +38,28 @@ const HAIKU_4_5 = { input: 1.0, output: 5.0, cache_write_5m: 1.25, cache_write_1
  */
 export const SONNET_5_INTRO_ENDS_MS = Date.parse('2026-09-01T00:00:00.000Z');
 
+/**
+ * Fast mode (`/fast`) bills Opus at a premium and is recorded per-turn as
+ * `message.usage.speed` — "standard" | "fast" (null on transcripts predating the
+ * field). Verified corpus-wide 2026-07-16: 59,332 turns, ALL "standard", zero
+ * "fast" — so this table currently prices nothing and is forward-looking only.
+ * It exists because the alternative is silent: without it, one `/fast` toggle
+ * would understate Opus 4.8 by 2x with no symptom, and the cheap-to-add case is
+ * exactly the one that goes unnoticed for a month.
+ *
+ * Rates verified at platform.claude.com/docs/en/about-claude/pricing (fast mode
+ * is Opus 4.8 / 4.7 only; 4.6 runs standard-speed at standard rates as of
+ * 2026-06-29). Cache multipliers stack ON TOP of fast pricing, per that page:
+ * 5m write = 1.25x input, 1h write = 2.0x input, cache read = 0.1x input.
+ */
+const OPUS_4_8_FAST = { input: 10.0, output: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 };
+const OPUS_4_7_FAST = { input: 30.0, output: 150.0, cache_write_5m: 37.5, cache_write_1h: 60.0, cache_read: 3.00 };
+
+export const FAST_PRICING = {
+  'claude-opus-4-8': OPUS_4_8_FAST,
+  'claude-opus-4-7': OPUS_4_7_FAST,
+};
+
 export const PRICING = {
   'claude-fable-5':             { input: 10.0, output: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
   'claude-opus-4-8':            OPUS_CURRENT,
@@ -64,11 +86,23 @@ export function round(n, decimals = 4) {
   return Math.round(n * f) / f;
 }
 
+/**
+ * Look a model id up in a pricing map: exact match, else longest-prefix match, so
+ * a specific dated id is not shadowed by a shorter bare-family key when the two
+ * ever diverge in price. Shared by the standard and fast tables so both resolve
+ * model ids by identical rules — a second copy of this matching would be a place
+ * for them to silently disagree.
+ */
+function findEntryIn(table, model) {
+  if (!model) return null;
+  if (table[model]) return table[model];
+  const key = Object.keys(table).sort((a, b) => b.length - a.length).find((k) => model.startsWith(k));
+  return key ? table[key] : null;
+}
+
 function findEntry(model) {
   if (!model) return null;
   if (PRICING[model]) return PRICING[model];
-  // Longest-prefix match, so a specific dated id is not shadowed by a shorter
-  // bare-family key when the two ever diverge in price.
   const key = PRICING_KEYS_LONGEST_FIRST.find((k) => model.startsWith(k));
   return key ? PRICING[key] : null;
 }
@@ -82,8 +116,20 @@ function findEntry(model) {
  *
  * `timestampMs` selects the dated row for models with a price schedule
  * (Sonnet-5's intro window); null/omitted resolves to the undated standard row.
+ *
+ * `speed` is the turn's `message.usage.speed` ("standard" | "fast" | null). Only
+ * "fast" changes anything, and only for the Opus models that offer it; anything
+ * else — including an unknown speed string — resolves to standard pricing, which
+ * is the honest default given fast mode is opt-in per turn.
  */
-export function findPricing(model, timestampMs = null) {
+export function findPricing(model, timestampMs = null, speed = null) {
+  if (speed === 'fast') {
+    const fast = findEntryIn(FAST_PRICING, model);
+    // A "fast" turn on a model with no fast row (e.g. a future model, or Opus 4.6
+    // where fast was withdrawn) falls through to standard rather than guessing a
+    // premium — but it is NOT silent: isFastPricedCorrectly() lets callers surface it.
+    if (fast) return fast;
+  }
   const entry = findEntry(model);
   if (!entry) return null;
   if (!entry.schedule) return entry;
@@ -92,6 +138,18 @@ export function findPricing(model, timestampMs = null) {
     if (timestampMs != null && timestampMs < step.before) return step.pricing;
   }
   return null;
+}
+
+/**
+ * True when a turn's (model, speed) pair is priced by a row that actually matches
+ * it. False only for a "fast" turn on a model with no fast row — i.e. the one case
+ * where findPricing knowingly falls back to standard and would understate. Lets a
+ * caller bucket the tokens loudly instead of shipping a plausible wrong number,
+ * the same contract isKnownModel provides for unknown models.
+ */
+export function isFastPricedCorrectly(model, speed) {
+  if (speed !== 'fast') return true;
+  return Boolean(findEntryIn(FAST_PRICING, model));
 }
 
 /**
@@ -336,7 +394,7 @@ function accumulate(result, { usage, model, tsMs }) {
   // mispriced turn behind a plausible-looking dollar figure) — its tokens are
   // routed into their model's bucket at $0 and surfaced via unknown_models by the
   // caller (isKnownModel is false for both cases).
-  const pricing = findPricing(model, tsMs);
+  const pricing = findPricing(model, tsMs, usage.speed ?? null);
   let turnCost = 0;
   if (pricing) {
     turnCost = (inp / PER_M) * pricing.input

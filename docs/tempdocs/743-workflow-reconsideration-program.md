@@ -415,9 +415,16 @@ confirmed: the direction is right, the size is **0.4pp**. So:
 - **Cost/merge moved +3.4%**, well inside the 2-2.7× weekly noise finding 6 predicted. Nothing in
   the readability verdict changes.
 
-Caveat inherited, not fixed: these are **API-equivalent dollars**, and Opus **fast mode** bills
-$10/$50 vs $5/$25 standard. Transcripts appear not to mark it, so a fast-mode-heavy session is
-understated. Unowned (745 §Open).
+Caveat: these are **API-equivalent dollars** (pricing-weighted tokens — the D-1 resource), not
+subscription spend.
+
+~~and Opus **fast mode** bills $10/$50 vs $5/$25 standard. Transcripts appear not to mark it, so a
+fast-mode-heavy session is understated. Unowned (745 §Open).~~
+**RESOLVED, and the caveat was wrong on its facts (745 F-14, 2026-07-16).** Transcripts *do* mark
+it — `message.usage.speed`, on the very object the parser already reads. Measured corpus-wide:
+**59,332 turns, all `"standard"`, zero `"fast"`** (founder confirms fast mode is never used). So
+**no session in this baseline was ever understated by it**, and fast rates are now encoded anyway
+(Opus 4.8 $10/$50, 4.7 $30/$150), so a future `/fast` toggle cannot silently halve the reading.
 
 ### Cross-validation against ccusage + adopt-vs-build (2026-07-16, founder question)
 

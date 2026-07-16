@@ -24,7 +24,7 @@ import {
   formatMarkdown,
   DEFAULT_SINCE,
 } from './baseline-economics.mjs';
-import { parseTranscriptTokens, parseSessionTokens, findPricing, isKnownModel, MISSING_MODEL_KEY } from './lib/transcript-cost.mjs';
+import { parseTranscriptTokens, parseSessionTokens, findPricing, isKnownModel, isFastPricedCorrectly, MISSING_MODEL_KEY } from './lib/transcript-cost.mjs';
 
 let passed = 0;
 const failures = [];
@@ -186,6 +186,56 @@ async function main() {
     assert.equal(r.output_tokens, 760);
     assert.equal(r.cache_write_tokens, 290);
     assert.equal(r.input_tokens, 2);
+  });
+
+  // --- 745 F-14: fast mode is recorded per-turn and must not silently underprice ---
+  // `message.usage.speed` is "standard" | "fast" | null. Verified corpus-wide
+  // 2026-07-16: 59,332 turns, all "standard", zero "fast" — so this prices nothing
+  // today and is purely forward-looking. Without it one /fast toggle understates
+  // Opus 4.8 by 2x with no symptom.
+  run('a fast-mode Opus turn is priced at the fast rate, not the standard one (F-14)', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'fast-'));
+    const usage = (speed) => ({
+      input_tokens: 1_000_000, output_tokens: 1_000_000,
+      cache_creation_input_tokens: 0, cache_read_input_tokens: 0, speed,
+    });
+    const mk = (id, speed) => assistantEntry({
+      id, requestId: 'req_' + id, model: 'claude-opus-4-8',
+      timestamp: '2026-07-10T00:00:00.000Z', usage: usage(speed),
+    });
+    const std = parseTranscriptTokens(writeTranscript(dir, 'sess-std', [mk('m1', 'standard')]));
+    const fast = parseTranscriptTokens(writeTranscript(dir, 'sess-fast', [mk('m2', 'fast')]));
+    // opus-4-8 standard $5/$25 -> $30 ; fast $10/$50 -> $60
+    assert.equal(std.cost_usd.toFixed(2), '30.00');
+    assert.equal(fast.cost_usd.toFixed(2), '60.00', 'fast mode must bill at the premium, not standard');
+  });
+
+  run('speed=null / "standard" / an unknown speed all resolve to standard pricing (F-14)', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'speed-fallback-'));
+    const mk = (id, speed) => assistantEntry({
+      id, requestId: 'req_' + id, model: 'claude-opus-4-8', timestamp: '2026-07-10T00:00:00.000Z',
+      usage: {
+        input_tokens: 1_000_000, output_tokens: 0,
+        cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+        ...(speed === undefined ? {} : { speed }),
+      },
+    });
+    for (const [label, speed] of [['absent', undefined], ['null', null], ['standard', 'standard'], ['unknown', 'turbo']]) {
+      const r = parseTranscriptTokens(writeTranscript(dir, 'sess-' + label, [mk('m-' + label, speed)]));
+      assert.equal(r.cost_usd.toFixed(2), '5.00', `speed=${label} must price as standard`);
+    }
+  });
+
+  run('a fast turn on a model with no fast row falls back to standard but is surfaced, not silent (F-14)', () => {
+    // Opus 4.6 withdrew fast mode (2026-06-29): a "fast" turn there is not billed
+    // at a premium, so standard is correct — but the caller must still be able to
+    // SEE the mismatch rather than trust a plausible number.
+    assert.equal(isFastPricedCorrectly('claude-opus-4-8', 'fast'), true);
+    assert.equal(isFastPricedCorrectly('claude-opus-4-6', 'fast'), false, 'no fast row => must be surfaceable');
+    assert.equal(isFastPricedCorrectly('claude-opus-4-6', 'standard'), true);
+    assert.equal(isFastPricedCorrectly('claude-sonnet-5', null), true);
+    // and the fallback itself must not invent a premium
+    assert.equal(findPricing('claude-opus-4-6', null, 'fast').input, 5.0);
   });
 
   // --- 745 F-13: the flat cache field is NOT authoritative ---
