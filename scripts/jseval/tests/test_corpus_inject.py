@@ -505,11 +505,22 @@ def test_scientific_gate_evidence_is_exact_and_snapshot_is_hash_bound(tmp_path):
         )
 
 
-def test_checked_in_scientific_policy_is_deliberately_unresolved():
+def test_checked_in_scientific_policy_is_ratified_clerc_four_cell():
+    """Founder-ratified 2026-07-16 (tempdoc 707 owner-decision sheet item 1): the policy is
+    ACTIVE with exactly the CLERC four-cell matrix; floors derived from the measured chain-1/2
+    candidates (band low = measured - 0.08, union min = measured - 0.10, leak max = measured
+    + 0.05, closed-book <= 0.15). The DE member is deliberately ABSENT (1k-only secondary
+    stratum, never claim-bearing until the encoder-lane finding resolves) — an unknown member
+    must still hard-fail."""
     policy = json.loads(corpus_certify.SCIENTIFIC_POLICY_PATH.read_text(encoding="utf-8"))
+    assert policy["status"] == "active" and policy["unresolved"] == []
+    cells = corpus_certify._active_scientific_policy_cells(policy, member="en-legal-clerc")
+    assert set(cells) == {
+        "mixed/en-legal-clerc-1k-verbose", "mixed/en-legal-clerc-1k-short-natural",
+        "mixed/en-legal-clerc-10k-verbose", "mixed/en-legal-clerc-10k-short-natural"}
     import pytest
-    with pytest.raises(ValueError, match="draft"):
-        corpus_certify._active_scientific_policy_cells(policy, member="fixture-member")
+    with pytest.raises(ValueError):
+        corpus_certify._active_scientific_policy_cells(policy, member="de-miracl")
 
 
 def test_scientific_evidence_builder_binds_canonical_source_and_query_bytes(tmp_path):

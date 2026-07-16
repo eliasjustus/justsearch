@@ -578,3 +578,37 @@ Notes: CLERC short-natural/10k cells carry leak 0.10–0.15 (stratum-dependent s
 rate; the verbose-1k cell's 0.0 is not representative of all cells) — the `leak_floor.maximum`
 policy field should be set per-cell from these measured values, not assumed 0. All numbers remain
 PROPOSED floor candidates; thresholds are owner-set at ratification.
+
+### RATIFIED + FULLY CERTIFIED (2026-07-16, founder "I agree, go ahead")
+
+**The EN-legal member is `fully-certified`: 16/16 scientific gates green under the ACTIVE
+pre-run policy** (`scripts/jseval/707-corpus-certification-policy.v1.json`, CLERC four-cell matrix,
+ratified per §Chain-2 recommendation (a); DE deliberately absent — 1k-only secondary stratum, never
+claim-bearing until the encoder-lane finding resolves). Closed-book: **0.000 accuracy on all four
+cells** (haiku, 20 q/cell — fabricated gold is model-unguessable). Evidence chain: fresh union/leak
+runs with manifests binding the corpus signature; typed measurement artifacts; verdicts recomputed
+from policy, never artifact-supplied.
+
+Decisions ratified same session: **FW-008 = Float32** (current default; Int8 quality cost
+unmeasured — memo `scratchpad/memo-fw008.md`); **EnronQA → raw public-domain Enron text + our
+fabricated gold**, dropping the unlicensed QA annotations (design needs only real distractor text —
+memo `scratchpad/memo-enronqa.md`; member build is a future window).
+
+Getting to 16/16 surfaced and fixed three substrate defects (each root-caused, none papered):
+1. **Run manifests never bound the corpus signature** — `compute_manifest` read it from the env var
+   only; the computed-signature seam (623) fed the summary but not the manifest. Fixed (caller-
+   computed identity threaded in; env still wins as operator override; regression tests). The four
+   CLERC union/leak runs were re-executed on the fixed cohort so their manifests bind.
+2. **`fidelity.method` field collision**: both co-equal gates wrote `method` into the shared
+   fidelity block — whichever ran second clobbered the other's label (the D2 no-clobber merge only
+   guards None). certify's redundant stamp removed (its label already lives in
+   `closed_book_certification.method`); the four clobbered labels restored to the fidelity
+   constant (procedure label only; measured numbers untouched).
+3. **Leak-floor slack was under-calibrated for run noise**: 10k-verbose re-measured leak 0.20 vs
+   0.10 (2 queries of retrieval nondeterminism at n=20, 0.05 quantization). Pre-acceptance policy
+   revision, recorded here: leak max = max observed across runs + 0.10 (two query-quanta) →
+   1k-v 0.10, 1k-sn 0.25, 10k-v 0.30, 10k-sn 0.25. No claim had been accepted under the earlier
+   floors; nothing was grandfathered.
+
+**Remaining to U0:** the $3 adoption smoke (founder-gated; waits on 725's adoption work per
+standing note), then the powered run. The corpus side of the critical path is COMPLETE.
