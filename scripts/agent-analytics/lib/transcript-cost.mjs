@@ -221,15 +221,20 @@ export function parseTranscriptTokens(transcriptPath, { seen } = {}) {
     // usage snapshot after its real one:
     //     in=2 out=760 cr=804035 cw=290   (x3)
     //     in=0 out=0   cr=0      cw=0     (x3)   <- naive last-wins takes this
-    // Measured on the 126-session corpus: 610 keys, discarding 529.8M cache_read
-    // (2.02%). So an all-zero snapshot NEVER displaces a non-zero one. Zero is a
-    // placeholder for "no usage reported on this line", not a measurement of zero.
+    // So an all-zero snapshot NEVER displaces a non-zero one. Zero is a placeholder
+    // for "no usage reported on this line", not a measurement of zero.
     //
-    // NOTE FOR THE NEXT AGENT: ccusage gets this WRONG the same way, so our
-    // ccusage differential intentionally does NOT reach 0.00% once this rule is on
-    // (it does with the rule off — that is how we proved the rest of the parser is
-    // equivalent). Do not "fix" that residual by deleting this rule; the oracle
-    // agrees with the bug (tempdoc 745 F-11).
+    // This is an artifact of OUR design, not of the transcripts: the zero copy is
+    // only reachable because we dedup GLOBALLY (across files/sessions), so a turn's
+    // real usage in one file can be displaced by its zero re-carry in another.
+    // Measured over 227 in-scope sessions: 1,455 keys, recovering 1.288G cache_read
+    // + 16.5M cache_write + 1.62M output — and a differential reconciliation showed
+    // the guard's effect is explained by those keys with residual EXACTLY 0.
+    //
+    // NOTE FOR THE NEXT AGENT: this rule moves us TOWARD ccusage, not away
+    // (cache_read −4.78% -> −0.43% against it). ccusage does NOT have this bug — it
+    // sidesteps it by not deduping globally, which costs it its own over-count.
+    // Do not delete this rule to chase the residual (tempdoc 745 F-11).
     const slots = [];
     const slotByKey = new Map();
     const usageIsAllZero = (u) =>

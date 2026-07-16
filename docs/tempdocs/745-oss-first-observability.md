@@ -600,37 +600,64 @@ msg_01Qfxz8e8Z542YgWfyDhfxyo|req_011CcbU
     in=0 out=0   cr=0      cw=0      (x3)   <- naive last-wins takes THIS
 ```
 
-**610 keys; 529.8M cache_read (2.02% of corpus) + 8.8M cache_write + 561.9K output** would be
-silently discarded. Zero is a placeholder for "no usage on this line", not a measurement of zero.
+**1,455 keys; 1.288G cache_read + 16.5M cache_write + 1.62M output** would be silently discarded
+(227-session scope). Zero is a placeholder for "no usage on this line", not a measurement of zero.
 Fixed: an all-zero snapshot never displaces a non-zero one (`transcript-cost.mjs`), pinned by two
 tests — one for the rule, one for its **direction** (a real snapshot must still displace a
 *leading* zero, or "ignore zeros" silently degrades into first-wins: a different bug).
 
-**Why this matters far beyond the bug — three consequences:**
+**It is our artifact, not the transcripts'.** The zero copy is only reachable because we dedup
+**globally** across files/sessions — so a turn's real usage in one file can be displaced by its
+zero re-carry in another. ccusage never sees the collision because it does not dedup globally.
 
-1. **The acceptance gate this tempdoc wrote was invalid.** The plan's gate was *"match ccusage
-   0.00% on every field."* **ccusage makes the identical error** — so that gate would have gone
-   GREEN on wrong code, and a 0.00% match now means we *replicated the oracle's bug*. The gate was
-   restructured: **Gate 1** = guard OFF must match ccusage ~0.00% (proves the rest of our parser is
-   equivalent to a mature independent implementation); **Gate 2** = guard ON must diverge, and the
-   divergence must be explained *entirely* by the all-zero keys. Equivalence is the proof;
-   divergence is the point.
-2. **It is decisive for V-3 / F-8.** The differential oracle is *not* ground truth — it is a
-   second opinion that can be confidently wrong. Had we adopted ccusage's **engine** (the fired
-   falsifier's prescription), this bug would be **unfixable from our side and invisible**: no test
-   we own could catch it, because the thing we'd be testing against is the thing that's wrong. Our
-   own parser is the only artifact that can be *more correct than the ecosystem*. This is the
-   strongest argument yet against the swap — and it was produced by *using* ccusage, which is
-   exactly the oracle role V-3 assigns it.
-3. **`interrogate-results`, working.** The implementing agent predicted ~+30% output from the
-   last-snapshot fix, measured **+22.33%**, and — instead of banking a large confirming number —
-   chased the gap and found this. The expected-result case is the dangerous one; here the
-   discipline paid for itself. It also correctly **shipped the spec as written and escalated**
-   rather than silently "improving" it (`tempdoc-is-your-contract`).
+#### ⚠ Correction (2026-07-16, same day): my first write-up of F-11 was WRONG, and the gate refuted it
 
-**Standing warning recorded in the code**, so the next agent cannot innocently undo it: the
-ccusage differential *intentionally* does not reach 0.00% with the guard on. Do not delete the
-guard to "fix" the residual.
+I originally wrote that *"ccusage makes the identical error"* and built an argument on it. **The
+differential refuted that**, and the retraction matters more than the original claim:
+
+- **The guard moves us TOWARD ccusage, not away**: cache_read **−4.78% → −0.43%** against it.
+  ccusage **already retains** the usage the guard recovers. It does **not** have this bug.
+- Therefore the claim *"adopting ccusage's engine would bake this bug in, unfixable and
+  invisible"* is **withdrawn**. It was a satisfying argument for a conclusion I already held —
+  which is exactly when to distrust one.
+
+**What survives, measured:**
+- The bug is real and the guard is exactly right: the reconciliation of (guard ON − guard OFF)
+  against recoverable all-zero tokens has **residual EXACTLY 0** on all four fields. The guard
+  does precisely what it claims and nothing else.
+- **Equivalence is proven where the artifact can't interfere**: `claude-sonnet-4-6` matches
+  ccusage at **exactly 0.000% on all four fields**; haiku cache_read likewise. Our dedup key,
+  scope, and tokenization are sound. (Only 19 lines lack `requestId`, carrying **0** tokens — the
+  key is not a source of error.)
+
+#### The gate's own premise was falsified — and that is a finding about the ORACLE
+
+**GATE 1 FAILED**: with the guard OFF we read **−4.78%** cache_read vs ccusage, not ~0.00%. **The
+earlier probe's "variant C matches 0.00% on every field" does not reproduce** under a
+scope-isolated comparison (227 sessions, corpus hardlinked into a private `CLAUDE_CONFIG_DIR` so
+ccusage's scope equals ours *by construction*; control run with an empty dir → 0 Claude tokens).
+That 0.00% was a *reconstruction* by a probe, never our actual parser — treat it as unreproduced.
+
+The residual is **ccusage counting MORE than us**, and it is bracketed, not guessed: a scope sweep
+puts our global scope at −0.42%, project at −0.20%, per-file at **+1.43%** — **ccusage lands
+between project and file scope, matching no clean policy**, consistent with it not deduping fully
+across files. Corroborated: session `f7580e17` gets 129.9M tokens from ccusage and **0** from us,
+because our corpus-scoped dedup correctly attributes those keys to the earlier origin session.
+ccusage also emits **469 periods for 227 sessions** — it treats each subagent file as its own
+session (the same structural blindness as F-5's lost role dimension).
+
+**Consequence for V-3 — refine ccusage's role, don't drop it.** ccusage is a **magnitude
+cross-check, not a precision oracle**. It is *excellent* at what it actually did: it would have
+flagged 743's 2.34× instantly, and cross-checking against it is what surfaced all four parser
+bugs. It **cannot** adjudicate a 0.4% difference, because its session model and dedup scope are
+not ours. Any future gate must assert *magnitude agreement*, never 0.00% equality. **Do not
+"fix" our numbers toward ccusage.**
+
+**`interrogate-results`, twice over.** The implementing agent predicted ~+30% output, measured
+**+22.33%**, and chased the 8-point gap instead of banking a confirming number — that found F-11.
+Then the gate refuted my own explanation of F-11. Both times the expected result was the
+dangerous one. The agent also correctly **shipped the spec as written and escalated** rather than
+silently "improving" it (`tempdoc-is-your-contract`).
 
 ## Verdict
 
@@ -668,8 +695,13 @@ graveyard is a liveness failure (F-1); OSS changes the implementation and never 
 Adopting into a consumer-less slot yields a dead slot **plus** a dependency — Gen-4 with extra
 steps. This framing is the single most dangerous idea in the charter.
 
-**V-3 — KEEP OUR ENGINE; ADOPT ccusage AS A DIFFERENTIAL ORACLE. CONFIRMED after the discovery
-sweep tried to overturn it (F-10).** Every candidate fails the preconditions, and the failures are
+**V-3 — KEEP OUR ENGINE; ADOPT ccusage AS A *MAGNITUDE* CROSS-CHECK. CONFIRMED after the discovery
+sweep tried to overturn it (F-10); the oracle's ROLE narrowed by F-11.**
+*(Refinement, 2026-07-16: "differential oracle" overstated it. ccusage's session model and dedup
+scope are not ours — it emits 469 periods for 227 sessions and does not dedup fully across files —
+so it can flag a 2.34× error instantly but cannot adjudicate 0.4%. Assert magnitude agreement,
+never 0.00% equality; never "fix" our numbers toward it. This does not weaken the keep verdict —
+cross-checking against it is what surfaced all four parser bugs.)* Every candidate fails the preconditions, and the failures are
 **structural, not incidental**: (b) the whole ecosystem deliberately folds subagents into the
 parent because none of it joins cost to git merges; (c) silent-$0 is what live-fetching a
 third-party pricing table buys — tokscale is *more* network-coupled than ccusage (3 hosts, no
