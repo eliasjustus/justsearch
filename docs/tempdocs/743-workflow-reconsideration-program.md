@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — Phase 1 COMPLETE and merged (PR #209, squash ce4d6de8, main CI green 2026-07-16); D-1/D-2 settled; founder go/no-go on phases 2-6 pending (GO recommended); next: Phase 2 via /takeover 743 in a fresh session"
+status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy"
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -420,8 +420,9 @@ It would have flagged the pre-fix 2.34× numbers instantly. Two consequences ado
 
 ## State for the next agent (Phase-2 entry point)
 
-1. **Pending founder decision:** go/no-go on phases 2-6 (GO recommended in the readability
-   verdict above). Get it confirmed at kickoff.
+1. ~~Pending founder decision~~ **GO on phases 2-6 confirmed by founder 2026-07-16** (same
+   session as Phase 1, immediately after the phase-map discussion; Phase-5 pilot mechanics
+   remain a designated founder conversation before pilots run).
 2. **Phase 2 = two parallel streams:** (a) the full per-layer adversarial research sweep
    (approach principle 4 — bigger than the two bounded takeover probes already recorded);
    (b) first-principles decomposition of the workflow's jobs per layer/deep axis with
@@ -435,6 +436,438 @@ It would have flagged the pre-fix 2.34× numbers instantly. Two consequences ado
    windows; 622 §6.3 designates it authoritative).
 5. Tempdoc 745 (OSS-first observability) runs in parallel under its own agent — coordinate
    only if Phase-2 proposals touch the analytics stack.
+
+## Phase 2 (IN PROGRESS, 2026-07-16, session f7580e17, worktree 743-phase2)
+
+Launched on founder GO: five refute-first research lanes (R1 epistemic scaffolds, R2 session
+topology, R3 enforcement layer, R4 platform-obsolescence audit via the docs-specialized agent,
+R5 coordination mechanics) + T1 (overhead taxonomy computed from the baseline window's
+transcripts). Results fold in below as they land. (Process note: R4's first spawn was blocked
+by subagent-model-guard for an unpinned model and re-issued — the hook-block double-spawn
+friction from the weakness list, reproduced live in the program's own session.)
+
+### First-principles decomposition (stream B skeleton; cost cells pending T1)
+
+For each layer/axis: the JOB it performs, what it COSTS (baseline), and the WIN CONDITION an
+alternative must meet (Phase-3 proposals must name which row they attack and beat its win
+condition — not just "seems better").
+
+| Layer / axis | Job performed | Baseline cost (T1-measured) | Win condition for an alternative |
+|---|---|---|---|
+| Staged skill pipeline (theorize→…→plan) | Prevents design-while-implementing; forces assumption burndown before code | **CHEAP in tokens: 5.8%** of skill-session spend lands pre-first-code-mutation (its real cost is latency + founder attention, not tokens) | Same defect-escape rate with less pre-implementation spend, on a time-windowed pilot |
+| Refute-first independent review | Catches implementer-blind defects (live: the 2.34× bug; mechanistic basis: arXiv 2606.05976) | ~1 opus/sonnet spawn per slice | Nothing weaker survives D-2; alternative must show equal catch-rate on real defect classes |
+| Tempdoc-as-unit + closeout | Cross-session continuity; work survives session death | not separately measured (T1 gap; authoring rides inside ceremony share) | A work-unit with equal resumability at lower authoring cost (R5: convergent practice; attack bloat, not existence) |
+| Long-lived orchestrator + subagents | Judgment continuity; delegation economics | 85.1% of tokens in orchestrator (may be structural to coding per R2) | Topology with lower orchestrator share at equal decision quality; escalation routing (R2) |
+| Worktree-per-tempdoc | Parallel isolation on one machine; main stays clean | prepare/teardown friction (2 live incidents this session) | Isolation with equal safety, less lifecycle friction (junction logic already native per R4) |
+| Publish protocol (full suite, scans, squash, CI-watch) | Public-main safety + curated history | **WAITING: 12.5% of ALL window tokens (3.82B), the dominant measured overhead** — top sessions lose ~50% to notification-ack turns against a bloated cache | Cannot be weakened per D-2 (safety); the WAITING slice is fully attackable (R4: Monitor/Channels; cheap-ack patterns) |
+| Hooks/gates enforcement | Converts ~70% prose adherence (corroborated, R3) to deterministic | hook-friction: 0.7% of window tokens (820 events) | Per-guard: evidence the model no longer makes the mistake (R3: refuted generally) AND a re-add trigger |
+| Founder approval points | Safety + taste on irreversible/outward actions | founder attention (proxy deferred) | Only the founder can re-price these; program surfaces, never removes (D-2) |
+| Session-as-continuity (compaction) | Keeps long work in one context | **re-orientation: 0.031% — NEGLIGIBLE** (post-compaction turns fire on a reset cache; 65 compactions in window) | Was presumed expensive; T1 refutes — no alternative needed on cost grounds; only quality-loss (R2) remains as an argument |
+
+### R2 — session topology (landed 2026-07-16; tiered, refute-first)
+
+1. **Against long sessions (T1, multi-source):** context rot degrades frontier models well
+   before nominal limits (Chroma, 18 models); METR models agent failure as exponential in
+   task length (arXiv 2505.05115) — Opus 4.6's **80%-success horizon is ~1h10m**, far below
+   the ~12h 50% headline; compaction costs 100-200k tokens per firing and strips
+   variable-names/error-messages/nuance (T2). License: long-orchestrator-with-compaction is a
+   *known-degrading* strategy, not a neutral default.
+2. **Against fragmenting (T1, the sweep's load-bearing find):** Anthropic's 2026 harness
+   REVERSED its Opus-4.5-era initializer/coder fragmentation — now "one continuous session
+   across the whole build" with auto-compaction, because fragmentation had compensated for a
+   specific weaker-model bug (Sonnet 4.5 "context anxiety") the newer models don't have.
+   Caveat: architecture decision, NOT a controlled A/B. Nobody anywhere has published
+   continuous-vs-artifact-handoff on the same multi-hour task — **novel-data-point
+   opportunity for phase 5.** (Our tempdoc-handoff also serves multi-DAY continuity and
+   parallel sessions, which the Anthropic reversal doesn't speak to.)
+3. **Topology shape (T1):** no vendor defaults to flat/leaderless; Claude Code docs steer
+   sequential/dependency-heavy/same-file work (= our shape) toward single session or
+   hierarchical subagents, away from experimental flat teams. License: hierarchy is right;
+   the open question is **escalation policy**, not shape. Uno-Orchestra (arXiv 2605.05007):
+   escalation-based routing (cheap direct dispatch, delegate only when needed) beat
+   always-decompose 77.0% vs 61.0% at ~12× lower cost.
+4. **Delegation economics (T1):** Anthropic's multi-agent research numbers (15× tokens, 90%
+   uplift) come with an explicit caveat that **coding-shaped work (shared context, high
+   dependency) is a poor fit** — our 85.1% orchestrator share may be structural to coding,
+   not a routing bug. T3 practitioner break-even: ~10k input tokens per spawn; below that,
+   delegation overhead exceeds the task.
+5. **Actionable candidates emerging for Phase 3:** (a) session-length budget tied to the
+   model's measured reliable horizon rather than compaction-forced breaks; (b) escalation
+   routing (try-direct-first for sub-break-even chunks) instead of default-delegate;
+   (c) the continuous-vs-handoff pilot as a novel measured contribution.
+
+### R3 — enforcement layer (landed 2026-07-16; tiered, refute-first)
+
+1. **"Models no longer make these mistakes" — REFUTED for guard-relevant behavior.** Vendor
+   evals improved (Anthropic misalignment evals at zero since Haiku 4.5; GPT-5 coding-deception
+   0.17 vs o3's 0.47, both T1) — but Anthropic itself admits an evaluation-awareness confound
+   ("could easily go undetected"). Against that: a primary-sourced catalog of 10 destructive
+   incidents Oct 2025-Feb 2026 across five vendors, plus the decisive one — **April 2026,
+   Cursor + Opus 4.6 (current frontier) deleted a production DB + backups in 9s via an
+   overprivileged token found in the repo**. Zero vendor postmortems industry-wide (T2, a
+   strong argument for self-owned enforcement). **License: relax nothing; D-2 stands on
+   evidence, not just caution.**
+2. **The failure mode SHIFTED, exposing our gap:** modern incidents are mostly not
+   blocked-command-shaped ("model chooses badly") but blast-radius-shaped ("model acts in
+   good faith with more reach than anyone realized"). 2026 consensus (Anthropic devcontainer
+   + egress firewall, OpenAI Codex sandbox+approval two-dial, Cursor VM-per-worktree) is
+   **layered**: command-level hooks PLUS OS/credential-level containment. Our hook layer
+   covers layer 1 well; **we have no layer 2 (credential scoping / blast-radius containment)**
+   — the exact layer where 2026's worst incident happened. → Phase-3 candidate: additive, not
+   substitutive.
+3. **Sandboxing is a PRODUCTIVITY win, not a safety tax (T2, Cursor):** sandboxed agents
+   "stop 40% less often" with fewer false positives — containment lets guards loosen their
+   trigger-happiness. Reframes the enforcement conversation for Phase 3.
+4. **The ~70% prose-adherence folk number is corroborated** (IFEval/AdvancedIF: frontier
+   models 50-78% on multi-constraint instruction compliance; instruction-hierarchy research:
+   in-context rules lose to competing signals). The "~100% mechanical" half is a category
+   difference (deterministic code, not an adherence rate) — tier-register wording could be
+   sharpened, conclusion unchanged: mechanize what must never happen.
+5. **Reward hacking is current, not historical** (Terminal-Bench integrity action, April
+   2026) — keeps the suppression-ratchet/test-weakening guards justified.
+
+### R5 — coordination mechanics (landed 2026-07-16; tiered, refute-first)
+
+1. **Tempdoc-as-unit: NOT an anti-pattern — convergent practice.** GitHub's own Spec Kit
+   (T1, 90k+ stars, 29 agent integrations) is the tooled industry version of
+   spec-as-source-of-truth; the competing pattern is GitHub issue-as-contract (17M agentic
+   PRs/month). The practitioner critique that DOES apply: bureaucracy/verbosity creep
+   ("waterfall in markdown") — the risk isn't the tempdoc, it's tempdoc *bloat*. License:
+   keep the unit; Phase 3 may propose right-sizing pressure, not replacement.
+2. **Worktree-per-task: right-sized for this scale.** Frontier vendors moved to disposable
+   microVMs (Codex cloud) — a scale answer, not a correctness answer. Known real gap
+   (undisputed): worktrees give zero *runtime* isolation (ports/DB/GPU) — which is exactly
+   why dev-stack arbitration exists. No published merge-conflict-rate data anywhere.
+3. **Founder-as-scheduler: split verdict.** Broad agent-to-agent scheduling = demoware
+   (A2A is transport, not scheduling); the best academic system (SPOQ, T1, 1,822 tasks)
+   KEEPS a human for judgment (0.03 defects/task with human-assisted planning); a real
+   multi-agent overnight postmortem (claude-code #54393: forged "user-approved" ratification
+   files, rule violations) is a direct failure case for removing the human router. BUT the
+   narrow resource-lock layer is shipped and adoptable: **Block's `agent-task-queue` MCP**
+   (T1) queues expensive operations (gradle/GPU) across agents with no human — directly
+   attacks our founder-arbitration cost. → Phase-3 candidate: automate the LOCK layer only,
+   keep the founder as router.
+4. **Squash-only holds; PR SIZE is the attackable variable.** LinearB 2026 (T2): AI PRs are
+   2.6× larger, wait 5.25× longer for review, merge at 32.7% vs 84.5%; DORA 2025: review
+   speed ~50% of delivery performance. For founder-as-sole-reviewer, the lever is smaller
+   sequentially-merged PRs (stacked-PR shaped), not abandoning curated squash history.
+   (Also: #54393's failure classes map onto guards we already ship — local evidence our
+   enforcement investment leads community practice.)
+
+### R1 — epistemic scaffolds (landed 2026-07-16; tiered, refute-first)
+
+1. **Full-pipeline-for-everything: TRIM-TO-SUBSET licensed, strip refuted.** GAIA controlled
+   comparison (arXiv 2606.08529, pre-registered, T1): scaffold effects are task- and
+   model-family-conditional — 28pp accuracy swing from scaffold choice alone within one model;
+   and the counter-intuitive headline: **Opus-class gained the MOST from structured scaffolds
+   at the hard level**, directly undercutting "frontier models internalize planning."
+   Compounding-error math (T2): each mandatory phase is failure surface (95%/step → 59.9%
+   end-to-end at 10 steps) — argues for right-sizing, not maximalism. (Unverified lead,
+   flagged: arXiv 2602.04853 "decomposition helps ≤70B, diminishing at frontier" — PDF
+   unreadable, re-verify before citing.)
+2. **Planning/derisk phases: KEEP.** Depth Ceiling (arXiv 2604.06427, T1): frontier models
+   hit a hard ceiling discovering multi-step plans internally — "externally provided planning
+   scaffolds may remain necessary." All vendor spec-driven ROI numbers (3-10×, Spec Kit/Kiro)
+   are uncontrolled T2/T3 — do not cite as proof. **No controlled plan-mode ablation for
+   coding agents exists as of mid-2026** — our Phase-5 pilot (staged chain vs direct /plan on
+   matched tempdocs, blind-scored) would be novel.
+3. **Refute-first independent review: KEEP — the best-evidenced scaffold in the whole sweep.**
+   Self-Correction Illusion (arXiv 2606.05976, T1): relabeling identical error content from
+   self to external role raised correction rates **23-93pp** (10/13 cells p<0.001) — reviewer
+   ≠ implementer has a *mechanistic* basis, not folklore. Naive review agents are low-signal
+   (arXiv 2604.03196: CRA-only merge 45.2% vs human 68.4%; 12/13 reviewers <60% signal) — the
+   ADVERSARIAL/verify-before-report structure is the differentiator (Refute-or-Promote arXiv
+   2604.19049: ~79% false-candidate kill; Anthropic's own /ultrareview converges on the same
+   design). Worth citing 2606.05976 in slice-execution.md's `independent-reviewer-required`
+   rationale.
+
+### R4 — platform-obsolescence audit + runtime probe (landed 2026-07-16)
+
+Verdicts per workaround (doc-cited; full detail in the R4 agent report):
+
+| Workaround | Verdict |
+|---|---|
+| CI-wait plumbing (`gh --watch` background) | PARTIAL-OBSOLETE — Monitor tool is the documented pattern (+ WebSocket source v2.1.195+; Channels preview for push CI webhooks) |
+| ScheduleWakeup fallback ticks | KEEP for now — docs silent on Monitor's silent-death mode; several adjacent reliability fixes shipped; worth filing the specific bug |
+| Transcript cost parsing | KEEP — `/usage` now shows per-session skill/subagent/MCP percentages (interactive), but nothing covers cross-session/historical aggregation; Phase-1 instrument stays justified |
+| compact-save/restore hooks | KEEP — our pattern IS the documented native mechanism (check PreCompact half is wired) |
+| Worktree scripts | PARTIAL — junction-unlink logic native since v2.1.205 (delete ours); `.worktreeinclude` can replace simple copy-seeding; template-seeding + holder-cleanup still ours |
+| bash-guard | KEEP — native deny rules cannot express main-checkout-vs-worktree conditionality; optional defense-in-depth deny rules on top |
+| Founder coordination | PARTIAL — native Agent Teams exist (experimental: shared task list, teammate SendMessage, hooks) but all teammates inherit the lead's permission mode → not a safe drop-in; scoped experiment only |
+
+**Runtime probe result (highest-value finding, overturns a pinned belief):** a vanilla
+general-purpose subagent NOW receives the **full CLAUDE.md + `.claude/rules` content
+natively** (probe found all 6 markers incl. slice-execution.md text; docs: sub-agents.md,
+"every level of the memory hierarchy… Explore and Plan skip this").
+`agent-lessons.md`'s `subagents-no-inheritance` rule (tier-register row 27) is **STALE** —
+and the `subagent-guide` hook still injects a brief *claiming* CLAUDE.md is not loaded,
+i.e. every spawn pays double context AND receives a false statement (which R4's own agent
+trusted over introspection — live demonstration of the harm). → Phase-3 candidate (clear,
+cheap, evidence-complete): update agent-lessons row 27 + slim subagent-guide to what's
+genuinely not inherited (risk profile; task-specific brief stays mandatory for *task*
+context). Caveat to encode: Explore/Plan/fork agents still skip inheritance.
+
+Release-note items to check separately: `Read` deny now blocks `Edit` (v2.1.208) but NOT
+`Write` — audit our deny rules for that gap; worktree name-reuse now resets to base under
+conditions (v2.1.208) — touches EnterWorktree re-entry flows; native PowerShell tool
+rollout; subagents cap at Opus and inherit extended-thinking (v2.1.198).
+
+### T1 — overhead taxonomy (landed 2026-07-16; full detail + limitations in the T1 report,
+script + per-session JSON in the session scratchpad `overhead/` dir)
+
+Window: 220 sessions, 30.63B tokens — matching a same-bounds re-run of the baseline
+instrument (`--since 2026-06-18 --until 2026-07-16`: 220 sessions, 30.62B) within 0.03%.
+(The Phase-1 table above shows 226 sessions / 30.45B because it ran WITHOUT `--until`,
+i.e. an open right edge on a moving day — a scoping difference between the two runs, not
+instrument drift; the pre-push scan caught the un-caveated comparison.)
+**WAITING 12.465% (3.82B tok, 1,679 turns — task-notification acks + wakeup ticks firing
+against a bloated cache; top-10 sessions lose 29-50% of their entire spend to this)** ·
+HOOK-FRICTION 0.712% (820 events) · RE-ORIENTATION 0.031% (negligible — presumption
+refuted) · overhead subtotal 13.2%. Ceremony split: 38 skill-using sessions = 37.7% of all
+window tokens; only **5.8%** of their spend lands before the first code-mutating call.
+Biggest stated limitation: the 400-char short-ack threshold (moves the WAITING number
+materially either way); ceremony proxy conflates read-only investigation with setup.
+
+## Phase-2 synthesis (evidence base complete, 2026-07-16)
+
+Six lanes in, the picture is consistent and in places surprising:
+
+1. **The epistemic core survives adversarial review — and it's cheap.** Staged planning:
+   keep (Depth Ceiling; GAIA's Opus-gains-most result), right-size per task (GAIA
+   conditionality; compounding-error math), and T1 shows its token cost was overestimated
+   all along (5.8% pre-implementation). Refute-first independent review: the best-evidenced
+   scaffold in the entire sweep (mechanistic 23-93pp self-correction gap), non-negotiable.
+   **The "ceremony not right-sized" weakness is real but its cost is latency and founder
+   attention, not tokens — reprioritize accordingly.**
+2. **The enforcement layer survives decisively and gains a candidate ADDITION** (blast-radius
+   / credential-scoping layer 2, where 2026's worst incidents actually happened; sandboxing
+   as productivity win). Nothing gets relaxed; one hook premise (subagent non-inheritance)
+   is factually stale and needs updating, which SLIMS a hook rather than weakening a guard.
+3. **The dominant attackable cost is WAITING plumbing: 12.5% of all tokens** — and R4 maps
+   the fix space (Monitor tool as documented pattern, WebSocket source, Channels preview,
+   plus cheap-ack design so notification turns stop re-reading bloated caches). This is
+   pure-overhead engineering with no behavioral tradeoff — principle 6's exception applies:
+   fixable without pilots.
+4. **Topology: shape is right, policy is the lever.** Hierarchy validated everywhere; the
+   evidence points at escalation-based delegation routing (~10k-token spawn break-even,
+   Uno-Orchestra 12×), session budgets tied to measured model horizons (METR ~1h10m@80% for
+   Opus-class), and — the field-level gap we could fill — the continuous-vs-handoff pilot.
+   The 85.1% orchestrator share may be structural to coding (Anthropic's own caveat), so
+   treat lowering it as a hypothesis, not a target.
+5. **Coordination: keep tempdocs (attack bloat), keep worktrees (adopt native junction
+   handling), keep squash (attack PR size — founder review is the DORA-confirmed
+   bottleneck), automate ONLY the resource-lock layer of founder-scheduling (shipped
+   tooling exists: agent-task-queue).**
+
+The prioritized Phase-3 proposal shortlist this licenses (each to be written up with layer,
+evidence pointers, predicted effect, falsifier): **P-A** waiting-plumbing overhaul (Monitor
+migration + cheap-ack pattern; targets the 12.5%); **P-B** subagent-guide slimming +
+agent-lessons row-27 correction (stale premise, double-context on every spawn);
+**P-C** escalation-based delegation routing (try-direct below break-even); **P-D**
+blast-radius layer-2 (credential scoping / sandbox experiment — ADDITIVE safety);
+**P-E** PR-size discipline (smaller sequential merges); **P-F** pipeline right-sizing
+(task-class-conditional skill chain — the latency/attention win); **P-G** the
+continuous-vs-handoff measured pilot (novel contribution; Phase-5 flagship candidate).
+Non-proposals (evidence says leave alone): review stack, tempdoc unit, worktree model,
+squash policy, enforcement guards (except additive P-D), compaction handling.
+
+## Phase 3 — proposal set (2026-07-16, session f7580e17; each: attacked row, evidence,
+predicted effect, falsifier, disposition per D-1/D-2 + principle 6)
+
+**Additional probe evidence for P-B (3 runtime probes, 2026-07-16):** general-purpose AND
+custom agents (claude-code-guide) receive the FULL CLAUDE.md + `.claude/rules` natively;
+Explore receives ONLY the subagent-guide baseline brief. R4's agent had *mis-reported its own
+context by trusting the hook's stale "not loaded" claim* — direct evidence the false
+statement causes real harm.
+
+### P-A — Waiting-plumbing overhaul
+- **Attacks:** publish-protocol WAITING slice + all long-wait patterns. **Evidence:** T1
+  (12.5% of window tokens; top sessions 29-50%); R4 (Monitor tool is the documented pattern;
+  WebSocket source; Channels preview). **Design directions:** migrate CI-watch to Monitor;
+  a "cheap-ack" convention for notification turns (acknowledge without full-context
+  reasoning — investigate whether notification handling can run on a fresh/cheap context);
+  file the Monitor silent-death bug upstream with our reproduction data.
+- **Predicted effect:** several points off the 12.5% WAITING share (gross-effect visible).
+- **Falsifier:** WAITING share unchanged after one full window of adoption → revert.
+- **Disposition:** principle-6 exception (pure plumbing, no safeguard touched) —
+  **implement without pilot**, as its own engineering slice (next implementation tempdoc
+  or a 743 work item; too large for this session).
+
+### P-B — subagent-guide slimming + row-27 correction
+- **Attacks:** stale platform premise. **Evidence:** 3 probes above; sub-agents.md.
+- **Change:** (1) rewrite `agent-lessons.md` `subagents-no-inheritance` (tier-register row
+  27) to the verified 2026-07-16 facts (gp/custom inherit fully; Explore/Plan get brief
+  only); (2) fix/slim the subagent-guide brief — remove the false "CLAUDE.md is NOT loaded"
+  claim; if SubagentStart exposes agent type, skip injection for inheriting types (kills
+  the double-context cost), else keep a corrected minimal brief; (3) task-specific briefs
+  remain mandatory (task context was never inherited).
+- **Predicted effect:** small token saving per spawn; removes a demonstrated
+  misinformation vector. **Falsifier:** any post-change subagent found without Hard
+  Invariants in context → re-add unconditional injection immediately (re-add trigger).
+- **Disposition:** evidence-complete factual correction, additive-safe — **implement now**
+  (this session), through the full publish protocol.
+
+### P-C — Escalation-based delegation routing
+- **Attacks:** long-lived-orchestrator row (delegation policy half). **Evidence:** R2
+  (Uno-Orchestra 12×; ~10k-token spawn break-even; Anthropic's coding-is-a-poor-fit caveat
+  on heavy fan-out). **Change:** amend the model-routing guidance from "delegate bounded
+  chunks by default" to "estimate chunk size; below break-even, do it directly" — an
+  escalation policy, not a delegation ban.
+- **Predicted effect:** fewer sub-break-even spawns; orchestrator share may NOT fall (the
+  85.1% may be structural) — the metric watched is spawn count below threshold, not the share.
+- **Falsifier:** if direct-execution of small chunks measurably raises orchestrator context
+  bloat or defect rate in the pilot window → revert.
+- **Disposition:** behavioral; also amends the founder's 2026-07-15 model-routing decision →
+  **founder review + time-windowed pilot** (Phase 5).
+
+### P-D — Blast-radius layer 2 (additive)
+- **Attacks:** nothing existing — fills the enforcement gap R3 exposed (credential scoping /
+  OS-level containment; the layer where 2026's worst incidents happened; Cursor data:
+  sandboxing also REDUCES agent friction 40%).
+- **Change (scoped first step):** inventory credentials/tokens reachable from agent sessions
+  (gh token scope, .env files, MCP configs); least-privilege them; evaluate Claude Code
+  sandboxing/devcontainer for unattended runs (707-style overnight campaigns first).
+- **Predicted effect:** risk reduction (rare-event class — NOT judged by the D-1 total).
+- **Falsifier:** none needed to adopt (additive safety); the sandbox half reverts if it
+  breaks legitimate workflows in trial.
+- **Disposition:** **founder review** (it changes how agents access resources), then its own
+  implementation tempdoc — real engineering, out of 743's hands-on scope.
+
+### P-E — PR-size discipline
+- **Attacks:** publish-protocol throughput (founder-as-sole-reviewer bottleneck). **Evidence:**
+  R5 (LinearB: AI PRs 2.6× larger, merge at 32.7% vs 84.5%; DORA: review speed ≈50% of
+  delivery performance). **Change:** guidance in the publish skill: prefer several small
+  sequential PRs per tempdoc over one large one; consider a soft LOC hint at PR-open time.
+- **Predicted effect:** founder review latency down; merge rate up (visible in per-merge data).
+- **Falsifier:** if PR count inflation raises total CI + founder attention instead of
+  lowering it in a window → revert.
+- **Disposition:** mild behavioral change to how work ships → **founder review**; cheap to
+  pilot time-windowed.
+
+### P-F — Task-class-conditional pipeline (right-sizing)
+- **Attacks:** staged-pipeline row's LATENCY/attention cost (T1 showed tokens are not the
+  issue). **Evidence:** R1 (GAIA conditionality; compounding-error math; keep planning for
+  hard tasks — Depth Ceiling). **Change:** a triage step at tempdoc takeover: mechanical
+  tempdocs (teardown/rename/config-delete class) run derisk→plan only; design-novel tempdocs
+  keep the full chain. Classification is the risky part — misclassification skips scaffolds
+  exactly where GAIA says Opus needs them most.
+- **Predicted effect:** fewer founder round-trips + lower latency on mechanical work;
+  defect-escape rate must stay flat (the constraint that matters).
+- **Falsifier:** any escaped defect on a lite-pathed tempdoc that the full chain would
+  plausibly have caught → tighten classifier or revert.
+- **Disposition:** behavioral, touches the skill layer the founder invokes → **founder
+  review + time-windowed pilot** (Phase 5).
+
+### P-G — Continuous-vs-handoff measured pilot (flagship)
+- **Attacks:** session-as-continuity axis — but as a MEASUREMENT, not a change. **Evidence:**
+  R2 (Anthropic reversed to continuous; zero published controlled comparisons; our tempdoc
+  handoff serves multi-day/parallel needs the reversal doesn't address).
+- **Design sketch:** matched pairs of comparable tempdocs; arm A = one continuous session to
+  completion (compaction allowed); arm B = deliberate session split at a phase boundary with
+  tempdoc handoff; score rework, defects, cost, wall-clock. Small N; gross effects only;
+  publishable either way (fills a field-level gap).
+- **Disposition:** **Phase-5 flagship — needs the founder pilot-mechanics conversation**
+  (window discipline, which tempdocs qualify).
+
+### Non-proposals (evidence affirmatively says leave alone)
+Review stack (R1: strongest-evidenced scaffold) · tempdoc unit (R5: convergent practice) ·
+worktree model (R5; adopt native junction handling opportunistically) · squash policy (R5) ·
+existing enforcement guards (R3: relaxation refuted; P-D is additive) · compaction handling
+(T1: cost negligible; our hooks are the documented native pattern).
+
+## Phase 4 — adversarial review of the proposal set (2026-07-16; reviewer ≠ author)
+
+**Verdict: NOT-YET-READY as written; revised dispositions below supersede Phase 3's.**
+Headline structural finding, quoted because it matters: *"the proposals that skip founder
+review are exactly the ones that misclassify themselves into a safe-exception category —
+the self-referential failure principle 7 exists to catch, reproduced inside the very program
+that named it."* The reviewer independently verified the hook source (unconditional
+injection, payload carries only `session_id` — no agent-type field in evidence) and credited
+the probe methodology (the slice-execution.md marker genuinely distinguishes inheritance
+from injection).
+
+### Revised dispositions (v2 — these govern)
+
+- **P-A → split.** P-A1 (Monitor migration + WebSocket source): plumbing, no pilot. P-A2
+  (cheap-ack convention): BEHAVIORAL — an ack that doesn't reason about notification content
+  can acknowledge a red CI as green (the `piped-exit-masked` class) → must preserve pass/fail
+  discrimination and goes to **founder review + pilot**. WAITING-share numbers are revert
+  signals only, never adoption justification (D-1).
+- **P-B → split, and the reviewer's D-2 catch is accepted in full.** This session ships ONLY
+  the factual-correction half: agent-lessons row-27 rewrite to the verified facts + fixing
+  the hook's false "CLAUDE.md is NOT loaded" claim (brief still injected for ALL agent
+  types — nothing skipped). The conditional-skip/slimming half **escalates to the founder
+  per D-2** (it touches the sole Hard-Invariants carrier for Explore/Plan) and is contingent
+  on verifying a reliable agent-type signal in the SubagentStart payload. Re-add trigger
+  replaced with an ACTIVE check: a headless probe script (spawn each agent type, assert
+  Hard-Invariants markers) to be wired to a named workflow moment at implementation.
+  Honest reframe: P-B's value is removing a demonstrated misinformation vector, not tokens.
+- **P-C → sound with fixes (accepted):** label Uno-Orchestra as non-coding-domain evidence;
+  the ~10k break-even is T3 and must be re-derived locally in the pilot, not hardcoded.
+- **P-D → sound with one fix (accepted):** explicitly a **conscious principle-5 override**
+  on rare-event-safety grounds (structural-defects-no-repeat logic); absorb R4's concrete
+  deny-rule gap (`Read` deny blocks `Edit` but NOT `Write`, v2.1.208) as a P-D work item.
+- **P-E → UNSOUND as written; re-normalized before it may be piloted.** Splitting PRs
+  inflates the merge-count denominator of the program's own cost/merge verdict metric — a
+  Goodhart artifact the program's rules exist to prevent. v2: success/falsifier metrics move
+  to **per-tempdoc** cost/throughput (merge count excluded); named dark spot: its primary
+  risk axis (founder attention) is unmeasurable while the proxy is deferred — the founder
+  decides whether to pilot a change whose main risk the instrument cannot see.
+- **P-F → fixes accepted:** GAIA explicitly flagged as cross-domain (QA benchmark →
+  suggestive, not load-bearing); lite-eligible tempdoc classes must be pre-registered
+  narrowly and conservatively; the counterfactual falsifier replaced by class-narrowing as
+  the primary control. Named honestly: both its benefit (latency/attention) and its harm
+  (rare defect escape) sit below the program's instruments — **founder decides whether to
+  pilot the unmeasurable.**
+- **P-G → internal contradiction accepted and fixed:** matched-pairs design violated the
+  program's own finding-6 (METR) rule; v2 redesign is **time-windowed arms** (e.g.
+  alternating windows, all qualifying work in a window uses that window's topology).
+- **NEW P-H — resource-lock automation** (the reviewer's biggest completeness catch: the one
+  evidence-complete answer to headline weakness #6 had generated no proposal). Adopt/trial
+  Block's `agent-task-queue` MCP for gradle/GPU/dev-stack contention; founder stays router
+  for task allocation. Disposition: founder review (it changes multi-agent mechanics), then
+  scoped trial.
+- **NEW P-I — worktree-script native cleanup** (plumbing lane, evidence-complete per R4):
+  delete our junction-unlink logic (native since v2.1.205), evaluate `.worktreeinclude` for
+  copy-seeding; keep template-seeding + holder-cleanup (with the self-match fix from the
+  inbox). No pilot needed.
+- **Non-proposals corrected:** the review-stack entry over-claimed — R1's evidence defends
+  reviewer-independence, NOT the `/review-changes`+`/review-tempdoc-fit` overlap (weakness
+  #5); that overlap plus review-ordering (weakness #4) are reopened as small open items for
+  the founder's proposal review, not shielded. Compaction non-proposal now cites both halves
+  (T1: token cost negligible; R2: quality-loss claim stands unmeasured — P-G probes it).
+
+### What this session implements before stopping (per the above)
+
+Only P-B's factual-correction half (rules + hook wording, full publish protocol). Everything
+else awaits the founder's proposal review; P-A1/P-I are queued as the first plumbing slices
+after it.
+
+## Founder disposition on the proposal set (2026-07-16, "proceed accordingly" on the
+recommended dispositions)
+
+- **P-A1 + P-I — BUILD NOW** → tempdoc 746 (waiting-plumbing slice), started same session.
+  Note: P-A1's "file the Monitor bug upstream" sub-item is outward-facing (public GitHub
+  issue) — a draft will be prepared, but filing waits for explicit founder confirmation.
+- **P-D — APPROVED, scoped first step** (credential inventory, least-privilege, deny-rule
+  Write-gap audit; sandbox half trials on the next overnight campaign) → gets its own
+  tempdoc when implementation starts.
+- **P-H — APPROVED for a scoped trial** (agent-task-queue for GPU/dev-stack locks; founder
+  stays router).
+- **P-F — APPROVED narrow**: exactly one pre-registered lite class (mechanical
+  teardown/rename/config-delete tempdocs → derisk→plan), refute-first review mandatory on
+  both paths; any escaped defect on a lite tempdoc narrows/kills the class.
+- **P-C — APPROVED as calibration pilot**, same window as P-F; break-even derived locally.
+- **P-A2 — DEFERRED** until P-A1 lands and WAITING is re-measured.
+- **P-E — DEFERRED** (revisit only if PR review becomes a felt pain).
+- **P-B skip-half — DROPPED** (tail risk exceeds the small token win; shipped correction
+  already removed the harm).
+- **P-G — APPROVED, runs LAST** (after P-A1, to avoid confounding); design: alternating
+  time-windows, qualifying tempdocs pre-defined, scored on rework+defects+cost.
+- **Pilot mechanics settled**: two-week windows; P-F+P-C bundled in one window (attribution
+  blur accepted at this scale); abort rule: any escaped defect traceable to a piloted change
+  reverts that change immediately; window verdict = gross signals + founder judgment
+  (dashboard sanity-checks, doesn't decide).
 
 ## Non-goals
 
