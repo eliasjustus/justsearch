@@ -8,7 +8,7 @@
     "axis": "prose",
     "lang": "de",
     "seed": 635,
-    "hops": 2,
+    "hops": 1,
     "distractor_ratio": 5,
     "semantic": true,
     "templated": true,
