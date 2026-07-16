@@ -134,7 +134,7 @@ each release's convergence tempdoc + its GitHub Release):
 | Version | Date | Sandbox verdict | Notes | Links |
 |---|---|---|---|---|
 | v0.1.0 | 2026-06-25 | (pre-pipeline) | Prerelease/alpha. **No MCP endpoint.** Installer built locally, not via CI. | [release](https://github.com/eliasjustus/justsearch/releases/tag/v0.1.0) |
-| v0.2.x | pending | rounds 1-5: dense-retrieval + capability-gate fixes confirmed working; round 5 (first GUI-capable) is **DO-NOT-QUALIFY** — blocked on an unexplained golden-query parity regression found only at host-side finalize. `core.workflow-run` (broken on every invocation) is a known issue (owner decision 2026-07-16, tracked in [744](tempdocs/744-workflow-run-dangling-delegations.md)), no longer blocking on its own | First cut with the MCP endpoint + the hash-consistent asset pipeline. | [734](tempdocs/734-0.2.0-sandbox-convergence.md) |
+| v0.2.x | pending | rounds 1-5: dense-retrieval + capability-gate fixes confirmed working; `core.workflow-run` (broken on every invocation) fixed 2026-07-16 (see [744](tempdocs/744-workflow-run-dangling-delegations.md)); round 5 (first GUI-capable) is **DO-NOT-QUALIFY** — blocked on an unexplained golden-query parity regression found only at host-side finalize; a real contributing cause is fixed but doesn't fully explain the round's magnitude | First cut with the MCP endpoint + the hash-consistent asset pipeline. | [734](tempdocs/734-0.2.0-sandbox-convergence.md) |
 
 ## See also
 

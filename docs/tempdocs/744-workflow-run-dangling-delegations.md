@@ -1,8 +1,8 @@
 ---
 title: core.workflow-run is non-functional — bundled workflow has dangling delegations to an uninstalled plugin
-status: "open — tracked as a known issue in the v0.2.0 release (owner decision 2026-07-16), not a release blocker. Spawned from tempdoc 734 round 5 finding #1; full evidence and repro live there, not duplicated here."
+status: "FIXED 2026-07-16 (sibling code PR, worktree-v020-followups). Originally tracked as a known issue in the v0.2.0 release (owner decision 2026-07-16) while the diagnosis was still black-box; source investigation the same day found the real, small root cause and fixed it before that framing was ever needed for a release. Spawned from tempdoc 734 round 5 finding #1; full evidence and repro live there."
 created: 2026-07-16
-relation: split out of docs/tempdocs/734-0.2.0-sandbox-convergence.md (round 5, finding #1) by explicit owner decision — the release is not blocked on fixing a single non-core chat shape; it ships with this documented in the GitHub Release's Known Issues instead.
+relation: split out of docs/tempdocs/734-0.2.0-sandbox-convergence.md (round 5, finding #1). Originally by explicit owner decision to ship as a known issue rather than block the release on a single non-core chat shape — superseded same-day once the actual fix turned out to be small and well-scoped (see "Fixed" below).
 ---
 
 # core.workflow-run is non-functional — bundled workflow has dangling delegations to an uninstalled plugin
@@ -72,3 +72,53 @@ This is a scoping decision about *whether it blocks the release*, not a judgment
 itself is unimportant or that it's fine to leave broken indefinitely — `structural-defects-no-repeat`
 still applies once this is picked up: it should be fixed with a regression test, not silently
 tolerated forever because it shipped once as a known issue.
+
+## Fixed (2026-07-16, same day) — the diagnosis above was directionally right, in more detail than expected
+
+Read the actual source before implementing, per this doc's own "first implementation step" list
+above. The real picture was more precise than the black-box hypothesis:
+
+- **`core.demo-compose` is not a mistake — it's a deliberate reference workflow.** Its own javadoc
+  (`CoreWorkflowCatalog.java`) states it "exercises all three node kinds in the canonical
+  think → confirm → act shape, proving the substrates compose" against a real external MCP tool.
+  It is *supposed* to need `vendor.mcphost.*` — that's the point of it existing.
+- **The catalog already had a second, fully self-contained workflow**: `core.research-brief`
+  ("think → draft", two `LlmStep`s delegating only to `core.free-chat`) — its own javadoc already
+  said "unlike demo-compose, which needs the vendor.mcphost.* pack to validate, it runs in any
+  stack with the chat model loaded." The fix wasn't building something new; it was routing to what
+  already existed.
+- **`shapeId` dispatch already supported an explicit choice** (`WorkflowShapeRunner.resolveWorkflowId`
+  reads an optional `workflowId` from the request body) — this doc's "confirm shapeId dispatch
+  offers a choice" question was already yes. The actual bug was narrower: the *fallback* when no
+  `workflowId` is given was hardcoded to `CoreWorkflowCatalog.DEMO_ID`, guaranteeing failure for
+  every caller who didn't know to pass one explicitly — exactly the round's own repro.
+- **A GUI entry point does exist** (`UnifiedChatView.renderWorkflowTrigger`, a `<select>` workflow
+  picker) — this doc's "also open" question is answered: not API/MCP-only. But its default
+  selection (`this.workflows[0]`) inherited the same underlying mistake, since the catalog listed
+  `demoCompose()` before `researchBrief()` — a user who found the picker and just clicked "Run
+  workflow" without changing the dropdown would have hit the identical failure.
+
+**Fix** (commit in `worktree-v020-followups`, sibling to this tempdoc's release-doc PR): reordered
+`CoreWorkflowCatalog.catalog()` to list `research-brief` first (fixing both the FE picker's default
+and, combined with the second change, the API fallback), and made `resolveWorkflowId`'s fallback
+explicit (`RESEARCH_BRIEF_ID`, not order-dependent on `DEMO_ID`).
+
+**Verified, not just green tests:**
+- New regression test (`WorkflowShapeRunnerTest.noWorkflowIdDefaultsToResearchBriefNotTheMcpDemo`)
+  uses the REAL `CoreWorkflowCatalog`, not a synthetic one, and asserts the run actually executes
+  (two `core.free-chat` dispatches observed in the test log, matching research-brief's two
+  `LlmStep`s) — not merely that validation passes.
+- Live-verified against a real dev stack: the round's exact repro
+  (`POST /api/chat/dispatch`, `shapeId:"core.workflow-run"`, no `workflowId`) no longer returns
+  "dangling delegations" — `workflow_started` now reports `workflowId: "core.research-brief"`, and
+  the run proceeds to `node_started`. The only remaining failure ("AI service unavailable") is the
+  separate, already-documented `ai_activate`-unavailable-in-a-worktree limitation (tempdoc 734),
+  not a reproduction of this bug.
+- Full `app-services` test suite green, full pre-merge build (`gradlew build -x test`) green.
+
+**Regression home**: the new `WorkflowShapeRunnerTest` case is the regression home for the default
+specifically. The build-time "every `ToolStep` delegation resolves to a registered operation"
+check this doc originally suggested is still worth having independently (it would catch a
+*genuinely* broken bundled workflow, as opposed to a wrong default pointing at an
+intentionally-external-dependent one) — not built here, since that wasn't the actual defect; left
+as a separate, smaller possible follow-up if `core.demo-compose` itself ever needs hardening.
