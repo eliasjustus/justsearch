@@ -14,24 +14,57 @@ related:
 
 # 745 — OSS-first agent observability
 
-## Charter
+## Current shape (2026-07-16, after the takeover investigation — READ THIS FIRST)
+
+**The survey is DONE. Its answer is "adopt nothing; fix two things we own."** 745 is no longer
+a program; it is three items and one founder decision. The charter below is the *original*
+intent and is **superseded** — it is retained unedited as dated history (`tempdocs-are-dated-history`),
+not as current truth.
+
+| | |
+|---|---|
+| **What 745 IS now** | (1) fix the OTLP sink's data-destroying rotation (**F-2**); (2) fix 3 (possibly 4) verified bugs in `transcript-cost.mjs` + recompute 743's baseline (**F-6/F-7/F-10**); (3) hold the retire sweep for 743's go/no-go (**F-4**). |
+| **What 745 is NOT** | A stack-wide OSS migration (nothing passes the bar — **F-5/F-10**), and not a standing OSS-first policy (**V-1**, partly refuted against itself in **F-3b**). |
+| **Founder decisions open** | **F-8** — the standing falsifier fired, but its prescribed remedy exists in *no* tool. **743 go/no-go** — gates item (3) only. |
+| **Nothing is blocked by those** | Items (1) and (2) are unblocked by either decision: no tool yields the orchestrator/worker split, so we parse transcripts for role attribution whichever way F-8 rules. |
+| **Verdict + evidence** | §Verdict and findings **F-1 … F-10** below. |
+
+**The one-line reason the charter's premise failed:** the analytics graveyard is a **liveness**
+failure (dead scripts had *no consumer*, not bad implementations — F-1), and **OSS adoption
+changes the implementation but never the consumer**.
+
+## Charter (original, 2026-07-16 — SUPERSEDED; retained as the dated record of intent)
+
+> ⚠ Three claims in this section were **refuted by the investigation it commissioned**. Marked
+> inline. Do not act from this section; act from §Verdict.
 
 Decide, once and as a standing policy, which slices of the maintainer agent-observability
 stack (`scripts/agent-analytics/` + the OTel sink/viewer) should be **adopted from maintained
 open-source tooling, kept as ours, or retired** — and execute the migration for the adopt
 slices. Founder direction (2026-07-16): purpose deliberately broad — this is the stack-wide
 survey, not just the ccusage engine swap.
+*[Outcome: the survey ran and returned **adopt nothing**. "Execute the migration" has no
+referent — F-5/F-9/F-10.]*
 
 **Motivating evidence (743 Phase 1, 2026-07-16):** hand-rolled transcript parsing carried a
 2.34× usage over-count bug class that mature OSS (ccusage) had already solved; our
 hand-maintained pricing table must chase monthly market changes; ccusage cross-validated the
 fixed instrument within 4.2%. Meanwhile two generations of home-grown analytics layers died
 unmaintained (285/622: "the raw stream is alive; every layer built on top is dead").
+*[**REFUTED — "died unmaintained" is the load-bearing error.** 424 probed them: the scripts
+were **sound but never invoked** (F-1). The graveyard is liveness, not quality — which inverts
+this section's whole inference. Also: the 4.2% delta was **two of our own bugs cancelling**
+(F-6), not a cross-validation success; and "pricing chases the market" is real but **no OSS tool
+handles it either** — both probed tools get sonnet-5 wrong, in opposite directions (F-10).]*
 
 **Working policy to validate or refute:** *prefer maintained OSS for every slice where we
 have no unique requirement; keep only what is genuinely ours* (currently believed unique:
 the session→merge join, the developer-session scope filter, orchestrator/worker split as a
 headline metric, the teardown workflow-moment wiring).
+*[**REFUTED as a standing policy** (V-1) — its hidden premise is that maintained OSS *exists*
+per slice; slices 3-4 are empty (F-3b). But its **"currently believed unique" list was right on
+every item**, and F-10 showed *why*: no tool joins cost to git merges, so none exposes the role
+dimension that join needs — the uniqueness is structural, not incidental.]*
 
 ## Hard constraints (inherited, non-negotiable)
 
@@ -40,6 +73,12 @@ headline metric, the teardown workflow-moment wiring).
    offline or be pinnable offline; no SaaS backends.
 2. **Capture stays native.** Claude Code's native OTel emission is the authoritative capture
    layer (622 §6.3); we do not adopt tools that re-instrument capture.
+   *[Holds, and is **independently endorsed**: Anthropic's own sanctioned local path is OTel
+   export — its official analytics is cloud-only, and a local `claude usage` command is still
+   only an open enhancement request (F-3b). **But state the tension it hides:** native OTel is
+   authoritative for *capture fidelity* and currently **cannot back any month-scale aggregation**
+   — the reservoir retains ~6-42 min (F-2). That is why the live instrument parses transcripts,
+   which persist. Fixing F-2 is what makes this constraint true in practice.]*
 3. **The survival law (743 finding 2).** Anything adopted must name the existing workflow
    moment that runs it (teardown, session hooks, publish) — a tool that must be remembered
    joins the 285/622 graveyard regardless of its quality.
@@ -47,31 +86,52 @@ headline metric, the teardown workflow-moment wiring).
    must be probed live before an adopt decision (the 743 takeover found README-level claims
    are routinely stale in this space).
 
-## Scope: the slices to survey
+## Adopt / keep / retire matrix — SETTLED (work-plan step 3 deliverable, 2026-07-16)
 
-| Slice | Current owner | Known OSS candidates (from 743's research pass — unverified until probed) |
-|---|---|---|
-| Cost/token parsing + pricing | `lib/transcript-cost.mjs` (ours, post-fix) | **ccusage** (mature, cross-file dedup, offline pricing); claude-code-usage-analyzer |
-| Per-session dashboards | `generate-dashboard.mjs` (Gen-1, dormant) | token-dashboard (per-prompt ranking, heatmaps) |
-| Behavioral/process taxonomy | `score-session.mjs` PHI (Gen-1, invalidated: r=0.064) | claude-session-analyzer (Read:Edit discipline, regression markers) |
-| Compaction/context events | `context-attribution.mjs` (chars/4 approximation) | context-analyzer (hooks→SQLite, compaction events first-class) |
-| OTel reservoir + viewer | `otlp-sink.py` + `otlp-viewer/` (ours; sink just fixed in 743) | any offline OTLP file-exporter/viewer stack — candidates TBD (research gap: 743's pass did not survey viewers) |
-| Merge-join economics | `baseline-economics.mjs` + `record-merge.mjs` (ours, new) | none found (743 research: genuinely novel) — KEEP candidate |
-| Friction mining | `mine-friction.mjs` + timeline/aggregate (727, alive) | none comparable found — KEEP candidate; do not destabilize |
+Liveness is `ALIVE` only where a **consumer** exists (F-1). "Migration cost" is what adopting
+would cost us; "displaces" is what the decision deletes. **Adopt count: 0 of 7.**
 
-## Work plan
+| # | Slice | Owner · liveness | **Decision** | Evidence | Cost / displaces |
+|---|---|---|---|---|---|
+| 1 | Cost/token parsing + pricing | `lib/transcript-cost.mjs` · **ALIVE** (`record-merge`@teardown) | **KEEP + FIX** (3-4 bugs) · **ADOPT ccusage as *differential oracle*, not engine** | F-5 (2 of 3 preconditions fail) · F-6 (3 bugs, 0.00% reconstruction) · F-10 (no tool passes) | Fix ≈ known exactly. Displaces nothing. Oracle needs a fail-closed unknown-model guard **we** own (`-O` silently $0s). |
+| 2 | Per-session dashboards | `generate-dashboard.mjs` · **DEAD** (0 invokers) | **RETIRE** — *conditional on 743 go/no-go* | F-1 · F-3 (candidates abandoned/unlicensed) | Deletion. **No OSS adopt**: a dead slot + a dependency is Gen-4 with extra steps (V-2). |
+| 3 | Behavioral/process taxonomy | `score-session.mjs` PHI · **DEAD** (26 rows, one batch Jul 12; r=0.064) | **RETIRE** — *conditional on 743 go/no-go* | F-1 · F-3b (slice **genuinely empty** in OSS) | Deletion. Salvage the *methodology* (`claude-code#42796` thresholds), never the dependency. |
+| 4 | Compaction/context events | `context-attribution.mjs` · **DEAD** (0 invokers) **but named as 743 Phase-2 substrate** | **BLOCKED** — 743 GO ⇒ keep; NO-GO ⇒ retire | F-4 (743:226, 743:429) · F-3b (slice genuinely empty) | Deciding now either deletes 743's substrate or preserves dead code on speculation. |
+| 5 | OTel reservoir + viewer | `otlp-sink.py` + `otlp-viewer/` · **capture ALIVE, reservoir BROKEN** | **KEEP + FIX retention** (highest-value item; never in the charter) | F-2 (measured ~6-42 min; watched 21 MB destroyed) · F-9 (ecosystem survey) | **Reject otel-tui** — won't read our schema; needs the **alpha** Collector `fileexporter` (V-6 dead). Prometheus optional/additive, metrics-only. Yield = 3 emitter flags, not a tool. |
+| 6 | Merge-join economics | `baseline-economics.mjs` + `record-merge.mjs` · **ALIVE** | **KEEP** (pre-marked; now *proven* unique) | F-10 — **no tool joins cost to git merges**; that is *why* none exposes a role dimension | Untouched. |
+| 7 | Friction mining | `mine-friction.mjs` + timeline/aggregate · **ALIVE** (owner-driven; 114 sessions, latest 2026-07-16) | **KEEP** (pre-marked; do not destabilize) | F-1 (liveness via consumer, not automation) | Untouched. |
 
-1. **Inventory** — classify every artifact in `scripts/agent-analytics/` (+ otlp-viewer):
-   alive/dead/uniquely-ours, with its consumer and workflow moment (743's takeover already
-   did ~70% of this; verify and complete).
-2. **Probe candidates** — one bounded verification per candidate per load-bearing claim
-   (subagent-friendly; each probe is self-contained). Includes the viewer-layer research gap.
-3. **Adopt/keep/retire matrix** — per slice: decision, evidence pointer, migration cost,
-   what it displaces (displaced code gets deleted in the SAME slice's migration, not a later
-   sweep).
-4. **Execute migrations** for adopt slices; delete retired code; wire survival moments.
-5. **Record the standing policy** outcome (validated/refuted/amended) in this tempdoc and
-   propose the one-line pointer for the appropriate canonical doc if it proves durable.
+*Original candidate list (743's research pass) retained in git history at `e7e835bf`; every name
+in it was probed and none survived — see F-3, F-3b, F-5, F-9, F-10.*
+
+## Work plan — RESHAPED (2026-07-16; steps 1-3 COMPLETE)
+
+- ~~1. Inventory~~ — **DONE** (F-1): 9 scripts at 0 invokers; the survival law refined (a consumer,
+  not necessarily automation).
+- ~~2. Probe candidates~~ — **DONE** (F-3, F-3b, F-5, F-9, F-10): includes the viewer research gap
+  **and** the discovery + LLM-obs-ecosystem sweeps the charter never scoped.
+- ~~3. Adopt/keep/retire matrix~~ — **DONE** (above). Adopt: 0 of 7.
+- ~~4. Execute migrations~~ — **VOID: no adopt slices exist.** Replaced by two *correctness* fixes
+  on layers we already own:
+  1. **Fix the sink** (slice 5 / F-2) — stop `os.remove(prev)` destroying data; date-partition
+     metrics+traces; keep logs rolling. Probe `OTEL_LOG_RAW_API_BODIES=file:<dir>` first
+     (−72% log volume) and set `METRICS_TEMPORALITY_PREFERENCE=cumulative`. **Unblocked; urgent —
+     it is deleting capture continuously.**
+  2. **Fix the parser** (slice 1 / F-6, F-10) — global `(messageId, requestId)` dedup + last/max
+     snapshot (reconstruction matches ccusage 0.00%); add the 1h cache tier (2.0×, 100% of our
+     writes — ccusage would **not** have fixed this); verify the sonnet-5 intro-rate cliff
+     (F-10, **unverified**); then **recompute 743's baseline** (F-7) before its prediction-1 is
+     tested. **Unblocked by F-8** — no tool yields the split, so we parse regardless.
+  3. **Retire sweep** (slices 2-4) — **BLOCKED on 743's go/no-go.** Then a deletion PR.
+- ~~5. Record the standing policy~~ — **REFUTED, do not record** (V-1). Slices 1-2 *are* well-served
+  by OSS; slices 3-4 are empty; the policy's hidden premise ("maintained OSS exists per slice")
+  fails, and stars actively mislead. `explore-before-implementing` already carries the real lesson.
+  **No CLAUDE.md line** — it would spend always-loaded budget to mostly fire "no".
+- **NEW — founder decision F-8**: the standing falsifier fired; its remedy exists in no tool.
+
+**Survival-law check on this plan (constraint 3):** neither fix adds an artifact needing to be
+remembered. Both repair layers already wired to live workflow moments — `record-merge`@teardown
+and `otlp-sink-ensure`@SessionStart. Nothing here can become Gen-4.
 
 ## Migrated proposal (from 743, single-home rule)
 
@@ -88,6 +148,26 @@ Open data-quality item inherited with the proposal: the 4.2% ccusage-vs-ours del
 plausibly resumed sessions re-carrying history lines under new session ids (ccusage dedups
 message ids across files; we dedup within-file). Root-cause during the probe step; direction
 of bias: ours slightly high.
+
+### Outcome of the migrated proposal (2026-07-16 — RESOLVED except F-8)
+
+- **The swap is DEAD on its own terms.** Its preconditions were *"IF probes confirm per-session +
+  subagent granularity and pinnable offline pricing"* — **2 of 3 refuted** (F-5), and **no
+  alternative tool passes either** (F-10). The failures are structural, not incidental.
+- **The 4.2% item is CLOSED** (F-6). The hypothesis was **right but incomplete**: the delta is
+  *two opposing bugs of ours partially cancelling* — cross-file dedup (**+3.5pp**, as guessed)
+  against a **first-vs-last snapshot** bug nobody suspected (**output −30%**). Proven by
+  reconstruction to a **0.00%** match, not by argument. A third defect (1h-cache-tier collapse,
+  100% of our cache writes) is **shared by ccusage** and would not have been fixed by adopting it.
+  "Direction of bias: ours slightly high" was true of tokens (+4.51%) and **misleading** about
+  dollars (−0.93%) — the two bugs cancel in the priced column, which is exactly why the delta
+  looked benign.
+- **The interim practice is PROMOTED, not retired**: ccusage-as-cross-check earned its place —
+  it found all three bugs. It becomes the **differential oracle** (slice 1). Gate: never trust
+  `-O` without our own fail-closed unknown-model check.
+- **⚠ The standing falsifier FIRED and is UNRESOLVED — see F-8.** Two parsing-class bugs is the
+  trigger, unambiguously met. Its prescription ("adopt ccusage's engine without further debate")
+  is **unavailable from any tool in the ecosystem**. Founder's call; an agent must not settle it.
 
 ## Takeover investigation (2026-07-16, session 805279a4, worktree 745-oss-observability)
 
@@ -177,6 +257,11 @@ Consequences:
    failure mode is consistently **silent** — which is the actual recurring defect.
 
 ### F-3. The OSS-first premise is refuted for the Claude-Code analytics slices (probed)
+
+> ⚠ **Read F-3b immediately after this section — it CORRECTS F-3's generalization.** F-3 probed
+> only the candidates the charter named; that is verification, not discovery. A later sweep found
+> maintained projects it missed, and **refuted this section's blanket claim for slices 1-2**.
+> F-3's *per-candidate* findings and its star-trap analysis stand; its generalization does not.
 
 Health probe of the charter's named candidates (primary sources: GitHub commit/contributor APIs,
 not READMEs). Today = 2026-07-16.
@@ -592,7 +677,18 @@ are both *correctness* work on live layers — neither is an adoption.
 
 - Building an observability product; this stack remains maintainer-only, local-only tooling.
 - Re-instrumenting capture (native OTel owns it — 622).
-- Re-validating PHI or reviving Gen-1 analytics as-is (285 closed that; the question here is
-  whether an OSS taxonomy replaces the *slot*, not resurrecting the old scores).
+- Re-validating PHI or reviving Gen-1 analytics as-is (285 closed that; ~~the question here is
+  whether an OSS taxonomy replaces the *slot*~~, not resurrecting the old scores).
+  **⚠ WITHDRAWN (V-2, 2026-07-16):** *"does an OSS taxonomy replace the slot"* is the wrong
+  question and the most dangerous idea the charter carried. The Gen-1 slots died for want of a
+  **consumer**, not an implementation (F-1) — so filling one with better OSS yields **a dead slot
+  plus a dependency**: Gen-4 with extra steps. The correct question is whether the *slot* has a
+  live consumer; for slices 2-3 the answer is no (retire), and for slice 4 it is 743's to answer.
 - 743's program work (objective function, workflow pilots) — that stays in 743; this tempdoc
   only owns the tooling-stack decisions.
+  **Amended (F-7):** 745 does **not** own 743's program, but it **does** own the correctness of
+  the instrument 743's baseline is computed from. Fixing the parser therefore *obliges* a
+  baseline recomputation in 743 — coordinate; do not let the fix land silently while 743's
+  published numbers and its live prediction-1 continue to cite the pre-fix figures.
+- **Added (2026-07-16):** adopting *anything* into a slot with no live consumer — including the
+  one survivor of the ecosystem survey (Prometheus, F-9). Adoption requires a consumer first.
