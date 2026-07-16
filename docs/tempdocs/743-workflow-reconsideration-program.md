@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — charter drafted; D-1 (objective function) settled by founder 2026-07-16; D-2 pending; next: Phase 1 baseline"
+status: "open — Phase 1 COMPLETE and merged (PR #209, squash ce4d6de8, main CI green 2026-07-16); D-1/D-2 settled; founder go/no-go on phases 2-6 pending (GO recommended); next: Phase 2 via /takeover 743 in a fresh session"
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -400,6 +400,41 @@ It would have flagged the pre-fix 2.34× numbers instantly. Two consequences ado
 - **Recommendation: GO for phases 2-6** under the gross-effect bar. The 85/15 orchestrator
   split is the first actionable baseline datum — it quantifies exactly the delegation-economics
   concern the founder raised on 2026-07-15 and gives phase-3 proposals a concrete target.
+
+## Publication + live-verification record (2026-07-16, session f7580e17)
+
+- Merged as **PR #209** (squash `ce4d6de8`); full suite green pre-merge (gradle build + full
+  test, 34/34 governance gates incl. hook-integrity, all analytics node/hook/python tests);
+  secret/claims scan CLEAR after one FIX-BEFORE-PUSH (a stale pre-dedup 86.2% figure the scan
+  itself caught); `preview-squash-message` 0 warnings; **main CI green post-merge**
+  (run 29492063792, conclusion success — explicitly verified, not inferred from PR checks).
+- **Survival-law wiring live-PASSED on its first firing:** this session's own worktree
+  teardown wrote both the `session-merges.ndjson` link (→ `ce4d6de8`) AND a `costs.ndjson`
+  row via the new `record-merge` upsert. Falsifiable prediction 2 is now armed with its first
+  data point.
+- OTel sink re-homed to main's fixed copy post-merge (it had been serving the worktree's copy;
+  worktree teardown required killing + respawning it — cmdline verified).
+- Incident during teardown, logged to the inbox: `remove-worktree.cjs`'s holder-scan
+  (727 F-2) matched its own invoking process chain and killed it mid-run; needs
+  self-PID/ancestor exclusion.
+
+## State for the next agent (Phase-2 entry point)
+
+1. **Pending founder decision:** go/no-go on phases 2-6 (GO recommended in the readability
+   verdict above). Get it confirmed at kickoff.
+2. **Phase 2 = two parallel streams:** (a) the full per-layer adversarial research sweep
+   (approach principle 4 — bigger than the two bounded takeover probes already recorded);
+   (b) first-principles decomposition of the workflow's jobs per layer/deep axis with
+   baseline cost attribution (the overhead taxonomy — waiting/ceremony/re-orientation — is
+   NOT yet computed; `context-attribution.mjs` covers one slice).
+3. **Check the two live predictions** against fresh data before proposing anything:
+   orchestrator share vs 85.1% baseline (post-2026-07-15 sessions only), and `costs.ndjson`
+   row accumulation per teardown.
+4. **OTel reservoir is feeding now** — from 2026-07-16 onward, native OTel data accumulates
+   in `tmp/agent-telemetry/otlp/` (a richer source than transcript parsing for future
+   windows; 622 §6.3 designates it authoritative).
+5. Tempdoc 745 (OSS-first observability) runs in parallel under its own agent — coordinate
+   only if Phase-2 proposals touch the analytics stack.
 
 ## Non-goals
 
