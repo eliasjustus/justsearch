@@ -667,6 +667,110 @@ continuous-vs-handoff measured pilot (novel contribution; Phase-5 flagship candi
 Non-proposals (evidence says leave alone): review stack, tempdoc unit, worktree model,
 squash policy, enforcement guards (except additive P-D), compaction handling.
 
+## Phase 3 — proposal set (2026-07-16, session f7580e17; each: attacked row, evidence,
+predicted effect, falsifier, disposition per D-1/D-2 + principle 6)
+
+**Additional probe evidence for P-B (3 runtime probes, 2026-07-16):** general-purpose AND
+custom agents (claude-code-guide) receive the FULL CLAUDE.md + `.claude/rules` natively;
+Explore receives ONLY the subagent-guide baseline brief. R4's agent had *mis-reported its own
+context by trusting the hook's stale "not loaded" claim* — direct evidence the false
+statement causes real harm.
+
+### P-A — Waiting-plumbing overhaul
+- **Attacks:** publish-protocol WAITING slice + all long-wait patterns. **Evidence:** T1
+  (12.5% of window tokens; top sessions 29-50%); R4 (Monitor tool is the documented pattern;
+  WebSocket source; Channels preview). **Design directions:** migrate CI-watch to Monitor;
+  a "cheap-ack" convention for notification turns (acknowledge without full-context
+  reasoning — investigate whether notification handling can run on a fresh/cheap context);
+  file the Monitor silent-death bug upstream with our reproduction data.
+- **Predicted effect:** several points off the 12.5% WAITING share (gross-effect visible).
+- **Falsifier:** WAITING share unchanged after one full window of adoption → revert.
+- **Disposition:** principle-6 exception (pure plumbing, no safeguard touched) —
+  **implement without pilot**, as its own engineering slice (next implementation tempdoc
+  or a 743 work item; too large for this session).
+
+### P-B — subagent-guide slimming + row-27 correction
+- **Attacks:** stale platform premise. **Evidence:** 3 probes above; sub-agents.md.
+- **Change:** (1) rewrite `agent-lessons.md` `subagents-no-inheritance` (tier-register row
+  27) to the verified 2026-07-16 facts (gp/custom inherit fully; Explore/Plan get brief
+  only); (2) fix/slim the subagent-guide brief — remove the false "CLAUDE.md is NOT loaded"
+  claim; if SubagentStart exposes agent type, skip injection for inheriting types (kills
+  the double-context cost), else keep a corrected minimal brief; (3) task-specific briefs
+  remain mandatory (task context was never inherited).
+- **Predicted effect:** small token saving per spawn; removes a demonstrated
+  misinformation vector. **Falsifier:** any post-change subagent found without Hard
+  Invariants in context → re-add unconditional injection immediately (re-add trigger).
+- **Disposition:** evidence-complete factual correction, additive-safe — **implement now**
+  (this session), through the full publish protocol.
+
+### P-C — Escalation-based delegation routing
+- **Attacks:** long-lived-orchestrator row (delegation policy half). **Evidence:** R2
+  (Uno-Orchestra 12×; ~10k-token spawn break-even; Anthropic's coding-is-a-poor-fit caveat
+  on heavy fan-out). **Change:** amend the model-routing guidance from "delegate bounded
+  chunks by default" to "estimate chunk size; below break-even, do it directly" — an
+  escalation policy, not a delegation ban.
+- **Predicted effect:** fewer sub-break-even spawns; orchestrator share may NOT fall (the
+  85.1% may be structural) — the metric watched is spawn count below threshold, not the share.
+- **Falsifier:** if direct-execution of small chunks measurably raises orchestrator context
+  bloat or defect rate in the pilot window → revert.
+- **Disposition:** behavioral; also amends the founder's 2026-07-15 model-routing decision →
+  **founder review + time-windowed pilot** (Phase 5).
+
+### P-D — Blast-radius layer 2 (additive)
+- **Attacks:** nothing existing — fills the enforcement gap R3 exposed (credential scoping /
+  OS-level containment; the layer where 2026's worst incidents happened; Cursor data:
+  sandboxing also REDUCES agent friction 40%).
+- **Change (scoped first step):** inventory credentials/tokens reachable from agent sessions
+  (gh token scope, .env files, MCP configs); least-privilege them; evaluate Claude Code
+  sandboxing/devcontainer for unattended runs (707-style overnight campaigns first).
+- **Predicted effect:** risk reduction (rare-event class — NOT judged by the D-1 total).
+- **Falsifier:** none needed to adopt (additive safety); the sandbox half reverts if it
+  breaks legitimate workflows in trial.
+- **Disposition:** **founder review** (it changes how agents access resources), then its own
+  implementation tempdoc — real engineering, out of 743's hands-on scope.
+
+### P-E — PR-size discipline
+- **Attacks:** publish-protocol throughput (founder-as-sole-reviewer bottleneck). **Evidence:**
+  R5 (LinearB: AI PRs 2.6× larger, merge at 32.7% vs 84.5%; DORA: review speed ≈50% of
+  delivery performance). **Change:** guidance in the publish skill: prefer several small
+  sequential PRs per tempdoc over one large one; consider a soft LOC hint at PR-open time.
+- **Predicted effect:** founder review latency down; merge rate up (visible in per-merge data).
+- **Falsifier:** if PR count inflation raises total CI + founder attention instead of
+  lowering it in a window → revert.
+- **Disposition:** mild behavioral change to how work ships → **founder review**; cheap to
+  pilot time-windowed.
+
+### P-F — Task-class-conditional pipeline (right-sizing)
+- **Attacks:** staged-pipeline row's LATENCY/attention cost (T1 showed tokens are not the
+  issue). **Evidence:** R1 (GAIA conditionality; compounding-error math; keep planning for
+  hard tasks — Depth Ceiling). **Change:** a triage step at tempdoc takeover: mechanical
+  tempdocs (teardown/rename/config-delete class) run derisk→plan only; design-novel tempdocs
+  keep the full chain. Classification is the risky part — misclassification skips scaffolds
+  exactly where GAIA says Opus needs them most.
+- **Predicted effect:** fewer founder round-trips + lower latency on mechanical work;
+  defect-escape rate must stay flat (the constraint that matters).
+- **Falsifier:** any escaped defect on a lite-pathed tempdoc that the full chain would
+  plausibly have caught → tighten classifier or revert.
+- **Disposition:** behavioral, touches the skill layer the founder invokes → **founder
+  review + time-windowed pilot** (Phase 5).
+
+### P-G — Continuous-vs-handoff measured pilot (flagship)
+- **Attacks:** session-as-continuity axis — but as a MEASUREMENT, not a change. **Evidence:**
+  R2 (Anthropic reversed to continuous; zero published controlled comparisons; our tempdoc
+  handoff serves multi-day/parallel needs the reversal doesn't address).
+- **Design sketch:** matched pairs of comparable tempdocs; arm A = one continuous session to
+  completion (compaction allowed); arm B = deliberate session split at a phase boundary with
+  tempdoc handoff; score rework, defects, cost, wall-clock. Small N; gross effects only;
+  publishable either way (fills a field-level gap).
+- **Disposition:** **Phase-5 flagship — needs the founder pilot-mechanics conversation**
+  (window discipline, which tempdocs qualify).
+
+### Non-proposals (evidence affirmatively says leave alone)
+Review stack (R1: strongest-evidenced scaffold) · tempdoc unit (R5: convergent practice) ·
+worktree model (R5; adopt native junction handling opportunistically) · squash policy (R5) ·
+existing enforcement guards (R3: relaxation refuted; P-D is additive) · compaction handling
+(T1: cost negligible; our hooks are the documented native pattern).
+
 ## Non-goals
 
 - Re-running 727's tactical fix loop (that instrument keeps running independently).
