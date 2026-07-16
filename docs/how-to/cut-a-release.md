@@ -147,7 +147,7 @@ each release's convergence tempdoc + its GitHub Release):
 | Version | Date | Sandbox verdict | Notes | Links |
 |---|---|---|---|---|
 | v0.1.0 | 2026-06-25 | (pre-pipeline) | Prerelease/alpha. **No MCP endpoint.** Installer built locally, not via CI. | [release](https://github.com/eliasjustus/justsearch/releases/tag/v0.1.0) |
-| v0.2.x | pending | rounds 1-5: dense-retrieval + capability-gate fixes confirmed working; `core.workflow-run` (broken on every invocation) fixed 2026-07-16 (tempdoc 744); round 5 (first GUI-capable) is **DO-NOT-QUALIFY** — blocked on an unexplained golden-query parity regression found only at host-side finalize; a real contributing cause is fixed but doesn't fully explain the round's magnitude | First cut with the MCP endpoint + the hash-consistent asset pipeline. | tempdoc 734 |
+| v0.2.x | pending | rounds 1-6: dense-retrieval + capability-gate fixes confirmed working; `core.workflow-run` fixed 2026-07-16 (tempdoc 744); round 6 (fresh-install, pre-registered) is **DO-NOT-QUALIFY** — the golden-query parity regression reproduces with the CPU/GPU-precision hypothesis now ruled out, root cause still unidentified; a new HIGH-severity RAG chunk-retrieval bug was also found (tempdoc 749) | First cut with the MCP endpoint + the hash-consistent asset pipeline. | tempdoc 734, tempdoc 749 |
 
 ## See also
 

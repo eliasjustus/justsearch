@@ -126,16 +126,17 @@ Write-Log $elevationNote
 # the installer over an already-installed product because nothing checked
 # for a prior install first. Three independent signals a per-user NSIS
 # install leaves behind (bundle.windows.nsis.installMode: currentUser,
-# ADR-0024): the installed binary under %LOCALAPPDATA%\Programs\JustSearch
-# (the actual per-user NSIS install location; NOT %LOCALAPPDATA%\JustSearch
-# directly), the app data dir
+# ADR-0024): the installed binary under %LOCALAPPDATA%\JustSearch directly
+# (per ADR-0024: "Installation target is per-user at %LOCALAPPDATA%\JustSearch"
+# -- there is no Programs subfolder; confirmed live against a real install,
+# Sandbox round 6, tempdoc 734), the app data dir
 # (-DataDir, default %APPDATA%\io.justsearch.shell), and the uninstall
 # registry entry (verified against
 # scripts/ci/verify-installer-nsis-win.ps1's $uninstRegKey). This is
 # informational, not blocking -- a round may deliberately be re-running
 # against an existing install (upgrade/repair scenarios) -- but it must be
 # recorded so a fresh-install round can't silently double-install.
-$installedExePath = Join-Path -Path $env:LOCALAPPDATA -ChildPath "Programs\JustSearch\JustSearch.exe"
+$installedExePath = Join-Path -Path $env:LOCALAPPDATA -ChildPath "JustSearch\JustSearch.exe"
 $installedExeFound = Test-Path -LiteralPath $installedExePath
 $dataDirFound = Test-Path -LiteralPath $DataDir
 $uninstallRegKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\JustSearch"
