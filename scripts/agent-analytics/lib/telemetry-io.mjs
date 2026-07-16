@@ -60,17 +60,45 @@ export function loadEvents() {
 
 export const OTLP_DIR = 'otlp';
 
+// Matches otlp-sink.py's `_archive_regex(base)`: `<base>.<UTC-compact-
+// timestamp>[_NN].ndjson`, e.g. `logs.2026-07-16T133648Z.ndjson` or
+// `logs.2026-07-16T133648Z_01.ndjson`. Anchored on the literal base so
+// base='logs' cannot match `logs-something-else.ndjson` or a different
+// stream's archives (e.g. `metrics.*`).
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function archiveRegex(base) {
+  return new RegExp(`^${escapeRegExp(base)}\\.\\d{4}-\\d{2}-\\d{2}T\\d{6}Z(_\\d+)?\\.ndjson$`);
+}
+
 /**
- * Read a rotated OTLP stream (both `<base>.prev.ndjson` and `<base>.ndjson`,
- * oldest first) — mirroring loadEvents' dual-read. otlp-sink.py rotates each
- * stream to `.prev` past 20 MB, so a reader that ignored `.prev` would silently
- * drop rotated sessions (and desync logs vs metrics).
+ * Read a rotated OTLP stream — the legacy `<base>.prev.ndjson` (if still on
+ * disk from before tempdoc 745), every `<base>.<timestamp>[_NN].ndjson`
+ * archive sorted chronologically, then the current `<base>.ndjson` — oldest
+ * first, mirroring loadEvents' dual-read. otlp-sink.py archives (never
+ * deletes) each stream past 20 MB and keeps every archive unless its
+ * RETENTION says otherwise, so a reader that only checked `.prev` would
+ * silently drop every archive but the newest one (and desync logs vs
+ * metrics). Exported for direct unit testing — the write path
+ * (loadEventsFromOtlp/loadCostsFromOtlp) is otherwise the only caller.
  */
-function loadOtlpStream(dir, base) {
-  return [
-    ...loadNdjsonArray(path.join(dir, `${base}.prev.ndjson`)),
-    ...loadNdjsonArray(path.join(dir, `${base}.ndjson`)),
+export function loadOtlpStream(dir, base) {
+  const pattern = archiveRegex(base);
+  let archiveNames = [];
+  try {
+    archiveNames = fs.readdirSync(dir).filter((name) => pattern.test(name));
+  } catch {
+    archiveNames = [];
+  }
+  archiveNames.sort();
+  const files = [
+    path.join(dir, `${base}.prev.ndjson`),
+    ...archiveNames.map((name) => path.join(dir, name)),
+    path.join(dir, `${base}.ndjson`),
   ];
+  return files.flatMap((f) => loadNdjsonArray(f));
 }
 
 /**
