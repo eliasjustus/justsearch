@@ -1126,7 +1126,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: docs/tempdocs/719-reproducible-public-agent-utility-benchmark.md` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
 - [ ] 719 source-identity prose is behind the implementation: #178 (725) added mcp_initialize_identity + session-config exposure mode to the captured surface, and utility-claim-policy.v1.json now requires verified_exposure_mode — 719's boundary section still names only the tools/list hash. Extend the prose when 719 is next touched — `docs/tempdocs/719-reproducible-public-agent-utility-benchmark.md:32` (2026-07-15)
 
-### obs:unanchored-drift-7 — tempdoc 737 status header still says 'NOT MERGED — no PR until owner's word' but PR #193 (f7d8e03f) 
+### obs:unanchored-drift-7 — tempdoc 737 status header still says 'NOT MERGED — no PR until owner's word' but PR #193 (f7d8e03f)
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
 - [ ] tempdoc 737 status header still says 'NOT MERGED — no PR until owner's word' but PR #193 (f7d8e03f) is its merge commit — stale status, refresh on next touch — `docs/tempdocs/737*.md:1` (2026-07-15)
 
@@ -1145,6 +1145,14 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:unanchored-drift-11 — CLAUDE.md + branch-safety.md still say the main checkout is 'F:\JustSearch' — stale. That private cl
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
 - [ ] CLAUDE.md + branch-safety.md still say the main checkout is 'F:\JustSearch' — stale. That private clone (remote eliasjustus/JustSearch, 9 .onnx via LFS) was last committed 2026-06-25 and has 1 worktree; the live repo is F:\justsearch-public (public remote, committed today, 19 worktrees, 487 tempdocs). Consequence: the never-checkout-in-main rule reads as not applying to the checkout it actually governs. Not fixed here — branch-safety.md is being edited by PR #202, so this needs to land without a collision — `CLAUDE.md:Parallel Agents` (2026-07-15)
+
+### obs:localapiserver — Verify product /mcp Streamable-HTTP conformance against current spec (single path supports POST+GET;
+`kind: defect?` `anchor: modules/ui/src/main/java/io/justsearch/ui/api/LocalApiServer.java` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
+- [ ] Verify product /mcp Streamable-HTTP conformance against current spec (single path supports POST+GET; server MUST validate Origin header vs DNS-rebinding) — app registers POST+DELETE /mcp at `modules/ui/src/main/java/io/justsearch/ui/api/LocalApiServer.java:567`; surfaced during tempdoc 728 research; owned by product/655 conformance, not 728 (2026-07-14)
+
+### obs:unanchored-general-60 — Background-watcher double failure mode (2026-07-16): a gh-polling background Bash spun 25+ min on a 
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] Background-watcher double failure mode (2026-07-16): a gh-polling background Bash spun 25+ min on a fabricated full SHA (guessed tail instead of git rev-parse — verify-dont-guess applies to command ARGUMENTS too) producing a 0-byte output file, AND its 900s timeout neither killed it nor emitted a task-notification (TaskStop found it alive at ~25 min). Silence was indistinguishable from progress until a disk-state check read the empty file — the founder's 30-min pull-based wakeup-loop pattern (this session) is the antidote; resolve-then-watch loops should fail closed after N empty polls instead of spinning (2026-07-16)
 
 ## Parked
 
