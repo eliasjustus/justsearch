@@ -452,17 +452,17 @@ For each layer/axis: the JOB it performs, what it COSTS (baseline), and the WIN 
 alternative must meet (Phase-3 proposals must name which row they attack and beat its win
 condition — not just "seems better").
 
-| Layer / axis | Job performed | Baseline cost | Win condition for an alternative |
+| Layer / axis | Job performed | Baseline cost (T1-measured) | Win condition for an alternative |
 |---|---|---|---|
-| Staged skill pipeline (theorize→…→plan) | Prevents design-while-implementing; forces assumption burndown before code | pending T1 ceremony split | Same defect-escape rate with less pre-implementation spend, on a time-windowed pilot |
-| Refute-first independent review | Catches implementer-blind defects (live: the 2.34× bug) | ~1 opus/sonnet spawn per slice | Nothing weaker survives D-2; alternative must show equal catch-rate on real defect classes |
-| Tempdoc-as-unit + closeout | Cross-session continuity; work survives session death | authoring + closeout turns (pending T1) | A work-unit with equal resumability at lower authoring cost (R5 evidence) |
-| Long-lived orchestrator + subagents | Judgment continuity; delegation economics | 85.1% of tokens in orchestrator; compaction re-orientation (pending T1) | Topology with lower orchestrator share at equal decision quality (R2 evidence) |
-| Worktree-per-tempdoc | Parallel isolation on one machine; main stays clean | prepare/teardown friction (2 incidents this session) | Isolation with equal safety, less lifecycle friction (R5/R4 evidence) |
-| Publish protocol (full suite, scans, squash, CI-watch) | Public-main safety + curated history | CI-wait plumbing (pending T1 waiting share) | Cannot be weakened per D-2 (safety); only its WAITING cost is attackable (R4/plumbing) |
-| Hooks/gates enforcement | Converts ~70% prose adherence to ~100% mechanical | hook-friction retries (pending T1) | Per-guard: evidence the model no longer makes the mistake (R3) AND a re-add trigger |
+| Staged skill pipeline (theorize→…→plan) | Prevents design-while-implementing; forces assumption burndown before code | **CHEAP in tokens: 5.8%** of skill-session spend lands pre-first-code-mutation (its real cost is latency + founder attention, not tokens) | Same defect-escape rate with less pre-implementation spend, on a time-windowed pilot |
+| Refute-first independent review | Catches implementer-blind defects (live: the 2.34× bug; mechanistic basis: arXiv 2606.05976) | ~1 opus/sonnet spawn per slice | Nothing weaker survives D-2; alternative must show equal catch-rate on real defect classes |
+| Tempdoc-as-unit + closeout | Cross-session continuity; work survives session death | not separately measured (T1 gap; authoring rides inside ceremony share) | A work-unit with equal resumability at lower authoring cost (R5: convergent practice; attack bloat, not existence) |
+| Long-lived orchestrator + subagents | Judgment continuity; delegation economics | 85.1% of tokens in orchestrator (may be structural to coding per R2) | Topology with lower orchestrator share at equal decision quality; escalation routing (R2) |
+| Worktree-per-tempdoc | Parallel isolation on one machine; main stays clean | prepare/teardown friction (2 live incidents this session) | Isolation with equal safety, less lifecycle friction (junction logic already native per R4) |
+| Publish protocol (full suite, scans, squash, CI-watch) | Public-main safety + curated history | **WAITING: 12.5% of ALL window tokens (3.82B), the dominant measured overhead** — top sessions lose ~50% to notification-ack turns against a bloated cache | Cannot be weakened per D-2 (safety); the WAITING slice is fully attackable (R4: Monitor/Channels; cheap-ack patterns) |
+| Hooks/gates enforcement | Converts ~70% prose adherence (corroborated, R3) to deterministic | hook-friction: 0.7% of window tokens (820 events) | Per-guard: evidence the model no longer makes the mistake (R3: refuted generally) AND a re-add trigger |
 | Founder approval points | Safety + taste on irreversible/outward actions | founder attention (proxy deferred) | Only the founder can re-price these; program surfaces, never removes (D-2) |
-| Session-as-continuity (compaction) | Keeps long work in one context | re-orientation cost (pending T1) | Artifact-mediated handoff with measured rework ≤ compaction's (R2) |
+| Session-as-continuity (compaction) | Keeps long work in one context | **re-orientation: 0.031% — NEGLIGIBLE** (post-compaction turns fire on a reset cache; 65 compactions in window) | Was presumed expensive; T1 refutes — no alternative needed on cost grounds; only quality-loss (R2) remains as an argument |
 
 ### R2 — session topology (landed 2026-07-16; tiered, refute-first)
 
@@ -611,6 +611,61 @@ Release-note items to check separately: `Read` deny now blocks `Edit` (v2.1.208)
 `Write` — audit our deny rules for that gap; worktree name-reuse now resets to base under
 conditions (v2.1.208) — touches EnterWorktree re-entry flows; native PowerShell tool
 rollout; subagents cap at Opus and inherit extended-thinking (v2.1.198).
+
+### T1 — overhead taxonomy (landed 2026-07-16; full detail + limitations in the T1 report,
+script + per-session JSON in the session scratchpad `overhead/` dir)
+
+Window: 220 sessions, 30.63B tokens (matches the baseline instrument within 0.03%).
+**WAITING 12.465% (3.82B tok, 1,679 turns — task-notification acks + wakeup ticks firing
+against a bloated cache; top-10 sessions lose 29-50% of their entire spend to this)** ·
+HOOK-FRICTION 0.712% (820 events) · RE-ORIENTATION 0.031% (negligible — presumption
+refuted) · overhead subtotal 13.2%. Ceremony split: 38 skill-using sessions = 37.7% of all
+window tokens; only **5.8%** of their spend lands before the first code-mutating call.
+Biggest stated limitation: the 400-char short-ack threshold (moves the WAITING number
+materially either way); ceremony proxy conflates read-only investigation with setup.
+
+## Phase-2 synthesis (evidence base complete, 2026-07-16)
+
+Six lanes in, the picture is consistent and in places surprising:
+
+1. **The epistemic core survives adversarial review — and it's cheap.** Staged planning:
+   keep (Depth Ceiling; GAIA's Opus-gains-most result), right-size per task (GAIA
+   conditionality; compounding-error math), and T1 shows its token cost was overestimated
+   all along (5.8% pre-implementation). Refute-first independent review: the best-evidenced
+   scaffold in the entire sweep (mechanistic 23-93pp self-correction gap), non-negotiable.
+   **The "ceremony not right-sized" weakness is real but its cost is latency and founder
+   attention, not tokens — reprioritize accordingly.**
+2. **The enforcement layer survives decisively and gains a candidate ADDITION** (blast-radius
+   / credential-scoping layer 2, where 2026's worst incidents actually happened; sandboxing
+   as productivity win). Nothing gets relaxed; one hook premise (subagent non-inheritance)
+   is factually stale and needs updating, which SLIMS a hook rather than weakening a guard.
+3. **The dominant attackable cost is WAITING plumbing: 12.5% of all tokens** — and R4 maps
+   the fix space (Monitor tool as documented pattern, WebSocket source, Channels preview,
+   plus cheap-ack design so notification turns stop re-reading bloated caches). This is
+   pure-overhead engineering with no behavioral tradeoff — principle 6's exception applies:
+   fixable without pilots.
+4. **Topology: shape is right, policy is the lever.** Hierarchy validated everywhere; the
+   evidence points at escalation-based delegation routing (~10k-token spawn break-even,
+   Uno-Orchestra 12×), session budgets tied to measured model horizons (METR ~1h10m@80% for
+   Opus-class), and — the field-level gap we could fill — the continuous-vs-handoff pilot.
+   The 85.1% orchestrator share may be structural to coding (Anthropic's own caveat), so
+   treat lowering it as a hypothesis, not a target.
+5. **Coordination: keep tempdocs (attack bloat), keep worktrees (adopt native junction
+   handling), keep squash (attack PR size — founder review is the DORA-confirmed
+   bottleneck), automate ONLY the resource-lock layer of founder-scheduling (shipped
+   tooling exists: agent-task-queue).**
+
+The prioritized Phase-3 proposal shortlist this licenses (each to be written up with layer,
+evidence pointers, predicted effect, falsifier): **P-A** waiting-plumbing overhaul (Monitor
+migration + cheap-ack pattern; targets the 12.5%); **P-B** subagent-guide slimming +
+agent-lessons row-27 correction (stale premise, double-context on every spawn);
+**P-C** escalation-based delegation routing (try-direct below break-even); **P-D**
+blast-radius layer-2 (credential scoping / sandbox experiment — ADDITIVE safety);
+**P-E** PR-size discipline (smaller sequential merges); **P-F** pipeline right-sizing
+(task-class-conditional skill chain — the latency/attention win); **P-G** the
+continuous-vs-handoff measured pilot (novel contribution; Phase-5 flagship candidate).
+Non-proposals (evidence says leave alone): review stack, tempdoc unit, worktree model,
+squash policy, enforcement guards (except additive P-D), compaction handling.
 
 ## Non-goals
 
