@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Self-tests for otlp-sink.py (tempdoc 743 Phase 1, reservoir workstream).
+"""Self-tests for otlp-sink.py (tempdoc 743 Phase 1, reservoir workstream;
+rotation coverage added tempdoc 745 item A).
 
-Covers the two defects this fix closes:
+Covers the defects this fix closes:
   1. `Transfer-Encoding: chunked` bodies (sent by OTel-OTLP-Exporter-JavaScript,
      with no `Content-Length` header) were silently read as empty, so real
      telemetry decoded to 0 records with no error at all — a completely
@@ -9,6 +10,13 @@ Covers the two defects this fix closes:
   2. A POST that decodes to 0 records now announces itself once per route in
      errors.log (rate-limited so a client emitting legitimate empty batches
      repeatedly cannot grow the log unboundedly).
+  3. Rotation used to keep only ONE `.prev` generation and unconditionally
+     `os.remove()` it on the next rotation, so anything older than "current +
+     one rotation" was destroyed forever (a rotation was directly observed
+     destroying 21 MB). Rotation now archives with a timestamped, never-
+     overwritten filename and prunes per a per-stream RETENTION policy, with
+     metrics/traces (RETENTION=None) never pruned at all — see
+     `RotationTests` below.
 
 Loaded via importlib (the hyphenated filename `otlp-sink.py` is not a valid
 Python module name), mirroring `scripts/sandbox/test_sandbox_launch_evidence_archive.py`'s
@@ -21,6 +29,7 @@ from __future__ import annotations
 import email.message
 import importlib.util
 import io
+import os
 import socket
 import tempfile
 import threading
@@ -188,6 +197,149 @@ class LiveServerTests(unittest.TestCase):
         self.assertEqual(
             len(route_lines), 1, f"expected exactly one rate-limited announce, got {route_lines}"
         )
+
+
+class RotationTests(unittest.TestCase):
+    """Direct unit tests of the module-level rotate/prune/archive functions —
+    no server rig needed. ROTATE_BYTES is monkeypatched down to a tiny value
+    so a few bytes of content trigger rotation without writing real 20 MB
+    files."""
+
+    def setUp(self):
+        self.out_dir = tempfile.mkdtemp()
+        self._orig_rotate_bytes = otlp_sink.ROTATE_BYTES
+        self._orig_retention = dict(otlp_sink.RETENTION)
+        otlp_sink.ROTATE_BYTES = 10
+
+    def tearDown(self):
+        otlp_sink.ROTATE_BYTES = self._orig_rotate_bytes
+        otlp_sink.RETENTION.clear()
+        otlp_sink.RETENTION.update(self._orig_retention)
+
+    def _path(self, base: str) -> str:
+        return os.path.join(self.out_dir, f"{base}.ndjson")
+
+    def _write(self, base: str, content: str) -> None:
+        with open(self._path(base), "a", encoding="utf-8") as f:
+            f.write(content)
+
+    def _rotate(self, base: str) -> None:
+        otlp_sink.rotate_if_big(self._path(base))
+
+    def test_two_successive_rotations_preserve_both_archives(self):
+        # The regression this fix closes. Old code:
+        #   prev = filepath[:-len(".ndjson")] + ".prev.ndjson"
+        #   if os.path.exists(prev): os.remove(prev)
+        #   os.replace(filepath, prev)
+        # On the SECOND rotation, `prev` already exists (from the first
+        # rotation) so the old code unconditionally os.remove()'d it before
+        # replacing — destroying the first archive's content outright,
+        # regardless of any retention policy. This test writes two rotations
+        # and asserts BOTH archives survive with distinct, original content:
+        # it would FAIL against the pre-fix rotate_if_big, because the old
+        # code left only one `.prev.ndjson` on disk (containing only the
+        # second generation's content) — never two files.
+        self._write("traces", "AAAAAAAAAAAAAAA\n")  # > 10 bytes -> triggers rotation
+        self._rotate("traces")
+        self._write("traces", "BBBBBBBBBBBBBBB\n")
+        self._rotate("traces")
+        archives = otlp_sink._list_archives(self.out_dir, "traces")
+        self.assertEqual(len(archives), 2, f"expected 2 surviving archives, got {archives}")
+        contents = [Path(p).read_text(encoding="utf-8") for p in archives]
+        self.assertIn("AAAAAAAAAAAAAAA\n", contents)
+        self.assertIn("BBBBBBBBBBBBBBB\n", contents)
+
+    def test_per_stream_prune_keeps_newest_n(self):
+        otlp_sink.RETENTION["logs"] = 2
+        for label in ("one", "two", "three"):
+            self._write("logs", f"{label}-padded-out-past-ten-bytes\n")
+            self._rotate("logs")
+        archives = otlp_sink._list_archives(self.out_dir, "logs")
+        self.assertEqual(len(archives), 2, f"expected 2 surviving archives, got {archives}")
+        contents = "".join(Path(p).read_text(encoding="utf-8") for p in archives)
+        self.assertNotIn("one-padded", contents, "oldest archive should have been pruned")
+        self.assertIn("two-padded", contents)
+        self.assertIn("three-padded", contents)
+
+    def test_metrics_retention_none_is_never_pruned(self):
+        # Load-bearing: metrics is the stream the cost baseline needs.
+        self.assertIsNone(otlp_sink.RETENTION.get("metrics"))
+        for i in range(4):
+            self._write("metrics", f"m{i}-padded-out-past-ten-bytes\n")
+            self._rotate("metrics")
+        archives = otlp_sink._list_archives(self.out_dir, "metrics")
+        self.assertEqual(len(archives), 4, f"expected all 4 archives kept, got {archives}")
+        contents = "".join(Path(p).read_text(encoding="utf-8") for p in archives)
+        for i in range(4):
+            self.assertIn(f"m{i}-padded", contents)
+
+    def test_traces_retention_none_is_never_pruned(self):
+        self.assertIsNone(otlp_sink.RETENTION.get("traces"))
+        for i in range(3):
+            self._write("traces", f"t{i}-padded-out-past-ten-bytes\n")
+            self._rotate("traces")
+        archives = otlp_sink._list_archives(self.out_dir, "traces")
+        self.assertEqual(len(archives), 3, f"expected all 3 archives kept, got {archives}")
+
+    def test_archive_naming_collision_safe_within_same_second(self):
+        fixed_ts = "2026-07-16T133648Z"
+        orig_ts_fn = otlp_sink._archive_timestamp
+        otlp_sink._archive_timestamp = lambda: fixed_ts
+        try:
+            self._write("traces", "first-collision-payload-bytes\n")
+            self._rotate("traces")
+            self._write("traces", "second-collision-payload-bytes\n")
+            self._rotate("traces")
+        finally:
+            otlp_sink._archive_timestamp = orig_ts_fn
+
+        archives = otlp_sink._list_archives(self.out_dir, "traces")
+        self.assertEqual(len(archives), 2, f"expected 2 non-colliding archives, got {archives}")
+        names = [os.path.basename(p) for p in archives]
+        # Neither rotation overwrote the other, and sort order (== filename
+        # order returned by _list_archives) matches creation order.
+        self.assertEqual(names[0], f"traces.{fixed_ts}.ndjson")
+        self.assertEqual(names[1], f"traces.{fixed_ts}_001.ndjson")
+        contents = [Path(p).read_text(encoding="utf-8") for p in archives]
+        self.assertIn("first-collision-payload-bytes\n", contents)
+        self.assertIn("second-collision-payload-bytes\n", contents)
+
+    def test_collision_counter_sorts_lexically_past_99(self):
+        """The counter is read back by a LEXICAL sort, so its zero-padding is a
+        correctness property, not cosmetics: at 2 digits `_100` sorts BEFORE `_99`
+        and the archives would be replayed out of order. Unreachable in practice
+        (100 rotations of a 20MB file in one second), but the ordering contract
+        should not quietly depend on that. Pins the padding against a naive revert.
+        """
+        names = [f"traces.2026-07-16T133648Z_{n:03d}.ndjson" for n in (1, 2, 99, 100, 101)]
+        self.assertEqual(sorted(names), names, "zero-padded counter must sort in creation order")
+        two_digit = [f"traces.2026-07-16T133648Z_{n:02d}.ndjson" for n in (99, 100)]
+        self.assertNotEqual(sorted(two_digit), two_digit, "2-digit padding would mis-sort (the bug this guards)")
+
+    def test_archive_regex_does_not_cross_match_other_streams_or_current_file(self):
+        # base='logs' must not pick up metrics archives, a 'logs-other'
+        # stream, or the plain current/legacy filenames.
+        for name in (
+            "metrics.2026-07-16T133648Z.ndjson",
+            "logs-other.2026-07-16T133648Z.ndjson",
+            "logs.ndjson",
+            "logs.prev.ndjson",
+        ):
+            Path(self.out_dir, name).write_text("x", encoding="utf-8")
+        Path(self.out_dir, "logs.2026-07-16T133648Z.ndjson").write_text("real-archive", encoding="utf-8")
+        archives = otlp_sink._list_archives(self.out_dir, "logs")
+        names = [os.path.basename(p) for p in archives]
+        self.assertEqual(names, ["logs.2026-07-16T133648Z.ndjson"], names)
+
+    def test_current_file_never_deleted_only_renamed(self):
+        # After rotation the current-named file must not exist as leftover
+        # content — os.replace() renamed it away, it was not deleted.
+        self._write("logs", "content-past-ten-bytes\n")
+        self._rotate("logs")
+        self.assertFalse(os.path.exists(self._path("logs")))
+        archives = otlp_sink._list_archives(self.out_dir, "logs")
+        self.assertEqual(len(archives), 1)
+        self.assertIn("content-past-ten-bytes\n", Path(archives[0]).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
