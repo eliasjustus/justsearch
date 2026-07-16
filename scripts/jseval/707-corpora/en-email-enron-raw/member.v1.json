@@ -1,0 +1,43 @@
+{
+  "schema": "707-corpus-member.v1",
+  "name": "en-email-enron-raw",
+  "language": "en",
+  "domain": "email",
+  "real_source": {
+    "recipe": "../../666-corpora/enron-raw-hosts-14k/recipe.json",
+    "content_scope": "CMU enron_mail_20150507 raw email bodies (FERC public record)",
+    "license": "LicenseRef-Enron-FERC-public-record",
+    "license_status": "verified",
+    "redistribute": false
+  },
+  "gold_source": "../../635-corpora/needle-burial-v1",
+  "assembly": {
+    "command": "jseval corpus-inject-real",
+    "style": "interleave",
+    "seed": 707,
+    "host_min_words": 60
+  },
+  "sizes": [
+    1000,
+    10000
+  ],
+  "query_variants": [
+    "verbose",
+    "short-natural"
+  ],
+  "materialized_datasets": [
+    "mixed/en-email-enron-raw-1k-verbose",
+    "mixed/en-email-enron-raw-1k-short-natural",
+    "mixed/en-email-enron-raw-10k-verbose",
+    "mixed/en-email-enron-raw-10k-short-natural"
+  ],
+  "structural_certification": "structural-certification.v1.json",
+  "claim_eligible": true,
+  "remaining_gates": [
+    "member_retrieval_calibration",
+    "closed_book",
+    "descriptor_collision",
+    "union_recall",
+    "leak_floor"
+  ]
+}

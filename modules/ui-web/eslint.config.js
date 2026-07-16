@@ -161,15 +161,6 @@ export default defineConfig([
 
   // app layer: can import everything (no restrictions)
 
-  // E2E + Playwright configs: allow common patterns (e.g. catch {}) and don't enforce unused vars yet.
-  {
-    files: ['e2e/**/*.{ts,tsx}', 'playwright.config.ts'],
-    rules: {
-      '@typescript-eslint/no-unused-vars': 'off',
-      'no-empty': 'off',
-    },
-  },
-
   // ==================== Authorized Writes Enforcement (D2) ====================
   // Restrict raw `fetch()` usage outside the API layer to enforce token correctness.
   // All non-GET fetch calls should go through the canonical `request()` helper in http.ts.

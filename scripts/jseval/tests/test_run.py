@@ -379,8 +379,11 @@ def _status_snapshot(chunk_doc_count, coverage_pct):
     }}}}
 
 
-def _mode_result(pipeline_tracking_observed=()):
-    return {"pipeline_tracking": {"observed": list(pipeline_tracking_observed)}}
+def _mode_result(pipeline_tracking_observed=(), run_evidence=None):
+    return {
+        "pipeline_tracking": {"observed": list(pipeline_tracking_observed)},
+        "run_evidence": run_evidence or {},
+    }
 
 
 class TestComputeChunkCompleteness:
@@ -461,6 +464,106 @@ class TestComputeChunkCompleteness:
             "scifact", {"vector": _mode_result([])}, _status_snapshot(0, 0.0), tmp_path,
         )
         assert block["verdict"] == "chunk-free"
+
+    # -- tempdoc 715 defect 1: engine-declared short-corpus skip is not a strike ------------
+
+    def test_short_corpus_skip_declared_is_not_a_strike(self, tmp_path):
+        # mixed/miracl-de-2k reproduction: SearchPlanner.java:267 skips chunk-merge with
+        # SKIPPED_SHORT_CORPUS by engine design (CorpusCapabilities.corpusSupportsChunks()
+        # false, median-token-count short corpus) even though some docs individually reach the
+        # chunk threshold. This is legitimate, not a degeneracy -- the corroborator must not
+        # fire just because "chunk_merge" is absent from the observed component set.
+        long_text = "x" * 2500
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": long_text},
+        ])
+        block = _compute_chunk_completeness(
+            "golden/demo",
+            {"vector": _mode_result(
+                ["dense"],  # chunk_merge absent from observed
+                run_evidence={
+                    "chunk_merge_skip_reason_counts": {"SKIPPED_SHORT_CORPUS": 305},
+                },
+            )},
+            _status_snapshot(48, 100.0),
+            tmp_path,
+        )
+        assert block["verdict"] == "ok"
+
+    def test_no_chunk_docs_skip_declared_is_not_a_strike(self, tmp_path):
+        long_text = "x" * 2500
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": long_text},
+        ])
+        block = _compute_chunk_completeness(
+            "golden/demo",
+            {"vector": _mode_result(
+                ["dense"],
+                run_evidence={
+                    "chunk_merge_skip_reason_counts": {"SKIPPED_NO_CHUNK_DOCS": 305},
+                },
+            )},
+            _status_snapshot(48, 100.0),
+            tmp_path,
+        )
+        assert block["verdict"] == "ok"
+
+    def test_chunk_merge_absent_without_any_skip_reason_stays_degenerate(self, tmp_path):
+        # No run_evidence skip-reason info at all (e.g. an older caller/shape) must not be
+        # silently treated as "not applicable" -- absence of evidence is not evidence of a
+        # legitimate skip.
+        long_text = "x" * 2500
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": long_text},
+        ])
+        block = _compute_chunk_completeness(
+            "golden/demo",
+            {"vector": _mode_result(["dense"], run_evidence={})},
+            _status_snapshot(48, 100.0),
+            tmp_path,
+        )
+        assert block["verdict"] == "degenerate"
+        assert any("chunk_merge" in r for r in block["reasons"])
+
+    def test_chunk_merge_absent_with_non_corpus_shape_reason_stays_degenerate(self, tmp_path):
+        # A real failure (e.g. vector-blocked) must still read as a strike, even when it's
+        # mixed with a legitimate corpus-shape skip reason on other queries.
+        long_text = "x" * 2500
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": long_text},
+        ])
+        block = _compute_chunk_completeness(
+            "golden/demo",
+            {"vector": _mode_result(
+                ["dense"],
+                run_evidence={
+                    "chunk_merge_skip_reason_counts": {
+                        "SKIPPED_SHORT_CORPUS": 200, "SKIPPED_VECTOR_BLOCKED": 5,
+                    },
+                },
+            )},
+            _status_snapshot(48, 100.0),
+            tmp_path,
+        )
+        assert block["verdict"] == "degenerate"
+
+    def test_healthy_run_with_chunk_merge_present_unaffected_by_skip_reasons_key(self, tmp_path):
+        # Existing "ok" path (chunk_merge present in observed) must stay unaffected regardless
+        # of whatever (irrelevant) skip-reason data happens to be present too.
+        long_text = "x" * 2500
+        _write_golden_corpus(tmp_path, "golden/demo", [
+            {"_id": "d1", "title": "", "text": long_text},
+        ])
+        block = _compute_chunk_completeness(
+            "golden/demo",
+            {"vector": _mode_result(
+                ["dense", "chunk_merge"],
+                run_evidence={"chunk_merge_skip_reason_counts": {"SKIPPED_SHORT_CORPUS": 1}},
+            )},
+            _status_snapshot(48, 100.0),
+            tmp_path,
+        )
+        assert block["verdict"] == "ok"
 
 
 class TestBuildSummaryEmbedsChunkCompleteness:

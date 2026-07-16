@@ -9,7 +9,12 @@ from pathlib import Path
 
 import httpx
 
-from .readiness import flatten_status, wait_index_idle, wait_pipeline_complete
+from .readiness import (
+    flatten_status,
+    wait_embed_compat_settled,
+    wait_index_idle,
+    wait_pipeline_complete,
+)
 from .types import IngestConfig
 
 log = logging.getLogger(__name__)
@@ -119,6 +124,20 @@ def ingest_and_wait(
         "docs_per_sec": round(docs_indexed / elapsed, 1) if elapsed > 0 else 0,
         "index_size_bytes": snapshot.get("indexSizeBytes"),
     }
+
+    # tempdoc 715 defect 2: on a fast small-corpus run, indexing/enrichment readiness
+    # (above) can be satisfied while the Worker's EmbeddingCompatibilityController is still
+    # mid-transition -- /api/status briefly still reads embeddingCompatState=REBUILDING even
+    # though nothing is actually pending. The run manifest's models_snapshot (`run._snapshot_
+    # models`, read fresh right after this function returns) would then capture "REBUILDING",
+    # splitting the release cohort key from a run of the same corpus/model that simply
+    # finished ingest a little slower. Bounded settle-wait BEFORE returning to the caller
+    # (which proceeds straight to eval + manifest snapshot) closes that race; computed AFTER
+    # `elapsed`/`docs_per_sec` above so it never pollutes this function's own throughput
+    # metrics (also read unmodified by ingest_bench.py's benchmark wrapper).
+    if readiness.passed:
+        settled_state = wait_embed_compat_settled(config.base_url)
+        summary["embed_compat_state_settled"] = settled_state
 
     # Write timeline TSV (item 5).
     if config.timeline_path and timeline_rows:

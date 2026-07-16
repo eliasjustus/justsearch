@@ -1,0 +1,179 @@
+{
+  "method": "real-text-injection-v1",
+  "seed": 707,
+  "style": "interleave",
+  "n_gold_docs": 40,
+  "n_distractors": 960,
+  "host_min_words": 60,
+  "host_mapping": [
+    {
+      "gold_id": "brelby39",
+      "host_id": "maildir__brawner-s__deleted_items__85."
+    },
+    {
+      "gold_id": "breldell15",
+      "host_id": "maildir__horton-s___sent_mail__191."
+    },
+    {
+      "gold_id": "brelker31",
+      "host_id": "maildir__mann-k___sent_mail__393."
+    },
+    {
+      "gold_id": "brelker38",
+      "host_id": "maildir__kean-s__all_documents__5728."
+    },
+    {
+      "gold_id": "cavby12",
+      "host_id": "maildir__germany-c__all_documents__2700."
+    },
+    {
+      "gold_id": "cavgrove40",
+      "host_id": "maildir__beck-s__inbox__633."
+    },
+    {
+      "gold_id": "cavric13",
+      "host_id": "maildir__dasovich-j__all_documents__10481."
+    },
+    {
+      "gold_id": "druash5",
+      "host_id": "maildir__presto-k__deleted_items__656."
+    },
+    {
+      "gold_id": "drugrove8",
+      "host_id": "maildir__beck-s__all_documents__2182."
+    },
+    {
+      "gold_id": "drureach1",
+      "host_id": "maildir__dasovich-j__inbox__1605."
+    },
+    {
+      "gold_id": "harnvale3",
+      "host_id": "maildir__blair-l__deleted_items__666."
+    },
+    {
+      "gold_id": "kanfen9",
+      "host_id": "maildir__kean-s__all_documents__6079."
+    },
+    {
+      "gold_id": "limric21",
+      "host_id": "maildir__kitchen-l___americas__regulatory__12."
+    },
+    {
+      "gold_id": "limvale22",
+      "host_id": "maildir__schwieger-j__all_documents__44."
+    },
+    {
+      "gold_id": "mirker33",
+      "host_id": "maildir__jones-t__all_documents__10882."
+    },
+    {
+      "gold_id": "mirven36",
+      "host_id": "maildir__dasovich-j__all_documents__1469."
+    },
+    {
+      "gold_id": "mirwick11",
+      "host_id": "maildir__dasovich-j__all_documents__12080."
+    },
+    {
+      "gold_id": "nuthstone34",
+      "host_id": "maildir__scott-s__inbox__314."
+    },
+    {
+      "gold_id": "olmvale17",
+      "host_id": "maildir__mims-thurston-p__inbox__42."
+    },
+    {
+      "gold_id": "orrgrove25",
+      "host_id": "maildir__germany-c__sent_items__716."
+    },
+    {
+      "gold_id": "orrvale7",
+      "host_id": "maildir__hain-m___sent_mail__11."
+    },
+    {
+      "gold_id": "pellash4",
+      "host_id": "maildir__symes-k__all_documents__2479."
+    },
+    {
+      "gold_id": "pellstone2",
+      "host_id": "maildir__arnold-j___sent_mail__452."
+    },
+    {
+      "gold_id": "quendell26",
+      "host_id": "maildir__ybarbo-p__procaribe__39."
+    },
+    {
+      "gold_id": "rellholt20",
+      "host_id": "maildir__shapiro-r__deleted_items__198."
+    },
+    {
+      "gold_id": "rellven10",
+      "host_id": "maildir__salisbury-h__read__15."
+    },
+    {
+      "gold_id": "skomond32",
+      "host_id": "maildir__dasovich-j__all_documents__9833."
+    },
+    {
+      "gold_id": "skoric37",
+      "host_id": "maildir__bass-e___sent_mail__197."
+    },
+    {
+      "gold_id": "skowick14",
+      "host_id": "maildir__dasovich-j__all_documents__1192."
+    },
+    {
+      "gold_id": "tasdac6",
+      "host_id": "maildir__sager-e__inbox__861."
+    },
+    {
+      "gold_id": "tasgrove19",
+      "host_id": "maildir__geaccone-t___sent_mail__182."
+    },
+    {
+      "gold_id": "tasreach24",
+      "host_id": "maildir__beck-s__inbox__644."
+    },
+    {
+      "gold_id": "tasvale29",
+      "host_id": "maildir__mann-k___sent_mail__1402."
+    },
+    {
+      "gold_id": "vexfen16",
+      "host_id": "maildir__schwieger-j__sent_items__37."
+    },
+    {
+      "gold_id": "vexvale28",
+      "host_id": "maildir__heard-m__inbox__164."
+    },
+    {
+      "gold_id": "vorby23",
+      "host_id": "maildir__kean-s__all_documents__1868."
+    },
+    {
+      "gold_id": "vorthorn30",
+      "host_id": "maildir__dasovich-j__inbox__531."
+    },
+    {
+      "gold_id": "vorwick18",
+      "host_id": "maildir__meyers-a__deleted_items__424."
+    },
+    {
+      "gold_id": "wendcrag27",
+      "host_id": "maildir__corman-s__sent_items__160."
+    },
+    {
+      "gold_id": "zelfen35",
+      "host_id": "maildir__mims-thurston-p__deleted_items__363."
+    }
+  ],
+  "assembled_digest": "747545a7e03200c356143edda0536d811e839c3539055ca120195243172c3068",
+  "real_source_id": "cmu-enron-raw:enron_mail_20150507:seed707:hosts14k",
+  "real_source_sha256": "ac96743aafa3e46d8340f114df6fae06aea1190f237bb88f4292bf20d4331c6b",
+  "license": "LicenseRef-Enron-FERC-public-record",
+  "assembly_determinism": {
+    "passed": true,
+    "method": "cross-process-regeneration-diff",
+    "digest": "747545a7e03200c356143edda0536d811e839c3539055ca120195243172c3068"
+  }
+}

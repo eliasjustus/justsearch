@@ -13,7 +13,7 @@ import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.loop.IndexingLoop;
 import io.justsearch.indexerworker.queue.SqliteJobQueue;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;

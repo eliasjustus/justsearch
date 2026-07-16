@@ -18,6 +18,23 @@
  *
  * Safety: refuses any path that is not under `.claude/worktrees/` so it can never touch the main
  * checkout or an arbitrary directory.
+ *
+ * Tempdoc 746 item 4 — junction-unlink KEPT (not superseded by Claude Code >=2.1.205's native
+ * junction handling), for two independent reasons:
+ *   1. Native handling covers harness-DRIVEN worktree removal only. This script also runs
+ *      standalone from a shell (its documented usage above), a path native handling never sees.
+ *   2. Deletion here never goes through `git worktree remove` (junction-safety of which would be
+ *      moot anyway) — `main()` deletes the tree itself via `deleteTree` (fs.rmSync, falling back
+ *      to a `\\?\`-prefixed .NET `Directory.Delete`) and only runs `git worktree prune` afterward,
+ *      to clear the now-stale registry entry. Empirically probed both of `deleteTree`'s own
+ *      methods against a scratch junction (temp-dir fixture, Node v24.12.0 / Windows 11):
+ *      fs.rmSync(recursive) turned out to already be junction-safe on its own (unlinks the
+ *      reparse point, leaves the target untouched) — but the `.NET Directory.Delete` FALLBACK is
+ *      NOT: it throws `UnauthorizedAccessException: Access to the path 'node_modules' is denied`
+ *      on a tree containing an un-unlinked junction, and does not complete the delete at all. That
+ *      fallback exists precisely for the long-path/held-handle cases this script was written to
+ *      solve (§ above), so `removeJunctions` running first is what keeps the fallback able to
+ *      finish, not merely "safe" in the no-data-loss sense.
  */
 'use strict';
 const fs = require('fs');
@@ -90,31 +107,114 @@ function longPathDelete(p) {
   });
 }
 
+/**
+ * Fetch the full local process table via WMI/CIM (ProcessId, ParentProcessId, Name, CommandLine).
+ * Returns [] on any failure so `reportHolders` degrades to "no holder found" instead of throwing
+ * mid-teardown. Deliberately unfiltered (not a `Where-Object -like` query): the ancestor walk in
+ * `ancestorPids` needs every process's ParentProcessId to climb the chain, including ancestors
+ * whose own command line does not name the worktree path (e.g. an intermediate console-host).
+ */
+function getProcessTable() {
+  if (process.platform !== 'win32') return [];
+  const psCmd =
+    'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress -Depth 2';
+  const res = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (res.status !== 0 || !res.stdout) return [];
+  try {
+    const parsed = JSON.parse(res.stdout);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Walk `table`'s ParentProcessId chain upward from `pid`, returning every ancestor PID (NOT
+ * including `pid` itself). A depth cap + cycle guard protects against a corrupt/partial table
+ * (real WMI snapshots can have stale ParentProcessId rows pointing at a reused PID).
+ */
+function ancestorPids(table, pid, maxDepth = 64) {
+  const byPid = new Map();
+  for (const proc of table) {
+    const id = Number(proc && proc.ProcessId);
+    if (Number.isFinite(id)) byPid.set(id, proc);
+  }
+  const ancestors = new Set();
+  let currentPid = Number(pid);
+  for (let i = 0; i < maxDepth; i += 1) {
+    const proc = byPid.get(currentPid);
+    if (!proc) break;
+    const parentPid = Number(proc.ParentProcessId);
+    if (!Number.isFinite(parentPid) || parentPid === currentPid || ancestors.has(parentPid)) break;
+    ancestors.add(parentPid);
+    currentPid = parentPid;
+  }
+  return ancestors;
+}
+
+/**
+ * Belt-and-braces: true when `entry`'s command line names both this script and the target path —
+ * i.e. it looks like remove-worktree.cjs's own invocation, independent of whether the PID/ancestor
+ * walk resolved it. Catches an intermediate wrapper the CIM parent chain didn't capture (e.g. a
+ * PID the WMI snapshot missed a generation of).
+ */
+function looksLikeOwnInvocation(entry, targetBase) {
+  const cmd = String((entry && entry.CommandLine) || '');
+  return cmd.includes('remove-worktree.cjs') && cmd.includes(targetBase);
+}
+
+/**
+ * Self-match fix (tempdoc 746 item 5): the previous holder-scan excluded only its OWN PowerShell
+ * query process (`-ne $PID`) — it still named the invoking Node process and its shell/bash
+ * ancestor as "holders", because BOTH have the worktree path in argv (that's how they invoked this
+ * very script). An agent that ran the printed `taskkill` suggestion against that self-match killed
+ * its own invoking process chain mid-run, leaving a half-deleted worktree — reproduced twice
+ * (docs/observations.md, 2026-07-16).
+ *
+ * Excludes from the holder set: this script's own PID, every ancestor PID up the parent chain (the
+ * shell/node chain that launched it), and any entry that looks like this script's own invocation by
+ * command line (belt-and-braces for an ancestor the CIM walk didn't resolve).
+ */
+function filterHolders(table, targetPath, ownPid) {
+  const base = path.basename(targetPath);
+  const excludePids = new Set([Number(ownPid), ...ancestorPids(table, ownPid)]);
+  return table.filter((entry) => {
+    const cmd = String((entry && entry.CommandLine) || '');
+    if (!cmd.includes(base)) return false;
+    if (excludePids.has(Number(entry && entry.ProcessId))) return false;
+    if (looksLikeOwnInvocation(entry, base)) return false;
+    return true;
+  });
+}
+
+function formatHolderLines(entry) {
+  return [
+    `PID ${entry.ProcessId}: ${entry.Name} — ${entry.CommandLine}`,
+    `  kill: taskkill /F /PID ${entry.ProcessId}`,
+  ];
+}
+
 /** Best-effort report of processes whose command line names the held path, to help the operator kill it. */
 function reportHolders(p) {
   if (process.platform !== 'win32') return;
-  const base = path.basename(p);
-  // `-and $_.ProcessId -ne $PID` excludes THIS query's own powershell process,
-  // whose command line contains `base` (in the -like literal) and would otherwise
-  // always self-match. Honest limit: Win32_Process exposes CommandLine but NOT the
-  // working directory, so a cwd-only holder (the common case — a shell whose cwd is
-  // inside the worktree) still won't appear; this catches only holders that NAME the
-  // path in argv (e.g. `node serve-worktree-fe <path>`, an editor opened on it).
-  const psCmd =
-    `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${base}*' -and $_.ProcessId -ne $PID } | ` +
-    `ForEach-Object { "PID $($_.ProcessId): $($_.Name) — $($_.CommandLine)\`n  kill: taskkill /F /PID $($_.ProcessId)" }`;
-  const res = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
-    encoding: 'utf8',
-  });
-  const out = (res.stdout || '').trim();
-  if (out) {
+  const table = getProcessTable();
+  const holders = filterHolders(table, p, process.pid);
+  if (holders.length) {
     // Tempdoc 727 F-2: alongside the existing description, print a ready-to-run kill
     // command per holder — turns manual recovery into "copy this line if you're sure
     // it's safe" instead of hand-constructing the right taskkill invocation. Never
     // executed automatically: an unconditional auto-kill risks a legitimate process
     // (an open editor, another agent's session) that merely happens to name this path.
+    // `filterHolders` (tempdoc 746 item 5) has already excluded this script's own PID,
+    // its ancestor chain, and anything matching its own invocation signature, so this
+    // list can no longer suggest killing the very process performing the teardown.
     console.error(`[remove-worktree] possible holder(s) of ${p}:`);
-    for (const line of out.split(/\r?\n/)) console.error(`[remove-worktree]   ${line}`);
+    for (const h of holders) {
+      for (const line of formatHolderLines(h)) console.error(`[remove-worktree]   ${line}`);
+    }
   } else {
     console.error(
       `[remove-worktree] no holder found by command line for ${p}; a process whose CWD is inside ` +
@@ -158,11 +258,81 @@ function deleteTree(p, { attempts = 5, retryDelayMs = 300 } = {}) {
   return !fs.existsSync(p);
 }
 
+/** Read a `--flag <value>` / `--flag=<value>` pair out of argv. */
+function flagValue(argv, name) {
+  const i = argv.indexOf(`--${name}`);
+  if (i !== -1 && argv[i + 1] && !argv[i + 1].startsWith('--')) return argv[i + 1].trim();
+  const eq = argv.find((a) => a.startsWith(`--${name}=`));
+  return eq ? eq.slice(`--${name}=`.length).trim() : null;
+}
+
+/** The branch checked out in the worktree we are about to delete. */
+function worktreeBranch(abs) {
+  const r = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: abs, encoding: 'utf8' });
+  if (r.status !== 0) return null;
+  const b = (r.stdout || '').trim();
+  return b && b !== 'HEAD' ? b : null;
+}
+
+/**
+ * Ask GitHub for the squash commit its merged PR produced. This is the only
+ * cheap source of truth: ADR-0045 squash-merges every PR, so the branch's own
+ * commits never appear in main and ancestry cannot answer this
+ * (`squash-merge-verify-content-not-ancestry`).
+ */
+function mergeCommitFromPr(repoRoot, branch) {
+  const r = spawnSync(
+    'gh',
+    ['pr', 'list', '--head', branch, '--state', 'merged', '--json', 'mergeCommit', '--limit', '1'],
+    { cwd: repoRoot, encoding: 'utf8' },
+  );
+  if (r.status !== 0) return null;
+  try {
+    const rows = JSON.parse(r.stdout || '[]');
+    return rows[0]?.mergeCommit?.oid || null;
+  } catch {
+    return null;
+  }
+}
+
+function recordMergeLink({ repoRoot, abs, mergeCommitArg, sessionIdArg }) {
+  const branch = worktreeBranch(abs);
+  const commit = mergeCommitArg || (branch ? mergeCommitFromPr(repoRoot, branch) : null);
+
+  if (!commit) {
+    // Deliberately NOT falling back to repoRoot HEAD — that is the bug.
+    console.error(
+      '[remove-worktree] record-merge SKIPPED: could not establish this branch\'s merge commit' +
+        (branch ? ` (branch ${branch}: no merged PR found via gh)` : ' (worktree has no branch)') +
+        '.\n[remove-worktree]   The session -> merge link is a FACT-tier row; guessing it would' +
+        ' write a wrong one that cannot be retracted.\n[remove-worktree]   Backfill once you know' +
+        ' the commit:\n[remove-worktree]     node scripts/agent-analytics/record-merge.mjs <merge-commit>' +
+        ' --session-id <id>\n[remove-worktree]   Or re-run with --merge-commit <sha>.',
+    );
+    return;
+  }
+
+  const args = [path.join(repoRoot, 'scripts', 'agent-analytics', 'record-merge.mjs'), commit];
+  if (sessionIdArg) args.push('--session-id', sessionIdArg);
+  try {
+    const rec = spawnSync('node', args, { cwd: repoRoot, encoding: 'utf8' });
+    const out = (rec.stdout || rec.stderr || '').trim();
+    if (out) console.error(`[remove-worktree] ${out}`);
+  } catch (err) {
+    console.error(`[remove-worktree] WARN record-merge: ${err.message}`);
+  }
+}
+
 function main() {
   const target = process.argv[2];
   const deleteBranch = process.argv.includes('--delete-branch');
+  const mergeCommitArg = flagValue(process.argv, 'merge-commit');
+  const sessionIdArg = flagValue(process.argv, 'session-id');
   if (!target || target.startsWith('--')) {
-    fail('usage: node scripts/dev/remove-worktree.cjs <worktree-path> [--delete-branch]');
+    fail(
+      'usage: node scripts/dev/remove-worktree.cjs <worktree-path> [--delete-branch]' +
+        ' [--merge-commit <sha>] [--session-id <id>]',
+    );
   }
 
   const repoRoot = path.resolve(__dirname, '..', '..');
@@ -175,17 +345,23 @@ function main() {
   }
 
   // Tempdoc 622 Layer B (§11 U2): record the session -> merge-commit link before
-  // teardown. This is the merge-time step that closes the weak join key — at this
-  // point HEAD on main is the just-created merge commit and the merging agent's
-  // current-session-id is still set. Best-effort: never blocks teardown.
-  try {
-    const rec = spawnSync('node', [path.join(repoRoot, 'scripts', 'agent-analytics', 'record-merge.mjs')],
-      { cwd: repoRoot, encoding: 'utf8' });
-    const out = (rec.stdout || rec.stderr || '').trim();
-    if (out) console.error(`[remove-worktree] ${out}`);
-  } catch (err) {
-    console.error(`[remove-worktree] WARN record-merge: ${err.message}`);
-  }
+  // teardown. Best-effort: never blocks teardown.
+  //
+  // This used to invoke record-merge.mjs with NO commit, so it defaulted to
+  // `HEAD` resolved in repoRoot, on the assumption "HEAD on main is the
+  // just-created merge commit". That assumption fails routinely, and silently:
+  // the main checkout is often parked on another branch (observed 4x — e.g.
+  // `session d1af1a27 -> 60f4e9d6`, an unrelated branch's tip), and even when
+  // it is on main, a GitHub squash-merge means local main is stale until pulled.
+  // The result was a WRONG row written into outcomes' fact tier — tagged
+  // kind:'fact', indistinguishable downstream from a correct one, outranking the
+  // LLM-judge inference it is designed to override, and unretractable (a
+  // backfill appends the right row but cannot remove the wrong one).
+  //
+  // So: establish the commit, never infer it. `--merge-commit` wins; else ask
+  // GitHub for the branch's merged PR (squash-proof: content, not ancestry);
+  // else SKIP and say so. A legible skip beats a confident wrong fact.
+  recordMergeLink({ repoRoot, abs, mergeCommitArg, sessionIdArg });
 
   if (fs.existsSync(abs)) {
     removeJunctions(abs);
@@ -218,4 +394,15 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { deleteTree, longPathDelete, sleepSync, reportHolders, removeJunctions, main };
+module.exports = {
+  deleteTree,
+  longPathDelete,
+  sleepSync,
+  reportHolders,
+  removeJunctions,
+  main,
+  getProcessTable,
+  ancestorPids,
+  looksLikeOwnInvocation,
+  filterHolders,
+};

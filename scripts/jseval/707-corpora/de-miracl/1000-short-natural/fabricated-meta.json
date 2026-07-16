@@ -8,7 +8,7 @@
     "axis": "prose",
     "lang": "de",
     "seed": 635,
-    "hops": 2,
+    "hops": 1,
     "distractor_ratio": 5,
     "semantic": true,
     "templated": true,
@@ -20,6 +20,6 @@
     "language": "de",
     "method": "deterministic-natural-template",
     "tool_version": "jseval.corpus_query_strata/1",
-    "source": "synth-multiling-de-v1"
+    "source": "gold-de-v2f-verbose"
   }
 }

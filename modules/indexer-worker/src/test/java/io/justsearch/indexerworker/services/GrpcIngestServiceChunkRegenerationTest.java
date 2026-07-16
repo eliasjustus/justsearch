@@ -11,7 +11,7 @@ import io.justsearch.indexerworker.loop.IndexingLoop;
 import io.justsearch.indexerworker.queue.SqliteJobQueue;
 import io.justsearch.indexerworker.rag.ChunkDocumentWriter;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.indexing.chunking.ChunkSplitter;
 import io.justsearch.ipc.UpdateVduResultRequest;
 import io.justsearch.ipc.UpdateVduResultResponse;

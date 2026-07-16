@@ -41,6 +41,12 @@ EXPECTED_COMPONENTS: dict[str, set[str]] = {
     "full": {"dense", "splade"},         # sparse is implicit
 }
 
+# tempdoc 715 defect 1: SearchReasonCode names (modules/worker-services/.../SearchReasonCode.java)
+# that mark an engine-declared, corpus-shape chunk-merge skip -- SearchPlanner.java:265/267 emits
+# these when CorpusCapabilities.corpusSupportsChunks() is false (short corpus by median token
+# count) or the corpus has no chunk docs at all. Legitimate, not a degeneracy.
+_CHUNK_MERGE_CORPUS_SHAPE_SKIP_REASONS = {"SKIPPED_SHORT_CORPUS", "SKIPPED_NO_CHUNK_DOCS"}
+
 
 def _snapshot_models(base_url: str) -> dict | None:
     """Fetch model identity from /api/status at run start (335 item 10)."""
@@ -355,6 +361,7 @@ def execute_run(
             state_snapshots=state_snapshots,
             workflow_run_id=os.environ.get("JUSTSEARCH_WORKFLOW_RUN_ID"),
             envelope_data_dir=envelope_data_dir,
+            corpus_identity=_get_corpus_identity(dataset_name, meta, qrels, base_dir),
         )
     summary = _build_summary(dataset_name, modes, mode_results, meta, qrels,
                              ingest_summary, pipeline_summary, models_snapshot,
@@ -552,6 +559,21 @@ def _compute_chunk_completeness(
         chunk_merge_observed = "chunk_merge" in (
             (vector_mr.get("pipeline_tracking") or {}).get("observed") or []
         )
+        if not chunk_merge_observed:
+            # tempdoc 715 defect 1: chunk_merge legitimately never fires on a short corpus --
+            # SearchPlanner.java:267/265 skips the leg with SearchReasonCode.SKIPPED_SHORT_CORPUS
+            # / SKIPPED_NO_CHUNK_DOCS (CorpusCapabilities.corpusSupportsChunks()==false), which is
+            # not a degeneracy (twice-observed false-positive on mixed/miracl-de-2k, 2026-07-16:
+            # 3103 docs, ~19 reach the chunk threshold). When every skip this run carries one of
+            # those engine-declared corpus-shape reasons, the corroborator is not applicable here
+            # (never a strike on its own, per chunk_completeness.py's own docstring) -- but a
+            # skip with NO reason recorded, or a reason outside this set (e.g.
+            # SKIPPED_VECTOR_BLOCKED -- a real failure), must still read as a strike.
+            skip_reasons = set(
+                (vector_mr.get("run_evidence") or {}).get("chunk_merge_skip_reason_counts") or {}
+            )
+            if skip_reasons and skip_reasons <= _CHUNK_MERGE_CORPUS_SHAPE_SKIP_REASONS:
+                chunk_merge_observed = True
     else:
         chunk_merge_observed = True
 

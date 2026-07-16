@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes.TelemetryEvents;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;

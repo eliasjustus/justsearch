@@ -9,8 +9,9 @@
  * The backend serves `GET /api/messages/registry-resource/{locale}` via
  * `MessageCatalogController` (one instance per namespace; see tempdoc 429
  * §E.8.b + §E.17). This module fetches the en catalog at app boot and
- * exposes a synchronous `localizeResourceKey(key)` lookup callable from
- * Lit components without tying them to the Lingui React runtime.
+ * exposes a synchronous `localizeResourceKey(key)` lookup callable directly
+ * from Lit components (tempdoc 742: the Lingui React runtime this originally
+ * avoided coupling to was removed entirely — zero live consumers).
  *
  * Lookup contract: keys missing from the catalog return the raw key
  * (defensive — surfaces missing translations honestly rather than

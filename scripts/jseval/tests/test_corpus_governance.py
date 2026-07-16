@@ -1124,3 +1124,56 @@ def test_generated_gold_source_is_checkout_stable(tmp_path):
     for name in ("docs.jsonl", "queries.json", "meta.json"):
         raw = (tmp_path / name).read_bytes()
         assert b"\r" not in raw, f"{name} contains CR bytes — git eol=lf will rewrite it after commit"
+
+
+def test_two_axis_regime_below_pair_bound(tmp_path):
+    """Axis-conditional descriptor width (2026-07-16): at n_chains within min(T, P) the
+    generator must emit v0.1.0-style TWO-axis descriptors (no ordinal qualifier) — the
+    regime every committed 635-era/707 fabricated-gold cell was generated in. The 624
+    triple-render made queries longer (breaking the German short-natural 5-12-word cap
+    structurally) and changed difficulty vs committed cells. Guards: no qual synonym in
+    any query at n=20, and BOTH languages' short-natural renderings fit the cap."""
+    from jseval.corpus_query_strata import build_short_natural_source
+
+    for lang in ("en", "de"):
+        out = tmp_path / f"gold-{lang}"
+        corpus_generate.generate(out, axis="prose", lang=lang, n_chains=20, hops=1,
+                                 distractor_ratio=2, doc_words=60, suite="test",
+                                 seed=635, semantic=True)
+        queries = json.loads((out / "queries.json").read_text(encoding="utf-8"))
+        quals = corpus_generate._SEM_QUAL_DE if lang == "de" else corpus_generate._SEM_QUAL
+        for q in queries:
+            for _dq, qq in quals:
+                assert qq not in q["query"], (
+                    f"{lang}: qualifier synonym {qq!r} leaked into a two-axis-regime query")
+        # the load-bearing consumer: short-natural stratum must build (5-12 word cap)
+        sn = build_short_natural_source(out, tmp_path / f"sn-{lang}", language=lang)
+        assert sn["query_count"] == 20
+
+
+def test_three_axis_regime_above_pair_bound(tmp_path):
+    """Above min(T, P) chains the 624 T.1 triple regime must still be active — the
+    qualifier is what carries injectivity at scale."""
+    out = tmp_path / "gold-scale"
+    corpus_generate.generate(out, axis="prose", lang="en", n_chains=30, hops=1,
+                             distractor_ratio=1, doc_words=60, suite="test",
+                             seed=7, semantic=True)
+    queries = json.loads((out / "queries.json").read_text(encoding="utf-8"))
+    qual_syns = {qq for _dq, qq in corpus_generate._SEM_QUAL}
+    hits = sum(1 for q in queries if any(qq in q["query"] for qq in qual_syns))
+    assert hits == len(queries), f"only {hits}/{len(queries)} scale-regime queries carry a qualifier"
+
+
+def test_two_axis_regime_collision_gate_still_clean(tmp_path):
+    """Two-axis mode has no reservation/exclusion (v0.1.0 rng parity), so the
+    descriptor-collision gate is the fail-closed check — assert it passes for the
+    exact DE v2 shape (lang=de, n=20, hops=1, seed=635)."""
+    out = tmp_path / "gold-de"
+    corpus_generate.generate(out, axis="prose", lang="de", n_chains=20, hops=1,
+                             distractor_ratio=5, doc_words=60, suite="test",
+                             seed=635, semantic=True)
+    docs = [json.loads(l) for l in (out / "docs.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    queries = json.loads((out / "queries.json").read_text(encoding="utf-8"))
+    report = corpus_certify.descriptor_collision_report(docs, queries)
+    assert report["n_gold_involved"] == 0, report
+    assert report["passed"] is True, report

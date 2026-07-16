@@ -20,7 +20,7 @@ import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.Directory;
 import org.junit.jupiter.api.Test;
-import io.justsearch.indexing.api.IndexApi;
+import io.justsearch.indexing.api.IndexDocument;
 
 class ComponentsInjectionTest {
 
@@ -90,7 +90,7 @@ class ComponentsInjectionTest {
             .open();
 
     runtime.indexingCoordinator().indexSingle(
-        new IndexApi.IndexDocument(
+        new IndexDocument(
             Map.of(SchemaFields.DOC_ID, "1", SchemaFields.DOC_UID, "1")));
     runtime.commitOps().commitAndTrack();
     runtime.commitOps().maybeRefresh();

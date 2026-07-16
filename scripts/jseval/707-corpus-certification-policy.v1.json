@@ -1,9 +1,111 @@
 {
   "schema": "707-corpus-certification-policy.v1",
-  "status": "draft",
-  "unresolved": [
-    "required_cells",
-    "scientific_thresholds"
-  ],
-  "required_cells": []
+  "status": "active",
+  "unresolved": [],
+  "required_cells": [
+    {
+      "member": "en-legal-clerc",
+      "dataset": "mixed/en-legal-clerc-1k-verbose",
+      "corpus_signature": "eff6406d23500db3cc7f4a18807b086d05db75f0c6c9f4a1cee0d82a908b8932",
+      "query_gold_sha256": "e7118a85c7d2a4d24ba86809d639d5c95698876ff898895e45a8db4682695533",
+      "query_count": 20,
+      "thresholds": {
+        "closed_book": { "maximum_accuracy": 0.15 },
+        "retrieval_calibration": { "ndcg_band": [0.42, 0.85], "shortcut_leak_rate_max": 0.05 },
+        "union_recall": { "minimum": 0.65 },
+        "leak_floor": { "maximum": 0.1 }
+      }
+    },
+    {
+      "member": "en-legal-clerc",
+      "dataset": "mixed/en-legal-clerc-1k-short-natural",
+      "corpus_signature": "eff6406d23500db3cc7f4a18807b086d05db75f0c6c9f4a1cee0d82a908b8932",
+      "query_gold_sha256": "ff6aea6f3d2efb19da4be23e86498e02c9e6c6eab703e4d50e887caf30d630c1",
+      "query_count": 20,
+      "thresholds": {
+        "closed_book": { "maximum_accuracy": 0.15 },
+        "retrieval_calibration": { "ndcg_band": [0.39, 0.85], "shortcut_leak_rate_max": 0.2 },
+        "union_recall": { "minimum": 0.65 },
+        "leak_floor": { "maximum": 0.25 }
+      }
+    },
+    {
+      "member": "en-legal-clerc",
+      "dataset": "mixed/en-legal-clerc-10k-verbose",
+      "corpus_signature": "7b108fc4f2f3b9b95e234fbf251d2a7258cbaf3dd5685f4d11d2b18b15f68395",
+      "query_gold_sha256": "e7118a85c7d2a4d24ba86809d639d5c95698876ff898895e45a8db4682695533",
+      "query_count": 20,
+      "thresholds": {
+        "closed_book": { "maximum_accuracy": 0.15 },
+        "retrieval_calibration": { "ndcg_band": [0.24, 0.85], "shortcut_leak_rate_max": 0.15 },
+        "union_recall": { "minimum": 0.45 },
+        "leak_floor": { "maximum": 0.3 }
+      }
+    },
+    {
+      "member": "en-legal-clerc",
+      "dataset": "mixed/en-legal-clerc-10k-short-natural",
+      "corpus_signature": "7b108fc4f2f3b9b95e234fbf251d2a7258cbaf3dd5685f4d11d2b18b15f68395",
+      "query_gold_sha256": "ff6aea6f3d2efb19da4be23e86498e02c9e6c6eab703e4d50e887caf30d630c1",
+      "query_count": 20,
+      "thresholds": {
+        "closed_book": { "maximum_accuracy": 0.15 },
+        "retrieval_calibration": { "ndcg_band": [0.2, 0.85], "shortcut_leak_rate_max": 0.15 },
+        "union_recall": { "minimum": 0.4 },
+        "leak_floor": { "maximum": 0.25 }
+      }
+    },
+    {
+      "member": "en-email-enron-raw",
+      "dataset": "mixed/en-email-enron-raw-1k-verbose",
+      "corpus_signature": "fba5cf691ce88e7689fed5c19b1a68072004beb67a5a964c4e52dea21a8649b7",
+      "query_gold_sha256": "2c42fad8b7632abf792ada6b64af8fe426b1fea5f0f8bbb2ccaeb8667664dabb",
+      "query_count": 20,
+      "thresholds": {
+        "closed_book": { "maximum_accuracy": 0.15 },
+        "retrieval_calibration": { "ndcg_band": [0.72, 0.85], "shortcut_leak_rate_max": 0.1 },
+        "union_recall": { "minimum": 0.9 },
+        "leak_floor": { "maximum": 0.15 }
+      }
+    },
+    {
+      "member": "en-email-enron-raw",
+      "dataset": "mixed/en-email-enron-raw-1k-short-natural",
+      "corpus_signature": "fba5cf691ce88e7689fed5c19b1a68072004beb67a5a964c4e52dea21a8649b7",
+      "query_gold_sha256": "42d5934a0885b3edba0c3f00f23dfdd81d7526585e748bcfb4f19f247455fadc",
+      "query_count": 20,
+      "thresholds": {
+        "closed_book": { "maximum_accuracy": 0.15 },
+        "retrieval_calibration": { "ndcg_band": [0.69, 0.85], "shortcut_leak_rate_max": 0.1 },
+        "union_recall": { "minimum": 0.85 },
+        "leak_floor": { "maximum": 0.1 }
+      }
+    },
+    {
+      "member": "en-email-enron-raw",
+      "dataset": "mixed/en-email-enron-raw-10k-verbose",
+      "corpus_signature": "e6b302ea4d0faead72701f7ae15e1753b75a4f9e9f15935ea9e904a54bca528c",
+      "query_gold_sha256": "2c42fad8b7632abf792ada6b64af8fe426b1fea5f0f8bbb2ccaeb8667664dabb",
+      "query_count": 20,
+      "thresholds": {
+        "closed_book": { "maximum_accuracy": 0.15 },
+        "retrieval_calibration": { "ndcg_band": [0.63, 0.85], "shortcut_leak_rate_max": 0.1 },
+        "union_recall": { "minimum": 0.85 },
+        "leak_floor": { "maximum": 0.15 }
+      }
+    },
+    {
+      "member": "en-email-enron-raw",
+      "dataset": "mixed/en-email-enron-raw-10k-short-natural",
+      "corpus_signature": "e6b302ea4d0faead72701f7ae15e1753b75a4f9e9f15935ea9e904a54bca528c",
+      "query_gold_sha256": "42d5934a0885b3edba0c3f00f23dfdd81d7526585e748bcfb4f19f247455fadc",
+      "query_count": 20,
+      "thresholds": {
+        "closed_book": { "maximum_accuracy": 0.15 },
+        "retrieval_calibration": { "ndcg_band": [0.58, 0.85], "shortcut_leak_rate_max": 0.1 },
+        "union_recall": { "minimum": 0.45 },
+        "leak_floor": { "maximum": 0.1 }
+      }
+    }
+  ]
 }

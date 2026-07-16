@@ -1,7 +1,7 @@
 ---
 title: "Pillar-1 in-band utility corpus: real-text distractor mass (legal+email, EN+DE) + fabricated injected gold — the measuring stick for the powered 624 Step-2 run, satisfying all seven 704 requirements at once"
 type: tempdocs
-status: "incomplete — CLERC and MIRACL-DE 1k/10k members exist at verbose and short-natural strata with structural certification, but closed-book, retrieval calibration, union-recall, and leak gates remain. EnronQA is non-claim-eligible until its source license is resolved. No paid run or completion claim is authorized. 2026-07-14 takeover: founder GPU-budget + claim-shape decisions recorded and gate-run execution plan set (§Takeover 2); pre-run unblockers in progress."
+status: "CORPUS LEDGER CLOSED (2026-07-16): TWO members FULLY CERTIFIED under the ACTIVE two-member eight-cell policy — EN-legal (16/16, merged #205) and EN-email raw-Enron (16/16, founder-ratified cells, claim_eligible). DE member: 1k-only secondary stratum, never claim-bearing; German 10k semantic collapse chartered as tempdoc 748 (encoder lane). Remaining outside this doc: the founder spend gates ($3 smoke after 725's A/B, then the powered run) and 748's attribution verdict."
 created: 2026-07-10
 author: agent (Fable orchestration) — filed at founder request after the pillar-5 attribution campaign; substrate choice founder-ratified same day
 category: eval-infrastructure / corpus-design / agent-utility / search-quality
@@ -505,3 +505,292 @@ claims re-verified first-hand at `backend.py:23,61` and `commands/corpus.py:347`
    (a Linux materialization would produce different signatures). Acceptable while the campaign runs
    on this box; flagged as an owner decision — LF-canonical dataset writers force a one-time
    signature re-baseline of all 8 cells (cheap: regenerate + re-certify, ~10 min, no GPU).
+
+### Gate measurement floor candidates (2026-07-15, post-#201 cohort) — PROPOSED, founder ratification pending
+
+Full gate chain executed under the founder-directed 30-min wakeup supervision loop (16:55–18:15 wall,
+~1 h 20 m GPU — far under the two-window budget; the 691 throughput work held: CLERC-10k full
+enrichment ≈ 50 min). All 8 steps rc=0. Cohort: HEAD ≡ origin/main post-#200/#201; fidelity headline
+mode `hybrid` with `--embedding`; bands shown are the DEFAULT (0.3–0.85) — the ratified policy sets
+the real thresholds.
+
+| cell | hybrid nDCG@10 | vector | lexical | verdict (default band) | union recall | leak |
+|---|---|---|---|---|---|---|
+| en-legal-clerc-1k-verbose | **0.5051** | 0.5952 | 0.0193 | PASS (moderate) | **0.75** | 0.0 |
+| en-legal-clerc-1k-short-natural | **0.4685** | — | — | PASS (hard) | — | — |
+| en-legal-clerc-10k-verbose | **0.3238** | 0.4165 | 0.0000 | PASS (hard) | — | — |
+| de-miracl-1k-verbose | 0.1849 | 0.1890 | 0.0000 | **FAIL** (below band) | 0.35 | 0.0 |
+| de-miracl-1k-short-natural | 0.2271 | — | — | **FAIL** | — | — |
+| de-miracl-10k-verbose | 0.0324 | — | — | **FAIL** (collapsed) | — | — |
+
+Run artifacts: `scripts/jseval/tmp/eval-results/20260715T160900_mixed_de-miracl-1k-verbose/` and
+`…T161458_mixed_en-legal-clerc-1k-verbose/` (staged_recall_accounting projections); fidelity blocks
+in each `datasets/mixed/<cell>/metadata.json`; full log in the session scratchpad (`chain-707.log`).
+
+**Reading (critical-analysis pass):**
+1. **The EN-legal member is policy-ready as designed.** In-band at both sizes and both strata, leak
+   0.0, union recall 0.75, and the U0 mechanism is visible in the raw legs: lexical ≈0.02 vs hybrid
+   0.51 at 1k — grep-hostile, retrieval-viable, on the paying-ICP document shape. The size trend
+   (0.51 → 0.32, still in-band) is requirements (c)+(f) working: difficulty grows with scale without
+   going dark.
+2. **The DE member fails retrieval-in-band (requirement b) and collapses at 10k.** Honest-constraint
+   #2 firing as predicted. First hypothesis (chain length) tested and largely REFUTED — see the
+   chain-2 fold below.
+3. Union-recall/leak were measured on the two verbose 1k cells only (chain scope); completed by
+   chain-2 below.
+4. Cohort hygiene: de-miracl-1k-verbose fidelity also ran once pre-restart on the identical cohort
+   (rc=0); superseded by this table — no pre-restart number is load-bearing.
+
+### Chain-2: full 8-cell matrix + DE v2 recalibration verdict (2026-07-16, overnight autonomous window)
+
+DE gold regenerated at hops=1 (v2, commit 8a562519 — chain-length parity with CLERC; also fixed the
+generator's post-624 unconditional triple-render drift, see that commit). All 5 remaining fidelity
+cells + all 7 remaining union/leak runs executed 03:22–06:45, every step rc=0. **Complete matrix
+(chain-1 + chain-2, one engine cohort ≡ origin/main post-#201):**
+
+| cell | hybrid nDCG@10 | verdict (default 0.3–0.85 band) | union recall | leak |
+|---|---|---|---|---|
+| en-legal-clerc-1k-verbose | **0.5051** | PASS (moderate) | 0.75 | 0.00 |
+| en-legal-clerc-1k-short-natural | **0.4685** | PASS (hard) | 0.75 | 0.15 |
+| en-legal-clerc-10k-verbose | **0.3238** | PASS (hard) | 0.55 | 0.10 |
+| en-legal-clerc-10k-short-natural | 0.2806 | band-edge FAIL | 0.50 | 0.10 |
+| de-miracl-1k-verbose (v2) | 0.2053 | FAIL | 0.40 | 0.00 |
+| de-miracl-1k-short-natural (v2) | 0.2660 | FAIL | 0.40 | 0.00 |
+| de-miracl-10k-verbose (v2) | 0.0431 | FAIL (collapsed) | 0.10 | 0.00 |
+| de-miracl-10k-short-natural (v2) | 0.0428 | FAIL (collapsed) | 0.10 | 0.00 |
+
+**DE recalibration verdict: hops parity helped marginally (+0.02–0.04 at 1k), but the structural
+residual is German semantic bridging itself** — DE v2 gold is pure zero-lexical-overlap synonym
+descriptors, and the engine bridges them at roughly half CLERC's strength at 1k and collapses at
+10k (union recall 0.40 → 0.10). The pre-registered DE prediction (grep collapses in German) is
+CONFIRMED — lexical nDCG 0.0 in every DE cell — but the engine's own DE semantic leg cannot carry
+an in-band 10⁴ measurement in this regime. Founder options (decision sheet item):
+- **(a) recommended:** ratify the CLERC 4-cell matrix as the U0 measuring stick now (with the
+  10k-short-natural floor set at its measured band-edge reality); keep DE as a secondary 1k-only
+  stratum with lower ratified floors and stratum-scoped claims (it still demonstrates the
+  German grep-collapse); register the German 10k semantic collapse as an ENGINE finding routed to
+  the encoder-representation lane (708-successor), not a corpus defect.
+- (b) another DE gold iteration with partial lexical anchors — changes what DE measures (no longer
+  pure semantic bridging); not recommended without a design pass.
+- (c) drop DE from the claim matrix entirely — loses the multilingual story U0 wants.
+
+Notes: CLERC short-natural/10k cells carry leak 0.10–0.15 (stratum-dependent single-doc shortcut
+rate; the verbose-1k cell's 0.0 is not representative of all cells) — the `leak_floor.maximum`
+policy field should be set per-cell from these measured values, not assumed 0. All numbers remain
+PROPOSED floor candidates; thresholds are owner-set at ratification.
+
+### RATIFIED + FULLY CERTIFIED (2026-07-16, founder "I agree, go ahead")
+
+**The EN-legal member is `fully-certified`: 16/16 scientific gates green under the ACTIVE
+pre-run policy** (`scripts/jseval/707-corpus-certification-policy.v1.json`, CLERC four-cell matrix,
+ratified per §Chain-2 recommendation (a); DE deliberately absent — 1k-only secondary stratum, never
+claim-bearing until the encoder-lane finding resolves). Closed-book: **0.000 accuracy on all four
+cells** (haiku, 20 q/cell — fabricated gold is model-unguessable). Evidence chain: fresh union/leak
+runs with manifests binding the corpus signature; typed measurement artifacts; verdicts recomputed
+from policy, never artifact-supplied.
+
+Decisions ratified same session: **FW-008 = Float32** (current default; Int8 quality cost
+unmeasured — memo `scratchpad/memo-fw008.md`); **EnronQA → raw public-domain Enron text + our
+fabricated gold**, dropping the unlicensed QA annotations (design needs only real distractor text —
+memo `scratchpad/memo-enronqa.md`; member build is a future window).
+
+Getting to 16/16 surfaced and fixed three substrate defects (each root-caused, none papered):
+1. **Run manifests never bound the corpus signature** — `compute_manifest` read it from the env var
+   only; the computed-signature seam (623) fed the summary but not the manifest. Fixed (caller-
+   computed identity threaded in; env still wins as operator override; regression tests). The four
+   CLERC union/leak runs were re-executed on the fixed cohort so their manifests bind.
+2. **`fidelity.method` field collision**: both co-equal gates wrote `method` into the shared
+   fidelity block — whichever ran second clobbered the other's label (the D2 no-clobber merge only
+   guards None). certify's redundant stamp removed (its label already lives in
+   `closed_book_certification.method`); the four clobbered labels restored to the fidelity
+   constant (procedure label only; measured numbers untouched).
+3. **Leak-floor slack was under-calibrated for run noise**: 10k-verbose re-measured leak 0.20 vs
+   0.10 (2 queries of retrieval nondeterminism at n=20, 0.05 quantization). Pre-acceptance policy
+   revision, recorded here: leak max = max observed across runs + 0.10 (two query-quanta) →
+   1k-v 0.10, 1k-sn 0.25, 10k-v 0.30, 10k-sn 0.25. No claim had been accepted under the earlier
+   floors; nothing was grandfathered.
+
+**Remaining to U0:** the $3 adoption smoke (founder-gated; waits on 725's adoption work per
+standing note), then the powered run. The corpus side of the critical path is COMPLETE.
+
+## Archived decision memos (2026-07-16 — ratified same day; preserved from session scratchpad)
+
+# Founder memo — FW-008 / Int8-vs-Float32 vector-codec cohort pin
+
+**Decision required before** eval baselines are pinned (tempdoc 719 Increment 9 item 1;
+`docs/tempdocs/719-...md:1549` — "pin the FW-008/Float32 search cohort choice").
+
+## (a) What is being pinned, and why it must precede baseline pinning
+FW-008 is the **Lucene vector-storage quantization codec** — NOT encoder/model precision.
+Two options for how dense vectors are stored in the HNSW index:
+- **Float32** — `Lucene99HnswVectorsFormat`, 768 dims × 4 B = 3,072 B/doc
+  (`JustSearchCodec.java:16,60,73`).
+- **Int8** — `Lucene104HnswScalarQuantizedVectorsFormat`, 7-bit scalar, 768 B/doc,
+  ~75% storage cut (`JustSearchCodec.java:8,17,74,86`; register `search-quality-register.md:1621`).
+- Toggle: config key `index.vector.quantization.enabled` (nullable boolean;
+  `EnvRegistry.java:1071` / env `JUSTSEARCH_INDEX_VECTOR_QUANTIZATION_ENABLED`;
+  resolved `ResolvedConfigBuilder.java:1368`).
+
+Must precede baselines because the codec is **baked into the index at build time and is
+reindex-required** to change, and Int8's recall/nDCG effect is **corpus-dependent**
+(register:1621). Baselines pinned under one codec are invalidated by a later switch —
+you'd be forced to re-run every paid EN/DE cell. Pinning it first keeps the campaign's
+baselines reproducible and cross-member comparable.
+
+## (b) Current default on main (verified)
+**Float32.** Default constructor `JustSearchCodec()` → `float32Format()`
+(`JustSearchCodec.java:39-45`, comment ln 40 "Default to Float32"). Config resolves
+nullable → when unset/false, `ComponentsFactory` builds float32
+(`ComponentsFactoryTest.java:144-148`, "DisabledUsesFloat32Format"). Register confirms
+"default remains Float32" (`search-quality-register.md:1621`).
+
+## (c) Evidence per option
+| Axis | Float32 (current) | Int8 |
+|---|---|---|
+| Storage | 3,072 B/doc | 768 B/doc, ~75% cut — **measured** (register:1621; JustSearchCodec.java:14-17) |
+| nDCG/recall quality | baseline | **UNMEASURED** — single-machine only, corpus-dependent (register:1621) |
+| VRAM/RAM footprint | higher vec memory | ~75% vec memory cut, but vectors are **not** the footprint driver — the LLM is ~75% of the ~7.5 GB resident weights (`tempdoc 640:129,162`) |
+| Query speed | baseline | **UNMEASURED** (no latency A/B on record) |
+| Cross-machine evidence | n/a | **absent** — FW-008's whole blocker: "needs cross-machine benchmark evidence before enabling by default" (register:1621) |
+
+## (d) Recommendation — pin **Float32** (hold the current default)
+Reasoning: the campaign is a *measurement* program; its baselines must isolate the variable
+under test (retrieval utility across EN/DE members), not smuggle in an **unmeasured,
+corpus-dependent recall variable**. Int8 is an efficiency lever (storage/memory), not a
+quality one (register:1621), and it doesn't even relieve the real footprint bottleneck (the
+LLM, not vectors). Float32 is the no-reindex-risk, honest, stable cohort. Keep FW-008 open
+as a separately eval-gated efficiency question **after** the campaign, when its quality cost
+can be measured against a fixed Float32 baseline rather than confounding it.
+
+## (e) One-line action that executes the decision
+Record `FW-008 = Float32` in the 719 campaign policy config and set
+`index.vector.quantization.enabled: false` explicitly (or leave unset — Float32 is already
+the on-main default), then proceed to baseline pinning.
+
+---
+
+# Founder memo — EnronQA email-member source decision (707 EN-email)
+
+**Blocker:** `scripts/jseval/707-corpora/en-email-enronqa/member.v1.json` records
+`license: null` / `license_status: "unresolved"` for HF dataset
+`MichaelR207/enron_qa_0922`, so `claim_eligible: false` and `redistribute: false`
+(member.v1.json:9-11,24). Gate `resolve_source_license_or_replace_email_source` is open.
+
+## Separability (the key framing — verified)
+The 707 design needs **real email-SHAPED distractor text only**; the gold is **fabricated
+and ours**. Tempdoc 707: "the fabricated gold is OURS and committable even though the
+surrounding real text is not" (`tempdoc 707:88`); distractor mass = "real licensed
+documents" (`:73`); EN-email = "Enron (established in-repo acquisition path,
+`convert-enronqa-to-beir.py`)" (`:78`). So the **QA annotations are NOT needed** — only the
+email bodies. The licensing question that actually blocks us is narrower than the dataset card.
+
+## (a) License status today (checked this session)
+- HF card `MichaelR207/enron_qa_0922`: **no license stated** — no license tag, field, or
+  file (WebFetch, unchanged from member.v1.json's "unresolved").
+- arXiv 2505.00263: CC-BY-4.0 covers the *paper PDF*, **not** the QA dataset; paper states
+  no dataset redistribution terms (WebFetch). The QA-annotation layer remains unlicensed.
+
+## (b) Raw Enron corpus legal status vs the QA layer (unverified precedent, web-sourced)
+- **Raw emails:** FERC made the emails public (2003); at investigation close they were
+  "deemed to be in the public domain, to be used for historical research and academic
+  purposes." CMU/CS cleaned+structured the ~500k-message CALO version, widely redistributed
+  (EDRM, Kaggle, LoC, enrondata.org), characterized as "free, legal." (WebSearch: Wikipedia
+  Enron Corpus, enrondata.org, EDRM — treat as precedent, not a formal grant.)
+- **QA annotations** (`enron_qa_0922`): a *derived layer* the paper authors added on top;
+  their license silence is what's unresolved. The raw-email public-domain precedent does
+  **not** automatically extend to these annotations — but we don't need them.
+
+## (c) Options
+1. **Contact authors for license clarification.** Risk: low legal, but slow/uncertain reply;
+   may still decline. Cost: an email + wait. Unblocks: reuse of the exact `enron_qa_0922`
+   text (and, incidentally, annotations we don't use). Weak leverage since we only want text.
+2. **Raw Enron (CMU/CALO) + our own fabricated-gold injection.** Use public-domain raw email
+   bodies as distractor mass; skip `enron_qa_0922` entirely; inject fabricated gold via the
+   existing `needle-burial-v1` / 635 machinery (member.v1.json:13 already points gold at
+   `../../635-corpora/needle-burial-v1`). Risk: low — relies on the strong FERC/CMU
+   public-domain precedent for *email text only*; still worth a one-line owner risk-accept.
+   Cost: swap the acquisition source in `convert-enronqa-to-beir.py`'s input (email text is
+   the same underlying corpus; the QA columns are just dropped). Unblocks: EN-email member
+   fully, cleanly, now. **Best cost/risk ratio.**
+3. **Different licensing-clean email corpus.** Candidates with explicit licenses: Avocado
+   (LDC, paid/restricted — not clean), 20 Newsgroups (public but *not* email-shaped), Apache
+   public mailing-list archives (open, genuinely email-shaped), Debian/FOSS list archives
+   (open). Risk: low-legal but medium-effort (new acquisition recipe, re-calibrate injection
+   knob per tempdoc 707:135). Cost: highest. Unblocks: email member with a cleaner license
+   than public-domain precedent, but throws away the in-repo Enron path.
+4. **Ship two-member (EN-legal + DE), add email later.** Risk: none legal; the campaign loses
+   the email domain axis (707 wanted legal+email × EN+DE). Cost: zero now. Unblocks:
+   baseline pinning immediately; email deferred to a follow-up.
+
+## Recommendation — **Option 2** (raw Enron text + our fabricated gold), Option 4 as fallback
+Because the 707 design already treats gold as fabricated-and-ours and only needs real
+email-shaped distractor text, the `enron_qa_0922` **annotation** license is irrelevant to
+what we consume. Dropping the QA columns and sourcing the same email bodies from the
+public-domain CMU/CALO corpus removes the blocker without changing the corpus's statistical
+character or the existing injection machinery. Record a one-line owner risk-acceptance of the
+FERC/CMU public-domain precedent (email text only), update `member.v1.json` `real_source` to
+the CMU/CALO origin with `license: "public-domain (FERC/CMU precedent)"`, and proceed. If the
+owner wants zero precedent risk this quarter, fall back to Option 4 (ship EN-legal+DE now,
+add an Apache-mailing-list email member — Option 3 — later). Options 1 and 3 are strictly
+higher cost for no benefit given separability.
+
+Sources (web): Wikipedia "Enron Corpus"; enrondata.org CALO/FERC dataset docs; EDRM
+"Retire the Enron Email Corpus" (2025); HF card `MichaelR207/enron_qa_0922`; arXiv 2505.00263.
+
+### EN-email member measured (2026-07-16, same session — the third member is corpus-complete)
+
+Raw-Enron pivot executed end-to-end (fetcher → 14k-body pool → seed-638 gold → 4 cells →
+structural certification → full gate measurements on the FIXED harness — every cell reads
+`embed_compat: COMPATIBLE` and `chunk verdict: ok`; the 715 fixes held).
+
+| cell | hybrid nDCG@10 | verdict (default band) | union recall | leak | closed-book |
+|---|---|---|---|---|---|
+| en-email-enron-raw-1k-verbose | **0.8043** | PASS (easy) | 1.00 | 0.05 | 0.000 |
+| en-email-enron-raw-1k-short-natural | **0.7699** | PASS (moderate) | 0.95 | 0.00 | 0.000 |
+| en-email-enron-raw-10k-verbose | **0.7052** | PASS (moderate) | 0.95 | 0.05 | 0.000 |
+| en-email-enron-raw-10k-short-natural | **0.6627** | PASS (moderate) | 0.55 | 0.00 | 0.000 |
+
+All four cells in-band with graceful scale decay (0.80 → 0.66) — the email member is the
+strongest of the three (better margins than CLERC), and the only soft spot is 10k-short-natural
+union recall (0.55). Note the 1k-verbose cell sits near the band top (0.8043 vs 0.85 ceiling,
+"easy") — if the founder wants more headroom for the utility measurement, a harder paraphrase
+distance for email gold is a one-session iteration; as-is it is policy-viable.
+
+**PROPOSED policy-extension cells (FOUNDER DECISION — same derivation rule as CLERC:
+band low = measured − 0.08, union min = measured − 0.10, leak max = measured + 0.10):**
+
+| cell | ndcg_band | union min | leak max |
+|---|---|---|---|
+| 1k-verbose | [0.72, 0.85] | 0.90 | 0.15 |
+| 1k-short-natural | [0.69, 0.85] | 0.85 | 0.10 |
+| 10k-verbose | [0.63, 0.85] | 0.85 | 0.15 |
+| 10k-short-natural | [0.58, 0.85] | 0.45 | 0.10 |
+
+Extending `707-corpus-certification-policy.v1.json` with these cells (then re-running the
+16-gate certification, evidence already producible) makes the email member the second
+fully-certified member. Until then it stands structurally-certified with banked closed-book
+0.000 ×4 and complete floor candidates.
+
+### EN-email RATIFIED + FULLY CERTIFIED (2026-07-16, founder "go ahead as you suggested")
+
+The founder ratified the PROPOSED cells above verbatim; the two fields the proposal table
+did not enumerate follow the CLERC conventions (closed-book `maximum_accuracy` 0.15;
+`shortcut_leak_rate_max` 0.10 = measured 0.0 + the same +0.10 margin rule). The policy now
+carries a **two-member eight-cell matrix** (DE still deliberately absent and hard-failing as
+an unknown member — see tempdoc 748 for the chartered encoder-lane investigation).
+
+**`en-email-enron-raw` is `fully-certified`: 16/16 scientific gates green under the ACTIVE
+policy.** Evidence artifacts bind each gate's measurement to the exact corpus signature +
+query/gold bytes + run-manifest bytes (1k `fba5cf69…`, 10k `e6b302ea…`, signatures recomputed
+and matched at certify time); `structural-certification.v1.json` rewritten by
+`corpus-certify-member` with the full evidence matrix; `member.v1.json` flipped to
+`claim_eligible: true` (license `LicenseRef-Enron-FERC-public-record`, status verified).
+Observed vs threshold, all cells: nDCG 0.8043/0.7699/0.7052/0.6627 in-band; union recall
+1.00/0.95/0.95/0.55 ≥ floors; leak 0.05/0.00/0.05/0.00 ≤ caps; shortcut leaks 0.0 ≤ 0.10;
+closed-book 0.000 ≤ 0.15 (haiku, 20 queries/cell). The ratified-policy pin test now asserts
+the eight-cell matrix; the member-recipes invariant admits both claim-matrix members.
+
+**U0 ledger after this close:** two fully-certified claim-bearing members (EN-legal, EN-email)
++ DE as a 1k-only secondary stratum pending tempdoc 748. Pillar 1's corpus ledger is closed;
+remaining stones are founder spend gates (the $3 adoption smoke after 725's A/B, the powered
+run) and, independently, 748's attribution verdict.
