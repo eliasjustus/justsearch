@@ -121,27 +121,27 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 > The (config × mode) ablation tables in each corpus block stay hand-authored. Reproduction tolerance
 > is the within-machine ±2σ envelope, scoped to equivalent hardware/setup (tempdoc 623 F-α).
 
-**Release:** `667-external-baselines-2026-07-01` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.62 · ORT 1.24.3
+**Release:** `715-rebaseline-2026-07-16` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.62 · ORT 1.24.3
 
 **Coverage:** retrieval ranking quality (per-corpus metrics above) — **does NOT measure** document extraction / OCR / VDU routing quality (see tempdoc 623 §F — extraction-quality sibling).
 
 | Corpus | Ours (mode) | nDCG@10 | Published baselines (cited, side-by-side) |
 |---|---|---|---|
-| beir/scifact | hybrid | 0.756 | BM25 (multifield) 0.665, SPLADE++ EnsembleDistil 0.710, ColBERTv2 0.693 |
-| mixed/enron-qa | hybrid | 0.719 | — |
-| mixed/legal-clerc-200 | hybrid | 0.516 | — |
-| mixed/miracl-de-2k | hybrid | 0.852 | BGE-M3 Dense 0.567 (dev) |
-| mixed/miracl-fr-2k | hybrid | 0.866 | BM25 0.183 (dev), mDPR (zero-shot) 0.435 (dev), Hybrid (BM25+mDPR) 0.523 (dev) |
+| beir/scifact | hybrid | 0.760 | BM25 (multifield) 0.665, SPLADE++ EnsembleDistil 0.710, ColBERTv2 0.693 |
+| mixed/enron-qa | hybrid | 0.736 | — |
+| mixed/legal-clerc-200 | hybrid | 0.598 | BM25 0.054, Contriever-MSMarco (zero-shot dense) 0.042 |
+| mixed/miracl-de-2k | hybrid | 0.862 | BGE-M3 Dense 0.567 (dev) |
+| mixed/miracl-fr-2k | hybrid | 0.873 | BM25 0.183 (dev), mDPR (zero-shot) 0.435 (dev), Hybrid (BM25+mDPR) 0.523 (dev) |
 
 **Engine performance** (relative-ratchet guarded — tempdoc 640):
 
 | Corpus | CE p50 (ms) | Index docs/s | Enrich docs/s | Resident (GB) |
 |---|---|---|---|---|
-| beir/scifact | 167 | 111.1 | 25.0 | 1.75 |
-| mixed/enron-qa | 157 | 96.4 | 7.9 | 2.02 |
-| mixed/legal-clerc-200 | 214 | 11.0 | 1.3 | 1.75 |
-| mixed/miracl-de-2k | 168 | 73.7 | 36.7 | 1.75 |
-| mixed/miracl-fr-2k | 169 | 124.6 | 50.0 | 1.75 |
+| beir/scifact | 171 | 89.8 | 20.5 | 2.02 |
+| mixed/enron-qa | 161 | 64.5 | 6.2 | 2.02 |
+| mixed/legal-clerc-200 | 226 | 29.3 | 1.0 | 2.02 |
+| mixed/miracl-de-2k | 175 | 97.2 | 33.4 | 2.02 |
+| mixed/miracl-fr-2k | 174 | 60.0 | 23.3 | 2.02 |
 
 <!-- generated:end -->
 
