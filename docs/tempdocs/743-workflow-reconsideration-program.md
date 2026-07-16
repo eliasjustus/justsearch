@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — charter drafted; objective-function decision under discussion with founder (see Open founder decisions)"
+status: "open — charter drafted; D-1 (objective function) settled by founder 2026-07-16; D-2 pending; next: Phase 1 baseline"
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -140,9 +140,32 @@ main CI, teardown).
 
 ## Open founder decisions
 
-- **D-1 (objective function).** What "better" means. Founder's initial position (2026-07-16):
-  improve the workflow **as a total**, not per-aspect. Concretization under discussion in the
-  provenance chat; to be recorded here once settled.
+- **D-1 (objective function) — SETTLED (founder, 2026-07-16).** "Better" means improving the
+  workflow **as a total**, operationalized as:
+
+  > **Maximize verified-merged output per unit of scarce input (founder attention + token
+  > spend), judged over month-scale windows** — never per-change or per-phase, because
+  > tempdoc heterogeneity makes single-change readings noise.
+  >
+  > - **Quality and safety are hard constraints, not terms in the total**: rework/escape
+  >   rate must not worsen, zero guardrail regressions. Rationale: these are
+  >   rare-event-dominated; an averaged total can look better for a month after a safeguard
+  >   is removed, until the incident.
+  > - **Founder attention counts as an input alongside tokens** (proxies: interventions per
+  >   tempdoc, questions requiring founder answers, stall-notices requiring founder
+  >   attention). A tokens-only total would "improve" by silently pushing coordination work
+  >   onto the founder.
+  > - **Aspect metrics (waiting overhead, ceremony cost, catch rates, …) are diagnostics
+  >   and leading indicators only — never justifications.** No change is adopted because an
+  >   aspect metric improved; the window-level total is the verdict.
+  > - **Acceptance criterion**: Pareto-dominant changes (better somewhere, worse nowhere
+  >   that matters) can be piloted on agent judgment; **genuine tradeoffs (better total via
+  >   a worse aspect, e.g. faster merges via thinner review) escalate to the founder by
+  >   construction.**
+  > - **Consequence accepted**: feedback is slow (≈one clean reading per month). Workflow
+  >   changes are therefore batched into evaluated rounds (phase 5), not continuous
+  >   tinkering — each rule change costs every future session adaptation, so changing less
+  >   often but only in verified directions is itself part of "better as a total."
 - **D-2 (guardrail-removal arbitration).** Confirm: proposals that *remove* a safeguard
   require explicit founder approval regardless of pilot results (per principle 7).
 
