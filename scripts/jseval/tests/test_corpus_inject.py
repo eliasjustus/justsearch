@@ -583,10 +583,16 @@ def test_checked_in_707_member_recipes_are_strict_and_license_fail_closed():
             certification = json.loads(
                 (path.parent / member["structural_certification"]).read_text(encoding="utf-8"))
             assert certification["structural_passed"] is True
-            assert certification["fully_certified"] is False
-            assert set(certification["scientific_gates"].values()) <= {
-                "pending-model-run", "pending-backend-run",
-            }
+            if certification["fully_certified"]:
+                # en-legal-clerc is fully certified since 2026-07-16 (founder-ratified
+                # ACTIVE policy, 16/16 gates) — full certification requires every gate
+                # to have actually passed, and only the claim-matrix member may carry it.
+                assert member["name"] == "en-legal-clerc"
+                assert set(certification["scientific_gates"].values()) == {"passed"}
+            else:
+                assert set(certification["scientific_gates"].values()) <= {
+                    "pending-model-run", "pending-backend-run",
+                }
     assert {member["name"] for member in members} == {
         "en-legal-clerc", "de-miracl", "en-email-enronqa",
     }
