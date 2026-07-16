@@ -1,0 +1,5 @@
+---
+description: "Think through user-facing/frontend consequences of the current tempdoc design using the live dev server and browser, without implementing."
+---
+
+Think deeply about the user-facing consequences of the current tempdoc design. This is not an implementation task, and you should not modify code. First, re-read the tempdoc's current design and identify which parts would be visible to the user, directly or indirectly. If there is no direct or indirect user-facing or frontend-relevant work, tell me that briefly and skip the rest. Then start the dev server and use claude chrome to inspect the relevant existing UI and UX with screenshots, and read nearby frontend code or docs only as needed to understand existing patterns. Do not judge from the tempdoc alone. After that, think about what user-visible changes you will now need to consider in your design. Then theorize what the correct frontend/user-facing design should be for this tempdoc. Afterwards update your tempdoc accordingly.
