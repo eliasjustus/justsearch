@@ -32,7 +32,7 @@
     "mixed/en-email-enron-raw-10k-short-natural"
   ],
   "structural_certification": "structural-certification.v1.json",
-  "claim_eligible": false,
+  "claim_eligible": true,
   "remaining_gates": [
     "member_retrieval_calibration",
     "closed_book",
