@@ -1,0 +1,9 @@
+{
+  "method": "cmu-enron-raw-sample",
+  "source": "https://www.cs.cmu.edu/~enron/enron_mail_20150507.tar.gz",
+  "seed": 707,
+  "n_docs": 14000,
+  "min_words": 60,
+  "raw_source_signature": "b3da1b3fe0369ec3140bb4fbce94702c33b7da810ec15d718b3fadf5cd748ca7",
+  "license": "LicenseRef-Enron-FERC-public-record"
+}

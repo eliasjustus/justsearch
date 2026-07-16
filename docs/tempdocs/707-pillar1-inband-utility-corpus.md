@@ -1,7 +1,7 @@
 ---
 title: "Pillar-1 in-band utility corpus: real-text distractor mass (legal+email, EN+DE) + fabricated injected gold — the measuring stick for the powered 624 Step-2 run, satisfying all seven 704 requirements at once"
 type: tempdocs
-status: "EN-legal member FULLY CERTIFIED (2026-07-16): pre-run policy ACTIVE (founder-ratified CLERC four-cell matrix), 16/16 scientific gates green, closed-book 0.000 x4 — the U0 measuring stick is a certified artifact (merged #205). DE member: v2 (hops=1) still out-of-band, 1k-only secondary stratum; German-bridging scale collapse routed to the encoder lane. Remaining in this doc: EN-email member build (ratified: raw public-domain Enron text + fabricated gold). Remaining outside it: the founder spend gates ($3 smoke after 725 adoption work, then the powered run)."
+status: "CORPUS LEDGER CLOSED (2026-07-16): TWO members FULLY CERTIFIED under the ACTIVE two-member eight-cell policy — EN-legal (16/16, merged #205) and EN-email raw-Enron (16/16, founder-ratified cells, claim_eligible). DE member: 1k-only secondary stratum, never claim-bearing; German 10k semantic collapse chartered as tempdoc 748 (encoder lane). Remaining outside this doc: the founder spend gates ($3 smoke after 725's A/B, then the powered run) and 748's attribution verdict."
 created: 2026-07-10
 author: agent (Fable orchestration) — filed at founder request after the pillar-5 attribution campaign; substrate choice founder-ratified same day
 category: eval-infrastructure / corpus-design / agent-utility / search-quality
@@ -770,3 +770,27 @@ Extending `707-corpus-certification-policy.v1.json` with these cells (then re-ru
 16-gate certification, evidence already producible) makes the email member the second
 fully-certified member. Until then it stands structurally-certified with banked closed-book
 0.000 ×4 and complete floor candidates.
+
+### EN-email RATIFIED + FULLY CERTIFIED (2026-07-16, founder "go ahead as you suggested")
+
+The founder ratified the PROPOSED cells above verbatim; the two fields the proposal table
+did not enumerate follow the CLERC conventions (closed-book `maximum_accuracy` 0.15;
+`shortcut_leak_rate_max` 0.10 = measured 0.0 + the same +0.10 margin rule). The policy now
+carries a **two-member eight-cell matrix** (DE still deliberately absent and hard-failing as
+an unknown member — see tempdoc 748 for the chartered encoder-lane investigation).
+
+**`en-email-enron-raw` is `fully-certified`: 16/16 scientific gates green under the ACTIVE
+policy.** Evidence artifacts bind each gate's measurement to the exact corpus signature +
+query/gold bytes + run-manifest bytes (1k `fba5cf69…`, 10k `e6b302ea…`, signatures recomputed
+and matched at certify time); `structural-certification.v1.json` rewritten by
+`corpus-certify-member` with the full evidence matrix; `member.v1.json` flipped to
+`claim_eligible: true` (license `LicenseRef-Enron-FERC-public-record`, status verified).
+Observed vs threshold, all cells: nDCG 0.8043/0.7699/0.7052/0.6627 in-band; union recall
+1.00/0.95/0.95/0.55 ≥ floors; leak 0.05/0.00/0.05/0.00 ≤ caps; shortcut leaks 0.0 ≤ 0.10;
+closed-book 0.000 ≤ 0.15 (haiku, 20 queries/cell). The ratified-policy pin test now asserts
+the eight-cell matrix; the member-recipes invariant admits both claim-matrix members.
+
+**U0 ledger after this close:** two fully-certified claim-bearing members (EN-legal, EN-email)
++ DE as a 1k-only secondary stratum pending tempdoc 748. Pillar 1's corpus ledger is closed;
+remaining stones are founder spend gates (the $3 adoption smoke after 725's A/B, the powered
+run) and, independently, 748's attribution verdict.
