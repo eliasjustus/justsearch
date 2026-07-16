@@ -34,7 +34,6 @@ python -m jseval --help
 | Run CI checks locally | `scripts/ci/` |
 | Generate reliability budget report | `node scripts/ci/report-reliability-budget.mjs` |
 | Validate documentation | `node scripts/docs/docs-validate.mjs` |
-| Debug GPU capabilities | `scripts/diagnostics/` |
 | Bootstrap dev environment | `scripts/setup/preflight.ps1` |
 | Verify pre-merge checks | See [CLAUDE.md "Verification Workflow"](../CLAUDE.md) step 5 |
 
@@ -72,16 +71,14 @@ python -m jseval --help
 | Directory | Purpose |
 |-----------|---------|
 | `ai/` | AI model packaging (`pack-author.ps1`). |
-| `diagnostics/` | GPU/NVML capability detection. |
+| `diagnostics/` | Inference diagnostic scenarios (`inference/`). |
 | `test-support/` | Test utilities and fixtures. |
 
 ### Deployment / Ops
 
 | Directory | Purpose |
 |-----------|---------|
-| `ops/` | Manual ops + deployment capture scripts. |
 | `sandbox/` | Isolated environment setup docs. |
-| `ui/` | UI-specific manual debug utilities. |
 | `models/` | Model packaging and distribution helpers. |
 | `prod/` | Production helpers. |
 
