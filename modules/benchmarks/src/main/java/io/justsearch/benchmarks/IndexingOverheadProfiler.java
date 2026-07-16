@@ -6,7 +6,7 @@ import tools.jackson.databind.ObjectMapper;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.configuration.JustSearchConfigurationLoader;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import org.apache.lucene.document.Document;
 import java.io.BufferedReader;
 import java.nio.charset.StandardCharsets;

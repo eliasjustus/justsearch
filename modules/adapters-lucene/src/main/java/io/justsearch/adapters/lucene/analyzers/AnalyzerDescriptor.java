@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-package io.justsearch.core.analyzers;
+package io.justsearch.adapters.lucene.analyzers;
 
 /**
  * Descriptor for an analyzer.

@@ -9,7 +9,7 @@ import io.justsearch.adapters.lucene.runtime.RunningRuntime;
 import io.justsearch.adapters.lucene.runtime.IndexSchema;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.ipc.PipelineConfig;
 import io.justsearch.ipc.SearchResponse;
 import java.util.ArrayList;
