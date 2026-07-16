@@ -224,6 +224,51 @@ Deciding now means either deleting 743's Phase-2 substrate or preserving dead co
 speculation. 743:436-437 anticipated this ("coordinate only if Phase-2 proposals touch the
 analytics stack") — they do.
 
+### F-3b. CORRECTION to F-3/V-1 — the discovery sweep refutes my own blanket claim
+
+Founder challenge (2026-07-16): *"did you already do a research for further OSS projects?"* — No.
+F-3 verified the **four candidates the charter already named**; it was not a discovery sweep. The
+sweep, run refute-first against V-1, **refuted it for two of four slices**. Recording this against
+myself:
+
+| Project | Health (primary-source) | License | Offline | Slice |
+|---|---|---|---|---|
+| `ryoppippi/ccusage` | **maintained** — 1,474 commits, **75 contributors, 100 releases**, 17.2k★ | MIT (GitHub detector says `NOASSERTION`; LICENSE file is verbatim MIT) | yes (`-O`) | 1 |
+| `junhoyeo/tokscale` | **maintained** — 1,803 commits, **97 contributors, 85 releases**, 4.5k★, last commit today | MIT | ⚠ advertises a **"Global Leaderboard"** — egress must be verified opt-in or it is disqualified | 1–2 |
+| `Maciek-roboblog/Claude-Code-Usage-Monitor` | **maintained** — 6 contributors, 12 releases, 8.5k★ | MIT | yes, "privacy-first" | 1–2 |
+| `phuryn/claude-usage` | **maintained** — 21 contributors, 16 releases, 2k★ | MIT | local dashboard | 1–2 |
+| `simple10/agents-observe` | **marginal** — 28 releases but 2 contributors, ~6 wks stale, pre-1.0 | MIT | ? | 2 (subagent attribution) |
+
+**Corrected slice coverage:** slice 1 (cost/pricing) **well covered** — this is *not* an abandonware
+niche, and my V-1 sentence overrode my own F-3 (which had already named ccusage as maintained).
+Slice 2 (session/subagent) **partially covered**. Slices **3 (behavioral taxonomy) and 4
+(compaction/context) are genuinely empty** — V-1 holds *there*, and only there.
+
+The star-trap analysis **survives** and is worth keeping: `disler/claude-code-hooks-multi-agent-observability`
+1,490★ with **no license** (disqualified); `ColeMurray/claude-code-otel` 467★, created and last
+pushed **the same day**, 13 months cold; `mksglu/context-mode` 19k★ but **Elastic License 2.0 —
+source-available, not OSI**. High stars + 1 contributor + 0 releases remains the tell.
+
+**Two findings here directly threaten V-3 (my "keep our engine" call) — now being probed:**
+1. `Claude-Code-Usage-Monitor` reportedly carries a **provenance-label system**
+   (`official`/`local_estimate`/`experimental`/`unknown`) — i.e. *exactly* the fail-closed
+   unknown-model guard I concluded we'd have to build ourselves because ccusage lacks it.
+2. `agents-observe` claims **subagent attribution** — *exactly* the headline metric ccusage
+   loses (F-5). If it (or tokscale) delivers a real role dimension, the engine-swap case reopens
+   with a different tool, and F-8's fired falsifier could be honored rather than amended.
+
+**Anthropic's first-party direction (never checked before, and it corroborates F-2):** official
+analytics is **cloud-only** (`claude.ai/analytics/claude-code`, Team/Enterprise) → disqualified by
+our local-only constraint. A built-in `claude usage` command is an **open enhancement request**
+([claude-code#33978](https://github.com/anthropics/claude-code/issues/33978), still open
+2026-07-08) → no local first-party tool exists or is imminent. **Anthropic's sanctioned local path
+is OpenTelemetry export** — which independently endorses constraint 2 and raises the priority of
+F-2 (fixing retention on the OTel path) over any transcript-parser choice.
+
+**Method lesson for this tempdoc:** the charter's candidate list was treated as the search space.
+It was a *starting* list, and a 15-minute sweep found 4 maintained projects it omitted. This is
+`explore-before-implementing` applied to research: verifying a given list is not surveying a field.
+
 ### F-5. The ccusage probe: the swap's own preconditions FAIL 2 of 3
 
 ccusage **20.0.17** pinned, probed live against 9,620 transcripts (125 sessions + 546 subagent
@@ -322,6 +367,66 @@ cost-benefit discussion — so this is escalated, not resolved here. **Recommend
 > workflow moment**, not the engine. Engine adoption additionally requires the swap's original
 > preconditions to pass.
 
+### F-9. The LLM-observability ecosystem surveyed (the F-3b scoping gap, closed)
+
+Our capture is native OTel, so the mature self-hostable LLM-obs ecosystem was in scope and had
+never been surveyed. It has been now. **The gap was real; the conclusion lands in the same place
+as V-5, but via a much better argument than I had.**
+
+| Tool | Blocking finding |
+|---|---|
+| **Arize Phoenix** | **Elastic License 2.0 — not OSI OSS**; and **traces-only, no metrics ingest** → disqualified twice |
+| **Langfuse** | MIT core but **`/ee` gated — "Data Retention Policies" is Enterprise-only**, i.e. the exact feature we need is the paid one; traces-only; Postgres+ClickHouse+Redis+S3 |
+| **OpenLLMetry / Helicone** | Architecturally irrelevant — emission-side SDK / API proxy; we already have native emission |
+| **OpenObserve** | Best architecture found, but **no OSS Windows build** (EE-only `.exe`) + mandatory telemetry |
+| **SigNoz / HyperDX / Uptrace / Laminar** | 2–5 containers (ClickHouse + friends) for one developer's tooling |
+| **Jaeger v2 / Grafana+Mimir** | Jaeger **structurally cannot store metrics**; Mimir has **no Windows binary** |
+| **Braintrust** | Proprietary |
+| **Prometheus 3.x** | **The only survivor** — single native `.exe`, Apache-2.0, `--web.enable-otlp-receiver`, `--storage.tsdb.retention.time=1y` |
+
+**The decisive argument is architectural, not cost.** Our question is *"what did this merge cost,"*
+keyed `session.id → merge_commit`: a **high-cardinality OLAP join**. Prometheus is optimized for
+the opposite (low-cardinality aggregation over time) — `session.id` as a label makes every session
+a new series with a resetting counter, and `increase()` over 4 weeks across churning series is
+precisely its weak spot. **The incumbent NDJSON + `record-merge.mjs` join is better matched to the
+question than a TSDB is.** The ecosystem wants spans; the TSDBs want low-cardinality metrics; we
+need durable per-session records for a join. Nobody is shaped to solve our problem.
+
+And the data isn't lost because NDJSON can't hold 1.1 GB/month — **it's lost because
+`otlp-sink.py:136` calls `os.remove(prev)`.**
+
+**The survey's real yield is three emitter config flags, not a tool — zero adoption cost:**
+
+1. **`OTEL_LOG_RAW_API_BODIES=file:<dir>`** — writes bodies out-of-band as `<uuid>.request.json`
+   instead of inline. That is **72% of log bytes out of the stream** (F-2), collapsing the
+   6–42 min retention crisis with a config change. ⚠ **Not yet live-probed** (it edits the
+   founder's global `~/.claude/settings.json`) — probe before relying on it, per constraint 4.
+2. **`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative`** — default is `delta`
+   (verified). Mandatory before *any* TSDB: VictoriaMetrics **silently drops** delta samples;
+   Prometheus's converter sits behind an experimental flag. A silent-loss trap of exactly the
+   class this sink already has twice.
+3. **Per-signal endpoints** (`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`) — metrics could go to
+   Prometheus while logs/traces keep hitting our sink, with **no Collector in between**.
+
+**V-6 RESOLVED — otel-tui is incompatible with our sink.** The flagged unverified fact is now
+settled from source: `otel-tui --from-json-file` delegates entirely to upstream
+`otlpjsonfilereceiver` and **will not read our flattened schema**. Adopting it therefore requires
+first adopting the OTel Collector `fileexporter` (`max_backups: 0` = retain forever, `format: json`)
+— an **alpha** component whose README disclaims field-name stability. Taking on alpha-schema churn
+to fix a rotation bug we can fix in five lines is a bad trade. *(One correction the sweep made
+against another agent's claim: format migration would **not** "touch every downstream script" —
+the scripts that would break are the ones F-1 measured at **0 invokers, DEAD**. Migration cost is
+near-zero; it just isn't worth paying for.)*
+
+**Ranked outcome for slice 5:** (1) **fix the sink + set the flags** — hours, no dependencies,
+**mandatory regardless of every other option** because nothing else stops a data-destroying bug we
+own; (2) *optionally* add Prometheus for metrics **trend visualization** — additive, metrics-only,
+does not displace the sink and does not answer the per-merge question better than the existing
+join; (3) Collector+otel-tui — only if a maintained viewer is independently wanted.
+
+This independently re-derives V-2: adopting Prometheus into a slot with no live consumer would be
+Gen-4 with extra steps.
+
 ## Verdict
 
 **As chartered — a stack-wide OSS-first survey producing a standing policy: NO. But the survey
@@ -329,12 +434,29 @@ itself is now COMPLETE, and its answer is "adopt almost nothing."** Work-plan st
 above (~1 session). Steps 4–5 largely evaporate because there is almost nothing to adopt.
 This is not "don't do 745" — it is "745 asked a good question and the answer came back negative."
 
-**V-1 — The OSS-first policy: REFUTE, do not record it.** In this niche "maintained OSS" mostly
-does not exist (F-3): 2 of 3 named candidates abandoned ~3 months, 2 carry **no license**, all
-single-author with zero releases. The policy's hidden premise is that maintained OSS *exists* per
-slice; here it usually doesn't, and stars actively mislead (639★, dead since April). A standing
-CLAUDE.md line would cost always-loaded budget, rest on N=1 evidence, and mostly fire "no."
-`explore-before-implementing` already covers the real lesson.
+**V-1 — The OSS-first policy: REFUTE, do not record it. ⚠ PROVISIONAL — see the discovery gap
+below.** In this niche "maintained OSS" mostly does not exist (F-3): 2 of 3 named candidates
+abandoned ~3 months, 2 carry **no license**, all single-author with zero releases. The policy's
+hidden premise is that maintained OSS *exists* per slice; here it usually doesn't, and stars
+actively mislead (639★, dead since April). A standing CLAUDE.md line would cost always-loaded
+budget, rest on N=1 evidence, and mostly fire "no." `explore-before-implementing` already covers
+the real lesson.
+
+> **⚠ Known weakness in V-1 (owned, 2026-07-16, founder-raised).** This verdict rests on the
+> **four candidates the charter already named**, plus ~6 sighted by name in passing — it is *not*
+> a discovery sweep. "The niche is abandonware" is therefore stated more strongly than an N=4
+> sample supports. Two sweeps are open to close this:
+> 1. **Discovery** of Claude-Code analytics OSS nobody has listed yet (incl. whether Anthropic
+>    ships/endorses first-party tooling), run refute-first against V-1.
+> 2. **The scoping error**: F-3 defined "the niche" as *Claude-Code-transcript parsers*. But our
+>    capture is **native OTel**, so the mature self-hostable LLM-observability ecosystem
+>    (Phoenix / Langfuse / SigNoz / OpenLLMetry / Collector+Tempo) is arguably in scope and was
+>    **never surveyed**. If any ingests OTLP locally with durable retention, it bears directly on
+>    **F-2 (the retention defect) and V-5/V-6 together** — the strongest possible adopt case in
+>    this tempdoc, and the one place the OSS-first premise might actually hold.
+>
+> Do not treat V-1 as settled until both land. V-2 (the liveness argument) is independent of this
+> gap and stands regardless: no discovery result can make OSS supply a missing *consumer*.
 
 **V-2 — Withdraw the "OSS replaces the *slot*" framing** (current non-goal, line 96-97). The
 graveyard is a liveness failure (F-1); OSS changes the implementation and never the consumer.
