@@ -843,6 +843,32 @@ Only P-B's factual-correction half (rules + hook wording, full publish protocol)
 else awaits the founder's proposal review; P-A1/P-I are queued as the first plumbing slices
 after it.
 
+## Founder disposition on the proposal set (2026-07-16, "proceed accordingly" on the
+recommended dispositions)
+
+- **P-A1 + P-I — BUILD NOW** → tempdoc 746 (waiting-plumbing slice), started same session.
+  Note: P-A1's "file the Monitor bug upstream" sub-item is outward-facing (public GitHub
+  issue) — a draft will be prepared, but filing waits for explicit founder confirmation.
+- **P-D — APPROVED, scoped first step** (credential inventory, least-privilege, deny-rule
+  Write-gap audit; sandbox half trials on the next overnight campaign) → gets its own
+  tempdoc when implementation starts.
+- **P-H — APPROVED for a scoped trial** (agent-task-queue for GPU/dev-stack locks; founder
+  stays router).
+- **P-F — APPROVED narrow**: exactly one pre-registered lite class (mechanical
+  teardown/rename/config-delete tempdocs → derisk→plan), refute-first review mandatory on
+  both paths; any escaped defect on a lite tempdoc narrows/kills the class.
+- **P-C — APPROVED as calibration pilot**, same window as P-F; break-even derived locally.
+- **P-A2 — DEFERRED** until P-A1 lands and WAITING is re-measured.
+- **P-E — DEFERRED** (revisit only if PR review becomes a felt pain).
+- **P-B skip-half — DROPPED** (tail risk exceeds the small token win; shipped correction
+  already removed the harm).
+- **P-G — APPROVED, runs LAST** (after P-A1, to avoid confounding); design: alternating
+  time-windows, qualifying tempdocs pre-defined, scored on rework+defects+cost.
+- **Pilot mechanics settled**: two-week windows; P-F+P-C bundled in one window (attribution
+  blur accepted at this scale); abort rule: any escaped defect traceable to a piloted change
+  reverts that change immediately; window verdict = gross signals + founder judgment
+  (dashboard sanity-checks, doesn't decide).
+
 ## Non-goals
 
 - Re-running 727's tactical fix loop (that instrument keeps running independently).
