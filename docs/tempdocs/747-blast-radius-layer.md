@@ -36,6 +36,51 @@ Additive safety: nothing existing is weakened (D-2 untouched).
 **Deferred to a later step (recorded, not started):** sandbox/devcontainer trial for
 unattended overnight runs (per disposition: trials on the next 707-style campaign).
 
-## Findings
+## Findings (2026-07-16 audit)
 
-(populated by the audit below)
+**Credential-specific inventory (token kinds, scopes, exact locations, reach ranking) was
+delivered to the founder out-of-band in session chat and is deliberately NOT recorded here** —
+this tempdoc is public-bound (ADR-0045), and a map of where secrets sit on the founder's
+machine is exactly what shouldn't be published, even without values. The structural /
+config-hygiene findings that are safe to record:
+
+1. **Permission layer is effectively open.** `.claude/settings.json` has no `permissions`
+   key; `.claude/settings.local.json` (gitignored, local) has empty `allow`/`deny`/`ask`;
+   global `~/.claude/settings.json` runs `defaultMode: "bypassPermissions"`. So the
+   deny-rule gap the audit was sent to find (Read-deny-doesn't-cover-Write, v2.1.208) is
+   moot in the narrow sense — there are no deny rules at all — but the STRUCTURAL gap is
+   larger: the hook layer (git/build-focused) is the only filesystem backstop. This is the
+   layer-2 hole P-D exists to start closing.
+2. **Proposed deny-rule additions** (additive safety; to `.claude/settings.local.json`, the
+   local gitignored file — NOT auto-applied, see escalation): deny Read+Write+NotebookEdit on
+   `.mcp.json`, `.env*`, `**/*.pem`, `**/*credentials*`. Caveat carried from the audit: the
+   permission-glob dialect's handling of absolute out-of-project paths (`F:/...`) is
+   unverified against current docs — confirm before relying on it for anything outside the
+   repo tree; out-of-tree secrets may need OS ACLs, not settings.json.
+3. **Self-hosted Actions runner** (sibling of the repo, registered on the PUBLIC repo) is
+   contained TODAY only because its one workflow is `workflow_dispatch`-only. Recommended
+   standing guard: a CI check failing the build if any self-hosted job's `on:` ever gains
+   `pull_request`/`pull_request_target`/`issue_comment` (would become RCE-from-any-public-PR
+   on the founder's machine). The repo already has `check-workflow-triggers` in the pre-merge
+   table — extending it is the natural home.
+
+### Escalated to founder (require founder action — this session did NOT act on them)
+
+- **A plaintext credential lives in a local gitignored config** — should move to an
+  env-var/keyring reference; and a `gh` token is broader-scoped than day-to-day agent work
+  needs. Both are the founder's account/machine to remediate. Details in chat.
+- **Whether to apply the proposed deny rules** — they touch the founder's local config in a
+  security-sensitive way with an unverified glob dialect; presented for approval, not
+  auto-applied.
+
+### Deferred (recorded, not started)
+
+Sandbox/devcontainer trial for unattended overnight runs — next 707-style campaign.
+
+### Disposition
+
+This scoped-first-step tempdoc is **investigation-complete**; its concrete remediations are
+either founder-gated (credentials, deny-rule application) or belong to an existing gate
+(`check-workflow-triggers` extension). Recommend it stays open pending the founder's calls
+above rather than shipping code this session — there is no safe-to-auto-apply code change
+here that doesn't touch the founder's credential posture or local config.
