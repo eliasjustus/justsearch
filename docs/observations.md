@@ -664,9 +664,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] capture_evidence crashes on Windows with a libuv fail-fast (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src/win/async.c`) after capturing api-status/api-health — blocks durable EvidenceBundle capture; live verification had to fall back to manual /mcp HTTP calls (tempdoc 658) — `scripts/…/capture-evidence` (MCP dev tool) (2026-07-07)
 
 ### obs:record-merge — Dev-tooling test-coverage gap (surfaced by 684): record-merge.mjs has NO dedicated test, and prepare
-`kind: defect?` `anchor: record-merge.mjs` `seen: 2` `first: 2026-07-07` `last: 2026-07-15`
+`kind: defect?` `anchor: record-merge.mjs` `seen: 3` `first: 2026-07-07` `last: 2026-07-16`
 - [ ] Dev-tooling test-coverage gap (surfaced by 684): record-merge.mjs has NO dedicated test, and prepare-worktree.cjs's item-3 gradle-spawn fix was verified only by static path-reasoning (no live run of npm-ci + installDist). 684 added the first test for remove-worktree.cjs (test-remove-worktree.cjs); the sibling lifecycle scripts remain a regression-net gap. Task-shaped, not tempdoc-shaped; a real prepare-worktree integration test is heavy (npm ci + installDist) so weigh unit-level spawn-path assertion vs full integration. — scripts/dev/prepare-worktree.cjs, scripts/agent-analytics/record-merge.mjs (2026-07-07)
 - [ ] session-merges.ndjson is fragmented per-worktree: remove-worktree/record-merge resolve repoRoot from __dirname, so a teardown run from inside a worktree appends to THAT worktree's tmp/agent-telemetry/session-merges.ndjson, not the main checkout's (211 rows). Any outcome join reading only one root sees a partial ledger. Observed while testing the attribution fix (tempdoc 739 follow-up) — `scripts/agent-analytics/record-merge.mjs` (2026-07-15)
+- [ ] record-merge.mjs backfill on a diverged local main links the session to the LOCAL merge commit (858e819a 'Merge branch main…', classes as 'other') instead of the public squash commit — baseline-economics merge classing gets polluted; backfill should resolve the squash on origin/main — `scripts/agent-analytics/record-merge.mjs` (2026-07-16)
 
 ### obs:unanchored-general-62 — worker.log: native ORT stderr (ANSI-colored CUDA/BFCArena OOM traces) is captured with NUL-byte-inte
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-07` `last: 2026-07-07`
@@ -832,8 +833,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] 709/173 interaction: pinning _CLERC_REVISION changed the clerc-raw dataset-cache key, orphaning the completed 7.7GB resolve/main entry (7df857..) — next fetch re-downloads and now hits HF anonymous-download 403 (AccessDenied at CDN hop, resolver quota fine); migrated entry to pinned key 0f0aba86.. via hardlinks+signature.json this session (content signature a23d916b.. unchanged, HF API confirms main sha == pinned rev). Residual: no cache-key migration/GC story on revision bumps, and the orphaned 6.3GB .tmp-* staging dir from the 07-11 dead fetch still leaks — `scripts/jseval/jseval/dataset_cache.py:150` (2026-07-13)
 
 ### obs:test-correction-probe — Pre-existing: scripts/jseval/tests/test_correction_probe.py default-manifest tests fail on main beca
-`kind: environment?` `anchor: test_correction_probe.py` `seen: 1` `first: 2026-07-13` `last: 2026-07-13`
+`kind: environment?` `anchor: test_correction_probe.py` `seen: 2` `first: 2026-07-13` `last: 2026-07-16`
 - [ ] Pre-existing: scripts/jseval/tests/test_correction_probe.py default-manifest tests fail on main because jseval/data/correction-eval-queries.v1.json was never committed (absent since v0.1.0) — full pytest suite is 2-red on a clean main checkout. Noted during 719 takeover; not caused by 719 branch. (2026-07-13)
+- [ ] tests/test_correction_probe.py::TestLoadManifest fails since v0.1.0: jseval/data/correction-eval-queries.v1.json was never committed (no jseval/data dir in history) — the full jseval pytest suite has never been green on the public repo; either commit the data file or skip-with-reason — `scripts/jseval/tests/test_correction_probe.py` (2026-07-16)
 
 ### obs:unanchored-general-14 — Empty dir .claude/worktrees/adoption-legibility still not removable (EBUSY, process-held) as of 2026
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-14` `last: 2026-07-14`
@@ -979,11 +981,12 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] The installed v0.1.0 app (F:\JustSearch-test, ui jars built 2026-04-28) contains no McpProtocolHandler — POST /mcp is not served by the shipped release, yet docs/reference/mcp-production-server.md's '~2 minutes' flow and the README describe connecting Claude Desktop to the installed app's /mcp. The MCP surface only exists in builds after v0.1.0 — `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpProtocolHandler.java` (2026-07-14)
 
 ### obs:check-tempdoc-numbers-general — Pre-existing cross-worktree tempdoc #720 collision: 720-memory-injector-plan.md (agent-a439b6b675c7d
-`kind: environment?` `anchor: check-tempdoc-numbers` `seen: 4` `first: 2026-07-14` `last: 2026-07-16`
+`kind: environment?` `anchor: check-tempdoc-numbers` `seen: 5` `first: 2026-07-14` `last: 2026-07-16`
 - [ ] Pre-existing cross-worktree tempdoc #720 collision: 720-memory-injector-plan.md (agent-a439b6b675c7d35e5) vs 720-p1a-context-prepend-plan.md (agent-adcdb24cb87068a9c) — check-tempdoc-numbers fails until one is renumbered (2026-07-14)
 - [ ] check-tempdoc-numbers exits 1 on two pre-existing cross-worktree collisions: #720 (agent worktrees) and #729 (725-response-legibility vs sandbox-validation) — neither introduced by the release-asset-set branch; owners of those worktrees need to renumber. (2026-07-14)
 - [ ] Tempdoc number collision on 729, live right now: '729-0.2.0-sandbox-convergence.md' (502 lines, uncommitted in the sandbox-validation worktree, authored 2026-07-14, exists NOWHERE in git) vs '729-java-formatting-not-enforced.md' (worktree 729-gjf-removal, another live session). Neither is on main, so check-tempdoc-numbers can't see the unbacked one — the cross-worktree collision check only compares what is committed. The sandbox doc is at risk of both loss and renumbering — `docs/tempdocs/729-*` (2026-07-15)
 - [ ] check-tempdoc-numbers reports pre-existing cross-worktree collisions: #720 (agent-a439b6b675c7d35e5 vs agent-adcdb24cb87068a9c) and #729 (729-gjf-removal vs sandbox-validation) — owners will hit the gate at merge; noted so it isn't a surprise (2026-07-16)
+- [ ] check-tempdoc-numbers reports live cross-worktree collisions at #729 (729-gjf-removal vs sandbox-validation) and #742 (742-gate-input-contract vs 742-residue-removal) — owners of those worktrees must renumber before merge; not this session's trees (2026-07-16)
 
 ### obs:check-always-loaded-budget-gate-red — always-loaded-budget gate is RED on origin/main (pre-existing, not from this branch): 4 files over c
 `kind: environment?` `anchor: scripts/ci/check-always-loaded-budget.mjs` `seen: 2` `first: 2026-07-15` `last: 2026-07-15`
@@ -1134,8 +1137,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] tempdoc 737 status header still says 'NOT MERGED — no PR until owner's word' but PR #193 (f7d8e03f) is its merge commit — stale status, refresh on next touch — `docs/tempdocs/737*.md:1` (2026-07-15)
 
 ### obs:707-pillar1-inband-utility-corpus — 707 chain-2 engine finding candidate: German pure-synonym semantic bridging collapses with corpus si
-`kind: follow-up?` `anchor: docs/tempdocs/707-pillar1-inband-utility-corpus.md` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+`kind: follow-up?` `anchor: docs/tempdocs/707-pillar1-inband-utility-corpus.md` `seen: 2` `first: 2026-07-16` `last: 2026-07-16`
 - [ ] 707 chain-2 engine finding candidate: German pure-synonym semantic bridging collapses with corpus size on the current encoder (DE v2 gold, zero lexical overlap: hybrid 0.21-0.27 at 1k -> 0.043 at 10k, union recall 0.40 -> 0.10; CLERC EN same design holds 0.32 at 10k). Routes to the encoder-representation lane (708-successor), not corpus design — `docs/tempdocs/707-pillar1-inband-utility-corpus.md` §Chain-2 (2026-07-16)
+- [ ] Subagent watcher-strand pattern (2x this session, 2026-07-16): workers stop mid-task 'waiting for background pytest via Monitor' and never resume — the Monitor notification does not reach a completed/stopped agent turn; each needed a SendMessage resume with 'run it foreground'. Same family as the main-loop watcher failures being investigated; worker briefs should mandate synchronous verification, and the harness fix should consider agent-scoped monitors dying with the agent turn — `docs/tempdocs/707-pillar1-inband-utility-corpus.md` (supervision sections) (2026-07-16)
 
 ### obs:unanchored-drift-10 — Main checkout parked on a stale feature branch (mcpb-packaging, 18 behind origin/main) means EVERY s
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
@@ -1156,6 +1160,76 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:unanchored-general-60 — Background-watcher double failure mode (2026-07-16): a gh-polling background Bash spun 25+ min on a
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
 - [ ] Background-watcher double failure mode (2026-07-16): a gh-polling background Bash spun 25+ min on a fabricated full SHA (guessed tail instead of git rev-parse — verify-dont-guess applies to command ARGUMENTS too) producing a 0-byte output file, AND its 900s timeout neither killed it nor emitted a task-notification (TaskStop found it alive at ~25 min). Silence was indistinguishable from progress until a disk-state check read the empty file — the founder's 30-min pull-based wakeup-loop pattern (this session) is the antidote; resolve-then-watch loops should fail closed after N empty polls instead of spinning (2026-07-16)
+
+### obs:inventory — inventory.py's _main() write path omits newline="\n" (unlike sibling committed-artifact writers e.g.
+`kind: defect?` `anchor: scripts/jseval/jseval/commands/inventory.py` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] inventory.py's _main() write path omits newline="\n" (unlike sibling committed-artifact writers e.g. commands/corpus.py's _write_recipe) -- write_text() on Windows emits CRLF; harmless only because the repo's blanket `* text=auto eol=lf` gitattribute normalizes it back to LF at commit time -- `scripts/jseval/jseval/commands/inventory.py:51` (2026-07-16)
+
+### obs:release — CRLF-writer family continues: jseval release (--out release.v1.json) and changeset-new both write pl
+`kind: defect?` `anchor: scripts/jseval/jseval/commands/release.py` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] CRLF-writer family continues: jseval release (--out release.v1.json) and changeset-new both write platform-default newlines (git warned CRLF->LF at commit, 2026-07-16). Parsed-not-hashed consumers so no integrity break today, but same class as the 707 commitment bake-in — sweep remaining write_text sites for newline= in scripts/jseval — `scripts/jseval/jseval/commands/release.py` (2026-07-16)
+
+### obs:gen-public-agent-utility — gen-public-agent-utility.mjs renders factually stale outward text post-#205: the README generated bl
+`kind: defect?` `anchor: scripts/docs/gen-public-agent-utility.mjs` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] gen-public-agent-utility.mjs renders factually stale outward text post-#205: the README generated block still claims 'the checked-in policy has no required campaign matrix / CLERC and MIRACL-DE lack certificates' — false since the policy went ACTIVE and en-legal-clerc reached fully-certified (#205). The generator's no-accepted-result boilerplate hardcodes pre-ratification state instead of reading the policy/certification files. Outward-facing factual drift on public README — high priority for whoever owns 719's public surfaces — `scripts/docs/gen-public-agent-utility.mjs` (2026-07-16)
+
+### obs:unanchored-general-61 — DE encoder-lane charter opened as tempdoc 748 (German semantic bridging 10k collapse) — closes the 7
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] DE encoder-lane charter opened as tempdoc 748 (German semantic bridging 10k collapse) — closes the 707 chain-2 'routed to encoder lane' condition; DE remains 1k-only secondary stratum until 748 closes (2026-07-16)
+
+### obs:unanchored-general-65 — main checkout's local main is ~4 docs(743) commits + merge-commits ahead of origin/main (branch prot
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] main checkout's local main is ~4 docs(743) commits + merge-commits ahead of origin/main (branch protection strands direct commits) — needs a batch docs PR from whoever owns the 743 session; pullers get recurring 'Merge branch main' commits until then (2026-07-16)
+
+### obs:unanchored-drift-16 — modules/ui-web/README.md still describes the frontend as React + TypeScript + Vite with Zustand stor
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] modules/ui-web/README.md still describes the frontend as React + TypeScript + Vite with Zustand stores / React hooks (lines 3, 91, 93) — stale vs Hard Invariant #5 (frontend is Lit, ADR-0032); out of scope for tempdoc 742 residue-removal (only touched the Playwright-script rows this pass) — `modules/ui-web/README.md:3` (2026-07-16)
+
+### obs:docs-validate — docs-validate.mjs crashes (uncaught YAMLException from gray-matter) on docs/tempdocs/530-*.md's fron
+`kind: environment?` `anchor: scripts/docs/docs-validate.mjs` `seen: 2` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] docs-validate.mjs crashes (uncaught YAMLException from gray-matter) on docs/tempdocs/530-*.md's frontmatter — an unescaped mid-line value breaks js-yaml block-mapping parsing; pre-existing, unrelated to the synonyms-loader removal (742) — `scripts/docs/docs-validate.mjs` + `docs/tempdocs/530-discipline-gate-kernel-four-layer-design.md:6` (approx, 'updated:' line) (2026-07-16)
+- [ ] docs-validate.mjs crashes with YAMLException on docs/tempdocs/530-*.md frontmatter — pre-existing, found during 742 synonyms-reader removal — `scripts/docs/docs-validate.mjs` (2026-07-16)
+
+### obs:gen-liveness-constants — check-liveness-constants-regen fails on main: SPDX mass-commit (11c306af) stamped the generated Live
+`kind: environment?` `anchor: scripts/codegen/gen-liveness-constants.mjs` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] check-liveness-constants-regen fails on main: SPDX mass-commit (11c306af) stamped the generated LivenessWindows.java but gen-liveness-constants.mjs doesn't emit SPDX headers — regen check red since 2026-06-23, pre-existing, unrelated to 742 — `scripts/codegen/gen-liveness-constants.mjs` (2026-07-16)
+
+### obs:unanchored-general-66 — Sonnet subagent bulk-edit corrupted UTF-8 in 47 Java files (cp1252 round-trip mojibake) during the 7
+`kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] Sonnet subagent bulk-edit corrupted UTF-8 in 47 Java files (cp1252 round-trip mojibake) during the 742 IndexDocument rename — only 3 tests caught it (language-detection assertions); repaired by regenerating from HEAD with a node UTF-8-safe transform + asserting zero added non-ASCII diff lines. Candidate agent-lessons rule: subagent bulk file edits on Windows must use UTF-8-safe tooling (node/Edit tool), never PowerShell Get/Set-Content defaults — `scripts/agent-analytics/hooks/` (2026-07-16)
+
+### obs:enforcer-test — Pre-existing test failure: operation-surface enforcer.test.mjs 'no forbidden file present -> pass' g
+`kind: environment?` `anchor: scripts/governance/gates/operation-surface/enforcer.test.mjs` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] Pre-existing test failure: operation-surface enforcer.test.mjs 'no forbidden file present -> pass' gets verdict operation-surface/vacuous-scan (fail); its harness also exits 0 despite the failure, masking it from node --test-per-file CI — `scripts/governance/gates/operation-surface/enforcer.test.mjs:1` (2026-07-16)
+
+### obs:21-agent-analytics-pipeline — Canonical doc 21-agent-analytics-pipeline.md predates the 622 OTel path: it documents zero of otlp-s
+`kind: environment?` `anchor: docs/explanation/21-agent-analytics-pipeline.md` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] Canonical doc 21-agent-analytics-pipeline.md predates the 622 OTel path: it documents zero of otlp-sink.py/otlp-viewer/outcome-session/record-merge/baseline-economics, lists 8 of ~40 hooks, and its headline 'Content is never stored' (`docs/explanation/21-agent-analytics-pipeline.md:72`) is true only of the hook/input-summarizer path — the OTel path stores full prompts + raw API bodies (OTEL_LOG_USER_PROMPTS/TOOL_CONTENT/RAW_API_BODIES=1). Both stay local so the local-only posture holds; the claim is scope-drifted, not a leak. Found during 745 investigation. (2026-07-16)
+
+### obs:transcript-cost — otlp-sink.py getPricing() falls back to DEFAULT_PRICING (sonnet-4-5) for any unrecognized model id —
+`kind: follow-up?` `anchor: scripts/agent-analytics/lib/transcript-cost.mjs` `seen: 2` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] otlp-sink.py getPricing() falls back to DEFAULT_PRICING (sonnet-4-5) for any unrecognized model id — `scripts/agent-analytics/lib/transcript-cost.mjs:48-53` — i.e. a silent mis-price at the lib layer. 743 Phase-1's 'unknown models are bucketed loudly, never silently priced' holds only because callers separately call the surface-unknown helper; a future caller that forgets inherits silent wrong dollars. Consider making the fallback fail-loud at the lib boundary. Noticed during 745 investigation, not fixed (out of scope). (2026-07-16)
+- [ ] Possible 4th pricing defect: sonnet-5 may be on a $2/$10 intro rate through 2026-08-31 reverting to $3/$15 on 2026-09-01, while `scripts/agent-analytics/lib/transcript-cost.mjs:23` hardcodes the $3/$15 sticker rate — if true we overstate sonnet-5 ~50% today. REPORTED BY PROBE, NOT INDEPENDENTLY VERIFIED — verify against Anthropic pricing before acting. Neither ccusage nor Usage-Monitor handles the dated cliff either; date-conditional pricing is unimplemented everywhere. See tempdoc 745 F-10. (2026-07-16)
+
+### obs:unanchored-gate-red-3 — 743's published Phase-1 baseline ($21,410; 85.1/14.9 orchestrator/worker) is computed by a parser wi
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] 743's published Phase-1 baseline ($21,410; 85.1/14.9 orchestrator/worker) is computed by a parser with 3 verified bugs found during the 745 takeover — cross-file dedup overcount, first-vs-last snapshot undercounting subagent output -30%, and a 1h-cache-tier collapse underpricing 100% of cache writes. Direction: total cost understated; split biased toward orchestrator — the same axis 743's live prediction 1 tests. Recompute after the parser fix before testing that prediction. See tempdoc 745 F-6/F-7. (2026-07-16)
+
+### obs:otlp-sink — otlp-sink.py's only third-party dependency (`opentelemetry-proto`, hard-imported at `scripts/agent-a
+`kind: defect?` `anchor: scripts/agent-analytics/otlp-sink.py` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] otlp-sink.py's only third-party dependency (`opentelemetry-proto`, hard-imported at `scripts/agent-analytics/otlp-sink.py:17-22`) is declared NOWHERE in the repo — no requirements.txt/pyproject, only a passing mention in tempdoc 622. On a fresh checkout `otlp-sink-ensure` spawns the sink detached with stdio:'ignore', so an ImportError kills it SILENTLY and telemetry stops with no symptom — the same silent-failure class as the chunked-encoding bug (743) and the rotation bug (745 F-2), now three times in one file. 745 pins it in CI; declaring it properly (requirements file + a startup check in otlp-sink-ensure) is unowned. (2026-07-16)
+
+### obs:unanchored-gate-red-4 — ~~FIFTH cost bug (745 item B, found while implementing D4, deliberately NOT fixed — needs an owner d
+`kind: defect?` `anchor: none` `seen: 1`
+- [x] ~~FIFTH cost bug (745 item B, found while implementing D4, deliberately NOT fixed — needs an owner decision): last-snapshot-wins discards real usage when a transcript re-carries a turn with an ALL-ZERO usage snapshot.~~ **RESOLVED IN THE SAME PR (#221) — this note was written mid-implementation and is superseded; do not read it as an open item.** The bug was real and is FIXED (745 F-11: an all-zero snapshot never displaces a non-zero one), pinned by three tests incl. an order-independence test. Two corrections to this note's own content: (a) its numbers (1,477 keys / 1.309G cache_read / $22,539) predate the reviewer's cross-file-guard fix and the tiered-cache alignment — the settled figures are 1,455 keys / 1.288G cache_read and a ~$22,100 baseline (745 F-12/F-13); (b) its claim that 'ccusage makes the identical error' was REFUTED by the differential — ccusage does not have this bug (745 F-11 correction). No owner decision is outstanding.
+
+### obs:run — PR #215's gate-input contract makes a bare local `node scripts/governance/run.mjs --mode gate` exit 
+`kind: follow-up?` `anchor: run.mjs` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] PR #215's gate-input contract makes a bare local `node scripts/governance/run.mjs --mode gate` exit 1 on a fresh worktree — npm-audit/module-deps/dead-code/dead-code-jvm now fail CLOSED on missing inputs rather than passing vacuously. Correct behaviour and each names its remedy, but two things compound it: the failures are invisible in the output tail (only the bare exit code shows them), and public CI does NOT run the kernel at all, so local is the only place it ever runs. An agent who greps the tail for ': fail' sees nothing and concludes green. Producing all four inputs (report-npm-audit.mjs, module-deps.mjs, knip:report, :modules:dead-code-audit:test) then gives 34/34 exit 0. Consider a one-shot 'produce kernel inputs' script or a note in the pre-merge table. Found during 745 publish. (2026-07-16)
+
+### obs:event-writer — SAME-CLASS DEFECT LEFT UNFIXED by 745: `scripts/agent-analytics/lib/event-writer.mjs` rotates events
+`kind: defect?` `anchor: scripts/agent-analytics/lib/event-writer.mjs` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] SAME-CLASS DEFECT LEFT UNFIXED by 745: `scripts/agent-analytics/lib/event-writer.mjs` rotates events.ndjson at 10MB via `fs.renameSync(filePath, filePath + '.prev')`, which SILENTLY OVERWRITES the existing .prev — identical data loss to the otlp-sink rotation 745 F-2 just fixed, only implicit instead of an explicit os.remove. It is LIVE: dispatch.mjs + export-session-env.mjs write it, and telemetry-io reads it. Measured 2026-07-16: events.ndjson 6.8MB against the 10MB trigger, with 10.49MB in .prev that the next rotation destroys. Per structural-defects-no-repeat one documented instance proves the class — 745 fixed one instance and left the sibling. Deliberately NOT bolted onto PR #221 (different subsystem/consumers; the PR was already independently reviewed and green — adding an unreviewed change would bypass that review). Remedy is known and cheap: mirror otlp-sink.py's archive+per-stream-retention pattern. TOP FOLLOWUP. (2026-07-16)
 
 ## Parked
 
