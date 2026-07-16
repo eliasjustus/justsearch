@@ -8,7 +8,9 @@ the real sources happens separately, matching this tempdoc family's established 
 from __future__ import annotations
 
 import gzip
+import io
 import json
+import tarfile
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -284,3 +286,215 @@ def test_fetch_miracl_sample_sets_ir_datasets_home_when_cache_enabled(tmp_path, 
         corpus_fetch.fetch_miracl_sample(tmp_path / "out", lang="de", seed=1, n_docs=1)
 
     assert __import__("os").environ["IR_DATASETS_HOME"] == str(tmp_path / "ir_datasets")
+
+
+# ---------------------------------------------------------------------------
+# fetch_enron_raw_sample -- raw CMU Enron maildir corpus (tempdoc 707 ratified pivot)
+# ---------------------------------------------------------------------------
+
+def _maildir_message(*, subject: str | None, body: str) -> bytes:
+    """A tiny fake RFC-822 maildir message: headers, a blank line, then the body -- exactly
+    the shape `_split_email_headers` parses."""
+    headers = "Message-ID: <1.fake@example.com>\nDate: Mon, 1 Jan 2001 00:00:00 -0800\n"
+    if subject is not None:
+        headers += f"Subject: {subject}\n"
+    return (headers + "\n" + body).encode("utf-8")
+
+
+_NORMAL_BODY = ("This is a normal length body with enough words to pass the minimum word "
+                 "filter threshold easily today for sure. " * 3).strip()
+_NO_SUBJECT_BODY = ("No subject header on this body but plenty of words to pass the sample "
+                     "filter threshold check for real today. " * 3).strip()
+_ANOTHER_BODY = ("Another distinct body with plenty of words for the sample gate word filter "
+                  "threshold check yes indeed today. " * 3).strip()
+_FIFTH_BODY = ("Fifth distinct message body containing more than the minimum number of words "
+                "for inclusion in the sample today. " * 3).strip()
+
+
+def _build_fake_enron_tar_gz() -> bytes:
+    """~6 fake maildir entries exercising every filter `_sample_enron_from_raw` applies:
+    one normal message, one too-short body, one exact-duplicate body (different subject --
+    dedup is on body content, not subject), one with no Subject header (title-fallback path),
+    and two more distinct normal messages. Member names are deliberately NOT pre-sorted (tar
+    write order != alphabetical) so a passing test proves the sampler sorts by name itself."""
+    entries = {
+        "maildir/allen-p/inbox/2.": _maildir_message(subject="Too short", body="Too short."),
+        "maildir/kaminski-v/all/1.": _maildir_message(subject="Fifth message", body=_FIFTH_BODY),
+        "maildir/allen-p/inbox/1.": _maildir_message(subject="Meeting notes", body=_NORMAL_BODY),
+        "maildir/bass-e/sent/2.": _maildir_message(subject="Another topic", body=_ANOTHER_BODY),
+        "maildir/allen-p/inbox/3.": _maildir_message(subject="Duplicate of one", body=_NORMAL_BODY),
+        "maildir/bass-e/sent/1.": _maildir_message(subject=None, body=_NO_SUBJECT_BODY),
+    }
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, content in entries.items():
+            info = tarfile.TarInfo(name=name)
+            info.size = len(content)
+            tar.addfile(info, io.BytesIO(content))
+    return buf.getvalue()
+
+
+def _patched_enron(tar_gz_bytes: bytes):
+    def _urlopen(req, timeout=None):
+        if req.url != corpus_fetch._ENRON_URL:
+            raise AssertionError(f"unexpected URL: {req.url}")
+        stream = io.BytesIO(tar_gz_bytes)
+        return MagicMock(__enter__=lambda s: stream, __exit__=lambda *a: None)
+
+    return (
+        patch("jseval.corpus_fetch.Request", _FakeReq),
+        patch("jseval.corpus_fetch.urlopen", side_effect=_urlopen),
+    )
+
+
+def test_fetch_enron_raw_sample_is_deterministic_across_two_calls(tmp_path, monkeypatch):
+    monkeypatch.setenv("JUSTSEARCH_DATASET_CACHE", str(tmp_path / "cache"))
+    tar_bytes = _build_fake_enron_tar_gz()
+
+    p1, p2 = _patched_enron(tar_bytes)
+    with p1, p2:
+        prov1 = corpus_fetch.fetch_enron_raw_sample(tmp_path / "one", seed=7, n_docs=3, min_words=10)
+
+    # Second call: patch urlopen to explode if invoked -- the raw fetch must come entirely from
+    # the shared cache (tempdoc 709 pattern, mirroring the CLERC cache test above), not the network.
+    def _urlopen_must_not_be_called(*args, **kwargs):
+        raise AssertionError("urlopen() must not be called on a cached raw-fetch hit")
+
+    with patch("jseval.corpus_fetch.Request", _FakeReq), \
+         patch("jseval.corpus_fetch.urlopen", side_effect=_urlopen_must_not_be_called):
+        prov2 = corpus_fetch.fetch_enron_raw_sample(tmp_path / "two", seed=7, n_docs=3, min_words=10)
+
+    assert prov1 == prov2
+    docs1 = (tmp_path / "one" / "docs.jsonl").read_bytes()
+    docs2 = (tmp_path / "two" / "docs.jsonl").read_bytes()
+    assert docs1 == docs2
+    assert len(docs1) > 0
+
+
+def test_fetch_enron_raw_sample_strips_headers_filters_and_dedupes(tmp_path, monkeypatch):
+    monkeypatch.setenv("JUSTSEARCH_DATASET_CACHE", str(tmp_path / "cache"))
+    tar_bytes = _build_fake_enron_tar_gz()
+
+    # n_docs=4 -- exactly the number of eligible (post min-words, post-dedup) entries -- so the
+    # reservoir keeps all of them deterministically, letting this test assert on the full set.
+    p1, p2 = _patched_enron(tar_bytes)
+    with p1, p2:
+        prov = corpus_fetch.fetch_enron_raw_sample(tmp_path / "out", seed=1, n_docs=4, min_words=10)
+
+    docs = [json.loads(l) for l in (tmp_path / "out" / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    doc_ids = {d["_id"] for d in docs}
+
+    assert len(docs) == 4  # 6 raw entries - 1 too-short - 1 exact-duplicate body = 4 eligible
+    assert prov["n_docs"] == 4
+    assert "maildir__allen-p__inbox__2." not in doc_ids  # too-short body, filtered by min_words
+    assert "maildir__allen-p__inbox__3." not in doc_ids  # exact-duplicate body, filtered by dedup
+    assert "maildir__allen-p__inbox__1." in doc_ids  # the original (first in sorted order) survives
+
+    # Header stripping: no header field leaks into any sampled body.
+    assert all("Message-ID" not in d["text"] for d in docs)
+    assert all("Date:" not in d["text"] for d in docs)
+
+    # Title: Subject header when present, else first-8-words fallback (the no-subject entry).
+    no_subject_doc = next(d for d in docs if d["_id"] == "maildir__bass-e__sent__1.")
+    assert no_subject_doc["title"] == " ".join(_NO_SUBJECT_BODY.split()[:8])
+    subject_doc = next(d for d in docs if d["_id"] == "maildir__allen-p__inbox__1.")
+    assert subject_doc["title"] == "Meeting notes"
+
+    # 707 distractor-mass-only contract: no queries/qrels of any kind are sampled or written.
+    queries_out = json.loads((tmp_path / "out" / "queries.json").read_text(encoding="utf-8"))
+    assert queries_out == []
+
+    written_meta = json.loads((tmp_path / "out" / "meta.json").read_text(encoding="utf-8"))
+    assert written_meta["generation_provenance"] == prov
+    assert "suite" not in written_meta
+
+    assert prov["method"] == "cmu-enron-raw-sample"
+    assert prov["source"] == corpus_fetch._ENRON_URL
+    assert prov["seed"] == 1
+    assert prov["min_words"] == 10
+    assert prov["license"] == "LicenseRef-Enron-FERC-public-record"
+    assert prov["raw_source_signature"]  # non-empty: a real sha256 of the cached tarball bytes
+
+
+def test_fetch_enron_raw_sample_reservoir_is_seed_dependent_but_reproducible(tmp_path, monkeypatch):
+    """n_docs smaller than the eligible pool actually exercises reservoir replacement (not just
+    'keep everything') -- two different seeds must be allowed to pick different subsets, but the
+    same seed must always reproduce the same subset (covered by the determinism test above)."""
+    monkeypatch.setenv("JUSTSEARCH_DATASET_CACHE", str(tmp_path / "cache"))
+    tar_bytes = _build_fake_enron_tar_gz()
+
+    p1, p2 = _patched_enron(tar_bytes)
+    with p1, p2:
+        prov_a = corpus_fetch.fetch_enron_raw_sample(tmp_path / "a", seed=1, n_docs=2, min_words=10)
+    p1, p2 = _patched_enron(tar_bytes)
+    with p1, p2:
+        prov_b = corpus_fetch.fetch_enron_raw_sample(tmp_path / "b", seed=99, n_docs=2, min_words=10)
+
+    assert prov_a["n_docs"] == prov_b["n_docs"] == 2
+    docs_a = [json.loads(l) for l in (tmp_path / "a" / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    docs_b = [json.loads(l) for l in (tmp_path / "b" / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert {d["_id"] for d in docs_a} <= {
+        "maildir__allen-p__inbox__1.", "maildir__bass-e__sent__1.",
+        "maildir__bass-e__sent__2.", "maildir__kaminski-v__all__1.",
+    }
+    assert {d["_id"] for d in docs_b} <= {
+        "maildir__allen-p__inbox__1.", "maildir__bass-e__sent__1.",
+        "maildir__bass-e__sent__2.", "maildir__kaminski-v__all__1.",
+    }
+
+
+def test_corpus_fetch_enron_raw_end_to_end_builds_zero_query_mixed_pool(tmp_path, monkeypatch):
+    """The full `corpus-fetch-enron-raw` CLI path: fetch -> `corpus_build.build_golden` (a
+    0-query source -- the least-forked shape for a distractor-mass-only pool, tempdoc 707) ->
+    a committed 666-corpora recipe. `REPO_ROOT` is patched so the recipe write (hardcoded under
+    the real repo root, no --datasets-dir override) lands in a scratch dir, never the checked-in
+    tree, this being a unit test."""
+    from click.testing import CliRunner
+
+    from jseval.cli import main
+
+    monkeypatch.setenv("JUSTSEARCH_DATASET_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr("jseval._paths.REPO_ROOT", tmp_path / "scratch-repo")
+    tar_bytes = _build_fake_enron_tar_gz()
+
+    runner = CliRunner()
+    p1, p2 = _patched_enron(tar_bytes)
+    with p1, p2:
+        result = runner.invoke(main, [
+            "corpus-fetch-enron-raw", "--name", "test-enron-pool", "--seed", "7",
+            "--n-docs", "3", "--min-words", "10",
+            "--datasets-dir", str(tmp_path / "datasets"),
+        ])
+    assert result.exit_code == 0, result.output
+
+    mixed_dir = tmp_path / "datasets" / "mixed" / "test-enron-pool"
+    corpus_docs = [json.loads(l) for l in (mixed_dir / "corpus.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(corpus_docs) == 3
+
+    metadata = json.loads((mixed_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["query_count"] == 0
+    assert metadata["corpus_size"] == 3
+
+    # An empty queries.jsonl and a header-only qrels/test.tsv -- build_golden's existing,
+    # unforked handling of a 0-query source (verified directly, not just assumed).
+    assert (mixed_dir / "queries.jsonl").read_text(encoding="utf-8") == ""
+    assert (mixed_dir / "qrels" / "test.tsv").read_text(encoding="utf-8") == "query-id\tcorpus-id\tscore\n"
+
+    recipe_path = tmp_path / "scratch-repo" / "scripts" / "jseval" / "666-corpora" / "test-enron-pool" / "recipe.json"
+    assert recipe_path.is_file()
+    recipe_bytes = recipe_path.read_bytes()
+    assert b"\r" not in recipe_bytes  # committed-artifact convention: LF-only, never CRLF
+    recipe = json.loads(recipe_bytes.decode("utf-8"))
+    assert recipe["method"] == "cmu-enron-raw-sample"
+    assert recipe["n_docs"] == 3
+
+
+def test_corpus_fetch_enron_raw_is_registered_in_cli_help():
+    from click.testing import CliRunner
+
+    from jseval.cli import main
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--help"])
+    assert result.exit_code == 0
+    assert "corpus-fetch-enron-raw" in result.output

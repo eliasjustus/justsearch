@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "type_axis": "prose",
+  "suite": "635-self-demo-v1",
+  "contamination_class": "private-synthetic",
+  "generation_provenance": {
+    "method": "procedural-fabricated",
+    "axis": "prose",
+    "lang": "en",
+    "seed": 638,
+    "hops": 1,
+    "distractor_ratio": 5,
+    "semantic": true,
+    "templated": true,
+    "n_chains": 20,
+    "doc_words": 520
+  },
+  "query_variant_provenance": {
+    "variant": "short-natural",
+    "language": "en",
+    "method": "deterministic-natural-template",
+    "tool_version": "jseval.corpus_query_strata/1",
+    "source": "gold-email-s638-verbose"
+  }
+}

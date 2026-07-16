@@ -19,7 +19,7 @@ warnings (`closed_book_certification`/`fidelity`/`descriptor_collisions`/`regene
 meaningless for a real BEIR-style corpus — confirmed live before this fix (loading `mixed/miracl-de-2k`
 produced all four).
 
-Two sources:
+Three sources:
 - **MIRACL** (Apache 2.0) via the already-installed `ir_datasets` dependency — no new dependency.
 - **CLERC** — its own added structure (query/positive/negative construction on top of the Caselaw Access
   Project) has no stated license anywhere, checked exhaustively (tempdoc 666, second pass: the GitHub
@@ -29,12 +29,20 @@ Two sources:
   from CLERC is ever committed here — this module only ever writes to the gitignored `datasets/` tree,
   fetching fresh each time, the same "fetch, never commit" policy this project already applies to every
   BEIR corpus (SciFact, NFCorpus, etc. are never committed either).
+- **Enron raw mail** (`fetch_enron_raw_sample`, tempdoc 707) — the CMU distribution of the raw Enron
+  maildir corpus, released as a public FERC record with no stated redistribution restriction. Unlike
+  MIRACL/CLERC above, this fetcher samples ONLY real email bodies — no queries/qrels of any kind — since
+  the 707 en-email member's queries and gold come entirely from its own fabricated `635-corpora` source,
+  injected over these real bodies by `corpus-inject-real` (which never reads a real corpus's own
+  queries.json — see `corpus_inject.build_source`). The previously-scoped MichaelR207/enron_qa_0922
+  question/answer annotations are unlicensed and are dropped entirely, never fetched by this module
+  (tempdoc 707 ratified decision, §Archived decision memos).
 
-CLERC's raw fetch (qrels/queries text + the several-GB document collection) goes through
-`dataset_cache.cached_dir` (tempdoc 709): a shared, cross-worktree, gitignored, integrity-verified
-on-disk cache of the raw upstream bytes under the MAIN checkout, so the GB-scale collection stream
-isn't re-downloaded once per worktree per day. This is purely a network-trip dedupe of the same
-"fetch fresh, never commit/redistribute" bytes this module already only ever writes to a gitignored
+CLERC's raw fetch (qrels/queries text + the several-GB document collection) and the Enron raw fetch (the
+~1.7 GB maildir tarball) both go through `dataset_cache.cached_dir` (tempdoc 709): a shared, cross-worktree,
+gitignored, integrity-verified on-disk cache of the raw upstream bytes under the MAIN checkout, so the
+GB-scale stream isn't re-downloaded once per worktree per day. This is purely a network-trip dedupe of the
+same "fetch fresh, never commit/redistribute" bytes this module already only ever writes to a gitignored
 tree — it changes nothing about the licensing posture above.
 """
 
@@ -42,10 +50,12 @@ from __future__ import annotations
 
 import contextlib
 import gzip
+import hashlib
 import io
 import json
 import random
 import shutil
+import tempfile
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -356,3 +366,135 @@ def _sample_clerc_from_raw(
         "contamination_class": "public-benchmark",
         "generation_provenance": provenance,
     })
+
+
+_ENRON_URL = "https://www.cs.cmu.edu/~enron/enron_mail_20150507.tar.gz"
+_ENRON_TARBALL_FILE = "enron_mail_20150507.tar.gz"
+_ENRON_LICENSE = "LicenseRef-Enron-FERC-public-record"
+
+
+def _populate_enron_raw(dest: Path, *, url: str) -> None:
+    """Stream the (~1.7 GB) CMU Enron raw maildir tarball to disk without ever holding the whole
+    file in memory (tempdoc 707's `dataset_cache` `populate` callback) -- the same chunked
+    `shutil.copyfileobj` pattern `_populate_clerc_raw` already uses for CLERC's several-GB document
+    collection (conform, don't fork)."""
+    req = Request(url, headers={"User-Agent": _USER_AGENT})
+    with urlopen(req, timeout=None) as raw, (dest / _ENRON_TARBALL_FILE).open("wb") as out:  # noqa: S310
+        shutil.copyfileobj(raw, out, length=1024 * 1024)
+
+
+def _split_email_headers(raw_bytes: bytes) -> tuple[str, str]:
+    """Split one RFC-822 maildir message into (subject, body) -- headers end at the first blank
+    line. Deliberately hand-rolled rather than `email.message_from_bytes`: the Enron maildir corpus
+    has some malformed/truncated headers that trip stdlib's stricter parser, and this only needs
+    "where does the body start" + "what's the Subject line", not a full RFC-822 object model."""
+    text = raw_bytes.decode("utf-8", errors="replace").replace("\r\n", "\n")
+    header_block, _, body = text.partition("\n\n")
+    subject = ""
+    for line in header_block.splitlines():
+        if line.lower().startswith("subject:"):
+            subject = line.split(":", 1)[1].strip()
+            break
+    return subject, body.strip()
+
+
+def _sample_enron_from_raw(
+    out_dir: Path | str, *, tarball_path: Path, seed: int, n_docs: int, min_words: int,
+    raw_source_signature: str | None,
+) -> dict:
+    """Deterministic sampling over the already-fetched raw Enron tarball -- split out from
+    `fetch_enron_raw_sample` so the (cache-eligible) raw fetch and the (seed-dependent) sampling
+    are two separate concerns, mirroring `_sample_clerc_from_raw`.
+
+    Iterates tar members sorted by member name (a stable order independent of the tarball's own
+    physical on-disk layout) and reservoir-samples `n_docs` bodies with `random.Random(seed)` --
+    the same reservoir pattern `fetch_clerc_sample`/`fetch_miracl_sample` already use. Because
+    `tarfile`'s compressed (``"r:gz"``) mode seeks by re-decompressing from the start every time (an
+    O(n^2) trap for the several-hundred-thousand members visited out of physical/sorted order), this
+    first decompresses the tarball to a plain, genuinely-seekable ``.tar`` in a scratch temp dir --
+    a single forward streaming pass, the same chunked-copy discipline as the download itself --
+    so the sorted-order `extractfile()` calls that follow are real O(1) file seeks, not
+    re-decompressions.
+    """
+    import tarfile
+
+    rng = random.Random(seed)
+    reservoir: list[dict] = []
+    seen_hashes: set[str] = set()
+    seen_candidates = 0
+
+    with tempfile.TemporaryDirectory() as scratch:
+        plain_tar_path = Path(scratch) / "enron_mail_20150507.tar"
+        with gzip.open(tarball_path, "rb") as gz_in, plain_tar_path.open("wb") as out:
+            shutil.copyfileobj(gz_in, out, length=1024 * 1024)
+
+        with tarfile.open(plain_tar_path, "r:") as tar:
+            members = sorted((m for m in tar.getmembers() if m.isfile()), key=lambda m: m.name)
+            for member in members:
+                extracted = tar.extractfile(member)
+                if extracted is None:
+                    continue
+                subject, body = _split_email_headers(extracted.read())
+                words = body.split()
+                if len(words) < min_words:
+                    continue
+                digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+                if digest in seen_hashes:
+                    continue
+                seen_hashes.add(digest)
+                doc_id = member.name.replace("/", "__")
+                title = subject or " ".join(words[:8])
+                entry = {"_id": doc_id, "title": title, "text": body}
+                seen_candidates += 1
+                if len(reservoir) < n_docs:
+                    reservoir.append(entry)
+                else:
+                    j = rng.randrange(seen_candidates)
+                    if j < n_docs:
+                        reservoir[j] = entry
+
+    doc_list = sorted(reservoir, key=lambda d: d["_id"])
+    return _write_source(out_dir, docs=doc_list, queries=[], meta={
+        "version": "1.0", "type_axis": "email",
+        "contamination_class": "public-benchmark",
+        "generation_provenance": {
+            "method": "cmu-enron-raw-sample",
+            "source": _ENRON_URL,
+            "seed": seed,
+            "n_docs": len(doc_list),
+            "min_words": min_words,
+            "raw_source_signature": raw_source_signature,
+            "license": _ENRON_LICENSE,
+        },
+    })
+
+
+def fetch_enron_raw_sample(out_dir: Path | str, *, seed: int, n_docs: int, min_words: int = 60) -> dict:
+    """Fetch the raw CMU Enron maildir tarball through the shared `dataset_cache` and
+    deterministically sample `n_docs` distinct email bodies (tempdoc 707's ratified pivot away from
+    the unlicensed MichaelR207/enron_qa_0922 dataset -- see this module's docstring, §Enron raw mail).
+
+    DISTRACTOR MASS ONLY: no queries or qrels of any kind are sampled or written here -- the 707
+    en-email member's queries/gold come entirely from its own fabricated `635-corpora` source,
+    injected over these real bodies by `jseval corpus-inject-real` (`corpus_inject.build_source`
+    reads only a real corpus's `corpus.jsonl`, never its `queries.json` -- confirmed by reading
+    `corpus_inject.py`). So `_write_source` is called with an empty `queries` list; `n_docs` is the
+    only sampling knob this fetcher exposes, and there is deliberately no `n_queries`/synthesized-
+    query concept to add -- `corpus_build.build_golden` already handles a `queries=[]` source
+    cleanly (an empty `queries.jsonl` + header-only `qrels/test.tsv`), the least-forked path
+    available. Forking a synthetic-query concept purely to satisfy a builder requirement that
+    doesn't actually exist would be new surface for no reader.
+
+    :returns: the `generation_provenance` dict recorded into the written `meta.json`.
+    """
+    with dataset_cache.cached_dir(
+        "enron-raw", {"url": _ENRON_URL}, filenames=[_ENRON_TARBALL_FILE],
+        populate=lambda dest: _populate_enron_raw(dest, url=_ENRON_URL),
+    ) as raw_dir:
+        from .corpus_identity import corpus_signature
+
+        tarball_path = raw_dir / _ENRON_TARBALL_FILE
+        return _sample_enron_from_raw(
+            out_dir, tarball_path=tarball_path, seed=seed, n_docs=n_docs, min_words=min_words,
+            raw_source_signature=corpus_signature(raw_dir, files=[tarball_path]),
+        )

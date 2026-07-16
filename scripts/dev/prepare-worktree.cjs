@@ -52,6 +52,11 @@ function run(cmd, args, cwd, extraEnv) {
   }
 }
 
+// Tempdoc 746 item 6: root `.worktreeinclude` now lists these same two paths, so Claude Code
+// copies the REAL (gitignored) files from the parent checkout into a new worktree at creation
+// time, before this script ever runs. The existsSync check below is what makes that composition
+// safe — this function is a fallback (seeds a blank `.example` template) only when no real file
+// was already copied in, and never clobbers one that was.
 function seedFromExample(exampleRelPath, destRelPath) {
   const dest = path.join(repoRoot, destRelPath);
   const example = path.join(repoRoot, exampleRelPath);

@@ -736,3 +736,37 @@ higher cost for no benefit given separability.
 
 Sources (web): Wikipedia "Enron Corpus"; enrondata.org CALO/FERC dataset docs; EDRM
 "Retire the Enron Email Corpus" (2025); HF card `MichaelR207/enron_qa_0922`; arXiv 2505.00263.
+
+### EN-email member measured (2026-07-16, same session — the third member is corpus-complete)
+
+Raw-Enron pivot executed end-to-end (fetcher → 14k-body pool → seed-638 gold → 4 cells →
+structural certification → full gate measurements on the FIXED harness — every cell reads
+`embed_compat: COMPATIBLE` and `chunk verdict: ok`; the 715 fixes held).
+
+| cell | hybrid nDCG@10 | verdict (default band) | union recall | leak | closed-book |
+|---|---|---|---|---|---|
+| en-email-enron-raw-1k-verbose | **0.8043** | PASS (easy) | 1.00 | 0.05 | 0.000 |
+| en-email-enron-raw-1k-short-natural | **0.7699** | PASS (moderate) | 0.95 | 0.00 | 0.000 |
+| en-email-enron-raw-10k-verbose | **0.7052** | PASS (moderate) | 0.95 | 0.05 | 0.000 |
+| en-email-enron-raw-10k-short-natural | **0.6627** | PASS (moderate) | 0.55 | 0.00 | 0.000 |
+
+All four cells in-band with graceful scale decay (0.80 → 0.66) — the email member is the
+strongest of the three (better margins than CLERC), and the only soft spot is 10k-short-natural
+union recall (0.55). Note the 1k-verbose cell sits near the band top (0.8043 vs 0.85 ceiling,
+"easy") — if the founder wants more headroom for the utility measurement, a harder paraphrase
+distance for email gold is a one-session iteration; as-is it is policy-viable.
+
+**PROPOSED policy-extension cells (FOUNDER DECISION — same derivation rule as CLERC:
+band low = measured − 0.08, union min = measured − 0.10, leak max = measured + 0.10):**
+
+| cell | ndcg_band | union min | leak max |
+|---|---|---|---|
+| 1k-verbose | [0.72, 0.85] | 0.90 | 0.15 |
+| 1k-short-natural | [0.69, 0.85] | 0.85 | 0.10 |
+| 10k-verbose | [0.63, 0.85] | 0.85 | 0.15 |
+| 10k-short-natural | [0.58, 0.85] | 0.45 | 0.10 |
+
+Extending `707-corpus-certification-policy.v1.json` with these cells (then re-running the
+16-gate certification, evidence already producible) makes the email member the second
+fully-certified member. Until then it stands structurally-certified with banked closed-book
+0.000 ×4 and complete floor candidates.
