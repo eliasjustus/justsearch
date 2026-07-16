@@ -75,7 +75,15 @@ function writeBaseWorkflows(repoRoot) {
   );
   write(
     path.join(repoRoot, '.github/workflows/docs-lint.yml'),
-    ['name: Docs lint', '"on":', '  workflow_dispatch: {}', 'jobs: {}', ''].join('\n')
+    [
+      'name: Docs lint',
+      '"on":',
+      '  workflow_dispatch: {}',
+      'jobs:',
+      '  docs_lint:',
+      '    runs-on: [self-hosted, Windows, X64, justsearch-perf]',
+      '',
+    ].join('\n')
   );
 }
 
@@ -130,6 +138,66 @@ function writeBaseWorkflows(repoRoot) {
   const errors = validateWorkflows({ repoRoot, policy: p });
   assert.equal(errors.length, 1);
   assert.match(errors[0].message, /points at a missing workflow file/);
+}
+
+// Self-hosted + externally-triggerable event fails EVEN IF policy allows it
+// (the both-files-edited-together evasion). Policy here expects the PR trigger,
+// so the only error must be the hard self-hosted invariant.
+{
+  const repoRoot = repoFixture();
+  writeBaseWorkflows(repoRoot);
+  write(
+    path.join(repoRoot, '.github/workflows/docs-lint.yml'),
+    [
+      'name: Docs lint',
+      'on:',
+      '  workflow_dispatch: {}',
+      '  pull_request:',
+      'jobs:',
+      '  docs_lint:',
+      '    runs-on: [self-hosted, Windows, X64, justsearch-perf]',
+      '',
+    ].join('\n')
+  );
+  const p = policy();
+  p.workflows.find((w) => w.name === 'Docs lint').expectedTriggers = ['workflow_dispatch', 'pull_request'];
+  const errors = validateWorkflows({ repoRoot, policy: p });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /self-hosted runner job must not use externally-triggerable event 'pull_request'/);
+}
+
+// A hosted runner with a PR trigger is fine — the invariant is self-hosted-only.
+{
+  const repoRoot = repoFixture();
+  writeBaseWorkflows(repoRoot);
+  // ci.yml (hosted, pull_request) already in base workflows → no self-hosted error.
+  const errors = validateWorkflows({ repoRoot, policy: policy() });
+  assert.deepEqual(errors, []);
+}
+
+// A bare "self-hosted" mention in a comment must NOT trip the detector
+// (ci-walltime-trend.yml's ADR-0026 note is a real example of this).
+{
+  const repoRoot = repoFixture();
+  writeBaseWorkflows(repoRoot);
+  write(
+    path.join(repoRoot, '.github/workflows/docs-lint.yml'),
+    [
+      'name: Docs lint',
+      '# see ADR-0026 for the self-hosted runner rationale',
+      'on:',
+      '  workflow_dispatch: {}',
+      '  pull_request:',
+      'jobs:',
+      '  docs_lint:',
+      '    runs-on: ubuntu-latest  # not self-hosted',
+      '',
+    ].join('\n')
+  );
+  const p = policy();
+  p.workflows.find((w) => w.name === 'Docs lint').expectedTriggers = ['workflow_dispatch', 'pull_request'];
+  const errors = validateWorkflows({ repoRoot, policy: p });
+  assert.deepEqual(errors, [], 'comment mention of self-hosted must not trigger the hard invariant');
 }
 
 console.log('test-check-workflow-triggers: PASS');

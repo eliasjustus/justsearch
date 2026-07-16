@@ -77,10 +77,28 @@ config-hygiene findings that are safe to record:
 
 Sandbox/devcontainer trial for unattended overnight runs — next 707-style campaign.
 
+### Implemented this session — self-hosted-runner trigger guard
+
+`scripts/ci/check-workflow-triggers.mjs` extended (rides existing CI wiring — same
+script already in the pre-merge table): a **policy-independent HARD invariant** —
+`SELF_HOSTED_FORBIDDEN_TRIGGERS` (`pull_request`, `pull_request_target`,
+`pull_request_review`, `pull_request_review_comment`, `issue_comment`) fails the build if
+any workflow with a self-hosted `runs-on:` carries one. Independence from the per-workflow
+`expectedTriggers` allowlist is the point: editing the workflow AND the policy together
+(which satisfies the existing allowlist match) still fails here. `usesSelfHostedRunner()`
+reads the `runs-on:` VALUE (scalar / inline list / block list), so `ci-walltime-trend.yml`'s
+comment mention of "self-hosted" does not false-positive (verified by test). Regression
+tests added: self-hosted+PR fails even when policy allows it, hosted+PR passes, comment
+mention passes. Real-repo run stays green (`docs-lint.yml` = self-hosted + dispatch-only).
+**Known limitation (recorded, not silently capped):** a self-hosted runner reached via a
+`runs-on: ${{ matrix.os }}` matrix value is not detected — no such usage exists today
+(the one matrix `runs-on` in `ci.yml` is ubuntu/windows-latest); close it if a matrix ever
+includes self-hosted.
+
 ### Disposition
 
-This scoped-first-step tempdoc is **investigation-complete**; its concrete remediations are
-either founder-gated (credentials, deny-rule application) or belong to an existing gate
-(`check-workflow-triggers` extension). Recommend it stays open pending the founder's calls
-above rather than shipping code this session — there is no safe-to-auto-apply code change
-here that doesn't touch the founder's credential posture or local config.
+This scoped-first-step tempdoc's one safe-to-auto-apply remediation — the
+self-hosted-runner trigger guard — is **implemented and shipping this session**. The
+remaining remediations are founder-gated (credential rotation/re-scoping, deny-rule
+application) and recorded above as escalations. Tempdoc stays open pending those founder
+calls; the sandbox/devcontainer half is deferred to the next overnight campaign.

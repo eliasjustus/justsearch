@@ -11,6 +11,21 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+// Triggers an external, unprivileged actor can fire on a PUBLIC repo. A
+// self-hosted runner executes on the maintainer's own machine, so any of these
+// on a self-hosted job is remote-code-execution-from-any-PR (tempdoc 747 P-D;
+// motivated by the April-2026 frontier-agent production-DB-deletion incident
+// class). This is a HARD invariant, enforced independently of the per-workflow
+// expectedTriggers allowlist below — so editing the workflow AND the policy
+// together (which would satisfy the allowlist match) still fails here.
+export const SELF_HOSTED_FORBIDDEN_TRIGGERS = new Set([
+  'pull_request',
+  'pull_request_target',
+  'pull_request_review',
+  'pull_request_review_comment',
+  'issue_comment',
+]);
+
 function repoRootFromCwd() {
   const markers = ['settings.gradle.kts', 'build.gradle.kts', '.git'];
   for (let dir = process.cwd(); ; dir = path.dirname(dir)) {
@@ -81,6 +96,46 @@ function parseInlineEvents(rest) {
   return events;
 }
 
+// True if any job's `runs-on:` resolves to a self-hosted runner. Reads the
+// runs-on VALUE (scalar, inline list, or block list) so a bare string mention
+// of "self-hosted" in a comment (as in ci-walltime-trend.yml's ADR-0026 note)
+// does not count — comments are already stripped by stripInlineComment.
+const SELF_HOSTED_TOKEN = /(^|[,[\s'"])self-hosted([,\]\s'"]|$)/;
+
+export function usesSelfHostedRunner(lines) {
+  let inRunsOnBlock = false;
+  let runsOnIndent = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    const noComment = stripInlineComment(lines[i]).trimEnd();
+    if (!noComment.trim()) continue;
+    const indent = leadingSpaces(noComment);
+    const trimmed = noComment.trim();
+
+    if (inRunsOnBlock) {
+      if (indent <= runsOnIndent) {
+        inRunsOnBlock = false;
+        runsOnIndent = -1;
+      } else {
+        const item = /^-\s*(.*)$/.exec(trimmed);
+        if (item && SELF_HOSTED_TOKEN.test(item[1])) return true;
+        continue;
+      }
+    }
+
+    const m = /^runs-on\s*:\s*(.*)$/.exec(trimmed);
+    if (m) {
+      const value = m[1].trim();
+      if (value === '') {
+        inRunsOnBlock = true;
+        runsOnIndent = indent;
+        continue;
+      }
+      if (SELF_HOSTED_TOKEN.test(value)) return true;
+    }
+  }
+  return false;
+}
+
 export function scanWorkflow(file, repoRoot) {
   const rel = normalizeRel(path.relative(repoRoot, file));
   const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
@@ -88,6 +143,7 @@ export function scanWorkflow(file, repoRoot) {
   let onIndent = -1;
   let sawOn = false;
   const events = new Map();
+  const selfHosted = usesSelfHostedRunner(lines);
 
   function addEvent(event, lineNumber) {
     const normalized = stripOuterQuotes(event).trim();
@@ -134,7 +190,7 @@ export function scanWorkflow(file, repoRoot) {
     }
   }
 
-  return { rel, sawOn, events };
+  return { rel, sawOn, events, selfHosted };
 }
 
 function workflowEntries(policy) {
@@ -168,6 +224,22 @@ export function validateWorkflows({ repoRoot, policy }) {
   for (const file of files) {
     const scanned = scanWorkflow(file, repoRoot);
     seen.add(scanned.rel);
+
+    // HARD invariant (policy-independent, tempdoc 747 P-D): a self-hosted job
+    // must never carry an externally-triggerable event. Checked before the
+    // policy lookup so it also fires for a workflow missing from the policy.
+    if (scanned.selfHosted) {
+      for (const [event, lineNumber] of scanned.events) {
+        if (SELF_HOSTED_FORBIDDEN_TRIGGERS.has(event)) {
+          errors.push({
+            rel: scanned.rel,
+            lineNumber,
+            message: `self-hosted runner job must not use externally-triggerable event '${event}' (RCE-from-any-PR on the maintainer's machine; tempdoc 747 P-D). Move the job to a hosted runner or drop the trigger.`,
+          });
+        }
+      }
+    }
+
     const policyEntry = policyByPath.get(scanned.rel);
     if (!policyEntry) {
       errors.push({ rel: scanned.rel, lineNumber: 1, message: 'workflow file is missing from workflow-signal-policy.v1.json' });
