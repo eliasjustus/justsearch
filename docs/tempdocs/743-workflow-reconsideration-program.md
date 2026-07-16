@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — Phase 1 COMPLETE and merged (PR #209, squash ce4d6de8, main CI green 2026-07-16); D-1/D-2 settled; founder go/no-go on phases 2-6 pending (GO recommended); next: Phase 2 via /takeover 743 in a fresh session"
+status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy"
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -420,8 +420,9 @@ It would have flagged the pre-fix 2.34× numbers instantly. Two consequences ado
 
 ## State for the next agent (Phase-2 entry point)
 
-1. **Pending founder decision:** go/no-go on phases 2-6 (GO recommended in the readability
-   verdict above). Get it confirmed at kickoff.
+1. ~~Pending founder decision~~ **GO on phases 2-6 confirmed by founder 2026-07-16** (same
+   session as Phase 1, immediately after the phase-map discussion; Phase-5 pilot mechanics
+   remain a designated founder conversation before pilots run).
 2. **Phase 2 = two parallel streams:** (a) the full per-layer adversarial research sweep
    (approach principle 4 — bigger than the two bounded takeover probes already recorded);
    (b) first-principles decomposition of the workflow's jobs per layer/deep axis with
@@ -435,6 +436,33 @@ It would have flagged the pre-fix 2.34× numbers instantly. Two consequences ado
    windows; 622 §6.3 designates it authoritative).
 5. Tempdoc 745 (OSS-first observability) runs in parallel under its own agent — coordinate
    only if Phase-2 proposals touch the analytics stack.
+
+## Phase 2 (IN PROGRESS, 2026-07-16, session f7580e17, worktree 743-phase2)
+
+Launched on founder GO: five refute-first research lanes (R1 epistemic scaffolds, R2 session
+topology, R3 enforcement layer, R4 platform-obsolescence audit via the docs-specialized agent,
+R5 coordination mechanics) + T1 (overhead taxonomy computed from the baseline window's
+transcripts). Results fold in below as they land. (Process note: R4's first spawn was blocked
+by subagent-model-guard for an unpinned model and re-issued — the hook-block double-spawn
+friction from the weakness list, reproduced live in the program's own session.)
+
+### First-principles decomposition (stream B skeleton; cost cells pending T1)
+
+For each layer/axis: the JOB it performs, what it COSTS (baseline), and the WIN CONDITION an
+alternative must meet (Phase-3 proposals must name which row they attack and beat its win
+condition — not just "seems better").
+
+| Layer / axis | Job performed | Baseline cost | Win condition for an alternative |
+|---|---|---|---|
+| Staged skill pipeline (theorize→…→plan) | Prevents design-while-implementing; forces assumption burndown before code | pending T1 ceremony split | Same defect-escape rate with less pre-implementation spend, on a time-windowed pilot |
+| Refute-first independent review | Catches implementer-blind defects (live: the 2.34× bug) | ~1 opus/sonnet spawn per slice | Nothing weaker survives D-2; alternative must show equal catch-rate on real defect classes |
+| Tempdoc-as-unit + closeout | Cross-session continuity; work survives session death | authoring + closeout turns (pending T1) | A work-unit with equal resumability at lower authoring cost (R5 evidence) |
+| Long-lived orchestrator + subagents | Judgment continuity; delegation economics | 85.1% of tokens in orchestrator; compaction re-orientation (pending T1) | Topology with lower orchestrator share at equal decision quality (R2 evidence) |
+| Worktree-per-tempdoc | Parallel isolation on one machine; main stays clean | prepare/teardown friction (2 incidents this session) | Isolation with equal safety, less lifecycle friction (R5/R4 evidence) |
+| Publish protocol (full suite, scans, squash, CI-watch) | Public-main safety + curated history | CI-wait plumbing (pending T1 waiting share) | Cannot be weakened per D-2 (safety); only its WAITING cost is attackable (R4/plumbing) |
+| Hooks/gates enforcement | Converts ~70% prose adherence to ~100% mechanical | hook-friction retries (pending T1) | Per-guard: evidence the model no longer makes the mistake (R3) AND a re-add trigger |
+| Founder approval points | Safety + taste on irreversible/outward actions | founder attention (proxy deferred) | Only the founder can re-price these; program surfaces, never removes (D-2) |
+| Session-as-continuity (compaction) | Keeps long work in one context | re-orientation cost (pending T1) | Artifact-mediated handoff with measured rework ≤ compaction's (R2) |
 
 ## Non-goals
 
