@@ -334,9 +334,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] logger.ts uses CSS `var(--text-*)` inside console `%c` style strings, which don't resolve in devtools console — colors silently fall back to default — `modules/ui-web/src/utils/logger.ts:63` (2026-06-15)
 
 ### obs:ui-shot-cleanup — ui-shot-cleanup.mjs exists on disk but is not wired in .claude/settings.local.json (hooks-reference.
-`kind: defect?` `anchor: scripts/agent-analytics/hooks/ui-shot-cleanup.mjs` `seen: 2` `first: 2026-06-16` `last: 2026-07-15`
+`kind: defect?` `anchor: scripts/agent-analytics/hooks/ui-shot-cleanup.mjs` `seen: 3` `first: 2026-06-16` `last: 2026-07-16`
 - [ ] ui-shot-cleanup.mjs exists on disk but is not wired in .claude/settings.local.json (hooks-reference.md documents it as a SessionEnd hook) — `scripts/agent-analytics/hooks/ui-shot-cleanup.mjs` (2026-06-16)
 - [ ] ui-shot's worktree auto-serve Vite (port 5174) survives the capture and breaks a later `./gradlew.bat build` in the same session: it holds handles under modules/ui-web, so `:modules:ui:installWebDependencies` fails with npm exit -4048 (libuv UV_EPERM on Windows) — looks like a build defect, is a live file lock. Reproduced 2026-07-15; killing the pid made the same build green. `ui-shot-cleanup` only fires at SessionEnd, so ANY capture-then-build session hits this. Remedy: stop the 5174 vite before building (pid via its `vite.js --port 5174` cmdline), or teach the build/hook to reap it — `scripts/agent-analytics/hooks/ui-shot-cleanup.mjs` (2026-07-15)
+- [ ] ui-shot's auto-served Vite (port 5174) left running from an earlier /ui-check session holds modules/ui-web/node_modules/lightningcss-win32-x64-msvc/*.node locked; a later ./gradlew.bat build's :modules:ui:installWebDependencies task fails EPERM/unlink trying to replace it. Kill the stray vite.js process for the worktree before a full build if one was ui-shot'd earlier in the session — `scripts/agent-analytics/hooks/ui-shot-cleanup.mjs` only fires at SessionEnd, not before an in-session gradle build. (2026-07-16)
 
 ### obs:presentation-demo — presentation-demo §7 chip strip drifts from the real HEALTH_STATS_BODY strip — demo shows Indexed/Qu
 `kind: defect?` `anchor: modules/ui-web/src/shell-v0/demo/presentation-demo.ts` `seen: 1`
@@ -1241,9 +1242,13 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
 - [ ] modules/ui-web/README.md still describes the frontend as React + TypeScript + Vite with Zustand stores / React hooks (lines 3, 91, 93) — stale vs Hard Invariant #5 (frontend is Lit, ADR-0032); out of scope for tempdoc 742 residue-removal (only touched the Playwright-script rows this pass) — `modules/ui-web/README.md:3` (2026-07-16)
 
-### obs:fold-observations — fold-observations.mjs is NOT idempotent for MERGED entries — re-folding a shard inflates the `seen` 
+### obs:fold-observations — fold-observations.mjs is NOT idempotent for MERGED entries — re-folding a shard inflates the `seen`
 `kind: follow-up?` `anchor: scripts/agent-analytics/fold-observations.mjs` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
 - [ ] fold-observations.mjs is NOT idempotent for MERGED entries — re-folding a shard inflates the `seen` ranking signal. Mechanism: an entry that merges into an existing condition has its text rewritten in the store (occurrence appended), so on a later fold of the same shard it no longer matches verbatim, misses the exact-duplicate skip, and merges AGAIN (seen++). Entries that OPEN a condition round-trip fine. Observed live 2026-07-16: shard 70bf04ea was folded, then session 70bf04ea appended 2 entries and restored the file via PR #222; re-folding its 8 entries gave 5 exact-duplicate skips instead of 6, i.e. one already-folded entry double-counted. Impact is small (seen is a ranking signal, not a gate) but it is silent and compounds with every modify/delete shard race — which will recur, since a shard can be appended to after a fold reads it. Candidate fix: key the duplicate check on a stable entry hash rather than the post-merge text. — `scripts/agent-analytics/fold-observations.mjs:107` (2026-07-16)
+
+### obs:coreworkflowcatalog — justsearch_dev_start defaults to the MAIN CHECKOUT's installed dist even when called from a worktree
+`kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/conversation/CoreWorkflowCatalog.java` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] justsearch_dev_start defaults to the MAIN CHECKOUT's installed dist even when called from a worktree session -- silently testing stale code with no error. Must pass distFrom:<worktree-path> explicitly after editing Java in a worktree, not just re-run installDist. Cost real debugging time verifying tempdoc 734/744's core.workflow-run fix (2026-07-16) -- `modules/app-services/src/main/java/io/justsearch/app/services/conversation/CoreWorkflowCatalog.java`, `WorkflowShapeRunner.java`. (2026-07-16)
 
 ## Parked
 
