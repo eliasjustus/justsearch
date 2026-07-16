@@ -1,7 +1,7 @@
 ---
 title: "Pillar-1 in-band utility corpus: real-text distractor mass (legal+email, EN+DE) + fabricated injected gold — the measuring stick for the powered 624 Step-2 run, satisfying all seven 704 requirements at once"
 type: tempdocs
-status: "incomplete — CLERC and MIRACL-DE 1k/10k members exist at verbose and short-natural strata with structural certification, but closed-book, retrieval calibration, union-recall, and leak gates remain. EnronQA is non-claim-eligible until its source license is resolved. No paid run or completion claim is authorized. 2026-07-14 takeover: founder GPU-budget + claim-shape decisions recorded and gate-run execution plan set (§Takeover 2); pre-run unblockers in progress."
+status: "incomplete — retrieval-calibration floor candidates MEASURED for all 6 planned cells (2026-07-15, §Gate measurement floor candidates): EN-legal in-band at both sizes/strata (policy-ready); DE member FAILS in-band and needs a paraphrase-distance recalibration before its cells can be ratified. Union/leak measured on the two verbose 1k cells (leak 0.0; union 0.75 CLERC / 0.35 DE). Still gated: closed-book certification (small paid call, founder), policy ratification, remaining union/leak cells, EnronQA license, any paid run. No completion claim authorized."
 created: 2026-07-10
 author: agent (Fable orchestration) — filed at founder request after the pillar-5 attribution campaign; substrate choice founder-ratified same day
 category: eval-infrastructure / corpus-design / agent-utility / search-quality
@@ -505,3 +505,110 @@ claims re-verified first-hand at `backend.py:23,61` and `commands/corpus.py:347`
    (a Linux materialization would produce different signatures). Acceptable while the campaign runs
    on this box; flagged as an owner decision — LF-canonical dataset writers force a one-time
    signature re-baseline of all 8 cells (cheap: regenerate + re-certify, ~10 min, no GPU).
+
+### Gate measurement floor candidates (2026-07-15, post-#201 cohort) — PROPOSED, founder ratification pending
+
+Full gate chain executed under the founder-directed 30-min wakeup supervision loop (16:55–18:15 wall,
+~1 h 20 m GPU — far under the two-window budget; the 691 throughput work held: CLERC-10k full
+enrichment ≈ 50 min). All 8 steps rc=0. Cohort: HEAD ≡ origin/main post-#200/#201; fidelity headline
+mode `hybrid` with `--embedding`; bands shown are the DEFAULT (0.3–0.85) — the ratified policy sets
+the real thresholds.
+
+| cell | hybrid nDCG@10 | vector | lexical | verdict (default band) | union recall | leak |
+|---|---|---|---|---|---|---|
+| en-legal-clerc-1k-verbose | **0.5051** | 0.5952 | 0.0193 | PASS (moderate) | **0.75** | 0.0 |
+| en-legal-clerc-1k-short-natural | **0.4685** | — | — | PASS (hard) | — | — |
+| en-legal-clerc-10k-verbose | **0.3238** | 0.4165 | 0.0000 | PASS (hard) | — | — |
+| de-miracl-1k-verbose | 0.1849 | 0.1890 | 0.0000 | **FAIL** (below band) | 0.35 | 0.0 |
+| de-miracl-1k-short-natural | 0.2271 | — | — | **FAIL** | — | — |
+| de-miracl-10k-verbose | 0.0324 | — | — | **FAIL** (collapsed) | — | — |
+
+Run artifacts: `scripts/jseval/tmp/eval-results/20260715T160900_mixed_de-miracl-1k-verbose/` and
+`…T161458_mixed_en-legal-clerc-1k-verbose/` (staged_recall_accounting projections); fidelity blocks
+in each `datasets/mixed/<cell>/metadata.json`; full log in the session scratchpad (`chain-707.log`).
+
+**Reading (critical-analysis pass):**
+1. **The EN-legal member is policy-ready as designed.** In-band at both sizes and both strata, leak
+   0.0, union recall 0.75, and the U0 mechanism is visible in the raw legs: lexical ≈0.02 vs hybrid
+   0.51 at 1k — grep-hostile, retrieval-viable, on the paying-ICP document shape. The size trend
+   (0.51 → 0.32, still in-band) is requirements (c)+(f) working: difficulty grows with scale without
+   going dark.
+2. **The DE member fails retrieval-in-band (requirement b) and collapses at 10k.** Honest-constraint
+   #2 firing as predicted. First hypothesis (chain length) tested and largely REFUTED — see the
+   chain-2 fold below.
+3. Union-recall/leak were measured on the two verbose 1k cells only (chain scope); completed by
+   chain-2 below.
+4. Cohort hygiene: de-miracl-1k-verbose fidelity also ran once pre-restart on the identical cohort
+   (rc=0); superseded by this table — no pre-restart number is load-bearing.
+
+### Chain-2: full 8-cell matrix + DE v2 recalibration verdict (2026-07-16, overnight autonomous window)
+
+DE gold regenerated at hops=1 (v2, commit 8a562519 — chain-length parity with CLERC; also fixed the
+generator's post-624 unconditional triple-render drift, see that commit). All 5 remaining fidelity
+cells + all 7 remaining union/leak runs executed 03:22–06:45, every step rc=0. **Complete matrix
+(chain-1 + chain-2, one engine cohort ≡ origin/main post-#201):**
+
+| cell | hybrid nDCG@10 | verdict (default 0.3–0.85 band) | union recall | leak |
+|---|---|---|---|---|
+| en-legal-clerc-1k-verbose | **0.5051** | PASS (moderate) | 0.75 | 0.00 |
+| en-legal-clerc-1k-short-natural | **0.4685** | PASS (hard) | 0.75 | 0.15 |
+| en-legal-clerc-10k-verbose | **0.3238** | PASS (hard) | 0.55 | 0.10 |
+| en-legal-clerc-10k-short-natural | 0.2806 | band-edge FAIL | 0.50 | 0.10 |
+| de-miracl-1k-verbose (v2) | 0.2053 | FAIL | 0.40 | 0.00 |
+| de-miracl-1k-short-natural (v2) | 0.2660 | FAIL | 0.40 | 0.00 |
+| de-miracl-10k-verbose (v2) | 0.0431 | FAIL (collapsed) | 0.10 | 0.00 |
+| de-miracl-10k-short-natural (v2) | 0.0428 | FAIL (collapsed) | 0.10 | 0.00 |
+
+**DE recalibration verdict: hops parity helped marginally (+0.02–0.04 at 1k), but the structural
+residual is German semantic bridging itself** — DE v2 gold is pure zero-lexical-overlap synonym
+descriptors, and the engine bridges them at roughly half CLERC's strength at 1k and collapses at
+10k (union recall 0.40 → 0.10). The pre-registered DE prediction (grep collapses in German) is
+CONFIRMED — lexical nDCG 0.0 in every DE cell — but the engine's own DE semantic leg cannot carry
+an in-band 10⁴ measurement in this regime. Founder options (decision sheet item):
+- **(a) recommended:** ratify the CLERC 4-cell matrix as the U0 measuring stick now (with the
+  10k-short-natural floor set at its measured band-edge reality); keep DE as a secondary 1k-only
+  stratum with lower ratified floors and stratum-scoped claims (it still demonstrates the
+  German grep-collapse); register the German 10k semantic collapse as an ENGINE finding routed to
+  the encoder-representation lane (708-successor), not a corpus defect.
+- (b) another DE gold iteration with partial lexical anchors — changes what DE measures (no longer
+  pure semantic bridging); not recommended without a design pass.
+- (c) drop DE from the claim matrix entirely — loses the multilingual story U0 wants.
+
+Notes: CLERC short-natural/10k cells carry leak 0.10–0.15 (stratum-dependent single-doc shortcut
+rate; the verbose-1k cell's 0.0 is not representative of all cells) — the `leak_floor.maximum`
+policy field should be set per-cell from these measured values, not assumed 0. All numbers remain
+PROPOSED floor candidates; thresholds are owner-set at ratification.
+
+### RATIFIED + FULLY CERTIFIED (2026-07-16, founder "I agree, go ahead")
+
+**The EN-legal member is `fully-certified`: 16/16 scientific gates green under the ACTIVE
+pre-run policy** (`scripts/jseval/707-corpus-certification-policy.v1.json`, CLERC four-cell matrix,
+ratified per §Chain-2 recommendation (a); DE deliberately absent — 1k-only secondary stratum, never
+claim-bearing until the encoder-lane finding resolves). Closed-book: **0.000 accuracy on all four
+cells** (haiku, 20 q/cell — fabricated gold is model-unguessable). Evidence chain: fresh union/leak
+runs with manifests binding the corpus signature; typed measurement artifacts; verdicts recomputed
+from policy, never artifact-supplied.
+
+Decisions ratified same session: **FW-008 = Float32** (current default; Int8 quality cost
+unmeasured — memo `scratchpad/memo-fw008.md`); **EnronQA → raw public-domain Enron text + our
+fabricated gold**, dropping the unlicensed QA annotations (design needs only real distractor text —
+memo `scratchpad/memo-enronqa.md`; member build is a future window).
+
+Getting to 16/16 surfaced and fixed three substrate defects (each root-caused, none papered):
+1. **Run manifests never bound the corpus signature** — `compute_manifest` read it from the env var
+   only; the computed-signature seam (623) fed the summary but not the manifest. Fixed (caller-
+   computed identity threaded in; env still wins as operator override; regression tests). The four
+   CLERC union/leak runs were re-executed on the fixed cohort so their manifests bind.
+2. **`fidelity.method` field collision**: both co-equal gates wrote `method` into the shared
+   fidelity block — whichever ran second clobbered the other's label (the D2 no-clobber merge only
+   guards None). certify's redundant stamp removed (its label already lives in
+   `closed_book_certification.method`); the four clobbered labels restored to the fidelity
+   constant (procedure label only; measured numbers untouched).
+3. **Leak-floor slack was under-calibrated for run noise**: 10k-verbose re-measured leak 0.20 vs
+   0.10 (2 queries of retrieval nondeterminism at n=20, 0.05 quantization). Pre-acceptance policy
+   revision, recorded here: leak max = max observed across runs + 0.10 (two query-quanta) →
+   1k-v 0.10, 1k-sn 0.25, 10k-v 0.30, 10k-sn 0.25. No claim had been accepted under the earlier
+   floors; nothing was grandfathered.
+
+**Remaining to U0:** the $3 adoption smoke (founder-gated; waits on 725's adoption work per
+standing note), then the powered run. The corpus side of the critical path is COMPLETE.

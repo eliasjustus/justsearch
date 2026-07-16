@@ -219,19 +219,22 @@ def _max_semantic_chains(lang="en"):
     return math.lcm(len(types), len(places), len(quals))
 
 
-def _gold_descriptor_reservations(n_chains, lang="en"):
-    """The (type_idx, place_idx, qual_idx) index-triples the gold chains in a `generate()` call
-    will occupy — mirrors `_sem_for`'s gold branch exactly. Used to EXCLUDE those combinations
-    from the distractor draw (tempdoc 624 T.1), so a distractor can never reproduce a gold
-    descriptor by construction rather than merely being caught after the fact by
-    `corpus_certify.descriptor_collision_report`."""
+def _gold_descriptor_reservations(n_chains, lang="en", *, use_qual=True):
+    """The descriptor index tuples the gold chains in a `generate()` call will occupy —
+    mirrors `_sem_for`'s gold branch exactly: (type_idx, place_idx, qual_idx) triples in
+    the scale regime, (type_idx, place_idx) pairs in the two-axis regime. Used to EXCLUDE
+    those combinations from the distractor draw (tempdoc 624 T.1), so a distractor can
+    never reproduce a gold descriptor by construction rather than merely being caught
+    after the fact by `corpus_certify.descriptor_collision_report`."""
     types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
     places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
+    if not use_qual:
+        return {(g % len(types), g % len(places)) for g in range(n_chains)}
     quals = _SEM_QUAL_DE if lang == "de" else _SEM_QUAL
     return {(g % len(types), g % len(places), g % len(quals)) for g in range(n_chains)}
 
 
-def _sem_for(idx, rng, *, gold, lang="en", exclude=None):
+def _sem_for(idx, rng, *, gold, lang="en", exclude=None, use_qual=True):
     """Build a (doc_noun, query_noun, doc_place, query_place, doc_qual, query_qual) tuple.
 
     Gold chains get a deterministic (type, place, qualifier) triple cycled by index. The full
@@ -249,6 +252,25 @@ def _sem_for(idx, rng, *, gold, lang="en", exclude=None):
     types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
     places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
     quals = _SEM_QUAL_DE if lang == "de" else _SEM_QUAL
+    if not use_qual:
+        # Two-axis regime (the v0.1.0 descriptor width that generated the committed
+        # 635-era gold every current 707 cell pins as fabricated inputs). Qual slots are
+        # None so the renders emit the two-axis strings. Unlike v0.1.0, distractors use
+        # the same T.1 exclusion discipline as the scale regime — a gold/distractor
+        # (type, place) collision is structurally impossible, not seed-luck (v0.1.0 rng
+        # parity had no remaining value: committed bytes are unreproducible anyway after
+        # the 664 interleaving fix + append-grown pools shifting the modulo map).
+        if gold:
+            ti, pi = idx % len(types), idx % len(places)
+        else:
+            reserved = exclude or set()
+            while True:
+                ti = rng.randrange(len(types))
+                pi = rng.randrange(len(places))
+                if (ti, pi) not in reserved:
+                    break
+        t, p = types[ti], places[pi]
+        return (t[0], t[1], p[0], p[1], None, None)
     if gold:
         ti, pi, qi = idx % len(types), idx % len(places), idx % len(quals)
     else:
@@ -318,23 +340,28 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None):
     `retrieval_hops = len(evidence_ids)` (edges + 1).
     """
     docs = []
+    # Descriptor-axis width: two-axis (qual slots None — the v0.1.0 regime the committed
+    # 635-era gold used) vs three-axis (tempdoc 624 T.1 scale regime). dq/qq are the
+    # doc-side/query-side qualifier suffixes; empty in the two-axis regime.
+    dq = f", {sem[4]}" if sem and sem[4] is not None else ""
+    qq = f", {sem[5]}" if sem and sem[5] is not None else ""
     for i in range(len(ents) - 1):
         rel = rels[i % len(rels)]
         if lang == "de":
             if sem and i == 0:
                 # head doc: German descriptor (sem[0]/sem[2]/sem[4]); the query references it
                 # by German SYNONYMS (sem[1]/sem[3]/sem[5]) → grep fails, multilingual dense bridges.
-                body = (f"Standort: {sem[0]}, {sem[2]}, {sem[4]}. "
+                body = (f"Standort: {sem[0]}, {sem[2]}{dq}. "
                         f"Das Objekt {ents[i]} ist mit {ents[i+1]} verknüpft. ")
-                title = f"Standort {sem[0]}, {sem[2]}, {sem[4]}"
+                title = f"Standort {sem[0]}, {sem[2]}{dq}"
             else:
                 body = f"Das Objekt {ents[i]} ist mit {ents[i+1]} verknüpft. "
                 title = f"Über {ents[i]}"
         elif sem and i == 0:
-            # head doc: surface descriptor (doc_noun/doc_place/doc_qual) + name + link
-            body = (f"The {sem[0]} in the {sem[2]}, {sem[4]}, designated {ents[i]}, "
+            # head doc: surface descriptor (doc_noun/doc_place[/doc_qual]) + name + link
+            body = (f"The {sem[0]} in the {sem[2]}{dq}, designated {ents[i]}, "
                     f"{rel[1]} {ents[i+1]}. ")
-            title = f"The {sem[0]} in the {sem[2]}, {sem[4]}"
+            title = f"The {sem[0]} in the {sem[2]}{dq}"
         else:
             body = f"The {ents[i]} {rel[1]} {ents[i+1]}. "
             title = f"The {ents[i]}"
@@ -344,8 +371,8 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None):
         docs.append((last.lower(), f"Über {last}",
                      _pad(f"{last} ist mit dem Wert {attr} verbunden. ", target_words)))
         if sem:
-            # reference the head by its German synonym descriptor (sem[1]/sem[3]/sem[5]), NOT its name
-            q = (f"Folgt man den Verknüpfungen ausgehend vom Standort {sem[1]}, {sem[3]}, {sem[5]}, "
+            # reference the head by its German synonym descriptor (sem[1]/sem[3][/sem[5]]), NOT its name
+            q = (f"Folgt man den Verknüpfungen ausgehend vom Standort {sem[1]}, {sem[3]}{qq}, "
                  f"mit welchem Wert ist die letzte Entität verbunden?")
         else:
             q = (f"Folgt man den Verknüpfungen ausgehend von {ents[0]}, "
@@ -353,7 +380,7 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None):
     else:
         docs.append((last.lower(), f"The {last}", _pad(f"{last} is associated with {attr}. ", target_words)))
         # head reference: SYNONYM descriptor (semantic) or the verbatim name (lexical)
-        head_ref = f"the {sem[1]} in the {sem[3]}, {sem[5]}" if sem else ents[0]
+        head_ref = f"the {sem[1]} in the {sem[3]}{qq}" if sem else ents[0]
         phrase = head_ref
         for i in range(len(ents) - 1):
             phrase = f"{rels[i % len(rels)][2]} {phrase}"
@@ -381,13 +408,15 @@ def _render_code(ents, attr, target_words, idx, sem=None):
     `retrieval_hops = len(evidence_ids)` (edges + 1).
     """
     docs = []
+    dq = f", {sem[4]}" if sem and sem[4] is not None else ""
+    qq = f", {sem[5]}" if sem and sem[5] is not None else ""
     for i in range(len(ents) - 1):
         if sem and i == 0:
             # head doc: descriptor in the TITLE + a module docstring (the high-signal fields
             # dense embeds), mirroring the prose member — sem[0]/sem[2]/sem[4] (doc side) so the
             # query's sem[1]/sem[3]/sem[5] synonyms stay zero-overlap (grep-defeating).
-            title = f"the {sem[0]} in the {sem[2]}, {sem[4]}"
-            body = (f'"""This module concerns the {sem[0]} in the {sem[2]}, {sem[4]}."""\n'
+            title = f"the {sem[0]} in the {sem[2]}{dq}"
+            body = (f'"""This module concerns the {sem[0]} in the {sem[2]}{dq}."""\n'
                     f"def {ents[i].lower()}():\n    return {ents[i+1].lower()}()\n\n"
                     + "# " + _FILLER.replace(". ", ".\n# "))
         else:
@@ -400,7 +429,7 @@ def _render_code(ents, attr, target_words, idx, sem=None):
     docs.append((last.lower(), f"{last.lower()}.py", _pad(body, target_words)))
     if sem:
         q = (f"What value is ultimately returned by the routine for the "
-             f"{sem[1]} in the {sem[3]}, {sem[5]}?")
+             f"{sem[1]} in the {sem[3]}{qq}?")
     else:
         q = f"What value does the function {ents[0].lower()}() ultimately return when called?"
     # question_type counts edges (N-1 for an N-entity chain); behavioral retrieval hops =
@@ -424,13 +453,15 @@ def _render_tabular(ents, attr, target_words, idx, sem=None):
     `retrieval_hops = len(evidence_ids)` (edges + 1).
     """
     docs = []
+    dq = f", {sem[4]}" if sem and sem[4] is not None else ""
+    qq = f", {sem[5]}" if sem and sem[5] is not None else ""
     for i in range(len(ents) - 1):
         if sem and i == 0:
             # head table: descriptor in the TITLE + a leading caption (high-signal), mirroring
             # the prose member — doc-side sem[0]/sem[2]/sem[4] keeps the query's
             # sem[1]/sem[3]/sem[5] zero-overlap.
-            title = f"the {sem[0]} in the {sem[2]}, {sem[4]}"
-            caption = f"Table for the {sem[0]} in the {sem[2]}, {sem[4]}.\n"
+            title = f"the {sem[0]} in the {sem[2]}{dq}"
+            caption = f"Table for the {sem[0]} in the {sem[2]}{dq}.\n"
         else:
             title = f"table_{ents[i].lower()}"
             caption = ""
@@ -440,7 +471,7 @@ def _render_tabular(ents, attr, target_words, idx, sem=None):
     body = (f"| entity | attribute |\n|---|---|\n| {last} | {attr} |\n\n" + _FILLER)
     docs.append((last.lower(), f"table_{last.lower()}", _pad(body, target_words)))
     if sem:
-        q = (f"In the records for the {sem[1]} in the {sem[3]}, {sem[5]}, following the links, "
+        q = (f"In the records for the {sem[1]} in the {sem[3]}{qq}, following the links, "
              f"what attribute is recorded for the final entity?")
     else:
         q = f"Following the links starting from {ents[0]}, what attribute is recorded for the final entity?"
@@ -649,15 +680,28 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     # JustSearch's retrieval beats a grep-agent → a real ceiling instead of a trivial nDCG 1.0).
     sem_active = bool(semantic)
     sem_places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
+    sem_types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
     if sem_active:
         # Cap at the (type, place, qualifier) triple-injectivity period, not the place-pool size:
         # the query disambiguates a gold head by the full synonym triple, so uniqueness holds up to
         # lcm(T, P, Q) chains (tempdoc 624 scale-corpus; see `_max_semantic_chains`).
         n_chains = min(n_chains, _max_semantic_chains(lang))
+    # Axis-conditional descriptor width (2026-07-16): the qualifier axis exists for
+    # triple-injectivity at SCALE (tempdoc 624 T.1). Below the pair regime it only lengthens
+    # queries — structurally breaking the German short-natural 5-12-word cap — and changes
+    # retrieval difficulty vs every committed 635-era cell (the 707 fabricated inputs were
+    # generated pre-624-lift with two-axis descriptors). Within min(T, P) chains the
+    # index-cycled (type, place) pair is already unique, so the qualifier adds nothing.
+    use_qual = sem_active and n_chains > min(len(sem_types), len(sem_places))
     # tempdoc 624 T.1: the exact (type, place, qualifier) index-triples the gold chains below
     # will occupy, so the distractor draw can EXCLUDE them — a gold/distractor descriptor
     # collision becomes structurally impossible rather than merely detected after the fact.
-    gold_reserved = _gold_descriptor_reservations(n_chains, lang) if sem_active else None
+    # Both regimes exclude gold reservations from the distractor draw (pairs in the
+    # two-axis regime, triples in the scale regime) — collisions are structurally
+    # impossible; the descriptor-collision certification gate is the belt-and-braces check.
+    gold_reserved = (
+        _gold_descriptor_reservations(n_chains, lang, use_qual=use_qual) if sem_active else None
+    )
 
     def render(e, a, sem):
         # `scan` reuses prose's text generation verbatim -- the axis only changes how a
@@ -675,7 +719,7 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     all_docs, queries = [], []
     for g in range(n_chains):
         ents, attr = _chain(rng, hops, counter)
-        sem = _sem_for(g, rng, gold=True, lang=lang) if sem_active else None
+        sem = _sem_for(g, rng, gold=True, lang=lang, use_qual=use_qual) if sem_active else None
         docs, q = render(ents, attr, sem)
         for did, title, text in docs:
             all_docs.append({"_id": did, "title": title, "text": text})
@@ -689,7 +733,8 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     made = 0
     while made < n_distract:
         ents, attr = _chain(rng, hops, counter)
-        sem = _sem_for(0, rng, gold=False, lang=lang, exclude=gold_reserved) if sem_active else None
+        sem = _sem_for(0, rng, gold=False, lang=lang, exclude=gold_reserved,
+                       use_qual=use_qual) if sem_active else None
         docs, _q = render(ents, attr, sem)
         for did, title, text in docs:
             if made >= n_distract:

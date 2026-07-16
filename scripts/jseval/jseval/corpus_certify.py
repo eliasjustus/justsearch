@@ -1003,7 +1003,13 @@ def certify_corpus(
         "fidelity": {
             "memory_independence": round(retrieval_dependence, 4),
             "retrieval_difficulty": None,  # populated post-retrieval-run from nDCG@10
-            "method": "closed-book",
+            # NO "method" key here: the shared fidelity block's method belongs to the
+            # retrieval gate ("retrieval-nDCG + single-doc-shortcut-probe"); certify's own
+            # label already lives in closed_book_certification.method. Writing it here made
+            # whichever co-equal gate ran SECOND clobber the other's label — the D2
+            # no-clobber merge only guards None values. Found 2026-07-16 when the 719
+            # boundary rejected retrieval_calibration evidence whose method read
+            # "closed-book" (certify had run after fidelity on the 707 cells).
         },
     }
 

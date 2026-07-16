@@ -233,6 +233,7 @@ def compute_manifest(
     workflow_run_id: str | None = None,
     non_determinism_envelope: dict | None = None,
     envelope_data_dir: Path | None = None,
+    corpus_identity: dict | None = None,
 ) -> dict:
     """Build the run manifest document.
 
@@ -284,10 +285,19 @@ def compute_manifest(
         # run and destabilised the cohort hash pre-Phase-2.0.
         "commit_metadata": commit_metadata,
 
-        # Identity inputs captured outside state endpoints.
+        # Identity inputs. The env vars remain the operator override (they win);
+        # the caller-computed identity (run._get_corpus_identity — the same
+        # content-signature seam the summary and release pin already use) fills
+        # the seam when they are unset. Pre-fix this was env-only, so every
+        # production manifest carried signature:null and the 719 scientific-
+        # evidence boundary (which binds manifest.corpus_identity.signature to
+        # the certified corpus) correctly rejected all backend-gate evidence
+        # (2026-07-16, 707 certification run).
         "corpus_identity": {
-            "profile_id": os.environ.get("JUSTSEARCH_CORPUS_PROFILE_ID"),
-            "signature": os.environ.get("JUSTSEARCH_CORPUS_SIGNATURE"),
+            "profile_id": os.environ.get("JUSTSEARCH_CORPUS_PROFILE_ID")
+            or (corpus_identity or {}).get("profile_id"),
+            "signature": os.environ.get("JUSTSEARCH_CORPUS_SIGNATURE")
+            or (corpus_identity or {}).get("signature"),
         },
 
         # Model fingerprints — already captured from /api/status by

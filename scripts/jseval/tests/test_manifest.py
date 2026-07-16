@@ -601,3 +601,37 @@ class TestWriteManifest:
         # sort_keys=True on write means reading and re-hashing the canonical
         # form gives the same manifest_hash.
         assert reloaded["dataset"] == "scifact"
+
+
+class TestCorpusIdentitySeam:
+    """719 boundary fix (2026-07-16): compute_manifest must carry the caller-computed
+    corpus identity when the operator env override is unset — pre-fix the manifest was
+    env-only, every production manifest had signature:null, and the scientific-evidence
+    boundary (which binds manifest.corpus_identity.signature to the certified corpus)
+    correctly rejected all backend-gate evidence."""
+
+    def _manifest(self, monkeypatch, identity):
+        monkeypatch.delenv("JUSTSEARCH_CORPUS_SIGNATURE", raising=False)
+        monkeypatch.delenv("JUSTSEARCH_CORPUS_PROFILE_ID", raising=False)
+        from types import SimpleNamespace
+        return compute_manifest(
+            dataset_name="mixed/x", meta=SimpleNamespace(doc_count=1, query_count=1),
+            env_fingerprint=None, models_snapshot=None, eval_protocol={},
+            state_snapshots={}, corpus_identity=identity)
+
+    def test_computed_identity_fills_seam(self, monkeypatch):
+        m = self._manifest(monkeypatch, {"profile_id": None, "signature": "a" * 64})
+        assert m["corpus_identity"]["signature"] == "a" * 64
+
+    def test_env_override_wins(self, monkeypatch):
+        monkeypatch.setenv("JUSTSEARCH_CORPUS_SIGNATURE", "e" * 64)
+        from types import SimpleNamespace
+        m = compute_manifest(
+            dataset_name="mixed/x", meta=SimpleNamespace(doc_count=1, query_count=1),
+            env_fingerprint=None, models_snapshot=None, eval_protocol={},
+            state_snapshots={}, corpus_identity={"profile_id": None, "signature": "a" * 64})
+        assert m["corpus_identity"]["signature"] == "e" * 64
+
+    def test_absent_identity_stays_null(self, monkeypatch):
+        m = self._manifest(monkeypatch, None)
+        assert m["corpus_identity"]["signature"] is None

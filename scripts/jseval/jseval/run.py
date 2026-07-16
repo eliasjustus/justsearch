@@ -355,6 +355,7 @@ def execute_run(
             state_snapshots=state_snapshots,
             workflow_run_id=os.environ.get("JUSTSEARCH_WORKFLOW_RUN_ID"),
             envelope_data_dir=envelope_data_dir,
+            corpus_identity=_get_corpus_identity(dataset_name, meta, qrels, base_dir),
         )
     summary = _build_summary(dataset_name, modes, mode_results, meta, qrels,
                              ingest_summary, pipeline_summary, models_snapshot,

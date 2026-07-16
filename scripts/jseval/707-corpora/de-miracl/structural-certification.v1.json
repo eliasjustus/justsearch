@@ -6,8 +6,8 @@
     "1000": {
       "short-natural": {
         "dataset": "mixed/de-miracl-1k-short-natural",
-        "corpus_signature": "04a71497dbb15efd48bcf0f48bf09e376e2a4f4071705fea9bb82db70090a0ce",
-        "query_gold_sha256": "f0ed79852de9d16fd34f0f6925f9e593d0fe2a48a46fe05f026b4a4f8300deb2",
+        "corpus_signature": "21509e4a1304d46a6adac3ce8711f6866430a63aad0ec56ee6928c4a41bd0ddb",
+        "query_gold_sha256": "b4b3f6a79ec0019ffefea8b8f4ba16b31b983ebbd358b5ce8db9f48a0f55080a",
         "query_count": 20,
         "checks": {
           "size": true,
@@ -21,13 +21,13 @@
         "regeneration": {
           "passed": true,
           "method": "cross-process-regeneration-diff",
-          "digest": "40451af76ac2a9bb80374bc028cf0920e73fa35e27e2a72e7b425ba29f4eb5c0",
+          "digest": "1f50009774bcac2fb14c25d51a71f51c2217ff7c933e75658d84dfbe00a5f391",
           "reason": null
         },
         "commitment": {
           "passed": true,
-          "manifest_sha256": "f8ce2e441e10dd78a3ab0fd0dc736380f14d807ca3c5393fc1e0a1edf2ce8d45",
-          "recipe_sha256": "0a71e765139ed7cb7e3b2bcb4d01bec28ec985a2c9695e4418c4399abe42f5ef"
+          "manifest_sha256": "85384cfc376a458423fc37502b8e79cf388ecdca941ec20d673261e8c2a154b9",
+          "recipe_sha256": "3866308385a85b35154fa3ce34938fbee7acd61262b35ddc1eb34bb0e93866ed"
         },
         "descriptor_collision": {
           "n_groups": 3,
@@ -59,8 +59,8 @@
       },
       "verbose": {
         "dataset": "mixed/de-miracl-1k-verbose",
-        "corpus_signature": "04a71497dbb15efd48bcf0f48bf09e376e2a4f4071705fea9bb82db70090a0ce",
-        "query_gold_sha256": "59a9194ebdb79a7b6b5c2e8578106a9bca02ad9257ba902a27b68d246d001698",
+        "corpus_signature": "21509e4a1304d46a6adac3ce8711f6866430a63aad0ec56ee6928c4a41bd0ddb",
+        "query_gold_sha256": "c1aca847e03ecbcbaf9ef77a674ed761b3a76735118e88192545796c98e54eeb",
         "query_count": 20,
         "checks": {
           "size": true,
@@ -74,13 +74,13 @@
         "regeneration": {
           "passed": true,
           "method": "cross-process-regeneration-diff",
-          "digest": "3a1f3a1b16801e2cf9e713b83343142bb33054895a53d5d0488f64b3b7cd3bef",
+          "digest": "a8f7cdeab7ad5417983f8a635acbdc48531f1bc7b54f158b63568c0e30ddfd99",
           "reason": null
         },
         "commitment": {
           "passed": true,
-          "manifest_sha256": "a9581776f7f12e8510cc39e99dbf2f34eeeecab87be88fa71d2f23e9bf323d05",
-          "recipe_sha256": "bf8f16db36f40187c5cbdd2e745c09e43d15a6db3f6324b9c9fdd65af82f9231"
+          "manifest_sha256": "d142e0a7013f45e8936d43d7cd9ffacd896580ef7b6024eb53c83fba32600a4c",
+          "recipe_sha256": "ded1aa3e5818099fb8abf0d9518c591d90f30318b7c232fc1f4a28e91c3e3974"
         },
         "descriptor_collision": {
           "n_groups": 3,
@@ -114,8 +114,8 @@
     "10000": {
       "short-natural": {
         "dataset": "mixed/de-miracl-10k-short-natural",
-        "corpus_signature": "81bbdc4497e442fb2eb23bb310bc0cc2b4c770309a65d47048ac9ae410731b58",
-        "query_gold_sha256": "f0ed79852de9d16fd34f0f6925f9e593d0fe2a48a46fe05f026b4a4f8300deb2",
+        "corpus_signature": "d659133091a8accf20685dda185f805a942d9210c2865dee75c1f47dc38a0852",
+        "query_gold_sha256": "b4b3f6a79ec0019ffefea8b8f4ba16b31b983ebbd358b5ce8db9f48a0f55080a",
         "query_count": 20,
         "checks": {
           "size": true,
@@ -129,13 +129,13 @@
         "regeneration": {
           "passed": true,
           "method": "cross-process-regeneration-diff",
-          "digest": "99349d31f71201e4b6486a567e79d7c29181089cd4ca873823ebce63b84869cb",
+          "digest": "a133b3b18c76c84f1ddba58a36291d57a02357ba8992cbd54bb3f70e5f2ccc50",
           "reason": null
         },
         "commitment": {
           "passed": true,
-          "manifest_sha256": "af429c56d3299516b8aac32446840d25763ca6c444bd59036fec5c1f1986cf42",
-          "recipe_sha256": "8a2780c95960a90de018f581c5bdce7179d073ca089204ce0e168d551b261451"
+          "manifest_sha256": "247e2865bffca46cf5bc7a00d3450477212fe5f7277eedfe938f7cd903bf25ca",
+          "recipe_sha256": "05cce76c71d0de41b80978a0f2068cb23375407c96dd6d7c82e0fd9028c4878e"
         },
         "descriptor_collision": {
           "n_groups": 148,
@@ -167,8 +167,8 @@
       },
       "verbose": {
         "dataset": "mixed/de-miracl-10k-verbose",
-        "corpus_signature": "81bbdc4497e442fb2eb23bb310bc0cc2b4c770309a65d47048ac9ae410731b58",
-        "query_gold_sha256": "59a9194ebdb79a7b6b5c2e8578106a9bca02ad9257ba902a27b68d246d001698",
+        "corpus_signature": "d659133091a8accf20685dda185f805a942d9210c2865dee75c1f47dc38a0852",
+        "query_gold_sha256": "c1aca847e03ecbcbaf9ef77a674ed761b3a76735118e88192545796c98e54eeb",
         "query_count": 20,
         "checks": {
           "size": true,
@@ -182,13 +182,13 @@
         "regeneration": {
           "passed": true,
           "method": "cross-process-regeneration-diff",
-          "digest": "428c962fffcae2cf60bf02496e1741bcc5b7d0e4253fef35aca3c07b21e70b86",
+          "digest": "6882678e60e0d125cbab0fe21b18d7c82fea4b662141b60ade361fd3fc01fa55",
           "reason": null
         },
         "commitment": {
           "passed": true,
-          "manifest_sha256": "66009f62d99e2a291c35af4539e4e7734973b20dd818d9832eb844e0b53a7406",
-          "recipe_sha256": "7772baada92ef814d13c1e5d23adfa04db64586f29fcbcf76b50f2b0ac41e69b"
+          "manifest_sha256": "f1180f7566fe4566de3aabf2e036fcbe3c26564adfc7dfeaad77a0be4b0f55be",
+          "recipe_sha256": "778d30deae1d7a0c27ba59cf1f140ff18d78aa9d71ec592fab3d2c39ce233cce"
         },
         "descriptor_collision": {
           "n_groups": 148,
