@@ -453,13 +453,21 @@ It would have flagged the pre-fix 2.34× numbers instantly. Two consequences ado
   trend/gross-effect instrument only.
 - **Gross effects and structural shifts: readable.** Two falsifiable predictions are already
   live: (1) the 2026-07-15 delegation-policy change should visibly LOWER the orchestrator
-  token share below its 85.1% baseline in the next window — if it doesn't, the policy
-  isn't biting;
+  token share below its ~~85.1%~~ **84.0%** baseline in the next window — if it doesn't, the
+  policy isn't biting;
   (2) `costs.ndjson` should now accumulate a row per teardown — if it's still sparse in two
   weeks, the workflow-moment wiring failed and the Gen-4-graveyard risk is realized.
-- **Recommendation: GO for phases 2-6** under the gross-effect bar. The 85/15 orchestrator
-  split is the first actionable baseline datum — it quantifies exactly the delegation-economics
-  concern the founder raised on 2026-07-15 and gives phase-3 proposals a concrete target.
+- **Recommendation: GO for phases 2-6** under the gross-effect bar. The ~~85/15~~ **84/16**
+  orchestrator split is the first actionable baseline datum — it quantifies exactly the
+  delegation-economics concern the founder raised on 2026-07-15 and gives phase-3 proposals a
+  concrete target.
+
+> **The two figures struck through above were corrected 2026-07-16 (745).** They were computed by
+> a parser with 7 verified bugs, biased toward the orchestrator on the very axis prediction 1
+> tests. The *conclusions* are unchanged — the correction moved the split 0.4pp, far inside
+> finding 6's 2-2.7× weekly noise — which is why this verdict and the GO both stand. Retained
+> with the old numbers visible because that is the honest record: this section was argued from
+> them.
 
 ## Publication + live-verification record (2026-07-16, session f7580e17)
 
