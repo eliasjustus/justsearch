@@ -378,15 +378,13 @@ It would have flagged the pre-fix 2.34× numbers instantly. Two consequences ado
   dedups message ids ACROSS transcript files; ours dedups within-file only — the ~4% residual
   is plausibly resumed/continued sessions re-carrying history lines under a new session id.
   Root-causing that delta is an open Phase-1 data-quality item (direction: ours slightly high).
-- **Phase-3 proposal (adopt-vs-build, pre-registered):** swap `transcript-cost.mjs`'s parsing
-  for ccusage-as-engine (consume its per-session JSON, keep our merge join / scope filter /
-  orchestrator-worker split / teardown wiring on top) IF it exposes per-session + subagent
-  granularity and pinnable offline pricing. Falsifier for keeping our parser: if a second
-  parsing-class bug is found in our lib within the program's lifetime, adopt ccusage's engine
-  without further debate — we already paid one 2.34× bug that a mature OSS engine had solved.
-  Lesson recorded: the research pass surfaced ccusage BEFORE implementation; we built the
-  parsing layer anyway because the join was novel — the join judgment was right, the
-  parsing-layer judgment cost us the dedup bug (explore-before-implementing, partially missed).
+- **Adopt-vs-build proposal → MOVED to tempdoc 745** (founder opened the broader OSS-first
+  observability survey, 2026-07-16; single-home rule). 745 now owns the ccusage-as-engine
+  swap, its falsifier, and the 4.2%-delta root-cause item. The interim cross-check practice
+  above stays in force. Lesson stays recorded here: the research pass surfaced ccusage BEFORE
+  implementation; we built the parsing layer anyway because the join was novel — the join
+  judgment was right, the parsing-layer judgment cost us the dedup bug
+  (explore-before-implementing, partially missed).
 
 ### Readability verdict (go/no-go input for the founder)
 
