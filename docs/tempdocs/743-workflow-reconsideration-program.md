@@ -291,6 +291,96 @@ reinterpreted accordingly.
   avoid is becoming Gen-4 of the measurement graveyard — hence finding 2's design law is a
   Phase-1 acceptance criterion: every artifact must name the workflow moment that re-runs it.
 
+## Phase 1 — baseline (2026-07-16, session f7580e17)
+
+### Instrument shipped
+
+- `scripts/agent-analytics/lib/transcript-cost.mjs` — pricing table (current: fable-5/opus-4.x/
+  sonnet-5/haiku-4.5, cache tiers) + transcript token parsing, extracted from `cost-session.mjs`
+  (which now imports it; behavior-identical, CLI verified).
+- `scripts/agent-analytics/baseline-economics.mjs` — transcript-first session discovery over
+  `~/.claude/projects/*justsearch*` (fixes the worktree blind spot: the events-store path found
+  0 worktree-homed sessions), per-session cost incl. `subagents/agent-*.jsonl`, orchestrator/
+  worker split, merge join against `session-merges.ndjson`, conventional-commit classing,
+  weekly rollup, JSON+MD report with the three caveats baked into the header. Unknown models
+  are bucketed loudly, never silently priced (only `<synthetic>` 0-token turns appeared).
+- **Workflow-moment wiring (the survival requirement):** `record-merge.mjs` now best-effort
+  upserts the session's cost record into `costs.ndjson` at worktree teardown — the same moment
+  that kept `session-merges.ndjson` alive. Unit-tested; live firing pending the next real
+  teardown (this worktree's own teardown is the first test).
+- OTel reservoir — **two stacked root causes, both fixed and live-verified**:
+  1. `otlp-sink-ensure.mjs` passed no `--out` → CWD-relative → worktree-ephemeral. Fixed
+     (absolute path anchored via `resolveMainRepoRoot`); regression test asserts the resolved
+     path can never contain `.claude/worktrees`.
+  2. `otlp-sink.py` read bodies via `Content-Length` only; Claude Code's bundled OTel JS
+     exporter switched to `Transfer-Encoding: chunked` between client 2.1.190 → 2.1.211, so
+     the sink parsed `b""` per request — 0 records, 0 errors, **100% telemetry loss since
+     2026-06-25** with no symptom (`ParseFromString(b"")` succeeds). Fixed (dechunking +
+     `Content-Length` fallback); a 0-record POST now self-announces to `errors.log`
+     (rate-limited per route) so this failure class can't be invisible again. 8 Python tests
+     incl. a raw-socket chunked-protobuf regression proof.
+     Live-verified: with 5 sessions emitting, `tmp/agent-telemetry/otlp/` grew continuously
+     (331 log / 140 trace / 21 metric lines in ~2 min, real `2.1.211` payloads).
+  - **Recovered history:** `F:\JustSearch\tmp\agent-telemetry\otlp\` holds ~81MB of intact
+    capture (2026-06-20→25, client 2.1.187–190) — the pre-breakage era; left in place.
+- Tests: 67 node assertions + 6 hook checks + 8 Python sink tests, all green.
+
+### Independent refute-first review (reviewer ≠ implementers) — findings & disposition
+
+The adversarial review of the Phase-1 diff found **1 CONFIRMED-BUG + 3 RISKs**, all fixed and
+regression-tested before this baseline was finalized:
+
+1. **CONFIRMED-BUG (ship-blocker): 2.34× token/cost over-count.** Multi-block assistant turns
+   persist as N JSONL lines sharing one `message.id`, each repeating the identical `usage`
+   snapshot; the parser summed every line (a latent `cost-session.mjs` bug propagated into
+   the new lib). Fixed by `message.id` dedup. **Every pre-review number was ~2.3-2.4× too
+   high**; the first published table below is post-fix. This is a live demonstration of the
+   scaffold under re-evaluation paying for itself: the inflated numbers had already survived
+   the implementer's tests AND the orchestrator's magnitude spot-check.
+2. RISK: merges with no discoverable transcript silently dropped → now reported three-way
+   (attributed / excluded-by-scope / unattributable, with ids) + caveat.
+3. RISK: `costs.ndjson` upsert was a non-atomic full-file rewrite → now `atomicWriteFileSync`
+   (documented residual: concurrent-upsert last-writer-wins, self-healing).
+4. RISK: model-less turns escaped the unknown-model surface → now bucketed under
+   `(missing-model)`, never priced.
+
+### Baseline numbers (window 2026-06-18 → 2026-07-16; API-equivalent USD)
+
+Costs are **API-equivalent dollars** (pricing-weighted tokens — the D-1 resource), not
+subscription spend. Scope: 226 developer sessions (31 excluded by the 727 scope filter).
+
+| Metric | Value (post-review-fix; pre-fix values were ~2.34× higher) |
+|---|---|
+| Total cost (attributed sessions) | **$21,410** |
+| Merge rows in window | **216** = 204 attributed + 5 excluded-by-scope + 7 unattributable (no transcript) |
+| Cost/merge (attributed) | $104.95 — still left-edge-inflated (W25/W26 cost with no merge store) |
+| Cost/merge, complete weeks (W27+W28) | **$63.07** ($11,290 / 179 merges) |
+| Orchestrator / worker token split | **85.1% / 14.9%** (25.92B / 4.53B tokens) |
+| Zero-merge sessions | 182 of 226 (left-edge artifact + genuine research/consult/aborted sessions) |
+| Weekly cost/merge | W27 $88 · W28 $43 · W29(partial) $117 |
+
+Interrogation notes: reviewer-predicted corrected magnitudes ($≈22K total, ≈$108/merge,
+worker share >13.8%) all reproduced by the orchestrator's own rerun; weekly cost/merge
+varies ~2-2.7×, confirming finding 6's noise prediction. A cautionary note now attached to
+this table's history: the pre-fix numbers had survived both the implementer's tests and an
+orchestrator magnitude spot-check — plausibility is not correctness (see review record
+above).
+
+### Readability verdict (go/no-go input for the founder)
+
+- **Fine effects: unreadable**, as predicted — week-to-week cost/merge noise is 2-2.7×, so a
+  10-30% workflow improvement will never be visible here. Confirmed: the dashboard is a
+  trend/gross-effect instrument only.
+- **Gross effects and structural shifts: readable.** Two falsifiable predictions are already
+  live: (1) the 2026-07-15 delegation-policy change should visibly LOWER the 86.2%
+  orchestrator token share (85.1% baseline) in the next window — if it doesn't, the policy
+  isn't biting;
+  (2) `costs.ndjson` should now accumulate a row per teardown — if it's still sparse in two
+  weeks, the workflow-moment wiring failed and the Gen-4-graveyard risk is realized.
+- **Recommendation: GO for phases 2-6** under the gross-effect bar. The 85/15 orchestrator
+  split is the first actionable baseline datum — it quantifies exactly the delegation-economics
+  concern the founder raised on 2026-07-15 and gives phase-3 proposals a concrete target.
+
 ## Non-goals
 
 - Re-running 727's tactical fix loop (that instrument keeps running independently).
