@@ -581,6 +581,37 @@ condition — not just "seems better").
    design). Worth citing 2606.05976 in slice-execution.md's `independent-reviewer-required`
    rationale.
 
+### R4 — platform-obsolescence audit + runtime probe (landed 2026-07-16)
+
+Verdicts per workaround (doc-cited; full detail in the R4 agent report):
+
+| Workaround | Verdict |
+|---|---|
+| CI-wait plumbing (`gh --watch` background) | PARTIAL-OBSOLETE — Monitor tool is the documented pattern (+ WebSocket source v2.1.195+; Channels preview for push CI webhooks) |
+| ScheduleWakeup fallback ticks | KEEP for now — docs silent on Monitor's silent-death mode; several adjacent reliability fixes shipped; worth filing the specific bug |
+| Transcript cost parsing | KEEP — `/usage` now shows per-session skill/subagent/MCP percentages (interactive), but nothing covers cross-session/historical aggregation; Phase-1 instrument stays justified |
+| compact-save/restore hooks | KEEP — our pattern IS the documented native mechanism (check PreCompact half is wired) |
+| Worktree scripts | PARTIAL — junction-unlink logic native since v2.1.205 (delete ours); `.worktreeinclude` can replace simple copy-seeding; template-seeding + holder-cleanup still ours |
+| bash-guard | KEEP — native deny rules cannot express main-checkout-vs-worktree conditionality; optional defense-in-depth deny rules on top |
+| Founder coordination | PARTIAL — native Agent Teams exist (experimental: shared task list, teammate SendMessage, hooks) but all teammates inherit the lead's permission mode → not a safe drop-in; scoped experiment only |
+
+**Runtime probe result (highest-value finding, overturns a pinned belief):** a vanilla
+general-purpose subagent NOW receives the **full CLAUDE.md + `.claude/rules` content
+natively** (probe found all 6 markers incl. slice-execution.md text; docs: sub-agents.md,
+"every level of the memory hierarchy… Explore and Plan skip this").
+`agent-lessons.md`'s `subagents-no-inheritance` rule (tier-register row 27) is **STALE** —
+and the `subagent-guide` hook still injects a brief *claiming* CLAUDE.md is not loaded,
+i.e. every spawn pays double context AND receives a false statement (which R4's own agent
+trusted over introspection — live demonstration of the harm). → Phase-3 candidate (clear,
+cheap, evidence-complete): update agent-lessons row 27 + slim subagent-guide to what's
+genuinely not inherited (risk profile; task-specific brief stays mandatory for *task*
+context). Caveat to encode: Explore/Plan/fork agents still skip inheritance.
+
+Release-note items to check separately: `Read` deny now blocks `Edit` (v2.1.208) but NOT
+`Write` — audit our deny rules for that gap; worktree name-reuse now resets to base under
+conditions (v2.1.208) — touches EnterWorktree re-entry flows; native PowerShell tool
+rollout; subagents cap at Opus and inherit extended-thinking (v2.1.198).
+
 ## Non-goals
 
 - Re-running 727's tactical fix loop (that instrument keeps running independently).
