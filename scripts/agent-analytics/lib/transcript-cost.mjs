@@ -158,6 +158,22 @@ function splitCacheWrite(usage) {
 }
 
 /**
+ * True when a snapshot reports no usage at all — a re-carried placeholder rather
+ * than a measurement (see the displacement rule in parseTranscriptTokens).
+ *
+ * It reads cache writes through `splitCacheWrite`, deliberately: reading the flat
+ * `cache_creation_input_tokens` directly would call a tiered-only snapshot
+ * "all-zero" and let a true placeholder displace it. The two functions must agree
+ * on where cache writes live, or the guard protects a different field than the
+ * pricing does.
+ */
+function usageIsAllZero(usage) {
+  const { w5, w1 } = splitCacheWrite(usage);
+  return !(usage.input_tokens || 0) && !(usage.output_tokens || 0) &&
+    !(usage.cache_read_input_tokens || 0) && !w5 && !w1;
+}
+
+/**
  * Dedup key for a usage-bearing assistant line. Claude Code persists a single
  * turn as N JSONL lines (one per content block) and re-carries prior turns
  * verbatim into a RESUMED session's file, so the same turn appears many times
@@ -237,9 +253,6 @@ export function parseTranscriptTokens(transcriptPath, { seen } = {}) {
     // Do not delete this rule to chase the residual (tempdoc 745 F-11).
     const slots = [];
     const slotByKey = new Map();
-    const usageIsAllZero = (u) =>
-      !(u.input_tokens || 0) && !(u.output_tokens || 0) &&
-      !(u.cache_read_input_tokens || 0) && !(u.cache_creation_input_tokens || 0);
 
     const content = fs.readFileSync(transcriptPath, 'utf8');
     for (const line of content.split('\n')) {
@@ -279,7 +292,15 @@ export function parseTranscriptTokens(transcriptPath, { seen } = {}) {
       }
     }
 
-    for (const key of slotByKey.keys()) seen?.set(key, true);
+    // Claim a key in the cross-file scope ONLY if what we recorded for it is real.
+    // A key whose only snapshot here is an all-zero placeholder must stay UNCLAIMED,
+    // or it suppresses the real turn in a later file — the same displacement the
+    // in-loop guard prevents within a file, one scope up. Marking unconditionally
+    // made the result depend on file-visit order: a zero-only copy in file B
+    // silently deleted the real turn in file C (804,035 cache_read on the repro).
+    for (const [key, slot] of slotByKey.entries()) {
+      if (!usageIsAllZero(slot.usage)) seen?.set(key, true);
+    }
 
     for (const slot of slots) accumulate(result, slot);
   } catch (err) {

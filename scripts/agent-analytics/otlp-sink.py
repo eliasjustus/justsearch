@@ -167,7 +167,11 @@ def _reserve_archive_path(out_dir, base, ts):
     candidate = os.path.join(out_dir, f"{base}.{ts}.ndjson")
     n = 1
     while os.path.exists(candidate):
-        candidate = os.path.join(out_dir, f"{base}.{ts}_{n:02d}.ndjson")
+        # 3 digits, not 2: the counter is read back by a LEXICAL sort, and `_100`
+        # sorts before `_99`. Unreachable in practice (it needs 100 rotations of a
+        # 20 MB file inside one second) but the padding is free and the ordering
+        # contract should not depend on that being true.
+        candidate = os.path.join(out_dir, f"{base}.{ts}_{n:03d}.ndjson")
         n += 1
     return candidate
 

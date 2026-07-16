@@ -24,7 +24,7 @@ import {
   formatMarkdown,
   DEFAULT_SINCE,
 } from './baseline-economics.mjs';
-import { parseTranscriptTokens, findPricing, isKnownModel, MISSING_MODEL_KEY } from './lib/transcript-cost.mjs';
+import { parseTranscriptTokens, parseSessionTokens, findPricing, isKnownModel, MISSING_MODEL_KEY } from './lib/transcript-cost.mjs';
 
 let passed = 0;
 const failures = [];
@@ -186,6 +186,43 @@ async function main() {
     assert.equal(r.output_tokens, 760);
     assert.equal(r.cache_write_tokens, 290);
     assert.equal(r.input_tokens, 2);
+  });
+
+  // --- 745 F-11 review ship-blocker: the guard must hold ACROSS files, not just within one ---
+  // Found by the independent reviewer. `seen` was marked for every key, including
+  // zero-only ones, so a placeholder in file B claimed the key and suppressed the
+  // REAL turn in file C — and the result depended on file-visit order. The two
+  // single-file F-11 tests above cannot reach this; order-independence is the
+  // property that pins it.
+  run('a zero-only copy in one file does not suppress the real turn in another (F-11 cross-file)', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'xfile-zero-'));
+    const real = { input_tokens: 2, output_tokens: 760, cache_creation_input_tokens: 290, cache_read_input_tokens: 804035 };
+    const zero = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+    const mk = (usage) => assistantEntry({
+      id: 'msg_xfile', requestId: 'req_xfile',
+      model: 'claude-haiku-4-5', timestamp: '2026-07-10T00:00:00.000Z', usage,
+    });
+    const zeroFile = writeTranscript(dir, 'sess-zero-only', [mk(zero)]);
+    const realFile = writeTranscript(dir, 'sess-real', [mk(real)]);
+
+    // parseSessionTokens returns { main, subagents: { totals } } — sum both sides.
+    const sum = (r) => ({
+      input: r.main.input_tokens + r.subagents.totals.input_tokens,
+      output: r.main.output_tokens + r.subagents.totals.output_tokens,
+      cache_read: r.main.cache_read_tokens + r.subagents.totals.cache_read_tokens,
+      cache_write: r.main.cache_write_tokens + r.subagents.totals.cache_write_tokens,
+    });
+
+    // Same corpus, both visit orders — the totals must not depend on order.
+    const zeroFirst = sum(parseSessionTokens({ mainPath: zeroFile, subagentPaths: [realFile], seen: new Map() }));
+    const realFirst = sum(parseSessionTokens({ mainPath: realFile, subagentPaths: [zeroFile], seen: new Map() }));
+
+    for (const [label, r] of [['zero-first', zeroFirst], ['real-first', realFirst]]) {
+      assert.equal(r.cache_read, 804035, `${label}: real usage must survive`);
+      assert.equal(r.output, 760, `${label}: output must survive`);
+      assert.equal(r.input, 2, `${label}: input must survive`);
+    }
+    assert.deepEqual(zeroFirst, realFirst, 'totals must be order-independent');
   });
 
   // The rule is directional: a REAL snapshot must still displace an earlier zero,

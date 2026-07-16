@@ -659,6 +659,58 @@ Then the gate refuted my own explanation of F-11. Both times the expected result
 dangerous one. The agent also correctly **shipped the spec as written and escalated** rather than
 silently "improving" it (`tempdoc-is-your-contract`).
 
+### F-12. Independent refute-first review — 1 ship-blocker, in the orchestrator's own code
+
+Reviewer ≠ implementer (`independent-reviewer-required`), refute-first brief, run against the
+implementation diff. **It found a real ship-blocker — in the F-11 guard the orchestrator wrote
+by hand**, which is precisely why the reviewer is not allowed to be the author.
+
+**SHIP-BLOCKER (fixed): the F-11 guard was intra-file only.** The in-loop guard compared snapshots
+within one file's `slotByKey`, but `seen` — the *cross-file* scope — was marked for **every** key,
+including keys whose only snapshot was an all-zero placeholder. So a zero-only copy in file B
+claimed the key and **suppressed the real turn in file C**. Reproduced, and **order-dependent**:
+
+```
+B-then-C: {input:0, output:0, cache_read:0,      cache_write:0}    <- real turn deleted
+C-then-B: {input:2, output:760, cache_read:804035, cache_write:290}
+```
+
+Same corpus, same turn, **804,035 cache_read tokens and $0.42 gone on file-visit order alone**.
+New-code-only (pre-745 dedup was per-file, so cross-file suppression could not happen) and **live
+on the production path** via `costSessionsChronologically`. Invisible to the ccusage differential
+(ccusage doesn't dedup globally). **The orchestrator's own comment claimed the guard covered this
+exact case — it did not**; the claim was aspirational, and the two F-11 tests were both
+single-file, so neither could reach it. Fixed: a key is claimed in the cross-file scope **only if
+what we recorded for it is real**. Pinned by a new test asserting **order-independence** — the
+property the single-file tests structurally could not express. Verified to bite: it fails against
+the pre-fix code with exactly the reviewer's repro.
+
+**Also fixed:** `usageIsAllZero` and `splitCacheWrite` disagreed on where cache writes live (flat
+field vs tiered object) — a tiered-only snapshot could read as "all-zero" and be displaced by a
+true placeholder; the guard now reads through `splitCacheWrite`, so both agree. Archive collision
+counter widened to 3 digits (at 2, `_100` sorts before `_99` and archives replay out of order —
+unreachable, but the ordering contract shouldn't depend on that), pinned by a test.
+
+**Documented, not fixed (RISK, inherent):** window-edge attribution — sessions starting before
+`--since` are never costed, so their keys aren't in scope, and a resumed left-edge session keeps
+history originating outside the window. Totals are mildly sensitive to `--since`. Now a first-class
+report caveat: compare like-for-like windows; a `--since` change is not a real cost movement.
+
+**Categories the reviewer attacked and found nothing in** (recorded so the next agent knows what
+*was* checked): the `record-merge` teardown row shape (all nine consumed fields verified
+field-by-field against the literal return — the live path is intact); fail-closed pricing
+(`findPricing` has exactly one production caller, which null-checks; `DEFAULT_PRICING` is fully
+gone); the dated-pricing UTC boundary (`2026-08-31T23:59:59Z`→$2, `2026-09-01T00:00:00Z`→$3;
+missing timestamp → the *more expensive* standard rate, i.e. conservative); the sink's
+regex/lock/retention (anchored + escaped, cannot cross-match streams or the current file; the
+size-check-then-re-check-under-lock closes the TOCTOU); CI portability.
+
+**Test precision was mutation-tested, not asserted**: disabling the guard fails exactly the F-11
+test; pricing 1h writes at the 5m rate fails both cache-tier tests. And the reviewer **verified
+rather than accepted** the claim that `test-pipeline.mjs`'s 15 failures are pre-existing — they
+are environmental (hardcoded `D:\code\JustSearch` paths, a retired `BrainView.tsx`), none under
+Test 16, which is green.
+
 ## Verdict
 
 **As chartered — a stack-wide OSS-first survey producing a standing policy: NO. But the survey

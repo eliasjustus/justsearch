@@ -299,10 +299,22 @@ class RotationTests(unittest.TestCase):
         # Neither rotation overwrote the other, and sort order (== filename
         # order returned by _list_archives) matches creation order.
         self.assertEqual(names[0], f"traces.{fixed_ts}.ndjson")
-        self.assertEqual(names[1], f"traces.{fixed_ts}_01.ndjson")
+        self.assertEqual(names[1], f"traces.{fixed_ts}_001.ndjson")
         contents = [Path(p).read_text(encoding="utf-8") for p in archives]
         self.assertIn("first-collision-payload-bytes\n", contents)
         self.assertIn("second-collision-payload-bytes\n", contents)
+
+    def test_collision_counter_sorts_lexically_past_99(self):
+        """The counter is read back by a LEXICAL sort, so its zero-padding is a
+        correctness property, not cosmetics: at 2 digits `_100` sorts BEFORE `_99`
+        and the archives would be replayed out of order. Unreachable in practice
+        (100 rotations of a 20MB file in one second), but the ordering contract
+        should not quietly depend on that. Pins the padding against a naive revert.
+        """
+        names = [f"traces.2026-07-16T133648Z_{n:03d}.ndjson" for n in (1, 2, 99, 100, 101)]
+        self.assertEqual(sorted(names), names, "zero-padded counter must sort in creation order")
+        two_digit = [f"traces.2026-07-16T133648Z_{n:02d}.ndjson" for n in (99, 100)]
+        self.assertNotEqual(sorted(two_digit), two_digit, "2-digit padding would mis-sort (the bug this guards)")
 
     def test_archive_regex_does_not_cross_match_other_streams_or_current_file(self):
         # base='logs' must not pick up metrics archives, a 'logs-other'
