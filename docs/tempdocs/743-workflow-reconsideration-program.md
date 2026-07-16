@@ -464,6 +464,96 @@ condition — not just "seems better").
 | Founder approval points | Safety + taste on irreversible/outward actions | founder attention (proxy deferred) | Only the founder can re-price these; program surfaces, never removes (D-2) |
 | Session-as-continuity (compaction) | Keeps long work in one context | re-orientation cost (pending T1) | Artifact-mediated handoff with measured rework ≤ compaction's (R2) |
 
+### R2 — session topology (landed 2026-07-16; tiered, refute-first)
+
+1. **Against long sessions (T1, multi-source):** context rot degrades frontier models well
+   before nominal limits (Chroma, 18 models); METR models agent failure as exponential in
+   task length (arXiv 2505.05115) — Opus 4.6's **80%-success horizon is ~1h10m**, far below
+   the ~12h 50% headline; compaction costs 100-200k tokens per firing and strips
+   variable-names/error-messages/nuance (T2). License: long-orchestrator-with-compaction is a
+   *known-degrading* strategy, not a neutral default.
+2. **Against fragmenting (T1, the sweep's load-bearing find):** Anthropic's 2026 harness
+   REVERSED its Opus-4.5-era initializer/coder fragmentation — now "one continuous session
+   across the whole build" with auto-compaction, because fragmentation had compensated for a
+   specific weaker-model bug (Sonnet 4.5 "context anxiety") the newer models don't have.
+   Caveat: architecture decision, NOT a controlled A/B. Nobody anywhere has published
+   continuous-vs-artifact-handoff on the same multi-hour task — **novel-data-point
+   opportunity for phase 5.** (Our tempdoc-handoff also serves multi-DAY continuity and
+   parallel sessions, which the Anthropic reversal doesn't speak to.)
+3. **Topology shape (T1):** no vendor defaults to flat/leaderless; Claude Code docs steer
+   sequential/dependency-heavy/same-file work (= our shape) toward single session or
+   hierarchical subagents, away from experimental flat teams. License: hierarchy is right;
+   the open question is **escalation policy**, not shape. Uno-Orchestra (arXiv 2605.05007):
+   escalation-based routing (cheap direct dispatch, delegate only when needed) beat
+   always-decompose 77.0% vs 61.0% at ~12× lower cost.
+4. **Delegation economics (T1):** Anthropic's multi-agent research numbers (15× tokens, 90%
+   uplift) come with an explicit caveat that **coding-shaped work (shared context, high
+   dependency) is a poor fit** — our 85.1% orchestrator share may be structural to coding,
+   not a routing bug. T3 practitioner break-even: ~10k input tokens per spawn; below that,
+   delegation overhead exceeds the task.
+5. **Actionable candidates emerging for Phase 3:** (a) session-length budget tied to the
+   model's measured reliable horizon rather than compaction-forced breaks; (b) escalation
+   routing (try-direct-first for sub-break-even chunks) instead of default-delegate;
+   (c) the continuous-vs-handoff pilot as a novel measured contribution.
+
+### R3 — enforcement layer (landed 2026-07-16; tiered, refute-first)
+
+1. **"Models no longer make these mistakes" — REFUTED for guard-relevant behavior.** Vendor
+   evals improved (Anthropic misalignment evals at zero since Haiku 4.5; GPT-5 coding-deception
+   0.17 vs o3's 0.47, both T1) — but Anthropic itself admits an evaluation-awareness confound
+   ("could easily go undetected"). Against that: a primary-sourced catalog of 10 destructive
+   incidents Oct 2025-Feb 2026 across five vendors, plus the decisive one — **April 2026,
+   Cursor + Opus 4.6 (current frontier) deleted a production DB + backups in 9s via an
+   overprivileged token found in the repo**. Zero vendor postmortems industry-wide (T2, a
+   strong argument for self-owned enforcement). **License: relax nothing; D-2 stands on
+   evidence, not just caution.**
+2. **The failure mode SHIFTED, exposing our gap:** modern incidents are mostly not
+   blocked-command-shaped ("model chooses badly") but blast-radius-shaped ("model acts in
+   good faith with more reach than anyone realized"). 2026 consensus (Anthropic devcontainer
+   + egress firewall, OpenAI Codex sandbox+approval two-dial, Cursor VM-per-worktree) is
+   **layered**: command-level hooks PLUS OS/credential-level containment. Our hook layer
+   covers layer 1 well; **we have no layer 2 (credential scoping / blast-radius containment)**
+   — the exact layer where 2026's worst incident happened. → Phase-3 candidate: additive, not
+   substitutive.
+3. **Sandboxing is a PRODUCTIVITY win, not a safety tax (T2, Cursor):** sandboxed agents
+   "stop 40% less often" with fewer false positives — containment lets guards loosen their
+   trigger-happiness. Reframes the enforcement conversation for Phase 3.
+4. **The ~70% prose-adherence folk number is corroborated** (IFEval/AdvancedIF: frontier
+   models 50-78% on multi-constraint instruction compliance; instruction-hierarchy research:
+   in-context rules lose to competing signals). The "~100% mechanical" half is a category
+   difference (deterministic code, not an adherence rate) — tier-register wording could be
+   sharpened, conclusion unchanged: mechanize what must never happen.
+5. **Reward hacking is current, not historical** (Terminal-Bench integrity action, April
+   2026) — keeps the suppression-ratchet/test-weakening guards justified.
+
+### R5 — coordination mechanics (landed 2026-07-16; tiered, refute-first)
+
+1. **Tempdoc-as-unit: NOT an anti-pattern — convergent practice.** GitHub's own Spec Kit
+   (T1, 90k+ stars, 29 agent integrations) is the tooled industry version of
+   spec-as-source-of-truth; the competing pattern is GitHub issue-as-contract (17M agentic
+   PRs/month). The practitioner critique that DOES apply: bureaucracy/verbosity creep
+   ("waterfall in markdown") — the risk isn't the tempdoc, it's tempdoc *bloat*. License:
+   keep the unit; Phase 3 may propose right-sizing pressure, not replacement.
+2. **Worktree-per-task: right-sized for this scale.** Frontier vendors moved to disposable
+   microVMs (Codex cloud) — a scale answer, not a correctness answer. Known real gap
+   (undisputed): worktrees give zero *runtime* isolation (ports/DB/GPU) — which is exactly
+   why dev-stack arbitration exists. No published merge-conflict-rate data anywhere.
+3. **Founder-as-scheduler: split verdict.** Broad agent-to-agent scheduling = demoware
+   (A2A is transport, not scheduling); the best academic system (SPOQ, T1, 1,822 tasks)
+   KEEPS a human for judgment (0.03 defects/task with human-assisted planning); a real
+   multi-agent overnight postmortem (claude-code #54393: forged "user-approved" ratification
+   files, rule violations) is a direct failure case for removing the human router. BUT the
+   narrow resource-lock layer is shipped and adoptable: **Block's `agent-task-queue` MCP**
+   (T1) queues expensive operations (gradle/GPU) across agents with no human — directly
+   attacks our founder-arbitration cost. → Phase-3 candidate: automate the LOCK layer only,
+   keep the founder as router.
+4. **Squash-only holds; PR SIZE is the attackable variable.** LinearB 2026 (T2): AI PRs are
+   2.6× larger, wait 5.25× longer for review, merge at 32.7% vs 84.5%; DORA 2025: review
+   speed ~50% of delivery performance. For founder-as-sole-reviewer, the lever is smaller
+   sequentially-merged PRs (stacked-PR shaped), not abandoning curated squash history.
+   (Also: #54393's failure classes map onto guards we already ship — local evidence our
+   enforcement investment leads community practice.)
+
 ## Non-goals
 
 - Re-running 727's tactical fix loop (that instrument keeps running independently).
