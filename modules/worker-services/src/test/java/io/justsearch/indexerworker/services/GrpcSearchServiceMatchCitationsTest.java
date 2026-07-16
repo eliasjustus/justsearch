@@ -9,7 +9,7 @@ import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.indexerworker.embed.EmbeddingConfig;
 import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.ipc.MatchCitationsRequest;
 import io.justsearch.ipc.MatchCitationsResponse;
 import java.lang.reflect.Field;

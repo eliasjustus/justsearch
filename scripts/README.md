@@ -80,7 +80,6 @@ python -m jseval --help
 | Directory | Purpose |
 |-----------|---------|
 | `ops/` | Manual ops + deployment capture scripts. |
-| `vmware/` | Offline VM installer packaging. |
 | `sandbox/` | Isolated environment setup docs. |
 | `ui/` | UI-specific manual debug utilities. |
 | `models/` | Model packaging and distribution helpers. |
