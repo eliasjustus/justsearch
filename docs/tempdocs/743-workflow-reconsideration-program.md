@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — Phase 1 COMPLETE and merged (PR #209, squash ce4d6de8, main CI green 2026-07-16); BASELINE RECOMPUTED 2026-07-16 after tempdoc 745 fixed 4 verified bugs in the cost parser it was measured with — total $21,410 -> $22,578, cost/merge $104.95 -> $108.55, split 85.1/14.9 -> 84.7/15.3 (headline survives; read prediction-1 against 84.7%). Handoff item 4 ("OTel reservoir is feeding") was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it. D-1/D-2 settled; founder go/no-go on phases 2-6 pending (GO recommended); next: Phase 2 via /takeover 743 in a fresh session"
+status: "open — Phase 1 COMPLETE and merged (PR #209, squash ce4d6de8, main CI green 2026-07-16); BASELINE RECOMPUTED 2026-07-16 after tempdoc 745 fixed 4 verified bugs in the cost parser it was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline survives; read prediction-1 against 84.0%). Handoff item 4 ("OTel reservoir is feeding") was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it. D-1/D-2 settled; founder go/no-go on phases 2-6 pending (GO recommended); next: Phase 2 via /takeover 743 in a fresh session"
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -374,26 +374,41 @@ fixed** (745 F-6/F-10/F-11). It is retained as dated history; **these are the cu
 
 | Metric | 743 published | **Recomputed (fixed parser)** |
 |---|---|---|
-| Total cost (attributed) | $21,410 | **$22,578** |
-| Cost/merge (attributed) | $104.95 | **$108.55** |
-| Orchestrator / worker split | 85.1% / 14.9% | **84.7% / 15.3%** |
+| Total cost (attributed) | $21,410 | **≈$22,100** |
+| Cost/merge (attributed) | $104.95 | **≈$106.25** |
+| Orchestrator / worker split | 85.1% / 14.9% | **84.0% / 16.0%** (24.61B / 4.69B) |
 | Sessions in window | 226 | 227 |
 | Merge rows in window | 216 | 220 |
 
+*Read the totals as ≈, not exact: the window ends today, so the corpus includes the **still-running
+session that measured it** and drifts a few dollars per minute (two runs minutes apart gave
+$22,093.35 and $22,100.35). The split and the decomposition below are stable; the last two digits
+of the total are not. Snapshot: 2026-07-16T14:0x UTC.*
+
 **The delta decomposes cleanly** (interrogated, not assumed): running the *old* parser on
-*today's* corpus gives $21,868, so **+2.1% is corpus growth** (one session and four merges landed
-between 743's run and this one) and **+3.2% is the parser fix**. The fix's components: output
+*today's* corpus gives $21,868, so **~+2.1% is corpus growth** (one session and four merges landed
+between 743's run and this one) and the remainder is the parser fix. The fix's components: output
 tokens **+22.3%** (first-vs-last snapshot), sonnet-5 cost **−29.4%** (it was priced at the
 post-cliff $3/$15 when the intro rate is $2/$10 through 2026-08-31), cache-write cost **up**
-(99.99% of our cache writes are the 1h tier, previously charged at the 5m rate), cross-session
-dedup **−1.9%** of tokens.
+(~100% of our cache writes are the 1h tier, previously charged at the 5m rate; and 16.99M of them
+were **invisible** to the old flat-field reader entirely), cross-session dedup **−1.9%** of tokens,
+and **−2.15%** from the post-review fix below.
+
+> **Numbers moved once more after the independent review** ($22,578 → $22,093), and the reason is
+> worth recording rather than quietly restating: the review found the cross-file guard was
+> incomplete, and fixing it *also* aligned "is this snapshot real?" with the tiered cache object.
+> That removed a **double-count** — it is not lost data. Root cause (745 F-13): **1,313 snapshots
+> carry tiered cache writes with the flat field at 0**, so a flat-only reader both misses
+> 16,992,717 cache-write tokens *and* mistakes those snapshots for empty placeholders. The
+> earlier $22,578 was measured before that was understood. This is the third time on this tempdoc
+> that a confidently-held number moved under interrogation.
 
 **The headline datum SURVIVES.** 745 F-7 warned this split was biased toward the orchestrator and
 predicted the magnitude would be small because `cache_read` dominates the token count. Both halves
 confirmed: the direction is right, the size is **0.4pp**. So:
 
 - **Prediction 1 is testable and unharmed.** The 2026-07-15 delegation-policy change should push
-  the orchestrator share below baseline — read it against **84.7%**, not 85.1%. The instrument no
+  the orchestrator share below baseline — read it against **84.0%**, not 85.1%. The instrument no
   longer biases the axis it measures.
 - **The delegation-economics decision (2026-07-15) is unaffected** — a 0.4pp correction does not
   touch "orchestrator tokens are the scarcest resource."

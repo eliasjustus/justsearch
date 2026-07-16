@@ -188,6 +188,37 @@ async function main() {
     assert.equal(r.input_tokens, 2);
   });
 
+  // --- 745 F-13: the flat cache field is NOT authoritative ---
+  // Measured: 1,313 snapshots carry tiered writes with flat == 0, hiding 16,992,717
+  // cache-write tokens from a flat-only reader. So a tiered-only snapshot is REAL and
+  // must never read as "all-zero" — otherwise a true placeholder displaces it, and it
+  // goes unclaimed in the cross-file scope and gets double-counted. Pins usageIsAllZero
+  // to splitCacheWrite against a "simplify it back to the flat field" revert.
+  run('a tiered-only snapshot (flat==0) is real usage, not an all-zero placeholder (F-13)', () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'tiered-only-'));
+    // flat==0 but the tiered object carries real 1h writes — the shape of all 1,313.
+    const tieredOnly = {
+      input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 5000 },
+    };
+    const zero = {
+      input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 },
+    };
+    const mk = (usage) => assistantEntry({
+      id: 'msg_tiered', requestId: 'req_tiered',
+      model: 'claude-haiku-4-5', timestamp: '2026-07-10T00:00:00.000Z', usage,
+    });
+    const file = writeTranscript(dir, 'sess-tiered', [mk(tieredOnly), mk(zero)]);
+    const r = parseTranscriptTokens(file);
+    // The placeholder must NOT displace the tiered-only snapshot.
+    assert.equal(r.cache_write_tokens, 5000, 'tiered-only writes must survive a trailing placeholder');
+    // ...and it must be priced at the 1h rate (haiku 1h = 2.0x input = $2/MTok).
+    assert.equal(r.cost_usd.toFixed(6), (5000 / 1_000_000 * 2.0).toFixed(6));
+  });
+
   // --- 745 F-11 review ship-blocker: the guard must hold ACROSS files, not just within one ---
   // Found by the independent reviewer. `seen` was marked for every key, including
   // zero-only ones, so a placeholder in file B claimed the key and suppressed the

@@ -142,10 +142,18 @@ export function mergeByModel(target, source) {
 /**
  * Split a turn's cache-creation tokens into the 5-minute and 1-hour ephemeral
  * tiers. `usage.cache_creation` is an object carrying both counts (verified on
- * real transcripts, tempdoc 745 item B bug 3 — where 100% of writes were 1h).
- * The flat `cache_creation_input_tokens` equals their sum and is the fallback
- * for a transcript that carries only the flat form; an un-tiered write is
- * charged at the cheaper 5m rate rather than guessed upward.
+ * real transcripts, tempdoc 745 item B bug 3 — where ~100% of writes were 1h).
+ *
+ * The tiered object is the SOURCE OF TRUTH; the flat `cache_creation_input_tokens`
+ * is only a fallback for a transcript carrying no tiered form. Do not assume the
+ * flat field equals the tiers' sum — measured on the 125-session corpus, **1,313
+ * snapshots carry tiered writes with flat == 0**, hiding **16,992,717 cache-write
+ * tokens (2.34%)** from any flat-only reader (sonnet-5 9.9M, opus-4-8 7.1M). That
+ * is what the pre-745 parser did, so bug 3's fix recovers those tokens outright,
+ * not merely their tier. Anything deciding "is this snapshot real?" must read
+ * through THIS function, never the flat field (see usageIsAllZero).
+ *
+ * An un-tiered write is charged at the cheaper 5m rate rather than guessed upward.
  */
 function splitCacheWrite(usage) {
   const cc = usage.cache_creation;

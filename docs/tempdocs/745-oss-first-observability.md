@@ -711,6 +711,35 @@ rather than accepted** the claim that `test-pipeline.mjs`'s 15 failures are pre-
 are environmental (hardcoded `D:\code\JustSearch` paths, a retired `BrainView.tsx`), none under
 Test 16, which is green.
 
+### F-13. The flat cache field is not authoritative — 17M tokens were invisible
+
+Found by chasing a delta rather than publishing it. After the F-12 ship-blocker fix, the baseline
+moved **−2.15%** ($22,578 → ≈$22,100) — the *opposite* direction from the fix's expected effect
+(it recovers suppressed tokens, so it should have gone UP). Rather than restate the number,
+interrogating it produced a genuine data-format finding:
+
+**1,313 snapshots carry tiered cache writes with the flat `cache_creation_input_tokens` at 0**
+(measured, 125-session corpus; the same 1,313 are exactly the flat≠sum mismatches). They hide
+**16,992,717 cache-write tokens (2.34%)** — sonnet-5 9.9M, opus-4-8 7.1M — from **any flat-only
+reader**. Two consequences:
+
+1. **`splitCacheWrite`'s comment was false.** It claimed *"the flat field equals their sum"* — a
+   4-turn sample supported that; the corpus does not. Corrected, with the measurement inline.
+2. **Bug 3 is bigger than "the wrong tier".** The pre-745 parser read the flat field only, so on
+   those snapshots it did not merely mis-price the writes — it **never saw them**. The fix
+   recovers the tokens outright.
+3. **The −2.15% is a double-count being removed, not data lost.** Before the fix, `usageIsAllZero`
+   read the flat field, so a tiered-only snapshot looked "all-zero" → went unclaimed in the
+   cross-file scope → was counted again in a later file. Aligning it with `splitCacheWrite` claims
+   them correctly. Direction: our numbers were slightly **high**.
+
+Pinned by a test that fails against a flat-only reader, so "simplify `usageIsAllZero` back to the
+flat field" cannot land quietly.
+
+**Live-corpus caveat, now in 743:** the window ends today, so the baseline includes the *still-
+running session measuring it* — two runs minutes apart gave $22,093.35 and $22,100.35. The split
+and the decomposition are stable; the last two digits of the total are not. Report it as ≈.
+
 ## Verdict
 
 **As chartered — a stack-wide OSS-first survey producing a standing policy: NO. But the survey
