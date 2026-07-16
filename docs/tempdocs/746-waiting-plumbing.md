@@ -50,6 +50,28 @@ reported"; remove-worktree self-match kill, reproduced twice).
    prepare-worktree.cjs). Adopt only if it composes with the existing seeding (fallback
    preserved); otherwise record why not.
 
+## Upstream bug draft (item 3 — FILING IS FOUNDER-GATED, not yet filed)
+
+Proposed issue for anthropics/claude-code, drafted 2026-07-16:
+
+> **Title:** Long-running Monitor streams can silently stop firing (no completion, no error)
+>
+> **Body sketch:** On Windows 11 (CLI ≥2.1.20x era), Monitor streams watching long-running
+> local processes (multi-hour eval pipelines) frequently end without ever delivering a
+> completion event — the watched process exits normally, but the session is never woken;
+> no timeout, no error, no transcript marker. Observed by multiple independent sessions on
+> one machine over several weeks ("almost all agents that rely on monitors end up never
+> being woken up" — maintainer). Workaround in production here: belt-and-braces
+> ScheduleWakeup polling ticks alongside every Monitor. A related-but-distinct case: a
+> previous session received a "No completion record was found for this background shell
+> command from the previous session" notice, suggesting teardown/restart loses monitor
+> state. Reproduction pointers available: session transcripts with Monitor-armed +
+> never-fired sequences (2026-07-1x, sessions 109145ac, 50ad1b65). Expected: either the
+> event fires, a timeout fires, or a failure is surfaced — silence is the only wrong
+> behavior. Happy to provide sanitized transcript excerpts.
+
+Founder: say "file it" and a session opens this issue verbatim (minus this note).
+
 ## Acceptance
 
 - All existing hook/script tests green + new regression tests for items 4-5.
