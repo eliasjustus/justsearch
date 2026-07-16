@@ -35,24 +35,9 @@ export async function enforceNpmAudit(options) {
   const findings = [];
   let verdict = 'pass';
 
-  if (!existsSync(reportPath)) {
-    return {
-      toolName: 'justsearch-npm-audit',
-      toolVersion: '0.1.0',
-      findings: [
-        {
-          ruleId: 'npm-audit/report-missing',
-          level: 'warning',
-          message:
-            `npm audit report not found at ${reportPath}. ` +
-            `Run \`node scripts/ci/report-npm-audit.mjs --out tmp/npm-audit-report.json\` first.`,
-          uri: gate.config?.reportPath ?? 'tmp/npm-audit-report.json',
-        },
-      ],
-      verdict: 'pass',
-      ruleDescriptions: NPM_AUDIT_RULE_DESCRIPTIONS,
-    };
-  }
+  // Report presence is the runner's contract (tempdoc 742 D1): `tmp/npm-audit-report.json`
+  // is a `required` input under config.inputs, so a missing report fails at the
+  // runner (kernel/input-missing) before this enforcer is dispatched.
 
   if (!existsSync(baselinePath)) {
     return {

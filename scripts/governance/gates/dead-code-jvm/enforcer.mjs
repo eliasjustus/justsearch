@@ -11,6 +11,11 @@
  * NOT in the baseline is a NEW dead class → fail unless a changeset declares the growth. A baseline
  * entry absent from the report means a dead class was removed → the ratchet can shrink (--rebalance).
  *
+ * Report presence is the RUNNER's contract (tempdoc 742 D1): `tmp/dead-code-jvm-report.json`
+ * is a `required` input under the gate's config.inputs, so a missing report fails at the runner
+ * (kernel/input-missing) before this enforcer runs. Produce it with
+ * `./gradlew.bat :modules:dead-code-audit:test`. A malformed report here fails closed.
+ *
  * Mirrors `scripts/governance/gates/dead-code/enforcer.mjs` (read-report-vs-ratchet shape).
  */
 
@@ -35,8 +40,7 @@ export const DEAD_CODE_JVM_RULE_DESCRIPTIONS = {
   'dead-code-jvm/rebalance-available':
     'A baseline dead class is gone from the report; the ratchet can be shrunk (--rebalance)',
   'dead-code-jvm/rebalanced': 'Baseline auto-shrunk',
-  'dead-code-jvm/report-missing':
-    'dead-code-jvm report not found. Run `./gradlew.bat :modules:dead-code-audit:test`.',
+  'dead-code-jvm/report-malformed': 'dead-code-jvm report could not be parsed (fail-closed)',
 };
 
 /** Baseline format: one fully-qualified class name per non-comment line. */
@@ -69,22 +73,17 @@ export async function enforce(options) {
 
   const findings = [];
 
-  if (!existsSync(reportPath)) {
-    findings.push({
-      ruleId: 'dead-code-jvm/report-missing',
-      level: 'warning',
-      message: `dead-code-jvm report not found at ${reportPath}. Run :modules:dead-code-audit:test.`,
-      uri: gate.config?.reportPath,
-    });
-    return result(findings, 'pass');
-  }
-
   let report;
   try {
     report = JSON.parse(readFileSync(reportPath, 'utf8'));
   } catch {
-    findings.push({ ruleId: 'dead-code-jvm/report-missing', level: 'warning', message: 'malformed report JSON' });
-    return result(findings, 'pass');
+    findings.push({
+      ruleId: 'dead-code-jvm/report-malformed',
+      level: 'error',
+      message: `malformed dead-code-jvm report JSON at ${reportPath}`,
+      uri: gate.config?.reportPath,
+    });
+    return result(findings, 'fail');
   }
 
   const current = new Set(

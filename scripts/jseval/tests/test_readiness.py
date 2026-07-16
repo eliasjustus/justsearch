@@ -13,6 +13,7 @@ from jseval.readiness import (
     _check_search_conditions,
     _poll_until_stable,
     flatten_status,
+    wait_embed_compat_settled,
 )
 
 
@@ -403,3 +404,80 @@ class TestPollUntilStable:
         assert result.passed
         # Should have taken 4 polls (2 stale + 2 fresh/passing)
         assert mock_fetch.call_count == 4
+
+
+class TestWaitEmbedCompatSettled:
+    """Tests for wait_embed_compat_settled (tempdoc 715 defect 2).
+
+    A fast small-corpus run can return from wait_pipeline_complete/wait_index_idle while
+    embeddingCompatState still reads REBUILDING -- this bounded settle-wait polls /api/status
+    until the state moves off REBUILDING (or times out and honestly returns whatever was last
+    observed), so the manifest snapshot captured right after doesn't split the release cohort
+    key on a transient state that would have read COMPATIBLE a few seconds later.
+    """
+
+    @patch("jseval.readiness.time.sleep")
+    @patch("jseval.readiness._fetch_status")
+    def test_already_compatible_returns_immediately(self, mock_fetch, mock_sleep):
+        mock_fetch.return_value = {"embeddingCompatState": "COMPATIBLE"}
+
+        state = wait_embed_compat_settled("http://localhost:33221")
+
+        assert state == "COMPATIBLE"
+        assert mock_fetch.call_count == 1
+        mock_sleep.assert_not_called()
+
+    @patch("jseval.readiness.time.sleep")
+    @patch("jseval.readiness._fetch_status")
+    def test_rebuilding_then_compatible_flips(self, mock_fetch, mock_sleep):
+        mock_fetch.side_effect = [
+            {"embeddingCompatState": "REBUILDING"},
+            {"embeddingCompatState": "REBUILDING"},
+            {"embeddingCompatState": "COMPATIBLE"},
+        ]
+
+        state = wait_embed_compat_settled(
+            "http://localhost:33221", poll_interval_sec=1, timeout_sec=600,
+        )
+
+        assert state == "COMPATIBLE"
+        assert mock_fetch.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    @patch("jseval.readiness.time.sleep")
+    @patch("jseval.readiness._fetch_status")
+    def test_non_rebuilding_state_other_than_compatible_also_settles(self, mock_fetch, mock_sleep):
+        # Any state other than REBUILDING is "settled" for this helper's purpose -- it isn't
+        # re-implementing _VALID_EMBEDDING_COMPAT's allowlist, just detecting the transient.
+        mock_fetch.return_value = {"embeddingCompatState": "FINGERPRINT_MATCH"}
+
+        state = wait_embed_compat_settled("http://localhost:33221")
+
+        assert state == "FINGERPRINT_MATCH"
+        mock_sleep.assert_not_called()
+
+    @patch("jseval.readiness.time.sleep")
+    @patch("jseval.readiness._fetch_status")
+    def test_timeout_warns_and_returns_last_observed_state(self, mock_fetch, mock_sleep, caplog):
+        mock_fetch.return_value = {"embeddingCompatState": "REBUILDING"}
+
+        with caplog.at_level("WARNING", logger="jseval.readiness"):
+            state = wait_embed_compat_settled(
+                "http://localhost:33221", poll_interval_sec=0.01, timeout_sec=0,
+            )
+
+        assert state == "REBUILDING"
+        assert any("embeddingCompatState" in r.message for r in caplog.records)
+
+    @patch("jseval.readiness.time.sleep")
+    @patch("jseval.readiness._fetch_status")
+    def test_all_fetches_fail_returns_none_and_warns(self, mock_fetch, mock_sleep, caplog):
+        mock_fetch.side_effect = ConnectionError("refused")
+
+        with caplog.at_level("WARNING", logger="jseval.readiness"):
+            state = wait_embed_compat_settled(
+                "http://localhost:33221", poll_interval_sec=0.01, timeout_sec=0,
+            )
+
+        assert state is None
+        assert any("None" in r.message for r in caplog.records)

@@ -1,1 +1,1 @@
-{"files":[{"file":"modules/ui-web/src/Foo.ts","unusedExports":["a","b"]}]}
+{"issues":[{"file":"modules/ui-web/src/Foo.ts","binaries":[],"catalog":[],"dependencies":[],"devDependencies":[],"duplicates":[],"enumMembers":[],"exports":[{"name":"a"},{"name":"b"}],"files":[],"namespaceMembers":[],"optionalPeerDependencies":[],"types":[],"unlisted":[],"unresolved":[]}]}

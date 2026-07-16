@@ -9,7 +9,7 @@ import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
 import io.justsearch.configuration.FieldCatalogDef;
 import io.justsearch.configuration.JustSearchConfigurationLoader;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import io.justsearch.reranker.CrossEncoderReranker;
 import io.justsearch.reranker.RerankerConfig;
 import io.justsearch.systemtests.corpus.FrozenEmbeddingBackend;

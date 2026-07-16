@@ -1,0 +1,13 @@
+# Tempdoc 746 item 6: Claude Code copies files matching these (gitignore-syntax) patterns from
+# the parent checkout into a NEW worktree at creation time, before any setup script runs. Listing
+# the maintainer-local dev configs here means a fresh worktree starts with the REAL, already
+# filled-in files (GitHub PAT, per-machine settings) instead of a blank `.example` template.
+#
+# Composes safely with scripts/dev/prepare-worktree.cjs's seedFromExample(): that function already
+# no-ops when the destination exists (`if (fs.existsSync(dest)) { ...; return; }`), so it never
+# clobbers a file `.worktreeinclude` already copied in — it only seeds from `.example` as a
+# fallback when the parent checkout had no real file to copy (e.g. a machine that never
+# customized settings.local.json), or when the worktree was created by a path this file doesn't
+# cover (a plain `git worktree add` outside the Claude Code harness).
+.mcp.json
+.claude/settings.local.json

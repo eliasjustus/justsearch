@@ -7,29 +7,6 @@ const files = await fg(['docs/**/*.md', '!docs/_**/*']);
 
 let issues = [];
 
-// Load synonyms (optional, best-effort)
-function loadSynonyms() {
-  try {
-    const raw = fs.readFileSync('config/synonyms_en.txt', 'utf8');
-    const clusters = [];
-    for (const line of raw.split(/\r?\n/)) {
-      const s = line.trim();
-      if (!s || s.startsWith('#')) continue;
-      const toks = s.split(',').map((t) => t.trim()).filter(Boolean);
-      if (toks.length >= 2) clusters.push(toks);
-    }
-    const map = new Map();
-    for (const cl of clusters) {
-      for (const term of cl) map.set(term.toLowerCase(), cl);
-    }
-    return map;
-  } catch {
-    return new Map();
-  }
-}
-
-const synonymMap = loadSynonyms();
-
 for (const f of files) {
   const raw = fs.readFileSync(f, 'utf8');
   if (raw.includes('\uFFFD')) {
@@ -157,25 +134,6 @@ for (const f of files) {
     if (aliases.length < 2) {
       issues.push({ file: f, kind: 'aliases', severity: 'warn', msg: `Few aliases (${aliases.length}); expected at least 2` });
     }
-  }
-
-  // Synonym-based alias suggestions (warn)
-  const title = String(data.title || '').toLowerCase();
-  const summary = String(data.summary || '').toLowerCase();
-  const words = new Set([...title.split(/[^a-z0-9]+/), ...summary.split(/[^a-z0-9]+/)].filter(Boolean));
-  const suggestions = new Set();
-  for (const w of words) {
-    const cluster = synonymMap.get(w);
-    if (cluster) {
-      for (const alt of cluster) {
-        if (alt.toLowerCase() !== w && !aliases.map((a) => a.toLowerCase()).includes(alt.toLowerCase())) {
-          suggestions.add(alt);
-        }
-      }
-    }
-  }
-  if (suggestions.size > 0) {
-    issues.push({ file: f, kind: 'aliases-suggest', severity: 'warn', msg: `Consider aliases: ${[...suggestions].slice(0, 5).join(', ')}` });
   }
 }
 

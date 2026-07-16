@@ -15,7 +15,7 @@ import io.justsearch.indexerworker.services.LanguageUtils;
 import io.justsearch.indexerworker.text.TextQualityAnalyzer;
 import io.justsearch.indexerworker.util.PathNormalizer;
 import io.justsearch.indexing.SchemaFields;
-import io.justsearch.indexing.api.IndexApi.IndexDocument;
+import io.justsearch.indexing.api.IndexDocument;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;

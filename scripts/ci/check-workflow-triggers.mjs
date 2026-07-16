@@ -11,6 +11,21 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+// Triggers an external, unprivileged actor can fire on a PUBLIC repo. A
+// self-hosted runner executes on the maintainer's own machine, so any of these
+// on a self-hosted job is remote-code-execution-from-any-PR (tempdoc 747 P-D;
+// motivated by the April-2026 frontier-agent production-DB-deletion incident
+// class). This is a HARD invariant, enforced independently of the per-workflow
+// expectedTriggers allowlist below — so editing the workflow AND the policy
+// together (which would satisfy the allowlist match) still fails here.
+export const SELF_HOSTED_FORBIDDEN_TRIGGERS = new Set([
+  'pull_request',
+  'pull_request_target',
+  'pull_request_review',
+  'pull_request_review_comment',
+  'issue_comment',
+]);
+
 function repoRootFromCwd() {
   const markers = ['settings.gradle.kts', 'build.gradle.kts', '.git'];
   for (let dir = process.cwd(); ; dir = path.dirname(dir)) {
@@ -81,6 +96,108 @@ function parseInlineEvents(rest) {
   return events;
 }
 
+// A GitHub-HOSTED runner label. GitHub-hosted labels are name-prefixed
+// `ubuntu-*` / `windows-*` / `macos-*` (incl. versioned + `-arm` variants);
+// GitHub-hosted runners cannot carry arbitrary custom labels, so any label
+// that isn't one of these can only belong to a self-hosted runner.
+const HOSTED_LABEL = /^(ubuntu|windows|macos)-[\w.-]+$/i;
+// A GitHub-Actions expression — cannot be resolved statically (e.g. a
+// `runs-on: ${{ matrix.os }}` matrix). This is the ONE documented limit where
+// the detector does NOT fail closed, because it genuinely can't know the value.
+const EXPRESSION = /\$\{\{/;
+
+function labelIsHosted(rawLabel) {
+  const label = stripOuterQuotes(rawLabel).trim();
+  if (!label) return true; // empty token → ignore
+  if (EXPRESSION.test(label)) return true; // documented matrix limit
+  return HOSTED_LABEL.test(label);
+}
+
+function anyLabelSelfHosted(csv) {
+  return csv.split(',').some((label) => !labelIsHosted(label));
+}
+
+// True if any job's `runs-on:` resolves to a self-hosted runner. FAIL-CLOSED:
+// a value is treated as self-hosted unless every label is a known hosted label
+// (or an unresolvable expression). This catches custom-label-only targeting
+// (`runs-on: justsearch-perf`) and the runner-group / block-`labels:` mapping
+// forms, not just the literal `self-hosted` token. Comments are already
+// stripped by stripInlineComment, so a bare mention in a comment does not count.
+export function usesSelfHostedRunner(lines) {
+  let inRunsOnBlock = false;
+  let runsOnIndent = -1;
+  let blockSelfHosted = false;
+
+  const finishBlock = () => {
+    const result = inRunsOnBlock && blockSelfHosted;
+    inRunsOnBlock = false;
+    runsOnIndent = -1;
+    blockSelfHosted = false;
+    return result;
+  };
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const noComment = stripInlineComment(lines[i]).trimEnd();
+    if (!noComment.trim()) continue;
+    const indent = leadingSpaces(noComment);
+    const trimmed = noComment.trim();
+
+    if (inRunsOnBlock && indent <= runsOnIndent) {
+      if (finishBlock()) return true;
+    }
+
+    if (inRunsOnBlock) {
+      // Inside a block-form runs-on: `- <label>` items, a `group:` key (runner
+      // groups are self-hosted infrastructure), or a `labels:` list.
+      const item = /^-\s*(.*)$/.exec(trimmed);
+      if (item) {
+        if (!labelIsHosted(item[1])) blockSelfHosted = true;
+        continue;
+      }
+      if (/^group\s*:/.test(trimmed)) {
+        blockSelfHosted = true;
+        continue;
+      }
+      const labels = /^labels\s*:\s*(.*)$/.exec(trimmed);
+      if (labels) {
+        const value = labels[1].trim();
+        const inner = value.startsWith('[') && value.endsWith(']') ? value.slice(1, -1) : value;
+        if (inner && anyLabelSelfHosted(inner)) blockSelfHosted = true;
+        continue;
+      }
+      continue;
+    }
+
+    const m = /^runs-on\s*:\s*(.*)$/.exec(trimmed);
+    if (m) {
+      const value = m[1].trim();
+      if (value === '') {
+        inRunsOnBlock = true;
+        runsOnIndent = indent;
+        blockSelfHosted = false;
+        continue;
+      }
+      if (value.startsWith('[') && value.endsWith(']')) {
+        if (anyLabelSelfHosted(value.slice(1, -1))) return true;
+      } else if (value.startsWith('{')) {
+        // Inline mapping form: a group is self-hosted; else inspect labels: [..];
+        // an opaque mapping fails closed.
+        if (/group\s*:/.test(value)) return true;
+        const lm = /labels\s*:\s*\[([^\]]*)\]/.exec(value);
+        if (lm) {
+          if (anyLabelSelfHosted(lm[1])) return true;
+        } else {
+          return true;
+        }
+      } else if (!labelIsHosted(value)) {
+        return true;
+      }
+    }
+  }
+
+  return finishBlock();
+}
+
 export function scanWorkflow(file, repoRoot) {
   const rel = normalizeRel(path.relative(repoRoot, file));
   const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
@@ -88,6 +205,7 @@ export function scanWorkflow(file, repoRoot) {
   let onIndent = -1;
   let sawOn = false;
   const events = new Map();
+  const selfHosted = usesSelfHostedRunner(lines);
 
   function addEvent(event, lineNumber) {
     const normalized = stripOuterQuotes(event).trim();
@@ -134,7 +252,7 @@ export function scanWorkflow(file, repoRoot) {
     }
   }
 
-  return { rel, sawOn, events };
+  return { rel, sawOn, events, selfHosted };
 }
 
 function workflowEntries(policy) {
@@ -168,6 +286,22 @@ export function validateWorkflows({ repoRoot, policy }) {
   for (const file of files) {
     const scanned = scanWorkflow(file, repoRoot);
     seen.add(scanned.rel);
+
+    // HARD invariant (policy-independent, tempdoc 747 P-D): a self-hosted job
+    // must never carry an externally-triggerable event. Checked before the
+    // policy lookup so it also fires for a workflow missing from the policy.
+    if (scanned.selfHosted) {
+      for (const [event, lineNumber] of scanned.events) {
+        if (SELF_HOSTED_FORBIDDEN_TRIGGERS.has(event)) {
+          errors.push({
+            rel: scanned.rel,
+            lineNumber,
+            message: `self-hosted runner job must not use externally-triggerable event '${event}' (RCE-from-any-PR on the maintainer's machine; tempdoc 747 P-D). Move the job to a hosted runner or drop the trigger.`,
+          });
+        }
+      }
+    }
+
     const policyEntry = policyByPath.get(scanned.rel);
     if (!policyEntry) {
       errors.push({ rel: scanned.rel, lineNumber: 1, message: 'workflow file is missing from workflow-signal-policy.v1.json' });

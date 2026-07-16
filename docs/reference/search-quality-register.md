@@ -76,6 +76,9 @@ every committed cell signature. The behavioral count is already derivable withou
 | golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json`. **Content regenerated 2026-07-01 (tempdoc 664)** — see Corpus provenance note under Findings. |
 | golden/battlefield-en-v1 | synthetic/2-hop chains | en | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | Certified in-band 624 (hybrid 0.4143 "hard", pre-F-031). **Out of band at HEAD defaults post-F-031** (711 re-measure: hybrid 0.9517, vector 1.0000 — saturated in BOTH modes) — no longer a difficulty discriminator in any mode; still valid for throughput profiling (691). Difficulty successor: 704 Pillar 1. Source `scripts/jseval/624-corpora/battlefield-en-v1`; re-measure: `jseval corpus-fidelity --dataset battlefield-en-v1 --modes hybrid,vector --embedding --start-backend --clean`. |
 | golden/battlefield-de-v1 | synthetic/2-hop chains | de | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | In-band at HEAD defaults (711 re-measure: hybrid 0.5924 — exact match to the 624 certification — vector 0.58, "moderate") — remains a valid difficulty corpus in both modes. Source `scripts/jseval/624-corpora/battlefield-de-v1`; same re-measure command shape as en-v1. |
+| mixed/en-legal-clerc-{1k,10k}-{verbose,short-natural} | legal (real CLERC hosts + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates under the ACTIVE pre-run policy `scripts/jseval/707-corpus-certification-policy.v1.json`; closed-book 0.000 ×4). Hybrid 0.5051 / 0.4685 / 0.3238 / 0.2806 (1k-v / 1k-sn / 10k-v / 10k-sn). Commitments + recipes: `scripts/jseval/707-corpora/en-legal-clerc/`. |
+| mixed/en-email-enron-raw-{1k,10k}-{verbose,short-natural} | email (raw public-domain Enron distractors + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates, same ACTIVE policy; closed-book 0.000 ×4; license `LicenseRef-Enron-FERC-public-record`). Hybrid 0.8043 / 0.7699 / 0.7052 / 0.6627 — strongest member; graceful scale decay. Commitments + recipes: `scripts/jseval/707-corpora/en-email-enron-raw/`. |
+| mixed/de-miracl-{1k,10k}-{verbose,short-natural} | wikipedia-de distractors + fabricated injected gold (v2, hops=1) | de | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 secondary stratum — NOT claim-bearing** (deliberately absent from the ACTIVE policy). 1k out-of-band (hybrid 0.2053 / 0.2660), 10k semantically collapsed (0.0431 / 0.0428, union recall 0.10); lexical 0.0 everywhere (pre-registered German grep-collapse, confirmed). The 10k collapse is chartered as tempdoc 748 → Q-018. Commitments: `scripts/jseval/707-corpora/de-miracl/`. |
 
 ---
 
@@ -112,27 +115,27 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 > The (config × mode) ablation tables in each corpus block stay hand-authored. Reproduction tolerance
 > is the within-machine ±2σ envelope, scoped to equivalent hardware/setup (tempdoc 623 F-α).
 
-**Release:** `667-external-baselines-2026-07-01` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.62 · ORT 1.24.3
+**Release:** `715-rebaseline-2026-07-16` · default mode `hybrid` · NVIDIA GeForce RTX 4070 · driver 610.62 · ORT 1.24.3
 
 **Coverage:** retrieval ranking quality (per-corpus metrics above) — **does NOT measure** document extraction / OCR / VDU routing quality (see tempdoc 623 §F — extraction-quality sibling).
 
 | Corpus | Ours (mode) | nDCG@10 | Published baselines (cited, side-by-side) |
 |---|---|---|---|
-| beir/scifact | hybrid | 0.756 | BM25 (multifield) 0.665, SPLADE++ EnsembleDistil 0.710, ColBERTv2 0.693 |
-| mixed/enron-qa | hybrid | 0.719 | — |
-| mixed/legal-clerc-200 | hybrid | 0.516 | — |
-| mixed/miracl-de-2k | hybrid | 0.852 | BGE-M3 Dense 0.567 (dev) |
-| mixed/miracl-fr-2k | hybrid | 0.866 | BM25 0.183 (dev), mDPR (zero-shot) 0.435 (dev), Hybrid (BM25+mDPR) 0.523 (dev) |
+| beir/scifact | hybrid | 0.760 | BM25 (multifield) 0.665, SPLADE++ EnsembleDistil 0.710, ColBERTv2 0.693 |
+| mixed/enron-qa | hybrid | 0.736 | — |
+| mixed/legal-clerc-200 | hybrid | 0.598 | BM25 0.054, Contriever-MSMarco (zero-shot dense) 0.042 |
+| mixed/miracl-de-2k | hybrid | 0.862 | BGE-M3 Dense 0.567 (dev) |
+| mixed/miracl-fr-2k | hybrid | 0.873 | BM25 0.183 (dev), mDPR (zero-shot) 0.435 (dev), Hybrid (BM25+mDPR) 0.523 (dev) |
 
 **Engine performance** (relative-ratchet guarded — tempdoc 640):
 
 | Corpus | CE p50 (ms) | Index docs/s | Enrich docs/s | Resident (GB) |
 |---|---|---|---|---|
-| beir/scifact | 167 | 111.1 | 25.0 | 1.75 |
-| mixed/enron-qa | 157 | 96.4 | 7.9 | 2.02 |
-| mixed/legal-clerc-200 | 214 | 11.0 | 1.3 | 1.75 |
-| mixed/miracl-de-2k | 168 | 73.7 | 36.7 | 1.75 |
-| mixed/miracl-fr-2k | 169 | 124.6 | 50.0 | 1.75 |
+| beir/scifact | 171 | 89.8 | 20.5 | 2.02 |
+| mixed/enron-qa | 161 | 64.5 | 6.2 | 2.02 |
+| mixed/legal-clerc-200 | 226 | 29.3 | 1.0 | 2.02 |
+| mixed/miracl-de-2k | 175 | 97.2 | 33.4 | 2.02 |
+| mixed/miracl-fr-2k | 174 | 60.0 | 23.3 | 2.02 |
 
 <!-- generated:end -->
 
@@ -1603,6 +1606,29 @@ above)*
   624 twentieth pass, fixed) — corpus signatures verified intact (recorded == on-disk == regenerated).
   Interim agent-utility numbers from these corpora exist but every record is `comparable=False`
   (internal only, per 624 §M.8); the certified 5-seed run is the pending step, not a corpus question.
+
+### Q-018: Why does German semantic bridging collapse at 10⁴ docs (de-miracl 10k hybrid 0.043, union recall 0.40 → 0.10) on post-F-031/F-032 code, while EN legal/email stay in-band at the same scale?
+
+- **Question:** On the 707 DE member (real German Wikipedia distractor mass + fabricated v2 gold at
+  hops=1, pure zero-lexical-overlap synonym descriptors), the semantic leg bridges at ~half CLERC
+  strength at 1k (hybrid 0.2053/0.2660) and goes dark at 10k (0.0431/0.0428) — measured on one
+  engine cohort ≡ origin/main post-#201, i.e. WITH the F-031/F-032 construction fixes shipped, and
+  with the EN members healthy on the same cohort as positive control. Is it (a) the incumbent
+  encoders' German representation quality, (b) a scale/candidate-depth interaction (ANN/fusion
+  starving a weak-but-nonzero leg), (c) the DE v2 gold design (zero-lexical-overlap descriptors =
+  a strictly harder task than CLERC/email gold — corpus artifact), or (d) German text mechanics
+  (compounding/tokenization) in chunking/indexing?
+- **Why it matters:** it caps the multilingual story U0 wants (DE is 1k-only, never claim-bearing
+  until resolved) and decides whether the honest scoped claim for German at scale is an engine fix,
+  a knob, or a gold-design revision. The lexical zero is the *pre-registered, confirmed*
+  grep-collapse prediction — not the finding; the semantic-leg collapse is.
+- **Already eliminated (do not re-test):** chain length (v2 hops=1 parity moved 1k only +0.02–0.04,
+  10k not at all); query shape (≤0.06 delta at 1k, ≈0 at 10k); F-031/F-032 (fixed pre-cohort);
+  708's EN-legal bake-off verdict is untouched (708 never measured German at 10⁴).
+- **Owner / approach:** tempdoc 748 (charter, 2026-07-16) — four ~$0 experiments, cheapest first:
+  an EN gold stratum with the identical zero-lexical-overlap construction (decides (c) without
+  touching the encoder question), staged-recall decomposition on the existing 10k run artifacts,
+  candidate-depth sweep, DE chunk-granularity probe.
 
 ---
 

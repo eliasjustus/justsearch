@@ -128,6 +128,8 @@ index:
     workers: 0
   export:
     otlp:
+      # Dormant since inception — no collector exists in this repo; aspirational
+      # config, see tempdoc 742.
       traces:
         enabled: false
         endpoint: http://collector:4317
@@ -136,6 +138,8 @@ index:
       metrics:
         enabled: false
         endpoint: http://collector:4318/v1/metrics
+      # Dormant since inception — no collector exists in this repo; aspirational
+      # config, see tempdoc 742.
       logs:
         enabled: false
         endpoint: http://collector:4317
