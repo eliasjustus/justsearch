@@ -534,13 +534,47 @@ in each `datasets/mixed/<cell>/metadata.json`; full log in the session scratchpa
    (0.51 → 0.32, still in-band) is requirements (c)+(f) working: difficulty grows with scale without
    going dark.
 2. **The DE member fails retrieval-in-band (requirement b) and collapses at 10k.** Honest-constraint
-   #2 firing as predicted, not a corpus-family failure: the paraphrase-distance knob was calibrated
-   on synthetic filler and is too aggressive for the multilingual encoder on German wiki hosts.
-   Remedy is the designed one — regenerate DE gold at shorter paraphrase distance (local LLM, ~$0),
-   rematerialize (minutes; the commitment/digest chain re-runs automatically), re-measure (1k ≈ 3
-   min, 10k ≈ 20 min at measured rates). **DE cells must not enter the ratified policy until this
-   iteration lands.**
-3. Union-recall/leak were measured on the two verbose 1k cells only (chain scope); the remaining
-   cells' runs are cheap (≤30 min total) and should ride the DE re-measure window.
+   #2 firing as predicted. First hypothesis (chain length) tested and largely REFUTED — see the
+   chain-2 fold below.
+3. Union-recall/leak were measured on the two verbose 1k cells only (chain scope); completed by
+   chain-2 below.
 4. Cohort hygiene: de-miracl-1k-verbose fidelity also ran once pre-restart on the identical cohort
    (rc=0); superseded by this table — no pre-restart number is load-bearing.
+
+### Chain-2: full 8-cell matrix + DE v2 recalibration verdict (2026-07-16, overnight autonomous window)
+
+DE gold regenerated at hops=1 (v2, commit 8a562519 — chain-length parity with CLERC; also fixed the
+generator's post-624 unconditional triple-render drift, see that commit). All 5 remaining fidelity
+cells + all 7 remaining union/leak runs executed 03:22–06:45, every step rc=0. **Complete matrix
+(chain-1 + chain-2, one engine cohort ≡ origin/main post-#201):**
+
+| cell | hybrid nDCG@10 | verdict (default 0.3–0.85 band) | union recall | leak |
+|---|---|---|---|---|
+| en-legal-clerc-1k-verbose | **0.5051** | PASS (moderate) | 0.75 | 0.00 |
+| en-legal-clerc-1k-short-natural | **0.4685** | PASS (hard) | 0.75 | 0.15 |
+| en-legal-clerc-10k-verbose | **0.3238** | PASS (hard) | 0.55 | 0.10 |
+| en-legal-clerc-10k-short-natural | 0.2806 | band-edge FAIL | 0.50 | 0.10 |
+| de-miracl-1k-verbose (v2) | 0.2053 | FAIL | 0.40 | 0.00 |
+| de-miracl-1k-short-natural (v2) | 0.2660 | FAIL | 0.40 | 0.00 |
+| de-miracl-10k-verbose (v2) | 0.0431 | FAIL (collapsed) | 0.10 | 0.00 |
+| de-miracl-10k-short-natural (v2) | 0.0428 | FAIL (collapsed) | 0.10 | 0.00 |
+
+**DE recalibration verdict: hops parity helped marginally (+0.02–0.04 at 1k), but the structural
+residual is German semantic bridging itself** — DE v2 gold is pure zero-lexical-overlap synonym
+descriptors, and the engine bridges them at roughly half CLERC's strength at 1k and collapses at
+10k (union recall 0.40 → 0.10). The pre-registered DE prediction (grep collapses in German) is
+CONFIRMED — lexical nDCG 0.0 in every DE cell — but the engine's own DE semantic leg cannot carry
+an in-band 10⁴ measurement in this regime. Founder options (decision sheet item):
+- **(a) recommended:** ratify the CLERC 4-cell matrix as the U0 measuring stick now (with the
+  10k-short-natural floor set at its measured band-edge reality); keep DE as a secondary 1k-only
+  stratum with lower ratified floors and stratum-scoped claims (it still demonstrates the
+  German grep-collapse); register the German 10k semantic collapse as an ENGINE finding routed to
+  the encoder-representation lane (708-successor), not a corpus defect.
+- (b) another DE gold iteration with partial lexical anchors — changes what DE measures (no longer
+  pure semantic bridging); not recommended without a design pass.
+- (c) drop DE from the claim matrix entirely — loses the multilingual story U0 wants.
+
+Notes: CLERC short-natural/10k cells carry leak 0.10–0.15 (stratum-dependent single-doc shortcut
+rate; the verbose-1k cell's 0.0 is not representative of all cells) — the `leak_floor.maximum`
+policy field should be set per-cell from these measured values, not assumed 0. All numbers remain
+PROPOSED floor candidates; thresholds are owner-set at ratification.
