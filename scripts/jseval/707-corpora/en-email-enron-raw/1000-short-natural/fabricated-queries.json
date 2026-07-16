@@ -1,0 +1,222 @@
+[
+ {
+  "query": "What value identifies power station in the upper wetlands's designer?",
+  "answer": "crimson ferrolite 0002",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "drureach1",
+   "pellstone2"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0001"
+ },
+ {
+  "query": "What value identifies stargazing facility in the ridge to the east's designer?",
+  "answer": "verdant brannik 0004",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "harnvale3",
+   "pellash4"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0002"
+ },
+ {
+  "query": "What value identifies grain-grinding works in the curve of the river's designer?",
+  "answer": "pallid lansk 0006",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "druash5",
+   "tasdac6"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0003"
+ },
+ {
+  "query": "What value identifies records vault in the former justice building's designer?",
+  "answer": "russet grist 0008",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "orrvale7",
+   "drugrove8"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0004"
+ },
+ {
+  "query": "What value identifies metal-casting works in the quarter to the west's designer?",
+  "answer": "azure brannik 0010",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "kanfen9",
+   "rellven10"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0005"
+ },
+ {
+  "query": "What value identifies optical instrument in the Carpathian uplands's designer?",
+  "answer": "verdant perrin 0012",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "mirwick11",
+   "cavby12"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0006"
+ },
+ {
+  "query": "What value identifies streetcar line in the city on the slopes's designer?",
+  "answer": "umber quartzine 0014",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "cavric13",
+   "skowick14"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0007"
+ },
+ {
+  "query": "What value identifies water channel in the hills to the south's designer?",
+  "answer": "umber brannik 0016",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "breldell15",
+   "vexfen16"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0008"
+ },
+ {
+  "query": "What value identifies publishing works in the central marketplace's designer?",
+  "answer": "ochre vellum 0018",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "olmvale17",
+   "vorwick18"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0009"
+ },
+ {
+  "query": "What value identifies coastal beacon in the stony promontory's designer?",
+  "answer": "ochre ferrolite 0020",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "tasgrove19",
+   "rellholt20"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0010"
+ },
+ {
+  "query": "What value identifies wine estate in the sunlit dale's designer?",
+  "answer": "azure ferrolite 0022",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "limric21",
+   "limvale22"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0011"
+ },
+ {
+  "query": "What value identifies thermal spa in the shoreline bluffs's designer?",
+  "answer": "indigo skack 0024",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "vorby23",
+   "tasreach24"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0012"
+ },
+ {
+  "query": "What value identifies grain depot in the evergreen woodland's designer?",
+  "answer": "pallid quartzine 0026",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "orrgrove25",
+   "quendell26"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0013"
+ },
+ {
+  "query": "What value identifies vessel works in the saline plains's designer?",
+  "answer": "ochre lansk 0028",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "wendcrag27",
+   "vexvale28"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0014"
+ },
+ {
+  "query": "What value identifies ale house in the stone pit's designer?",
+  "answer": "pallid grist 0030",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "tasvale29",
+   "vorthorn30"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0015"
+ },
+ {
+  "query": "What value identifies hide-processing works in the port entrance's designer?",
+  "answer": "crimson quartzine 0032",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "brelker31",
+   "skomond32"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0016"
+ },
+ {
+  "query": "What value identifies coin-striking works in the arid hollow's designer?",
+  "answer": "ochre ferrolite 0034",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "mirker33",
+   "nuthstone34"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0017"
+ },
+ {
+  "query": "What value identifies blacksmith works in the iced-over tarn's designer?",
+  "answer": "pallid quartzine 0036",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "zelfen35",
+   "mirven36"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0018"
+ },
+ {
+  "query": "What value identifies glasshouse nursery in the enclosed grounds's designer?",
+  "answer": "pallid brannik 0038",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "skoric37",
+   "brelker38"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0019"
+ },
+ {
+  "query": "What value identifies small place of worship in the belfry spire's designer?",
+  "answer": "russet ferrolite 0040",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "brelby39",
+   "cavgrove40"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0020"
+ }
+]
