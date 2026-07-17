@@ -61,15 +61,6 @@ public enum EnvRegistry {
     /** Telemetry flush interval (ms). */
     TELEMETRY_FLUSH_MS("justsearch.telemetry.flushMs", "JUSTSEARCH_TELEMETRY_FLUSH_MS"),
 
-    /** Telemetry metrics file max size (MB). */
-    TELEMETRY_METRICS_MAX_MB("justsearch.telemetry.metrics.max_mb", "JUSTSEARCH_TELEMETRY_METRICS_MAX_MB"),
-
-    /** Telemetry metrics retention period (days). */
-    TELEMETRY_METRICS_RETENTION_DAYS("justsearch.telemetry.metrics.retention.days", "JUSTSEARCH_TELEMETRY_METRICS_RETENTION_DAYS"),
-
-    /** Telemetry exemplars enabled flag. */
-    TELEMETRY_METRICS_EXEMPLARS("justsearch.telemetry.metrics.exemplars", "JUSTSEARCH_TELEMETRY_METRICS_EXEMPLARS"),
-
     /** Indexer-worker version string (override). */
     INDEXER_WORKER_VERSION("indexer.worker.version", "JUSTSEARCH_INDEXER_WORKER_VERSION"),
 

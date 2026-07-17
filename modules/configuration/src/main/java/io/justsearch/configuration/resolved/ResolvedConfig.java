@@ -469,12 +469,8 @@ public record ResolvedConfig(
    * Telemetry flush and retention settings.
    *
    * @param flushMs telemetry flush interval in milliseconds
-   * @param metricsMaxMb max size of metrics file in MB
-   * @param metricsRetentionDays metrics retention period in days
-   * @param exemplarsEnabled whether telemetry exemplars are enabled
    */
-  public record Telemetry(
-      long flushMs, int metricsMaxMb, int metricsRetentionDays, boolean exemplarsEnabled) {}
+  public record Telemetry(long flushMs) {}
 
   /**
    * Enterprise policy flags.
@@ -589,7 +585,6 @@ public record ResolvedConfig(
       Double similarityTextK1,
       Double similarityTextB,
       String validationMode,
-      String tracingLevel,
       List<IndexSortItem> sort,
       Map<String, Double> boosts) {
 

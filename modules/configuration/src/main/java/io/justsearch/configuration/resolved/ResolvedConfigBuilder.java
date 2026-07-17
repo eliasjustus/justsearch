@@ -1223,10 +1223,7 @@ public final class ResolvedConfigBuilder {
 
   private ResolvedConfig.Telemetry buildTelemetry() {
     return new ResolvedConfig.Telemetry(
-        resolveLong("justsearch.telemetry.flushMs", 60_000),
-        resolveInt("justsearch.telemetry.metrics.max_mb", 50),
-        resolveInt("justsearch.telemetry.metrics.retention.days", 30),
-        resolveBoolean("justsearch.telemetry.metrics.exemplars", false));
+        resolveLong("justsearch.telemetry.flushMs", 60_000));
   }
 
   private ResolvedConfig.Policy buildPolicy() {
@@ -1294,7 +1291,6 @@ public final class ResolvedConfigBuilder {
         resolveNullableDouble("index.similarity.text.k1"),
         resolveNullableDouble("index.similarity.text.b"),
         resolveString("index.validation.mode", null),
-        resolveString(EnvRegistry.INDEX_TRACING_LEVEL.sysProp(), "none"),
         parseIndexSort(resolveString("index.sort", null)),
         parseBoosts(resolveString("index.boosts", null)));
   }
