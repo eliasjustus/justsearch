@@ -73,6 +73,7 @@ def start_backend(
     llm: bool = False,
     index_cache_mode: str = "off",
     corpus_dir: Path | None = None,
+    dataset_name: str | None = None,
 ) -> BackendInfo:
     """Start runHeadlessEval and wait for the backend to become healthy.
 
@@ -89,8 +90,10 @@ def start_backend(
     is then byte-identical to today (no cache seam is touched). When ``"on"`` AND
     ``clean`` is set, an input-addressed cache entry may be adopted before the
     fresh build (two-phase adopt->confirm, sec M.2): a confirmed hit boots on a copied
-    data dir, any doubt falls through to today's fresh build. ``corpus_dir`` (when
-    known) adds the corpus axis to the selector key.
+    data dir, any doubt falls through to today's fresh build. ``corpus_dir`` /
+    ``dataset_name`` (when known) are the corpus AXIS: they resolve through the one
+    shared ``index_identity.resolve_corpus_axis`` so this adopter and the warm
+    publisher bind identical corpus components (751 P.5 finding 2).
     """
     if health_timeout_sec is None:
         raw_timeout = os.environ.get("JSEVAL_HEALTH_TIMEOUT_SEC", "")
@@ -164,6 +167,7 @@ def start_backend(
             llm=llm,
             health_timeout_sec=health_timeout_sec,
             corpus_dir=corpus_dir,
+            dataset_name=dataset_name,
         )
         return BackendInfo(
             proc=proc, data_dir=resolved_data,
@@ -260,6 +264,7 @@ def _run_with_cache(
     llm: bool,
     health_timeout_sec: float,
     corpus_dir: Path | None,
+    dataset_name: str | None = None,
 ) -> tuple[subprocess.Popen, dict]:
     """Two-phase adopt (tempdoc 751 sec M.2); returns (healthy proc, cache_outcome).
 
@@ -282,24 +287,34 @@ def _run_with_cache(
             health_timeout_sec=health_timeout_sec,
         )
 
-    # Without the corpus axis the selector key would collide across corpora that
+    # Without a corpus axis the selector key would collide across corpora that
     # share a config: adoption stays safe (confirm's count/canary checks catch
     # it) but every cross-corpus run would thrash the same entry slot. Fail
-    # closed instead: no corpus dir resolved pre-start -> cache off for this run.
-    if corpus_dir is None:
-        log.info("Index cache disabled for this run (no corpus dir resolved) -- fresh build.")
+    # closed when there is no axis intent at all (no --corpus-dir AND no dataset).
+    # A resolvable-but-bad axis (subdir garbage, missing corpus.jsonl) is reported
+    # by compute_selector's resolve_corpus_axis below.
+    if corpus_dir is None and not dataset_name:
+        log.warning(
+            "Index cache requested but no corpus axis (no --corpus-dir, no dataset) "
+            "-- fresh build."
+        )
         return _boot_fresh(), {
-            "mode": "disabled:no-corpus-dir",
+            "mode": "disabled:no-corpus-axis",
             "entry": None,
-            "detail": {"reason": "corpus dir not resolvable before backend start"},
+            "detail": {"reason": "no corpus dir and no dataset name before backend start"},
             "selector_key": None,
             "would_have_hit_scoped_pin": None,
         }
 
-    selector = index_identity.compute_selector(resolved_root, corpus_dir, env)
+    selector = index_identity.compute_selector(
+        resolved_root, corpus_dir, env, dataset_name=dataset_name,
+    )
     if selector.key is None:
-        log.info(
-            "Index cache disabled for this run (%s) -- fresh build.",
+        # Finding 1: this used to log at INFO -- a chain that passed the exploded
+        # corpus-dir subdir lost ALL caching with only an easily-missed INFO line.
+        # Requested-but-disabled is a WARNING now, naming the remedy verbatim.
+        log.warning(
+            "Index cache requested but disabled for this run (%s) -- fresh build.",
             selector.unavailable_reason,
         )
         return _boot_fresh(), {

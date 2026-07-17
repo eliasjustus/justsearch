@@ -217,6 +217,10 @@ def _raw_corpus_dir(dataset_name: str) -> Path | None:
     first corpus of real binary documents. Such datasets have no corpus.jsonl and are
     never materialized; ingest points the watched root at the real files directly.
     """
+    # dataset_name may be None: `index-cache warm --corpus-dir X` (751 sec P.5)
+    # drives prepare_corpus with an explicit dir and no dataset identity.
+    if not dataset_name:
+        return None
     if not (dataset_name.startswith("golden/") or dataset_name.startswith("mixed/")):
         return None
     from .corpora import _default_base_dir
@@ -249,6 +253,10 @@ def _source_signature(dataset_name: str) -> str | None:
     ir-datasets versions and cannot go stale via regeneration, so they keep the plain
     materialize-if-empty behaviour.
     """
+    # dataset_name may be None: `index-cache warm --corpus-dir X` (751 sec P.5)
+    # drives prepare_corpus with an explicit dir and no dataset identity.
+    if not dataset_name:
+        return None
     if not (dataset_name.startswith("golden/") or dataset_name.startswith("mixed/")):
         return None
     from .corpora import _default_base_dir

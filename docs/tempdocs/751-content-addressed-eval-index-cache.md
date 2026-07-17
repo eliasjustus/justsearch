@@ -1,7 +1,7 @@
 ---
 title: "Input-addressed eval index cache: reuse a built index iff (corpus_signature × index_identity_key) match — static selector nominates, the running backend confirms, fail-closed to fresh build — keeping the fresh-build validity guarantee while amortizing the ~50-min/10k-doc rebuild eval campaigns pay repeatedly for identical inputs"
 type: tempdocs
-status: "SHIPPED to main as #235 (2026-07-17); v0+v1 live-validated (§P). Default OFF (--index-cache opt-in). REOPENED same day for the chain-integration seam (§P.5): the first real consumer (#236's Phase-2 chain) integrated within 2h, hit three live findings, reverted to fresh-build — the cache's amortization is unrealized until the seam lands. §P.3 evidence-gated follow-ups unchanged (v2 scoped pin cannot even collect its trigger data until §P.5 closes)."
+status: "v1 SHIPPED as #235; §P.5 chain-integration seam IMPLEMENTED in worktree 751-chain-seam (2026-07-17) and live-validated — the chain's exact three-failure sequence replayed green (warm from corpus-dir subdir → published; wrapper adopt same dir → six confirm checks green; warm again → already-cached; dataset-mode regression clean). resolve_corpus_axis + index-cache warm + WARN escalation + ingest None-guard; finding 3 refuted by IngestionSkipPolicy.java:137 (dotfiles never indexed). Not yet merged. §P.3 evidence-gated follow-ups unchanged."
 created: 2026-07-17
 author: agent (Fable orchestration), chartered at founder direction during the Phase-2 utility campaign ("open a new tempdoc for this. ill set a new agent on it")
 category: eval-infrastructure / measurement-economics / index-lifecycle
@@ -938,3 +938,42 @@ Also filed by the founder from the same campaign (class-level, owned elsewhere):
 proactively flagged the rebuild inefficiency before 751 was chartered — the
 "friction-you-schedule-around-is-a-finding" lesson; 751 is the instance, the class fix
 candidates (GPU-hours ledger, postmortem handle) belong to the agent-environment program.
+
+### P.5 implementation log (2026-07-17, session 7b0aa2d9 — the seam SHIPPED in worktree)
+
+**What shipped (worktree `751-chain-seam`):**
+- **`resolve_corpus_axis(dataset_name, explicit_dir) -> CorpusAxis(watched_dir, signature_root,
+  reason)`** in `index_identity.py` — the one canonical corpus-axis resolution, mirroring
+  `ingest.prepare_corpus`'s watched-root derivation; `compute_selector` now takes
+  `dataset_name` and binds `corpus_signature` to `signature_root` and `corpus_dir_path` to
+  `watched_dir` (the doc-universe path F-A actually protects). The finding-1 subdir shape
+  (`datasets/<cell>/corpus-dir`) resolves (watched=subdir, signature=parent); unresolvable +
+  cache requested now logs **WARNING with the remedy** (was INFO). `corpora.local_dataset_dir`
+  deleted (teardown rode along; sole caller was superseded).
+- **`jseval index-cache warm (--dataset X | --corpus-dir DIR)`** — the designed seam #236's
+  wrapper comment presupposed: drives the existing run lifecycle (`warm_index_cache` helper
+  reusing `_run_iteration`); prints `published <key>` / `already-cached <key>`; an
+  unresolvable axis exits 2 (fail LOUD — a warm that cannot cache is a chain-config error).
+  `serve-eval-backend.py` gains `--dataset`; publisher/adopter agreement is now structural
+  (same resolver, same input → same key).
+- **Latent None-guard** in `ingest._raw_corpus_dir`/`_source_signature` (corpus-dir-only
+  warm was the first caller to pass `dataset_name=None`; found by the live replay's first
+  attempt, exactly the class the replay exists to catch).
+- Finding 3 resolved by inspection: the Worker's `IngestionSkipPolicy.java:137` skips every
+  dot-prefixed file — `.source_signature` is never indexed; the stray-root-gate half is moot
+  under warm (chains watch `datasets/<cell>/corpus-dir`, which has no sidecar). A separate
+  199-vs-198 materialization-orphan artifact went to the observations inbox.
+
+**Live replay of the chain's exact failure sequence (2026-07-17 17:57-18:05, all green):**
+1. `warm --corpus-dir …/legal-clerc-200/corpus-dir` (finding-1 shape) → MISS → build →
+   `published d842873a…` with the chain dir as the recorded watched root.
+2. `serve-eval-backend.py --index-cache-mode on --corpus-dir <same>` (finding-2 replay) →
+   **adopted, all six confirm checks green** incl. watched-roots and canary (chunk-merge
+   executed, 59 hits) — the previously-impossible two-boot hit.
+3. `warm` again → `already-cached d842873a…` (confirmed live, ~30 s).
+4. Dataset-mode `jseval run --index-cache` → its own distinct key (watched =
+   `tmp/eval-corpora` materialization target) → publish — no regression; the two flows
+   coexist under legitimately different keys by design.
+
+Tests: 156 targeted + full suite green (modulo the 2 known-RED correction-probe). The chain
+can now run `index-cache warm` once per (corpus × config) and adopt in seconds per cell.
