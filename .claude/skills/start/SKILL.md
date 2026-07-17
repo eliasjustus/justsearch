@@ -21,3 +21,7 @@ Summarize:
 - What the app does
 - Key architecture decisions
 - Main components and how they interact
+
+## 3. Check the operational picture
+
+Run `node scripts/agent-analytics/world-state.mjs` for a live snapshot of worktree staleness, other agents' live sessions, and the next free tempdoc number — orient to what else is in flight before you start.

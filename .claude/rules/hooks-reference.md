@@ -36,7 +36,8 @@ message names the allowed alternative; use it.
   ssot-hint, test-edit-hint, stress-test-hint, governance-hint, seam-hint, search-engine-hint.
 - Bash-triggered: pipe-mask-hint (build exit masked by trailing pipe),
   governance-precommit-hint (`git commit`), docs-granularity-hint (`git push`),
-  dataset-cache-hint (corpus/dataset fetch — use the cache-backed `jseval corpus-fetch-*`, 709).
+  dataset-cache-hint (corpus/dataset fetch — use the cache-backed `jseval corpus-fetch-*`, 709),
+  exec-substrate-hint (scoop `&`-paste, `gh` wait-loops, piped py — use `run-gh`/`run-py.mjs`, 743).
 - Read-triggered: tempdoc-age-hint. Stop-triggered: observation-shard-hint.
 
 ## Transparent (no action needed)
