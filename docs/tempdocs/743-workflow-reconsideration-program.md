@@ -1516,6 +1516,57 @@ approved P-F/P-C pilots (that call remains open). Nothing in the wave weakens a 
    declares durable-or-adapter and its retirement condition at design time** — a component
    that can't name its retirement condition doesn't ship.
 
+## Derisk record — second wave (2026-07-17, session a6d2af56; 8 probes, all read-only/side-effect-free)
+
+- **R1 (P-J scanner) HELD.** The in-flight-vs-merged blind spot is confirmed from source
+  (`check-tempdoc-numbers.mjs:117` deliberately filters origin-present basenames — correct for
+  the merge-gate's divergent-claim rule, blind for "is N free?" at pick time). Scanner is pure
+  functions; extraction to a shared lib is trivial. The pick-time query and merge-gate need
+  *different* collision predicates over the same scan — design's one-scanner-two-consumers
+  shape is exactly right.
+- **R2 (session inventory) ADJUSTED, both directions.** `claude agents --json` natively lists
+  LIVE interactive sessions with pid/cwd/sessionId/name/busy-idle status — the live half of the
+  session inventory is adapter-over-native, better than designed. But no `sessions-index.json`
+  exists on this machine (Lane C's claim unconfirmed locally) — historical session↔transcript
+  mapping stays on the empirical projects-dir layout with a version-pinned fallback (V-A5).
+- **R3 (gh contract) HELD, partially live-confirmed** (0 = concluded-pass and 1 = failure/
+  not-found reproduced on gh 2.90.0; pending=8 had no live specimen — remains doc-grounded,
+  wrapper design unchanged).
+- **R4 (encoding root-fix) CONFIRMED live.** Bare piped python mangles non-ASCII
+  (`umlaut-�`); `PYTHONIOENCODING=utf-8` scoped fixes it. The P-K interpreter-runner's core
+  mechanism is validated on this box.
+- **R5 (hint-hook cost) HELD.** Register = one `{file, role}` entry + binding in
+  `agent-hooks.v1.json` (36 hooks today), hook-integrity gate covers wiring/load/bite, and
+  `dataset-cache-hint.mjs` (98 lines, with test corpus) is a near-template for the P-K
+  redirect hints — its own header argues the paved-path/moment-of-relevance thesis.
+- **R6 (transcript-store) HELD.** Pricing logic already confined to `lib/transcript-cost.mjs`
+  (2 importers); the 7 readers' discovery/parse code is modest and separable; one-consumer-
+  per-slice migration is viable without touching the 745-fixed parser semantics.
+- **R7 (750 fork risk) HELD — no fork today.** The 750 branch's non-sandbox content is
+  release/eval docs + run data; no general watcher exists there. Coordination note stands for
+  P-M(b), but nothing to reconcile yet.
+- **R8 (in-flight conflicts) CLEAR.** Only two commits on origin/main since this worktree's
+  base, neither touching `scripts/agent-analytics`, `scripts/ci`, or `.claude/skills`; open
+  PRs are dependabot-only.
+
+**Residual risks (accepted, gated):** V-A1 (resume-orphaning fix state) intentionally
+unprobed — it requires a session restart and gates only P-M(b)'s size; probe it at that
+slice's start. P-K adoption is unprovable pre-hoc — the redirect hints + P-L census ratchet
+are the measurement. Projects-dir layout instability (V-A5) carried as a pinned assumption.
+
+**Confidence: 8/10** for the remaining implementation. Docked for: adoption uncertainty on
+paved paths (measurable, not designable-away), V-A1 unknown, and platform-drift exposure on
+the adapter-class components (by design, priced in via retirement conditions).
+
+**Difficulty & routing recommendation (per repo delegation economics):** every slice is
+bounded, template-rich plumbing — **sonnet is the implementation floor for all slices**
+(self-contained briefs with the probe evidence above inlined), with **opus pinned for the
+refute-first reviews** (mandatory: P-J touches a CI gate's shared scanner; P-K encodes an
+exit-code contract; P-L touches the alive miner). No slice requires opus implementation;
+P-N/skill-wording edits are main-loop/trivial scale. Suggested slice order: transcript-store
+extraction rides P-L (its first consumer); P-J and P-K are independent and can go first in
+either order; P-M(a) guidance edits ride whichever slice ships first; P-M(b) waits on V-A1.
+
 ## Non-goals
 
 - Re-running 727's tactical fix loop (that instrument keeps running independently).
