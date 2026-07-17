@@ -320,17 +320,12 @@ public final class ResolvedConfigBuilder {
   }
 
   private void contributeYamlWatcher(JsonNode root) {
-    putYaml("index.watcher.strategy", root, "index.watcher.strategy");
-    putYamlInt("index.watcher.debounce_ms", root, "index.watcher.debounce_ms");
     putYamlBoolean("index.watcher.overflow.rescan_on_overflow", root,
         "index.watcher.overflow.rescan_on_overflow");
-    putYamlInt("index.watcher.polling.interval_ms", root, "index.watcher.polling.interval_ms");
-    putYamlInt("index.watcher.queue.max_entries", root, "index.watcher.queue.max_entries");
   }
 
   private void contributeYamlOcr(JsonNode root) {
     putYamlBoolean("index.ocr.enabled", root, "index.ocr.enabled");
-    putYamlInt("index.ocr.trigger.min_image_pixels", root, "index.ocr.trigger.min_image_pixels");
     putYamlInt("index.ocr.limits.per_file_timeout_ms", root, "index.ocr.limits.per_file_timeout_ms");
     putYamlInt("index.ocr.limits.max_pages", root, "index.ocr.limits.max_pages");
     putYamlInt("index.ocr.limits.max_image_dimension", root,
@@ -357,7 +352,6 @@ public final class ResolvedConfigBuilder {
     putYamlInt("index.writer.max_buffered_docs", root, "index.writer.max_buffered_docs");
     putYamlInt("index.queue.max_depth", root, "index.queue.max_depth");
     putYamlInt("index.commit.debounce_ms", root, "index.commit.debounce_ms");
-    putYaml("index.commit.policy", root, "index.commit.policy");
     putYamlBoolean("index.commit.meta.enabled", root, "index.commit.meta.enabled");
     putYamlInt("index.nrt.target_max_stale_ms", root, "index.nrt.target_max_stale_ms");
     putYamlInt("index.nrt.max_stale_ms", root, "index.nrt.max_stale_ms");
@@ -388,14 +382,12 @@ public final class ResolvedConfigBuilder {
     putYamlDouble("index.similarity.text.k1", root, "index.similarity.text.k1");
     putYamlDouble("index.similarity.text.b", root, "index.similarity.text.b");
     putYaml("index.validation.mode", root, "index.validation.mode");
-    putYaml(EnvRegistry.INDEX_DEFAULT_LANGUAGE.sysProp(), root, "index.default_language");
   }
 
   private void contributeYamlPolicy(JsonNode root) {
     putYamlBoolean("egress.block_all", root, "egress.block_all");
     putYamlBoolean("justsearch.llm.enabled", root, "llm.enabled");
     putYaml("justsearch.llm.model_path", root, "llm.model_path");
-    putYaml("justsearch.llm.mode", root, "llm.mode");
     // 347: policy GPU acceleration now handled by EnvRegistry.POLICY_GPU_ACCELERATION_ENABLED
     // (with configKey "policy.gpu_acceleration_enabled").
   }
@@ -407,7 +399,6 @@ public final class ResolvedConfigBuilder {
     putYaml("rag.diversify.mode", root, "rag.diversify.mode");
     putYamlDouble("rag.mmr.lambda", root, "rag.mmr.lambda");
     putYamlInt("rag.mmr.max_candidates", root, "rag.mmr.max_candidates");
-    putYamlBoolean("rag.context.include_surrounding", root, "rag.context.include_surrounding");
     putYamlBoolean("rag.chunk_vectors.enabled", root, "rag.chunk_vectors.enabled");
     putYamlBoolean("rag.chunk_splade.enabled", root, "rag.chunk_splade.enabled");
     // 347: RAG env/sysprop overrides now handled by EnvRegistry entries.
@@ -477,16 +468,6 @@ public final class ResolvedConfigBuilder {
   private void contributeYamlSearch(JsonNode root) {
     JsonNode searchRoot = root.path("search");
     if (searchRoot.isMissingNode()) return;
-    putYamlFromNode("search.cursor.legacy_enabled", searchRoot, "cursor.legacy_enabled");
-    putYamlFromNodeLower("search.paging.strategy", searchRoot, "paging.strategy");
-    putYamlLongClampedFromNode("search.paging.pit_ttl_ms", searchRoot, "paging.pit_ttl_ms", 1L);
-    putYamlFromNode("search.paging.tiebreak_field", searchRoot, "paging.tiebreak_field");
-    // Also check top-level tiebreak_field as fallback
-    String tiebreak = readYamlText(searchRoot, "tiebreak_field");
-    if (tiebreak != null && resolve("search.paging.tiebreak_field").value() == null) {
-      put("search.paging.tiebreak_field", ORDINAL_YAML, "yaml", "search.tiebreak_field",
-          tiebreak);
-    }
     putYamlIntFromNode("search.hybrid.bm25_k", searchRoot, "hybrid.bm25_k");
     putYamlIntFromNode("search.hybrid.ann_k", searchRoot, "hybrid.ann_k");
     putYamlFromNode("search.hybrid.auto_embed", searchRoot, "hybrid.auto_embed");
@@ -500,8 +481,6 @@ public final class ResolvedConfigBuilder {
         "corrections.max_edit_distance", 0, 2);
     putYamlFromNode("search.corrections.zero_hit_retry_enabled", searchRoot,
         "corrections.zero_hit_retry_enabled");
-    putYamlFromNode("search.corrections.index_fallback_enabled", searchRoot,
-        "corrections.index_fallback_enabled");
     putYamlFromNode("search.chunk_aware.enabled", searchRoot, "chunk_aware.enabled");
     putDefault("search.chunk_aware.enabled", "true");
     // Facet fields list
@@ -516,7 +495,6 @@ public final class ResolvedConfigBuilder {
             String.join(",", fields));
       }
     }
-    putYaml(EnvRegistry.SEARCH_LANGUAGE_POLICY.sysProp(), root, "search.default_language_policy");
   }
 
   private void contributeYamlIndexComposite(JsonNode root) {
@@ -547,12 +525,6 @@ public final class ResolvedConfigBuilder {
     putYamlInt("justsearch.indexer.queueSize", root, "workers.indexer.queueSize");
     putYamlInt("justsearch.indexer.maxInFlightBytes", root, "workers.indexer.maxInFlightBytes");
     putYaml("workers.indexer.backpressure_mode", root, "workers.indexer.backpressure_mode");
-
-    // translator.health.*
-    putYamlLong("translator.health.refreshIntervalMs", root, "translator.health.refreshIntervalMs");
-    putYamlLong("translator.health.maxBackoffMs", root, "translator.health.maxBackoffMs");
-    putYamlLong("translator.health.stalenessAlertSeconds", root,
-        "translator.health.stalenessAlertSeconds");
   }
 
   private void contributeYamlCollections(JsonNode root) {
@@ -655,11 +627,6 @@ public final class ResolvedConfigBuilder {
   }
 
   /** Like {@link #putYamlFromNode} but normalizes the value to lowercase (for enum-like keys). */
-  private void putYamlFromNodeLower(String key, JsonNode node, String yamlPath) {
-    String value = readYamlText(node, yamlPath);
-    if (value != null) put(key, ORDINAL_YAML, "yaml", yamlPath, value.toLowerCase(Locale.ROOT));
-  }
-
   private void putYamlIntFromNode(String key, JsonNode node, String yamlPath) {
     Integer value = readYamlInt(node, yamlPath);
     if (value != null) put(key, ORDINAL_YAML, "yaml", yamlPath, value.toString());
@@ -671,15 +638,6 @@ public final class ResolvedConfigBuilder {
     if (value != null) {
       int clamped = Math.max(min, Math.min(max, value));
       put(key, ORDINAL_YAML, "yaml", yamlPath, Integer.toString(clamped));
-    }
-  }
-
-  private void putYamlLongClampedFromNode(
-      String key, JsonNode node, String yamlPath, long min) {
-    Long value = readYamlLong(node, yamlPath);
-    if (value != null) {
-      long clamped = Math.max(min, value);
-      put(key, ORDINAL_YAML, "yaml", yamlPath, Long.toString(clamped));
     }
   }
 
@@ -837,7 +795,6 @@ public final class ResolvedConfigBuilder {
     ResolvedConfig.Llm llm = buildLlm();
     ResolvedConfig.Agent agent = buildAgent();
     ResolvedConfig.Summary summary = buildSummary();
-    ResolvedConfig.Translator translator = buildTranslator();
     ResolvedConfig.Search search = buildSearch();
     ResolvedConfig.Telemetry telemetry = buildTelemetry();
     ResolvedConfig.Policy policy = buildPolicy();
@@ -856,7 +813,7 @@ public final class ResolvedConfigBuilder {
 
     ResolvedConfig config =
         new ResolvedConfig(
-            paths, ports, ai, llm, agent, summary, translator,
+            paths, ports, ai, llm, agent, summary,
             search, telemetry, policy, ui,
             watcher, ocr, index, rag, hybridSearch, worker,
             collections, workerAi, workerIndexer,
@@ -964,12 +921,9 @@ public final class ResolvedConfigBuilder {
         resolvePath("justsearch.llm.model_path", null),
         resolveBoolean("justsearch.ai.disabled", false),
         resolveBoolean("justsearch.llm.enabled", true),
-        resolveString("justsearch.llm.mode", "remote"),
-        resolveString("justsearch.llm.backend", ""),
         resolveInt("justsearch.context.size", 8192),
         resolveString("justsearch.vlm.model", ""),
         resolveString("justsearch.mmproj.model", ""),
-        resolveBoolean("justsearch.ai.classify.enabled", true),
         resolveBoolean("justsearch.llm.use_thinking", true),
         resolveInt("justsearch.llm.reasoning_budget", 0),
         resolveString("justsearch.onnxruntime.variantId", ""),
@@ -1218,19 +1172,12 @@ public final class ResolvedConfigBuilder {
         resolveDouble("justsearch.llm.temperature", 0.0),
         resolveDouble("justsearch.llm.top_p", 0.0),
         resolveDouble("justsearch.llm.min_p", 0.0),
-        resolveDouble("justsearch.llm.rep_penalty", 0.0),
-        resolveInt("justsearch.llm.rep_window", 0),
-        resolveBoolean("justsearch.llm.enable_json_guard", false),
         resolveLong("justsearch.llm.rng_seed", 42L),
         resolveString("justsearch.llm.backend_selector", ""),
-        resolveBoolean("justsearch.llm.allow_remote", false),
-        resolveString("justsearch.llm.remote_endpoint", ""),
-        resolveString("justsearch.llm.remote_auth_token", ""),
         resolveString("justsearch.llm.backend_supports", ""),
         resolveInt("justsearch.llm.summary_chunk_tokens", 0),
         resolveInt("justsearch.llm.summary_chunk_overlap", 0),
         resolveString("justsearch.llm.template_root", ""),
-        resolveString("justsearch.llm.template_translate", ""),
         resolveString("justsearch.llm.template_summary", ""),
         resolveString("justsearch.llm.template_reduce", ""));
   }
@@ -1250,21 +1197,7 @@ public final class ResolvedConfigBuilder {
   private ResolvedConfig.Summary buildSummary() {
     return new ResolvedConfig.Summary(
         resolveString("justsearch.summary.pipeline", ""),
-        resolveInt("justsearch.summary.max_characters", 0),
-        resolveInt("justsearch.summary.max_tokens", 0),
-        resolveString("justsearch.summary.message_key", ""),
-        resolveString("justsearch.summary.queue_full_message_key", ""),
-        resolveInt("justsearch.summary.execution_threads", 0),
-        resolveInt("justsearch.summary.execution_queue_capacity", 0));
-  }
-
-  private ResolvedConfig.Translator buildTranslator() {
-    return new ResolvedConfig.Translator(
-        resolveString("justsearch.translator.pipeline.intent", ""),
-        resolveString("justsearch.translator.pipeline.embed", ""),
-        resolveString("justsearch.translator.pipeline.classify", ""),
-        resolveString("justsearch.translator.repoRoot", ""),
-        buildTranslatorHealth());
+        resolveInt("justsearch.summary.max_tokens", 0));
   }
 
   private ResolvedConfig.Search buildSearch() {
@@ -1277,8 +1210,7 @@ public final class ResolvedConfigBuilder {
         resolveDouble("justsearch.search.entity_boost", 0.0),
         resolveBoolean("search.chunk_aware.enabled", true),
         resolveBoolean("justsearch.lambdamart.enabled", false),
-        buildSearchCorrections(),
-        buildSearchPaging());
+        buildSearchCorrections());
   }
 
   private ResolvedConfig.Search.Corrections buildSearchCorrections() {
@@ -1286,49 +1218,30 @@ public final class ResolvedConfigBuilder {
         resolveBoolean("search.corrections.enabled", false),
         resolveInt("search.corrections.df_threshold", 1),
         resolveInt("search.corrections.max_edit_distance", 1),
-        resolveBoolean("search.corrections.zero_hit_retry_enabled", false),
-        resolveBoolean("search.corrections.index_fallback_enabled", false));
-  }
-
-  private ResolvedConfig.Search.Paging buildSearchPaging() {
-    return new ResolvedConfig.Search.Paging(
-        resolveBoolean("search.cursor.legacy_enabled", false),
-        resolveString("search.paging.strategy", "search_after"),
-        resolveLong("search.paging.pit_ttl_ms", 60_000L),
-        resolveString("search.paging.tiebreak_field", null));
+        resolveBoolean("search.corrections.zero_hit_retry_enabled", false));
   }
 
   private ResolvedConfig.Telemetry buildTelemetry() {
     return new ResolvedConfig.Telemetry(
-        resolveLong("justsearch.telemetry.flushMs", 60_000),
-        resolveInt("justsearch.telemetry.metrics.max_mb", 50),
-        resolveInt("justsearch.telemetry.metrics.retention.days", 30),
-        resolveBoolean("justsearch.telemetry.metrics.exemplars", false));
+        resolveLong("justsearch.telemetry.flushMs", 60_000));
   }
 
   private ResolvedConfig.Policy buildPolicy() {
     return new ResolvedConfig.Policy(
         resolveBoolean("egress.block_all", false),
         resolveBoolean("justsearch.prod", false),
-        resolveBoolean("justsearch.index.parity.allow_mismatch", false),
-        resolveString(EnvRegistry.SEARCH_LANGUAGE_POLICY.sysProp(), "explicit_or_default"));
+        resolveBoolean("justsearch.index.parity.allow_mismatch", false));
   }
 
   private ResolvedConfig.Ui buildUi() {
     return new ResolvedConfig.Ui(
-        resolveString("justsearch.ui.settings.mode", null),
         resolveBoolean("justsearch.ui.automation.enabled", false),
-        resolveBoolean("justsearch.ui.automation.requireTranslator", false),
         resolveBoolean("justsearch.ui.automation.forceDiagnostics", true));
   }
 
   private ResolvedConfig.Watcher buildWatcher() {
     return new ResolvedConfig.Watcher(
-        resolveString("index.watcher.strategy", null),
-        resolveNullableInt("index.watcher.debounce_ms"),
-        resolveNullableBoolean("index.watcher.overflow.rescan_on_overflow"),
-        resolveNullableInt("index.watcher.polling.interval_ms"),
-        resolveNullableInt("index.watcher.queue.max_entries"));
+        resolveNullableBoolean("index.watcher.overflow.rescan_on_overflow"));
   }
 
   private ResolvedConfig.Ocr buildOcr() {
@@ -1338,7 +1251,6 @@ public final class ResolvedConfigBuilder {
     return new ResolvedConfig.Ocr(
         resolveNullableBoolean("index.ocr.enabled"),
         languages,
-        resolveNullableInt("index.ocr.trigger.min_image_pixels"),
         resolveNullableInt("index.ocr.limits.per_file_timeout_ms"),
         resolveNullableInt("index.ocr.limits.max_pages"),
         resolveNullableInt("index.ocr.limits.max_image_dimension"),
@@ -1353,7 +1265,6 @@ public final class ResolvedConfigBuilder {
         resolveNullableInt("index.writer.max_buffered_docs"),
         resolveNullableInt("index.queue.max_depth"),
         resolveNullableInt("index.commit.debounce_ms"),
-        resolveString("index.commit.policy", null),
         resolveBoolean("index.commit.meta.enabled", true),
         resolveNullableInt("index.nrt.target_max_stale_ms"),
         resolveNullableInt("index.nrt.max_stale_ms"),
@@ -1380,8 +1291,6 @@ public final class ResolvedConfigBuilder {
         resolveNullableDouble("index.similarity.text.k1"),
         resolveNullableDouble("index.similarity.text.b"),
         resolveString("index.validation.mode", null),
-        resolveString(EnvRegistry.INDEX_DEFAULT_LANGUAGE.sysProp(), "en-US"),
-        resolveString(EnvRegistry.INDEX_TRACING_LEVEL.sysProp(), "none"),
         parseIndexSort(resolveString("index.sort", null)),
         parseBoosts(resolveString("index.boosts", null)));
   }
@@ -1407,13 +1316,7 @@ public final class ResolvedConfigBuilder {
             }
           }
         }
-        String strategy = null;
-        JsonNode watcherNode = node.path("watcher");
-        if (watcherNode.isObject()) {
-          String s = watcherNode.path("strategy").asText(null);
-          if (s != null && !s.isBlank()) strategy = s;
-        }
-        out.add(new ResolvedConfig.CollectionCfg(name, roots, strategy));
+        out.add(new ResolvedConfig.CollectionCfg(name, roots));
       }
       return new ResolvedConfig.Collections(List.copyOf(out));
     } catch (Exception e) {
@@ -1455,13 +1358,6 @@ public final class ResolvedConfigBuilder {
         resolveString(EnvRegistry.INFRA_HEALTH_HOST.sysProp(), "127.0.0.1"),
         Math.max(0, Math.min(65535, resolveInt(
             EnvRegistry.INFRA_HEALTH_PORT.sysProp(), 7443))));
-  }
-
-  private ResolvedConfig.Translator.Health buildTranslatorHealth() {
-    return new ResolvedConfig.Translator.Health(
-        Math.max(1, resolveLong("translator.health.refreshIntervalMs", 300_000L)),
-        Math.max(1, resolveLong("translator.health.maxBackoffMs", 30_000L)),
-        Math.max(1, resolveLong("translator.health.stalenessAlertSeconds", 1_800L)));
   }
 
   private static List<ResolvedConfig.Index.IndexSortItem> parseIndexSort(String json) {
@@ -1517,7 +1413,6 @@ public final class ResolvedConfigBuilder {
         resolveStringLower("rag.diversify.mode", "position"),
         Math.max(0.0, Math.min(1.0, resolveDouble("rag.mmr.lambda", 0.5))),
         Math.max(1, Math.min(200, resolveInt("rag.mmr.max_candidates", 20))),
-        resolveBoolean("rag.context.include_surrounding", false),
         resolveBoolean("rag.chunk_vectors.enabled", true),
         resolveBoolean("rag.chunk_splade.enabled", false),
         resolveInt("justsearch.rag.top_k", 5),

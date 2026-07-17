@@ -1,7 +1,7 @@
 ---
 title: "Worktree local-config bootstrap gap: prepare-worktree.cjs documented the .mcp.json/settings.local.json seed step but never ran it"
 type: tempdocs
-status: "PR open, not yet merged (2026-07-02). Fix implemented and live-verified via `claude mcp list` (both the main checkout and a fresh worktree now report `justsearch-dev: ... Connected`); the one remaining verification step — confirming `mcp__justsearch-dev__*` tools actually appear inside a live agent session — needs a session restart and was not exercised. See §Remaining work."
+status: "MERGED to main as PR #45, commit 69a77a57 (2026-07-17 reconciliation). [pre-merge status retained: PR open, not yet merged (2026-07-02). Fix implemented and live-verified via `claude mcp list` (both the main checkout and a fresh worktree now report `justsearch-dev: ... Connected`); the one remaining verification step — confirming `mcp__justsearch-dev__*` tools actually appear inside a live agent session — needs a session restart and was not exercised. See §Remaining work.]"
 created: 2026-07-02
 updated: 2026-07-02
 author: agent investigation + fix pass (triggered by agents reporting no access to the justsearch-dev MCP tooling; live repo inspection of .gitignore, ~/.claude.json, scripts/dev/prepare-worktree.cjs, .claude/rules/branch-safety.md, MAINTAINING.md, and git history of tempdocs 631/634 + PR #14)

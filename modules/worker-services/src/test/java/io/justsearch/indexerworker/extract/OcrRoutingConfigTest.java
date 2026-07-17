@@ -40,7 +40,7 @@ final class OcrRoutingConfigTest {
   @Test
   void allNullLimitsFillToSafeDefaults() {
     ResolvedConfig.Ocr allNull =
-        new ResolvedConfig.Ocr(null, null, null, null, null, null, null, null, null);
+        new ResolvedConfig.Ocr(null, null, null, null, null, null, null, null);
 
     OcrRoutingConfig resolved = OcrRoutingConfig.from(allNull);
 
@@ -58,7 +58,7 @@ final class OcrRoutingConfigTest {
   @Test
   void nonPositiveLimitsAlsoFillToSafeDefaults() {
     ResolvedConfig.Ocr allZeroOrNegative =
-        new ResolvedConfig.Ocr(true, List.of("eng"), 0, -1, 0, -5, 0, -10, -1);
+        new ResolvedConfig.Ocr(true, List.of("eng"), -1, 0, -5, 0, -10, -1);
 
     OcrRoutingConfig resolved = OcrRoutingConfig.from(allZeroOrNegative);
 
@@ -73,7 +73,7 @@ final class OcrRoutingConfigTest {
   @Test
   void explicitPositiveLimitsAreHonoredAndBecomeTheEffectiveValues() {
     ResolvedConfig.Ocr configured =
-        new ResolvedConfig.Ocr(true, List.of("eng"), null, 12_000, 7, 2048, 8_000_000, 220, 3);
+        new ResolvedConfig.Ocr(true, List.of("eng"), 12_000, 7, 2048, 8_000_000, 220, 3);
 
     OcrRoutingConfig resolved = OcrRoutingConfig.from(configured);
 
@@ -90,7 +90,7 @@ final class OcrRoutingConfigTest {
   @Test
   void disabledOcrIsRespectedRegardlessOfOtherFields() {
     ResolvedConfig.Ocr disabled =
-        new ResolvedConfig.Ocr(false, List.of("eng"), null, 12_000, 7, 2048, 8_000_000, 220, 3);
+        new ResolvedConfig.Ocr(false, List.of("eng"), 12_000, 7, 2048, 8_000_000, 220, 3);
 
     assertEquals(false, OcrRoutingConfig.from(disabled).enabled());
   }

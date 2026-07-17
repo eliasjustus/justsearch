@@ -351,13 +351,11 @@ final class SearchPlannerApprovalCorpusTest {
   /** Stubs a {@link ResolvedConfig} with the minimal {@code search()} sub-record. */
   private static SearchPlanner newPlanner(boolean chunkAwareEnabled, boolean correctionsEnabled) {
     ResolvedConfig.Search.Corrections corrections =
-        new ResolvedConfig.Search.Corrections(correctionsEnabled, 1, 2, true, true);
-    ResolvedConfig.Search.Paging paging =
-        new ResolvedConfig.Search.Paging(false, "tiebreak", 60_000L, "doc_id");
+        new ResolvedConfig.Search.Corrections(correctionsEnabled, 1, 2, true);
     ResolvedConfig.Search search =
         new ResolvedConfig.Search(
             "default", "search.v1", "main", false, 0.0, 0.0, chunkAwareEnabled, false,
-            corrections, paging);
+            corrections);
     ResolvedConfig config = mock(ResolvedConfig.class);
     when(config.search()).thenReturn(search);
     return new SearchPlanner(() -> config);

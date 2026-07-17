@@ -1,7 +1,7 @@
 ---
 title: "Input-addressed eval index cache: reuse a built index iff (corpus_signature × index_identity_key) match — static selector nominates, the running backend confirms, fail-closed to fresh build — keeping the fresh-build validity guarantee while amortizing the ~50-min/10k-doc rebuild eval campaigns pay repeatedly for identical inputs"
 type: tempdocs
-status: "v1 SHIPPED as #235; §P.5 chain-integration seam IMPLEMENTED in worktree 751-chain-seam (2026-07-17) and live-validated — the chain's exact three-failure sequence replayed green (warm from corpus-dir subdir → published; wrapper adopt same dir → six confirm checks green; warm again → already-cached; dataset-mode regression clean). resolve_corpus_axis + index-cache warm + WARN escalation + ingest None-guard; finding 3 refuted by IngestionSkipPolicy.java:137 (dotfiles never indexed). Not yet merged. §P.3 evidence-gated follow-ups unchanged."
+status: "v1 MERGED to main as PR #235, commit 66c6c71e (2026-07-17). §P.5 chain-integration seam IMPLEMENTED in worktree 751-chain-seam same day and live-validated — the chain's exact three-failure sequence replayed green (warm from corpus-dir subdir → published; wrapper adopt same dir → six confirm checks green; warm again → already-cached; dataset-mode regression clean). resolve_corpus_axis + index-cache warm + WARN escalation + ingest None-guard; finding 3 refuted by IngestionSkipPolicy.java:137 (dotfiles never indexed). §P.3 evidence-gated follow-ups unchanged."
 created: 2026-07-17
 author: agent (Fable orchestration), chartered at founder direction during the Phase-2 utility campaign ("open a new tempdoc for this. ill set a new agent on it")
 category: eval-infrastructure / measurement-economics / index-lifecycle

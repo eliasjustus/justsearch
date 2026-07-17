@@ -61,15 +61,6 @@ public enum EnvRegistry {
     /** Telemetry flush interval (ms). */
     TELEMETRY_FLUSH_MS("justsearch.telemetry.flushMs", "JUSTSEARCH_TELEMETRY_FLUSH_MS"),
 
-    /** Telemetry metrics file max size (MB). */
-    TELEMETRY_METRICS_MAX_MB("justsearch.telemetry.metrics.max_mb", "JUSTSEARCH_TELEMETRY_METRICS_MAX_MB"),
-
-    /** Telemetry metrics retention period (days). */
-    TELEMETRY_METRICS_RETENTION_DAYS("justsearch.telemetry.metrics.retention.days", "JUSTSEARCH_TELEMETRY_METRICS_RETENTION_DAYS"),
-
-    /** Telemetry exemplars enabled flag. */
-    TELEMETRY_METRICS_EXEMPLARS("justsearch.telemetry.metrics.exemplars", "JUSTSEARCH_TELEMETRY_METRICS_EXEMPLARS"),
-
     /** Indexer-worker version string (override). */
     INDEXER_WORKER_VERSION("indexer.worker.version", "JUSTSEARCH_INDEXER_WORKER_VERSION"),
 
@@ -91,9 +82,6 @@ public enum EnvRegistry {
     /** LLM model path. */
     LLM_MODEL_PATH("justsearch.llm.model_path", "JUSTSEARCH_LLM_MODEL_PATH"),
 
-    /** LLM mode (local/remote). */
-    LLM_MODE("justsearch.llm.mode", "JUSTSEARCH_LLM_MODE"),
-
     /**
      * Install/runtime intent (tempdoc 657): {@code full-desktop} | {@code headless} |
      * {@code mcp-lite}. Set at launch by whichever launcher started the backend (the Tauri shell
@@ -102,9 +90,6 @@ public enum EnvRegistry {
      * unset), consumed by the install planner and the runtime-manifest publisher.
      */
     MODE("justsearch.mode", "JUSTSEARCH_MODE"),
-
-    /** LLM backend selector (auto/stub/etc). */
-    LLM_BACKEND("justsearch.llm.backend", "JUSTSEARCH_LLM_BACKEND"),
 
     /** LLM model file hash (sha256). */
     LLM_MODEL_SHA256("justsearch.llm.model_sha256", "JUSTSEARCH_LLM_MODEL_SHA256"),
@@ -164,15 +149,6 @@ public enum EnvRegistry {
     /** Min-p sampling parameter. */
     LLM_MIN_P("justsearch.llm.min_p", "JUSTSEARCH_LLM_MIN_P"),
 
-    /** Repetition penalty value. */
-    LLM_REP_PENALTY("justsearch.llm.rep_penalty", "JUSTSEARCH_LLM_REP_PENALTY"),
-
-    /** Repetition penalty sliding window. */
-    LLM_REP_WINDOW("justsearch.llm.rep_window", "JUSTSEARCH_LLM_REP_WINDOW"),
-
-    /** Enables JSON grammar guard. */
-    LLM_ENABLE_JSON_GUARD("justsearch.llm.enable_json_guard", "JUSTSEARCH_LLM_ENABLE_JSON_GUARD"),
-
     /** Enables thinking mode (reasoning_content parsing, --reasoning-format deepseek). Default true. */
     USE_THINKING("justsearch.llm.use_thinking", "JUSTSEARCH_USE_THINKING"),
 
@@ -218,10 +194,6 @@ public enum EnvRegistry {
     /** Template root directory. */
     LLM_TEMPLATE_ROOT("justsearch.llm.template_root", "JUSTSEARCH_LLM_TEMPLATE_ROOT"),
 
-    /** Intent translation template filename. */
-    LLM_TEMPLATE_TRANSLATE(
-        "justsearch.llm.template_translate", "JUSTSEARCH_LLM_TEMPLATE_TRANSLATE"),
-
     /** Summary map template filename. */
     LLM_TEMPLATE_SUMMARY("justsearch.llm.template_summary", "JUSTSEARCH_LLM_TEMPLATE_SUMMARY"),
 
@@ -242,54 +214,14 @@ public enum EnvRegistry {
     LLM_SUMMARY_CHUNK_OVERLAP(
         "justsearch.llm.summary_chunk_overlap", "JUSTSEARCH_LLM_SUMMARY_CHUNK_OVERLAP"),
 
-    /** Allows remote LLM backend usage. */
-    LLM_ALLOW_REMOTE("justsearch.llm.allow_remote", "JUSTSEARCH_LLM_ALLOW_REMOTE"),
-
-    /** Remote backend endpoint. */
-    LLM_REMOTE_ENDPOINT("justsearch.llm.remote_endpoint", "JUSTSEARCH_LLM_REMOTE_ENDPOINT"),
-
-    /** Remote backend auth token. */
-    LLM_REMOTE_AUTH_TOKEN("justsearch.llm.remote_auth_token", "JUSTSEARCH_LLM_REMOTE_AUTH_TOKEN"),
-
     /** Comma-separated backend task capability overrides. */
     LLM_BACKEND_SUPPORTS("justsearch.llm.backend_supports", "JUSTSEARCH_LLM_BACKEND_SUPPORTS"),
-
-    /** Translator intent pipeline identifier. */
-    TRANSLATOR_PIPELINE_INTENT(
-        "justsearch.translator.pipeline.intent", "JUSTSEARCH_TRANSLATOR_PIPELINE_INTENT"),
-
-    /** Translator embedding pipeline identifier. */
-    TRANSLATOR_PIPELINE_EMBED(
-        "justsearch.translator.pipeline.embed", "JUSTSEARCH_TRANSLATOR_PIPELINE_EMBED"),
-
-    /** Translator classify pipeline identifier. */
-    TRANSLATOR_PIPELINE_CLASSIFY(
-        "justsearch.translator.pipeline.classify", "JUSTSEARCH_TRANSLATOR_PIPELINE_CLASSIFY"),
 
     /** Summary pipeline identifier. */
     SUMMARY_PIPELINE("justsearch.summary.pipeline", "JUSTSEARCH_SUMMARY_PIPELINE"),
 
-    /** Summary max input characters before rejection. */
-    SUMMARY_MAX_CHARACTERS("justsearch.summary.max_characters", "JUSTSEARCH_SUMMARY_MAX_CHARACTERS"),
-
     /** Summary max estimated tokens before rejection. */
     SUMMARY_MAX_TOKENS("justsearch.summary.max_tokens", "JUSTSEARCH_SUMMARY_MAX_TOKENS"),
-
-    /** Summary too-large message key. */
-    SUMMARY_MESSAGE_KEY("justsearch.summary.message_key", "JUSTSEARCH_SUMMARY_MESSAGE_KEY"),
-
-    /** Summary queue-full message key. */
-    SUMMARY_QUEUE_FULL_MESSAGE_KEY(
-        "justsearch.summary.queue_full_message_key", "JUSTSEARCH_SUMMARY_QUEUE_FULL_MESSAGE_KEY"),
-
-    /** Summary execution threads. */
-    SUMMARY_EXECUTION_THREADS(
-        "justsearch.summary.execution_threads", "JUSTSEARCH_SUMMARY_EXECUTION_THREADS"),
-
-    /** Summary execution queue capacity. */
-    SUMMARY_EXECUTION_QUEUE_CAPACITY(
-        "justsearch.summary.execution_queue_capacity",
-        "JUSTSEARCH_SUMMARY_EXECUTION_QUEUE_CAPACITY"),
 
     /** Embedding dimension override for worker/runtime compatibility. */
     EMBED_DIMENSION_OVERRIDE("justsearch.embed.dimension", "JUSTSEARCH_EMBED_DIM"),
@@ -446,9 +378,6 @@ public enum EnvRegistry {
     /** Enable/disable embedding feature independently (escape hatch; default from YAML/SSOT). */
     AI_EMBED_ENABLED("justsearch.ai.embed.enabled", "JUSTSEARCH_AI_EMBED_ENABLED"),
 
-    /** Enable/disable classification feature independently (escape hatch; default from YAML/SSOT). */
-    AI_CLASSIFY_ENABLED("justsearch.ai.classify.enabled", "JUSTSEARCH_AI_CLASSIFY_ENABLED"),
-
     /** Disable all AI features. */
     AI_DISABLED("justsearch.ai.disabled", "JUSTSEARCH_AI_DISABLED"),
 
@@ -499,16 +428,8 @@ public enum EnvRegistry {
     SEARCH_CHUNK_AWARE_ENABLED(
         "search.chunk_aware.enabled", "JUSTSEARCH_SEARCH_CHUNK_AWARE_ENABLED"),
 
-    /** Translator repo root override (for local/dev model assets). */
-    TRANSLATOR_REPO_ROOT("justsearch.translator.repoRoot", "JUSTSEARCH_TRANSLATOR_REPO_ROOT"),
-
     /** UI automation mode enabled flag. */
     UI_AUTOMATION_ENABLED("justsearch.ui.automation.enabled", "JUSTSEARCH_UI_AUTOMATION"),
-
-    /** UI automation: require translator even in automation mode. */
-    UI_AUTOMATION_REQUIRE_TRANSLATOR(
-        "justsearch.ui.automation.requireTranslator",
-        "JUSTSEARCH_UI_AUTOMATION_REQUIRE_TRANSLATOR"),
 
     /** UI automation: force infra diagnostics overrides. */
     UI_AUTOMATION_FORCE_DIAGNOSTICS(
@@ -971,31 +892,12 @@ public enum EnvRegistry {
     INDEXER_MAX_INFLIGHT_BYTES(
         "justsearch.indexer.maxInFlightBytes", "JUSTSEARCH_INDEXER_MAX_INFLIGHT_BYTES"),
 
-    // ==================== Translator Health (tempdoc 314 C1) ====================
-
-    /** Translator health check refresh interval (ms). */
-    TRANSLATOR_REFRESH_INTERVAL_MS(
-        "translator.health.refreshIntervalMs", "JUSTSEARCH_TRANSLATOR_REFRESH_INTERVAL_MS"),
-
-    /** Translator health check max backoff (ms). */
-    TRANSLATOR_MAX_BACKOFF_MS(
-        "translator.health.maxBackoffMs", "JUSTSEARCH_TRANSLATOR_MAX_BACKOFF_MS"),
-
-    /** Translator health check staleness alert threshold (seconds). */
-    TRANSLATOR_STALENESS_ALERT_SECONDS(
-        "translator.health.stalenessAlertSeconds", "JUSTSEARCH_TRANSLATOR_STALENESS_ALERT_SECONDS"),
-
     // ==================== Infra Health (tempdoc 314 Phase F) ====================
 
     /** Infra health gRPC server host. */
     INFRA_HEALTH_HOST("justsearch.infra.health.host", "JUSTSEARCH_INFRA_HEALTH_HOST"),
     /** Infra health gRPC server port. */
     INFRA_HEALTH_PORT("justsearch.infra.health.port", "JUSTSEARCH_INFRA_HEALTH_PORT"),
-
-    // ==================== Language Configuration (tempdoc 314 Phase F) ====================
-
-    /** Default index language (BCP-47 tag). */
-    INDEX_DEFAULT_LANGUAGE("justsearch.index.default_language", "JUSTSEARCH_INDEX_DEFAULT_LANGUAGE"),
 
     // ==================== Indexing Tracing (tempdoc 312 Phase 0) ====================
 
@@ -1011,9 +913,6 @@ public enum EnvRegistry {
      * {@code justsearch.inference.generation} span attribute to attach to exported spans.
      */
     HEAD_TRACING_LEVEL("justsearch.head.tracing_level", "JUSTSEARCH_HEAD_TRACING_LEVEL"),
-    /** Search language filter policy. */
-    SEARCH_LANGUAGE_POLICY(
-        "justsearch.search.default_language_policy", "JUSTSEARCH_SEARCH_DEFAULT_LANGUAGE_POLICY"),
 
     // ==================== Dev Hot-Reload (tempdoc 305 Phase 2) ====================
 
@@ -1085,9 +984,6 @@ public enum EnvRegistry {
     RAG_MMR_LAMBDA("rag.mmr.lambda", "JUSTSEARCH_RAG_MMR_LAMBDA"),
     /** MMR max candidate pool size. */
     RAG_MMR_MAX_CANDIDATES("rag.mmr.max_candidates", "JUSTSEARCH_RAG_MMR_MAX_CANDIDATES"),
-    /** Include surrounding document context in RAG chunks. */
-    RAG_INCLUDE_SURROUNDING("rag.context.include_surrounding",
-        "JUSTSEARCH_RAG_INCLUDE_SURROUNDING_CONTEXT"),
     /** Enable chunk-level vector retrieval for RAG. */
     RAG_CHUNK_VECTORS_ENABLED("rag.chunk_vectors.enabled", "JUSTSEARCH_RAG_CHUNK_VECTORS_ENABLED"),
     /** Enable chunk-level SPLADE enrichment (tempdoc 712; default false, evidence-gated). */
