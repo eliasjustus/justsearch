@@ -2,7 +2,8 @@
 
 - **status:** open — DESIGN/ROUTING 2026-07-12. Two go-now slices SHIPPED (MMR field-adapter
   PR #170; per-sentence grounding-badge fix PR #171). Memory read-injector designed (GO 7/10)
-  but HELD on a new Head↔Worker embedding RPC prerequisite; P1a held on a buried-signal corpus.
+  but HELD on a new Head↔Worker embedding RPC prerequisite — full plan: 752-memory-injector-plan.md;
+  P1a held on a buried-signal corpus — full plan: 753-p1a-context-prepend-plan.md.
   Remaining parked levers trigger-checked — none fired (see §Parked levers).
 - **created:** 2026-07-12
 - **author-role:** orchestrator (Opus) — design/judgment; implementation delegatable to sonnet
