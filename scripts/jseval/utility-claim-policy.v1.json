@@ -1,21 +1,62 @@
 {
   "schema": "utility-claim-policy.v1",
   "schema_version": 1,
-  "policy_id": "agent-utility-public-v1-draft",
-  "status": "draft",
+  "policy_id": "agent-utility-public-v1",
+  "status": "active",
   "primary_estimand": "addition_b",
-  "required_strata": [],
+  "required_strata": [
+    {
+      "stratum_id": "en-legal-clerc|mixed/en-legal-clerc-1k-verbose|1000|verbose|haiku",
+      "corpus_member": "en-legal-clerc",
+      "dataset": "mixed/en-legal-clerc-1k-verbose",
+      "size": 1000,
+      "query_variant": "verbose",
+      "requested_model": "haiku",
+      "query_count": 20,
+      "seed_ids": [0, 1, 2]
+    },
+    {
+      "stratum_id": "en-legal-clerc|mixed/en-legal-clerc-10k-verbose|10000|verbose|haiku",
+      "corpus_member": "en-legal-clerc",
+      "dataset": "mixed/en-legal-clerc-10k-verbose",
+      "size": 10000,
+      "query_variant": "verbose",
+      "requested_model": "haiku",
+      "query_count": 20,
+      "seed_ids": [0, 1, 2]
+    },
+    {
+      "stratum_id": "en-email-enron-raw|mixed/en-email-enron-raw-1k-verbose|1000|verbose|haiku",
+      "corpus_member": "en-email-enron-raw",
+      "dataset": "mixed/en-email-enron-raw-1k-verbose",
+      "size": 1000,
+      "query_variant": "verbose",
+      "requested_model": "haiku",
+      "query_count": 20,
+      "seed_ids": [0, 1, 2]
+    },
+    {
+      "stratum_id": "en-email-enron-raw|mixed/en-email-enron-raw-10k-verbose|10000|verbose|haiku",
+      "corpus_member": "en-email-enron-raw",
+      "dataset": "mixed/en-email-enron-raw-10k-verbose",
+      "size": 10000,
+      "query_variant": "verbose",
+      "requested_model": "haiku",
+      "query_count": 20,
+      "seed_ids": [0, 1, 2]
+    }
+  ],
   "thresholds": {
-    "minimum_seeds": 5,
-    "minimum_paired_observations": 100,
+    "minimum_seeds": 3,
+    "minimum_paired_observations": 54,
     "maximum_exclusion_rate": 0.15,
     "minimum_paired_retention": 0.7,
     "minimum_excluded_jaccard": 0.5,
     "significance_alpha": 0.05,
-    "minimum_adoption_rate": null,
-    "accuracy_noninferiority_margin": null,
-    "provider_token_equivalence_margin": null,
-    "cost_equivalence_margin_usd": null
+    "minimum_adoption_rate": 0.9,
+    "accuracy_noninferiority_margin": 0.1,
+    "provider_token_equivalence_margin": 15000,
+    "cost_equivalence_margin_usd": 0.05
   },
   "requirements": {
     "source_identity_complete": true,
@@ -27,18 +68,15 @@
     "verified_tool_surface": true,
     "verified_exposure_mode": true,
     "no_leak_suspect_cells": true,
-    "contamination_classes": ["post-cutoff", "private-synthetic"],
+    "contamination_classes": [
+      "post-cutoff",
+      "private-synthetic"
+    ],
     "judge_calibration": true,
     "accuracy_delta_interval": true,
     "intention_to_treat": true,
     "per_protocol_is_secondary": true,
     "per_stratum_promotion": "all_required_strata_pass"
   },
-  "unresolved": [
-    "required_strata",
-    "thresholds.minimum_adoption_rate",
-    "thresholds.accuracy_noninferiority_margin",
-    "thresholds.provider_token_equivalence_margin",
-    "thresholds.cost_equivalence_margin_usd"
-  ]
+  "unresolved": []
 }

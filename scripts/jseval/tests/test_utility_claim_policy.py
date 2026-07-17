@@ -174,25 +174,54 @@ def _sync_tool_assertion_counts(record: dict) -> None:
     assertions["cells_with_exposure_mode_verified"] = total
 
 
-def test_checked_in_policy_validates_and_is_deliberately_unresolved():
+def test_checked_in_policy_is_active_confirmatory_four_stratum():
+    """Founder-delegated activation (tempdoc 624 §Confirmatory pre-registration,
+    2026-07-17): the checked-in policy is ACTIVE with the exact haiku confirmatory
+    matrix (legal 1k/10k + email 1k/10k, verbose, seeds {0,1,2}, 20q) and fully
+    resolved thresholds (seeds floor 3 = harness SEED_FLOOR; paired >= 54 = 90%%
+    of the 60-pair complete matrix; adoption >= 0.9; noninferiority margin 0.10).
+    Thresholds were set BEFORE the confirmatory campaign ran — pre-registration,
+    not post-hoc selection."""
     policy = load_policy()
     jsonschema = pytest.importorskip("jsonschema")
     schema_path = __import__("pathlib").Path(__file__).parents[1] / "utility-claim-policy.v1.schema.json"
     jsonschema.validate(policy, json.loads(schema_path.read_text(encoding="utf-8")))
 
+    assert policy["status"] == "active"
+    assert policy["unresolved"] == []
+    assert policy["policy_id"] == "agent-utility-public-v1"
+    assert {item["stratum_id"] for item in policy["required_strata"]} == {
+        "en-legal-clerc|mixed/en-legal-clerc-1k-verbose|1000|verbose|haiku",
+        "en-legal-clerc|mixed/en-legal-clerc-10k-verbose|10000|verbose|haiku",
+        "en-email-enron-raw|mixed/en-email-enron-raw-1k-verbose|1000|verbose|haiku",
+        "en-email-enron-raw|mixed/en-email-enron-raw-10k-verbose|10000|verbose|haiku",
+    }
+    assert all(item["seed_ids"] == [0, 1, 2] and item["query_count"] == 20
+               for item in policy["required_strata"])
+    thresholds = policy["thresholds"]
+    assert thresholds["minimum_seeds"] == 3
+    assert thresholds["minimum_paired_observations"] == 54
+    assert thresholds["minimum_adoption_rate"] == 0.9
+    assert thresholds["accuracy_noninferiority_margin"] == 0.1
+    # A fixture record (wrong strata) must NOT promote under the active policy —
+    # required_strata_exact fails, not policy_unresolved.
     verdict = evaluate_claim(_record(), policy)
     assert verdict["accepted"] is False
-    assert verdict["status"] == "rejected"
-    assert verdict["outcome"] == "inconclusive"
-    assert verdict["reasons"][0] == "policy_unresolved"
     assert verdict["policy_hash"] == policy_digest(policy)
 
 
 def test_favorable_outcomes_cannot_override_unresolved_policy():
+    """The unresolved-blocks-promotion behavior, now tested via a draft fixture
+    (the checked-in policy activated 2026-07-17 — tempdoc 624)."""
     record = _record()
     record["measured"]["fixture"]["haiku"]["accuracy"]["delta_ci95"] = [0.5, 0.7]
     record["measured"]["fixture"]["haiku"]["adoption"]["with_tool"]["adoption_rate"] = 1.0
-    assert evaluate_claim(record)["accepted"] is False
+    draft = copy.deepcopy(load_policy())
+    draft["status"] = "draft"
+    draft["unresolved"] = ["required_strata"]
+    verdict = evaluate_claim(record, draft)
+    assert verdict["accepted"] is False
+    assert verdict["reasons"][0] == "policy_unresolved"
 
 
 def test_settled_active_policy_is_machine_evaluable_without_posthoc_wording():
@@ -679,3 +708,99 @@ def test_source_identity_complete_requires_well_formed_mcp_initialize_identity()
     unknown_exposure_mode["cohort"]["exposure_config"]["exposure_mode"] = "unknown"
     verdict = evaluate_claim(unknown_exposure_mode, _active_policy(unknown_exposure_mode))
     assert "source_identity_complete" in verdict["reasons"]
+
+
+# --- corpus-root identity axis: certification -> stratum -> policy end-to-end
+#     (tempdoc 624 confirmatory pre-registration, 2026-07-17) -----------------
+#
+# This closes the chain the corpus-root axis exists to enable: an attached
+# certification (only attachable on a leak-safe run because identity now resolves
+# from the dataset ROOT) makes utility_recompose's ITT stratum carry a populated
+# member/size/query_variant/stratum_id, which required_strata_exact then matches.
+
+
+def _certified_pair(member: str, dataset: str, signature: str, model_alias: str = "haiku") -> list[dict]:
+    """One A/B paired-cell observation set carrying a certification snapshot in the
+    cohort — the shape utility_recompose groups into one ITT stratum."""
+    certification = _certification_snapshot_fixture(
+        member=member, dataset=dataset, signature=signature)
+    expected_cells = [f"{c}|0|q0" for c in ("A", "B")]
+    cohort = {
+        "corpus_certification": certification,
+        "query_identity": {"sha256": "b" * 64, "row_count": 1},
+        "campaign_identity": {"conditions": ["A", "B"], "seeds": 1, "expected_cells": expected_cells},
+        "exposure_config": {"enable_tool_search": "true", "always_load": False, "exposure_mode": "deferred"},
+        "mcp_initialize_identity": {"instructions_sha256": "d" * 64, "server_version": "1.0.0"},
+    }
+    return [
+        {
+            "source": {
+                "model_alias": model_alias,
+                "corpus": {"dataset": dataset, "signature": signature},
+                "cohort": cohort,
+            },
+            "condition": condition,
+            "seed": 0,
+            "qid": "q0",
+            "attempted": True,
+            "excluded": False,
+            "error": None,
+            "correct": condition == "B",
+            "cost_usd": 0.1,
+            "unique_tokens": 10,
+            "num_turns": 2,
+            "resolved_model": "claude-haiku-versioned",
+            "tool_calls": [{"tool": "mcp__justsearch__search"}] if condition == "B" else [],
+        }
+        for condition in ("A", "B")
+    ]
+
+
+def test_root_mode_certification_populates_stratum_id_and_matches_required_strata():
+    from jseval.utility_recompose import _intention_to_treat_estimand
+
+    observations = _certified_pair("fixture-member", "fixture", "c" * 64)
+    estimand = _intention_to_treat_estimand(observations)
+    strata = estimand["intention_to_treat"]["strata"]
+    assert len(strata) == 1
+    stratum = strata[0]
+
+    # utility_recompose derived the identity FROM the attached certification
+    # (member/size/query_variant) + grouping dataset/model — not hand-set.
+    assert stratum["stratum_id"] == "fixture-member|fixture|1000|verbose|haiku"
+    assert stratum["corpus_member"] == "fixture-member"
+    assert stratum["corpus_size"] == 1000
+    assert stratum["query_variant"] == "verbose"
+
+    record = {"estimands": {"intention_to_treat": {"strata": [stratum]}}}
+    base_policy = {
+        "status": "active",
+        "unresolved": [],
+        "thresholds": {},
+        "requirements": {"per_stratum_promotion": "all_required_strata_pass"},
+        "required_strata": [{
+            "stratum_id": stratum["stratum_id"],
+            "corpus_member": stratum["corpus_member"],
+            "dataset": stratum["corpus"],
+            "size": stratum["corpus_size"],
+            "query_variant": stratum["query_variant"],
+            "requested_model": stratum["model"],
+            "query_count": stratum["query_count"],
+            "seed_ids": stratum["seed_ids"],
+        }],
+    }
+
+    def _exact_gate(policy: dict) -> dict:
+        verdict = evaluate_claim(record, policy)
+        return next(g for g in verdict["gates"] if g["name"] == "required_strata_exact"), verdict
+
+    gate, verdict = _exact_gate(base_policy)
+    assert gate["passed"] is True
+    assert "required_strata_exact" not in verdict["reasons"]
+
+    mismatched = copy.deepcopy(base_policy)
+    mismatched["required_strata"][0]["corpus_member"] = "other-member"
+    mismatched["required_strata"][0]["stratum_id"] = "other-member|fixture|1000|verbose|haiku"
+    gate, verdict = _exact_gate(mismatched)
+    assert gate["passed"] is False
+    assert "required_strata_exact" in verdict["reasons"]
