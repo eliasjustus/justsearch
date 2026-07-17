@@ -316,7 +316,12 @@ class ReachRoundTripsRegisterToManifestTests(unittest.TestCase):
         self.assertIn("core.brain-surface", warnings[0])
         manifest = build_manifest(results, _cohort_routes(), register)
         entry = next(i for i in manifest["mustTouch"] if i["id"] == "core.brain-surface")
-        self.assertNotIn("reach", entry)
+        # The stale pointer is gone -- but the row does NOT go silent: dropping its
+        # only pointer leaves the surface with no declared way in, which is exactly
+        # the "entry point unknown, finding it is a round deliverable" case
+        # (tempdoc 750 Part D). Silence here would re-create the round-6 time sink.
+        self.assertTrue(entry["reach"]["unknown"])
+        self.assertIn("reach not declared", entry["reach"]["note"])
         # and the raw testid string must not appear anywhere in the manifest
         import json
 
@@ -366,9 +371,13 @@ class MustWatchInManifestTests(unittest.TestCase):
         manifest = build_manifest(results, _cohort_routes(), register)
         self.assertEqual(manifest["mustWatch"], [])
 
-    def test_no_reach_on_a_row_is_backward_compatible_no_crash_no_key(self):
-        # Old-style register row -- no 'reach' key at all. build_manifest must
-        # not crash and must not fabricate a reach entry.
+    def test_sandbox_tier_row_with_no_reach_is_marked_unknown_not_silent(self):
+        # A register row with no 'reach' key -- e.g. a newly-shipped surface whose
+        # author added the row (satisfying the drift check) but no pointer. It must
+        # not crash, must not fabricate a path, and must NOT go silent: it renders
+        # as the honest "entry point unknown, finding it is a round deliverable"
+        # form (tempdoc 750 Part D). Silence is the failure this part exists to
+        # kill -- round 6 burned a dozen-plus screenshot round-trips on exactly it.
         surface_row = {"surfaceId": "core.brain-surface", "tier": "sandbox", "validateHow": "v"}
         register = _register(surface_coverage=[surface_row])
         errors, warnings, results = run_drift_check(
@@ -381,7 +390,31 @@ class MustWatchInManifestTests(unittest.TestCase):
         self.assertEqual(errors, [])
         manifest = build_manifest(results, _cohort_routes(), register)
         entry = next(i for i in manifest["mustTouch"] if i["id"] == "core.brain-surface")
-        self.assertNotIn("reach", entry)
+        self.assertTrue(entry["reach"]["unknown"])
+        self.assertIn("reach not declared", entry["reach"]["note"])
+        # no fabricated pointer sneaks in alongside the honest unknown
+        self.assertNotIn("testid", entry["reach"])
+        self.assertNotIn("navPath", entry["reach"])
+
+    def test_host_tier_row_with_no_reach_stays_silent(self):
+        # The unknown-marking is scoped to sandbox-tier items -- a host-tier surface
+        # is verified by a host test and is never reached by hand, so demanding an
+        # entry point for it would be noise, not signal.
+        surface_row = {"surfaceId": "core.brain-surface", "tier": "host", "validateHow": "v"}
+        register = _register(surface_coverage=[surface_row])
+        errors, _warnings, results = run_drift_check(
+            register,
+            _cohort_routes(),
+            _surface_placements({"core.brain-surface": "RAIL"}),
+            _shapes(),
+            known_testids=set(),
+        )
+        self.assertEqual(errors, [])
+        # Asserted on the classified row itself: a host-tier surface never enters
+        # mustTouch (that list is sandbox-tier by construction), so the row is where
+        # the no-synthesis guarantee is observable.
+        row = results["surface"].covered_map["core.brain-surface"]
+        self.assertNotIn("reach", row)
 
 
 if __name__ == "__main__":

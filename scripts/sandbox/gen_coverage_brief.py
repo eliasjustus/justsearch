@@ -268,6 +268,40 @@ def verify_reach_testids(
     return warnings
 
 
+def mark_undeclared_reach(results: dict[str, DriftResult]) -> None:
+    """Part D (tempdoc 750): a sandbox-tier surface/shape that declares NO reach --
+    or whose only reach pointer was just dropped as stale -- is synthesized into the
+    honest `unknown` form, so the brief SAYS "entry point unknown, finding it is a
+    round deliverable" instead of saying nothing.
+
+    Silence is the failure mode this part exists to kill: a newly-shipped surface
+    passes the drift check the moment someone adds a register row, and if nobody
+    also remembers a reach pointer, the round re-pays the discovery cost exactly as
+    round 6 did (tempdoc 734: a dozen-plus screenshot round-trips hunting an entry
+    point that may not exist). Reported, never fail-closed -- whether the entry
+    point exists at all is a question only a round can answer.
+
+    Synthesizing at the source means the manifest and derive_round_plan.py inherit
+    it for free; neither renderer needs to know about the undeclared case.
+    """
+    for kind, id_key in (("surface", "surfaceId"), ("shape", "shape")):
+        for item_id, row in results[kind].covered_map.items():
+            if row.get("tier") != "sandbox":
+                continue  # host-tier/exempt items are not reached by hand
+            reach = row.get("reach")
+            if isinstance(reach, dict) and reach:
+                continue
+            row["reach"] = {
+                "unknown": True,
+                "note": (
+                    f"reach not declared for {kind} {item_id!r} in the coverage register "
+                    "-- locating its entry point (or proving it has none) is a round "
+                    "deliverable; record the answer back into "
+                    "governance/sandbox-coverage.v1.json"
+                ),
+            }
+
+
 def run_drift_check(
     register: dict[str, Any],
     cohort_routes: dict[str, list[str]],
@@ -352,6 +386,11 @@ def run_drift_check(
 
     if known_testids is not None:
         warnings.extend(verify_reach_testids(results, known_testids))
+
+    # After stale pointers are dropped, anything left without reach gets the honest
+    # "unknown" form -- ordering matters: a row whose only pointer was just dropped
+    # must land here, not stay silent.
+    mark_undeclared_reach(results)
 
     return errors, warnings, results
 

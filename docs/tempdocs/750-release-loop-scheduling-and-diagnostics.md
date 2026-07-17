@@ -741,6 +741,35 @@ proven causal chain. Routing: 734/product, with these leads named.
 contributed roughly one document of shift. q06/q08 are unmoved by that fix, as
 734 predicted.
 
+### Known deviation from §Design A4 — deliberate, and it needs an owner decision
+
+§Design A4 says two things the implementation deliberately stops short of, and this
+is recorded rather than left as a silent gap between design text and code:
+
+1. *"Overlap@k becomes a descriptive secondary, **never the gate**"* — it is still
+   the gate. Overlap is demoted in the *report*; the *blocking rule* is unchanged.
+2. *"...and fails toward 'uncalibrated for this population' rather than toward a
+   phantom regression"* — the checker still fails with `PARITY_OVERLAP_MISS`. It now
+   *reports* toward uncalibrated (the SYSTEMATIC line + the calibration block) but
+   does not *fail* that way.
+
+**Why.** A4's replacement gate is A3 (exact-truth recall), which is deferred. Demoting
+overlap from blocking with no replacement would not make the gate better — it would
+make the parity check non-blocking, and would **unblock 0.2.0 as a side effect of an
+instrument change**. Releasing is an owner decision, and it must not be smuggled in as
+a refactor's side effect.
+
+**The design is not wrong — the evidence now supports it.** The end-to-end run shows
+the q06/q08 block *is* the phantom-regression case A4 describes: a systematic
+environment-level difference judged against an envelope that never sampled this
+population. So the honest end-state is A4 as written. The gap is that acting on it is
+a release decision with a product question attached ("do we accept that a real
+install's embeddings differ from dev's?"), which this tempdoc cannot make for the
+owner. **Decision needed:** once finding 5's mechanism is understood, either (a)
+recalibrate the envelope on a properly sampled dev↔sandbox population and keep overlap
+blocking against *that*, or (b) land A3 and let overlap fall to descriptive as designed.
+Until then the gate stays where it is, blocking, for the reason above.
+
 ### Follow-ups this tempdoc owns (not silently dropped)
 
 - **Post-0.2.0 retirement review** (Part E, gated on the release finalizing):
