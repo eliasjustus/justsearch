@@ -142,7 +142,7 @@ Full architecture: `docs/explanation/01-system-overview.md`. Key API endpoints: 
 | Goal | Command |
 |------|---------|
 | Compile | `./gradlew.bat build -x test` |
-| Format (run first) | `./gradlew.bat spotlessApply` |
+| Whitespace (run first) | `./gradlew.bat spotlessApply` |
 | Unit tests | `./gradlew.bat test` |
 | Single module | `./gradlew.bat :modules:<module>:test` |
 | Frontend typecheck + tests | `cd modules/ui-web && npm run typecheck && npm run test:unit:run` |
@@ -150,7 +150,7 @@ Full architecture: `docs/explanation/01-system-overview.md`. Key API endpoints: 
 | Hot-reload after edit | `reload` (requires `hotReload: true` on dev-stack start) |
 | Pre-merge gate | `./gradlew.bat build -x test` from main before merge |
 
-Build fails on PMD/Spotless violations — run `spotlessApply` first.
+Build fails on PMD + Spotless whitespace/newline checks — run `spotlessApply` first. Java is deliberately **not** auto-formatted (tempdoc 729).
 
 Public hosted `CI` runs on PRs, pushes to `main`, and manual dispatch ([ADR-0044](docs/decisions/0044-public-hosted-ci-fact-lanes.md)); self-hosted/specialty workflows remain manual. Local-first verification stays primary. For CI triage load `/ci-triage`; for profiling/live stack load `/jseval` and `/dev-stack`.
 

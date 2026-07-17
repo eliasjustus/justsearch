@@ -1,7 +1,7 @@
 ---
 title: "AI-runtime lifecycle — why local fixes come out wrong, and the spec/status model that replaces the mode enum"
 type: tempdocs
-status: "IMPLEMENTED + REVIEWED on branch worktree-737-ai-runtime (2026-07-15, 21 commits): full arc §8→§15 complete incl. refute-first review (F2 HIGH install/activation race found+fixed as multi-kind procedures; REST intent-write; ArchUnit carve-out closed) and tempdoc-fit review. Full suite + 34-gate kernel green; live E2E incl. browser-verified Shut Down/Resume Chat AI and 30s post-activation stability. OPEN (§16): R1 reason-code register join (do before/with merge), R2 lease→MMF derivation, R3-R7 triggered deferrals, R8 merge reconciliation with 0.2.0. NOT MERGED — no PR until owner's word."
+status: "MERGED to main as PR #193, commit f7d8e03f (2026-07-17 reconciliation). [pre-merge status retained: IMPLEMENTED + REVIEWED on branch worktree-737-ai-runtime (2026-07-15, 21 commits): full arc §8→§15 complete incl. refute-first review (F2 HIGH install/activation race found+fixed as multi-kind procedures; REST intent-write; ArchUnit carve-out closed) and tempdoc-fit review. Full suite + 34-gate kernel green; live E2E incl. browser-verified Shut Down/Resume Chat AI and 30s post-activation stability. OPEN (§16): R1 reason-code register join (do before/with merge), R2 lease→MMF derivation, R3-R7 triggered deferrals, R8 merge reconciliation with 0.2.0. NOT MERGED — no PR until owner's word.]"
 created: 2026-07-15
 updated: 2026-07-15
 author: "agent (opened from the 0.2.0 release round; owner-directed 2026-07-15)"

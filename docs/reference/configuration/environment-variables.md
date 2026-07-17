@@ -59,10 +59,7 @@ Scope:
 | `JUSTSEARCH_AI_DISABLED` | `justsearch.ai.disabled` | Bool | Disables all AI features (forces keyword-only flows where applicable). |
 | `JUSTSEARCH_LLM_ENABLED` | `justsearch.llm.enabled` | Bool | Enables/disables LLM features (escape hatch; policy/UI may override). |
 | `JUSTSEARCH_AI_EMBED_ENABLED` | `justsearch.ai.embed.enabled` | Bool | Enables/disables embeddings independently (escape hatch). |
-| `JUSTSEARCH_AI_CLASSIFY_ENABLED` | `justsearch.ai.classify.enabled` | Bool | Enables/disables classification independently (escape hatch). |
 | `JUSTSEARCH_LLM_MODEL_PATH` | `justsearch.llm.model_path` | Path | Path to the main chat/VLM GGUF model used by `llama-server`. |
-| `JUSTSEARCH_LLM_MODE` | `justsearch.llm.mode` | String | LLM mode selector (implementation-defined; e.g., local/remote). |
-| `JUSTSEARCH_LLM_BACKEND` | `justsearch.llm.backend` | String | Backend selector (e.g., `auto`, `stub`). `stub` disables vector embeddings (used by indexing benches). |
 | `JUSTSEARCH_EMBED_BACKEND` | `justsearch.embed.backend` | String | Embedding backend selector: `auto` (default) or `onnx`. Does NOT control GPU/CPU — use `JUSTSEARCH_EMBED_GPU_ENABLED` for GPU offload. |
 | `JUSTSEARCH_MODEL_PATH` | `justsearch.model.path` | Path | Legacy embedding model path. Propagated to Worker via env but not consumed by ONNX embedding discovery (use `JUSTSEARCH_EMBED_ONNX_MODEL_PATH` for explicit model override). |
 | `JUSTSEARCH_EMBED_ONNX_MODEL_PATH` | `justsearch.embed.onnx.model_path` | Path | Explicit ONNX embedding model directory (overrides auto-discovery). When unset, `EmbeddingOnnxModelDiscovery` tries `embeddinggemma-300m/` then `embedding/`. |
@@ -91,12 +88,7 @@ Scope:
 | `JUSTSEARCH_AGENT_MAX_TOOL_RESULT_CHARS` | `justsearch.agent.max_tool_result_chars` | Int | Maximum characters preserved per tool result before truncation. Default `900`, min `100`. |
 | `JUSTSEARCH_RERANK_GPU_MEM_MB` | `justsearch.rerank.gpu_mem_mb` | Int | GPU memory arena size (MB) for the Worker-side ONNX reranker CUDA execution provider. Default `2048`. Minimum for GTE-ModernBERT at seq=512. See `docs/explanation/05-ai-architecture.md` §Reranker GPU Coordination. |
 | **Summary runtime** | | | |
-| `JUSTSEARCH_SUMMARY_MAX_CHARACTERS` | `justsearch.summary.max_characters` | Int | Max summary input characters before rejection (default `200000`, clamped `>= 1`). |
 | `JUSTSEARCH_SUMMARY_MAX_TOKENS` | `justsearch.summary.max_tokens` | Int | Max summary estimated tokens before rejection (default `20000`, clamped `>= 1`). |
-| `JUSTSEARCH_SUMMARY_MESSAGE_KEY` | `justsearch.summary.message_key` | String | i18n key for the summary-too-large toast. |
-| `JUSTSEARCH_SUMMARY_QUEUE_FULL_MESSAGE_KEY` | `justsearch.summary.queue_full_message_key` | String | i18n key for summary queue saturation toast. |
-| `JUSTSEARCH_SUMMARY_EXECUTION_THREADS` | `justsearch.summary.execution_threads` | Int | Summary execution thread override (default from `llm.max_sessions`, clamped `>= 1`). |
-| `JUSTSEARCH_SUMMARY_EXECUTION_QUEUE_CAPACITY` | `justsearch.summary.execution_queue_capacity` | Int | Summary execution queue capacity (default `max(llm.queue_capacity, threads)`, clamped `>= 1`). |
 | `JUSTSEARCH_SUMMARY_PIPELINE` | `justsearch.summary.pipeline` | String | Summary pipeline id (default `summary_mapreduce_v1` after sanitize). |
 | **LLM runtime tuning** | | | |
 | `JUSTSEARCH_LLM_MODEL_SHA256` | `justsearch.llm.model_sha256` | String | Expected model SHA-256 metadata (default `unknown`). |
@@ -118,25 +110,15 @@ Scope:
 | `JUSTSEARCH_LLM_TEMPERATURE` | `justsearch.llm.temperature` | Double | Sampling temperature (finite, non-negative). |
 | `JUSTSEARCH_LLM_TOP_P` | `justsearch.llm.top_p` | Double | Top-p sampling parameter. |
 | `JUSTSEARCH_LLM_MIN_P` | `justsearch.llm.min_p` | Double | Min-p sampling parameter. |
-| `JUSTSEARCH_LLM_REP_PENALTY` | `justsearch.llm.rep_penalty` | Double | Repetition penalty value. |
-| `JUSTSEARCH_LLM_REP_WINDOW` | `justsearch.llm.rep_window` | Int | Repetition penalty window. |
-| `JUSTSEARCH_LLM_ENABLE_JSON_GUARD` | `justsearch.llm.enable_json_guard` | Bool | Enable JSON grammar guard. |
 | `JUSTSEARCH_LLM_TEMPLATE_ROOT` | `justsearch.llm.template_root` | Path | Template root directory (invalid path -> `null`). |
-| `JUSTSEARCH_LLM_TEMPLATE_TRANSLATE` | `justsearch.llm.template_translate` | String | Translation template filename. |
 | `JUSTSEARCH_LLM_TEMPLATE_SUMMARY` | `justsearch.llm.template_summary` | String | Summary map template filename. |
 | `JUSTSEARCH_LLM_TEMPLATE_REDUCE` | `justsearch.llm.template_reduce` | String | Summary reduce template filename. |
 | `JUSTSEARCH_LLM_RNG_SEED` | `justsearch.llm.rng_seed` | Long | RNG seed override. |
 | `JUSTSEARCH_LLM_BACKEND_SELECTOR` | `justsearch.llm.backend_selector` | String | Backend selector profile (`auto` by default). |
 | `JUSTSEARCH_LLM_SUMMARY_CHUNK_TOKENS` | `justsearch.llm.summary_chunk_tokens` | Int | Summary chunk size (clamped `>= 32`). |
 | `JUSTSEARCH_LLM_SUMMARY_CHUNK_OVERLAP` | `justsearch.llm.summary_chunk_overlap` | Int | Summary overlap, bounded to `[0, chunk-1]`. |
-| `JUSTSEARCH_LLM_ALLOW_REMOTE` | `justsearch.llm.allow_remote` | Bool | Allows remote backend use when enabled. |
-| `JUSTSEARCH_LLM_REMOTE_ENDPOINT` | `justsearch.llm.remote_endpoint` | String | Remote backend endpoint URL/base. |
-| `JUSTSEARCH_LLM_REMOTE_AUTH_TOKEN` | `justsearch.llm.remote_auth_token` | String | Remote backend auth token. |
 | `JUSTSEARCH_LLM_BACKEND_SUPPORTS` | `justsearch.llm.backend_supports` | CSV List | Backend capability override list (comma-separated). |
 | **Pipeline ids** | | | |
-| `JUSTSEARCH_TRANSLATOR_PIPELINE_INTENT` | `justsearch.translator.pipeline.intent` | String | Intent pipeline id (default `intent_v1`). |
-| `JUSTSEARCH_TRANSLATOR_PIPELINE_EMBED` | `justsearch.translator.pipeline.embed` | String | Embed pipeline id (default `embed_v1`). |
-| `JUSTSEARCH_TRANSLATOR_PIPELINE_CLASSIFY` | `justsearch.translator.pipeline.classify` | String | Classify pipeline id (default `classify_v1`). |
 | **RAG** | | | |
 | `JUSTSEARCH_RAG_TOP_K` | `justsearch.rag.top_k` | Int | Number of chunks to retrieve for RAG context (default 5). |
 | **GPU / VRAM thresholds** | | | |
@@ -301,14 +283,7 @@ of the long-lived app runtime configuration contract. They are retained here as 
 
 ## Examples
 
-### 1) Mode 0 (lexical-only; disable embeddings)
-
-```powershell
-$env:JUSTSEARCH_LLM_BACKEND = "stub"
-powershell -ExecutionPolicy Bypass -File scripts/bench/run-claim-b-suite-win.ps1
-```
-
-### 2) Mode 1 (CPU embeddings)
+### 1) Mode 1 (CPU embeddings)
 
 ```powershell
 $env:JUSTSEARCH_MODEL_PATH = "C:\\AI\\models\\nomic-embed-text-v1.5.Q4_K_M.gguf"
@@ -316,7 +291,7 @@ $env:JUSTSEARCH_EMBED_GPU_LAYERS = "0"
 powershell -ExecutionPolicy Bypass -File scripts/bench/run-claim-b-suite-win.ps1
 ```
 
-### 3) Online inference GPU offload (llama-server)
+### 2) Online inference GPU offload (llama-server)
 
 ```powershell
 $env:JUSTSEARCH_LLM_MODEL_PATH = "C:\\AI\\models\\Qwen_Qwen3.5-9B-Q4_K_M.gguf"

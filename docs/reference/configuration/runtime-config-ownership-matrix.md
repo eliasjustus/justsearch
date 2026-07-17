@@ -22,7 +22,6 @@ Precedence note:
 | index.collections | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.commit.debounce_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.commit.meta.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| index.commit.policy | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.directory.type | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.hybrid.adaptive_weights_enabled | JUSTSEARCH_HYBRID_ADAPTIVE_WEIGHTS_ENABLED | index.hybrid.adaptive_weights_enabled | HYBRID_ADAPTIVE_WEIGHTS_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.bm25_low_signal_top_score_threshold | JUSTSEARCH_INDEX_BM25_LOW_SIGNAL_TOP_SCORE_THRESHOLD | index.hybrid.bm25_low_signal_top_score_threshold | HYBRID_BM25_LOW_SIGNAL_TOP_SCORE_THRESHOLD | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
@@ -66,7 +65,6 @@ Precedence note:
 | index.ocr.limits.max_pages | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.limits.per_file_timeout_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.limits.render_dpi | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| index.ocr.trigger.min_image_pixels | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.workers | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.queue.max_depth | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.recovery.policy | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
@@ -85,11 +83,7 @@ Precedence note:
 | index.vector.hnsw.ef_construction | JUSTSEARCH_INDEX_VECTOR_HNSW_EF_CONSTRUCTION | index.vector.hnsw.ef_construction | INDEX_VECTOR_HNSW_EF_CONSTRUCTION | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.vector.hnsw.m | JUSTSEARCH_INDEX_VECTOR_HNSW_M | index.vector.hnsw.m | INDEX_VECTOR_HNSW_M | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.vector.quantization.enabled | JUSTSEARCH_INDEX_VECTOR_QUANTIZATION_ENABLED | index.vector.quantization.enabled | INDEX_VECTOR_QUANTIZATION_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| index.watcher.debounce_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.watcher.overflow.rescan_on_overflow | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| index.watcher.polling.interval_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| index.watcher.queue.max_entries | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| index.watcher.strategy | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.writer.max_buffered_docs | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.writer.ram_buffer_mb | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | - | JUSTSEARCH_INDEXER_WORKER_VERSION | indexer.worker.version | INDEXER_WORKER_VERSION | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -105,7 +99,6 @@ Precedence note:
 | - | JUSTSEARCH_AGENT_MAX_TOOL_RESULT_CHARS | justsearch.agent.max_tool_result_chars | AGENT_MAX_TOOL_RESULT_CHARS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_AGENT_SEARCH_DEFAULT_LIMIT | justsearch.agent.search.default_limit | AGENT_SEARCH_DEFAULT_LIMIT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_AGENT_SEARCH_DEFAULT_MODE | justsearch.agent.search.default_mode | AGENT_SEARCH_DEFAULT_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_AI_CLASSIFY_ENABLED | justsearch.ai.classify.enabled | AI_CLASSIFY_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | justsearch.ai.deadlineMs | JUSTSEARCH_AI_DEADLINE_MS | justsearch.ai.deadlineMs | AI_DEADLINE_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | - | JUSTSEARCH_AI_DISABLED | justsearch.ai.disabled | AI_DISABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_AI_EMBED_ENABLED | justsearch.ai.embed.enabled | AI_EMBED_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -165,9 +158,8 @@ Precedence note:
 | - | JUSTSEARCH_HOME | justsearch.home | HOME | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_INDEX_BASE_PATH | justsearch.index.base_path | INDEX_BASE_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_INDEX_COLLECTION | justsearch.index.collection | INDEX_COLLECTION | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_INDEX_DEFAULT_LANGUAGE | justsearch.index.default_language | INDEX_DEFAULT_LANGUAGE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_INDEX_PARITY_ALLOW_MISMATCH | justsearch.index.parity.allow_mismatch | INDEX_PARITY_ALLOW_MISMATCH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_INDEX_TRACING_LEVEL | justsearch.index.tracing_level | INDEX_TRACING_LEVEL | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_INDEX_TRACING_LEVEL | justsearch.index.tracing_level | INDEX_TRACING_LEVEL | modules/indexer-worker + ort-common + worker-core (KnowledgeServer, NativeSessionHandle, EncoderOrtRunSpans — direct EnvRegistry reads) | sysprop > env > default |
 | justsearch.indexer.deadlineMs | JUSTSEARCH_INDEXER_DEADLINE_MS | justsearch.indexer.deadlineMs | INDEXER_DEADLINE_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | justsearch.indexer.host | JUSTSEARCH_INDEXER_HOST | justsearch.indexer.host | INDEXER_HOST | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | justsearch.indexer.maxInFlightBytes | JUSTSEARCH_INDEXER_MAX_INFLIGHT_BYTES | justsearch.indexer.maxInFlightBytes | INDEXER_MAX_INFLIGHT_BYTES | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
@@ -180,13 +172,10 @@ Precedence note:
 | - | JUSTSEARCH_INGESTION_SKIP_PATTERNS | justsearch.ingestion.skip.patterns | INGESTION_SKIP_PATTERNS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LAMBDAMART_ENABLED | justsearch.lambdamart.enabled | LAMBDAMART_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LITE_MODE | justsearch.lite.mode | LITE_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_ALLOW_REMOTE | justsearch.llm.allow_remote | LLM_ALLOW_REMOTE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_BACKEND | justsearch.llm.backend | LLM_BACKEND | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_BACKEND_SELECTOR | justsearch.llm.backend_selector | LLM_BACKEND_SELECTOR | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_BACKEND_SUPPORTS | justsearch.llm.backend_supports | LLM_BACKEND_SUPPORTS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_CONTEXT_LENGTH | justsearch.llm.context_length | LLM_CONTEXT_LENGTH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_DEADLINE_MS | justsearch.llm.deadline_ms | LLM_DEADLINE_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_ENABLE_JSON_GUARD | justsearch.llm.enable_json_guard | LLM_ENABLE_JSON_GUARD | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | justsearch.llm.enabled | JUSTSEARCH_LLM_ENABLED | justsearch.llm.enabled | LLM_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | - | JUSTSEARCH_LLM_GPU_LAYERS | justsearch.llm.gpu_layers | LLM_GPU_LAYERS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_MAX_NEW_TOKENS | justsearch.llm.max_new_tokens | LLM_MAX_NEW_TOKENS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -194,15 +183,10 @@ Precedence note:
 | - | JUSTSEARCH_LLM_MAX_SESSIONS | justsearch.llm.max_sessions | LLM_MAX_SESSIONS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_MAX_SLOTS | justsearch.llm.max_slots | LLM_MAX_SLOTS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_MIN_P | justsearch.llm.min_p | LLM_MIN_P | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| justsearch.llm.mode | JUSTSEARCH_LLM_MODE | justsearch.llm.mode | LLM_MODE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | justsearch.llm.model_path | JUSTSEARCH_LLM_MODEL_PATH | justsearch.llm.model_path | LLM_MODEL_PATH | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | - | JUSTSEARCH_LLM_MODEL_SHA256 | justsearch.llm.model_sha256 | LLM_MODEL_SHA256 | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_QUEUE_CAPACITY | justsearch.llm.queue_capacity | LLM_QUEUE_CAPACITY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_REASONING_BUDGET | justsearch.llm.reasoning_budget | REASONING_BUDGET | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_REMOTE_AUTH_TOKEN | justsearch.llm.remote_auth_token | LLM_REMOTE_AUTH_TOKEN | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_REMOTE_ENDPOINT | justsearch.llm.remote_endpoint | LLM_REMOTE_ENDPOINT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_REP_PENALTY | justsearch.llm.rep_penalty | LLM_REP_PENALTY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_REP_WINDOW | justsearch.llm.rep_window | LLM_REP_WINDOW | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_RNG_SEED | justsearch.llm.rng_seed | LLM_RNG_SEED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_SESSION_WARMUP_MS | justsearch.llm.session_warmup_ms | LLM_SESSION_WARMUP_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_SIMULATED_LATENCY_MS | justsearch.llm.simulated_latency_ms | LLM_SIMULATED_LATENCY_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -212,7 +196,6 @@ Precedence note:
 | - | JUSTSEARCH_LLM_TEMPLATE_REDUCE | justsearch.llm.template_reduce | LLM_TEMPLATE_REDUCE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_TEMPLATE_ROOT | justsearch.llm.template_root | LLM_TEMPLATE_ROOT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_TEMPLATE_SUMMARY | justsearch.llm.template_summary | LLM_TEMPLATE_SUMMARY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_TEMPLATE_TRANSLATE | justsearch.llm.template_translate | LLM_TEMPLATE_TRANSLATE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_THREADS | justsearch.llm.threads | LLM_THREADS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LLM_TOP_P | justsearch.llm.top_p | LLM_TOP_P | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_USE_THINKING | justsearch.llm.use_thinking | USE_THINKING | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -268,7 +251,6 @@ Precedence note:
 | - | JUSTSEARCH_RERANK_MODEL_PATH | justsearch.rerank.model_path | RERANK_MODEL_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_RERANK_TOP_K | justsearch.rerank.top_k | RERANK_TOP_K | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_RULE_TICK_MS | justsearch.rule.tick.ms | RULE_TICK_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_SEARCH_DEFAULT_LANGUAGE_POLICY | justsearch.search.default_language_policy | SEARCH_LANGUAGE_POLICY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SEARCH_ENTITY_BOOST | justsearch.search.entity_boost | SEARCH_ENTITY_BOOST | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SEARCH_PIPELINE | justsearch.search.pipeline | SEARCH_PIPELINE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SEARCH_PROFILE | justsearch.search.pipeline.profile | SEARCH_PROFILE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -288,28 +270,15 @@ Precedence note:
 | - | JUSTSEARCH_SPLADE_MODEL_PATH | justsearch.splade.model_path | SPLADE_MODEL_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SPLADE_QUERY_MODE | justsearch.splade.query_mode | SPLADE_QUERY_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SSOT_PATH | justsearch.ssot.path | SSOT_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_SUMMARY_EXECUTION_QUEUE_CAPACITY | justsearch.summary.execution_queue_capacity | SUMMARY_EXECUTION_QUEUE_CAPACITY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_SUMMARY_EXECUTION_THREADS | justsearch.summary.execution_threads | SUMMARY_EXECUTION_THREADS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_SUMMARY_MAX_CHARACTERS | justsearch.summary.max_characters | SUMMARY_MAX_CHARACTERS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SUMMARY_MAX_TOKENS | justsearch.summary.max_tokens | SUMMARY_MAX_TOKENS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_SUMMARY_MESSAGE_KEY | justsearch.summary.message_key | SUMMARY_MESSAGE_KEY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_SUMMARY_PIPELINE | justsearch.summary.pipeline | SUMMARY_PIPELINE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_SUMMARY_QUEUE_FULL_MESSAGE_KEY | justsearch.summary.queue_full_message_key | SUMMARY_QUEUE_FULL_MESSAGE_KEY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_TELEMETRY_FLUSH_MS | justsearch.telemetry.flushMs | TELEMETRY_FLUSH_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_TELEMETRY_METRICS_EXEMPLARS | justsearch.telemetry.metrics.exemplars | TELEMETRY_METRICS_EXEMPLARS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_TELEMETRY_METRICS_MAX_MB | justsearch.telemetry.metrics.max_mb | TELEMETRY_METRICS_MAX_MB | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_TELEMETRY_METRICS_RETENTION_DAYS | justsearch.telemetry.metrics.retention.days | TELEMETRY_METRICS_RETENTION_DAYS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_TESSDATA_PATH | justsearch.tessdata.path | TESSDATA_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_TESSERACT_PATH | justsearch.tesseract.path | TESSERACT_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_TRANSLATOR_PIPELINE_CLASSIFY | justsearch.translator.pipeline.classify | TRANSLATOR_PIPELINE_CLASSIFY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_TRANSLATOR_PIPELINE_EMBED | justsearch.translator.pipeline.embed | TRANSLATOR_PIPELINE_EMBED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_TRANSLATOR_PIPELINE_INTENT | justsearch.translator.pipeline.intent | TRANSLATOR_PIPELINE_INTENT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_TRANSLATOR_REPO_ROOT | justsearch.translator.repoRoot | TRANSLATOR_REPO_ROOT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_UI_AUTOMATION | justsearch.ui.automation.enabled | UI_AUTOMATION_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_UI_AUTOMATION_FORCE_DIAGNOSTICS | justsearch.ui.automation.forceDiagnostics | UI_AUTOMATION_FORCE_DIAGNOSTICS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_UI_AUTOMATION_REQUIRE_TRANSLATOR | justsearch.ui.automation.requireTranslator | UI_AUTOMATION_REQUIRE_TRANSLATOR | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_UI_EXCLUDE_PATTERNS | justsearch.ui.exclude_patterns | UI_EXCLUDE_PATTERNS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_UI_SETTINGS_MODE | justsearch.ui.settings.mode | UI_SETTINGS_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_UI_SETTINGS_MODE | justsearch.ui.settings.mode | UI_SETTINGS_MODE | modules/app-services (UiSettingsStore, direct EnvRegistry read) | sysprop > env > default |
 | - | JUSTSEARCH_UI_SETTINGS_READONLY | justsearch.ui.settings.readOnly | UI_SETTINGS_READONLY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_VDU_QUALITY_THRESHOLD | justsearch.vdu.quality_threshold | VDU_QUALITY_THRESHOLD | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_VLM_MODEL | justsearch.vlm.model | VLM_MODEL | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -321,7 +290,6 @@ Precedence note:
 | - | JUSTSEARCH_POLICY_GPU_ACCELERATION_ENABLED | policy.gpu_acceleration_enabled | POLICY_GPU_ACCELERATION_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | rag.chunk_splade.enabled | JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED | rag.chunk_splade.enabled | RAG_CHUNK_SPLADE_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.chunk_vectors.enabled | JUSTSEARCH_RAG_CHUNK_VECTORS_ENABLED | rag.chunk_vectors.enabled | RAG_CHUNK_VECTORS_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| rag.context.include_surrounding | JUSTSEARCH_RAG_INCLUDE_SURROUNDING_CONTEXT | rag.context.include_surrounding | RAG_INCLUDE_SURROUNDING | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.diversify.mode | JUSTSEARCH_RAG_DIVERSIFY_MODE | rag.diversify.mode | RAG_DIVERSIFY_MODE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.max_chunks_per_article | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | rag.mmr.lambda | JUSTSEARCH_RAG_MMR_LAMBDA | rag.mmr.lambda | RAG_MMR_LAMBDA | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
@@ -333,16 +301,8 @@ Precedence note:
 | search.chunk_aware.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.corrections.df_threshold | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.corrections.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| search.corrections.index_fallback_enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.corrections.max_edit_distance | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.corrections.zero_hit_retry_enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| search.cursor.legacy_enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| search.paging.pit_ttl_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| search.paging.strategy | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| search.paging.tiebreak_field | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| translator.health.maxBackoffMs | JUSTSEARCH_TRANSLATOR_MAX_BACKOFF_MS | translator.health.maxBackoffMs | TRANSLATOR_MAX_BACKOFF_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| translator.health.refreshIntervalMs | JUSTSEARCH_TRANSLATOR_REFRESH_INTERVAL_MS | translator.health.refreshIntervalMs | TRANSLATOR_REFRESH_INTERVAL_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| translator.health.stalenessAlertSeconds | JUSTSEARCH_TRANSLATOR_STALENESS_ALERT_SECONDS | translator.health.stalenessAlertSeconds | TRANSLATOR_STALENESS_ALERT_SECONDS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_batch_size | JUSTSEARCH_WORKER_MAX_BATCH_SIZE | worker.limits.max_batch_size | WORKER_MAX_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_content_length | JUSTSEARCH_WORKER_MAX_CONTENT_LENGTH | worker.limits.max_content_length | WORKER_MAX_CONTENT_LENGTH | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_file_size | JUSTSEARCH_WORKER_MAX_FILE_SIZE | worker.limits.max_file_size | WORKER_MAX_FILE_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |

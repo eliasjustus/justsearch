@@ -18,16 +18,11 @@ package io.justsearch.configuration;
 public enum ConfigKey {
 
     // -- File watcher --
-    INDEX_WATCHER_STRATEGY("index.watcher.strategy"),
-    INDEX_WATCHER_DEBOUNCE_MS("index.watcher.debounce_ms"),
     INDEX_WATCHER_RESCAN_ON_OVERFLOW("index.watcher.overflow.rescan_on_overflow"),
-    INDEX_WATCHER_POLLING_INTERVAL_MS("index.watcher.polling.interval_ms"),
-    INDEX_WATCHER_QUEUE_MAX_ENTRIES("index.watcher.queue.max_entries"),
 
     // -- OCR --
     INDEX_OCR_LANGUAGES("index.ocr.languages"),
     INDEX_OCR_ENABLED("index.ocr.enabled"),
-    INDEX_OCR_MIN_IMAGE_PIXELS("index.ocr.trigger.min_image_pixels"),
     INDEX_OCR_PER_FILE_TIMEOUT_MS("index.ocr.limits.per_file_timeout_ms"),
     INDEX_OCR_MAX_PAGES("index.ocr.limits.max_pages"),
     INDEX_OCR_MAX_IMAGE_DIMENSION("index.ocr.limits.max_image_dimension"),
@@ -40,7 +35,6 @@ public enum ConfigKey {
     INDEX_WRITER_MAX_BUFFERED_DOCS("index.writer.max_buffered_docs"),
     INDEX_QUEUE_MAX_DEPTH("index.queue.max_depth"),
     INDEX_COMMIT_DEBOUNCE_MS("index.commit.debounce_ms"),
-    INDEX_COMMIT_POLICY("index.commit.policy"),
     INDEX_COMMIT_META_ENABLED("index.commit.meta.enabled"),
     INDEX_NRT_TARGET_MAX_STALE_MS("index.nrt.target_max_stale_ms"),
     INDEX_NRT_MAX_STALE_MS("index.nrt.max_stale_ms"),
@@ -68,11 +62,6 @@ public enum ConfigKey {
     SEARCH_CORRECTIONS_DF_THRESHOLD("search.corrections.df_threshold"),
     SEARCH_CORRECTIONS_MAX_EDIT_DISTANCE("search.corrections.max_edit_distance"),
     SEARCH_CORRECTIONS_ZERO_HIT_RETRY("search.corrections.zero_hit_retry_enabled"),
-    SEARCH_CORRECTIONS_INDEX_FALLBACK("search.corrections.index_fallback_enabled"),
-    SEARCH_CURSOR_LEGACY_ENABLED("search.cursor.legacy_enabled"),
-    SEARCH_PAGING_STRATEGY("search.paging.strategy"),
-    SEARCH_PAGING_PIT_TTL_MS("search.paging.pit_ttl_ms"),
-    SEARCH_PAGING_TIEBREAK_FIELD("search.paging.tiebreak_field"),
 
     // -- Worker indexer --
     INDEXER_BACKPRESSURE_MODE("workers.indexer.backpressure_mode"),

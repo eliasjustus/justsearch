@@ -238,28 +238,12 @@
                                                       "enabled":  {
                                                                       "type":  "boolean"
                                                                   },
-                                                      "mode":  {
-                                                                   "type":  "string",
-                                                                   "enum":  [
-                                                                                "local"
-                                                                            ]
-                                                               },
                                                       "model_path":  {
                                                                          "type":  [
                                                                                       "string",
                                                                                       "null"
                                                                                   ]
                                                                      },
-                                                      "backend":  {
-                                                                      "type":  "string",
-                                                                      "enum":  [
-                                                                                   "auto",
-                                                                                   "cpu",
-                                                                                   "metal",
-                                                                                   "cuda",
-                                                                                   "vulkan"
-                                                                               ]
-                                                                  },
                                                       "gpu_layers":  {
                                                                          "oneOf":  [
                                                                                        {
@@ -398,24 +382,7 @@
                                                                                                                                           "type":  "integer",
                                                                                                                                           "minimum":  0
                                                                                                                                       }
-                                                                                                                        },
-                                                                                                             "watcher":  {
-                                                                                                                             "type":  "object",
-                                                                                                                             "additionalProperties":  false,
-                                                                                                                             "properties":  {
-                                                                                                                                                "strategy":  {
-                                                                                                                                                                 "type":  "string",
-                                                                                                                                                                 "enum":  [
-                                                                                                                                                                              "auto",
-                                                                                                                                                                              "nio",
-                                                                                                                                                                              "windows_native",
-                                                                                                                                                                              "watchman",
-                                                                                                                                                                              "rust_notify",
-                                                                                                                                                                              "polling"
-                                                                                                                                                                          ]
-                                                                                                                                                             }
-                                                                                                                                            }
-                                                                                                                         }
+                                                                                                                        }
                                                                                                          },
                                                                                          "required":  [
                                                                                                           "name",
@@ -423,10 +390,6 @@
                                                                                                       ]
                                                                                      }
                                                                         },
-                                                        "default_language":  {
-                                                                                   "type":  "string",
-                                                                                   "minLength":  1
-                                                                               },
                                                         "language_detection":  {
                                                                                    "type":  "object",
                                                                                    "additionalProperties":  false,
@@ -495,13 +458,6 @@
                                                                        "type":  "object",
                                                                        "additionalProperties":  false,
                                                                        "properties":  {
-                                                                                          "policy":  {
-                                                                                                          "type":  "string",
-                                                                                                          "enum":  [
-                                                                                                                       "per_batch",
-                                                                                                                       "deferred"
-                                                                                                                   ]
-                                                                                                      },
                                                                                           "debounce_ms":  {
                                                                                                                "type":  "integer",
                                                                                                                "minimum":  0
@@ -559,21 +515,6 @@
                                                                         "type":  "object",
                                                                         "additionalProperties":  false,
                                                                         "properties":  {
-                                                                                           "strategy":  {
-                                                                                                            "type":  "string",
-                                                                                                            "enum":  [
-                                                                                                                         "auto",
-                                                                                                                         "nio",
-                                                                                                                         "windows_native",
-                                                                                                                         "watchman",
-                                                                                                                         "rust_notify",
-                                                                                                                         "polling"
-                                                                                                                     ]
-                                                                                                        },
-                                                                                           "debounce_ms":  {
-                                                                                                               "type":  "integer",
-                                                                                                               "minimum":  0
-                                                                                                           },
                                                                                            "overflow":  {
                                                                                                             "type":  "object",
                                                                                                             "additionalProperties":  false,
@@ -582,27 +523,7 @@
                                                                                                                                                           "type":  "boolean"
                                                                                                                                                       }
                                                                                                                            }
-                                                                                                        },
-                                                                                           "queue":  {
-                                                                                                         "type":  "object",
-                                                                                                         "additionalProperties":  false,
-                                                                                                         "properties":  {
-                                                                                                                            "max_entries":  {
-                                                                                                                                                "type":  "integer",
-                                                                                                                                                "minimum":  1
-                                                                                                                                            }
-                                                                                                                        }
-                                                                                                     },
-                                                                                           "polling":  {
-                                                                                                           "type":  "object",
-                                                                                                           "additionalProperties":  false,
-                                                                                                           "properties":  {
-                                                                                                                              "interval_ms":  {
-                                                                                                                                                  "type":  "integer",
-                                                                                                                                                  "minimum":  1
-                                                                                                                                              }
-                                                                                                                          }
-                                                                                                       }
+                                                                                                        }
                                                                                        }
                                                                     },
                                                         "sort":  {
@@ -757,16 +678,6 @@
                                                                                                                        "type":  "string"
                                                                                                                    }
                                                                                                      },
-                                                                                       "trigger":  {
-                                                                                                       "type":  "object",
-                                                                                                       "additionalProperties":  false,
-                                                                                                       "properties":  {
-                                                                                                                          "min_image_pixels":  {
-                                                                                                                                                   "type":  "integer",
-                                                                                                                                                   "minimum":  0
-                                                                                                                                               }
-                                                                                                                      }
-                                                                                                   },
                                                                                        "limits":  {
                                                                                                       "type":  "object",
                                                                                                       "additionalProperties":  false,
@@ -861,15 +772,6 @@
                                                                            "minimum":  1,
                                                                            "maximum":  100
                                                                        },
-                                                         "default_language_policy":  {
-                                                                                        "type":  "string",
-                                                                                        "enum":  [
-                                                                                                     "explicit_or_default",
-                                                                                                     "explicit_only",
-                                                                                                     "translator_or_default",
-                                                                                                     "allow_any"
-                                                                                                 ]
-                                                                                    },
                                                          "sort_default":  {
                                                                               "type":  "array",
                                                                               "items":  {
@@ -952,9 +854,6 @@
                                                                                                                        "minimum":  1
                                                                                                                    },
                                                                                                 "zero_hit_retry_enabled":  {
-                                                                                                                               "type":  "boolean"
-                                                                                                                           },
-                                                                                                "index_fallback_enabled":  {
                                                                                                                                "type":  "boolean"
                                                                                                                            }
                                                                                             }

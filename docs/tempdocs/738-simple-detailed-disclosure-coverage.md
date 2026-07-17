@@ -1,7 +1,7 @@
 ---
 title: "738 — Simple/Detailed disclosure coverage: bring user-facing technical strings under the one uiMode authority"
 type: tempdoc
-status: implemented + independently reviewed; merged forward onto main 2026-07-15 and re-verified. Pending merge. NOTE — authored as tempdoc **696**; briefly renumbered to **728** on 2026-07-15, then renumbered again to **738** the same day after 728 was found to collide with in-flight work in other worktrees (see §Renumber) — so pre-2026-07-15 references to "tempdoc 696", and any short-lived same-day reference to the intermediate 728 number, meaning disclosure both mean this doc
+status: MERGED to main together with 697 as PR #188, commit add9d620 (2026-07-17 reconciliation). [pre-merge status retained: implemented + independently reviewed; merged forward onto main 2026-07-15 and re-verified. Pending merge.] NOTE — authored as tempdoc **696**; briefly renumbered to **728** on 2026-07-15, then renumbered again to **738** the same day after 728 was found to collide with in-flight work in other worktrees (see §Renumber) — so pre-2026-07-15 references to "tempdoc 696", and any short-lived same-day reference to the intermediate 728 number, meaning disclosure both mean this doc
 created: 2026-07-08
 updated: 2026-07-15
 related:

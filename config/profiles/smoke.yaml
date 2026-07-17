@@ -9,7 +9,6 @@ egress:
 
 llm:
   enabled: true
-  mode: local
   model_path: ""
 
 workers:
@@ -54,7 +53,6 @@ infra:
       port: 0
 
 search:
-  default_language_policy: explicit_or_default
   pipeline:
     profile: desktop-default
   tiebreak_field: doc_uid
@@ -76,18 +74,15 @@ search:
     df_threshold: 5
     max_edit_distance: 1
     zero_hit_retry_enabled: true
-    index_fallback_enabled: false
   hybrid:
     bm25_k: 200
     ann_k: 200
     auto_embed: true
 
 index:
-  default_language: en-US
   language_detection:
     enabled: true
   commit:
-    policy: per_batch
     debounce_ms: 0
   pipeline:
     profile: desktop-default
@@ -97,19 +92,11 @@ index:
       enabled: true
       days: 7
   watcher:
-    strategy: auto
-    debounce_ms: 50
     overflow:
       rescan_on_overflow: true
-    queue:
-      max_entries: 2048
-    polling:
-      interval_ms: 2000
   ocr:
     enabled: false
     languages: []
-    trigger:
-      min_image_pixels: 524288
     limits:
       per_file_timeout_ms: 5000
       max_pages: 10
