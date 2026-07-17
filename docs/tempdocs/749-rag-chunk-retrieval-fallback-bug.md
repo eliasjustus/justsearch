@@ -1,8 +1,8 @@
 ---
 title: RAG chunk-retrieval fallback bug — /api/chat/ask misses the top HYBRID hit on some queries
-status: "open — ROOT CAUSE CONFIRMED 2026-07-17 (session a6d2af56, live repro + source). `ChunkDocumentWriter` writes ZERO chunk documents for docs < 2000 chars (`CHUNK_THRESHOLD_CHARS`) or that split into ≤1 chunk; RAG chunk retrieval filters `IS_CHUNK:true` so it only sees chunk documents → sub-2000-char docs (85.2% of the eval corpus) are invisible to RAG chunk retrieval and fall back to whole-doc BM25, which unscoped misses the best short doc. The 'query-dependence' is really: a RAG ask retrieves chunks only when its ~10-doc scope happens to include one of the ~15% ≥2000-char chunked docs. Doc-level search is unaffected (finds them). DESIGN SETTLED 2026-07-17 (§Design): option A — `ChunkDocumentWriter` writes ONE whole-doc chunk for short/single-chunk docs instead of dropping them (completes the `IS_CHUNK:true` retrieval contract; matches universal splitter convention; fixes both failure sub-cases). B (merge a doc-level retrieval leg) kept only as the no-re-index fallback; C (hybrid-ise the fallback) ruled out. In-scope alongside the writer change: fusion parent-doc dedup, EXTEND 718's chunk-completeness guard to the per-doc-class gap, reranker length-calibration check, and a MANDATORY /search-quality eval before/after with a falsifier. Names a retrieval-completeness invariant (conform to 717/718, no parallel structure). DERISK 2026-07-17 (§Derisk, 4 probes) RE-OPENED the A-vs-B call: A is more invasive than the design assumed (ChunkSplitter returns 2 chunks not 1 for short docs — a real splitter bug; flips isShortCorpus/chunk_merge; needs 718-guard rework; needs a re-index existing users can't self-serve via the UI — though a FRESH v0.2.0 install gets A for free). B works with the short-corpus machinery (no writer/index/guard change, no re-index). Updated lean: B for alignment+no-migration, A only attractive for the fresh-install path. R1/R8 favourable (dedup+citation already safe); R5/R6 fine. Confidence: bug+fix achievable 8/10, A-as-designed 4/10. Difficulty HIGH → opus-tier design-revision+implementation. FOUNDER CALL: re-decide A vs B with these findings. Spawned from tempdoc 734 round 6."
+status: "open — ROOT CAUSE CONFIRMED 2026-07-17 (session a6d2af56, live repro + source). `ChunkDocumentWriter` writes ZERO chunk documents for docs < 2000 chars (`CHUNK_THRESHOLD_CHARS`) or that split into ≤1 chunk; RAG chunk retrieval filters `IS_CHUNK:true` so it only sees chunk documents → sub-2000-char docs (85.2% of the eval corpus) are invisible to RAG chunk retrieval and fall back to whole-doc BM25, which unscoped misses the best short doc. The 'query-dependence' is really: a RAG ask retrieves chunks only when its ~10-doc scope happens to include one of the ~15% ≥2000-char chunked docs. Doc-level search is unaffected (finds them). DESIGN SETTLED 2026-07-17 (§Design): option A — `ChunkDocumentWriter` writes ONE whole-doc chunk for short/single-chunk docs instead of dropping them (completes the `IS_CHUNK:true` retrieval contract; matches universal splitter convention; fixes both failure sub-cases). B (merge a doc-level retrieval leg) kept only as the no-re-index fallback; C (hybrid-ise the fallback) ruled out. In-scope alongside the writer change: fusion parent-doc dedup, EXTEND 718's chunk-completeness guard to the per-doc-class gap, reranker length-calibration check, and a MANDATORY /search-quality eval before/after with a falsifier. Names a retrieval-completeness invariant (conform to 717/718, no parallel structure). DERISK 2026-07-17 (§Derisk, 4 probes) RE-OPENED the A-vs-B call: A is more invasive than the design assumed (ChunkSplitter returns 2 chunks not 1 for short docs — a real splitter bug; flips isShortCorpus/chunk_merge; needs 718-guard rework; needs a re-index existing users can't self-serve via the UI — though a FRESH v0.2.0 install gets A for free). B works with the short-corpus machinery (no writer/index/guard change, no re-index). Updated lean: B for alignment+no-migration, A only attractive for the fresh-install path. R1/R8 favourable (dedup+citation already safe); R5/R6 fine. Confidence: bug+fix achievable 8/10, A-as-designed 4/10. Difficulty HIGH → opus-tier design-revision+implementation. FOUNDER CALL: re-decide A vs B with these findings. SCOPE INVESTIGATION 2026-07-17 (session 2cad7f69, §Scope investigation): two-lane audit (code map + incident-history mining 222→749) — the chunk area holds ONE recurring structural class (silent sub-population loss + lying status: F-032, 712, 717, 749) plus a CLOSED representation-quality class (F-031/F-033, do not sweep in); scoped class-level response, NOT a subsystem rewrite; stays in 749. R4/R2 re-confirmed vs source (band 385–1923 stripped chars; the splitter tail bug is LIVE today via the un-gated virtual-chunk fallback — fix regardless of A/B; UI force-reindex never reaches re-chunk). NEW structural insight: interactive search unions chunks over a doc-level base (tolerant), while RAG treats the incomplete chunk index as PRIMARY — a recall gate, violating D-005 'fusion is a ranking step, not a recall gate'. RECOMMENDATION SHARPENED TO B (union doc-level entries into the primary RAG candidate set): fixes ALL indices incl. upgrade-in-place (A can't self-serve re-index), aligns RAG with the proven interactive union architecture; retrieval-completeness invariant guarded in reachability form via the extended 718 guard. Founder calls open: ratify B; confirm the /search-quality eval gate. Spawned from tempdoc 734 round 6."
 created: 2026-07-16
-updated: 2026-07-16
+updated: 2026-07-17
 ---
 
 # RAG chunk-retrieval fallback bug — `/api/chat/ask` misses the top HYBRID hit on some queries
@@ -498,3 +498,110 @@ explicit, dated owner decision per `cut-a-release.md`'s policy) — recorded her
 tracking home while that decision is pending. This is a candidate for that classification
 given v0.2.0 is already blocked on tempdoc 734's finding 5, but the owner should make that
 call explicitly rather than have it happen by default.
+
+## Scope investigation (2026-07-17, session 2cad7f69) — subsystem-wide review; ONE recurring defect class; recommendation sharpened to B
+
+The interrupted "step back and consider a broad rewrite of the chunk subsystem" question was
+picked up as two parallel opus audits: (1) a read-only code map of the chunk write / enrichment /
+read / corpus-classification seams with a silent-exclusion census + independent re-verification of
+the §Derisk claims, and (2) an incident-history mining pass over the whole chunk lineage
+(222 → 280 → 691/F-031 → 711/F-032 → 712/F-033·F-036 → 713/F-035 → 717 → 718 → 749) with a
+per-incident counterfactual against a hypothetical completeness unification.
+
+### Incident-history verdict — one recurring class, one closed class, noise
+
+- **Recurring structural class (4 documented instances): silent sub-population loss with a
+  passing/lying status**, on the dual doc/chunk representation: F-032 (ALL chunk vectors destroyed
+  by RMW, status stayed COMPLETED), 712 (chunk docs marked splade-COMPLETED without ever being
+  encoded), 717 (SPLADE-load race → short-corpus misclassification → `chunk_merge` leg silently
+  skipped), and this bug (85% of a short corpus invisible to `IS_CHUNK:true` retrieval). Four
+  instances across write / enrichment / classification / read seams is well past the
+  `structural-defects-no-repeat` bar — a **class-level response is warranted**.
+- **Separate, already-closed representation-quality class:** F-031 (window-mean parent dilution)
+  and F-033 (SPLADE 512-token truncation) merely co-locate in the chunk area; folding them into a
+  rework would be over-DRY (they share no reason to change with the exclusion class). Nothing to do.
+- **Counterfactual:** "every servable doc has ≥1 chunk entry by construction + one data-keyed
+  status authority" would have PREVENTED this bug, DETECTED F-032/712/717, and done NOTHING for
+  the quality class — confirming the class boundary.
+- **Hard constraint reaffirmed:** F-035 measurement-rejects any chunks-only collapse; the parent
+  representation stays regardless.
+- **Net scope answer: scoped class-level response (fix + extended 718 guard + the §Reach
+  invariant), NOT a subsystem rewrite. Stays in 749 — no new tempdoc.**
+
+### Code-map corrections and sharpenings to §Derisk (all source-verified at current HEAD)
+
+- **The primary write-time exclusion lives in `IndexingDocumentOps.indexChunks`**
+  (`modules/worker-services/.../loop/ops/IndexingDocumentOps.java:352` — `content.length() <
+  CHUNK_THRESHOLD_CHARS → return 0`); `ChunkDocumentWriter:92` is a redundant second guard for
+  VDU/replay callers. Option A touches both, plus the `chunks.size() <= 1` guard at
+  `ChunkDocumentWriter:102`.
+- **R4 CONFIRMED with the exact band:** with `targetChars=1923`, `overlapChars=192`,
+  `minChars=384` (`ChunkSplitter.java:753-755`), any stripped length in **385–1923 chars** yields
+  chunk 0 = the whole text, then `advance = max(L−192, 384) < L` → a second, fully-redundant
+  overlap-tail chunk (`:772-817`); `chunks.size()==2` evades the `<=1` guard. Two sharpenings:
+  (i) via `ChunkDocumentWriter` the band is only narrowly reachable (raw ≥2000 chars stripping
+  into the band); (ii) **the identical loop in the metadata-free `ChunkSplitter.split()` runs
+  UN-gated in `buildFallbackWithVirtualChunks` (`RagContextOps.java:769`) — the redundant-tail bug
+  is LIVE in production today on the virtual-chunk fallback path for any short doc.** It also sits
+  on option B's own path (B virtual-chunks short docs). **Fix the splitter regardless of A vs B.**
+- **R2 CONFIRMED with the full chain:** UI "Reindex Now (force)" → `RemoteKnowledgeClient`
+  `scanRootFn` hardcodes `SCAN_MODE_INITIAL` (`RemoteKnowledgeClient.java:275`); `markForced` is
+  only reachable via the `submitBatch` path (`GrpcIngestService.java:504-508`);
+  `JobBatchExtractor.extractAll` therefore runs `isUnmodified()` and skips unchanged files
+  (`JobBatchExtractor.java:193-208`). No self-serve re-chunk path exists.
+- **The key NEW structural insight — the two chunk consumers have opposite architectures:**
+  - *Interactive search* treats chunk hits as an **augmentation** fused over a doc-level base:
+    `SearchPlanner.planChunkMerge` emits explicit skip reason codes, and
+    `SearchExecutor.collapseChunkHitsToParents` (`:899`) merges best-chunk-per-parent into
+    doc-level results. It is **tolerant of an incomplete chunk index** — a doc with no chunks
+    still surfaces via its doc-level entry.
+  - *The RAG ask path* treats chunk search as **PRIMARY**: `RagContextOps.executeRetrieval` →
+    `ChunkSearchOps` under `IS_CHUNK:true`, and on empty falls back to `searchFullDocsForDocs`
+    **scoped to a possibly-empty `docIds` set** (`ChunkSearchOps.java:393` returns empty on empty
+    scope) → `NO_CHUNKS_FOUND`. It is a **recall gate over an index surface that was never
+    complete** — precisely the shape D-005 forbids ("fusion is a ranking step, not a recall
+    gate", 636 Design v3 lineage).
+- **Silent-exclusion census (8 sites):** the `<2000` guards (2 sites), the `<=1` guard, the four
+  `IS_CHUNK:true` filters in `ChunkSearchOps` (`:128/:183/:246/:298`) — all silent; `isShortCorpus`
+  → `SKIPPED_SHORT_CORPUS` (NOT silent, reason-coded); the ≥95% coverage gate (semi-silent,
+  `CHUNK_VECTOR_COVERAGE_INCOMPLETE` reason, debug-log only); and **FAILED-status chunks silently
+  stop being retried with no serve-time gate** (`EmbeddingBackfillOps`/`SpladeBackfillOps`
+  PENDING-only queries) — the last logged to the observations inbox as out-of-scope.
+
+### Updated recommendation (founder-decision input, sharpened from §Derisk's lean)
+
+**B — union doc-level entries into the primary RAG candidate set — now clearly preferred**, and
+reframed: B is not a workaround; it **aligns the RAG path with the interactive path's proven
+union architecture** (doc-level base + chunk augmentation + parent dedup, which
+`collapseChunkHitsToParents` already implements on the interactive side). Rationale over A:
+
+1. **Doctrine:** the defect's deepest form is the RAG path being a recall gate (D-005). A completes
+   the index but leaves the recall-gate architecture in place; B removes it.
+2. **Migration:** A cannot reach existing indices (R2 confirmed: no self-serve re-chunk) — every
+   upgrade-in-place install would keep the bug **silently and indefinitely**, converting the
+   recurring class from a code property into a per-install data property (its worst form). B fixes
+   ALL indices — fresh, old, upgraded — at query time immediately. A's "fresh-install-free" appeal
+   is subsumed: B fixes fresh installs too.
+3. **Ripple:** A's confirmed extra work (splitter fix as prerequisite, `isShortCorpus` flip +
+   coverage transient, 718-guard rework whose `expected_chunk_docs` is keyed to the 2000
+   threshold) vs B's one real cost (a doc-leg union + parent dedup in `RagContextOps`, machinery
+   that largely exists: `searchFullDocsForDocs`, virtual chunks, the dedup pattern).
+4. **The invariant survives under B in its honest form:** §Reach's retrieval-completeness invariant
+   is about *reachability* ("every doc reachable by document-level search must be reachable by the
+   RAG path"), not index shape. Under B it becomes a query-path property, guarded by extending
+   718's guard to assert per-doc-class RAG reachability in eval — a cleaner guard than A's
+   (which must model write-time thresholds).
+
+**In-scope alongside B:** the `ChunkSplitter` tail-fragment fix + test (live bug on B's own path
+and today's fallback path); the extended 718 guard in reachability form; the reranker
+length-calibration spot-check (Lane 1 caution); the mandatory before/after `/search-quality` eval
+with the §Research falsifier; acceptance R9 restated for B — the unscoped target-query ask must
+retrieve and cite `1631583.txt` through the PRIMARY path (not FULLTEXT_FALLBACK).
+
+**A is not resurrected later unless** chunk-index completeness earns independent value (e.g. a
+schema-migration moment where a re-index ships anyway); if so it layers cleanly on top of B.
+
+**Remaining founder calls:** (1) ratify B (this investigation's recommendation; A-as-designed
+stays 4/10, B now carries both the derisk and the architecture argument); (2) confirm the
+`/search-quality` eval gate before merge (unchanged). Difficulty stays HIGH / opus-tier for
+implementation.
