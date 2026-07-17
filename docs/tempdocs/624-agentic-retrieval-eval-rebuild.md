@@ -4632,3 +4632,54 @@ semantics + tests; then the 719 replay machinery recomposes the existing Step-2 
 this campaign gains first-class time metrics retroactively. Composes with the
 exhaustion-as-failure policy change (previous section) — same layer, same replay, one re-verdict
 pass covers both.
+
+## Phase-2 pre-registration (2026-07-17 ~06:45, BEFORE any cell runs; founder-authorized "go ahead with phase 2")
+
+Two runs, one chain, both under rules that are now PRE-registered (unlike Step-2's declared
+post-hoc sensitivity): the resource-exhaustion-as-failure ITT outcome rule (merged #230) and
+per-arm timeout calibration (harness increment landing before launch — the Step-2 lesson that
+pooled-pilot timeouts under-budget the grep arm at scale).
+
+**Run 1 — email-10k stratum (completes the email size trend).** `mixed/en-email-enron-raw-10k-verbose`
+(fully-certified cell), haiku, A/B × seeds {0,1,2} × 20q = 120 cells, per-cell max_budget $0.50,
+per-arm calibrated timeouts. Hard cap **$22** (calibrate-projected; abort and ask if over).
+
+**Run 2 — sonnet tier probe (the 10k capability question).** `mixed/en-legal-clerc-10k-verbose`,
+model sonnet, A/B × seed {0} × 20q = 40 cells, per-cell max_budget **$1.00** (a fair tier budget —
+exhaustion at the cap scores as failure under the pre-registered rule, scoping the claim to
+"within a $1/cell budget"), per-arm calibrated timeouts. Hard cap **$25** (abort and ask if over).
+Pre-registered interpretation: haiku-B floored at 0.067 on this stratum with retrieval healthy
+(adoption 1.0, union recall measured in-band at certification). (a) sonnet-B materially above
+floor → the hop-2 failure is MODEL-CAPABILITY-bound → the tier lever is real (657 install-tier
+economics; the wedge story becomes "tool + adequate tier"). (b) sonnet-B also at floor → the
+failure is task/corpus-bound at 10⁴ → route to answer-side hop absorption or query design, NOT
+model tier; a single seed cannot support fine deltas — this probe answers floor-vs-not, nothing
+smaller. A-arm (sonnet + grep) is the same-tier control separating tool effect from tier effect.
+
+Order: email-10k first (cheap validation of per-arm timeouts on a known corpus), then the probe.
+Combined worst-case ≈ $47 — within the founder-quoted Phase-2 envelope; running guards enforce
+per-run caps independently. Datasets already materialized + hash-verified (2026-07-16 prep);
+supervision: detached chain + monitor + 30-min wakeup loop, the proven pattern.
+
+### Phase-2 amendment 1 (2026-07-17 ~08:15, BEFORE any run-2 cell; timeout equalization + run-1 confound disposition)
+
+Run 1 (email-10k) exposed a design interaction the increment reviews missed because it spans two
+increments: **exhaustion-as-failure is only fair under identical per-arm budgets, and naive
+per-arm timeout application makes budgets unequal.** The calibration floor-clamped B to 120s —
+below B's own realized p95 (125s) — while A got 337s; result: B exhausted 26/60 cells vs A's 14,
+flipping the stratum's accuracy delta negative (A 0.350 vs B 0.167, p=0.043) as an ARTIFACT of a
+2.8× budget asymmetry, not a tool effect. (Step-2's flaw was the mirror image: EQUAL pooled
+budgets starved the slow arm. Both are instances of one rule: calibrate per arm, but APPLY the
+max across arms to every arm.)
+
+- **Fix (landed before run-2 calibration, `equalize_timeouts_across_conditions` +
+  `timeout_s_by_condition_measured` recorded alongside):** budgets equal by construction, sized
+  to the slowest arm's calibrated tail. Run 2 (sonnet probe) executes under this rule — its
+  entire purpose is B-arm accuracy, which a tight B budget would have corrupted.
+- **Run-1 disposition (honest):** email-10k's ACCURACY comparison is INVALID as a tool-effect
+  measure (unequal budgets; the 26 B exhaustions are substantially calibration artifacts — B's
+  completed-cell median was 60s against a 120s cap). Its duration/completion data remain
+  informative descriptively (B median 60.6s vs A 156.7s on completed cells). A rerun under
+  equalized budgets costs ~$16 — founder option, not assumed. The zero-residual-exclusion
+  outcome (0 infra errors both arms) does confirm the exhaustion classification pipeline works
+  live.
