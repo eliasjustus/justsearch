@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy. BASELINE RECOMPUTED 2026-07-16 by tempdoc 745 (session 805279a4) after it fixed 7 verified bugs in the cost parser this program was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline SURVIVES; read prediction-1 against 84.0%, not 85.1%). Handoff item 4 ('OTel reservoir is feeding') was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it — no month-scale OTel data predating 2026-07-16 exists."
+status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy. BASELINE RECOMPUTED 2026-07-16 by tempdoc 745 (session 805279a4) after it fixed 7 verified bugs in the cost parser this program was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline SURVIVES; read prediction-1 against 84.0%, not 85.1%). Handoff item 4 ('OTel reservoir is feeding') was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it — no month-scale OTel data predating 2026-07-16 exists. FRESH EVIDENCE LANE 2026-07-17 (session a6d2af56, worktree takeover-743): founder-directed independent 11-session raw-transcript pass, deliberately derived without relying on this tempdoc's prior conclusions, plus a founder reframe (no specific scarcity; environment-centric: 'the agents themselves might be the ones encountering issues') — see §'Independent transcript-evidence lane (2026-07-17)'. SECOND-WAVE THEORIZATION written same day (§'Theorization — second proposal wave'): three environment deficits (queryable world-state / reliability-vs-insurance / learning loop) + go/stop visibility, unification stance settled (paved usage surfaces, consolidation only under a live consumer, no standalone refactor). RESEARCH PASS COMPLETE same day (3 refute-first lanes, §'Research pass — second wave'): premise WEAKENED-not-refuted — durable core narrowed to exec/encoding-normalization + world-state query; transcript-reader/watcher demoted to deletable adapters over native surfaces; error-hint loop gated to fire-time hooks under the existing ratchet; PYTHONUTF8-machine-wide corrected to scoped PYTHONIOENCODING; gh 0/1/8 bitwise contract + pre-poll race grounded. SECOND WAVE IMPLEMENTED-ON-BRANCH 2026-07-17 (session a6d2af56, worktree takeover-743, NO PR yet): P-J/P-K/P-L/P-M shipped + P-N drafted across commits a47cd644/28113460/905cab97/d9beed29/7ee65238; opus refute-first review verdict SHIP, its 3 findings fixed + live-verified; 100+ new checks, suite 31/31, kernel wave-gates green, gradle sanity green (see §'Second-wave implementation record'). OPEN FOUNDER ITEMS: P-N/P-M(c) draft wording approval; V-A4 (Remote-Control push vs local beacon); P-F/P-C pilot sequencing; PR/publish go for this branch."
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -975,6 +975,648 @@ recommended dispositions)
   blur accepted at this scale); abort rule: any escaped defect traceable to a piloted change
   reverts that change immediately; window verdict = gross signals + founder judgment
   (dashboard sanity-checks, doesn't decide).
+
+## Independent transcript-evidence lane (2026-07-17, session a6d2af56, worktree takeover-743)
+
+### Charter and method
+
+Founder-directed fresh pass: re-derive the friction picture from raw session transcripts
+**without relying on this tempdoc's prior conclusions** — issues only, regardless of fix
+feasibility. Analysis was done by the orchestrator itself (no subagent summarization). Each
+transcript was mechanically condensed to a per-turn spine (user turns, assistant text, tool
+calls + inputs, errors, time gaps, per-turn token usage — no interpretation), then read and
+judged directly; one session read end-to-end, the rest via full anomaly skeletons plus deep
+dives into every flagged region.
+
+**Corpus (11 sessions, 2026-07-13 → 2026-07-17):** f03cea03 (737 full pipeline → implementation
+→ live E2E; $326, 20 spawns, 0 merges), 109145ac (707/624 overnight campaign, 38 wakeups,
+15 Monitors), 114e3e71 (release round-5 convergence, 38 tool errors, mostly inline), 478caa0c
+(stale-worktree rescue + publish; $71, 11 merges), cfa87fbc (750 theorize/research/derisk),
+805279a4 (745 implementation, delegation-heavy), 25f8ac5d (725 orchestrator, 54 spawns),
+f3e41644 (release agent, 92 spawns, 9 Monitors, 11 SendMessage), 70bf04ea (742 archaeology),
+d1af1a27 (739/history), plus micro-sessions becbe262/cadd2043/b19e907c/60dde1e9.
+
+### Founder inputs recorded (2026-07-17, this session)
+
+- **No specific scarcity currently** — the program should target overall improvement of every
+  aspect, not optimize one currency. Founder reports **no complaints about how agents behave**;
+  the operative frame: *"i just feel like the agents themselves might be the ones encountering
+  issues or working in an inefficient environment."*
+- Monitor experience: *"ive simply found the monitor sometimes not firing and agents waiting
+  indefinitely"* — a silent-tail claim, not an average-case claim.
+- Rapid duplicate user messages in transcripts are a **storage artifact**, not founder behavior
+  (instrument warning below).
+- The 7/15 overnight-run matter: founder declines severity ("not that big of an issue").
+
+### Findings
+
+**A. Mechanical substrate tax — confirmed in 11/11 sessions, head-heavy distribution.**
+Recurring deterministic signatures, none of which feed back into anything: PowerShell
+call-operator `& "…gh.exe"` pasted into bash (≥4 sessions); PowerShell 7 syntax (`??`) on the
+5.1 shell; cp1252 decode crashes reading UTF-8 JSON/logs from inline Python (≥3 sessions);
+inline-Python backslash SyntaxErrors; quote-escape EOF errors (b19e907c hit one on its *first
+tool call*); `F:\tmp`/`/tmp` vs scratchpad path misses; cwd drift between Bash calls;
+deferred-tool schema-not-loaded InputValidationErrors (TaskCreate, Monitor); **`gh` exit-code
+semantics misread as failures** (`gh pr checks` exits 1/8 while all checks pass — error-surfaced
+in ≥3 sessions); 2–5-min command timeouts on searches/watches. Every session pays the same
+tuition; **nothing learns across sessions**.
+
+**B. Waiting economics / defensive overspending — confirmed at mechanism level.** f03cea03:
+14 ScheduleWakeup fallbacks armed, 0 needed (every primary notification arrived first), 1 fired
+stale *after closeout* burning a full ~672k-cache-read turn. 109145ac overnight: **triple**
+supervision (per-step Monitor + 30-min /loop + wakeup fallbacks); five consecutive Monitor-ack
+turns in 18 min, each a one-liner at ~550k cache reads; each /loop tick re-injects ~9k chars of
+static skill text. Late-session per-turn cache reads reach 550–670k, so *every* trivial ack pays
+it; multi-minute waits invalidate the cache (observed cr collapse to ~31k ≥5× in one session),
+so each wait also buys a full cache re-write. The defensive layering is environment-taught:
+primitives that fail rarely-but-silently force 100% insurance (see Monitor nuance below).
+
+**C. World-state illegibility — hits the founder directly, not just agents.** Finished work
+parks invisibly: a week-old, never-pushed worktree holding two finished tempdocs (~1,380 lines)
+was found only because the founder *remembered* it (478caa0c); f03cea03's 21 commits sit
+unmergeable on a parked release-branch base. Tempdoc-number collisions recurred 3× live, and
+478caa0c documented the detector's blind spot then **fell into the same trap two hours later**
+(picked 728, colliding with four in-flight worktrees). The micro-sessions show the founder as
+the system's index and message bus: cadd2043 = founder lost their own session (transcripts file
+under per-worktree project dirs — the same mechanism that made the baseline instrument call
+109145ac's merges "unattributable"); becbe262 = founder asking why skills don't appear in
+worktrees (untracked files); b19e907c = founder hand-carrying one agent's watcher-failure
+analysis into another session as pasted text.
+
+**D. Stop/go calibration — one judgment axis, errors in both directions, silent while wrong.**
+Overstep: 109145ac fired the overnight GPU chain treating a budget remark as authorization
+(admitted verbatim: "I treated that as standing authorization"), and the dev stack stayed up
+~12h idle afterward until the founder stopped it. Understep: 805279a4 sat silent 24 min until
+the founder asked "what are you waiting for?" — the agent's own answer: it had labeled one
+pending decision "awaiting founder" so broadly it "shaded into sounding like everything is
+blocked. It isn't." Same root both times: the authorization state between founder and session
+is implicit, carried in prose interpretation, invisible when miscalibrated; the only correction
+channel observed was the founder noticing. Related, softer instance: 114e3e71 deferred a direct
+"copy the documentation over" twice (two real `[Request interrupted by user]` markers) in favor
+of self-directed verification; the copy happened next morning after "did you copy all relevent
+content?" → "No". Also in this family: closure overclaiming — "NOT A DEFECT / closed" survived
+implementer + reviewer + tempdoc until the founder's "just because they arent bugs, doesnt mean
+they arent issues" forced the correction (114e3e71).
+
+**E. Written rules encode a stricter posture than the founder actually holds — and agents
+can't tell which rules are soft.** f3e41644: agent refused (correctly per `never-share-worktree`)
+to implement in the shared release worktree, with rule-grounded reasons; founder overrode in one
+line ("you can proceed with implementation on this branch"). Two diverging authorities: the rule
+corpus and live founder judgment. Sibling datum (25f8ac5d): founder rejects "agent intelligence"
+as a dismissal category — "we cant just ignore these issues because the cause is the agents
+intelligence."
+
+**F. Instrument notes (for anyone mining transcripts or reading the baseline).**
+1. **Duplicate-user-message artifact:** adjacent near-identical user messages are storage
+   artifacts UNLESS preceded by an explicit `[Request interrupted by user]` marker — friction
+   miners counting user repeats without this filter will over-count founder interventions.
+2. **Producer/publisher misattribution in cost/merge:** the producing session can score $326/0
+   merges (f03cea03, work parked on a release-branch base) while the publishing session scores
+   $71/11 merges (478caa0c, largely shipping other sessions' finished work). Window totals are
+   fine; per-session cost/merge is misleading.
+3. Transcripts of worktree-homed sessions file under per-worktree project dirs — the baseline
+   instrument's "unattributable" bucket partially reflects this, not missing data.
+4. The survival-law machinery itself glitched live once (`record-merge: cannot resolve commit
+   --help`, 25f8ac5d) — the instruments are part of the unreliable environment.
+5. Thinking blocks are not persisted in transcripts (all zero-length) — causal reads of
+   judgment failures from transcripts alone are inference from behavior, and should be labeled
+   as such.
+
+**G. Monitor reliability — both prior claims need merging.** In the one fully-observed
+overnight window the disk-marker Monitor fired flawlessly all night (consistent with 746's 7/7
+repro on 2.1.212); the founder's experience of monitors "sometimes not firing, agents waiting
+indefinitely" stands as the silent tail (cross-restart orphaning produced the literal "No
+completion record" notice in 109145ac after documented PC restarts). Economics consequence: a
+primitive that fails rarely but *silently* forces permanent 100% insurance — the fix that
+matters is reliability *or legible failure*, not average-case improvement.
+
+**H. Counter-findings (what demonstrably works — kept for calibration).** Micro-sessions are
+near-free and effective (a platform question answered in 2 tool calls; the lost session found
+in 8). Refute-first review caught a real HIGH bug pre-merge (f03cea03). pipe-mask-hint,
+bash-guard, repeat-guard, and worktree-base verification all fired correctly when needed. Live
+E2E was genuinely end-to-end (real model, real browser, backend state checked per step). A
+session absorbed a just-merged rule mid-flight and re-verified by content, not ancestry
+(478caa0c). Session startup/orientation overhead is NOT a problem at any observed scale.
+
+### Synthesis (feeds Phase 3+; no proposals authored in this lane)
+
+Three environment deficits explain most of the observed waste across 11 sessions, matching the
+founder's frame: **(1) nothing is queryable** — world-state (worktrees, stranded work, tempdoc
+numbers, sessions, stack ownership) lives in scattered files and founder memory, re-derived
+expensively per session; **(2) nothing is reliable enough to skip insuring against** — watchers,
+exit codes, teardown scripts, even the telemetry, so every session self-insures at per-turn
+cost; **(3) nothing learns** — the same error signatures recur in every session with no
+feedback loop. Plus one judgment axis worth cheap *visibility* (not prevention): the implicit
+go/stop authorization state (finding D). Gaps not covered by the existing P-set: a queryable
+world-state index, an error-signature feedback loop, go/stop-state legibility. P-A2 (cheap-ack,
+deferred) covers part of deficit 2's cost surface.
+
+## Theorization — second proposal wave (2026-07-17, session a6d2af56; pre-design, nothing settled)
+
+Input: the transcript-evidence lane above + the founder's environment-centric reframe. This
+section explores solution *directions* for the three deficits + the go/stop axis; it authors no
+proposals and fixes no designs. A platform-capabilities probe (R4-refresh) should precede any
+design commitment — several directions below die instantly if the harness now ships the
+equivalent natively, and R4's probe was Phase 2's highest-value lane precisely because the
+platform moves monthly.
+
+### Four candidate framings (they suggest different builds)
+
+1. **Agent ergonomics** — treat agents as the environment's *users*; apply UX vocabulary
+   (discoverability, feedback, affordances). Inverts the historical emphasis: the workflow has
+   invested heavily in discipline (rules constraining agents) and comparatively little in
+   ergonomics (environment informing agents).
+2. **A distributed system missing its OS services** — sessions are concurrent processes over
+   shared resources, and the system lacks a process table (session/worktree index), syslog
+   (shared error memory), init/reaper (stranded-work collection), and IPC (the founder is the
+   message bus). Suggests building minimal "kernel services." Risk: this framing flatters
+   overbuilding — the system serves 3-4 concurrent sessions and one human; the Gen-1/Gen-2
+   analytics graveyard shows what happens to infrastructure sized beyond its consumers.
+3. **Legibility asymmetry** — the system is highly legible *downward* (agents receive rules,
+   registers, fire-time hints) and nearly illegible *upward/sideways* (founder can't see
+   session state; sessions can't see each other). Suggests the cheapest wins are upward-facing
+   surfaces, not more downward rules.
+4. **Vigilance-priced-per-turn vs reliability-priced-once** — the economic frame: discipline
+   and insurance cost every turn forever; environment reliability costs once and deletes a
+   defensive behavior from every future session. Compounding argument for reliability work.
+
+Working stance: frame 4 is the *selection criterion*, frames 1/3 are the *design lens*, frame 2
+is a vocabulary to borrow cautiously — explicitly not a mandate to build an agent OS.
+
+### Deficit 1 (nothing queryable) — directions
+
+- **D1-a: World-state as a pure function of disk.** One CLI that *computes* (never stores) the
+  operational picture on demand: worktree inventory with staleness verdicts (dirty / ahead /
+  pushed / PR state / last activity), session→worktree→transcript mapping (absorbing the
+  per-worktree project-dir quirk that lost the founder their own session), tempdoc-number
+  allocation across ALL worktrees at pick time (closing the collision detector's structural
+  blind spot), stranded-finished-work detection. No daemon, no cache, no stored index → nothing
+  to go stale, near-zero graveyard risk; survival comes from wiring into moments that already
+  exist (/start orientation, EnterWorktree, publish). Key property: computed state can't lie.
+- **D1-b: Founder-facing dashboard artifact.** Higher value if it works (it addresses the
+  founder-as-index problem directly), but historically the worst survival record (Gen-1
+  dashboard died unconsumed). Only viable as a projection of D1-a regenerated at a workflow
+  moment, never as its own layer.
+- **D1-c: Platform-native.** Teams' shared task lists / session listings may already cover
+  parts. Probe before building anything.
+- Honest limit: the routine re-derivation cost is modest (micro-sessions are cheap); the real
+  value is the *risk tail* (week-lost work, collisions) plus founder-attention relief — mostly
+  unmeasurable by the D-1 dashboard. This class would be adopted on judgment, not metrics.
+
+### Deficit 2 (nothing reliable enough to skip insuring) — directions
+
+- **D2-a: Make silence legible instead of making watchers perfect.** The founder's monitor
+  experience is a *silent-tail* problem; perfect reliability is unattainable, but silence can
+  be made distinguishable from death: long-running work writes a heartbeat artifact; ONE
+  fallback checks the heartbeat, not the work; a stale heartbeat is an explicit, escalatable
+  event. Converts "waiting indefinitely" into a legible failure state.
+- **D2-b: Notification design: failure-triggered fast path, coarse progress.** Per-step acks
+  had no decision content (five one-liner turns in 18 min at ~550k cache reads each), but
+  fast-path *failure* notification is genuinely valuable overnight (a 30-min tick can waste 30
+  GPU-minutes on a dead run). Direction: notify on failure/completion/milestone; progress goes
+  to disk and is read on the coarse tick. The insurance stays; the premiums drop an order of
+  magnitude.
+- **D2-c: Wakeup hygiene.** Arm one fallback per wait; cancel it when the primary signal
+  arrives (observed: 14 armed / 0 needed / 1 stale-fired-after-closeout). Behavioral (~85%),
+  possibly assisted by a fire-time hint when a stale wakeup fires.
+- **D2-d: Supervisor extraction.** Move babysitting out of the expensive orchestrator context
+  entirely (dedicated cheap watcher session/cron that escalates on anomaly only). Attacks the
+  cost at its root (acks stop paying main-session cache prices) but adds topology — a Phase-5
+  shaped change, not plumbing. Recorded as a direction, not favored yet.
+- **D2-e: Cheap-ack (existing P-A2, deferred)** — platform-dependent; unchanged status.
+- Hidden assumption to keep visible: *some* insurance is correct. The design target is not
+  zero premiums; it's premiums proportional to the silent-tail probability.
+
+### Deficit 3 (nothing learns) — directions
+
+- **D3-a: Extend the alive 727 loop to mechanical signatures.** The friction miner already
+  exists and is consumed; the extension is a signature census (recurring tool-error patterns
+  with counts) feeding the existing hook layer. Semi-automatic, not autonomous: miner proposes,
+  a human/agent session disposes. Survival odds good because both ends (miner, hooks) are
+  already alive.
+- **D3-b: Fix classes at the root instead of hinting.** Several signatures trace to single
+  environmental roots: the unreachable scoop shims force full-path invocations, which cause the
+  quoting/`&` errors — fixing shim reachability once could delete a whole class; a global
+  `PYTHONUTF8=1` kills the cp1252 class; a `gh` exit-code-normalizing wrapper kills the
+  false-failure class. Root fixes beat hints where they exist (fix-root-causes, applied to the
+  environment itself).
+- **D3-c: Rewrite-hooks for pure-syntax classes.** For deterministic signatures a PreToolUse
+  hook could *correct* rather than block. Powerful but double-edged (silent mutation of agent
+  commands); only for provably-semantics-preserving rewrites, if ever.
+- Candidate invariant: **a deterministic error signature recurring across sessions is
+  infrastructure debt, not agent error** — chargeable to the environment, with a countable
+  metric (signature recurrence should ratchet down).
+
+### Go/stop axis — directions (visibility only; D-2 untouched)
+
+- **G-a: Explicit blocked/proceeding enumeration.** When a session stops for founder input, it
+  must enumerate: BLOCKED-ON-FOUNDER (what, why), PROCEEDING (what continues meanwhile), so
+  over-blocking ("everything is waiting") becomes visibly wrong at the moment it's written.
+  Skill/closeout-level convention.
+- **G-b: Stall beacon.** A session ending its turn blocked on the founder emits an explicit
+  founder-visible signal (what's awaited) instead of going silent — converts the 24-min silent
+  idle into a legible wait.
+- **G-c: Arming step for enumerable big actions.** Expensive/irreversible actions (overnight
+  GPU windows) require an explicit, recent founder token — mechanical where the action is
+  enumerable; the general authorization-interpretation class stays founder-arbitrated (D-2).
+
+### Cross-cutting risks and hidden assumptions
+
+1. **Graveyard law is the binding constraint** (finding 2, Phase 1): every artifact names the
+   workflow moment that re-runs it, and extending alive systems beats new layers. D1-a/D3-a are
+   deliberately shaped as extensions/pure functions for this reason.
+2. **Right-sizing:** 3-4 sessions, one founder. Conventions + a few pure functions + 2-3 hooks
+   is the correct order of magnitude; anything resembling a service belongs to a future scale.
+3. **Platform drift:** monthly harness releases have repeatedly obsoleted local workarounds
+   (R4). The probe gates design; wait-for-platform is a legitimate disposition for D2-e and
+   parts of D1.
+4. **Steelman against the whole wave:** the founder-as-bus and founder-as-index roles *work
+   today* at current scale and cost little routinely; the argument for change is the risk tail
+   and the founder's own stated frame, not measured routine waste. If the founder prefers, most
+   of Deficit 1 can be deferred until scale forces it — recorded as a genuine option.
+5. **Self-assessment bias, standing:** an agent theorizing about its own environment will
+   over-attribute failures to the environment (the flattering direction). The evidence lane's
+   finding D (both stop/go directions are agent miscalibration) is the counterweight; G-a/G-b
+   make that class visible rather than explaining it away.
+
+### The broader principle candidate
+
+The repo already solved this problem class once, for code: one canonical authority, projections
+derived from it, drift gates between them (execution-surfaces register, SSOT catalogs,
+ADR-0043). The three deficits are the same shape in the *operational* plane: worktree state,
+session state, error history, and authorization state each live as scattered copies (files +
+founder memory + per-session re-derivation) with no canonical computable source. The candidate
+invariant, stated for later scrutiny rather than adoption now: **every operational fact an
+agent or the founder routinely needs should be computable from one place, on demand, by a pure
+function of disk state — never stored in a second authority, never resident only in a human.**
+If Phase 3's second wave survives review, it is likely this invariant wearing different clothes
+per deficit.
+
+### Addendum: unification — usage surfaces, not module trees (founder question, 2026-07-17)
+
+Founder asked whether unifying/improving the code structure of the issue-cluster areas is the
+best long-term move. Position settled in discussion:
+
+- **The obvious version is rejected.** Refactoring the existing tooling tree for structure's
+  own sake doesn't touch the clusters: the recurring errors occur overwhelmingly in
+  *agent-generated ad-hoc actions* (inline bash/python, per-session scratchpad scripts —
+  109145ac hand-rolled its own watcher; every session hand-rolls gh invocations), not inside
+  committed scripts. Structure without a new consumer is also exactly what the graveyard law
+  kills, and AHA already warns against DRY-ing scaffolding.
+- **The endorsed version: unify around usage surfaces (paved paths), not module layout.** The
+  clusters reveal ~5 capabilities agents keep hand-rolling because no blessed path exists:
+  (1) **transcript access** — ≥5 independent reader implementations to date, and the cost
+  parser's 7 bugs lived in one of these duplicates → one library, everything a consumer;
+  (2) **exec substrate** — one blessed way to run gh/python/node baking in encoding, quoting,
+  exit-code semantics, shim workarounds (D3-b root-fixing in structural form);
+  (3) **world-state queries** (D1-a is itself a unification of five scattered fact sources);
+  (4) **supervision** — one reusable heartbeat-watcher helper instead of per-session scripts;
+  (5) hooks — already unified via hook-base.mjs, and notably the one layer where errors don't
+  keep reappearing.
+- **Precedent inside the repo, both directions:** jseval unified eval ad-hocery so thoroughly
+  it earned a standing "improve jseval rather than work around it" rule — that is what a paved
+  path looks like after it wins. Phase 1's transcript-cost.mjs extraction is the same move
+  small. The dead generations were all new layers *without* consumers; no consolidation under
+  a live consumer has died.
+- **Execution shape:** not a standalone refactor project — each second-wave slice is built ON
+  the shared library it implies, migrating one existing duplicate as it lands (consumer
+  attached to every abstraction from day one). Caution carried: platform drift argues for thin
+  and replaceable over deep and load-bearing.
+- This is the broader-principle candidate applied to the tooling plane: one computable home
+  per operational fact, one paved path per recurring action.
+
+## Research pass — second wave (2026-07-17, session a6d2af56; three bounded refute-first lanes)
+
+Narrow by design (R1-R5 swept the broad territory 24-48h earlier): Lane A = platform-capability
+probe vs the wave's build candidates (docs-specialized agent; official docs + changelog + live
+issue lookups); Lane B = grounding the Windows root-fix candidates (official docs, refute-first);
+Lane C = adversarial premise check ("find the strongest published case AGAINST local
+agent-environment investment"; tiered evidence). Full reports in the session record; the
+load-bearing results:
+
+### Lane A — platform capabilities (verdicts vs our build candidates)
+
+- **Session inventory: NATIVE-NOW in part.** `claude agents --json --all` + daemon roster list
+  background sessions; a per-project `sessions-index.json` (summaries, counts, branch,
+  timestamps) exists per Lane C's doc pass. The `~/.claude/projects/<encoded-cwd>` per-worktree
+  layout our instruments rely on is real empirically but NOT documented — treat as unstable.
+- **Cross-session shared task list: ABSENT by documented design** (Agent Teams: "one team per
+  session… can't share a team across sessions") — coordination layer stays homegrown.
+- **PreToolUse input REWRITING is native** (`hookSpecificOutput.updatedInput`, confirmed by two
+  independent doc examples + a `--debug` confirmation string) — D3-c is a real mechanism.
+- **~30 hook events documented**, incl. `Notification`, `PostToolUseFailure`,
+  `TaskCreated/TaskCompleted` (blockable), `SubagentStart/Stop` with `agent_type` — an
+  auto-cancel-wakeup-on-notification wiring (Notification hook → CronDelete) is buildable;
+  not built-in.
+- **The harness already self-arms a ~20-min fallback wakeup** when a loop iteration ends
+  without rescheduling (v2.1.202) — part of our belt-and-braces is double insurance on top of
+  native insurance.
+- **`--resume` DOCUMENTS background/Monitor task loss as expected behavior** ("never restored
+  on resume") — the founder's "monitors never fire" experience is the documented cross-restart
+  path, with a doc-vs-tracker inconsistency (#72171 closed, #75438 open, behavior still
+  documented) to re-verify before designing around either story.
+- **Monitor has no notify-on-failure-only filter and no payload control**; Channels = research
+  preview (CI push = build-your-own webhook receiver); mobile push ("needs a decision from
+  you") exists as a Remote-Control feature (claude.ai auth, two coarse toggles) — **a native
+  stall beacon (G-b), gated on the founder enabling Remote Control**; the "PushNotification
+  tool" name is unverified against primary sources.
+- **New silent-failure class from docs:** a `/loop` tick only re-runs skills that are
+  model-invokable; others degrade to inert plain text with no error (v2.1.196) — audit our
+  loop-invoked skills.
+- Cost surfaces: `/usage` is current-session-only (resets on /clear since v2.1.211); no local
+  per-session historical cost API — transcript parsing (Phase 1 instrument) remains justified;
+  OTel cost counter is the only native per-session alternative.
+- Worktrees: v2.1.211 makes "don't ask again" approvals save repo-wide to the main checkout's
+  settings (survives worktree removal); v2.1.210 auto-releases stale worktree locks.
+
+### Lane B — Windows root-fix grounding (verdicts)
+
+- **gh exit codes: documented bitwise contract** — 0=pass / 1=fail / **8=pending** (`gh pr
+  checks`, deliberately bitwise per cli/cli#7866; pre-2023 the 1-vs-pending ambiguity was real).
+  Known live race: right after push, `--watch` can exit 1 with "no checks reported" before
+  checks queue (cli/cli#7401) → any wrapper must pre-poll for check registration (exactly 746's
+  shipped guidance). FIX-WITH-CAVEATS.
+- **Machine-wide `PYTHONUTF8=1`: recommended AGAINST by Python's own docs** (affects every
+  Python app on the box). Root cause of our cp1252 class confirmed (bpo-27179: redirected pipes
+  bypass the PEP 528 console special-case, falling back to ANSI cp1252). **Minimal safe fix:
+  `PYTHONIOENCODING=utf-8` scoped per-process** — i.e., owned by the exec substrate, not the
+  machine. PEP 686 makes UTF-8 the default only in Python 3.15. This corrects the
+  theorization's D3-b as written. `chcp 65001` is NOT-A-FIX for the pipe case.
+- **Scoop shims: calling the resolved binary path is the validated-safe workaround** (root
+  cause for constrained-process failures only partially explainable from primary sources;
+  symlink/shim-replacement alternatives carry privilege caveats). Consequence: don't chase
+  fixing shims — make the exec substrate own path resolution so agents never hand-type
+  quoted full paths (where the `&`/quoting error class is born).
+- Blessed-exec precedent: thin/generic (directional advice = standardize on one shell; pwsh 7
+  cross-platform) — the wrapper is justified by local evidence, not industry precedent; keep it
+  thin.
+
+### Lane C — adversarial premise check: **PREMISE-WEAKENED, not refuted** (verdict adopted)
+
+The 2026 harness-engineering / agent-experience movement (OpenAI harness-engineering post,
+Fowler/Böckeler, Anthropic trends report, AX/Netlify) vindicates the *direction* — "design the
+environment, build feedback loops" is a named, vendor-backed practice, and error-mining-into-
+guards is explicitly recommended (OpenAI: treat agent struggle as signal, feed the fix back
+into the repo). Three refutations reshape scope and are **adopted as design constraints**:
+
+1. **Durable/disposable split.** Only components fixing *deterministic platform defects a
+   model cannot runtime-patch* qualify as durable (exec/encoding normalization, world-state
+   query). Transcript-reader and watcher components must be built as **thin, deletable
+   adapters over native surfaces** (sessions-index, background tasks) — the field's consensus
+   failure mode is capability-shaped scaffolds rotting at model/platform boundaries ("90-day
+   artifact" test: removable in an hour, or it's debt).
+2. **The error-hint loop is self-poisoning past a byte budget** (documented: bloated rule
+   files measurably reduce instruction-following; "expect 80% compliance plus hooks for the
+   rest"). It is only net-positive routed to **fire-time hooks under the existing
+   always-loaded-budget ratchet with eviction** — never accumulating always-loaded prose. The
+   repo's tier-register discipline is precisely the literature's prescribed mitigation; this
+   is a point *for* proceeding where a naive learnings-file accumulator would fail.
+3. **Tool-count ceiling:** documented degradation above ~10-20 tools per context — the wave's
+   surfaces must consolidate into FEW entry points, not add five new tools.
+
+Cross-lane tension recorded honestly: "scaffolding beats model upgrades" (same LLM 42%→78% on
+SWE-bench via scaffolding alone) vs "the bitter lesson of agent frameworks" (that structure
+dissolves next model) — both camps agree the environment/error-recovery layer is where the
+value is; they disagree on permanence. Converged directive: **build it, but deletable.**
+
+### Verification items opened by this pass (pre-design)
+
+V-A1: re-verify #72171's actual fix state vs the "never restored on resume" doc line (live
+probe, not docs). V-A2: fetch channels-reference webhook-receiver mechanics before any CI-push
+design. V-A3: audit loop-invoked skills for model-invocability (silent-degradation landmine).
+V-A4: confirm whether Remote-Control mobile push is acceptable to the founder as the G-b stall
+beacon before building anything. V-A5: the `~/.claude/projects` layout is undocumented — every
+instrument relying on it needs a fallback or a version-pinned assumption note.
+
+## Design — second proposal wave P-J…P-N (2026-07-17, session a6d2af56; general level, per Lane-C constraints)
+
+Every component carries its durability class (Lane C: durable = fixes a deterministic platform
+defect a model can't runtime-patch; adapter = thin, deletable over native surfaces) and a
+retirement condition. Codebase recon confirmed the extend-don't-replace facts cited inline.
+
+### P-J — World-state query surface (durable core)
+
+One entry point (a single CLI report; no daemon, no stored state — a pure function of disk +
+best-effort gh) answering: **worktree staleness** (dirty / ahead / unpushed / PR state / age,
+with an explicit stranded-finished-work verdict), **session↔worktree↔transcript mapping**
+(adapter sub-part: prefer the native per-project sessions-index where present; the empirical
+`~/.claude/projects` layout is undocumented → version-pinned fallback, V-A5), **tempdoc-number
+allocation at pick time**, and **stack ownership** (delegates to the existing
+`quick_health`/ownership authority — not duplicated).
+- **Extends, not replaces:** `scripts/ci/check-tempdoc-numbers.mjs` already scans every
+  registered worktree + origin; its gaps are the *moment* (merge-time only, nothing runs at
+  pick time) and the reported in-flight-vs-merged filter blind spot. Design: extract its
+  scanner into a shared lib — **one scanning module, two consumers** (the unchanged CI gate +
+  the new pick-time query). The gate's behavior does not weaken (D-2 clean).
+- **Wiring (survival law):** /start orientation, the tempdoc-pick moment in takeover/theorize
+  skills, publish (staleness sweep), session-closeout.
+- **Orphans:** none deleted; absorbs the hand-rolled staleness-sweep procedure as a tool.
+- **Falsifier:** a number collision recurs despite the pick-time query, or the tool's wired
+  moments go unconsumed for two weeks → revisit or delete. **Retirement:** platform ships a
+  cross-session/worktree index covering these facts.
+
+### P-K — Exec substrate (durable core; ≤2-3 entry points per the tool-count ceiling)
+
+(a) a `gh` runner encoding the documented 0/1/8 bitwise exit contract plus the post-push
+check-registration pre-poll (mechanizing 746's shipped prose guidance) and owning resolved-path
+invocation (so agents never hand-type quoted scoop paths — the birthplace of the `&`/quoting
+class); (b) an interpreter runner (python/node) with scoped `PYTHONIOENCODING=utf-8` (per Lane
+B: the minimal official fix; machine-wide PYTHONUTF8 rejected) and argument-vector passing that
+eliminates inline-quoting traps.
+- **Delivery shape — paved path + fire-time redirect:** the wrapper alone won't be adopted;
+  a PreToolUse hint on signature match redirects to it at the moment of error, conforming to
+  bash-guard's existing redirect pattern (cat→Read) and the jseval precedent. Native
+  `updatedInput` rewriting exists (Lane A) but starts OFF: hint-tier first; rewrite-tier only
+  for provably-semantics-preserving classes after a live probe, if ever.
+- **Orphans (same-PR sweep):** the gh-watch guidance prose duplicated across publish skill /
+  agent-guide / ci-triage becomes a pointer to the wrapper.
+- **Falsifier/metric:** P-L's signature census — the `&`/quoting, cp1252, and gh-exit classes
+  ratchet toward zero across windows, or the wrapper isn't earning its slot.
+
+### P-L — Error-signature feedback loop (extension of the alive 727 miner; ratchet-gated)
+
+A mechanical-signature census added as an output of the existing friction-mining pass
+(signature, count, sessions, sample). Semi-automatic by design: the census *proposes*; a
+session *disposes* each above-threshold signature as exactly one of root-fix (P-K class) /
+fire-time hint (new hook row: agent-hooks register + tier-register + hook-integrity gate, as
+today) / explicit wontfix. Census output **never** lands in always-loaded prose (Lane C:
+documented self-poisoning; the existing always-loaded-budget ratchet is the guard — the
+literature's prescribed mitigation, already built here).
+- Also homes the rescued T1 `overhead-taxonomy.mjs` and the spine condenser from this lane's
+  method — as consumers of the shared transcript substrate below.
+- **Falsifier:** two consecutive mining passes whose dispositions nobody implements → the loop
+  is dead weight; stop running the census.
+
+### Shared substrate (adapter class): `lib/transcript-store`
+
+Discovery + line-stream + turn model over local transcripts, consolidating the seven
+independent readers (analyze-session, baseline-economics, evaluate-session, friction-timeline,
+mine-friction, cost-session, context-attribution — `lib/transcript-cost.mjs` is the shape
+precedent). **Migration is opportunistic, never big-bang:** each wave slice that touches a
+reader migrates that one reader (consumer attached to every abstraction from day one).
+Explicitly deletable-adapter class: native session indexing may absorb discovery
+(**retirement:** documented native store + index covering discovery → shrink the lib to a
+parser).
+
+### P-M — Supervision & waiting hygiene (adapter/convention class)
+
+(a) **Drop double insurance:** the harness self-arms a ~20-min loop fallback (v2.1.202) —
+skills guidance (loop / dev-stack / publish) stops prescribing manual always-on fallbacks;
+manual wakeups only where the native fallback doesn't apply, with a cancel-on-primary
+convention (candidate fire-time hint: a wakeup that fires with nothing pending names the
+convention). (b) **One reusable watcher/heartbeat helper** for long runs — markers + heartbeat
++ stale-heartbeat escalation ("silence made legible") — replacing per-session hand-rolled
+watchers. Explicitly a 90-day artifact; **V-A1 (resume-orphaning fix state) gates how much to
+build; retirement:** platform restores background tasks on resume + emits failure events.
+(c) **Notification design convention:** failure/completion on the fast path, progress to disk,
+read on the coarse tick. **Coordination, not fork:** in-flight tempdoc 750 (release-loop
+scheduling/diagnostics) is a prospective consumer of (b) — align before either side builds a
+second watcher.
+- **Metric:** WAITING share + wakeup/ack counts in the next window (existing instruments;
+  the rescued taxonomy script is the measurement dependency).
+
+### P-N — Go/stop visibility (convention tier; smallest; D-2 untouched)
+
+Stop-turns that await founder input must enumerate BLOCKED-ON-FOUNDER (what, why) vs
+PROCEEDING (what continues) — embedded in the skills where stop-turns are authored
+(session-closeout, takeover, plan). Enumerable big actions (overnight GPU windows) get an
+explicit arming step riding the existing dev-stack lease machinery. The stall beacon builds
+NOTHING until V-A4 answers whether native Remote-Control push ("needs a decision from you")
+covers it. Visibility only; decision authority unmoved.
+
+### Dispositions & sequencing
+
+P-J, P-K, P-L, P-M(a)(b) are plumbing under principle 6's exception — no pilots; each ships as
+its own bounded slice through the full publish protocol with refute-first review. P-N and
+P-M(c) touch founder-facing conventions → **founder review before adoption**. Verification
+items V-A1..V-A5 front-load the slices they gate. This wave is sequencing-independent of the
+approved P-F/P-C pilots (that call remains open). Nothing in the wave weakens a guard.
+
+### Reach judgment (principles; recognized, not built beyond present need)
+
+1. **Operational facts get the register treatment code already has** — one computable home,
+   consumers as projections. Conformance: stack ownership already conforms (quick_health);
+   tempdoc numbers currently *violate* it (knowledge computed only merge-time in a CI-only
+   script — fixed by the one-scanner-two-consumers extraction); session inventory violates it
+   (resident in founder memory). **Earns its keep if:** collisions stop recurring,
+   stranded-work discovery latency drops from weeks to days, and founder-as-index requests
+   disappear from transcripts. **Retire when:** the platform's native indexes cover the facts.
+2. **A path isn't paved until the environment redirects onto it at the moment of need** — a
+   tool without a fire-time redirect is a suggestion. Existing conformers: bash-guard's
+   cat→Read, dataset-cache-hint→jseval. Applies to every P-K/P-J surface. **Earns its keep
+   if:** hand-rolled instances of a paved capability go to ~zero in the signature census.
+   **Retire (per redirect) when:** its signature count is zero for a full window, or native
+   absorption lands.
+3. **Insurance proportional to the silent tail** — buy legible failure before buying
+   redundancy. Applies to all waiting/supervision surfaces; would also apply to any future
+   CI-watch design. **Earns its keep if:** armed-wakeup and ack-turn counts fall with zero
+   missed-dead-run incidents. **Retire when:** platform failure-legibility (resume restoration
+   + failure events) makes local heartbeats redundant.
+4. Meta-rule adopted from Lane C for this wave and future waves: **every new component
+   declares durable-or-adapter and its retirement condition at design time** — a component
+   that can't name its retirement condition doesn't ship.
+
+## Derisk record — second wave (2026-07-17, session a6d2af56; 8 probes, all read-only/side-effect-free)
+
+- **R1 (P-J scanner) HELD.** The in-flight-vs-merged blind spot is confirmed from source
+  (`check-tempdoc-numbers.mjs:117` deliberately filters origin-present basenames — correct for
+  the merge-gate's divergent-claim rule, blind for "is N free?" at pick time). Scanner is pure
+  functions; extraction to a shared lib is trivial. The pick-time query and merge-gate need
+  *different* collision predicates over the same scan — design's one-scanner-two-consumers
+  shape is exactly right.
+- **R2 (session inventory) ADJUSTED, both directions.** `claude agents --json` natively lists
+  LIVE interactive sessions with pid/cwd/sessionId/name/busy-idle status — the live half of the
+  session inventory is adapter-over-native, better than designed. But no `sessions-index.json`
+  exists on this machine (Lane C's claim unconfirmed locally) — historical session↔transcript
+  mapping stays on the empirical projects-dir layout with a version-pinned fallback (V-A5).
+- **R3 (gh contract) HELD, partially live-confirmed** (0 = concluded-pass and 1 = failure/
+  not-found reproduced on gh 2.90.0; pending=8 had no live specimen — remains doc-grounded,
+  wrapper design unchanged).
+- **R4 (encoding root-fix) CONFIRMED live.** Bare piped python mangles non-ASCII
+  (`umlaut-�`); `PYTHONIOENCODING=utf-8` scoped fixes it. The P-K interpreter-runner's core
+  mechanism is validated on this box.
+- **R5 (hint-hook cost) HELD.** Register = one `{file, role}` entry + binding in
+  `agent-hooks.v1.json` (36 hooks today), hook-integrity gate covers wiring/load/bite, and
+  `dataset-cache-hint.mjs` (98 lines, with test corpus) is a near-template for the P-K
+  redirect hints — its own header argues the paved-path/moment-of-relevance thesis.
+- **R6 (transcript-store) HELD.** Pricing logic already confined to `lib/transcript-cost.mjs`
+  (2 importers); the 7 readers' discovery/parse code is modest and separable; one-consumer-
+  per-slice migration is viable without touching the 745-fixed parser semantics.
+- **R7 (750 fork risk) HELD — no fork today.** The 750 branch's non-sandbox content is
+  release/eval docs + run data; no general watcher exists there. Coordination note stands for
+  P-M(b), but nothing to reconcile yet.
+- **R8 (in-flight conflicts) CLEAR.** Only two commits on origin/main since this worktree's
+  base, neither touching `scripts/agent-analytics`, `scripts/ci`, or `.claude/skills`; open
+  PRs are dependabot-only.
+
+**Residual risks (accepted, gated):** V-A1 (resume-orphaning fix state) intentionally
+unprobed — it requires a session restart and gates only P-M(b)'s size; probe it at that
+slice's start. P-K adoption is unprovable pre-hoc — the redirect hints + P-L census ratchet
+are the measurement. Projects-dir layout instability (V-A5) carried as a pinned assumption.
+
+**Confidence: 8/10** for the remaining implementation. Docked for: adoption uncertainty on
+paved paths (measurable, not designable-away), V-A1 unknown, and platform-drift exposure on
+the adapter-class components (by design, priced in via retirement conditions).
+
+**Difficulty & routing recommendation (per repo delegation economics):** every slice is
+bounded, template-rich plumbing — **sonnet is the implementation floor for all slices**
+(self-contained briefs with the probe evidence above inlined), with **opus pinned for the
+refute-first reviews** (mandatory: P-J touches a CI gate's shared scanner; P-K encodes an
+exit-code contract; P-L touches the alive miner). No slice requires opus implementation;
+P-N/skill-wording edits are main-loop/trivial scale. Suggested slice order: transcript-store
+extraction rides P-L (its first consumer); P-J and P-K are independent and can go first in
+either order; P-M(a) guidance edits ride whichever slice ships first; P-M(b) waits on V-A1.
+
+## Second-wave implementation record (2026-07-17, session a6d2af56, worktree takeover-743)
+
+Implemented on branch `worktree-takeover-743` per the approved plan; **no PR opened** (awaiting
+founder word). Six commits: `a47cd644` (P-J: world-state CLI + one-scanner-two-consumers
+extraction, gate parity byte-verified), `28113460` (P-K: run-gh with 0/1/8 + pre-poll, run-py
+with scoped UTF-8, exec-substrate-hint registered, gh-guidance prose swept to pointers),
+`905cab97` (P-L: transcript-store lib, signature census, T1 taxonomy + spine condenser rescued
+from ephemeral scratchpads), `d9beed29` (P-M/P-N: run-watcher heartbeat helper, wakeup-hygiene
+guidance, overnight-window arming note, stop-turn two-list drafts — every draft flagged
+pending founder approval), `7ee65238` (three refute-first review fixes), plus this record.
+
+- **Independent refute-first review (opus, reviewer ≠ implementers): SHIP.** Scanner parity
+  byte-proven against the pre-extraction gate (incl. the live #720/#729 collisions); taxonomy
+  byte-faithful to the T1 original (comparability preserved; only discovery/paths differ);
+  watcher never reports DONE on a dead run; duplicate-filter interrupt-exception hand-traced
+  correct; hint corpus precise; no mojibake (the reviewer's one suspect line was its own
+  cp1252 console — the exact bug run-py fixes). Three non-blocking findings, all fixed and
+  live-verified in `7ee65238`: run-gh spawn-ENOENT fast-fail (was a 30-min wrong-cause
+  timeout), watcher verdict.json read race (was undocumented exit 64), census subagent
+  double-count (sidechain lines skipped iff subagent files scanned separately).
+- **Validation:** 100+ new checks across 7 test files; analytics suite 31/31; hook-integrity
+  + full kernel pass on every wave-relevant gate; gradle sanity build green.
+  `npm-audit`/`module-deps`/`dead-code`/`dead-code-jvm` report `kernel/input-missing` in this
+  never-prepared worktree (no node_modules/audit-report — the 742 gate-input contract failing
+  closed on missing inputs, not a regression; they run with real inputs in CI/at publish).
+- **The loop measured itself:** the census's live run shows this wave's own worker sessions
+  hitting ps-call-operator and cp1252 signatures on 2026-07-17 — the baseline the P-K ratchet
+  will be judged against.
+- **V-A1 resolved for sizing:** #72171 CLOSED-COMPLETED but #75438 OPEN and docs still state
+  background/Monitor tasks are never restored on resume → restart-loss class live; minimal
+  watcher justified. **V-A3 clear:** the four `disable-model-invocation` skills
+  (collision-check/goal/payback/time-calibration) are not used in any observed /loop prompt.
+- **Process note (for the record):** the Slice-2 worker used `git stash` for verification
+  despite the no-git-mutation brief (shared stash stack risk; no damage — verified only the
+  725 session's tagged entry present). Later briefs carried an explicit stash prohibition;
+  worker briefs should always name it.
+- **Founder decisions 2026-07-17 (this session):** P-N and P-M(c) APPROVED as drafted -
+  flags finalized in the three skills + mcp-dev-tools.md. V-A4 RESOLVED: no Remote Control;
+  no beacon built now - the P-N two-list convention is the stall-visibility mechanism; a
+  local beacon remains a possible later item only if that proves insufficient. P-F/P-C PILOT ARMED
+  2026-07-17 (owner approved wording + hardening): P-C exception wired into CLAUDE.md
+  model-routing; P-F LITE-CLASS declaration + frontmatter marker wired into the takeover
+  skill; both changes reach other sessions only when this branch merges, so the two-week
+  window starts AT MERGE (adoption lag is the settle period — resolves the sequencing
+  question naturally). Hardening note: a tier-register row was considered and dropped —
+  the lite-class rule lives in the takeover skill, outside the register-scanned always-
+  loaded files, and moving it there would violate the wave-2 no-new-always-loaded-prose
+  constraint; the grep-able frontmatter marker + verdict-line requirement deliver the
+  measurement enforcement instead. Still open: PR/publish go for this branch (which also
+  starts the pilot window).
 
 ## Non-goals
 
