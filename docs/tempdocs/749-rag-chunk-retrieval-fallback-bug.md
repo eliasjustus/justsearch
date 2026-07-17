@@ -1,6 +1,6 @@
 ---
 title: RAG chunk-retrieval fallback bug — /api/chat/ask misses the top HYBRID hit on some queries
-status: "open — ROOT CAUSE NARROWED 2026-07-17 (session a6d2af56, live repro on fully-enriched scifact): the failure is at CHUNK retrieval — affected docs have a doc-level entry+embedding (found by /api/knowledge/search) but NO searchable chunk entries, so RAG chunk search returns bm25Hits=0/knnHits=0 and falls back to full-text, missing them. NOT an enrichment-timing artifact (enrichment 100%). Two earlier hypotheses REFUTED live (empty-docIds short-circuit; coverage-incomplete). One sub-question open before a fix: WHY do some fully-enriched docs lack chunk entries (chunking skip vs ≥95% ready-threshold gap vs writer bug). See §Live investigation for evidence + repro recipe. Spawned from tempdoc 734 round 6."
+status: "open — ROOT CAUSE CONFIRMED 2026-07-17 (session a6d2af56, live repro + source). `ChunkDocumentWriter` writes ZERO chunk documents for docs < 2000 chars (`CHUNK_THRESHOLD_CHARS`) or that split into ≤1 chunk; RAG chunk retrieval filters `IS_CHUNK:true` so it only sees chunk documents → sub-2000-char docs (85.2% of the scifact corpus) are invisible to RAG chunk retrieval and fall back to whole-doc BM25, which unscoped misses the best short doc. The 'query-dependence' is really: a RAG ask retrieves chunks only when its ~10-doc scope happens to include one of the ~15% ≥2000-char chunked docs. Doc-level search is unaffected (finds them). NOT a fix yet — the FIX APPROACH is an open design/founder call (write short docs as one whole-doc chunk [needs re-index + baseline re-eval] vs query-time whole-doc union vs HYBRID-fallback); touches search-quality baselines. See §ROOT CAUSE + §Fix decision. Spawned from tempdoc 734 round 6."
 created: 2026-07-16
 updated: 2026-07-16
 ---
@@ -104,7 +104,60 @@ artifact). Qwen3.5-9B chat model, cuda12. All evidence below is from the live ru
 - **REFUTED: enrichment-timing / chunk-coverage-incomplete.** Enrichment is 100% and
   `chunkEmbeddingReady: true` at repro time; the doc still has no searchable chunks.
 
-### Root cause — NARROWED to: affected documents have a doc-level entry+embedding but NO searchable chunk entries
+### ROOT CAUSE — CONFIRMED (source + data decisive, 2026-07-17)
+
+`ChunkDocumentWriter.regenerateChunks` writes **zero chunk documents** for a doc when either
+guard fires:
+- `modules/worker-services/.../rag/ChunkDocumentWriter.java:92` —
+  `if (content.length() < CHUNK_THRESHOLD_CHARS) return 0;` with **`CHUNK_THRESHOLD_CHARS = 2000`**
+  (line 28).
+- `:102` — `if (chunks.size() <= 1) return 0;` (a doc that splits into a single chunk).
+
+Every chunk-search query in `ChunkSearchOps` filters `IS_CHUNK:true` (lines 80/128/183/246/298/424)
+— it searches **only** chunk documents, never whole-doc entries. So a doc with no chunk documents
+is **completely invisible to RAG chunk retrieval**, even though it has a document-level entry +
+embedding (which is why `/api/knowledge/search` still finds it).
+
+**Measured on the live corpus: 4,419 of 5,184 scifact docs (85.2%) are < 2000 chars → no chunk
+entries at all.** Only the ~15% of docs ≥ 2000 chars are chunk-searchable. The yeast doc
+(1500 chars) and even the Lyme *top* doc (1781 chars) are both below the threshold and both
+chunk-less — the Lyme ASK nonetheless succeeded because its ~10-doc retrieval scope happened to
+include a ≥2000-char doc with a matching chunk, so chunks came from a *neighbour*, not Lyme's own
+best doc. That is the true nature of the "query-dependence": **a RAG ask surfaces chunks only when
+its doc-scope happens to contain one of the minority long docs; when the best answer lives in a
+short doc, RAG chunk retrieval returns nothing and falls back to whole-doc BM25, which — unscoped —
+misses it.**
+
+The design intent of the guards is sound for *document* search (a short doc is one unit; no
+sub-document chunks needed). The defect is that **RAG chunk retrieval excludes non-chunk docs
+(`IS_CHUNK:true`) with no whole-doc union**, so the "small docs don't need chunks" optimization
+silently removes 85% of a short-abstract corpus from the RAG candidate set.
+
+### Fix decision (design call — approach not yet chosen; touches retrieval behaviour + search-quality baselines)
+
+Three shapes, with tradeoffs a founder/design pass should weigh (this is `/search-quality`
+territory and any change needs eval-baseline re-validation, not just a unit test):
+- **(A) Write short/single-chunk docs as one whole-doc chunk** (drop/relax the two guards so every
+  doc has ≥1 chunk entry). Most direct; makes all docs RAG-retrievable. Cost: chunk index grows
+  substantially (~7× more chunk-bearing docs on this corpus) and it **requires a re-index** to take
+  effect; must re-check retrieval-quality baselines.
+- **(B) Union whole-doc entries into chunk retrieval** for docs lacking chunks (query-time; no
+  re-index) — when chunk search under-fills, also search `IS_CHUNK:false` whole-doc entries and
+  treat them as single virtual chunks. Less index churn; changes query-path semantics.
+- **(C) Change the RAG fallback from whole-doc BM25 to document-level HYBRID** so the fallback
+  itself finds short docs via their doc-level embedding. Narrowest, but leaves the chunk path blind
+  and only improves the fallback ranking.
+- **Regression home (any option):** a host-tier test asserting a RAG `/api/chat/ask` for content
+  that lives in a **sub-2000-char** doc retrieves that doc via the chunk path (not FULLTEXT_FALLBACK)
+  when `/api/knowledge/search` HYBRID ranks it top — the exact yeast/scifact shape, now a runnable
+  repro (recipe below).
+
+**Recommendation:** (A) is the most correct (RAG should be able to retrieve any indexed doc), but
+because it changes index size + requires re-index + shifts search-quality baselines, the approach
+is a founder/design decision, not a unilateral edit. Root cause is confirmed and a fix is
+unblocked; the *approach* is the open call.
+
+### (superseded) Earlier narrowing — affected documents have a doc-level entry+embedding but NO searchable chunk entries
 
 The document-level index has `1631583.txt` (searchable, embedded), but its **chunk_content
 (BM25) and chunk_vector (kNN) entries are absent or unsearchable**, so RAG chunk retrieval finds
