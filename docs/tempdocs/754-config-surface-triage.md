@@ -1,6 +1,6 @@
 ---
 title: "Config-surface classification pass — 70 inert ResolvedConfig components"
-status: "PAUSED 2026-07-15 at a clean boundary (commit cc6b80a4) — classification COMPLETE (70/70). Deletion: 4 of 8 batches landed, 20/31 components; full ./gradlew.bat test GREEN at every batch. RESUME AT BATCH 5 — see §Resume point below. Owner scope: classification pass only, no gate; GJF settled separately in tempdoc 729."
+status: "IN PROGRESS 2026-07-17 on feat/754-config-surface-triage — classification COMPLETE (70/70). Deletion: 6 of 8 batches landed, 25/31 components; full ./gradlew.bat test GREEN at every batch. RESUME AT BATCH 7 (Ui) then 8 (Telemetry) — both reserved for the orchestrator because the keep/delete rule inverts inside the record. Owner scope: classification pass only, no gate; GJF settled separately in tempdoc 729."
 created: 2026-07-15
 author: agent session 1b3050fb (Opus 4.8) — orchestration/judgment; classification delegated to sonnet
 category: config / dead-code / docs-truth
@@ -307,11 +307,13 @@ that is now proven absent. Accessor usage is compiler-covered; the payload is co
 start for near-zero marginal information was not a good trade. **Reverse this if a cluster ever
 touches a key with a keyed lookup or a live FE consumer.**
 
-## Resume point (paused 2026-07-15, commit `cc6b80a4`)
+## Resume point (in progress 2026-07-17, branch `feat/754-config-surface-triage`)
 
-Branch `worktree-728-config-surface-triage`, unpushed, no PR. Tree clean; every landed batch is
-green on the FULL suite. A batch-5 delegation was stopped mid-flight and its partial, unverified
-edits were reverted — nothing half-cut is inherited. Nothing here is blocked; it is simply unstarted.
+Branch `feat/754-config-surface-triage`, unpushed, no PR — batches 1-4 cherry-picked clean from the
+retired `worktree-728-config-surface-triage`, batches 5-6 landed fresh (`210af464`, `bfbf2b8e`).
+Tree clean; every landed batch is green on the FULL suite. Remaining work is batches 7 (Ui) and 8
+(Telemetry) — reserved for the orchestrator because the keep/delete rule inverts inside those
+records (see the teardown-rule note below). Nothing here is blocked.
 
 **Landed (4 batches, 20/31):**
 
@@ -322,13 +324,17 @@ edits were reverted — nothing half-cut is inherited. Nothing here is blocked; 
 | 2 | Summary ×5 | `751370b0` |
 | 3 | Ai ×3 (`llmMode`, `llmBackend`, `aiClassifyEnabled`) | `b442de8c` |
 | 4 | Watcher ×4 + `CollectionCfg.watcherStrategy` | `cc6b80a4` |
+| 5 | `Index.defaultLanguage`, `Policy.languagePolicy` (completes ADR-0043) | `210af464` (on `feat/754`) |
+| 6 | `Index.commitPolicy`, `Rag.includeSurroundingContext`, `Ocr.triggerMinImagePixels` | `bfbf2b8e` (on `feat/754`) |
 
-**Remaining (4 batches, 11 components):**
+Note: batches 1-4 were cherry-picked from the old `worktree-728-config-surface-triage`
+branch onto `feat/754-config-surface-triage` (new hashes); batches 5-6 landed fresh
+on `feat/754`. The commit hashes above for 5-6 are the `feat/754` hashes.
+
+**Remaining (2 batches, 6 components):**
 
 | Batch | Components | Rule |
 |---|---|---|
-| 5 | `Index.defaultLanguage`, `Policy.languagePolicy` | full teardown (completes ADR-0043) |
-| 6 | `Index.commitPolicy`, `Rag.includeSurroundingContext`, `Ocr.triggerMinImagePixels` | full teardown |
 | 7 | `Ui.requireTranslator` (full), `Ui.settingsMode` (component only) | **rule inverts inside the record — do NOT delegate** |
 | 8 | `Telemetry`×3 (full), `Index.tracingLevel` (component only) | **rule inverts — do NOT delegate** |
 
