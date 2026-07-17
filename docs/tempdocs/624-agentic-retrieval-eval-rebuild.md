@@ -4780,3 +4780,14 @@ also the first real hit-rate dataset for 751's v2 trigger.
 **Supervision:** detached chain + monitor + 30-min wakeup loop; founder asleep — fully
 autonomous per explicit authorization ("proceed autonomously with 1 and 2 … authorized to run
 the full sequence", 2026-07-17 ~17:00).
+
+### Confirmatory amendment 1 (2026-07-17 ~23:20, before any measured cell): cheapest-first run order
+
+The running guard fired spuriously at the first dataset: legal-1k calibrated $31.77 and the
+max-extrapolation projected $127.08 vs the ≈$90 true sum — the formula over-projects when the
+most expensive dataset calibrates first (the same shape as Step-2's $91.02-vs-$90 firing). Fix
+is ORDER, not cap: cheapest-first (email-1k → email-10k → legal-1k → legal-10k) keeps the same
+conservative formula tight (~$46 → ~$60 → ~$91 → ~$91, all under $100). Matrix, thresholds, and
+policy unchanged (the required-strata gate is order-independent); legal-1k's banked calibration
+deleted so its max cannot poison the early-glob projection (~$2-3 re-pilot). ~$3 of pilot spend
+consumed by the aborted attempt.

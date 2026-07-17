@@ -54,10 +54,16 @@ set "MCP=%BASE%\mcp-config.json"
 set "LOG=%BASE%\chain-confirm.log"
 
 rem Runs: <cell>|<member>|<dataset-root signature = certified signature>
-set "R1=en-legal-clerc-1k-verbose|en-legal-clerc|eff6406d23500db3cc7f4a18807b086d05db75f0c6c9f4a1cee0d82a908b8932"
-set "R2=en-legal-clerc-10k-verbose|en-legal-clerc|7b108fc4f2f3b9b95e234fbf251d2a7258cbaf3dd5685f4d11d2b18b15f68395"
-set "R3=en-email-enron-raw-1k-verbose|en-email-enron-raw|fba5cf691ce88e7689fed5c19b1a68072004beb67a5a964c4e52dea21a8649b7"
-set "R4=en-email-enron-raw-10k-verbose|en-email-enron-raw|e6b302ea4d0faead72701f7ae15e1753b75a4f9e9f15935ea9e904a54bca528c"
+rem Order: CHEAPEST-FIRST (2026-07-17 ~23:20 reorder): the running guard's
+rem max-extrapolation over-projects when the most expensive dataset calibrates
+rem first (legal-1k $31.77 x4 = $127 projected vs ~$90 true sum -> spurious
+rem abort). Cheapest-first keeps the SAME conservative formula tight:
+rem ~46 -> ~60 -> ~91 -> ~91, all under the $100 cap. Matrix unchanged; the
+rem claim policy is order-independent.
+set "R1=en-email-enron-raw-1k-verbose|en-email-enron-raw|fba5cf691ce88e7689fed5c19b1a68072004beb67a5a964c4e52dea21a8649b7"
+set "R2=en-email-enron-raw-10k-verbose|en-email-enron-raw|e6b302ea4d0faead72701f7ae15e1753b75a4f9e9f15935ea9e904a54bca528c"
+set "R3=en-legal-clerc-1k-verbose|en-legal-clerc|eff6406d23500db3cc7f4a18807b086d05db75f0c6c9f4a1cee0d82a908b8932"
+set "R4=en-legal-clerc-10k-verbose|en-legal-clerc|7b108fc4f2f3b9b95e234fbf251d2a7258cbaf3dd5685f4d11d2b18b15f68395"
 
 if not exist "%BASE%" mkdir "%BASE%"
 if not exist "%MK%" mkdir "%MK%"
