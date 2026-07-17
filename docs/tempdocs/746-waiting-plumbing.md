@@ -31,10 +31,9 @@ reported"; remove-worktree self-match kill, reproduced twice).
    re-check mergeability, catch up via `git merge`, re-watch).
 2. **Sweep other guidance** mentioning `gh pr checks --watch` / `gh run watch` patterns
    (ci-triage skill, agent-guide, common-workflows) — align, don't duplicate.
-3. **Upstream bug draft** (Monitor streams silently never firing — the founder-observed
-   "almost all agents relying on monitors never get woken" failure): draft the report with
-   local reproduction pointers into this tempdoc. **Filing is founder-gated** (public,
-   outward-facing).
+3. **Upstream bug draft** — investigated and closed **DO-NOT-FILE** (see the updated section
+   below; NOT-REPRODUCED on 2.1.212, and the original anecdote is most likely the known
+   #72171/#75438 restart class). Kept as a record of the disambiguation, not an action item.
 
 ### P-I — teardown cleanup
 4. **`scripts/dev/remove-worktree.cjs`**: delete the custom junction-unlink logic (native in
@@ -50,27 +49,38 @@ reported"; remove-worktree self-match kill, reproduced twice).
    prepare-worktree.cjs). Adopt only if it composes with the existing seeding (fallback
    preserved); otherwise record why not.
 
-## Upstream bug draft (item 3 — FILING IS FOUNDER-GATED, not yet filed)
+## Upstream Monitor bug — investigated, DO NOT FILE (updated 2026-07-17)
 
-Proposed issue for anthropics/claude-code, drafted 2026-07-16:
+The original plan here was to file a "Monitor streams silently stop firing" issue against
+anthropics/claude-code. Two investigations (2026-07-17) closed that out as **do-not-file**:
 
-> **Title:** Long-running Monitor streams can silently stop firing (no completion, no error)
->
-> **Body sketch:** On Windows 11 (CLI ≥2.1.20x era), Monitor streams watching long-running
-> local processes (multi-hour eval pipelines) frequently end without ever delivering a
-> completion event — the watched process exits normally, but the session is never woken;
-> no timeout, no error, no transcript marker. Observed by multiple independent sessions on
-> one machine over several weeks ("almost all agents that rely on monitors end up never
-> being woken up" — maintainer). Workaround in production here: belt-and-braces
-> ScheduleWakeup polling ticks alongside every Monitor. A related-but-distinct case: a
-> previous session received a "No completion record was found for this background shell
-> command from the previous session" notice, suggesting teardown/restart loses monitor
-> state. Reproduction pointers available: session transcripts with Monitor-armed +
-> never-fired sequences (2026-07-1x, sessions 109145ac, 50ad1b65). Expected: either the
-> event fires, a timeout fires, or a failure is surfaced — silence is the only wrong
-> behavior. Happy to provide sanitized transcript excerpts.
+1. **Issue-landscape survey** (read-only, GitHub + changelog): no existing issue matches our
+   exact symptom, BUT it's a crowded, recurring problem class (~9 related issues since Jan
+   2026). The nearest cases rule themselves out — #76508 is the same tool but a *delay* not
+   silence (Linux only); #77300/#77578 are subagent/teammate-scoped and state the main
+   session is immune. Critically, **#72171 / #75438 (cross-restart / `--resume` background
+   orphaning) explain our strongest anecdote almost verbatim** — the 707 session (109145ac)
+   had documented PC restarts and produced the literal "No completion record was found for
+   this background shell command from the previous session" notice, which is *their*
+   signature, not a novel single-session bug. Verdict was a CONDITIONAL file-new, gated on a
+   clean single-session repro.
 
-Founder: say "file it" and a session opens this issue verbatim (minus this note).
+2. **Controlled reproduction** (fresh single-session, `claude --version` = 2.1.212): the
+   condition FAILED. **7/7 Monitor arms fired**, all within 1-3s, weighted toward long
+   watches (10/15/20-min), in one unbroken session, each corroborated by an independent
+   wall-clock oracle. NOT-REPRODUCED.
+
+**Conclusion:** the novel single-session silent-death does not reproduce on current
+(2.1.212); the observed pain is most consistent with the already-reported cross-restart
+class (#72171/#75438) plus an older CLI (heavy background-task plumbing churned across
+2.1.20x → 2.1.212). Filing would have been a duplicate or non-repro — the pre-file
+disambiguation is exactly what prevented that. **Keep the ScheduleWakeup belt-and-braces
+workaround** (cheap insurance; the CI-wait pattern in `.claude/skills/publish/SKILL.md`
+already carries the caveat). **Re-open only** if a real repro surfaces with the differentiators
+the repro test did NOT exercise: heavy concurrent Monitor/task load, a long idle gap between
+arm and next turn, a heavy watched command (real build/eval, not a bash loop), or very long
+total session elapsed time — and first re-check it isn't #72171/#75438 or the #76508 delay.
+Repro harness + raw trial table preserved in the repro session's scratchpad for reuse.
 
 ## Acceptance
 

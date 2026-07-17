@@ -64,14 +64,31 @@ config-hygiene findings that are safe to record:
    on the founder's machine). The repo already has `check-workflow-triggers` in the pre-merge
    table — extending it is the natural home.
 
+### Correction (2026-07-17): the plaintext-credential finding was WRONG — retracted
+
+The original audit reported "a literal GitHub PAT embedded in `.mcp.json`" and it was
+escalated as the top finding. **An independent read-only investigation (2026-07-17) refuted
+it:** `.mcp.json` (main + its one worktree copy) contains only the placeholder
+`REPLACE_WITH_YOUR_GITHUB_PAT`, unchanged since 2026-07-02 (two weeks pre-audit); no real
+token exists in shell/persistent env, profiles, `.env*`, or backups; and a live `github` MCP
+call returned "Bad credentials" — positive evidence the server has no real token. The audit
+subagent saw a literal string (not a `$VAR` reference), correctly noted "not an env-var
+indirection," then WRONGLY inferred "therefore a real secret" without checking the literal
+was credential-shaped vs a placeholder. A textbook `audit-without-test` miss — a static
+audit's claim relayed as fact, in the highest-stakes domain, without the live probe that
+would have caught it. **There is no plaintext token to rotate.** (Operational side note: the
+`github` MCP is consequently unauthenticated — a functionality gap, not a leak.)
+
 ### Escalated to founder (require founder action — this session did NOT act on them)
 
-- **A plaintext credential lives in a local gitignored config** — should move to an
-  env-var/keyring reference; and a `gh` token is broader-scoped than day-to-day agent work
-  needs. Both are the founder's account/machine to remediate. Details in chat.
+- **`gh` CLI token scope — CONFIRMED (independently, 2026-07-17).** Account-wide
+  `repo`+`workflow`+`gist`+`read:org`; replace with a fine-grained PAT scoped to
+  `justsearch`/`justsearch-public` (contents/PRs/workflows), drop `gist`/`read:org`. The
+  founder's account to remediate. (This is the ONLY surviving credential finding — the
+  plaintext-token half above is retracted.)
 - **Whether to apply the proposed deny rules** — they touch the founder's local config in a
   security-sensitive way with an unverified glob dialect; presented for approval, not
-  auto-applied.
+  auto-applied. (Still valid as additive hardening regardless of the retraction.)
 
 ### Deferred (recorded, not started)
 
