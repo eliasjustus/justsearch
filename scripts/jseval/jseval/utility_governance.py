@@ -19,6 +19,43 @@ from jseval.types import AnnProofResult, ComparabilityResult, ReadinessResult
 # Condition semantics (tempdoc 346): A = baseline (file tools), C = with-tool.
 _BASELINE = "A"
 
+# tempdoc 624 (2026-07-17 "resource-exhaustion-as-failure" outcome rule):
+# an errored cell classifies into exactly two kinds. `resource_exhaustion`
+# (the agent hit a per-cell budget: wall-clock or spend) is ATTEMPTED and
+# scored INCORRECT under the ITT rule -- it no longer voids comparability.
+# Everything else (`other`) stays MISSING DATA (a residual exclusion). The
+# match is over the raw executor error text; only the two known exhaustion
+# shapes classify as exhaustion. Fail-closed: any unrecognized error text --
+# including an errored cell whose text we cannot parse -- is `other`, so an
+# unknown failure is conservatively treated as missing data, never silently
+# promoted into the scored-incorrect (comparability-neutral) bucket.
+RESOURCE_EXHAUSTION = "resource_exhaustion"
+OTHER_ERROR = "other"
+_EXHAUSTION_MARKERS = ("per-cell wall-clock budget exhausted", "error_max_budget_usd")
+# The sanitized-evidence `error_class` values that ONLY the two raw exhaustion
+# markers produce (utility_evidence._error_class). Accepting these -- and NOT the
+# generic `timeout`/`budget` buckets -- lets the evidence-recompose path classify
+# exhaustion identically to the raw-logs path while a generic infra timeout stays
+# `other` (fail-closed preserved).
+_EXHAUSTION_ERROR_CLASSES = frozenset({"wall_clock_budget_exhausted", "usd_budget_exhausted"})
+
+
+def classify_error_kind(error: object) -> str | None:
+    """Classify a cell's error text (``None`` when the cell did not error).
+
+    Returns ``RESOURCE_EXHAUSTION`` for the two known budget-exhaustion shapes --
+    matched either as the raw executor error text (logs path) or as the distinct
+    sanitized `error_class` category (evidence path). Every other non-empty error,
+    including a generic `timeout`/`budget` bucket, is ``OTHER_ERROR`` (fail-closed)."""
+    if error is None:
+        return None
+    text = str(error)
+    if any(marker in text for marker in _EXHAUSTION_MARKERS):
+        return RESOURCE_EXHAUSTION
+    if text in _EXHAUSTION_ERROR_CLASSES:
+        return RESOURCE_EXHAUSTION
+    return OTHER_ERROR
+
 
 @dataclass
 class ArmLoss:
@@ -38,9 +75,13 @@ class ArmLoss:
     n_seeds: int
     n_queries: int                       # distinct queries per seed
     n_completed: int
-    n_error_cells: int = 0               # flushed samples with metadata.error
-    excluded_query_ids: set = field(default_factory=set)   # excluded in >=1 seed
-    ok_by_seed: dict = field(default_factory=dict)         # seed -> {completed query ids}
+    n_error_cells: int = 0               # RESIDUAL (`other`-kind) error cells
+    excluded_query_ids: set = field(default_factory=set)   # residual-excluded in >=1 seed
+    ok_by_seed: dict = field(default_factory=dict)         # seed -> {retained query ids}
+    # tempdoc 624 (2026-07-17): resource-exhaustion cells are ATTEMPTED and
+    # scored-incorrect under the ITT rule, not residual exclusions -- they do
+    # not enter `n_error_cells`/`excluded_query_ids`, but stay VISIBLE here.
+    n_exhausted_cells: int = 0
 
     @property
     def n_planned(self) -> int:
@@ -49,8 +90,8 @@ class ArmLoss:
 
     @property
     def n_attempted(self) -> int:
-        """Cells with a flushed outcome (completed or errored)."""
-        return self.n_completed + self.n_error_cells
+        """Cells with a flushed outcome (completed, exhausted, or residual-errored)."""
+        return self.n_completed + self.n_error_cells + self.n_exhausted_cells
 
     @property
     def n_pending(self) -> int:
@@ -59,7 +100,12 @@ class ArmLoss:
 
     @property
     def n_excluded(self) -> int:
+        """RESIDUAL exclusions only (`other`-kind errors) -- exhaustion excluded."""
         return self.n_error_cells
+
+    @property
+    def n_exhausted(self) -> int:
+        return self.n_exhausted_cells
 
     @property
     def exclusion_rate(self) -> float:
@@ -90,14 +136,24 @@ def loss_accounting_from_observations(observations: list[dict]) -> dict[str, Arm
             "qids": set(),
             "completed": 0,
             "errors": 0,
+            "exhausted": 0,
             "excluded": set(),
             "ok_by_seed": {},
         })
         aggregate["seeds"].add(seed)
         aggregate["qids"].add(qid)
+        # tempdoc 624 (2026-07-17): only RESIDUAL (`other`) errors are exclusions.
+        # Exhausted cells are scored-incorrect (ITT) so they are RETAINED for the
+        # paired/comparability axes (`ok_by_seed`) -- exhaustion no longer voids
+        # comparability -- while staying visible via `n_exhausted_cells`.
         if observation.get("excluded"):
-            aggregate["errors"] += 1
-            aggregate["excluded"].add(qid)
+            kind = classify_error_kind(observation.get("error"))
+            if kind == RESOURCE_EXHAUSTION:
+                aggregate["exhausted"] += 1
+                aggregate["ok_by_seed"].setdefault(seed, set()).add(qid)
+            else:
+                aggregate["errors"] += 1
+                aggregate["excluded"].add(qid)
         else:
             aggregate["completed"] += 1
             aggregate["ok_by_seed"].setdefault(seed, set()).add(qid)
@@ -111,6 +167,7 @@ def loss_accounting_from_observations(observations: list[dict]) -> dict[str, Arm
             n_error_cells=aggregate["errors"],
             excluded_query_ids=aggregate["excluded"],
             ok_by_seed=aggregate["ok_by_seed"],
+            n_exhausted_cells=aggregate["exhausted"],
         )
         for condition, aggregate in sorted(aggregates.items())
     }

@@ -26,9 +26,24 @@ from jseval.utility_comparison import (
     compose_utility_cross_corpus,
 )
 from jseval.utility_governance import (
+    OTHER_ERROR,
+    RESOURCE_EXHAUSTION,
+    classify_error_kind,
     loss_accounting_from_observations,
     paired_comparability,
 )
+
+# tempdoc 624 (2026-07-17): the primary ITT outcome rule this recompose applies,
+# stamped on every composed record so a hostile reviewer sees WHICH rule scored
+# the numbers and WHEN it was adopted relative to the data. A byte-identical
+# constant -- pure self-description -- so it is excluded from the semantic digest
+# (see `_NON_SEMANTIC_TOP_LEVEL_FIELDS`): the digest fingerprints the
+# MEASUREMENT (which the rule changes via the numbers), not the rule's label.
+OUTCOME_RULE = {
+    "name": "resource-exhaustion-as-failure",
+    "adopted": "2026-07-17",
+    "post_hoc_for": ["step2 campaign logs composed 2026-07-17"],
+}
 
 _VOLATILE_SEMANTIC_FIELDS = frozenset({"composed_at", "semantic_digest"})
 
@@ -48,6 +63,12 @@ _VOLATILE_SEMANTIC_FIELDS = frozenset({"composed_at", "semantic_digest"})
 # the MEASUREMENT, not its self-description.
 _NON_SEMANTIC_TOP_LEVEL_FIELDS = frozenset({
     "denominators", "seed_floor_met", "exposure_contrast_ineligible",
+    # tempdoc 624 (2026-07-17): the `outcome_rule` provenance stamp is a fixed
+    # constant (byte-identical on every record) -- pure self-description, never
+    # discriminating measurement content -- so it is excluded from the digest by
+    # the same rationale as `denominators` (the numbers the rule produces ARE
+    # digested; two records under different rules necessarily differ in those).
+    "outcome_rule",
 })
 
 
@@ -107,6 +128,46 @@ def _intention_to_treat_estimand(
     observations: Iterable[dict], *, statistical_alpha: float = 0.05
 ) -> dict:
     """Compose the primary ITT view; errored attempts count as incorrect/non-adoption."""
+    observations = list(observations)
+
+    def _coarse_key(observation: dict) -> tuple:
+        source = observation.get("source") or {}
+        corpus = source.get("corpus") or {}
+        cohort = source.get("cohort") or {}
+        return (
+            corpus.get("dataset"), corpus.get("signature"), source.get("model_alias"),
+            canonical_bytes(cohort.get("corpus_certification")),
+            # tempdoc 725 increment 2: exposure/instructions identity joins the
+            # stratum key -- evidence from two differently-configured campaigns
+            # must never silently share one ITT stratum.
+            (cohort.get("exposure_config") or {}).get("exposure_mode"),
+            (cohort.get("mcp_initialize_identity") or {}).get("instructions_sha256"),
+        )
+
+    # tempdoc 624 (2026-07-17): a resource-exhaustion cell can terminate BEFORE
+    # the provider model version resolves, leaving `resolved_model=None`. Under
+    # the exhaustion-as-failure rule that cell MUST be scored in its arm's
+    # stratum, but `None` is not a different model VERSION -- it is absence. So a
+    # `None`-resolved cell inherits the coarse group's resolved model WHEN that
+    # group has exactly one concrete value (the identity guard still splits a
+    # genuine multi-version pool: >1 concrete value keeps each cell's own
+    # `resolved_model`, and an all-`None` group -- pre-resolution evidence --
+    # stays `None`). Without this, wall-clock timeouts orphan into a `None`
+    # stratum and the failure rule silently no-ops on exactly the cells it exists
+    # to capture.
+    concrete_by_coarse: dict[tuple, set] = {}
+    for observation in observations:
+        resolved = observation.get("resolved_model")
+        if resolved is not None:
+            concrete_by_coarse.setdefault(_coarse_key(observation), set()).add(resolved)
+
+    def _canonical_resolved(observation: dict) -> object:
+        resolved = observation.get("resolved_model")
+        if resolved is not None:
+            return resolved
+        concrete = concrete_by_coarse.get(_coarse_key(observation)) or set()
+        return next(iter(concrete)) if len(concrete) == 1 else None
+
     grouped: dict[tuple, dict[str, dict[tuple[int, str], dict]]] = {}
     for observation in observations:
         source = observation.get("source") or {}
@@ -114,13 +175,8 @@ def _intention_to_treat_estimand(
         cohort = source.get("cohort") or {}
         key = (
             corpus.get("dataset"), corpus.get("signature"), source.get("model_alias"),
-            observation.get("resolved_model"),
+            _canonical_resolved(observation),
             canonical_bytes(cohort.get("corpus_certification")),
-            # tempdoc 725 increment 2: additively join exposure/instructions
-            # identity into the stratum grouping key, the same discipline as
-            # agent_cohort_key/the compose_utility mix-guard tuple -- evidence
-            # from two differently-configured campaigns must never silently
-            # share one ITT stratum.
             (cohort.get("exposure_config") or {}).get("exposure_mode"),
             (cohort.get("mcp_initialize_identity") or {}).get("instructions_sha256"),
         )
@@ -144,16 +200,30 @@ def _intention_to_treat_estimand(
         for seed, qid in shared:
             baseline = arms["A"][(seed, qid)]
             with_tool = arms["B"][(seed, qid)]
-            a_excluded = bool(baseline.get("excluded"))
-            b_excluded = bool(with_tool.get("excluded"))
-            if not a_excluded and not b_excluded:
-                per_protocol_pairs += 1
+            # tempdoc 624 (2026-07-17) exhaustion-as-failure outcome rule:
+            #  - `other`-kind error either side => MISSING DATA => drop the pair
+            #    from the ITT estimand (residual exclusion, handled per-arm below).
+            #  - resource-exhaustion => cell is ATTEMPTED and scored INCORRECT
+            #    (not dropped); its recorded wall-clock is right-censored.
+            a_kind = classify_error_kind(baseline.get("error")) if baseline.get("excluded") else None
+            b_kind = classify_error_kind(with_tool.get("error")) if with_tool.get("excluded") else None
+            # Adoption is a with-tool-arm behavioural signal available on every
+            # shared cell regardless of the outcome rule, so it is counted over
+            # the full shared set (denominator `len(shared)`), before any drop.
             tool_names = [
                 str(call.get("tool"))
                 for call in (with_tool.get("tool_calls") or [])
                 if isinstance(call, dict) and call.get("tool")
             ]
             adopted += int(any(name.startswith("mcp__justsearch") for name in tool_names))
+            if a_kind == OTHER_ERROR or b_kind == OTHER_ERROR:
+                continue
+            a_exhausted = a_kind == RESOURCE_EXHAUSTION
+            b_exhausted = b_kind == RESOURCE_EXHAUSTION
+            # Residual-retained (neither arm a residual `other` error). This is
+            # the ITT paired denominator; the CLEAN per-protocol set lives in the
+            # secondary `measured` block (successful_summaries drops all errors).
+            per_protocol_pairs += 1
             values = (
                 baseline.get("cost_usd"), with_tool.get("cost_usd"),
                 baseline.get("unique_tokens"), with_tool.get("unique_tokens"),
@@ -161,14 +231,18 @@ def _intention_to_treat_estimand(
             usage_complete = usage_complete and all(value is not None for value in values)
             pairs[f"{seed}|{qid}"] = {
                 "seed": seed,
-                "a_correct": bool(baseline.get("correct")) and not a_excluded,
-                "c_correct": bool(with_tool.get("correct")) and not b_excluded,
+                "a_correct": bool(baseline.get("correct")) and not a_exhausted,
+                "c_correct": bool(with_tool.get("correct")) and not b_exhausted,
                 "a_cost": baseline.get("cost_usd"),
                 "c_cost": with_tool.get("cost_usd"),
                 "a_tok": baseline.get("unique_tokens"),
                 "c_tok": with_tool.get("unique_tokens"),
                 "a_turns": baseline.get("num_turns"),
                 "c_turns": with_tool.get("num_turns"),
+                "a_dur": baseline.get("total_time"),
+                "c_dur": with_tool.get("total_time"),
+                "a_censored": a_exhausted,
+                "c_censored": b_exhausted,
                 "a_tool_calls": baseline.get("tool_calls"),
                 "c_tool_calls": with_tool.get("tool_calls"),
                 "c_toolsearch_targets": with_tool.get("toolsearch_targets"),
@@ -226,38 +300,39 @@ def _intention_to_treat_estimand(
             f"{member}|{dataset}|{size}|{query_variant}|{model}"
             if member and size and query_variant and model else None
         )
-        per_arm_loss = {
-            condition: {
+        # tempdoc 624 (2026-07-17): split each arm's errored cells into RESIDUAL
+        # (`other`, a true exclusion / missing data) and resource-EXHAUSTION
+        # (scored-incorrect, retained). n_completed stays the CLEAN count; the
+        # comparability axes (exclusion_rate, excluded_jaccard, paired_retention)
+        # recompute over the residual set only.
+        residual_excluded: dict[str, set] = {"A": set(), "B": set()}
+        n_exhausted_by_arm: dict[str, int] = {"A": 0, "B": 0}
+        per_arm_loss: dict[str, dict] = {}
+        for condition in ("A", "B"):
+            arm = arms.get(condition, {})
+            n_clean = n_other = n_exhausted = 0
+            for key, item in arm.items():
+                if not item.get("excluded"):
+                    n_clean += 1
+                elif classify_error_kind(item.get("error")) == RESOURCE_EXHAUSTION:
+                    n_exhausted += 1
+                else:
+                    n_other += 1
+                    residual_excluded[condition].add(key)
+            n_exhausted_by_arm[condition] = n_exhausted
+            per_arm_loss[condition] = {
                 "n_expected": len(expected_by_arm[condition]),
-                "n_attempted": len(arms.get(condition, {})),
-                "n_completed": sum(
-                    not bool(item.get("excluded"))
-                    for item in arms.get(condition, {}).values()
-                ),
-                "n_excluded": sum(
-                    bool(item.get("excluded"))
-                    for item in arms.get(condition, {}).values()
-                ),
-                "n_pending": len(
-                    expected_by_arm[condition] - set(arms.get(condition, {}))
-                ),
-                "exclusion_rate": (
-                    sum(
-                        bool(item.get("excluded"))
-                        for item in arms.get(condition, {}).values()
-                    ) / len(arms.get(condition, {}))
-                    if arms.get(condition) else 0.0
-                ),
+                "n_attempted": len(arm),
+                "n_completed": n_clean,
+                "n_excluded": n_other,
+                "n_pending": len(expected_by_arm[condition] - set(arm)),
+                "exclusion_rate": (n_other / len(arm) if arm else 0.0),
             }
-            for condition in ("A", "B")
-        }
-        excluded = {
-            condition: {
-                key for key, item in arms.get(condition, {}).items()
-                if bool(item.get("excluded"))
-            }
-            for condition in ("A", "B")
-        }
+        record_has_exhaustion = any(n_exhausted_by_arm.values())
+        if record_has_exhaustion:
+            for condition in ("A", "B"):
+                per_arm_loss[condition]["n_exhausted"] = n_exhausted_by_arm[condition]
+        excluded = residual_excluded
         excluded_union = excluded["A"] | excluded["B"]
         excluded_jaccard = (
             len(excluded["A"] & excluded["B"]) / len(excluded_union)
@@ -313,6 +388,13 @@ def _intention_to_treat_estimand(
         # to before this key existed.
         if stats and "funnel" in stats:
             stratum["funnel"] = stats["funnel"]
+        # Duration metric family (tempdoc 624, 2026-07-17): projected from the
+        # SAME `pairs` (whose exhausted cells are right-censored). OMITTED when
+        # `_stats_from_pairs` found no wall-clock on any paired cell -- a stratum
+        # composed purely from pre-duration evidence has no "duration" key,
+        # byte-identical to before it existed (the funnel precedent).
+        if stats and "duration" in stats:
+            stratum["duration"] = stats["duration"]
         strata.append(stratum)
     return {
         "primary": "intention_to_treat",
@@ -420,6 +502,7 @@ def partial_status_projection(log_dir: str | Path, *, policy: dict | None = None
         min_paired_retention=thresholds.get("minimum_paired_retention", 0.70),
         min_excluded_jaccard=thresholds.get("minimum_excluded_jaccard", 0.50),
     )
+    status_has_exhaustion = any(loss.n_exhausted for loss in arms.values())
     result = {
         "per_arm_loss": {
             condition: {
@@ -429,6 +512,7 @@ def partial_status_projection(log_dir: str | Path, *, policy: dict | None = None
                 "n_completed": loss.n_completed,
                 "n_excluded": loss.n_excluded,
                 "exclusion_rate": loss.exclusion_rate,
+                **({"n_exhausted": loss.n_exhausted} if status_has_exhaustion else {}),
             }
             for condition, loss in arms.items()
         },
@@ -561,6 +645,10 @@ def finalize_observation_groups(
         min_paired_retention=thresholds.get("minimum_paired_retention", 0.70),
         min_excluded_jaccard=thresholds.get("minimum_excluded_jaccard", 0.50),
     )
+    # tempdoc 624 (2026-07-17): surface resource-exhaustion in the top-level loss
+    # accounting only when present -- a record with zero exhausted cells projects
+    # byte-identical loss to before this field existed (historical digest-stable).
+    governance_has_exhaustion = any(loss.n_exhausted for loss in arms.values())
     governance = {
         "comparable": verdict.comparable,
         "reasons": verdict.reasons,
@@ -573,6 +661,7 @@ def finalize_observation_groups(
                 "n_completed": loss.n_completed,
                 "n_excluded": loss.n_excluded,
                 "exclusion_rate": round(loss.exclusion_rate, 4),
+                **({"n_exhausted": loss.n_exhausted} if governance_has_exhaustion else {}),
             }
             for condition, loss in arms.items()
         },
@@ -596,6 +685,9 @@ def finalize_observation_groups(
         all_observations, statistical_alpha=alpha
     )
     record["statistical_alpha"] = alpha
+    # tempdoc 624 (2026-07-17): explicit provenance stamp of the primary outcome
+    # rule -- excluded from the digest (a constant), present for the reviewer.
+    record["outcome_rule"] = dict(OUTCOME_RULE)
     record["claim_verdict"] = evaluate_claim(record, selected_policy)
     record["semantic_digest"] = semantic_digest(record)
     return record

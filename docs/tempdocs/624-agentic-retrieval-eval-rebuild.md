@@ -4438,3 +4438,197 @@ the wrong run). This section is the single current authority:
   (no hard-kill resume, 675), concurrency may be raised above 6 (backend is not the ceiling, 699),
   config cohort frozen before launch (incl. the 640 quantization on/off decision). The spend and
   the corpus-fork ratification remain founder decisions; nothing here authorizes them.
+
+## Step-2 pre-registration (2026-07-16, BEFORE any cell runs; founder-authorized spend + owner-set matrix)
+
+Authorization chain: the founder authorized the remaining desk items verbatim ("go ahead with your
+mentioned remaining work on my desk", 2026-07-16 ~17:00) and then OWNER-SET the matrix and window
+via explicit selection ("Haiku ×2 seeds (Recommended)"; "Tonight, when I say"). This section is
+written before any measured cell runs, per the 719 promotion boundary (owner-set matrix +
+fully-certified 707 snapshots + paid-run authorization — all three now hold).
+
+**Smoke-gate judgment (the "~$3 adoption smoke" step):** SATISFIED by Campaign T (tempdoc 725
+§Response-shape A/B, 2026-07-14, owner-authorized) on the now-fully-certified EN-legal member:
+adoption at ceiling (discovery 20/20, invocation 1.0, reinforcement healthy) and headroom real
+(B 21.1% vs A 6.2% at half the median cost). Both replication conditions the Step-2 sequence
+required (headroom + adoption) are met; the stop-condition did not fire. No separate $3 smoke is
+run — re-buying T's evidence would be spend without information.
+
+**Matrix (immutable for this campaign):**
+- Model: haiku (claude-haiku cohort pinned at run time by the harness). Conditions: A (file
+  tools, no MCP) vs B (file tools + JustSearch MCP). Seeds: {0,1} (Inspect epochs = 2).
+  Concurrency: 6.
+- Datasets (verbose stratum, both certified members × both sizes): mixed/en-legal-clerc-1k-verbose,
+  mixed/en-legal-clerc-10k-verbose, mixed/en-email-enron-raw-1k-verbose,
+  mixed/en-email-enron-raw-10k-verbose — 20 committed queries each, corpus signatures pinned to
+  the fully-certified snapshots (legal 1k eff6406d…/10k 7b108fc4…; email 1k fba5cf69…/10k
+  e6b302ea…), --corpus-certification pointing at each member's structural-certification.v1.json.
+- Cells: 4 datasets × 20 queries × 2 arms × 2 seeds = 320. Budget: ≈$70 run (measured $0.22/cell,
+  Campaign T) + per-dataset utility-calibrate overhead (pilot-n 5 + closed-book filter) ≈ $8-12;
+  **hard cap $90 total — the chain aborts before the first utility-run if the summed calibrate
+  cost estimates project past it.**
+- DE is deliberately ABSENT: the ratified 707 verdict (2026-07-16) made DE a 1k-only secondary
+  stratum, never claim-bearing until tempdoc 748 resolves — the Step-2 definition's older "EN+DE
+  members" wording is superseded by that ratification, and this is a recorded scope decision, not
+  a silent cut. Short-natural stratum deferred (seeds-over-breadth: Campaign T measured
+  single-seed accuracy as churn-dominated, so replication buys more claim than stratum breadth).
+- Claims this matrix can support (and no more): with-tool vs no-tool utility on two certified
+  ICP-shaped domains (legal, email), the 1k→10k size trend at fixed queries, seed-replicated.
+  Model-tier attribution (the hop-2 capability question) is OUT of scope — the sonnet probe was
+  offered and not selected; it remains a future founder option.
+- Interpretation: the §5 pre-registered tree (extends §M.7a) stands unchanged; 719's promotion
+  gates (seed/pair/uncertainty/adoption/outcome per ITT stratum, complete seed-by-query Cartesian
+  product both arms) are the mechanical verdict layer. Operational constraints carried forward:
+  uninterrupted run (resume only via Inspect log-dir, no hard-kill), config cohort frozen at
+  calibrate time (config_cohort_key recorded pre-run; FW-008 quantization stays Float32 per the
+  2026-07-16 ratified decision), INSPECT_DISPLAY=none + PYTHONUTF8=1 on all backgrounded cells.
+- Window: founder-scheduled — tonight on the founder's word; the launch package (chain +
+  supervision loop) is armed in the step2-powered worktree beforehand.
+
+### Pre-registration amendment 1 (2026-07-16 ~18:45, still BEFORE any cell runs; owner-set)
+
+Three revisions after the launch package's static verification pass, each owner-visible and made
+before any measured cell:
+
+1. **Seeds 2 → 3; datasets 4 → 3 (owner selection "3 seeds × 3 datasets").** The harness's claim
+   policy enforces SEED_FLOOR=3 — at 2 seeds no accuracy claim can promote. Owner chose
+   promotability within the cap: `mixed/en-legal-clerc-1k-verbose`, `mixed/en-legal-clerc-10k-verbose`,
+   `mixed/en-email-enron-raw-1k-verbose` × A/B × seeds {0,1,2} × 20q = 360 cells ≈ $79 run + ~$8
+   calibration ≈ $87 (hard cap $90 unchanged). Consequence recorded: the email size trend
+   (email-10k) is deferred (~$22 standalone rerun); the legal size trend and the two-domain claim
+   survive; all accuracy strata clear the seed floor.
+2. **Budget guard: two-phase → running guard (single ingest per dataset).** The literal
+   calibrate-all-then-run-all shape would ingest each dataset twice and calibrate against a
+   different ingest than the run measures — a cohort split of exactly the class the 715
+   settle-wait fix closed. Revised: per dataset, one ingest → calibrate → guard → run; the guard
+   aborts before the NEXT paid step whenever projected total (sum of known calibrate estimates +
+   max(known) × remaining datasets) exceeds $90. `utility-run --max-budget` 0.50/cell stays the
+   independent per-cell ceiling.
+3. **Certification binding: declared-signature mode (Campaign-D parity), not strict.** The
+   committed 707 certifications sign `corpus.jsonl+qrels`; the run harness signs the staged
+   raw-file `corpus-dir` — mechanically different hashes, so strict binding cannot pass without a
+   substrate change too risky to make hours before launch. The run therefore carries declared
+   signatures, PLUS the recorded equivalence chain: this worktree's materialization reproduced all
+   16 certification hashes byte-exactly (prep verification, 2026-07-16) and the corpus-dir is the
+   deterministic projection of that same corpus.jsonl. The dual-signature gap (add a
+   `corpus_dir_signature` to 707 certification so the NEXT campaign binds strictly) is logged as a
+   follow-up in the observations inbox.
+
+### Pre-registration amendment 2 (2026-07-16 ~21:45, before any utility-run cell; owner-set)
+
+The running budget guard fired exactly as designed at the first dataset: legal-1k's live
+calibration estimated $30.34/dataset (pilot-measured ~$0.25/cell vs the $0.22 Campaign-T basis),
+projecting $91.02 vs the $90 cap under the conservative max-extrapolation. Owner decision:
+**hard cap raised $90 → $100**, matrix unchanged (expected actual $85–95 all-in). The ~$2–3
+calibration already spent is reused on resume (calibration.json persisted; the chain skips
+completed calibrations). No measured utility-run cell had run at amendment time.
+
+## Step-2 powered campaign — RESULTS (2026-07-17, 01:49–04:50; founder-supervised overnight window)
+
+Executed exactly per the pre-registration + amendments 1–2. All 360 planned cells attempted across
+the three strata; total spend ≈ $85–90 (within the $100 cap; calibrate estimates $73.05 + excluded
+cells' partial spend). Artifacts: `tmp/step2-powered/<cell>/{out/utility-comparison.v1.json,logs/}`
+(step2-powered worktree), chain log + rc markers alongside.
+
+**Paired results (both-arms-completed queries; A = file tools incl. grep, B = A + JustSearch MCP; haiku, 3 seeds):**
+
+| stratum | n_paired | acc A → B | Δ (CI95, McNemar p) | turns med A→B | tokens med A→B | adoption (B) |
+|---|---|---|---|---|---|---|
+| legal-1k-v | 55 | 0.036 → **0.255** | **+0.218** ([0.09, 0.35], **p=0.0018**; 13 fixes / 1 break) | 27 → 13 | 92.0k → 51.6k | 0.98 |
+| legal-10k-v | 40 | 0.075 → 0.075 | +0.000 ([−0.10, 0.10], p=1.0) | 26 → 15 | 95.3k → 64.0k | 1.00 |
+| email-1k-v | 38 | 0.605 → 0.658 | +0.053 ([−0.18, 0.29], p=0.82) | 13 → 8 | 18.3k → 22.7k | 1.00 |
+
+**Claim verdicts: all three `rejected / inconclusive`** — every stratum failed ≥1 comparability
+gate (A-arm timeout attrition: legal-10k A error 0.317, email A 0.350, legal-1k excluded-set
+Jaccard 0.25), so no accuracy claim promotes despite seed_floor_met=true. This is the
+pre-registered fail-closed boundary working, not a measurement void.
+
+**What the campaign established (descriptive, honest scope):**
+1. **legal-1k: the tool's accuracy effect is large and individually significant** (+0.218 paired,
+   p=0.0018, 13 fixes vs 1 break) at 45% of the per-cell cost (median $0.38 → $0.17) and half the
+   turns. The strongest with-tool result the program has produced.
+2. **legal-10k: accuracy parity at floor (0.075 both arms — hop-2 at scale exceeds haiku in either
+   arm), but the tool's value shows up operationally**: the grep arm TIMED OUT on 32% of its cells
+   (293s calibrated budget) vs ~3% for the tool arm, and completed cells ran at half the turns and
+   ⅔ the tokens. The A-arm attrition IS the scale finding — grep-driven investigation stops
+   fitting the budget at 10⁴ docs — but it simultaneously breaks paired comparability (the ITT
+   tension, now measured).
+3. **email-1k: null accuracy delta on a grep-friendly corpus** (A already 0.605), tool still
+   −38% turns at flat tokens — consistent with Campaign T's small-corpus economics.
+4. **Adoption at ceiling everywhere** (0.98–1.0, first MCP call at turn 2, call share 0.42–0.57)
+   — the 725 legibility work holds under scale and repetition.
+
+**Harness lessons (fold into the next campaign's design; observations logged):**
+- **Per-arm timeout calibration**: `utility-calibrate`'s pooled pilot p95×2 systematically
+  underestimates the A-arm tail on large corpora — the arms need per-arm budgets (or an explicit
+  generous A budget) DECIDED PRE-RUN, else A-attrition mechanically voids comparability exactly
+  where the tool is strongest.
+- **A completed eval with per-sample errors is terminal**: Inspect `eval_set` re-invocation cannot
+  retry excluded cells of a successfully-composed run, and task identity embeds live-captured MCP
+  surface/initialize fields, so a fresh backend instance can never adopt the old log
+  ("log not associated"). Post-hoc repair is structurally unavailable — retry budget must be
+  designed INTO the run (higher timeout, in-run retries) rather than appended after it.
+
+**Remaining after this campaign:** email-10k stratum (~$22, deferred by amendment 1); the sonnet
+tier probe (owner option — decisive for the hop-2 capability question the 10k floor re-confirmed);
+a re-run with per-arm timeouts if the owner wants promotable accuracy claims from the 10k/email
+strata; the corpus_dir_signature certification bridge (observation logged 2026-07-16) for
+strict-bound runs.
+
+### Post-hoc sensitivity analysis: resource-exhaustion-as-failure ITT (2026-07-17, founder-directed; DECLARED post-hoc)
+
+Founder question after the primary results: "agents taking unreasonably long at searches can just
+count as a failure" — the conventional ITT outcome rule. Verified against the raw logs first:
+**every excluded cell across all three strata is a resource-exhaustion outcome** (wall-clock
+budget: 10k A×15/B×1, email A×21/B×6; per-cell $0.50 cap: legal-1k A×4/B×1, 10k A×4) — zero
+infrastructure errors, both arms under identical calibrated budgets. Scoring exhausted cells as
+incorrect yields COMPLETE 60-pair matrices per stratum (no attrition → the comparability problem
+dissolves):
+
+| stratum | acc A → B (n=60/arm) | Δ | fixes/breaks | McNemar p |
+|---|---|---|---|---|
+| legal-1k-v | 0.033 → 0.250 | +0.217 | 14/1 | **0.00098** |
+| legal-10k-v | 0.050 → 0.067 | +0.017 | 3/2 | 1.0 |
+| email-1k-v | 0.383 → 0.483 | +0.100 | 15/9 | 0.31 |
+
+Completion under equal budgets: A 140/180 (78%) vs B 172/180 (96%) — the exhaustion asymmetry is
+itself the speed/reliability finding. Reading: legal-1k is the robust headline (significant on the
+complete matrix); email strengthens directionally (A's 21 exhaustions); 10k stays accuracy-null
+because BOTH arms sit at floor (hop-2 at 10⁴ exceeds haiku regardless of retrieval — the model-tier
+question, twice re-confirmed).
+
+**Status of this analysis:** post-hoc (rule chosen after unblinding) — internal decision-grade,
+not promotion-grade. The promotion path with NO new spend: encode exhaustion-as-failure as the
+pre-registered primary outcome rule in the claim policy (it is the conventional ITT treatment; the
+current policy treats exhausted cells as excluded → comparability-gate failure), then recompute
+verdicts offline from these same logs via the 719 replay machinery. That policy change + changeset
+is the next-campaign (or founder-authorized retroactive re-verdict) decision, recorded here before
+any such change is made.
+
+### Time as the third utility axis — extracted from the Step-2 logs (2026-07-17, founder-directed; no rerun)
+
+Founder observation: the program's metrics carry accuracy and economics but not TIME. Verified:
+Inspect already records per-cell `working_time`/`total_time`/`started_at`/`completed_at` — the
+capture side has been complete all along; only the recompose projection is missing. Extracted
+directly from the Step-2 logs (medians over all 60 cells/arm; budget-hit cells are RIGHT-CENSORED
+at the cap, so A-arm numbers are conservative):
+
+| stratum | median wall-clock A → B | Δ | p95 A → B | budget-hits A/B |
+|---|---|---|---|---|
+| legal-1k-v | 96s → 55s | −43% | 198s → 199s | 4 / 1 |
+| legal-10k-v | 142s → 71s | −50% | 239s → 114s | 19 / 1 |
+| email-1k-v | 132s → 40s | **−70%** | 190s → 190s | 21 / 6 |
+
+**Reading — the utility triad completes:** time is the most uniform win in the campaign, and it
+inverts the email story: the stratum that is accuracy-null and token-negative is a 3.3× speedup.
+On grep-hostile corpora the tool buys accuracy + cost; on grep-friendly corpora it buys time.
+Scope notes for any published number: hardware- and concurrency-scoped (both arms shared the box
+at max_samples=6 — deltas fair, absolutes machine-scoped, same framing as the perf families), and
+time medians must always publish WITH the completion rate (censoring), never bare.
+
+**Implementation path (no rerun, $0):** add a `duration` metric family (observation reader →
+evidence → recompose projection, the tokens_unique/cost_usd pattern) + registry entry + censoring
+semantics + tests; then the 719 replay machinery recomposes the existing Step-2 logs offline and
+this campaign gains first-class time metrics retroactively. Composes with the
+exhaustion-as-failure policy change (previous section) — same layer, same replay, one re-verdict
+pass covers both.

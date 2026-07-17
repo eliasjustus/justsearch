@@ -13,6 +13,7 @@ SCHEMA = "agent-utility-observation.v1"
 _OBSERVATION_KEYS = {
     "schema", "condition", "seed", "qid", "attempted", "excluded",
     "error_class", "attempts", "first_error_class", "correct", "cost_usd",
+    "working_time", "total_time",
     "provider_usage", "provider_model_usage", "provider_cache_creation_input_tokens",
     "resolved_provider_model", "num_turns", "tool_call_names", "blocked_tool_call_names",
     "disallowed_tool_call_names", "leak_suspect", "mcp_server_statuses",
@@ -33,6 +34,17 @@ def _error_class(error: Any) -> str | None:
     if error is None:
         return None
     text = str(error).lower()
+    # tempdoc 624 (2026-07-17): the two resource-EXHAUSTION shapes bucket to
+    # DISTINCT categories the raw markers uniquely produce, so `classify_error_kind`
+    # can recover exhaustion on the evidence-recompose path exactly as it does on
+    # the raw-logs path (otherwise the exhaustion-as-failure rule silently no-ops
+    # through sanitize->evidence, and raw vs evidence composes disagree on the
+    # semantic_digest -- the publication builder's evidence-recompose check). A
+    # GENERIC infra timeout/budget still buckets below and stays `other`.
+    if "per-cell wall-clock budget exhausted" in text:
+        return "wall_clock_budget_exhausted"
+    if "error_max_budget_usd" in text:
+        return "usd_budget_exhausted"
     for needle, category in (
         ("timeout", "timeout"),
         ("timed out", "timeout"),
@@ -182,6 +194,11 @@ def sanitize_observation(observation: dict) -> dict:
         "first_error_class": _error_class(observation.get("first_error")),
         "correct": bool(observation.get("correct")),
         "cost_usd": observation.get("cost_usd"),
+        # tempdoc 624 (2026-07-17 duration axis): per-sample wall-clock, carried
+        # through the sanitized evidence so an offline replay recomposes the
+        # duration metric family without re-reading the ephemeral Inspect log.
+        "working_time": observation.get("working_time"),
+        "total_time": observation.get("total_time"),
         "provider_usage": _numeric_tree(observation.get("usage")) or {},
         "provider_model_usage": _numeric_tree(observation.get("model_usage")) or {},
         "provider_cache_creation_input_tokens": observation.get("unique_tokens"),
@@ -293,6 +310,8 @@ def read_evidence(path: str | Path) -> list[dict]:
             "first_error": item.get("first_error_class"),
             "correct": bool(item.get("correct")),
             "cost_usd": item.get("cost_usd"),
+            "working_time": item.get("working_time"),
+            "total_time": item.get("total_time"),
             "unique_tokens": item.get("provider_cache_creation_input_tokens"),
             "usage": item.get("provider_usage") or {},
             "model_usage": item.get("provider_model_usage") or {},
