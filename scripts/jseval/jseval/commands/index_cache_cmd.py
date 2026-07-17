@@ -59,7 +59,10 @@ def cmd_index_cache_list():
     for entry in entries:
         doc = entry.doc
         key = (doc.get("selector_key") or "")[:16]
-        corpus = "yes" if _has_corpus_axis(doc) else "no"
+        corpus = (
+            doc.get("attestation", {}).get("dataset")
+            or ("yes" if _has_corpus_axis(doc) else "no")
+        )
         built = _fmt_ts(doc.get("published_at"))
         adopted = _fmt_ts(doc.get("last_adopted_at"))
         size = _fmt_size(index_cache._dir_size(entry.dir))

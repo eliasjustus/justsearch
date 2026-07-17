@@ -560,6 +560,9 @@ def _build_attestation(base_url, spawn_env, dataset):
         "generation_id": _find(status, "activeGenerationId"),
         "counts": counts,
         "canary": canary,
+        # Operational inspectability only (which corpus does this entry serve?);
+        # correctness never reads this -- the selector key embeds the corpus axis.
+        "dataset": dataset,
     }
 
 
