@@ -1,7 +1,7 @@
 ---
 title: "Input-addressed eval index cache: reuse a built index iff (corpus_signature × index_identity_key) match — static selector nominates, the running backend confirms, fail-closed to fresh build — keeping the fresh-build validity guarantee while amortizing the ~50-min/10k-doc rebuild eval campaigns pay repeatedly for identical inputs"
 type: tempdocs
-status: "open — takeover (GO, §F), theorization (§G-§K), research (§L), design (§M-§N), derisk (§O, live-probed, confidence 8/10) complete (2026-07-17). Plan pass is next; no implementation yet. Original charter title said 'content-addressed … config_cohort_key'; corrected per §L.2 (input-addressed) and §A.1 (purpose-built key). Design amendments from derisk: dirty-state-in-key (§O.4), kill-quiesce definition (§O.2), process-binding assertion in confirm (§O.8.1)."
+status: "IMPLEMENTED v0+v1 (2026-07-17, §P) in worktree takeover-751 — live-validated (miss→publish, 17s confirmed adoption, knob-flip + dirty-tree misses, prune). Default OFF (--index-cache opt-in). Full pipeline this session: takeover (GO, §F) → theorize (§G-§K) → research (§L) → design (§M-§N) → derisk (§O, 8/10) → plan → implement (§P). Evidence-gated follow-ups in §P.3 (v2 scoped pin, parity sampling, NER stamp, 676 line). Not yet merged to main."
 created: 2026-07-17
 author: agent (Fable orchestration), chartered at founder direction during the Phase-2 utility campaign ("open a new tempdoc for this. ill set a new agent on it")
 category: eval-infrastructure / measurement-economics / index-lifecycle
@@ -772,3 +772,67 @@ follow-up). The work is one new jseval module family (index-identity key assembl
 atomic publish per `dataset_cache.py` idioms, publish/adopt orchestration in `backend.py`'s
 lifecycle, provenance block in the run record, miss-reason instrumentation) plus tests. The
 hard parts are fail-closed edge-case discipline and Windows process/file realities, not volume.
+
+---
+
+# Implementation (2026-07-17, session 7b0aa2d9 — v0+v1 SHIPPED in worktree, live-validated)
+
+## §P. Implementation log
+
+### P.1 What shipped (all pure Python, no Java changes — as §O.9 predicted)
+
+- **`jseval/index_identity.py`** (WP1): `SelectorKey` / `IndexIdentity` / `ConfirmResult` +
+  `compute_selector` (static: git sha, dirty-state hash incl. untracked-source content, model
+  sidecar hashes, 9 EnvRegistry-cited runtime knobs, `corpus_signature`), `compute_live_identity`
+  (authoritative, from commit-metadata + session-policies + status), `confirm_adoption` (five
+  independent checks, per-check miss-reason diff, never short-circuits). `ef_search` deliberately
+  excluded (query-time, not index-shaping). 29 unit tests (real tmp git repos, fake HTTP backend).
+- **`jseval/index_cache.py`** (WP2): store mirroring `dataset_cache.py` idioms (main-checkout
+  shared root via `JUSTSEARCH_INDEX_CACHE` / `main_repo_root()`, move-aside atomic publish,
+  verify-on-lookup) with the documented opposite disposition: fail-closed for adoption, fail-quiet
+  for cache trouble during a fresh run. Entry = `entry.json` (identity + attestation/realisation)
+  + `data/` (whole data dir minus `logs/`, `telemetry/`, lock files). Publish refuses on
+  `build_state != COMPLETE` (§O.2 quiesce), missing state.json, or low disk. LRU prune with a
+  10-min publish-protection window. 28 unit tests.
+- **Lifecycle wiring** (WP3): `--index-cache/--fresh-index` on `jseval run` (default OFF;
+  `JUSTSEARCH_INDEX_CACHE_ADOPT=1`; explicit `--fresh-index` beats env). `_run_with_cache` in
+  `backend.py` implements §M.2's two-phase adopt with five outcomes
+  (`disabled:*`/`miss:selector`/`adopted`/`miss:confirm`/`miss:adopt-error`); every doubt path
+  reaches the *identical* fresh build via the extracted `_boot_and_wait`. Publish hook captures
+  identity + attestation + one live canary while the backend is up, publishes AFTER `stop_backend`
+  (§O.2), keyed off backend state only (§O.8.2). `summary["index_cache"]` provenance block
+  (outside the manifest — `manifest_hash` untouched) incl. `would_have_hit_scoped_pin` (§M.5
+  instrumentation). CLI: `index-cache list|inspect|prune` + `index-identity` (the §M.6 v0
+  primitive). Orchestrator follow-ups during review: **pre-start corpus-axis resolution**
+  (`corpora.local_dataset_dir`; unresolvable → `disabled:no-corpus-dir`, closing a cross-corpus
+  selector-key collision that would have caused safe-but-wasteful entry thrash) and **dataset
+  recorded in the attestation** for list/prune inspectability.
+- Tests: 57 module + 15 integration; **full jseval suite 2120 passed** (+2 known-RED
+  pre-existing `test_correction_probe` failures, expected-state-listed).
+
+### P.2 Live validation matrix (real stack, `mixed/legal-clerc-200`, 2026-07-17)
+
+| Probe | Outcome |
+|---|---|
+| Run 1 (clean tree, cache on, empty store) | `miss (no entry for selector) -- fresh build` → published entry `e3c2f5c0…` with full attestation (gen id, COMPLETE, counts 199/199/4293/100%, canary incl. `chunk-merge`) |
+| Run 2 (identical) | **`adopted entry e3c2f5c0… (confirmed live)` — 17 s from wipe to confirmed adoption** vs ~3 min fresh build (10k-corpus projection: seconds vs ~50 min) |
+| Run 3 (`JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED=true`) | `miss:selector` → fresh build → second distinct entry `3c98954b…` whose key equals the direct `compute_selector` prediction; knob value recorded in the entry |
+| Run 4 (tracked file edited) | `miss:selector` (dirty-state hash) → third entry |
+| Publish under the §O.8.2 quirk | run wrote no eval-results dir (pre-existing no-queries bug) yet publish succeeded — keyed off backend state, trap avoided in vivo |
+| CLI | `list` (with dataset column), `inspect`, `prune` (evicted exactly the backdated LRU entry; 10-min protection honored) |
+
+Validation note (`interrogate-results`): run 3's first attempt **adopted** — root-caused to the
+probe, not the product: `Start-Process` argument quoting ate the env assignment, so neither the
+selector nor the backend saw the knob (the adoption was therefore correct). Re-run with inherited
+env produced the designed miss. The module-level probe (`compute_selector` with only the knob
+differing → different keys) isolates the causal link.
+
+### P.3 Evidence-gated follow-ups (recorded, deliberately NOT built — §M.5/M.6)
+
+1. **v2 scoped path-register engine pin** — build only if `would_have_hit_scoped_pin`
+   instrumentation shows full-sha starves the cache in real campaigns.
+2. **Parity sampling / certified-tier admission** — the default-OFF rollout makes certified
+   runs fresh-build trivially; admission waits for parity evidence.
+3. **Java `ner_model_sha256` commit stamp** — closes the one live/static asymmetry in the key.
+4. **676 eval-lane contract line** (the §K derivation-pin invariant) — on ship to `main`.
+5. Chain tooling adoption of the v0 `index-identity` primitive (campaign-side, not jseval-side).
