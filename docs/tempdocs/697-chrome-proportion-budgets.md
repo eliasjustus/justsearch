@@ -1,7 +1,7 @@
 ---
 title: "697 — Oversized persistent chrome: root-cause the bugs + a measured shrink-only ratchet so it can't regress"
 type: tempdoc
-status: COMPLETE — Part A implemented + live-validated; Part B implemented, unit-tested, and **ACTIVATED** 2026-07-15 (both target elements registered and measuring against a seeded `chat-proportion` fixture step; gate green). Pending merge
+status: MERGED to main together with 738 as PR #188, commit add9d620 (2026-07-17 reconciliation). [pre-merge status retained: COMPLETE — Part A implemented + live-validated; Part B implemented, unit-tested, and **ACTIVATED** 2026-07-15 (both target elements registered and measuring against a seeded `chat-proportion` fixture step; gate green). Pending merge]
 created: 2026-07-08
 updated: 2026-07-15
 related:

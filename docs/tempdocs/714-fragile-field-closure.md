@@ -1,8 +1,9 @@
 # 714 — Fragile-field closure: extend the rmwPolicy fail-fast to every field type + dead-field census
 
-- **status:** implemented — plan approved (orchestrator, two riders) and executed same day; full
-  unit suite green; unmerged on branch `worktree-714-fields` (chartered 2026-07-11 from the 711
-  close-out)
+- **status:** MERGED to main as PR #144, commit 98517a12 (2026-07-17 reconciliation). [pre-merge
+  status retained: implemented — plan approved (orchestrator, two riders) and executed same day;
+  full unit suite green; unmerged on branch `worktree-714-fields` (chartered 2026-07-11 from the
+  711 close-out)]
 - **created:** 2026-07-11
 - **updated:** 2026-07-11 (takeover + theorize + design + plan + implementation, worktree
   `714-fields`)
