@@ -45,10 +45,21 @@ _WORKER_LOG_TAIL_LINES = 50
 
 @dataclasses.dataclass
 class BackendInfo:
-    """Return value from start_backend() — includes the data_dir for log access."""
+    """Return value from start_backend() -- includes the data_dir for log access.
+
+    ``cache_outcome`` (tempdoc 751 WP3) is ``None`` unless the input-addressed
+    index cache was engaged for this boot; when engaged it carries the adopt-side
+    outcome (``mode``/``entry``/``detail``/``selector_key``/
+    ``would_have_hit_scoped_pin``) the caller threads into run provenance and the
+    publish hook. ``spawn_env`` is the exact resolved env the backend was spawned
+    with -- the publish step needs it to compute the live identity against the same
+    models/repo roots the boot used.
+    """
 
     proc: subprocess.Popen
     data_dir: Path
+    cache_outcome: dict | None = None
+    spawn_env: dict | None = None
 
 
 def start_backend(
@@ -60,6 +71,8 @@ def start_backend(
     env_overrides: dict[str, str] | None = None,
     health_timeout_sec: float | None = None,
     llm: bool = False,
+    index_cache_mode: str = "off",
+    corpus_dir: Path | None = None,
 ) -> BackendInfo:
     """Start runHeadlessEval and wait for the backend to become healthy.
 
@@ -71,6 +84,13 @@ def start_backend(
     environment before falling back to the 120s default — the only lever that
     reaches call sites that don't thread the kwarg (707 gate runs died at the
     fixed boundary twice, cause undiagnosed; raise it without editing every CLI).
+
+    ``index_cache_mode`` (tempdoc 751 WP3) is ``"off"`` by default -- the behavior
+    is then byte-identical to today (no cache seam is touched). When ``"on"`` AND
+    ``clean`` is set, an input-addressed cache entry may be adopted before the
+    fresh build (two-phase adopt->confirm, sec M.2): a confirmed hit boots on a copied
+    data dir, any doubt falls through to today's fresh build. ``corpus_dir`` (when
+    known) adds the corpus axis to the selector key.
     """
     if health_timeout_sec is None:
         raw_timeout = os.environ.get("JSEVAL_HEALTH_TIMEOUT_SEC", "")
@@ -129,6 +149,56 @@ def start_backend(
             env["JUSTSEARCH_MODELS_DIR"] = str(shared_models)
             log.info("Resolved JUSTSEARCH_MODELS_DIR=%s (shared models)", shared_models)
 
+    # Tempdoc 751 WP3: index-cache adopt path. The gate is `index_cache_mode ==
+    # "on" AND clean` -- off (the default) means _run_with_cache is never entered
+    # and the boot below is byte-identical to today. When on, _run_with_cache
+    # owns the boot (adopt->confirm->maybe-fallthrough-to-fresh) and returns the
+    # healthy proc + the adopt-side outcome.
+    if index_cache_mode == "on" and clean:
+        proc, cache_outcome = _run_with_cache(
+            resolved_root=resolved_root,
+            resolved_data=resolved_data,
+            gradlew=gradlew,
+            env=env,
+            port=port,
+            llm=llm,
+            health_timeout_sec=health_timeout_sec,
+            corpus_dir=corpus_dir,
+        )
+        return BackendInfo(
+            proc=proc, data_dir=resolved_data,
+            cache_outcome=cache_outcome, spawn_env=env,
+        )
+
+    proc = _boot_and_wait(
+        resolved_root=resolved_root,
+        resolved_data=resolved_data,
+        gradlew=gradlew,
+        env=env,
+        port=port,
+        llm=llm,
+        health_timeout_sec=health_timeout_sec,
+    )
+    return BackendInfo(proc=proc, data_dir=resolved_data, spawn_env=env)
+
+
+def _boot_and_wait(
+    *,
+    resolved_root: Path,
+    resolved_data: Path,
+    gradlew: Path,
+    env: dict[str, str],
+    port: int,
+    llm: bool,
+    health_timeout_sec: float,
+) -> subprocess.Popen:
+    """Spawn runHeadlessEval and wait for readiness; return the healthy Popen.
+
+    Extracted verbatim from start_backend so the tempdoc 751 adopt path and its
+    fresh-build fallthrough share ONE boot+health block (a confirm failure boots
+    twice -- the fallthrough must reach the identical code a fresh build gets, not
+    a divergent copy).
+    """
     cmd = [
         str(gradlew),
         ":modules:ui:runHeadlessEval",
@@ -177,7 +247,157 @@ def start_backend(
             )
         log.info("LLM inference available")
 
-    return BackendInfo(proc=proc, data_dir=resolved_data)
+    return proc
+
+
+def _run_with_cache(
+    *,
+    resolved_root: Path,
+    resolved_data: Path,
+    gradlew: Path,
+    env: dict[str, str],
+    port: int,
+    llm: bool,
+    health_timeout_sec: float,
+    corpus_dir: Path | None,
+) -> tuple[subprocess.Popen, dict]:
+    """Two-phase adopt (tempdoc 751 sec M.2); returns (healthy proc, cache_outcome).
+
+    Fail-closed for adoption: a null selector, a lookup miss, an adopt error, or a
+    confirm failure all fall through to the identical fresh build today's callers
+    get (via :func:`_boot_and_wait`). Only a confirmed hit skips the rebuild.
+    """
+    from . import index_cache, index_identity
+
+    # Pin the live-identity repo root to the checkout the backend actually boots
+    # from (cwd=resolved_root) so the selector (uses resolved_root) and the live
+    # identity (uses spawn_env's JUSTSEARCH_REPO_ROOT) agree. Only mutated on the
+    # opt-in on-path -- the off-path env stays byte-identical to today.
+    env["JUSTSEARCH_REPO_ROOT"] = str(resolved_root)
+
+    def _boot_fresh() -> subprocess.Popen:
+        return _boot_and_wait(
+            resolved_root=resolved_root, resolved_data=resolved_data,
+            gradlew=gradlew, env=env, port=port, llm=llm,
+            health_timeout_sec=health_timeout_sec,
+        )
+
+    # Without the corpus axis the selector key would collide across corpora that
+    # share a config: adoption stays safe (confirm's count/canary checks catch
+    # it) but every cross-corpus run would thrash the same entry slot. Fail
+    # closed instead: no corpus dir resolved pre-start -> cache off for this run.
+    if corpus_dir is None:
+        log.info("Index cache disabled for this run (no corpus dir resolved) -- fresh build.")
+        return _boot_fresh(), {
+            "mode": "disabled:no-corpus-dir",
+            "entry": None,
+            "detail": {"reason": "corpus dir not resolvable before backend start"},
+            "selector_key": None,
+            "would_have_hit_scoped_pin": None,
+        }
+
+    selector = index_identity.compute_selector(resolved_root, corpus_dir, env)
+    if selector.key is None:
+        log.info(
+            "Index cache disabled for this run (%s) -- fresh build.",
+            selector.unavailable_reason,
+        )
+        return _boot_fresh(), {
+            "mode": f"disabled:{selector.unavailable_reason}",
+            "entry": None,
+            "detail": {"reason": selector.unavailable_reason},
+            "selector_key": None,
+            "would_have_hit_scoped_pin": None,
+        }
+
+    entry = index_cache.lookup(selector.key)
+    if entry is None:
+        log.info("Index cache miss (no entry for selector) -- fresh build.")
+        return _boot_fresh(), {
+            "mode": "miss:selector",
+            "entry": None,
+            "detail": {},
+            "selector_key": selector.key,
+            "would_have_hit_scoped_pin": None,
+        }
+
+    # Candidate hit: wipe, ensure an empty dir, adopt the entry's data into it.
+    try:
+        if resolved_data.is_dir():
+            _clean_data_dir(resolved_data)
+        resolved_data.mkdir(parents=True, exist_ok=True)
+        index_cache.adopt(entry, resolved_data)
+    except Exception as exc:
+        log.warning(
+            "Index cache adopt of %s failed (%s) -- wiping and falling through to "
+            "a fresh build.", entry.dir.name, exc,
+        )
+        if resolved_data.is_dir():
+            _clean_data_dir(resolved_data)
+        return _boot_fresh(), {
+            "mode": "miss:adopt-error",
+            "entry": entry.dir.name,
+            "detail": {"error": f"{type(exc).__name__}: {exc}"},
+            "selector_key": selector.key,
+            "would_have_hit_scoped_pin": None,
+        }
+
+    # Boot on the adopted dir, then let the running backend confirm its identity.
+    proc = _boot_and_wait(
+        resolved_root=resolved_root, resolved_data=resolved_data,
+        gradlew=gradlew, env=env, port=port, llm=llm,
+        health_timeout_sec=health_timeout_sec,
+    )
+    base_url = f"http://127.0.0.1:{port}"
+    confirm = index_identity.confirm_adoption(base_url, entry.doc, resolved_data, spawn_env=env)
+    if confirm.ok:
+        index_cache.touch(entry)
+        log.info("Index cache adopted entry %s (confirmed live).", entry.dir.name)
+        return proc, {
+            "mode": "adopted",
+            "entry": entry.dir.name,
+            "detail": {"checks": confirm.checks},
+            "selector_key": selector.key,
+            "would_have_hit_scoped_pin": None,
+        }
+
+    # Confirm failed: stop the wrongly-booted backend, wipe, fresh build.
+    log.warning(
+        "Index cache adoption of %s NOT confirmed (%s) -- stopping, wiping, fresh build.",
+        entry.dir.name, confirm.failures,
+    )
+    stop_backend(proc, data_dir=resolved_data)
+    if resolved_data.is_dir():
+        _clean_data_dir(resolved_data)
+    return _boot_fresh(), {
+        "mode": "miss:confirm",
+        "entry": entry.dir.name,
+        "detail": {"failures": confirm.failures, "checks": confirm.checks},
+        "selector_key": selector.key,
+        "would_have_hit_scoped_pin": _scoped_pin_would_hit(confirm),
+    }
+
+
+def _scoped_pin_would_hit(confirm) -> bool:
+    """sec M.5 instrumentation: would a scoped pin (ignoring git_sha/dirt) have hit?
+
+    True iff the ONLY differing live-key components are ``git_sha`` /
+    ``dirty_state_hash`` (a within-chain edit that a scoped index-shaping pin
+    would have tolerated); False if any model/config/corpus component differed or
+    the diff is empty/unavailable.
+    """
+    ident = confirm.checks.get("identity") or {}
+    diffs = ident.get("diffs")
+    if not diffs:
+        return False
+    scoped_ignorable = {"git_sha", "dirty_state_hash"}
+    for d in diffs:
+        comp = d.split(":", 1)[0]
+        if comp.startswith("identity."):
+            comp = comp[len("identity."):]
+        if comp not in scoped_ignorable:
+            return False
+    return True
 
 
 def _attempt_wipe(resolved_data: Path) -> list[Path]:

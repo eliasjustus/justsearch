@@ -136,10 +136,16 @@ def execute_run(
     history_db: Path | None = None,
     pipeline_summary: dict | None = None,
     env_overrides: dict[str, str] | None = None,
+    index_cache: dict | None = None,
 ) -> dict:
     """Execute a full evaluation run.
 
     Returns a summary dict with aggregate metrics, comparability, and timing.
+
+    ``index_cache`` (tempdoc 751 WP3) is the adopt-side cache outcome from
+    BackendInfo; when present it is projected into ``summary["index_cache"]`` as a
+    top-level provenance block. It never enters the manifest dict (manifest_hash
+    stability).
     """
     # E-J-N11: capture environment fingerprint once per run. Informational only
     # (never used as a comparability gate). Safe to run early — best-effort with
@@ -170,6 +176,9 @@ def execute_run(
             summary["env_overrides"] = env_overrides
         if env_fingerprint:
             summary["env_fingerprint"] = env_fingerprint
+        cache_block = _index_cache_block(index_cache)
+        if cache_block:
+            summary["index_cache"] = cache_block
         return summary
 
     # 1. Load dataset
@@ -367,7 +376,8 @@ def execute_run(
                              ingest_summary, pipeline_summary, models_snapshot,
                              search_config, env_overrides, env_fingerprint,
                              run_manifest=run_manifest, base_dir=base_dir,
-                             status_snapshot=state_snapshots.get("/api/status"))
+                             status_snapshot=state_snapshots.get("/api/status"),
+                             index_cache=index_cache)
 
     # 5. Write artifacts + append history
     if output_dir:
@@ -466,6 +476,7 @@ def _build_summary(
     run_manifest: dict | None = None,
     base_dir: Path | None = None,
     status_snapshot: dict | None = None,
+    index_cache: dict | None = None,
 ) -> dict:
     summary: dict = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -519,10 +530,31 @@ def _build_summary(
         summary["env_fingerprint"] = env_fingerprint
     if run_manifest:
         summary["manifest"] = run_manifest
+    cache_block = _index_cache_block(index_cache)
+    if cache_block:
+        summary["index_cache"] = cache_block
     summary["chunk_completeness"] = _compute_chunk_completeness(
         dataset_name, mode_results, status_snapshot, base_dir,
     )
     return summary
+
+
+def _index_cache_block(cache_outcome: dict | None) -> dict | None:
+    """Project the BackendInfo cache outcome into the run-provenance block (751 M.4).
+
+    Drops the internal ``selector_key`` (used only by the publish hook) and keeps
+    the disclosed axes: adopted-vs-fresh mode, entry id, miss/confirm detail, and
+    the sec M.5 scoped-pin placeholder. Returns ``None`` when the cache was not
+    engaged (no block enters the summary -- byte-identical to today).
+    """
+    if not cache_outcome:
+        return None
+    return {
+        "mode": cache_outcome.get("mode"),
+        "entry": cache_outcome.get("entry"),
+        "detail": cache_outcome.get("detail"),
+        "would_have_hit_scoped_pin": cache_outcome.get("would_have_hit_scoped_pin"),
+    }
 
 
 def _compute_chunk_completeness(
