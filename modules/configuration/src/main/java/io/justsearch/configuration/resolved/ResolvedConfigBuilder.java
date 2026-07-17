@@ -1238,9 +1238,7 @@ public final class ResolvedConfigBuilder {
 
   private ResolvedConfig.Ui buildUi() {
     return new ResolvedConfig.Ui(
-        resolveString("justsearch.ui.settings.mode", null),
         resolveBoolean("justsearch.ui.automation.enabled", false),
-        resolveBoolean("justsearch.ui.automation.requireTranslator", false),
         resolveBoolean("justsearch.ui.automation.forceDiagnostics", true));
   }
 

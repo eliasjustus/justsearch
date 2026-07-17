@@ -440,11 +440,6 @@ public enum EnvRegistry {
     /** UI automation mode enabled flag. */
     UI_AUTOMATION_ENABLED("justsearch.ui.automation.enabled", "JUSTSEARCH_UI_AUTOMATION"),
 
-    /** UI automation: require translator even in automation mode. */
-    UI_AUTOMATION_REQUIRE_TRANSLATOR(
-        "justsearch.ui.automation.requireTranslator",
-        "JUSTSEARCH_UI_AUTOMATION_REQUIRE_TRANSLATOR"),
-
     /** UI automation: force infra diagnostics overrides. */
     UI_AUTOMATION_FORCE_DIAGNOSTICS(
         "justsearch.ui.automation.forceDiagnostics",

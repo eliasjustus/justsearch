@@ -489,16 +489,10 @@ public record ResolvedConfig(
   /**
    * UI configuration.
    *
-   * @param settingsMode persistence mode for UI settings (read-only, in-memory, etc.)
    * @param automationEnabled true if UI automation mode is enabled
-   * @param requireTranslator true to require translator even in automation mode
    * @param forceDiagnostics true to force infra diagnostics overrides
    */
-  public record Ui(
-      String settingsMode,
-      boolean automationEnabled,
-      boolean requireTranslator,
-      boolean forceDiagnostics) {}
+  public record Ui(boolean automationEnabled, boolean forceDiagnostics) {}
 
   /**
    * File-system watcher configuration.

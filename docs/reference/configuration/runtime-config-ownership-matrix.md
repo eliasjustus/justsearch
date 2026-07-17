@@ -280,9 +280,8 @@ Precedence note:
 | - | JUSTSEARCH_TESSERACT_PATH | justsearch.tesseract.path | TESSERACT_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_UI_AUTOMATION | justsearch.ui.automation.enabled | UI_AUTOMATION_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_UI_AUTOMATION_FORCE_DIAGNOSTICS | justsearch.ui.automation.forceDiagnostics | UI_AUTOMATION_FORCE_DIAGNOSTICS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_UI_AUTOMATION_REQUIRE_TRANSLATOR | justsearch.ui.automation.requireTranslator | UI_AUTOMATION_REQUIRE_TRANSLATOR | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_UI_EXCLUDE_PATTERNS | justsearch.ui.exclude_patterns | UI_EXCLUDE_PATTERNS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_UI_SETTINGS_MODE | justsearch.ui.settings.mode | UI_SETTINGS_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| - | JUSTSEARCH_UI_SETTINGS_MODE | justsearch.ui.settings.mode | UI_SETTINGS_MODE | modules/app-services (UiSettingsStore, direct EnvRegistry read) | sysprop > env > default |
 | - | JUSTSEARCH_UI_SETTINGS_READONLY | justsearch.ui.settings.readOnly | UI_SETTINGS_READONLY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_VDU_QUALITY_THRESHOLD | justsearch.vdu.quality_threshold | VDU_QUALITY_THRESHOLD | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_VLM_MODEL | justsearch.vlm.model | VLM_MODEL | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
