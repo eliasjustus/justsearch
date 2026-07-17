@@ -134,15 +134,14 @@ if exist "!OUT!\run.done" (
   goto :eof
 )
 
-rem --- WARM (751 #242): build-or-adopt + publish the index-cache entry for this corpus axis.
-echo [%date% %time%] warm !CELL! START>> "%LOG%"
-python -m jseval index-cache warm --corpus-dir "!CORPUSDIR!" --port %PORT% >> "%LOG%" 2>&1
-set "WRC=!errorlevel!"
-echo rc=!WRC! > "%MK%\warm-!CELL!.marker"
-if not "!WRC!"=="0" ( call :fail "warm !CELL! rc=!WRC!" & goto :eof )
+rem --- WARM step REMOVED (2026-07-17 ~23:00): the 751 index-cache warm wedged on a
+rem     cumulative readiness floor (same root ingested twice within one backend
+rem     lifetime -> floor 2002 vs 1001 indexed, unmeetable). Finding filed to the
+rem     751 lane; this campaign runs the proven fresh-build path (cache is
+rem     economics, not mission -- root-mode claim identity is independent of it).
 
 rem --- serve up (adopt the just-published entry via the #242 wrapper) + ingest ONCE
-call :serve_up !CELL! "!OUT!" "!CORPUSDIR!"
+call :serve_up !CELL! "!OUT!"
 if not "!SERVE_RC!"=="0" ( call :fail "serve_up !CELL!" & goto :eof )
 call :ingest !CELL! "!CORPUSDIR!" "!SLUG!" "!OUT!"
 if not "!ING_RC!"=="0" ( call :serve_down !CELL! "!OUT!" & call :fail "ingest !CELL!" & goto :eof )
@@ -207,8 +206,8 @@ set "STOP=%MK%\serve-%~1.stop"
 set "STOPPED=%MK%\serve-%~1.stopped"
 set "FAILED=%MK%\serve-%~1.failed"
 del "!RDY!" "!STOP!" "!STOPPED!" "!FAILED!" 2>nul
-echo [%date% %time%] serve_up %~1 START - index-cache adopt>> "%LOG%"
-start "serve-%~1" /b cmd /c "python serve-eval-backend.py --port %PORT% --clean --index-cache-mode on --corpus-dir "%~3" --ready-file "!RDY!" --stop-file "!STOP!" --stopped-file "!STOPPED!" --failed-file "!FAILED!" > "%~2\serve.log" 2>&1"
+echo [%date% %time%] serve_up %~1 START>> "%LOG%"
+start "serve-%~1" /b cmd /c "python serve-eval-backend.py --port %PORT% --clean --ready-file "!RDY!" --stop-file "!STOP!" --stopped-file "!STOPPED!" --failed-file "!FAILED!" > "%~2\serve.log" 2>&1"
 rem Poll up to ~660s - greater than the 600s health timeout.
 set /a _i=0
 :serve_up_poll
