@@ -146,9 +146,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Dev-stack: orphaned dev-runner/Worker processes accumulate across sessions and hold `index/default.index.lock` + squat port 5173, crash-looping new Workers (`Index base path is already locked`) and tearing the stack down — symptom looks like a code boot failure but isn't. Recover: kill stray java/node dev PIDs + delete the stale lock; run `dev-runner.cjs start` as a BARE persistent background process (its children are in a KILL_ON_JOB_CLOSE Job Object, so a timeout/pipe wrapper kills the whole stack). Hit during 629 LAYER live-validation. (2026-06-22)
 
 ### obs:agent-utility-inspect — jseval utility-run (Inspect eval_set): re-invoking a FULLY-COMPLETED set errors 'log file not associ
-`kind: defect?` `anchor: agent_utility_inspect.py` `seen: 2` `first: 2026-06-22` `last: 2026-07-14`
+`kind: defect?` `anchor: agent_utility_inspect.py` `seen: 3` `first: 2026-06-22` `last: 2026-07-17`
 - [ ] jseval utility-run (Inspect eval_set): re-invoking a FULLY-COMPLETED set errors 'log file not associated with a task' — needs --log-dir-allow-dirty; partial-crash resume uses the now-pinned deterministic eval_set_id. tempdoc 624 run-governance validation — `scripts/jseval/jseval/agent_utility_inspect.py:run_utility_eval` (2026-06-22)
 - [ ] furniture_markers all-False in the one live L1 capture cell despite extraction verified correct on both content shapes against live 0.3.1 responses (evidence_pack=True in-process) — child-agent-session content path discrepancy, unrecoverable from redacted logs; settle via one debug-instrumented cell — `scripts/jseval/jseval/agent_utility_inspect.py:548-621` (2026-07-14)
+- [ ] Inspect eval_set post-hoc retry is structurally unavailable: completed evals with per-sample errors are terminal, and task identity embeds live-captured MCP surface/initialize fields so a fresh backend can never adopt an old log ('log not associated') — retry budget must be designed into the run — `scripts/jseval/jseval/agent_utility_inspect.py:1278` (2026-07-17)
 
 ### obs:knowledgeapi — Pre-existing: modules/app-api/.../KnowledgeApi.java is a 1-byte empty stub (no package/class) — like
 `kind: environment?` `anchor: modules/app-api/src/main/java/io/justsearch/app/api/KnowledgeApi.java` `seen: 1` `first: 2026-06-23` `last: 2026-06-23`
@@ -943,8 +944,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Backend-death root cause substantially resolved: deaths coincide with other sessions' lease takeovers (30s lease not renewed during long-running probes/campaigns that make no MCP dev-tool calls; observed live — session f3e41644 reclaimed mid-probe, stale_reclaim written by ITS runner). Issue 6 reframes from product crash to contention semantics; candidate fix: lease renewal heartbeat during utility-run/long ops — `scripts/dev/dev-runner.cjs lease model` (2026-07-14)
 
 ### obs:check-tempdoc-numbers — check-tempdoc-numbers has a blind spot: it only reports a number claimed by 2+ IN-FLIGHT worktrees,
-`kind: defect?` `anchor: scripts/ci/check-tempdoc-numbers.mjs` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+`kind: defect?` `anchor: scripts/ci/check-tempdoc-numbers.mjs` `seen: 2` `first: 2026-07-15` `last: 2026-07-17`
 - [ ] check-tempdoc-numbers has a blind spot: it only reports a number claimed by 2+ IN-FLIGHT worktrees, excluding any basename already on origin (`newBasenames` filter). So an in-flight tempdoc colliding with one already merged to main passes green — reproduced live: branch worktree-ui-audit-density-review's 696-simple-detailed-disclosure vs main's 696-dev-tooling-jdk-resolution went undetected while the check flagged an unrelated 720 collision in the same run — `scripts/ci/check-tempdoc-numbers.mjs:117` (2026-07-15)
+- [ ] check-tempdoc-numbers reports two pre-existing cross-worktree number collisions (#720: memory-injector-plan vs p1a-context-prepend-plan; #729: gjf-removal vs the stale pre-rename copy of 734 in worktree sandbox-validation) — the affected sessions may not know until their own merge-time run — `scripts/ci/check-tempdoc-numbers.mjs` (2026-07-17)
 
 ### obs:expected-state-v1 — Possible stale expected-state entry: [ui-web-typecheck-ts5101] declares ui-web `npm run typecheck` R
 `kind: environment?` `anchor: expected-state.v1.json` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
@@ -991,10 +993,11 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] check-tempdoc-numbers reports live cross-worktree collisions at #729 (729-gjf-removal vs sandbox-validation) and #742 (742-gate-input-contract vs 742-residue-removal) — owners of those worktrees must renumber before merge; not this session's trees (2026-07-16)
 
 ### obs:check-always-loaded-budget-gate-red — always-loaded-budget gate is RED on origin/main (pre-existing, not from this branch): 4 files over c
-`kind: environment?` `anchor: scripts/ci/check-always-loaded-budget.mjs` `seen: 3` `first: 2026-07-15` `last: 2026-07-16`
+`kind: environment?` `anchor: scripts/ci/check-always-loaded-budget.mjs` `seen: 4` `first: 2026-07-15` `last: 2026-07-17`
 - [ ] always-loaded-budget gate is RED on origin/main (pre-existing, not from this branch): 4 files over ceiling — CLAUDE.md +1604B, branch-safety.md +1892B, hooks-reference.md +99B, tier-register.md +1579B — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-15)
 - [ ] always-loaded-budget ratchet fails on origin/main already: CLAUDE.md (+1604 B over), agent-lessons.md, branch-safety.md, hooks-reference.md, tier-register.md are all OVER their ceilings, and the check isn't wired into the public CI workflow so nothing catches the drift. The ratchet only bites the honest agent who runs it locally — the always-loaded set is ~1.6 KB past its own cap on main today — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-15)
 - [ ] check-always-loaded-budget.mjs is red on main (5 files ~9KB over ceilings, predates 742 followups) AND wired to no CI lane or kernel gate — an unenforced ratchet accumulating debt silently; needs an owner editorial trim pass + a decision on wiring it (742-class: unevaluated assertion channel) — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-16)
+- [ ] always-loaded-budget ratchet already failing pre-existing (CLAUDE.md, agent-lessons.md, branch-safety.md, tier-register.md all OVER ceiling before this session's edits) — worktree takeover-743, base commit a47cd644 — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-17)
 
 ### obs:unanchored-general-56 — Skill-vs-CLAUDE.md contradiction (same class as tempdoc 739 F-3): `.claude/skills/publish/SKILL.md`
 `kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
@@ -1249,6 +1252,59 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:coreworkflowcatalog — justsearch_dev_start defaults to the MAIN CHECKOUT's installed dist even when called from a worktree
 `kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/conversation/CoreWorkflowCatalog.java` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
 - [ ] justsearch_dev_start defaults to the MAIN CHECKOUT's installed dist even when called from a worktree session -- silently testing stale code with no error. Must pass distFrom:<worktree-path> explicitly after editing Java in a worktree, not just re-run installDist. Cost real debugging time verifying tempdoc 734/744's core.workflow-run fix (2026-07-16) -- `modules/app-services/src/main/java/io/justsearch/app/services/conversation/CoreWorkflowCatalog.java`, `WorkflowShapeRunner.java`. (2026-07-16)
+
+### obs:unanchored-general-67 — DE encoder-lane charter opened as tempdoc 748 (German semantic bridging 10k collapse) — closes the 7
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] DE encoder-lane charter opened as tempdoc 748 (German semantic bridging 10k collapse) — closes the 707 chain-2 'routed to encoder lane' condition; DE remains 1k-only secondary stratum until 748 closes (2026-07-16)
+
+### obs:unanchored-general-70 — main checkout's local main is ~4 docs(743) commits + merge-commits ahead of origin/main (branch prot
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] main checkout's local main is ~4 docs(743) commits + merge-commits ahead of origin/main (branch protection strands direct commits) — needs a batch docs PR from whoever owns the 743 session; pullers get recurring 'Merge branch main' commits until then (2026-07-16)
+
+### obs:unanchored-general-71 — 707 corpus reproduction path CONFIRMED end-to-end for the first time (741 §8 flagged never-run): fre
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] 707 corpus reproduction path CONFIRMED end-to-end for the first time (741 §8 flagged never-run): fresh worktree, corpus-fetch-clerc/-enron-raw cache hits reproduced recipe pins byte-exactly, corpus-inject-real regenerated all 8 cells with all 16 certification hashes matching — Step-2 prep, ~6 min total (2026-07-16)
+
+### obs:corpus-certify — 707 certification signs corpus.jsonl+qrels but utility-run's staged binding hashes the raw corpus-di
+`kind: follow-up?` `anchor: scripts/jseval/jseval/corpus_certify.py` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] 707 certification signs corpus.jsonl+qrels but utility-run's staged binding hashes the raw corpus-dir files — strict --corpus-certification can never pass on a certified member (Step-2 ran declared-signature mode with a recorded hash-equivalence chain instead). Follow-up: add corpus_dir_signature to corpus-certify-member + thread it through utility-run strict mode — `scripts/jseval/jseval/corpus_certify.py:617` (2026-07-16)
+
+### obs:utility-calibrate — Step-2 campaign harness lesson: utility-calibrate's pooled-pilot timeout (p95x2) underestimates the 
+`kind: lesson?` `anchor: scripts/jseval/jseval/utility_calibrate.py` `seen: 2` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] Step-2 campaign harness lesson: utility-calibrate's pooled-pilot timeout (p95x2) underestimates the A-arm (grep) tail on 10k corpora — A-arm timeout attrition (32%) voided comparability exactly where the tool wins; next campaign needs per-arm timeout calibration pre-run — `scripts/jseval/jseval/utility_calibrate.py` (2026-07-17)
+- [ ] Design-interaction lesson (phase-2 email-10k): exhaustion-as-failure ITT scoring requires IDENTICAL per-arm budgets — per-arm timeout application (built to fix Step-2's slow-arm starvation) inverted the bias and starved the fast arm (B floor-clamped 120s < its own p95; 26/60 B exhaustions, accuracy delta flipped negative as artifact). Rule: calibrate per arm, apply max() to all arms. Cross-increment interactions need a review lens of their own — `scripts/jseval/jseval/utility_calibrate.py` (2026-07-17)
+
+### obs:agent-utility-observations — utility claim policy treats resource-exhausted cells (wall-clock/USD budget) as EXCLUDED rather than
+`kind: defect?` `anchor: scripts/jseval/jseval/agent_utility_observations.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] utility claim policy treats resource-exhausted cells (wall-clock/USD budget) as EXCLUDED rather than as ITT failures — the conventional exhaustion-as-failure outcome rule would have made Step-2's matrices complete (60/60 pairs) instead of comparability-voided; encode it as the pre-registered primary rule before the next campaign, then re-verdict Step-2 offline via 719 replay — `scripts/jseval/jseval/agent_utility_observations.py:96` (2026-07-17)
+
+### obs:chain-phase2 — chain-phase2 first launch: serve_up call frame silently aborted ~2s in (no marker, no branch log; ch
+`kind: defect?` `anchor: scripts/jseval/chain-phase2.bat` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] chain-phase2 first launch: serve_up call frame silently aborted ~2s in (no marker, no branch log; child backend healthy) — unreproduced on identical relaunch; poll-loop iteration tracing now baked into the chain; signature: FAIL-serve_up at +2s with empty markers dir — reopen if it recurs — `scripts/jseval/chain-phase2.bat` (2026-07-17)
+
+### obs:backend — Eval campaigns rebuild identical indexes repeatedly (legal-10k built 3x in 12h for the same corpus_s
+`kind: defect?` `anchor: scripts/jseval/jseval/backend.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] Eval campaigns rebuild identical indexes repeatedly (legal-10k built 3x in 12h for the same corpus_signature x config_cohort_key) — a content-addressed index cache keyed on exactly those two pins would keep the fresh-build validity guarantee while amortizing ~50min/build; belongs to the 676/pillar-6 isolated eval lane; note the 716 retirement of --clean protected-set reuse was about UNKEYED reuse, which this design avoids — `scripts/jseval/jseval/backend.py` (2026-07-17)
+
+### obs:docs-granularity-hint — docs-granularity-hint fired on push for worktree-round6-writeup despite the branch's actual diff vs 
+`kind: defect?` `anchor: scripts/agent-analytics/hooks/docs-granularity-hint.mjs` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+- [ ] docs-granularity-hint fired on push for worktree-round6-writeup despite the branch's actual diff vs origin/main spanning 4 files (canonical doc + 2 tempdocs + code) -- exactly the multi-file/canonical-doc case the rule says should NOT trigger it. Possible hook logic bug (maybe checking only the latest commit's diff, not the full branch-vs-base diff) -- `scripts/agent-analytics/hooks/docs-granularity-hint.mjs` (2026-07-16)
+
+### obs:check-store-recoverability — scripts/ci/*.test.mjs sibling-convention tests (e.g. check-store-recoverability.test.mjs, check-read
+`kind: defect?` `anchor: check-store-recoverability` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] scripts/ci/*.test.mjs sibling-convention tests (e.g. check-store-recoverability.test.mjs, check-readiness-reason-codes.test.mjs, and the new scripts/ci/lib/tempdoc-scan.test.mjs) have no auto-discovery runner analogous to scripts/agent-analytics/run-all-tests.mjs (745 D6) — most are never invoked by ci.yml at all, only a hand-picked subset (pack-mcpb, check-mcpb-consistency, check-public-agent-utility) is wired; a new sibling test is silently dead unless someone remembers to add a ci.yml step — `scripts/ci/**/*.test.mjs` (2026-07-17)
+
+### obs:test-check-coverage — Concurrent subagents editing the same worktree make the shared test suite transiently red: a worker 
+`kind: environment?` `anchor: test_check_coverage.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] Concurrent subagents editing the same worktree make the shared test suite transiently red: a worker running the full suite mid-flight saw 6 `test_check_coverage.py` failures that were another worker's in-progress edits, and logged them as "pre-existing" (they were not; the integrated tree is 213/213 green). Worker briefs should scope the acceptance suite to owned files, or the orchestrator should serialize suite runs -- `scripts/sandbox/` (2026-07-17)
+
+### obs:unanchored-general-73 — Sandbox rounds 5 and 6 archived NO service logs (only round 4 has them, hand-copied) — a host-side i
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] Sandbox rounds 5 and 6 archived NO service logs (only round 4 has them, hand-copied) — a host-side investigation into a real search-quality finding had to fall back to round 4's worker.log to answer an ONNX-session question; fixed forward in collect-evidence.ps1 (tempdoc 750), but rounds 5/6's logs are gone for good — `scripts/sandbox/collect-evidence.ps1` (2026-07-17)
+
+### obs:note-observation — A session's observation shard can reach `origin/main` inside ANOTHER session's PR: PR #229 branched 
+`kind: defect?` `anchor: scripts/agent-analytics/note-observation.mjs` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] A session's observation shard can reach `origin/main` inside ANOTHER session's PR: PR #229 branched from local `main` after this session committed its shard, so its squash carried entry 1 upstream under a different commit identity — producing an add/add conflict when this session's own PR later merged `origin/main` (resolved as the union; no loss). Shards are per-session by design but ride whatever branch happens to contain them — `scripts/agent-analytics/note-observation.mjs` (2026-07-17)
 
 ## Parked
 
