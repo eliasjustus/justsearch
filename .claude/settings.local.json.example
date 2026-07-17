@@ -170,6 +170,14 @@
             "type": "command",
             "command": "node",
             "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/exec-substrate-hint.mjs"
+            ],
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/known-state-hint.mjs"
             ],
             "timeout": 5
@@ -228,6 +236,19 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/subagent-model-guard.mjs"
+            ],
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -255,6 +276,19 @@
               "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/build-counter.mjs"
             ],
             "if": "Bash(./gradlew*)",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/scripts/agent-analytics/hooks/merge-full-suite-hint.mjs"
+            ],
             "timeout": 5
           }
         ]

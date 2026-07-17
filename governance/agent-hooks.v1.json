@@ -82,6 +82,10 @@
       "file": "dataset-cache-hint.mjs",
       "role": "advisory"
     },
+    "exec-substrate-hint": {
+      "file": "exec-substrate-hint.mjs",
+      "role": "advisory"
+    },
     "known-state-hint": {
       "file": "known-state-hint.mjs",
       "role": "advisory",
@@ -365,6 +369,10 @@
           },
           {
             "hookId": "dataset-cache-hint",
+            "timeout": 5
+          },
+          {
+            "hookId": "exec-substrate-hint",
             "timeout": 5
           },
           {

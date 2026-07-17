@@ -993,10 +993,11 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] check-tempdoc-numbers reports live cross-worktree collisions at #729 (729-gjf-removal vs sandbox-validation) and #742 (742-gate-input-contract vs 742-residue-removal) — owners of those worktrees must renumber before merge; not this session's trees (2026-07-16)
 
 ### obs:check-always-loaded-budget-gate-red — always-loaded-budget gate is RED on origin/main (pre-existing, not from this branch): 4 files over c
-`kind: environment?` `anchor: scripts/ci/check-always-loaded-budget.mjs` `seen: 3` `first: 2026-07-15` `last: 2026-07-16`
+`kind: environment?` `anchor: scripts/ci/check-always-loaded-budget.mjs` `seen: 4` `first: 2026-07-15` `last: 2026-07-17`
 - [ ] always-loaded-budget gate is RED on origin/main (pre-existing, not from this branch): 4 files over ceiling — CLAUDE.md +1604B, branch-safety.md +1892B, hooks-reference.md +99B, tier-register.md +1579B — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-15)
 - [ ] always-loaded-budget ratchet fails on origin/main already: CLAUDE.md (+1604 B over), agent-lessons.md, branch-safety.md, hooks-reference.md, tier-register.md are all OVER their ceilings, and the check isn't wired into the public CI workflow so nothing catches the drift. The ratchet only bites the honest agent who runs it locally — the always-loaded set is ~1.6 KB past its own cap on main today — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-15)
 - [ ] check-always-loaded-budget.mjs is red on main (5 files ~9KB over ceilings, predates 742 followups) AND wired to no CI lane or kernel gate — an unenforced ratchet accumulating debt silently; needs an owner editorial trim pass + a decision on wiring it (742-class: unevaluated assertion channel) — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-16)
+- [ ] always-loaded-budget ratchet already failing pre-existing (CLAUDE.md, agent-lessons.md, branch-safety.md, tier-register.md all OVER ceiling before this session's edits) — worktree takeover-743, base commit a47cd644 — `scripts/ci/check-always-loaded-budget.mjs` (2026-07-17)
 
 ### obs:unanchored-general-56 — Skill-vs-CLAUDE.md contradiction (same class as tempdoc 739 F-3): `.claude/skills/publish/SKILL.md`
 `kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
@@ -1269,16 +1270,29 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] 707 certification signs corpus.jsonl+qrels but utility-run's staged binding hashes the raw corpus-dir files — strict --corpus-certification can never pass on a certified member (Step-2 ran declared-signature mode with a recorded hash-equivalence chain instead). Follow-up: add corpus_dir_signature to corpus-certify-member + thread it through utility-run strict mode — `scripts/jseval/jseval/corpus_certify.py:617` (2026-07-16)
 
 ### obs:utility-calibrate — Step-2 campaign harness lesson: utility-calibrate's pooled-pilot timeout (p95x2) underestimates the 
-`kind: lesson?` `anchor: scripts/jseval/jseval/utility_calibrate.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+`kind: lesson?` `anchor: scripts/jseval/jseval/utility_calibrate.py` `seen: 2` `first: 2026-07-17` `last: 2026-07-17`
 - [ ] Step-2 campaign harness lesson: utility-calibrate's pooled-pilot timeout (p95x2) underestimates the A-arm (grep) tail on 10k corpora — A-arm timeout attrition (32%) voided comparability exactly where the tool wins; next campaign needs per-arm timeout calibration pre-run — `scripts/jseval/jseval/utility_calibrate.py` (2026-07-17)
+- [ ] Design-interaction lesson (phase-2 email-10k): exhaustion-as-failure ITT scoring requires IDENTICAL per-arm budgets — per-arm timeout application (built to fix Step-2's slow-arm starvation) inverted the bias and starved the fast arm (B floor-clamped 120s < its own p95; 26/60 B exhaustions, accuracy delta flipped negative as artifact). Rule: calibrate per arm, apply max() to all arms. Cross-increment interactions need a review lens of their own — `scripts/jseval/jseval/utility_calibrate.py` (2026-07-17)
 
 ### obs:agent-utility-observations — utility claim policy treats resource-exhausted cells (wall-clock/USD budget) as EXCLUDED rather than
 `kind: defect?` `anchor: scripts/jseval/jseval/agent_utility_observations.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
 - [ ] utility claim policy treats resource-exhausted cells (wall-clock/USD budget) as EXCLUDED rather than as ITT failures — the conventional exhaustion-as-failure outcome rule would have made Step-2's matrices complete (60/60 pairs) instead of comparability-voided; encode it as the pre-registered primary rule before the next campaign, then re-verdict Step-2 offline via 719 replay — `scripts/jseval/jseval/agent_utility_observations.py:96` (2026-07-17)
 
+### obs:chain-phase2 — chain-phase2 first launch: serve_up call frame silently aborted ~2s in (no marker, no branch log; ch
+`kind: defect?` `anchor: scripts/jseval/chain-phase2.bat` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] chain-phase2 first launch: serve_up call frame silently aborted ~2s in (no marker, no branch log; child backend healthy) — unreproduced on identical relaunch; poll-loop iteration tracing now baked into the chain; signature: FAIL-serve_up at +2s with empty markers dir — reopen if it recurs — `scripts/jseval/chain-phase2.bat` (2026-07-17)
+
+### obs:backend — Eval campaigns rebuild identical indexes repeatedly (legal-10k built 3x in 12h for the same corpus_s
+`kind: defect?` `anchor: scripts/jseval/jseval/backend.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] Eval campaigns rebuild identical indexes repeatedly (legal-10k built 3x in 12h for the same corpus_signature x config_cohort_key) — a content-addressed index cache keyed on exactly those two pins would keep the fresh-build validity guarantee while amortizing ~50min/build; belongs to the 676/pillar-6 isolated eval lane; note the 716 retirement of --clean protected-set reuse was about UNKEYED reuse, which this design avoids — `scripts/jseval/jseval/backend.py` (2026-07-17)
+
 ### obs:docs-granularity-hint — docs-granularity-hint fired on push for worktree-round6-writeup despite the branch's actual diff vs 
 `kind: defect?` `anchor: scripts/agent-analytics/hooks/docs-granularity-hint.mjs` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
 - [ ] docs-granularity-hint fired on push for worktree-round6-writeup despite the branch's actual diff vs origin/main spanning 4 files (canonical doc + 2 tempdocs + code) -- exactly the multi-file/canonical-doc case the rule says should NOT trigger it. Possible hook logic bug (maybe checking only the latest commit's diff, not the full branch-vs-base diff) -- `scripts/agent-analytics/hooks/docs-granularity-hint.mjs` (2026-07-16)
+
+### obs:check-store-recoverability — scripts/ci/*.test.mjs sibling-convention tests (e.g. check-store-recoverability.test.mjs, check-read
+`kind: defect?` `anchor: check-store-recoverability` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] scripts/ci/*.test.mjs sibling-convention tests (e.g. check-store-recoverability.test.mjs, check-readiness-reason-codes.test.mjs, and the new scripts/ci/lib/tempdoc-scan.test.mjs) have no auto-discovery runner analogous to scripts/agent-analytics/run-all-tests.mjs (745 D6) — most are never invoked by ci.yml at all, only a hand-picked subset (pack-mcpb, check-mcpb-consistency, check-public-agent-utility) is wired; a new sibling test is silently dead unless someone remembers to add a ci.yml step — `scripts/ci/**/*.test.mjs` (2026-07-17)
 
 ### obs:test-check-coverage — Concurrent subagents editing the same worktree make the shared test suite transiently red: a worker 
 `kind: environment?` `anchor: test_check_coverage.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
