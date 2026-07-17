@@ -1822,7 +1822,9 @@ def test_agent_utility_task_threads_agent_env_json_into_solver(tmp_path, monkeyp
         agent_env_json=json.dumps({"ENABLE_TOOL_SEARCH": "false"}),
     )
 
-    assert captured_args["args"][-1] == json.dumps({"ENABLE_TOOL_SEARCH": "false"})
+    # agent_env_json is threaded through as a positional solver arg (its exact slot is
+    # not load-bearing -- later per-cell args, e.g. timeout_s_by_condition_json, may follow).
+    assert json.dumps({"ENABLE_TOOL_SEARCH": "false"}) in captured_args["args"]
 
 
 def test_run_utility_eval_threads_agent_env_into_task_and_exposure_config(tmp_path, monkeypatch):
@@ -1930,3 +1932,118 @@ def test_run_utility_eval_agent_env_none_falls_back_to_harness_process_env(tmp_p
 
     source_identity = json.loads((log_dir / "source-identity.v1.json").read_text(encoding="utf-8"))
     assert source_identity["exposure_config"]["enable_tool_search"] == "true"
+
+
+# --- per-arm (per-condition) timeout calibration (tempdoc 624 §Harness lessons):
+# the run-side threads the {condition: int} map through the task identity as a
+# canonical int-valued JSON string, and the solver resolves each cell's wall-clock
+# budget by its own condition (falling back to the scalar). ---
+
+def _tiny_corpus_and_queries(tmp_path):
+    dataset_dir = tmp_path / "dataset"
+    corpus_dir = dataset_dir / "corpus-dir"
+    corpus_dir.mkdir(parents=True)
+    (corpus_dir / "doc1.txt").write_text("hello world", encoding="utf-8")
+    queries_for_eval = tmp_path / "eval_queries.json"
+    queries_for_eval.write_text(
+        json.dumps([{"query": "q1", "answer": "a1", "question_type": "t"}]), encoding="utf-8")
+    return str(corpus_dir), str(queries_for_eval)
+
+
+def _capture_task_kwargs(monkeypatch):
+    captured = {}
+
+    def fake_agent_utility_task(**kwargs):
+        captured.update(kwargs)
+        return object()  # eval_set is mocked too, so any placeholder Task works
+
+    monkeypatch.setattr(aui, "agent_utility_task", fake_agent_utility_task)
+    monkeypatch.setattr(inspect_ai, "eval_set", lambda *a, **k: None)
+    return captured
+
+
+def test_run_utility_eval_threads_per_condition_timeout_as_canonical_int_json(tmp_path, monkeypatch):
+    corpus_dir, queries = _tiny_corpus_and_queries(tmp_path)
+    captured = _capture_task_kwargs(monkeypatch)
+    aui.run_utility_eval(
+        queries_path=queries, corpus_dir=corpus_dir, mcp_config=None,
+        conditions=("A", "C"), seeds=1, concurrency=1, log_dir=str(tmp_path / "logs"),
+        timeout_s_by_condition={"C": 150, "A": 300},
+    )
+    # Canonical: sorted keys, no whitespace, int values -> deterministic task identity.
+    assert captured["timeout_s_by_condition_json"] == '{"A":300,"C":150}'
+
+
+def test_run_utility_eval_omitted_per_condition_timeout_is_empty_json(tmp_path, monkeypatch):
+    # Old calibration files (no timeout_s_by_condition) -> "{}" -> scalar for every cell.
+    corpus_dir, queries = _tiny_corpus_and_queries(tmp_path)
+    captured = _capture_task_kwargs(monkeypatch)
+    aui.run_utility_eval(
+        queries_path=queries, corpus_dir=corpus_dir, mcp_config=None,
+        conditions=("A", "C"), seeds=1, concurrency=1, log_dir=str(tmp_path / "logs"),
+    )
+    assert captured["timeout_s_by_condition_json"] == "{}"
+
+
+def test_run_utility_eval_coerces_float_budgets_to_int_in_task_args(tmp_path, monkeypatch):
+    # A float in the task-identity args breaks eval_set resume (_assert_no_float_task_args);
+    # the map is int-coerced at serialization so a float can never reach the task args.
+    corpus_dir, queries = _tiny_corpus_and_queries(tmp_path)
+    captured = _capture_task_kwargs(monkeypatch)
+    aui.run_utility_eval(
+        queries_path=queries, corpus_dir=corpus_dir, mcp_config=None,
+        conditions=("A",), seeds=1, concurrency=1, log_dir=str(tmp_path / "logs"),
+        timeout_s_by_condition={"A": 300.0},
+    )
+    assert captured["timeout_s_by_condition_json"] == '{"A":300}'
+
+
+def _drive_solver_budget(monkeypatch, tmp_path, *, condition, timeout_s,
+                         timeout_s_by_condition_json):
+    """Run the solver just far enough to capture the wall-clock budget it hands to
+    `asyncio.wait_for` for a cell of `condition`, without touching the real SDK: the
+    fake `wait_for` records the timeout and closes the (never-awaited) coroutine."""
+    captured = {}
+
+    async def fake_wait_for(coro, timeout):
+        captured["timeout"] = timeout
+        coro.close()  # _one_attempt body (mkdtemp / SDK session) never runs
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(aui.asyncio, "wait_for", fake_wait_for)
+    monkeypatch.setattr(aui, "_record_cell", lambda *a, **k: None)
+    solve = aui.claude_agent_solver(
+        corpus_dir=str(tmp_path), mcp_config=None, model="haiku",
+        timeout_s=timeout_s, timeout_s_by_condition_json=timeout_s_by_condition_json)
+    state = _state()
+    state.metadata["condition"] = condition
+    asyncio.run(solve(state, None))
+    return captured["timeout"]
+
+
+def test_solver_resolves_timeout_by_condition(tmp_path, monkeypatch):
+    m = '{"A":300,"C":150}'
+    a = _drive_solver_budget(monkeypatch, tmp_path, condition="A", timeout_s=180,
+                             timeout_s_by_condition_json=m)
+    c = _drive_solver_budget(monkeypatch, tmp_path, condition="C", timeout_s=180,
+                             timeout_s_by_condition_json=m)
+    assert a == pytest.approx(300, abs=5)
+    assert c == pytest.approx(150, abs=5)
+    assert a > c
+
+
+def test_solver_falls_back_to_scalar_for_condition_absent_from_map(tmp_path, monkeypatch):
+    # A requested but only C is in the map -> A uses the scalar timeout_s.
+    budget = _drive_solver_budget(monkeypatch, tmp_path, condition="A", timeout_s=180,
+                                  timeout_s_by_condition_json='{"C":150}')
+    assert budget == pytest.approx(180, abs=5)
+
+
+def test_solver_empty_map_uses_scalar_for_every_condition(tmp_path, monkeypatch):
+    # Old-calibration-file behavior byte-for-byte: "{}" -> scalar for all cells.
+    a = _drive_solver_budget(monkeypatch, tmp_path, condition="A", timeout_s=180,
+                             timeout_s_by_condition_json="{}")
+    c = _drive_solver_budget(monkeypatch, tmp_path, condition="C", timeout_s=180,
+                             timeout_s_by_condition_json="{}")
+    assert a == pytest.approx(180, abs=5)
+    assert c == pytest.approx(180, abs=5)

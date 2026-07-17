@@ -4683,3 +4683,52 @@ max across arms to every arm.)
   equalized budgets costs ~$16 — founder option, not assumed. The zero-residual-exclusion
   outcome (0 infra errors both arms) does confirm the exhaustion classification pipeline works
   live.
+
+### Phase-2 amendment 2 (2026-07-17 ~09:35, before the sonnet re-run's cells; single-tier cell enforcement)
+
+The sonnet probe's first attempt was voided cell-by-cell by the resolved-model cohort guard:
+39/40 cells errored `resolved provider model changed within one cell: ['claude-haiku-4-5-20251001',
+'claude-sonnet-5']`. Root cause: the Claude CLI makes haiku-class BACKGROUND calls alongside the
+main model — invisible in every prior campaign because the main model was also haiku; sonnet is
+the first non-haiku campaign through this executor, and the guard (correctly fail-closed) voided
+every cell (~$5–15 spent, zero usable observations; logs archived at
+`logs-void-mixed-model-guard-20260717/`). Fix (config, not code — the 725 `--agent-env` seam):
+pin `ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-sonnet-5` and `CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-5`
+into every sonnet cell, making cells single-tier by construction (verified against Claude Code
+docs §model-config env vars; the deprecated SMALL_FAST var superseded). Calibration is reused
+(its timing/cost data are unaffected by background-call attribution); the re-run uses a fresh
+eval-set identity (agent_env is a task arg). Projected additional spend ≈ the same $4.80
+estimate; combined sonnet-run spend stays well under the $25 cap. Harness lesson recorded: the
+single-model cohort guard meets multi-model CLI reality on any non-haiku campaign — the overlay
+is now the standing convention for tier probes.
+
+## Phase-2 RESULTS (2026-07-17; both runs complete; campaign closed)
+
+**Run 2 — the sonnet tier probe: VERDICT (a), decisively — the 10k hop-2 failure is
+MODEL-CAPABILITY-bound.** 40 cells, every cell single-tier (`claude-sonnet-5` resolved in all 40;
+zero guard voids — the --agent-env overlay held), `comparable: true`, zero residual exclusions.
+Against the pre-registered floor-vs-not question: **sonnet-B 0.600 vs haiku-B's 0.067 floor** —
+a 9× clearance, unambiguous. The same-tier grep control adds the texture: sonnet-A also clears
+the floor (0.550 vs haiku-A 0.050), so at an adequate tier the task is solvable by both
+strategies; the tool's sonnet-tier margin on this stratum is completion/reliability (A exhausted
+5/20 cells at the 600s equalized budget → 75% completion; B 1/20 → 95%) rather than paired
+accuracy (+0.05 at n=20 single seed — explicitly NOT a claim per the pre-registration; this probe
+answers floor-vs-not, nothing finer). Consequences: the tier lever is real and feeds the 657
+install-tier economics; the wedge story for hard multi-hop at scale is "tool + adequate tier";
+and the tool's dividend re-denominates by regime — accuracy+cost at weak-tier/grep-hostile
+(legal-1k haiku), time at grep-friendly (email-1k), completion at strong-tier/scale (this probe).
+Routing per the pre-registered tree: answer-side hop absorption is NOT the required next lever
+(the capability branch resolved positive); L4d stays a hypothesis for weak tiers only.
+
+**Run 1 — email-10k (recap): accuracy confounded** by the pre-equalization budget asymmetry
+(amendment 1 disposition); duration/completion data valid; the $16 equalized rerun remains a
+founder option to complete the email size trend cleanly.
+
+**Spend**: email-10k ≈ $16; sonnet probe ≈ $5-8 actual (est $4.80) + the voided mixed-model
+attempt ≈ $5-15; Phase-2 total ≈ **$26-39**, all inside per-run caps.
+
+**Harness lessons banked this phase (all in the inbox/lessons trail):** (1) equalized-max
+per-arm timeouts (amendment 1 — shipped #232); (2) single-tier --agent-env overlay for any
+non-haiku campaign (amendment 2); (3) the 751 index-cache chain-integration spec (three live
+conflicts; campaign reverted to fresh-build; findings own the §P.3.5 follow-up); (4) the
+wrapper/orphan port-contention classes (watched-root gate catch + the mid-death relaunch race).
