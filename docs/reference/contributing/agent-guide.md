@@ -497,19 +497,20 @@ plain bullets or a prose list there instead.
 
 Two `gh` CLI quirks worth knowing at merge/wait time (tempdoc 695):
 
-- **Waiting on a PR's or run's CI completion** fits `gh pr checks <N> --watch
-  --interval 30` (backgrounded) better than a hand-rolled poll loop — the
+- **Waiting on a PR's CI completion** fits `node scripts/dev/run-gh.mjs
+  checks-wait <N>` (backgrounded) better than a hand-rolled poll loop — the
   latter forces sub-1s `sleep` calls to dodge the bash-guard threshold, costs
   hundreds of loop iterations and GitHub API calls on a multi-minute job, and
-  can outlast the Bash tool's own command timeout. `gh run watch <run-id>
-  --exit-status` is the equivalent for a specific workflow run. The default
-  10s refresh reprints the full check table every tick; `--interval 30` or
-  higher cuts output volume substantially on jobs known to run several
-  minutes. Watching immediately after *any* push (not just the batch case
-  further below) can race check registration and exit on "no checks
-  reported" — see the registration-race bullet in Batch-publishing below,
-  and the `/publish` skill's CI-wait pattern for the condition-poll-first /
-  never-chain-with-merge version of this sequence.
+  can outlast the Bash tool's own command timeout. `checks-wait` pre-polls
+  until checks register on the branch, then decodes `gh pr checks`'s
+  documented 0=pass/1=fail/8=pending bitwise exit contract instead of
+  guessing at it (tempdoc 743 P-K). `gh run watch <run-id> --exit-status` is
+  still the equivalent for a specific workflow run (no wrapper yet). Watching
+  immediately after *any* push (not just the batch case further below) can
+  race check registration — `checks-wait`'s pre-poll is exactly that
+  mitigation; see the registration-race bullet in Batch-publishing below and
+  the `/publish` skill's CI-wait pattern for the never-chain-with-merge half
+  of this sequence.
 - **`gh pr merge <N> --squash --delete-branch` can report `failed to run
   git: fatal: 'main' is already used by worktree` even when the remote merge
   succeeded.** That's `gh`'s local post-merge branch-sync step failing
