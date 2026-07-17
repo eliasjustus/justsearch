@@ -876,3 +876,29 @@ designed rather than as an accident.
 3. **Java `ner_model_sha256` commit stamp** — closes the one live/static asymmetry in the key.
 4. **676 eval-lane contract line** (the §K derivation-pin invariant) — on ship to `main`.
 5. Chain tooling adoption of the v0 `index-identity` primitive (campaign-side, not jseval-side).
+   Note: in practice the v1 store already captures most of v0's in-chain waste class —
+   consecutive `jseval run --index-cache` invocations within one chain hit the store.
+
+### P.4 Design-fit review (2026-07-17) — three recorded gaps, none load-bearing
+
+A final conceptual pass of implementation-vs-tempdoc found the charter's five hard
+requirements, the §F design conditions, and §M's shape all satisfied (fail-closed with no
+force flag; complete purpose-built key incl. the post-review corpus-path axis; counts+canary
+attestation re-verified at adoption; provenance in the run summary — deliberately outside
+`manifest_hash`, an honest projection per requirement 4; copy-on-adopt concurrency; eval-lane
+only; MISS byte-identical to today, audit-verified). Three deviations, all minor, recorded
+here so they aren't lost:
+
+1. **Hardware/ORT identity is not yet in the attestation** (§M.1/§I.1 said it should be, so a
+   future cross-machine share fails closed on it). No live risk — the store is machine-local
+   and cross-machine sharing is an §M.8 non-goal — but the fail-closed hook §I.1 wanted is
+   absent; add `hardware` to `_build_attestation` before any cross-machine ambition.
+2. **`would_have_hit_scoped_pin` is narrower than §M.5's "every miss"**: it is computed only on
+   `miss:confirm` (a nominated candidate whose confirm diff isolates git/dirt), but the common
+   sha-change miss class surfaces as `miss:selector` (key mismatch → no candidate → nothing to
+   diff) and records `null`. The v2 trigger data therefore under-collects; if v2 becomes a real
+   question, the selector should additionally probe a scoped-variant key on miss to attribute it.
+3. **Campaign pinning of in-use entries** (§M.3 hygiene, "entries pinned while a campaign
+   declares them in use") is not implemented — the 10-minute publish-protection window plus
+   adoption `touch()` (which refreshes LRU recency) is the only protection. Adequate at current
+   store sizes; revisit with follow-up 5 when chains declare campaigns.
