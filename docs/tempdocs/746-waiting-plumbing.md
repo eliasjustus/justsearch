@@ -1,7 +1,7 @@
 ---
 title: "746 — Waiting-plumbing slice: Monitor-based CI waits + worktree-teardown cleanup (743 P-A1 + P-I)"
 type: tempdocs
-status: "open — implementation started 2026-07-16 (session f7580e17); founder-approved via 743's disposition record"
+status: "COMPLETE 2026-07-17 — all work items shipped: P-A1/P-I via PR #213 (CI-wait pattern, remove-worktree self-match fix + junction evaluation, .worktreeinclude), Monitor bug closed DO-NOT-FILE via PR #229. Successor guidance: 743's second wave (session a6d2af56) mechanized the CI-wait prose as scripts/dev/run-gh.mjs checks-wait and added scripts/dev/run-watcher.mjs for long-run supervision; the publish skill now points at both. Nothing remains here."
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / plumbing

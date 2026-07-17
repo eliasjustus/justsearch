@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy. BASELINE RECOMPUTED 2026-07-16 by tempdoc 745 (session 805279a4) after it fixed 7 verified bugs in the cost parser this program was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline SURVIVES; read prediction-1 against 84.0%, not 85.1%). Handoff item 4 ('OTel reservoir is feeding') was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it — no month-scale OTel data predating 2026-07-16 exists. FRESH EVIDENCE LANE 2026-07-17 (session a6d2af56, worktree takeover-743): founder-directed independent 11-session raw-transcript pass, deliberately derived without relying on this tempdoc's prior conclusions, plus a founder reframe (no specific scarcity; environment-centric: 'the agents themselves might be the ones encountering issues') — see §'Independent transcript-evidence lane (2026-07-17)'. SECOND-WAVE THEORIZATION written same day (§'Theorization — second proposal wave'): three environment deficits (queryable world-state / reliability-vs-insurance / learning loop) + go/stop visibility, unification stance settled (paved usage surfaces, consolidation only under a live consumer, no standalone refactor). RESEARCH PASS COMPLETE same day (3 refute-first lanes, §'Research pass — second wave'): premise WEAKENED-not-refuted — durable core narrowed to exec/encoding-normalization + world-state query; transcript-reader/watcher demoted to deletable adapters over native surfaces; error-hint loop gated to fire-time hooks under the existing ratchet; PYTHONUTF8-machine-wide corrected to scoped PYTHONIOENCODING; gh 0/1/8 bitwise contract + pre-poll race grounded. DESIGN COMPLETE same day (§'Design — second proposal wave P-J…P-N'): P-J world-state query (durable; one-scanner-two-consumers extraction from check-tempdoc-numbers), P-K exec substrate (durable; gh 0/1/8 + pre-poll, scoped PYTHONIOENCODING; paved-path + fire-time redirect delivery), P-L signature census extending 727 (ratchet-gated), shared transcript-store lib (adapter; opportunistic migration of 7 readers), P-M supervision hygiene (drop double insurance, one watcher helper, notify-on-failure convention; coordinate with in-flight 750), P-N go/stop visibility (convention tier). Every component classed durable-or-adapter with a named retirement condition. NEXT: founder review of P-N/P-M(c) + the wave's dispositions; V-A1..V-A5; P-F/P-C pilot sequencing still an open founder call."
+status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy. BASELINE RECOMPUTED 2026-07-16 by tempdoc 745 (session 805279a4) after it fixed 7 verified bugs in the cost parser this program was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline SURVIVES; read prediction-1 against 84.0%, not 85.1%). Handoff item 4 ('OTel reservoir is feeding') was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it — no month-scale OTel data predating 2026-07-16 exists. FRESH EVIDENCE LANE 2026-07-17 (session a6d2af56, worktree takeover-743): founder-directed independent 11-session raw-transcript pass, deliberately derived without relying on this tempdoc's prior conclusions, plus a founder reframe (no specific scarcity; environment-centric: 'the agents themselves might be the ones encountering issues') — see §'Independent transcript-evidence lane (2026-07-17)'. SECOND-WAVE THEORIZATION written same day (§'Theorization — second proposal wave'): three environment deficits (queryable world-state / reliability-vs-insurance / learning loop) + go/stop visibility, unification stance settled (paved usage surfaces, consolidation only under a live consumer, no standalone refactor). RESEARCH PASS COMPLETE same day (3 refute-first lanes, §'Research pass — second wave'): premise WEAKENED-not-refuted — durable core narrowed to exec/encoding-normalization + world-state query; transcript-reader/watcher demoted to deletable adapters over native surfaces; error-hint loop gated to fire-time hooks under the existing ratchet; PYTHONUTF8-machine-wide corrected to scoped PYTHONIOENCODING; gh 0/1/8 bitwise contract + pre-poll race grounded. SECOND WAVE IMPLEMENTED-ON-BRANCH 2026-07-17 (session a6d2af56, worktree takeover-743, NO PR yet): P-J/P-K/P-L/P-M shipped + P-N drafted across commits a47cd644/28113460/905cab97/d9beed29/7ee65238; opus refute-first review verdict SHIP, its 3 findings fixed + live-verified; 100+ new checks, suite 31/31, kernel wave-gates green, gradle sanity green (see §'Second-wave implementation record'). OPEN FOUNDER ITEMS: P-N/P-M(c) draft wording approval; V-A4 (Remote-Control push vs local beacon); P-F/P-C pilot sequencing; PR/publish go for this branch."
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -1566,6 +1566,46 @@ exit-code contract; P-L touches the alive miner). No slice requires opus impleme
 P-N/skill-wording edits are main-loop/trivial scale. Suggested slice order: transcript-store
 extraction rides P-L (its first consumer); P-J and P-K are independent and can go first in
 either order; P-M(a) guidance edits ride whichever slice ships first; P-M(b) waits on V-A1.
+
+## Second-wave implementation record (2026-07-17, session a6d2af56, worktree takeover-743)
+
+Implemented on branch `worktree-takeover-743` per the approved plan; **no PR opened** (awaiting
+founder word). Six commits: `a47cd644` (P-J: world-state CLI + one-scanner-two-consumers
+extraction, gate parity byte-verified), `28113460` (P-K: run-gh with 0/1/8 + pre-poll, run-py
+with scoped UTF-8, exec-substrate-hint registered, gh-guidance prose swept to pointers),
+`905cab97` (P-L: transcript-store lib, signature census, T1 taxonomy + spine condenser rescued
+from ephemeral scratchpads), `d9beed29` (P-M/P-N: run-watcher heartbeat helper, wakeup-hygiene
+guidance, overnight-window arming note, stop-turn two-list drafts — every draft flagged
+pending founder approval), `7ee65238` (three refute-first review fixes), plus this record.
+
+- **Independent refute-first review (opus, reviewer ≠ implementers): SHIP.** Scanner parity
+  byte-proven against the pre-extraction gate (incl. the live #720/#729 collisions); taxonomy
+  byte-faithful to the T1 original (comparability preserved; only discovery/paths differ);
+  watcher never reports DONE on a dead run; duplicate-filter interrupt-exception hand-traced
+  correct; hint corpus precise; no mojibake (the reviewer's one suspect line was its own
+  cp1252 console — the exact bug run-py fixes). Three non-blocking findings, all fixed and
+  live-verified in `7ee65238`: run-gh spawn-ENOENT fast-fail (was a 30-min wrong-cause
+  timeout), watcher verdict.json read race (was undocumented exit 64), census subagent
+  double-count (sidechain lines skipped iff subagent files scanned separately).
+- **Validation:** 100+ new checks across 7 test files; analytics suite 31/31; hook-integrity
+  + full kernel pass on every wave-relevant gate; gradle sanity build green.
+  `npm-audit`/`module-deps`/`dead-code`/`dead-code-jvm` report `kernel/input-missing` in this
+  never-prepared worktree (no node_modules/audit-report — the 742 gate-input contract failing
+  closed on missing inputs, not a regression; they run with real inputs in CI/at publish).
+- **The loop measured itself:** the census's live run shows this wave's own worker sessions
+  hitting ps-call-operator and cp1252 signatures on 2026-07-17 — the baseline the P-K ratchet
+  will be judged against.
+- **V-A1 resolved for sizing:** #72171 CLOSED-COMPLETED but #75438 OPEN and docs still state
+  background/Monitor tasks are never restored on resume → restart-loss class live; minimal
+  watcher justified. **V-A3 clear:** the four `disable-model-invocation` skills
+  (collision-check/goal/payback/time-calibration) are not used in any observed /loop prompt.
+- **Process note (for the record):** the Slice-2 worker used `git stash` for verification
+  despite the no-git-mutation brief (shared stash stack risk; no damage — verified only the
+  725 session's tagged entry present). Later briefs carried an explicit stash prohibition;
+  worker briefs should always name it.
+- **Remaining founder items:** P-N wording (3 draft-flagged skill edits) + P-M(c)
+  notify-on-failure convention approval; V-A4 (enable Remote-Control push vs build a beacon);
+  P-F/P-C pilot sequencing; and the PR/publish go for this branch.
 
 ## Non-goals
 
