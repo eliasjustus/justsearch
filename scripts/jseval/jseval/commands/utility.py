@@ -330,10 +330,15 @@ def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, see
     # Calibration (from `utility-calibrate`) overrides timeout/concurrency/search-key
     # and filters the queries to the closed-book-retained (retrieval-relevant) set.
     calib_readiness = None  # threaded into the run's comparability verdict (readiness ∧ error_rate)
+    # Per-arm timeout calibration (tempdoc 624 §Harness lessons): present only in newer
+    # calibration files; None → the run uses the scalar `timeout_s` for every condition
+    # (old calibration files keep working byte-for-byte).
+    timeout_s_by_condition = None
     if calibration:
         from ..types import ReadinessResult
         calib = json.loads(Path(calibration).read_text(encoding="utf-8"))
         timeout_s = calib.get("timeout_s", timeout_s)
+        timeout_s_by_condition = calib.get("timeout_s_by_condition")
         concurrency = calib.get("concurrency", concurrency)
         search_config_key = calib.get("config_cohort_key", search_config_key)
         if not calib.get("readiness_passed", True):
@@ -349,7 +354,8 @@ def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, see
             stable_q = Path(calibration).parent / "_calibrated_queries.json"
             stable_q.write_text(json.dumps(kept), encoding="utf-8")
             queries = str(stable_q)
-            click.echo(f"calibration: timeout={timeout_s}s concurrency={concurrency} "
+            per_arm = (f" per-arm={timeout_s_by_condition}" if timeout_s_by_condition else "")
+            click.echo(f"calibration: timeout={timeout_s}s{per_arm} concurrency={concurrency} "
                        f"queries={len(kept)} (dropped {calib.get('n_dropped_contaminated', 0)} contaminated)")
     # corpus-dir + mcp-config must be ABSOLUTE (the solver runs claude from a temp cwd).
     aui.run_utility_eval(
@@ -363,6 +369,7 @@ def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, see
         search_config_cohort_key=search_config_key,
         corpus_certification=corpus_certification,
         agent_env=agent_env or None,
+        timeout_s_by_condition=timeout_s_by_condition,
     )
     from ..utility_recompose import finalize_logs
     record = finalize_logs(
