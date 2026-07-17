@@ -355,6 +355,22 @@ def cmd_utility_run(ctx, queries, corpus_dir, corpus_root, mcp_config, model, co
         if idx is not None:
             rows = json.loads(Path(queries).read_text(encoding="utf-8"))
             kept = [rows[i] for i in idx if i < len(rows)]
+            # Rewrite ONLY when the closed-book filter actually dropped queries
+            # (tempdoc 624 confirmatory launch, 2026-07-17): an unconditional
+            # rewrite changes the queries file's BYTES even at zero drops, so a
+            # root-mode certified run fails its query_gold_sha256 check against
+            # the original committed queries ("query-and-gold digest disagrees").
+            # Zero drops -> keep the original path (bytes match the certification;
+            # path is equally stable for eval_set resume identity). When queries
+            # ARE dropped, the rewrite proceeds -- and a certified run failing its
+            # digest check in that case is CORRECT fail-closed behavior: the
+            # certified query matrix no longer holds.
+            if len(kept) == len(rows):
+                click.echo(
+                    f"calibration: timeout={timeout_s}s concurrency={concurrency} "
+                    f"queries={len(kept)} (dropped 0 contaminated; original queries file kept)")
+                idx = None
+        if idx is not None:
             # STABLE path (next to the calibration) so queries_path — a task-identity
             # arg — is constant across re-runs and eval_set can resume (D2).
             stable_q = Path(calibration).parent / "_calibrated_queries.json"
