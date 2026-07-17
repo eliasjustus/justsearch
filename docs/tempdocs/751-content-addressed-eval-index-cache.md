@@ -1,7 +1,7 @@
 ---
 title: "Input-addressed eval index cache: reuse a built index iff (corpus_signature × index_identity_key) match — static selector nominates, the running backend confirms, fail-closed to fresh build — keeping the fresh-build validity guarantee while amortizing the ~50-min/10k-doc rebuild eval campaigns pay repeatedly for identical inputs"
 type: tempdocs
-status: "open — takeover (GO, §F), theorization (§G-§K), research (§L), design (§M-§N) complete (2026-07-17). Plan/derisk passes are next; no implementation yet. Original charter title said 'content-addressed … config_cohort_key'; corrected per §L.2 (input-addressed) and §A.1 (purpose-built key)."
+status: "open — takeover (GO, §F), theorization (§G-§K), research (§L), design (§M-§N), derisk (§O, live-probed, confidence 8/10) complete (2026-07-17). Plan pass is next; no implementation yet. Original charter title said 'content-addressed … config_cohort_key'; corrected per §L.2 (input-addressed) and §A.1 (purpose-built key). Design amendments from derisk: dirty-state-in-key (§O.4), kill-quiesce definition (§O.2), process-binding assertion in confirm (§O.8.1)."
 created: 2026-07-17
 author: agent (Fable orchestration), chartered at founder direction during the Phase-2 utility campaign ("open a new tempdoc for this. ill set a new agent on it")
 category: eval-infrastructure / measurement-economics / index-lifecycle
@@ -679,3 +679,96 @@ keep: amortization accrues while reuse-related measurement-validity incidents st
 Retire when the eval lane no longer rebuilds at meaningful cost (smaller corpora, faster
 hardware, or the lane itself retired) — at that point the invariant is vacuously true and should
 be dropped from active guidance rather than maintained as apparatus.
+
+---
+
+# Derisk (2026-07-17, session 7b0aa2d9 — live-probed on the real eval stack)
+
+## §O. Derisk findings
+
+Confidence-building pass before implementation: static probes + a **live end-to-end adoption
+experiment** (fresh `mixed/legal-clerc-200` build → kill-stopped data dir → `cp -r` copy → boot
+`runHeadlessEval` on the copy → full verification battery → teardown). Per-risk outcomes:
+
+### O.1 [was HIGH] Copied-data-dir boot: PROVEN GREEN — the core mechanism works
+
+A byte copy of the quiesced data dir booted into a fully healthy backend: bound to the copy
+(`/api/debug/state` → `justsearch.data.dir = …-COPY-751`), **adopted the copied generation
+verbatim** (`activeGenerationId == g-20260717-082744` == the copy's `state.json`; building/
+previous generation empty; `migration_state IDLE` — no silent adopt-then-migrate), all counts
+served instantly with no re-enrichment (199 docs, embedding+SPLADE 100%, 4293 chunk docs, chunk
+vectors 100%), the copied sibling `default.index.lock` re-acquired cleanly (stale-lock recovery
+worked as designed), and only benign WARNs in the worker log. §M.2's adopt path is demonstrated,
+not hypothesized.
+
+### O.2 [was HIGH] Quiesce: GREEN with a redefinition — today's stop is a KILL, and that's fine
+
+Both observed jseval stops ended in the orphan-Worker force-kill sweep (PIDs 25964, 24296) —
+there is no graceful shutdown to lean on. The killed dir nonetheless adopted perfectly because
+the *Lucene commit* was already complete (`build_state=COMPLETE` + embedding fingerprint stamped
+at 08:30:08Z, kill at 10:30:11) and SQLite WALs recover on open (copy `-wal`/`-shm` alongside).
+⇒ Design refinement: **"quiesced" = enrichment-complete + final commit stamped** (both readable
+from `/api/status` + `/api/debug/commit-metadata` before stopping), NOT "cleanly shut down."
+
+### O.3 [was MED] Eval-mode identity surfaces: GREEN, better than the audit knew
+
+Live from the eval backend: `/api/debug/commit-metadata` fully real (all fps, `vector_format`,
+`build_state`, `commit_time`); session-policies `configStatus: ok`. **Bonus finding:** the index
+commit already carries `embedding_model_sha256` AND `splade_model_sha256` — the §A.2 "SPLADE
+path-only" gap is a *jseval snapshot* gap, not an index gap; the confirm step can read both
+content hashes from the artifact itself. Remaining true gap: no `ner_model_sha256` in the commit.
+
+### O.4 [was MED] `git_dirty`: RISK CONFIRMED — the hard gate would zero the hit rate
+
+Both real campaign trees are dirty with **tracked** modifications right now (main: 3 files;
+step2-powered: 5, including jseval code itself). §M.1's hard `git_dirty==false` gate would have
+disabled the cache for the very campaign that chartered this doc. ⇒ Design amendment (still
+fail-closed): **include the dirt in the key instead of gating on it** — key component
+`sha256(git status --porcelain ∥ git diff HEAD)`; identical dirty state ⇒ identical key ⇒ hit;
+any edit ⇒ miss. Open detail for the plan pass: untracked *source* files appear in porcelain by
+name but not content — decide whether to content-hash untracked files under code/SSOT paths or
+treat any untracked file under those paths as cache-disabling.
+
+### O.5 [was MED] Behavioral canary: GREEN — one API call
+
+`POST /api/knowledge/search {debug:true}` on the adopted index returns the full `searchTrace`:
+`chunk-merge: executed`, sparse+dense+cross-encoder executed, degradation empty. The canary is a
+single call; jseval's own `provenance.extract_query_evidence` already parses this shape.
+
+### O.6-O.7 [were LOW] Selector inputs + entry economics: GREEN
+
+Sidecar `.onnx.sha256` + `model_manifest.json` files exist next to embed/SPLADE models (no
+GB-hashing in the selector). Entry sizes: 200-doc dir = 44 MB (copy: 0.1 s); the 10k campaign
+dir = 440 MB — **copy cost is seconds, not the minutes §H.3 conservatively assumed**.
+
+### O.8 New findings the plan didn't anticipate
+
+1. **Wrong-backend binding hazard (live-reproduced):** the first experiment run silently spent
+   49 minutes bound to a STALE backend — jseval health-polls fixed port 33221 while its own
+   spawned Head, finding 33221 occupied, fell back to an ephemeral port. Direct consequence for
+   §M.2, now verified feasible: the confirm step MUST include the process-binding assertion
+   (`/api/debug/state → justsearch.data.dir == the adopted copy's path`), not just config
+   equality. (jseval's own bind-vs-poll identity gap logged to the observations inbox.)
+2. `jseval run --max-queries 0` completed exit 0 but wrote **no summary/run dir** — the publish
+   step must not assume a run dir exists; logged to observations, not investigated (out of
+   scope).
+3. B4 (Worker silently serves an index whose HNSW/chunking knobs changed) was verified by code
+   reading only (`KnowledgeServer.java:539-619` checks embedding fp, schema, recovery marker —
+   nothing else): the Worker's own checks cover a strict subset of the key, as §B stated.
+
+### O.9 Confidence and implementation shape
+
+**Confidence: 8/10** for the remaining (plan → implement) work. The load-bearing mechanism
+(copy → boot → adopt-verbatim → confirm → canary) is live-proven end-to-end; every identity
+surface the confirm step needs exists and is real in eval mode; entry economics are better than
+assumed. Held-back points: (a) the dirty-state-in-key design (O.4) needs careful specification
+around untracked files; (b) publish-time quiesce detection needs the O.2 observable definition
+wired precisely; (c) the jseval integration surface has live quirks (port discipline O.8.1, the
+missing-summary path O.8.2) that implementation will trip over if briefs don't name them.
+
+**Implementation difficulty: moderate, and v1 is pure-Python** — every needed backend surface
+already exists (no Java changes for v1; a `ner_model_sha256` commit stamp is a nice-to-have
+follow-up). The work is one new jseval module family (index-identity key assembly, store with
+atomic publish per `dataset_cache.py` idioms, publish/adopt orchestration in `backend.py`'s
+lifecycle, provenance block in the run record, miss-reason instrumentation) plus tests. The
+hard parts are fail-closed edge-case discipline and Windows process/file realities, not volume.
