@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy. BASELINE RECOMPUTED 2026-07-16 by tempdoc 745 (session 805279a4) after it fixed 7 verified bugs in the cost parser this program was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline SURVIVES; read prediction-1 against 84.0%, not 85.1%). Handoff item 4 ('OTel reservoir is feeding') was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it — no month-scale OTel data predating 2026-07-16 exists."
+status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy. BASELINE RECOMPUTED 2026-07-16 by tempdoc 745 (session 805279a4) after it fixed 7 verified bugs in the cost parser this program was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline SURVIVES; read prediction-1 against 84.0%, not 85.1%). Handoff item 4 ('OTel reservoir is feeding') was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it — no month-scale OTel data predating 2026-07-16 exists. FRESH EVIDENCE LANE 2026-07-17 (session a6d2af56, worktree takeover-743): founder-directed independent 11-session raw-transcript pass, deliberately derived without relying on this tempdoc's prior conclusions, plus a founder reframe (no specific scarcity; environment-centric: 'the agents themselves might be the ones encountering issues') — see §'Independent transcript-evidence lane (2026-07-17)'."
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -975,6 +975,141 @@ recommended dispositions)
   blur accepted at this scale); abort rule: any escaped defect traceable to a piloted change
   reverts that change immediately; window verdict = gross signals + founder judgment
   (dashboard sanity-checks, doesn't decide).
+
+## Independent transcript-evidence lane (2026-07-17, session a6d2af56, worktree takeover-743)
+
+### Charter and method
+
+Founder-directed fresh pass: re-derive the friction picture from raw session transcripts
+**without relying on this tempdoc's prior conclusions** — issues only, regardless of fix
+feasibility. Analysis was done by the orchestrator itself (no subagent summarization). Each
+transcript was mechanically condensed to a per-turn spine (user turns, assistant text, tool
+calls + inputs, errors, time gaps, per-turn token usage — no interpretation), then read and
+judged directly; one session read end-to-end, the rest via full anomaly skeletons plus deep
+dives into every flagged region.
+
+**Corpus (11 sessions, 2026-07-13 → 2026-07-17):** f03cea03 (737 full pipeline → implementation
+→ live E2E; $326, 20 spawns, 0 merges), 109145ac (707/624 overnight campaign, 38 wakeups,
+15 Monitors), 114e3e71 (release round-5 convergence, 38 tool errors, mostly inline), 478caa0c
+(stale-worktree rescue + publish; $71, 11 merges), cfa87fbc (750 theorize/research/derisk),
+805279a4 (745 implementation, delegation-heavy), 25f8ac5d (725 orchestrator, 54 spawns),
+f3e41644 (release agent, 92 spawns, 9 Monitors, 11 SendMessage), 70bf04ea (742 archaeology),
+d1af1a27 (739/history), plus micro-sessions becbe262/cadd2043/b19e907c/60dde1e9.
+
+### Founder inputs recorded (2026-07-17, this session)
+
+- **No specific scarcity currently** — the program should target overall improvement of every
+  aspect, not optimize one currency. Founder reports **no complaints about how agents behave**;
+  the operative frame: *"i just feel like the agents themselves might be the ones encountering
+  issues or working in an inefficient environment."*
+- Monitor experience: *"ive simply found the monitor sometimes not firing and agents waiting
+  indefinitely"* — a silent-tail claim, not an average-case claim.
+- Rapid duplicate user messages in transcripts are a **storage artifact**, not founder behavior
+  (instrument warning below).
+- The 7/15 overnight-run matter: founder declines severity ("not that big of an issue").
+
+### Findings
+
+**A. Mechanical substrate tax — confirmed in 11/11 sessions, head-heavy distribution.**
+Recurring deterministic signatures, none of which feed back into anything: PowerShell
+call-operator `& "…gh.exe"` pasted into bash (≥4 sessions); PowerShell 7 syntax (`??`) on the
+5.1 shell; cp1252 decode crashes reading UTF-8 JSON/logs from inline Python (≥3 sessions);
+inline-Python backslash SyntaxErrors; quote-escape EOF errors (b19e907c hit one on its *first
+tool call*); `F:\tmp`/`/tmp` vs scratchpad path misses; cwd drift between Bash calls;
+deferred-tool schema-not-loaded InputValidationErrors (TaskCreate, Monitor); **`gh` exit-code
+semantics misread as failures** (`gh pr checks` exits 1/8 while all checks pass — error-surfaced
+in ≥3 sessions); 2–5-min command timeouts on searches/watches. Every session pays the same
+tuition; **nothing learns across sessions**.
+
+**B. Waiting economics / defensive overspending — confirmed at mechanism level.** f03cea03:
+14 ScheduleWakeup fallbacks armed, 0 needed (every primary notification arrived first), 1 fired
+stale *after closeout* burning a full ~672k-cache-read turn. 109145ac overnight: **triple**
+supervision (per-step Monitor + 30-min /loop + wakeup fallbacks); five consecutive Monitor-ack
+turns in 18 min, each a one-liner at ~550k cache reads; each /loop tick re-injects ~9k chars of
+static skill text. Late-session per-turn cache reads reach 550–670k, so *every* trivial ack pays
+it; multi-minute waits invalidate the cache (observed cr collapse to ~31k ≥5× in one session),
+so each wait also buys a full cache re-write. The defensive layering is environment-taught:
+primitives that fail rarely-but-silently force 100% insurance (see Monitor nuance below).
+
+**C. World-state illegibility — hits the founder directly, not just agents.** Finished work
+parks invisibly: a week-old, never-pushed worktree holding two finished tempdocs (~1,380 lines)
+was found only because the founder *remembered* it (478caa0c); f03cea03's 21 commits sit
+unmergeable on a parked release-branch base. Tempdoc-number collisions recurred 3× live, and
+478caa0c documented the detector's blind spot then **fell into the same trap two hours later**
+(picked 728, colliding with four in-flight worktrees). The micro-sessions show the founder as
+the system's index and message bus: cadd2043 = founder lost their own session (transcripts file
+under per-worktree project dirs — the same mechanism that made the baseline instrument call
+109145ac's merges "unattributable"); becbe262 = founder asking why skills don't appear in
+worktrees (untracked files); b19e907c = founder hand-carrying one agent's watcher-failure
+analysis into another session as pasted text.
+
+**D. Stop/go calibration — one judgment axis, errors in both directions, silent while wrong.**
+Overstep: 109145ac fired the overnight GPU chain treating a budget remark as authorization
+(admitted verbatim: "I treated that as standing authorization"), and the dev stack stayed up
+~12h idle afterward until the founder stopped it. Understep: 805279a4 sat silent 24 min until
+the founder asked "what are you waiting for?" — the agent's own answer: it had labeled one
+pending decision "awaiting founder" so broadly it "shaded into sounding like everything is
+blocked. It isn't." Same root both times: the authorization state between founder and session
+is implicit, carried in prose interpretation, invisible when miscalibrated; the only correction
+channel observed was the founder noticing. Related, softer instance: 114e3e71 deferred a direct
+"copy the documentation over" twice (two real `[Request interrupted by user]` markers) in favor
+of self-directed verification; the copy happened next morning after "did you copy all relevent
+content?" → "No". Also in this family: closure overclaiming — "NOT A DEFECT / closed" survived
+implementer + reviewer + tempdoc until the founder's "just because they arent bugs, doesnt mean
+they arent issues" forced the correction (114e3e71).
+
+**E. Written rules encode a stricter posture than the founder actually holds — and agents
+can't tell which rules are soft.** f3e41644: agent refused (correctly per `never-share-worktree`)
+to implement in the shared release worktree, with rule-grounded reasons; founder overrode in one
+line ("you can proceed with implementation on this branch"). Two diverging authorities: the rule
+corpus and live founder judgment. Sibling datum (25f8ac5d): founder rejects "agent intelligence"
+as a dismissal category — "we cant just ignore these issues because the cause is the agents
+intelligence."
+
+**F. Instrument notes (for anyone mining transcripts or reading the baseline).**
+1. **Duplicate-user-message artifact:** adjacent near-identical user messages are storage
+   artifacts UNLESS preceded by an explicit `[Request interrupted by user]` marker — friction
+   miners counting user repeats without this filter will over-count founder interventions.
+2. **Producer/publisher misattribution in cost/merge:** the producing session can score $326/0
+   merges (f03cea03, work parked on a release-branch base) while the publishing session scores
+   $71/11 merges (478caa0c, largely shipping other sessions' finished work). Window totals are
+   fine; per-session cost/merge is misleading.
+3. Transcripts of worktree-homed sessions file under per-worktree project dirs — the baseline
+   instrument's "unattributable" bucket partially reflects this, not missing data.
+4. The survival-law machinery itself glitched live once (`record-merge: cannot resolve commit
+   --help`, 25f8ac5d) — the instruments are part of the unreliable environment.
+5. Thinking blocks are not persisted in transcripts (all zero-length) — causal reads of
+   judgment failures from transcripts alone are inference from behavior, and should be labeled
+   as such.
+
+**G. Monitor reliability — both prior claims need merging.** In the one fully-observed
+overnight window the disk-marker Monitor fired flawlessly all night (consistent with 746's 7/7
+repro on 2.1.212); the founder's experience of monitors "sometimes not firing, agents waiting
+indefinitely" stands as the silent tail (cross-restart orphaning produced the literal "No
+completion record" notice in 109145ac after documented PC restarts). Economics consequence: a
+primitive that fails rarely but *silently* forces permanent 100% insurance — the fix that
+matters is reliability *or legible failure*, not average-case improvement.
+
+**H. Counter-findings (what demonstrably works — kept for calibration).** Micro-sessions are
+near-free and effective (a platform question answered in 2 tool calls; the lost session found
+in 8). Refute-first review caught a real HIGH bug pre-merge (f03cea03). pipe-mask-hint,
+bash-guard, repeat-guard, and worktree-base verification all fired correctly when needed. Live
+E2E was genuinely end-to-end (real model, real browser, backend state checked per step). A
+session absorbed a just-merged rule mid-flight and re-verified by content, not ancestry
+(478caa0c). Session startup/orientation overhead is NOT a problem at any observed scale.
+
+### Synthesis (feeds Phase 3+; no proposals authored in this lane)
+
+Three environment deficits explain most of the observed waste across 11 sessions, matching the
+founder's frame: **(1) nothing is queryable** — world-state (worktrees, stranded work, tempdoc
+numbers, sessions, stack ownership) lives in scattered files and founder memory, re-derived
+expensively per session; **(2) nothing is reliable enough to skip insuring against** — watchers,
+exit codes, teardown scripts, even the telemetry, so every session self-insures at per-turn
+cost; **(3) nothing learns** — the same error signatures recur in every session with no
+feedback loop. Plus one judgment axis worth cheap *visibility* (not prevention): the implicit
+go/stop authorization state (finding D). Gaps not covered by the existing P-set: a queryable
+world-state index, an error-signature feedback loop, go/stop-state legibility. P-A2 (cheap-ack,
+deferred) covers part of deficit 2's cost surface.
 
 ## Non-goals
 
