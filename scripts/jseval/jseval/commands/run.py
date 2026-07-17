@@ -379,6 +379,7 @@ def _run_iteration(
             if _oc.get("mode") != "adopted" and publish_selector_key:
                 publish_inputs = _capture_publish_inputs(
                     effective_base_url, backend_proc.spawn_env or {}, dataset,
+                    backend_proc.data_dir,
                 )
     finally:
         if backend_proc is not None:
@@ -507,7 +508,7 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
             click.echo(tl.format_pipeline_summary(pipeline_summary))
 
 
-def _capture_publish_inputs(base_url, spawn_env, dataset):
+def _capture_publish_inputs(base_url, spawn_env, dataset, data_dir):
     """Capture the live identity + attestation while the backend is up (751 WP3).
 
     Returns ``(identity_doc, attestation)`` or ``None`` when the live identity is
@@ -521,13 +522,35 @@ def _capture_publish_inputs(base_url, spawn_env, dataset):
     except index_identity.IdentityUnavailable as exc:
         log.warning("Index cache publish skipped: live identity unavailable (%s).", exc.reason)
         return None
-    attestation = _build_attestation(base_url, spawn_env, dataset)
+    attestation = _build_attestation(base_url, spawn_env, dataset, data_dir)
     if attestation is None:
         return None
     return identity.to_doc(), attestation
 
 
-def _build_attestation(base_url, spawn_env, dataset):
+def _read_watched_roots(data_dir):
+    """Root paths from ``<data_dir>/watched_roots.json`` (review fix F-A).
+
+    Recorded verbatim (un-normalized) in the entry attestation so
+    ``confirm_adoption``'s check 6 can compare the adopted copy's roots against
+    what the publisher actually watched. Unreadable file -> None (publish is
+    then skipped by the caller -- an entry without recorded roots would recreate
+    the pre-F-A blind spot).
+    """
+    import json as _json
+
+    p = Path(data_dir) / "watched_roots.json"
+    if not p.is_file():
+        return []
+    try:
+        raw = _json.loads(p.read_text(encoding="utf-8"))
+        return [r["path"] for r in raw.get("roots", []) if r.get("path")]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        log.warning("Index cache publish: watched_roots.json unreadable (%s).", exc)
+        return None
+
+
+def _build_attestation(base_url, spawn_env, dataset, data_dir):
     """Assemble the entry attestation from live surfaces (751 M.2 publish)."""
     from .. import index_identity
 
@@ -554,6 +577,10 @@ def _build_attestation(base_url, spawn_env, dataset):
             "chunkDocCount", "chunkVectorCoveragePercent",
         )
     }
+    watched_roots = _read_watched_roots(data_dir)
+    if watched_roots is None:
+        log.warning("Index cache publish skipped: cannot record watched roots (F-A).")
+        return None
     return {
         "build_state": (commit_meta or {}).get("build_state"),
         "commit_time": (commit_meta or {}).get("commit_time"),
@@ -563,6 +590,9 @@ def _build_attestation(base_url, spawn_env, dataset):
         # Operational inspectability only (which corpus does this entry serve?);
         # correctness never reads this -- the selector key embeds the corpus axis.
         "dataset": dataset,
+        # Review fix F-A: confirm_adoption check 6 compares the adopted copy's
+        # watched_roots.json against these publisher-recorded roots.
+        "watched_roots": watched_roots,
     }
 
 

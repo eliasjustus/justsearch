@@ -44,6 +44,10 @@ def _init_repo(path: Path) -> None:
     _git(path, "config", "user.name", "Tester")
     _git(path, "config", "commit.gpgsign", "false")
     (path / "README.md").write_text("hello\n", encoding="utf-8")
+    # An in-scope tracked file (dirt scoping, review fix F-B): only dirt under
+    # _DIRT_SCOPE_PREFIXES enters the dirty-state hash.
+    (path / "modules").mkdir()
+    (path / "modules" / "Engine.java").write_text("class Engine {}\n", encoding="utf-8")
     _git(path, "add", "-A")
     _git(path, "commit", "-q", "-m", "init")
 
@@ -179,11 +183,20 @@ def test_dirty_state_hash_clean_repo_is_stable(git_repo: Path):
     assert len(h1) == 64
 
 
-def test_tracked_modification_changes_hash(git_repo: Path):
+def test_tracked_modification_in_scope_changes_hash(git_repo: Path):
     clean = ii._dirty_state_hash(git_repo)
-    (git_repo / "README.md").write_text("hello world\n", encoding="utf-8")
+    (git_repo / "modules" / "Engine.java").write_text(
+        "class Engine { int x; }\n", encoding="utf-8",
+    )
     dirty = ii._dirty_state_hash(git_repo)
     assert dirty != clean
+
+
+def test_tracked_modification_out_of_scope_does_not_change_hash(git_repo: Path):
+    """Review fix F-B: routine non-index dirt (docs edits) must not flip the key."""
+    clean = ii._dirty_state_hash(git_repo)
+    (git_repo / "README.md").write_text("hello world\n", encoding="utf-8")
+    assert ii._dirty_state_hash(git_repo) == clean
 
 
 def test_untracked_source_file_changes_hash_and_is_content_hashed(git_repo: Path):
@@ -199,18 +212,20 @@ def test_untracked_source_file_changes_hash_and_is_content_hashed(git_repo: Path
     assert h_b != h_a
 
 
-def test_untracked_nonsource_file_not_content_hashed_but_appears_in_porcelain(git_repo: Path):
+def test_untracked_out_of_scope_file_does_not_change_hash(git_repo: Path):
+    """Review fix F-B: an untracked file outside _DIRT_SCOPE_PREFIXES is
+    invisible to the key entirely (neither porcelain nor content)."""
     clean = ii._dirty_state_hash(git_repo)
-    note = git_repo / "notes.txt"
-    note.write_text("first\n", encoding="utf-8")
-    h1 = ii._dirty_state_hash(git_repo)
-    # Appears via porcelain -> hash changes vs clean.
-    assert h1 != clean
-    # But its content is NOT hashed (not under a source prefix): same name,
-    # different content -> porcelain identical -> hash identical.
-    note.write_text("second-and-longer\n", encoding="utf-8")
-    h2 = ii._dirty_state_hash(git_repo)
-    assert h2 == h1
+    (git_repo / "notes.txt").write_text("first\n", encoding="utf-8")
+    assert ii._dirty_state_hash(git_repo) == clean
+
+
+def test_untracked_jseval_file_changes_hash(git_repo: Path):
+    """scripts/jseval/ is in the dirt scope (corpus derivation code, 751 sec I.5)."""
+    clean = ii._dirty_state_hash(git_repo)
+    (git_repo / "scripts" / "jseval").mkdir(parents=True)
+    (git_repo / "scripts" / "jseval" / "ingest.py").write_text("x = 1\n", encoding="utf-8")
+    assert ii._dirty_state_hash(git_repo) != clean
 
 
 def test_oversized_untracked_source_file_is_unavailable(git_repo: Path):
@@ -289,6 +304,79 @@ def test_selector_corpus_dir_without_files_unavailable(git_repo: Path, tmp_path:
     sel = compute_selector(git_repo, empty_corpus, env)
     assert sel.key is None
     assert "corpus_signature" in sel.unavailable_reason
+
+
+def test_selector_key_differs_by_corpus_dir_path(git_repo: Path, tmp_path: Path):
+    """Review fix F-A: byte-identical corpus at a different absolute path must
+    produce a different key (doc identity in the engine is the absolute path,
+    so cross-checkout entries are not equivalent)."""
+    models = _make_models_dir(tmp_path)
+    env = {"JUSTSEARCH_MODELS_DIR": str(models)}
+    content = '{"id":"1"}\n'
+    a = tmp_path / "checkout-a" / "corpus"
+    b = tmp_path / "checkout-b" / "corpus"
+    for d in (a, b):
+        d.mkdir(parents=True)
+        (d / "corpus.jsonl").write_text(content, encoding="utf-8")
+    sa = compute_selector(git_repo, a, env)
+    sb = compute_selector(git_repo, b, env)
+    assert sa.components["corpus_signature"] == sb.components["corpus_signature"]
+    assert sa.components["corpus_dir_path"] != sb.components["corpus_dir_path"]
+    assert sa.key != sb.key
+
+
+def _confirm_roots(adopted_dir: Path, entry_doc: dict):
+    failures: list = []
+    checks: dict = {}
+    ii._confirm_watched_roots(adopted_dir, entry_doc, failures.append, checks)
+    return failures, checks
+
+
+def test_confirm_watched_roots_match_passes(tmp_path: Path):
+    root_path = str(tmp_path / "corpus-dir")
+    (tmp_path / "watched_roots.json").write_text(
+        json.dumps({"roots": [{"path": root_path}]}), encoding="utf-8",
+    )
+    failures, checks = _confirm_roots(
+        tmp_path, {"attestation": {"watched_roots": [root_path]}},
+    )
+    assert failures == []
+    assert checks["watched_roots"]["ok"] is True
+
+
+def test_confirm_watched_roots_foreign_path_fails_named(tmp_path: Path):
+    """Review fix F-A check 6: a foreign absolute root in the adopted copy is
+    the cross-worktree pollution signature -- must fail with paths named."""
+    (tmp_path / "watched_roots.json").write_text(
+        json.dumps({"roots": [{"path": r"F:\other-worktree\eval-corpora\x"}]}),
+        encoding="utf-8",
+    )
+    failures, checks = _confirm_roots(
+        tmp_path, {"attestation": {"watched_roots": [str(tmp_path / "corpus-dir")]}},
+    )
+    assert len(failures) == 1
+    assert "watched_roots.mismatch" in failures[0]
+    assert checks["watched_roots"]["ok"] is False
+
+
+def test_confirm_watched_roots_unrecorded_with_roots_fails(tmp_path: Path):
+    """Pre-F-A entry (no recorded roots) + adopted dir WITH roots = the old
+    blind spot -> fail closed."""
+    (tmp_path / "watched_roots.json").write_text(
+        json.dumps({"roots": [{"path": str(tmp_path / "somewhere")}]}),
+        encoding="utf-8",
+    )
+    failures, _ = _confirm_roots(tmp_path, {"attestation": {}})
+    assert len(failures) == 1
+    assert "watched_roots.unrecorded" in failures[0]
+
+
+def test_confirm_watched_roots_both_absent_passes(tmp_path: Path):
+    failures, checks = _confirm_roots(
+        tmp_path, {"attestation": {"watched_roots": []}},
+    )
+    assert failures == []
+    assert checks["watched_roots"]["ok"] is True
 
 
 # --------------------------------------------------------------------------- #

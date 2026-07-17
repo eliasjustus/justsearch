@@ -211,9 +211,13 @@ def publish(
     - ``data_dir`` has no ``index/default/state.json`` (not a real built index);
     - free disk on the store volume is below 2x ``data_dir``'s size.
 
-    On success, publishes atomically (build under a sibling ``.tmp-<pid>-<time_ns>/`` dir,
-    then move-aside-then-rename into place) exactly like `dataset_cache.store()`'s pattern,
-    and returns the published entry directory (never the ``data/`` subdirectory).
+    On success, publishes near-atomically (build under a sibling ``.tmp-<pid>-<time_ns>/``
+    dir, then move-aside-then-rename into place) exactly like `dataset_cache.store()`'s
+    pattern, and returns the published entry directory (never the ``data/`` subdirectory).
+    "Near": a crash between the move-aside of a stale prior entry and the final rename
+    leaves the slot empty and leaks a tmp/stale dir -- readers see a plain miss (fail
+    closed) and the next publish self-heals the slot, so the window is crash-only and
+    benign, but it is not strictly atomic (review fix F-D).
     """
     root = cache_root()
     if root is None:

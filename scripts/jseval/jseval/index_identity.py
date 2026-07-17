@@ -69,10 +69,21 @@ _SELECTOR_SCHEMA_VERSION = "index-selector.v1"
 # unavailable -- fail closed, never silently skip the file (751 sec O.4).
 _MAX_UNTRACKED_BYTES = 10 * 1024 * 1024
 
-# Untracked files under these repo-relative prefixes are content-hashed into the
-# dirty-state component (they shape the built index without appearing in
-# ``git diff HEAD``). Everything else only contributes its porcelain name.
-_UNTRACKED_CONTENT_PREFIXES = ("modules/", "SSOT/", "contracts/")
+# Working-tree dirt is scoped to these repo-relative prefixes (review fix F-B,
+# 2026-07-17 refute-first audit): dirt anywhere else (docs/, governance/,
+# .claude/, ...) cannot shape the built index -- committed state is pinned by
+# ``git_sha``, runtime knobs and corpus content are pinned as their own key
+# components -- and hashing it made routine multi-agent dirt (tempdoc edits)
+# zero the hit rate. ``scripts/jseval/`` IS in scope because corpus
+# materialization/derivation code is not otherwise pinned (751 sec I.5).
+# Residual risk (accepted, documented): dirt outside these prefixes that
+# somehow shapes the index is not covered; blast radius is small because
+# ``git_sha`` still pins every committed file.
+_DIRT_SCOPE_PREFIXES = ("modules/", "SSOT/", "contracts/", "scripts/jseval/")
+# Untracked files under the same prefixes are content-hashed into the
+# dirty-state component (their content appears in neither porcelain nor
+# ``git diff HEAD``, only their name in porcelain).
+_UNTRACKED_CONTENT_PREFIXES = _DIRT_SCOPE_PREFIXES
 
 # Index-shaping runtime knobs whose env/-D overrides bypass ``git_sha`` (751 sec
 # A.2/A.3). Env-var names and file:line citations are from
@@ -265,18 +276,27 @@ def _dirty_state_hash(repo_root: Path) -> str:
       ``relpath\\0 sha256(bytes)`` -- because an untracked file's *content* does
       not appear in either of the above, only its name in porcelain.
 
+    Scoped (review fix F-B) to :data:`_DIRT_SCOPE_PREFIXES`: porcelain lines and
+    the tracked diff are filtered/pathspec-limited to those prefixes, so routine
+    non-index dirt (docs/tempdocs edits) leaves the key unchanged while any
+    engine/SSOT/contracts/jseval dirt still changes it.
+
     Raises :class:`IdentityUnavailable` if git is unavailable, or if any such
     untracked source file exceeds 10 MB (fail closed -- never skip it).
     """
     porcelain = _git_bytes(repo_root, ["status", "--porcelain"])
-    diff = _git_bytes(repo_root, ["diff", "HEAD"])
+    diff = _git_bytes(
+        repo_root,
+        ["diff", "HEAD", "--", *(p.rstrip("/") for p in _DIRT_SCOPE_PREFIXES)],
+    )
     if porcelain is None or diff is None:
         raise IdentityUnavailable(
             "dirty_state_hash: git status/diff unavailable in " + str(repo_root),
         )
+    scoped_porcelain = _scope_porcelain(porcelain)
     untracked = _collect_untracked_content(repo_root, porcelain)
     h = hashlib.sha256()
-    h.update(porcelain)
+    h.update(scoped_porcelain)
     h.update(b"\x00")
     h.update(diff)
     for relpath, filehash in untracked:
@@ -285,6 +305,40 @@ def _dirty_state_hash(repo_root: Path) -> str:
         h.update(b"\x00")
         h.update(filehash.encode("ascii"))
     return h.hexdigest()
+
+
+def _scope_porcelain(porcelain: bytes) -> bytes:
+    """Porcelain output filtered to :data:`_DIRT_SCOPE_PREFIXES` (fix F-B).
+
+    A rename line (``XY old -> new``) is kept when EITHER side is in scope.
+    Line order is git's own (stable for a given tree state).
+    """
+    kept: list[str] = []
+    for line in porcelain.decode("utf-8", errors="replace").splitlines():
+        if len(line) < 4:
+            continue
+        remainder = line[3:]
+        paths = [p.strip() for p in remainder.split(" -> ")]
+        in_scope = False
+        for p in paths:
+            norm = _unquote_porcelain(p).replace("\\", "/")
+            if _dirt_path_in_scope(norm):
+                in_scope = True
+                break
+        if in_scope:
+            kept.append(line)
+    return ("\n".join(kept) + ("\n" if kept else "")).encode("utf-8")
+
+
+def _dirt_path_in_scope(norm: str) -> bool:
+    """True when a porcelain path is inside a scope prefix OR is a collapsed
+    untracked parent dir of one (git lists a wholly-untracked tree as one
+    ``?? scripts/`` line -- ``scripts/`` must count for ``scripts/jseval/``;
+    the per-file rglob expansion then filters to the real prefix)."""
+    return any(
+        norm.startswith(pref) or pref.startswith(norm)
+        for pref in _DIRT_SCOPE_PREFIXES
+    )
 
 
 def _collect_untracked_content(
@@ -306,11 +360,15 @@ def _collect_untracked_content(
         # Porcelain untracked line: "?? <path>" (path begins at column 3).
         raw_path = _unquote_porcelain(line[3:])
         norm = raw_path.replace("\\", "/")
-        if not any(norm.startswith(p) for p in _UNTRACKED_CONTENT_PREFIXES):
+        if not _dirt_path_in_scope(norm):
             continue
         base = Path(repo_root) / raw_path
         for f in _iter_regular_files(base):
             rel = _rel_posix(repo_root, f)
+            # A collapsed parent dir (e.g. "?? scripts/") expands to files both
+            # in and out of scope -- filter per file to the real prefixes.
+            if not any(rel.startswith(p) for p in _UNTRACKED_CONTENT_PREFIXES):
+                continue
             if rel in seen:
                 continue
             try:
@@ -543,6 +601,15 @@ def compute_selector(
                     "corpus_signature: no corpus files under " + str(corpus_dir),
                 )
             components["corpus_signature"] = sig
+            # Review fix F-A (refute-first audit claim 10): the engine's doc
+            # identity is the absolute file path (IndexingDocumentOps.java:137),
+            # so a byte-identical corpus at a DIFFERENT absolute path (another
+            # worktree) builds a different-doc-universe index. Binding the
+            # normalized path into the key makes cross-checkout entries live
+            # under different keys -- a foreign-path entry can never even be
+            # nominated (and same-key last-writer republish races can only
+            # involve same-path, genuinely-equivalent entries).
+            components["corpus_dir_path"] = _norm_path(corpus_dir)
     except IdentityUnavailable as e:
         return SelectorKey(None, components, e.reason)
 
@@ -663,7 +730,72 @@ def confirm_adoption(
     except Exception as e:  # pragma: no cover - defensive last resort
         fail("confirm.error: " + type(e).__name__)
 
+    # -- Check 6: watched roots match the entry's recorded roots (fix F-A). --- #
+    _confirm_watched_roots(adopted_data_dir, entry_doc, fail, checks)
+
     return ConfirmResult(ok=not failures, failures=failures, checks=checks)
+
+
+def _confirm_watched_roots(adopted_data_dir, entry_doc, fail, checks) -> None:
+    """Check 6 (review fix F-A): the adopted dir's watched roots equal the
+    entry's recorded roots.
+
+    Defensive depth behind the corpus_dir_path selector component: doc identity
+    in the engine is the absolute path, so an adopted index whose
+    ``watched_roots.json`` names a path this run does not expect would, after
+    the run's own ingest adds its root, serve a polluted doc universe. Local
+    file read, no HTTP. Both-absent passes (a scrubbed/rootless entry adopts
+    into a rootless dir); any asymmetry or path mismatch fails with the paths
+    named.
+    """
+    def _roots(source) -> list[str] | None:
+        try:
+            if isinstance(source, dict):
+                raw = source
+            else:
+                p = Path(source) / "watched_roots.json"
+                if not p.is_file():
+                    return []
+                raw = json.loads(p.read_text(encoding="utf-8"))
+            return sorted(
+                _norm_path(r["path"]) for r in raw.get("roots", []) if r.get("path")
+            )
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as e:
+            fail("watched_roots.unreadable: " + type(e).__name__)
+            return None
+
+    expected = entry_doc.get("attestation", {}).get("watched_roots")
+    if expected is None:
+        # Entry predates the field (pre-F-A entries): treat recorded-roots as
+        # unknown and compare against nothing -- but an adopted dir with roots
+        # and no record is exactly the foreign-path blind spot, so fail closed.
+        adopted = _roots(adopted_data_dir)
+        if adopted is None:
+            checks["watched_roots"] = {"ok": False}
+            return
+        if adopted:
+            fail(
+                "watched_roots.unrecorded: adopted dir has roots "
+                + ",".join(adopted) + " but entry records none",
+            )
+            checks["watched_roots"] = {"ok": False, "adopted": adopted}
+        else:
+            checks["watched_roots"] = {"ok": True, "roots": []}
+        return
+
+    recorded = sorted(_norm_path(p) for p in expected)
+    adopted = _roots(adopted_data_dir)
+    if adopted is None:
+        checks["watched_roots"] = {"ok": False}
+        return
+    if adopted == recorded:
+        checks["watched_roots"] = {"ok": True, "roots": adopted}
+    else:
+        fail(
+            "watched_roots.mismatch: adopted=" + (",".join(adopted) or "<none>")
+            + " recorded=" + (",".join(recorded) or "<none>"),
+        )
+        checks["watched_roots"] = {"ok": False, "adopted": adopted, "recorded": recorded}
 
 
 def _confirm_binding(client, adopted_data_dir, fail, checks) -> None:
