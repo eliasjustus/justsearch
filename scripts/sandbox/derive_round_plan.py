@@ -15,13 +15,19 @@ MustTouchItem schema), NOT coverage-brief.md: the JSON is the stable,
 machine-readable schema; scraping the generated Markdown would just add a
 second, driftable parser for data that already has one authoritative shape.
 
-Scope: mustTouch items only (cohort/surface/shape, tier=sandbox) — the
-concrete failure mode this closes ("missed a whole mandatory cohort plus 4
-of 5 required shapes"). mustWatch items (e.g. warm-reinstall-over-existing-
-data) are markdown-only in coverage-brief.md and have no equivalent key in
-coverage-manifest.json's schema — this script cannot mechanically derive
-them and says so explicitly in its output rather than silently omitting
-them from the round's awareness.
+Scope: mustTouch items (cohort/surface/shape, tier=sandbox) -- the concrete
+failure mode this closes ("missed a whole mandatory cohort plus 4 of 5
+required shapes") -- plus, as of tempdoc 750 Part D, the manifest's
+top-level `mustWatch` array and each mustTouch item's optional `reach`
+pointer (testid / navPath / apiRecipe / unknown). Before Part D, mustWatch
+was markdown-only in coverage-brief.md with no equivalent manifest key, so
+this script could not mechanically derive it and said so explicitly instead
+of silently omitting it; gen_coverage_brief.py now writes `mustWatch` into
+coverage-manifest.json too, so this script derives a checklist section from
+it directly. A manifest written before Part D (no `mustWatch` key at all)
+still renders a plan -- see render_must_watch_section's backward-compat
+branch, which falls back to the old "read coverage-brief.md directly"
+guidance for that older schema shape.
 
 Pure Python 3 stdlib. No network access.
 
@@ -62,6 +68,34 @@ def shape_token(shape_id: str) -> str:
     return shape_id[len(prefix):] if shape_id.startswith(prefix) else shape_id
 
 
+def render_reach_line(reach: dict | None) -> str | None:
+    """Part D (tempdoc 750): render a mustTouch item's optional `reach`
+    pointer (testid / navPath / apiRecipe / unknown) as one checklist line,
+    or None if the item carries no reach data (older manifests, or a
+    cohort/surface/shape the round-6 investigation never reached). A round
+    should not have to re-pay the discovery cost of "how do I even get to
+    this surface" every time -- that is the whole point of Part D.
+    `unknown: true` renders the honest "entry point unknown, this is a round
+    deliverable" form rather than a fabricated path."""
+    if not reach:
+        return None
+    if reach.get("unknown"):
+        note = reach.get("note", "")
+        return f"      Reach: ENTRY POINT UNKNOWN - {note}"
+    parts: list[str] = []
+    if reach.get("testid"):
+        parts.append(f"testid=`{reach['testid']}`")
+    if reach.get("navPath"):
+        parts.append(f"navPath: {reach['navPath']}")
+    if reach.get("apiRecipe"):
+        parts.append(f"apiRecipe: {reach['apiRecipe']}")
+    if reach.get("note"):
+        parts.append(f"note: {reach['note']}")
+    if not parts:
+        return None
+    return "      Reach: " + "; ".join(parts)
+
+
 def render_cohort_item(item: dict) -> list[str]:
     lines = [f"- [ ] cohort:{item.get('id', '')}"]
     lines.append(f"      validateHow: {item.get('validateHow', '')}")
@@ -73,6 +107,9 @@ def render_cohort_item(item: dict) -> list[str]:
         lines.append(f"      any ONE of these routes must be hit: {', '.join(routes)}")
     else:
         lines.append("      (no routes declared on this item — check coverage-manifest.json)")
+    reach_line = render_reach_line(item.get("reach"))
+    if reach_line:
+        lines.append(reach_line)
     lines.append("")
     return lines
 
@@ -86,6 +123,9 @@ def render_surface_item(item: dict) -> list[str]:
         f"(must be >= {MIN_SCREENSHOT_BYTES_HINT} bytes — check_coverage.py "
         "rejects undersized/near-blank captures)"
     )
+    reach_line = render_reach_line(item.get("reach"))
+    if reach_line:
+        lines.append(reach_line)
     lines.append("")
     return lines
 
@@ -99,7 +139,63 @@ def render_shape_item(item: dict) -> list[str]:
         f"(must be >= {MIN_SCREENSHOT_BYTES_HINT} bytes — check_coverage.py "
         "rejects undersized/near-blank captures)"
     )
+    reach_line = render_reach_line(item.get("reach"))
+    if reach_line:
+        lines.append(reach_line)
     lines.append("")
+    return lines
+
+
+def must_watch_items(manifest: dict) -> list[dict]:
+    """Every entry in manifest['mustWatch'] (Part D, tempdoc 750). Returns []
+    both when the key is present-but-empty and when it is absent -- callers
+    that need to distinguish "derived, zero items" from "cannot derive"
+    check `'mustWatch' in manifest` directly (see render_must_watch_section)."""
+    return manifest.get("mustWatch") or []
+
+
+def render_must_watch_section(manifest: dict) -> list[str]:
+    """Part D (tempdoc 750): mustWatch items join coverage-manifest.json, so
+    this script is no longer structurally unable to derive them (the real
+    gap the 750 investigation surfaced -- a round trusting only the old
+    checklist was never told must-watch items existed at all). Manifests
+    written before Part D have no 'mustWatch' key -- for those, fall back to
+    the old "cannot be mechanically derived, read coverage-brief.md" guidance
+    rather than silently rendering an empty/misleading section."""
+    lines: list[str] = []
+    if "mustWatch" not in manifest:
+        lines.append("## Reminder: must-watch items are NOT on this checklist")
+        lines.append("")
+        lines.append(
+            "This coverage-manifest.json has no 'mustWatch' key (it predates "
+            "tempdoc 750 Part D) -- must-watch items are NOT on this "
+            "checklist and cannot be mechanically derived here. "
+            "coverage-brief.md also has a 'Must-watch' section (re-injected "
+            "every round -- e.g. warm-reinstall-over-existing-data, "
+            "ui-api-truthfulness-under-load); read it directly -- it is "
+            "real required work this checklist cannot enforce for this "
+            "older manifest."
+        )
+        lines.append("")
+        return lines
+
+    items = must_watch_items(manifest)
+    lines.append("## Must-watch items (re-injected every round)")
+    lines.append("")
+    if not items:
+        lines.append("(none)")
+        lines.append("")
+        return lines
+    for item in items:
+        lines.append(f"- [ ] mustWatch:{item.get('id', '')}")
+        lines.append(f"      reason: {item.get('reason', '')}")
+        observability = item.get("observability")
+        if observability:
+            lines.append(f"      observability: {observability}")
+        note = item.get("note")
+        if note:
+            lines.append(f"      note: {note}")
+        lines.append("")
     return lines
 
 
@@ -169,19 +265,7 @@ def render_plan(manifest: dict, manifest_path: str) -> str:
     )
     lines.append("")
 
-    lines.append("## Reminder: must-watch items are NOT on this checklist")
-    lines.append("")
-    lines.append(
-        "This checklist mechanically derives from coverage-manifest.json's "
-        "mustTouch rows (cohort/surface/shape) only. coverage-brief.md also "
-        "has a 'Must-watch' section (re-injected every round -- e.g. "
-        "warm-reinstall-over-existing-data, ui-api-truthfulness-under-load) "
-        "that is markdown-only and has no equivalent key in "
-        "coverage-manifest.json's schema, so it cannot be mechanically "
-        "derived here. Read that section of coverage-brief.md directly -- "
-        "it is real required work this checklist cannot enforce."
-    )
-    lines.append("")
+    lines.extend(render_must_watch_section(manifest))
 
     return "\n".join(lines)
 

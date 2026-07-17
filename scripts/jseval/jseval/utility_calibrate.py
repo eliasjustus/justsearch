@@ -271,12 +271,16 @@ def pin_config_cohort_key(base_url: str) -> tuple[str | None, dict]:
     return release.config_cohort_key(manifest), manifest["commit_metadata"]
 
 
-def calibrate_timeout(pilot_log_dir: str, *, multiplier: float = 2.0,
-                      floor_s: int = 120, ceil_s: int = 600) -> int:
-    """timeout ≈ multiplier × the pilot's *contended* p95 (B1), clamped to [floor, ceil]."""
+def _read_pilot_sample_times(pilot_log_dir: str) -> list[tuple[str | None, float]]:
+    """Every non-errored pilot sample's ``(condition, total_time)``.
+
+    ``condition`` comes from ``sample.metadata["condition"]`` (the single-pool sample field
+    set by ``agent_utility_task``); it is ``None`` only for a malformed/legacy sample that
+    carries no condition. Errored or time-less cells are skipped (they carry no usable
+    wall-clock signal)."""
     from inspect_ai.log import read_eval_log
 
-    times: list[float] = []
+    out: list[tuple[str | None, float]] = []
     for lf in sorted(Path(pilot_log_dir).glob("*.json")) + sorted(Path(pilot_log_dir).glob("*.eval")):
         if lf.name in ("eval-set.json", "logs.json"):
             continue
@@ -285,13 +289,56 @@ def calibrate_timeout(pilot_log_dir: str, *, multiplier: float = 2.0,
         except Exception:
             continue
         for s in (log.samples or []):
-            if not (s.metadata or {}).get("error") and s.total_time:
-                times.append(s.total_time)
-    if not times:
-        return ceil_s
+            if (s.metadata or {}).get("error") or not s.total_time:
+                continue
+            cond = (s.metadata or {}).get("condition")
+            out.append((str(cond) if cond is not None else None, s.total_time))
+    return out
+
+
+def _p95_timeout(times: list[float], *, multiplier: float, floor_s: int, ceil_s: int) -> int:
+    """``multiplier × p95(times)`` clamped to ``[floor_s, ceil_s]`` — the shared 2× rule."""
     s = sorted(times)
     p95 = s[min(len(s) - 1, int(len(s) * 0.95))]
     return int(max(floor_s, min(ceil_s, multiplier * p95)))
+
+
+def calibrate_timeout(pilot_log_dir: str, *, multiplier: float = 2.0,
+                      floor_s: int = 120, ceil_s: int = 600) -> int:
+    """timeout ≈ multiplier × the pilot's *contended* p95 (B1), clamped to [floor, ceil].
+
+    Pooled across ALL conditions — kept as the backward-compatible scalar and as the
+    per-condition fallback (see `calibrate_timeout_by_condition`)."""
+    times = [t for _cond, t in _read_pilot_sample_times(pilot_log_dir)]
+    if not times:
+        return ceil_s
+    return _p95_timeout(times, multiplier=multiplier, floor_s=floor_s, ceil_s=ceil_s)
+
+
+def calibrate_timeout_by_condition(pilot_log_dir: str, conditions, *, pooled_timeout_s: int,
+                                   multiplier: float = 2.0, floor_s: int = 120,
+                                   ceil_s: int = 600) -> dict[str, int]:
+    """Per-condition `timeout ≈ multiplier × that condition's OWN contended p95`, the same
+    2× rule as the pooled `calibrate_timeout` but computed per arm.
+
+    On a large corpus the A arm (grep/file-tools) tail runs much longer than B/C's, so a
+    single pooled timeout under-budgets A → A-arm exhaustion (tempdoc 624 §Harness lessons:
+    32% A exhaustion at 10k). A condition with NO usable pilot cells (all errored, or the
+    condition never appeared in the pilot) falls back to `pooled_timeout_s`, so the returned
+    map is always fully populated for every requested condition."""
+    by_cond: dict[str, list[float]] = {}
+    for cond, t in _read_pilot_sample_times(pilot_log_dir):
+        if cond is None:
+            continue
+        by_cond.setdefault(cond, []).append(t)
+    result: dict[str, int] = {}
+    for cond in conditions:
+        times = by_cond.get(str(cond))
+        result[str(cond)] = (
+            _p95_timeout(times, multiplier=multiplier, floor_s=floor_s, ceil_s=ceil_s)
+            if times else pooled_timeout_s
+        )
+    return result
 
 
 def closed_book_filter(queries: list[dict], *, model: str = "haiku",
@@ -322,6 +369,22 @@ def closed_book_filter(queries: list[dict], *, model: str = "haiku",
     return retained, len(queries) - len(retained)
 
 
+def equalize_timeouts_across_conditions(
+    measured: dict[str, int], *, fallback: int
+) -> dict[str, int]:
+    """Apply max() across conditions to every condition's budget.
+
+    The exhaustion-as-failure outcome rule is only fair under IDENTICAL per-arm
+    budgets; sizing that shared budget to the SLOWEST arm's calibrated tail keeps
+    the Step-2 lesson (a pooled budget starves the slow arm) without the phase-2
+    email-10k artifact (a naive per-arm budget starves whichever arm calibrates
+    tight). Empty measurement -> {} (callers fall back to the pooled scalar)."""
+    if not measured:
+        return {}
+    equalized = max(measured.values(), default=fallback)
+    return {condition: int(equalized) for condition in measured}
+
+
 def calibrate(*, base_url: str, queries: list[dict], corpus_dir: str, mcp_config: str | None,
               model: str, concurrency: int, seeds: int, conditions=("A", "C"),
               require_dense: bool = True, pilot_n: int = 5, max_budget: float = 0.50,
@@ -343,6 +406,20 @@ def calibrate(*, base_url: str, queries: list[dict], corpus_dir: str, mcp_config
         max_queries=pilot_n, max_budget=max_budget, cli_version=aur.claude_cli_version(),
         corpus_dataset="pilot", corpus_signature="pilot")
     timeout_s = calibrate_timeout(pilot_dir)
+    # Per-condition MEASUREMENT, EQUALIZED-MAX application (tempdoc 624 Phase-2
+    # amendment, 2026-07-17): the resource-exhaustion-as-failure outcome rule is
+    # only fair when both arms run under IDENTICAL budgets, and the pooled pilot
+    # under-budgets the slow arm's tail (Step-2: 32% A exhaustion at 10k) while a
+    # naive per-arm application under-budgets whichever arm calibrates tight
+    # (phase-2 email-10k: B floor-clamped to 120s below its own p95 = 26/60 B
+    # exhaustions -- an artifact, not a capability limit). So: calibrate each
+    # condition's tail, then apply max() across conditions to EVERY condition --
+    # budgets equal by construction, sized so no arm is tail-starved. The raw
+    # per-condition measurement is kept alongside for the record.
+    timeout_s_by_condition_measured = calibrate_timeout_by_condition(
+        pilot_dir, conditions, pooled_timeout_s=timeout_s)
+    timeout_s_by_condition = equalize_timeouts_across_conditions(
+        timeout_s_by_condition_measured, fallback=timeout_s)
 
     retained, n_dropped = ([list(range(len(queries))), 0])
     if do_closed_book:
@@ -362,6 +439,8 @@ def calibrate(*, base_url: str, queries: list[dict], corpus_dir: str, mcp_config
         "readiness_reasons": rd.failure_reasons,
         "config_cohort_key": cck,
         "timeout_s": timeout_s,
+        "timeout_s_by_condition": timeout_s_by_condition,
+        "timeout_s_by_condition_measured": timeout_s_by_condition_measured,
         "concurrency": concurrency,
         "retained_query_indices": retained,
         "n_dropped_contaminated": n_dropped,

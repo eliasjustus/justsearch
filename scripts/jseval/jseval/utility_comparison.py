@@ -188,6 +188,36 @@ def _distribution(values: list) -> dict:
     }
 
 
+def _censored_distribution(items: list) -> dict:
+    """Per-arm duration distribution + its MANDATORY censoring context
+    (tempdoc 624, 2026-07-17 "Time as the third utility axis").
+
+    ``items`` is one ``(duration_or_None, censored_bool)`` tuple per cell.
+    Budget-exhausted cells are RIGHT-CENSORED at the cap, so a duration median
+    must never be published bare -- it is only ever meaningful alongside how
+    many of its contributing observations were censored and the arm's completion
+    rate. Every duration arm is emitted through THIS helper, making a bare median
+    (a median without `n_censored`/`completion_rate`) structurally impossible.
+
+    `n_censored` counts ONLY cells that contribute a duration to the distribution
+    -- a censored cell that recorded no wall-clock is not in the denominator, so
+    `completion_rate` can never go out of [0, 1]. Cells lacking a time (censored
+    or clean) are surfaced separately as `n_missing_duration` when any exist.
+    """
+    values = [duration for duration, _ in items if duration is not None]
+    dist = _distribution(values)
+    n = dist["n"]
+    n_censored = sum(1 for duration, censored in items if censored and duration is not None)
+    n_missing = sum(1 for duration, _ in items if duration is None)
+    dist["n_censored"] = n_censored
+    dist["completion_rate"] = (
+        round(max(0.0, min(1.0, (n - n_censored) / n)), 6) if n else None
+    )
+    if n_missing:
+        dist["n_missing_duration"] = n_missing
+    return dist
+
+
 def _seed_envelope(values: list[float]) -> dict:
     """mean +/- population-sigma over per-seed accuracies (the seed envelope, R3).
 
@@ -696,6 +726,13 @@ def _pair_observations(baseline: list[dict], with_tool: list[dict]) -> tuple[dic
                 "c_tok": cc.get("unique_tokens"),
                 "a_turns": ca.get("num_turns"),
                 "c_turns": cc.get("num_turns"),
+                # Duration axis (tempdoc 624, 2026-07-17): wall-clock total_time.
+                # The per-protocol/measured set is completed cells only (excluded
+                # cells never reach `per_query`), so nothing here is censored.
+                "a_dur": ca.get("total_time"),
+                "c_dur": cc.get("total_time"),
+                "a_censored": False,
+                "c_censored": False,
                 "a_tool_calls": ca.get("tool_calls"),
                 "c_tool_calls": cc.get("tool_calls"),
                 "c_toolsearch_targets": cc.get("toolsearch_targets"),
@@ -927,6 +964,7 @@ def _stats_from_pairs(pairs: dict, *, statistical_alpha: float = 0.05) -> dict |
             "cost_usd": float(p["a_cost"] or 0.0),
             "unique_tokens": float(p["a_tok"] or 0),
             "num_turns": float(p["a_turns"] or 0),
+            "duration": float(p.get("a_dur") or 0.0),
         }
         for obs, p in pairs.items()
     }
@@ -936,6 +974,7 @@ def _stats_from_pairs(pairs: dict, *, statistical_alpha: float = 0.05) -> dict |
             "cost_usd": float(p["c_cost"] or 0.0),
             "unique_tokens": float(p["c_tok"] or 0),
             "num_turns": float(p["c_turns"] or 0),
+            "duration": float(p.get("c_dur") or 0.0),
         }
         for obs, p in pairs.items()
     }
@@ -949,7 +988,7 @@ def _stats_from_pairs(pairs: dict, *, statistical_alpha: float = 0.05) -> dict |
         {"per_query_metrics": pqm_a},
         {"per_query_metrics": pqm_c},
         pseudo_qrels,
-        metrics=["accuracy_delta", "cost_usd", "unique_tokens", "num_turns"],
+        metrics=["accuracy_delta", "cost_usd", "unique_tokens", "num_turns", "duration"],
         alpha=statistical_alpha,
     )
 
@@ -959,6 +998,8 @@ def _stats_from_pairs(pairs: dict, *, statistical_alpha: float = 0.05) -> dict |
     c_tok = [p["c_tok"] for p in pairs.values()]
     a_turns = [p["a_turns"] for p in pairs.values()]
     c_turns = [p["c_turns"] for p in pairs.values()]
+    a_items = [(p.get("a_dur"), bool(p.get("a_censored"))) for p in pairs.values()]
+    c_items = [(p.get("c_dur"), bool(p.get("c_censored"))) for p in pairs.values()]
 
     result = {
         "accuracy": {
@@ -1014,6 +1055,20 @@ def _stats_from_pairs(pairs: dict, *, statistical_alpha: float = 0.05) -> dict |
         },
         "n_paired_observations": mc["n_paired"],
     }
+    # Duration metric family (tempdoc 624, 2026-07-17 "Time as the third utility
+    # axis"): the tokens_unique/cost_usd projection pattern, PLUS mandatory
+    # censoring context. OMITTED entirely (not a null-marker) when NO paired cell
+    # carries a wall-clock time at all -- a comparison composed purely from
+    # pre-duration evidence projects byte-identical to before this key existed
+    # (the funnel/exposure precedent). Once ANY cell carries a time, the block
+    # always appears, and every arm is built through `_censored_distribution` so
+    # a median can never be published without its `n_censored`/`completion_rate`.
+    if any(d is not None for d, _ in a_items) or any(d is not None for d, _ in c_items):
+        result["duration"] = {
+            "baseline": _censored_distribution(a_items),
+            "with_tool": _censored_distribution(c_items),
+            "delta_mean": cont["duration"]["delta"],
+        }
     # Adoption FUNNEL (tempdoc 725 increment 3): same with-tool-arm-only shape
     # as "adoption" above -- arm A is null by construction. OMITTED entirely
     # (not added as a null-marker dict) when NONE of the paired cells carry

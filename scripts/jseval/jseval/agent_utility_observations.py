@@ -87,6 +87,11 @@ def read_inspect_observations(
             tool_calls = metadata.get("tool_calls")
             disallowed = metadata.get("disallowed_tool_calls")
             leak_calls = metadata.get("leak_suspect_tool_calls")
+            # tempdoc 624 (2026-07-17 "Time as the third utility axis"): the
+            # duration axis reads Inspect's own per-sample wall-clock attributes
+            # off the SAMPLE object (not metadata) -- `working_time` excludes
+            # retry/rate-limit waits, `total_time` is the full wall clock. A
+            # budget-exhausted cell's recorded time is right-censored at the cap.
             observations.append({
                 "source": source,
                 "condition": condition,
@@ -95,6 +100,8 @@ def read_inspect_observations(
                 "attempted": True,
                 "excluded": error is not None,
                 "error": error,
+                "working_time": getattr(sample, "working_time", None),
+                "total_time": getattr(sample, "total_time", None),
                 "attempts": metadata.get("attempts"),
                 "first_error": metadata.get("first_error"),
                 "correct": correct,
@@ -192,6 +199,7 @@ def successful_summaries(
             key: obs.get(key)
             for key in (
                 "correct", "cost_usd", "unique_tokens", "usage", "model_usage", "num_turns",
+                "working_time", "total_time",
                 "tool_calls", "tool_calls_blocked", "disallowed_tool_calls",
                 "leak_suspect_tool_calls", "leak_suspect", "mcp_servers",
                 "mcp_tools_offered", "mcp_surface_unverified", "mcp_tools_deferred",

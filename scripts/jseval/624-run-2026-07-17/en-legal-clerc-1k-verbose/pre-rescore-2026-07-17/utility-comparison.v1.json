@@ -1,0 +1,1348 @@
+{
+  "schema": "utility-comparison.v1",
+  "schema_version": 2,
+  "composed_at": "2026-07-17T00:26:57.277355+00:00",
+  "cohort": {
+    "agent_cohort_key": "dded73fe4ed02183b601da9ac27d4fbc9ced81167de480d379c1a89a6405b817",
+    "git_sha": "7c050b07dfd523b6e83d087e5d4457b1c2d24d08",
+    "git_dirty": true,
+    "source_git_state": {
+      "dirty": true,
+      "tracked_diff_sha256": "3ac1c368bd7e66efd1ab94e32169e382b176940c837a8c644541f8ce806f46b1",
+      "untracked_count": 4,
+      "untracked_sha256": "862d0f26c36e2182e5fcf8b22b3ca9583029a57c1a0c2e0cce4db920c575c337"
+    },
+    "cli_version": "2.1.211 (Claude Code)",
+    "mcp_tool_surface_hash": "54025dc98f49e2dba7a625d3f9732220ea9db97821290d52f03dc9ffc229cf5f",
+    "judge": {
+      "kind": "substring-em"
+    },
+    "prompt_template_hash": "c6835f2fc85da3a7adeb1c68e64b8b292be9eca00cde4360c39f652b2de4bd29",
+    "decoding": {
+      "temperature": 0,
+      "max_tokens": null
+    },
+    "eval_limits": {},
+    "search_config_cohort_key": "79dfd659489104c829a986bd45b14357937f8b8c88014a57bb8a30faa88c5d5d",
+    "hardware": null,
+    "environment": {
+      "platform": {
+        "system": "Windows",
+        "release": "11",
+        "machine": "AMD64"
+      },
+      "gpu": {
+        "available": true,
+        "driver_version": "610.62",
+        "name": "NVIDIA GeForce RTX 4070",
+        "mem_total_mb": 12282
+      }
+    },
+    "query_identity": {
+      "row_count": 20,
+      "sha256": "c270a195c07f957a2698b5f979ef741e2fd0339b646f2eb18e061ee14c167dce"
+    },
+    "campaign_identity": {
+      "conditions": [
+        "A",
+        "B"
+      ],
+      "expected_cells": [
+        "A|0|q0",
+        "A|0|q1",
+        "A|0|q2",
+        "A|0|q3",
+        "A|0|q4",
+        "A|0|q5",
+        "A|0|q6",
+        "A|0|q7",
+        "A|0|q8",
+        "A|0|q9",
+        "A|0|q10",
+        "A|0|q11",
+        "A|0|q12",
+        "A|0|q13",
+        "A|0|q14",
+        "A|0|q15",
+        "A|0|q16",
+        "A|0|q17",
+        "A|0|q18",
+        "A|0|q19",
+        "B|0|q0",
+        "B|0|q1",
+        "B|0|q2",
+        "B|0|q3",
+        "B|0|q4",
+        "B|0|q5",
+        "B|0|q6",
+        "B|0|q7",
+        "B|0|q8",
+        "B|0|q9",
+        "B|0|q10",
+        "B|0|q11",
+        "B|0|q12",
+        "B|0|q13",
+        "B|0|q14",
+        "B|0|q15",
+        "B|0|q16",
+        "B|0|q17",
+        "B|0|q18",
+        "B|0|q19",
+        "A|1|q0",
+        "A|1|q1",
+        "A|1|q2",
+        "A|1|q3",
+        "A|1|q4",
+        "A|1|q5",
+        "A|1|q6",
+        "A|1|q7",
+        "A|1|q8",
+        "A|1|q9",
+        "A|1|q10",
+        "A|1|q11",
+        "A|1|q12",
+        "A|1|q13",
+        "A|1|q14",
+        "A|1|q15",
+        "A|1|q16",
+        "A|1|q17",
+        "A|1|q18",
+        "A|1|q19",
+        "B|1|q0",
+        "B|1|q1",
+        "B|1|q2",
+        "B|1|q3",
+        "B|1|q4",
+        "B|1|q5",
+        "B|1|q6",
+        "B|1|q7",
+        "B|1|q8",
+        "B|1|q9",
+        "B|1|q10",
+        "B|1|q11",
+        "B|1|q12",
+        "B|1|q13",
+        "B|1|q14",
+        "B|1|q15",
+        "B|1|q16",
+        "B|1|q17",
+        "B|1|q18",
+        "B|1|q19",
+        "A|2|q0",
+        "A|2|q1",
+        "A|2|q2",
+        "A|2|q3",
+        "A|2|q4",
+        "A|2|q5",
+        "A|2|q6",
+        "A|2|q7",
+        "A|2|q8",
+        "A|2|q9",
+        "A|2|q10",
+        "A|2|q11",
+        "A|2|q12",
+        "A|2|q13",
+        "A|2|q14",
+        "A|2|q15",
+        "A|2|q16",
+        "A|2|q17",
+        "A|2|q18",
+        "A|2|q19",
+        "B|2|q0",
+        "B|2|q1",
+        "B|2|q2",
+        "B|2|q3",
+        "B|2|q4",
+        "B|2|q5",
+        "B|2|q6",
+        "B|2|q7",
+        "B|2|q8",
+        "B|2|q9",
+        "B|2|q10",
+        "B|2|q11",
+        "B|2|q12",
+        "B|2|q13",
+        "B|2|q14",
+        "B|2|q15",
+        "B|2|q16",
+        "B|2|q17",
+        "B|2|q18",
+        "B|2|q19"
+      ],
+      "seeds": 3
+    },
+    "tool_surfacing_mode": "eager",
+    "executor": "inspect-ai",
+    "exposure_config": {
+      "always_load": null,
+      "enable_tool_search": null,
+      "exposure_mode": "deferred"
+    },
+    "mcp_initialize_identity": {
+      "instructions": "JustSearch maintains a local search index over the user's documents. Prefer justsearch_answer \u2014 which retrieves and assembles cited passages from across many documents in a single call \u2014 over reading files one-by-one when the corpus is large, when the question is conceptual or semantic (no exact keyword or filename to match on), when it spans multiple documents, or when you want to conserve context. For a small set of files or an exact string / filename lookup, ordinary file tools are equally good. Use justsearch_search to explore what is in the index, and justsearch_status for the live index size and readiness. Both tools accept response_format; \"concise\" returns substantially fewer tokens per call and keeps every line that reports what was elided.",
+      "instructions_sha256": "dfc56fa14b026feb78ef0eab1dea5af5af2bf5507318cd9cca61edfd624d7a7f",
+      "protocol_version": "2025-11-25",
+      "server_version": "0.4.0"
+    }
+  },
+  "conditions": {
+    "baseline": "A (file tools only)",
+    "with_tool": "C (JustSearch only)",
+    "addition": "B (file tools + JustSearch)"
+  },
+  "measured": {
+    "mixed/en-legal-clerc-1k-verbose": {
+      "haiku": {
+        "accuracy": {
+          "baseline": 0.0364,
+          "with_tool": 0.2545,
+          "delta": 0.2182,
+          "delta_ci95": [
+            0.090909,
+            0.345455
+          ],
+          "delta_ci": [
+            0.090909,
+            0.345455
+          ],
+          "mcnemar_p": 0.001831,
+          "mcnemar_test": "exact-binomial",
+          "n_with_tool_fixes": 13,
+          "n_with_tool_breaks": 1,
+          "seed_envelope_baseline": {
+            "mean": 0.0361,
+            "stdev": 0.0255,
+            "n": 3
+          },
+          "seed_envelope_with_tool": {
+            "mean": 0.2573,
+            "stdev": 0.1167,
+            "n": 3
+          }
+        },
+        "provider_cache_creation_input_tokens": {
+          "baseline": {
+            "n": 55,
+            "median": 92013.0,
+            "p95": 125516.1,
+            "mean": 82881.2
+          },
+          "with_tool": {
+            "n": 55,
+            "median": 51579.0,
+            "p95": 109553.9,
+            "mean": 53204.2
+          },
+          "delta_mean": -29677.0,
+          "delta_ci95": [
+            -38611.307273,
+            -20221.851818
+          ],
+          "delta_ci": [
+            -38611.307273,
+            -20221.851818
+          ]
+        },
+        "tokens_unique": {
+          "baseline": {
+            "n": 55,
+            "median": 92013.0,
+            "p95": 125516.1,
+            "mean": 82881.2
+          },
+          "with_tool": {
+            "n": 55,
+            "median": 51579.0,
+            "p95": 109553.9,
+            "mean": 53204.2
+          },
+          "delta_mean": -29677.0,
+          "delta_ci95": [
+            -38611.307273,
+            -20221.851818
+          ],
+          "delta_ci": [
+            -38611.307273,
+            -20221.851818
+          ]
+        },
+        "cost_usd": {
+          "baseline": {
+            "n": 55,
+            "median": 0.380617,
+            "p95": 0.471508,
+            "mean": 0.332625
+          },
+          "with_tool": {
+            "n": 55,
+            "median": 0.170472,
+            "p95": 0.488177,
+            "mean": 0.203389
+          },
+          "delta_mean": -0.12923657818181816,
+          "delta_ci95": [
+            -0.171892,
+            -0.086044
+          ],
+          "delta_ci": [
+            -0.171892,
+            -0.086044
+          ]
+        },
+        "turns": {
+          "baseline": {
+            "n": 55,
+            "median": 27.0,
+            "p95": 39.0,
+            "mean": 25.036364
+          },
+          "with_tool": {
+            "n": 55,
+            "median": 13.0,
+            "p95": 35.0,
+            "mean": 15.781818
+          },
+          "delta_mean": -9.254545454545454
+        },
+        "adoption": {
+          "baseline": {
+            "adoption_rate": null,
+            "first_mcp_call_index": null,
+            "mcp_call_share": null
+          },
+          "with_tool": {
+            "adoption_rate": 0.9818,
+            "first_mcp_call_index": 2.0,
+            "mcp_call_share": 0.4836
+          }
+        },
+        "n_paired_observations": 55,
+        "funnel": {
+          "baseline": {
+            "discovery_rate": null,
+            "post_discovery_invocation_rate": null,
+            "first_discovery_turn": null,
+            "reinforced_proxy_rate": null,
+            "reinforced_rate": null,
+            "funnel_fields_absent": true
+          },
+          "with_tool": {
+            "discovery_rate": 0.9818,
+            "post_discovery_invocation_rate": 1.0,
+            "first_discovery_turn": 1.0,
+            "reinforced_proxy_rate": 0.9815,
+            "reinforced_rate": 1.0,
+            "funnel_fields_absent": false
+          },
+          "denominator_note": "rates above are computed over CHECKED cells (paired cells carrying funnel instrumentation) -- the SECONDARY denominator, conditional on a usable cell; see the record's top-level `denominators` block."
+        },
+        "leak_suspect_cells": [],
+        "arms": {
+          "addition_b": {
+            "accuracy": {
+              "baseline": 0.0364,
+              "with_tool": 0.2545,
+              "delta": 0.2182,
+              "delta_ci95": [
+                0.090909,
+                0.345455
+              ],
+              "delta_ci": [
+                0.090909,
+                0.345455
+              ],
+              "mcnemar_p": 0.001831,
+              "mcnemar_test": "exact-binomial",
+              "n_with_tool_fixes": 13,
+              "n_with_tool_breaks": 1,
+              "seed_envelope_baseline": {
+                "mean": 0.0361,
+                "stdev": 0.0255,
+                "n": 3
+              },
+              "seed_envelope_with_tool": {
+                "mean": 0.2573,
+                "stdev": 0.1167,
+                "n": 3
+              }
+            },
+            "provider_cache_creation_input_tokens": {
+              "baseline": {
+                "n": 55,
+                "median": 92013.0,
+                "p95": 125516.1,
+                "mean": 82881.2
+              },
+              "with_tool": {
+                "n": 55,
+                "median": 51579.0,
+                "p95": 109553.9,
+                "mean": 53204.2
+              },
+              "delta_mean": -29677.0,
+              "delta_ci95": [
+                -38611.307273,
+                -20221.851818
+              ],
+              "delta_ci": [
+                -38611.307273,
+                -20221.851818
+              ]
+            },
+            "tokens_unique": {
+              "baseline": {
+                "n": 55,
+                "median": 92013.0,
+                "p95": 125516.1,
+                "mean": 82881.2
+              },
+              "with_tool": {
+                "n": 55,
+                "median": 51579.0,
+                "p95": 109553.9,
+                "mean": 53204.2
+              },
+              "delta_mean": -29677.0,
+              "delta_ci95": [
+                -38611.307273,
+                -20221.851818
+              ],
+              "delta_ci": [
+                -38611.307273,
+                -20221.851818
+              ]
+            },
+            "cost_usd": {
+              "baseline": {
+                "n": 55,
+                "median": 0.380617,
+                "p95": 0.471508,
+                "mean": 0.332625
+              },
+              "with_tool": {
+                "n": 55,
+                "median": 0.170472,
+                "p95": 0.488177,
+                "mean": 0.203389
+              },
+              "delta_mean": -0.12923657818181816,
+              "delta_ci95": [
+                -0.171892,
+                -0.086044
+              ],
+              "delta_ci": [
+                -0.171892,
+                -0.086044
+              ]
+            },
+            "turns": {
+              "baseline": {
+                "n": 55,
+                "median": 27.0,
+                "p95": 39.0,
+                "mean": 25.036364
+              },
+              "with_tool": {
+                "n": 55,
+                "median": 13.0,
+                "p95": 35.0,
+                "mean": 15.781818
+              },
+              "delta_mean": -9.254545454545454
+            },
+            "adoption": {
+              "baseline": {
+                "adoption_rate": null,
+                "first_mcp_call_index": null,
+                "mcp_call_share": null
+              },
+              "with_tool": {
+                "adoption_rate": 0.9818,
+                "first_mcp_call_index": 2.0,
+                "mcp_call_share": 0.4836
+              }
+            },
+            "n_paired_observations": 55,
+            "funnel": {
+              "baseline": {
+                "discovery_rate": null,
+                "post_discovery_invocation_rate": null,
+                "first_discovery_turn": null,
+                "reinforced_proxy_rate": null,
+                "reinforced_rate": null,
+                "funnel_fields_absent": true
+              },
+              "with_tool": {
+                "discovery_rate": 0.9818,
+                "post_discovery_invocation_rate": 1.0,
+                "first_discovery_turn": 1.0,
+                "reinforced_proxy_rate": 0.9815,
+                "reinforced_rate": 1.0,
+                "funnel_fields_absent": false
+              },
+              "denominator_note": "rates above are computed over CHECKED cells (paired cells carrying funnel instrumentation) -- the SECONDARY denominator, conditional on a usable cell; see the record's top-level `denominators` block."
+            },
+            "leak_suspect_cells": []
+          }
+        },
+        "primary_arm": "addition_b",
+        "identity": {
+          "corpus_signature": "4a686d49a3b729751e62be1607396ec4b793188a2e76de1a17805fff91d815f4",
+          "requested_model_alias": "haiku",
+          "resolved_provider_model": "claude-haiku-4-5-20251001",
+          "query_identity": {
+            "row_count": 20,
+            "sha256": "c270a195c07f957a2698b5f979ef741e2fd0339b646f2eb18e061ee14c167dce"
+          },
+          "campaign_identity": {
+            "conditions": [
+              "A",
+              "B"
+            ],
+            "expected_cells": [
+              "A|0|q0",
+              "A|0|q1",
+              "A|0|q2",
+              "A|0|q3",
+              "A|0|q4",
+              "A|0|q5",
+              "A|0|q6",
+              "A|0|q7",
+              "A|0|q8",
+              "A|0|q9",
+              "A|0|q10",
+              "A|0|q11",
+              "A|0|q12",
+              "A|0|q13",
+              "A|0|q14",
+              "A|0|q15",
+              "A|0|q16",
+              "A|0|q17",
+              "A|0|q18",
+              "A|0|q19",
+              "B|0|q0",
+              "B|0|q1",
+              "B|0|q2",
+              "B|0|q3",
+              "B|0|q4",
+              "B|0|q5",
+              "B|0|q6",
+              "B|0|q7",
+              "B|0|q8",
+              "B|0|q9",
+              "B|0|q10",
+              "B|0|q11",
+              "B|0|q12",
+              "B|0|q13",
+              "B|0|q14",
+              "B|0|q15",
+              "B|0|q16",
+              "B|0|q17",
+              "B|0|q18",
+              "B|0|q19",
+              "A|1|q0",
+              "A|1|q1",
+              "A|1|q2",
+              "A|1|q3",
+              "A|1|q4",
+              "A|1|q5",
+              "A|1|q6",
+              "A|1|q7",
+              "A|1|q8",
+              "A|1|q9",
+              "A|1|q10",
+              "A|1|q11",
+              "A|1|q12",
+              "A|1|q13",
+              "A|1|q14",
+              "A|1|q15",
+              "A|1|q16",
+              "A|1|q17",
+              "A|1|q18",
+              "A|1|q19",
+              "B|1|q0",
+              "B|1|q1",
+              "B|1|q2",
+              "B|1|q3",
+              "B|1|q4",
+              "B|1|q5",
+              "B|1|q6",
+              "B|1|q7",
+              "B|1|q8",
+              "B|1|q9",
+              "B|1|q10",
+              "B|1|q11",
+              "B|1|q12",
+              "B|1|q13",
+              "B|1|q14",
+              "B|1|q15",
+              "B|1|q16",
+              "B|1|q17",
+              "B|1|q18",
+              "B|1|q19",
+              "A|2|q0",
+              "A|2|q1",
+              "A|2|q2",
+              "A|2|q3",
+              "A|2|q4",
+              "A|2|q5",
+              "A|2|q6",
+              "A|2|q7",
+              "A|2|q8",
+              "A|2|q9",
+              "A|2|q10",
+              "A|2|q11",
+              "A|2|q12",
+              "A|2|q13",
+              "A|2|q14",
+              "A|2|q15",
+              "A|2|q16",
+              "A|2|q17",
+              "A|2|q18",
+              "A|2|q19",
+              "B|2|q0",
+              "B|2|q1",
+              "B|2|q2",
+              "B|2|q3",
+              "B|2|q4",
+              "B|2|q5",
+              "B|2|q6",
+              "B|2|q7",
+              "B|2|q8",
+              "B|2|q9",
+              "B|2|q10",
+              "B|2|q11",
+              "B|2|q12",
+              "B|2|q13",
+              "B|2|q14",
+              "B|2|q15",
+              "B|2|q16",
+              "B|2|q17",
+              "B|2|q18",
+              "B|2|q19"
+            ],
+            "seeds": 3
+          },
+          "corpus_identity": {
+            "dataset": "mixed/en-legal-clerc-1k-verbose",
+            "declared_signature": "4a686d49a3b729751e62be1607396ec4b793188a2e76de1a17805fff91d815f4",
+            "signature": "4a686d49a3b729751e62be1607396ec4b793188a2e76de1a17805fff91d815f4",
+            "signature_matches": true
+          },
+          "corpus_certification": null
+        }
+      }
+    }
+  },
+  "seed_count": 3,
+  "seed_floor_met": true,
+  "confidence_tier": "C",
+  "comparability": {
+    "comparable": false,
+    "reasons": [
+      "asymmetric_exclusion: excluded_jaccard=0.25 < 0.5 (arms dropped different queries -> biased per-arm distributions)"
+    ],
+    "metrics": {
+      "per_arm_exclusion_rate": {
+        "A": 0.0667,
+        "B": 0.0167
+      },
+      "excluded_jaccard": 0.25,
+      "paired_n_retention": 0.9167
+    },
+    "per_arm_loss": {
+      "A": {
+        "n_attempted": 60,
+        "n_planned": 60,
+        "n_pending": 0,
+        "n_completed": 56,
+        "n_excluded": 4,
+        "exclusion_rate": 0.0667
+      },
+      "B": {
+        "n_attempted": 60,
+        "n_planned": 60,
+        "n_pending": 0,
+        "n_completed": 59,
+        "n_excluded": 1,
+        "exclusion_rate": 0.0167
+      }
+    },
+    "denominator_note": "per_arm_loss.<arm>.n_attempted is the PRIMARY (ITT) denominator for spend/comparability -- see the record's top-level `denominators` block."
+  },
+  "coverage": {
+    "measures": "marginal utility of the JustSearch MCP retrieval tool to an LLM agent (answer accuracy + cost/token efficiency) vs. generic file tools",
+    "does_not_measure": "the realistic 'addition' scenario unless condition B is present; the favorable delta is the SUBSTITUTION arm (C, file tools disabled) \u2014 NOT 'adding JustSearch to an agent that already has file tools' (tempdoc 624 \u00a7C-4).",
+    "contamination_class": "private-synthetic"
+  },
+  "external_baselines": {
+    "retrieval_tool_utility": [
+      {
+        "name": "FRAMES",
+        "claim": "retrieval lifts downstream QA: 0.40 (no retrieval) -> 0.66 (multi-step), same model",
+        "value": {
+          "no_retrieval": 0.4,
+          "with_retrieval": 0.66
+        },
+        "source_url": "https://arxiv.org/abs/2409.12941",
+        "version": "Google, NAACL 2025",
+        "self_reproduced": false
+      },
+      {
+        "name": "BFCL-V4 web-search",
+        "claim": "accuracy drops sharply without the retrieval tool (with/without-tool precedent)",
+        "value": null,
+        "source_url": "https://gorilla.cs.berkeley.edu/blogs/15_bfcl_v4_web_search.html",
+        "version": "Berkeley Function-Calling Leaderboard V4 (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "Sourcegraph CodeScaleBench",
+        "claim": "direct structural twin: grep/read baseline vs. MCP search tools; own caveat that the swap-the-backend benchmark 'was not enough on its own'",
+        "value": null,
+        "source_url": "https://sourcegraph.com/blog/codescalebench-testing-coding-agents-on-large-codebases-and-multi-repo-software-engineering-tasks",
+        "version": "Sourcegraph (2025)",
+        "self_reproduced": false
+      },
+      {
+        "name": "PHMForge",
+        "claim": "the exact MCP-tools-vs-text-RAG ablation (industrial prognostics domain)",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2604.01532",
+        "version": "2026",
+        "self_reproduced": false
+      },
+      {
+        "name": "A-RAG",
+        "claim": "ablates removing individual retrieval tools from the agent toolkit on multi-hop QA",
+        "value": null,
+        "source_url": "https://arxiv.org/html/2602.03442v1",
+        "version": "2026",
+        "self_reproduced": false
+      }
+    ]
+  },
+  "tool_call_assertions": {
+    "A": {
+      "cells_total": 60,
+      "cells_excluded": 4,
+      "cells_with_tool_data": 60,
+      "cells_with_disallowed_violations": 0,
+      "cells_with_leak_suspect": 0,
+      "cells_with_mcp_surface_verified": 0,
+      "cells_mcp_surface_unverified": 0,
+      "observed_mcp_tool_surface_hashes": [],
+      "observed_mcp_tool_surface_consistent": false,
+      "cells_with_exposure_mode_verified": 60,
+      "observed_exposure_modes": [
+        "deferred"
+      ],
+      "observed_exposure_mode_consistent": true
+    },
+    "B": {
+      "cells_total": 60,
+      "cells_excluded": 1,
+      "cells_with_tool_data": 60,
+      "cells_with_disallowed_violations": 0,
+      "cells_with_leak_suspect": 0,
+      "cells_with_mcp_surface_verified": 60,
+      "cells_mcp_surface_unverified": 0,
+      "observed_mcp_tool_surface_hashes": [
+        "54025dc98f49e2dba7a625d3f9732220ea9db97821290d52f03dc9ffc229cf5f"
+      ],
+      "observed_mcp_tool_surface_consistent": true,
+      "cells_with_exposure_mode_verified": 60,
+      "observed_exposure_modes": [
+        "deferred"
+      ],
+      "observed_exposure_mode_consistent": true
+    }
+  },
+  "denominators": {
+    "n_attempted": {
+      "tier": "primary",
+      "estimand": "intention_to_treat",
+      "source": "comparability.per_arm_loss.<condition>.n_attempted",
+      "question": "How many cells did this campaign spend money attempting, including the errored/timed-out tail? The honest base for cost accounting and cross-campaign comparability -- the ITT ledger never silently drops an attempted cell."
+    },
+    "n_checked": {
+      "tier": "secondary",
+      "estimand": "funnel_conditional",
+      "source": "measured.<dataset>.<model>.funnel.with_tool -- the paired cells carrying tool_calls/toolsearch_targets/tool_call_sequence",
+      "question": "Of the paired cells, how many carried funnel instrumentation and are therefore usable for adoption-funnel behavior analysis? Descriptive of behavior GIVEN a usable cell, not of campaign spend -- a different question than n_attempted."
+    },
+    "n_excluded": {
+      "tier": "secondary",
+      "estimand": "funnel_conditional",
+      "source": "measured.<dataset>.<model>.funnel -- paired cells lacking funnel instrumentation (e.g. evidence composed before funnel fields existed)",
+      "question": "Of the paired cells, how many lack funnel instrumentation and are excluded from the funnel's OWN denominator? NOT the same population as the ITT ledger's errored/excluded tail -- a cell can be a successfully-attempted ITT n_attempted member and still be excluded here for lacking funnel data."
+    }
+  },
+  "estimands": {
+    "primary": "intention_to_treat",
+    "intention_to_treat": {
+      "strata": [
+        {
+          "stratum_id": null,
+          "corpus_member": null,
+          "corpus": "mixed/en-legal-clerc-1k-verbose",
+          "corpus_size": null,
+          "query_variant": null,
+          "corpus_signature": "4a686d49a3b729751e62be1607396ec4b793188a2e76de1a17805fff91d815f4",
+          "model": "haiku",
+          "resolved_provider_model": "claude-haiku-4-5-20251001",
+          "query_identity": {
+            "row_count": 20,
+            "sha256": "c270a195c07f957a2698b5f979ef741e2fd0339b646f2eb18e061ee14c167dce"
+          },
+          "campaign_identity": {
+            "conditions": [
+              "A",
+              "B"
+            ],
+            "expected_cells": [
+              "A|0|q0",
+              "A|0|q1",
+              "A|0|q2",
+              "A|0|q3",
+              "A|0|q4",
+              "A|0|q5",
+              "A|0|q6",
+              "A|0|q7",
+              "A|0|q8",
+              "A|0|q9",
+              "A|0|q10",
+              "A|0|q11",
+              "A|0|q12",
+              "A|0|q13",
+              "A|0|q14",
+              "A|0|q15",
+              "A|0|q16",
+              "A|0|q17",
+              "A|0|q18",
+              "A|0|q19",
+              "B|0|q0",
+              "B|0|q1",
+              "B|0|q2",
+              "B|0|q3",
+              "B|0|q4",
+              "B|0|q5",
+              "B|0|q6",
+              "B|0|q7",
+              "B|0|q8",
+              "B|0|q9",
+              "B|0|q10",
+              "B|0|q11",
+              "B|0|q12",
+              "B|0|q13",
+              "B|0|q14",
+              "B|0|q15",
+              "B|0|q16",
+              "B|0|q17",
+              "B|0|q18",
+              "B|0|q19",
+              "A|1|q0",
+              "A|1|q1",
+              "A|1|q2",
+              "A|1|q3",
+              "A|1|q4",
+              "A|1|q5",
+              "A|1|q6",
+              "A|1|q7",
+              "A|1|q8",
+              "A|1|q9",
+              "A|1|q10",
+              "A|1|q11",
+              "A|1|q12",
+              "A|1|q13",
+              "A|1|q14",
+              "A|1|q15",
+              "A|1|q16",
+              "A|1|q17",
+              "A|1|q18",
+              "A|1|q19",
+              "B|1|q0",
+              "B|1|q1",
+              "B|1|q2",
+              "B|1|q3",
+              "B|1|q4",
+              "B|1|q5",
+              "B|1|q6",
+              "B|1|q7",
+              "B|1|q8",
+              "B|1|q9",
+              "B|1|q10",
+              "B|1|q11",
+              "B|1|q12",
+              "B|1|q13",
+              "B|1|q14",
+              "B|1|q15",
+              "B|1|q16",
+              "B|1|q17",
+              "B|1|q18",
+              "B|1|q19",
+              "A|2|q0",
+              "A|2|q1",
+              "A|2|q2",
+              "A|2|q3",
+              "A|2|q4",
+              "A|2|q5",
+              "A|2|q6",
+              "A|2|q7",
+              "A|2|q8",
+              "A|2|q9",
+              "A|2|q10",
+              "A|2|q11",
+              "A|2|q12",
+              "A|2|q13",
+              "A|2|q14",
+              "A|2|q15",
+              "A|2|q16",
+              "A|2|q17",
+              "A|2|q18",
+              "A|2|q19",
+              "B|2|q0",
+              "B|2|q1",
+              "B|2|q2",
+              "B|2|q3",
+              "B|2|q4",
+              "B|2|q5",
+              "B|2|q6",
+              "B|2|q7",
+              "B|2|q8",
+              "B|2|q9",
+              "B|2|q10",
+              "B|2|q11",
+              "B|2|q12",
+              "B|2|q13",
+              "B|2|q14",
+              "B|2|q15",
+              "B|2|q16",
+              "B|2|q17",
+              "B|2|q18",
+              "B|2|q19"
+            ],
+            "seeds": 3
+          },
+          "corpus_certification": null,
+          "seed_ids": [
+            0,
+            1,
+            2
+          ],
+          "seed_count": 3,
+          "query_count": 20,
+          "n_expected_cells": 120,
+          "n_observed_cells": 120,
+          "n_pending_cells": 0,
+          "n_expected_pairs": 60,
+          "n_paired_observations": 60,
+          "n_per_protocol_pairs": 55,
+          "paired_retention": 0.9166666666666666,
+          "excluded_jaccard": 0.0,
+          "per_arm_loss": {
+            "A": {
+              "n_expected": 60,
+              "n_attempted": 60,
+              "n_completed": 56,
+              "n_excluded": 4,
+              "n_pending": 0,
+              "exclusion_rate": 0.06666666666666667
+            },
+            "B": {
+              "n_expected": 60,
+              "n_attempted": 60,
+              "n_completed": 59,
+              "n_excluded": 1,
+              "n_pending": 0,
+              "exclusion_rate": 0.016666666666666666
+            }
+          },
+          "usage_complete": false,
+          "accuracy": {
+            "baseline": 0.0333,
+            "with_tool": 0.25,
+            "delta": 0.2167,
+            "delta_ci95": [
+              0.1,
+              0.333333
+            ],
+            "delta_ci": [
+              0.1,
+              0.333333
+            ],
+            "mcnemar_p": 0.000977,
+            "mcnemar_test": "exact-binomial",
+            "n_with_tool_fixes": 14,
+            "n_with_tool_breaks": 1,
+            "seed_envelope_baseline": {
+              "mean": 0.0333,
+              "stdev": 0.0236,
+              "n": 3
+            },
+            "seed_envelope_with_tool": {
+              "mean": 0.25,
+              "stdev": 0.1225,
+              "n": 3
+            }
+          },
+          "provider_cache_creation_input_tokens": {
+            "available": false,
+            "reason": "incomplete ITT usage evidence"
+          },
+          "cost_usd": {
+            "available": false,
+            "reason": "incomplete ITT usage evidence"
+          },
+          "adoption": {
+            "with_tool": {
+              "adopted_cells": 59,
+              "eligible_cells": 60,
+              "adoption_rate": 0.9833333333333333
+            }
+          },
+          "funnel": {
+            "baseline": {
+              "discovery_rate": null,
+              "post_discovery_invocation_rate": null,
+              "first_discovery_turn": null,
+              "reinforced_proxy_rate": null,
+              "reinforced_rate": null,
+              "funnel_fields_absent": true
+            },
+            "with_tool": {
+              "discovery_rate": 0.9833,
+              "post_discovery_invocation_rate": 1.0,
+              "first_discovery_turn": 1.0,
+              "reinforced_proxy_rate": 0.9831,
+              "reinforced_rate": 1.0,
+              "funnel_fields_absent": false
+            },
+            "denominator_note": "rates above are computed over CHECKED cells (paired cells carrying funnel instrumentation) -- the SECONDARY denominator, conditional on a usable cell; see the record's top-level `denominators` block."
+          }
+        }
+      ]
+    },
+    "per_protocol": {
+      "role": "secondary",
+      "source": "measured"
+    }
+  },
+  "statistical_alpha": 0.05,
+  "claim_verdict": {
+    "status": "rejected",
+    "accepted": false,
+    "outcome": "inconclusive",
+    "arm": "addition_b",
+    "strata": "all_required",
+    "stratum_outcomes": [
+      {
+        "stratum_id": null,
+        "corpus": "mixed/en-legal-clerc-1k-verbose",
+        "model": "haiku",
+        "outcome": "inconclusive",
+        "gates": {
+          "derived_matrix": {
+            "observed": true,
+            "threshold": true,
+            "passed": true
+          },
+          "minimum_seeds": {
+            "observed": 3,
+            "threshold": 5,
+            "passed": false
+          },
+          "minimum_paired_observations": {
+            "observed": 60,
+            "threshold": 100,
+            "passed": false
+          },
+          "maximum_exclusion_rate": {
+            "observed": 0.06666666666666667,
+            "threshold": 0.15,
+            "passed": true
+          },
+          "complete_expected_matrix": {
+            "observed": 0,
+            "threshold": 0,
+            "passed": true
+          },
+          "minimum_paired_retention": {
+            "observed": 0.9166666666666666,
+            "threshold": 0.7,
+            "passed": true
+          },
+          "minimum_excluded_jaccard": {
+            "observed": 0.0,
+            "threshold": 0.5,
+            "passed": false
+          },
+          "accuracy_delta_interval": {
+            "observed": [
+              0.1,
+              0.333333
+            ],
+            "threshold": "two-sided interval",
+            "passed": true
+          },
+          "minimum_adoption_rate": {
+            "observed": 0.9833333333333333,
+            "threshold": null,
+            "passed": false
+          },
+          "seed_floor_met": {
+            "observed": 3,
+            "threshold": 3,
+            "passed": true
+          },
+          "outcome_resolved": {
+            "observed": "inconclusive",
+            "threshold": "benefit|harm|null|adoption-only",
+            "passed": false
+          }
+        }
+      }
+    ],
+    "policy_id": "agent-utility-public-v1-draft",
+    "policy_hash": "8de9d8b02bef53d4405bf802999feb6e4b10ee9f62e488ffb0425a161511220e",
+    "policy_status": "draft",
+    "unresolved": [
+      "required_strata",
+      "thresholds.minimum_adoption_rate",
+      "thresholds.accuracy_noninferiority_margin",
+      "thresholds.provider_token_equivalence_margin",
+      "thresholds.cost_equivalence_margin_usd"
+    ],
+    "gates": [
+      {
+        "name": "policy_resolved",
+        "observed": false,
+        "threshold": true,
+        "passed": false,
+        "reason": "owner must settle the campaign matrix and scientific margins"
+      },
+      {
+        "name": "supported_policy_requirements",
+        "observed": [],
+        "threshold": [],
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "per_stratum_promotion",
+        "observed": "all_required_strata_pass",
+        "threshold": "all_required_strata_pass",
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "required_strata_exact",
+        "observed": [
+          {
+            "stratum_id": null,
+            "corpus_member": null,
+            "dataset": "mixed/en-legal-clerc-1k-verbose",
+            "size": null,
+            "query_variant": null,
+            "requested_model": "haiku",
+            "query_count": 20,
+            "seed_ids": [
+              0,
+              1,
+              2
+            ]
+          }
+        ],
+        "threshold": [],
+        "passed": false,
+        "reason": "the record must contain exactly the pre-registered member/size/query/model/seed matrix"
+      },
+      {
+        "name": "itt_strata_derived",
+        "observed": [
+          {
+            "stratum_id": null,
+            "consistent": true
+          }
+        ],
+        "threshold": "every count is derived from the exact expected cell matrix",
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "minimum_seeds",
+        "observed": 3,
+        "threshold": 5,
+        "passed": false,
+        "reason": ""
+      },
+      {
+        "name": "seed_floor_met",
+        "observed": 3,
+        "threshold": 3,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "maximum_exclusion_rate",
+        "observed": 0.06666666666666667,
+        "threshold": 0.15,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "complete_expected_matrix",
+        "observed": 0,
+        "threshold": 0,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "minimum_paired_retention",
+        "observed": 0.9166666666666666,
+        "threshold": 0.7,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "minimum_excluded_jaccard",
+        "observed": 0.0,
+        "threshold": 0.5,
+        "passed": false,
+        "reason": ""
+      },
+      {
+        "name": "minimum_paired_observations",
+        "observed": 60,
+        "threshold": 100,
+        "passed": false,
+        "reason": ""
+      },
+      {
+        "name": "source_identity_complete",
+        "observed": false,
+        "threshold": true,
+        "passed": false,
+        "reason": ""
+      },
+      {
+        "name": "corpus_certification_complete",
+        "observed": false,
+        "threshold": true,
+        "passed": false,
+        "reason": ""
+      },
+      {
+        "name": "intention_to_treat_primary",
+        "observed": true,
+        "threshold": true,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "per_protocol_secondary",
+        "observed": true,
+        "threshold": true,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "accuracy_delta_interval",
+        "observed": true,
+        "threshold": true,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "significance_alpha",
+        "observed": 0.05,
+        "threshold": 0.05,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "contamination_class",
+        "observed": "private-synthetic",
+        "threshold": [
+          "post-cutoff",
+          "private-synthetic"
+        ],
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "captured_search_config",
+        "observed": true,
+        "threshold": true,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "verified_tool_surface",
+        "observed": true,
+        "threshold": true,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "verified_exposure_mode",
+        "observed": true,
+        "threshold": true,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "no_leak_suspect_cells",
+        "observed": 0,
+        "threshold": 0,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "no_disallowed_tool_calls",
+        "observed": 0,
+        "threshold": 0,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "judge_calibration",
+        "observed": true,
+        "threshold": true,
+        "passed": true,
+        "reason": ""
+      },
+      {
+        "name": "minimum_adoption_rate",
+        "observed": 0.9833333333333333,
+        "threshold": null,
+        "passed": false,
+        "reason": ""
+      },
+      {
+        "name": "accuracy_margin_resolved",
+        "observed": null,
+        "threshold": "non-null",
+        "passed": false,
+        "reason": ""
+      }
+    ],
+    "reasons": [
+      "policy_unresolved",
+      "policy_resolved",
+      "required_strata_exact",
+      "minimum_seeds",
+      "minimum_excluded_jaccard",
+      "minimum_paired_observations",
+      "source_identity_complete",
+      "corpus_certification_complete",
+      "accuracy_margin_resolved"
+    ],
+    "wording_constraints": [
+      "Do not publish numeric benefit language unless accepted is true.",
+      "A rejected run may be described only as rejected or inconclusive.",
+      "Condition C is substitution-only and never a deployment headline."
+    ]
+  },
+  "semantic_digest": "a12f2806a3ba5986fe343b6ed9778612d3a95c117fbb7d3a2ebae184509fe8ad"
+}
