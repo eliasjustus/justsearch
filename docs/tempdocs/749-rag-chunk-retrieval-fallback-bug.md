@@ -1,6 +1,6 @@
 ---
 title: RAG chunk-retrieval fallback bug — /api/chat/ask misses the top HYBRID hit on some queries
-status: "open — ROOT CAUSE CONFIRMED 2026-07-17 (session a6d2af56, live repro + source). `ChunkDocumentWriter` writes ZERO chunk documents for docs < 2000 chars (`CHUNK_THRESHOLD_CHARS`) or that split into ≤1 chunk; RAG chunk retrieval filters `IS_CHUNK:true` so it only sees chunk documents → sub-2000-char docs (85.2% of the scifact corpus) are invisible to RAG chunk retrieval and fall back to whole-doc BM25, which unscoped misses the best short doc. The 'query-dependence' is really: a RAG ask retrieves chunks only when its ~10-doc scope happens to include one of the ~15% ≥2000-char chunked docs. Doc-level search is unaffected (finds them). NOT a fix yet — the FIX APPROACH is an open design/founder call (write short docs as one whole-doc chunk [needs re-index + baseline re-eval] vs query-time whole-doc union vs HYBRID-fallback); touches search-quality baselines. See §ROOT CAUSE + §Fix decision. Spawned from tempdoc 734 round 6."
+status: "open — ROOT CAUSE CONFIRMED 2026-07-17 (session a6d2af56, live repro + source). `ChunkDocumentWriter` writes ZERO chunk documents for docs < 2000 chars (`CHUNK_THRESHOLD_CHARS`) or that split into ≤1 chunk; RAG chunk retrieval filters `IS_CHUNK:true` so it only sees chunk documents → sub-2000-char docs (85.2% of the scifact corpus) are invisible to RAG chunk retrieval and fall back to whole-doc BM25, which unscoped misses the best short doc. The 'query-dependence' is really: a RAG ask retrieves chunks only when its ~10-doc scope happens to include one of the ~15% ≥2000-char chunked docs. Doc-level search is unaffected (finds them). DESIGN SETTLED 2026-07-17 (§Design): option A — `ChunkDocumentWriter` writes ONE whole-doc chunk for short/single-chunk docs instead of dropping them (completes the `IS_CHUNK:true` retrieval contract; matches universal splitter convention; fixes both failure sub-cases). B (merge a doc-level retrieval leg) kept only as the no-re-index fallback; C (hybrid-ise the fallback) ruled out. In-scope alongside the writer change: fusion parent-doc dedup, EXTEND 718's chunk-completeness guard to the per-doc-class gap, reranker length-calibration check, and a MANDATORY /search-quality eval before/after with a falsifier. Names a retrieval-completeness invariant (conform to 717/718, no parallel structure). Open founder call narrowed to: is a one-time re-index/chunk-embedding backfill acceptable (→A, recommended) or a hard no (→B). Spawned from tempdoc 734 round 6."
 created: 2026-07-16
 updated: 2026-07-16
 ---
@@ -264,7 +264,117 @@ organism?"}` → FULLTEXT_FALLBACK (bug); Lyme query → CHUNK_HYBRID (control).
 staged into the worktree's `modules/ui/native-bin/llama-server/variants/` first — construction-
 time resolution, restart after staging.)
 
-## Suggested fix shape (not yet investigated in code)
+## Design (2026-07-17, session a6d2af56) — settled: complete the chunk index (option A), conforming to the 717/718 chunk-completeness seam
+
+Codebase facts that decide the design (verified this session):
+- **Doc and chunk vectors are SEPARATE index fields** — `SchemaFields.VECTOR` (doc-level) vs
+  `SchemaFields.CHUNK_VECTOR` (chunk-level); `ChunkSearchOps.searchChunkVector` issues a
+  `KnnFloatVectorQuery(CHUNK_VECTOR, …)`. A short doc's existing doc-level `VECTOR` is therefore
+  **invisible to the chunk kNN**. So option B ("union the doc-level entries") is *not* a trivial
+  union — it is a **second retrieval leg** (doc-level BM25+`VECTOR` kNN) merged into the RAG
+  candidate set. This materially narrows B's "cheaper" appeal.
+- The system already has **virtual-chunk machinery** (`RagContextOps.buildFallbackWithVirtualChunks`,
+  RAG-005): it splits whole docs into chunks on the fly — but only in the fallback, over
+  **BM25-selected** docs. This is why the current fallback misses semantically-matched short docs.
+- The bug is two per-doc exclusion guards in `ChunkDocumentWriter.regenerateChunks`
+  (`content.length() < CHUNK_THRESHOLD_CHARS(2000) → return 0`; `chunks.size() <= 1 → return 0`).
+  `ChunkSplitter.splitWithMetadata` already returns exactly one chunk for sub-threshold text — the
+  writer then **drops it**.
+- Adjacent prior art (read this session): **717** (fresh-build "chunk-death": a corpus mis-classified
+  "short" skips the `chunk_merge` leg → index ships with no chunks) and **718** (an *eval-time
+  chunk-completeness guard* that catches a chunk-death). This bug is the **same family — a silent
+  chunk-completeness gap — at per-document-class granularity** (short docs), which 718's whole-index
+  guard does not catch.
+
+### The settled design: A — every servable document gets ≥1 chunk entry
+
+Replace the two exclusion guards with a **single-whole-doc-chunk path**: when a document splits into
+≤1 chunk (short docs, and any doc that produces one chunk), write **exactly one chunk covering the
+whole document** (offsets `0..len`, `chunkTotal=1`) rather than writing nothing. Keep only a minimal
+garbage floor (genuinely empty / sub-~100-char noise, consistent with `TextQualityAnalyzer`'s
+"< 100 chars = garbage") so true noise still gets no chunk. This makes the `IS_CHUNK:true` retrieval
+contract **complete** — RAG chunk retrieval can now reach every document document-level search can —
+and it is exactly what every production splitter does (LlamaIndex/LangChain/Haystack, per the
+research lanes). Both failure sub-cases are fixed uniformly: the all-short-scope case (yeast) and the
+mixed-scope case (best answer is a short doc while long docs also match), because short docs now
+compete in the *same* RRF-fused + cross-encoder-reranked pipeline as every other chunk.
+
+**Why A over B/C (design judgement, not just cost):**
+- **C (hybrid-ise the fallback) is ruled out** — it only fires when chunk retrieval returns *zero*
+  overall, so it cannot fix the mixed-scope case; and it keeps short docs on a structurally separate,
+  inconsistently-scored path (research Lane 2, arXiv:2605.01664 "reranker can't fix what retrieval
+  missed").
+- **B (merge a doc-level retrieval leg) is the correct fallback IF a re-index is a hard constraint**,
+  but the separate-vector-field finding makes it a genuine second retrieval path with its own
+  scoring, and it leaves the chunk index permanently incomplete (papering over the writer). It does
+  not restore the invariant; it works around it.
+- **A restores the invariant and conforms to the single existing chunk seam** (chunk writer → chunk
+  search), adds no parallel retrieval path, and matches universal convention. Its costs are bounded
+  and enumerated: a one-time **re-index / chunk-embedding backfill** for the ~85%-of-corpus short
+  docs that currently lack chunks, ~+1 chunk row per such doc, and duplication between a short doc's
+  single chunk and its whole-doc entry.
+
+### What A requires alongside the writer change (in-scope for this tempdoc, not a later sweep)
+
+1. **Fusion de-dup by parent-doc-id** so a short doc's single whole-doc chunk and its whole-doc entry
+   do not both surface as separate hits in one answer. Verify whether the existing fusion already
+   dedups on source-doc-id (overlapping-chunk stacks usually need this); if not, add it. (Do not
+   assume — check `SearchExecutor`/RRF fusion.)
+2. **Extend 718's chunk-completeness guard to the per-doc-class gap** — the invariant a guard should
+   enforce is "a document that is document-searchable but has zero chunk entries is a completeness
+   defect," not just "the whole index has a chunk leg." This is the conform-to-existing-seam move:
+   grow the 718 guard, do not add a parallel check.
+3. **Reranker length-calibration spot-check** (research Lane 1 caution): confirm the cross-encoder
+   scores a whole-abstract single chunk sensibly against multi-chunk long-doc passages.
+4. **Eval-baseline validation is mandatory, not optional** — this is a retrieval-behaviour change in
+   `/search-quality` territory. Run a before/after nDCG@10 + Recall on the utility corpora
+   (`scripts/jseval` utility-comparison / the 334/343 quality baselines) and record the delta in this
+   tempdoc. **Falsifier:** if the fix degrades aggregate nDCG/recall (brevity bias over-favouring
+   short chunks past net benefit), A is wrong-as-shipped-flat and must be gated/length-weighted at
+   fusion rather than merged unconditionally.
+
+### Orphaned / changed by this design (teardown rides with the fix, per the skill)
+
+- `ChunkDocumentWriter`'s two exclusion guards (`CHUNK_THRESHOLD_CHARS` length-skip at :92 and
+  `chunks.size() <= 1` skip at :102) — their *exclusion* semantics are removed; they become the
+  write-one-whole-doc-chunk path. `CHUNK_THRESHOLD_CHARS` may be retired entirely or repurposed as
+  the garbage floor — decide at implementation.
+- The RAG-005 virtual-chunk fallback (`buildFallbackWithVirtualChunks`) is **NOT orphaned** — it stays
+  as the safety net for genuine zero-match queries — but its firing rate should drop sharply once
+  short docs have real chunks; note this in its comment so a future reader doesn't think it's dead.
+
+### Reach judgement — the retrieval-completeness invariant (conform to 717/718, don't fork)
+
+This design is an instance of a shape the repo already fights in the 717/718 lineage and the 743
+"green-masked gap" family: **a query-time or index-time filter that silently excludes a
+sub-population with no error.** Named plainly as an invariant:
+
+> **Retrieval-completeness invariant** — every document reachable by document-level search must be
+> reachable by the RAG chunk path; any `IS_CHUNK`/status/coverage filter that removes a document
+> sub-population from a retrieval path must be either impossible-by-construction or **eval-guarded**,
+> never a silent optimisation.
+
+- **Where else it applies (candidate scope, not to be built now):** the `isChunkVectorCoverageReady`
+  ≥95% gate (a doc in the missing ≤5% is silently vector-invisible); the SPLADE/embedding-status
+  coverage filters; 717's `isShortCorpus` classification; any future retrieval leg that filters on an
+  enrichment-status field. Some of these may already violate it — worth a follow-up audit, not a
+  rewrite here.
+- **Earns its keep if:** the extended 718 guard (item 2) catches a document-searchable-but-RAG-invisible
+  class in CI/eval before it ships (as 718's guard caught chunk-death). If it never fires across many
+  builds, the invariant is either already impossible-by-construction or the guard is mis-placed.
+- **Retire when:** RAG and document search are unified into a single retrieval unit (no chunk/doc
+  representational split) — at which point the invariant is subsumed and the guard is dead weight.
+
+Recording the invariant here (per the skill) without building generalised structure: this tempdoc
+builds only the specific fix (A) + the one guard extension the present problem requires; the wider
+audit of other status-filtered retrieval legs is named, not undertaken.
+
+**Remaining open founder call (narrowed):** A vs B is now really just *"is a one-time re-index /
+chunk-embedding backfill acceptable?"* — if yes (recommended), A; if a re-index is a hard no, B as the
+work-around. Plus confirmation that the fix goes through the `/search-quality` eval gate (item 4)
+before merge.
+
+## Suggested fix shape (SUPERSEDED by §Design above — retained as the round-6 originating note)
 
 This needs an investigation pass into the RAG chunk-retrieval threshold/fallback logic —
 whatever decides `NO_CHUNKS_FOUND` (likely a chunk-relevance-score cutoff, or a chunk-index
