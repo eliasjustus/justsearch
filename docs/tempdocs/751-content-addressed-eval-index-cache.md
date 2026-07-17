@@ -1,7 +1,7 @@
 ---
 title: "Input-addressed eval index cache: reuse a built index iff (corpus_signature × index_identity_key) match — static selector nominates, the running backend confirms, fail-closed to fresh build — keeping the fresh-build validity guarantee while amortizing the ~50-min/10k-doc rebuild eval campaigns pay repeatedly for identical inputs"
 type: tempdocs
-status: "IMPLEMENTED v0+v1 (2026-07-17, §P) in worktree takeover-751 — live-validated (miss→publish, 17s confirmed adoption, knob-flip + dirty-tree misses, prune). Default OFF (--index-cache opt-in). Full pipeline this session: takeover (GO, §F) → theorize (§G-§K) → research (§L) → design (§M-§N) → derisk (§O, 8/10) → plan → implement (§P). Evidence-gated follow-ups in §P.3 (v2 scoped pin, parity sampling, NER stamp, 676 line). Not yet merged to main."
+status: "SHIPPED to main as #235 (2026-07-17); v0+v1 live-validated (§P). Default OFF (--index-cache opt-in). REOPENED same day for the chain-integration seam (§P.5): the first real consumer (#236's Phase-2 chain) integrated within 2h, hit three live findings, reverted to fresh-build — the cache's amortization is unrealized until the seam lands. §P.3 evidence-gated follow-ups unchanged (v2 scoped pin cannot even collect its trigger data until §P.5 closes)."
 created: 2026-07-17
 author: agent (Fable orchestration), chartered at founder direction during the Phase-2 utility campaign ("open a new tempdoc for this. ill set a new agent on it")
 category: eval-infrastructure / measurement-economics / index-lifecycle
@@ -902,3 +902,39 @@ here so they aren't lost:
    declares them in use") is not implemented — the 10-minute publish-protection window plus
    adoption `touch()` (which refreshes LRU recency) is the only protection. Adequate at current
    store sizes; revisit with follow-up 5 when chains declare campaigns.
+
+### P.5 Chain-integration seam (REOPENED 2026-07-17 — the §P.3.5 follow-up, now with live spec)
+
+Within two hours of #235 landing, the Phase-2 campaign session (#236) wired an adopt-side
+index-cache passthrough into `serve-eval-backend.py` (default off) and attempted live
+integration three times (14:49-15:00), hit three findings, and **reverted to fresh-build** —
+filing the findings in the observations inbox (session 109145ac shard) as this section's spec:
+
+1. **Subdir corpus mode silently disables the cache.** Chains pass the exploded
+   `datasets/<cell>/corpus-dir` as the corpus axis; `corpus_signature` (dataset-dir mode wants
+   `corpus.jsonl` + qrels at the dataset root) returns empty → selector unavailable →
+   fail-quiet disable → chain topologies lose ALL caching with only an INFO line. Fix
+   direction: resolve/accept the parent dataset dir (conform to the one canonical signature,
+   don't fork a files-mode variant of corpus identity) + upgrade the disable log to a WARN
+   naming the remedy (their diagnosis cycle was spent on the silence, not the behavior).
+2. **The F-A `corpus_dir_path` binding breaks two-boot chain topologies.** Publisher
+   (`jseval run` pass) binds the key to its resolution (`datasets/<name>` root) while the
+   chain adopter passes `datasets/<cell>/corpus-dir` — different absolute paths, different
+   keys, never a hit. F-A is doing its fail-closed job against a *legitimate* same-machine
+   consumer; the fix is **one canonical corpus-path resolution shared by every caller**
+   (publisher and adopter must agree by construction, not by convention).
+3. **Staging sidecar pollution:** the `tmp/eval-corpora` staging dir carries a
+   `.source_signature` sidecar that would index as a stray extra document AND its watched
+   root trips utility-run's stray-root gate against the `datasets/` convention.
+
+Their conclusion, adopted here verbatim: integration needs a **designed seam** (e.g. an
+`index-cache warm` CLI or publish-from-wrapper), not chain-side improvisation.
+
+**Consequence for §P.3.1 (v2 scoped pin):** its `would_have_hit_scoped_pin` trigger data
+cannot accumulate while the first consumer cannot use the cache at all — the evidence pipeline
+is dammed upstream of the engine-pin question. §P.5 closes first; v2 stays evidence-gated.
+
+Also filed by the founder from the same campaign (class-level, owned elsewhere): no agent
+proactively flagged the rebuild inefficiency before 751 was chartered — the
+"friction-you-schedule-around-is-a-finding" lesson; 751 is the instance, the class fix
+candidates (GPU-hours ledger, postmortem handle) belong to the agent-environment program.
