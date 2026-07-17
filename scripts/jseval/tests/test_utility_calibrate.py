@@ -410,3 +410,80 @@ class TestUtilityCalibrateCliExitCode:
         assert result.exit_code == 0
         assert "READINESS FAILED" not in result.output
         assert output.exists()
+
+
+# --- per-arm (per-condition) timeout calibration (tempdoc 624 §Harness lessons):
+# a single POOLED timeout under-budgets the long-tail A arm on large corpora, so
+# `calibrate_timeout_by_condition` computes the same 2x rule per condition, with a
+# fallback to the pooled scalar for any condition with no usable pilot cells. Patch
+# `_read_pilot_sample_times` (which lazily imports inspect_ai) so these stay fast,
+# inspect_ai-free unit tests of the grouping + fallback + clamp logic. ---
+
+
+class TestCalibrateTimeoutByCondition:
+    def _patch_times(self, monkeypatch, samples):
+        from jseval import utility_calibrate as ucal
+        monkeypatch.setattr(ucal, "_read_pilot_sample_times", lambda _d: samples)
+        return ucal
+
+    def test_per_condition_p95_differs_by_arm(self, monkeypatch):
+        # A arm has a long tail (100s), C arm is short (10s) -> A gets a larger budget.
+        samples = ([("A", 100.0)] * 20) + ([("C", 10.0)] * 20)
+        ucal = self._patch_times(monkeypatch, samples)
+        m = ucal.calibrate_timeout_by_condition("ignored", ("A", "C"), pooled_timeout_s=200)
+        # A: 2 x p95(100) = 200 (inside [120, 600]); C: 2 x p95(10) = 20 -> floored to 120.
+        assert m == {"A": 200, "C": 120}
+        assert m["A"] > m["C"]
+
+    def test_condition_absent_from_pilot_falls_back_to_pooled(self, monkeypatch):
+        # Only A cells appeared in the pilot; C is requested but never ran -> C = pooled.
+        ucal = self._patch_times(monkeypatch, [("A", 50.0)] * 5)
+        m = ucal.calibrate_timeout_by_condition("ignored", ("A", "C"), pooled_timeout_s=333)
+        assert m["C"] == 333  # fallback to the pooled scalar
+        assert m["A"] == 120  # 2 x 50 = 100 -> floored to 120 (computed, not the fallback)
+
+    def test_empty_pilot_all_conditions_fall_back_to_pooled(self, monkeypatch):
+        ucal = self._patch_times(monkeypatch, [])
+        m = ucal.calibrate_timeout_by_condition("ignored", ("A", "C"), pooled_timeout_s=250)
+        assert m == {"A": 250, "C": 250}
+
+    def test_map_keys_are_strings_and_values_ints(self, monkeypatch):
+        ucal = self._patch_times(monkeypatch, [("A", 90.0), ("C", 200.0)])
+        m = ucal.calibrate_timeout_by_condition("ignored", ("A", "C"), pooled_timeout_s=200)
+        assert all(isinstance(k, str) for k in m)
+        assert all(isinstance(v, int) for v in m.values())
+
+    def test_pooled_calibrate_timeout_unchanged_by_refactor(self, monkeypatch):
+        # The pooled scalar pools across ALL conditions (the backward-compatible behavior).
+        samples = ([("A", 100.0)] * 10) + ([("C", 10.0)] * 10)
+        ucal = self._patch_times(monkeypatch, samples)
+        assert ucal.calibrate_timeout("ignored") == 200  # 2 x p95(100) over the pool
+
+    def test_pooled_calibrate_timeout_empty_returns_ceil(self, monkeypatch):
+        ucal = self._patch_times(monkeypatch, [])
+        assert ucal.calibrate_timeout("ignored") == 600  # ceil when no usable cells
+
+
+class TestEqualizeTimeoutsAcrossConditions:
+    """tempdoc 624 Phase-2 amendment (2026-07-17): exhaustion-as-failure is only
+    fair under identical per-arm budgets — the applied map is max()-equalized,
+    sized to the slowest arm's calibrated tail."""
+
+    def test_equalizes_to_slowest_arm(self):
+        from jseval.utility_calibrate import equalize_timeouts_across_conditions
+
+        assert equalize_timeouts_across_conditions(
+            {"A": 337, "B": 120}, fallback=180
+        ) == {"A": 337, "B": 337}
+
+    def test_empty_measurement_returns_empty(self):
+        from jseval.utility_calibrate import equalize_timeouts_across_conditions
+
+        assert equalize_timeouts_across_conditions({}, fallback=180) == {}
+
+    def test_single_condition_unchanged(self):
+        from jseval.utility_calibrate import equalize_timeouts_across_conditions
+
+        assert equalize_timeouts_across_conditions(
+            {"A": 250}, fallback=180
+        ) == {"A": 250}
