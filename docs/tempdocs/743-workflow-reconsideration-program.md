@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy. BASELINE RECOMPUTED 2026-07-16 by tempdoc 745 (session 805279a4) after it fixed 7 verified bugs in the cost parser this program was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline SURVIVES; read prediction-1 against 84.0%, not 85.1%). Handoff item 4 ('OTel reservoir is feeding') was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it — no month-scale OTel data predating 2026-07-16 exists. FRESH EVIDENCE LANE 2026-07-17 (session a6d2af56, worktree takeover-743): founder-directed independent 11-session raw-transcript pass, deliberately derived without relying on this tempdoc's prior conclusions, plus a founder reframe (no specific scarcity; environment-centric: 'the agents themselves might be the ones encountering issues') — see §'Independent transcript-evidence lane (2026-07-17)'."
+status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy. BASELINE RECOMPUTED 2026-07-16 by tempdoc 745 (session 805279a4) after it fixed 7 verified bugs in the cost parser this program was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline SURVIVES; read prediction-1 against 84.0%, not 85.1%). Handoff item 4 ('OTel reservoir is feeding') was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it — no month-scale OTel data predating 2026-07-16 exists. FRESH EVIDENCE LANE 2026-07-17 (session a6d2af56, worktree takeover-743): founder-directed independent 11-session raw-transcript pass, deliberately derived without relying on this tempdoc's prior conclusions, plus a founder reframe (no specific scarcity; environment-centric: 'the agents themselves might be the ones encountering issues') — see §'Independent transcript-evidence lane (2026-07-17)'. SECOND-WAVE THEORIZATION written same day (§'Theorization — second proposal wave'): three environment deficits (queryable world-state / reliability-vs-insurance / learning loop) + go/stop visibility, unification stance settled (paved usage surfaces, consolidation only under a live consumer, no standalone refactor). NEXT: platform-capabilities probe (R4-refresh) gates design; second-wave proposals not yet authored; P-F/P-C pilot sequencing vs environment slices is an open founder call."
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -1251,6 +1251,39 @@ agent or the founder routinely needs should be computable from one place, on dem
 function of disk state — never stored in a second authority, never resident only in a human.**
 If Phase 3's second wave survives review, it is likely this invariant wearing different clothes
 per deficit.
+
+### Addendum: unification — usage surfaces, not module trees (founder question, 2026-07-17)
+
+Founder asked whether unifying/improving the code structure of the issue-cluster areas is the
+best long-term move. Position settled in discussion:
+
+- **The obvious version is rejected.** Refactoring the existing tooling tree for structure's
+  own sake doesn't touch the clusters: the recurring errors occur overwhelmingly in
+  *agent-generated ad-hoc actions* (inline bash/python, per-session scratchpad scripts —
+  109145ac hand-rolled its own watcher; every session hand-rolls gh invocations), not inside
+  committed scripts. Structure without a new consumer is also exactly what the graveyard law
+  kills, and AHA already warns against DRY-ing scaffolding.
+- **The endorsed version: unify around usage surfaces (paved paths), not module layout.** The
+  clusters reveal ~5 capabilities agents keep hand-rolling because no blessed path exists:
+  (1) **transcript access** — ≥5 independent reader implementations to date, and the cost
+  parser's 7 bugs lived in one of these duplicates → one library, everything a consumer;
+  (2) **exec substrate** — one blessed way to run gh/python/node baking in encoding, quoting,
+  exit-code semantics, shim workarounds (D3-b root-fixing in structural form);
+  (3) **world-state queries** (D1-a is itself a unification of five scattered fact sources);
+  (4) **supervision** — one reusable heartbeat-watcher helper instead of per-session scripts;
+  (5) hooks — already unified via hook-base.mjs, and notably the one layer where errors don't
+  keep reappearing.
+- **Precedent inside the repo, both directions:** jseval unified eval ad-hocery so thoroughly
+  it earned a standing "improve jseval rather than work around it" rule — that is what a paved
+  path looks like after it wins. Phase 1's transcript-cost.mjs extraction is the same move
+  small. The dead generations were all new layers *without* consumers; no consolidation under
+  a live consumer has died.
+- **Execution shape:** not a standalone refactor project — each second-wave slice is built ON
+  the shared library it implies, migrating one existing duplicate as it lands (consumer
+  attached to every abstraction from day one). Caution carried: platform drift argues for thin
+  and replaceable over deep and load-bearing.
+- This is the broader-principle candidate applied to the tooling plane: one computable home
+  per operational fact, one paved path per recurring action.
 
 ## Non-goals
 
