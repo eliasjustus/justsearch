@@ -618,3 +618,40 @@ ignored).
    no vector export needed. Running A1 against the archived round-5/6 evidence +
    a score-bearing regenerated baseline is the highest-information next step for
    finding 5. Exact-KNN (A3) remains the end-state gate question, spike-gated.
+
+## Derisk (2026-07-17) — all six load-bearing assumptions verified; probe dry-run produced real signal
+
+Read-only pass (repo + archived round evidence + a scratchpad probe script); plan
+pre-registered and approved. Verdicts:
+
+- **U1 (captures carry the data):** YES — both rounds' `evidence/golden/*.json`
+  contain per-hit `trace` arrays with `dense-retrieval` rank + score at full float
+  precision (e.g. `0.57117754`), captured by the harness's plain POST. A1 runs
+  retroactively against archives.
+- **U2 (score semantics):** YES — the per-hit dense score is the dense leg's own
+  raw Lucene KNN similarity recorded pre-fusion (`HitProvenanceProjector.java:46`
+  stores `hit.score()` from the dense leg's result; emitted at
+  `SearchResponseBuilder.java:296-298`). A pure function of the two embeddings.
+- **U3 (single-leg modes):** YES — `parseModeOrDefault`
+  (`SearchPipelinePresets.java:25-38`): `text`/`lexical`, `vector`, `splade`,
+  `hybrid`. A2 needs zero product change.
+- **U4/U4b (probe dry-run, round5 ↔ round6):** the decisive result. The two rounds
+  agree with each other almost perfectly — **10/10 shared docs on every query,
+  dense-score deltas ≤ 1.8e-4** across two different builds and sandbox sessions —
+  while both diverge from the dev baseline **identically** (q04 6/10, q06 5/10,
+  q08 4/10). The divergence 734 finding 5 measures is a **systematic dev-vs-sandbox
+  difference, not round noise**; embedding inference inside the Sandbox is
+  reproducible to ~1e-4. (Side signal: BM25 scores drift up to ~0.1 round-to-round —
+  corpus-stats sensitivity, resolvable the same way once the baseline carries
+  scores.) Shared-pair counts on the failing queries (4-6) are sufficient; the
+  probe is not starved. This answers §Open question 1: sandbox-to-sandbox IS stable.
+- **U5 (previous installer):** YES — `JustSearch_0.1.0_x64-setup.exe` is a GitHub
+  release asset.
+- **U6 (reach anchors):** YES — 200 distinct `data-testid`s in `shell-v0`,
+  including surface-level ids.
+
+**Confidence: 8.5/10.** Residuals: upgrade-mode installer behavior is only provable
+in a live round; the charter/TBS field set may need one iteration; A3 stays
+spike-gated (and the dry-run's "systematic + stable + enough shared pairs" result
+makes it less likely A3 is ever needed). Recommended implementation: Opus (medium)
+orchestrating, Sonnet workers for the bounded mechanical chunks.
