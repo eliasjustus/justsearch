@@ -116,11 +116,18 @@ export function computeVerdict({ dir, staleSec = DEFAULT_STALE_SEC, now = Date.n
 
   const verdictPath = path.join(dir, 'verdict.json');
   if (fs.existsSync(verdictPath)) {
-    const verdict = JSON.parse(fs.readFileSync(verdictPath, 'utf8'));
-    if (verdict.code === 0) {
-      return { status: 'DONE-OK', message: 'DONE-OK', exitCode: 0 };
+    // A check racing the exit-time write can read a partial file; treat an unparseable
+    // verdict as "not written yet" and fall through to heartbeat age instead of crashing
+    // with an undocumented exit code (refute-first review finding 6, 743 second wave).
+    try {
+      const verdict = JSON.parse(fs.readFileSync(verdictPath, 'utf8'));
+      if (verdict.code === 0) {
+        return { status: 'DONE-OK', message: 'DONE-OK', exitCode: 0 };
+      }
+      return { status: 'DONE-FAILED', message: `DONE-FAILED(${verdict.code})`, exitCode: 1 };
+    } catch {
+      // fall through to heartbeat-based verdict
     }
-    return { status: 'DONE-FAILED', message: `DONE-FAILED(${verdict.code})`, exitCode: 1 };
   }
 
   const ageSec = Math.max(0, Math.round((now - fs.statSync(heartbeatPath).mtimeMs) / 1000));

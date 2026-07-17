@@ -166,8 +166,12 @@ function record(bucket, { sessionId, timestamp, text }) {
  * the same signature table, since either is evidence the signature fired in
  * this session.
  */
-function scanFile(filePath, sessionId, buckets, unmatchedClusters) {
+function scanFile(filePath, sessionId, buckets, unmatchedClusters, { skipSidechain = false } = {}) {
   for (const turn of iterateTurns(filePath)) {
+    // When the session's subagents/agent-*.jsonl files are scanned separately, the same
+    // subagent errors also appear inlined as sidechain lines in the parent transcript —
+    // skip them here so each error counts once (refute-first review finding 4, 743).
+    if (skipSidechain && turn.isSidechain) continue;
     const candidates = [];
     for (const r of turn.toolResults) {
       if (r.isError && r.text) candidates.push(r.text);
@@ -282,12 +286,17 @@ export function main() {
 
   for (const s of sessions) {
     try {
-      scanFile(s.path, s.sessionId, buckets, unmatchedClusters);
+      const projectDirPath = path.join(opts.projectsRoot, s.projectDir);
+      const subPaths = listSubagentPaths(projectDirPath, s.sessionId);
+      // Skip sidechain lines in the parent only when the subagent files exist to be
+      // scanned in their own right — otherwise sidechain lines are the only record.
+      scanFile(s.path, s.sessionId, buckets, unmatchedClusters, {
+        skipSidechain: subPaths.length > 0,
+      });
       realUserMessages += countRealUserMessages(s.path);
       filesScanned += 1;
 
-      const projectDirPath = path.join(opts.projectsRoot, s.projectDir);
-      for (const subPath of listSubagentPaths(projectDirPath, s.sessionId)) {
+      for (const subPath of subPaths) {
         scanFile(subPath, s.sessionId, buckets, unmatchedClusters);
         filesScanned += 1;
       }

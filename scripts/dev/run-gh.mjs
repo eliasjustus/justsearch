@@ -107,6 +107,13 @@ async function checksWait(bin, prNumber, timeoutSec) {
 
   // Phase 1: pre-poll until checks register (cli/cli#7401 mitigation).
   let last = runGhCaptured(bin, checksArgs);
+  if (last.error) {
+    // Spawn failure (ENOENT etc.) must fail fast and legibly — never poll a binary that
+    // isn't there until timeout and then report a wrong-cause TIMEOUT (refute-first review
+    // finding 2a, 743 second wave).
+    process.stderr.write(`run-gh checks-wait: failed to spawn \`${bin}\`: ${last.error.message}\n`);
+    return 2;
+  }
   while (isUnregistered(last)) {
     if (Date.now() >= deadline) {
       process.stderr.write(
@@ -116,6 +123,10 @@ async function checksWait(bin, prNumber, timeoutSec) {
     }
     await sleep(POLL_INTERVAL_MS);
     last = runGhCaptured(bin, checksArgs);
+    if (last.error) {
+      process.stderr.write(`run-gh checks-wait: failed to spawn \`${bin}\`: ${last.error.message}\n`);
+      return 2;
+    }
   }
 
   // Phase 2: trust the bitwise contract until it resolves to pass/fail.
@@ -172,6 +183,12 @@ async function main() {
   }
 
   const result = runGh(bin, argv);
+  if (result.error) {
+    // Mirror run-py.mjs's spawn-error guard: with stdio 'inherit', ENOENT is otherwise a
+    // silent exit 1 with zero output (refute-first review finding 2b, 743 second wave).
+    process.stderr.write(`run-gh: failed to spawn \`${bin}\`: ${result.error.message}\n`);
+    process.exit(127);
+  }
   process.exit(result.status ?? 1);
 }
 
