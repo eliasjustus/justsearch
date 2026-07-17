@@ -49,12 +49,18 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
-from check_golden_parity import extract_top_identities  # noqa: E402
+from golden_common import (  # noqa: E402
+    BASELINE_FORMAT_VERSION,
+    extract_doc_identity,
+    extract_top_identities,
+    leg_scores,
+)
 
 DEFAULT_QUERIES_REL = "golden-queries.json"
 DEFAULT_OUT_REL = "golden-parity.json"
 TOP_N = 10
 REQUEST_TIMEOUT_S = 30.0
+LEG_MODES = ("vector", "text", "splade")
 
 
 def find_repo_root(start: Path) -> Path:
@@ -84,10 +90,16 @@ def git_head(repo_root: Path) -> str:
     return "UNKNOWN"
 
 
-def post_search(base_url: str, query: str, limit: int = TOP_N) -> dict[str, Any]:
-    """POST /api/knowledge/search {query, limit, mode: hybrid} and return the parsed body."""
+def post_search(base_url: str, query: str, limit: int = TOP_N, mode: str = "hybrid") -> dict[str, Any]:
+    """POST /api/knowledge/search {query, limit, mode} and return the parsed body.
+
+    `mode` defaults to "hybrid" (the golden baseline's primary leg). The
+    public API also accepts "text"/"lexical" (BM25-only), "vector"
+    (dense-only), and "splade" (SPLADE-only) -- used by `generate()` to
+    capture per-leg top-10s (`SearchPipelinePresets.java:31-34`).
+    """
     url = f"{base_url}/api/knowledge/search"
-    body = json.dumps({"query": query, "limit": limit, "mode": "hybrid"}).encode("utf-8")
+    body = json.dumps({"query": query, "limit": limit, "mode": mode}).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=body,
@@ -167,6 +179,39 @@ def queries_hash(queries: list[dict[str, Any]]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def calibration_block() -> dict[str, Any]:
+    """Same-machine-population calibration metadata for the golden baseline.
+
+    Records the axes that were actually sampled (HNSW rebuild noise, tempdoc
+    734 + tempdoc 750 derisk) versus the axes deliberately held constant
+    (GPU/driver, embedding-inference environment, index-insertion
+    environment) while sampling them -- so a comparison that crosses one of
+    the held-constant axes (e.g. dev vs. a Sandbox candidate on different
+    hardware) can see explicitly that the overlap floors below were never
+    measured across that axis, instead of silently trusting them there too."""
+    return {
+        "population": "same-machine-dev-rebuilds",
+        "axesSampled": ["hnsw-rebuild-noise"],
+        "axesHeldConstant": [
+            "gpu+driver",
+            "embedding-inference-env",
+            "index-insertion-environment",
+        ],
+        "n": 3,
+        "denseScoreEnvelopeAbs": 2.0e-4,
+        "source": (
+            "tempdoc 734 calibration (n=3 dev rebuilds) + tempdoc 750 derisk "
+            "round5-vs-round6 dense-score deltas <= 1.8e-4"
+        ),
+        "note": (
+            "dense-score envelope measured on the sandbox population (round5 vs round6, "
+            "fingerprint-identical weights); overlap floors were sampled ONLY on the "
+            "same-machine population - applying them cross-environment is exactly what "
+            "this block exists to make visible"
+        ),
+    }
+
+
 def generate(
     base_url: str, queries_doc: dict[str, Any], corpus: str, repo_root: Path
 ) -> dict[str, Any]:
@@ -243,17 +288,51 @@ def generate(
             )
 
         top10 = extract_top_identities(response, TOP_N)
+
+        # Per-hit leg scores (tempdoc 750 Part A): each hybrid hit's `trace`
+        # array carries per-stage scores at full float precision. Recorded
+        # keyed by the SAME normalized identity used in expectedTop10, so a
+        # consumer can look up a leg's contribution without re-deriving
+        # identity extraction.
+        leg_scores_by_identity: dict[str, dict[str, float]] = {}
+        for hit in (response.get("results") or [])[:TOP_N]:
+            identity = extract_doc_identity(hit)
+            if identity is None:
+                continue
+            leg_scores_by_identity[identity] = leg_scores(hit)
+
+        # Per-leg top-10 (tempdoc 750 Part A): one additional POST per mode
+        # (vector/text/splade) so a consumer can see what each retrieval leg
+        # alone would have surfaced, independent of hybrid fusion. Unlike the
+        # hybrid capture above, a leg returning fewer than TOP_N hits records
+        # what it returns rather than failing -- only the hybrid <10 check
+        # stays fail-closed.
+        leg_top10: dict[str, list[str]] = {}
+        for leg_mode in LEG_MODES:
+            try:
+                leg_response = post_search(base_url, qtext, TOP_N, mode=leg_mode)
+            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
+                sys.exit(
+                    f"Query {qid!r} ({qtext!r}) leg capture (mode={leg_mode!r}) failed "
+                    f"against {base_url}: {exc}. Is the dev backend running and reachable "
+                    "at --api-port?"
+                )
+            leg_top10[leg_mode] = extract_top_identities(leg_response, TOP_N)
+
         results.append(
             {
                 "id": qid,
                 "query": qtext,
                 "kind": q.get("kind", ""),
                 "expectedTop10": top10,
+                "legScores": leg_scores_by_identity,
+                "legTop10": leg_top10,
             }
         )
 
     return {
         "version": 1,
+        "formatVersion": BASELINE_FORMAT_VERSION,
         "corpus": corpus,
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "gitHead": git_head(repo_root),
@@ -263,6 +342,7 @@ def generate(
         "embeddingFingerprint": embedding_fingerprint,
         "indexedDocuments": indexed_documents,
         "probeExecutedRetrievalLegs": probe_executed_legs or [],
+        "calibration": calibration_block(),
         "queries": results,
     }
 

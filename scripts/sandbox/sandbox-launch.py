@@ -20,6 +20,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -163,6 +164,32 @@ def resolve_models_dir(explicit_path: str | None) -> tuple[Path | None, str | No
                 "or --no-models for a true fresh-install round."
             )
     return None, None
+
+
+def resolve_upgrade_from(explicit_path: str, candidate_installer: Path) -> Path:
+    """Resolve and validate the --upgrade-from previous-release installer path
+    for an upgrade-from-release round (tempdoc 750 Part C).
+
+    FAILS CLOSED: the path must exist, must be a .exe, and must not share the
+    candidate installer's filename -- staging the same file twice under two
+    different labels (candidate vs. "previous release") would silently
+    defeat the point of an upgrade round, which needs two DISTINCT binaries
+    (e.g. JustSearch_0.1.0_x64-setup.exe upgraded to the current candidate)."""
+    p = Path(explicit_path)
+    if not p.is_absolute():
+        p = REPO_ROOT / p
+    if not p.is_file():
+        sys.exit(f"--upgrade-from installer not found: {p}")
+    if p.suffix.lower() != ".exe":
+        sys.exit(f"--upgrade-from installer must be a .exe: {p}")
+    if p.name == candidate_installer.name:
+        sys.exit(
+            f"--upgrade-from installer has the same filename as the candidate "
+            f"installer ({p.name}) -- refusing to stage the same file twice as "
+            "both 'previous release' and 'candidate'. Pass the actual previous "
+            "public release installer (e.g. JustSearch_0.1.0_x64-setup.exe)."
+        )
+    return p
 
 
 def clean_dir(path: Path):
@@ -535,13 +562,78 @@ def stage_claude_settings(share_dir: Path):
             print(f"Staged .claude/settings.json (raw copy, sanitization failed: {e})")
 
 
-def write_validation_mode(share_dir: Path, installer: Path, models_dir: Path | None, no_models: bool):
+def _sha256_of(path: Path) -> str:
+    """Return the hex SHA-256 digest of a file, reading in 1 MB chunks (avoids
+    loading a whole installer exe into memory)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def stage_upgrade_installer(share_dir: Path, upgrade_installer: Path) -> tuple[str, str]:
+    """Stage the previous release's installer into share/previous-release/
+    (tempdoc 750 Part C), next to the candidate under share root, and return
+    (filename, sha256) for write_validation_mode()'s mode section.
+
+    The candidate installer is already staged at share_dir root by main();
+    this keeps the previous release distinctly namespaced so the in-sandbox
+    agent cannot confuse which installer is which."""
+    dst_dir = share_dir / "previous-release"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst = dst_dir / upgrade_installer.name
+    shutil.copy2(upgrade_installer, dst)
+    digest = _sha256_of(upgrade_installer)
+    print(f"Staged previous-release installer: {upgrade_installer.name} (sha256 {digest})")
+    return upgrade_installer.name, digest
+
+
+def write_validation_mode(
+    share_dir: Path,
+    installer: Path,
+    models_dir: Path | None,
+    no_models: bool,
+    upgrade_info: tuple[str, str] | None = None,
+):
     """Write the actual launch mode into the mapped folder.
 
     The static sandbox docs describe both fresh and pre-staged model modes.
     This generated file is the authority for the current sandbox instance.
+
+    upgrade_info, when given, is (previous_installer_filename, sha256) staged
+    by stage_upgrade_installer() for an upgrade-from-release round (tempdoc
+    750 Part C). It takes priority over no_models/models_dir: an upgrade
+    round always exercises the real download path (like fresh-install),
+    never the pre-staged-models shortcut (enforced in main()'s argument
+    parsing -- --upgrade-from and --models-dir are mutually exclusive).
+
+    Every mode also writes a machine-readable "ExpectPriorInstall" marker
+    that collect-evidence.ps1 reads to decide whether a FOUND prior-install
+    signal is the expected state (upgrade-from-release) or a warning
+    (every other mode).
     """
-    if no_models:
+    expect_prior_install = upgrade_info is not None
+
+    if upgrade_info:
+        prev_name, prev_sha256 = upgrade_info
+        mode = "upgrade-from-release"
+        details = [
+            "Host models mapped: no",
+            "JUSTSEARCH_MODELS_DIR: must remain unset",
+            "Install AI expectation: full clean download of models and cuda-runtime (like fresh-install)",
+            "Coverage: production first-run download, manifest resolution, native-bin extraction, "
+            "plus retained-user-data survival across an upgrade (ADR-0024)",
+            f"Previous release installer: previous-release/{prev_name}",
+            f"Previous release SHA-256: {prev_sha256}",
+            "Instruction sequence:",
+            "1. Install the PREVIOUS release from previous-release/, launch it once so it creates "
+            "real user data, seed minimal data (add one folder, run one search), quit it fully.",
+            "2. Run the CANDIDATE installer over it.",
+            "3. Proceed with the normal mission -- data survival across the upgrade is itself a "
+            "required observation, per ADR-0024 retained user data.",
+        ]
+    elif no_models:
         mode = "fresh-install"
         details = [
             "Host models mapped: no",
@@ -576,12 +668,81 @@ def write_validation_mode(share_dir: Path, installer: Path, models_dir: Path | N
         f"- Mode: {mode}",
         f"- Installer: {installer.name}",
         *[f"- {line}" for line in details],
+        f"- ExpectPriorInstall: {'true' if expect_prior_install else 'false'}",
         "",
         "The final validation summary must state this mode explicitly.",
         "",
     ]
     (share_dir / "validation-mode.md").write_text("\n".join(text), encoding="utf-8")
     print(f"Staged validation-mode.md ({mode})")
+
+
+def _read_resolved_mode(share_dir: Path) -> tuple[str, str]:
+    """Read the mode + a one-line meaning back out of the validation-mode.md
+    that write_validation_mode() already wrote, without touching that
+    function's own mode-resolution logic (out of scope for this change).
+
+    Returns (mode, meaning). Tolerant of a missing/malformed file -- returns
+    ("unknown", "") rather than raising, since a trailer with a degraded
+    meaning is better than aborting an otherwise-valid charter stage."""
+    path = share_dir / "validation-mode.md"
+    if not path.is_file():
+        return "unknown", ""
+    mode = "unknown"
+    meaning = ""
+    found_mode = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not found_mode:
+            if stripped.startswith("- Mode:"):
+                mode = stripped[len("- Mode:"):].strip()
+                found_mode = True
+            continue
+        if stripped.startswith("- "):
+            meaning = stripped[2:].strip()
+            break
+    return mode, meaning
+
+
+def stage_charter(share_dir: Path, charter_path: str | None, no_charter: bool):
+    """Stage this round's charter (Session-Based Test Management, J. Bach &
+    J. Bach, STQE 2000 -- charter/debrief/TBS time accounting, adapted;
+    tempdoc 750 Part B). A charter pre-registers the round's purpose and
+    each blocker's needs-round/needs-dig classification BEFORE the round
+    starts, per Bach & Bach: "a charter... states what is to be tested,
+    why, and how."
+
+    With a charter path: validates the file exists and is non-empty, then
+    stages it verbatim as charter.md with a generated "## Resolved launch
+    mode" trailer section appended, reflecting the mode write_validation_mode()
+    already resolved for this instance (read back via _read_resolved_mode(),
+    not re-derived here).
+
+    With no_charter: prints a one-line notice that this launch is
+    non-qualifying and stages nothing.
+
+    FAILS CLOSED on a missing or empty charter file -- an unreadable or
+    blank charter is not a real pre-registration, and staging it as though
+    it were would silently defeat the point of requiring one.
+    """
+    if no_charter:
+        print("Non-qualifying launch: no charter staged (--no-charter).")
+        return
+
+    path = Path(charter_path)
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    if not path.is_file():
+        sys.exit(f"--charter file not found: {path}")
+
+    content = path.read_text(encoding="utf-8")
+    if not content.strip():
+        sys.exit(f"--charter file is empty: {path}")
+
+    mode, meaning = _read_resolved_mode(share_dir)
+    trailer = f"\n## Resolved launch mode\n{mode}: {meaning}\n"
+    (share_dir / "charter.md").write_text(content.rstrip("\n") + "\n" + trailer, encoding="utf-8")
+    print(f"Staged charter.md ({path.name}, + resolved-mode trailer: {mode})")
 
 
 def stage_coverage_brief(share_dir: Path):
@@ -796,9 +957,74 @@ def main():
             "Bug S NER GPU_FULL bug that 11 prior rounds missed)."
         ),
     )
+    parser.add_argument(
+        "--charter",
+        help=(
+            "Path to this round's charter markdown file (Session-Based Test "
+            "Management, Bach & Bach, STQE 2000 -- charter/debrief/TBS time "
+            "accounting, adapted; tempdoc 750 Part B). Staged verbatim into "
+            "the share as charter.md with a generated 'Resolved launch mode' "
+            "trailer appended. Mutually exclusive with --no-charter; exactly "
+            "one is required on every real invocation of this script (this "
+            "flag is enforced in main()'s argument parsing, which only runs "
+            "when the script is actually executed -- staging-only "
+            "(--no-launch) runs still generate charter.md/the notice, since "
+            "generate_wsb() always runs too; importing this module for its "
+            "functions, as test_sandbox_launch_evidence_archive.py does, "
+            "never calls main() and so never trips this requirement)."
+        ),
+    )
+    parser.add_argument(
+        "--no-charter",
+        action="store_true",
+        help=(
+            "Explicitly mark this launch as a non-qualifying round: no "
+            "charter.md is staged, only a one-line notice is printed. "
+            "Mutually exclusive with --charter; exactly one of the two is "
+            "required (see --charter's help for the enforcement boundary)."
+        ),
+    )
+    parser.add_argument(
+        "--upgrade-from",
+        help=(
+            "Path to the previous public release's installer exe, for an "
+            "upgrade-from-release round (tempdoc 750 Part C): the qualifying "
+            "set for a release includes the existing fresh-install "
+            "requirements plus at least one upgrade round. Stages the file "
+            "into previous-release/ alongside the candidate installer, "
+            "resolves the mode to 'upgrade-from-release', and records its "
+            "filename + SHA-256 plus the install-then-upgrade instruction "
+            "sequence in validation-mode.md. Mutually exclusive with "
+            "--models-dir (an upgrade round exercises the real download "
+            "path, like fresh-install, never the pre-staged-models "
+            "shortcut); combines internally with the no-models resolution. "
+            "The path must exist, be a .exe, and differ in filename from "
+            "the candidate installer (refuses staging the same file twice)."
+        ),
+    )
     args = parser.parse_args()
     if args.no_models and args.models_dir:
         sys.exit("--no-models and --models-dir are mutually exclusive.")
+
+    if args.upgrade_from and args.models_dir:
+        sys.exit(
+            "--upgrade-from and --models-dir are mutually exclusive: an "
+            "upgrade-from-release round exercises the real download path "
+            "(like fresh-install), not the pre-staged-models shortcut."
+        )
+
+    if args.charter and args.no_charter:
+        sys.exit("--charter and --no-charter are mutually exclusive.")
+    if not args.charter and not args.no_charter:
+        sys.exit(
+            "Exactly one of --charter <path-to-md> or --no-charter is required. "
+            "Session-Based Test Management (Bach & Bach, STQE 2000) treats the "
+            "charter as the round's pre-registered contract: a qualifying round "
+            "pre-registers its purpose and each blocker's needs-round/needs-dig "
+            "classification BEFORE the round starts (tempdoc 750 Part B). Pass "
+            "--charter <path-to-md> for a qualifying round, or --no-charter to "
+            "explicitly mark this launch non-qualifying."
+        )
 
     if not (REPO_ROOT / "gradlew.bat").exists():
         sys.exit(f"Cannot find repo root from {SCRIPT_DIR}")
@@ -806,6 +1032,11 @@ def main():
     # 1. Resolve installer
     installer = find_installer(args.installer)
     print(f"Installer: {installer}")
+
+    upgrade_installer = None
+    if args.upgrade_from:
+        upgrade_installer = resolve_upgrade_from(args.upgrade_from, installer)
+        print(f"Upgrade-from (previous release) installer: {upgrade_installer}")
 
     # 2. Stage shared folder
     stage_dir = Path(args.stage_dir)
@@ -892,7 +1123,14 @@ def main():
     # other staging gap, rather than a second ad hoc mechanism.
     models_dir = None
     if args.no_models:
-        print("Models directory: SKIPPED (--no-models, Rule 14 — true fresh install)")
+        print("Models directory: SKIPPED (--no-models, Rule 14 -- true fresh install)")
+        print("  Install AI in the sandbox will do the full ~10 GB clean download.")
+    elif upgrade_installer:
+        # An upgrade-from-release round always exercises the real download
+        # path (like fresh-install), never the pre-staged-models shortcut --
+        # combined internally with the no-models resolution rather than
+        # requiring the operator to also pass --no-models explicitly.
+        print("Models directory: SKIPPED (--upgrade-from, exercising the real download path like fresh-install)")
         print("  Install AI in the sandbox will do the full ~10 GB clean download.")
     else:
         models_dir, models_gap = resolve_models_dir(args.models_dir)
@@ -914,10 +1152,18 @@ def main():
     print(f"\nShare directory: {share_dir}")
     print(f"Share size: {total_bytes // (1024 * 1024)} MB")
 
+    # Stage the previous release's installer for an upgrade-from-release
+    # round (tempdoc 750 Part C), before write_validation_mode() so its
+    # filename + sha256 are available to record in validation-mode.md.
+    upgrade_info = None
+    if upgrade_installer:
+        upgrade_info = stage_upgrade_installer(share_dir, upgrade_installer)
+
     # 4. Stamp actual validation mode, generate the per-candidate coverage brief
     #    (fail-closed on an unclassified shipped surface), stage the capture
     #    harness, then generate .wsb (tempdoc 728).
-    write_validation_mode(share_dir, installer, models_dir, args.no_models)
+    write_validation_mode(share_dir, installer, models_dir, args.no_models, upgrade_info)
+    stage_charter(share_dir, args.charter, args.no_charter)
     stage_coverage_brief(share_dir)
     stage_round_plan(share_dir)
     stage_evidence_harness(share_dir)

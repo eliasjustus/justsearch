@@ -12,7 +12,7 @@ import json
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -20,17 +20,30 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from check_golden_parity import (  # noqa: E402
     KNOWLEDGE_STATUS_EVIDENCE_FILENAME,
+    BASELINE_FORMAT_VERSION,
+    PARITY_CORPUS_MISMATCH,
+    PARITY_DENSE_LEG_SKIPPED,
+    PARITY_EMBEDDING_VARIANCE,
+    PARITY_LEG_DIVERGENCE,
+    PARITY_MODEL_MISMATCH,
+    PARITY_OVERLAP_MISS,
+    PARITY_UNCALIBRATED_POPULATION,
     GoldenQuery,
     check_corpus_sanity,
     check_dense_leg,
     check_model_identity,
+    compute_dense_score_signal,
+    compute_leg_attribution,
     evaluate_all,
     evaluate_query,
     extract_doc_identity,
     extract_top_identities,
+    format_leg_attribution_line,
     load_capture,
     load_golden,
+    main,
     normalize_identity,
+    print_report,
 )
 
 
@@ -456,6 +469,283 @@ class Utf8BomEvidenceTests(PreconditionTestsBase):
 
             verdicts = evaluate_all(loaded_baseline, str(evidence_dir))
             self.assertTrue(verdicts[0].passed, verdicts[0].reason)
+
+
+class DenseScoreSignalTests(unittest.TestCase):
+    """Signal 1 (tempdoc 750 Part A1): the score-identity probe compares
+    dense-leg scores on the (query, doc) pairs shared by baseline and
+    capture against the baseline's calibrated envelope."""
+
+    def test_planted_drift_flags_embedding_variance(self):
+        golden_query = GoldenQuery(
+            id="q01",
+            query="a",
+            kind="keyword",
+            expected_top10=["d1.txt"],
+            leg_scores={"d1.txt": {"dense": 0.50}},
+        )
+        line = compute_dense_score_signal(golden_query, {"d1.txt": {"dense": 0.51}}, envelope_abs=2.0e-4)
+        self.assertIn(f"[{PARITY_EMBEDDING_VARIANCE}]", line)
+        self.assertIn("1.00e-02", line)
+        self.assertIn("1 shared pairs", line)
+
+    def test_identical_scores_disjoint_tails_reports_consistent(self):
+        golden_query = GoldenQuery(
+            id="q01",
+            query="a",
+            kind="keyword",
+            expected_top10=["d1.txt", "d2.txt", "tailA.txt"],
+            leg_scores={"d1.txt": {"dense": 0.50}, "d2.txt": {"dense": 0.42}},
+        )
+        captured_leg_scores = {
+            "d1.txt": {"dense": 0.50},
+            "d2.txt": {"dense": 0.42},
+            "tailB.txt": {"dense": 0.10},  # disjoint tail identity, not in baseline
+        }
+        line = compute_dense_score_signal(golden_query, captured_leg_scores, envelope_abs=2.0e-4)
+        self.assertNotIn(PARITY_EMBEDDING_VARIANCE, line)
+        self.assertIn("scores consistent", line)
+        self.assertIn("selection-side", line)
+        self.assertIn("2 shared pairs", line)
+
+    def test_zero_shared_pairs_says_so(self):
+        golden_query = GoldenQuery(id="q01", query="a", kind="keyword", expected_top10=["d1.txt"], leg_scores={})
+        line = compute_dense_score_signal(golden_query, {"d9.txt": {"dense": 0.1}}, envelope_abs=2.0e-4)
+        self.assertIn("no shared score-bearing pairs", line)
+
+
+class LegAttributionTests(unittest.TestCase):
+    """Signal 2 (tempdoc 750 Part A2): per-leg overlap attribution."""
+
+    def _write_leg_capture(self, evidence_dir: Path, query_id: str, mode: str, identities: list[str]) -> None:
+        (evidence_dir / "golden" / f"{query_id}.{mode}.json").write_text(
+            json.dumps(_response(identities)), encoding="utf-8"
+        )
+
+    def test_vector_leg_diverges_names_only_dense(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = Path(tmp) / "evidence"
+            (evidence_dir / "golden").mkdir(parents=True)
+            baseline_top10 = [f"d{i}.txt" for i in range(1, 11)]
+
+            # vector leg (displayed as "dense"): only 4/10 overlap.
+            self._write_leg_capture(
+                evidence_dir,
+                "q01",
+                "vector",
+                [f"d{i}.txt" for i in range(1, 5)] + [f"x{i}.txt" for i in range(1, 7)],
+            )
+            # text and splade legs: full 10/10 overlap.
+            self._write_leg_capture(evidence_dir, "q01", "text", baseline_top10)
+            self._write_leg_capture(evidence_dir, "q01", "splade", baseline_top10)
+
+            golden_query = GoldenQuery(
+                id="q01",
+                query="a",
+                kind="keyword",
+                expected_top10=baseline_top10,
+                leg_top10={"vector": baseline_top10, "text": baseline_top10, "splade": baseline_top10},
+            )
+            overlaps = compute_leg_attribution(golden_query, str(evidence_dir))
+            self.assertEqual(overlaps, {"dense": 4, "text": 10, "splade": 10})
+
+            line = format_leg_attribution_line(overlaps)
+            self.assertIn(f"[{PARITY_LEG_DIVERGENCE}: dense]", line)
+            self.assertNotIn(f"{PARITY_LEG_DIVERGENCE}: dense, text", line)
+            self.assertNotIn(f"{PARITY_LEG_DIVERGENCE}: dense, splade", line)
+
+    def test_missing_leg_captures_reports_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = Path(tmp) / "evidence"
+            (evidence_dir / "golden").mkdir(parents=True)
+            golden_query = GoldenQuery(
+                id="q01",
+                query="a",
+                kind="keyword",
+                expected_top10=["d1.txt"],
+                leg_top10={"vector": ["d1.txt"], "text": ["d1.txt"], "splade": ["d1.txt"]},
+            )
+            overlaps = compute_leg_attribution(golden_query, str(evidence_dir))
+            self.assertIsNone(overlaps)
+            self.assertEqual(
+                format_leg_attribution_line(overlaps),
+                "leg attribution unavailable (no per-leg captures in this evidence set)",
+            )
+
+
+class V1BaselineNoticeTests(PreconditionTestsBase):
+    """A v1 baseline (no formatVersion, or formatVersion 1) runs the legacy
+    comparison exactly as before, plus one PARITY_UNCALIBRATED_POPULATION
+    notice line naming that the new signals aren't available for it."""
+
+    def test_v1_baseline_shows_legacy_report_plus_notice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            expected = [f"d{i}.txt" for i in range(1, 11)]
+            self._write_capture(evidence_dir, "q01", _response(expected))
+
+            golden = self._baseline(
+                queries=[{"id": "q01", "query": "a", "kind": "keyword", "expectedTop10": expected}],
+            )
+            self.assertNotIn("formatVersion", golden)
+
+            verdicts = evaluate_all(golden, str(evidence_dir))
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                all_passed = print_report(golden, str(evidence_dir), verdicts)
+            output = buf.getvalue()
+
+            self.assertTrue(all_passed)
+            self.assertIn(f"[{PARITY_UNCALIBRATED_POPULATION}]", output)
+            self.assertIn("v1 baseline", output)
+            self.assertNotIn("dense-score identity:", output)
+            self.assertNotIn("leg attribution unavailable", output)
+
+    def test_explicit_format_version_1_is_also_treated_as_legacy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            expected = ["d1.txt"]
+            self._write_capture(evidence_dir, "q01", _response(expected))
+            golden = self._baseline(
+                formatVersion=1,
+                queries=[{"id": "q01", "query": "a", "kind": "keyword", "expectedTop10": expected}],
+            )
+            verdicts = evaluate_all(golden, str(evidence_dir))
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                print_report(golden, str(evidence_dir), verdicts)
+            self.assertIn(f"[{PARITY_UNCALIBRATED_POPULATION}]", buf.getvalue())
+
+
+class PreconditionTypedCodesTests(PreconditionTestsBase):
+    """Precondition failures carry their typed PARITY_* reason codes in the
+    main()-level BLOCKING output (tempdoc 750 Part A4)."""
+
+    def test_model_identity_failure_carries_typed_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            self._write_knowledge_status(evidence_dir, embeddingFingerprintCurrent="fp-DIFFERENT")
+            golden_path = Path(tmp) / "golden-parity.json"
+            golden_path.write_text(json.dumps(self._baseline()), encoding="utf-8")
+
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                rc = main(["--golden", str(golden_path), "--evidence-dir", str(evidence_dir)])
+            self.assertEqual(rc, 1)
+            self.assertIn(f"[{PARITY_MODEL_MISMATCH}]", buf.getvalue())
+
+    def test_corpus_sanity_failure_carries_typed_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            self._write_knowledge_status(evidence_dir, embeddingFingerprintCurrent="fp-abc123", indexedDocuments=5)
+            golden_path = Path(tmp) / "golden-parity.json"
+            golden_path.write_text(json.dumps(self._baseline()), encoding="utf-8")
+
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                rc = main(["--golden", str(golden_path), "--evidence-dir", str(evidence_dir)])
+            self.assertEqual(rc, 1)
+            self.assertIn(f"[{PARITY_CORPUS_MISMATCH}]", buf.getvalue())
+
+    def test_dense_leg_failure_carries_typed_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            self._write_knowledge_status(evidence_dir, embeddingFingerprintCurrent="fp-abc123", indexedDocuments=100)
+            response = _response(["d1.txt"])
+            response["searchTrace"] = {
+                "stages": [{"id": "dense-retrieval", "status": "skipped", "reason": "NO_EMBEDDING_MODEL"}]
+            }
+            self._write_capture(evidence_dir, "q01", response)
+            golden = self._baseline(
+                queries=[{"id": "q01", "query": "a", "kind": "keyword", "expectedTop10": ["d1.txt"]}]
+            )
+            golden_path = Path(tmp) / "golden-parity.json"
+            golden_path.write_text(json.dumps(golden), encoding="utf-8")
+
+            buf = io.StringIO()
+            with redirect_stderr(buf):
+                rc = main(["--golden", str(golden_path), "--evidence-dir", str(evidence_dir)])
+            self.assertEqual(rc, 1)
+            self.assertIn(f"[{PARITY_DENSE_LEG_SKIPPED}]", buf.getvalue())
+
+
+class ExitCodeEquivalenceTests(PreconditionTestsBase):
+    """The new attribution signals are report payload only -- main()'s exit
+    code stays governed solely by the (unchanged) tolerance rule (tempdoc 750
+    Part A: exit 1 iff a precondition fails or any query fails tolerance;
+    exit 0 otherwise)."""
+
+    def test_passing_v2_fixture_with_variance_flag_still_exits_0(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            expected = [f"d{i}.txt" for i in range(1, 11)]
+            self._write_knowledge_status(evidence_dir, embeddingFingerprintCurrent="fp-abc123", indexedDocuments=100)
+
+            hits = [_hit("d1.txt")]
+            hits[0]["trace"] = [{"id": "dense-retrieval", "score": 0.51}]
+            hits += [_hit(f"d{i}.txt") for i in range(2, 11)]
+            response = {
+                "results": hits,
+                "searchTrace": {"stages": [{"id": "dense-retrieval", "status": "executed"}]},
+            }
+            self._write_capture(evidence_dir, "q01", response)
+
+            golden = self._baseline(
+                formatVersion=BASELINE_FORMAT_VERSION,
+                calibration={"denseScoreEnvelopeAbs": 2.0e-4},
+                queries=[
+                    {
+                        "id": "q01",
+                        "query": "a",
+                        "kind": "keyword",
+                        "expectedTop10": expected,
+                        "legScores": {"d1.txt": {"dense": 0.50}},
+                        "legTop10": {},
+                    }
+                ],
+            )
+            golden_path = Path(tmp) / "golden-parity.json"
+            golden_path.write_text(json.dumps(golden), encoding="utf-8")
+
+            buf_out, buf_err = io.StringIO(), io.StringIO()
+            with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                rc = main(["--golden", str(golden_path), "--evidence-dir", str(evidence_dir)])
+            self.assertEqual(rc, 0)
+            self.assertIn(f"[{PARITY_EMBEDDING_VARIANCE}]", buf_out.getvalue())
+
+    def test_failing_v2_fixture_still_exits_1(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            expected = [f"d{i}.txt" for i in range(1, 11)]
+            self._write_knowledge_status(evidence_dir, embeddingFingerprintCurrent="fp-abc123", indexedDocuments=100)
+
+            captured = [f"d{i}.txt" for i in range(1, 7)] + [f"x{i}.txt" for i in range(1, 5)]
+            response = _response(captured)
+            response["searchTrace"] = {"stages": [{"id": "dense-retrieval", "status": "executed"}]}
+            self._write_capture(evidence_dir, "q01", response)
+
+            golden = self._baseline(
+                formatVersion=BASELINE_FORMAT_VERSION,
+                calibration={"denseScoreEnvelopeAbs": 2.0e-4},
+                queries=[
+                    {
+                        "id": "q01",
+                        "query": "a",
+                        "kind": "keyword",
+                        "expectedTop10": expected,
+                        "legScores": {},
+                        "legTop10": {},
+                    }
+                ],
+            )
+            golden_path = Path(tmp) / "golden-parity.json"
+            golden_path.write_text(json.dumps(golden), encoding="utf-8")
+
+            buf_out, buf_err = io.StringIO(), io.StringIO()
+            with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                rc = main(["--golden", str(golden_path), "--evidence-dir", str(evidence_dir)])
+            self.assertEqual(rc, 1)
+            self.assertIn(f"[{PARITY_OVERLAP_MISS}]", buf_out.getvalue())
 
 
 if __name__ == "__main__":
