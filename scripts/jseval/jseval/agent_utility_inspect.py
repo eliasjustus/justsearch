@@ -342,7 +342,8 @@ async def _mcp_surface(client: ClaudeSDKClient) -> tuple[list | None, list[str],
 def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                         model: str = "haiku", max_budget: str = "0.50",
                         timeout_s: int = 180, max_turns: int = _DEFAULT_MAX_TURNS,
-                        mcp_tool_surface_json: str = "[]", agent_env_json: str = "{}"):
+                        mcp_tool_surface_json: str = "[]", agent_env_json: str = "{}",
+                        timeout_s_by_condition_json: str = "{}"):
     """Per-sample solver: run one query as an in-process Claude Agent SDK cell.
 
     `condition` is read from `state.metadata["condition"]` (the single-pool sample
@@ -368,9 +369,19 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
     solver identity arg JSON-string-shaped is the established pattern here. Empty
     (``"{}"``, the default) round-trips to `env={}`, which the SDK's
     `default_factory=dict` makes byte-identical to omitting `env` entirely — today's
-    behavior is preserved when no `--agent-env` is passed."""
+    behavior is preserved when no `--agent-env` is passed.
+
+    `timeout_s_by_condition_json` (tempdoc 624 §Harness lessons -- per-arm timeout
+    calibration): a JSON-encoded ``{condition: int}`` map of per-condition wall-clock
+    budgets. A cell resolves its budget by its own condition, falling back to the scalar
+    `timeout_s` for any condition absent from the map. A STR for the same `eval_set` resume
+    reason as `max_budget`/`agent_env_json` above (its int values also keep a float out of
+    the task-identity args -- `_assert_no_float_task_args`). Empty (``"{}"``, the default)
+    means every cell uses the scalar `timeout_s` -- today's behavior byte-for-byte when no
+    per-condition calibration is supplied."""
     mcp_servers = _mcp_servers_from_config(mcp_config)
     agent_env = json.loads(agent_env_json) if agent_env_json else {}
+    timeout_s_by_condition = json.loads(timeout_s_by_condition_json) if timeout_s_by_condition_json else {}
     declared_mcp_tool_surface = json.loads(mcp_tool_surface_json)
     from jseval.agent_manifest import mcp_tool_surface_hash
     declared_mcp_tool_surface_hash = (
@@ -446,7 +457,11 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
         first_error: str | None = None
         attempt = 0
         capture: dict | None = None
-        deadline = asyncio.get_event_loop().time() + timeout_s
+        # Per-arm budget: resolve this cell's wall-clock timeout by its condition, falling
+        # back to the scalar `timeout_s` (tempdoc 624 §Harness lessons — a pooled timeout
+        # under-budgets the long-tail A arm on large corpora).
+        cell_timeout_s = timeout_s_by_condition.get(condition, timeout_s)
+        deadline = asyncio.get_event_loop().time() + cell_timeout_s
         for attempt in (1, 2):
             remaining = deadline - asyncio.get_event_loop().time()
             if remaining <= 0:
@@ -956,7 +971,8 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
                        judge_kind: str = "substring-em", prompt_template_hash: str | None = None,
                        corpus_dataset: str = "", corpus_signature: str = "",
                        source_identity_json: str = "{}",
-                       agent_env_json: str = "{}") -> Task:
+                       agent_env_json: str = "{}",
+                       timeout_s_by_condition_json: str = "{}") -> Task:
     """ONE Inspect task over the whole matrix (tempdoc 675 single pool).
 
     Samples are the flat `condition × query` cross-product; `condition` is a sample
@@ -978,7 +994,7 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
         dataset=samples,
         solver=claude_agent_solver(
             corpus_dir, mcp_config, model, max_budget, timeout_s, max_turns,
-            mcp_tool_surface_json, agent_env_json,
+            mcp_tool_surface_json, agent_env_json, timeout_s_by_condition_json,
         ),
         scorer=substring_scorer(),
         metadata={
@@ -1191,7 +1207,8 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
                      corpus_dataset: str = "", corpus_signature: str = "",
                      search_config_cohort_key: str | None = None,
                      corpus_certification: str | Path | None = None,
-                     agent_env: dict[str, str] | None = None) -> str:
+                     agent_env: dict[str, str] | None = None,
+                     timeout_s_by_condition: dict[str, int] | None = None) -> str:
     """Run the matrix through Inspect `eval_set` (resumable). seeds → `epochs`.
 
     Returns the log_dir; re-invoking with the same log_dir resumes (skips done
@@ -1207,7 +1224,14 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
     session sees `agent_env` merged OVER the harness process's own env (the SDK's
     `subprocess_cli.py` does `{**inherited_env, **options.env}`), so an `agent_env`
     override, not just the parent process's own `os.environ`, is what the recorded
-    `exposure_config` must describe to match the child's actual config."""
+    `exposure_config` must describe to match the child's actual config.
+
+    `timeout_s_by_condition` (tempdoc 624 §Harness lessons — per-arm timeout calibration):
+    an optional ``{condition: int}`` map of per-condition wall-clock budgets (from
+    `utility-calibrate`'s `timeout_s_by_condition`). Threaded through the task identity as a
+    canonical-JSON int-valued string; a cell resolves its budget by its own condition and
+    falls back to the scalar `timeout_s` for any absent condition. `None`/empty is today's
+    behavior byte-for-byte (every cell uses `timeout_s`)."""
     # Dead-config fail-fast (tempdoc 624 battlefield retrospective): a `url`-only
     # `mcpServers` entry (no `"type":"http"`) is silently DROPPED — the run would
     # otherwise complete "successfully" with zero MCP tool calls per cell. Checked
@@ -1299,6 +1323,11 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
                 corpus_signature=corpus_signature,
                 source_identity_json=source_identity_json,
                 agent_env_json=json.dumps(agent_env or {}, sort_keys=True, separators=(",", ":")),
+                # int-coerced so a float can never enter the task-identity args
+                # (`_assert_no_float_task_args`); canonical (sorted keys) for a stable identity.
+                timeout_s_by_condition_json=json.dumps(
+                    {str(k): int(v) for k, v in (timeout_s_by_condition or {}).items()},
+                    sort_keys=True, separators=(",", ":")),
             )
         ]
         # log_format="json": the .eval (zip) recorder breaks on Windows fsspec paths

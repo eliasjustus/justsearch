@@ -23,6 +23,7 @@ legible state.
 from __future__ import annotations
 
 import argparse
+import json
 import signal
 import sys
 import time
@@ -45,6 +46,14 @@ def main() -> int:
     ap.add_argument("--stop-file", required=True)
     ap.add_argument("--stopped-file", required=True)
     ap.add_argument("--failed-file", required=True)
+    # Tempdoc 751 chain integration (§P.3.5): adopt-side only. This wrapper never
+    # PUBLISHES (publish lives in `jseval run --start-backend --index-cache`'s own
+    # lifecycle) -- the chain runs a warm-cache pass first, then this wrapper
+    # adopts the just-published entry. Miss/confirm-failure falls through to
+    # today's clean boot; the chain's ingest step is the idempotent safety net.
+    ap.add_argument("--index-cache-mode", choices=["off", "on"], default="off")
+    ap.add_argument("--corpus-dir", default=None,
+                    help="Corpus axis for the adopt selector (required for a hit).")
     a = ap.parse_args()
 
     # Fresh markers for this lifecycle.
@@ -54,14 +63,22 @@ def main() -> int:
     from jseval import backend as backend_mod
 
     try:
-        info = backend_mod.start_backend(clean=a.clean, port=a.port)
+        info = backend_mod.start_backend(
+            clean=a.clean, port=a.port,
+            index_cache_mode=a.index_cache_mode,
+            corpus_dir=(Path(a.corpus_dir) if a.corpus_dir else None),
+        )
     except Exception:  # noqa: BLE001 - fail-closed: surface to the batch
         Path(a.failed_file).write_text(traceback.format_exc(), encoding="utf-8")
         print("serve-eval-backend: start_backend FAILED", file=sys.stderr)
         return 3
 
-    Path(a.ready_file).write_text(f"ready port={a.port}\n", encoding="utf-8")
-    print(f"serve-eval-backend: healthy on port {a.port} (PID={info.proc.pid})")
+    cache_outcome = getattr(info, "cache_outcome", None)
+    Path(a.ready_file).write_text(
+        f"ready port={a.port} cache={json.dumps(cache_outcome) if cache_outcome else 'off'}\n",
+        encoding="utf-8")
+    print(f"serve-eval-backend: healthy on port {a.port} (PID={info.proc.pid}) "
+          f"index_cache={cache_outcome}")
 
     stop = {"now": False}
 
