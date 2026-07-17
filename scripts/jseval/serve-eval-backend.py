@@ -54,6 +54,9 @@ def main() -> int:
     ap.add_argument("--index-cache-mode", choices=["off", "on"], default="off")
     ap.add_argument("--corpus-dir", default=None,
                     help="Corpus axis for the adopt selector (required for a hit).")
+    ap.add_argument("--dataset", default=None,
+                    help="Dataset axis for the adopt selector (shared resolution with "
+                         "the warm publisher -- pass whichever the warm pass used).")
     a = ap.parse_args()
 
     # Fresh markers for this lifecycle.
@@ -67,6 +70,7 @@ def main() -> int:
             clean=a.clean, port=a.port,
             index_cache_mode=a.index_cache_mode,
             corpus_dir=(Path(a.corpus_dir) if a.corpus_dir else None),
+            dataset_name=a.dataset,
         )
     except Exception:  # noqa: BLE001 - fail-closed: surface to the batch
         Path(a.failed_file).write_text(traceback.format_exc(), encoding="utf-8")

@@ -108,6 +108,39 @@ def cmd_index_cache_prune(max_entries, max_bytes):
     click.echo(f"pruned {len(removed)} entr{'y' if len(removed) == 1 else 'ies'}.")
 
 
+@index_cache_group.command("warm")
+@click.option("--dataset", default=None,
+              help="Local golden/mixed dataset to warm (XOR --corpus-dir).")
+@click.option("--corpus-dir", default=None, type=click.Path(),
+              help="Corpus dir (e.g. an exploded datasets/<cell>/corpus-dir) to warm "
+                   "(XOR --dataset).")
+@click.option("--port", default=33221, show_default=True, type=int,
+              help="Backend API port for the warm lifecycle.")
+def cmd_index_cache_warm(dataset, corpus_dir, port):
+    """Publish (or confirm already-cached) the index-cache entry for a corpus axis.
+
+    The designed chain seam (751 P.5): drives one ``jseval run ... --index-cache``
+    lifecycle, so the entry it publishes is byte-for-byte what an adopter booting
+    on the SAME corpus axis will confirm against. Exactly ONE of --dataset /
+    --corpus-dir is required. An unresolvable axis fails LOUD (exit 2): warm's whole
+    job is to cache, so a chain-config error that would silently skip caching must
+    surface -- unlike the run path's fail-quiet disable.
+    """
+    if bool(dataset) == bool(corpus_dir):
+        raise click.UsageError("Pass exactly one of --dataset or --corpus-dir.")
+    from .run import warm_index_cache
+
+    result = warm_index_cache(dataset, corpus_dir, port)
+    status = result["status"]
+    if status == "published":
+        click.echo(f"published {result['entry']}")
+    elif status == "already-cached":
+        click.echo(f"already-cached {result['entry']}")
+    else:  # disabled -- fail loud (chain-config error)
+        click.echo(f"disabled: {result['reason']}")
+        raise SystemExit(2)
+
+
 @click.command("index-identity")
 @click.option("--base-url", default="http://127.0.0.1:33221", show_default=True,
               help="Backend base URL to read the live identity from.")
