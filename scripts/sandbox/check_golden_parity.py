@@ -597,6 +597,19 @@ def print_report(golden: dict[str, Any], evidence_dir: str, verdicts: list[Query
             f"dense-score identity: {emb_variance_count} flagged [{PARITY_EMBEDDING_VARIANCE}], "
             f"{emb_consistent_count} consistent, {emb_no_pairs_count} with no shared pairs"
         )
+        measured = emb_variance_count + emb_consistent_count
+        if measured > 0 and emb_variance_count == measured:
+            # Every measurable query out of envelope is an ENVIRONMENT-level fact, not a
+            # per-query anomaly: the same weights are producing different embeddings on the
+            # two sides, and only the near-tie queries turn that into a ranking miss. Say it
+            # here, or a reader has to count rows to notice. (Tempdoc 750 P2: a threshold
+            # applied across an axis its calibration never sampled is itself a finding.)
+            print(
+                "  ^ SYSTEMATIC: every measurable query is out of envelope -- an "
+                "environment-level embedding difference (same weights, different inference "
+                "path), not a per-query ranking anomaly. Check the baseline's calibration "
+                "block for whether this population was ever sampled."
+            )
         print(
             f"leg attribution: {leg_divergence_count} failed queries attributed to a diverging "
             f"leg, {leg_unavailable_count} failed queries with leg attribution unavailable"

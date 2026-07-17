@@ -655,3 +655,102 @@ in a live round; the charter/TBS field set may need one iteration; A3 stays
 spike-gated (and the dry-run's "systematic + stable + enough shared pairs" result
 makes it less likely A3 is ever needed). Recommended implementation: Opus (medium)
 orchestrating, Sonnet workers for the bounded mechanical chunks.
+
+## Implementation (2026-07-17)
+
+Landed on `worktree-750-validation-instruments` (pre-PR). Parts A, B, C, D, E as
+designed; A3 (exact-KNN gate) remains deliberately deferred and is now **less
+likely to be needed** (see the end-to-end result below). Orchestrated: five
+bounded Sonnet workers, orchestrator-owned policy prose, integration review, and
+a non-ASCII diff check on every worker's output (all clean).
+
+**What shipped, mapped to the design:**
+
+- **Part A** — `golden_common.py` (one authority for identity/leg-score
+  extraction, replacing a duplicate); `gen_golden_parity.py` baseline **v2**
+  (per-doc leg scores, per-leg top-10s via `mode=vector|text|splade`, and a
+  `calibration` block naming each threshold's population);
+  `check_golden_parity.py` gains the score-identity probe, per-leg attribution,
+  and typed `PARITY_*` reasons on every blocking path; `collect-evidence.ps1`
+  captures each golden query per single retrieval mode. **Exit-code semantics are
+  unchanged by construction and by proof** (below).
+- **Part B** — `sandbox-launch.py --charter/--no-charter` (fail-closed);
+  `check_coverage.py`'s retrospective gate additionally requires a TBS
+  time-accounting section, plus a report-only evidence-timestamp timeline as the
+  independent cross-check; `cut-a-release.md` carries the scheduling gate.
+- **Part C** — `--upgrade-from` stages the previous release, records its SHA-256
+  and the install/seed/upgrade sequence, and writes `ExpectPriorInstall: true` so
+  `collect-evidence.ps1` asserts a prior install as *expected* rather than
+  warning. Round-mode policy now requires >=1 upgrade round per release.
+- **Part D** — `reach` in the coverage register (testids verified against
+  frontend source at generation; a stale one is dropped with a warning), reach +
+  `mustWatch` in the manifest, and `derive_round_plan.py` emitting both —
+  closing its self-documented inability to derive must-watch items.
+- **Part E** — the independence invariant and the calibration-provenance rewrite
+  are in `sandbox-CLAUDE.md`; the post-0.2.0 retirement review is recorded below.
+
+**Verification (all green):** 213/213 sandbox harness tests (the CI lane's own
+command); `gen_coverage_brief.py --check` exit 0 on the real tree; staging
+dry-runs per mode (fresh / pre-staged / upgrade / charter / missing-charter
+fail-closed) asserted on staged contents; `./gradlew.bat build -x test` exit 0
+(verified unpiped). Live: a clean dev stack (`clean: hard`), the sandbox's own
+SciFact corpus ingested (5,189 docs incl. the 5 auto-ingested help docs —
+corpus-matched to a real install, unlike the v1 baseline), enrichment to 100%
+embeddings + SPLADE, `COMPATIBLE`; v2 baseline generated; the new checker run
+against **round 6's real archived evidence**.
+
+### The end-to-end run answered 734 finding 5's open question
+
+**Equivalence first (the guard rail):** with the v1 baseline, the new checker
+reproduces round 6's verdict exactly — q04 6/10, q06 5/10, q08 4/10, **exit 1** —
+plus the `PARITY_UNCALIBRATED_POPULATION` notice. No recalibration rode along; the
+gate did not move while the release is blocked on it.
+
+**Then the v2 baseline decomposed the failure.** Controlled variables, all
+verified rather than assumed: byte-identical model fingerprint (`f1d0f4ec...` on
+both sides), both sides CUDA-EP on `model_fp16.onnx` (dev confirmed live in
+`worker.log`; round 6 recorded GPU-FP16), same corpus (5,189 both sides). Result:
+
+| Population | Dense-score delta on shared (query, doc) pairs |
+|---|---|
+| sandbox <-> sandbox (rounds 5 vs 6, different builds) | **<= 1.8e-4** |
+| dev <-> sandbox (this run, round-6 evidence) | **1.7e-2 to 6.8e-2 on ALL 10 queries** |
+
+Two to three orders of magnitude apart, with identical weights. **The embeddings
+themselves differ between the dev and Sandbox environments** — so finding 5 is
+**embedding-output variance, not HNSW selection variance and not a ranking-code
+regression in the candidate.** The 10/10 flag rate is what makes it legible: the
+divergence is systematic and environment-level; only the near-tie semantic
+queries (q06/q08) convert it into a ranking miss, which is why 8 queries pass
+with the same deltas. (The checker now prints this conclusion itself rather than
+leaving a reader to count rows — a refinement the live run earned.)
+
+**Honest limits.** This establishes the *class*, not the mechanism. Not
+established: which inference-path difference produces it. One concrete lead the
+run surfaced — dev loads a **pre-optimized** graph
+(`model_fp16.onnx.cuda.optimized`, `OnnxSessionCache`), and whether a fresh
+install's first load produces an identically-optimized graph is unverified;
+ONNX Runtime's CUDA EP also defaults to runtime algorithm search and TF32 (see
+§Research R1), and the Sandbox's vGPU driver path differs from the host's. Also
+not established: that the measured deltas *cause* the q06/q08 misses — it is a
+coherent and well-supported mechanism (uniform deltas + near-tie density), not a
+proven causal chain. Routing: 734/product, with these leads named.
+
+**Side result:** with a corpus-matched v2 baseline, **q04 now passes (7/10, was
+6/10)** — consistent with 734's finding that the help-doc corpus mismatch
+contributed roughly one document of shift. q06/q08 are unmoved by that fix, as
+734 predicted.
+
+### Follow-ups this tempdoc owns (not silently dropped)
+
+- **Post-0.2.0 retirement review** (Part E, gated on the release finalizing):
+  execute 728 P1-P3's retirement conditions and 734 Part F/G's falsifiers against
+  the full release's evidence — including the size floor, already convicted by
+  734 G.6 as a defeated byte proxy, which gets replaced or deleted rather than
+  footnoted.
+- **A3 (exact-KNN recall gate):** still the literature-standard end-state, still
+  spike-gated. The evidence above lowers its priority — the cheap signals located
+  the class without it.
+- **Envelope recalibration** is deliberately NOT done here: doing it would move
+  the gate while 734 finding 5 is open. Once the mechanism is understood, the
+  dev<->sandbox population can be sampled honestly and the envelope set from it.
