@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy. BASELINE RECOMPUTED 2026-07-16 by tempdoc 745 (session 805279a4) after it fixed 7 verified bugs in the cost parser this program was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline SURVIVES; read prediction-1 against 84.0%, not 85.1%). Handoff item 4 ('OTel reservoir is feeding') was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it — no month-scale OTel data predating 2026-07-16 exists. FRESH EVIDENCE LANE 2026-07-17 (session a6d2af56, worktree takeover-743): founder-directed independent 11-session raw-transcript pass, deliberately derived without relying on this tempdoc's prior conclusions, plus a founder reframe (no specific scarcity; environment-centric: 'the agents themselves might be the ones encountering issues') — see §'Independent transcript-evidence lane (2026-07-17)'. SECOND-WAVE THEORIZATION written same day (§'Theorization — second proposal wave'): three environment deficits (queryable world-state / reliability-vs-insurance / learning loop) + go/stop visibility, unification stance settled (paved usage surfaces, consolidation only under a live consumer, no standalone refactor). NEXT: platform-capabilities probe (R4-refresh) gates design; second-wave proposals not yet authored; P-F/P-C pilot sequencing vs environment slices is an open founder call."
+status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy. BASELINE RECOMPUTED 2026-07-16 by tempdoc 745 (session 805279a4) after it fixed 7 verified bugs in the cost parser this program was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline SURVIVES; read prediction-1 against 84.0%, not 85.1%). Handoff item 4 ('OTel reservoir is feeding') was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it — no month-scale OTel data predating 2026-07-16 exists. FRESH EVIDENCE LANE 2026-07-17 (session a6d2af56, worktree takeover-743): founder-directed independent 11-session raw-transcript pass, deliberately derived without relying on this tempdoc's prior conclusions, plus a founder reframe (no specific scarcity; environment-centric: 'the agents themselves might be the ones encountering issues') — see §'Independent transcript-evidence lane (2026-07-17)'. SECOND-WAVE THEORIZATION written same day (§'Theorization — second proposal wave'): three environment deficits (queryable world-state / reliability-vs-insurance / learning loop) + go/stop visibility, unification stance settled (paved usage surfaces, consolidation only under a live consumer, no standalone refactor). RESEARCH PASS COMPLETE same day (3 refute-first lanes, §'Research pass — second wave'): premise WEAKENED-not-refuted — durable core narrowed to exec/encoding-normalization + world-state query; transcript-reader/watcher demoted to deletable adapters over native surfaces; error-hint loop gated to fire-time hooks under the existing ratchet; PYTHONUTF8-machine-wide corrected to scoped PYTHONIOENCODING; gh 0/1/8 bitwise contract + pre-poll race grounded. NEXT: /design authors the second-wave proposals under these constraints; verification items V-A1..V-A5 open; P-F/P-C pilot sequencing vs environment slices is an open founder call."
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -1284,6 +1284,109 @@ best long-term move. Position settled in discussion:
   and replaceable over deep and load-bearing.
 - This is the broader-principle candidate applied to the tooling plane: one computable home
   per operational fact, one paved path per recurring action.
+
+## Research pass — second wave (2026-07-17, session a6d2af56; three bounded refute-first lanes)
+
+Narrow by design (R1-R5 swept the broad territory 24-48h earlier): Lane A = platform-capability
+probe vs the wave's build candidates (docs-specialized agent; official docs + changelog + live
+issue lookups); Lane B = grounding the Windows root-fix candidates (official docs, refute-first);
+Lane C = adversarial premise check ("find the strongest published case AGAINST local
+agent-environment investment"; tiered evidence). Full reports in the session record; the
+load-bearing results:
+
+### Lane A — platform capabilities (verdicts vs our build candidates)
+
+- **Session inventory: NATIVE-NOW in part.** `claude agents --json --all` + daemon roster list
+  background sessions; a per-project `sessions-index.json` (summaries, counts, branch,
+  timestamps) exists per Lane C's doc pass. The `~/.claude/projects/<encoded-cwd>` per-worktree
+  layout our instruments rely on is real empirically but NOT documented — treat as unstable.
+- **Cross-session shared task list: ABSENT by documented design** (Agent Teams: "one team per
+  session… can't share a team across sessions") — coordination layer stays homegrown.
+- **PreToolUse input REWRITING is native** (`hookSpecificOutput.updatedInput`, confirmed by two
+  independent doc examples + a `--debug` confirmation string) — D3-c is a real mechanism.
+- **~30 hook events documented**, incl. `Notification`, `PostToolUseFailure`,
+  `TaskCreated/TaskCompleted` (blockable), `SubagentStart/Stop` with `agent_type` — an
+  auto-cancel-wakeup-on-notification wiring (Notification hook → CronDelete) is buildable;
+  not built-in.
+- **The harness already self-arms a ~20-min fallback wakeup** when a loop iteration ends
+  without rescheduling (v2.1.202) — part of our belt-and-braces is double insurance on top of
+  native insurance.
+- **`--resume` DOCUMENTS background/Monitor task loss as expected behavior** ("never restored
+  on resume") — the founder's "monitors never fire" experience is the documented cross-restart
+  path, with a doc-vs-tracker inconsistency (#72171 closed, #75438 open, behavior still
+  documented) to re-verify before designing around either story.
+- **Monitor has no notify-on-failure-only filter and no payload control**; Channels = research
+  preview (CI push = build-your-own webhook receiver); mobile push ("needs a decision from
+  you") exists as a Remote-Control feature (claude.ai auth, two coarse toggles) — **a native
+  stall beacon (G-b), gated on the founder enabling Remote Control**; the "PushNotification
+  tool" name is unverified against primary sources.
+- **New silent-failure class from docs:** a `/loop` tick only re-runs skills that are
+  model-invokable; others degrade to inert plain text with no error (v2.1.196) — audit our
+  loop-invoked skills.
+- Cost surfaces: `/usage` is current-session-only (resets on /clear since v2.1.211); no local
+  per-session historical cost API — transcript parsing (Phase 1 instrument) remains justified;
+  OTel cost counter is the only native per-session alternative.
+- Worktrees: v2.1.211 makes "don't ask again" approvals save repo-wide to the main checkout's
+  settings (survives worktree removal); v2.1.210 auto-releases stale worktree locks.
+
+### Lane B — Windows root-fix grounding (verdicts)
+
+- **gh exit codes: documented bitwise contract** — 0=pass / 1=fail / **8=pending** (`gh pr
+  checks`, deliberately bitwise per cli/cli#7866; pre-2023 the 1-vs-pending ambiguity was real).
+  Known live race: right after push, `--watch` can exit 1 with "no checks reported" before
+  checks queue (cli/cli#7401) → any wrapper must pre-poll for check registration (exactly 746's
+  shipped guidance). FIX-WITH-CAVEATS.
+- **Machine-wide `PYTHONUTF8=1`: recommended AGAINST by Python's own docs** (affects every
+  Python app on the box). Root cause of our cp1252 class confirmed (bpo-27179: redirected pipes
+  bypass the PEP 528 console special-case, falling back to ANSI cp1252). **Minimal safe fix:
+  `PYTHONIOENCODING=utf-8` scoped per-process** — i.e., owned by the exec substrate, not the
+  machine. PEP 686 makes UTF-8 the default only in Python 3.15. This corrects the
+  theorization's D3-b as written. `chcp 65001` is NOT-A-FIX for the pipe case.
+- **Scoop shims: calling the resolved binary path is the validated-safe workaround** (root
+  cause for constrained-process failures only partially explainable from primary sources;
+  symlink/shim-replacement alternatives carry privilege caveats). Consequence: don't chase
+  fixing shims — make the exec substrate own path resolution so agents never hand-type
+  quoted full paths (where the `&`/quoting error class is born).
+- Blessed-exec precedent: thin/generic (directional advice = standardize on one shell; pwsh 7
+  cross-platform) — the wrapper is justified by local evidence, not industry precedent; keep it
+  thin.
+
+### Lane C — adversarial premise check: **PREMISE-WEAKENED, not refuted** (verdict adopted)
+
+The 2026 harness-engineering / agent-experience movement (OpenAI harness-engineering post,
+Fowler/Böckeler, Anthropic trends report, AX/Netlify) vindicates the *direction* — "design the
+environment, build feedback loops" is a named, vendor-backed practice, and error-mining-into-
+guards is explicitly recommended (OpenAI: treat agent struggle as signal, feed the fix back
+into the repo). Three refutations reshape scope and are **adopted as design constraints**:
+
+1. **Durable/disposable split.** Only components fixing *deterministic platform defects a
+   model cannot runtime-patch* qualify as durable (exec/encoding normalization, world-state
+   query). Transcript-reader and watcher components must be built as **thin, deletable
+   adapters over native surfaces** (sessions-index, background tasks) — the field's consensus
+   failure mode is capability-shaped scaffolds rotting at model/platform boundaries ("90-day
+   artifact" test: removable in an hour, or it's debt).
+2. **The error-hint loop is self-poisoning past a byte budget** (documented: bloated rule
+   files measurably reduce instruction-following; "expect 80% compliance plus hooks for the
+   rest"). It is only net-positive routed to **fire-time hooks under the existing
+   always-loaded-budget ratchet with eviction** — never accumulating always-loaded prose. The
+   repo's tier-register discipline is precisely the literature's prescribed mitigation; this
+   is a point *for* proceeding where a naive learnings-file accumulator would fail.
+3. **Tool-count ceiling:** documented degradation above ~10-20 tools per context — the wave's
+   surfaces must consolidate into FEW entry points, not add five new tools.
+
+Cross-lane tension recorded honestly: "scaffolding beats model upgrades" (same LLM 42%→78% on
+SWE-bench via scaffolding alone) vs "the bitter lesson of agent frameworks" (that structure
+dissolves next model) — both camps agree the environment/error-recovery layer is where the
+value is; they disagree on permanence. Converged directive: **build it, but deletable.**
+
+### Verification items opened by this pass (pre-design)
+
+V-A1: re-verify #72171's actual fix state vs the "never restored on resume" doc line (live
+probe, not docs). V-A2: fetch channels-reference webhook-receiver mechanics before any CI-push
+design. V-A3: audit loop-invoked skills for model-invocability (silent-degradation landmine).
+V-A4: confirm whether Remote-Control mobile push is acceptable to the founder as the G-b stall
+beacon before building anything. V-A5: the `~/.claude/projects` layout is undocumented — every
+instrument relying on it needs a fallback or a version-pinned assumption note.
 
 ## Non-goals
 
