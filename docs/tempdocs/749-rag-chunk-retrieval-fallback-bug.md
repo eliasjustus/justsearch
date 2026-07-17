@@ -1,6 +1,6 @@
 ---
 title: RAG chunk-retrieval fallback bug — /api/chat/ask misses the top HYBRID hit on some queries
-status: "open — ROOT CAUSE CONFIRMED 2026-07-17 (session a6d2af56, live repro + source). `ChunkDocumentWriter` writes ZERO chunk documents for docs < 2000 chars (`CHUNK_THRESHOLD_CHARS`) or that split into ≤1 chunk; RAG chunk retrieval filters `IS_CHUNK:true` so it only sees chunk documents → sub-2000-char docs (85.2% of the scifact corpus) are invisible to RAG chunk retrieval and fall back to whole-doc BM25, which unscoped misses the best short doc. The 'query-dependence' is really: a RAG ask retrieves chunks only when its ~10-doc scope happens to include one of the ~15% ≥2000-char chunked docs. Doc-level search is unaffected (finds them). DESIGN SETTLED 2026-07-17 (§Design): option A — `ChunkDocumentWriter` writes ONE whole-doc chunk for short/single-chunk docs instead of dropping them (completes the `IS_CHUNK:true` retrieval contract; matches universal splitter convention; fixes both failure sub-cases). B (merge a doc-level retrieval leg) kept only as the no-re-index fallback; C (hybrid-ise the fallback) ruled out. In-scope alongside the writer change: fusion parent-doc dedup, EXTEND 718's chunk-completeness guard to the per-doc-class gap, reranker length-calibration check, and a MANDATORY /search-quality eval before/after with a falsifier. Names a retrieval-completeness invariant (conform to 717/718, no parallel structure). Open founder call narrowed to: is a one-time re-index/chunk-embedding backfill acceptable (→A, recommended) or a hard no (→B). Spawned from tempdoc 734 round 6."
+status: "open — ROOT CAUSE CONFIRMED 2026-07-17 (session a6d2af56, live repro + source). `ChunkDocumentWriter` writes ZERO chunk documents for docs < 2000 chars (`CHUNK_THRESHOLD_CHARS`) or that split into ≤1 chunk; RAG chunk retrieval filters `IS_CHUNK:true` so it only sees chunk documents → sub-2000-char docs (85.2% of the scifact corpus) are invisible to RAG chunk retrieval and fall back to whole-doc BM25, which unscoped misses the best short doc. The 'query-dependence' is really: a RAG ask retrieves chunks only when its ~10-doc scope happens to include one of the ~15% ≥2000-char chunked docs. Doc-level search is unaffected (finds them). DESIGN SETTLED 2026-07-17 (§Design): option A — `ChunkDocumentWriter` writes ONE whole-doc chunk for short/single-chunk docs instead of dropping them (completes the `IS_CHUNK:true` retrieval contract; matches universal splitter convention; fixes both failure sub-cases). B (merge a doc-level retrieval leg) kept only as the no-re-index fallback; C (hybrid-ise the fallback) ruled out. In-scope alongside the writer change: fusion parent-doc dedup, EXTEND 718's chunk-completeness guard to the per-doc-class gap, reranker length-calibration check, and a MANDATORY /search-quality eval before/after with a falsifier. Names a retrieval-completeness invariant (conform to 717/718, no parallel structure). DERISK 2026-07-17 (§Derisk, 4 probes) RE-OPENED the A-vs-B call: A is more invasive than the design assumed (ChunkSplitter returns 2 chunks not 1 for short docs — a real splitter bug; flips isShortCorpus/chunk_merge; needs 718-guard rework; needs a re-index existing users can't self-serve via the UI — though a FRESH v0.2.0 install gets A for free). B works with the short-corpus machinery (no writer/index/guard change, no re-index). Updated lean: B for alignment+no-migration, A only attractive for the fresh-install path. R1/R8 favourable (dedup+citation already safe); R5/R6 fine. Confidence: bug+fix achievable 8/10, A-as-designed 4/10. Difficulty HIGH → opus-tier design-revision+implementation. FOUNDER CALL: re-decide A vs B with these findings. Spawned from tempdoc 734 round 6."
 created: 2026-07-16
 updated: 2026-07-16
 ---
@@ -374,7 +374,92 @@ chunk-embedding backfill acceptable?"* — if yes (recommended), A; if a re-inde
 work-around. Plus confirmation that the fix goes through the `/search-quality` eval gate (item 4)
 before merge.
 
-## Suggested fix shape (SUPERSEDED by §Design above — retained as the round-6 originating note)
+## Derisk (2026-07-17, session a6d2af56, 4 read-only probes) — A is MORE invasive than the design assumed; re-open A vs B
+
+The derisk found three surprises that materially change option A's cost/shape and one that was
+favourable. **The design's "A is clearly better, flip two guards, write one clean chunk" is not
+implementable as written** — corrected below. Per-risk verdicts:
+
+- **R1 (document-search double-surface) — RESOLVED, favourable.** Chunk-aware document search already
+  collapses chunk hits to one-per-parent (`SearchExecutor.collapseChunkHitsToParents`, :899-921) and
+  fuses by `docId` (`HybridFusionUtils.fuseWith{CC,RRF}Named`), so a short doc's whole-doc entry and
+  its new chunk merge into one hit. **No dedup work needed.**
+- **R8 (whole-doc-chunk citation semantics) — RESOLVED, favourable.** A `chunkIndex=0,chunkTotal=1,
+  startChar=0,endChar=len` chunk is already a live, exercised shape (the RAG-005 virtual-chunk
+  fallback produces exactly it); nothing assumes `chunkTotal>1` or a strict sub-span. **No work.**
+- **R4 (ChunkSplitter output) — REFUTED the design's load-bearing claim.** `splitWithMetadata` does
+  NOT return one chunk for a 1500-char doc. A loop-continuation bug (`position < text.length()` after
+  the first chunk already consumed the whole string) makes any text in the ~384–1923-char band return
+  **TWO** chunks — the whole text + a redundant overlap-tail fragment — and the `chunks.size() <= 1`
+  guard (size==2) would not catch it. So "remove the 2000-char guard → one clean whole-doc chunk" is
+  false; as written it produces parent + whole-doc chunk + near-duplicate tail. **Option A must also
+  fix the splitter's single-chunk case (or bypass the splitter for sub-target docs).** (This splitter
+  overlap-tail bug is arguably a real defect worth its own fix regardless.)
+- **R3 (short-corpus / chunk_merge / coverage interaction) — HELD, with real ripple effects.** A fights
+  a deliberate design: `CorpusProfile.isShortCorpus` (`chunkRate()<0.05` fallback, :62-70) FLIPS once
+  ~85% of docs gain chunks → activates the `chunk_merge` leg (`CorpusCapabilities.corpusSupportsChunks`
+  → `SearchPlanner.planChunkMerge` `SKIPPED_SHORT_CORPUS`). Intended for 749's target corpus, but
+  **spillover** for any short corpus crossing the 0.05 line. Coverage is a ratio so it doesn't flip
+  mathematically, BUT there is a **transient `isChunkVectorCoverageReady=false` window** while the burst
+  of new chunks' embeddings backfill (totalChunks jumps instantly, vectorsPresent lags). R4's 2-chunk
+  bug compounds this by inflating `chunkDocCount`.
+- **R7 (718 chunk-completeness guard) — NEEDS WORK, not mechanical.** The guard
+  (`scripts/jseval/jseval/chunk_completeness.py` + `ratchet_kernel.py`) is a whole-index AGGREGATE whose
+  `expected_chunk_docs` is itself keyed to `CHUNK_THRESHOLD_CHARS(2000)` — so it **must be reworked just
+  to stay correct** after the writer stops honouring that threshold. Extending it to the per-doc-class
+  gap (the design's aspiration) needs NEW server-side per-doc aggregation (enumerate `PARENT_DOC_ID`
+  over chunk docs), a NEW `/api/status` surface, and a list-valued verdict — a different mechanism on
+  the same seam, not a parameter tweak.
+- **R2 (re-index) — NEEDS DECISION, and worse than expected.** Guard-removal does NOT backfill existing
+  indices: the enrichment backfill only enriches chunk docs that already exist (by
+  `CHUNK_EMBEDDING_STATUS=PENDING`); a short doc with zero chunks has no marker to find. Re-chunking an
+  existing doc requires it to re-flow through `JobBatchWriter.indexChunks()`, gated by
+  `isUnmodified()`. Only a true `--clean` rebuild (empty-index bypass) or an explicit
+  `submitBatch(force_reindex=true)` API call re-chunks. **Critically, the Head's "Reindex Now (force)"
+  UI button does NOT reach the bypass** (`RemoteKnowledgeClient` hardcodes `SCAN_MODE_INITIAL`, never
+  `markForced`), so existing-index users have no self-serve path to the fix short of a full clean
+  rebuild. **Nuance that rehabilitates A for the release context: a FRESH install (empty index → full
+  chunk write) gets the fix for free** — so for the v0.2.0 fresh-install sandbox blocker, A works out
+  of the box; the migration gap is an upgrade-in-place concern.
+- **R5 (enrichment cost) — RESOLVED, manageable.** New chunk embeddings share the batched GPU call
+  (slot cap 50 unchanged → no per-batch VRAM increase); total PENDING volume rises ~85% → proportionally
+  more backfill cycles/wall-clock, no new pipeline type.
+- **R6 (eval harness) — RESOLVED.** `scripts/jseval` measures nDCG@10/R@10 with a `343-scifact-baseline`,
+  `corpus-fidelity`, and `agent_retrieval_eval`/`agent_utility_run` for the RAG path — the mandatory
+  before/after validation is runnable.
+- **R9 (acceptance bar) — stands:** post-fix, the unscoped yeast ask must return `CHUNK_HYBRID` and cite
+  `1631583.txt` (live-verify at implementation).
+
+### Net effect on the A-vs-B decision (the derisk's main outcome)
+
+The design pass under-counted A and over-counted B. **A** now = writer change **+ ChunkSplitter
+single-chunk fix + short-corpus/coverage-race handling + 718-guard rework + a re-index existing users
+can't self-serve** — i.e. it *reverses a deliberate short-corpus optimisation* and ripples through the
+corpus-classification / chunk_merge / guard machinery. **B** (union doc-level entries into the RAG
+candidate set, virtual-chunked, reusing the existing doc-level hybrid search + RAG-005 machinery)
+**works WITH that machinery**: no writer/splitter/classification/guard change, no re-index (doc-level
+entries already exist), and the research already established a whole-doc embedding IS the field-standard
+retrieval unit for abstracts. B's one real cost — a second retrieval leg merged pre-rerank into RAG —
+now looks *smaller* than A's surfaced ripple set. **Recommendation: RE-OPEN A vs B as a founder
+decision informed by these findings.** My updated lean is **B for architectural alignment + no
+migration**, with the exception that **A is attractive specifically for the v0.2.0 fresh-install path**
+(free on a clean index) *if* the upgrade-in-place migration gap and the four extra work items are
+accepted. This is a genuine judgement call, not a mechanical pick.
+
+### Confidence + difficulty (derisk deliverable)
+
+- **Confidence the bug is understood and a correct fix (A or B) is achievable: 8/10.** Root cause is
+  source+live confirmed; both fix paths are viable; the eval harness exists.
+- **Confidence in A *as currently designed* (two-guard flip): 4/10** — refuted by R4/R3/R7/R2; needs a
+  design revision before it's implementable.
+- **Difficulty: HIGH, not mechanical.** Either path is retrieval-architecture work (writer/splitter/
+  corpus-classification/guard for A; RAG query-path candidate-generation for B) plus mandatory
+  `/search-quality` eval validation. **Model/effort: opus for the design-revision + implementation**
+  (this is not sonnet-mechanical); a sonnet worker could execute a *fully-specified* sub-slice (e.g. the
+  isolated ChunkSplitter single-chunk fix + its test) under an opus-authored brief, but the fix's core —
+  choosing and wiring A-revised vs B and validating retrieval quality — is opus-tier judgement.
+
+## Suggested fix shape (SUPERSEDED by §Design + §Derisk above — retained as the round-6 originating note)
 
 This needs an investigation pass into the RAG chunk-retrieval threshold/fallback logic —
 whatever decides `NO_CHUNKS_FOUND` (likely a chunk-relevance-score cutoff, or a chunk-index
