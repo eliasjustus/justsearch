@@ -36,7 +36,6 @@ import java.util.TreeMap;
  *   <li>{@link Llm} — LLM runtime tuning (sampling, VRAM, templates, deadlines)
  *   <li>{@link Agent} — agent tool configuration (limits, compression)
  *   <li>{@link Summary} — summary pipeline configuration
- *   <li>{@link Translator} — translator pipeline identifiers
  *   <li>{@link Search} — search pipeline configuration
  *   <li>{@link Telemetry} — telemetry flush and retention settings
  *   <li>{@link Policy} — enterprise policy flags
@@ -52,7 +51,6 @@ public record ResolvedConfig(
     Llm llm,
     Agent agent,
     Summary summary,
-    Translator translator,
     Search search,
     Telemetry telemetry,
     Policy policy,
@@ -77,7 +75,6 @@ public record ResolvedConfig(
     Objects.requireNonNull(llm, "llm");
     Objects.requireNonNull(agent, "agent");
     Objects.requireNonNull(summary, "summary");
-    Objects.requireNonNull(translator, "translator");
     Objects.requireNonNull(search, "search");
     Objects.requireNonNull(telemetry, "telemetry");
     Objects.requireNonNull(policy, "policy");
@@ -212,12 +209,9 @@ public record ResolvedConfig(
       Path llmModelPath,
       boolean disabled,
       boolean llmEnabled,
-      String llmMode,
-      String llmBackend,
       int contextSize,
       String vlmModel,
       String mmprojModel,
-      boolean aiClassifyEnabled,
       boolean useThinking,
       int reasoningBudget,
       String onnxruntimeVariantId,
@@ -419,19 +413,12 @@ public record ResolvedConfig(
       double temperature,
       double topP,
       double minP,
-      double repPenalty,
-      int repWindow,
-      boolean enableJsonGuard,
       long rngSeed,
       String backendSelector,
-      boolean allowRemote,
-      String remoteEndpoint,
-      String remoteAuthToken,
       String backendSupports,
       int summaryChunkTokens,
       int summaryChunkOverlap,
       String templateRoot,
-      String templateTranslate,
       String templateSummary,
       String templateReduce) {}
 
@@ -447,26 +434,7 @@ public record ResolvedConfig(
       int contextCompressionKeepLastResults) {}
 
   /** Summary pipeline configuration. */
-  public record Summary(
-      String pipeline,
-      int maxCharacters,
-      int maxTokens,
-      String messageKey,
-      String queueFullMessageKey,
-      int executionThreads,
-      int executionQueueCapacity) {}
-
-  /** Translator pipeline identifiers, model asset root, and health check tuning. */
-  public record Translator(
-      String pipelineIntent,
-      String pipelineEmbed,
-      String pipelineClassify,
-      String repoRoot,
-      Health health) {
-
-    /** Translator health check tuning. */
-    public record Health(long refreshIntervalMs, long maxBackoffMs, long stalenessAlertSeconds) {}
-  }
+  public record Summary(String pipeline, int maxTokens) {}
 
   /**
    * Search pipeline configuration.
@@ -487,35 +455,22 @@ public record ResolvedConfig(
       double entityBoost,
       boolean chunkAwareEnabled,
       boolean lambdamartEnabled,
-      Corrections corrections,
-      Paging paging) {
+      Corrections corrections) {
 
     /** Spelling/fuzzy correction settings. */
     public record Corrections(
         boolean enabled,
         int dfThreshold,
         int maxEditDistance,
-        boolean zeroHitRetryEnabled,
-        boolean indexFallbackEnabled) {}
-
-    /** Cursor paging strategy and PIT settings. */
-    public record Paging(
-        boolean cursorLegacyEnabled,
-        String strategy,
-        long pitTtlMs,
-        String tiebreakField) {}
+        boolean zeroHitRetryEnabled) {}
   }
 
   /**
    * Telemetry flush and retention settings.
    *
    * @param flushMs telemetry flush interval in milliseconds
-   * @param metricsMaxMb max size of metrics file in MB
-   * @param metricsRetentionDays metrics retention period in days
-   * @param exemplarsEnabled whether telemetry exemplars are enabled
    */
-  public record Telemetry(
-      long flushMs, int metricsMaxMb, int metricsRetentionDays, boolean exemplarsEnabled) {}
+  public record Telemetry(long flushMs) {}
 
   /**
    * Enterprise policy flags.
@@ -525,45 +480,28 @@ public record ResolvedConfig(
    * @param indexParityAllowMismatch true to allow opening index read-only on schema mismatch
    */
   public record Policy(
-      boolean egressBlockAll, boolean prodMode, boolean indexParityAllowMismatch,
-      String languagePolicy) {}
+      boolean egressBlockAll, boolean prodMode, boolean indexParityAllowMismatch) {}
 
   /**
    * UI configuration.
    *
-   * @param settingsMode persistence mode for UI settings (read-only, in-memory, etc.)
    * @param automationEnabled true if UI automation mode is enabled
-   * @param requireTranslator true to require translator even in automation mode
    * @param forceDiagnostics true to force infra diagnostics overrides
    */
-  public record Ui(
-      String settingsMode,
-      boolean automationEnabled,
-      boolean requireTranslator,
-      boolean forceDiagnostics) {}
+  public record Ui(boolean automationEnabled, boolean forceDiagnostics) {}
 
   /**
    * File-system watcher configuration.
    *
-   * @param strategy watcher strategy (native, polling, none)
-   * @param debounceMs debounce interval in milliseconds
    * @param overflowRescanOnOverflow whether to rescan on watcher overflow
-   * @param pollingIntervalMs polling interval in milliseconds (for polling strategy)
-   * @param queueMaxEntries maximum watcher queue entries
    */
-  public record Watcher(
-      String strategy,
-      Integer debounceMs,
-      Boolean overflowRescanOnOverflow,
-      Integer pollingIntervalMs,
-      Integer queueMaxEntries) {}
+  public record Watcher(Boolean overflowRescanOnOverflow) {}
 
   /**
    * OCR (optical character recognition) pipeline configuration.
    *
    * @param enabled whether OCR is enabled
    * @param languages list of OCR languages
-   * @param triggerMinImagePixels minimum image pixels to trigger OCR
    * @param perFileTimeoutMs per-file OCR timeout in milliseconds
    * @param maxPages maximum pages to process
    * @param maxImageDimension maximum image dimension
@@ -574,7 +512,6 @@ public record ResolvedConfig(
   public record Ocr(
       Boolean enabled,
       List<String> languages,
-      Integer triggerMinImagePixels,
       Integer perFileTimeoutMs,
       Integer maxPages,
       Integer maxImageDimension,
@@ -594,7 +531,6 @@ public record ResolvedConfig(
    * @param writerMaxBufferedDocs max buffered docs before flush
    * @param writerMaxQueueDepth max writer queue depth
    * @param commitDebounceMs commit debounce interval in ms
-   * @param commitPolicy commit policy (per_batch, deferred)
    * @param commitMetadataEnabled whether commit metadata is enabled
    * @param nrtTargetMaxStaleMs NRT target max stale time in ms
    * @param nrtHardMaxStaleMs NRT hard max stale time in ms
@@ -625,7 +561,6 @@ public record ResolvedConfig(
       Integer writerMaxBufferedDocs,
       Integer writerMaxQueueDepth,
       Integer commitDebounceMs,
-      String commitPolicy,
       boolean commitMetadataEnabled,
       Integer nrtTargetMaxStaleMs,
       Integer nrtHardMaxStaleMs,
@@ -650,8 +585,6 @@ public record ResolvedConfig(
       Double similarityTextK1,
       Double similarityTextB,
       String validationMode,
-      String defaultLanguage,
-      String tracingLevel,
       List<IndexSortItem> sort,
       Map<String, Double> boosts) {
 
@@ -666,7 +599,7 @@ public record ResolvedConfig(
   }
 
   /** Collection configuration from YAML {@code index.collections[]}. */
-  public record CollectionCfg(String name, List<Path> roots, String watcherStrategy) {
+  public record CollectionCfg(String name, List<Path> roots) {
     public CollectionCfg {
       roots = roots != null ? List.copyOf(roots) : List.of();
     }
@@ -704,7 +637,6 @@ public record ResolvedConfig(
    * @param diversifyMode diversification mode (position, mmr)
    * @param mmrLambda MMR lambda parameter
    * @param mmrMaxCandidates max MMR candidates
-   * @param includeSurroundingContext whether to include surrounding context
    * @param chunkVectorsEnabled whether chunk-level vector retrieval is enabled
    * @param chunkSpladeEnabled whether chunk-level SPLADE enrichment is enabled (tempdoc 712:
    *     encodes chunk docs' {@code chunk_content} into the {@code splade} FeatureField so the
@@ -720,7 +652,6 @@ public record ResolvedConfig(
       String diversifyMode,
       double mmrLambda,
       int mmrMaxCandidates,
-      boolean includeSurroundingContext,
       boolean chunkVectorsEnabled,
       boolean chunkSpladeEnabled,
       int ragTopK,

@@ -542,30 +542,6 @@ final class ResolvedConfigBuilderTest {
     }
 
     @Test
-    @DisplayName("contributeYaml reads watcher config from YAML")
-    void watcherConfig() {
-      String yaml =
-          """
-          index:
-            watcher:
-              strategy: polling
-              debounce_ms: 500
-              polling:
-                interval_ms: 2000
-              queue:
-                max_entries: 1000
-          """;
-      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
-      builder.contributeYaml(parseYaml(yaml));
-      ResolvedConfig config = builder.build();
-
-      assertEquals("polling", config.watcher().strategy());
-      assertEquals(500, config.watcher().debounceMs());
-      assertEquals(2000, config.watcher().pollingIntervalMs());
-      assertEquals(1000, config.watcher().queueMaxEntries());
-    }
-
-    @Test
     @DisplayName("contributeYaml reads OCR config including languages list")
     void ocrConfig() {
       String yaml =
@@ -576,8 +552,6 @@ final class ResolvedConfigBuilderTest {
               languages:
                 - eng
                 - deu
-              trigger:
-                min_image_pixels: 10000
               limits:
                 max_pages: 50
                 render_dpi: 220
@@ -589,7 +563,6 @@ final class ResolvedConfigBuilderTest {
 
       assertEquals(true, config.ocr().enabled());
       assertEquals(java.util.List.of("eng", "deu"), config.ocr().languages());
-      assertEquals(10000, config.ocr().triggerMinImagePixels());
       assertEquals(50, config.ocr().maxPages());
       assertEquals(220, config.ocr().renderDpi());
       assertEquals(4, config.ocr().workers());
@@ -678,7 +651,6 @@ final class ResolvedConfigBuilderTest {
             writer:
               ram_buffer_mb: 256
             commit:
-              policy: deferred
               debounce_ms: 1000
               meta:
                 enabled: false
@@ -696,7 +668,6 @@ final class ResolvedConfigBuilderTest {
       ResolvedConfig config = builder.build();
 
       assertEquals(256, config.index().writerRamBufferMb());
-      assertEquals("deferred", config.index().commitPolicy());
       assertEquals(1000, config.index().commitDebounceMs());
       assertFalse(config.index().commitMetadataEnabled());
       assertEquals(384, config.index().vectorDimension());
@@ -725,7 +696,6 @@ final class ResolvedConfigBuilderTest {
           Path.of("/models/llama.gguf"),
           config.ai().llmModelPath(),
           "YAML llm.model_path should be visible to buildAi()");
-      assertEquals("remote", config.ai().llmMode(), "YAML llm.mode should be visible to buildAi()");
     }
 
     @Test
@@ -772,7 +742,6 @@ final class ResolvedConfigBuilderTest {
       assertEquals(100_000L, config.worker().maxQueueDepth());
       // AI defaults — must match RuntimePolicyConfigFactory defaults
       assertTrue(config.ai().llmEnabled(), "llmEnabled default must be true (matches factory)");
-      assertEquals("remote", config.ai().llmMode(), "llmMode default must be 'remote' (matches factory)");
     }
   }
 
