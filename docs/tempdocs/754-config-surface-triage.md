@@ -10,7 +10,7 @@ related:
   - ADR-0043 / the `language-agnostic-analysis` tempdoc (581) — killed the consumer of `Index.defaultLanguage` and `Policy.languagePolicy`
 ---
 
-# 728 — Config-surface classification pass
+# 754 — Config-surface classification pass
 
 ## Charter
 
