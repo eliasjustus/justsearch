@@ -136,6 +136,30 @@ Write-Log $elevationNote
 # informational, not blocking -- a round may deliberately be re-running
 # against an existing install (upgrade/repair scenarios) -- but it must be
 # recorded so a fresh-install round can't silently double-install.
+#
+# tempdoc 750 Part C: an upgrade-from-release round deliberately installs
+# the PREVIOUS release before the candidate, so a prior install is that
+# round's ASSERTED-EXPECTED precondition, not a defect. sandbox-launch.py
+# writes a machine-readable "ExpectPriorInstall: true/false" marker into
+# validation-mode.md for exactly this -- read it back here so the verdict
+# flips: FOUND becomes OK and a NOT-FOUND signal becomes the warning
+# instead (the upgrade scenario did not happen as expected). Absent/
+# malformed/missing validation-mode.md defaults to false, i.e. today's
+# behavior below, unchanged.
+$validationModePath = Join-Path -Path $PSScriptRoot -ChildPath "validation-mode.md"
+$expectPriorInstall = $false
+if (Test-Path -LiteralPath $validationModePath) {
+    try {
+        $validationModeContent = Get-Content -LiteralPath $validationModePath -Raw -ErrorAction Stop
+        if ($validationModeContent -match 'ExpectPriorInstall:\s*true') {
+            $expectPriorInstall = $true
+        }
+    }
+    catch {
+        Write-Log "Could not read $validationModePath for ExpectPriorInstall ($($_.Exception.Message)) -- defaulting to false."
+    }
+}
+
 $installedExePath = Join-Path -Path $env:LOCALAPPDATA -ChildPath "JustSearch\JustSearch.exe"
 $installedExeFound = Test-Path -LiteralPath $installedExePath
 $dataDirFound = Test-Path -LiteralPath $DataDir
@@ -144,13 +168,33 @@ $uninstallRegFound = Test-Path -LiteralPath $uninstallRegKey
 
 $installStateLines = @(
     "",
-    "--- Install-state fingerprint (tempdoc 729-followup) ---",
+    "--- Install-state fingerprint (tempdoc 729-followup / 750 Part C) ---",
+    "ExpectPriorInstall (from validation-mode.md): $expectPriorInstall",
     "Installed exe ($installedExePath): $(if ($installedExeFound) { 'FOUND' } else { 'not found' })",
     "App data dir ($DataDir): $(if ($dataDirFound) { 'FOUND' } else { 'not found' })",
     "Uninstall registry key ($uninstallRegKey): $(if ($uninstallRegFound) { 'FOUND' } else { 'not found' })"
 )
 
-if ($installedExeFound -or $dataDirFound -or $uninstallRegFound) {
+if ($expectPriorInstall) {
+    $missingSignals = @()
+    if (-not $installedExeFound) { $missingSignals += "installed exe" }
+    if (-not $dataDirFound) { $missingSignals += "app data dir" }
+    if (-not $uninstallRegFound) { $missingSignals += "uninstall registry key" }
+    if ($missingSignals.Count -gt 0) {
+        $installStateLines += ("WARNING: this is an upgrade-from-release round (validation-mode.md: " +
+            "ExpectPriorInstall: true), which asserts a prior install as the EXPECTED " +
+            "precondition -- but the following signal(s) are NOT FOUND: " +
+            ($missingSignals -join ", ") + ". The upgrade scenario (install the previous " +
+            "release, seed data, quit it fully, then install the candidate over it) did not " +
+            "happen as expected this round.")
+        Write-Log "WARNING: upgrade-from-release round but prior-install signal(s) missing -- see elevation-check.txt"
+    }
+    else {
+        $installStateLines += ("Prior-install state confirmed (all three signals FOUND) -- the expected " +
+            "precondition for upgrade-from-release mode holds.")
+    }
+}
+elseif ($installedExeFound -or $dataDirFound -or $uninstallRegFound) {
     $installStateLines += ("WARNING: JustSearch already appears to be installed on this system " +
         "(at least one signal above is FOUND). Relaunching the installer over an " +
         "existing install is a known round defect. If this round intends a fresh " +
@@ -555,6 +599,14 @@ $goldenFailedCount = 0
 $goldenSkipped = $false
 $goldenSkipReason = $null
 
+# Per-leg capture (tempdoc 750 Part A): alongside the hybrid capture above,
+# also capture each golden query once per retrieval-leg-only mode so the
+# host-side checker can see what each leg alone would have surfaced,
+# independent of hybrid fusion. Saved as golden/<id>.<mode>.json.
+$goldenLegModes = @("vector", "text", "splade")
+$goldenLegCapturedCount = 0
+$goldenLegFailedCount = 0
+
 # Corpus-sanity pre-check (tempdoc 729-followup): the docs tell a round to
 # "run it early", which — unguarded — measures search quality against a
 # nearly-empty index and poisons the parity evidence with a false regression
@@ -650,6 +702,32 @@ else {
                 ($errorRecord | ConvertTo-Json -Depth 5) | Write-Utf8NoBom -Path $outFile
                 Write-Log "  golden $qid -> ERROR ($exceptionMessage) recorded to golden/$qid.json"
             }
+
+            foreach ($legMode in $goldenLegModes) {
+                $legOutFile = Join-Path -Path $goldenDir -ChildPath "$qid.$legMode.json"
+                $legRequestBody = @{ query = $qtext; limit = 10; mode = $legMode } | ConvertTo-Json
+
+                try {
+                    $legResponse = Invoke-WebRequest -Uri $searchUrl -Method Post -Body $legRequestBody `
+                        -ContentType "application/json" -UseBasicParsing -ErrorAction Stop
+                    $legResponse.Content | Write-Utf8NoBom -Path $legOutFile
+                    $goldenLegCapturedCount++
+                    Write-Log "  golden $qid ($legMode) -> captured to golden/$qid.$legMode.json"
+                }
+                catch {
+                    $goldenLegFailedCount++
+                    $legExceptionMessage = $_.Exception.Message
+                    $legErrorRecord = New-Object PSObject -Property @{
+                        queryId   = $qid
+                        query     = $qtext
+                        mode      = $legMode
+                        url       = $searchUrl
+                        exception = $legExceptionMessage
+                    }
+                    ($legErrorRecord | ConvertTo-Json -Depth 5) | Write-Utf8NoBom -Path $legOutFile
+                    Write-Log "  golden $qid ($legMode) -> ERROR ($legExceptionMessage) recorded to golden/$qid.$legMode.json"
+                }
+            }
         }
     }
     catch {
@@ -708,6 +786,7 @@ if ($goldenSkipped) {
 }
 else {
     $summaryLines += "Golden-query search-parity capture: $goldenCapturedCount captured, $goldenFailedCount failed -> golden/ (host-side check_golden_parity.py input)"
+    $summaryLines += "Golden-query per-leg capture (vector/text/splade): $goldenLegCapturedCount captured, $goldenLegFailedCount failed -> golden/<id>.<mode>.json"
 }
 
 ($summaryLines -join "`r`n") | Write-Utf8NoBom -Path $summaryPath
