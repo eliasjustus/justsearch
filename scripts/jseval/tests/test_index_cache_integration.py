@@ -89,9 +89,9 @@ def test_selector_unavailable_falls_back_to_fresh(boot_mocks):
     assert boot_mocks.popen.call_count == 1
 
 
-def test_no_corpus_dir_disables_cache(boot_mocks):
-    """corpus_dir=None + mode=on -> disabled (no cross-corpus key collisions),
-    selector never computed, one fresh boot, selector_key None (blocks publish)."""
+def test_no_corpus_axis_disables_cache(boot_mocks):
+    """corpus_dir=None + dataset_name=None + mode=on -> disabled (no cross-corpus
+    key collisions), selector never computed, one fresh boot, selector_key None."""
     with patch("jseval.index_identity.compute_selector") as sel, \
          patch("jseval.index_cache.lookup") as lookup:
         info = backend_mod.start_backend(
@@ -99,7 +99,7 @@ def test_no_corpus_dir_disables_cache(boot_mocks):
 
     sel.assert_not_called()
     lookup.assert_not_called()
-    assert info.cache_outcome["mode"] == "disabled:no-corpus-dir"
+    assert info.cache_outcome["mode"] == "disabled:no-corpus-axis"
     assert info.cache_outcome["selector_key"] is None
     assert boot_mocks.popen.call_count == 1
 
@@ -187,6 +187,28 @@ def test_scoped_pin_would_hit_when_only_git_differs(boot_mocks):
             corpus_dir=boot_mocks.data_dir.parent)
 
     assert info.cache_outcome["would_have_hit_scoped_pin"] is True
+
+
+def test_requested_but_unavailable_axis_logs_warning(boot_mocks, caplog):
+    """Finding 1: a requested cache disabled because the axis is unresolvable must
+    log at WARNING (not the old silent INFO), with the reason verbatim."""
+    import logging
+
+    reason = ("corpus axis unresolvable: F:\\d\\corpus-dir has no corpus.jsonl and "
+              "neither does its parent F:\\d")
+    with caplog.at_level(logging.WARNING, logger="jseval.backend"), \
+         patch("jseval.index_identity.compute_selector",
+               return_value=_selector(None, reason)), \
+         patch("jseval.index_cache.lookup") as lookup:
+        info = backend_mod.start_backend(
+            data_dir=boot_mocks.data_dir, clean=True, index_cache_mode="on",
+            corpus_dir=boot_mocks.data_dir.parent)
+
+    lookup.assert_not_called()
+    assert info.cache_outcome["mode"] == f"disabled:{reason}"
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(reason in r.getMessage() for r in warnings), \
+        "expected a WARNING carrying the unavailable-axis reason verbatim"
 
 
 def test_adopt_error_falls_through_to_fresh(boot_mocks):
@@ -385,3 +407,110 @@ def test_run_fresh_index_flag_keeps_cache_off():
         ])
     assert result.exit_code == 0, result.output
     assert start.call_args.kwargs["index_cache_mode"] == "off"
+
+
+def test_run_dataset_reaches_start_backend_kwarg():
+    """`run --dataset X` threads dataset_name into start_backend (751 P.5)."""
+    info = backend_mod.BackendInfo(
+        proc=MagicMock(), data_dir=Path("data"),
+        cache_outcome={"mode": "miss:selector", "selector_key": "k"}, spawn_env={},
+    )
+    with patch("jseval.backend.start_backend", return_value=info) as start, \
+         patch("jseval.backend.stop_backend"), \
+         patch("jseval.commands.run.assert_run_capabilities"), \
+         patch("jseval.commands.run._do_run"):
+        result = CliRunner().invoke(main, [
+            "run", "--dataset", "golden/desktop-v1", "--max-queries", "0",
+            "--start-backend", "--clean", "--index-cache",
+        ])
+    assert result.exit_code == 0, result.output
+    assert start.call_args.kwargs["dataset_name"] == "golden/desktop-v1"
+
+
+# --------------------------------------------------------------------------- #
+# index-cache warm CLI (751 P.5 WP-2) -- helper mocked.
+# --------------------------------------------------------------------------- #
+
+
+def test_warm_published_line():
+    with patch("jseval.commands.run.warm_index_cache",
+               return_value={"status": "published", "entry": "abc123def4567890", "reason": None}):
+        result = CliRunner().invoke(main, ["index-cache", "warm", "--dataset", "golden/x"])
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == "published abc123def4567890"
+
+
+def test_warm_already_cached_line():
+    with patch("jseval.commands.run.warm_index_cache",
+               return_value={"status": "already-cached", "entry": "deadbeefcafef00d", "reason": None}):
+        result = CliRunner().invoke(
+            main, ["index-cache", "warm", "--corpus-dir", "datasets/cell/corpus-dir"])
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == "already-cached deadbeefcafef00d"
+
+
+def test_warm_disabled_exits_2():
+    """Unresolvable axis -> disabled -> LOUD exit 2 (warm's whole job is to cache)."""
+    with patch("jseval.commands.run.warm_index_cache",
+               return_value={"status": "disabled", "entry": None,
+                             "reason": "corpus axis unresolvable: no corpus.jsonl"}):
+        result = CliRunner().invoke(main, ["index-cache", "warm", "--dataset", "scifact"])
+    assert result.exit_code == 2
+    assert "disabled: corpus axis unresolvable" in result.output
+
+
+def test_warm_helper_axis_unresolvable_disabled():
+    """warm_index_cache resolves the axis FIRST; unresolvable -> disabled, no boot."""
+    from jseval.commands import run as run_cmd
+    from jseval.index_identity import CorpusAxis
+
+    with patch("jseval.index_identity.resolve_corpus_axis",
+               return_value=CorpusAxis(None, None, "corpus axis unresolvable: bad")), \
+         patch("jseval.commands.run._run_iteration") as iter_mock:
+        out = run_cmd.warm_index_cache("scifact", None, 33221)
+    iter_mock.assert_not_called()
+    assert out == {"status": "disabled", "entry": None,
+                   "reason": "corpus axis unresolvable: bad"}
+
+
+def test_warm_helper_published():
+    from jseval.commands import run as run_cmd
+    from jseval.index_identity import CorpusAxis
+
+    axis = CorpusAxis(Path("w"), Path("s"), None)
+    with patch("jseval.index_identity.resolve_corpus_axis", return_value=axis), \
+         patch("jseval.commands.run._run_iteration",
+               return_value={"cache_outcome": {"mode": "miss:selector"},
+                             "published_entry": "0123456789abcdefXXXX"}):
+        out = run_cmd.warm_index_cache(None, "datasets/cell/corpus-dir", 33221)
+    assert out["status"] == "published"
+    assert out["entry"] == "0123456789abcdef"  # truncated to 16
+
+
+def test_warm_helper_already_cached():
+    from jseval.commands import run as run_cmd
+    from jseval.index_identity import CorpusAxis
+
+    axis = CorpusAxis(Path("w"), Path("s"), None)
+    with patch("jseval.index_identity.resolve_corpus_axis", return_value=axis), \
+         patch("jseval.commands.run._run_iteration",
+               return_value={"cache_outcome": {"mode": "adopted", "entry": "cafebabecafebabeZZ"},
+                             "published_entry": None}):
+        out = run_cmd.warm_index_cache(None, "datasets/cell/corpus-dir", 33221)
+    assert out["status"] == "already-cached"
+    assert out["entry"] == "cafebabecafebabe"
+
+
+def test_warm_requires_exactly_one_of_dataset_or_corpus_dir():
+    # Neither -> usage error.
+    r_neither = CliRunner().invoke(main, ["index-cache", "warm"])
+    assert r_neither.exit_code != 0
+    assert "exactly one" in r_neither.output
+    # Both -> usage error (helper never invoked).
+    with patch("jseval.commands.run.warm_index_cache") as helper:
+        r_both = CliRunner().invoke(
+            main, ["index-cache", "warm", "--dataset", "golden/x",
+                   "--corpus-dir", "datasets/cell/corpus-dir"])
+    assert r_both.exit_code != 0
+    assert "exactly one" in r_both.output
+    helper.assert_not_called()

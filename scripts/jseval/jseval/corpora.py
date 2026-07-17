@@ -304,19 +304,3 @@ def _default_base_dir() -> Path:
     from ._paths import REPO_ROOT
 
     return REPO_ROOT / "datasets"
-
-
-def local_dataset_dir(name: str, base_dir: Path | None = None) -> Path | None:
-    """On-disk corpus dir for a golden/mixed dataset, or ``None`` when unresolvable.
-
-    Tempdoc 751 WP3 follow-up: the index-cache selector needs the corpus axis
-    BEFORE the backend starts, but ``--corpus-dir`` is optional. Local datasets
-    (``golden/``/``mixed/``) live at a deterministic path; BEIR corpora are only
-    materialized later in the run, so they resolve to ``None`` here and the
-    cache stays disabled for that run (fail closed against cross-corpus
-    selector-key collisions) rather than keying on config alone.
-    """
-    if not (name.startswith("golden/") or name.startswith("mixed/")):
-        return None
-    candidate = (base_dir or _default_base_dir()) / name
-    return candidate if (candidate / "corpus.jsonl").is_file() else None

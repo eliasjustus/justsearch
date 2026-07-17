@@ -552,21 +552,130 @@ def _fetch_commit_metadata(base_url: str, timeout: float) -> dict:
 # --------------------------------------------------------------------------- #
 
 
+@dataclass(frozen=True)
+class CorpusAxis:
+    """Canonical corpus-axis resolution shared by EVERY index-cache caller (751 P.5).
+
+    ``watched_dir`` is the directory that becomes the backend's watched root (the
+    engine's doc-identity path base -- IndexingDocumentOps.java:137); it is what
+    the selector's ``corpus_dir_path`` component binds. ``signature_root`` is
+    where ``corpus.jsonl``/qrels live -- the input to the canonical
+    ``corpus_signature``. Both are ``None`` when the axis is unresolvable, and
+    ``reason`` then names why (fail closed).
+
+    The publisher (``jseval run --dataset X`` / ``index-cache warm``) and the
+    adopter (``serve-eval-backend.py --corpus-dir ...``) bind identical key
+    components ONLY because they run this one resolver on the same input
+    (finding 2): the shared function is the by-construction agreement, not a
+    convention two call sites must both remember.
+    """
+
+    watched_dir: Path | None
+    signature_root: Path | None
+    reason: str | None = None
+
+
+def resolve_corpus_axis(
+    dataset_name: str | None, explicit_dir: Path | None
+) -> CorpusAxis:
+    """Resolve the corpus axis exactly as ``ingest.prepare_corpus`` derives its
+    watched root (ingest.py:181-209), so a cached entry's ``corpus_dir_path``
+    equals the path the real ingest will watch.
+
+    Resolution rules (751 P.5 WP-1):
+
+    * ``explicit_dir`` with ``corpus.jsonl`` -> watched=dir, signature_root=dir.
+    * ``explicit_dir`` whose PARENT has ``corpus.jsonl`` (the exploded
+      ``datasets/<cell>/corpus-dir`` subdir, finding 1) -> watched=dir,
+      signature_root=parent -- the files are watched here, but corpus.jsonl+qrels
+      live one level up.
+    * ``explicit_dir`` with neither -> unresolvable (reason names both shapes).
+    * no ``explicit_dir``, golden/mixed ``raw_files`` dataset -> watched=
+      ``<datasets>/<ds>/corpus-dir``, signature_root=``<datasets>/<ds>``
+      (mirrors ``ingest._raw_corpus_dir`` / ingest.py:205).
+    * no ``explicit_dir``, golden/mixed materialized -> watched=
+      ``default_corpus_dir(ds)`` (the tmp/eval-corpora target, which does NOT
+      exist until ingest materializes it -- fine, the selector needs only its
+      normalized PATH, ingest.py:207), signature_root=``<datasets>/<ds>`` (which
+      MUST already hold corpus.jsonl, else nothing to sign -> unresolvable).
+    * anything else (BEIR / unknown / ``None`` name) -> unresolvable.
+    """
+    if explicit_dir is not None:
+        explicit_dir = Path(explicit_dir)
+        if (explicit_dir / "corpus.jsonl").is_file():
+            return CorpusAxis(explicit_dir, explicit_dir, None)
+        parent = explicit_dir.parent
+        if (parent / "corpus.jsonl").is_file():
+            return CorpusAxis(explicit_dir, parent, None)
+        return CorpusAxis(
+            None, None,
+            reason=(
+                f"corpus axis unresolvable: {explicit_dir} has no corpus.jsonl and "
+                f"neither does its parent {parent}; pass either a dataset dir "
+                f"containing corpus.jsonl, or a child directory of one"
+            ),
+        )
+
+    if not dataset_name:
+        return CorpusAxis(
+            None, None,
+            reason="corpus axis unresolvable: no dataset name and no --corpus-dir given",
+        )
+    if not (dataset_name.startswith("golden/") or dataset_name.startswith("mixed/")):
+        return CorpusAxis(
+            None, None,
+            reason=(
+                f"corpus axis unresolvable: dataset {dataset_name!r} is not a local "
+                f"golden/mixed dataset (BEIR/unknown corpora materialize only mid-run, "
+                f"so their path is not known before the backend starts); pass --corpus-dir"
+            ),
+        )
+
+    from ._paths import default_corpus_dir
+    from .corpora import _default_base_dir
+    from .ingest import _raw_corpus_dir
+
+    dataset_root = _default_base_dir() / dataset_name
+    raw_dir = _raw_corpus_dir(dataset_name)
+    if raw_dir is not None:
+        # raw_files dataset (ingest.py:192-205): the real binary files ARE the
+        # corpus (there is no corpus.jsonl); the watched root is the corpus-dir,
+        # the signature comes off the dataset root (qrels-based signature).
+        return CorpusAxis(raw_dir, dataset_root, None)
+
+    if not (dataset_root / "corpus.jsonl").is_file():
+        return CorpusAxis(
+            None, None,
+            reason=(
+                f"corpus axis unresolvable: dataset {dataset_name!r} has no "
+                f"corpus.jsonl at {dataset_root}"
+            ),
+        )
+    return CorpusAxis(default_corpus_dir(dataset_name), dataset_root, None)
+
+
 def compute_selector(
     repo_root: Path,
     corpus_dir: Path | None,
     spawn_env: Mapping[str, str],
+    dataset_name: str | None = None,
 ) -> SelectorKey:
     """Static candidate selector (751 sec M.2 -- heuristic, never authoritative).
 
     Computable with no backend: git identity + working-tree dirt, on-disk model
-    sidecar hashes (embed + SPLADE), the index-shaping runtime knobs, and (when
-    ``corpus_dir`` is given) the canonical ``corpus_signature``. Any unavailable
-    input returns a ``SelectorKey`` with ``key=None`` and a named reason (fail
-    closed). NER is intentionally absent here (the selector has no backend and
-    the design's selector set is embed/splade sidecars only) -- the selector and
-    live component sets differ by construction and are never compared to each
-    other.
+    sidecar hashes (embed + SPLADE), the index-shaping runtime knobs, and (when a
+    corpus axis is given) the canonical ``corpus_signature`` + normalized watched
+    path. Any unavailable input returns a ``SelectorKey`` with ``key=None`` and a
+    named reason (fail closed). NER is intentionally absent here (the selector has
+    no backend and the design's selector set is embed/splade sidecars only) -- the
+    selector and live component sets differ by construction and are never compared
+    to each other.
+
+    Corpus axis (751 P.5): ``corpus_dir`` and ``dataset_name`` are the AXIS input,
+    resolved through the ONE shared :func:`resolve_corpus_axis` so the publisher and
+    the adopter bind identical corpus components by construction (finding 2). When
+    BOTH are ``None`` the caller is axis-less (v0 selector with no corpus) and no
+    corpus components are added -- today's behavior for axis-less callers.
     """
     components: dict = {"schema_version": _SELECTOR_SCHEMA_VERSION}
     try:
@@ -599,23 +708,28 @@ def compute_selector(
 
         components["runtime_config"] = _runtime_config(spawn_env)
 
-        if corpus_dir is not None:
-            sig = corpus_signature(corpus_dir)
+        if dataset_name is not None or corpus_dir is not None:
+            axis = resolve_corpus_axis(dataset_name, corpus_dir)
+            if axis.reason is not None:
+                return SelectorKey(None, components, axis.reason)
+            sig = corpus_signature(axis.signature_root)
             if sig is None:
                 return SelectorKey(
                     None, components,
-                    "corpus_signature: no corpus files under " + str(corpus_dir),
+                    "corpus_signature: no corpus files under "
+                    + str(axis.signature_root),
                 )
             components["corpus_signature"] = sig
             # Review fix F-A (refute-first audit claim 10): the engine's doc
             # identity is the absolute file path (IndexingDocumentOps.java:137),
             # so a byte-identical corpus at a DIFFERENT absolute path (another
             # worktree) builds a different-doc-universe index. Binding the
-            # normalized path into the key makes cross-checkout entries live
-            # under different keys -- a foreign-path entry can never even be
+            # normalized WATCHED path into the key makes cross-checkout entries
+            # live under different keys -- a foreign-path entry can never even be
             # nominated (and same-key last-writer republish races can only
-            # involve same-path, genuinely-equivalent entries).
-            components["corpus_dir_path"] = _norm_path(corpus_dir)
+            # involve same-path, genuinely-equivalent entries). The watched dir
+            # (not the signature root) is what the engine actually indexes.
+            components["corpus_dir_path"] = _norm_path(axis.watched_dir)
     except IdentityUnavailable as e:
         return SelectorKey(None, components, e.reason)
 

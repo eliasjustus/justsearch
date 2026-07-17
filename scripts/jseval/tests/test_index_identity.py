@@ -303,7 +303,9 @@ def test_selector_corpus_dir_without_files_unavailable(git_repo: Path, tmp_path:
     empty_corpus.mkdir()
     sel = compute_selector(git_repo, empty_corpus, env)
     assert sel.key is None
-    assert "corpus_signature" in sel.unavailable_reason
+    # 751 P.5: the axis resolver now reports garbage dirs, naming both shapes.
+    assert "corpus axis unresolvable" in sel.unavailable_reason
+    assert "corpus.jsonl" in sel.unavailable_reason
 
 
 def test_selector_key_differs_by_corpus_dir_path(git_repo: Path, tmp_path: Path):
