@@ -476,3 +476,48 @@ execution-surfaces register enforces for `SearchTrace`.
 Not proposed here: generalizing the three mechanisms into one framework. They share a principle,
 not a reason to change (AHA); 751 should *cite* the pattern, copy the atomic-publish idiom, and
 stop there.
+
+## §L. External research notes (2026-07-17; ideas only, no code copied)
+
+Targeted pass on the two areas with live external practice. Sources are cited for ideas, not
+adapted text/code.
+
+### L.1 Pyserini/Anserini prebuilt indexes — the IR community's production instance of this
+
+The reproducible-IR ecosystem ([Pyserini](https://github.com/castorini/pyserini/blob/master/docs/prebuilt-indexes.md),
+[Anserini](https://github.com/castorini/anserini/blob/master/docs/prebuilt-indexes.md)) has
+distributed **prebuilt Lucene indexes** for years — BEIR, MS MARCO, Mr.TyDi — verified by
+checksum on download and unpacked into a flat local cache
+(`~/.cache/pyserini/indexes/<name>.<date>.<commit-abbrev>.<md5>`). Take-aways:
+
+1. **Entry naming embeds build date + toolkit commit + artifact checksum** — their pin is
+   "date + engine commit + transport integrity," coarser than 751's derivation pin (they verify
+   *the artifact is the blessed one*, not *the inputs equal yours*). Their model is a trusted
+   central registry; 751's is local memoization. Different trust root, same artifact shape.
+2. **Engine version is in their pin for a reason**: the Lucene 8→9 transition forced rebuilding
+   the whole prebuilt-index fleet — index-format identity is a real invalidation axis, matching
+   751's engine-pin input.
+3. **Strong precedent for the frozen-sample question (§I.3)**: the entire IR research community
+   publishes results against *shared single builds* of each collection — conditional-on-one-
+   HNSW-draw results are accepted reproducible science there (indeed the sharing is what makes
+   them comparable). This supports treating shared-entry comparability as a feature and
+   disclosing entry id in run records, rather than treating frozen-sample as a defect to
+   engineer away.
+
+### L.2 Nix input- vs content-addressing — a terminology correction for this doc
+
+In Nix's precise vocabulary ([IA vs CA derivations](https://www.tweag.io/blog/2021-12-02-nix-cas-4/),
+[CA-derivations RFC 0062](https://github.com/NixOS/rfcs/blob/master/rfcs/0062-content-addressed-paths.md)),
+this cache is **input-addressed**, not content-addressed: the key hashes the *inputs*
+(corpus bytes × config × engine), never the output index — the output is HNSW-nondeterministic,
+so no stable output hash exists. Nix's CA machinery struggles exactly at nondeterministic
+outputs (conflicting "realisations" of one derivation can render a cache useless —
+[nix#4087](https://github.com/NixOS/nix/issues/4087)); input-addressing is the standard, correct
+choice for that case. Consequences for the design:
+
+- Keep the established title, but the design doc should use "input-keyed"/"derivation-pinned"
+  internally and **never attempt to address or dedupe entries by output hash** — attestation
+  records content *facts* (counts, canary results), but the *address* is inputs-only.
+- Nix's "realisation" record (derivation-hash → what this build actually produced) is precisely
+  751's attestation record; the naming precedent confirms it belongs *inside* the entry, beside
+  the artifact, not in a side database.
