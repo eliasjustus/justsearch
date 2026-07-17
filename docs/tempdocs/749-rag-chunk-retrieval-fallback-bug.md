@@ -157,6 +157,79 @@ because it changes index size + requires re-index + shifts search-quality baseli
 is a founder/design decision, not a unilateral edit. Root cause is confirmed and a fix is
 unblocked; the *approach* is the open call.
 
+### Research + theorization (2026-07-17, two refute-first lanes; tiered) — the fix approach
+
+Two bounded external-evidence lanes (full reports in the session record). Both **converge on the
+diagnosis and rule out option C; they split A vs B**, which sharpens the design call rather than
+settling it.
+
+**Lane 1 — production chunking practice (T1-heavy, decisive):** every mainstream splitter emits
+**≥1 node per document**, treating "shorter than chunk_size" as the trivial one-chunk case, never
+as exclusion. Verified in source: LlamaIndex `SentenceSplitter._split` early-returns a single
+`_Split` when `token_size <= chunk_size` (T1). LangChain `RecursiveCharacterTextSplitter` returns
+one document for sub-chunk text; Haystack passes a short doc through as one `Document`; Pinecone's
+"small docs may not need chunking" means *index the whole doc as one record*, not *drop it* (T2).
+The repo's writer **inverts this universal convention** — there is no precedent anywhere for
+"too short to chunk" meaning "absent from the chunk index." Refute-first on "write every short
+doc as one chunk": index cost is bounded (one chunk per currently-missing doc, not the
+multiplicative blow-up of finer granularity — Dense X Retrieval arXiv:2312.06648), and dense
+retrieval's documented **brevity bias** (BEIR arXiv:2104.08663; arXiv:2503.05037) means short
+whole-abstract chunks are model-*favored* once visible, not buried. One real caution: cross-
+encoder rerankers can score inconsistently across very-short vs long passages → a length-
+calibration eval check post-fix.
+
+**Lane 2 — fallback quality + retrieval architecture (T1/T2):** (1) BM25-only fallback is an
+evidenced weak point for exactly this shape — on SciFact, BM25 ≈ dense on nDCG@10 (0.65 vs 0.65)
+but **loses on Recall@100 (0.873 vs 0.925)**: it structurally *excludes* semantically-relevant,
+lexically-distant abstracts from the candidate pool (vocabulary mismatch between a NL question and
+an abstract). (2) A single **whole-document dense embedding is the field-standard retrieval unit
+for abstract-length docs** — BEIR/MTEB SciFact embeds each ~1,400–1,700-char abstract as one
+unbroken unit; below ~1,000 tokens chunking overhead buys nothing (Late Chunking arXiv:2409.04701).
+(3) **C is insufficient (strongly refuted):** "a reranker can't fix what retrieval missed" — recall
+is fixed at pool-construction time (arXiv:2605.01664); and a fallback fires only when chunk
+retrieval returns *zero* overall, runs *outside* the primary RRF-fusion + cross-encoder rerank, and
+yields different citation granularity — so even a hybrid fallback leaves the doc out of the primary
+candidate set. (4) Established architectures (LlamaIndex auto-merging, LangChain parent-document,
+Haystack hybrid) **never** special-case short docs onto a degraded lexical-only path: every doc gets
+a uniform embedded representation competing in the *same* fused+reranked pipeline; hierarchy governs
+what is *returned*, not which retrieval signal a doc is limited to.
+
+**The one thing both lanes agree on (load-bearing):** the fix must put short docs into the
+**primary hybrid + rerank candidate set** — not a separate degraded path. That **eliminates C**
+outright (it only touches the fallback) and reframes A vs B as *where* to inject the short doc:
+
+- **A — write short/single-chunk docs as one whole-doc chunk** (index-time; matches the universal
+  splitter convention; makes the `IS_CHUNK:true` contract *correct/complete*; uniform pipeline).
+  Cost: **requires a re-index**, ~+1 chunk per short doc (~85% of this corpus), duplication with the
+  existing whole-doc entry (neutralized by a source-doc-id dedup at fusion — which overlapping-chunk
+  stacks already need), plus the reranker length-calibration check.
+- **B — union the existing doc-level dense entries into RAG retrieval for docs lacking chunks**
+  (query-time; **no re-index** — reuses the field-standard whole-doc embedding that already exists;
+  Lane 2's point that this embedding is *not* a stopgap but the standard unit for abstracts).
+  Cost: a per-doc conditional in the query path (union `IS_CHUNK:false` whole-doc entries only for
+  docs without chunks, else long docs double-count), different citation granularity for those
+  results, and it leaves the chunk index *incomplete* (papers over the writer rather than fixing it).
+
+**Recommended direction (theorization, not a decision): A is the more architecturally-honest fix**
+— it makes the chunk index *complete* so `IS_CHUNK:true` stops silently excluding 85% of the corpus,
+it is precisely what every production splitter does, and its costs are bounded and enumerated. **B
+is the correct choice if a re-index is unacceptable** or index growth is a hard constraint — it is
+cheaper and reuses standard-unit embeddings, at the price of a query-path special-case. **C is
+ruled out by the evidence.** Either A or B is a retrieval-behaviour change that **must be
+eval-validated against the search-quality baselines** (this is `/search-quality` territory), not
+merely unit-tested — the regression home in §Fix decision is necessary but not sufficient; a
+before/after nDCG/recall run on the utility corpora is required, plus the reranker length-calibration
+spot-check Lane 1 flagged.
+
+- **Falsifier for the recommendation:** if an A/B eval run shows the short-doc fix *degrades*
+  aggregate nDCG@10 or recall on the existing utility baselines (e.g. brevity bias over-favouring
+  short chunks past the point of net benefit), the "complete the chunk index" thesis is wrong for
+  this corpus and the fix must be gated/tuned (length-aware fusion weight) rather than shipped flat.
+
+**Open founder call:** A vs B (driven by *is a re-index acceptable / is chunk-index size a hard
+constraint*), and confirmation that this goes through a `/search-quality` design+eval pass before
+merge. Root cause is confirmed; the fix is unblocked; the approach is the decision.
+
 ### (superseded) Earlier narrowing — affected documents have a doc-level entry+embedding but NO searchable chunk entries
 
 The document-level index has `1631583.txt` (searchable, embedded), but its **chunk_content
