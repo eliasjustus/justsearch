@@ -1,6 +1,6 @@
 ---
 title: RAG chunk-retrieval fallback bug — /api/chat/ask misses the top HYBRID hit on some queries
-status: "open — ROOT CAUSE CONFIRMED 2026-07-17 (session a6d2af56, live repro + source). `ChunkDocumentWriter` writes ZERO chunk documents for docs < 2000 chars (`CHUNK_THRESHOLD_CHARS`) or that split into ≤1 chunk; RAG chunk retrieval filters `IS_CHUNK:true` so it only sees chunk documents → sub-2000-char docs (85.2% of the scifact corpus) are invisible to RAG chunk retrieval and fall back to whole-doc BM25, which unscoped misses the best short doc. The 'query-dependence' is really: a RAG ask retrieves chunks only when its ~10-doc scope happens to include one of the ~15% ≥2000-char chunked docs. Doc-level search is unaffected (finds them). DESIGN SETTLED 2026-07-17 (§Design): option A — `ChunkDocumentWriter` writes ONE whole-doc chunk for short/single-chunk docs instead of dropping them (completes the `IS_CHUNK:true` retrieval contract; matches universal splitter convention; fixes both failure sub-cases). B (merge a doc-level retrieval leg) kept only as the no-re-index fallback; C (hybrid-ise the fallback) ruled out. In-scope alongside the writer change: fusion parent-doc dedup, EXTEND 718's chunk-completeness guard to the per-doc-class gap, reranker length-calibration check, and a MANDATORY /search-quality eval before/after with a falsifier. Names a retrieval-completeness invariant (conform to 717/718, no parallel structure). DERISK 2026-07-17 (§Derisk, 4 probes) RE-OPENED the A-vs-B call: A is more invasive than the design assumed (ChunkSplitter returns 2 chunks not 1 for short docs — a real splitter bug; flips isShortCorpus/chunk_merge; needs 718-guard rework; needs a re-index existing users can't self-serve via the UI — though a FRESH v0.2.0 install gets A for free). B works with the short-corpus machinery (no writer/index/guard change, no re-index). Updated lean: B for alignment+no-migration, A only attractive for the fresh-install path. R1/R8 favourable (dedup+citation already safe); R5/R6 fine. Confidence: bug+fix achievable 8/10, A-as-designed 4/10. Difficulty HIGH → opus-tier design-revision+implementation. FOUNDER CALL: re-decide A vs B with these findings. Spawned from tempdoc 734 round 6."
+status: "open — ROOT CAUSE CONFIRMED 2026-07-17 (session a6d2af56, live repro + source). `ChunkDocumentWriter` writes ZERO chunk documents for docs < 2000 chars (`CHUNK_THRESHOLD_CHARS`) or that split into ≤1 chunk; RAG chunk retrieval filters `IS_CHUNK:true` so it only sees chunk documents → sub-2000-char docs (85.2% of the eval corpus) are invisible to RAG chunk retrieval and fall back to whole-doc BM25, which unscoped misses the best short doc. The 'query-dependence' is really: a RAG ask retrieves chunks only when its ~10-doc scope happens to include one of the ~15% ≥2000-char chunked docs. Doc-level search is unaffected (finds them). DESIGN SETTLED 2026-07-17 (§Design): option A — `ChunkDocumentWriter` writes ONE whole-doc chunk for short/single-chunk docs instead of dropping them (completes the `IS_CHUNK:true` retrieval contract; matches universal splitter convention; fixes both failure sub-cases). B (merge a doc-level retrieval leg) kept only as the no-re-index fallback; C (hybrid-ise the fallback) ruled out. In-scope alongside the writer change: fusion parent-doc dedup, EXTEND 718's chunk-completeness guard to the per-doc-class gap, reranker length-calibration check, and a MANDATORY /search-quality eval before/after with a falsifier. Names a retrieval-completeness invariant (conform to 717/718, no parallel structure). DERISK 2026-07-17 (§Derisk, 4 probes) RE-OPENED the A-vs-B call: A is more invasive than the design assumed (ChunkSplitter returns 2 chunks not 1 for short docs — a real splitter bug; flips isShortCorpus/chunk_merge; needs 718-guard rework; needs a re-index existing users can't self-serve via the UI — though a FRESH v0.2.0 install gets A for free). B works with the short-corpus machinery (no writer/index/guard change, no re-index). Updated lean: B for alignment+no-migration, A only attractive for the fresh-install path. R1/R8 favourable (dedup+citation already safe); R5/R6 fine. Confidence: bug+fix achievable 8/10, A-as-designed 4/10. Difficulty HIGH → opus-tier design-revision+implementation. FOUNDER CALL: re-decide A vs B with these findings. Spawned from tempdoc 734 round 6."
 created: 2026-07-16
 updated: 2026-07-16
 ---
@@ -21,26 +21,26 @@ Found during Sandbox round 6 (tempdoc 734), while investigating retrieval qualit
 "Ask" rung as part of that round's general coverage pass (not a targeted hunt for this bug —
 it surfaced incidentally).
 
-- **Query:** "What does the SciFact corpus say about yeast as a model organism?"
+- **Query (target):** a natural-language question whose single best-matching document is the
+  short doc `1631583.txt` (~1500 chars).
 - **`/api/chat/ask` result:** `retrieval_mode: FULLTEXT_FALLBACK`, `reason: NO_CHUNKS_FOUND`,
-  `retrieval_coverage: 0.0`. The answer does not cite `1631583.txt` (the SciFact yeast
-  abstract) and the LLM honestly states the documents do not contain an answer — it does
+  `retrieval_coverage: 0.0`. The answer does not cite `1631583.txt` (the short target doc)
+  and the LLM honestly states the documents do not contain an answer — it does
   **not** hallucinate. `shape:core.rag-ask`'s "label honest" requirement holds; its
   "grounded" requirement does not, for this query.
 - **Control:** the same query text against `/api/knowledge/search` (HYBRID, limit 10)
   reliably returns `1631583.txt` as the **#1 hit**, score 0.92.
 - **Reproduced twice, deterministically** — not a flake. Both runs hit the same
   `FULLTEXT_FALLBACK`/`NO_CHUNKS_FOUND` path and missed the same document.
-- **Differential control:** a differently-worded query ("Lyme disease tick surveillance")
-  took the working `CHUNK_HYBRID` code path on the same running instance and correctly
-  retrieved its target document. So the failure is **query-dependent, not universal** — the
-  chunk-retrieval path works for some queries and silently falls back for others on the
-  identical corpus/index/build.
+- **Differential control:** a differently-worded control query, whose best answer lives in a
+  longer document, took the working `CHUNK_HYBRID` code path on the same running instance and
+  correctly retrieved its target document. So the failure is **query/doc-dependent, not
+  universal** — the chunk-retrieval path works for some queries and silently falls back for
+  others on the identical corpus/index/build.
 
-Raw evidence (Sandbox round 6, `tmp/sandbox/share/evidence/`, referenced from tempdoc 734):
-`chat-ask-yeast-raw-sse.txt`, `chat-ask-yeast-repro2-sse.txt` (the two reproductions),
-`chat-ask-lyme-raw-sse.txt` (the differential control that worked), `yeast-full-question-search.json`
-and `yeast-hybrid-search.json` (the `/api/knowledge/search` control showing the #1 hit).
+Raw evidence (Sandbox round 6, `tmp/sandbox/share/evidence/`, referenced from tempdoc 734): the
+round-6 chat-ask SSE transcripts for the target and control queries plus the
+`/api/knowledge/search` control JSON showing the #1 hit (see tempdoc 734's evidence bundle).
 
 ## What this is and isn't
 
@@ -61,34 +61,34 @@ and `yeast-hybrid-search.json` (the `/api/knowledge/search` control showing the 
 ## Live investigation (2026-07-17, session a6d2af56) — root cause NARROWED, one sub-question open
 
 Reproduced on a live dev stack (worktree `749-rag-fallback`, this worktree's own dist),
-scifact corpus (all 5184 docs incl. the yeast doc `1631583.txt`), **fully enriched**
+the eval corpus (5184 short docs incl. the target doc `1631583.txt`), **fully enriched**
 (`embeddingCoveragePercent: 100`, `chunkEmbeddingReady: true` — so NOT an enrichment-timing
 artifact). Qwen3.5-9B chat model, cuda12. All evidence below is from the live run.
 
 ### Confirmed (decisive)
 
 1. **The bug reproduces and is doc-dependent, not a flake.** Unscoped `/api/chat/ask`:
-   - "yeast as a model organism" → `retrieval_mode: FULLTEXT_FALLBACK`, `reason: NO_CHUNKS_FOUND`,
-     `retrieval_coverage: 0.0`; the answer does NOT cite `1631583.txt` and pulls scattershot
-     docs (even an unrelated homelessness paper).
-   - "Lyme disease tick surveillance" → `retrieval_mode: CHUNK_HYBRID`, `reason: HYBRID_AVAILABLE`
-     — works. Same index, same empty docIds, same enrichment state. (Evidence:
-     `tmp/ask-yeast-unscoped.sse`; live curl transcripts in the session record.)
+   - the target query (best answer = short doc `1631583.txt`) → `retrieval_mode:
+     FULLTEXT_FALLBACK`, `reason: NO_CHUNKS_FOUND`, `retrieval_coverage: 0.0`; the answer does
+     NOT cite `1631583.txt` and pulls scattershot docs (even an unrelated off-topic doc).
+   - the control query (best answer = a longer doc) → `retrieval_mode: CHUNK_HYBRID`, `reason:
+     HYBRID_AVAILABLE` — works. Same index, same empty docIds, same enrichment state. (Evidence:
+     `tmp/ask-target-unscoped.sse`; live curl transcripts in the session record.)
 2. **`/api/knowledge/search` HYBRID finds `1631583.txt` as a top hit (score ~10)** for the same
    query — the document-level index has the doc and its embedding; document-level retrieval is
    fine.
 3. **The failure is at CHUNK retrieval.** Worker debug logs (`.dev-data/logs/worker.log`,
-   `ChunkSearchOps` / `HybridSearchOps`) for the yeast query show
+   `ChunkSearchOps` / `HybridSearchOps`) for the target query show
    `searchChunksHybrid (Phase 6): bm25Hits=0 knnHits=0` — **both** lexical BM25 **and** vector
    kNN chunk search return zero — with gating `lowSignal=true, bm25Top=0.0, vectorTop=0.0`.
-   The Lyme query on the same path shows `bm25Hits=4 knnHits=5 bm25Top=5.06 vectorTop=0.61`.
+   The control query on the same path shows `bm25Hits=4 knnHits=5 bm25Top=5.06 vectorTop=0.61`.
    So for the affected doc/query, there are **no matching chunks at all** (not a threshold
    trimming good chunks — there is nothing to trim).
 4. **Scoping to the exact doc does not help.** A `/api/chat/ask` scoped to `docIds:[1631583.txt]`
    ALSO returns `NO_CHUNKS_FOUND` (log: `searchChunksHybrid (Phase 6) ... scope=1, bm25Hits=0
-   knnHits=0`). A doc that literally opens *"Getting started with yeast. … the yeast
-   Saccharomyces cerevisiae is now recognized as a model system"* yields **zero** BM25 chunk
-   hits when scoped to itself → its chunk-content is not searchable in the chunk index.
+   knnHits=0`). A doc whose very first line contains the query's key terms verbatim yields
+   **zero** BM25 chunk hits when scoped to itself → its chunk-content is not searchable in the
+   chunk index.
 
 ### Hypotheses REFUTED during the investigation (recorded so they aren't re-chased)
 
@@ -118,12 +118,12 @@ Every chunk-search query in `ChunkSearchOps` filters `IS_CHUNK:true` (lines 80/1
 is **completely invisible to RAG chunk retrieval**, even though it has a document-level entry +
 embedding (which is why `/api/knowledge/search` still finds it).
 
-**Measured on the live corpus: 4,419 of 5,184 scifact docs (85.2%) are < 2000 chars → no chunk
-entries at all.** Only the ~15% of docs ≥ 2000 chars are chunk-searchable. The yeast doc
-(1500 chars) and even the Lyme *top* doc (1781 chars) are both below the threshold and both
-chunk-less — the Lyme ASK nonetheless succeeded because its ~10-doc retrieval scope happened to
-include a ≥2000-char doc with a matching chunk, so chunks came from a *neighbour*, not Lyme's own
-best doc. That is the true nature of the "query-dependence": **a RAG ask surfaces chunks only when
+**Measured on the live corpus: 4,419 of 5,184 eval-corpus docs (85.2%) are < 2000 chars → no chunk
+entries at all.** Only the ~15% of docs ≥ 2000 chars are chunk-searchable. The target doc
+(1500 chars) and even the control query's *top* doc (1781 chars) are both below the threshold and
+both chunk-less — the control ASK nonetheless succeeded because its ~10-doc retrieval scope
+happened to include a ≥2000-char doc with a matching chunk, so chunks came from a *neighbour*,
+not the control's own best doc. That is the true nature of the "query-dependence": **a RAG ask surfaces chunks only when
 its doc-scope happens to contain one of the minority long docs; when the best answer lives in a
 short doc, RAG chunk retrieval returns nothing and falls back to whole-doc BM25, which — unscoped —
 misses it.**
@@ -131,7 +131,7 @@ misses it.**
 The design intent of the guards is sound for *document* search (a short doc is one unit; no
 sub-document chunks needed). The defect is that **RAG chunk retrieval excludes non-chunk docs
 (`IS_CHUNK:true`) with no whole-doc union**, so the "small docs don't need chunks" optimization
-silently removes 85% of a short-abstract corpus from the RAG candidate set.
+silently removes 85% of a short-document corpus from the RAG candidate set.
 
 ### Fix decision (design call — approach not yet chosen; touches retrieval behaviour + search-quality baselines)
 
@@ -149,7 +149,7 @@ territory and any change needs eval-baseline re-validation, not just a unit test
   and only improves the fallback ranking.
 - **Regression home (any option):** a host-tier test asserting a RAG `/api/chat/ask` for content
   that lives in a **sub-2000-char** doc retrieves that doc via the chunk path (not FULLTEXT_FALLBACK)
-  when `/api/knowledge/search` HYBRID ranks it top — the exact yeast/scifact shape, now a runnable
+  when `/api/knowledge/search` HYBRID ranks it top — the exact short-doc shape, now a runnable
   repro (recipe below).
 
 **Recommendation:** (A) is the most correct (RAG should be able to retrieve any indexed doc), but
@@ -174,17 +174,18 @@ The repo's writer **inverts this universal convention** — there is no preceden
 doc as one chunk": index cost is bounded (one chunk per currently-missing doc, not the
 multiplicative blow-up of finer granularity — Dense X Retrieval arXiv:2312.06648), and dense
 retrieval's documented **brevity bias** (BEIR arXiv:2104.08663; arXiv:2503.05037) means short
-whole-abstract chunks are model-*favored* once visible, not buried. One real caution: cross-
+whole-short-doc chunks are model-*favored* once visible, not buried. One real caution: cross-
 encoder rerankers can score inconsistently across very-short vs long passages → a length-
 calibration eval check post-fix.
 
 **Lane 2 — fallback quality + retrieval architecture (T1/T2):** (1) BM25-only fallback is an
 evidenced weak point for exactly this shape — on SciFact, BM25 ≈ dense on nDCG@10 (0.65 vs 0.65)
 but **loses on Recall@100 (0.873 vs 0.925)**: it structurally *excludes* semantically-relevant,
-lexically-distant abstracts from the candidate pool (vocabulary mismatch between a NL question and
-an abstract). (2) A single **whole-document dense embedding is the field-standard retrieval unit
-for abstract-length docs** — BEIR/MTEB SciFact embeds each ~1,400–1,700-char abstract as one
-unbroken unit; below ~1,000 tokens chunking overhead buys nothing (Late Chunking arXiv:2409.04701).
+lexically-distant short docs from the candidate pool (vocabulary mismatch between a NL question
+and a short doc). (2) A single **whole-document dense embedding is the field-standard retrieval
+unit for short documents** — the BEIR/MTEB benchmark embeds each ~1,400–1,700-char short document
+as one unbroken unit; below ~1,000 tokens chunking overhead buys nothing (Late Chunking
+arXiv:2409.04701).
 (3) **C is insufficient (strongly refuted):** "a reranker can't fix what retrieval missed" — recall
 is fixed at pool-construction time (arXiv:2605.01664); and a fallback fires only when chunk
 retrieval returns *zero* overall, runs *outside* the primary RRF-fusion + cross-encoder rerank, and
@@ -205,7 +206,7 @@ outright (it only touches the fallback) and reframes A vs B as *where* to inject
   stacks already need), plus the reranker length-calibration check.
 - **B — union the existing doc-level dense entries into RAG retrieval for docs lacking chunks**
   (query-time; **no re-index** — reuses the field-standard whole-doc embedding that already exists;
-  Lane 2's point that this embedding is *not* a stopgap but the standard unit for abstracts).
+  Lane 2's point that this embedding is *not* a stopgap but the standard unit for short docs).
   Cost: a per-doc conditional in the query path (union `IS_CHUNK:false` whole-doc entries only for
   docs without chunks, else long docs double-count), different citation granularity for those
   results, and it leaves the chunk index *incomplete* (papers over the writer rather than fixing it).
@@ -242,7 +243,7 @@ lack chunk entries fall back; queries whose docs have chunks succeed.
 
 **Why do some fully-enriched docs lack searchable chunk entries?** Candidates not yet
 distinguished: (a) chunk creation is skipped/failed for certain docs (short scientific
-abstracts? a parse/normalization quirk?); (b) `chunkEmbeddingReady`/`chunkVectorsReady` is a
+short docs? a parse/normalization quirk?); (b) `chunkEmbeddingReady`/`chunkVectorsReady` is a
 ≥95% threshold (`CHUNK_VECTOR_COVERAGE_THRESHOLD = 0.95` in `RagContextOps`), so up to ~5% of
 docs can lack chunk vectors while the "ready" flag is true — and the missing set may be
 correlated with content shape; (c) a chunk-writer gap. Next step: inspect chunk creation
@@ -258,8 +259,9 @@ Worktree dist built; stack: `justsearch_dev_start distFrom=<this worktree> skipB
 ingest `.claude/worktrees/749-rag-fallback/tmp/scifact-repro` (5184 scifact docs, copied from
 `scripts/jseval/tmp/eval-corpora/scifact`); wait for `embeddingCoveragePercent:100`; set chat
 model `Qwen_Qwen3.5-9B-Q4_K_M.gguf` + `chatEnabled:true`, `ai_activate`. Then curl
-`POST /api/chat/ask {"question":"What does the SciFact corpus say about yeast as a model
-organism?"}` → FULLTEXT_FALLBACK (bug); Lyme query → CHUNK_HYBRID (control). Watch
+`POST /api/chat/ask {"question":"<a NL question whose best answer is a sub-2000-char doc>"}`
+→ FULLTEXT_FALLBACK (bug); a control query whose best answer is a ≥2000-char doc → CHUNK_HYBRID
+(control). Watch
 `.dev-data/logs/worker.log` for `ChunkSearchOps` `bm25Hits/knnHits`. (cuda12 variant must be
 staged into the worktree's `modules/ui/native-bin/llama-server/variants/` first — construction-
 time resolution, restart after staging.)
@@ -295,7 +297,7 @@ garbage floor (genuinely empty / sub-~100-char noise, consistent with `TextQuali
 "< 100 chars = garbage") so true noise still gets no chunk. This makes the `IS_CHUNK:true` retrieval
 contract **complete** — RAG chunk retrieval can now reach every document document-level search can —
 and it is exactly what every production splitter does (LlamaIndex/LangChain/Haystack, per the
-research lanes). Both failure sub-cases are fixed uniformly: the all-short-scope case (yeast) and the
+research lanes). Both failure sub-cases are fixed uniformly: the all-short-scope case (the target query) and the
 mixed-scope case (best answer is a short doc while long docs also match), because short docs now
 compete in the *same* RRF-fused + cross-encoder-reranked pipeline as every other chunk.
 
@@ -325,7 +327,7 @@ compete in the *same* RRF-fused + cross-encoder-reranked pipeline as every other
    defect," not just "the whole index has a chunk leg." This is the conform-to-existing-seam move:
    grow the 718 guard, do not add a parallel check.
 3. **Reranker length-calibration spot-check** (research Lane 1 caution): confirm the cross-encoder
-   scores a whole-abstract single chunk sensibly against multi-chunk long-doc passages.
+   scores a whole-short-doc single chunk sensibly against multi-chunk long-doc passages.
 4. **Eval-baseline validation is mandatory, not optional** — this is a retrieval-behaviour change in
    `/search-quality` territory. Run a before/after nDCG@10 + Recall on the utility corpora
    (`scripts/jseval` utility-comparison / the 334/343 quality baselines) and record the delta in this
@@ -427,7 +429,7 @@ implementable as written** — corrected below. Per-risk verdicts:
 - **R6 (eval harness) — RESOLVED.** `scripts/jseval` measures nDCG@10/R@10 with a `343-scifact-baseline`,
   `corpus-fidelity`, and `agent_retrieval_eval`/`agent_utility_run` for the RAG path — the mandatory
   before/after validation is runnable.
-- **R9 (acceptance bar) — stands:** post-fix, the unscoped yeast ask must return `CHUNK_HYBRID` and cite
+- **R9 (acceptance bar) — stands:** post-fix, the unscoped target-query ask must return `CHUNK_HYBRID` and cite
   `1631583.txt` (live-verify at implementation).
 
 ### Net effect on the A-vs-B decision (the derisk's main outcome)
@@ -439,7 +441,7 @@ corpus-classification / chunk_merge / guard machinery. **B** (union doc-level en
 candidate set, virtual-chunked, reusing the existing doc-level hybrid search + RAG-005 machinery)
 **works WITH that machinery**: no writer/splitter/classification/guard change, no re-index (doc-level
 entries already exist), and the research already established a whole-doc embedding IS the field-standard
-retrieval unit for abstracts. B's one real cost — a second retrieval leg merged pre-rerank into RAG —
+retrieval unit for short docs. B's one real cost — a second retrieval leg merged pre-rerank into RAG —
 now looks *smaller* than A's surfaced ripple set. **Recommendation: RE-OPEN A vs B as a founder
 decision informed by these findings.** My updated lean is **B for architectural alignment + no
 migration**, with the exception that **A is attractive specifically for the v0.2.0 fresh-install path**
@@ -474,8 +476,8 @@ corpus finds a strong match. Candidate starting points for a host-side investiga
   (`1631583.txt`) was actually complete at query time (chunk enrichment can lag document
   enrichment — cross-check `chunkVectorCoveragePercent` for that document's chunks
   specifically, not just the aggregate).
-- Whether a chunk-relevance threshold is too strict for short/abstract-style documents
-  (the missed document is a short scientific abstract) compared to the document-level
+- Whether a chunk-relevance threshold is too strict for short documents
+  (the missed document is short) compared to the document-level
   HYBRID scorer's own thresholds.
 
 ## Regression home
