@@ -16,17 +16,29 @@ Five staged files govern this round. Read them before launching JustSearch:
    is the authority for *what to cover*; it cannot silently omit a newly-shipped
    surface. If a surface is on it and you cannot reach it, that is a finding.
 2. **`validation-mode.md`** — the model mode for this instance (`fresh-install`
-   vs `pre-staged-models`). Overrides any static wording about host models.
+   vs `pre-staged-models` vs `upgrade-from-release`). Overrides any static
+   wording about host models.
    **Round-mode policy:** a release's FIRST round and its FINAL qualifying round
    MUST run `fresh-install` (the only mode that covers the real download path);
    intermediate convergence rounds MAY use `pre-staged-models` for iteration
-   speed, and their evidence must be labeled as such.
-3. **`sandbox-environment.md`** — directory layout, what is staged, environment
+   speed, and their evidence must be labeled as such. A release's qualifying set
+   must additionally include **at least one `upgrade-from-release` round**
+   (install the previous public release, seed minimal data, install the candidate
+   over it) — real users arrive from the previous version, not only from a clean
+   machine, and the strongest defect repro this harness ever produced came from a
+   non-fresh arrival state (tempdoc 734 A.1, round 2). Tempdoc 750 Part C.
+3. **`charter.md`** — this round's pre-registration (SBTM's *charter*, adapted —
+   see *Retrospective / debrief* below): what the round is FOR, each open
+   blocker's needs-round vs. needs-dig classification, the chosen mode and why,
+   and expectations. Written before the round runs; the debrief is read against
+   it. A round asked to verify something the charter classifies needs-dig should
+   flag that, not silently spend itself on it.
+4. **`sandbox-environment.md`** — directory layout, what is staged, environment
    characteristics.
-4. **`staging-gaps.md`** — assets the host failed to stage this round (e.g. the
+5. **`staging-gaps.md`** — assets the host failed to stage this round (e.g. the
    SciFact corpus, a Node installer). Each entry must be recorded as a
    round-level coverage gap, not silently absorbed.
-5. **This candidate's convergence tempdoc** (`docs/tempdocs/NNN-<version>-sandbox-convergence.md`,
+6. **This candidate's convergence tempdoc** (`docs/tempdocs/NNN-<version>-sandbox-convergence.md`,
    staged read-only under `docs/`) — states what this round is *for*: which prior
    findings it exists to re-confirm fixed, and which are still open. A tempdoc is
    **dated history, not current truth** — it reflects what was known when it was
@@ -256,19 +268,37 @@ far smaller than the baseline's, or if any captured golden response shows `dense
 skipped (hybrid silently collapsed to BM25) — both would otherwise surface as a phantom ranking
 regression instead of the real cause.
 
-**The tolerance HAS now been calibrated** (n=3 clean dev rebuilds, scifact, GPU-FP16, same
-corpus/code/model, 30 query-observations, 2026-07-15). Pure build-to-build variance: overlap
-**never drops below 9/10**, top-1 **never** moves (0/30), and only 2 queries ever shift, by exactly
-one doc. So a round's **8/10 with `q06`/`q08` below the 7-overlap bar is OUTSIDE the rebuild
-envelope by a wide margin — it is a REAL signal about the installed build, not HNSW-tail noise.**
-The earlier "likely HNSW/approximate tail churn" reading (stated here through 2026-07-14) is
-**refuted**: `q08` is 10/10 across every rebuild pair — it does not move at all — so its real-round
-miss cannot be rebuild non-determinism; `q06` wobbles by 1 doc, nowhere near the 3-doc drop needed
-to fail the bar. `MIN_OVERLAP=7` is therefore **too lenient** (two slots below the measured floor of
-9), not too strict. What the calibration does **not** establish is the *cause* of the installed
-round's divergence; the leading hypothesis (for a human, not the round) is CPU-FP32 in the sandbox
-vs GPU-FP16 for the baseline — a CPU round must use a **CPU-generated** baseline (see the FP16/FP32
-note above). Treat a sub-7 overlap as a **finding to explain, not** noise to wave through.
+**Calibration provenance (every threshold names the population it was sampled on —
+tempdoc 750 P2 "calibration names its axes"; applying a threshold across an unsampled
+axis is itself a finding, not a formality):**
+
+- **Same-machine dev-rebuild population** (n=3 clean dev rebuilds, scifact, GPU-FP16,
+  same corpus/code/model, 30 query-observations, 2026-07-15): overlap never drops
+  below 9/10, top-1 never moves (0/30), only 2 queries ever shift, by exactly one
+  doc. Axes held constant: GPU + driver, embedding-inference environment, index
+  build environment. This envelope covers **rebuild noise only**.
+- **Sandbox↔sandbox population** (round 5 vs round 6, two different builds,
+  fingerprint-identical weights, 2026-07-17 — tempdoc 750 §Derisk): all 10 queries
+  share 10/10 result docs across the two rounds; per-hit **dense-leg score deltas
+  never exceed 1.8e-4**. Embedding inference inside the Sandbox environment is
+  highly reproducible; this is the measured basis for the baseline's
+  `denseScoreEnvelopeAbs`.
+- **Dev↔sandbox (the axis the finalize comparison actually spans) is NOT yet a
+  calibrated population.** Rounds 5 and 6 both diverged from the dev baseline
+  identically (q04 6/10, q06 5/10, q08 4/10) — a **systematic** dev-vs-sandbox
+  difference, not round noise. Its cause is 734 finding 5's open question; the v2
+  baseline's per-pair dense-score comparison is the discriminating instrument
+  (embedding-output variance vs. HNSW selection variance).
+
+Two earlier readings recorded here are superseded on evidence: "likely
+HNSW/approximate tail churn" (refuted by the dev-rebuild calibration — `q08` is
+10/10 across every rebuild pair) and the CPU-FP32-vs-GPU-FP16 hypothesis (refuted by
+round 6, which ran GPU-FP16 fingerprint-identical to the baseline and still
+diverged). The FP16/FP32 note above still matters operationally — a CPU round needs
+a CPU-generated baseline — it just is not finding 5's cause. Treat a sub-7 overlap
+as a **finding to explain, not** noise to wave through; the check's report now
+carries typed reasons and per-leg attribution so the explanation can start
+host-side instead of costing another round.
 
 ## Required validation phases
 
@@ -505,13 +535,28 @@ before finalize (union the `examined` lists, concatenate `mismatches` and
 evidence* above) and the round **fails closed** if it is missing, malformed,
 omits a credit-eligible screenshot, or reports a mismatch.
 
-### Retrospective (required — the loop only improves via this channel)
+### Retrospective / debrief (required — the loop only improves via this channel)
 
 Every round must write `evidence/retrospective.md`. This is not an optional
 afterthought: a prior round's spontaneous "Part B" harness/process retrospective
 drove roughly 15 harness fixes, and a later round that skipped one produced zero —
 not because nothing went wrong, but because nothing asked for it. The harness only
 gets better if every round leaves this behind, on purpose, every time.
+
+This artifact is the round's *debrief* in the Session-Based Test Management sense
+(J. Bach & J. Bach, STQE, 2000 — the charter/session/debrief/time-accounting
+vocabulary here is adopted from SBTM, adapted to agent-driven rounds, not
+invented). Read it against `charter.md`: what the charter asked vs. what happened.
+
+**Time accounting (required section, TBS-adapted).** Include a section headed
+`## Time accounting` breaking the round's hours into: **setup**, **install-wait**,
+**coverage work**, **findings investigation**, and **write-up**, plus the split of
+**on-charter vs. on-opportunity** work (off-charter pursuit of something important
+you stumbled into is sanctioned — measure it, don't hide it). Estimates are fine;
+the point is that "where do a round's hours go" stops being unanswerable
+(tempdoc 734 D.9 asked; nothing before this measured it). The finalize check also
+prints a report-only timeline computed from evidence-file timestamps as an
+independent cross-check of your self-report.
 
 Cover, at minimum, four things:
 
@@ -527,3 +572,20 @@ Cover, at minimum, four things:
 `evidence/retrospective.md` is checked at finalize (see *Coverage & evidence*
 above) and the round **fails closed** if it is missing or too thin to be a real
 retrospective — a stub file does not satisfy this.
+
+## Independence invariant (durable — do not "streamline" this away)
+
+The round's self-report and the host-side mechanical re-run at finalize are two
+deliberately separate authorities, and they stay separate. The verifier (you)
+never sees or edits its own coverage bookkeeping's verdict; the host re-runs
+`check_coverage.py` / `check_golden_parity.py` against the persisted evidence and
+the two are compared. This pairing is the workflow's best-performing control: in
+both GUI-capable rounds to date the mechanical re-run surfaced something the
+round's own narrative missed (round 5: mislabeled screenshots and a surface with
+zero genuine evidence; round 6: a cohort tested against the wrong port, 26/28 not
+the self-reported 9/9 clean). Any future change that merges the self-report with
+the finalize check, lets the round grade its own coverage, or drops the
+independent re-run "because the round already reports it" removes that control —
+if it is ever done, it must be done as an explicit, argued decision, not as
+streamlining. (Tempdoc 750 Part E; lineage: 734 Part D.5-D.6/E.9 — the round is
+the one tier that can be wrong without failing.)

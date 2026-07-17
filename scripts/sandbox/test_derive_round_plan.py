@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Self-tests for derive_round_plan.py (tempdoc 729-followup mechanical
-brief-to-plan derivation). Shipped with zero tests originally.
+brief-to-plan derivation; extended tempdoc 750 Part D for reach pointers +
+mustWatch derivability). Shipped with zero tests originally.
 
 Covers, at minimum (per the brief this test file closes):
 
@@ -10,11 +11,17 @@ Covers, at minimum (per the brief this test file closes):
   only `POST /mcp`); when `requiredRoutes` is present it means ALL of those
   routes are mandatory, not "any ONE of `routes`". The rendered checklist item
   must say so unambiguously.
-- `mustWatch` items are declared-not-covered, not silently dropped: the
-  schema has no `mustWatch` key (derive_round_plan.py's own module docstring
-  says so), so the script cannot mechanically list them -- but the rendered
-  plan must explicitly say they exist and are not on this checklist, rather
-  than producing an output that looks complete when it isn't.
+- `mustWatch` items are declared-not-covered, not silently dropped. Before
+  tempdoc 750 Part D, the manifest schema had no `mustWatch` key at all, so
+  the script could not mechanically list them -- the rendered plan had to say
+  explicitly that they exist and are not on this checklist. Part D adds the
+  key; a manifest WITHOUT it (older schema) must still fall back to that old
+  explicit-not-derivable text (backward compat), while a manifest WITH it
+  (even an empty list) gets a real derived checklist section instead.
+- Part D reach pointers (testid / navPath / apiRecipe / unknown) render as a
+  "Reach:" line under each mustTouch checklist item when present, and are
+  silently absent (no crash, no line) when an item carries no `reach` key --
+  the pre-750 case.
 - tier filtering (sandbox-only), end-to-end main() wiring (stdout vs --out,
   I/O and JSON error codes), and the smaller per-kind renderers.
 
@@ -37,8 +44,11 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from derive_round_plan import (  # noqa: E402
     load_manifest,
     main,
+    must_watch_items,
     render_cohort_item,
+    render_must_watch_section,
     render_plan,
+    render_reach_line,
     render_shape_item,
     render_surface_item,
     sandbox_must_touch,
@@ -46,13 +56,20 @@ from derive_round_plan import (  # noqa: E402
 )
 
 
-def _manifest(must_touch=None, covered_elsewhere=None, exempt=None) -> dict:
-    return {
+def _manifest(must_touch=None, covered_elsewhere=None, exempt=None, must_watch=None) -> dict:
+    manifest: dict = {
         "version": 1,
         "mustTouch": must_touch or [],
         "coveredElsewhere": covered_elsewhere or [],
         "exempt": exempt or [],
     }
+    # Only add the 'mustWatch' key when explicitly given -- omitting it by
+    # default reproduces the pre-750 manifest schema shape the backward-compat
+    # tests need (see MustWatchSectionTests / the legacy MustWatchDeclaredNot-
+    # CoveredTests below).
+    if must_watch is not None:
+        manifest["mustWatch"] = must_watch
+    return manifest
 
 
 class ShapeTokenTests(unittest.TestCase):
@@ -174,6 +191,228 @@ class MustWatchDeclaredNotCoveredTests(unittest.TestCase):
         # show -- an empty round-plan must still surface it.
         manifest = _manifest(must_touch=[])
         text = render_plan(manifest, "coverage-manifest.json")
+        self.assertIn("## Reminder: must-watch items are NOT on this checklist", text)
+
+
+class ReachLineRenderingTests(unittest.TestCase):
+    """Part D (tempdoc 750): render_reach_line() renders a mustTouch item's
+    optional `reach` pointer as a single checklist line."""
+
+    def test_missing_reach_renders_nothing(self):
+        self.assertIsNone(render_reach_line(None))
+
+    def test_empty_reach_dict_renders_nothing(self):
+        self.assertIsNone(render_reach_line({}))
+
+    def test_testid_only(self):
+        line = render_reach_line({"testid": "escalation-delegate"})
+        self.assertEqual(line, "      Reach: testid=`escalation-delegate`")
+
+    def test_navpath_only(self):
+        line = render_reach_line({"navPath": "Ctrl+K command palette"})
+        self.assertEqual(line, "      Reach: navPath: Ctrl+K command palette")
+
+    def test_testid_and_navpath_combine_with_semicolon(self):
+        line = render_reach_line(
+            {"testid": "activity-surface-action-ledger", "navPath": "System page tabs"}
+        )
+        self.assertEqual(
+            line,
+            "      Reach: testid=`activity-surface-action-ledger`; navPath: System page tabs",
+        )
+
+    def test_api_recipe_renders(self):
+        line = render_reach_line({"apiRecipe": "GET /api/foo"})
+        self.assertEqual(line, "      Reach: apiRecipe: GET /api/foo")
+
+    def test_unknown_true_renders_entry_point_unknown_with_note_not_a_fabricated_path(self):
+        line = render_reach_line(
+            {"unknown": True, "note": "no discoverable entry point as of round 6"}
+        )
+        self.assertEqual(
+            line, "      Reach: ENTRY POINT UNKNOWN - no discoverable entry point as of round 6"
+        )
+        self.assertNotIn("testid", line)
+        self.assertNotIn("navPath", line)
+
+    def test_unknown_true_ignores_any_stray_testid(self):
+        # unknown:true always wins -- never render a fabricated path alongside it.
+        line = render_reach_line({"unknown": True, "note": "n/a", "testid": "should-not-appear"})
+        self.assertNotIn("should-not-appear", line)
+
+
+class ReachLineWiredIntoItemRenderersTests(unittest.TestCase):
+    """The three per-kind renderers thread `item['reach']` through
+    render_reach_line() -- present renders a Reach line, absent renders none
+    (the pre-750 shape, must not crash or fabricate anything)."""
+
+    def test_cohort_item_with_reach_renders_reach_line(self):
+        item = {
+            "kind": "cohort",
+            "id": "mcp",
+            "validateHow": "x",
+            "routes": ["POST /mcp"],
+            "reach": {"navPath": "settings deep-link"},
+        }
+        text = "\n".join(render_cohort_item(item))
+        self.assertIn("Reach: navPath: settings deep-link", text)
+
+    def test_cohort_item_without_reach_renders_no_reach_line(self):
+        item = {"kind": "cohort", "id": "agent", "validateHow": "x", "routes": ["GET /a"]}
+        text = "\n".join(render_cohort_item(item))
+        self.assertNotIn("Reach:", text)
+
+    def test_surface_item_with_reach_renders_reach_line(self):
+        item = {
+            "kind": "surface",
+            "id": "core.brain-surface",
+            "validateHow": "x",
+            "evidenceToken": "brain",
+            "reach": {"testid": "brain-simple-panel"},
+        }
+        text = "\n".join(render_surface_item(item))
+        self.assertIn("Reach: testid=`brain-simple-panel`", text)
+
+    def test_surface_item_without_reach_renders_no_reach_line(self):
+        item = {"kind": "surface", "id": "core.memory-surface", "validateHow": "x", "evidenceToken": "memory"}
+        text = "\n".join(render_surface_item(item))
+        self.assertNotIn("Reach:", text)
+
+    def test_shape_item_with_unknown_reach_renders_entry_point_unknown(self):
+        item = {
+            "kind": "shape",
+            "id": "core.free-chat",
+            "validateHow": "x",
+            "reach": {"unknown": True, "note": "no discoverable entry point"},
+        }
+        text = "\n".join(render_shape_item(item))
+        self.assertIn("Reach: ENTRY POINT UNKNOWN - no discoverable entry point", text)
+
+    def test_shape_item_without_reach_renders_no_reach_line(self):
+        item = {"kind": "shape", "id": "core.rag-ask", "validateHow": "x"}
+        text = "\n".join(render_shape_item(item))
+        self.assertNotIn("Reach:", text)
+
+
+class MustWatchSectionTests(unittest.TestCase):
+    """Part D (tempdoc 750): coverage-manifest.json now carries the
+    register's mustWatch array (gen_coverage_brief.py's build_manifest), so
+    derive_round_plan.py derives a real checklist section from it instead of
+    only pointing at coverage-brief.md."""
+
+    def test_must_watch_items_returns_empty_list_when_key_absent(self):
+        self.assertEqual(must_watch_items({}), [])
+
+    def test_must_watch_items_returns_empty_list_when_key_null(self):
+        self.assertEqual(must_watch_items({"mustWatch": None}), [])
+
+    def test_must_watch_items_returns_the_list_when_present(self):
+        items = [{"id": "x", "reason": "y", "observability": "sandbox"}]
+        self.assertEqual(must_watch_items({"mustWatch": items}), items)
+
+    def test_key_absent_falls_back_to_legacy_reminder_text(self):
+        # Backward compat: an OLDER manifest (pre-750, no 'mustWatch' key at
+        # all) must still derive a plan, and must say explicitly that
+        # must-watch items are not derivable from it.
+        manifest = _manifest()
+        lines = render_must_watch_section(manifest)
+        text = "\n".join(lines)
+        self.assertIn("## Reminder: must-watch items are NOT on this checklist", text)
+        self.assertIn("predates tempdoc 750 Part D", text)
+        self.assertIn("cannot be mechanically derived here", text)
+        self.assertIn("coverage-brief.md", text)
+
+    def test_key_present_but_empty_renders_derived_none_section_not_the_legacy_text(self):
+        manifest = _manifest(must_watch=[])
+        lines = render_must_watch_section(manifest)
+        text = "\n".join(lines)
+        self.assertIn("## Must-watch items (re-injected every round)", text)
+        self.assertIn("(none)", text)
+        # The legacy "cannot be mechanically derived" framing must NOT leak in
+        # once the manifest actually carries the key -- that would contradict
+        # the (none) line right above it.
+        self.assertNotIn("cannot be mechanically derived here", text)
+
+    def test_key_present_with_items_renders_checklist_with_id_reason_observability_note(self):
+        manifest = _manifest(
+            must_watch=[
+                {
+                    "id": "install-trust-prompts",
+                    "reason": "SmartScreen cannot be reproduced in CI",
+                    "origin": "recurring across rounds",
+                    "observability": "blocked-by-posture",
+                    "note": "not observable under the current sandbox posture",
+                },
+                {
+                    "id": "ui-api-truthfulness-under-load",
+                    "reason": "Reconnecting while healthy is a timing finding",
+                    "observability": "sandbox",
+                },
+            ]
+        )
+        lines = render_must_watch_section(manifest)
+        text = "\n".join(lines)
+        self.assertIn("- [ ] mustWatch:install-trust-prompts", text)
+        self.assertIn("reason: SmartScreen cannot be reproduced in CI", text)
+        self.assertIn("observability: blocked-by-posture", text)
+        self.assertIn("note: not observable under the current sandbox posture", text)
+        self.assertIn("- [ ] mustWatch:ui-api-truthfulness-under-load", text)
+        self.assertIn("observability: sandbox", text)
+
+    def test_item_without_note_renders_no_note_line(self):
+        manifest = _manifest(must_watch=[{"id": "x", "reason": "y", "observability": "sandbox"}])
+        text = "\n".join(render_must_watch_section(manifest))
+        self.assertNotIn("note:", text)
+
+
+class MustWatchAndReachIntegrationInRenderPlanTests(unittest.TestCase):
+    """End-to-end through render_plan(): both Part D features actually reach
+    the generated round-plan text, not just their own unit-level renderers."""
+
+    def test_render_plan_includes_derived_must_watch_checklist_when_key_present(self):
+        manifest = _manifest(
+            must_touch=[{"kind": "cohort", "id": "agent", "tier": "sandbox", "routes": ["GET /a"]}],
+            must_watch=[{"id": "warm-reinstall-over-existing-data", "reason": "regression home", "observability": "sandbox"}],
+        )
+        text = render_plan(manifest, "coverage-manifest.json")
+        self.assertIn("## Must-watch items (re-injected every round)", text)
+        self.assertIn("- [ ] mustWatch:warm-reinstall-over-existing-data", text)
+        # And the old "not on this checklist" framing must not linger once
+        # mustWatch really is derived onto a section of this checklist.
+        self.assertNotIn("## Reminder: must-watch items are NOT on this checklist", text)
+
+    def test_render_plan_includes_reach_line_for_a_mustTouch_item(self):
+        manifest = _manifest(
+            must_touch=[
+                {
+                    "kind": "shape",
+                    "id": "core.agent-run",
+                    "tier": "sandbox",
+                    "validateHow": "x",
+                    "reach": {"testid": "escalation-delegate"},
+                }
+            ]
+        )
+        text = render_plan(manifest, "coverage-manifest.json")
+        self.assertIn("Reach: testid=`escalation-delegate`", text)
+
+    def test_backward_compat_old_manifest_with_no_reach_or_mustwatch_keys_still_derives_a_plan(self):
+        # The exact backward-compat case tempdoc 750 Part D requires: a
+        # manifest written by a pre-750 gen_coverage_brief.py (no 'reach' on
+        # any mustTouch item, no top-level 'mustWatch' key at all) must still
+        # produce a complete, non-crashing round plan.
+        manifest = _manifest(
+            must_touch=[
+                {"kind": "cohort", "id": "agent", "tier": "sandbox", "routes": ["GET /a"]},
+                {"kind": "surface", "id": "core.memory-surface", "tier": "sandbox", "evidenceToken": "memory"},
+                {"kind": "shape", "id": "core.rag-ask", "tier": "sandbox"},
+            ]
+        )
+        text = render_plan(manifest, "coverage-manifest.json")
+        self.assertIn("cohort:agent", text)
+        self.assertIn("surface:core.memory-surface", text)
+        self.assertIn("shape:core.rag-ask", text)
+        self.assertNotIn("Reach:", text)
         self.assertIn("## Reminder: must-watch items are NOT on this checklist", text)
 
 

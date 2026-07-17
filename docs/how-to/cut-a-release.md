@@ -40,7 +40,14 @@ A release **candidate** is qualified before its number is finalized:
 2. **Verify in a clean Windows Sandbox.** Install the candidate in a fresh Sandbox and let an
    independent agent run a **whole-product** verification pass (search, chat/RAG, MCP, Install
    AI, restart cycles — not just the changed slice). The clean Sandbox avoids dev-machine model
-   pollution. *What* to cover is not remembered — it is **derived from what the candidate ships:**
+   pollution. Every qualifying round is launched with a **charter** (`sandbox-launch.py
+   --charter`): the round's purpose and each open blocker's needs-round / needs-dig
+   classification, staged for the verifier and read against the round's debrief at finalize
+   (tempdoc 750 Part B). Round modes cover the supported **arrival states**, not only the empty
+   machine: first and final qualifying rounds run `fresh-install`, and the qualifying set must
+   include at least one `upgrade-from-release` round (previous public release installed first,
+   candidate installed over it — tempdoc 750 Part C). *What* to cover is not remembered — it is
+   **derived from what the candidate ships:**
    `scripts/sandbox/sandbox-launch.py` generates a per-candidate `coverage-brief.md` from the
    committed surface artifacts against `governance/sandbox-coverage.v1.json` and **fails closed**
    if the build ships a surface not yet classified there (so a new endpoint/panel like `/mcp` can't
@@ -63,6 +70,15 @@ A release **candidate** is qualified before its number is finalized:
    in code, and the installer is rebuilt under the same number. Every confirmed regression
    should become a regression test/gate before the next round, so the loop converges instead of
    re-finding the same class.
+   **Round-scheduling gate (tempdoc 750 Part B):** after a DO-NOT-QUALIFY, classify each open
+   blocker **needs-round** (only a clean install / real GUI / real external client can answer
+   it) or **needs-dig** (source-level or dev-stack investigation). Schedule a new round only
+   when at least one blocker is needs-round, or the round is the final qualifying round — a
+   round is the most expensive verification tier and must not be spent re-confirming a
+   needs-dig blocker (0.2.0 rounds 5→6 did exactly that; the classification goes in the
+   charter). A needs-dig classification carries an owner and a timebox so the gate cannot
+   stall a release indefinitely; by-catch from past confirmatory rounds is real but is
+   measured in the debrief (on-opportunity share), not used to justify the next one.
 4. **Finalize on zero findings.** Only when a Sandbox round finds no blocking issues is the
    number finalized and the release published.
 

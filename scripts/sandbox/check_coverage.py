@@ -8,6 +8,16 @@ see gen_coverage_brief.py) against what it ACTUALLY exercised (endpoint traces
 This is the fail-closed half of "coverage follows shipment" (tempdoc 728): it
 lives where coverage happens (the validation round), not in CI.
 
+Gates enforced by main() (all fail-closed unless noted):
+  - mustTouch coverage (cohort/surface/shape items, tier=sandbox)
+  - duplicate-content collisions across required evidence tokens (F-729-3)
+  - round retrospective (D1): presence, substance, required topic coverage,
+    AND a TBS time-accounting section (Session-Based Test Management, Bach &
+    Bach, STQE 2000 -- adapted; tempdoc 750 Part B)
+  - evidence review (735-followup): a reader must examine every credit-
+    eligible screenshot
+  - evidence mtime timeline: REPORT-ONLY, does not affect the exit code
+
 Pure Python 3 stdlib. No network access.
 """
 
@@ -17,7 +27,9 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -36,6 +48,15 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 # surfaceCoverage -- that schema classifies surfaces the candidate SHIPS;
 # this is a fixed, every-round check on the harness's own improvement loop,
 # so it lives as its own top-level gate here instead.
+#
+# tempdoc 750 Part B extends this with a TBS (Time-Box-Session) debrief gate:
+# Session-Based Test Management (J. Bach & J. Bach, STQE 2000) treats a
+# session's time accounting -- how much went to setup, testing, bug
+# investigation/write-up, and how much was on-charter vs. opportunity -- as
+# part of the debrief, not an afterthought. Rounds capture evidence files
+# (screenshots, api-*.json) whose file mtimes are the only OTHER timing
+# signal that exists (see emit_evidence_timeline below, report-only); this
+# gate requires the round's own TBS self-report in the retrospective.
 # --------------------------------------------------------------------------
 
 RETROSPECTIVE_FILENAME = "retrospective.md"
@@ -66,6 +87,45 @@ RETROSPECTIVE_REQUIRED_TOPICS: list[tuple[str, tuple[str, ...]]] = [
         ("would change", "should change", "recommend", "next round", "fix:"),
     ),
 ]
+
+# TBS debrief gate (tempdoc 750 Part B): the retrospective must ALSO carry a
+# time-accounting section -- a heading line matching TIME_ACCOUNTING_HEADING_RE
+# -- whose body hits at least one keyword from EACH group below. Deliberately
+# the same dumb keyword-substring style as RETROSPECTIVE_REQUIRED_TOPICS
+# above: no NLP, no attempt to judge whether the numbers are honest, only
+# whether the round bothered to account for where session time went at all.
+TIME_ACCOUNTING_HEADING_RE = re.compile(r"^#{2,6}\s.*time accounting", re.IGNORECASE | re.MULTILINE)
+
+# Matches every markdown heading line (any level from 2-6 "#"s), used to find
+# the end of the time-accounting section: everything up to the NEXT such
+# heading, or end of file.
+_HEADING_LINE_RE = re.compile(r"^#{2,6}\s.*$", re.MULTILINE)
+
+TIME_ACCOUNTING_REQUIRED_GROUPS: list[tuple[str, tuple[str, ...]]] = [
+    ("setup", ("setup",)),
+    ("install", ("install",)),
+    ("coverage", ("coverage",)),
+    ("investigat", ("investigat",)),
+    ("write-up/writeup/report", ("write-up", "writeup", "report")),
+    ("on-charter/charter", ("on-charter", "charter")),
+    ("opportunity", ("opportunity",)),
+]
+
+
+def _time_accounting_section(content: str) -> str | None:
+    """Return the body of the retrospective's time-accounting section (the
+    heading line itself excluded; everything from just after that heading up
+    to the next markdown heading of any level, or end of file).
+
+    Returns None if no heading line matches TIME_ACCOUNTING_HEADING_RE.
+    """
+    headings = list(_HEADING_LINE_RE.finditer(content))
+    for i, heading in enumerate(headings):
+        if TIME_ACCOUNTING_HEADING_RE.match(heading.group(0)):
+            start = heading.end()
+            end = headings[i + 1].start() if i + 1 < len(headings) else len(content)
+            return content[start:end]
+    return None
 
 
 def check_retrospective(evidence_dir: str | None) -> tuple[bool, str]:
@@ -110,7 +170,36 @@ def check_retrospective(evidence_dir: str | None) -> tuple[bool, str]:
             f"slowed the round down, and what would change"
         )
 
-    return True, f"{RETROSPECTIVE_FILENAME} present ({len(stripped)} bytes, all required topics found)"
+    # TBS debrief gate (tempdoc 750 Part B): a time-accounting section is
+    # required in addition to the four topic groups above.
+    tbs_section = _time_accounting_section(content)
+    if tbs_section is None:
+        return False, (
+            f"{RETROSPECTIVE_FILENAME} is missing a time-accounting section -- no heading line "
+            "matches '##+ ... time accounting' (case-insensitive). Session-Based Test "
+            "Management (Bach & Bach, STQE 2000) requires a TBS debrief: add a heading such as "
+            "'## Time accounting' covering setup, install, coverage, investigation, write-up, "
+            "and on-charter vs. opportunity time."
+        )
+
+    lowered_tbs = tbs_section.lower()
+    missing_tbs_groups = [
+        label
+        for label, alternatives in TIME_ACCOUNTING_REQUIRED_GROUPS
+        if not any(alt in lowered_tbs for alt in alternatives)
+    ]
+    if missing_tbs_groups:
+        return False, (
+            f"{RETROSPECTIVE_FILENAME}'s time-accounting section is missing required coverage "
+            f"of: {'; '.join(missing_tbs_groups)} (no matching keyword found) -- the TBS section "
+            "must account for setup, install, coverage, investigation, write-up, on-charter "
+            "classification, and opportunity time."
+        )
+
+    return True, (
+        f"{RETROSPECTIVE_FILENAME} present ({len(stripped)} bytes, all required topics found, "
+        "TBS time-accounting section present with all required groups)"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -262,6 +351,85 @@ def check_evidence_review(evidence_dir: str | None, screenshots: set[str]) -> tu
         f"{EVIDENCE_REVIEW_FILENAME} present, all {len(screenshots)} credit-eligible "
         "screenshot(s) examined, no mismatches, none uncertain"
     )
+
+
+# --------------------------------------------------------------------------
+# Evidence mtime timeline (tempdoc 750 Part B): REPORT-ONLY, no gate.
+#
+# Rounds capture evidence files (screenshots, api-*.json) whose file mtimes
+# are the only timing signal that exists -- no other time accounting is
+# recorded anywhere in the pipeline. This prints the mtime span and a
+# per-30-minute-bucket file-count table as a mechanical cross-check a human
+# reviewer can compare against the retrospective's TBS self-report (see
+# check_retrospective's time-accounting gate above). It never affects the
+# exit code -- it is evidence for a reader, not an assertion.
+# --------------------------------------------------------------------------
+
+TIMELINE_BUCKET_SECONDS = 30 * 60
+
+
+def _format_timestamp(epoch_seconds: float) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(epoch_seconds))
+
+
+def _format_duration(seconds: float) -> str:
+    total = int(seconds)
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def emit_evidence_timeline(evidence_dir: str | None) -> None:
+    """Print a report-only mtime timeline of the evidence directory.
+
+    Reports first/last evidence file mtime, the total span between them, and
+    a per-30-minute-bucket file-count table. Has NO effect on the exit code:
+    file mtimes are the only timing signal this pipeline has, so this is a
+    mechanical cross-check surfaced for a human reviewer, not a gate.
+    """
+    print("=" * 72)
+    print("Evidence mtime timeline (report-only, no gate)")
+    print("=" * 72)
+
+    if not evidence_dir or not os.path.isdir(evidence_dir):
+        print(f"No evidence directory to report on ({evidence_dir!r}).")
+        return
+
+    mtimes: list[float] = []
+    for entry in os.listdir(evidence_dir):
+        full = os.path.join(evidence_dir, entry)
+        if os.path.isfile(full):
+            try:
+                mtimes.append(os.path.getmtime(full))
+            except OSError:
+                continue
+
+    if not mtimes:
+        print("No files found in evidence dir; nothing to report.")
+        return
+
+    mtimes.sort()
+    first, last = mtimes[0], mtimes[-1]
+    span_seconds = last - first
+    print(f"First evidence mtime: {_format_timestamp(first)}")
+    print(f"Last evidence mtime:  {_format_timestamp(last)}")
+    print(f"Total span: {_format_duration(span_seconds)} ({len(mtimes)} file(s))")
+
+    buckets: dict[int, int] = {}
+    for t in mtimes:
+        bucket = int((t - first) // TIMELINE_BUCKET_SECONDS)
+        buckets[bucket] = buckets.get(bucket, 0) + 1
+
+    print("-" * 72)
+    print(f"{'Bucket start (30-min)':<28}{'Files':>8}")
+    for bucket in range(max(buckets) + 1):
+        bucket_start = first + bucket * TIMELINE_BUCKET_SECONDS
+        print(f"{_format_timestamp(bucket_start):<28}{buckets.get(bucket, 0):>8}")
+    print("=" * 72)
 
 
 # --------------------------------------------------------------------------
@@ -891,6 +1059,10 @@ def main(argv: list[str] | None = None) -> int:
             "scripts/sandbox/evidence-review.schema.json for the required shape."
         )
         print("=" * 72)
+
+    # Report-only (no gate): see emit_evidence_timeline's docstring. Runs
+    # after every gate above and never affects the exit code below.
+    emit_evidence_timeline(args.evidence_dir)
 
     return 0 if (all_covered and retrospective_ok and evidence_review_ok and not collisions) else 1
 

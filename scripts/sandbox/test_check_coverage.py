@@ -25,9 +25,12 @@ from check_coverage import (  # noqa: E402
     MIN_SCREENSHOT_BYTES,
     RETROSPECTIVE_FILENAME,
     RETROSPECTIVE_MIN_BYTES,
+    TIME_ACCOUNTING_REQUIRED_GROUPS,
     MustTouchItem,
+    _time_accounting_section,
     check_evidence_review,
     check_retrospective,
+    emit_evidence_timeline,
     find_duplicate_token_collisions,
     main,
     required_evidence_tokens,
@@ -54,6 +57,16 @@ from the CLI's own help output and produced a confusing wrong-type error.
 
 Recommend the harness ship a small driver that speaks JSON-RPC directly
 instead of routing through a CLI that cannot express array arguments.
+
+## Time accounting (TBS)
+
+Setup (staging + sandbox boot) took about 10 minutes. Install AI's model
+download and CUDA runtime install consumed the bulk of the session. Coverage
+capture (screenshots, api snapshots) and the investigation of the
+--tool-arg limitation split the remaining on-charter time roughly evenly,
+and write-up of the retrospective and findings took the final block. All of
+this was on-charter time against the round's charter; no opportunity time
+was spent testing outside it.
 """
 
 
@@ -113,6 +126,174 @@ class CheckRetrospectiveTests(unittest.TestCase):
             (Path(tmp) / RETROSPECTIVE_FILENAME).write_bytes(data)
             ok, reason = check_retrospective(tmp)
             self.assertTrue(ok, reason)
+
+
+# Body carrying all four required topic groups (so the pre-existing topic
+# check never fires) but no time-accounting heading at all.
+_RETROSPECTIVE_NO_TBS_SECTION = """\
+## What the harness/docs got wrong or made impossible
+
+This was impossible to follow as written; it just doesn't work.
+
+## What we had to work around or build
+
+We built our own workaround from scratch after the documented path failed.
+
+## What slowed us down
+
+This cost us real time and caused a lot of friction and wasted effort.
+
+## What we would change
+
+We recommend the harness change this for the next round.
+""" + ("padding " * 30)
+
+
+def _retrospective_with_tbs_missing_group(missing_label: str) -> str:
+    """SUBSTANTIAL_RETROSPECTIVE's TBS section with every required group's
+    keyword present EXCEPT the one named by `missing_label`."""
+    lines = [
+        "Setup took a while.",
+        "Install AI ran the download.",
+        "Coverage capture went smoothly.",
+        "The investigation of the bug took time.",
+        "Write-up of the findings was quick.",
+        "This was on-charter time throughout.",
+        "No opportunity time was spent elsewhere.",
+    ]
+    body = "\n".join(
+        line for line, (label, _alts) in zip(lines, TIME_ACCOUNTING_REQUIRED_GROUPS) if label != missing_label
+    )
+    return (
+        "## What the harness/docs got wrong or made impossible\n\n"
+        "This was impossible to follow as written; it just doesn't work.\n\n"
+        "## What we had to work around or build\n\n"
+        "We built our own workaround from scratch after the documented path failed.\n\n"
+        "## What slowed us down\n\n"
+        "This cost us real time and caused a lot of friction and wasted effort.\n\n"
+        "## What we would change\n\n"
+        "We recommend the harness change this for the next round.\n\n"
+        "## Time accounting (TBS)\n\n"
+        f"{body}\n"
+        + ("padding " * 30)
+    )
+
+
+class TimeAccountingSectionTests(unittest.TestCase):
+    """TBS debrief gate (tempdoc 750 Part B): check_retrospective must ALSO
+    require a '## ... time accounting' section with all 7 required keyword
+    groups present."""
+
+    def test_valid_tbs_section_extracted_correctly(self):
+        section = _time_accounting_section(SUBSTANTIAL_RETROSPECTIVE)
+        self.assertIsNotNone(section)
+        lowered = section.lower()
+        for label, alternatives in TIME_ACCOUNTING_REQUIRED_GROUPS:
+            self.assertTrue(
+                any(alt in lowered for alt in alternatives),
+                f"expected a hit for group {label!r} in extracted TBS section",
+            )
+
+    def test_retrospective_with_valid_tbs_section_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / RETROSPECTIVE_FILENAME).write_text(
+                SUBSTANTIAL_RETROSPECTIVE, encoding="utf-8"
+            )
+            ok, reason = check_retrospective(tmp)
+            self.assertTrue(ok, reason)
+            self.assertIn("TBS", reason)
+
+    def test_missing_time_accounting_section_fails_naming_it(self):
+        self.assertGreaterEqual(
+            len(_RETROSPECTIVE_NO_TBS_SECTION.strip()), RETROSPECTIVE_MIN_BYTES
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / RETROSPECTIVE_FILENAME).write_text(
+                _RETROSPECTIVE_NO_TBS_SECTION, encoding="utf-8"
+            )
+            ok, reason = check_retrospective(tmp)
+            self.assertFalse(ok)
+            self.assertIn("time-accounting section", reason)
+
+    def test_tbs_section_missing_one_group_fails_naming_it(self):
+        body = _retrospective_with_tbs_missing_group("opportunity")
+        self.assertGreaterEqual(len(body.strip()), RETROSPECTIVE_MIN_BYTES)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / RETROSPECTIVE_FILENAME).write_text(body, encoding="utf-8")
+            ok, reason = check_retrospective(tmp)
+            self.assertFalse(ok)
+            self.assertIn("opportunity", reason)
+
+    def test_tbs_section_missing_setup_group_fails_naming_it(self):
+        body = _retrospective_with_tbs_missing_group("setup")
+        self.assertGreaterEqual(len(body.strip()), RETROSPECTIVE_MIN_BYTES)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / RETROSPECTIVE_FILENAME).write_text(body, encoding="utf-8")
+            ok, reason = check_retrospective(tmp)
+            self.assertFalse(ok)
+            self.assertIn("setup", reason)
+
+
+class EvidenceTimelineTests(unittest.TestCase):
+    """Report-only mtime timeline (tempdoc 750 Part B): must never affect
+    the exit code, whether called standalone or via main()."""
+
+    def test_runs_without_error_on_populated_dir(self):
+        import io
+        from contextlib import redirect_stdout
+
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "01-first.png").write_bytes(b"x")
+            (d / "02-second.png").write_bytes(b"y")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                result = emit_evidence_timeline(tmp)
+            self.assertIsNone(result)
+            output = buf.getvalue()
+            self.assertIn("Evidence mtime timeline (report-only, no gate)", output)
+            self.assertIn("First evidence mtime:", output)
+            self.assertIn("Bucket start", output)
+
+    def test_runs_without_error_on_empty_dir(self):
+        import io
+        from contextlib import redirect_stdout
+
+        with tempfile.TemporaryDirectory() as tmp:
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                result = emit_evidence_timeline(tmp)
+            self.assertIsNone(result)
+            self.assertIn("nothing to report", buf.getvalue())
+
+    def test_runs_without_error_on_missing_dir(self):
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            result = emit_evidence_timeline(None)
+        self.assertIsNone(result)
+        self.assertIn("No evidence directory", buf.getvalue())
+
+    def test_timeline_does_not_affect_exit_code_via_main(self):
+        # Same fixture shape as MainWiringTests' passing case -- the timeline
+        # call happens after every gate but must not flip a clean rc=0.
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            manifest = {"version": 1, "mustTouch": [], "coveredElsewhere": [], "exempt": []}
+            manifest_path = tmp / "coverage-manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            evidence_dir = tmp / "evidence"
+            evidence_dir.mkdir()
+            (evidence_dir / RETROSPECTIVE_FILENAME).write_text(
+                SUBSTANTIAL_RETROSPECTIVE, encoding="utf-8"
+            )
+            (evidence_dir / EVIDENCE_REVIEW_FILENAME).write_text(
+                _empty_evidence_review_json(), encoding="utf-8"
+            )
+            rc = main(["--manifest", str(manifest_path), "--evidence-dir", str(evidence_dir)])
+            self.assertEqual(rc, 0)
 
 
 class MainWiringTests(unittest.TestCase):
