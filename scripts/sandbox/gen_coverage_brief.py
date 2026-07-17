@@ -37,6 +37,7 @@ ROUTE_MANIFEST_REL = "modules/ui-web/src/api/generated/route-manifest.snapshot.j
 CORE_PLUGIN_REL = "modules/ui-web/src/shell-v0/plugin-api/CorePlugin.ts"
 INTERACTION_SHAPES_REL = "modules/ui-web/src/shell-v0/plugin-api/coreInteractionShapes.ts"
 REGISTER_REL = "governance/sandbox-coverage.v1.json"
+UI_WEB_SRC_REL = "modules/ui-web/src"
 
 # D4 (tempdoc 728-followup): mustWatch observability tiers. 'blocked-by-posture'
 # is the honest "cannot be observed under the CURRENT sandbox posture" status
@@ -47,6 +48,13 @@ SURFACE_ID_RE = re.compile(
     r"id:\s*'(core\.[^']+)'(?:(?!id:\s*')[\s\S])*?placement:\s*'([A-Z]+)'"
 )
 SHAPE_ID_RE = re.compile(r"'(core\.[^']+)'")
+
+# Part D (tempdoc 750): reach-pointer verification. A `reach.testid` on a
+# surfaceCoverage/shapeCoverage register row is only trustworthy if it is
+# still greppable in the frontend source -- a stale pointer is worse than
+# none (750 Fork-risk control). Plain literal `data-testid="..."` scan, no
+# subprocess/git dependency.
+TESTID_ATTR_RE = re.compile(r'data-testid="([^"]+)"')
 
 
 def find_repo_root(start: Path) -> Path:
@@ -102,6 +110,18 @@ def extract_shapes(interaction_shapes_path: Path) -> list[str]:
     region = text[idx: end if end != -1 else len(text)]
     shapes = sorted({m.group(1) for m in SHAPE_ID_RE.finditer(region)})
     return shapes
+
+
+def scan_data_testids(ui_web_src_path: Path) -> set[str]:
+    """Part D (tempdoc 750): plain-text scan of every `data-testid="..."` literal
+    under modules/ui-web/src/**/*.ts. Used to verify a register row's
+    reach.testid is still real at generation time -- never emit an unverified
+    testid (750 Fork-risk control: a stale pointer is worse than none)."""
+    testids: set[str] = set()
+    for ts_file in ui_web_src_path.rglob("*.ts"):
+        text = ts_file.read_text(encoding="utf-8", errors="ignore")
+        testids.update(TESTID_ATTR_RE.findall(text))
+    return testids
 
 
 def evidence_token(surface_id: str) -> str:
@@ -220,11 +240,40 @@ def validate_must_watch_observability(register: dict[str, Any]) -> list[str]:
     return errors
 
 
+def verify_reach_testids(
+    results: dict[str, DriftResult], known_testids: set[str]
+) -> list[str]:
+    """Part D (tempdoc 750): drop any reach.testid that isn't a real, current
+    `data-testid` under modules/ui-web/src -- mutates the register rows in
+    `results[*].covered_map` in place (this run's in-memory copy only, never
+    the file on disk). A stale testid is dropped, not fatal: generation
+    continues, but the warning names the entry + testid so the register gets
+    fixed (750 Fork-risk control: a stale pointer is worse than none)."""
+    warnings: list[str] = []
+    for kind, id_key in (("surface", "surfaceId"), ("shape", "shape")):
+        result = results[kind]
+        for item_id, row in result.covered_map.items():
+            reach = row.get("reach")
+            if not isinstance(reach, dict):
+                continue
+            testid = reach.get("testid")
+            if testid and testid not in known_testids:
+                warnings.append(
+                    f"REACH-STALE-TESTID: {kind} {item_id!r} declares reach.testid={testid!r} "
+                    f"but it was not found under {UI_WEB_SRC_REL} -- dropped from output."
+                )
+                del reach["testid"]
+                if not reach:
+                    del row["reach"]
+    return warnings
+
+
 def run_drift_check(
     register: dict[str, Any],
     cohort_routes: dict[str, list[str]],
     surface_placements: dict[str, str],
     shapes: list[str],
+    known_testids: set[str] | None = None,
 ) -> tuple[list[str], list[str], dict[str, DriftResult]]:
     """Returns (fatal_errors, warnings, {kind: DriftResult})."""
     errors: list[str] = []
@@ -301,6 +350,9 @@ def run_drift_check(
                 f"regex) — do not leave the register drifting from what ships."
             )
 
+    if known_testids is not None:
+        warnings.extend(verify_reach_testids(results, known_testids))
+
     return errors, warnings, results
 
 
@@ -312,6 +364,7 @@ def run_drift_check(
 def build_manifest(
     results: dict[str, DriftResult],
     cohort_routes: dict[str, list[str]],
+    register: dict[str, Any],
 ) -> dict[str, Any]:
     must_touch: list[dict[str, Any]] = []
     covered_elsewhere: list[dict[str, Any]] = []
@@ -338,6 +391,13 @@ def build_manifest(
                         entry["requiredRoutes"] = list(required)
                 elif kind == "surface":
                     entry["evidenceToken"] = evidence_token(item_id)
+                # Part D (tempdoc 750): propagate the (already testid-verified,
+                # see verify_reach_testids) reach pointer verbatim so the round
+                # plan and the brief can render "how to find it" instead of
+                # re-paying the discovery cost every round.
+                reach = row.get("reach") if row is not None else None
+                if reach:
+                    entry["reach"] = reach
                 must_touch.append(entry)
             elif tier == "host":
                 covered_elsewhere.append({"kind": kind, "id": item_id, "tier": "host"})
@@ -350,7 +410,36 @@ def build_manifest(
         "mustTouch": must_touch,
         "coveredElsewhere": covered_elsewhere,
         "exempt": exempt,
+        # Part D (tempdoc 750): mustWatch joins the manifest so
+        # derive_round_plan.py stops being structurally unable to derive it
+        # (it previously only lived in coverage-brief.md's Markdown).
+        "mustWatch": register.get("mustWatch", []) or [],
     }
+
+
+def render_reach_line(reach: dict[str, Any]) -> str | None:
+    """Part D (tempdoc 750): render a reach pointer as one "Reach:" line for
+    coverage-brief.md. `unknown: true` renders the honest "entry point
+    unknown, this is a round deliverable" form instead of a fabricated path
+    (750 Part D: reported, not fail-closed -- free-chat/workflow-run are
+    genuinely unresolved product questions a stage-time block can't answer)."""
+    if not reach:
+        return None
+    if reach.get("unknown"):
+        note = reach.get("note", "")
+        return f"Reach: ENTRY POINT UNKNOWN - {note}"
+    parts: list[str] = []
+    if reach.get("testid"):
+        parts.append(f"testid=`{reach['testid']}`")
+    if reach.get("navPath"):
+        parts.append(f"navPath: {reach['navPath']}")
+    if reach.get("apiRecipe"):
+        parts.append(f"apiRecipe: {reach['apiRecipe']}")
+    if reach.get("note"):
+        parts.append(f"note: {reach['note']}")
+    if not parts:
+        return None
+    return "Reach: " + "; ".join(parts)
 
 
 def build_brief_markdown(manifest: dict[str, Any], register: dict[str, Any]) -> str:
@@ -386,6 +475,9 @@ def build_brief_markdown(manifest: dict[str, Any], register: dict[str, Any]) -> 
                     lines.append(f"  - routes: {routes_str}")
                 if kind == "surface":
                     lines.append(f"  - evidence token: `{item['evidenceToken']}`")
+                reach_line = render_reach_line(item.get("reach"))
+                if reach_line:
+                    lines.append(f"  - {reach_line}")
             lines.append("")
 
     lines.append("## Covered elsewhere (host tier)")
@@ -488,13 +580,17 @@ def main(argv: list[str] | None = None) -> int:
     core_plugin_path = repo_root / CORE_PLUGIN_REL
     interaction_shapes_path = repo_root / INTERACTION_SHAPES_REL
     register_path = Path(args.register) if args.register else (repo_root / REGISTER_REL)
+    ui_web_src_path = repo_root / UI_WEB_SRC_REL
 
     cohort_routes = extract_cohorts(route_manifest_path)
     surface_placements = extract_surfaces(core_plugin_path)
     shapes = extract_shapes(interaction_shapes_path)
     register = json.loads(register_path.read_text(encoding="utf-8"))
+    known_testids = scan_data_testids(ui_web_src_path)
 
-    errors, warnings, results = run_drift_check(register, cohort_routes, surface_placements, shapes)
+    errors, warnings, results = run_drift_check(
+        register, cohort_routes, surface_placements, shapes, known_testids
+    )
 
     if errors:
         print("gen_coverage_brief: FAILED\n", file=sys.stderr)
@@ -515,7 +611,7 @@ def main(argv: list[str] | None = None) -> int:
         out_dir = Path(args.out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        manifest = build_manifest(results, cohort_routes)
+        manifest = build_manifest(results, cohort_routes, register)
         brief_md = build_brief_markdown(manifest, register)
 
         manifest_path = out_dir / "coverage-manifest.json"
