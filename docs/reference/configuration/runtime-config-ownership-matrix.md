@@ -22,7 +22,6 @@ Precedence note:
 | index.collections | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.commit.debounce_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.commit.meta.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| index.commit.policy | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.directory.type | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.hybrid.adaptive_weights_enabled | JUSTSEARCH_HYBRID_ADAPTIVE_WEIGHTS_ENABLED | index.hybrid.adaptive_weights_enabled | HYBRID_ADAPTIVE_WEIGHTS_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.bm25_low_signal_top_score_threshold | JUSTSEARCH_INDEX_BM25_LOW_SIGNAL_TOP_SCORE_THRESHOLD | index.hybrid.bm25_low_signal_top_score_threshold | HYBRID_BM25_LOW_SIGNAL_TOP_SCORE_THRESHOLD | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
@@ -66,7 +65,6 @@ Precedence note:
 | index.ocr.limits.max_pages | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.limits.per_file_timeout_ms | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.limits.render_dpi | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| index.ocr.trigger.min_image_pixels | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.ocr.workers | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.queue.max_depth | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | index.recovery.policy | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
@@ -296,7 +294,6 @@ Precedence note:
 | - | JUSTSEARCH_POLICY_GPU_ACCELERATION_ENABLED | policy.gpu_acceleration_enabled | POLICY_GPU_ACCELERATION_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | rag.chunk_splade.enabled | JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED | rag.chunk_splade.enabled | RAG_CHUNK_SPLADE_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.chunk_vectors.enabled | JUSTSEARCH_RAG_CHUNK_VECTORS_ENABLED | rag.chunk_vectors.enabled | RAG_CHUNK_VECTORS_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| rag.context.include_surrounding | JUSTSEARCH_RAG_INCLUDE_SURROUNDING_CONTEXT | rag.context.include_surrounding | RAG_INCLUDE_SURROUNDING | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.diversify.mode | JUSTSEARCH_RAG_DIVERSIFY_MODE | rag.diversify.mode | RAG_DIVERSIFY_MODE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.max_chunks_per_article | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | rag.mmr.lambda | JUSTSEARCH_RAG_MMR_LAMBDA | rag.mmr.lambda | RAG_MMR_LAMBDA | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |

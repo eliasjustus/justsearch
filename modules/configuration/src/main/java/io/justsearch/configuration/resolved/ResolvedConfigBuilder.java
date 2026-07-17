@@ -326,7 +326,6 @@ public final class ResolvedConfigBuilder {
 
   private void contributeYamlOcr(JsonNode root) {
     putYamlBoolean("index.ocr.enabled", root, "index.ocr.enabled");
-    putYamlInt("index.ocr.trigger.min_image_pixels", root, "index.ocr.trigger.min_image_pixels");
     putYamlInt("index.ocr.limits.per_file_timeout_ms", root, "index.ocr.limits.per_file_timeout_ms");
     putYamlInt("index.ocr.limits.max_pages", root, "index.ocr.limits.max_pages");
     putYamlInt("index.ocr.limits.max_image_dimension", root,
@@ -353,7 +352,6 @@ public final class ResolvedConfigBuilder {
     putYamlInt("index.writer.max_buffered_docs", root, "index.writer.max_buffered_docs");
     putYamlInt("index.queue.max_depth", root, "index.queue.max_depth");
     putYamlInt("index.commit.debounce_ms", root, "index.commit.debounce_ms");
-    putYaml("index.commit.policy", root, "index.commit.policy");
     putYamlBoolean("index.commit.meta.enabled", root, "index.commit.meta.enabled");
     putYamlInt("index.nrt.target_max_stale_ms", root, "index.nrt.target_max_stale_ms");
     putYamlInt("index.nrt.max_stale_ms", root, "index.nrt.max_stale_ms");
@@ -401,7 +399,6 @@ public final class ResolvedConfigBuilder {
     putYaml("rag.diversify.mode", root, "rag.diversify.mode");
     putYamlDouble("rag.mmr.lambda", root, "rag.mmr.lambda");
     putYamlInt("rag.mmr.max_candidates", root, "rag.mmr.max_candidates");
-    putYamlBoolean("rag.context.include_surrounding", root, "rag.context.include_surrounding");
     putYamlBoolean("rag.chunk_vectors.enabled", root, "rag.chunk_vectors.enabled");
     putYamlBoolean("rag.chunk_splade.enabled", root, "rag.chunk_splade.enabled");
     // 347: RAG env/sysprop overrides now handled by EnvRegistry entries.
@@ -1259,7 +1256,6 @@ public final class ResolvedConfigBuilder {
     return new ResolvedConfig.Ocr(
         resolveNullableBoolean("index.ocr.enabled"),
         languages,
-        resolveNullableInt("index.ocr.trigger.min_image_pixels"),
         resolveNullableInt("index.ocr.limits.per_file_timeout_ms"),
         resolveNullableInt("index.ocr.limits.max_pages"),
         resolveNullableInt("index.ocr.limits.max_image_dimension"),
@@ -1274,7 +1270,6 @@ public final class ResolvedConfigBuilder {
         resolveNullableInt("index.writer.max_buffered_docs"),
         resolveNullableInt("index.queue.max_depth"),
         resolveNullableInt("index.commit.debounce_ms"),
-        resolveString("index.commit.policy", null),
         resolveBoolean("index.commit.meta.enabled", true),
         resolveNullableInt("index.nrt.target_max_stale_ms"),
         resolveNullableInt("index.nrt.max_stale_ms"),
@@ -1424,7 +1419,6 @@ public final class ResolvedConfigBuilder {
         resolveStringLower("rag.diversify.mode", "position"),
         Math.max(0.0, Math.min(1.0, resolveDouble("rag.mmr.lambda", 0.5))),
         Math.max(1, Math.min(200, resolveInt("rag.mmr.max_candidates", 20))),
-        resolveBoolean("rag.context.include_surrounding", false),
         resolveBoolean("rag.chunk_vectors.enabled", true),
         resolveBoolean("rag.chunk_splade.enabled", false),
         resolveInt("justsearch.rag.top_k", 5),

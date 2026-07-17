@@ -458,13 +458,6 @@
                                                                        "type":  "object",
                                                                        "additionalProperties":  false,
                                                                        "properties":  {
-                                                                                          "policy":  {
-                                                                                                          "type":  "string",
-                                                                                                          "enum":  [
-                                                                                                                       "per_batch",
-                                                                                                                       "deferred"
-                                                                                                                   ]
-                                                                                                      },
                                                                                           "debounce_ms":  {
                                                                                                                "type":  "integer",
                                                                                                                "minimum":  0
@@ -685,16 +678,6 @@
                                                                                                                        "type":  "string"
                                                                                                                    }
                                                                                                      },
-                                                                                       "trigger":  {
-                                                                                                       "type":  "object",
-                                                                                                       "additionalProperties":  false,
-                                                                                                       "properties":  {
-                                                                                                                          "min_image_pixels":  {
-                                                                                                                                                   "type":  "integer",
-                                                                                                                                                   "minimum":  0
-                                                                                                                                               }
-                                                                                                                      }
-                                                                                                   },
                                                                                        "limits":  {
                                                                                                       "type":  "object",
                                                                                                       "additionalProperties":  false,

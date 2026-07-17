@@ -75,7 +75,6 @@ index:
   language_detection:
     enabled: true
   commit:
-    policy: per_batch
     debounce_ms: 0
   pipeline:
     profile: desktop-default
@@ -91,8 +90,6 @@ index:
   ocr:
     enabled: true
     languages: []
-    trigger:
-      min_image_pixels: 524288
     limits:
       # Aggregate per-document OCR budget (must sit below the outer extractor timebox).
       per_file_timeout_ms: 30000

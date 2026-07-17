@@ -998,9 +998,6 @@ public enum EnvRegistry {
     RAG_MMR_LAMBDA("rag.mmr.lambda", "JUSTSEARCH_RAG_MMR_LAMBDA"),
     /** MMR max candidate pool size. */
     RAG_MMR_MAX_CANDIDATES("rag.mmr.max_candidates", "JUSTSEARCH_RAG_MMR_MAX_CANDIDATES"),
-    /** Include surrounding document context in RAG chunks. */
-    RAG_INCLUDE_SURROUNDING("rag.context.include_surrounding",
-        "JUSTSEARCH_RAG_INCLUDE_SURROUNDING_CONTEXT"),
     /** Enable chunk-level vector retrieval for RAG. */
     RAG_CHUNK_VECTORS_ENABLED("rag.chunk_vectors.enabled", "JUSTSEARCH_RAG_CHUNK_VECTORS_ENABLED"),
     /** Enable chunk-level SPLADE enrichment (tempdoc 712; default false, evidence-gated). */

@@ -512,7 +512,6 @@ public record ResolvedConfig(
    *
    * @param enabled whether OCR is enabled
    * @param languages list of OCR languages
-   * @param triggerMinImagePixels minimum image pixels to trigger OCR
    * @param perFileTimeoutMs per-file OCR timeout in milliseconds
    * @param maxPages maximum pages to process
    * @param maxImageDimension maximum image dimension
@@ -523,7 +522,6 @@ public record ResolvedConfig(
   public record Ocr(
       Boolean enabled,
       List<String> languages,
-      Integer triggerMinImagePixels,
       Integer perFileTimeoutMs,
       Integer maxPages,
       Integer maxImageDimension,
@@ -543,7 +541,6 @@ public record ResolvedConfig(
    * @param writerMaxBufferedDocs max buffered docs before flush
    * @param writerMaxQueueDepth max writer queue depth
    * @param commitDebounceMs commit debounce interval in ms
-   * @param commitPolicy commit policy (per_batch, deferred)
    * @param commitMetadataEnabled whether commit metadata is enabled
    * @param nrtTargetMaxStaleMs NRT target max stale time in ms
    * @param nrtHardMaxStaleMs NRT hard max stale time in ms
@@ -574,7 +571,6 @@ public record ResolvedConfig(
       Integer writerMaxBufferedDocs,
       Integer writerMaxQueueDepth,
       Integer commitDebounceMs,
-      String commitPolicy,
       boolean commitMetadataEnabled,
       Integer nrtTargetMaxStaleMs,
       Integer nrtHardMaxStaleMs,
@@ -652,7 +648,6 @@ public record ResolvedConfig(
    * @param diversifyMode diversification mode (position, mmr)
    * @param mmrLambda MMR lambda parameter
    * @param mmrMaxCandidates max MMR candidates
-   * @param includeSurroundingContext whether to include surrounding context
    * @param chunkVectorsEnabled whether chunk-level vector retrieval is enabled
    * @param chunkSpladeEnabled whether chunk-level SPLADE enrichment is enabled (tempdoc 712:
    *     encodes chunk docs' {@code chunk_content} into the {@code splade} FeatureField so the
@@ -668,7 +663,6 @@ public record ResolvedConfig(
       String diversifyMode,
       double mmrLambda,
       int mmrMaxCandidates,
-      boolean includeSurroundingContext,
       boolean chunkVectorsEnabled,
       boolean chunkSpladeEnabled,
       int ragTopK,

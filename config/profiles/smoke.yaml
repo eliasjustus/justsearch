@@ -83,7 +83,6 @@ index:
   language_detection:
     enabled: true
   commit:
-    policy: per_batch
     debounce_ms: 0
   pipeline:
     profile: desktop-default
@@ -98,8 +97,6 @@ index:
   ocr:
     enabled: false
     languages: []
-    trigger:
-      min_image_pixels: 524288
     limits:
       per_file_timeout_ms: 5000
       max_pages: 10

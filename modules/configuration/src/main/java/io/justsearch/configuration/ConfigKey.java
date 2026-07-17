@@ -23,7 +23,6 @@ public enum ConfigKey {
     // -- OCR --
     INDEX_OCR_LANGUAGES("index.ocr.languages"),
     INDEX_OCR_ENABLED("index.ocr.enabled"),
-    INDEX_OCR_MIN_IMAGE_PIXELS("index.ocr.trigger.min_image_pixels"),
     INDEX_OCR_PER_FILE_TIMEOUT_MS("index.ocr.limits.per_file_timeout_ms"),
     INDEX_OCR_MAX_PAGES("index.ocr.limits.max_pages"),
     INDEX_OCR_MAX_IMAGE_DIMENSION("index.ocr.limits.max_image_dimension"),
@@ -36,7 +35,6 @@ public enum ConfigKey {
     INDEX_WRITER_MAX_BUFFERED_DOCS("index.writer.max_buffered_docs"),
     INDEX_QUEUE_MAX_DEPTH("index.queue.max_depth"),
     INDEX_COMMIT_DEBOUNCE_MS("index.commit.debounce_ms"),
-    INDEX_COMMIT_POLICY("index.commit.policy"),
     INDEX_COMMIT_META_ENABLED("index.commit.meta.enabled"),
     INDEX_NRT_TARGET_MAX_STALE_MS("index.nrt.target_max_stale_ms"),
     INDEX_NRT_MAX_STALE_MS("index.nrt.max_stale_ms"),
