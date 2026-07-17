@@ -1,6 +1,6 @@
 ---
 title: "Config-surface classification pass — 70 inert ResolvedConfig components"
-status: "IN PROGRESS 2026-07-17 on feat/754-config-surface-triage — classification COMPLETE (70/70). Deletion: 6 of 8 batches landed, 25/31 components; full ./gradlew.bat test GREEN at every batch. RESUME AT BATCH 7 (Ui) then 8 (Telemetry) — both reserved for the orchestrator because the keep/delete rule inverts inside the record. Owner scope: classification pass only, no gate; GJF settled separately in tempdoc 729."
+status: "IMPLEMENTED, PR-ready 2026-07-17 on feat/754-config-surface-triage — classification COMPLETE (70/70); deletion COMPLETE, all 8 batches landed, 31/31 safe-delete components drained; full ./gradlew.bat test GREEN at every batch (batches 7-8 executed by the orchestrator per the rule-inversion reservation). Remaining out of scope by owner decision: the 28 shadowed/duplicate knobs (logged as bugs, product call), no regrowth gate. GJF settled separately in tempdoc 729."
 created: 2026-07-15
 author: agent session 1b3050fb (Opus 4.8) — orchestration/judgment; classification delegated to sonnet
 category: config / dead-code / docs-truth
@@ -331,12 +331,13 @@ Note: batches 1-4 were cherry-picked from the old `worktree-728-config-surface-t
 branch onto `feat/754-config-surface-triage` (new hashes); batches 5-6 landed fresh
 on `feat/754`. The commit hashes above for 5-6 are the `feat/754` hashes.
 
-**Remaining (2 batches, 6 components):**
-
-| Batch | Components | Rule |
-|---|---|---|
-| 7 | `Ui.requireTranslator` (full), `Ui.settingsMode` (component only) | **rule inverts inside the record — do NOT delegate** |
-| 8 | `Telemetry`×3 (full), `Index.tracingLevel` (component only) | **rule inverts — do NOT delegate** |
+**Remaining: none.** Batches 7 (`12e22285`) and 8 (`4e7934a8`) landed 2026-07-17, executed
+in the main loop per the rule-inversion reservation: `Ui.requireTranslator` full;
+`Ui.settingsMode` component-only (UI_SETTINGS_MODE entry kept — UiSettingsStore direct read);
+`Telemetry.metricsMaxMb`/`metricsRetentionDays`/`exemplarsEnabled` full including their
+EnvRegistry entries (live consumers read raw sysprop literals; wiring instead would have
+sprung the 10→50 MB / 7→30 d default-mismatch trap); `Index.tracingLevel` component-only
+(INDEX_TRACING_LEVEL entry + env-var doc row kept — 4 direct readers verified).
 
 **The teardown rule that inverts** (deleting these entries breaks live code):
 `Index.tracingLevel` → KEEP its `EnvRegistry` entry (3 live readers: `KnowledgeServer.java:352`,
