@@ -1,7 +1,7 @@
 ---
 title: "Input-addressed eval index cache: reuse a built index iff (corpus_signature × index_identity_key) match — static selector nominates, the running backend confirms, fail-closed to fresh build — keeping the fresh-build validity guarantee while amortizing the ~50-min/10k-doc rebuild eval campaigns pay repeatedly for identical inputs"
 type: tempdocs
-status: "IMPLEMENTED v0+v1 (2026-07-17, §P) in worktree takeover-751 — live-validated (miss→publish, 17s confirmed adoption, knob-flip + dirty-tree misses, prune). Default OFF (--index-cache opt-in). Full pipeline this session: takeover (GO, §F) → theorize (§G-§K) → research (§L) → design (§M-§N) → derisk (§O, 8/10) → plan → implement (§P). Evidence-gated follow-ups in §P.3 (v2 scoped pin, parity sampling, NER stamp, 676 line). Not yet merged to main."
+status: "MERGED to main same-day as PR #235, commit 66c6c71e (2026-07-17 reconciliation). [pre-merge status retained: IMPLEMENTED v0+v1 (2026-07-17, §P) in worktree takeover-751 — live-validated (miss→publish, 17s confirmed adoption, knob-flip + dirty-tree misses, prune). Default OFF (--index-cache opt-in). Full pipeline this session: takeover (GO, §F) → theorize (§G-§K) → research (§L) → design (§M-§N) → derisk (§O, 8/10) → plan → implement (§P). Evidence-gated follow-ups in §P.3 (v2 scoped pin, parity sampling, NER stamp, 676 line). Not yet merged to main.]"
 created: 2026-07-17
 author: agent (Fable orchestration), chartered at founder direction during the Phase-2 utility campaign ("open a new tempdoc for this. ill set a new agent on it")
 category: eval-infrastructure / measurement-economics / index-lifecycle
