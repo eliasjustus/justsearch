@@ -913,11 +913,6 @@ public enum EnvRegistry {
     /** Infra health gRPC server port. */
     INFRA_HEALTH_PORT("justsearch.infra.health.port", "JUSTSEARCH_INFRA_HEALTH_PORT"),
 
-    // ==================== Language Configuration (tempdoc 314 Phase F) ====================
-
-    /** Default index language (BCP-47 tag). */
-    INDEX_DEFAULT_LANGUAGE("justsearch.index.default_language", "JUSTSEARCH_INDEX_DEFAULT_LANGUAGE"),
-
     // ==================== Indexing Tracing (tempdoc 312 Phase 0) ====================
 
     /** Indexing pipeline tracing level: none (default), sample (1%), detailed (100%). */
@@ -932,9 +927,6 @@ public enum EnvRegistry {
      * {@code justsearch.inference.generation} span attribute to attach to exported spans.
      */
     HEAD_TRACING_LEVEL("justsearch.head.tracing_level", "JUSTSEARCH_HEAD_TRACING_LEVEL"),
-    /** Search language filter policy. */
-    SEARCH_LANGUAGE_POLICY(
-        "justsearch.search.default_language_policy", "JUSTSEARCH_SEARCH_DEFAULT_LANGUAGE_POLICY"),
 
     // ==================== Dev Hot-Reload (tempdoc 305 Phase 2) ====================
 

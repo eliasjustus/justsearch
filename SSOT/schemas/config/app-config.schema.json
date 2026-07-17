@@ -390,10 +390,6 @@
                                                                                                       ]
                                                                                      }
                                                                         },
-                                                        "default_language":  {
-                                                                                   "type":  "string",
-                                                                                   "minLength":  1
-                                                                               },
                                                         "language_detection":  {
                                                                                    "type":  "object",
                                                                                    "additionalProperties":  false,
@@ -793,15 +789,6 @@
                                                                            "minimum":  1,
                                                                            "maximum":  100
                                                                        },
-                                                         "default_language_policy":  {
-                                                                                        "type":  "string",
-                                                                                        "enum":  [
-                                                                                                     "explicit_or_default",
-                                                                                                     "explicit_only",
-                                                                                                     "translator_or_default",
-                                                                                                     "allow_any"
-                                                                                                 ]
-                                                                                    },
                                                          "sort_default":  {
                                                                               "type":  "array",
                                                                               "items":  {

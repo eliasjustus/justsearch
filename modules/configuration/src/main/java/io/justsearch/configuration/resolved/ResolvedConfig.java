@@ -484,8 +484,7 @@ public record ResolvedConfig(
    * @param indexParityAllowMismatch true to allow opening index read-only on schema mismatch
    */
   public record Policy(
-      boolean egressBlockAll, boolean prodMode, boolean indexParityAllowMismatch,
-      String languagePolicy) {}
+      boolean egressBlockAll, boolean prodMode, boolean indexParityAllowMismatch) {}
 
   /**
    * UI configuration.
@@ -600,7 +599,6 @@ public record ResolvedConfig(
       Double similarityTextK1,
       Double similarityTextB,
       String validationMode,
-      String defaultLanguage,
       String tracingLevel,
       List<IndexSortItem> sort,
       Map<String, Double> boosts) {

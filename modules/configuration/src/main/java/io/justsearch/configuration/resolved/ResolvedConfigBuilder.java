@@ -384,7 +384,6 @@ public final class ResolvedConfigBuilder {
     putYamlDouble("index.similarity.text.k1", root, "index.similarity.text.k1");
     putYamlDouble("index.similarity.text.b", root, "index.similarity.text.b");
     putYaml("index.validation.mode", root, "index.validation.mode");
-    putYaml(EnvRegistry.INDEX_DEFAULT_LANGUAGE.sysProp(), root, "index.default_language");
   }
 
   private void contributeYamlPolicy(JsonNode root) {
@@ -499,7 +498,6 @@ public final class ResolvedConfigBuilder {
             String.join(",", fields));
       }
     }
-    putYaml(EnvRegistry.SEARCH_LANGUAGE_POLICY.sysProp(), root, "search.default_language_policy");
   }
 
   private void contributeYamlIndexComposite(JsonNode root) {
@@ -1238,8 +1236,7 @@ public final class ResolvedConfigBuilder {
     return new ResolvedConfig.Policy(
         resolveBoolean("egress.block_all", false),
         resolveBoolean("justsearch.prod", false),
-        resolveBoolean("justsearch.index.parity.allow_mismatch", false),
-        resolveString(EnvRegistry.SEARCH_LANGUAGE_POLICY.sysProp(), "explicit_or_default"));
+        resolveBoolean("justsearch.index.parity.allow_mismatch", false));
   }
 
   private ResolvedConfig.Ui buildUi() {
@@ -1304,7 +1301,6 @@ public final class ResolvedConfigBuilder {
         resolveNullableDouble("index.similarity.text.k1"),
         resolveNullableDouble("index.similarity.text.b"),
         resolveString("index.validation.mode", null),
-        resolveString(EnvRegistry.INDEX_DEFAULT_LANGUAGE.sysProp(), "en-US"),
         resolveString(EnvRegistry.INDEX_TRACING_LEVEL.sysProp(), "none"),
         parseIndexSort(resolveString("index.sort", null)),
         parseBoosts(resolveString("index.boosts", null)));
