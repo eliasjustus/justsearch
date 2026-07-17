@@ -116,6 +116,14 @@
     "group": "gates"
   },
   {
+    "name": "index-cache",
+    "group": "index-cache"
+  },
+  {
+    "name": "index-identity",
+    "group": "index-cache"
+  },
+  {
     "name": "ingest-bench",
     "group": "bench"
   },

@@ -1,7 +1,7 @@
 ---
-title: "Content-addressed eval index cache: reuse a built index if and only if (corpus_signature × config_cohort_key) match byte-exactly — keep the fresh-build validity guarantee while amortizing the ~50-min/10k-doc rebuild that eval campaigns currently pay repeatedly for identical inputs"
+title: "Input-addressed eval index cache: reuse a built index iff (corpus_signature × index_identity_key) match — static selector nominates, the running backend confirms, fail-closed to fresh build — keeping the fresh-build validity guarantee while amortizing the ~50-min/10k-doc rebuild eval campaigns pay repeatedly for identical inputs"
 type: tempdocs
-status: "open — charter/stub (2026-07-17). Founder-commissioned lane for a new agent; no implementation here. The takeover/theorize/design passes expand this document."
+status: "IMPLEMENTED v0+v1 (2026-07-17, §P) in worktree takeover-751 — live-validated (miss→publish, 17s confirmed adoption, knob-flip + dirty-tree misses, prune). Default OFF (--index-cache opt-in). Full pipeline this session: takeover (GO, §F) → theorize (§G-§K) → research (§L) → design (§M-§N) → derisk (§O, 8/10) → plan → implement (§P). Evidence-gated follow-ups in §P.3 (v2 scoped pin, parity sampling, NER stamp, 676 line). Not yet merged to main."
 created: 2026-07-17
 author: agent (Fable orchestration), chartered at founder direction during the Phase-2 utility campaign ("open a new tempdoc for this. ill set a new agent on it")
 category: eval-infrastructure / measurement-economics / index-lifecycle
@@ -100,3 +100,805 @@ ranking-instability class) instead of resampling it per run.
 - The founder-visible cost instance: legal-10k built 3× in 12h (2026-07-16 21:41, 2026-07-17
   03:21, 2026-07-17 08:02 chains).
 - Observations inbox note (2026-07-17, session 109145ac): the keyed-vs-unkeyed distinction.
+
+---
+
+# Takeover investigation (2026-07-17, session 7b0aa2d9)
+
+Three parallel audits (key-completeness, backend mechanics, inherited-claim verification) plus
+first-hand spot-checks of every load-bearing claim below. **Verdict at the end: GO, with design
+conditions.** Design/implementation has NOT started; this section is investigation only.
+
+## §A. Key-completeness audit (charter work item 1 — the feasibility crux)
+
+### A.1 `config_cohort_key` as it exists today is NOT a safe cache key
+
+Computation site: `scripts/jseval/jseval/release.py:147` (`config_cohort_key(manifest)`), inputs
+assembled live by `utility_calibrate.py:252` (`pin_config_cohort_key`). It hashes exactly:
+`git_sha`, `eval_protocol_hash`, `policy_hash`, four "config-global" commit-metadata fps
+(`schema_fp, similarity_fp, boosts_fp, grammar_hash` — `release.py:74-79`), and model identity
+minus `*_gpu` flags (`release.py:141-144`).
+
+Its own docstring (`release.py:148-156`) states the disqualifying design intent: it is a
+**cross-corpus release-grouping key** (tempdoc 623 T-1/U1) that *deliberately excludes* the four
+corpus-varying commit-metadata fps — `field_catalog_hash`, `index_schema_fp`, `analyzer_fp`,
+`synonyms_hash` (`release.py:82-87`) — because including them "would refuse every multi-corpus
+release." The cache needs the union of everything index-shaping; `config_cohort_key` was built to
+be the intersection that survives corpus changes. **Opposite selection criteria.** The stub's
+title formula "(corpus_signature × config_cohort_key)" is therefore wrong as literal code; it
+survives only as shorthand for "corpus identity × a (new) complete config identity."
+
+### A.2 Coverage matrix (index-shaping input → in `config_cohort_key`?)
+
+| Index-shaping input | In key? | Evidence (index side / key side) |
+|---|---|---|
+| Committed engine code, Lucene version, YAML defaults | YES via `git_sha` | `release.py:159` |
+| Embedding model **content** | YES | `EmbeddingFingerprint.java:94` (sha256 of onnx bytes) → `model_identity` |
+| BM25 similarity params | YES | `SsotCommitMetadataSource.java:111` / `release.py:162` |
+| `fields.v1.json` schema (`field_catalog_hash`) | **NO — excluded** | `SsotCommitMetadataSource.java:81` / `release.py:82-87` |
+| Effective vector dimension (`index_schema_fp`) | **NO — excluded** | `SsotCommitMetadataSource.java:83-93` |
+| Analyzer config (`analyzer_fp`) | **NO — excluded** | `SsotCommitMetadataSource.java:100,137-150` |
+| Vector quantization (`vector_format` int8_sq/float32) | **NO — not in allow-list** | `SsotCommitMetadataSource.java:119-127`, toggle `EnvRegistry.java:1071` |
+| SPLADE model content | **PARTIAL — path only** | `run.py:74`; content-hasher `SpladeFingerprint.java` exists but unused in `_snapshot_models` |
+| NER model content | **PARTIAL — path only** | `run.py:78` |
+| Embedding runtime knobs (context length, late-chunking, dim override) | **NO** | `EnvRegistry.java:295,327-340,932` — env/`-D` bypasses `git_sha` |
+| Chunking params + chunk-vector/chunk-splade toggles | **NO** (runtime toggles bypass `git_sha`) | `EnvRegistry.java:1092-1094`, `ResolvedConfig.java:708-728` |
+| HNSW M / efConstruction | **NO** (sysprops bypass `git_sha`) | `EnvRegistry.java:1061`, `ResolvedConfig.java:637-638` |
+| Uncommitted working-tree edits (`git_dirty`) | **NO** — recorded but never hashed | `release.py:159` uses `git_sha` only |
+
+Note `policy_hash` closes none of these: `/api/debug/session-policies` serializes
+`PolicySnapshot` = `RuntimePolicy` + per-encoder `ModelSessionPolicy` — ORT session/GPU/arena/
+threading policy only (`PolicySnapshot.java:28`, `RuntimePolicy.java:34`,
+`ModelSessionPolicy.java:38`; verified first-hand). The 713 §M-3 confound
+(`JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED`) is exactly a row of this gap table — the historical
+incident and the audit agree on where the danger lives.
+
+### A.3 Closability: bounded and cheap — feasibility crux resolved POSITIVE
+
+The gap set is **not open-ended**: `git_sha` is a genuine catch-all for every *committed*
+index-shaping input, so arbitrary engine changes need no per-file hashing. The residual set is
+four concrete moves, all reusing existing plumbing:
+
+1. **Fail closed on `git_dirty == true`** (single largest hole; a dirty tree means `git_sha` no
+   longer pins the engine).
+2. **Hash the resolved index-shaping runtime-config subset** (one fingerprint over
+   `ResolvedConfig.index()` + embed-config: dim override, quantization, context length,
+   late-chunking, chunk toggles, HNSW M/ef) to capture env/`-D` overrides that bypass `git_sha`.
+3. **Content-fingerprint SPLADE + NER** (mirror `EmbeddingFingerprint.java:94`; a
+   `SpladeFingerprint.java` already exists).
+4. **Include the four excluded commit-metadata fps + `vector_format`** — they already exist in
+   `/api/debug/commit-metadata`; they were only excluded for release-grouping reasons that don't
+   apply here. (Nuance, resolved first-hand: `field_catalog_hash` is a *static* hash of
+   `fields.v1.json` — `SsotCommitMetadataSource.java:81` — and `index_schema_fp` varies only via
+   the runtime dim override; release.py's "corpus-dependent" label is empirical from runs that
+   used per-corpus overrides, not intrinsic. For the cache they are config axis, include them.)
+
+⇒ The design deliverable is a **purpose-built index-identity key**, NOT a reuse of
+`config_cohort_key`. Roughly: `git_sha + (git_dirty==false gate) + resolved-index-config hash +
+per-model content fingerprints (embed/splade/ner) + {field_catalog_hash, index_schema_fp,
+analyzer_fp, vector_format}`.
+
+### A.4 `corpus_signature` axis is already canonical — conform, don't fork
+
+`scripts/jseval/jseval/corpus_identity.py:20`: `sha256(corpus.jsonl + qrels/test.tsv)`; single
+definition used by run manifest, summary, and release pin. The cache calls this directly.
+
+## §B. Mechanics (charter work item 2)
+
+- **Data dir**: `backend.py:83-98` resolves `JUSTSEARCH_DATA_DIR` (default
+  `tmp/headless-eval-data`); `--clean` is now an unconditional fail-closed whole-dir wipe with
+  orphan-Worker sweep (`backend.py:105-113,183-254`) — the 716 carve-out is gone in code.
+- **Index layout is a stable contract**: `<base>/state.json` + `indices/<genId>/` with sentinel +
+  generation manifest (`IndexGenerationManager.java:28-42`, marked `PERMANENT COMPAT`).
+- **Adoption precedents already exist in the Worker**: normal non-clean startup opens an existing
+  generation without rebuilding (`KnowledgeServer.java:456-460` → `resolveFromState`,
+  `IndexGenerationManager.java:393-405`); `tryAdoptSingleExistingGeneration`
+  (`IndexGenerationManager.java:440-476`) adopts a lone generation dir with no `state.json`,
+  refusing to guess when 0 or >1 candidates. "Adopt on hit" rides existing code paths.
+- **The Worker independently validates on open** — belt-and-suspenders under the cache: embedding
+  fingerprint stored in the Lucene commit vs current model (`KnowledgeServer.java:539-586`),
+  schema mismatch (`:587-619`), recovery marker (`:513-537`); mismatch auto-triggers Blue/Green
+  rebuild. Consequence: a wrong cache hit degrades to a *wasted copy + rebuild*, not a silently
+  wrong measurement — for the inputs the Worker checks (embedding model, schema). The cache key
+  must still cover the rest (analyzer, chunking, HNSW…), which the Worker does NOT re-check.
+- **Concurrency**: `IndexRootLock` (sibling lock file *outside* the index dir — deliberately
+  move/rename-friendly, `IndexRootLock.java:41-46`) + `AppInstanceLock` per data dir
+  (`AppInstanceLock.java:27-206`). Copy-on-adopt into a fresh data dir composes cleanly with
+  both; the cache store itself needs only atomic publish + a read lock convention.
+- **Lucene portability** (web-verified): index directories are copyable/portable; replication is
+  first-class. One hazard: never let an IndexWriter open the copy target during copy.
+
+## §C. Evidence verification (motivation)
+
+Confirmed from surviving marker mtimes + eval-results manifests + `chain-phase2.log` in the
+step2-powered worktree: **3 distinct from-scratch builds of `mixed/en-legal-clerc-10k-verbose`**
+(02:27→03:21 ≈54 min; 03:21→04:04 ≈43 min; 08:02→truncation ≥54 min, embedding restarted from
+0% each time). The ~50 min/build claim holds. The "~12h window" is not directly verifiable from
+surviving logs (observed span ≈6.5 h; `chain-step2.log` was overwritten by a later invocation) —
+immaterial to the case. Consumer cadence is real: Phase-2 continues, 657 install-tier economics
+and further size-trend cells are pre-registered follow-ons (624 §Phase-2), so identical
+(corpus × config) rebuilds keep recurring.
+
+## §D. Corrections to this charter's inherited claims (apply before design)
+
+1. **The 716 framing above is wrong.** 716 never retired index reuse — the Lucene `index/` dir
+   was never in the protected set and was always wiped by `--clean`; 716 retired a
+   *calibration-metadata* carve-out (`cohort_baselines/`, `non_determinism_envelopes/`) by moving
+   those files out of the data dir (716 §352-428). "Unkeyed reuse produced ambiguous artifacts"
+   appears nowhere in 716. The **real** cautionary precedent for unkeyed index reuse is
+   **713 §M-3/M-5**: pre-716 `--clean` accidentally reused the CONTROL's index generation for an
+   ARM run whose `JUSTSEARCH_EMBED_LATE_CHUNKING_ENABLED` differed — B-confidence downgrade, a
+   hand VecProbe (4293/4293), and a full extra GPU session (M-5 fresh-build probe) to resolve.
+   Cite 713, not 716, as the incident; cite 716 only for the "one declared shape, no
+   two-independent-lists drift" design principle.
+2. **The F-037 cite is imprecise.** F-037's headline is the MCP evidence-pack document-universe
+   fork (tempdoc 731). The HNSW rebuild-variance / rank-instability observation is a separate,
+   still-open finding from 731 (register lines ~781-788). The comparability bonus is real
+   (HNSW build randomness is inherent — layer assignment is stochastic) but should cite "731's
+   HNSW rebuild-variance finding."
+3. **Requirement 3's probe set is necessary but proven insufficient.** 717 (now RESOLVED on
+   `main`) was a *query-time* degradation — index reported 100% chunk-vector coverage throughout;
+   `parent_token_count` unpopulated → `SKIPPED_SHORT_CORPUS` → `chunk_merge` leg dropped at
+   search time (717 §651-721). Count-based attestation (doc count, chunk-vector count, per-field
+   coverage) would NOT have caught it. Attestation should add a cheap **behavioral canary**
+   (e.g. a known query must return `chunk_merge` among observed legs) on build AND on adoption.
+   Also: no reusable VecProbe module exists — the 713/717 probes were ad-hoc; the status surface
+   (`chunkDocCount`, `chunkVectorCoveragePercent`, `chunkVectorsReady`) is real and readable via
+   `/api/status` / `/api/debug/state`.
+
+## §E. Displacement / duplication check
+
+- **Nothing existing implements a built-index cache** — no tempdoc or code (grepped).
+- **704 Pillar 3 (fail-closed validity envelopes)** already plans a preflight VALIDITY
+  CERTIFICATE checking "corpus signature match … config cohort match" (704 §117-126, vehicle:
+  675 executor v2) — the same two-axis identity, used as a run-provenance assertion rather than
+  a build-skip decision. **Design condition: one identity primitive, two consumers** — the cache
+  hit/miss decision and the validity certificate must project from the same key computation, not
+  fork a second authority (execution-surfaces projection-vs-fork discipline).
+- **`manifest.py:212` `manifest_hash`** already *claims* exactly this identity ("same git, same
+  policy, same index identity, same models, same corpus" — `manifest.py:216-218`) but is
+  computed **post-hoc from live backend snapshots** (`/api/status`, commit-metadata,
+  session-policies) — unusable as-is for a pre-build cache decision. The design must reconcile
+  three identity surfaces (`config_cohort_key`, `manifest_hash`, the new cache key) — ideally
+  the cache key becomes the pre-computable core that the other two embed — or we ship a fourth
+  drifting identity authority. **A pre-hoc-computable key whose inputs are currently emitted
+  only by a running backend is the main unsolved design problem** (options: compute
+  fingerprints statically in jseval; or a cheap backend "identity-only" boot mode; or
+  build-once-then-key adoption for subsequent runs only).
+- **`dataset_cache.py` (tempdoc 709)** is the in-repo structural template (content-verified hit,
+  atomic publish) — but it is deliberately fail-**open** (raw downloaded bytes, cheap to
+  re-fetch); 751 is deliberately fail-**closed**. Divergence is intentional; note it, don't
+  copy the disposition.
+- **Naming**: `cohort_hash`/`cohort_baselines/` already mean *statistical calibration cohort*
+  (non-determinism envelopes). Pick a visibly distinct name for the cache key (e.g.
+  `index_identity_key`), not another "cohort."
+
+## §F. Verdict — GO, now, with design conditions
+
+**Should this be done at all?** Yes. The motivation is measured and recurring (3× ~50-min
+rebuilds of one identical corpus×config confirmed; more campaigns pre-registered), the benefit
+is dual (economics + within-campaign comparability via shared physical index), and the
+feasibility crux the charter itself named — key completeness — resolves **positive**: the gap
+set is bounded, enumerated (§A.2), and closable with existing fingerprint plumbing (§A.3).
+Adoption mechanics are favorable: the Worker already has adoption + validation paths, and its
+own fingerprint checks mean a subset of wrong-hit classes degrade to a wasted rebuild rather
+than a wrong measurement (§B).
+
+**Why now?** Every campaign chain burns ~1-2 redundant GPU-hours per repeated corpus, and the
+next campaigns (Phase-2 continuation, 657 economics, size-trend cells) are already planned.
+Pillar 4's premise applies: iteration speed bounds affordable correctness.
+
+**Cheapest validating/invalidating evidence?** Already exists — this investigation was it. The
+three plausible kill-conditions were checked and all resolve in favor: (1) key can't be made
+complete → refuted, §A.3; (2) no recurring consumer → refuted, §C; (3) adoption mechanically
+infeasible / Lucene indexes not safely reusable → refuted, §B. No further evidence gathering is
+needed before design.
+
+**What it displaces/duplicates**: nothing shipped; but two planned/existing identity surfaces
+(Pillar-3 validity certificate, `manifest_hash`) overlap — the design must unify, not fork (§E).
+
+**Conditions the design pass must satisfy** (beyond the charter's five hard requirements):
+1. Purpose-built index-identity key per §A.3 — do **not** reuse `config_cohort_key`; fail closed
+   on `git_dirty`.
+2. Solve pre-hoc computability (§E `manifest_hash` paragraph) — this is the hardest open design
+   question, not the key contents.
+3. One identity primitive shared with the Pillar-3 validity certificate (§E).
+4. Attestation = counts + behavioral canary (§D.3).
+5. Key computation and index-shaping config must derive from one declared source (716's actual
+   lesson), so the key can't drift from the engine.
+6. Distinct naming vs the calibration-cohort machinery (§E).
+
+---
+
+# Theorization (2026-07-17, session 7b0aa2d9 — pre-design)
+
+Broadening pass before design settles. Nothing here is a decision; it maps the solution space,
+surfaces assumptions the charter left implicit, and names the recurring shape this belongs to.
+
+## §G. Four framings of the same problem
+
+1. **Memoization**: index build as a function `build(corpus, config, engine) → index`, cache =
+   memo table. Exposes the purity assumption: build is pure only *up to HNSW sampling* — see
+   §I.3 for what reuse does to that distribution.
+2. **Provenance**: the problem isn't rebuild cost per se, it's that we currently have only one
+   proof that an index equals its declared inputs — *proof by construction* (fresh build). The
+   cache adds a second proof form — *proof by input identity*. Attestation (§D.3) is a third,
+   weaker form — *proof by observed behavior* — useful as a cross-check, insufficient alone
+   (717: behavior probes miss what they don't probe).
+3. **Lifecycle**: today's cost exists because `--clean` destroys and identity is unprovable
+   afterwards. An alternative family keeps the artifact alive instead of caching it: keyed
+   persistent data dirs (§H.2-b) or a backend kept running across same-key cells (§H.1). "Cache"
+   is one point in a larger reuse-lifecycle space.
+4. **Economics**: the cache competes with two other cost levers — making ingest faster
+   (enrichment throughput, 691) and building less often via orchestration (§H.1). It composes
+   with both; but if §H.1 alone captures most of the waste, the persistent cache's marginal
+   value shrinks. The design should check the observed waste's split: builds #1→#2 were
+   *within* one chain (same invocation, ~43 min saved by mere in-chain reuse); build #3 was a
+   *new* chain (needs persistence to save).
+
+## §H. Design-space axes (each independent; name them, don't decide yet)
+
+### H.1 Tier 0 — orchestration reuse, no persistence
+Keep the backend (or at least its data dir) alive across consecutive same-key cells within one
+chain invocation. Identity is maintained by process continuity, not by a key; no store, no
+adoption, no attestation machinery. Captures the #1→#2 class of waste (~half the observed
+instance). Cheapest thing that could possibly work; also the natural v0 to gather hit-rate data
+for the real cache. Its identity question doesn't vanish (per-arm config differences must still
+compare equal) — it's the same key, minus persistence.
+
+### H.2 What is the cached unit?
+- (a) **The Lucene generation dir only** (`indices/<gen>/`): smallest unit, but adoption must
+  reconstruct everything else the Worker derives during ingest (job-queue state, watched-roots
+  registration, `state.json`) or the backend re-ingests anyway — the adopt step becomes a mini
+  state-fabrication protocol that can drift from the Worker's real ingest.
+- (b) **The whole data dir**: coarser but honest — the cache entry is exactly the post-build,
+  post-enrichment, quiesced state a fresh build leaves behind. Adoption = point the backend at
+  it (or a copy of it). No fabrication. Cost: entries are bigger; entry hygiene (logs, locks,
+  PIDs inside) needs a quiesce/scrub step at publish time.
+- (c) **Keyed persistent data dirs** (data-dir-as-entry, no copy): `eval-data/<key>/` IS the
+  entry; hit = start backend against it directly. Zero copy cost, but the run *mutates* its own
+  cache entry (see §I.4) — needs either post-run divergence re-attestation or acceptance that
+  same-inputs mutation is benign.
+
+### H.3 Adopt mechanics: copy vs point-at vs link
+Copy-on-adopt isolates the store from mutation and composes trivially with `IndexRootLock` (the
+sibling-lock placement was *deliberately* chosen to keep index dirs movable —
+`IndexRootLock.java:41-46`). Point-at is free but mutable. Hardlink-farm (NTFS hardlinks per
+segment file) exploits Lucene's write-once segment files for near-zero-cost "copies" — but
+segment *deletion* (merges) and any writer opening would mutate shared inodes; only safe under a
+proven no-writer adoption mode. Copy is the conservative default; a 10k index copy is minutes
+against a 50-minute build.
+
+### H.4 Engine-pin scope: full `git_sha` vs scoped tree-hash — the hit-rate/completeness dial
+Full `git_sha` is maximally safe and maximally over-strict: **any** commit invalidates, including
+docs-only and eval-protocol-only changes. This is not hypothetical — five commits landed on
+`main` during the motivating 12h window, and the delta before rebuild #3 (#232, per-arm timeout
+fix) was eval-protocol-only: a full-sha key would have missed on **the very instance that
+chartered this doc**. The alternative is a **declared index-shaping path set** pinned by git
+*tree hashes* (`git rev-parse HEAD:modules/adapters-lucene HEAD:modules/indexer-worker
+HEAD:SSOT/catalogs …`) — invalidation only when index-shaping code changes. That converts the
+completeness risk into a register-completeness problem, which is this repo's home turf (an
+`index-shaping-paths` register + a gate that fails when a new index-relevant module/file class
+appears outside it — same shape as `execution-surfaces`). Honest statement of the trade: the
+scoped pin re-admits exactly one hole (an index-shaping edit landing outside the declared set),
+and pays for it with most of the cache's real-world hit rate. Likely resolution: v1 ships
+full-sha (safe, still catches within-chain and fixed-sha campaign reuse), v2 upgrades to the
+scoped register **only if** measured hit-rate data shows full-sha starves the cache — a
+falsifiable trigger, recorded per run (key computed both ways, "would-have-hit-under-scoped-pin"
+logged before any scoped adoption is allowed).
+
+### H.5 Trust tiers and a parity-sampling audit
+Adoption need not be all-or-nothing across run classes. 704's two-tier measurement split
+(standing smoke vs certified) offers a natural rollout: allow adoption for iteration/smoke tiers
+first; certified/release runs keep fresh-build until the cache has evidence. The evidence
+mechanism can be built in: **parity sampling** — on a configurable fraction of cache hits, ALSO
+fresh-build and compare (metric deltas within the non-determinism envelope; attestation counts
+equal). This converts "keyed adoption is as good as fresh" from a design argument into a
+continuously collected measurement, and its failures are exactly the key-incompleteness alarms
+requirement 2 needs. (It also naturally re-samples HNSW variance now and then — see §I.3.)
+
+### H.6 Multi-sample entries
+If a study *wants* build-distribution variance (non-determinism envelope calibration does), the
+cache can hold N entries per key (`<key>/sample-<n>/`) instead of forcing sample-1 reuse.
+Probably YAGNI for v1 — but the entry layout should not preclude it (a sample ordinal in the
+path costs nothing now, redesign later costs a migration).
+
+## §I. Hidden assumptions surfaced
+
+1. **"Same machine" is silently assumed.** Embedding vectors baked into the index carry
+   GPU/driver/ORT numerical identity; `config_cohort_key` *deliberately* excludes `*_gpu` flags
+   as execution context, but for a cache, vector values ARE index content. Fine while the eval
+   lane is one dev machine; the entry's attestation should still record hardware/ORT identity so
+   a future cross-machine share fails closed instead of silently mixing float regimes.
+2. **"Adopt" must be verified post-startup, or hits silently degrade to builds.** The Worker's
+   own mismatch handling (§B) auto-starts a Blue/Green rebuild when an opened index disagrees
+   with current config (`KnowledgeServer.java:539-619`). An adoption that trips this serves a
+   *fresh* index while the harness records "cache hit" — wrong provenance in the run record and
+   50 unexplained minutes. Adoption must end with an assertion: active generation id == adopted
+   generation id, no migration started. (This is the `wrong-gate` class applied to caching.)
+3. **Reuse changes what the measurement samples.** A fresh build per run samples the HNSW build
+   distribution; shared-index runs condition on one draw. Within-campaign A/B: a feature
+   (variance eliminated exactly where it confounds). Cross-campaign or absolute-level claims: a
+   frozen-sample bias the run record must disclose (entry id makes runs conditional-on-entry
+   distinguishable). The non-determinism-envelope machinery calibrates *rebuild* variance —
+   envelopes calibrated fresh may understate agreement between two same-entry runs and vice
+   versa; the design should state which comparisons remain envelope-covered.
+4. **A run may mutate what it adopted.** Enrichment retries, job-queue writes, or a stray
+   watched-roots event can write into an adopted index/data dir. Copy-on-adopt contains this;
+   point-at (§H.2-c) must either re-attest after the run or prove read-only-ness. Related trap:
+   publishing an entry from a data dir that hasn't fully quiesced (enrichment "complete" but
+   final commits pending) immortalizes a moving target.
+5. **`corpus_signature` covers `corpus.jsonl` + qrels, not the exploded corpus-dir** the ingest
+   actually watches (10k files). The derivation corpus.jsonl → corpus-dir is committed code
+   (covered by the engine pin) — but the design should assert corpus-dir is *regenerated or
+   verified* on adoption, not trusted as a third unpinned artifact.
+6. **Hit-rate is an empirical unknown.** The whole economic case silently assumes campaigns
+   repeat keys. Observed: true within 12h at fixed config; unknown across weeks of active
+   development (§H.4). v1 should instrument misses with a *miss-reason diff* (which key
+   component differed) — that data decides v2 (scoped pin), eviction policy, and whether the
+   cache earns its complexity.
+
+## §J. Risks not in the charter's list
+
+- **Cache poisoning** (717-class degenerate build published): attestation-at-publish + canary
+  at adopt (§D.3); parity sampling (§H.5) as the backstop.
+- **Silent adopt-then-migrate** (§I.2): loud assertion, never a log line.
+- **Store growth**: multi-GB entries × corpora × configs; needs an eviction policy (LRU-by-key
+  + pin-while-campaign-active) and a disk floor check before publish — mundane but the eval
+  drive is shared with models and corpora.
+- **Concurrent publish/adopt races**: two chains building the same key, or adopting during
+  publish — atomic publish (build in `.tmp-<nonce>/`, rename into place; the `dataset_cache.py`
+  pattern) + copy-on-adopt makes readers race-free without a lock service.
+- **Complexity ratchet**: the cache adds a store, a key, an attestation record, and provenance
+  plumbing to run records — all of which must be maintained. If §H.1 (in-chain reuse) plus
+  fixed-sha campaign discipline captures most waste, stop there. The falsifier is cheap and
+  should be pre-registered: instrument would-have-hit rates before building v2 scope.
+
+## §K. The broader shape: derived-artifact derivation pins
+
+This is the third rung of a ladder the repo is already climbing:
+
+| Rung | Artifact | Pin | Mechanism |
+|---|---|---|---|
+| 709 `dataset_cache.py` | raw downloaded dataset bytes | content signature | fail-open cache |
+| 741 | eval corpora | recipe + `corpus_signature` | derived-artifact recipes |
+| **751** | **built indexes** | **corpus × config × engine identity** | **fail-closed keyed cache** |
+
+The emerging invariant, stated once: **a derived artifact may be reused iff it carries a
+complete, machine-checkable derivation pin, and the reuse decision is pin equality — anything
+less is a fresh derivation.** Each rung differs only in what "complete pin" means and in failure
+disposition (cheap-to-refetch bytes fail open; measurement-validity artifacts fail closed). If
+751 ships, this invariant is worth a line in the eval-lane contract (676) rather than staying
+folklore — and the identity algebra underneath it (§E: one primitive, projections for cache key
+/ validity certificate / manifest) is the same projection-vs-fork discipline the
+execution-surfaces register enforces for `SearchTrace`.
+
+Not proposed here: generalizing the three mechanisms into one framework. They share a principle,
+not a reason to change (AHA); 751 should *cite* the pattern, copy the atomic-publish idiom, and
+stop there.
+
+## §L. External research notes (2026-07-17; ideas only, no code copied)
+
+Targeted pass on the two areas with live external practice. Sources are cited for ideas, not
+adapted text/code.
+
+### L.1 Pyserini/Anserini prebuilt indexes — the IR community's production instance of this
+
+The reproducible-IR ecosystem ([Pyserini](https://github.com/castorini/pyserini/blob/master/docs/prebuilt-indexes.md),
+[Anserini](https://github.com/castorini/anserini/blob/master/docs/prebuilt-indexes.md)) has
+distributed **prebuilt Lucene indexes** for years — BEIR, MS MARCO, Mr.TyDi — verified by
+checksum on download and unpacked into a flat local cache
+(`~/.cache/pyserini/indexes/<name>.<date>.<commit-abbrev>.<md5>`). Take-aways:
+
+1. **Entry naming embeds build date + toolkit commit + artifact checksum** — their pin is
+   "date + engine commit + transport integrity," coarser than 751's derivation pin (they verify
+   *the artifact is the blessed one*, not *the inputs equal yours*). Their model is a trusted
+   central registry; 751's is local memoization. Different trust root, same artifact shape.
+2. **Engine version is in their pin for a reason**: the Lucene 8→9 transition forced rebuilding
+   the whole prebuilt-index fleet — index-format identity is a real invalidation axis, matching
+   751's engine-pin input.
+3. **Strong precedent for the frozen-sample question (§I.3)**: the entire IR research community
+   publishes results against *shared single builds* of each collection — conditional-on-one-
+   HNSW-draw results are accepted reproducible science there (indeed the sharing is what makes
+   them comparable). This supports treating shared-entry comparability as a feature and
+   disclosing entry id in run records, rather than treating frozen-sample as a defect to
+   engineer away.
+
+### L.2 Nix input- vs content-addressing — a terminology correction for this doc
+
+In Nix's precise vocabulary ([IA vs CA derivations](https://www.tweag.io/blog/2021-12-02-nix-cas-4/),
+[CA-derivations RFC 0062](https://github.com/NixOS/rfcs/blob/master/rfcs/0062-content-addressed-paths.md)),
+this cache is **input-addressed**, not content-addressed: the key hashes the *inputs*
+(corpus bytes × config × engine), never the output index — the output is HNSW-nondeterministic,
+so no stable output hash exists. Nix's CA machinery struggles exactly at nondeterministic
+outputs (conflicting "realisations" of one derivation can render a cache useless —
+[nix#4087](https://github.com/NixOS/nix/issues/4087)); input-addressing is the standard, correct
+choice for that case. Consequences for the design:
+
+- Keep the established title, but the design doc should use "input-keyed"/"derivation-pinned"
+  internally and **never attempt to address or dedupe entries by output hash** — attestation
+  records content *facts* (counts, canary results), but the *address* is inputs-only.
+- Nix's "realisation" record (derivation-hash → what this build actually produced) is precisely
+  751's attestation record; the naming precedent confirms it belongs *inside* the entry, beside
+  the artifact, not in a side database.
+
+---
+
+# Design (2026-07-17, session 7b0aa2d9 — settled at general level; implementation-level detail
+# deferred to the plan/derisk passes)
+
+## §M. The design
+
+### M.0 Shape in one paragraph
+
+An **input-addressed store of quiesced eval data dirs**, keyed on `corpus_signature ×
+index_identity_key`, with a **two-phase adoption protocol**: a cheap *static candidate selector*
+nominates a cache entry before any backend starts, and the **running backend itself confirms the
+identity** after adoption — any disagreement discards the entry and falls through to today's
+fresh build. Copy-on-adopt, fail-closed everywhere, provenance recorded in the run manifest.
+Name: `index_identity_key` — deliberately not "cohort" (§E naming collision) and deliberately
+"input-addressed" (§L.2: the output is HNSW-nondeterministic; entries are never addressed or
+deduped by output hash).
+
+### M.1 The identity key
+
+Two orthogonal axes, both conforming to existing canonical definitions where they exist:
+
+- **Corpus axis**: `corpus_identity.corpus_signature()` verbatim (§A.4 — conform, don't fork).
+  Adoption additionally asserts the exploded corpus-dir is regenerated-or-verified, not trusted
+  (§I.5).
+- **Config/engine axis** (`index_identity_key`), per §A.3: full `git_sha` + a hard
+  `git_dirty == false` gate; a fingerprint of the resolved index-shaping runtime-config subset
+  (dim override, quantization, embed context/late-chunking, chunk toggles, HNSW M/ef); content
+  fingerprints for embed + SPLADE + NER models; the four commit-metadata index fps
+  (`field_catalog_hash`, `index_schema_fp`, `analyzer_fp`, `synonyms_hash`) + `vector_format`.
+  Hardware/ORT identity is recorded in the **attestation, not the key** (§I.1) — the store is
+  machine-local by declaration; a future cross-machine share fails closed on the attestation.
+
+**Authority rule** (this is the load-bearing choice): the config-derived key components are
+authored by the backend's own live surfaces (`/api/debug/commit-metadata`, session-policies,
+`/api/status` model fingerprints). jseval **never re-implements a Java fingerprint in Python** —
+that would be two independently-maintained lists that drift (716's actual lesson, §D.1).
+
+### M.2 Two-phase adoption — how pre-hoc computability dissolves
+
+The §E open problem ("key inputs are only emitted by a running backend") is not solved by making
+the key statically computable; it is dissolved by demoting the static side to a *selector*:
+
+- **Publish (on today's MISS path)**: fresh build exactly as today → wait for quiesce (all
+  enrichment complete, no pending commits — §I.4) → read the authoritative fingerprints from the
+  live backend → assemble key + **attestation** (doc/chunk/vector counts from the status
+  surface, a behavioral canary result (§D.3: a known query returning `chunk_merge` among
+  observed legs), hardware/ORT identity, built-at, engine sha) → scrub volatile files → publish
+  a copy of the data dir atomically (build under `.tmp-<nonce>/`, rename into place — the
+  `dataset_cache.py` idiom).
+- **Adopt (candidate HIT path)**: the static selector (git sha/dirty, `corpus_signature`, model
+  file hashes, env-visible knobs — cheap, heuristic, allowed to false-positive, never allowed to
+  be authoritative) nominates an entry → **copy** entry into the run's fresh data dir → boot the
+  backend on it (the existing `resolveFromState` path, §B) → **confirm**: (1) key recomputed
+  from the live backend's surfaces == entry key, (2) active generation == adopted generation and
+  no Blue/Green migration started (§I.2 — the silent adopt-then-migrate trap), (3) attestation
+  counts match the status surface and the canary passes. Any failure → wipe, fall through to a
+  standard fresh build, and record a **miss-reason diff** (which component differed — §I.6's
+  instrumentation).
+
+A wrong candidate therefore costs a copy + boot + wipe (minutes); it can never become a wrong
+measurement. This inverts the usual cache design: correctness never depends on the selector
+being right, only on the confirm step — which runs the same code a fresh build would use to
+describe itself.
+
+### M.3 Cached unit, store location, hygiene
+
+- **Unit: the whole quiesced data dir** (§H.2-b). Caching only `indices/<gen>/` would force a
+  state-fabrication protocol (job queue, watched roots, `state.json`) that drifts from the
+  Worker's real ingest; the data dir as a fresh build leaves it is the honest artifact.
+  Copy-on-adopt (§H.3) — conservative, isolates the store from run mutation, composes with
+  `IndexRootLock`'s move-friendly sibling-lock placement.
+- **Store root**: main-checkout-shared with env override, mirroring `dataset_cache.cache_root()`
+  exactly (`dataset_cache.py:47-76` — worktree-to-main resolution so all worktrees share one
+  store; `JUSTSEARCH_INDEX_CACHE` env to override or disable). Entry dir name = truncated sha256
+  of the canonical key JSON (`dataset_cache.py:79-82` idiom). `entry.json` inside the entry =
+  key inputs verbatim + attestation (the Nix "realisation" placement, §L.2).
+- **Hygiene**: disk-floor check before publish; LRU-by-last-adoption eviction with size/count
+  caps + a prune command; entries pinned while a campaign declares them in use.
+
+### M.4 Run-record provenance (charter requirement 4)
+
+The run manifest gains a cache-provenance block: adopted-vs-fresh, entry id, entry built-at,
+attestation reference. Runs sharing an entry are thereby *conditional-on-entry* — disclosed, not
+hidden (§I.3; legitimized by community practice, §L.1). Envelope-calibration consumers can then
+distinguish same-entry from cross-entry comparisons (§I.3's variance caveat).
+
+### M.5 Engine-pin scope: v1 strict, v2 evidence-gated
+
+v1 ships **full `git_sha`** (maximally safe; still captures within-chain and fixed-sha campaign
+reuse). Every miss logs whether a **scoped index-shaping path-register pin** (§H.4) would have
+hit. The v2 upgrade to the scoped register (+ its completeness gate, execution-surfaces-style)
+happens **only if** that instrumentation shows full-sha starves the cache in real campaigns — a
+pre-registered, falsifiable trigger, not a design argument.
+
+### M.6 Rollout tiers (§H.1/§H.5 settled)
+
+- **v0 — in-chain reuse**: consecutive same-key cells within one chain invocation reuse the
+  live backend; the *same confirm primitive* (live key equality) guards it — no store involved.
+  Captures the observed #1→#2 waste class immediately.
+- **v1 — the store**, adoption allowed for iteration/smoke-tier runs; certified/release runs
+  keep unconditional fresh-build.
+- **Certified-tier admission by parity sampling** (§H.5): a configurable fraction of hits also
+  fresh-builds and compares (metrics within the non-determinism envelope; attestation equal).
+  Certified runs adopt only after parity evidence accumulates — and parity failures are exactly
+  the key-incompleteness alarms requirement 2 wants.
+
+### M.7 What this displaces (named per the design discipline)
+
+- **Nothing shipped is orphaned.** `config_cohort_key` is NOT displaced — its release-grouping
+  purpose (cross-corpus cohorting) is a different consumer with opposite selection criteria
+  (§A.1); it stays. `dataset_cache` stays (different artifact rung, §K).
+- **Superseded within this doc**: the charter's original title formula
+  "(corpus_signature × config_cohort_key)" → corrected to the purpose-built
+  `index_identity_key` (title updated this pass). The §E three-identity-surfaces concern
+  resolves as: the key-assembly logic lives in one jseval module; the Pillar-3 validity
+  certificate (704, vehicle 675 executor v2) is expected to consume it when it lands;
+  `manifest_hash` is untouched now and noted as a future projection of the same primitive.
+
+### M.8 Explicit non-goals
+
+Cross-machine entry sharing; output-hash addressing/dedup (§L.2); multi-sample entries (§H.6 —
+the entry layout reserves a sample ordinal, nothing more); any change to the production index
+lifecycle; any change to MISS-path semantics (`--clean` stays exactly today's fail-closed wipe).
+
+## §N. Reach judgment
+
+**Conformance (instances of existing seams, deliberately reused rather than re-invented):**
+`corpus_signature` conform-don't-fork; `dataset_cache` store idioms (root resolution, atomic
+publish, entry-key derivation) with an explicitly **opposite failure disposition** (fail-closed
+vs fail-open — measurement validity vs cheap-to-refetch bytes); the projection-vs-fork identity
+discipline (execution-surfaces register shape) for the one-key-many-consumers rule; 716's
+one-declared-shape lesson as the authority rule in M.1.
+
+**Principle this design reveals** — *live-authority identity confirmation*:
+
+> Static tooling may **nominate** a configuration-identity match, but only the **running system
+> confirms** its own configuration identity; a static equality check is a candidate selector,
+> never a validity authority.
+
+Where else it applies: the Pillar-3 validity certificate (704 §117-126) — same rule, the
+certificate should assert against live surfaces, which its sketch already implies; and any
+future jseval feature tempted to re-derive a Java-side fingerprint in Python (the standing
+temptation this repo's split-language identity plumbing creates). Existing violations: none
+found — `pin_config_cohort_key` already pulls from live surfaces; the risk is prospective, not
+retrospective. **Earning its keep** looks like: zero Python↔Java fingerprint-drift incidents and
+zero silent-stale adoptions while the cache operates, with misses accurately attributed by the
+miss-reason diff. **Retire it** if the backend ever emits a sealed, signed static identity
+artifact at build time that offline tools can trust directly (the confirm step would then be
+redundant), or when the cache itself is retired.
+
+**The derivation-pin invariant (§K)** is the second, broader principle; its candidate scope is a
+one-line addition to the eval-lane contract (676) *when 751 ships* — not built now. Earning its
+keep: amortization accrues while reuse-related measurement-validity incidents stay at zero.
+Retire when the eval lane no longer rebuilds at meaningful cost (smaller corpora, faster
+hardware, or the lane itself retired) — at that point the invariant is vacuously true and should
+be dropped from active guidance rather than maintained as apparatus.
+
+---
+
+# Derisk (2026-07-17, session 7b0aa2d9 — live-probed on the real eval stack)
+
+## §O. Derisk findings
+
+Confidence-building pass before implementation: static probes + a **live end-to-end adoption
+experiment** (fresh `mixed/legal-clerc-200` build → kill-stopped data dir → `cp -r` copy → boot
+`runHeadlessEval` on the copy → full verification battery → teardown). Per-risk outcomes:
+
+### O.1 [was HIGH] Copied-data-dir boot: PROVEN GREEN — the core mechanism works
+
+A byte copy of the quiesced data dir booted into a fully healthy backend: bound to the copy
+(`/api/debug/state` → `justsearch.data.dir = …-COPY-751`), **adopted the copied generation
+verbatim** (`activeGenerationId == g-20260717-082744` == the copy's `state.json`; building/
+previous generation empty; `migration_state IDLE` — no silent adopt-then-migrate), all counts
+served instantly with no re-enrichment (199 docs, embedding+SPLADE 100%, 4293 chunk docs, chunk
+vectors 100%), the copied sibling `default.index.lock` re-acquired cleanly (stale-lock recovery
+worked as designed), and only benign WARNs in the worker log. §M.2's adopt path is demonstrated,
+not hypothesized.
+
+### O.2 [was HIGH] Quiesce: GREEN with a redefinition — today's stop is a KILL, and that's fine
+
+Both observed jseval stops ended in the orphan-Worker force-kill sweep (PIDs 25964, 24296) —
+there is no graceful shutdown to lean on. The killed dir nonetheless adopted perfectly because
+the *Lucene commit* was already complete (`build_state=COMPLETE` + embedding fingerprint stamped
+at 08:30:08Z, kill at 10:30:11) and SQLite WALs recover on open (copy `-wal`/`-shm` alongside).
+⇒ Design refinement: **"quiesced" = enrichment-complete + final commit stamped** (both readable
+from `/api/status` + `/api/debug/commit-metadata` before stopping), NOT "cleanly shut down."
+
+### O.3 [was MED] Eval-mode identity surfaces: GREEN, better than the audit knew
+
+Live from the eval backend: `/api/debug/commit-metadata` fully real (all fps, `vector_format`,
+`build_state`, `commit_time`); session-policies `configStatus: ok`. **Bonus finding:** the index
+commit already carries `embedding_model_sha256` AND `splade_model_sha256` — the §A.2 "SPLADE
+path-only" gap is a *jseval snapshot* gap, not an index gap; the confirm step can read both
+content hashes from the artifact itself. Remaining true gap: no `ner_model_sha256` in the commit.
+
+### O.4 [was MED] `git_dirty`: RISK CONFIRMED — the hard gate would zero the hit rate
+
+Both real campaign trees are dirty with **tracked** modifications right now (main: 3 files;
+step2-powered: 5, including jseval code itself). §M.1's hard `git_dirty==false` gate would have
+disabled the cache for the very campaign that chartered this doc. ⇒ Design amendment (still
+fail-closed): **include the dirt in the key instead of gating on it** — key component
+`sha256(git status --porcelain ∥ git diff HEAD)`; identical dirty state ⇒ identical key ⇒ hit;
+any edit ⇒ miss. Open detail for the plan pass: untracked *source* files appear in porcelain by
+name but not content — decide whether to content-hash untracked files under code/SSOT paths or
+treat any untracked file under those paths as cache-disabling.
+
+### O.5 [was MED] Behavioral canary: GREEN — one API call
+
+`POST /api/knowledge/search {debug:true}` on the adopted index returns the full `searchTrace`:
+`chunk-merge: executed`, sparse+dense+cross-encoder executed, degradation empty. The canary is a
+single call; jseval's own `provenance.extract_query_evidence` already parses this shape.
+
+### O.6-O.7 [were LOW] Selector inputs + entry economics: GREEN
+
+Sidecar `.onnx.sha256` + `model_manifest.json` files exist next to embed/SPLADE models (no
+GB-hashing in the selector). Entry sizes: 200-doc dir = 44 MB (copy: 0.1 s); the 10k campaign
+dir = 440 MB — **copy cost is seconds, not the minutes §H.3 conservatively assumed**.
+
+### O.8 New findings the plan didn't anticipate
+
+1. **Wrong-backend binding hazard (live-reproduced):** the first experiment run silently spent
+   49 minutes bound to a STALE backend — jseval health-polls fixed port 33221 while its own
+   spawned Head, finding 33221 occupied, fell back to an ephemeral port. Direct consequence for
+   §M.2, now verified feasible: the confirm step MUST include the process-binding assertion
+   (`/api/debug/state → justsearch.data.dir == the adopted copy's path`), not just config
+   equality. (jseval's own bind-vs-poll identity gap logged to the observations inbox.)
+2. `jseval run --max-queries 0` completed exit 0 but wrote **no summary/run dir** — the publish
+   step must not assume a run dir exists; logged to observations, not investigated (out of
+   scope).
+3. B4 (Worker silently serves an index whose HNSW/chunking knobs changed) was verified by code
+   reading only (`KnowledgeServer.java:539-619` checks embedding fp, schema, recovery marker —
+   nothing else): the Worker's own checks cover a strict subset of the key, as §B stated.
+
+### O.9 Confidence and implementation shape
+
+**Confidence: 8/10** for the remaining (plan → implement) work. The load-bearing mechanism
+(copy → boot → adopt-verbatim → confirm → canary) is live-proven end-to-end; every identity
+surface the confirm step needs exists and is real in eval mode; entry economics are better than
+assumed. Held-back points: (a) the dirty-state-in-key design (O.4) needs careful specification
+around untracked files; (b) publish-time quiesce detection needs the O.2 observable definition
+wired precisely; (c) the jseval integration surface has live quirks (port discipline O.8.1, the
+missing-summary path O.8.2) that implementation will trip over if briefs don't name them.
+
+**Implementation difficulty: moderate, and v1 is pure-Python** — every needed backend surface
+already exists (no Java changes for v1; a `ner_model_sha256` commit stamp is a nice-to-have
+follow-up). The work is one new jseval module family (index-identity key assembly, store with
+atomic publish per `dataset_cache.py` idioms, publish/adopt orchestration in `backend.py`'s
+lifecycle, provenance block in the run record, miss-reason instrumentation) plus tests. The
+hard parts are fail-closed edge-case discipline and Windows process/file realities, not volume.
+
+---
+
+# Implementation (2026-07-17, session 7b0aa2d9 — v0+v1 SHIPPED in worktree, live-validated)
+
+## §P. Implementation log
+
+### P.1 What shipped (all pure Python, no Java changes — as §O.9 predicted)
+
+- **`jseval/index_identity.py`** (WP1): `SelectorKey` / `IndexIdentity` / `ConfirmResult` +
+  `compute_selector` (static: git sha, dirty-state hash incl. untracked-source content, model
+  sidecar hashes, 9 EnvRegistry-cited runtime knobs, `corpus_signature`), `compute_live_identity`
+  (authoritative, from commit-metadata + session-policies + status), `confirm_adoption` (five
+  independent checks, per-check miss-reason diff, never short-circuits). `ef_search` deliberately
+  excluded (query-time, not index-shaping). 29 unit tests (real tmp git repos, fake HTTP backend).
+- **`jseval/index_cache.py`** (WP2): store mirroring `dataset_cache.py` idioms (main-checkout
+  shared root via `JUSTSEARCH_INDEX_CACHE` / `main_repo_root()`, move-aside atomic publish,
+  verify-on-lookup) with the documented opposite disposition: fail-closed for adoption, fail-quiet
+  for cache trouble during a fresh run. Entry = `entry.json` (identity + attestation/realisation)
+  + `data/` (whole data dir minus `logs/`, `telemetry/`, lock files). Publish refuses on
+  `build_state != COMPLETE` (§O.2 quiesce), missing state.json, or low disk. LRU prune with a
+  10-min publish-protection window. 28 unit tests.
+- **Lifecycle wiring** (WP3): `--index-cache/--fresh-index` on `jseval run` (default OFF;
+  `JUSTSEARCH_INDEX_CACHE_ADOPT=1`; explicit `--fresh-index` beats env). `_run_with_cache` in
+  `backend.py` implements §M.2's two-phase adopt with five outcomes
+  (`disabled:*`/`miss:selector`/`adopted`/`miss:confirm`/`miss:adopt-error`); every doubt path
+  reaches the *identical* fresh build via the extracted `_boot_and_wait`. Publish hook captures
+  identity + attestation + one live canary while the backend is up, publishes AFTER `stop_backend`
+  (§O.2), keyed off backend state only (§O.8.2). `summary["index_cache"]` provenance block
+  (outside the manifest — `manifest_hash` untouched) incl. `would_have_hit_scoped_pin` (§M.5
+  instrumentation). CLI: `index-cache list|inspect|prune` + `index-identity` (the §M.6 v0
+  primitive). Orchestrator follow-ups during review: **pre-start corpus-axis resolution**
+  (`corpora.local_dataset_dir`; unresolvable → `disabled:no-corpus-dir`, closing a cross-corpus
+  selector-key collision that would have caused safe-but-wasteful entry thrash) and **dataset
+  recorded in the attestation** for list/prune inspectability.
+- Tests: 57 module + 15 integration; **full jseval suite 2120 passed** (+2 known-RED
+  pre-existing `test_correction_probe` failures, expected-state-listed).
+
+### P.2 Live validation matrix (real stack, `mixed/legal-clerc-200`, 2026-07-17)
+
+| Probe | Outcome |
+|---|---|
+| Run 1 (clean tree, cache on, empty store) | `miss (no entry for selector) -- fresh build` → published entry `e3c2f5c0…` with full attestation (gen id, COMPLETE, counts 199/199/4293/100%, canary incl. `chunk-merge`) |
+| Run 2 (identical) | **`adopted entry e3c2f5c0… (confirmed live)` — 17 s from wipe to confirmed adoption** vs ~3 min fresh build (10k-corpus projection: seconds vs ~50 min) |
+| Run 3 (`JUSTSEARCH_RAG_CHUNK_SPLADE_ENABLED=true`) | `miss:selector` → fresh build → second distinct entry `3c98954b…` whose key equals the direct `compute_selector` prediction; knob value recorded in the entry |
+| Run 4 (tracked file edited) | `miss:selector` (dirty-state hash) → third entry |
+| Publish under the §O.8.2 quirk | run wrote no eval-results dir (pre-existing no-queries bug) yet publish succeeded — keyed off backend state, trap avoided in vivo |
+| CLI | `list` (with dataset column), `inspect`, `prune` (evicted exactly the backdated LRU entry; 10-min protection honored) |
+
+Validation note (`interrogate-results`): run 3's first attempt **adopted** — root-caused to the
+probe, not the product: `Start-Process` argument quoting ate the env assignment, so neither the
+selector nor the backend saw the knob (the adoption was therefore correct). Re-run with inherited
+env produced the designed miss. The module-level probe (`compute_selector` with only the knob
+differing → different keys) isolates the causal link. **Audit correction (refute-first pass,
+2026-07-17):** even the retried run 3 does not isolate the knob live — the working tree had
+changed between runs 1 and 3 (uncommitted follow-up edits), so the live miss was jointly caused
+by the knob and the dirty-state hash; the module probe alone carries the isolation. (Under the
+§Q F-B fix this confound class is gone: those particular edits were under `scripts/jseval/`,
+still in scope, but routine docs dirt no longer moves the key.)
+
+### P.2b Independent refute-first audit + review fixes (2026-07-17)
+
+A second-agent audit attacked ten verification claims: **confirmed** default-off byte-identity
+(0 diff lines between the pre-change boot block and `_boot_and_wait`), miss→publish, 17-s
+confirmed adoption (single boot, no miss/publish lines), dirty-miss, publish-independent-of-
+run-dir, entry immutability under adoption (mtime evidence); **weakened** claim 4 as above; and
+**confirmed a real defect** the review then fixed (§Q):
+
+- **F-A (correctness):** cross-worktree adoption was reachable and polluting — content-only
+  `corpus_signature`, no corpus/path axis in the live identity, absolute watched-root paths
+  inside entries, path-based engine doc identity (`IndexingDocumentOps.java:137`), and
+  last-writer-wins republish compounding it. Fixed by binding `corpus_dir_path` into the
+  selector key (foreign-path entries can no longer be nominated; same-key races are now
+  same-path by construction), recording watched roots in the entry attestation at publish, and
+  a sixth confirm check comparing the adopted copy's `watched_roots.json` against them —
+  fail-closed on pre-fix entries (they orphan; prune collects them).
+- **F-B (utility):** the whole-tree dirty hash zeroed real-world hit rate (any tempdoc edit
+  missed). Scoped to `modules/ SSOT/ contracts/ scripts/jseval/` (jseval stays in scope —
+  corpus derivation code is not otherwise pinned, §I.5); collapsed untracked parent dirs are
+  expanded and filtered per file. Residual accepted risk documented in the module.
+- **F-D:** publish docstring corrected to "near-atomic" (crash-only empty-slot window,
+  self-healing, fail-closed for readers).
+
+**Post-fix live re-validation (2026-07-17 14:04-14:12):** clean-tree run published entry
+`ab17e483…` (fresh MISS under the new corpus-path-bound key; watched roots recorded in the
+attestation); a rerun with the tempdoc deliberately dirty — the exact condition that zeroed
+hit-rate pre-F-B — **hit and adopted with live confirmation in 18 s**. Two additional live
+findings from the re-validation pair, both fixed in the same pass: (1) a one-shot canary fired
+HTTP 504 at boot+11 s while the Worker warmed its search path, voiding a valid adoption — the
+fail-closed fallthrough handled it correctly (stop → wipe → fresh build, run exit 0, its first
+live firing), and the canary now retries transient 502/503/504/transport errors up to 90 s;
+(2) an intermediate rerun with uncommitted `scripts/jseval/` edits correctly MISSED (in-scope
+dirt moved the key) — the same confound class the audit flagged in run 3, now working as
+designed rather than as an accident.
+
+### P.3 Evidence-gated follow-ups (recorded, deliberately NOT built — §M.5/M.6)
+
+1. **v2 scoped path-register engine pin** — build only if `would_have_hit_scoped_pin`
+   instrumentation shows full-sha starves the cache in real campaigns.
+2. **Parity sampling / certified-tier admission** — the default-OFF rollout makes certified
+   runs fresh-build trivially; admission waits for parity evidence.
+3. **Java `ner_model_sha256` commit stamp** — closes the one live/static asymmetry in the key.
+4. **676 eval-lane contract line** (the §K derivation-pin invariant) — on ship to `main`.
+5. Chain tooling adoption of the v0 `index-identity` primitive (campaign-side, not jseval-side).
+   Note: in practice the v1 store already captures most of v0's in-chain waste class —
+   consecutive `jseval run --index-cache` invocations within one chain hit the store.
+
+### P.4 Design-fit review (2026-07-17) — three recorded gaps, none load-bearing
+
+A final conceptual pass of implementation-vs-tempdoc found the charter's five hard
+requirements, the §F design conditions, and §M's shape all satisfied (fail-closed with no
+force flag; complete purpose-built key incl. the post-review corpus-path axis; counts+canary
+attestation re-verified at adoption; provenance in the run summary — deliberately outside
+`manifest_hash`, an honest projection per requirement 4; copy-on-adopt concurrency; eval-lane
+only; MISS byte-identical to today, audit-verified). Three deviations, all minor, recorded
+here so they aren't lost:
+
+1. **Hardware/ORT identity is not yet in the attestation** (§M.1/§I.1 said it should be, so a
+   future cross-machine share fails closed on it). No live risk — the store is machine-local
+   and cross-machine sharing is an §M.8 non-goal — but the fail-closed hook §I.1 wanted is
+   absent; add `hardware` to `_build_attestation` before any cross-machine ambition.
+2. **`would_have_hit_scoped_pin` is narrower than §M.5's "every miss"**: it is computed only on
+   `miss:confirm` (a nominated candidate whose confirm diff isolates git/dirt), but the common
+   sha-change miss class surfaces as `miss:selector` (key mismatch → no candidate → nothing to
+   diff) and records `null`. The v2 trigger data therefore under-collects; if v2 becomes a real
+   question, the selector should additionally probe a scoped-variant key on miss to attribute it.
+3. **Campaign pinning of in-use entries** (§M.3 hygiene, "entries pinned while a campaign
+   declares them in use") is not implemented — the 10-minute publish-protection window plus
+   adoption `touch()` (which refreshes LRU recency) is the only protection. Adequate at current
+   store sizes; revisit with follow-up 5 when chains declare campaigns.
