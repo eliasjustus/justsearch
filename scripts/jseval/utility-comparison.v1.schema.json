@@ -17,7 +17,8 @@
         "n_completed": {"type": "integer", "minimum": 0},
         "n_excluded": {"type": "integer", "minimum": 0},
         "n_pending": {"type": "integer", "minimum": 0},
-        "exclusion_rate": {"type": "number", "minimum": 0, "maximum": 1}
+        "exclusion_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "n_exhausted": {"type": "integer", "minimum": 0, "description": "tempdoc 624 (2026-07-17): resource-exhaustion cells (scored-incorrect, retained). Omitted on records with no exhausted cells."}
       }
     },
     "ittStratum": {
@@ -65,7 +66,8 @@
         "provider_cache_creation_input_tokens": {"type": ["object", "null"]},
         "cost_usd": {"type": ["object", "null"]},
         "adoption": {"type": "object"},
-        "funnel": {"type": ["object", "null"]}
+        "funnel": {"type": ["object", "null"]},
+        "duration": {"type": ["object", "null"], "description": "tempdoc 624 (2026-07-17) duration metric family: per-arm wall-clock distribution + mandatory n_censored/completion_rate. Omitted when no paired cell carried a time."}
       }
     }
   },

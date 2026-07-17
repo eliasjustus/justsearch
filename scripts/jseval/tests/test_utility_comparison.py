@@ -1839,6 +1839,10 @@ def test_non_semantic_digest_exclusion_list_is_exactly_pinned():
     already-digested content."""
     from jseval.utility_recompose import _NON_SEMANTIC_TOP_LEVEL_FIELDS
 
+    # tempdoc 624 (2026-07-17 "Time as the third utility axis" / outcome-rule
+    # provenance): `outcome_rule` is a fixed constant stamped on every record --
+    # pure self-description, never discriminating measurement content -- so it is
+    # excluded from the digest by the same rationale as `denominators`.
     assert _NON_SEMANTIC_TOP_LEVEL_FIELDS == frozenset(
-        {"denominators", "seed_floor_met", "exposure_contrast_ineligible"}
+        {"denominators", "seed_floor_met", "exposure_contrast_ineligible", "outcome_rule"}
     )
