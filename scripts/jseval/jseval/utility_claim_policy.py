@@ -122,14 +122,22 @@ def _stratum_matrix_consistent(cell: dict) -> bool:
         n_completed = arm.get("n_completed")
         n_pending = arm.get("n_pending")
         exclusion_rate = arm.get("exclusion_rate")
+        # tempdoc 624 (2026-07-17): resource-exhaustion is a THIRD attempted
+        # disposition (scored-incorrect, retained), so the closure identity is
+        # n_completed + n_exhausted + n_excluded == n_attempted. `n_exhausted`
+        # is omitted (defaults 0) on records with no exhausted cells, which
+        # recovers the original two-way identity byte-for-byte.
+        n_exhausted = arm.get("n_exhausted", 0)
         if (
             arm.get("n_expected") != len(pairs)
             or not isinstance(n_attempted, int)
             or not isinstance(n_excluded, int)
             or not isinstance(n_completed, int)
+            or not isinstance(n_exhausted, int)
             or not isinstance(n_pending, int)
             or not isinstance(exclusion_rate, (int, float))
-            or n_completed + n_excluded != n_attempted
+            or n_exhausted < 0
+            or n_completed + n_exhausted + n_excluded != n_attempted
             or n_pending != len(pairs) - n_attempted
             or n_attempted < 0
             or n_attempted > len(pairs)

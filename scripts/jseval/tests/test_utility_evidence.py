@@ -332,17 +332,20 @@ def test_real_2026_07_12_rejected_fixture_reproduces_false_green_loss():
     assert "source_identity_complete" in record["claim_verdict"]["reasons"]
 
 
-def test_historical_fixture_semantic_digest_unchanged_by_tool_result_digests_addition():
-    """tempdoc 736 U1 (non-negotiable): adding the optional `tool_result_digests`
-    field (D9) must NOT perturb the `semantic_digest` of this pre-existing
-    committed 48-row historical evidence fixture, which predates the field.
-    `tool_result_digests` is deliberately NOT threaded into
-    `successful_summaries`'s per_query composer projection (that would touch
-    `utility_comparison.py`, out of this tempdoc's Chain-A scope) -- it is
-    evidence/sanitizer-tier only, so the composed record this digest covers is
-    byte-identical to before this change. Value captured with
-    `finalize_evidence([path], composed_at="fixture")["semantic_digest"]`
-    BEFORE any of the tempdoc 736 Chain A edits landed."""
+def test_historical_fixture_semantic_digest_repinned_after_624_itt_change():
+    """tempdoc 736 U1: `tool_result_digests` (D9) is evidence/sanitizer-tier only
+    and does not perturb this committed 48-row fixture's composed digest.
+
+    tempdoc 624 (2026-07-17 resource-exhaustion-as-failure) DELIBERATELY moved
+    this value (hence the re-pin): the ITT estimand now treats `other`-kind errors (this fixture's
+    18 bucketed `timeout` cells classify as `other` under the raw-marker
+    classifier -- fail-closed, since a bucketed class has lost the specific
+    exhaustion signal) as MISSING DATA and drops them from the paired accuracy,
+    where they were previously scored-incorrect-and-included. The comparability
+    layer is unchanged (those cells stay residual exclusions -- see
+    test_real_2026_07_12_rejected_fixture_reproduces_false_green_loss). New value
+    re-captured with `finalize_evidence([path])["semantic_digest"]` after the
+    2026-07-17 estimand change; the `outcome_rule` stamp is digest-excluded."""
     path = (
         Path(__file__).parent
         / "fixtures"
@@ -351,7 +354,7 @@ def test_historical_fixture_semantic_digest_unchanged_by_tool_result_digests_add
     )
     record = finalize_evidence([path], composed_at="fixture")
     assert record["semantic_digest"] == (
-        "2f555f661a9165fcb29a3f7d0ec10c70ca5ca28b8e4d47581361c430a464a100"
+        "3a4e0813df2257e474a4923bec00fea69f4f374e832e6131630aa151a536e0a1"
     )
 
 
