@@ -855,6 +855,18 @@ run-dir, entry immutability under adoption (mtime evidence); **weakened** claim 
 - **F-D:** publish docstring corrected to "near-atomic" (crash-only empty-slot window,
   self-healing, fail-closed for readers).
 
+**Post-fix live re-validation (2026-07-17 14:04-14:12):** clean-tree run published entry
+`ab17e483…` (fresh MISS under the new corpus-path-bound key; watched roots recorded in the
+attestation); a rerun with the tempdoc deliberately dirty — the exact condition that zeroed
+hit-rate pre-F-B — **hit and adopted with live confirmation in 18 s**. Two additional live
+findings from the re-validation pair, both fixed in the same pass: (1) a one-shot canary fired
+HTTP 504 at boot+11 s while the Worker warmed its search path, voiding a valid adoption — the
+fail-closed fallthrough handled it correctly (stop → wipe → fresh build, run exit 0, its first
+live firing), and the canary now retries transient 502/503/504/transport errors up to 90 s;
+(2) an intermediate rerun with uncommitted `scripts/jseval/` edits correctly MISSED (in-scope
+dirt moved the key) — the same confound class the audit flagged in run 3, now working as
+designed rather than as an accident.
+
 ### P.3 Evidence-gated follow-ups (recorded, deliberately NOT built — §M.5/M.6)
 
 1. **v2 scoped path-register engine pin** — build only if `would_have_hit_scoped_pin`
