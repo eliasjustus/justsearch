@@ -1,7 +1,7 @@
 ---
 title: "Public CI wall-clock attribution and advisory latency budgets"
 type: tempdoc
-status: "shipped — wall-clock attribution instrument + advisory budgets + on-demand `--run-id`/`--latest` entry (see 'Implementation closeout' at end). The Windows→Linux CI migration this instrument led also landed on this branch (~741s→~415s, ~44% wall-clock cut) though that optimization arguably belongs in its own tempdoc. Remaining work is hand-offs only: contributor/agent triage surface → 651; build-cache / windows-native-lane optimization → a 648-analogue. Not yet merged to main (no PR opened)."
+status: "MERGED to main as PR #39, commit 9c298399 (2026-07-17 reconciliation). [pre-merge status retained: shipped — wall-clock attribution instrument + advisory budgets + on-demand `--run-id`/`--latest` entry (see 'Implementation closeout' at end). The Windows→Linux CI migration this instrument led also landed on this branch (~741s→~415s, ~44% wall-clock cut) though that optimization arguably belongs in its own tempdoc. Remaining work is hand-offs only: contributor/agent triage surface → 651; build-cache / windows-native-lane optimization → a 648-analogue. Not yet merged to main (no PR opened).]"
 created: 2026-07-01
 updated: 2026-07-02
 related:

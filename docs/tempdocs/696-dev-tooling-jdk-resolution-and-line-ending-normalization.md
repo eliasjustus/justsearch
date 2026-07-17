@@ -1,7 +1,7 @@
 ---
 title: "Dev-tooling hardening: dev-runner JDK resolution + schema-writer line-ending normalization"
 type: tempdocs
-status: open — IMPLEMENTED + verified (Issue 1 JDK resolver + Issue 3 LF normalization; branch worktree-td696-dev-jdk-eol, no PR yet). Discovered follow-up: an always-true `updateSchemas` gate in build.gradle.kts (pre-existing; logged, not fixed). See "Implementation (2026-07-07)" at end
+status: MERGED to main as PR #101, commit 156088d8 (2026-07-17 reconciliation). [pre-merge status retained: open — IMPLEMENTED + verified (Issue 1 JDK resolver + Issue 3 LF normalization; branch worktree-td696-dev-jdk-eol, no PR yet). Discovered follow-up: an always-true `updateSchemas` gate in build.gradle.kts (pre-existing; logged, not fixed). See "Implementation (2026-07-07)" at end]
 created: 2026-07-07
 updated: 2026-07-07
 category: dev-tooling / build / windows
