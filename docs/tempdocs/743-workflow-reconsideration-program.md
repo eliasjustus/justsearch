@@ -1606,8 +1606,17 @@ pending founder approval), `7ee65238` (three refute-first review fixes), plus th
 - **Founder decisions 2026-07-17 (this session):** P-N and P-M(c) APPROVED as drafted -
   flags finalized in the three skills + mcp-dev-tools.md. V-A4 RESOLVED: no Remote Control;
   no beacon built now - the P-N two-list convention is the stall-visibility mechanism; a
-  local beacon remains a possible later item only if that proves insufficient. Still open:
-  P-F/P-C pilot sequencing; PR/publish go for this branch.
+  local beacon remains a possible later item only if that proves insufficient. P-F/P-C PILOT ARMED
+  2026-07-17 (owner approved wording + hardening): P-C exception wired into CLAUDE.md
+  model-routing; P-F LITE-CLASS declaration + frontmatter marker wired into the takeover
+  skill; both changes reach other sessions only when this branch merges, so the two-week
+  window starts AT MERGE (adoption lag is the settle period — resolves the sequencing
+  question naturally). Hardening note: a tier-register row was considered and dropped —
+  the lite-class rule lives in the takeover skill, outside the register-scanned always-
+  loaded files, and moving it there would violate the wave-2 no-new-always-loaded-prose
+  constraint; the grep-able frontmatter marker + verdict-line requirement deliver the
+  measurement enforcement instead. Still open: PR/publish go for this branch (which also
+  starts the pilot window).
 
 ## Non-goals
 
