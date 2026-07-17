@@ -825,7 +825,35 @@ Validation note (`interrogate-results`): run 3's first attempt **adopted** — r
 probe, not the product: `Start-Process` argument quoting ate the env assignment, so neither the
 selector nor the backend saw the knob (the adoption was therefore correct). Re-run with inherited
 env produced the designed miss. The module-level probe (`compute_selector` with only the knob
-differing → different keys) isolates the causal link.
+differing → different keys) isolates the causal link. **Audit correction (refute-first pass,
+2026-07-17):** even the retried run 3 does not isolate the knob live — the working tree had
+changed between runs 1 and 3 (uncommitted follow-up edits), so the live miss was jointly caused
+by the knob and the dirty-state hash; the module probe alone carries the isolation. (Under the
+§Q F-B fix this confound class is gone: those particular edits were under `scripts/jseval/`,
+still in scope, but routine docs dirt no longer moves the key.)
+
+### P.2b Independent refute-first audit + review fixes (2026-07-17)
+
+A second-agent audit attacked ten verification claims: **confirmed** default-off byte-identity
+(0 diff lines between the pre-change boot block and `_boot_and_wait`), miss→publish, 17-s
+confirmed adoption (single boot, no miss/publish lines), dirty-miss, publish-independent-of-
+run-dir, entry immutability under adoption (mtime evidence); **weakened** claim 4 as above; and
+**confirmed a real defect** the review then fixed (§Q):
+
+- **F-A (correctness):** cross-worktree adoption was reachable and polluting — content-only
+  `corpus_signature`, no corpus/path axis in the live identity, absolute watched-root paths
+  inside entries, path-based engine doc identity (`IndexingDocumentOps.java:137`), and
+  last-writer-wins republish compounding it. Fixed by binding `corpus_dir_path` into the
+  selector key (foreign-path entries can no longer be nominated; same-key races are now
+  same-path by construction), recording watched roots in the entry attestation at publish, and
+  a sixth confirm check comparing the adopted copy's `watched_roots.json` against them —
+  fail-closed on pre-fix entries (they orphan; prune collects them).
+- **F-B (utility):** the whole-tree dirty hash zeroed real-world hit rate (any tempdoc edit
+  missed). Scoped to `modules/ SSOT/ contracts/ scripts/jseval/` (jseval stays in scope —
+  corpus derivation code is not otherwise pinned, §I.5); collapsed untracked parent dirs are
+  expanded and filtered per file. Residual accepted risk documented in the module.
+- **F-D:** publish docstring corrected to "near-atomic" (crash-only empty-slot window,
+  self-healing, fail-closed for readers).
 
 ### P.3 Evidence-gated follow-ups (recorded, deliberately NOT built — §M.5/M.6)
 

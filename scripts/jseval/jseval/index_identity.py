@@ -50,6 +50,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -68,6 +69,11 @@ _SELECTOR_SCHEMA_VERSION = "index-selector.v1"
 # An untracked source file larger than this makes the whole identity
 # unavailable -- fail closed, never silently skip the file (751 sec O.4).
 _MAX_UNTRACKED_BYTES = 10 * 1024 * 1024
+
+# Canary warm-up budget: transient 502/503/504 or transport errors retry with
+# backoff up to this many seconds after boot (freshly-booted Workers 504 the
+# first search while the search path warms -- observed live 2026-07-17).
+_CANARY_WARMUP_SEC = 90.0
 
 # Working-tree dirt is scoped to these repo-relative prefixes (review fix F-B,
 # 2026-07-17 refute-first audit): dirt anywhere else (docs/, governance/,
@@ -911,15 +917,35 @@ def _confirm_canary(client, entry_doc, fail, checks) -> None:
         checks["canary"] = {"ok": False, "reason": "no query"}
         return
     payload = {"query": query, "mode": "hybrid", "limit": 5, "debug": True}
-    try:
-        resp = client.post("/api/knowledge/search", json=payload)
-    except httpx.HTTPError as e:
-        fail("canary.http: request failed (" + type(e).__name__ + ")")
-        checks["canary"] = {"ok": False, "reason": type(e).__name__}
-        return
-    if resp.status_code != 200:
-        fail("canary.http: HTTP " + str(resp.status_code))
-        checks["canary"] = {"ok": False, "reason": "HTTP " + str(resp.status_code)}
+    # Warm-up tolerance (live re-validation finding, 2026-07-17): a freshly
+    # booted backend can 504/502 the first search while the Worker warms its
+    # search path (reranker warm-up + model init take ~10-20s) -- observed
+    # live as a one-shot canary HTTP 504 at boot+11s that voided an otherwise
+    # valid adoption. Transient statuses and transport errors retry with
+    # backoff until the deadline; any 200 (or non-transient status) settles
+    # the check immediately. The retry only defers the verdict -- it never
+    # weakens it (a persistent failure still fails, with the last error named).
+    deadline = time.monotonic() + _CANARY_WARMUP_SEC
+    last_err = None
+    resp = None
+    while True:
+        try:
+            resp = client.post("/api/knowledge/search", json=payload)
+        except httpx.HTTPError as e:
+            last_err = "request failed (" + type(e).__name__ + ")"
+            resp = None
+        else:
+            if resp.status_code == 200:
+                break
+            last_err = "HTTP " + str(resp.status_code)
+            if resp.status_code not in (502, 503, 504):
+                break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(2.0)
+    if resp is None or resp.status_code != 200:
+        fail("canary.http: " + str(last_err))
+        checks["canary"] = {"ok": False, "reason": last_err}
         return
     try:
         body = resp.json()

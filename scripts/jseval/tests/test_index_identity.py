@@ -379,6 +379,67 @@ def test_confirm_watched_roots_both_absent_passes(tmp_path: Path):
     assert checks["watched_roots"]["ok"] is True
 
 
+class _FakeResp:
+    def __init__(self, status_code, body=None):
+        self.status_code = status_code
+        self._body = body or {}
+
+    def json(self):
+        return self._body
+
+
+def _canary_entry():
+    return {"attestation": {"canary": {"query": "q", "required_stages": ["fusion"]}}}
+
+
+def _good_canary_body():
+    return {
+        "totalHits": 3,
+        "searchTrace": {"stages": [{"id": "fusion", "status": "executed"}], "degradation": {}},
+    }
+
+
+def test_canary_retries_transient_504_then_passes(monkeypatch):
+    """Live finding 2026-07-17: freshly-booted Workers 504 the first search
+    while the search path warms; the canary must retry, not void the adoption."""
+    monkeypatch.setattr(ii, "_CANARY_WARMUP_SEC", 10.0)
+    monkeypatch.setattr(ii.time, "sleep", lambda s: None)
+    responses = [_FakeResp(504), _FakeResp(504), _FakeResp(200, _good_canary_body())]
+    client = type("C", (), {"post": lambda self, *a, **k: responses.pop(0)})()
+    failures: list = []
+    checks: dict = {}
+    ii._confirm_canary(client, _canary_entry(), failures.append, checks)
+    assert failures == []
+    assert checks["canary"]["ok"] is True
+
+
+def test_canary_persistent_504_fails_after_deadline(monkeypatch):
+    monkeypatch.setattr(ii, "_CANARY_WARMUP_SEC", 0.0)
+    monkeypatch.setattr(ii.time, "sleep", lambda s: None)
+    client = type("C", (), {"post": lambda self, *a, **k: _FakeResp(504)})()
+    failures: list = []
+    checks: dict = {}
+    ii._confirm_canary(client, _canary_entry(), failures.append, checks)
+    assert len(failures) == 1
+    assert "canary.http: HTTP 504" in failures[0]
+
+
+def test_canary_non_transient_status_fails_immediately(monkeypatch):
+    monkeypatch.setattr(ii, "_CANARY_WARMUP_SEC", 60.0)
+    calls = {"n": 0}
+
+    def post(self, *a, **k):
+        calls["n"] += 1
+        return _FakeResp(500)
+
+    client = type("C", (), {"post": post})()
+    failures: list = []
+    checks: dict = {}
+    ii._confirm_canary(client, _canary_entry(), failures.append, checks)
+    assert calls["n"] == 1
+    assert "canary.http: HTTP 500" in failures[0]
+
+
 # --------------------------------------------------------------------------- #
 # 4. compute_live_identity + confirm_adoption against the fake backend.
 # --------------------------------------------------------------------------- #
