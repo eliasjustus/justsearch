@@ -1111,6 +1111,147 @@ go/stop authorization state (finding D). Gaps not covered by the existing P-set:
 world-state index, an error-signature feedback loop, go/stop-state legibility. P-A2 (cheap-ack,
 deferred) covers part of deficit 2's cost surface.
 
+## Theorization — second proposal wave (2026-07-17, session a6d2af56; pre-design, nothing settled)
+
+Input: the transcript-evidence lane above + the founder's environment-centric reframe. This
+section explores solution *directions* for the three deficits + the go/stop axis; it authors no
+proposals and fixes no designs. A platform-capabilities probe (R4-refresh) should precede any
+design commitment — several directions below die instantly if the harness now ships the
+equivalent natively, and R4's probe was Phase 2's highest-value lane precisely because the
+platform moves monthly.
+
+### Four candidate framings (they suggest different builds)
+
+1. **Agent ergonomics** — treat agents as the environment's *users*; apply UX vocabulary
+   (discoverability, feedback, affordances). Inverts the historical emphasis: the workflow has
+   invested heavily in discipline (rules constraining agents) and comparatively little in
+   ergonomics (environment informing agents).
+2. **A distributed system missing its OS services** — sessions are concurrent processes over
+   shared resources, and the system lacks a process table (session/worktree index), syslog
+   (shared error memory), init/reaper (stranded-work collection), and IPC (the founder is the
+   message bus). Suggests building minimal "kernel services." Risk: this framing flatters
+   overbuilding — the system serves 3-4 concurrent sessions and one human; the Gen-1/Gen-2
+   analytics graveyard shows what happens to infrastructure sized beyond its consumers.
+3. **Legibility asymmetry** — the system is highly legible *downward* (agents receive rules,
+   registers, fire-time hints) and nearly illegible *upward/sideways* (founder can't see
+   session state; sessions can't see each other). Suggests the cheapest wins are upward-facing
+   surfaces, not more downward rules.
+4. **Vigilance-priced-per-turn vs reliability-priced-once** — the economic frame: discipline
+   and insurance cost every turn forever; environment reliability costs once and deletes a
+   defensive behavior from every future session. Compounding argument for reliability work.
+
+Working stance: frame 4 is the *selection criterion*, frames 1/3 are the *design lens*, frame 2
+is a vocabulary to borrow cautiously — explicitly not a mandate to build an agent OS.
+
+### Deficit 1 (nothing queryable) — directions
+
+- **D1-a: World-state as a pure function of disk.** One CLI that *computes* (never stores) the
+  operational picture on demand: worktree inventory with staleness verdicts (dirty / ahead /
+  pushed / PR state / last activity), session→worktree→transcript mapping (absorbing the
+  per-worktree project-dir quirk that lost the founder their own session), tempdoc-number
+  allocation across ALL worktrees at pick time (closing the collision detector's structural
+  blind spot), stranded-finished-work detection. No daemon, no cache, no stored index → nothing
+  to go stale, near-zero graveyard risk; survival comes from wiring into moments that already
+  exist (/start orientation, EnterWorktree, publish). Key property: computed state can't lie.
+- **D1-b: Founder-facing dashboard artifact.** Higher value if it works (it addresses the
+  founder-as-index problem directly), but historically the worst survival record (Gen-1
+  dashboard died unconsumed). Only viable as a projection of D1-a regenerated at a workflow
+  moment, never as its own layer.
+- **D1-c: Platform-native.** Teams' shared task lists / session listings may already cover
+  parts. Probe before building anything.
+- Honest limit: the routine re-derivation cost is modest (micro-sessions are cheap); the real
+  value is the *risk tail* (week-lost work, collisions) plus founder-attention relief — mostly
+  unmeasurable by the D-1 dashboard. This class would be adopted on judgment, not metrics.
+
+### Deficit 2 (nothing reliable enough to skip insuring) — directions
+
+- **D2-a: Make silence legible instead of making watchers perfect.** The founder's monitor
+  experience is a *silent-tail* problem; perfect reliability is unattainable, but silence can
+  be made distinguishable from death: long-running work writes a heartbeat artifact; ONE
+  fallback checks the heartbeat, not the work; a stale heartbeat is an explicit, escalatable
+  event. Converts "waiting indefinitely" into a legible failure state.
+- **D2-b: Notification design: failure-triggered fast path, coarse progress.** Per-step acks
+  had no decision content (five one-liner turns in 18 min at ~550k cache reads each), but
+  fast-path *failure* notification is genuinely valuable overnight (a 30-min tick can waste 30
+  GPU-minutes on a dead run). Direction: notify on failure/completion/milestone; progress goes
+  to disk and is read on the coarse tick. The insurance stays; the premiums drop an order of
+  magnitude.
+- **D2-c: Wakeup hygiene.** Arm one fallback per wait; cancel it when the primary signal
+  arrives (observed: 14 armed / 0 needed / 1 stale-fired-after-closeout). Behavioral (~85%),
+  possibly assisted by a fire-time hint when a stale wakeup fires.
+- **D2-d: Supervisor extraction.** Move babysitting out of the expensive orchestrator context
+  entirely (dedicated cheap watcher session/cron that escalates on anomaly only). Attacks the
+  cost at its root (acks stop paying main-session cache prices) but adds topology — a Phase-5
+  shaped change, not plumbing. Recorded as a direction, not favored yet.
+- **D2-e: Cheap-ack (existing P-A2, deferred)** — platform-dependent; unchanged status.
+- Hidden assumption to keep visible: *some* insurance is correct. The design target is not
+  zero premiums; it's premiums proportional to the silent-tail probability.
+
+### Deficit 3 (nothing learns) — directions
+
+- **D3-a: Extend the alive 727 loop to mechanical signatures.** The friction miner already
+  exists and is consumed; the extension is a signature census (recurring tool-error patterns
+  with counts) feeding the existing hook layer. Semi-automatic, not autonomous: miner proposes,
+  a human/agent session disposes. Survival odds good because both ends (miner, hooks) are
+  already alive.
+- **D3-b: Fix classes at the root instead of hinting.** Several signatures trace to single
+  environmental roots: the unreachable scoop shims force full-path invocations, which cause the
+  quoting/`&` errors — fixing shim reachability once could delete a whole class; a global
+  `PYTHONUTF8=1` kills the cp1252 class; a `gh` exit-code-normalizing wrapper kills the
+  false-failure class. Root fixes beat hints where they exist (fix-root-causes, applied to the
+  environment itself).
+- **D3-c: Rewrite-hooks for pure-syntax classes.** For deterministic signatures a PreToolUse
+  hook could *correct* rather than block. Powerful but double-edged (silent mutation of agent
+  commands); only for provably-semantics-preserving rewrites, if ever.
+- Candidate invariant: **a deterministic error signature recurring across sessions is
+  infrastructure debt, not agent error** — chargeable to the environment, with a countable
+  metric (signature recurrence should ratchet down).
+
+### Go/stop axis — directions (visibility only; D-2 untouched)
+
+- **G-a: Explicit blocked/proceeding enumeration.** When a session stops for founder input, it
+  must enumerate: BLOCKED-ON-FOUNDER (what, why), PROCEEDING (what continues meanwhile), so
+  over-blocking ("everything is waiting") becomes visibly wrong at the moment it's written.
+  Skill/closeout-level convention.
+- **G-b: Stall beacon.** A session ending its turn blocked on the founder emits an explicit
+  founder-visible signal (what's awaited) instead of going silent — converts the 24-min silent
+  idle into a legible wait.
+- **G-c: Arming step for enumerable big actions.** Expensive/irreversible actions (overnight
+  GPU windows) require an explicit, recent founder token — mechanical where the action is
+  enumerable; the general authorization-interpretation class stays founder-arbitrated (D-2).
+
+### Cross-cutting risks and hidden assumptions
+
+1. **Graveyard law is the binding constraint** (finding 2, Phase 1): every artifact names the
+   workflow moment that re-runs it, and extending alive systems beats new layers. D1-a/D3-a are
+   deliberately shaped as extensions/pure functions for this reason.
+2. **Right-sizing:** 3-4 sessions, one founder. Conventions + a few pure functions + 2-3 hooks
+   is the correct order of magnitude; anything resembling a service belongs to a future scale.
+3. **Platform drift:** monthly harness releases have repeatedly obsoleted local workarounds
+   (R4). The probe gates design; wait-for-platform is a legitimate disposition for D2-e and
+   parts of D1.
+4. **Steelman against the whole wave:** the founder-as-bus and founder-as-index roles *work
+   today* at current scale and cost little routinely; the argument for change is the risk tail
+   and the founder's own stated frame, not measured routine waste. If the founder prefers, most
+   of Deficit 1 can be deferred until scale forces it — recorded as a genuine option.
+5. **Self-assessment bias, standing:** an agent theorizing about its own environment will
+   over-attribute failures to the environment (the flattering direction). The evidence lane's
+   finding D (both stop/go directions are agent miscalibration) is the counterweight; G-a/G-b
+   make that class visible rather than explaining it away.
+
+### The broader principle candidate
+
+The repo already solved this problem class once, for code: one canonical authority, projections
+derived from it, drift gates between them (execution-surfaces register, SSOT catalogs,
+ADR-0043). The three deficits are the same shape in the *operational* plane: worktree state,
+session state, error history, and authorization state each live as scattered copies (files +
+founder memory + per-session re-derivation) with no canonical computable source. The candidate
+invariant, stated for later scrutiny rather than adoption now: **every operational fact an
+agent or the founder routinely needs should be computable from one place, on demand, by a pure
+function of disk state — never stored in a second authority, never resident only in a human.**
+If Phase 3's second wave survives review, it is likely this invariant wearing different clothes
+per deficit.
+
 ## Non-goals
 
 - Re-running 727's tactical fix loop (that instrument keeps running independently).
