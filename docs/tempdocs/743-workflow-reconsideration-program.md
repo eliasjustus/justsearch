@@ -1,7 +1,7 @@
 ---
 title: "743 — Workflow reconsideration program: fundamentally re-evaluating the agent development workflow"
 type: tempdocs
-status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy. BASELINE RECOMPUTED 2026-07-16 by tempdoc 745 (session 805279a4) after it fixed 7 verified bugs in the cost parser this program was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline SURVIVES; read prediction-1 against 84.0%, not 85.1%). Handoff item 4 ('OTel reservoir is feeding') was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it — no month-scale OTel data predating 2026-07-16 exists. FRESH EVIDENCE LANE 2026-07-17 (session a6d2af56, worktree takeover-743): founder-directed independent 11-session raw-transcript pass, deliberately derived without relying on this tempdoc's prior conclusions, plus a founder reframe (no specific scarcity; environment-centric: 'the agents themselves might be the ones encountering issues') — see §'Independent transcript-evidence lane (2026-07-17)'. SECOND-WAVE THEORIZATION written same day (§'Theorization — second proposal wave'): three environment deficits (queryable world-state / reliability-vs-insurance / learning loop) + go/stop visibility, unification stance settled (paved usage surfaces, consolidation only under a live consumer, no standalone refactor). RESEARCH PASS COMPLETE same day (3 refute-first lanes, §'Research pass — second wave'): premise WEAKENED-not-refuted — durable core narrowed to exec/encoding-normalization + world-state query; transcript-reader/watcher demoted to deletable adapters over native surfaces; error-hint loop gated to fire-time hooks under the existing ratchet; PYTHONUTF8-machine-wide corrected to scoped PYTHONIOENCODING; gh 0/1/8 bitwise contract + pre-poll race grounded. NEXT: /design authors the second-wave proposals under these constraints; verification items V-A1..V-A5 open; P-F/P-C pilot sequencing vs environment slices is an open founder call."
+status: "open — Phase 1 merged (PR #209); founder GO on phases 2-6 confirmed 2026-07-16; Phase 2 IN PROGRESS (session f7580e17, worktree 743-phase2): research sweep + decomposition + overhead taxonomy. BASELINE RECOMPUTED 2026-07-16 by tempdoc 745 (session 805279a4) after it fixed 7 verified bugs in the cost parser this program was measured with — total $21,410 -> ~$22,100, cost/merge $104.95 -> ~$106.25, split 85.1/14.9 -> 84.0/16.0 (headline SURVIVES; read prediction-1 against 84.0%, not 85.1%). Handoff item 4 ('OTel reservoir is feeding') was FALSE and is corrected: the reservoir destroyed itself every few minutes until 745 F-2 fixed it — no month-scale OTel data predating 2026-07-16 exists. FRESH EVIDENCE LANE 2026-07-17 (session a6d2af56, worktree takeover-743): founder-directed independent 11-session raw-transcript pass, deliberately derived without relying on this tempdoc's prior conclusions, plus a founder reframe (no specific scarcity; environment-centric: 'the agents themselves might be the ones encountering issues') — see §'Independent transcript-evidence lane (2026-07-17)'. SECOND-WAVE THEORIZATION written same day (§'Theorization — second proposal wave'): three environment deficits (queryable world-state / reliability-vs-insurance / learning loop) + go/stop visibility, unification stance settled (paved usage surfaces, consolidation only under a live consumer, no standalone refactor). RESEARCH PASS COMPLETE same day (3 refute-first lanes, §'Research pass — second wave'): premise WEAKENED-not-refuted — durable core narrowed to exec/encoding-normalization + world-state query; transcript-reader/watcher demoted to deletable adapters over native surfaces; error-hint loop gated to fire-time hooks under the existing ratchet; PYTHONUTF8-machine-wide corrected to scoped PYTHONIOENCODING; gh 0/1/8 bitwise contract + pre-poll race grounded. DESIGN COMPLETE same day (§'Design — second proposal wave P-J…P-N'): P-J world-state query (durable; one-scanner-two-consumers extraction from check-tempdoc-numbers), P-K exec substrate (durable; gh 0/1/8 + pre-poll, scoped PYTHONIOENCODING; paved-path + fire-time redirect delivery), P-L signature census extending 727 (ratchet-gated), shared transcript-store lib (adapter; opportunistic migration of 7 readers), P-M supervision hygiene (drop double insurance, one watcher helper, notify-on-failure convention; coordinate with in-flight 750), P-N go/stop visibility (convention tier). Every component classed durable-or-adapter with a named retirement condition. NEXT: founder review of P-N/P-M(c) + the wave's dispositions; V-A1..V-A5; P-F/P-C pilot sequencing still an open founder call."
 created: 2026-07-16
 author: agent session f7580e17 (Fable 5)
 category: agent-process / meta / workflow-engineering
@@ -1387,6 +1387,134 @@ design. V-A3: audit loop-invoked skills for model-invocability (silent-degradati
 V-A4: confirm whether Remote-Control mobile push is acceptable to the founder as the G-b stall
 beacon before building anything. V-A5: the `~/.claude/projects` layout is undocumented — every
 instrument relying on it needs a fallback or a version-pinned assumption note.
+
+## Design — second proposal wave P-J…P-N (2026-07-17, session a6d2af56; general level, per Lane-C constraints)
+
+Every component carries its durability class (Lane C: durable = fixes a deterministic platform
+defect a model can't runtime-patch; adapter = thin, deletable over native surfaces) and a
+retirement condition. Codebase recon confirmed the extend-don't-replace facts cited inline.
+
+### P-J — World-state query surface (durable core)
+
+One entry point (a single CLI report; no daemon, no stored state — a pure function of disk +
+best-effort gh) answering: **worktree staleness** (dirty / ahead / unpushed / PR state / age,
+with an explicit stranded-finished-work verdict), **session↔worktree↔transcript mapping**
+(adapter sub-part: prefer the native per-project sessions-index where present; the empirical
+`~/.claude/projects` layout is undocumented → version-pinned fallback, V-A5), **tempdoc-number
+allocation at pick time**, and **stack ownership** (delegates to the existing
+`quick_health`/ownership authority — not duplicated).
+- **Extends, not replaces:** `scripts/ci/check-tempdoc-numbers.mjs` already scans every
+  registered worktree + origin; its gaps are the *moment* (merge-time only, nothing runs at
+  pick time) and the reported in-flight-vs-merged filter blind spot. Design: extract its
+  scanner into a shared lib — **one scanning module, two consumers** (the unchanged CI gate +
+  the new pick-time query). The gate's behavior does not weaken (D-2 clean).
+- **Wiring (survival law):** /start orientation, the tempdoc-pick moment in takeover/theorize
+  skills, publish (staleness sweep), session-closeout.
+- **Orphans:** none deleted; absorbs the hand-rolled staleness-sweep procedure as a tool.
+- **Falsifier:** a number collision recurs despite the pick-time query, or the tool's wired
+  moments go unconsumed for two weeks → revisit or delete. **Retirement:** platform ships a
+  cross-session/worktree index covering these facts.
+
+### P-K — Exec substrate (durable core; ≤2-3 entry points per the tool-count ceiling)
+
+(a) a `gh` runner encoding the documented 0/1/8 bitwise exit contract plus the post-push
+check-registration pre-poll (mechanizing 746's shipped prose guidance) and owning resolved-path
+invocation (so agents never hand-type quoted scoop paths — the birthplace of the `&`/quoting
+class); (b) an interpreter runner (python/node) with scoped `PYTHONIOENCODING=utf-8` (per Lane
+B: the minimal official fix; machine-wide PYTHONUTF8 rejected) and argument-vector passing that
+eliminates inline-quoting traps.
+- **Delivery shape — paved path + fire-time redirect:** the wrapper alone won't be adopted;
+  a PreToolUse hint on signature match redirects to it at the moment of error, conforming to
+  bash-guard's existing redirect pattern (cat→Read) and the jseval precedent. Native
+  `updatedInput` rewriting exists (Lane A) but starts OFF: hint-tier first; rewrite-tier only
+  for provably-semantics-preserving classes after a live probe, if ever.
+- **Orphans (same-PR sweep):** the gh-watch guidance prose duplicated across publish skill /
+  agent-guide / ci-triage becomes a pointer to the wrapper.
+- **Falsifier/metric:** P-L's signature census — the `&`/quoting, cp1252, and gh-exit classes
+  ratchet toward zero across windows, or the wrapper isn't earning its slot.
+
+### P-L — Error-signature feedback loop (extension of the alive 727 miner; ratchet-gated)
+
+A mechanical-signature census added as an output of the existing friction-mining pass
+(signature, count, sessions, sample). Semi-automatic by design: the census *proposes*; a
+session *disposes* each above-threshold signature as exactly one of root-fix (P-K class) /
+fire-time hint (new hook row: agent-hooks register + tier-register + hook-integrity gate, as
+today) / explicit wontfix. Census output **never** lands in always-loaded prose (Lane C:
+documented self-poisoning; the existing always-loaded-budget ratchet is the guard — the
+literature's prescribed mitigation, already built here).
+- Also homes the rescued T1 `overhead-taxonomy.mjs` and the spine condenser from this lane's
+  method — as consumers of the shared transcript substrate below.
+- **Falsifier:** two consecutive mining passes whose dispositions nobody implements → the loop
+  is dead weight; stop running the census.
+
+### Shared substrate (adapter class): `lib/transcript-store`
+
+Discovery + line-stream + turn model over local transcripts, consolidating the seven
+independent readers (analyze-session, baseline-economics, evaluate-session, friction-timeline,
+mine-friction, cost-session, context-attribution — `lib/transcript-cost.mjs` is the shape
+precedent). **Migration is opportunistic, never big-bang:** each wave slice that touches a
+reader migrates that one reader (consumer attached to every abstraction from day one).
+Explicitly deletable-adapter class: native session indexing may absorb discovery
+(**retirement:** documented native store + index covering discovery → shrink the lib to a
+parser).
+
+### P-M — Supervision & waiting hygiene (adapter/convention class)
+
+(a) **Drop double insurance:** the harness self-arms a ~20-min loop fallback (v2.1.202) —
+skills guidance (loop / dev-stack / publish) stops prescribing manual always-on fallbacks;
+manual wakeups only where the native fallback doesn't apply, with a cancel-on-primary
+convention (candidate fire-time hint: a wakeup that fires with nothing pending names the
+convention). (b) **One reusable watcher/heartbeat helper** for long runs — markers + heartbeat
++ stale-heartbeat escalation ("silence made legible") — replacing per-session hand-rolled
+watchers. Explicitly a 90-day artifact; **V-A1 (resume-orphaning fix state) gates how much to
+build; retirement:** platform restores background tasks on resume + emits failure events.
+(c) **Notification design convention:** failure/completion on the fast path, progress to disk,
+read on the coarse tick. **Coordination, not fork:** in-flight tempdoc 750 (release-loop
+scheduling/diagnostics) is a prospective consumer of (b) — align before either side builds a
+second watcher.
+- **Metric:** WAITING share + wakeup/ack counts in the next window (existing instruments;
+  the rescued taxonomy script is the measurement dependency).
+
+### P-N — Go/stop visibility (convention tier; smallest; D-2 untouched)
+
+Stop-turns that await founder input must enumerate BLOCKED-ON-FOUNDER (what, why) vs
+PROCEEDING (what continues) — embedded in the skills where stop-turns are authored
+(session-closeout, takeover, plan). Enumerable big actions (overnight GPU windows) get an
+explicit arming step riding the existing dev-stack lease machinery. The stall beacon builds
+NOTHING until V-A4 answers whether native Remote-Control push ("needs a decision from you")
+covers it. Visibility only; decision authority unmoved.
+
+### Dispositions & sequencing
+
+P-J, P-K, P-L, P-M(a)(b) are plumbing under principle 6's exception — no pilots; each ships as
+its own bounded slice through the full publish protocol with refute-first review. P-N and
+P-M(c) touch founder-facing conventions → **founder review before adoption**. Verification
+items V-A1..V-A5 front-load the slices they gate. This wave is sequencing-independent of the
+approved P-F/P-C pilots (that call remains open). Nothing in the wave weakens a guard.
+
+### Reach judgment (principles; recognized, not built beyond present need)
+
+1. **Operational facts get the register treatment code already has** — one computable home,
+   consumers as projections. Conformance: stack ownership already conforms (quick_health);
+   tempdoc numbers currently *violate* it (knowledge computed only merge-time in a CI-only
+   script — fixed by the one-scanner-two-consumers extraction); session inventory violates it
+   (resident in founder memory). **Earns its keep if:** collisions stop recurring,
+   stranded-work discovery latency drops from weeks to days, and founder-as-index requests
+   disappear from transcripts. **Retire when:** the platform's native indexes cover the facts.
+2. **A path isn't paved until the environment redirects onto it at the moment of need** — a
+   tool without a fire-time redirect is a suggestion. Existing conformers: bash-guard's
+   cat→Read, dataset-cache-hint→jseval. Applies to every P-K/P-J surface. **Earns its keep
+   if:** hand-rolled instances of a paved capability go to ~zero in the signature census.
+   **Retire (per redirect) when:** its signature count is zero for a full window, or native
+   absorption lands.
+3. **Insurance proportional to the silent tail** — buy legible failure before buying
+   redundancy. Applies to all waiting/supervision surfaces; would also apply to any future
+   CI-watch design. **Earns its keep if:** armed-wakeup and ack-turn counts fall with zero
+   missed-dead-run incidents. **Retire when:** platform failure-legibility (resume restoration
+   + failure events) makes local heartbeats redundant.
+4. Meta-rule adopted from Lane C for this wave and future waves: **every new component
+   declares durable-or-adapter and its retirement condition at design time** — a component
+   that can't name its retirement condition doesn't ship.
 
 ## Non-goals
 
