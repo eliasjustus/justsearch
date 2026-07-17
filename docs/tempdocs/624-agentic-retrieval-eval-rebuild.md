@@ -4732,3 +4732,51 @@ per-arm timeouts (amendment 1 — shipped #232); (2) single-tier --agent-env ove
 non-haiku campaign (amendment 2); (3) the 751 index-cache chain-integration spec (three live
 conflicts; campaign reverted to fresh-build; findings own the §P.3.5 follow-up); (4) the
 wrapper/orphan port-contention classes (watched-root gate catch + the mid-death relaunch race).
+
+## Confirmatory campaign pre-registration (2026-07-17 ~17:45, BEFORE any cell runs; founder-authorized "full sequence", decisions delegated)
+
+The exploratory campaigns (Step-2, Phase-2) found the story; every strong record carries an
+asterisk (post-hoc outcome rule, budget confound, single seed). This campaign is the
+zero-asterisk confirmation: every methodological fix is now PRE-registered in the standing
+harness, and the claim policy is activated (this same PR) BEFORE the run with the exact
+required matrix and thresholds — textbook exploration → confirmation.
+
+**Claim policy activation (founder-delegated, this commit):** `utility-claim-policy.v1.json` →
+`status: active`, `policy_id: agent-utility-public-v1`, required_strata = exactly the four
+confirmatory strata below. Thresholds: minimum_seeds 3 (= harness SEED_FLOOR), paired ≥ 54
+(90% of the 60-pair complete matrix), residual exclusion ≤ 0.15, retention ≥ 0.7, Jaccard ≥
+0.5, α = 0.05, adoption ≥ 0.9 (the F-027 placebo class, mechanical), accuracy noninferiority
+margin 0.10, token equivalence ±15k, cost equivalence ±$0.05. The drafted 5-seed/100-pair
+placeholders were never ratified and were sized for small-delta power the measured effects
+don't need; 3/54 are independently principled (harness floor; complete matrix at 3 seeds).
+Set BEFORE the run — no retroactive promotion is possible (per-dataset exploratory records can
+never match the four-stratum exact gate, by design).
+
+**Matrix (immutable):** haiku, A (file tools) vs B (A + JustSearch MCP), seeds {0,1,2}, 20
+committed queries, four certified strata: en-legal-clerc {1k,10k} verbose + en-email-enron-raw
+{1k,10k} verbose = 480 cells. Per-cell max_budget $0.50; equalized-max per-arm timeouts;
+exhaustion-as-failure ITT (standing, pre-registered); fresh calibrations (engine sha moved).
+
+**Claim-grade identity (the corpus-root increment, this PR):** every run attaches
+`--corpus-certification` verified against the DATASET-ROOT signature via the new
+`--corpus-root` axis, while `--corpus-dir` stays the leak-safe exploded subdir (positional
+answer-key safety unchanged). This populates stratum identity end-to-end; runs execute from a
+CLEAN committed tree (the policy's clean_source_checkout requirement) — all campaign tooling is
+committed in this PR before launch.
+
+**Budget:** measured per-dataset estimates sum ≈ $89 + fresh calibrations ≈ $10 → hard cap
+**$100**, running guard with max-extrapolation across the four datasets. Because the policy
+demands the EXACT four-stratum matrix, there is no partial-value degradation ladder: projected
+over-cap → ABORT the whole campaign and report (a three-stratum record cannot promote, so
+partial spend buys nothing).
+
+**Composition & verdict:** one combined record from all four log dirs via
+`utility-recompose --log-dir ×4` (contamination-class private-synthetic, tier upgraded per the
+record's own gates) → the claim verdict evaluates against the active policy mechanically.
+Index-cache (751 seam, now landed): the chain warms each dataset via `jseval index-cache warm`
+and adopts via the wrapper — first builds publish entries, any retry adopts; this campaign is
+also the first real hit-rate dataset for 751's v2 trigger.
+
+**Supervision:** detached chain + monitor + 30-min wakeup loop; founder asleep — fully
+autonomous per explicit authorization ("proceed autonomously with 1 and 2 … authorized to run
+the full sequence", 2026-07-17 ~17:00).

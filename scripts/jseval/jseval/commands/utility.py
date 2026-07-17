@@ -267,6 +267,12 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
 @click.command("utility-run")
 @click.option("--queries", required=True, type=click.Path(exists=True), help="MultiHop-RAG-format queries JSON.")
 @click.option("--corpus-dir", required=True, type=click.Path(exists=True), help="Corpus dir (for condition-A file tools).")
+@click.option("--corpus-root", default=None, type=click.Path(exists=True, file_okay=False),
+              help="Dataset ROOT (corpus.jsonl + qrels/) whose signature the "
+                   "--corpus-certification verifies against (tempdoc 624 confirmatory "
+                   "pre-registration, 2026-07-17). --corpus-dir stays the leak-safe "
+                   "staged/agent subdir and MUST be this root's immediate child. Omit = "
+                   "today's single-axis behavior (identity from --corpus-dir).")
 @click.option("--mcp-config", default=None, type=click.Path(exists=True), help="JustSearch MCP config (for B/C).")
 @click.option("--model", default="haiku", show_default=True)
 @click.option("--conditions", default="A,C", show_default=True, help="Comma list, e.g. A,C.")
@@ -294,7 +300,7 @@ def cmd_utility_compose(ctx, runs, dataset, corpus_signature, model, search_conf
 @click.option("--log-dir", required=True, type=click.Path(), help="Inspect log dir (re-run = resume).")
 @click.option("--output-dir", default=None, type=click.Path())
 @click.pass_context
-def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, seeds, concurrency,
+def cmd_utility_run(ctx, queries, corpus_dir, corpus_root, mcp_config, model, conditions, seeds, concurrency,
                     max_queries, max_budget, timeout_s, max_turns, calibration, agent_env_specs,
                     dataset, corpus_signature,
                     corpus_certification,
@@ -366,6 +372,7 @@ def cmd_utility_run(ctx, queries, corpus_dir, mcp_config, model, conditions, see
         max_turns=max_turns,
         cli_version=cli_version,
         corpus_dataset=dataset, corpus_signature=corpus_signature or dataset,
+        corpus_root=(os.path.abspath(corpus_root) if corpus_root else None),
         search_config_cohort_key=search_config_key,
         corpus_certification=corpus_certification,
         agent_env=agent_env or None,
