@@ -581,7 +581,44 @@ else {
 }
 
 # ---------------------------------------------------------------------------
-# Step 3.6: Golden-query search-parity capture (capture-only, no judgment)
+# Step 3.6: Persist the service logs past sandbox teardown (tempdoc 750)
+# ---------------------------------------------------------------------------
+# Same reason as traces.ndjson above, and the same failure already bit us: the
+# logs live in the ephemeral data dir and die with the VM. Round 4's logs exist
+# only because a human hand-copied them; rounds 5 and 6 archived none, and a
+# later host-side investigation into a real search-quality finding had to fall
+# back to round 4's -- a round's own logs are the single richest attribution
+# artifact it produces, and it was throwing them away. (Tempdoc 750 P1, "fail
+# with attribution": a failure must carry enough evidence for a cheaper tier to
+# root-cause it. That is worth nothing if the evidence is deleted at teardown.)
+# Best-effort per file: a missing/locked log is logged, never fatal.
+
+$logsSrcDir = Join-Path -Path $DataDir -ChildPath "logs"
+$logsDstDir = Join-Path -Path $EvidenceDir -ChildPath "logs"
+$logsCopiedCount = 0
+if (Test-Path -LiteralPath $logsSrcDir) {
+    if (-not (Test-Path -LiteralPath $logsDstDir)) {
+        New-Item -ItemType Directory -Path $logsDstDir -Force | Out-Null
+    }
+    foreach ($logFile in Get-ChildItem -LiteralPath $logsSrcDir -File -ErrorAction SilentlyContinue) {
+        try {
+            Copy-Item -LiteralPath $logFile.FullName `
+                -Destination (Join-Path -Path $logsDstDir -ChildPath $logFile.Name) `
+                -Force -ErrorAction Stop
+            $logsCopiedCount++
+        }
+        catch {
+            Write-Log "Failed to copy log $($logFile.Name): $($_.Exception.Message)"
+        }
+    }
+    Write-Log "Copied $logsCopiedCount log file(s) into evidence dir (survive teardown for host-side attribution)."
+}
+else {
+    Write-Log "logs dir not found at $logsSrcDir -- no service logs archived this round."
+}
+
+# ---------------------------------------------------------------------------
+# Step 3.7: Golden-query search-parity capture (capture-only, no judgment)
 # ---------------------------------------------------------------------------
 # Parity-with-dev search-quality harness (owner design): if a golden query set
 # is staged next to this script, POST each query to /api/knowledge/search
