@@ -1603,9 +1603,11 @@ pending founder approval), `7ee65238` (three refute-first review fixes), plus th
   despite the no-git-mutation brief (shared stash stack risk; no damage — verified only the
   725 session's tagged entry present). Later briefs carried an explicit stash prohibition;
   worker briefs should always name it.
-- **Remaining founder items:** P-N wording (3 draft-flagged skill edits) + P-M(c)
-  notify-on-failure convention approval; V-A4 (enable Remote-Control push vs build a beacon);
-  P-F/P-C pilot sequencing; and the PR/publish go for this branch.
+- **Founder decisions 2026-07-17 (this session):** P-N and P-M(c) APPROVED as drafted -
+  flags finalized in the three skills + mcp-dev-tools.md. V-A4 RESOLVED: no Remote Control;
+  no beacon built now - the P-N two-list convention is the stall-visibility mechanism; a
+  local beacon remains a possible later item only if that proves insufficient. Still open:
+  P-F/P-C pilot sequencing; PR/publish go for this branch.
 
 ## Non-goals
 
