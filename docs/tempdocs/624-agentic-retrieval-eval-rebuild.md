@@ -4791,3 +4791,73 @@ conservative formula tight (~$46 → ~$60 → ~$91 → ~$91, all under $100). Ma
 policy unchanged (the required-strata gate is order-independent); legal-1k's banked calibration
 deleted so its max cannot poison the early-glob projection (~$2-3 re-pilot). ~$3 of pilot spend
 consumed by the aborted attempt.
+
+## Confirmatory campaign RESULTS (2026-07-18, 23:43–04:05; autonomous overnight, founder asleep)
+
+Evidence: `scripts/jseval/624-run-2026-07-18-confirmatory/` (5 per-run records incl. the two
+voided email-1k runs, the policy-evaluated combined record, all calibrations, both chain
+scripts). Launched 23:43 on a clean tree at public squash `079e63e5`, cheapest-first; all four
+strata ran to completion; 600 cells total (480 planned + 120 rerun), every cell resolved
+`claude-haiku`, 120/120 observed per stratum, **0 excluded cells, paired retention 1.0,
+adoption 1.0** — the cleanest data-quality profile of the program.
+
+**Claim verdict: `rejected` / `inconclusive`. No promoted claim.** All three failing gates are
+infrastructure-identity, not data:
+
+1. **`required_strata_exact`** — the email-1k stratum was voided twice. Incident #5: the v4
+   chain adopted a banked 23:33 calibration pinned at `92ec2e6d` (launch-attempt-3 leftover)
+   into the `079e63e5` run → search-config cohort split; recompose refused. Forensic proof
+   against the live backend: swapping ONLY `git_sha` in the manifest reproduces both keys
+   exactly (`ab705cf9…` ↔ `f1566eff…`) — label-only split, live components identical. Remedy
+   was a clean stratum rerun (chain-confirm-r1, $9.36, guard `known=5/5 sum=$92.09` under the
+   $100 cap), NOT a hand-patched identity. Incident #6: the rerun was itself voided —
+   Claude Code auto-updated 2.1.212→2.1.214 mid-night (splitting `agent_cohort_key`, which
+   hashes `cli_version`) and the rerun launched with the then-untracked chain script in-tree
+   (`git_dirty`). Completing the cohort would require downgrading the founder's shared global
+   CLI while other sessions run on it — out of bounds autonomously; stopped there (the two
+   independent email-1k runs agree scientifically: both accuracy-null).
+2. **`source_identity_complete`** — compose bug, not a capture gap: every per-run record
+   carries `exposure_config.exposure_mode="deferred"` + full `mcp_initialize_identity`, and
+   the cross-corpus compose drops them (observation filed; fix cannot change tonight's verdict
+   so it was not hot-patched at 4am).
+3. **`verified_tool_surface`** — structurally unsatisfiable as ratified: the per-cell surface
+   hash comes from the SDK's known-flaky `get_mcp_status()` (675/725), which returned nothing
+   for 4–12 of 60 B-cells per stratum (~8%). A gate requiring 100% of ~240 B-cells verified has
+   ≈0 success probability at that flake rate. **This means no run of this campaign could ever
+   have promoted** — the two options (capture hardening with retry/fallback evidence vs. a
+   policy amendment to a rate threshold + single-hash consistency) are a founder decision, since
+   the policy is ratified.
+
+Fourth structural finding: per-stratum outcomes cap at **`adoption-only`** even where ITT
+accuracy benefit is significant, because exhausted cells lack usage evidence → the efficiency
+intervals the `benefit` outcome requires are unavailable ("incomplete ITT usage evidence").
+With gates 1–3 fixed the record would have promoted as `accepted`/`adoption-only` — not yet a
+numeric-benefit claim. Filed alongside the others.
+
+**Scientific results (pre-registered primary: ITT exhaustion-as-failure, n=60 pairs/stratum,
+McNemar exact, α=0.05).** The Step-2 regime triad REPLICATES under confirmatory conditions:
+
+| Stratum | acc A | acc B | Δ | p | 95% CI | completion A→B | median wall A→B |
+|---|---|---|---|---|---|---|---|
+| legal-1k | 0.017 | 0.233 | **+0.217** | **0.00098** | [+0.100, +0.333] | 0.88 → 0.95 | 98s → 48s |
+| legal-10k | 0.000 | 0.100 | **+0.100** | **0.031** | [+0.033, +0.183] | 0.55 → 0.90 | 129s → 74s |
+| email-10k | 0.300 | 0.250 | −0.050 | 0.68 | [−0.200, +0.100] | 0.55 → 0.82 | 146s → 43s |
+| email-1k r2 (voided) | 0.350 | 0.383 | +0.033 | 0.83 | [−0.117, +0.183] | — | — |
+| email-1k v4 (voided) | 0.367 | 0.317 | −0.050 | 0.69 | [−0.217, +0.117] | — | — |
+
+Accuracy benefit is legal-only and significant at BOTH scales; email is accuracy-null (twice,
+independently); the time/completion axis favors B everywhere — the A arm's completion collapses
+to 55% at 10k in both domains while B holds 82–90%, and median wall time roughly halves. Note
+the wording constraint: none of these numbers may be published as a promoted claim (verdict is
+rejected); they are recorded here as the campaign's measured outcomes.
+
+**Spend.** Calibration-estimate basis $92.09 for the five runs (guard-verified under the $100
+cap; voided v4 email-1k $12.92, r2 rerun $9.36 included) + ≈$9 pilot spend across the three
+aborted launch attempts (amendments above). Program conclusion: the fail-closed identity/policy
+layer refused six different shortcuts in one night (warm wedge, guard over-projection,
+digest-breaking rewrite, flaky CI lane, banked-calibration split, harness-cohort split) — every
+refusal exposed a real infrastructure gap, all filed to the observations shard with `file:line`
+fix directions. Next founder decisions: verified_tool_surface remedy (capture vs. policy
+amendment), compose exposure-identity fix + fixture re-pin, ITT usage capture for the
+efficiency family, then ONE clean relaunch of the 4-stratum matrix under a pinned-CLI chain env
+(`DISABLE_AUTOUPDATER=1`) — at that point promotion is mechanical if the data repeats.
