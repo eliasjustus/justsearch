@@ -641,6 +641,8 @@ public record ResolvedConfig(
    * @param chunkSpladeEnabled whether chunk-level SPLADE enrichment is enabled (tempdoc 712:
    *     encodes chunk docs' {@code chunk_content} into the {@code splade} FeatureField so the
    *     chunk-merge sparse sub-leg has data; default false — evidence-gated flip, F-033/Q-017)
+   * @param unionEnabled whether the RAG doc-level union leg for chunkless docs is enabled
+   *     (tempdoc 749; default true)
    * @param ragTopK env var override for RAG top-k (justsearch.rag.top_k)
    * @param citationMatchThreshold cosine similarity threshold for citation matching
    * @param maxChunksPerArticle 385: max chunks per parent document in RAG context (diversity cap)
@@ -654,6 +656,7 @@ public record ResolvedConfig(
       int mmrMaxCandidates,
       boolean chunkVectorsEnabled,
       boolean chunkSpladeEnabled,
+      boolean unionEnabled,
       int ragTopK,
       String citationMatchThreshold,
       int maxChunksPerArticle) {}

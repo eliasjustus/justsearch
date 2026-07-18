@@ -11,6 +11,7 @@ import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypesRuntimeSearchFilt
 import io.justsearch.configuration.resolved.ResolvedConfig;
 import io.justsearch.indexerworker.embed.EmbeddingProvider;
 import io.justsearch.indexerworker.metrics.OperationalMetrics;
+import io.justsearch.indexerworker.rag.ChunkDocumentWriter;
 import io.justsearch.indexerworker.util.ParseUtils;
 import io.justsearch.indexerworker.util.VectorUtils;
 import io.justsearch.indexing.SchemaFields;
@@ -27,6 +28,7 @@ import io.justsearch.reranker.RerankerConfig;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -294,7 +296,10 @@ final class RagContextOps {
       return buildChunkResponse(chunkContext);
     }
 
-    // Fallback: full document search with BM25, then virtual-chunk for citations (RAG-005)
+    // Fallback: full document search with BM25, then virtual-chunk for citations (RAG-005).
+    // Since the tempdoc-749 union leg made chunkless docs part of the PRIMARY candidate set,
+    // this fires only when both the chunk search and the doc-level union found nothing usable
+    // (or the assembled context was blank) — a genuine last resort, not the short-doc path.
     long chunksFoundInSearch = chunkContext.totalFound();
     String fallbackReason =
         chunksFoundInSearch > 0 ? "CHUNKS_BELOW_THRESHOLD" : "NO_CHUNKS_FOUND";
@@ -517,13 +522,39 @@ final class RagContextOps {
       effectiveMode = "BM25";
     }
 
-    // Record metrics
-    long latencyMs = System.currentTimeMillis() - startTime;
-    metrics.recordRagRetrieval(effectiveMode, result.hits().size(), latencyMs);
+    // Tempdoc 749 (option B): union doc-level hits for chunkless parents into the PRIMARY
+    // candidate set. Docs under the chunking threshold have no chunk documents at all, so every
+    // is_chunk=true query above is structurally blind to them even though document-level search
+    // finds them. Synthesized whole-doc chunks compete in the same rerank/diversify/budget
+    // pipeline as real chunks ("fusion is a ranking step, not a recall gate", D-005).
+    List<LuceneRuntimeTypes.SearchHit> unionHits =
+        ragConfig.unionEnabled()
+            ? buildUnionCandidates(
+                question, queryVector, docIds, ragFilters, excludedChunks, overRetrieveK,
+                result.hits())
+            : List.of();
+    List<LuceneRuntimeTypes.SearchHit> candidateHits =
+        unionHits.isEmpty()
+            ? result.hits()
+            : mergeByReciprocalRank(result.hits(), unionHits, overRetrieveK);
+    // totalFound is a display-only composite (corpus-wide chunk total + synthesized union count);
+    // the proto contract already notes chunks_found "may exceed the returned chunks list".
+    long totalFound = result.totalHits() + unionHits.size();
 
-    if (result.hits().isEmpty()) {
+    // Record metrics AFTER the union leg so its cost (doc-level search + existence probes) is
+    // included — tempdoc 749 review PF-1 (don't make the union leg's latency invisible).
+    long latencyMs = System.currentTimeMillis() - startTime;
+    metrics.recordRagRetrieval(effectiveMode, candidateHits.size(), latencyMs);
+
+    if (!unionHits.isEmpty()) {
+      log.debug(
+          "RAG union leg: {} chunkless doc-level candidates merged into {} chunk hits",
+          unionHits.size(), result.hits().size());
+    }
+
+    if (candidateHits.isEmpty()) {
       return new ChunkContextResult(
-          "", List.of(), result.totalHits(), effectiveMode, retrievalModeReason, false, List.of(),
+          "", List.of(), totalFound, effectiveMode, retrievalModeReason, false, List.of(),
           RagQualitySignals.EMPTY);
     }
 
@@ -532,24 +563,24 @@ final class RagContextOps {
     // GPU path: Rerank full candidate set (better quality) -> then diversify on semantic scores
     // CPU path: Diversify first (bounds work) -> then rerank bounded set
     List<LuceneRuntimeTypes.SearchHit> finalHits;
-    int chunksConsidered = result.hits().size();
+    int chunksConsidered = candidateHits.size();
     List<Float> ceScores = List.of();
     if (shouldRerankChunks(effectiveMode)) {
       boolean rerankBeforeDiversify = determineRerankOrder();
       if (rerankBeforeDiversify) {
         // GPU path: rerank full set, then diversify
-        var rerankResult = rerankChunks(question, result.hits());
+        var rerankResult = rerankChunks(question, candidateHits);
         ceScores = rerankResult.ceScores();
         finalHits =
             diversifyChunks(question, queryVector, rerankResult.hits(), topK, allowQueryEmbeddings);
         log.debug(
             "Chunk retrieval: rerank->diversify (GPU path), {} candidates -> {} final",
-            result.hits().size(),
+            candidateHits.size(),
             finalHits.size());
       } else {
         // CPU path: diversify first (bounds work), then rerank
         var diversifiedHits =
-            diversifyChunks(question, queryVector, result.hits(), topK, allowQueryEmbeddings);
+            diversifyChunks(question, queryVector, candidateHits, topK, allowQueryEmbeddings);
         var rerankResult = rerankChunks(question, diversifiedHits);
         ceScores = rerankResult.ceScores();
         finalHits = rerankResult.hits();
@@ -561,7 +592,7 @@ final class RagContextOps {
     } else {
       // No reranking - just diversify
       finalHits =
-          diversifyChunks(question, queryVector, result.hits(), topK, allowQueryEmbeddings);
+          diversifyChunks(question, queryVector, candidateHits, topK, allowQueryEmbeddings);
     }
 
     MDC.put("stage_id", "respond");
@@ -598,7 +629,7 @@ final class RagContextOps {
       return new ChunkContextResult(
           tokenBudgeter.build(),
           List.copyOf(used),
-          result.totalHits(),
+          totalFound,
           effectiveMode,
           retrievalModeReason,
           contextTruncated,
@@ -618,13 +649,13 @@ final class RagContextOps {
     log.info(
         "RAG context assembly (char-based): {} sections, {} hits, mode={}, bestScore={}",
         budgeter.sections().size(),
-        result.totalHits(),
+        totalFound,
         effectiveMode,
         quality.bestChunkScore());
     return new ChunkContextResult(
         budgeter.build(),
         List.copyOf(used),
-        result.totalHits(),
+        totalFound,
         effectiveMode,
         retrievalModeReason,
         contextTruncated,
@@ -656,6 +687,200 @@ final class RagContextOps {
     }
     return new RagQualitySignals(bestScore, scoreGap, retrievalCoverage,
         chunksConsidered, chunksIncluded);
+  }
+
+  // ==================== Doc-level union leg (tempdoc 749, option B) ====================
+
+  /**
+   * Builds synthesized whole-doc chunk candidates for parents that have NO chunk documents.
+   *
+   * <p>Runs the doc-level retrieval leg (hybrid when a query vector is usable, BM25 otherwise),
+   * drops parents that already compete via real chunks (chunk docs exist, or the primary chunk
+   * search already surfaced them) and user-hidden parents, then synthesizes chunk-shaped hits
+   * that the downstream rerank/diversify/budget/citation pipeline consumes unchanged.
+   */
+  private List<LuceneRuntimeTypes.SearchHit> buildUnionCandidates(
+      String question,
+      float[] queryVector,
+      Set<String> docIds,
+      LuceneRuntimeTypes.RuntimeSearchFilters ragFilters,
+      List<io.justsearch.ipc.ChunkRef> excludedChunks,
+      int limit,
+      List<LuceneRuntimeTypes.SearchHit> chunkHits) {
+    try {
+      return buildUnionCandidatesUnsafe(
+          question, queryVector, docIds, ragFilters, excludedChunks, limit, chunkHits);
+    } catch (RuntimeException e) {
+      // Fix 3 (review F3): WARN, not debug — a systemically-failing union leg would otherwise be
+      // silently inert on every query (the "inert green" class).
+      log.warn("RAG union leg failed; continuing with chunk hits only: {}", e.toString());
+      return List.of();
+    }
+  }
+
+  private List<LuceneRuntimeTypes.SearchHit> buildUnionCandidatesUnsafe(
+      String question,
+      float[] queryVector,
+      Set<String> docIds,
+      LuceneRuntimeTypes.RuntimeSearchFilters ragFilters,
+      List<io.justsearch.ipc.ChunkRef> excludedChunks,
+      int limit,
+      List<LuceneRuntimeTypes.SearchHit> chunkHits) {
+    // Doc-level user filters (mime, language, ...) — same builder the two-stage pre-filter
+    // uses; entity/metadata/path/date filters arrive pre-resolved through docIds already, so
+    // this is at worst redundant, never wrong.
+    org.apache.lucene.search.Query docFilter =
+        ragFilters != null
+            ? QueryFilterBuilder.buildFilterQueryOnly(withIncludeChunks(ragFilters, false))
+            : null;
+    LuceneRuntimeTypes.SearchResult unionRaw =
+        chunkSearchOps.searchDocLevelUnion(question, queryVector, docIds, limit, docFilter);
+    if (unionRaw.hits().isEmpty()) {
+      return List.of();
+    }
+
+    Set<String> candidateIds = new LinkedHashSet<>();
+    for (var hit : unionRaw.hits()) {
+      if (hit.docId() != null && !hit.docId().isBlank()) {
+        candidateIds.add(hit.docId());
+      }
+    }
+    // Tempdoc 610 §J.3 parity with the fallback: never re-inject a parent whose chunks the
+    // user hid.
+    Set<String> allowed = ChunkExclusionQuery.dropExcludedParents(candidateIds, excludedChunks);
+    Set<String> withChunks = chunkSearchOps.findParentDocIdsWithChunks(candidateIds);
+    Set<String> chunkHitParents = new HashSet<>();
+    for (var hit : chunkHits) {
+      var fields = hit.fields();
+      String parent =
+          fields != null ? fields.getOrDefault(SchemaFields.PARENT_DOC_ID, hit.docId())
+              : hit.docId();
+      if (parent != null) {
+        chunkHitParents.add(parent);
+      }
+    }
+
+    List<LuceneRuntimeTypes.SearchHit> synthesized = new ArrayList<>();
+    List<LuceneRuntimeTypes.SearchHit> needsContentFetch = new ArrayList<>();
+    for (var hit : unionRaw.hits()) {
+      String id = hit.docId();
+      if (id == null || id.isBlank() || !allowed.contains(id)
+          || withChunks.contains(id) || chunkHitParents.contains(id)) {
+        continue;
+      }
+      String content = contentOf(hit.fields());
+      if (content == null || content.isBlank()) {
+        needsContentFetch.add(hit);
+        continue;
+      }
+      synthesizeWholeDocHits(id, content, hit.score(), synthesized);
+    }
+    // Hybrid-leg hits may not carry stored CONTENT — batch-fetch it (bounded by the hit set).
+    if (!needsContentFetch.isEmpty() && documentFieldOps != null) {
+      List<String> fetchIds = new ArrayList<>();
+      for (var hit : needsContentFetch) {
+        fetchIds.add(hit.docId());
+      }
+      Map<String, Map<String, String>> fetched;
+      try {
+        fetched = documentFieldOps.getDocumentFieldsBatch(
+            fetchIds, Set.of(SchemaFields.CONTENT));
+      } catch (Exception e) {
+        log.debug("RAG union leg: content batch fetch failed: {}", e.getMessage());
+        fetched = Map.of();
+      }
+      for (var hit : needsContentFetch) {
+        Map<String, String> f = fetched.get(hit.docId());
+        String content = f != null ? f.get(SchemaFields.CONTENT) : null;
+        if (content != null && !content.isBlank()) {
+          synthesizeWholeDocHits(hit.docId(), content, hit.score(), synthesized);
+        }
+      }
+    }
+    return synthesized;
+  }
+
+  private static String contentOf(Map<String, String> fields) {
+    if (fields == null) {
+      return null;
+    }
+    String content = fields.get(SchemaFields.CONTENT);
+    if (content == null || content.isBlank()) {
+      content = fields.get("content");
+    }
+    return content;
+  }
+
+  /**
+   * Synthesizes chunk-shaped hits for a chunkless parent: one whole-doc chunk normally; the
+   * rare oversized outlier (a chunkless doc above the chunking threshold, e.g. a legacy
+   * single-chunk drop) is virtual-chunked the way the fallback does so no single section
+   * swamps the budget.
+   */
+  private static void synthesizeWholeDocHits(
+      String docId, String content, float score, List<LuceneRuntimeTypes.SearchHit> out) {
+    if (content.length() <= ChunkDocumentWriter.CHUNK_THRESHOLD_CHARS) {
+      out.add(syntheticChunkHit(docId, content, 0, 1, 0, content.length(), score, content));
+      return;
+    }
+    List<String> parts = ChunkSplitter.split(content);
+    int total = parts.size();
+    int searchFrom = 0;
+    for (int i = 0; i < parts.size(); i++) {
+      String part = parts.get(i);
+      int startChar = content.indexOf(part, searchFrom);
+      if (startChar < 0) {
+        startChar = searchFrom;
+      }
+      int endChar = startChar + part.length();
+      searchFrom = startChar + 1;
+      out.add(syntheticChunkHit(docId, content, i, total, startChar, endChar, score, part));
+    }
+  }
+
+  private static LuceneRuntimeTypes.SearchHit syntheticChunkHit(
+      String docId, String parentContent, int index, int total,
+      int startChar, int endChar, float score, String chunkText) {
+    int startLine = countNewlinesBefore(parentContent, startChar) + 1;
+    int endLine = startLine + countNewlinesInRange(parentContent, startChar, endChar);
+    Map<String, String> fields = new HashMap<>();
+    fields.put(SchemaFields.PARENT_DOC_ID, docId);
+    fields.put(SchemaFields.CHUNK_INDEX, Integer.toString(index));
+    fields.put(SchemaFields.CHUNK_TOTAL, Integer.toString(total));
+    fields.put(SchemaFields.CHUNK_CONTENT, chunkText);
+    fields.put(SchemaFields.CHUNK_START_CHAR, Integer.toString(startChar));
+    fields.put(SchemaFields.CHUNK_END_CHAR, Integer.toString(endChar));
+    fields.put(SchemaFields.CHUNK_START_LINE, Integer.toString(startLine));
+    fields.put(SchemaFields.CHUNK_END_LINE, Integer.toString(endLine));
+    return new LuceneRuntimeTypes.SearchHit(docId, score, fields);
+  }
+
+  /**
+   * Rank-based (reciprocal-rank) ORDER merge of two disjoint hit lists, preserving each hit's
+   * native score (quality signals read raw scores; in BM25 mode the CE re-scores the whole
+   * pool anyway). Ties (equal rank) prefer real chunk hits over synthesized doc-level hits.
+   */
+  private static List<LuceneRuntimeTypes.SearchHit> mergeByReciprocalRank(
+      List<LuceneRuntimeTypes.SearchHit> chunkHits,
+      List<LuceneRuntimeTypes.SearchHit> unionHits,
+      int limit) {
+    record Ranked(LuceneRuntimeTypes.SearchHit hit, double rrf, int source) {}
+    List<Ranked> all = new ArrayList<>(chunkHits.size() + unionHits.size());
+    for (int i = 0; i < chunkHits.size(); i++) {
+      all.add(new Ranked(chunkHits.get(i), 1.0 / (60 + i + 1), 0));
+    }
+    for (int i = 0; i < unionHits.size(); i++) {
+      all.add(new Ranked(unionHits.get(i), 1.0 / (60 + i + 1), 1));
+    }
+    all.sort(
+        java.util.Comparator.comparingDouble((Ranked r) -> -r.rrf())
+            .thenComparingInt(Ranked::source));
+    int cap = limit <= 0 ? all.size() : Math.min(limit, all.size());
+    List<LuceneRuntimeTypes.SearchHit> merged = new ArrayList<>(cap);
+    for (int i = 0; i < cap; i++) {
+      merged.add(all.get(i).hit());
+    }
+    return merged;
   }
 
   /**
@@ -732,10 +957,14 @@ final class RagContextOps {
   /**
    * Builds a FULLTEXT_FALLBACK response with virtual chunks for citation support (RAG-005).
    *
-   * <p>When chunk search returns 0 hits, this method splits full documents into virtual chunks
-   * at retrieval time, scores them by query term overlap, and returns structured chunk metadata.
-   * This enables the downstream citation pipeline to produce source attribution for unchunked
-   * documents.
+   * <p>Splits full documents into virtual chunks at retrieval time, scores them by query term
+   * overlap, and returns structured chunk metadata so the downstream citation pipeline can
+   * attribute sources for unchunked documents.
+   *
+   * <p>Since tempdoc 749's doc-level union leg, chunkless docs already compete in the PRIMARY
+   * candidate set ({@code searchChunksWithMeta}); this path is the safety net for queries where
+   * both the chunk search and the union leg came up empty (plus the FULL_DOCUMENT mode), so its
+   * firing rate is expected to be low — do not read it as the main short-doc path anymore.
    */
   private RetrieveContextResponse buildFallbackWithVirtualChunks(
       String question, Set<String> docIds, int topK,

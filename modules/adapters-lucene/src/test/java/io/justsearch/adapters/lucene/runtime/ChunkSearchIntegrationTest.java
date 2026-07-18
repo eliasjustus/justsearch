@@ -473,6 +473,152 @@ class ChunkSearchIntegrationTest {
     assertTrue(docExists("doc-1#chunk_1"), "New chunk 1 should exist");
   }
 
+  // ========== Doc-level union leg (tempdoc 749, option B) ==========
+
+  @Test
+  @DisplayName("findParentDocIdsWithChunks returns only candidates that have chunk docs")
+  void findParentDocIdsWithChunksReturnsChunkedSubset() throws Exception {
+    // Parent A has a chunk doc; parent B has none.
+    indexDoc("parent-a", "Parent A about migratory birds");
+    indexChunk("parent-a", 0, 1, "Migratory birds travel long distances");
+    indexDoc("parent-b", "Parent B about desert reptiles");
+
+    commitAndRefresh();
+
+    Set<String> probed =
+        runtime.chunkSearchOps().findParentDocIdsWithChunks(Set.of("parent-a", "parent-b"));
+    assertEquals(Set.of("parent-a"), probed,
+        "Only parent-a (which owns a chunk doc) should be reported as chunked");
+
+    // Empty probe short-circuits to empty.
+    assertTrue(runtime.chunkSearchOps().findParentDocIdsWithChunks(Set.of()).isEmpty(),
+        "Empty candidate set returns empty");
+  }
+
+  @Test
+  @DisplayName(
+      "findParentDocIdsWithChunks: a parent with SEVERAL chunk docs is still classified "
+          + "chunked, and a chunkless sibling among the same candidates is not (review Fix 2 — "
+          + "per-parent existence probes, not a shared result-window)")
+  void findParentDocIdsWithChunksHandlesMultiChunkParent() throws Exception {
+    // Parent C owns 3 chunk docs; parent D has none.
+    indexDoc("parent-c", "Parent C about renewable energy policy");
+    indexChunk("parent-c", 0, 3, "Solar power adoption is accelerating");
+    indexChunk("parent-c", 1, 3, "Wind energy capacity has doubled");
+    indexChunk("parent-c", 2, 3, "Grid storage remains the bottleneck");
+    indexDoc("parent-d", "Parent D about unrelated topic");
+
+    commitAndRefresh();
+
+    Set<String> probed =
+        runtime.chunkSearchOps().findParentDocIdsWithChunks(Set.of("parent-c", "parent-d"));
+    assertEquals(Set.of("parent-c"), probed,
+        "parent-c (3 chunk docs) is classified chunked; chunkless parent-d is not");
+  }
+
+  @Test
+  @DisplayName("searchFullDocs: unscoped finds all parents; scoped filters; excludes chunk docs")
+  void searchFullDocsUnscopedScopedAndChunkExclusion() throws Exception {
+    indexDoc("doc-p1", "The quick brown fox jumps");
+    indexDoc("doc-p2", "A red fox runs through the forest");
+
+    // A chunk doc that ALSO carries a CONTENT field mentioning the query term — this is exactly
+    // what the IS_CHUNK MUST_NOT clause must keep out of full-doc results.
+    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+        SchemaFields.DOC_ID, "chunk:fox-000",
+        SchemaFields.DOC_UID, "chunk:fox-000#0",
+        SchemaFields.IS_CHUNK, "true",
+        SchemaFields.PARENT_DOC_ID, "doc-p1",
+        SchemaFields.CHUNK_INDEX, "0",
+        SchemaFields.CHUNK_TOTAL, "1",
+        SchemaFields.CHUNK_CONTENT, "fox chunk content",
+        SchemaFields.CONTENT, "fox also appears in this chunk document body",
+        SchemaFields.PATH, "doc-p1")));
+
+    commitAndRefresh();
+
+    // Unscoped (empty docIds): both parents match, and the chunk doc is excluded despite its
+    // CONTENT field containing "fox". null additionalFilter is accepted.
+    var unscoped = runtime.chunkSearchOps().searchFullDocs("fox", Set.of(), 10, null);
+    assertNotNull(unscoped);
+    assertEquals(2, unscoped.hits().size(), "Unscoped search returns both parent docs");
+    Set<String> unscopedIds =
+        unscoped.hits().stream().map(h -> h.docId()).collect(java.util.stream.Collectors.toSet());
+    assertEquals(Set.of("doc-p1", "doc-p2"), unscopedIds,
+        "Only the two parents come back — never the chunk doc (IS_CHUNK MUST_NOT)");
+
+    // Scoped to {doc-p2}: only doc-p2 comes back.
+    var scoped = runtime.chunkSearchOps().searchFullDocs("fox", Set.of("doc-p2"), 10, null);
+    assertEquals(1, scoped.hits().size(), "Scoped search returns exactly the in-scope parent");
+    assertEquals("doc-p2", scoped.hits().get(0).docId());
+
+    // Blank query is empty regardless of scope.
+    var blank = runtime.chunkSearchOps().searchFullDocs("   ", Set.of(), 10, null);
+    assertTrue(blank.hits().isEmpty(), "Blank query yields no full-doc hits");
+
+    // Regression: searchFullDocsForDocs keeps its return-empty-on-empty-scope contract, which
+    // is deliberately distinct from searchFullDocs' unscoped-means-all-docs behaviour above.
+    var emptyScope = runtime.chunkSearchOps().searchFullDocsForDocs("fox", Set.of(), 5);
+    assertTrue(emptyScope.hits().isEmpty(),
+        "searchFullDocsForDocs still returns empty on empty docIds (contract unchanged)");
+  }
+
+  @Test
+  @DisplayName("searchDocLevelUnion with null queryVector dispatches to the BM25 full-doc path")
+  void searchDocLevelUnionNullVectorUsesBm25() throws Exception {
+    indexDoc("doc-u1", "Coral reefs support diverse marine life");
+    indexDoc("doc-u2", "Coral bleaching threatens reef ecosystems");
+
+    commitAndRefresh();
+
+    // Null queryVector forces the BM25 (searchFullDocs) branch; both parents match "coral".
+    var result =
+        runtime.chunkSearchOps().searchDocLevelUnion("coral reef", null, Set.of(), 10, null);
+    assertNotNull(result);
+    assertEquals(2, result.hits().size(), "BM25 union path returns both matching parents");
+    Set<String> ids =
+        result.hits().stream().map(h -> h.docId()).collect(java.util.stream.Collectors.toSet());
+    assertEquals(Set.of("doc-u1", "doc-u2"), ids);
+    // The hybrid (usable-queryVector) branch's RRF ranking is covered by the live R9 validation;
+    // its symmetric IS_CHUNK exclusion is unit-tested below (searchDocLevelUnionHybridExcludesChunkDocs).
+  }
+
+  @Test
+  @DisplayName("searchDocLevelUnion (hybrid branch) excludes chunk docs by construction (tempdoc 749 review PF-2)")
+  void searchDocLevelUnionHybridExcludesChunkDocs() throws Exception {
+    // Regular parent: matches the BM25 leg via content, carries no vector of its own.
+    indexDoc("doc-1", "Coral reefs support diverse marine life");
+
+    // A "poisoned" chunk doc that also happens to carry parent-level content + vector — the
+    // latent double-surface trap this guard exists to prevent. A chunk doc must never be
+    // eligible for the doc-level union, regardless of what fields it carries.
+    float[] queryVector = new float[] {1f, 0f, 0f, 0f};
+    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+        SchemaFields.DOC_ID, "doc-1#chunk_0",
+        SchemaFields.DOC_UID, "doc-1#chunk_0#0",
+        SchemaFields.IS_CHUNK, "true",
+        SchemaFields.PARENT_DOC_ID, "doc-1",
+        SchemaFields.CONTENT, "Coral reefs support diverse marine life",
+        SchemaFields.VECTOR, queryVector,
+        SchemaFields.PATH, "doc-1"
+    )));
+
+    commitAndRefresh();
+
+    // Non-null, non-empty queryVector and no query-skip condition -> dispatches to the hybrid
+    // branch (searchHybridFiltered), not the BM25 (searchFullDocs) fallback.
+    var result =
+        runtime.chunkSearchOps().searchDocLevelUnion("coral reef", queryVector, Set.of(), 10, null);
+
+    assertNotNull(result);
+    for (var hit : result.hits()) {
+      assertFalse(
+          "doc-1#chunk_0".equals(hit.docId()),
+          "Chunk doc must never surface from the doc-level union hybrid branch, even though it "
+              + "carries matching content + vector. Got: " + hit.docId());
+    }
+  }
+
   // ========== Helper Methods ==========
 
   private void indexDoc(String docId, String content) {

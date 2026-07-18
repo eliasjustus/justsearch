@@ -297,6 +297,7 @@ Precedence note:
 | rag.retrieve.mode | JUSTSEARCH_RAG_RETRIEVE_MODE | rag.retrieve.mode | RAG_RETRIEVE_MODE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.retrieve.overretrieve_factor | JUSTSEARCH_RAG_OVERRETRIEVE_FACTOR | rag.retrieve.overretrieve_factor | RAG_OVERRETRIEVE_FACTOR | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.retrieve.top_k | JUSTSEARCH_RAG_RETRIEVE_TOP_K | rag.retrieve.top_k | RAG_RETRIEVE_TOP_K | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| rag.union.enabled | JUSTSEARCH_RAG_UNION_ENABLED | rag.union.enabled | RAG_UNION_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | search.chunk_aware.enabled | JUSTSEARCH_SEARCH_CHUNK_AWARE_ENABLED | search.chunk_aware.enabled | SEARCH_CHUNK_AWARE_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | search.chunk_aware.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.corrections.df_threshold | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |

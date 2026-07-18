@@ -763,6 +763,68 @@ above)*
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
 
+### F-038: RAG chunk retrieval was blind to chunkless (sub-2000-char) docs — a doc-level union leg into the PRIMARY RAG candidate set fixes it with no re-index; interactive hybrid on-baseline (tempdoc 749, 2026-07-18)
+
+- **Answer:** `/api/chat/ask` (RAG) silently missed documents whose best answer lives in a short doc.
+  `IndexingDocumentOps.indexChunks`/`ChunkDocumentWriter` write ZERO chunk docs for content
+  < `CHUNK_THRESHOLD_CHARS` (2000) or that split into ≤1 chunk, and every `ChunkSearchOps` RAG query
+  filters `IS_CHUNK:true` with no whole-doc union — so short docs (measured ~70% of the scifact
+  corpus: 1557 chunk docs from 5189) were invisible to RAG chunk retrieval and fell back to
+  whole-doc BM25 (`FULLTEXT_FALLBACK`/`NO_CHUNKS_FOUND`), which unscoped missed the best short doc.
+  The interactive `/api/knowledge/search` path was unaffected (doc-level entry + embedding present).
+  **Fix (option B, founder-ratified):** `RagContextOps.searchChunksWithMeta` now unions doc-level
+  hits for chunkless parents into the PRIMARY candidate set (synthesized whole-doc chunk-shaped hits,
+  flowing through the same rerank/diversify/budget/citation pipeline), before rerank — removing the
+  RAG path's recall-gate character (D-005: "fusion is a ranking step, not a recall gate"). No
+  re-index (fixes all existing indices at query time); no proto/FE change; interactive search
+  untouched. Chunked-doc behavior unchanged (union restricted to parents with zero chunk docs, via a
+  per-candidate existence probe; excluded/hidden parents dropped for fallback parity).
+- **Evidence:**
+  - **Live R9 (2026-07-18, worktree dist, scifact 5184-doc repro, Qwen3.5-9B, full enrichment):** the
+    unscoped ask on a chunkless target (`1631583.txt`, ~1500 chars, doc-level hybrid #1 @score 1.0)
+    → `retrieval_mode: CHUNK_HYBRID` (not FULLTEXT_FALLBACK), coverage 0.33, cites `1631583.txt`;
+    worker log `bestScore=1.0` = the synthesized hit's native doc-level score (only the union leg can
+    produce a CHUNK_HYBRID citation for a chunkless doc). Browser click-to-verify confirmed the
+    citation resolves to the target's whole-doc source.
+  - **Interactive no-regression (mandatory falsifier):** `jseval run --dataset scifact --modes hybrid
+    --start-backend --clean --pipeline`, full enrichment (embed/splade 99.9%), observed legs
+    `cross_encoder+dense+hybrid+query_classification`: **nDCG@10 0.7603** (P@1 0.637, R@10 0.888) vs
+    register scorecard 0.760 / baseline 0.758 — Δ+0.002, within the ±2σ noise envelope. (The run's
+    `summary.json` stamps `git_sha 5e195fe6`, the *parent* commit — the code changes were uncommitted
+    in the working tree at eval time, so `runHeadlessEval` compiled them but jseval records HEAD; the
+    number is the working-tree code, not the parent's.) **The load-bearing no-regression argument is
+    structural, not the eval number alone:** the entire interactive-hybrid ranking path
+    (`HybridSearchOps.java`, `TextQueryOps.java`, `ReadPathOps.java`, fusion) is **absent from the
+    diff** (`git diff 5e195fe6 b59ef3a2 --stat`), so interactive ranking is byte-identical — the
+    union leg lives only in `RagContextOps.searchChunksWithMeta` (the RAG path), and the ChunkSplitter
+    tail-fix only changes new-build chunk counts. The 0.7603 = scorecard-0.760 result confirms the
+    chunk-count change had no measurable interactive effect.
+- **Conditions/caveats:** a first eval run scored 0.680 with `requested_dense_but_not_observed` — a
+  **confounder, not a regression**: it omitted `--pipeline`, so jseval queried at
+  `embeddingCoveragePercent 59.9%` (dense/splade only ~60% enriched → BM25+CE only). The 0.7603 run
+  with full-enrichment wait is the valid comparison. The `buildFallbackWithVirtualChunks` path stays
+  as the genuine last resort (both legs empty / FULL_DOCUMENT mode), firing rate expected to drop
+  sharply.
+- **RAG-path validation + `rag.union.enabled` flag (2026-07-18):** a default-ON flag
+  `rag.union.enabled` now gates the union leg (operational off-switch + the tempdoc's own
+  gating-remedy). Live RAG-path demonstration on a mixed index (280 long chunked + 24 short chunkless
+  docs, union ON): `rag_reachability_probe` verdict **`ok`, 10/10 chunkless short docs reachable via
+  CHUNK_HYBRID** — the reachability guard fired and passed on a real corpus. Running the probe live
+  caught **3 real bugs in the W3 probe** (scoping to a corpus-id the backend keys by path; exact
+  path-vs-id match; over-strict `top_k=5`) — it was non-functional for real corpus-dir corpora, a
+  `static-green ≠ live-working` catch; all fixed + tests rewritten. Long-path non-disturbance is
+  structural (the union's `withChunks` filter drops all chunked docs → long-doc retrieval is
+  union-independent by construction). **Residual (named, not measured):** the pure adversarial
+  same-query short-vs-long displacement needs a purpose-built topically-competing corpus that
+  doesn't exist locally; low-probability under B (query-conditional injection + F-014 length-asymmetry
+  handling + CE-not-in-CHUNK_HYBRID) and now mitigated by the off-switch.
+- **Adjacent finds (rode along):** the ChunkSplitter emitted a redundant overlap-tail chunk for
+  stripped lengths 385–1923 and for long docs' final segment (live on the virtual-chunk fallback);
+  fixed. `modules/indexing` test runtime lacked `net.jqwik:jqwik-engine`, so the tempdoc-554
+  `ChunkTilingPropertyTest` `@Property`s were silently never collected (inert-green) — fixed, and the
+  now-live property test caught a second splitter corner (a trimmed all-whitespace tail whose
+  adjusted span lands inside its predecessor).
+
 ### F-037: the MCP evidence pack's document universe came from a DEPRECATED sparse-only pre-search while `justsearch_search` ran hybrid — a two-retrievals fork at the pack's first stage; universe fixed, curation-stage disagreement remains open (tempdoc 731, 2026-07-14)
 
 - **Answer:** `RemoteDocumentService.preSearchForDocIds` (the stage that selects the evidence

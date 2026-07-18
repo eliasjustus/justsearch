@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from jseval.agent_retrieval_eval import (
     AgentResult,
@@ -28,8 +29,10 @@ from jseval.agent_retrieval_eval import (
     build_disallowed_tools,
     find_disallowed_tool_calls,
     find_leak_suspect_tool_calls,
+    rag_reachability_probe,
     stage_corpus_dir,
 )
+from jseval.chunk_completeness import CHUNK_THRESHOLD_CHARS
 
 
 # --- _score_answer scorer semantics fixture (tempdoc 624 §M.8 amendment, Step 0
@@ -212,6 +215,252 @@ def test_find_leak_suspect_tool_calls_ignores_other_tools_naming_the_file():
 def test_agent_result_leak_suspect_tool_calls_defaults_empty():
     result = AgentResult(query="q", answer="a", question_type="t", condition="A", model="haiku")
     assert result.leak_suspect_tool_calls == []
+
+
+# --- rag_reachability_probe: the retrieval-completeness invariant guard (tempdoc 749).
+#
+# ChunkDocumentWriter writes ZERO chunk documents for docs < CHUNK_THRESHOLD_CHARS, so RAG
+# chunk retrieval (which filters IS_CHUNK:true) is structurally blind to them unless the
+# doc-level-union fix is actually wired into the primary retrieval path. This probe samples
+# the shortest chunkless-by-construction docs from a BEIR-format corpus.jsonl and asserts each
+# is still reachable via an UNSCOPED retrieve-context call (no `doc_ids` -- the backend keys
+# docs by ingest path, not the corpus id, so scoping can't be expressed here), fail-closed on
+# regression.
+
+def _write_corpus(tmp_path: Path, docs: list[dict]) -> Path:
+    p = tmp_path / "corpus.jsonl"
+    with p.open("w", encoding="utf-8") as f:
+        for d in docs:
+            f.write(json.dumps(d) + "\n")
+    return p
+
+
+def _mock_response(*, mode: str, chunks: list[dict]):
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = {
+        "quality": {"retrieval_mode": mode},
+        "chunks": chunks,
+        "context": "",
+    }
+    return resp
+
+
+class TestRagReachabilityProbeSampling:
+    def test_boundary_doc_at_exactly_threshold_is_not_sampled(self, tmp_path):
+        """A doc whose content is exactly CHUNK_THRESHOLD_CHARS long DOES get chunked by
+        ChunkDocumentWriter (its guard is `< CHUNK_THRESHOLD_CHARS`), so it must not be
+        treated as chunkless-by-construction here either."""
+        p = _write_corpus(tmp_path, [
+            {"_id": "at-threshold", "title": "", "text": "x" * CHUNK_THRESHOLD_CHARS},
+        ])
+        mock_client = MagicMock()
+
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+        assert result == {"sampled": 0, "passed": 0, "failed": [], "verdict": "not-applicable"}
+        mock_client.post.assert_not_called()
+
+    def test_sampling_is_deterministic_ascending_length_then_doc_id(self, tmp_path):
+        # The probe is unscoped (no `doc_ids` in the request, see
+        # test_request_body_is_unscoped_no_doc_ids below), so this test can no longer read the
+        # sampled doc id back off the request body. Each doc gets a distinct (short, so it
+        # doesn't perturb the length-based sample ordering -- `content` is `title + "\n\n" +
+        # text`) title instead -- the title becomes the `query` sent, which lets the
+        # side_effect (and the assertion) identify which doc a given call was for.
+        p = _write_corpus(tmp_path, [
+            {"_id": "d3", "title": "T3", "text": "x" * 1500},
+            {"_id": "d2", "title": "T2", "text": "x" * 500},
+            {"_id": "d1", "title": "T1", "text": "x" * 500},  # ties d2 on length -> d1 first
+            {"_id": "d4", "title": "T4", "text": "x" * CHUNK_THRESHOLD_CHARS},  # not chunkless
+        ])
+        mock_client = MagicMock()
+        title_to_id = {"T1": "d1", "T2": "d2", "T3": "d3"}
+
+        def _side_effect(url, json):
+            doc_id = title_to_id[json["query"]]
+            return _mock_response(
+                mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": f"/corpus/{doc_id}.txt"}],
+            )
+
+        mock_client.post.side_effect = _side_effect
+
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+        called_queries = [c.kwargs["json"]["query"] for c in mock_client.post.call_args_list]
+        assert called_queries == ["T1", "T2", "T3"]
+        assert result["sampled"] == 3
+        assert result["verdict"] == "ok"
+
+    def test_sample_size_truncated_to_n(self, tmp_path):
+        p = _write_corpus(tmp_path, [
+            {"_id": f"d{i}", "title": "", "text": "x" * (100 + i)} for i in range(5)
+        ])
+        mock_client = MagicMock()
+        mock_client.post.return_value = _mock_response(
+            mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/corpus/whichever.txt"}],
+        )
+
+        result = rag_reachability_probe(p, mock_client, n=2, top_k=5)
+
+        assert result["sampled"] == 2
+        assert mock_client.post.call_count == 2
+
+    def test_request_body_is_unscoped_no_doc_ids(self, tmp_path):
+        """Bug #1 regression (tempdoc 749): the probe used to POST `doc_ids: [d.doc_id]`,
+        scoping the request to the corpus id. The backend keys retrieved docs by ingest PATH,
+        not the corpus doc id, so that scoped a non-existent doc and retrieved nothing. The
+        probe is now UNSCOPED -- the request body is exactly `{"query": ..., "top_k": ...}`,
+        with no `doc_ids` key at all."""
+        p = _write_corpus(tmp_path, [{"_id": "d1", "title": "T", "text": "x" * 50}])
+        mock_client = MagicMock()
+        mock_client.post.return_value = _mock_response(
+            mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/corpus/d1.txt"}],
+        )
+
+        rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+        sent = mock_client.post.call_args.kwargs["json"]
+        assert "doc_ids" not in sent
+        assert sent == {"query": "T", "top_k": 5}
+
+    def test_question_uses_title_when_present(self, tmp_path):
+        p = _write_corpus(tmp_path, [
+            {"_id": "d1", "title": "The FTX Trial", "text": "x" * 50},
+        ])
+        mock_client = MagicMock()
+        mock_client.post.return_value = _mock_response(
+            mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/corpus/d1.txt"}],
+        )
+
+        rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+        sent = mock_client.post.call_args.kwargs["json"]
+        assert sent["query"] == "The FTX Trial"
+
+    def test_question_falls_back_to_first_12_words_of_text_when_title_blank(self, tmp_path):
+        words = [f"w{i}" for i in range(20)]
+        p = _write_corpus(tmp_path, [
+            {"_id": "d1", "title": "", "text": " ".join(words)},
+        ])
+        mock_client = MagicMock()
+        mock_client.post.return_value = _mock_response(
+            mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/corpus/d1.txt"}],
+        )
+
+        rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+        sent = mock_client.post.call_args.kwargs["json"]
+        assert sent["query"] == " ".join(words[:12])
+
+
+class TestRagReachabilityProbeVerdict:
+    def test_pass_when_non_fallback_mode_and_matching_parent_doc_id_path(self, tmp_path):
+        """Bug #2 regression (tempdoc 749): the probe used to check reachability via exact
+        `c.get("parent_doc_id") == d.doc_id`. Real `parent_doc_id` values are full ingest
+        paths (e.g. `/some/path/d1.txt`), never equal to the bare corpus id (`d1`) -- so the
+        old exact-`==` code would treat this doc as UNREACHABLE and this test would FAIL
+        against it. The fix uses `_doc_id_matches_title`, the same filename-stem matcher the
+        Tier-1 metrics use, which resolves the path back to the bare id."""
+        p = _write_corpus(tmp_path, [{"_id": "d1", "title": "T", "text": "x" * 50}])
+        mock_client = MagicMock()
+        mock_client.post.return_value = _mock_response(
+            mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/some/path/d1.txt"}],
+        )
+
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+        assert result == {"sampled": 1, "passed": 1, "failed": [], "verdict": "ok"}
+
+    def test_fail_on_fulltext_fallback_even_with_matching_parent_doc_id(self, tmp_path):
+        """The exact tempdoc 749 regression shape: chunk retrieval fell back to whole-doc
+        BM25 for a chunkless doc. A matching parent_doc_id alone must not count as reachable
+        when the response says the primary chunk path didn't find it."""
+        p = _write_corpus(tmp_path, [{"_id": "d1", "title": "T", "text": "x" * 50}])
+        mock_client = MagicMock()
+        mock_client.post.return_value = _mock_response(
+            mode="FULLTEXT_FALLBACK", chunks=[{"parent_doc_id": "/some/path/d1.txt"}],
+        )
+
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+        assert result == {"sampled": 1, "passed": 0, "failed": ["d1"], "verdict": "fail"}
+
+    def test_fail_when_no_returned_chunk_matches_the_doc_id(self, tmp_path):
+        p = _write_corpus(tmp_path, [{"_id": "d1", "title": "T", "text": "x" * 50}])
+        mock_client = MagicMock()
+        mock_client.post.return_value = _mock_response(
+            mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/some/other/path/some-other-doc.txt"}],
+        )
+
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+        assert result["verdict"] == "fail"
+        assert result["failed"] == ["d1"]
+
+    def test_not_applicable_on_all_long_corpus(self, tmp_path):
+        long_text = "x" * (CHUNK_THRESHOLD_CHARS + 500)
+        p = _write_corpus(tmp_path, [
+            {"_id": "d1", "title": "", "text": long_text},
+            {"_id": "d2", "title": "", "text": long_text},
+        ])
+        mock_client = MagicMock()
+
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+        assert result == {"sampled": 0, "passed": 0, "failed": [], "verdict": "not-applicable"}
+        mock_client.post.assert_not_called()
+
+    def test_not_applicable_when_corpus_jsonl_missing(self, tmp_path):
+        mock_client = MagicMock()
+
+        result = rag_reachability_probe(
+            tmp_path / "does-not-exist.jsonl", mock_client, n=10, top_k=5,
+        )
+
+        assert result["verdict"] == "not-applicable"
+        mock_client.post.assert_not_called()
+
+    def test_http_error_on_a_sampled_doc_counts_as_failed(self, tmp_path):
+        p = _write_corpus(tmp_path, [{"_id": "d1", "title": "T", "text": "x" * 50}])
+        mock_client = MagicMock()
+        mock_client.post.side_effect = RuntimeError("connection refused")
+
+        result = rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+        assert result == {"sampled": 1, "passed": 0, "failed": ["d1"], "verdict": "fail"}
+
+    def test_owns_and_closes_its_own_client_when_given_a_base_url_string(self, tmp_path, monkeypatch):
+        p = _write_corpus(tmp_path, [{"_id": "d1", "title": "T", "text": "x" * 50}])
+        mock_client = MagicMock()
+        mock_client.post.return_value = _mock_response(
+            mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/corpus/d1.txt"}],
+        )
+
+        created_with = {}
+
+        def _fake_client(*, base_url, timeout):
+            created_with["base_url"] = base_url
+            return mock_client
+
+        monkeypatch.setattr("jseval.agent_retrieval_eval.httpx.Client", _fake_client)
+
+        result = rag_reachability_probe(p, "http://127.0.0.1:33221", n=10, top_k=5)
+
+        assert created_with["base_url"] == "http://127.0.0.1:33221"
+        assert result["verdict"] == "ok"
+        mock_client.close.assert_called_once()
+
+    def test_does_not_close_a_caller_supplied_client(self, tmp_path):
+        p = _write_corpus(tmp_path, [{"_id": "d1", "title": "T", "text": "x" * 50}])
+        mock_client = MagicMock()
+        mock_client.post.return_value = _mock_response(
+            mode="CHUNK_HYBRID", chunks=[{"parent_doc_id": "/corpus/d1.txt"}],
+        )
+
+        rag_reachability_probe(p, mock_client, n=10, top_k=5)
+
+        mock_client.close.assert_not_called()
 
 
 # --- stage_corpus_dir: the answer-key isolation fix (tempdoc 624 §As-built #7).

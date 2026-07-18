@@ -104,14 +104,23 @@ def cmd_ner_eval(ctx, model_dir, max_sentences, data_dir):
               help="Path to eval queries JSON (MultiHop-RAG format).")
 @click.option("--corpus-dir", type=click.Path(exists=True), required=True,
               help="Path to corpus directory (for title→filename mapping).")
+@click.option("--corpus-jsonl", type=click.Path(exists=True), default=None,
+              help="Path to a BEIR-format corpus.jsonl for the rag_reachability guard "
+                   "(tempdoc 749). Defaults to <corpus-dir>/corpus.jsonl; the guard reports "
+                   "'not-applicable' when neither exists.")
 @click.option("--base-url", default=_DEFAULT_BASE_URL_EVAL, show_default=True)
 @click.option("--top-k", default=10, show_default=True)
 @click.option("--max-tokens", default=8192, show_default=True)
 @click.option("--types", default=None, help="Comma-separated question types to include.")
 @click.option("--max-queries", default=None, type=int, help="Limit number of queries.")
+@click.option("--skip-reachability", is_flag=True, default=False,
+              help="Skip the rag_reachability guard (tempdoc 749) that fail-closes when a "
+                   "sub-threshold (chunkless-by-construction) doc isn't reachable via the "
+                   "primary RAG chunk path.")
 @click.option("--output-dir", type=click.Path(), default=None)
 @click.pass_context
-def cmd_retrieval_eval(ctx, queries, corpus_dir, base_url, top_k, max_tokens, types, max_queries, output_dir):
+def cmd_retrieval_eval(ctx, queries, corpus_dir, corpus_jsonl, base_url, top_k, max_tokens,
+                        types, max_queries, skip_reachability, output_dir):
     """Tier 1: Evaluate retrieval quality with Hits@K, MRR, and evidence recall ($0 cost)."""
     from .. import agent_retrieval_eval as are
 
@@ -121,6 +130,8 @@ def cmd_retrieval_eval(ctx, queries, corpus_dir, base_url, top_k, max_tokens, ty
         qa, base_url=base_url, top_k=top_k, max_tokens=max_tokens,
         question_types=question_types, max_queries=max_queries,
         corpus_dir=Path(corpus_dir),
+        corpus_jsonl=Path(corpus_jsonl) if corpus_jsonl else None,
+        skip_reachability=skip_reachability,
     )
 
     if ctx.obj.get("json"):
@@ -134,6 +145,10 @@ def cmd_retrieval_eval(ctx, queries, corpus_dir, base_url, top_k, max_tokens, ty
         (out / "retrieval-eval.json").write_text(
             json.dumps(result, indent=2, default=str), encoding="utf-8")
         click.echo(f"Written to {out / 'retrieval-eval.json'}")
+
+    if "error" in result:
+        click.echo(f"Retrieval eval failed: {result['error']}", err=True)
+        sys.exit(1)
 
 
 @click.command("tier2-eval")
