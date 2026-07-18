@@ -702,12 +702,17 @@ the target population: **1557 chunk docs from 5189 docs → ~70% chunkless short
   produces 1 (→ chunkless on new builds, covered by the union leg) is expected and consistent with
   B's intent; existing indices are unaffected at query time.
 - `/search-quality` before/after eval on scifact (mandatory falsifier): interactive
-  `jseval run --modes hybrid --start-backend --clean --pipeline` (git 5e195fe6, full enrichment,
-  dense+CE+hybrid legs observed) → **nDCG@10 0.7603** (P@1 0.637, R@10 0.888) vs register baseline
-  **0.758**, Δ+0.002 — **on-baseline, falsifier does NOT trip.** The ChunkSplitter chunk-count change
-  + the RAG-path union leave interactive ranking unregressed, as predicted (union is RAG-path-only).
-  Recorded as register **F-038**. Interrogate-results note: a first run scored 0.680 — a missing
-  `--pipeline` confounder (queried at 60% embedding coverage → BM25+CE only, `requested_dense_but_
-  not_observed`), NOT a regression; the full-enrichment re-run is the valid number. The live
+  `jseval run --modes hybrid --start-backend --clean --pipeline` (full enrichment, dense+CE+hybrid
+  legs observed) → **nDCG@10 0.7603** (P@1 0.637, R@10 0.888) vs register scorecard **0.760** /
+  baseline 0.758, Δ+0.002 — **on-baseline, falsifier does NOT trip.** Recorded as register **F-038**.
+  **Coverage note (review PF-3):** the run's `summary.json` stamps `git_sha 5e195fe6` (the *parent*
+  commit) because the code changes were uncommitted at eval time — `runHeadlessEval` built the
+  working tree, jseval stamped HEAD; the number reflects the changed code. The load-bearing
+  no-regression reason is structural: the interactive-hybrid path source (`HybridSearchOps`,
+  `TextQueryOps`, `ReadPathOps`, fusion) is absent from the `5e195fe6→b59ef3a2` diff, so interactive
+  ranking is byte-identical; the union leg is RAG-path-only and the ChunkSplitter fix only changes
+  new-build chunk counts. Interrogate-results note: a first run scored 0.680 — a missing `--pipeline`
+  confounder (queried at 60% embedding coverage → BM25+CE only, `requested_dense_but_not_observed`),
+  NOT a regression; the full-enrichment re-run is the valid number. The live
   `retrieval-eval`/`rag_reachability` probe (W3, unit-tested) was not run against a full corpus.jsonl
   in this env (corpus-path limit); live R9 + browser + unit tests are the RAG-path end-to-end proof.

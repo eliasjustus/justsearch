@@ -579,8 +579,44 @@ class ChunkSearchIntegrationTest {
     Set<String> ids =
         result.hits().stream().map(h -> h.docId()).collect(java.util.stream.Collectors.toSet());
     assertEquals(Set.of("doc-u1", "doc-u2"), ids);
-    // The hybrid (usable-queryVector) branch is covered by the live R9 validation — this harness
-    // has no embedding fixtures, so only the BM25 dispatch is unit-tested here.
+    // The hybrid (usable-queryVector) branch's RRF ranking is covered by the live R9 validation;
+    // its symmetric IS_CHUNK exclusion is unit-tested below (searchDocLevelUnionHybridExcludesChunkDocs).
+  }
+
+  @Test
+  @DisplayName("searchDocLevelUnion (hybrid branch) excludes chunk docs by construction (tempdoc 749 review PF-2)")
+  void searchDocLevelUnionHybridExcludesChunkDocs() throws Exception {
+    // Regular parent: matches the BM25 leg via content, carries no vector of its own.
+    indexDoc("doc-1", "Coral reefs support diverse marine life");
+
+    // A "poisoned" chunk doc that also happens to carry parent-level content + vector — the
+    // latent double-surface trap this guard exists to prevent. A chunk doc must never be
+    // eligible for the doc-level union, regardless of what fields it carries.
+    float[] queryVector = new float[] {1f, 0f, 0f, 0f};
+    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+        SchemaFields.DOC_ID, "doc-1#chunk_0",
+        SchemaFields.DOC_UID, "doc-1#chunk_0#0",
+        SchemaFields.IS_CHUNK, "true",
+        SchemaFields.PARENT_DOC_ID, "doc-1",
+        SchemaFields.CONTENT, "Coral reefs support diverse marine life",
+        SchemaFields.VECTOR, queryVector,
+        SchemaFields.PATH, "doc-1"
+    )));
+
+    commitAndRefresh();
+
+    // Non-null, non-empty queryVector and no query-skip condition -> dispatches to the hybrid
+    // branch (searchHybridFiltered), not the BM25 (searchFullDocs) fallback.
+    var result =
+        runtime.chunkSearchOps().searchDocLevelUnion("coral reef", queryVector, Set.of(), 10, null);
+
+    assertNotNull(result);
+    for (var hit : result.hits()) {
+      assertFalse(
+          "doc-1#chunk_0".equals(hit.docId()),
+          "Chunk doc must never surface from the doc-level union hybrid branch, even though it "
+              + "carries matching content + vector. Got: " + hit.docId());
+    }
   }
 
   // ========== Helper Methods ==========

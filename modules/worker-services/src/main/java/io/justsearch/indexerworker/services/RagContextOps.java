@@ -522,10 +522,6 @@ final class RagContextOps {
       effectiveMode = "BM25";
     }
 
-    // Record metrics
-    long latencyMs = System.currentTimeMillis() - startTime;
-    metrics.recordRagRetrieval(effectiveMode, result.hits().size(), latencyMs);
-
     // Tempdoc 749 (option B): union doc-level hits for chunkless parents into the PRIMARY
     // candidate set. Docs under the chunking threshold have no chunk documents at all, so every
     // is_chunk=true query above is structurally blind to them even though document-level search
@@ -539,7 +535,15 @@ final class RagContextOps {
         unionHits.isEmpty()
             ? result.hits()
             : mergeByReciprocalRank(result.hits(), unionHits, overRetrieveK);
+    // totalFound is a display-only composite (corpus-wide chunk total + synthesized union count);
+    // the proto contract already notes chunks_found "may exceed the returned chunks list".
     long totalFound = result.totalHits() + unionHits.size();
+
+    // Record metrics AFTER the union leg so its cost (doc-level search + existence probes) is
+    // included — tempdoc 749 review PF-1 (don't make the union leg's latency invisible).
+    long latencyMs = System.currentTimeMillis() - startTime;
+    metrics.recordRagRetrieval(effectiveMode, candidateHits.size(), latencyMs);
+
     if (!unionHits.isEmpty()) {
       log.debug(
           "RAG union leg: {} chunkless doc-level candidates merged into {} chunk hits",

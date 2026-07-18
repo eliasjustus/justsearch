@@ -709,15 +709,19 @@ public final class ChunkSearchOps {
     Query scope = (docIds == null || docIds.isEmpty())
         ? null
         : termInSetFilter(SchemaFields.DOC_ID, docIds);
-    Query combined;
-    if (scope != null && additionalFilter != null) {
-      combined = new BooleanQuery.Builder()
-          .add(scope, BooleanClause.Occur.FILTER)
-          .add(additionalFilter, BooleanClause.Occur.FILTER)
-          .build();
-    } else {
-      combined = scope != null ? scope : additionalFilter;
+    // Exclude chunk docs by construction (symmetric with searchFullDocs) — tempdoc 749 review PF-2.
+    // MatchAllDocsQuery is the REQUIRED positive clause: a pure MUST_NOT filter matches nothing and
+    // would break the unscoped union (no scope/user filter present).
+    BooleanQuery.Builder cb = new BooleanQuery.Builder()
+        .add(new org.apache.lucene.search.MatchAllDocsQuery(), BooleanClause.Occur.FILTER)
+        .add(new TermQuery(new Term(SchemaFields.IS_CHUNK, "true")), BooleanClause.Occur.MUST_NOT);
+    if (scope != null) {
+      cb.add(scope, BooleanClause.Occur.FILTER);
     }
+    if (additionalFilter != null) {
+      cb.add(additionalFilter, BooleanClause.Occur.FILTER);
+    }
+    Query combined = cb.build();
     return hybridSearchOps.searchHybridFiltered(queryText, queryVector, limit, combined);
   }
 }

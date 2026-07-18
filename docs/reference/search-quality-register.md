@@ -787,11 +787,18 @@ above)*
     produce a CHUNK_HYBRID citation for a chunkless doc). Browser click-to-verify confirmed the
     citation resolves to the target's whole-doc source.
   - **Interactive no-regression (mandatory falsifier):** `jseval run --dataset scifact --modes hybrid
-    --start-backend --clean --pipeline`, git 5e195fe6, full enrichment (embed/splade 99.9%), observed
-    legs `cross_encoder+dense+hybrid+query_classification`: **nDCG@10 0.7603** (P@1 0.637, R@10 0.888)
-    vs register baseline 0.758 — Δ+0.002, within the ±2σ noise envelope. The ChunkSplitter tail-fix
-    (which changes new-build chunk counts) + the RAG-path union thus leave interactive ranking
-    on-baseline, as predicted architecturally (union touches only the RAG path).
+    --start-backend --clean --pipeline`, full enrichment (embed/splade 99.9%), observed legs
+    `cross_encoder+dense+hybrid+query_classification`: **nDCG@10 0.7603** (P@1 0.637, R@10 0.888) vs
+    register scorecard 0.760 / baseline 0.758 — Δ+0.002, within the ±2σ noise envelope. (The run's
+    `summary.json` stamps `git_sha 5e195fe6`, the *parent* commit — the code changes were uncommitted
+    in the working tree at eval time, so `runHeadlessEval` compiled them but jseval records HEAD; the
+    number is the working-tree code, not the parent's.) **The load-bearing no-regression argument is
+    structural, not the eval number alone:** the entire interactive-hybrid ranking path
+    (`HybridSearchOps.java`, `TextQueryOps.java`, `ReadPathOps.java`, fusion) is **absent from the
+    diff** (`git diff 5e195fe6 b59ef3a2 --stat`), so interactive ranking is byte-identical — the
+    union leg lives only in `RagContextOps.searchChunksWithMeta` (the RAG path), and the ChunkSplitter
+    tail-fix only changes new-build chunk counts. The 0.7603 = scorecard-0.760 result confirms the
+    chunk-count change had no measurable interactive effect.
 - **Conditions/caveats:** a first eval run scored 0.680 with `requested_dense_but_not_observed` — a
   **confounder, not a regression**: it omitted `--pipeline`, so jseval queried at
   `embeddingCoveragePercent 59.9%` (dense/splade only ~60% enriched → BM25+CE only). The 0.7603 run
