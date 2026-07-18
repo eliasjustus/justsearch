@@ -528,9 +528,11 @@ final class RagContextOps {
     // finds them. Synthesized whole-doc chunks compete in the same rerank/diversify/budget
     // pipeline as real chunks ("fusion is a ranking step, not a recall gate", D-005).
     List<LuceneRuntimeTypes.SearchHit> unionHits =
-        buildUnionCandidates(
-            question, queryVector, docIds, ragFilters, excludedChunks, overRetrieveK,
-            result.hits());
+        ragConfig.unionEnabled()
+            ? buildUnionCandidates(
+                question, queryVector, docIds, ragFilters, excludedChunks, overRetrieveK,
+                result.hits())
+            : List.of();
     List<LuceneRuntimeTypes.SearchHit> candidateHits =
         unionHits.isEmpty()
             ? result.hits()

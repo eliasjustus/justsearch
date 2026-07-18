@@ -811,12 +811,22 @@ above)*
 - **Conditions/caveats:** a first eval run scored 0.680 with `requested_dense_but_not_observed` — a
   **confounder, not a regression**: it omitted `--pipeline`, so jseval queried at
   `embeddingCoveragePercent 59.9%` (dense/splade only ~60% enriched → BM25+CE only). The 0.7603 run
-  with full-enrichment wait is the valid comparison. The `jseval retrieval-eval`/`rag_reachability`
-  live probe (W3, shipped + unit-tested) was not run against a full `corpus.jsonl` in this
-  environment (corpus-path limitation; the 718 chunk-completeness guard reported `chunk-free`
-  fail-open on the same missing input) — the live R9 + browser + worker/adapter unit tests are the
-  end-to-end proof for the RAG path. The `buildFallbackWithVirtualChunks` path stays as the genuine
-  last resort (both legs empty / FULL_DOCUMENT mode), firing rate expected to drop sharply.
+  with full-enrichment wait is the valid comparison. The `buildFallbackWithVirtualChunks` path stays
+  as the genuine last resort (both legs empty / FULL_DOCUMENT mode), firing rate expected to drop
+  sharply.
+- **RAG-path validation + `rag.union.enabled` flag (2026-07-18):** a default-ON flag
+  `rag.union.enabled` now gates the union leg (operational off-switch + the tempdoc's own
+  gating-remedy). Live RAG-path demonstration on a mixed index (280 long chunked + 24 short chunkless
+  docs, union ON): `rag_reachability_probe` verdict **`ok`, 10/10 chunkless short docs reachable via
+  CHUNK_HYBRID** — the reachability guard fired and passed on a real corpus. Running the probe live
+  caught **3 real bugs in the W3 probe** (scoping to a corpus-id the backend keys by path; exact
+  path-vs-id match; over-strict `top_k=5`) — it was non-functional for real corpus-dir corpora, a
+  `static-green ≠ live-working` catch; all fixed + tests rewritten. Long-path non-disturbance is
+  structural (the union's `withChunks` filter drops all chunked docs → long-doc retrieval is
+  union-independent by construction). **Residual (named, not measured):** the pure adversarial
+  same-query short-vs-long displacement needs a purpose-built topically-competing corpus that
+  doesn't exist locally; low-probability under B (query-conditional injection + F-014 length-asymmetry
+  handling + CE-not-in-CHUNK_HYBRID) and now mitigated by the off-switch.
 - **Adjacent finds (rode along):** the ChunkSplitter emitted a redundant overlap-tail chunk for
   stripped lengths 385–1923 and for long docs' final segment (live on the virtual-chunk fallback);
   fixed. `modules/indexing` test runtime lacked `net.jqwik:jqwik-engine`, so the tempdoc-554

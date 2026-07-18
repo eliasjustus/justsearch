@@ -623,6 +623,22 @@ final class ResolvedConfigBuilderTest {
     }
 
     @Test
+    @DisplayName("contributeYaml reads RAG union.enabled override")
+    void ragUnionEnabledOverride() {
+      String yaml =
+          """
+          rag:
+            union:
+              enabled: false
+          """;
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeYaml(parseYaml(yaml));
+      ResolvedConfig config = builder.build();
+
+      assertFalse(config.rag().unionEnabled());
+    }
+
+    @Test
     @DisplayName("contributeYaml reads worker limits")
     void workerConfig() {
       String yaml =
@@ -734,6 +750,7 @@ final class ResolvedConfigBuilderTest {
       assertEquals("auto", config.rag().retrieveMode());
       assertEquals(5, config.rag().retrieveTopK());
       assertEquals(0.5, config.rag().mmrLambda(), 0.001);
+      assertTrue(config.rag().unionEnabled());
       // HybridSearch defaults
       assertEquals(60, config.hybridSearch().rrfK());
       assertEquals(0.75, config.hybridSearch().vectorRrfWeight(), 0.001);

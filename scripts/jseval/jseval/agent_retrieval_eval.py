@@ -335,9 +335,12 @@ def rag_reachability_probe(
             title = d.title.strip()
             question = title if title else " ".join(d.text.split()[:12])
             try:
+                # UNSCOPED on purpose: reachability means the doc surfaces via the primary
+                # RAG path on its own content — scoping to a doc_id (a) defeats the test and
+                # (b) can't be expressed here anyway, since the backend keys docs by ingest
+                # PATH, not the corpus doc id.
                 resp = client.post("/api/knowledge/retrieve-context", json={
                     "query": question,
-                    "doc_ids": [d.doc_id],
                     "top_k": top_k,
                 })
                 resp.raise_for_status()
@@ -350,9 +353,15 @@ def rag_reachability_probe(
             quality = data.get("quality", {})
             retrieval_mode = quality.get("retrieval_mode", "")
             chunks = data.get("chunks", [])
+            # parent_doc_id is a full ingest path (…/<doc_id>.txt), not the bare corpus
+            # doc id, so compare by filename stem via the same path↔id matcher the Tier-1
+            # metrics use — an exact `==` never matches a corpus-dir-ingested doc.
             reachable = (
                 retrieval_mode != "FULLTEXT_FALLBACK"
-                and any(c.get("parent_doc_id") == d.doc_id for c in chunks)
+                and any(
+                    _doc_id_matches_title(c.get("parent_doc_id", ""), d.doc_id)
+                    for c in chunks
+                )
             )
             if reachable:
                 passed += 1
@@ -381,7 +390,10 @@ def run_retrieval_eval(
     corpus_jsonl: str | Path | None = None,
     skip_reachability: bool = False,
     reachability_n: int = 10,
-    reachability_top_k: int = 5,
+    # Test reachability at the same depth the eval/product retrieves (command --top-k
+    # default is 10); a stricter hidden default made the guard over-strict — a doc reachable
+    # at the product's top_k could false-fail on a smaller over-retrieve pool.
+    reachability_top_k: int = 10,
 ) -> dict:
     """Run Tier 1 retrieval eval against the retrieve-context REST API.
 
