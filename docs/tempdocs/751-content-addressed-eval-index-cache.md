@@ -1,7 +1,7 @@
 ---
 title: "Input-addressed eval index cache: reuse a built index iff (corpus_signature × index_identity_key) match — static selector nominates, the running backend confirms, fail-closed to fresh build — keeping the fresh-build validity guarantee while amortizing the ~50-min/10k-doc rebuild eval campaigns pay repeatedly for identical inputs"
 type: tempdocs
-status: "MERGED to main same-day as PR #235, commit 66c6c71e (2026-07-17 reconciliation). [pre-merge status retained: IMPLEMENTED v0+v1 (2026-07-17, §P) in worktree takeover-751 — live-validated (miss→publish, 17s confirmed adoption, knob-flip + dirty-tree misses, prune). Default OFF (--index-cache opt-in). Full pipeline this session: takeover (GO, §F) → theorize (§G-§K) → research (§L) → design (§M-§N) → derisk (§O, 8/10) → plan → implement (§P). Evidence-gated follow-ups in §P.3 (v2 scoped pin, parity sampling, NER stamp, 676 line). Not yet merged to main.]"
+status: "v1 MERGED to main as PR #235, commit 66c6c71e (2026-07-17). §P.5 chain-integration seam IMPLEMENTED in worktree 751-chain-seam same day and live-validated — the chain's exact three-failure sequence replayed green (warm from corpus-dir subdir → published; wrapper adopt same dir → six confirm checks green; warm again → already-cached; dataset-mode regression clean). resolve_corpus_axis + index-cache warm + WARN escalation + ingest None-guard; finding 3 refuted by IngestionSkipPolicy.java:137 (dotfiles never indexed). §P.3 evidence-gated follow-ups unchanged."
 created: 2026-07-17
 author: agent (Fable orchestration), chartered at founder direction during the Phase-2 utility campaign ("open a new tempdoc for this. ill set a new agent on it")
 category: eval-infrastructure / measurement-economics / index-lifecycle
@@ -902,3 +902,92 @@ here so they aren't lost:
    declares them in use") is not implemented — the 10-minute publish-protection window plus
    adoption `touch()` (which refreshes LRU recency) is the only protection. Adequate at current
    store sizes; revisit with follow-up 5 when chains declare campaigns.
+
+### P.5 Chain-integration seam (REOPENED 2026-07-17 — the §P.3.5 follow-up, now with live spec)
+
+Within two hours of #235 landing, the Phase-2 campaign session (#236) wired an adopt-side
+index-cache passthrough into `serve-eval-backend.py` (default off) and attempted live
+integration three times (14:49-15:00), hit three findings, and **reverted to fresh-build** —
+filing the findings in the observations inbox (session 109145ac shard) as this section's spec:
+
+1. **Subdir corpus mode silently disables the cache.** Chains pass the exploded
+   `datasets/<cell>/corpus-dir` as the corpus axis; `corpus_signature` (dataset-dir mode wants
+   `corpus.jsonl` + qrels at the dataset root) returns empty → selector unavailable →
+   fail-quiet disable → chain topologies lose ALL caching with only an INFO line. Fix
+   direction: resolve/accept the parent dataset dir (conform to the one canonical signature,
+   don't fork a files-mode variant of corpus identity) + upgrade the disable log to a WARN
+   naming the remedy (their diagnosis cycle was spent on the silence, not the behavior).
+2. **The F-A `corpus_dir_path` binding breaks two-boot chain topologies.** Publisher
+   (`jseval run` pass) binds the key to its resolution (`datasets/<name>` root) while the
+   chain adopter passes `datasets/<cell>/corpus-dir` — different absolute paths, different
+   keys, never a hit. F-A is doing its fail-closed job against a *legitimate* same-machine
+   consumer; the fix is **one canonical corpus-path resolution shared by every caller**
+   (publisher and adopter must agree by construction, not by convention).
+3. **Staging sidecar pollution:** the `tmp/eval-corpora` staging dir carries a
+   `.source_signature` sidecar that would index as a stray extra document AND its watched
+   root trips utility-run's stray-root gate against the `datasets/` convention.
+
+Their conclusion, adopted here verbatim: integration needs a **designed seam** (e.g. an
+`index-cache warm` CLI or publish-from-wrapper), not chain-side improvisation.
+
+**Consequence for §P.3.1 (v2 scoped pin):** its `would_have_hit_scoped_pin` trigger data
+cannot accumulate while the first consumer cannot use the cache at all — the evidence pipeline
+is dammed upstream of the engine-pin question. §P.5 closes first; v2 stays evidence-gated.
+
+Also filed by the founder from the same campaign (class-level, owned elsewhere): no agent
+proactively flagged the rebuild inefficiency before 751 was chartered — the
+"friction-you-schedule-around-is-a-finding" lesson; 751 is the instance, the class fix
+candidates (GPU-hours ledger, postmortem handle) belong to the agent-environment program.
+
+### P.5 implementation log (2026-07-17, session 7b0aa2d9 — the seam SHIPPED in worktree)
+
+**What shipped (worktree `751-chain-seam`):**
+- **`resolve_corpus_axis(dataset_name, explicit_dir) -> CorpusAxis(watched_dir, signature_root,
+  reason)`** in `index_identity.py` — the one canonical corpus-axis resolution, mirroring
+  `ingest.prepare_corpus`'s watched-root derivation; `compute_selector` now takes
+  `dataset_name` and binds `corpus_signature` to `signature_root` and `corpus_dir_path` to
+  `watched_dir` (the doc-universe path F-A actually protects). The finding-1 subdir shape
+  (`datasets/<cell>/corpus-dir`) resolves (watched=subdir, signature=parent); unresolvable +
+  cache requested now logs **WARNING with the remedy** (was INFO). `corpora.local_dataset_dir`
+  deleted (teardown rode along; sole caller was superseded).
+- **`jseval index-cache warm (--dataset X | --corpus-dir DIR)`** — the designed seam #236's
+  wrapper comment presupposed: drives the existing run lifecycle (`warm_index_cache` helper
+  reusing `_run_iteration`); prints `published <key>` / `already-cached <key>`; an
+  unresolvable axis exits 2 (fail LOUD — a warm that cannot cache is a chain-config error).
+  `serve-eval-backend.py` gains `--dataset`; publisher/adopter agreement is now structural
+  (same resolver, same input → same key).
+- **Latent None-guard** in `ingest._raw_corpus_dir`/`_source_signature` (corpus-dir-only
+  warm was the first caller to pass `dataset_name=None`; found by the live replay's first
+  attempt, exactly the class the replay exists to catch).
+- Finding 3 resolved by inspection: the Worker's `IngestionSkipPolicy.java:137` skips every
+  dot-prefixed file — `.source_signature` is never indexed; the stray-root-gate half is moot
+  under warm (chains watch `datasets/<cell>/corpus-dir`, which has no sidecar). A separate
+  199-vs-198 materialization-orphan artifact went to the observations inbox.
+
+**Live replay of the chain's exact failure sequence (2026-07-17 17:57-18:05, all green):**
+1. `warm --corpus-dir …/legal-clerc-200/corpus-dir` (finding-1 shape) → MISS → build →
+   `published d842873a…` with the chain dir as the recorded watched root.
+2. `serve-eval-backend.py --index-cache-mode on --corpus-dir <same>` (finding-2 replay) →
+   **adopted, all six confirm checks green** incl. watched-roots and canary (chunk-merge
+   executed, 59 hits) — the previously-impossible two-boot hit.
+3. `warm` again → `already-cached d842873a…` (confirmed live, ~30 s).
+4. Dataset-mode `jseval run --index-cache` → its own distinct key (watched =
+   `tmp/eval-corpora` materialization target) → publish — no regression; the two flows
+   coexist under legitimately different keys by design.
+
+Tests: 156 targeted + full suite green (modulo the 2 known-RED correction-probe). The chain
+can now run `index-cache warm` once per (corpus × config) and adopt in seconds per cell.
+
+## §Q. Live campaign finding (2026-07-17 ~22:23, confirmatory launch 1): warm double-ingest wedges readiness — OPEN
+
+First production use of the §P warm seam (chain-confirm.bat, 10k strata) wedged: `index-cache
+warm --corpus-dir` issued TWO ingest passes of the same root within one backend lifetime, and
+the readiness doc-count floor ACCUMULATED (1001+1001=2002 expected) while path-dedup held the
+index at 1001 — an unmeetable readiness wall; warm spun 25+ min GPU-idle past the 600s health
+timeout. Two sub-bugs: (a) the cumulative floor across repeated same-root ingest requests,
+(b) the warm's second ingest pass itself. The campaign reverted to the fresh-build path
+(warm step removed, PR #244) — root-mode claim identity is independent of the cache, so this
+cost economics only, not evidence validity. Repro/spec detail in the session shard note
+(109145ac, 2026-07-17) and the chain comment at `scripts/jseval/chain-confirm.bat:143-147`.
+This is the lane's next work item; the §P.4 verification steps above all used single-ingest
+lifetimes and remain valid.

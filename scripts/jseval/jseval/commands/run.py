@@ -307,19 +307,19 @@ def _run_iteration(
         # polls the port the JVM actually binds to (from env_overrides) rather than
         # backend.py's default 33221 — otherwise the check can false-positive against an
         # unrelated concurrent backend already listening on 33221.
-        # Tempdoc 751: the selector's corpus axis must be known BEFORE the backend
-        # starts. --corpus-dir wins; else resolve local (golden/mixed) datasets to
-        # their deterministic on-disk dir. Unresolvable (e.g. BEIR, materialized
-        # only later in the run) -> None -> backend disables the cache for this
-        # run (fail closed against cross-corpus selector-key collisions).
+        # Tempdoc 751 P.5: the selector's corpus AXIS must be known BEFORE the
+        # backend starts. Thread the explicit --corpus-dir (if any) AND the dataset
+        # name down; the shared index_identity.resolve_corpus_axis (invoked inside
+        # start_backend -> _run_with_cache -> compute_selector) turns them into the
+        # one canonical corpus_signature + watched-path binding both the publisher
+        # and the adopter agree on (finding 2). Unresolvable (BEIR/unknown) -> the
+        # backend disables the cache for this run, fail-quiet (finding 1's WARN).
         cache_corpus_dir = Path(corpus_dir) if corpus_dir else None
-        if cache_corpus_dir is None and index_cache_enabled and dataset:
-            from .. import corpora
-            cache_corpus_dir = corpora.local_dataset_dir(dataset)
         backend_proc = backend_mod.start_backend(
             clean=clean, env_overrides=env_overrides or None, llm=llm, port=int(port),
             index_cache_mode=("on" if index_cache_enabled else "off"),
             corpus_dir=cache_corpus_dir,
+            dataset_name=dataset,
         )
         effective_base_url = f"http://127.0.0.1:{port}"
 
@@ -351,6 +351,7 @@ def _run_iteration(
     # run dir existing (sec O.8.2 trap).
     publish_inputs = None
     publish_selector_key = None
+    published_entry = None
     try:
         # Tempdoc 644 Axis 2: instrument-integrity guard. Refuse to emit numbers when the
         # realized engine set diverges from the intended one (the worktree silent
@@ -386,9 +387,14 @@ def _run_iteration(
             from .. import backend as backend_mod
             backend_mod.stop_backend(backend_proc.proc, data_dir=backend_proc.data_dir)
             if publish_inputs is not None and publish_selector_key:
-                _publish_after_stop(
+                published_entry = _publish_after_stop(
                     backend_proc.data_dir, publish_selector_key, publish_inputs,
                 )
+
+    # 751 P.5 WP-2: the warm helper reuses this exact lifecycle and needs the
+    # adopt-side outcome + any freshly-published entry to report published vs
+    # already-cached. cmd_run's loop ignores the return.
+    return {"cache_outcome": cache_outcome, "published_entry": published_entry}
 
 
 def _reset_index(base_url: str) -> None:
@@ -641,7 +647,11 @@ def _get_json_or_none(client, path):
 
 
 def _publish_after_stop(data_dir, selector_key, publish_inputs):
-    """Publish the fresh-built data dir AFTER stop_backend (751 WP3; fail-quiet)."""
+    """Publish the fresh-built data dir AFTER stop_backend (751 WP3; fail-quiet).
+
+    Returns the published entry dir name (751 P.5 WP-2 -- the warm helper reports
+    it), or ``None`` when publish was skipped/failed.
+    """
     from .. import index_cache
 
     identity_doc, attestation = publish_inputs
@@ -649,9 +659,70 @@ def _publish_after_stop(data_dir, selector_key, publish_inputs):
         entry_dir = index_cache.publish(data_dir, selector_key, identity_doc, attestation)
     except Exception as exc:  # publish is fail-quiet internally; never fail the run
         log.warning("Index cache publish raised unexpectedly (%s) -- ignored.", exc)
-        return
+        return None
     if entry_dir is not None:
         log.info("Index cache published entry %s.", entry_dir.name)
+        return entry_dir.name
+    return None
+
+
+def warm_index_cache(dataset, corpus_dir, port):
+    """Publish (or confirm already-cached) the index-cache entry for one corpus
+    axis, reusing the exact ``jseval run ... --index-cache`` lifecycle (751 P.5 WP-2).
+
+    Drives ``jseval run (--dataset X | --corpus-dir DIR) --max-queries 0 --pipeline
+    --start-backend --clean --index-cache`` via :func:`_run_iteration` (the boot +
+    adopt + publish lifecycle is NOT duplicated).
+
+    Returns ``{"status": "published"|"already-cached"|"disabled", "entry": <prefix
+    or None>, "reason": <str or None>}``. Resolves the axis FIRST and fails LOUD
+    (``status`` ``disabled``) on an unresolvable axis: warm exists to cache, so a
+    chain-config error that would silently skip caching must surface -- unlike the
+    run path's fail-quiet disable.
+    """
+    from types import SimpleNamespace
+
+    from .. import index_identity
+
+    axis = index_identity.resolve_corpus_axis(
+        dataset, Path(corpus_dir) if corpus_dir else None,
+    )
+    if axis.reason is not None:
+        return {"status": "disabled", "entry": None, "reason": axis.reason}
+
+    import tempfile
+
+    ctx = SimpleNamespace(obj={"json": False})
+    out_dir = Path(tempfile.mkdtemp(prefix="jseval-warm-"))
+    result = _run_iteration(
+        ctx=ctx, dataset=dataset, modes=None,
+        base_url=f"http://127.0.0.1:{port}", output_dir=str(out_dir), top_k=10,
+        embedding=False, splade=False, lambdamart=False, cross_encoder=False,
+        allow_errors=False, max_queries=0, context_coverage=False,
+        thresholds="0.25,0.5", history_db=None, corpus_dir=corpus_dir,
+        skip_ingest=False, pipeline=True, timeline_path=None, start_backend=True,
+        llm=False, clean=True, reset=False, allow_degraded=False,
+        index_cache_enabled=True, env_overrides={"JUSTSEARCH_API_PORT": str(port)},
+        json_flag=False, is_warmup=False,
+    )
+    result = result or {}
+    outcome = result.get("cache_outcome") or {}
+    published = result.get("published_entry")
+    if published:
+        return {"status": "published", "entry": published[:16], "reason": None}
+    if outcome.get("mode") == "adopted":
+        return {
+            "status": "already-cached",
+            "entry": (outcome.get("entry") or "")[:16],
+            "reason": None,
+        }
+    # Neither published nor adopted: the cache was disabled mid-lifecycle or the
+    # publish was skipped -- surface loudly rather than pretend success.
+    return {
+        "status": "disabled",
+        "entry": None,
+        "reason": outcome.get("mode") or "no cache outcome (publish skipped)",
+    }
 
 
 def _print_summary(summary: dict) -> None:

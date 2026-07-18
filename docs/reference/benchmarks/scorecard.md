@@ -12,57 +12,59 @@ description: "Generated delta-vs-guard scorecard co-locating all engine-quality 
 > ratchet guards. **Relevance is the constraint; perf + footprint are the tracked score** (the MLPerf split).
 > Status is direction-aware vs each axis's guard (floor / budget-ratio / ceiling).
 
-*Release `667-external-baselines-2026-07-01`, default mode `hybrid`.*
+*Release `715-rebaseline-2026-07-16`, default mode `hybrid`.*
 
 ### beir/scifact
 
 | Axis | Metric | This release | Guard | Status |
 |---|---|---|---|---|
-| quality | nDCG@10 | 0.756 | ≥ 0.736 (floor) | ✅ |
-| perf | CE p50 (ms) | 167 | ≤ band (relative) | ✅ |
-| perf | Index docs/s | 111.1 | ≥ band (relative) | ✅ |
-| perf | Enrich docs/s | 25.0 | ≥ band (relative) | ✅ |
-| perf | Resident (GB) | 1.75 | ≤ band (relative) | ✅ |
-| leak | leak_rate | ≤ 0.013 | ≤ ceiling+tol | ✅ |
+| quality | nDCG@10 | 0.760 | ≥ 0.740 (floor) | ✅ |
+| perf | CE p50 (ms) | 171 | ≤ band (relative) | ✅ |
+| perf | Index docs/s | 89.8 | ≥ band (relative) | ✅ |
+| perf | Enrich docs/s | 20.5 | ≥ band (relative) | ✅ |
+| perf | Resident (GB) | 2.02 | ≤ band (relative) | ✅ |
+| leak | leak_rate | ≤ 0.023 | ≤ ceiling+tol | ✅ |
 
 ### mixed/enron-qa
 
 | Axis | Metric | This release | Guard | Status |
 |---|---|---|---|---|
-| quality | nDCG@10 | 0.719 | ≥ 0.699 (floor) | ✅ |
-| perf | CE p50 (ms) | 157 | ≤ band (relative) | ✅ |
-| perf | Index docs/s | 96.4 | ≥ band (relative) | ✅ |
-| perf | Enrich docs/s | 7.9 | ≥ band (relative) | ✅ |
+| quality | nDCG@10 | 0.736 | ≥ 0.716 (floor) | ✅ |
+| perf | CE p50 (ms) | 161 | ≤ band (relative) | ✅ |
+| perf | Index docs/s | 64.5 | ≥ band (relative) | ✅ |
+| perf | Enrich docs/s | 6.2 | ≥ band (relative) | ✅ |
 | perf | Resident (GB) | 2.02 | ≤ band (relative) | ✅ |
-| leak | leak_rate | ≤ 0.047 | ≤ ceiling+tol | ✅ |
+| leak | leak_rate | ≤ 0.113 | ≤ ceiling+tol | ✅ |
 
 ### mixed/legal-clerc-200
 
 | Axis | Metric | This release | Guard | Status |
 |---|---|---|---|---|
-| quality | nDCG@10 | 0.516 | ≥ 0.496 (floor) | ✅ |
-| perf | CE p50 (ms) | 214 | ≤ band (relative) | ✅ |
-| perf | Index docs/s | 11.0 | ≥ band (relative) | ✅ |
-| perf | Enrich docs/s | 1.3 | ≥ band (relative) | ✅ |
-| perf | Resident (GB) | 1.75 | ≤ band (relative) | ✅ |
-| leak | leak_rate | ≤ 0.205 | ≤ ceiling+tol | ✅ |
+| quality | nDCG@10 | 0.598 | ≥ 0.578 (floor) | ✅ |
+| perf | CE p50 (ms) | 226 | ≤ band (relative) | ✅ |
+| perf | Index docs/s | 29.3 | ≥ band (relative) | ✅ |
+| perf | Enrich docs/s | 1.0 | ≥ band (relative) | ✅ |
+| perf | Resident (GB) | 2.02 | ≤ band (relative) | ✅ |
+| leak | leak_rate | ≤ 0.155 | ≤ ceiling+tol | ✅ |
 
 ### mixed/miracl-de-2k
 
 | Axis | Metric | This release | Guard | Status |
 |---|---|---|---|---|
-| quality | nDCG@10 | 0.852 | ≥ 0.832 (floor) | ✅ |
-| perf | CE p50 (ms) | 168 | ≤ band (relative) | ✅ |
-| perf | Index docs/s | 73.7 | ≥ band (relative) | ✅ |
-| perf | Enrich docs/s | 36.7 | ≥ band (relative) | ✅ |
-| perf | Resident (GB) | 1.75 | ≤ band (relative) | ✅ |
+| quality | nDCG@10 | 0.862 | ≥ 0.842 (floor) | ✅ |
+| perf | CE p50 (ms) | 175 | ≤ band (relative) | ✅ |
+| perf | Index docs/s | 97.2 | ≥ band (relative) | ✅ |
+| perf | Enrich docs/s | 33.4 | ≥ band (relative) | ✅ |
+| perf | Resident (GB) | 2.02 | ≤ band (relative) | ✅ |
+| leak | leak_rate | ≤ 0.003 | ≤ ceiling+tol | ✅ |
 
 ### mixed/miracl-fr-2k
 
 | Axis | Metric | This release | Guard | Status |
 |---|---|---|---|---|
-| quality | nDCG@10 | 0.866 | ≥ 0.846 (floor) | ✅ |
-| perf | CE p50 (ms) | 169 | ≤ band (relative) | ✅ |
-| perf | Index docs/s | 124.6 | ≥ band (relative) | ✅ |
-| perf | Enrich docs/s | 50.0 | ≥ band (relative) | ✅ |
-| perf | Resident (GB) | 1.75 | ≤ band (relative) | ✅ |
+| quality | nDCG@10 | 0.873 | ≥ 0.853 (floor) | ✅ |
+| perf | CE p50 (ms) | 174 | ≤ band (relative) | ✅ |
+| perf | Index docs/s | 60.0 | ≥ band (relative) | ✅ |
+| perf | Enrich docs/s | 23.3 | ≥ band (relative) | ✅ |
+| perf | Resident (GB) | 2.02 | ≤ band (relative) | ✅ |
+| leak | leak_rate | ≤ 0.000 | ≤ ceiling+tol | ✅ |

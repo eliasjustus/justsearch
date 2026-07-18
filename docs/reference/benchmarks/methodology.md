@@ -45,25 +45,25 @@ everywhere) — and they are **not directly apples-to-apples**. Read them honest
 
 <!-- generated:start — do not edit between markers; run: node scripts/docs/gen-public-benchmark.mjs -->
 
-*Default mode `hybrid`, commit `84b305b2b`, NVIDIA GeForce RTX 4070, 13 GB VRAM, ORT 1.24.3. nDCG@10. External baselines are cited published numbers (not re-run by us) — see the comparison-class note above.*
+*Default mode `hybrid`, commit `8aacedc37`, NVIDIA GeForce RTX 4070, 13 GB VRAM, ORT 1.24.3. nDCG@10. External baselines are cited published numbers (not re-run by us) — see the comparison-class note above.*
 
 | Corpus | Ours (mode) | nDCG@10 | Ablation | Published baselines (cited) |
 |---|---|---|---|---|
-| beir/scifact | hybrid | **0.756** | — | BM25 (multifield) 0.665; SPLADE++ EnsembleDistil 0.710; ColBERTv2 0.693 |
-| mixed/enron-qa | hybrid | **0.719** | — | — |
-| mixed/legal-clerc-200 | hybrid | **0.516** | — | — |
-| mixed/miracl-de-2k | hybrid | **0.852** | — | BGE-M3 Dense 0.567 (dev) |
-| mixed/miracl-fr-2k | hybrid | **0.866** | — | BM25 0.183 (dev); mDPR (zero-shot) 0.435 (dev); Hybrid (BM25+mDPR) 0.523 (dev) |
+| beir/scifact | hybrid | **0.760** | 0.661 (lexical); 0.668 (bm25_splade); 0.731 (vector) | BM25 (multifield) 0.665; SPLADE++ EnsembleDistil 0.710; ColBERTv2 0.693 |
+| mixed/enron-qa | hybrid | **0.736** | 0.828 (lexical); 0.813 (bm25_splade); 0.587 (vector) | — |
+| mixed/legal-clerc-200 | hybrid | **0.598** | 0.688 (lexical); 0.684 (bm25_splade); 0.620 (vector) | BM25 0.054; Contriever-MSMarco (zero-shot dense) 0.042 |
+| mixed/miracl-de-2k | hybrid | **0.862** | 0.703 (lexical); 0.746 (bm25_splade); 0.851 (vector) | BGE-M3 Dense 0.567 (dev) |
+| mixed/miracl-fr-2k | hybrid | **0.873** | 0.702 (lexical); 0.760 (bm25_splade); 0.891 (vector) | BM25 0.183 (dev); mDPR (zero-shot) 0.435 (dev); Hybrid (BM25+mDPR) 0.523 (dev) |
 
 **Engine performance** (relative-ratchet guarded — tempdoc 640; lower latency / higher throughput / lower footprint better):
 
 | Corpus | CE p50 (ms) | Index docs/s | Enrich docs/s | Resident (GB) |
 |---|---|---|---|---|
-| beir/scifact | 167 | 111.1 | 25.0 | 1.75 |
-| mixed/enron-qa | 157 | 96.4 | 7.9 | 2.02 |
-| mixed/legal-clerc-200 | 214 | 11.0 | 1.3 | 1.75 |
-| mixed/miracl-de-2k | 168 | 73.7 | 36.7 | 1.75 |
-| mixed/miracl-fr-2k | 169 | 124.6 | 50.0 | 1.75 |
+| beir/scifact | 171 | 89.8 | 20.5 | 2.02 |
+| mixed/enron-qa | 161 | 64.5 | 6.2 | 2.02 |
+| mixed/legal-clerc-200 | 226 | 29.3 | 1.0 | 2.02 |
+| mixed/miracl-de-2k | 175 | 97.2 | 33.4 | 2.02 |
+| mixed/miracl-fr-2k | 174 | 60.0 | 23.3 | 2.02 |
 
 <!-- generated:end -->
 

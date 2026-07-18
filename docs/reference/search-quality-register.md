@@ -144,7 +144,7 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 > user actually gets and the one the ratchet floors against. The per-corpus **Best known:** lines below
 > are a *hand-authored research log of best-achievable-config ablations* (often `full`-mode), kept for
 > engineering history — **not** the production headline. They differ **by design**: e.g. legal is
-> `full`-mode **0.925** best-achievable vs `hybrid` **0.620** production-default (corpus×config optimality,
+> `full`-mode **0.925** best-achievable vs `hybrid` **0.598** production-default (corpus×config optimality,
 > F-004). When a Scorecard value is present for a corpus, it — not the "Best known" line — is the
 > canonical production number; the "Best known" line is its best-config ablation.
 

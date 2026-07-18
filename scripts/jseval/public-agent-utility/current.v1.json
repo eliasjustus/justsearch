@@ -3,6 +3,6 @@
   "schema_version": 1,
   "current": null,
   "previous": null,
-  "reason": "No agent-utility result has passed the unresolved scientific claim policy.",
+  "reason": "No agent-utility result has passed the active scientific claim policy; the 2026-07-18 confirmatory campaign was rejected on identity-verification gates.",
   "selected_at": null
 }
