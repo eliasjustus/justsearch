@@ -977,3 +977,17 @@ candidates (GPU-hours ledger, postmortem handle) belong to the agent-environment
 
 Tests: 156 targeted + full suite green (modulo the 2 known-RED correction-probe). The chain
 can now run `index-cache warm` once per (corpus × config) and adopt in seconds per cell.
+
+## §Q. Live campaign finding (2026-07-17 ~22:23, confirmatory launch 1): warm double-ingest wedges readiness — OPEN
+
+First production use of the §P warm seam (chain-confirm.bat, 10k strata) wedged: `index-cache
+warm --corpus-dir` issued TWO ingest passes of the same root within one backend lifetime, and
+the readiness doc-count floor ACCUMULATED (1001+1001=2002 expected) while path-dedup held the
+index at 1001 — an unmeetable readiness wall; warm spun 25+ min GPU-idle past the 600s health
+timeout. Two sub-bugs: (a) the cumulative floor across repeated same-root ingest requests,
+(b) the warm's second ingest pass itself. The campaign reverted to the fresh-build path
+(warm step removed, PR #244) — root-mode claim identity is independent of the cache, so this
+cost economics only, not evidence validity. Repro/spec detail in the session shard note
+(109145ac, 2026-07-17) and the chain comment at `scripts/jseval/chain-confirm.bat:143-147`.
+This is the lane's next work item; the §P.4 verification steps above all used single-ingest
+lifetimes and remain valid.
