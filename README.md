@@ -116,7 +116,7 @@ that ships **{true hybrid retrieval × fully offline × multilingual × OCR}** o
 ## Benchmarks
 
 Retrieval quality (nDCG@10) from one reproducible release run (`scripts/jseval/release.v1.json`, RTX 4070,
-~300 queries/corpus; measured on the canonical 2026-07-01 release tree). Numbers are
+~300 queries/corpus; measured on the canonical 2026-07-16 release tree). Numbers are
 the **default `hybrid` config** unless noted:
 
 | Corpus | nDCG@10 | Note |
@@ -140,7 +140,7 @@ then `python -m jseval relevance-gate --dataset beir/scifact`. Slugs: `beir/scif
 `mixed/legal-clerc-200`, `mixed/miracl-de-2k`, `mixed/miracl-fr-2k`.
 Full methodology, comparison-class caveats, and reproduction:
 [`docs/reference/benchmarks/methodology.md`](docs/reference/benchmarks/methodology.md). The table above is
-projected from `scripts/jseval/release.v1.json` (the canonical 2026-07-01 release), not hand-transcribed.
+projected from `scripts/jseval/release.v1.json` (the canonical 2026-07-16 release), not hand-transcribed.
 For the broader research angle — open questions, what's deferred, and how to get involved — see
 [`RESEARCH.md`](RESEARCH.md).
 
