@@ -4861,3 +4861,23 @@ fix directions. Next founder decisions: verified_tool_surface remedy (capture vs
 amendment), compose exposure-identity fix + fixture re-pin, ITT usage capture for the
 efficiency family, then ONE clean relaunch of the 4-stratum matrix under a pinned-CLI chain env
 (`DISABLE_AUTOUPDATER=1`) — at that point promotion is mechanical if the data repeats.
+
+### Confirmatory phase CLOSED — handoff (2026-07-18, founder-directed "proceed accordingly")
+
+The remediation worklist is chartered as four delegable tempdocs; this tempdoc's confirmatory
+phase is closed and its next entry should be the relaunch pre-registration:
+
+- **755** — `verified_tool_surface` remedy (capture hardening now; ready-to-ratify policy
+  amendment staged, activation founder-gated).
+- **756** — compose exposure-identity carry-through (+ fixture digest re-pin).
+- **757** — ITT usage evidence for exhausted cells (unlocks the `benefit` outcome tier;
+  imputation fallback founder-gated).
+- **758** — campaign-chain hardening (banked-calibration SHA binding, pinned-harness cohort
+  window, guard extrapolation legibility).
+- 751 §Q — index-cache warm double-ingest wedge (filed in its own lane).
+
+**Relaunch trigger (founder-gated spend, ~$90–100):** 755-758 landed → relaunch the identical
+4-stratum matrix under a single pinned-CLI cohort window. Public docs were updated in the same
+handoff PR (generator fallback prose + pointer reason now state the active policy, the
+2026-07-18 rejected campaign, and the committed evidence path — no numeric claims, per the
+policy's wording constraints).
