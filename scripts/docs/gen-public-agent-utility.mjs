@@ -232,17 +232,21 @@ function noResult(selection, target) {
   const state = selection.pointer.previous ? "The previously selected result was withdrawn. " : "";
   const common =
     `No agent-utility result is currently accepted for publication. ${state}${reason} ` +
-    "The checked-in policy has no required campaign matrix and intentionally leaves its model cohort and scientific margins unresolved. " +
-    "CLERC and MIRACL-DE also lack the complete closed-book, retrieval-calibration, union-recall, and leak certificates required for promotion. " +
-    "Those owner decisions, certifications, and any paid run require separate authorization; the harness does not invent them.";
+    "The checked-in claim policy (`agent-utility-public-v1`) is active and fully resolved: it pins a required four-stratum " +
+    "campaign matrix (CLERC legal + Enron email, each at 1k and 10k documents), a model cohort, and its scientific margins. " +
+    "One pre-registered confirmatory campaign has run against it (2026-07-18); the policy rejected promotion on " +
+    "identity-verification gates, and the complete evidence — including both voided runs — is committed under " +
+    "`scripts/jseval/624-run-2026-07-18-confirmatory/`. " +
+    "Owner decisions, certifications, and any paid rerun require separate authorization; the harness does not invent them.";
   if (target === "readme") return common;
   if (target === "research") {
     return [
       common,
       "",
-      "The latest sanitized pilot evidence is retained as a rejected fixture and can be recomposed without credentials, " +
-        "a backend, or model calls. A result can appear here only after an immutable bundle replays, passes the settled " +
-        "policy, and is explicitly selected by the owner.",
+      "The latest rejected campaign record (with its policy-evaluated verdict and per-gate reasons) lives in the " +
+        "evidence directory above; earlier sanitized pilot evidence is retained as a rejected fixture and can be " +
+        "recomposed without credentials, a backend, or model calls. A result can appear here only after an immutable " +
+        "bundle replays, passes the settled policy, and is explicitly selected by the owner.",
       "",
       "```bash",
       "cd scripts/jseval",

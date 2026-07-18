@@ -4732,3 +4732,152 @@ per-arm timeouts (amendment 1 — shipped #232); (2) single-tier --agent-env ove
 non-haiku campaign (amendment 2); (3) the 751 index-cache chain-integration spec (three live
 conflicts; campaign reverted to fresh-build; findings own the §P.3.5 follow-up); (4) the
 wrapper/orphan port-contention classes (watched-root gate catch + the mid-death relaunch race).
+
+## Confirmatory campaign pre-registration (2026-07-17 ~17:45, BEFORE any cell runs; founder-authorized "full sequence", decisions delegated)
+
+The exploratory campaigns (Step-2, Phase-2) found the story; every strong record carries an
+asterisk (post-hoc outcome rule, budget confound, single seed). This campaign is the
+zero-asterisk confirmation: every methodological fix is now PRE-registered in the standing
+harness, and the claim policy is activated (this same PR) BEFORE the run with the exact
+required matrix and thresholds — textbook exploration → confirmation.
+
+**Claim policy activation (founder-delegated, this commit):** `utility-claim-policy.v1.json` →
+`status: active`, `policy_id: agent-utility-public-v1`, required_strata = exactly the four
+confirmatory strata below. Thresholds: minimum_seeds 3 (= harness SEED_FLOOR), paired ≥ 54
+(90% of the 60-pair complete matrix), residual exclusion ≤ 0.15, retention ≥ 0.7, Jaccard ≥
+0.5, α = 0.05, adoption ≥ 0.9 (the F-027 placebo class, mechanical), accuracy noninferiority
+margin 0.10, token equivalence ±15k, cost equivalence ±$0.05. The drafted 5-seed/100-pair
+placeholders were never ratified and were sized for small-delta power the measured effects
+don't need; 3/54 are independently principled (harness floor; complete matrix at 3 seeds).
+Set BEFORE the run — no retroactive promotion is possible (per-dataset exploratory records can
+never match the four-stratum exact gate, by design).
+
+**Matrix (immutable):** haiku, A (file tools) vs B (A + JustSearch MCP), seeds {0,1,2}, 20
+committed queries, four certified strata: en-legal-clerc {1k,10k} verbose + en-email-enron-raw
+{1k,10k} verbose = 480 cells. Per-cell max_budget $0.50; equalized-max per-arm timeouts;
+exhaustion-as-failure ITT (standing, pre-registered); fresh calibrations (engine sha moved).
+
+**Claim-grade identity (the corpus-root increment, this PR):** every run attaches
+`--corpus-certification` verified against the DATASET-ROOT signature via the new
+`--corpus-root` axis, while `--corpus-dir` stays the leak-safe exploded subdir (positional
+answer-key safety unchanged). This populates stratum identity end-to-end; runs execute from a
+CLEAN committed tree (the policy's clean_source_checkout requirement) — all campaign tooling is
+committed in this PR before launch.
+
+**Budget:** measured per-dataset estimates sum ≈ $89 + fresh calibrations ≈ $10 → hard cap
+**$100**, running guard with max-extrapolation across the four datasets. Because the policy
+demands the EXACT four-stratum matrix, there is no partial-value degradation ladder: projected
+over-cap → ABORT the whole campaign and report (a three-stratum record cannot promote, so
+partial spend buys nothing).
+
+**Composition & verdict:** one combined record from all four log dirs via
+`utility-recompose --log-dir ×4` (contamination-class private-synthetic, tier upgraded per the
+record's own gates) → the claim verdict evaluates against the active policy mechanically.
+Index-cache (751 seam, now landed): the chain warms each dataset via `jseval index-cache warm`
+and adopts via the wrapper — first builds publish entries, any retry adopts; this campaign is
+also the first real hit-rate dataset for 751's v2 trigger.
+
+**Supervision:** detached chain + monitor + 30-min wakeup loop; founder asleep — fully
+autonomous per explicit authorization ("proceed autonomously with 1 and 2 … authorized to run
+the full sequence", 2026-07-17 ~17:00).
+
+### Confirmatory amendment 1 (2026-07-17 ~23:20, before any measured cell): cheapest-first run order
+
+The running guard fired spuriously at the first dataset: legal-1k calibrated $31.77 and the
+max-extrapolation projected $127.08 vs the ≈$90 true sum — the formula over-projects when the
+most expensive dataset calibrates first (the same shape as Step-2's $91.02-vs-$90 firing). Fix
+is ORDER, not cap: cheapest-first (email-1k → email-10k → legal-1k → legal-10k) keeps the same
+conservative formula tight (~$46 → ~$60 → ~$91 → ~$91, all under $100). Matrix, thresholds, and
+policy unchanged (the required-strata gate is order-independent); legal-1k's banked calibration
+deleted so its max cannot poison the early-glob projection (~$2-3 re-pilot). ~$3 of pilot spend
+consumed by the aborted attempt.
+
+## Confirmatory campaign RESULTS (2026-07-18, 23:43–04:05; autonomous overnight, founder asleep)
+
+Evidence: `scripts/jseval/624-run-2026-07-18-confirmatory/` (5 per-run records incl. the two
+voided email-1k runs, the policy-evaluated combined record, all calibrations, both chain
+scripts). Launched 23:43 on a clean tree at public squash `079e63e5`, cheapest-first; all four
+strata ran to completion; 600 cells total (480 planned + 120 rerun), every cell resolved
+`claude-haiku`, 120/120 observed per stratum, **0 excluded cells, paired retention 1.0,
+adoption 1.0** — the cleanest data-quality profile of the program.
+
+**Claim verdict: `rejected` / `inconclusive`. No promoted claim.** All three failing gates are
+infrastructure-identity, not data:
+
+1. **`required_strata_exact`** — the email-1k stratum was voided twice. Incident #5: the v4
+   chain adopted a banked 23:33 calibration pinned at `92ec2e6d` (launch-attempt-3 leftover)
+   into the `079e63e5` run → search-config cohort split; recompose refused. Forensic proof
+   against the live backend: swapping ONLY `git_sha` in the manifest reproduces both keys
+   exactly (`ab705cf9…` ↔ `f1566eff…`) — label-only split, live components identical. Remedy
+   was a clean stratum rerun (chain-confirm-r1, $9.36, guard `known=5/5 sum=$92.09` under the
+   $100 cap), NOT a hand-patched identity. Incident #6: the rerun was itself voided —
+   Claude Code auto-updated 2.1.212→2.1.214 mid-night (splitting `agent_cohort_key`, which
+   hashes `cli_version`) and the rerun launched with the then-untracked chain script in-tree
+   (`git_dirty`). Completing the cohort would require downgrading the founder's shared global
+   CLI while other sessions run on it — out of bounds autonomously; stopped there (the two
+   independent email-1k runs agree scientifically: both accuracy-null).
+2. **`source_identity_complete`** — compose bug, not a capture gap: every per-run record
+   carries `exposure_config.exposure_mode="deferred"` + full `mcp_initialize_identity`, and
+   the cross-corpus compose drops them (observation filed; fix cannot change tonight's verdict
+   so it was not hot-patched at 4am).
+3. **`verified_tool_surface`** — structurally unsatisfiable as ratified: the per-cell surface
+   hash comes from the SDK's known-flaky `get_mcp_status()` (675/725), which returned nothing
+   for 4–12 of 60 B-cells per stratum (~8%). A gate requiring 100% of ~240 B-cells verified has
+   ≈0 success probability at that flake rate. **This means no run of this campaign could ever
+   have promoted** — the two options (capture hardening with retry/fallback evidence vs. a
+   policy amendment to a rate threshold + single-hash consistency) are a founder decision, since
+   the policy is ratified.
+
+Fourth structural finding: per-stratum outcomes cap at **`adoption-only`** even where ITT
+accuracy benefit is significant, because exhausted cells lack usage evidence → the efficiency
+intervals the `benefit` outcome requires are unavailable ("incomplete ITT usage evidence").
+With gates 1–3 fixed the record would have promoted as `accepted`/`adoption-only` — not yet a
+numeric-benefit claim. Filed alongside the others.
+
+**Scientific results (pre-registered primary: ITT exhaustion-as-failure, n=60 pairs/stratum,
+McNemar exact, α=0.05).** The Step-2 regime triad REPLICATES under confirmatory conditions:
+
+| Stratum | acc A | acc B | Δ | p | 95% CI | completion A→B | median wall A→B |
+|---|---|---|---|---|---|---|---|
+| legal-1k | 0.017 | 0.233 | **+0.217** | **0.00098** | [+0.100, +0.333] | 0.88 → 0.95 | 98s → 48s |
+| legal-10k | 0.000 | 0.100 | **+0.100** | **0.031** | [+0.033, +0.183] | 0.55 → 0.90 | 129s → 74s |
+| email-10k | 0.300 | 0.250 | −0.050 | 0.68 | [−0.200, +0.100] | 0.55 → 0.82 | 146s → 43s |
+| email-1k r2 (voided) | 0.350 | 0.383 | +0.033 | 0.83 | [−0.117, +0.183] | — | — |
+| email-1k v4 (voided) | 0.367 | 0.317 | −0.050 | 0.69 | [−0.217, +0.117] | — | — |
+
+Accuracy benefit is legal-only and significant at BOTH scales; email is accuracy-null (twice,
+independently); the time/completion axis favors B everywhere — the A arm's completion collapses
+to 55% at 10k in both domains while B holds 82–90%, and median wall time roughly halves. Note
+the wording constraint: none of these numbers may be published as a promoted claim (verdict is
+rejected); they are recorded here as the campaign's measured outcomes.
+
+**Spend.** Calibration-estimate basis $92.09 for the five runs (guard-verified under the $100
+cap; voided v4 email-1k $12.92, r2 rerun $9.36 included) + ≈$9 pilot spend across the three
+aborted launch attempts (amendments above). Program conclusion: the fail-closed identity/policy
+layer refused six different shortcuts in one night (warm wedge, guard over-projection,
+digest-breaking rewrite, flaky CI lane, banked-calibration split, harness-cohort split) — every
+refusal exposed a real infrastructure gap, all filed to the observations shard with `file:line`
+fix directions. Next founder decisions: verified_tool_surface remedy (capture vs. policy
+amendment), compose exposure-identity fix + fixture re-pin, ITT usage capture for the
+efficiency family, then ONE clean relaunch of the 4-stratum matrix under a pinned-CLI chain env
+(`DISABLE_AUTOUPDATER=1`) — at that point promotion is mechanical if the data repeats.
+
+### Confirmatory phase CLOSED — handoff (2026-07-18, founder-directed "proceed accordingly")
+
+The remediation worklist is chartered as four delegable tempdocs; this tempdoc's confirmatory
+phase is closed and its next entry should be the relaunch pre-registration:
+
+- **755** — `verified_tool_surface` remedy (capture hardening now; ready-to-ratify policy
+  amendment staged, activation founder-gated).
+- **756** — compose exposure-identity carry-through (+ fixture digest re-pin).
+- **757** — ITT usage evidence for exhausted cells (unlocks the `benefit` outcome tier;
+  imputation fallback founder-gated).
+- **758** — campaign-chain hardening (banked-calibration SHA binding, pinned-harness cohort
+  window, guard extrapolation legibility).
+- 751 §Q — index-cache warm double-ingest wedge (filed in its own lane).
+
+**Relaunch trigger (founder-gated spend, ~$90–100):** 755-758 landed → relaunch the identical
+4-stratum matrix under a single pinned-CLI cohort window. Public docs were updated in the same
+handoff PR (generator fallback prose + pointer reason now state the active policy, the
+2026-07-18 rejected campaign, and the committed evidence path — no numeric claims, per the
+policy's wording constraints).

@@ -1088,6 +1088,7 @@ def _capture_or_load_source_identity(
     corpus_dataset: str,
     declared_corpus_signature: str,
     search_config_cohort_key: str | None,
+    corpus_root: str | Path | None = None,
     queries_path: str | None = None,
     conditions: tuple[str, ...] | list[str] = (),
     seeds: int = 0,
@@ -1097,19 +1098,57 @@ def _capture_or_load_source_identity(
     exposure_config: dict | None = None,
     mcp_initialize_identity: dict | None = None,
 ) -> dict:
-    """Persist source-time identity and fail closed when resumed inputs drift."""
+    """Persist source-time identity and fail closed when resumed inputs drift.
+
+    `corpus_root` (tempdoc 624 confirmatory pre-registration, 2026-07-17 — corpus
+    identity/staging decoupling): when given it is the dataset ROOT (`corpus.jsonl`
+    + `qrels/`), and the corpus SIGNATURE — the value a `--corpus-certification`
+    verifies against — is computed from that root, not from the leak-safe staged
+    `corpus_dir` SUBDIR. `corpus_dir` stays the raw agent-facing text axis and its
+    files hash is recorded as an audit-only attestation (`corpus_dir_files_signature`).
+    Fails CLOSED if `corpus_root` is not a dataset root (no `corpus.jsonl`/`qrels`)
+    or if `corpus_dir` is not its immediate child. `None` = today's behavior
+    byte-for-byte (the staged/declared single-axis path)."""
     from jseval.corpus_identity import corpus_signature
     from jseval.env_fingerprint import safe_environment_identity
     from jseval.manifest import _git_sha_full
 
     root = Path(corpus_dir)
-    signature = corpus_signature(root)
-    if signature is None:
-        materialized_files = sorted(
+    corpus_dir_files_signature: str | None = None
+    corpus_root_resolved: str | None = None
+    if corpus_root is not None:
+        corpus_root_path = Path(corpus_root)
+        signature = corpus_signature(corpus_root_path)
+        if signature is None:
+            raise ValueError(
+                f"corpus_root {corpus_root} is not a dataset root "
+                "(no corpus.jsonl or qrels/test.tsv to sign) — no files-mode "
+                "fallback on the root, this is a config error"
+            )
+        # The staged corpus_dir must be the root's OWN exploded subdir: this
+        # prevents attaching corpus A's certified root identity to corpus B's
+        # staged text (the whole point of a separate root axis).
+        if Path(corpus_dir).resolve().parent != corpus_root_path.resolve():
+            raise ValueError(
+                f"corpus_dir {corpus_dir} is not an immediate child of "
+                f"corpus_root {corpus_root}"
+            )
+        corpus_root_resolved = str(corpus_root_path.resolve())
+        # Attestation only: the raw-text axis stays auditable even though it is no
+        # longer part of identity in root mode.
+        staged_files = sorted(
             (path for path in root.rglob("*") if path.is_file()),
             key=lambda path: path.relative_to(root).as_posix(),
         )
-        signature = corpus_signature(root, materialized_files)
+        corpus_dir_files_signature = corpus_signature(root, staged_files)
+    else:
+        signature = corpus_signature(root)
+        if signature is None:
+            materialized_files = sorted(
+                (path for path in root.rglob("*") if path.is_file()),
+                key=lambda path: path.relative_to(root).as_posix(),
+            )
+            signature = corpus_signature(root, materialized_files)
     declared = declared_corpus_signature or None
     signature_matches = declared == signature if declared else None
     if declared and len(declared) == 64 and signature_matches is False:
@@ -1162,6 +1201,18 @@ def _capture_or_load_source_identity(
         )
 
     git_state = _git_source_state(exclude=log_dir)
+    corpus_block = {
+        "dataset": corpus_dataset,
+        "declared_signature": declared,
+        "signature": signature,
+        "signature_matches": signature_matches,
+    }
+    if corpus_root is not None:
+        # Root-mode keys are added ONLY when corpus_root is given, so a declared-mode
+        # run's persisted sidecar stays byte-identical to pre-change and a root-mode
+        # run is a distinct identity vs a declared-mode one (both correct).
+        corpus_block["corpus_root"] = corpus_root_resolved
+        corpus_block["corpus_dir_files_signature"] = corpus_dir_files_signature
     stable_identity = {
         "schema": "agent-utility-source-identity.v1",
         "source_git_sha": _git_sha_full(),
@@ -1169,12 +1220,7 @@ def _capture_or_load_source_identity(
         "source_git_state": git_state,
         "search_config_cohort_key": search_config_cohort_key,
         "mcp_tool_surface": mcp_tool_surface,
-        "corpus": {
-            "dataset": corpus_dataset,
-            "declared_signature": declared,
-            "signature": signature,
-            "signature_matches": signature_matches,
-        },
+        "corpus": corpus_block,
         "corpus_certification": certification,
         "queries": query_identity,
         "campaign": campaign,
@@ -1205,6 +1251,7 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
                      max_turns: int = _DEFAULT_MAX_TURNS,
                      cli_version: str | None = None,
                      corpus_dataset: str = "", corpus_signature: str = "",
+                     corpus_root: str | None = None,
                      search_config_cohort_key: str | None = None,
                      corpus_certification: str | Path | None = None,
                      agent_env: dict[str, str] | None = None,
@@ -1282,6 +1329,7 @@ def run_utility_eval(*, queries_path: str, corpus_dir: str, mcp_config: str | No
         corpus_dir=corpus_dir,
         corpus_dataset=corpus_dataset,
         declared_corpus_signature=corpus_signature,
+        corpus_root=corpus_root,
         search_config_cohort_key=search_config_cohort_key,
         queries_path=queries_path,
         conditions=conditions,

@@ -1,0 +1,41 @@
+{
+  "readiness_passed": true,
+  "readiness_reasons": [],
+  "config_cohort_key": "f1566eff7dc054a41d493a5d5df9110c8dd0dd9f5904d8015ea3cd2cd05e9391",
+  "timeout_s": 164,
+  "timeout_s_by_condition": {
+    "A": 164,
+    "B": 164
+  },
+  "timeout_s_by_condition_measured": {
+    "A": 120,
+    "B": 164
+  },
+  "concurrency": 6,
+  "retained_query_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+  ],
+  "n_dropped_contaminated": 0,
+  "n_cells": 120,
+  "cost_estimate_usd": 12.92,
+  "time_estimate_min": 27.3
+}

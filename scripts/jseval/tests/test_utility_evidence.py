@@ -345,7 +345,14 @@ def test_historical_fixture_semantic_digest_repinned_after_624_itt_change():
     layer is unchanged (those cells stay residual exclusions -- see
     test_real_2026_07_12_rejected_fixture_reproduces_false_green_loss). New value
     re-captured with `finalize_evidence([path])["semantic_digest"]` after the
-    2026-07-17 estimand change; the `outcome_rule` stamp is digest-excluded."""
+    2026-07-17 estimand change; the `outcome_rule` stamp is digest-excluded.
+
+    Re-pinned AGAIN 2026-07-17 (claim-policy ACTIVATION, tempdoc 624
+    §Confirmatory pre-registration): `claim_verdict` is digest-covered and
+    evaluates against the checked-in policy, so activating
+    `agent-utility-public-v1` (draft -> active, four required strata) moved this
+    fixture's verdict payload (still rejected — its strata cannot match the
+    confirmatory matrix) and therefore its digest."""
     path = (
         Path(__file__).parent
         / "fixtures"
@@ -354,7 +361,7 @@ def test_historical_fixture_semantic_digest_repinned_after_624_itt_change():
     )
     record = finalize_evidence([path], composed_at="fixture")
     assert record["semantic_digest"] == (
-        "3a4e0813df2257e474a4923bec00fea69f4f374e832e6131630aa151a536e0a1"
+        "2be7446c70b1177353a0c2f1bf127d4d2519299fc4c1d5166ec1ed26bf4071f5"
     )
 
 

@@ -754,6 +754,197 @@ def test_source_identity_captures_and_rechecks_corpus_certification(tmp_path, mo
         aui._capture_or_load_source_identity(**kwargs)
 
 
+# --- corpus-root identity axis (tempdoc 624 confirmatory pre-registration,
+#     2026-07-17: corpus identity/staging decoupling) ------------------------
+#
+# A claim-grade run stages a leak-safe corpus SUBDIR (queries.json structurally
+# absent) but must certify against the dataset ROOT's signature (corpus.jsonl +
+# qrels). `corpus_root` makes identity resolve from the root while `corpus_dir`
+# stays the agent-facing staged subdir.
+
+
+def _dataset_root(base: Path) -> Path:
+    """A minimal dataset ROOT (corpus.jsonl + qrels/test.tsv) — dataset-dir mode
+    signable by corpus_signature."""
+    root = base / "dataset-root"
+    (root / "qrels").mkdir(parents=True)
+    (root / "corpus.jsonl").write_text(
+        '{"id":"d1","text":"body one"}\n{"id":"d2","text":"body two"}\n', encoding="utf-8")
+    (root / "qrels" / "test.tsv").write_text("q1\t0\td1\t1\n", encoding="utf-8")
+    return root
+
+
+def _staged_child(root: Path) -> Path:
+    """The leak-safe staged subdir: an immediate child of `root` holding exploded
+    text only (no corpus.jsonl/qrels — so it is NOT itself a dataset root)."""
+    staged = root / "corpus-dir"
+    staged.mkdir()
+    (staged / "d1.txt").write_text("body one", encoding="utf-8")
+    (staged / "d2.txt").write_text("body two", encoding="utf-8")
+    return staged
+
+
+def _pin_git(monkeypatch):
+    import jseval.manifest as manifest
+    monkeypatch.setattr(manifest, "_git_sha_full", lambda: "a" * 40)
+    monkeypatch.setattr(aui, "_git_source_state", lambda **_: {
+        "tracked_diff_sha256": "0" * 64, "untracked_sha256": "0" * 64,
+        "untracked_count": 0, "dirty": False,
+    })
+
+
+def test_source_identity_root_mode_signs_root_not_staged_subdir(tmp_path, monkeypatch):
+    from jseval.corpus_identity import corpus_signature
+
+    root = _dataset_root(tmp_path)
+    staged = _staged_child(root)
+    root_sig = corpus_signature(root)  # dataset-dir mode
+    staged_files_sig = corpus_signature(
+        staged, sorted(staged.rglob("*"), key=lambda p: p.relative_to(staged).as_posix()))
+    assert root_sig and staged_files_sig and root_sig != staged_files_sig
+    _pin_git(monkeypatch)
+
+    identity = aui._capture_or_load_source_identity(
+        log_dir=str(tmp_path / "logs"), corpus_dir=str(staged), corpus_root=str(root),
+        corpus_dataset="fixture", declared_corpus_signature=root_sig,
+        search_config_cohort_key="search-1",
+    )
+
+    corpus = identity["corpus"]
+    # Identity is the ROOT signature, not the staged subdir's files hash.
+    assert corpus["signature"] == root_sig
+    assert corpus["signature"] != staged_files_sig
+    assert corpus["signature_matches"] is True
+    assert corpus["corpus_root"] == str(root.resolve())
+    # The raw-text axis survives as an audit-only attestation.
+    assert corpus["corpus_dir_files_signature"] == staged_files_sig
+
+
+def test_source_identity_root_mode_declared_signature_checked_against_root(tmp_path, monkeypatch):
+    root = _dataset_root(tmp_path)
+    staged = _staged_child(root)
+    _pin_git(monkeypatch)
+    # A declared 64-char signature that disagrees with the ROOT signature fails
+    # closed (the declared check now compares against the canonical/certified root).
+    with pytest.raises(ValueError, match="declared corpus signature"):
+        aui._capture_or_load_source_identity(
+            log_dir=str(tmp_path / "logs"), corpus_dir=str(staged), corpus_root=str(root),
+            corpus_dataset="fixture", declared_corpus_signature="e" * 64,
+            search_config_cohort_key="search-1",
+        )
+
+
+def test_source_identity_root_mode_fails_closed_on_non_dataset_root(tmp_path, monkeypatch):
+    # A "root" without corpus.jsonl/qrels is a config error — NO files-mode
+    # fallback on the root (unlike the declared/staged path, which does fall back).
+    root = tmp_path / "not-a-root"
+    (root).mkdir()
+    (root / "loose.txt").write_text("x", encoding="utf-8")
+    staged = root / "corpus-dir"
+    staged.mkdir()
+    (staged / "d1.txt").write_text("y", encoding="utf-8")
+    _pin_git(monkeypatch)
+    with pytest.raises(ValueError, match="not a dataset root"):
+        aui._capture_or_load_source_identity(
+            log_dir=str(tmp_path / "logs"), corpus_dir=str(staged), corpus_root=str(root),
+            corpus_dataset="fixture", declared_corpus_signature="",
+            search_config_cohort_key="search-1",
+        )
+
+
+def test_source_identity_root_mode_requires_corpus_dir_child_of_root(tmp_path, monkeypatch):
+    # The corpus-dir must be the root's OWN exploded subdir. Pointing it at a
+    # DIFFERENT corpus's staged text (corpus A root + corpus B staged) fails closed.
+    root_a = _dataset_root(tmp_path / "a")
+    root_b = _dataset_root(tmp_path / "b")
+    staged_b = _staged_child(root_b)  # child of B, not A
+    _pin_git(monkeypatch)
+    with pytest.raises(ValueError, match="immediate child"):
+        aui._capture_or_load_source_identity(
+            log_dir=str(tmp_path / "logs"), corpus_dir=str(staged_b), corpus_root=str(root_a),
+            corpus_dataset="fixture", declared_corpus_signature="",
+            search_config_cohort_key="search-1",
+        )
+    # A grandchild (not an IMMEDIATE child) is also rejected.
+    grandchild = staged_b / "nested"
+    grandchild.mkdir()
+    (grandchild / "d.txt").write_text("z", encoding="utf-8")
+    with pytest.raises(ValueError, match="immediate child"):
+        aui._capture_or_load_source_identity(
+            log_dir=str(tmp_path / "logs2"), corpus_dir=str(grandchild), corpus_root=str(root_b),
+            corpus_dataset="fixture", declared_corpus_signature="",
+            search_config_cohort_key="search-1",
+        )
+
+
+def test_source_identity_root_mode_attaches_certification_that_declared_mode_rejects(
+        tmp_path, monkeypatch):
+    """The load-bearing decoupling: a cert signing the dataset-ROOT signature
+    attaches in root mode on a LEAK-SAFE staged subdir — and the same cert on the
+    same staged subdir is REJECTED in declared mode (the 624 §M.7a impossibility
+    this axis removes: the staged subdir's files hash never equals the root sig)."""
+    from jseval.corpus_certify import SCIENTIFIC_GATES
+    from jseval.corpus_identity import corpus_signature
+    from tests.test_corpus_inject import _complete_certificate, _gate_evidence
+
+    root = _dataset_root(tmp_path)
+    staged = _staged_child(root)
+    root_sig = corpus_signature(root)
+    queries = tmp_path / "queries.json"
+    queries.write_text('[{"query":"q","answer":"a"}]', encoding="utf-8")
+    query_gold_sha256 = hashlib.sha256(queries.read_bytes()).hexdigest()
+    gate_rows = {
+        gate: _gate_evidence(
+            gate, dataset="fixture", signature=root_sig,
+            query_gold_sha256=query_gold_sha256, query_count=1,
+        )
+        for gate in SCIENTIFIC_GATES
+    }
+    certification = tmp_path / "certification.json"
+    certification.write_text(json.dumps(_complete_certificate(
+        "fixture-member", "fixture", root_sig, gate_rows, query_count=1,
+        query_gold_sha256=query_gold_sha256,
+    )), encoding="utf-8")
+    _pin_git(monkeypatch)
+
+    kwargs = dict(
+        corpus_dir=str(staged), corpus_dataset="fixture",
+        declared_corpus_signature=root_sig, search_config_cohort_key="search-1",
+        corpus_certification=str(certification),
+        queries_path=str(queries), conditions=("A", "B"), seeds=1,
+    )
+    identity = aui._capture_or_load_source_identity(
+        log_dir=str(tmp_path / "logs-root"), corpus_root=str(root), **kwargs)
+    snapshot = identity["corpus_certification"]
+    assert snapshot["fully_certified"] is True
+    assert snapshot["corpus_signature"] == root_sig
+    assert snapshot["member"] == "fixture-member"
+    assert snapshot["size"] == 1000
+    assert snapshot["query_variant"] == "verbose"
+
+    # Declared mode (no corpus_root) signs the staged subdir's files instead, whose
+    # hash != root_sig, so the SAME cert can never attach — the pre-decoupling wall.
+    with pytest.raises(ValueError, match="corpus_certification|signature"):
+        aui._capture_or_load_source_identity(
+            log_dir=str(tmp_path / "logs-declared"), corpus_root=None, **kwargs)
+
+
+def test_source_identity_declared_mode_sidecar_has_no_root_keys(tmp_path, monkeypatch):
+    """Regression: without corpus_root the persisted corpus block is byte-identical
+    to pre-change (no corpus_root / corpus_dir_files_signature keys leak in)."""
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "doc.txt").write_text("stable corpus", encoding="utf-8")
+    _pin_git(monkeypatch)
+    identity = aui._capture_or_load_source_identity(
+        log_dir=str(tmp_path / "logs"), corpus_dir=str(corpus), corpus_dataset="fixture",
+        declared_corpus_signature="", search_config_cohort_key="search-1",
+    )
+    assert set(identity["corpus"]) == {
+        "dataset", "declared_signature", "signature", "signature_matches",
+    }
+
+
 def test_source_identity_resume_recomputes_safe_environment(tmp_path, monkeypatch):
     corpus = tmp_path / "corpus"
     corpus.mkdir()

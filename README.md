@@ -116,7 +116,7 @@ that ships **{true hybrid retrieval × fully offline × multilingual × OCR}** o
 ## Benchmarks
 
 Retrieval quality (nDCG@10) from one reproducible release run (`scripts/jseval/release.v1.json`, RTX 4070,
-~300 queries/corpus; measured on the canonical 2026-07-01 release tree). Numbers are
+~300 queries/corpus; measured on the canonical 2026-07-16 release tree). Numbers are
 the **default `hybrid` config** unless noted:
 
 | Corpus | nDCG@10 | Note |
@@ -140,7 +140,7 @@ then `python -m jseval relevance-gate --dataset beir/scifact`. Slugs: `beir/scif
 `mixed/legal-clerc-200`, `mixed/miracl-de-2k`, `mixed/miracl-fr-2k`.
 Full methodology, comparison-class caveats, and reproduction:
 [`docs/reference/benchmarks/methodology.md`](docs/reference/benchmarks/methodology.md). The table above is
-projected from `scripts/jseval/release.v1.json` (the canonical 2026-07-01 release), not hand-transcribed.
+projected from `scripts/jseval/release.v1.json` (the canonical 2026-07-16 release), not hand-transcribed.
 For the broader research angle — open questions, what's deferred, and how to get involved — see
 [`RESEARCH.md`](RESEARCH.md).
 
@@ -151,7 +151,7 @@ answer better than one without?) under a fail-closed publication policy:
 
 <!-- agent-utility:generated:start - run: node scripts/docs/gen-public-agent-utility.mjs -->
 
-No agent-utility result is currently accepted for publication. No agent-utility result has passed the unresolved scientific claim policy. The checked-in policy has no required campaign matrix and intentionally leaves its model cohort and scientific margins unresolved. CLERC and MIRACL-DE also lack the complete closed-book, retrieval-calibration, union-recall, and leak certificates required for promotion. Those owner decisions, certifications, and any paid run require separate authorization; the harness does not invent them.
+No agent-utility result is currently accepted for publication. No agent-utility result has passed the active scientific claim policy; the 2026-07-18 confirmatory campaign was rejected on identity-verification gates. The checked-in claim policy (`agent-utility-public-v1`) is active and fully resolved: it pins a required four-stratum campaign matrix (CLERC legal + Enron email, each at 1k and 10k documents), a model cohort, and its scientific margins. One pre-registered confirmatory campaign has run against it (2026-07-18); the policy rejected promotion on identity-verification gates, and the complete evidence — including both voided runs — is committed under `scripts/jseval/624-run-2026-07-18-confirmatory/`. Owner decisions, certifications, and any paid rerun require separate authorization; the harness does not invent them.
 
 <!-- agent-utility:generated:end -->
 
