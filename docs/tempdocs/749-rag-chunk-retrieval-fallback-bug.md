@@ -762,3 +762,42 @@ chars, + 24 short chunkless `synth-multihop-v1` docs, all <200 chars; union ON; 
   corpus). A decisive test needs a purpose-built paired short/long labeled corpus. The risk is low
   under B (query-conditional injection; F-014 length-asymmetry handling; CE-not-in-CHUNK_HYBRID) and
   is now mitigated by the `rag.union.enabled` off-switch. Founder-scoped as out of scope for v0.2.0.
+
+### Reproduction (the live artifacts are ephemeral; this is the durable pointer)
+
+The corpora are regenerable (zero network) and the eval is one command against a running stack:
+```
+# 1. Materialize the mixed corpus (deterministic, seconds):
+cd scripts/jseval && PYTHONUTF8=1 PYTHONPATH="$PWD" \
+  python -m jseval corpus-build --source 635-corpora/needle-burial-v1  --name needle-burial-v1
+python -m jseval corpus-build --source 635-corpora/synth-multihop-v1 --name synth-multihop-v1
+# 2. Start the worktree-dist stack (installDist first), ingest BOTH corpus-dirs with
+#    WORKTREE-QUALIFIED paths (repo-relative resolves against the MAIN checkout, not the worktree):
+#    justsearch_dev_ingest paths=[".claude/worktrees/749-rag-fallback/datasets/golden/needle-burial-v1/corpus-dir",
+#                                 ".claude/worktrees/749-rag-fallback/datasets/golden/synth-multihop-v1/corpus-dir"]
+#    wait for embeddingCoveragePercent==100 && chunkVectorsReady.
+# 3. Reachability arm (expect verdict ok, 10/10):
+python -m jseval retrieval-eval \
+  --queries ../../datasets/golden/synth-multihop-v1/queries.json \
+  --corpus-dir ../../datasets/golden/synth-multihop-v1/corpus-dir \
+  --corpus-jsonl ../../datasets/golden/synth-multihop-v1/corpus.jsonl \
+  --base-url http://127.0.0.1:<port>
+```
+
+### Deferred checks / unverified assumptions (honest, for the next agent)
+
+- **The union-OFF empirical arm was NOT run** — the fail-direction (chunkless docs unreachable
+  pre-union) is deductive + the `rag.union.enabled` off-switch enables anyone to run it. The live
+  OFF toggle was skipped because the dev-stack backend reads a *shared* `config/application.yaml`
+  (repoRoot = main checkout) and injecting `rag.union.enabled=false` there risked clobbering another
+  agent's config; the MCP `start` tool exposes no per-run sysprop/env passthrough. A clean OFF arm
+  needs either that passthrough or a throwaway `EnvRegistry.CONFIG_PATH`-pointed yaml.
+- **Interactive 0.7603 evidence:** `scripts/jseval/tmp/eval-results/20260718T035713_scifact/
+  summary.json` (per_mode.hybrid.aggregate_metrics). Ephemeral run dir — regenerable via
+  `jseval run --dataset scifact --modes hybrid --start-backend --clean --pipeline`.
+- **Live R9 + browser click-to-verify:** verified live this session (worker log
+  `mode=CHUNK_HYBRID, bestScore=1.0`; a session-scoped screenshot, not a retrievable artifact) —
+  re-verifiable via §"Reproduction recipe" earlier in this tempdoc, not a stored bundle.
+- **needle long-path arm is uninformative** (needle `queries.json` lacks the `query` field
+  retrieval-eval reads → empty queries → 0%); the long-path non-disturbance rests on the *structural*
+  `withChunks`-drops-all-chunked argument, not that arm's number.
