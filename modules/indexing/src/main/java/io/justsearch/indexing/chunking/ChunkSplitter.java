@@ -273,6 +273,11 @@ public final class ChunkSplitter {
         chunks.add(chunk);
       }
 
+      // A chunk reaching the text end makes any further window a contained suffix.
+      if (endPos >= remaining.length()) {
+        break;
+      }
+
       // Move past chunk, accounting for overlap
       int advance = Math.max(endPos - overlapChars, minChars);
 
@@ -797,7 +802,20 @@ public final class ChunkSplitter {
         int trailingWhitespace = rawChunk.length() - rawChunk.stripTrailing().length();
         int adjustedStart = contentOffset + position + leadingWhitespace;
         int adjustedEnd = contentOffset + endPos - trailingWhitespace;
-        chunks.add(Chunk.of(index++, chunkContent, adjustedStart, adjustedEnd));
+        // Invariant: no emitted chunk's span may be contained in its predecessor's — a trimmed
+        // all-whitespace-tail window would otherwise emit redundant contained content (tempdoc 749).
+        boolean containedInPredecessor =
+            !chunks.isEmpty()
+                && adjustedStart >= chunks.get(chunks.size() - 1).startChar()
+                && adjustedEnd <= chunks.get(chunks.size() - 1).endChar();
+        if (!containedInPredecessor) {
+          chunks.add(Chunk.of(index++, chunkContent, adjustedStart, adjustedEnd));
+        }
+      }
+
+      // A chunk reaching the text end makes any further window a contained suffix.
+      if (endPos >= text.length()) {
+        break;
       }
 
       int advance = Math.max(endPos - position - overlapChars, minChars);

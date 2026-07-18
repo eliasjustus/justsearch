@@ -393,6 +393,22 @@ public final class ChunkSearchOps {
     if (queryText == null || queryText.isBlank() || docIds == null || docIds.isEmpty()) {
       return new SearchResult(List.of(), 0, 0);
     }
+    return searchFullDocs(queryText, docIds, limit, null);
+  }
+
+  /**
+   * Searches full documents (non-chunks) using BM25; an empty {@code docIds} means unscoped.
+   *
+   * <p>Unscoped-capable sibling of {@link #searchFullDocsForDocs}, which keeps its
+   * return-empty-on-empty-scope contract for the fallback path (tempdoc 749 — the two
+   * empty-scope semantics are deliberately distinct). {@code additionalFilter} carries
+   * doc-level user filters (mime, language, ...); may be null.
+   */
+  public SearchResult searchFullDocs(
+      String queryText, Set<String> docIds, int limit, Query additionalFilter) {
+    if (queryText == null || queryText.isBlank()) {
+      return new SearchResult(List.of(), 0, 0);
+    }
     final int effectiveLimit = limit <= 0 ? 5 : limit;
 
     Query contentQuery;
@@ -415,11 +431,14 @@ public final class ChunkSearchOps {
     try {
       return bridge.withSearcher(
           searcher -> {
-            Query docFilter = termInSetFilter(idField, docIds);
-
             BooleanQuery.Builder queryBuilder = new BooleanQuery.Builder();
             queryBuilder.add(contentQuery, BooleanClause.Occur.MUST);
-            queryBuilder.add(docFilter, BooleanClause.Occur.FILTER);
+            if (docIds != null && !docIds.isEmpty()) {
+              queryBuilder.add(termInSetFilter(idField, docIds), BooleanClause.Occur.FILTER);
+            }
+            if (additionalFilter != null) {
+              queryBuilder.add(additionalFilter, BooleanClause.Occur.FILTER);
+            }
             queryBuilder.add(
                 new TermQuery(new Term(SchemaFields.IS_CHUNK, "true")),
                 BooleanClause.Occur.MUST_NOT);
@@ -629,5 +648,76 @@ public final class ChunkSearchOps {
 
     long tookMs = System.currentTimeMillis() - startTime;
     return new SearchResult(fused.hits(), fused.totalHits(), tookMs);
+  }
+
+  // ==========================================================================
+  // Doc-level union leg (tempdoc 749, option B)
+  // ==========================================================================
+
+  /**
+   * Returns the subset of {@code candidateDocIds} that have at least one chunk document.
+   *
+   * <p>Used by the RAG doc-level union leg (tempdoc 749): a parent returned here already
+   * competes through its real chunks and must not be double-surfaced as a synthesized
+   * whole-doc chunk; a parent absent here has no chunk documents at all and is invisible
+   * to every {@code is_chunk=true} query in this class.
+   *
+   * @param candidateDocIds parent doc IDs to probe (bounded — callers pass a top-N hit set)
+   * @return the subset of candidates with at least one chunk doc (never null)
+   */
+  public Set<String> findParentDocIdsWithChunks(Set<String> candidateDocIds) {
+    if (candidateDocIds == null || candidateDocIds.isEmpty()) {
+      return Set.of();
+    }
+    // One bounded existence probe per candidate — bounded by the top-N candidate set, immune to
+    // per-parent chunk-count skew (a single query with a shared result-window limit could push a
+    // heavily-chunked parent's own chunks outside the window and misclassify it as chunkless).
+    LinkedHashSet<String> withChunks = new LinkedHashSet<>();
+    for (String docId : candidateDocIds) {
+      BooleanQuery q = new BooleanQuery.Builder()
+          .add(new TermQuery(new Term(SchemaFields.IS_CHUNK, "true")),
+              BooleanClause.Occur.MUST)
+          .add(new TermQuery(new Term(SchemaFields.PARENT_DOC_ID, docId)),
+              BooleanClause.Occur.FILTER)
+          .build();
+      SearchResult probe = readPathOps.search(q, 1, Set.of(SchemaFields.PARENT_DOC_ID),
+          RuntimeSearchSort.RELEVANCE, null);
+      if (!probe.hits().isEmpty()) {
+        withChunks.add(docId);
+      }
+    }
+    return withChunks;
+  }
+
+  /**
+   * Doc-level retrieval leg for the RAG union (tempdoc 749): hybrid (BM25 + KNN over parent
+   * {@code content}/{@code vector}) when a query vector is usable, BM25-only otherwise.
+   * An empty {@code docIds} means unscoped; {@code additionalFilter} carries doc-level user
+   * filters and may be null.
+   */
+  public SearchResult searchDocLevelUnion(
+      String queryText, float[] queryVector, Set<String> docIds, int limit,
+      Query additionalFilter) {
+    if (queryText == null || queryText.isBlank()) {
+      return new SearchResult(List.of(), 0, 0);
+    }
+    boolean vectorUsable = queryVector != null && queryVector.length > 0
+        && !hybridSearchOps.shouldSkipVectorSearch(queryText);
+    if (!vectorUsable) {
+      return searchFullDocs(queryText, docIds, limit, additionalFilter);
+    }
+    Query scope = (docIds == null || docIds.isEmpty())
+        ? null
+        : termInSetFilter(SchemaFields.DOC_ID, docIds);
+    Query combined;
+    if (scope != null && additionalFilter != null) {
+      combined = new BooleanQuery.Builder()
+          .add(scope, BooleanClause.Occur.FILTER)
+          .add(additionalFilter, BooleanClause.Occur.FILTER)
+          .build();
+    } else {
+      combined = scope != null ? scope : additionalFilter;
+    }
+    return hybridSearchOps.searchHybridFiltered(queryText, queryVector, limit, combined);
   }
 }

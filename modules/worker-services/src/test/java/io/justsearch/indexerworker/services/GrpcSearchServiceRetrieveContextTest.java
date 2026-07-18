@@ -117,11 +117,12 @@ class GrpcSearchServiceRetrieveContextTest {
     }
 
     @Test
-    @DisplayName("falls back to full document when no chunks exist")
-    void fallsBackToFullDocWhenNoChunks() throws Exception {
+    @DisplayName("serves unchunked docs via the PRIMARY path, not fallback (tempdoc 749 union leg)")
+    void servesUnchunkedDocViaPrimaryPath() throws Exception {
       String parentDocId = "d:/docs/simple.txt";
 
-      // Index only a parent document (no chunks)
+      // Index only a parent document (no chunks) — the sub-2000-char shape that used to be
+      // invisible to IS_CHUNK:true retrieval and silently fell back (tempdoc 749).
       lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
           SchemaFields.DOC_ID, parentDocId,
           SchemaFields.DOC_UID, parentDocId + "#0",
@@ -141,13 +142,49 @@ class GrpcSearchServiceRetrieveContextTest {
 
       var response = callRetrieveContext(request);
 
-      // RAG-005: Fallback now produces virtual chunks for citation support
-      assertTrue(response.getUsedChunks(), "Should use virtual chunks even for unchunked docs");
-      assertTrue(response.getChunksCount() > 0, "Should have virtual chunk metadata");
-      assertEquals("FULLTEXT_FALLBACK", response.getRetrievalMode());
+      // Tempdoc 749 option B: the doc-level union leg synthesizes a whole-doc chunk in the
+      // PRIMARY candidate set — this must no longer take the FULLTEXT_FALLBACK path.
+      assertTrue(response.getUsedChunks(), "Unchunked doc must be served via synthesized chunk");
+      assertTrue(response.getChunksCount() > 0, "Should have synthesized chunk metadata");
+      assertNotEquals("FULLTEXT_FALLBACK", response.getRetrievalMode(),
+          "Chunkless docs are primary-path citizens since the 749 union leg");
+      var chunk = response.getChunks(0);
+      assertEquals(parentDocId, chunk.getParentDocId());
+      assertEquals(0, chunk.getChunkIndex(), "Whole-doc synthetic chunk is index 0");
+      assertEquals(1, chunk.getChunkTotal(), "Whole-doc synthetic chunk is total 1");
+      assertTrue(chunk.getEndChar() > chunk.getStartChar(), "Synthetic chunk has a real span");
       assertTrue(response.getContext().contains("quantum") ||
                  response.getContext().contains("Quantum"),
-          "Context should contain full doc content when no chunks");
+          "Context should contain the unchunked doc's content");
+    }
+
+    @Test
+    @DisplayName("FULLTEXT_FALLBACK still fires when neither chunks nor union match")
+    void fallbackStillReachableWhenNothingMatches() throws Exception {
+      String parentDocId = "d:/docs/unrelated.txt";
+
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+          SchemaFields.DOC_ID, parentDocId,
+          SchemaFields.DOC_UID, parentDocId + "#0",
+          SchemaFields.PATH, parentDocId,
+          SchemaFields.CONTENT, "This document discusses quantum computing and qubits.",
+          SchemaFields.MIME, "text/plain")));
+
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      // A question sharing no terms with the doc: BM25 chunk search AND the doc-level union
+      // both come up empty, so the fallback remains the last resort.
+      RetrieveContextRequest request = RetrieveContextRequest.newBuilder()
+          .setQuestion("zebra migration seasons")
+          .addDocIds(parentDocId)
+          .setTopK(5)
+          .build();
+
+      var response = callRetrieveContext(request);
+
+      assertEquals("FULLTEXT_FALLBACK", response.getRetrievalMode(),
+          "Nothing-matches queries still reach the fallback safety net");
     }
 
     @Test
@@ -190,6 +227,172 @@ class GrpcSearchServiceRetrieveContextTest {
       assertEquals("", response.getContext(), "Should return empty context when no docIds");
       assertFalse(response.getUsedChunks());
       assertEquals(0, response.getChunksFound());
+    }
+  }
+
+  @Nested
+  @DisplayName("Doc-level union leg (tempdoc 749 option B)")
+  class UnionLeg {
+
+    @Test
+    @DisplayName("chunked parent is never double-surfaced by the union; only its real chunks cite")
+    void chunkedParentNotDoubleSurfaced() throws Exception {
+      // (a) A LONG parent (>2000 chars, above CHUNK_THRESHOLD_CHARS) that owns 2 real chunk docs.
+      String longParent = "d:/docs/photosynthesis-long.md";
+      String longContent =
+          "Photosynthesis in plants converts sunlight into chemical energy. ".repeat(40);
+      assertTrue(longContent.length() > 2000, "Long parent must exceed the chunking threshold");
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+          SchemaFields.DOC_ID, longParent,
+          SchemaFields.DOC_UID, longParent + "#0",
+          SchemaFields.PATH, longParent,
+          SchemaFields.CONTENT, longContent,
+          SchemaFields.MIME, "text/markdown")));
+
+      final String longChunk0 =
+          "Photosynthesis converts sunlight into chemical energy inside plant cells.";
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+          SchemaFields.DOC_ID, "chunk:long-000",
+          SchemaFields.DOC_UID, "chunk:long-000#0",
+          SchemaFields.PATH, longParent,
+          SchemaFields.PARENT_DOC_ID, longParent,
+          SchemaFields.IS_CHUNK, "true",
+          SchemaFields.CHUNK_INDEX, "0",
+          SchemaFields.CHUNK_TOTAL, "2",
+          SchemaFields.CHUNK_CONTENT, longChunk0,
+          SchemaFields.CHUNK_START_CHAR, "0",
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(longChunk0.length()))));
+
+      final String longChunk1 =
+          "The photosynthesis process relies on chlorophyll in plants to capture sunlight.";
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+          SchemaFields.DOC_ID, "chunk:long-001",
+          SchemaFields.DOC_UID, "chunk:long-001#0",
+          SchemaFields.PATH, longParent,
+          SchemaFields.PARENT_DOC_ID, longParent,
+          SchemaFields.IS_CHUNK, "true",
+          SchemaFields.CHUNK_INDEX, "1",
+          SchemaFields.CHUNK_TOTAL, "2",
+          SchemaFields.CHUNK_CONTENT, longChunk1,
+          SchemaFields.CHUNK_START_CHAR, "1000",
+          SchemaFields.CHUNK_END_CHAR, String.valueOf(1000 + longChunk1.length()))));
+
+      // (b) A SHORT chunkless parent (<2000 chars) that also matches the query — the union path
+      // is the only way it reaches retrieval.
+      String shortParent = "d:/docs/photosynthesis-short.md";
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+          SchemaFields.DOC_ID, shortParent,
+          SchemaFields.DOC_UID, shortParent + "#0",
+          SchemaFields.PATH, shortParent,
+          SchemaFields.CONTENT,
+          "Photosynthesis is how plants make food from sunlight and water.",
+          SchemaFields.MIME, "text/markdown")));
+
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      RetrieveContextRequest request = RetrieveContextRequest.newBuilder()
+          .setQuestion("photosynthesis sunlight plants")
+          .addDocIds(longParent)
+          .addDocIds(shortParent)
+          .setTopK(10)
+          .build();
+
+      var response = callRetrieveContext(request);
+
+      assertTrue(response.getUsedChunks(), "Both parents should retrieve via the chunk pipeline");
+
+      int shortCitations = 0;
+      int longCitations = 0;
+      for (int i = 0; i < response.getChunksCount(); i++) {
+        var chunk = response.getChunks(i);
+        if (shortParent.equals(chunk.getParentDocId())) {
+          shortCitations++;
+          // The short parent's only citation is the synthesized whole-doc chunk.
+          assertEquals(1, chunk.getChunkTotal(),
+              "Chunkless short parent must surface as a single whole-doc chunk (total=1)");
+          assertEquals(0, chunk.getChunkIndex(),
+              "Whole-doc synthetic chunk is index 0");
+        } else if (longParent.equals(chunk.getParentDocId())) {
+          longCitations++;
+          // The union must NOT synthesize a whole-doc chunk for the chunked long parent: every
+          // long-parent citation comes from a seeded real chunk (chunkTotal==2). A synthesized
+          // whole-doc chunk for a >2000-char parent would carry a different total (its split
+          // count, or 1), so this assertion fails the instant double-surfacing occurs.
+          assertEquals(2, chunk.getChunkTotal(),
+              "Long parent citations must be its real chunks only (total=2), never a synthesized "
+                  + "whole-doc chunk. chunkIndex=" + chunk.getChunkIndex());
+        }
+      }
+
+      assertEquals(1, shortCitations,
+          "Chunkless short parent must be cited exactly once (no duplicate whole-doc chunk)");
+      assertTrue(longCitations >= 1,
+          "Long parent must still be cited via its real chunks");
+    }
+
+    @Test
+    @DisplayName("unscoped union (empty docIds) serves a chunkless parent via the primary path")
+    void unscopedUnionServesChunklessParent() throws Exception {
+      String parent = "d:/docs/tardigrade.md";
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+          SchemaFields.DOC_ID, parent,
+          SchemaFields.DOC_UID, parent + "#0",
+          SchemaFields.PATH, parent,
+          SchemaFields.CONTENT,
+          "Tardigrades are microscopic animals that survive extreme conditions.",
+          SchemaFields.MIME, "text/markdown")));
+
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      // No docIds — the unscoped searchFullDocs leg of the union is what must find the parent.
+      RetrieveContextRequest request = RetrieveContextRequest.newBuilder()
+          .setQuestion("tardigrades extreme conditions")
+          .setTopK(5)
+          .build();
+
+      var response = callRetrieveContext(request);
+
+      // The harness has no embedding service, so this is the BM25 doc-level union leg.
+      assertTrue(response.getUsedChunks(), "Unscoped chunkless parent must be served, not skipped");
+      assertNotEquals("FULLTEXT_FALLBACK", response.getRetrievalMode(),
+          "Unscoped union is a primary-path result, not the fallback safety net");
+      assertTrue(response.getChunksCount() > 0, "Should synthesize a citation");
+      assertEquals(parent, response.getChunks(0).getParentDocId(),
+          "The synthesized citation references the chunkless parent");
+    }
+
+    @Test
+    @DisplayName("excluded parent is not re-injected by the union leg")
+    void excludedParentNotReinjected() throws Exception {
+      String parent = "d:/docs/hidden.md";
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+          SchemaFields.DOC_ID, parent,
+          SchemaFields.DOC_UID, parent + "#0",
+          SchemaFields.PATH, parent,
+          SchemaFields.CONTENT,
+          "Volcanic eruptions release ash and lava from the earth's mantle.",
+          SchemaFields.MIME, "text/markdown")));
+
+      lifecycle.commitOps().commitAndTrack();
+      lifecycle.commitOps().maybeRefreshBlocking();
+
+      // Scoped to the parent, but the user has hidden it via an excluded-chunk ref. The union
+      // leg must honour the exclusion and NOT resurrect the doc as a synthesized whole-doc chunk.
+      RetrieveContextRequest request = RetrieveContextRequest.newBuilder()
+          .setQuestion("volcanic eruptions ash lava")
+          .addDocIds(parent)
+          .setTopK(5)
+          .addExcludedChunks(ChunkRef.newBuilder().setParentDocId(parent).setChunkIndex(0))
+          .build();
+
+      var response = callRetrieveContext(request);
+
+      for (int i = 0; i < response.getChunksCount(); i++) {
+        assertNotEquals(parent, response.getChunks(i).getParentDocId(),
+            "An excluded parent must never re-surface via the union leg");
+      }
     }
   }
 
