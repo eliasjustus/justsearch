@@ -1,222 +1,552 @@
 [
  {
   "query": "What value identifies power station in the upper wetlands's designer?",
-  "answer": "crimson ferrolite 0002",
+  "answer": "XQN 853",
   "question_type": "1_hop",
   "evidence_ids": [
-   "drureach1",
-   "pellstone2"
+   "patchinonference togses",
+   "langna solational tna"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0001"
  },
  {
-  "query": "What value identifies stargazing facility in the ridge to the east's designer?",
-  "answer": "verdant brannik 0004",
+  "query": "What value identifies stargazing facility in the crest to the east's founder?",
+  "answer": "lot 6693726",
   "question_type": "1_hop",
   "evidence_ids": [
-   "harnvale3",
-   "pellash4"
+   "eme, ca",
+   "blanca daugherus"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0002"
  },
  {
-  "query": "What value identifies grain-grinding works in the curve of the river's designer?",
-  "answer": "pallid lansk 0006",
+  "query": "What value identifies grain-grinding works in the curve of the watercourse's builder?",
+  "answer": "PX-3652",
   "question_type": "1_hop",
   "evidence_ids": [
-   "druash5",
-   "tasdac6"
+   "gas tralectric where prician are going-- not",
+   "evansnited, il"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0003"
  },
  {
-  "query": "What value identifies records vault in the former justice building's designer?",
-  "answer": "russet grist 0008",
+  "query": "What value identifies records vault in the former justice building's leader?",
+  "answer": "ref-10-5524",
   "question_type": "1_hop",
   "evidence_ids": [
-   "orrvale7",
-   "drugrove8"
+   "caliary gov",
+   "brigk skileigh avendish for solar pock"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0004"
  },
  {
-  "query": "What value identifies metal-casting works in the quarter to the west's designer?",
-  "answer": "azure brannik 0010",
+  "query": "What value identifies metal-casting works in the quarter to the west's commissioner?",
+  "answer": "ref-24-5220",
   "question_type": "1_hop",
   "evidence_ids": [
-   "kanfen9",
-   "rellven10"
+   "chicagrt, il",
+   "alndy hoin signy weein"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0005"
  },
  {
-  "query": "What value identifies optical instrument in the Carpathian uplands's designer?",
-  "answer": "verdant perrin 0012",
+  "query": "What value identifies optical instrument in the elevated tableland's operator?",
+  "answer": "lot 1627568",
   "question_type": "1_hop",
   "evidence_ids": [
-   "mirwick11",
-   "cavby12"
+   "pssee enet authority of kpeals",
+   "dublint, oh"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0006"
  },
  {
-  "query": "What value identifies streetcar line in the city on the slopes's designer?",
-  "answer": "umber quartzine 0014",
+  "query": "What value identifies streetcar line in the town on the slopes's financier?",
+  "answer": "grade 25-UH-2",
   "question_type": "1_hop",
   "evidence_ids": [
-   "cavric13",
-   "skowick14"
+   "gohill butd",
+   "enrok cs bustock controings"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0007"
  },
  {
-  "query": "What value identifies water channel in the hills to the south's designer?",
-  "answer": "umber brannik 0016",
+  "query": "What value identifies water channel in the knolls to the south's restorer?",
+  "answer": "grade 13-PA-9",
   "question_type": "1_hop",
   "evidence_ids": [
-   "breldell15",
-   "vexfen16"
+   "jla, ms",
+   "danieen plotksen"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0008"
  },
  {
   "query": "What value identifies publishing works in the central marketplace's designer?",
-  "answer": "ochre vellum 0018",
+  "answer": "PUJ 649",
   "question_type": "1_hop",
   "evidence_ids": [
-   "olmvale17",
-   "vorwick18"
+   "ewer industrrices refore fewer enes coise",
+   "lanidgeland fairview, or"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0009"
  },
  {
-  "query": "What value identifies coastal beacon in the stony promontory's designer?",
-  "answer": "ochre ferrolite 0020",
+  "query": "What value identifies coastal beacon in the stony promontory's founder?",
+  "answer": "TS-8612",
   "question_type": "1_hop",
   "evidence_ids": [
-   "tasgrove19",
-   "rellholt20"
+   "alloyd martit",
+   "sheila exinergy for company"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0010"
  },
  {
-  "query": "What value identifies wine estate in the sunlit dale's designer?",
-  "answer": "azure ferrolite 0022",
+  "query": "What value identifies wine estate in the sunlit dale's builder?",
+  "answer": "UVY 936",
   "question_type": "1_hop",
   "evidence_ids": [
-   "limric21",
-   "limvale22"
+   "wilminax, de",
+   "waighty zoss"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0011"
  },
  {
-  "query": "What value identifies thermal spa in the shoreline bluffs's designer?",
-  "answer": "indigo skack 0024",
+  "query": "What value identifies thermal spa in the shoreline bluffs's leader?",
+  "answer": "PD-8836",
   "question_type": "1_hop",
   "evidence_ids": [
-   "vorby23",
-   "tasreach24"
+   "energy commital minergy",
+   "pocar, id"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0012"
  },
  {
-  "query": "What value identifies grain depot in the evergreen woodland's designer?",
-  "answer": "pallid quartzine 0026",
+  "query": "What value identifies grain depot in the evergreen woodland's commissioner?",
+  "answer": "ref-68-5149",
   "question_type": "1_hop",
   "evidence_ids": [
-   "orrgrove25",
-   "quendell26"
+   "updatunita cgin st",
+   "asseather managemener outsourockhart arrangson proposal paus"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0013"
  },
  {
-  "query": "What value identifies vessel works in the saline plains's designer?",
-  "answer": "ochre lansk 0028",
+  "query": "What value identifies vessel works in the saline plains's operator?",
+  "answer": "ref-85-1764",
   "question_type": "1_hop",
   "evidence_ids": [
-   "wendcrag27",
-   "vexvale28"
+   "cua, ca",
+   "lng invoiolson dan"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0014"
  },
  {
-  "query": "What value identifies ale house in the stone pit's designer?",
-  "answer": "pallid grist 0030",
+  "query": "What value identifies ale house in the stone pit's financier?",
+  "answer": "RFR 169",
   "question_type": "1_hop",
   "evidence_ids": [
-   "tasvale29",
-   "vorthorn30"
+   "octagoabisco redings",
+   "brentwague, tn"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0015"
  },
  {
-  "query": "What value identifies hide-processing works in the port entrance's designer?",
-  "answer": "crimson quartzine 0032",
+  "query": "What value identifies hide-processing works in the port entrance's restorer?",
+  "answer": "2975Y",
   "question_type": "1_hop",
   "evidence_ids": [
-   "brelker31",
-   "skomond32"
+   "grar chler try",
+   "enroly tranric serviceer cews"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0016"
  },
  {
   "query": "What value identifies coin-striking works in the arid hollow's designer?",
-  "answer": "ochre ferrolite 0034",
+  "answer": "grade 44-UU-0",
   "question_type": "1_hop",
   "evidence_ids": [
-   "mirker33",
-   "nuthstone34"
+   "kee, nc",
+   "poulet de brmberg"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0017"
  },
  {
-  "query": "What value identifies blacksmith works in the iced-over tarn's designer?",
-  "answer": "pallid quartzine 0036",
+  "query": "What value identifies blacksmith works in the iced-over tarn's founder?",
+  "answer": "KS-3762",
   "question_type": "1_hop",
   "evidence_ids": [
-   "zelfen35",
-   "mirven36"
+   "inc. cossing inc",
+   "macago, fl"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0018"
  },
  {
-  "query": "What value identifies glasshouse nursery in the enclosed grounds's designer?",
-  "answer": "pallid brannik 0038",
+  "query": "What value identifies glasshouse nursery in the enclosed grounds's builder?",
+  "answer": "ref-29-0935",
   "question_type": "1_hop",
   "evidence_ids": [
-   "skoric37",
-   "brelker38"
+   "jefary scott govenaipari",
+   "advanceoral power trhed"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0019"
  },
  {
-  "query": "What value identifies small place of worship in the belfry spire's designer?",
-  "answer": "russet ferrolite 0040",
+  "query": "What value identifies prayer hall in the belfry spire's leader?",
+  "answer": "ref-42-9165",
   "question_type": "1_hop",
   "evidence_ids": [
-   "brelby39",
-   "cavgrove40"
+   "owenss, ky",
+   "enis direcerick"
   ],
   "query_variant": "short-natural",
   "query_family_id": "q0020"
+ },
+ {
+  "query": "What value identifies grain-milling tower in the ore working's commissioner?",
+  "answer": "6342F",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "s. disnergy cy jmerican bnergy enmpany oan",
+   "norwak, ct"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0021"
+ },
+ {
+  "query": "What value identifies power station in the blustery heath's operator?",
+  "answer": "ref-05-7068",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "pouleel de bl",
+   "international linetners"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0022"
+ },
+ {
+  "query": "What value identifies stargazing facility in the estuary fan's financier?",
+  "answer": "UHZ 416",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "streverse, ne",
+   "dedex barm"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0023"
+ },
+ {
+  "query": "What value identifies grain-grinding works in the high col's restorer?",
+  "answer": "0945H",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "wiational lowegy gas rateny ch rapidnistration",
+   "masaytown portland, or"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0024"
+ },
+ {
+  "query": "What value identifies records vault in the angling quay's designer?",
+  "answer": "SRF 901",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "cotd ve",
+   "piance serviding"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0025"
+ },
+ {
+  "query": "What value identifies metal-casting works in the fruit-grove hillside's founder?",
+  "answer": "FS-1220",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "carmkwila, in",
+   "daathy marketinlly manaathy"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0026"
+ },
+ {
+  "query": "What value identifies optical instrument in the chalky underground hollows's builder?",
+  "answer": "grade 65-XS-8",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "public serviego company of new mexigent",
+   "mrham, co"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0027"
+ },
+ {
+  "query": "What value identifies streetcar line in the metal river crossing's leader?",
+  "answer": "BJM 309",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "my crozin",
+   "futurass commissstomer"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0028"
+ },
+ {
+  "query": "What value identifies water channel in the lowland riverside settlement's commissioner?",
+  "answer": "3982P",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "samas, ny",
+   "arorge nationaowski wildlrge reowski"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0029"
+ },
+ {
+  "query": "What value identifies publishing works in the layered slope embankments's operator?",
+  "answer": "TTK 580",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "jupimmercial mermation",
+   "corngton, ak"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0030"
+ },
+ {
+  "query": "What value identifies coastal beacon in the disused switching grounds's financier?",
+  "answer": "AQ-0453",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "transaction sults",
+   "enll forlow"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0031"
+ },
+ {
+  "query": "What value identifies wine estate in the white escarpment hills's restorer?",
+  "answer": "lot 0282113",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "kmpoc, de",
+   "buffveler newws"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0032"
+ },
+ {
+  "query": "What value identifies thermal spa in the mudflat shallows's designer?",
+  "answer": "4435T",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "pried ves partners",
+   "kamemt city"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0033"
+ },
+ {
+  "query": "What value identifies grain depot in the frontier crossing post's founder?",
+  "answer": "grade 22-VR-7",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "ir dale",
+   "boarham of gm of unham"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0034"
+ },
+ {
+  "query": "What value identifies vessel works in the disused landing ground's builder?",
+  "answer": "ref-03-1411",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "sweetwatz, tx",
+   "ralif conference newslif"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0035"
+ },
+ {
+  "query": "What value identifies ale house in the buried water reservoir's leader?",
+  "answer": "AV-0567",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "transalind er marketinroduction",
+   "scottsdaloit, az"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0036"
+ },
+ {
+  "query": "What value identifies hide-processing works in the sunken-vessel inlet's commissioner?",
+  "answer": "CC-6744",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "hssembly amigos",
+   "cenfic ofnd"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0037"
+ },
+ {
+  "query": "What value identifies coin-striking works in the hot-water hollow's operator?",
+  "answer": "0662A",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "fon pierce, fl",
+   "thper alleesk revirt"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0038"
+ },
+ {
+  "query": "What value identifies blacksmith works in the reddish rock escarpment's financier?",
+  "answer": "lot 1088490",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "inncy separate busiagement unitnt hallibcy co",
+   "napoleovi, la"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0039"
+ },
+ {
+  "query": "What value identifies glasshouse nursery in the boat crossing point's restorer?",
+  "answer": "grade 04-WZ-1",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "vin ehen",
+   "el paine natural gas companipeline"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0040"
+ },
+ {
+  "query": "What value identifies prayer hall in the caved-in excavation shaft's designer?",
+  "answer": "9669S",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "galvle, tx",
+   "thanksgiving whstante"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0041"
+ },
+ {
+  "query": "What value identifies grain-milling tower in the sun-facing viewing ledge's founder?",
+  "answer": "TSK 599",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "learnit managemete",
+   "thorntolis, co"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0042"
+ },
+ {
+  "query": "What value identifies power station in the salt-tinged inlet's builder?",
+  "answer": "HVH 282",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "schaereak property",
+   "stuking says lning poervice corking"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0043"
+ },
+ {
+  "query": "What value identifies stargazing facility in the abandoned lookout post's leader?",
+  "answer": "DZ-4682",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "brae, nj",
+   "punterill cornaker"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0044"
+ },
+ {
+  "query": "What value identifies grain-grinding works in the upper wetlands's commissioner?",
+  "answer": "ref-70-0143",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "switzer poweing physier",
+   "aherst, tx"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0045"
+ },
+ {
+  "query": "What value identifies records vault in the crest to the east's operator?",
+  "answer": "DC-1252",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "btt ellimble",
+   "mg anducation"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0046"
+ },
+ {
+  "query": "What value identifies metal-casting works in the curve of the watercourse's financier?",
+  "answer": "lot 6270243",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "norin, il",
+   "ed missiork"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0047"
+ },
+ {
+  "query": "What value identifies optical instrument in the former justice building's restorer?",
+  "answer": "XU-3397",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "us justdburn department'fice civan righoodburn divisiice",
+   "rutlewark, ne"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0048"
+ },
+ {
+  "query": "What value identifies streetcar line in the quarter to the west's designer?",
+  "answer": "VG-2354",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "gwest munde",
+   "co frequeats fd cted"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0049"
+ },
+ {
+  "query": "What value identifies water channel in the elevated tableland's founder?",
+  "answer": "ref-19-7388",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "grn, ct",
+   "surid go sporavid"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0050"
  }
 ]

@@ -33,18 +33,21 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Fabricated syllable pools — combined by the seeded RNG into invented, unguessable
-# entity names (the closed-book gate certifies non-memorizability).
-_SYL_A = ["zel", "quen", "vor", "mir", "tas", "brel", "kan", "olm", "vex", "dru",
-          "pell", "harn", "sko", "lim", "rell", "cav", "nuth", "orr", "wend", "fal"]
-_SYL_B = ["thorn", "by", "mire", "ven", "dac", "lun", "ric", "mond", "ash", "ker",
-          "vale", "post", "wick", "dell", "grove", "fen", "stone", "reach", " holt".strip(), "crag"]
-# Attribute values are fabricated UNIQUELY per chain (adjective + noun + the chain's
-# unique uid), so an answer (e.g. "ochre ferrolite 0047") is uniquely determined by its
-# chain and never appears in a distractor doc (review Issue-C: a shared pool let the same
-# answer string recur across gold + distractors).
-_ATTR_ADJ = ["ochre", "crimson", "azure", "umber", "verdant", "pallid", "russet", "indigo"]
-_ATTR_NOUN = ["ferrolite", "lansk", "brannik", "skack", "vellum", "grist", "perrin", "quartzine"]
+# The BUILD-PATH half of the entity bank only. `entity_harvest` (the offline harvester)
+# is deliberately NOT imported here: a build that could re-harvest could silently produce
+# different output from a different corpus snapshot, which would put the harvester's
+# regexes and the host-corpus bytes inside this module's cross-interpreter determinism
+# proof (`regenerate_and_diff`). Harvest once, pin the sha, sample forever.
+from jseval import entity_bank as _entity_bank
+
+# Padding boilerplate. REMAINING OWNER: the 635 goldens (`635-corpora/synth-*`), which are
+# STANDALONE corpora with no host document — without padding they would be one-sentence
+# documents, so they keep `doc_words=<int>` and this filler (tempdoc 767 §I.2 scope
+# boundary). The 707 injected corpora pass `doc_words=None` and get NO padding: their
+# fabricated sentences are interleaved into a REAL host document by `corpus_inject.assemble`,
+# so the host already supplies register-native bulk and this text would be pure additive
+# boilerplate — byte-identical across every gold doc, i.e. one grep selects them all
+# (tempdoc 767 §I.1 "bulk" layer, measured: 280/280 gold docs enumerable by this string).
 _FILLER = ("The surrounding district is known for long winters and quiet markets where "
            "traders gather to exchange goods and stories. Over the years many travellers "
            "passed through, leaving small monuments and the occasional inscription. Scholars "
@@ -57,6 +60,13 @@ _FILLER = ("The surrounding district is known for long winters and quiet markets
 # one surface phrasing; the QUERY references it via SYNONYMS (low lexical overlap), so
 # exact-match `Grep` / pure-BM25 fails at the entry point but dense/SPLADE bridges
 # semantically — the only setup where JustSearch's retrieval can beat a grep-agent.
+# INVARIANT (tempdoc 767 §I.3, guarded by `test_sem_pools_are_root_disjoint`): the two members
+# of every pair must share NO token. A pair like ("Carpathian highlands", "Carpathian uplands")
+# varies the head noun but leaves a distinctive modifier verbatim, so the query and its gold doc
+# share a corpus-wide df=1 token — a perfect grep anchor pinning exactly one document, which
+# defeats the whole point of the synonym bridge. Replacements stay domain-neutral and carry no
+# proper noun the host corpus does not already use. Pool LENGTHS are load-bearing (see
+# `_max_semantic_chains`), so fixes are in-place substitutions, never additions or removals.
 # (doc_noun, query_noun) type synonyms + (doc_place, query_place) place synonyms. The
 # head's descriptor combines a type + a UNIQUE place per gold chain, so the query (synonyms
 # of both) identifies exactly one head SEMANTICALLY — but shares no surface tokens with the
@@ -74,14 +84,21 @@ _SEM_TYPE = [
     ("granary", "grain depot"), ("shipyard", "vessel works"),
     ("brewery", "ale house"), ("tannery", "hide-processing works"),
     ("mint", "coin-striking works"), ("smithy", "blacksmith works"),
-    ("greenhouse", "glasshouse nursery"), ("chapel", "small place of worship"),
+    # tempdoc 767: the query side of index 19 was "small place of worship" — the only 4-word
+    # type synonym in the pool. An EN short-natural query is `6 + |type_syn| + |place_syn|`
+    # words (`corpus_query_strata._short_natural`) against a 12-word cap, and the longest
+    # place synonyms are 4 words, so a 4-word type synonym is the single reason the EN cap
+    # broke (20 of the 924 two-axis diagonal combinations, ALL of them at this index —
+    # measured). A 2-word in-place substitution takes that to 0/924. In-place: pool LENGTHS
+    # are load-bearing (`_max_semantic_chains`), so this is a substitution, not a removal.
+    ("greenhouse", "glasshouse nursery"), ("chapel", "prayer hall"),
     ("windmill", "grain-milling tower"),
 ]
 _SEM_PLACE = [
-    ("northern marshlands", "upper wetlands"), ("eastern ridge", "ridge to the east"),
-    ("river bend", "curve of the river"), ("old courthouse", "former justice building"),
-    ("western district", "quarter to the west"), ("Carpathian highlands", "Carpathian uplands"),
-    ("hill city", "city on the slopes"), ("southern hills", "hills to the south"),
+    ("northern marshlands", "upper wetlands"), ("eastern ridge", "crest to the east"),
+    ("river bend", "curve of the watercourse"), ("old courthouse", "former justice building"),
+    ("western district", "quarter to the west"), ("highland plateau", "elevated tableland"),
+    ("hill city", "town on the slopes"), ("southern hills", "knolls to the south"),
     ("market square", "central marketplace"), ("rocky headland", "stony promontory"),
     ("sunny valley", "sunlit dale"), ("coastal cliffs", "shoreline bluffs"),
     ("pine forest", "evergreen woodland"), ("salt flats", "saline plains"),
@@ -130,9 +147,14 @@ _SEM_QUAL = [
     ("unit seventeen", "the seventeenth installation"), ("unit eighteen", "the eighteenth installation"),
     ("unit nineteen", "the nineteenth installation"), ("unit twenty", "the twentieth installation"),
     # -- tempdoc 624 scale-corpus: appended 20->25 (append-only).
-    ("unit twenty-one", "the twenty-first installation"), ("unit twenty-two", "the twenty-second installation"),
-    ("unit twenty-three", "the twenty-third installation"), ("unit twenty-four", "the twenty-fourth installation"),
-    ("unit twenty-five", "the twenty-fifth installation"),
+    # tempdoc 767: the doc side of 21-25 uses the DIGIT cardinal, not the spelled one — the
+    # spelled form ("unit twenty-one") shares the token `twenty` with its own query-side
+    # ordinal ("the twenty-first installation"), which is exactly the shared-root leak
+    # `_pair_shares_token` now guards against. Digits keep the pool's cardinal/ordinal
+    # contract (doc = cardinal surface, query = ordinal synonym) while being token-disjoint.
+    ("unit 21", "the twenty-first installation"), ("unit 22", "the twenty-second installation"),
+    ("unit 23", "the twenty-third installation"), ("unit 24", "the twenty-fourth installation"),
+    ("unit 25", "the twenty-fifth installation"),
 ]
 _SEM_QUAL_DE = [
     ("Einheit eins", "die erste Anlage"), ("Einheit zwei", "die zweite Anlage"),
@@ -172,8 +194,13 @@ _SEM_TYPE_DE = [
 _SEM_PLACE_DE = [
     ("nördliches Marschland", "oberes Feuchtgebiet"), ("östlicher Bergrücken", "Höhenzug im Osten"),
     ("Flussbiegung", "Krümmung des Flusses"), ("altes Gerichtsgebäude", "früheres Justizgebäude"),
-    ("westlicher Bezirk", "Viertel im Westen"), ("Karpatenhochland", "Karpaten-Bergland"),
-    ("Hügelstadt", "Stadt an den Hängen"), ("südliche Hügel", "Hügel im Süden"),
+    # tempdoc 767: "Karpatenhochland"/"Karpaten-Bergland" is the German half of the same
+    # minted-proper-noun leak as the English index 5 — `Karpaten` occurs in no real host
+    # document, so it is a df=1 anchor, and German compounding means a substring grep for it
+    # hits both members even though they are token-disjoint. Replaced with a common-noun pair
+    # (index-aligned with the English "highland plateau"/"elevated tableland").
+    ("westlicher Bezirk", "Viertel im Westen"), ("Hochlandplateau", "erhöhte Tafelebene"),
+    ("Hügelstadt", "Stadt an den Hängen"), ("südliche Hügel", "Anhöhen im Süden"),
     ("Marktplatz", "zentrales Marktviertel"), ("felsige Landzunge", "steiniges Vorgebirge"),
     ("sonniges Tal", "lichtdurchflutete Senke"), ("Küstenklippen", "Steilküste am Ufer"),
     ("Kiefernwald", "immergrüner Forst"), ("Salzebene", "salzhaltiges Flachland"),
@@ -212,11 +239,67 @@ def _max_semantic_chains(lang="en"):
 
     Tempdoc 624 scale-corpus (pool-growth follow-up): pools are now 21 types x 44 places x 25
     quals = 23100 triples, chosen pairwise-coprime (21=3*7, 44=2^2*11, 25=5^2) so
-    lcm(21, 44, 25) == 23100 == the full triple-space size — no combination is wasted."""
+    lcm(21, 44, 25) == 23100 == the full triple-space size — no combination is wasted.
+
+    Tempdoc 767: this is the ceiling for the THREE-axis regime only. The two-axis regime has
+    its own, smaller-but-still-large ceiling — see `_max_semantic_pair_chains`. The
+    distinction became load-bearing when the descriptor-width guard in `generate()` stopped
+    treating "one axis has run out of values" as "the descriptor has run out of values"."""
     types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
     places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
     quals = _SEM_QUAL_DE if lang == "de" else _SEM_QUAL
     return math.lcm(len(types), len(places), len(quals))
+
+
+def _max_semantic_pair_chains(lang="en"):
+    """The same ceiling for the TWO-axis regime: the largest gold-chain count for which every
+    chain's (type, place) index-PAIR is distinct.
+
+    `_sem_for`'s two-axis gold branch assigns chain ``g`` the pair ``(g % T, g % P)``. By the
+    same CRT argument as `_max_semantic_chains`, that pair map is injective on
+    ``[0, lcm(T, P))`` and lossy from the next chain on — with T=21 and P=44 coprime,
+    lcm(21, 44) == 21 * 44 == 924, i.e. the whole pair space and not merely a period inside
+    it. Measured and pinned by `test_two_axis_pair_bound_is_exactly_924`:
+    `_gold_descriptor_reservations(n, use_qual=False)` returns exactly ``n`` distinct pairs
+    for every n <= 924 and only 924 at n = 925."""
+    types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
+    places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
+    return math.lcm(len(types), len(places))
+
+
+#: Ceiling on the *expected* share of generated distractor chains whose two-axis descriptor
+#: is shared with another distractor. Above it `generate()` switches the qualifier axis on
+#: for diversity (NOT for uniqueness — see the guard comment in `generate()`). The standing
+#: regression test `test_generate_third_axis_keeps_distractor_duplication_low_at_scale`
+#: asserts the realised rate stays under 25%; the budget keeps a margin below that, since
+#: the realised rate is seed-dependent scatter around this expectation.
+_DISTRACTOR_PAIR_DUPLICATION_BUDGET = 0.20
+
+
+def _expected_distractor_pair_duplication(n_draws, n_gold_reserved, lang="en"):
+    """Expected fraction of ``n_draws`` two-axis distractor descriptor draws that land in a
+    (type, place) bin already occupied by another distractor.
+
+    `_sem_for`'s distractor branch draws uniformly from the ``T * P`` pair space MINUS the
+    pairs the gold chains reserved this call (rejection sampling against
+    `_gold_descriptor_reservations`), so the free space is ``T * P - n_gold_reserved`` bins.
+    For ``k`` balls in ``N`` bins the expected share of balls sharing a bin with at least one
+    other is ``1 - (1 - 1/N)**(k - 1)``. Validated against the real generator: at k=780,
+    N=898 (n_chains=26, distractor_ratio=30, hops=2) this predicts 57.8% and the generator
+    measures 58.2%.
+
+    Returns 1.0 when the free space cannot absorb the draws at all (``N <= 1``) — that is
+    both maximal duplication and the regime where `_sem_for`'s two-axis rejection loop would
+    not terminate, so the caller must take the qualifier axis there.
+    """
+    types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
+    places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
+    n_bins = len(types) * len(places) - n_gold_reserved
+    if n_bins <= 1:
+        return 1.0
+    if n_draws < 2:
+        return 0.0
+    return 1.0 - (1.0 - 1.0 / n_bins) ** (n_draws - 1)
 
 
 def _gold_descriptor_reservations(n_chains, lang="en", *, use_qual=True):
@@ -242,12 +325,16 @@ def _sem_for(idx, rng, *, gold, lang="en", exclude=None, use_qual=True):
     references all three synonyms, so `generate()`'s semantic-mode cap is the triple-injectivity
     period `lcm(T, P, Q)` (`_max_semantic_chains`), not the place-pool size alone.
 
-    Distractors draw UNIFORMLY AT RANDOM from the full type x place x qualifier space,
-    EXCLUDING any index-triple already reserved by a gold chain this call (``exclude`` — see
-    `_gold_descriptor_reservations`) via rejection sampling: ``exclude`` holds at most
-    `n_chains` (<=26) entries against a pool of `len(types) * len(places) * len(quals)`
-    (thousands of combinations with the qualifier axis), so this terminates in a handful of
-    draws even in the worst case. ``lang`` selects the English or German synonym pools.
+    Distractors draw UNIFORMLY AT RANDOM from the full descriptor space, EXCLUDING any index
+    tuple already reserved by a gold chain this call (``exclude`` — see
+    `_gold_descriptor_reservations`) via rejection sampling. Termination is the caller's
+    responsibility and is not free in the TWO-axis regime: ``exclude`` holds min(n_chains,
+    924) of the 924 (type, place) pairs, so a two-axis call with ~900 gold chains and any
+    distractors would spin. `generate()`'s descriptor-width guard is what rules that out —
+    it takes the qualifier axis whenever the free pair space cannot comfortably absorb the
+    distractor draws (`_expected_distractor_pair_duplication` returns 1.0 at <= 1 free bin).
+    In the three-axis regime the space is 23100 combinations, so a handful of draws suffices
+    in the worst case. ``lang`` selects the English or German synonym pools.
     """
     types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
     places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
@@ -285,46 +372,123 @@ def _sem_for(idx, rng, *, gold, lang="en", exclude=None, use_qual=True):
     return (t[0], t[1], p[0], p[1], q[0], q[1])
 
 
-def _name(rng: random.Random, uid: int) -> str:
-    # Monotonic uid suffix guarantees uniqueness (the syllable space alone is too small
-    # for a high distractor ratio → would otherwise collide and spin). Reads as a catalog id.
-    return (rng.choice(_SYL_A) + rng.choice(_SYL_B)).capitalize() + str(uid)
+def _ident(name: str) -> str:
+    """A minted entity surface as a Python-ish identifier, for the ``code`` axis.
+
+    Bank-minted names are type-matched to real ones, so they carry spaces, hyphens and
+    apostrophes ("Marden Colwell"); the ``code`` renderer emits them as function names.
+    The document ``_id`` stays the plain lowercased surface — this is a rendering
+    concern only.
+    """
+    return "".join(ch if ch.isalnum() else "_" for ch in name.lower())
 
 
-def _pad(text: str, target_words: int) -> str:
+def _pad(text: str, target_words: int | None) -> str:
+    """Pad ``text`` with :data:`_FILLER` to ``target_words``; ``None`` means do not pad.
+
+    ``None`` is the 707 injected-corpus path — see :data:`_FILLER` for why padding is
+    opt-out there rather than deleted outright.
+    """
+    if target_words is None:
+        return text
     out = text
     while len(out.split()) < target_words:
         out += " " + _FILLER
     return out
 
 
+def _filler_tail(target_words: int | None, *, comment: bool = False) -> str:
+    """The renderer-appended filler block, or ``""`` when padding is off.
+
+    The prose renderer's filler arrives solely through :func:`_pad`, but the code and
+    tabular renderers also concatenate ``_FILLER`` directly into the document body — so
+    the ``doc_words=None`` opt-out has to be honoured here too, or those two axes would
+    still emit the enumerable boilerplate.
+    """
+    if target_words is None:
+        return ""
+    if comment:
+        return "\n\n# " + _FILLER.replace(". ", ".\n# ")
+    return "\n\n" + _FILLER
+
+
 # --- relation vocabulary per axis (kind, prose phrasing, question phrasing) ---
+#
+# tempdoc 767 §I.3 (template anchor): every chain used to render with `_RELATIONS["prose"][0]`,
+# because `_render_prose` indexes by HOP (`rels[i % len(rels)]`) and the 707 cells are all
+# `hops=1` — so all 20 gold heads carried the byte-identical 5-gram "was designed by the
+# engineer" (measured: gold coverage 0.500 against a 0.225 native base rate, one grep selecting
+# half the gold set). `generate()` now ROTATES this list per chain (`_rotate`), so the head
+# phrasing is spread evenly across the pool: 8 phrasings over 20 chains caps any single
+# template at 3 of 40 gold docs (0.075).
+#
+# INVARIANT: a tuple's doc phrasing and question phrasing must share no content token
+# ("designed"/"designer", "financed"/"financier"), or the semantic bridge leaks lexically and
+# `query_overlap_report` rises. Guarded by `test_relation_phrasings_are_token_disjoint`.
 _RELATIONS = {
     "prose": [
         ("designed", "was designed by the engineer", "the designer of"),
         ("founded", "was founded by", "the founder of"),
         ("built", "was built by", "the builder of"),
         ("led", "was led by", "the leader of"),
+        # -- tempdoc 767: appended 4->8 to spread the head-template anchor.
+        ("commissioned", "was commissioned by", "the commissioner of"),
+        ("operated", "was operated by", "the operator of"),
+        ("financed", "was financed by", "the financier of"),
+        ("restored", "was restored by", "the restorer of"),
     ],
 }
 
+# The TERMINAL (attribute) sentence of an English prose chain. This was a single fixed string,
+# `"{last} is associated with {attr}. "`, emitted by every one of the 20 gold tail docs —
+# the other half of the two-anchor structure §I.3 found (the head template being the first).
+# Rotated per chain by `generate()` exactly like `_RELATIONS`.
+#
+# INVARIANT: no template may contain 5 consecutive LITERAL tokens, or it reintroduces a fixed
+# 5-gram anchor of its own regardless of how evenly it is spread. The longest literal run below
+# is 4 ("The entry filed under"). Guarded by `test_tail_phrasings_have_no_fixed_5gram`.
+_TAIL_PHRASINGS = [
+    "{last} is associated with {attr}. ",
+    "The record for {last} lists {attr}. ",
+    "{last} carries the designation {attr}. ",
+    "The entry filed under {last} reads {attr}. ",
+    "{last} corresponds to {attr}. ",
+    "The register notes {attr} for {last}. ",
+    "{last} is catalogued as {attr}. ",
+    "The final annotation for {last} gives {attr}. ",
+]
 
-def _chain(rng, hops, counter):
+
+def _rotate(pool, offset):
+    """``pool`` rotated left by ``offset`` — the per-chain template spread (tempdoc 767 §I.3).
+
+    Rotating (rather than picking `pool[offset]`) keeps `_render_prose`'s existing
+    hop-indexed `pool[i % len(pool)]` walk intact: chain ``g`` starts at ``pool[g % len(pool)]``
+    and a multi-hop chain still cycles through distinct phrasings for its successive hops.
+    Deterministic and rng-free, so it adds no draw to the seeded stream.
+    """
+    k = offset % len(pool)
+    return pool[k:] + pool[:k]
+
+
+def _chain(rng, hops, minter):
     """A fabricated chain: entities e0..e{hops} (globally-unique), ending in an attribute.
 
-    ``counter`` is a single-element mutable list used as a monotonic id source so every
-    entity across the whole corpus is unique (no collisions → no spin).
+    ``minter`` is the call's single :class:`jseval.entity_bank.Minter`; it owns global
+    uniqueness for both names and values, which is what the deleted monotonic uid counter
+    used to provide.
+
+    tempdoc 767 §I.2 (answer leak): the attribute is drawn from a format-diverse space
+    that is INDEPENDENT of the entities. Previously both the entity names and the value
+    were derived from the same monotonic counter (``Tasdell272`` … ``ochre ferrolite
+    0272``), so the answer was inferable from any entity name in the chain without
+    retrieving the final document at all.
     """
-    ents = []
-    for _ in range(hops + 1):
-        counter[0] += 1
-        ents.append(_name(rng, counter[0]))
-    # unique per chain: adjective + noun + the chain's last (unique) uid
-    attr = f"{rng.choice(_ATTR_ADJ)} {rng.choice(_ATTR_NOUN)} {counter[0]:04d}"
-    return ents, attr
+    ents = [minter.mint_entity(rng) for _ in range(hops + 1)]
+    return ents, minter.mint_value(rng)
 
 
-def _render_prose(ents, attr, rels, target_words, lang="en", sem=None):
+def _render_prose(ents, attr, rels, target_words, lang="en", sem=None, tails=_TAIL_PHRASINGS):
     """Render a chain as gold docs (one per hop link) + a multi-hop question.
 
     If ``sem`` is a `_SEM` tuple, the HEAD doc describes the entity by a descriptor and
@@ -378,7 +542,10 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None):
             q = (f"Folgt man den Verknüpfungen ausgehend von {ents[0]}, "
                  f"mit welchem Wert ist die letzte Entität verbunden?")
     else:
-        docs.append((last.lower(), f"The {last}", _pad(f"{last} is associated with {attr}. ", target_words)))
+        # tail phrasing is rotated per chain by `generate()` (tempdoc 767 §I.3) — a single
+        # fixed string here made every gold tail doc share one template.
+        docs.append((last.lower(), f"The {last}",
+                     _pad(tails[0].format(last=last, attr=attr), target_words)))
         # head reference: SYNONYM descriptor (semantic) or the verbatim name (lexical)
         head_ref = f"the {sem[1]} in the {sem[3]}{qq}" if sem else ents[0]
         phrase = head_ref
@@ -417,21 +584,23 @@ def _render_code(ents, attr, target_words, idx, sem=None):
             # query's sem[1]/sem[3]/sem[5] synonyms stay zero-overlap (grep-defeating).
             title = f"the {sem[0]} in the {sem[2]}{dq}"
             body = (f'"""This module concerns the {sem[0]} in the {sem[2]}{dq}."""\n'
-                    f"def {ents[i].lower()}():\n    return {ents[i+1].lower()}()\n\n"
-                    + "# " + _FILLER.replace(". ", ".\n# "))
+                    f"def {_ident(ents[i])}():\n    return {_ident(ents[i+1])}()"
+                    + _filler_tail(target_words, comment=True))
         else:
-            title = f"{ents[i].lower()}.py"
-            body = (f"def {ents[i].lower()}():\n    # module helper {idx}.{i}\n"
-                    f"    return {ents[i+1].lower()}()\n\n" + "# " + _FILLER.replace(". ", ".\n# "))
+            title = f"{_ident(ents[i])}.py"
+            body = (f"def {_ident(ents[i])}():\n    # module helper {idx}.{i}\n"
+                    f"    return {_ident(ents[i+1])}()"
+                    + _filler_tail(target_words, comment=True))
         docs.append((ents[i].lower(), title, _pad(body, target_words)))
     last = ents[-1]
-    body = (f"def {last.lower()}():\n    return {attr!r}\n\n" + "# " + _FILLER.replace(". ", ".\n# "))
-    docs.append((last.lower(), f"{last.lower()}.py", _pad(body, target_words)))
+    body = (f"def {_ident(last)}():\n    return {attr!r}"
+            + _filler_tail(target_words, comment=True))
+    docs.append((last.lower(), f"{_ident(last)}.py", _pad(body, target_words)))
     if sem:
         q = (f"What value is ultimately returned by the routine for the "
              f"{sem[1]} in the {sem[3]}{qq}?")
     else:
-        q = f"What value does the function {ents[0].lower()}() ultimately return when called?"
+        q = f"What value does the function {_ident(ents[0])}() ultimately return when called?"
     # question_type counts edges (N-1 for an N-entity chain); behavioral retrieval hops =
     # edges + 1 = len(evidence_ids) — see the docstring above and tempdoc 731 §3.3.
     return docs, {"query": q, "answer": attr, "question_type": f"{len(ents)-1}_hop", "evidence_ids": [e.lower() for e in ents]}
@@ -465,10 +634,11 @@ def _render_tabular(ents, attr, target_words, idx, sem=None):
         else:
             title = f"table_{ents[i].lower()}"
             caption = ""
-        body = (f"{caption}| entity | linked_to |\n|---|---|\n| {ents[i]} | {ents[i+1]} |\n\n" + _FILLER)
+        body = (f"{caption}| entity | linked_to |\n|---|---|\n| {ents[i]} | {ents[i+1]} |"
+                + _filler_tail(target_words))
         docs.append((ents[i].lower(), title, _pad(body, target_words)))
     last = ents[-1]
-    body = (f"| entity | attribute |\n|---|---|\n| {last} | {attr} |\n\n" + _FILLER)
+    body = (f"| entity | attribute |\n|---|---|\n| {last} | {attr} |" + _filler_tail(target_words))
     docs.append((last.lower(), f"table_{last.lower()}", _pad(body, target_words)))
     if sem:
         q = (f"In the records for the {sem[1]} in the {sem[3]}{qq}, following the links, "
@@ -652,17 +822,54 @@ def materialize_doc_entry(doc: dict, type_axis: str | None) -> dict:
     return entry
 
 
+#: Bumped whenever the emitted payload changes shape. Its PRESENCE in a corpus's
+#: ``generation_provenance`` is what tells `corpus_certify.regeneration_determinism_report`
+#: to demand the v2 parameter set and to FAIL (not skip) on a missing key — see that
+#: function for why a silent skip was the danger here.
+PAYLOAD_VERSION = "payload.v2"
+
+
 def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
              distractor_ratio=6, doc_words=520, suite="635-self-demo-v1", seed=635,
-             semantic=False):
+             semantic=False, entity_bank=None):
     """Generate a fabricated corpus source into ``out_dir`` (docs.jsonl/queries.json/meta.json).
 
     distractor_ratio = distractor docs per gold doc (de-risk: ~5–10:1 to reach the band).
+    ``0`` is valid and is the right value for the INJECTED (707) path: `corpus_inject.assemble`
+    keeps only the docs named by `evidence_ids` and draws its distractors from the real host
+    corpus, so generated distractors there are produced and discarded (verified byte-identical
+    assembled output either way — `test_distractor_ratio_zero_leaves_the_gold_payload_identical`).
+    They are not free: they are what can push the descriptor-width guard below onto the
+    qualifier axis, whose longer queries break the 5-12-word short-natural stratum.
     semantic=True (all axes, en+de): the head is referenced in the query by SYNONYMS of its
     descriptor (low lexical overlap → grep/BM25 fail at the entry, semantic retrieval wins).
     code/tabular carry the descriptor in a head comment/caption; German uses the de synonym
-    pools. Capped at the (lang-appropriate) place-pool size gold chains for unique descriptors.
+    pools. ``n_chains`` is capped at the descriptor-injectivity ceiling `_max_semantic_chains`
+    (23100); the descriptor WIDTH used below that is chosen by the two-concern guard in the
+    body (uniqueness up to `_max_semantic_pair_chains` = 924, distractor diversity).
+
+    ``doc_words`` is the padding target, and ``None`` means DO NOT PAD (tempdoc 767 §I.2):
+    the 707 corpora are injected into a real host document that already supplies
+    register-native bulk, so padding there is purely additive boilerplate that makes every
+    gold document enumerable by one grep. The standalone 635 goldens keep an integer.
+
+    ``entity_bank`` is the directory holding a frozen, committed ``entity-bank.v2.json`` +
+    ``commitment.v1.json`` (see :mod:`jseval.entity_bank`). It is REQUIRED: chain entities
+    are minted type- and length-matched against real host entities and collision-checked
+    against them, which replaces the syllable-pair minter. The bank's sha256 is recorded in
+    ``generation_provenance`` so a skeptic can reproduce the corpus exactly.
     """
+    if entity_bank is None:
+        raise ValueError(
+            "generate() requires entity_bank=<dir containing entity-bank.v2.json>; "
+            "the syllable-pair name minter it replaces was deleted in tempdoc 767"
+        )
+    bank_root = Path(entity_bank)
+    verdict = _entity_bank.validate_entity_bank(bank_root)
+    if not verdict["passed"]:
+        raise ValueError(f"unusable entity bank at {bank_root}: {verdict['reason']}")
+    bank = _entity_bank.load_bank(bank_root)
+    minter = _entity_bank.Minter(bank)
     # `hash(axis)` (a builtin str hash) is randomized per-process (PEP 456) unless
     # PYTHONHASHSEED is pinned, which this repo never does — so the "seeded -> reproducible"
     # claim above was false: two separate process invocations with the identical nominal `seed`
@@ -679,20 +886,54 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     # zero-overlap synonyms, so grep/pure-BM25 fail and dense must bridge (the only setup where
     # JustSearch's retrieval beats a grep-agent → a real ceiling instead of a trivial nDCG 1.0).
     sem_active = bool(semantic)
-    sem_places = _SEM_PLACE_DE if lang == "de" else _SEM_PLACE
-    sem_types = _SEM_TYPE_DE if lang == "de" else _SEM_TYPE
     if sem_active:
         # Cap at the (type, place, qualifier) triple-injectivity period, not the place-pool size:
         # the query disambiguates a gold head by the full synonym triple, so uniqueness holds up to
         # lcm(T, P, Q) chains (tempdoc 624 scale-corpus; see `_max_semantic_chains`).
         n_chains = min(n_chains, _max_semantic_chains(lang))
-    # Axis-conditional descriptor width (2026-07-16): the qualifier axis exists for
-    # triple-injectivity at SCALE (tempdoc 624 T.1). Below the pair regime it only lengthens
-    # queries — structurally breaking the German short-natural 5-12-word cap — and changes
-    # retrieval difficulty vs every committed 635-era cell (the 707 fabricated inputs were
-    # generated pre-624-lift with two-axis descriptors). Within min(T, P) chains the
-    # index-cycled (type, place) pair is already unique, so the qualifier adds nothing.
-    use_qual = sem_active and n_chains > min(len(sem_types), len(sem_places))
+    # Axis-conditional descriptor width. The qualifier axis is not free: it lengthens every
+    # query by a clause, which is what breaks the 5-12-word short-natural stratum
+    # (`corpus_query_strata._short_natural`), and it changes retrieval difficulty against
+    # every committed 635-era cell. So it is switched on only when something actually needs
+    # it — and TWO different things can, for two different reasons. Keep them separate;
+    # the pre-2026-07-21 guard (`n_chains > min(T, P)`) was a single condition standing in
+    # for both, and was wrong about each.
+    #
+    #   1. GOLD DESCRIPTOR UNIQUENESS. A gold query names its head by the synonym descriptor,
+    #      so no two gold chains may share one. `_sem_for` gives chain g the index pair
+    #      (g % T, g % P); T=21 and P=44 are coprime, so by the CRT that pair is injective on
+    #      [0, lcm(21, 44)) = [0, 924) — two-axis descriptors are collision-free to 924 gold
+    #      chains and first collide at 925 (measured; pinned by
+    #      `test_two_axis_pair_bound_is_exactly_924`). `min(T, P)` = 21 was the count of
+    #      values on the SHORTER axis, not the count of distinct pairs; as a uniqueness bound
+    #      it was over-conservative by 44x.
+    #
+    #   2. GENERATED-DISTRACTOR DIVERSITY. Distractors draw their pair uniformly from the
+    #      pair space minus the gold reservations. Enough draws into that space and many
+    #      distractors end up textually interchangeable — a loss of hard-negative diversity,
+    #      never a qrel break (gold pairs are excluded from the draw, so `n_gold_involved`
+    #      stays 0 in both regimes). At n_chains=26 / distractor_ratio=30 — 780 distractor
+    #      chains into 898 free bins — two-axis measures 58.2% duplication against 4.1% with
+    #      the qualifier, and by pigeonhole no seed can avoid it. Q=25 multiplies the draw
+    #      space and dissolves the problem.
+    #
+    # They are separate because a caller can have either without the other: 900 gold chains
+    # with no generated distractors needs no qualifier, and 26 gold chains with 780 distractor
+    # chains needs one. Fusing them made every caller above 21 chains pay the query-length
+    # cost for a uniqueness margin it did not need — and, in the injected (707) path, pay it
+    # for distractors that `corpus_inject.assemble` discards outright.
+    docs_per_chain = hops + 1
+    n_distractor_chains = -(
+        -int(n_chains * docs_per_chain * distractor_ratio) // docs_per_chain
+    )
+    # The gold pair reservations number exactly min(n_chains, 924) by the CRT argument above.
+    pair_bound = _max_semantic_pair_chains(lang)
+    use_qual = sem_active and (
+        n_chains > pair_bound
+        or _expected_distractor_pair_duplication(
+            n_distractor_chains, min(n_chains, pair_bound), lang)
+        > _DISTRACTOR_PAIR_DUPLICATION_BUDGET
+    )
     # tempdoc 624 T.1: the exact (type, place, qualifier) index-triples the gold chains below
     # will occupy, so the distractor draw can EXCLUDE them — a gold/distractor descriptor
     # collision becomes structurally impossible rather than merely detected after the fact.
@@ -703,24 +944,27 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
         _gold_descriptor_reservations(n_chains, lang, use_qual=use_qual) if sem_active else None
     )
 
-    def render(e, a, sem):
+    def render(e, a, sem, chain_idx):
         # `scan` reuses prose's text generation verbatim -- the axis only changes how a
         # document is later MATERIALIZED (`corpus_build.build_golden` renders each doc's
         # text as a degraded scan-page PNG at build time via `render_scan_page`), not how
         # its ground-truth text is composed. `docs.jsonl` for a scan-axis corpus is
         # therefore identical in shape to a plain prose source (tempdoc 624 §T.2).
         if axis in ("prose", "scan"):
-            return _render_prose(e, a, rels, doc_words, lang, sem=sem)
+            # tempdoc 767 §I.3: rotate the relation + tail pools by the CHAIN index so no
+            # single phrasing dominates the gold set. `_rotate` is rng-free, so this adds
+            # no draw to the seeded stream (distractors rotate off their own counter).
+            return _render_prose(e, a, _rotate(rels, chain_idx), doc_words, lang, sem=sem,
+                                 tails=_rotate(_TAIL_PHRASINGS, chain_idx))
         if axis == "code":
             return _render_code(e, a, doc_words, rng.randint(0, 999), sem=sem)
         return _render_tabular(e, a, doc_words, rng.randint(0, 999), sem=sem)
 
-    counter = [0]  # monotonic unique-id source across gold + distractors
     all_docs, queries = [], []
     for g in range(n_chains):
-        ents, attr = _chain(rng, hops, counter)
+        ents, attr = _chain(rng, hops, minter)
         sem = _sem_for(g, rng, gold=True, lang=lang, use_qual=use_qual) if sem_active else None
-        docs, q = render(ents, attr, sem)
+        docs, q = render(ents, attr, sem, g)
         for did, title, text in docs:
             all_docs.append({"_id": did, "title": title, "text": text})
         queries.append(q)
@@ -731,11 +975,16 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     # distractor can never be textually indistinguishable from the query's actual answer head.
     n_distract = int(len(all_docs) * distractor_ratio)
     made = 0
+    # Distractors rotate the phrasing pools off their own chain counter, for the same reason
+    # gold chains do: a distractor population that all shares one template is itself a
+    # separating signal (the complement of a gold anchor is still an anchor).
+    distract_idx = 0
     while made < n_distract:
-        ents, attr = _chain(rng, hops, counter)
+        ents, attr = _chain(rng, hops, minter)
         sem = _sem_for(0, rng, gold=False, lang=lang, exclude=gold_reserved,
                        use_qual=use_qual) if sem_active else None
-        docs, _q = render(ents, attr, sem)
+        docs, _q = render(ents, attr, sem, distract_idx)
+        distract_idx += 1
         for did, title, text in docs:
             if made >= n_distract:
                 break
@@ -765,17 +1014,24 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
         # tempdoc 664 (seventh pass): `n_chains`/`doc_words` were missing here, so a corpus's own
         # recorded provenance could not reconstruct the exact `generate()` call that produced it —
         # a regeneration-determinism check needs the FULL parameter set, not a partial one.
+        # tempdoc 767: `payload_version` + the two `entity_bank*` keys complete the
+        # parameter set — without the bank's identity and digest the recorded provenance
+        # can no longer reconstruct the exact `generate()` call, because the entity
+        # surfaces now come from a committed artifact rather than an in-module pool.
         "generation_provenance": {"method": "procedural-fabricated", "axis": axis, "lang": lang,
                                   "seed": seed, "hops": hops, "distractor_ratio": distractor_ratio,
                                   "semantic": sem_active, "templated": True,
-                                  "n_chains": n_chains, "doc_words": doc_words},
+                                  "n_chains": n_chains, "doc_words": doc_words,
+                                  "payload_version": PAYLOAD_VERSION,
+                                  "entity_bank": _entity_bank.bank_reference(bank_root),
+                                  "entity_bank_sha256": verdict["bank_sha256"]},
     }, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
     return {"docs": len(all_docs), "gold_chains": n_chains, "queries": len(queries),
             "distractor_docs": made}
 
 
 def regenerate_and_diff(out1, out2, *, axis, lang, seed, hops, distractor_ratio, semantic,
-                         n_chains, doc_words, timeout=60) -> dict:
+                         n_chains, doc_words, entity_bank, timeout=60) -> dict:
     """Spawn :func:`generate` twice, in two SEPARATE Python processes, into ``out1``/``out2`` with
     identical parameters, then diff ``docs.jsonl``/``queries.json`` (tempdoc 664, twelfth pass).
 
@@ -816,14 +1072,21 @@ def regenerate_and_diff(out1, out2, *, axis, lang, seed, hops, distractor_ratio,
     :returns: ``{"ok": True, "mismatched_files": [...]}`` or ``{"ok": False, "error": "..."}`` if a
       regeneration subprocess itself failed (not a mismatch — a hard error, e.g. bad parameters).
     """
+    # tempdoc 767: parameters are marshalled as ONE json argv element rather than a
+    # by-name-positionally-decoded argv list. The old form decoded `int(sys.argv[9])` for
+    # doc_words, which cannot express the `None` (do-not-pad) value the 707 corpora now
+    # use, and silently re-typed anything it did not parse. The out_dir stays argv[1]
+    # (cmd index 3), which is what the mocked-subprocess test keys on.
     script = (
-        "from jseval import corpus_generate as cg; "
-        "cg.generate(sys.argv[1], axis=sys.argv[2], lang=sys.argv[3], seed=int(sys.argv[4]), "
-        "hops=int(sys.argv[5]), distractor_ratio=int(sys.argv[6]), "
-        "semantic=(sys.argv[7] == 'True'), n_chains=int(sys.argv[8]), doc_words=int(sys.argv[9]))"
+        "import json; from jseval import corpus_generate as cg; "
+        "cg.generate(sys.argv[1], **json.loads(sys.argv[2]))"
     )
-    args = [axis, lang, str(seed), str(hops), str(distractor_ratio),
-            str(bool(semantic)), str(n_chains), str(doc_words)]
+    params = {
+        "axis": axis, "lang": lang, "seed": seed, "hops": hops,
+        "distractor_ratio": distractor_ratio, "semantic": bool(semantic),
+        "n_chains": n_chains, "doc_words": doc_words, "entity_bank": str(entity_bank),
+    }
+    args = [json.dumps(params, sort_keys=True)]
     # The directory that directly contains `jseval/` (this file is
     # `<pkg_root>/jseval/corpus_generate.py`) -- passed as the subprocess's `cwd` so its
     # `sys.path[0] = ''` resolves to THIS package, not an ambient site-packages install.

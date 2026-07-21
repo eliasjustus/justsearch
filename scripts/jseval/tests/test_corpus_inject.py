@@ -3,9 +3,18 @@ from __future__ import annotations
 import json
 import base64
 import hashlib
+import random
 from pathlib import Path
 
-from jseval import corpus_build, corpus_certify, corpus_inject, corpus_query_strata
+import pytest
+
+from jseval import (
+    corpus_build,
+    corpus_certify,
+    corpus_inject,
+    corpus_leak,
+    corpus_query_strata,
+)
 
 
 def _gate_artifact(
@@ -157,6 +166,7 @@ def _complete_certificate(
                     "size": True, "signature": True, "query_variant": True,
                     "query_family_ids": True, "cross_process_regeneration": True,
                     "immutable_commitment": True, "descriptor_collision": True,
+                    "indistinguishability": True,
                 },
                 "regeneration": {
                     "passed": True,
@@ -175,6 +185,17 @@ def _complete_certificate(
                     "n_gold_involved": 0,
                     "passed": True,
                     "method": "exact-title-match",
+                },
+                "indistinguishability": {
+                    "id_shape_separability": 0.1,
+                    "id_shape_native_base_rate": 0.2,
+                    "id_shape_rule": "len(id) <= 7",
+                    "id_shape_passed": True,
+                    "ngram_max_gold_coverage": 0.3,
+                    "ngram_native_base_rate": 0.4,
+                    "ngram_passed": True,
+                    "passed": True,
+                    "method": "null-calibrated-id-shape-and-ngram-selectivity",
                 },
                 "scientific_gates": cell_gates,
                 "passed": True,
@@ -646,3 +667,374 @@ def test_commitment_files_are_checkout_stable(tmp_path):
         assert b"\r" not in raw, f"{name} contains CR bytes — git eol=lf will rewrite it"
         assert hashlib.sha256(raw).hexdigest() == recorded, f"{name} hash not self-consistent"
     assert b"\r" not in (root / "commitment.v1.json").read_bytes()
+
+
+# --- abbreviation-aware sentence splitting (tempdoc 767) --------------------
+#
+# `_split_sentences` fixes a defect where the naive `(?<=[.!?])\s+` splitter
+# shattered legal citations mid-string (e.g. at "U.S." in "477 U.S. 242"),
+# letting `_interleave` insert fabricated sentences INSIDE a real citation and
+# corrupt host-document realism. These tests cover the reported real-world
+# citation, normal sentence boundaries, each abbreviation class named in the
+# fix's brief, the genuinely ambiguous "abbreviation immediately followed by a
+# new sentence" case, and cross-run determinism.
+
+
+def test_real_world_citation_is_not_split():
+    """The exact reported regression case: Anderson v. Liberty Lobby must survive
+    intact as a single sentence, not shatter at 'v.' or 'U.S.'."""
+    citation = "Anderson v. Liberty Lobby, Inc., 477 U.S. 242, 248 (1986)."
+    text = f"The engineer built the bridge. {citation} Winters here are quiet."
+    sentences = corpus_inject._split_sentences(text)
+    assert citation.strip() in [s.strip() for s in sentences]
+    assert not any("U.S." in s and s.strip() != citation for s in sentences)
+
+
+def test_real_world_citation_survives_interleave_injection():
+    """End-to-end: gold sentences must never land inside the citation."""
+    host = (
+        "The building was designed by the engineer Tasdell272. "
+        "Anderson v. Liberty Lobby, Inc., 477 U.S. 242, 248 (1986). "
+        "The surrounding district is known for long winters and quiet markets."
+    )
+    gold = (
+        "The fabricated Quenby attribute is ochre ferrolite 0047. "
+        "Another linked fact follows."
+    )
+    result = corpus_inject._interleave(host, gold)
+    assert "Anderson v. Liberty Lobby, Inc., 477 U.S. 242, 248 (1986)." in result
+    # No fabricated sentence boundary falls between "U.S." and the rest of the
+    # citation, and none falls between "v." and "Liberty".
+    assert "U.S. The fabricated" not in result
+    assert "U.S. Another" not in result
+    assert "v. The fabricated" not in result
+    assert "v. Another" not in result
+
+
+def test_normal_sentence_boundaries_still_split():
+    sentences = corpus_inject._split_sentences("Foo happened. Bar followed.")
+    assert [s.strip() for s in sentences] == ["Foo happened.", "Bar followed."]
+
+
+def test_legal_reporter_abbreviations_not_split():
+    cases = [
+        "The court cited 492 U.S. 33 directly.",
+        "Damages were set per 42 U.S.C. 1988.",
+        "See 156 F.2d 27 for background.",
+        "See 156 F. 2d 27 for background.",
+        "The panel followed 88 F.3d 900 exactly.",
+        "The panel followed 88 F. 3d 900 exactly.",
+        "Applying S. Ct. review here.",
+        "Under Cal. law the claim fails.",
+        "Filed under N.Y. procedure rules.",
+        "Widget Inc. shipped the part.",
+        "Widget Corp. shipped the part.",
+        "Widget Co. shipped the part.",
+        "Widget Ltd. shipped the part.",
+        "See No. 12-345 for the docket.",
+        "Id. at 12 confirms the point.",
+        "2 Ed. 2d covers the topic.",
+        "12 F. Supp. 2d covers the topic.",
+        "Reviewed by the Cir. panel.",
+        "Filed in the Dist. court below.",
+        "Under Fed. rules this applies.",
+        "The Bar Ass'n filed a brief.",
+    ]
+    for text in cases:
+        sentences = [s.strip() for s in corpus_inject._split_sentences(text) if s.strip()]
+        assert len(sentences) == 1, f"unexpected split for: {text!r} -> {sentences}"
+
+
+def test_titles_not_split():
+    cases = [
+        "Mr. Jones signed the form.",
+        "Mrs. Jones signed the form.",
+        "Ms. Jones signed the form.",
+        "Dr. Jones signed the form.",
+        "Hon. Jones presided that day.",
+        "Reviewed by Jones Jr. today.",
+        "Reviewed by Jones Sr. today.",
+        "Located on St. James street.",
+    ]
+    for text in cases:
+        sentences = [s.strip() for s in corpus_inject._split_sentences(text) if s.strip()]
+        assert len(sentences) == 1, f"unexpected split for: {text!r} -> {sentences}"
+
+
+def test_general_prose_abbreviations_not_split():
+    cases = [
+        "Bring supplies, e.g. rope and water.",
+        "Bring supplies, i.e. rope and water.",
+        "Pack snacks, etc. before leaving.",
+        "Filed vs. the opposing party.",
+        "Costs were approx. ten dollars.",
+    ]
+    for text in cases:
+        sentences = [s.strip() for s in corpus_inject._split_sentences(text) if s.strip()]
+        assert len(sentences) == 1, f"unexpected split for: {text!r} -> {sentences}"
+
+
+def test_single_capital_initials_not_split():
+    """Single-letter initials in names, e.g. the judge byline 'GORDON J. QUIST'."""
+    cases = [
+        "GORDON J. QUIST, District Judge.",
+        "Opinion by A. Smith today.",
+        "Signed by J. Doe below.",
+    ]
+    for text in cases:
+        sentences = [s.strip() for s in corpus_inject._split_sentences(text) if s.strip()]
+        assert len(sentences) == 1, f"unexpected split for: {text!r} -> {sentences}"
+
+
+def test_decimal_number_sequence_not_split():
+    sentences = [
+        s.strip() for s in corpus_inject._split_sentences(
+            "The rate is 3. 14 percent approximately. It never changes."
+        ) if s.strip()
+    ]
+    assert sentences == ["The rate is 3. 14 percent approximately.", "It never changes."]
+
+
+def test_ambiguous_abbreviation_then_new_sentence_documents_tradeoff():
+    """Genuinely ambiguous case: an abbreviation legitimately ends a sentence and a
+    new, capitalized sentence follows immediately. A stdlib-regex splitter cannot
+    perfectly disambiguate this from a mid-citation period without semantic
+    context. This implementation always suppresses the boundary after a known
+    abbreviation (see the docstring on `_split_sentences` for the rationale): it
+    protects host realism by never splitting — and therefore never injecting —
+    inside a citation/title, at the cost of occasionally under-splitting two
+    genuinely separate sentences into one. That is the intended, documented
+    behaviour, not a bug.
+    """
+    text = "Filed in 1998 in the U.S. The court then ruled against the defendant."
+    sentences = [s.strip() for s in corpus_inject._split_sentences(text) if s.strip()]
+    assert sentences == [text]
+
+
+def test_split_sentences_is_deterministic():
+    text = (
+        "Anderson v. Liberty Lobby, Inc., 477 U.S. 242, 248 (1986). "
+        "Mr. Jones filed under 42 U.S.C. 1988. GORDON J. QUIST presided. "
+        "The rate is 3.14 percent, e.g. as measured. Later cases agreed."
+    )
+    first = corpus_inject._split_sentences(text)
+    second = corpus_inject._split_sentences(text)
+    assert first == second
+
+
+def test_punctuation_prefixed_abbreviation_not_split():
+    """Regression: parenthesized/bracketed/quoted citations are the norm in legal
+    text, e.g. "(Fed. Cir. 1995)" — so the token immediately before a candidate
+    boundary routinely carries leading punctuation ("(Fed."). The abbreviation
+    lookup previously matched the RAW token against `_ABBREVIATIONS`, so
+    "(fed." (lowercased) never matched "fed." in the set and the text was
+    split apart at "(Fed." — reproduced live via
+    `_split_sentences('See Markman v. Westview Instruments, 52 F.3d 967, 34
+    USPQ2d 1321 (Fed. Cir. 1995). Then this.')`, which returned 3 parts with
+    the citation shattered at "(Fed." Leading punctuation must be stripped
+    before the abbreviation/initial lookup."""
+    cases = [
+        ("See Markman v. Westview Instruments, 52 F.3d 967, 34 USPQ2d 1321 "
+         "(Fed. Cir. 1995). Then this."),
+        ("See Markman v. Westview Instruments, 52 F.3d 967, 34 USPQ2d 1321 "
+         "[Fed. Cir. 1995]. Then this."),
+        ('See Markman v. Westview Instruments, 52 F.3d 967, 34 USPQ2d 1321 '
+         '("Fed. Cir. 1995"). Then this.'),
+        ("The panel followed ('Cir. 1995') precedent directly. It controlled."),
+        ("Filed by (Mr. Jones) that day. The clerk noted it."),
+    ]
+    for text in cases:
+        sentences = [s.strip() for s in corpus_inject._split_sentences(text) if s.strip()]
+        assert len(sentences) == 2, f"unexpected split for: {text!r} -> {sentences}"
+        assert sentences[1] in ("Then this.", "It controlled.", "The clerk noted it.")
+
+
+def test_reported_bug_case_produces_exactly_two_parts():
+    """The exact string the coordinator reported as failing (3 parts, citation
+    shattered at '(Fed.') must now produce exactly 2 parts with the citation
+    intact end-to-end."""
+    text = (
+        "See Markman v. Westview Instruments, 52 F.3d 967, 34 USPQ2d 1321 "
+        "(Fed. Cir. 1995). Then this."
+    )
+    sentences = [s.strip() for s in corpus_inject._split_sentences(text) if s.strip()]
+    assert sentences == [
+        "See Markman v. Westview Instruments, 52 F.3d 967, 34 USPQ2d 1321 (Fed. Cir. 1995).",
+        "Then this.",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# mint_native_shaped_ids — closing the document-ID enumeration channel (767 I.3)
+# ---------------------------------------------------------------------------
+
+_CLERC_IDS = [str(1000731 + index * 7919) for index in range(200)]
+_ENRON_IDS = [
+    f"dasovich-j/dasovich-j/{folder}/{100 + index}."
+    for folder in ("inbox", "all_documents", "sent")
+    for index in range(50)
+]
+_MIRACL_IDS = [f"{140 + index}#{index % 30}" for index in range(200)]
+
+
+def test_minted_ids_are_collision_free_against_hosts_and_each_other():
+    minted = corpus_inject.mint_native_shaped_ids(_CLERC_IDS, 40, random.Random(707))
+    assert len(minted) == 40
+    assert len(set(minted)) == 40
+    assert not set(minted) & set(_CLERC_IDS)
+
+
+def test_minted_ids_match_the_host_character_class_and_length():
+    for native in (_CLERC_IDS, _ENRON_IDS, _MIRACL_IDS):
+        minted = corpus_inject.mint_native_shaped_ids(native, 20, random.Random(707))
+        native_charset = set("".join(native))
+        native_lengths = {len(i) for i in native}
+        # Characters are a SUBSET of the hosts' by construction (only digits are
+        # redrawn), which is what makes qrels-TSV and filename safety inherited
+        # rather than separately asserted.
+        assert set("".join(minted)) <= native_charset
+        assert {len(i) for i in minted} <= native_lengths
+
+
+def test_minted_ids_are_deterministic_for_the_same_rng_seed():
+    first = corpus_inject.mint_native_shaped_ids(_CLERC_IDS, 25, random.Random(707))
+    second = corpus_inject.mint_native_shaped_ids(_CLERC_IDS, 25, random.Random(707))
+    assert first == second
+    # Order-insensitive in the host list: the donor pool is sorted before any draw,
+    # so a reordered (or duplicated) host corpus mints the identical ids.
+    shuffled = list(reversed(_CLERC_IDS)) + _CLERC_IDS[:10]
+    assert corpus_inject.mint_native_shaped_ids(shuffled, 25, random.Random(707)) == first
+
+
+def test_minted_ids_never_carry_a_qrels_breaking_character():
+    # qrels/test.tsv rows are tab-separated and newline-delimited (corpus_build), so a
+    # tab/CR/LF in a doc id would silently corrupt the relevance judgments.
+    for native in (_CLERC_IDS, _ENRON_IDS, _MIRACL_IDS):
+        for minted in corpus_inject.mint_native_shaped_ids(native, 20, random.Random(707)):
+            assert not any(bad in minted for bad in ("\t", "\n", "\r"))
+            assert minted.strip() == minted and minted
+
+
+def test_minting_fails_closed_when_no_host_id_has_a_digit_run():
+    with pytest.raises(ValueError, match="digit run"):
+        corpus_inject.mint_native_shaped_ids(["alpha", "beta"], 3, random.Random(707))
+
+
+def test_minting_fails_closed_when_the_host_id_space_is_exhausted():
+    # A single 1-digit donor offers 10 values, 1 of which is taken.
+    with pytest.raises(ValueError, match="collision-free"):
+        corpus_inject.mint_native_shaped_ids(["a1"], 40, random.Random(707))
+
+
+def test_assemble_remaps_gold_ids_and_query_evidence_consistently(tmp_path):
+    real_docs = [
+        {"_id": doc_id, "title": "Host", "text": ("Real host sentence here. " * 80)}
+        for doc_id in _CLERC_IDS[:20]
+    ]
+    fabricated = [
+        {"_id": "breldac18", "title": "T1", "text": "Fabricated fact one."},
+        {"_id": "brelker20", "title": "T2", "text": "Fabricated fact two."},
+    ]
+    queries = [{"query": "q", "answer": "a", "evidence_ids": ["breldac18", "brelker20"]}]
+
+    docs, remapped, report = corpus_inject.assemble(
+        real_docs, fabricated, queries, seed=707, n_distractors=5
+    )
+
+    doc_ids = {d["_id"] for d in docs}
+    assert "breldac18" not in doc_ids and "brelker20" not in doc_ids
+    # Every evidence id still resolves to a document in the assembled corpus — the
+    # invariant corpus_build.build_golden raises on.
+    assert set(remapped[0]["evidence_ids"]) <= doc_ids
+    assert all(i.isdigit() for i in remapped[0]["evidence_ids"])
+    # The caller's input is not mutated (assemble stays pure).
+    assert queries[0]["evidence_ids"] == ["breldac18", "brelker20"]
+    assert remapped[0]["query"] == "q" and remapped[0]["answer"] == "a"
+    # The mapping is recorded so a skeptic can reconnect the committed fabricated
+    # inputs to the assembled cell.
+    assert [m["fabricated_id"] for m in report["gold_id_mapping"]] == [
+        "breldac18", "brelker20"
+    ]
+    assert {m["assembled_id"] for m in report["gold_id_mapping"]} == set(
+        remapped[0]["evidence_ids"]
+    )
+    assert all("fabricated_id" in row for row in report["host_mapping"])
+
+
+def test_assembled_gold_ids_defeat_the_id_shape_leak_gate():
+    # The end-to-end statement of this lane: the assembled cell's gold ids are not
+    # separable from its natives by any simple rule over ids alone.
+    real_docs = [
+        {"_id": doc_id, "title": "Host", "text": ("Real host sentence here. " * 80)}
+        for doc_id in _CLERC_IDS
+    ]
+    fabricated = [
+        {"_id": f"breldac{index}", "title": "T", "text": "Fabricated fact."}
+        for index in range(10)
+    ]
+    queries = [
+        {"query": f"q{index}", "answer": "a", "evidence_ids": [f"breldac{index}"]}
+        for index in range(10)
+    ]
+    docs, remapped, _report = corpus_inject.assemble(
+        real_docs, fabricated, queries, seed=707, n_distractors=150
+    )
+
+    report = corpus_leak.id_shape_report(docs, remapped)
+    assert report["n_gold"] == 10
+    assert report["passed"] is True
+    assert report["gold_shape_classes"] == {"all-digits": 10}
+
+    # Control: the SAME corpus with the pre-767 id convention on the gold docs is
+    # caught, so the pass above is the remapping's doing and not the gate going quiet.
+    gold_ids = {q["evidence_ids"][0] for q in remapped}
+    unfixed = [
+        {**d, "_id": f"breldac{index}"} if d["_id"] in gold_ids else d
+        for index, d in enumerate(docs)
+    ]
+    unfixed_queries = [
+        {"query": q["query"], "evidence_ids": [
+            next(u["_id"] for u, o in zip(unfixed, docs) if o["_id"] == q["evidence_ids"][0])
+        ]}
+        for q in remapped
+    ]
+    assert corpus_leak.id_shape_report(unfixed, unfixed_queries)["passed"] is False
+
+
+def test_gold_ids_are_minted_from_the_host_min_words_ELIGIBLE_population_only():
+    # Regression (tempdoc 767 rebuild): the donor pool was every id in `real_docs`, but
+    # the natives a cell actually contains are only those passing `host_min_words`. On
+    # CLERC the filter is not id-independent — short opinions skew to high ids — so gold
+    # landed in a different numeric distribution from its own neighbours and `id_shape`
+    # separated the 1k legal cell at J=0.177 against a 0.151 null.
+    #
+    # Here the two populations are made disjoint by construction: eligible ids all begin
+    # `1000`, ineligible ones `9000`. `_perturb_digit_runs` redraws only the trailing 3
+    # digits, so a minted id's first four digits name the population it was drawn from.
+    eligible = [
+        {"_id": f"1000{index:03d}", "title": "H", "text": ("Real host sentence here. " * 80)}
+        for index in range(200)
+    ]
+    ineligible = [
+        {"_id": f"9000{index:03d}", "title": "H", "text": "Too short to host."}
+        for index in range(200)
+    ]
+    fabricated = [
+        {"_id": f"breldac{index}", "title": "T", "text": "Fabricated fact."}
+        for index in range(10)
+    ]
+    queries = [
+        {"query": f"q{index}", "answer": "a", "evidence_ids": [f"breldac{index}"]}
+        for index in range(10)
+    ]
+    docs, remapped, _report = corpus_inject.assemble(
+        eligible + ineligible, fabricated, queries,
+        seed=707, n_distractors=150, host_min_words=60,
+    )
+    minted = sorted({e for q in remapped for e in q["evidence_ids"]})
+    assert len(minted) == 10
+    assert all(m.startswith("1000") for m in minted), minted
+
+    # And the wider real-id set still governs COLLISION exclusion, which is what keeps a
+    # minted id off an ineligible host that a later, lower `host_min_words` would admit.
+    assert not {m for m in minted} & {d["_id"] for d in eligible + ineligible}

@@ -1,182 +1,452 @@
 [
  {
   "query": "What is the value associated with the designer of the power station in the upper wetlands?",
-  "answer": "crimson ferrolite 0002",
+  "answer": "XQN 853",
   "question_type": "1_hop",
   "evidence_ids": [
-   "drureach1",
-   "pellstone2"
+   "patchinonference togses",
+   "langna solational tna"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the stargazing facility in the ridge to the east?",
-  "answer": "verdant brannik 0004",
+  "query": "What is the value associated with the founder of the stargazing facility in the crest to the east?",
+  "answer": "lot 6693726",
   "question_type": "1_hop",
   "evidence_ids": [
-   "harnvale3",
-   "pellash4"
+   "eme, ca",
+   "blanca daugherus"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the grain-grinding works in the curve of the river?",
-  "answer": "pallid lansk 0006",
+  "query": "What is the value associated with the builder of the grain-grinding works in the curve of the watercourse?",
+  "answer": "PX-3652",
   "question_type": "1_hop",
   "evidence_ids": [
-   "druash5",
-   "tasdac6"
+   "gas tralectric where prician are going-- not",
+   "evansnited, il"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the records vault in the former justice building?",
-  "answer": "russet grist 0008",
+  "query": "What is the value associated with the leader of the records vault in the former justice building?",
+  "answer": "ref-10-5524",
   "question_type": "1_hop",
   "evidence_ids": [
-   "orrvale7",
-   "drugrove8"
+   "caliary gov",
+   "brigk skileigh avendish for solar pock"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the metal-casting works in the quarter to the west?",
-  "answer": "azure brannik 0010",
+  "query": "What is the value associated with the commissioner of the metal-casting works in the quarter to the west?",
+  "answer": "ref-24-5220",
   "question_type": "1_hop",
   "evidence_ids": [
-   "kanfen9",
-   "rellven10"
+   "chicagrt, il",
+   "alndy hoin signy weein"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the optical instrument in the Carpathian uplands?",
-  "answer": "verdant perrin 0012",
+  "query": "What is the value associated with the operator of the optical instrument in the elevated tableland?",
+  "answer": "lot 1627568",
   "question_type": "1_hop",
   "evidence_ids": [
-   "mirwick11",
-   "cavby12"
+   "pssee enet authority of kpeals",
+   "dublint, oh"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the streetcar line in the city on the slopes?",
-  "answer": "umber quartzine 0014",
+  "query": "What is the value associated with the financier of the streetcar line in the town on the slopes?",
+  "answer": "grade 25-UH-2",
   "question_type": "1_hop",
   "evidence_ids": [
-   "cavric13",
-   "skowick14"
+   "gohill butd",
+   "enrok cs bustock controings"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the water channel in the hills to the south?",
-  "answer": "umber brannik 0016",
+  "query": "What is the value associated with the restorer of the water channel in the knolls to the south?",
+  "answer": "grade 13-PA-9",
   "question_type": "1_hop",
   "evidence_ids": [
-   "breldell15",
-   "vexfen16"
+   "jla, ms",
+   "danieen plotksen"
   ]
  },
  {
   "query": "What is the value associated with the designer of the publishing works in the central marketplace?",
-  "answer": "ochre vellum 0018",
+  "answer": "PUJ 649",
   "question_type": "1_hop",
   "evidence_ids": [
-   "olmvale17",
-   "vorwick18"
+   "ewer industrrices refore fewer enes coise",
+   "lanidgeland fairview, or"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the coastal beacon in the stony promontory?",
-  "answer": "ochre ferrolite 0020",
+  "query": "What is the value associated with the founder of the coastal beacon in the stony promontory?",
+  "answer": "TS-8612",
   "question_type": "1_hop",
   "evidence_ids": [
-   "tasgrove19",
-   "rellholt20"
+   "alloyd martit",
+   "sheila exinergy for company"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the wine estate in the sunlit dale?",
-  "answer": "azure ferrolite 0022",
+  "query": "What is the value associated with the builder of the wine estate in the sunlit dale?",
+  "answer": "UVY 936",
   "question_type": "1_hop",
   "evidence_ids": [
-   "limric21",
-   "limvale22"
+   "wilminax, de",
+   "waighty zoss"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the thermal spa in the shoreline bluffs?",
-  "answer": "indigo skack 0024",
+  "query": "What is the value associated with the leader of the thermal spa in the shoreline bluffs?",
+  "answer": "PD-8836",
   "question_type": "1_hop",
   "evidence_ids": [
-   "vorby23",
-   "tasreach24"
+   "energy commital minergy",
+   "pocar, id"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the grain depot in the evergreen woodland?",
-  "answer": "pallid quartzine 0026",
+  "query": "What is the value associated with the commissioner of the grain depot in the evergreen woodland?",
+  "answer": "ref-68-5149",
   "question_type": "1_hop",
   "evidence_ids": [
-   "orrgrove25",
-   "quendell26"
+   "updatunita cgin st",
+   "asseather managemener outsourockhart arrangson proposal paus"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the vessel works in the saline plains?",
-  "answer": "ochre lansk 0028",
+  "query": "What is the value associated with the operator of the vessel works in the saline plains?",
+  "answer": "ref-85-1764",
   "question_type": "1_hop",
   "evidence_ids": [
-   "wendcrag27",
-   "vexvale28"
+   "cua, ca",
+   "lng invoiolson dan"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the ale house in the stone pit?",
-  "answer": "pallid grist 0030",
+  "query": "What is the value associated with the financier of the ale house in the stone pit?",
+  "answer": "RFR 169",
   "question_type": "1_hop",
   "evidence_ids": [
-   "tasvale29",
-   "vorthorn30"
+   "octagoabisco redings",
+   "brentwague, tn"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the hide-processing works in the port entrance?",
-  "answer": "crimson quartzine 0032",
+  "query": "What is the value associated with the restorer of the hide-processing works in the port entrance?",
+  "answer": "2975Y",
   "question_type": "1_hop",
   "evidence_ids": [
-   "brelker31",
-   "skomond32"
+   "grar chler try",
+   "enroly tranric serviceer cews"
   ]
  },
  {
   "query": "What is the value associated with the designer of the coin-striking works in the arid hollow?",
-  "answer": "ochre ferrolite 0034",
+  "answer": "grade 44-UU-0",
   "question_type": "1_hop",
   "evidence_ids": [
-   "mirker33",
-   "nuthstone34"
+   "kee, nc",
+   "poulet de brmberg"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the blacksmith works in the iced-over tarn?",
-  "answer": "pallid quartzine 0036",
+  "query": "What is the value associated with the founder of the blacksmith works in the iced-over tarn?",
+  "answer": "KS-3762",
   "question_type": "1_hop",
   "evidence_ids": [
-   "zelfen35",
-   "mirven36"
+   "inc. cossing inc",
+   "macago, fl"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the glasshouse nursery in the enclosed grounds?",
-  "answer": "pallid brannik 0038",
+  "query": "What is the value associated with the builder of the glasshouse nursery in the enclosed grounds?",
+  "answer": "ref-29-0935",
   "question_type": "1_hop",
   "evidence_ids": [
-   "skoric37",
-   "brelker38"
+   "jefary scott govenaipari",
+   "advanceoral power trhed"
   ]
  },
  {
-  "query": "What is the value associated with the designer of the small place of worship in the belfry spire?",
-  "answer": "russet ferrolite 0040",
+  "query": "What is the value associated with the leader of the prayer hall in the belfry spire?",
+  "answer": "ref-42-9165",
   "question_type": "1_hop",
   "evidence_ids": [
-   "brelby39",
-   "cavgrove40"
+   "owenss, ky",
+   "enis direcerick"
+  ]
+ },
+ {
+  "query": "What is the value associated with the commissioner of the grain-milling tower in the ore working?",
+  "answer": "6342F",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "s. disnergy cy jmerican bnergy enmpany oan",
+   "norwak, ct"
+  ]
+ },
+ {
+  "query": "What is the value associated with the operator of the power station in the blustery heath?",
+  "answer": "ref-05-7068",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "pouleel de bl",
+   "international linetners"
+  ]
+ },
+ {
+  "query": "What is the value associated with the financier of the stargazing facility in the estuary fan?",
+  "answer": "UHZ 416",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "streverse, ne",
+   "dedex barm"
+  ]
+ },
+ {
+  "query": "What is the value associated with the restorer of the grain-grinding works in the high col?",
+  "answer": "0945H",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "wiational lowegy gas rateny ch rapidnistration",
+   "masaytown portland, or"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the records vault in the angling quay?",
+  "answer": "SRF 901",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "cotd ve",
+   "piance serviding"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the metal-casting works in the fruit-grove hillside?",
+  "answer": "FS-1220",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "carmkwila, in",
+   "daathy marketinlly manaathy"
+  ]
+ },
+ {
+  "query": "What is the value associated with the builder of the optical instrument in the chalky underground hollows?",
+  "answer": "grade 65-XS-8",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "public serviego company of new mexigent",
+   "mrham, co"
+  ]
+ },
+ {
+  "query": "What is the value associated with the leader of the streetcar line in the metal river crossing?",
+  "answer": "BJM 309",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "my crozin",
+   "futurass commissstomer"
+  ]
+ },
+ {
+  "query": "What is the value associated with the commissioner of the water channel in the lowland riverside settlement?",
+  "answer": "3982P",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "samas, ny",
+   "arorge nationaowski wildlrge reowski"
+  ]
+ },
+ {
+  "query": "What is the value associated with the operator of the publishing works in the layered slope embankments?",
+  "answer": "TTK 580",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "jupimmercial mermation",
+   "corngton, ak"
+  ]
+ },
+ {
+  "query": "What is the value associated with the financier of the coastal beacon in the disused switching grounds?",
+  "answer": "AQ-0453",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "transaction sults",
+   "enll forlow"
+  ]
+ },
+ {
+  "query": "What is the value associated with the restorer of the wine estate in the white escarpment hills?",
+  "answer": "lot 0282113",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "kmpoc, de",
+   "buffveler newws"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the thermal spa in the mudflat shallows?",
+  "answer": "4435T",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "pried ves partners",
+   "kamemt city"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the grain depot in the frontier crossing post?",
+  "answer": "grade 22-VR-7",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "ir dale",
+   "boarham of gm of unham"
+  ]
+ },
+ {
+  "query": "What is the value associated with the builder of the vessel works in the disused landing ground?",
+  "answer": "ref-03-1411",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "sweetwatz, tx",
+   "ralif conference newslif"
+  ]
+ },
+ {
+  "query": "What is the value associated with the leader of the ale house in the buried water reservoir?",
+  "answer": "AV-0567",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "transalind er marketinroduction",
+   "scottsdaloit, az"
+  ]
+ },
+ {
+  "query": "What is the value associated with the commissioner of the hide-processing works in the sunken-vessel inlet?",
+  "answer": "CC-6744",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "hssembly amigos",
+   "cenfic ofnd"
+  ]
+ },
+ {
+  "query": "What is the value associated with the operator of the coin-striking works in the hot-water hollow?",
+  "answer": "0662A",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "fon pierce, fl",
+   "thper alleesk revirt"
+  ]
+ },
+ {
+  "query": "What is the value associated with the financier of the blacksmith works in the reddish rock escarpment?",
+  "answer": "lot 1088490",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "inncy separate busiagement unitnt hallibcy co",
+   "napoleovi, la"
+  ]
+ },
+ {
+  "query": "What is the value associated with the restorer of the glasshouse nursery in the boat crossing point?",
+  "answer": "grade 04-WZ-1",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "vin ehen",
+   "el paine natural gas companipeline"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the prayer hall in the caved-in excavation shaft?",
+  "answer": "9669S",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "galvle, tx",
+   "thanksgiving whstante"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the grain-milling tower in the sun-facing viewing ledge?",
+  "answer": "TSK 599",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "learnit managemete",
+   "thorntolis, co"
+  ]
+ },
+ {
+  "query": "What is the value associated with the builder of the power station in the salt-tinged inlet?",
+  "answer": "HVH 282",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "schaereak property",
+   "stuking says lning poervice corking"
+  ]
+ },
+ {
+  "query": "What is the value associated with the leader of the stargazing facility in the abandoned lookout post?",
+  "answer": "DZ-4682",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "brae, nj",
+   "punterill cornaker"
+  ]
+ },
+ {
+  "query": "What is the value associated with the commissioner of the grain-grinding works in the upper wetlands?",
+  "answer": "ref-70-0143",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "switzer poweing physier",
+   "aherst, tx"
+  ]
+ },
+ {
+  "query": "What is the value associated with the operator of the records vault in the crest to the east?",
+  "answer": "DC-1252",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "btt ellimble",
+   "mg anducation"
+  ]
+ },
+ {
+  "query": "What is the value associated with the financier of the metal-casting works in the curve of the watercourse?",
+  "answer": "lot 6270243",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "norin, il",
+   "ed missiork"
+  ]
+ },
+ {
+  "query": "What is the value associated with the restorer of the optical instrument in the former justice building?",
+  "answer": "XU-3397",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "us justdburn department'fice civan righoodburn divisiice",
+   "rutlewark, ne"
+  ]
+ },
+ {
+  "query": "What is the value associated with the designer of the streetcar line in the quarter to the west?",
+  "answer": "VG-2354",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "gwest munde",
+   "co frequeats fd cted"
+  ]
+ },
+ {
+  "query": "What is the value associated with the founder of the water channel in the elevated tableland?",
+  "answer": "ref-19-7388",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "grn, ct",
+   "surid go sporavid"
   ]
  }
 ]

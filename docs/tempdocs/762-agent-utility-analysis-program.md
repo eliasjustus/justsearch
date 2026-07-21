@@ -285,6 +285,20 @@ Filled as lanes close. Each lane appends rows; the umbrella owner ranks them.
 | 6 | USD-cap per-cell budgets (not wall-clock) + ITT/per-protocol/completion triple reporting | campaign-design | 765 §1 (69/86 exhausted cells lost cost receipts); §T.4 bridge | 100% cost receipts → defensible cost-per-correct headline (B $0.197 < A $0.280/cell) | config |
 | 7 | n=120/stratum only if certifying Δ≈0.15; n=60 suffices at the §T target Δ≥0.25 | campaign-design | 764 power tables (n@80%: 92 for 0.15, 32 for 0.25) | right-sizes the next campaign's spend | config |
 
+> **[CORRECTED 2026-07-21 — tempdoc 767 §H.0]** **Rank-1's Evidence column is
+> partly retracted.** The "764 email verdict + mechanism probe" evidence is
+> **withdrawn** — the vocabulary-confound measurement it names was a substring
+> match compared across mismatched units (files vs lines), and unit-normalized
+> the asymmetry is 0.96× rather than 247×. The `763 replay` and `§X` evidence
+> is unaffected. The lever itself **still stands**, but now rests on two
+> **independently verified** payload defects rather than the vocabulary
+> thesis: payload enumerability (one literal `_FILLER` phrase selects
+> **280/280** gold docs) and a live entity-uid→gold-value coupling
+> (`Tasdell272` → `…0272`). Note also that the lever's wording ("camouflaged")
+> is superseded — 767 §H.3 measured host-derived camouflage making the
+> cross-domain asymmetry *worse* (4.39× → 10.5×), and 767 re-framed the lane
+> around **payload integrity** (§I supersedes §F).
+
 Lane results are folded into each lane tempdoc (763/764/765 §Results); raw
 artifacts under `tmp/analysis-624/` (unversioned, session-machine). Instrument
 verdicts worth pinning: judge error ~0/1,269 (substring scorer, anti-leak by
@@ -315,6 +329,21 @@ with this tempdoc.
    regime pattern reduced to vocabulary overlap between the generator's
    wording and the distractor domain (mechanism probe: `spa` matches 22% of
    legal docs, ~0 of Enron) — a generator artifact, not a domain finding.
+
+   > **[CORRECTED 2026-07-21 — tempdoc 767 §H.0]** **Finding 1 as worded does
+   > not stand.** The mechanism probe behind it is an artifact: `spa` = 22% of
+   > legal docs is a **substring** match (it caught `space`, `newspaper`,
+   > `disparate`, `aerospace`; the token `\bspa\b` occurs in **0 of 199** real
+   > CLERC opinions), and the legal/Enron columns compare **files against
+   > lines** per the source CSV's own header. Unit-normalized and
+   > token-boundary, the asymmetry is **0.96×, not 247×**; the operational
+   > best-grep asymmetry over the real queries is 4.39×. So the regime pattern
+   > did **not** reduce to vocabulary overlap. The *behaviour* still stands
+   > (43/60 legal baseline cells opened neither gold doc vs 6/60 email;
+   > accuracy 0.033 vs 0.533 — reproducible scripts over real eval logs), but
+   > it is **currently unexplained**. Since this is item 1 of the list the 766
+   > program was chartered to answer, that item is reopened: tempdoc 769's M1
+   > measurement is the leading candidate to explain the asymmetry.
 2. **Instrument aim**: replay census attributed ~77% of with-tool failures to
    model synthesis over already-surfaced evidence, ~13% to the engine. The
    benchmark mostly meters the model, not the product.
@@ -373,6 +402,23 @@ them, D as optional later scope.
   Injected facts must be lexically domain-native (entity names shaped like the
   domain's names, sentences in the host register). This is the hard technical
   problem of injection; it deserves its own certification metric, not hope.
+
+  > **[CORRECTED 2026-07-21 — tempdoc 767 §H.0]** **The enumerability half
+  > stands; the prescription is contradicted by measurement.** "Alien
+  > vocabulary is trivially greppable" survives as a concern — but the
+  > specific evidence for "the current failure" (the 764 vocabulary-flood
+  > probe) is retracted, and the remedy "injected facts must be lexically
+  > domain-native" was **measured and found to make things worse**:
+  > 767 §H.3 found host-derived camouflage raised the cross-domain grep
+  > asymmetry from **4.39× to 10.5×** (and absolute legal flood ~37×), because
+  > camouflage *inherits* its host's own document-frequency concentration
+  > rather than cancelling it. 767 §H.1 separately found host-derived
+  > descriptors destroy the semantic bridge the benchmark depends on:
+  > query↔gold overlap rises **0.083 → 0.820**, with **65% of queries leaking
+  > a document-frequency-1 token** — a perfect grep anchor pinning exactly one
+  > document. Uniqueness and lexical distance are in direct tension and this
+  > is not fixable by paraphrasing harder. 767 accordingly re-framed the lane
+  > from camouflage to **payload integrity** (§I supersedes §F).
 - **Machine-checkable vs pattern-greppable golds**: substring scoring is a
   proven asset, but format-uniform golds ("xxx yyy 0NNN") are greppable *by
   format*. Golds should be domain-plausible, format-diverse, exact-matchable
@@ -383,6 +429,17 @@ them, D as optional later scope.
   no-corpus-arm solvability probe (contamination control ≈ 0), naming-leak
   check, gold dispersion, dead/ceiling calibration band. A corpus that fails
   certification never reaches a paid campaign.
+
+  > **[CORRECTED 2026-07-21 — tempdoc 767 §H.0]** **The distractor-flood index
+  > is withdrawn as a separate gate.** Its motivating measurement (the 764
+  > mechanism probe) is retracted — substring match, mismatched units, 0.96×
+  > not 247×. It has been **folded into the bridge-distance gate (G-bridge)
+  > defined in 767 §I.3**, which tests the quantity that actually bites:
+  > whether a query leaks a token whose **document frequency in the host
+  > corpus is at or below a floor**. A rare token pinning one document is a
+  > perfect grep anchor, and an aggregate flood index cannot detect it — 767
+  > §H.1 measured exactly that case (65% of queries at df=1) while aggregate
+  > means looked healthy. The other four checks in this bullet are unaffected.
 - **Question-schema diversity**: ≥3 schemas (single-fact lookup, 2-hop bridge,
   aggregation/multi-doc synthesis; candidates: temporal "latest", negation) —
   each stresses different engine behavior, and schema-stratified reporting
@@ -446,6 +503,15 @@ next one should cost ~nothing.
    structural checks + SCIENTIFIC_GATES {closed_book (threshold 0.15),
    retrieval_calibration, union_recall, leak_floor}; missing: distractor-flood
    index, naming/format-leak check, gold-dispersion metric.
+
+   > **[CORRECTED 2026-07-21 — tempdoc 767 §H.0]** The **distractor-flood
+   > index** in this missing-gates list is withdrawn as a separate gate — its
+   > motivating measurement (the 764 mechanism probe) is retracted (substring
+   > match, mismatched units; 0.96× not 247×). It is **folded into the
+   > bridge-distance gate (G-bridge) in 767 §I.3**, which tests whether a query
+   > leaks a host-corpus token with document frequency at or below a floor —
+   > the df=1 anchor case an aggregate flood index cannot see. The
+   > naming/format-leak check and gold-dispersion metric are unaffected.
 2. **Licensing (Q2)**: Enron = public-domain with a live privacy duty (fetch +
    inject locally; never republish modified mailboxes; PII-scrub published
    samples). CLERC rests on the Caselaw Access Project = **CC0 since 2024-03**

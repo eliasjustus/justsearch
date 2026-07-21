@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "gen-public-agent-utility.mjs");
 const START = "<!-- agent-utility:generated:start - run: node scripts/docs/gen-public-agent-utility.mjs -->";
 const END = "<!-- agent-utility:generated:end -->";
+const FIXTURE_POLICY_ID = "agent-utility-fixture-v9";
 const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 
 function writeJson(file, value) {
@@ -30,6 +31,12 @@ function fixture() {
   writeJson(path.join(root, "scripts/jseval/public-agent-utility/current.v1.json"), {
     schema: "agent-utility-publication-pointer.v1", schema_version: 1,
     current: null, previous: null, reason: "No accepted result.", selected_at: null,
+  });
+  // The no-result block renders the ACTIVE claim-policy id, read dynamically from this
+  // file (it used to be hardcoded, which silently named a superseded policy). The
+  // fixture must provide it so the generator has its real input.
+  writeJson(path.join(root, "scripts/jseval/utility-claim-policy.v1.json"), {
+    policy_id: FIXTURE_POLICY_ID, status: "active",
   });
   return root;
 }
@@ -154,6 +161,8 @@ scenario("initial null and drift", (root, ok) => {
     ok(`${relative} states no accepted result`, /No agent-utility result is currently accepted/.test(projected));
     const body = projected.slice(projected.indexOf(START), projected.indexOf(END));
     ok(`${relative} carries no benchmark table or percentages`, !/\| Corpus|\d+\.\d+%/.test(body));
+    // The active policy id is read dynamically from utility-claim-policy.v1.json, not hardcoded.
+    ok(`${relative} renders the active policy id dynamically`, body.includes(FIXTURE_POLICY_ID));
   }
   ok("--check exits 0 once in sync", run(root, "--check").status === 0);
   const readme = path.join(root, "README.md");
