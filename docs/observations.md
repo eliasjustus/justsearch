@@ -100,10 +100,12 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] ui-shot/ui-check chat steps target the retired React inspector (search-input, inspector-pane, context-state pills) or a broken ?shell-demo bypass — none render the live shell-v0 UnifiedChatView, so the main chat surface has no visual-verification coverage — `scripts/jseval/jseval/ui_check.py` (2026-06-19)
 
 ### obs:utility-comparison — Pre-existing (unrelated to tempdoc 624 utility_comparison.py work): tests/test_agent_retrieval_eval.
-`kind: environment?` `anchor: utility_comparison.py` `seen: 3` `first: 2026-07-02` `last: 2026-07-14`
+`kind: environment?` `anchor: utility_comparison.py` `seen: 5` `first: 2026-07-02` `last: 2026-07-21`
 - [ ] Pre-existing (unrelated to tempdoc 624 utility_comparison.py work): tests/test_agent_retrieval_eval.py::test_build_disallowed_tools_condition_{a,b,c}_* fail with 'Extra items in the left set: Skill' — a disallowed-tools set assertion out of sync with agent_retrieval_eval.py, in already-uncommitted worktree changes predating this session. (2026-07-02)
 - [ ] utility_comparison._pair_observations only reads a_by_seed[seed][0]/c_by_seed[seed][0] — if a cell's cell_summaries ever contain >1 summary at the SAME (seed, arm) pair (e.g. a corpus-signature refresh landing at the same seed the _default_corpus_stratify docstring anticipates), all but the first summary's per_query is silently dropped rather than merged; the existing stratify test avoids this by using distinct seeds per signature — `scripts/jseval/jseval/utility_comparison.py:298-300` (2026-07-02)
 - [ ] Shared-worktree race: Chain B (tempdoc 736) concurrently edited scripts/jseval/jseval/utility_claim_policy.py while Chain A's git-stash isolation probe was mid-flight, causing a stash-pop conflict (recovered via per-file git checkout from stash@{0}, no data lost, stash left in place as safety net). Separately, Chain B's utility_comparison.py currently adds compose_utility()'s top-level `seed_floor_met` and `denominators` keys UNCONDITIONALLY (no conditional-omission path), which changes semantic_digest for every pre-736 historical composed record — the same digest-perturbation class the pre-existing cell["identity"] comment at utility_comparison.py warns about. Chain A verified in isolation that its own tool_result_digests/four-state/cost-turns changes do NOT perturb the historical fixture's semantic_digest (unchanged at 2f555f661a9165fcb29a3f7d0ec10c70ca5ca28b8e4d47581361c430a464a100); this finding is Chain B's, out of Chain A's file scope (utility_comparison.py) to fix. — `scripts/jseval/jseval/utility_comparison.py` (D13/D15 unconditional dict additions) (2026-07-14)
+- [ ] cross-corpus compose DROPS exposure identity that every per-run record carries (cohort.exposure_config.exposure_mode + mcp_initialize_identity end up null/empty in the combined record) → source_identity_complete claim gate fails on composed evidence that is actually complete per-run; carry the (verified-identical) per-run exposure/mcp-init blocks through compose — `scripts/jseval/jseval/utility_comparison.py:1324` area (compose_utility_cross_corpus cohort assembly) (2026-07-18)
+- [ ] 757 reviewer MEDIUM: turns/duration delta_mean are NOT direction-gated for truncated with-tool cells (a censored c_turns→0.0 flatters the B arm) — pre-existing, diagnostic-only fields, not claim gates; gate them or label them censored when any usage_truncated cell contributes — `scripts/jseval/jseval/utility_comparison.py:977` + `:1046-1049` (2026-07-21)
 
 ### obs:corpus-generate — battlefield-en-v1's materialized corpus-dir contained 858 stale .txt files from an earlier, larger r
 `kind: follow-up` `anchor: corpus_generate.py` `seen: 3` `first: 2026-07-02` `last: 2026-07-02`
@@ -1272,9 +1274,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] 707 certification signs corpus.jsonl+qrels but utility-run's staged binding hashes the raw corpus-dir files — strict --corpus-certification can never pass on a certified member (Step-2 ran declared-signature mode with a recorded hash-equivalence chain instead). Follow-up: add corpus_dir_signature to corpus-certify-member + thread it through utility-run strict mode — `scripts/jseval/jseval/corpus_certify.py:617` (2026-07-16)
 
 ### obs:utility-calibrate — Step-2 campaign harness lesson: utility-calibrate's pooled-pilot timeout (p95x2) underestimates the
-`kind: lesson?` `anchor: scripts/jseval/jseval/utility_calibrate.py` `seen: 2` `first: 2026-07-17` `last: 2026-07-17`
+`kind: lesson?` `anchor: scripts/jseval/jseval/utility_calibrate.py` `seen: 3` `first: 2026-07-17` `last: 2026-07-18`
 - [ ] Step-2 campaign harness lesson: utility-calibrate's pooled-pilot timeout (p95x2) underestimates the A-arm (grep) tail on 10k corpora — A-arm timeout attrition (32%) voided comparability exactly where the tool wins; next campaign needs per-arm timeout calibration pre-run — `scripts/jseval/jseval/utility_calibrate.py` (2026-07-17)
 - [ ] Design-interaction lesson (phase-2 email-10k): exhaustion-as-failure ITT scoring requires IDENTICAL per-arm budgets — per-arm timeout application (built to fix Step-2's slow-arm starvation) inverted the bias and starved the fast arm (B floor-clamped 120s < its own p95; 26/60 B exhaustions, accuracy delta flipped negative as artifact). Rule: calibrate per arm, apply max() to all arms. Cross-increment interactions need a review lens of their own — `scripts/jseval/jseval/utility_calibrate.py` (2026-07-17)
+- [ ] chain-level banked calibration.json survives across git SHA changes between launch attempts — v4 confirmatory chain adopted a 23:33 calibration pinned at 92ec2e6d into a 079e63e5 run, splitting the config cohort and failing recompose (incident #5, tempdoc 624). Fix direction: utility-calibrate should stamp git_sha into calibration.json and chains should invalidate banked calibrations on mismatch — `scripts/jseval/jseval/utility_calibrate.py:252` (2026-07-18)
 
 ### obs:agent-utility-observations — utility claim policy treats resource-exhausted cells (wall-clock/USD budget) as EXCLUDED rather than
 `kind: defect?` `anchor: scripts/jseval/jseval/agent_utility_observations.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
@@ -1347,8 +1350,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Root cause of the GJF gap is a misread green, not an oversight: tempdoc 236:144 defers google-java-format 1.34.1 deliberately ("Reformats all Java; must be isolated commit"), and tempdoc 591:105 records "spotlessCheck green — no reformat ... rule-neutral" as evidence the bump was safe. But spotlessCheck is green because GJF does not run at all on JDK 25 (see the enableGjf note) — it only checks trailing whitespace/newline. The deferral was priced as "formatting stays as-is"; its actual cost is "formatting is unenforced". Decision needed: accept unenforced java formatting and correct the CLAUDE.md claim, or land the isolated 1.34.1 reformat commit already scoped in 236 — `docs/tempdocs/591-dependency-hygiene-triage.md:105` (2026-07-15)
 
 ### obs:embeddingbackfillops — EmbeddingBackfillOps.processChunkEmbeddingBackfill Phase 1 fetches CHUNK_CONTENT via one getDocument
-`kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/EmbeddingBackfillOps.java` `seen: 1` `first: 2026-07-12` `last: 2026-07-12`
+`kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/EmbeddingBackfillOps.java` `seen: 2` `first: 2026-07-12` `last: 2026-07-17`
 - [ ] EmbeddingBackfillOps.processChunkEmbeddingBackfill Phase 1 fetches CHUNK_CONTENT via one getDocumentField() call per chunk instead of the batched getDocumentFieldsBatch() CombinedEnrichmentBackfillOps already uses — noticed while designing tempdoc 720 (P1a prepend) — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/EmbeddingBackfillOps.java:350-367` (2026-07-12)
+- [ ] FAILED-status chunks silently stop being retried and remain vector/splade-less with no serve-time gate — EmbeddingBackfillOps/SpladeBackfillOps select PENDING only; retry-count fields exist but nothing surfaces or re-drives the FAILED population (749 scope-investigation census site 8) — `modules/worker-services/.../loop/ops/EmbeddingBackfillOps.java:325` (2026-07-17)
 
 ### obs:run-error — jseval run --dataset mixed/legal-clerc-200 --max-queries 0 --pipeline --start-backend --clean --json
 `kind: defect?` `anchor: scripts/jseval/jseval/run.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
@@ -1361,6 +1365,62 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:run-gh — run-gh.mjs checks-wait races a just-pushed catch-up commit: it matches the PREVIOUS commit's green r
 `kind: defect?` `anchor: scripts/dev/run-gh.mjs` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
 - [ ] run-gh.mjs checks-wait races a just-pushed catch-up commit: it matches the PREVIOUS commit's green run and exits 0 while the new run is still pending — observed twice in one merge session (PRs 237, 239); it should key on the head-SHA's runs, not the PR's latest completed run — `scripts/dev/run-gh.mjs` (2026-07-17)
+
+### obs:test-utility-evidence — test_historical_fixture_semantic_digest_repinned_after_624_itt_change RED on confirmatory-campaign —
+`kind: environment?` `anchor: scripts/jseval/tests/test_utility_evidence.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] test_historical_fixture_semantic_digest_repinned_after_624_itt_change RED on confirmatory-campaign — pre-existing WIP activation of utility-claim-policy.v1.json (draft->active, populated required_strata) changes the fixture claim_verdict/semantic_digest; digest needs re-pinning by the policy-activation author — `scripts/jseval/tests/test_utility_evidence.py:356` (2026-07-17)
+
+### obs:agent-utility-inspect-drift — corpus-root review nit (follow-up): root mode ATTESTS the staged corpus-dir hash (corpus_dir_files_s
+`kind: follow-up?` `anchor: scripts/jseval/jseval/agent_utility_inspect.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] corpus-root review nit (follow-up): root mode ATTESTS the staged corpus-dir hash (corpus_dir_files_signature) but never enforces corpus-dir ≡ corpus.jsonl derivation — a stale explosion would pass all checks while agents search divergent text; add a fail-closed derivation check (count + sampled-content or a derivation signature) to root mode — `scripts/jseval/jseval/agent_utility_inspect.py:1143` (2026-07-17)
+
+### obs:index-cache-cmd — 751 warm bug (live, confirmatory launch 22:23): index-cache warm --corpus-dir ran TWO ingest passes 
+`kind: defect?` `anchor: scripts/jseval/jseval/commands/index_cache_cmd.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] 751 warm bug (live, confirmatory launch 22:23): index-cache warm --corpus-dir ran TWO ingest passes of the same root within one backend lifetime — the readiness doc-count floor ACCUMULATED (1001+1001=2002 expected) while path-dedup keeps the index at 1001 → unmeetable readiness wall, warm spun 25+ min GPU-idle past the 600s health timeout. Two sub-bugs: (a) cumulative floor across repeated same-root ingest requests, (b) the warm's second ingest pass itself; campaign reverted to fresh-build — `scripts/jseval/jseval/commands/index_cache_cmd.py` (2026-07-17)
+
+### obs:step2-budget-guard — Budget-guard design lesson (fired 2x): max-extrapolation running guards over-project when the most e
+`kind: lesson?` `anchor: scripts/jseval/step2-budget-guard.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] Budget-guard design lesson (fired 2x): max-extrapolation running guards over-project when the most expensive dataset calibrates first — order campaigns cheapest-first, or extrapolate from the MEAN of known estimates with the cap as the safety margin — `scripts/jseval/step2-budget-guard.py` (2026-07-17)
+
+### obs:unanchored-flake-4 — Flaky CI lane: 'Unit tests (platform-contracts)' failed on PR #245 whose diff is a .bat + two markdo
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] Flaky CI lane: 'Unit tests (platform-contracts)' failed on PR #245 whose diff is a .bat + two markdown files (cannot affect Java tests; main green at base) — rerun-once applied; if this lane flakes again it needs its own investigation — CI run 29614120711 (2026-07-17)
+
+### obs:agent-utility-inspect-flake — verified_tool_surface claim gate is structurally unsatisfiable at current SDK flake rate: observed_m
+`kind: environment?` `anchor: scripts/jseval/jseval/agent_utility_inspect.py` `seen: 1` `first: 2026-07-18` `last: 2026-07-18`
+- [ ] verified_tool_surface claim gate is structurally unsatisfiable at current SDK flake rate: observed_mcp_tool_surface_hash is None whenever the agent SDK's get_mcp_status() returns nothing (known-flaky, tempdoc 675/725) — confirmatory campaign saw 4-12 unverified B-cells per 60-cell stratum (~8%); P(all ~240 cells verified) ≈ 0. Needs either capture hardening (retry/fallback surface evidence) or a founder-ratified policy amendment (e.g. minimum surface-verification rate + single-hash consistency) — `scripts/jseval/jseval/agent_utility_inspect.py:848` (2026-07-18)
+
+### obs:chain-confirm — Claude Code CLI auto-updated 2.1.212→2.1.214 mid-campaign-night, splitting agent_cohort_key between 
+`kind: defect?` `anchor: scripts/jseval/chain-confirm.bat` `seen: 1` `first: 2026-07-18` `last: 2026-07-18`
+- [ ] Claude Code CLI auto-updated 2.1.212→2.1.214 mid-campaign-night, splitting agent_cohort_key between the v4 strata and the email-1k rerun (incident #6, tempdoc 624) — future campaign chains should pin harness identity for the whole cohort window (e.g. DISABLE_AUTOUPDATER=1 in the chain env) so a multi-run cohort can't be torn by a background update — `scripts/jseval/chain-confirm.bat` env block (2026-07-18)
+
+### obs:utility-claim-policy — ITT usage evidence incomplete for exhausted cells → composed cost_usd/token efficiency intervals una
+`kind: defect?` `anchor: scripts/jseval/jseval/utility_claim_policy.py` `seen: 1` `first: 2026-07-18` `last: 2026-07-18`
+- [ ] ITT usage evidence incomplete for exhausted cells → composed cost_usd/token efficiency intervals unavailable ("incomplete ITT usage evidence") → per-stratum outcome caps at adoption-only even where ITT accuracy delta is significant (legal-1k +0.217 p=0.001); capture usage for exhausted cells or define a pre-registered imputation for the efficiency family — `scripts/jseval/jseval/utility_claim_policy.py:505` (2026-07-18)
+
+### obs:gen-scorecard — gen-scorecard.mjs and gen-public-benchmark.mjs are wired into NO CI workflow — scorecard.md and meth
+`kind: defect?` `anchor: gen-scorecard.mjs` `seen: 1` `first: 2026-07-18` `last: 2026-07-18`
+- [ ] gen-scorecard.mjs and gen-public-benchmark.mjs are wired into NO CI workflow — scorecard.md and methodology.md silently drifted a full release cycle (2026-07-01 → 2026-07-16, caught by the 2026-07-18 numbers audit); wire both --check modes into the public-claims CI job — `.github/workflows/ci.yml` public-claims job (2026-07-18)
+
+### obs:utility — 758 reviewer MINORs: (a) utility-run WITHOUT --calibration has no CLI-drift assert (chain path cover
+`kind: defect?` `anchor: scripts/jseval/jseval/commands/utility.py` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
+- [ ] 758 reviewer MINORs: (a) utility-run WITHOUT --calibration has no CLI-drift assert (chain path covered; bare path relies on DISABLE_AUTOUPDATER), (b) calibration SHA-binding detects commit movement but not dirty-tree drift at same HEAD (git_dirty stamped, unchecked) — `scripts/jseval/jseval/commands/utility.py:349-357` (2026-07-21)
+
+### obs:utility-recompose — 757 reviewer MINOR: taint condition 'b_exhausted AND usage_truncated' — the conjunct is redundant to
+`kind: defect?` `anchor: scripts/jseval/jseval/utility_recompose.py` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
+- [ ] 757 reviewer MINOR: taint condition 'b_exhausted AND usage_truncated' — the conjunct is redundant today (classification implies both) but becomes a hole if stamp/classification ever diverge; gate on usage_truncated alone — `scripts/jseval/jseval/utility_recompose.py:243`. 755 reviewer MINOR: sanitize emits surface_evidence/mcp_surface_fallback nulls unconditionally (composed-record byte-identity holds; evidence-line layer differs from 757's omitted-when-absent style) — `scripts/jseval/jseval/utility_evidence.py:239-240` (2026-07-21)
+
+### obs:queries — jseval retrieval-eval consumes only MultiHop-format queries (q['query'] + evidence_list); 635-corpor
+`kind: defect?` `anchor: queries.json` `seen: 1` `first: 2026-07-18` `last: 2026-07-18`
+- [ ] jseval retrieval-eval consumes only MultiHop-format queries (q['query'] + evidence_list); 635-corpora queries.json (evidence_ids, and needle-burial-v1's has null 'query') yield empty queries → 0% metrics silently. Discovered running the 749 reachability eval — `scripts/jseval/jseval/agent_retrieval_eval.py:load_queries` (2026-07-18)
+
+### obs:ingest — main checkout tmp/eval-corpora/mixed/legal-clerc-200 holds 199 materialized .txt files vs 198 corpus
+`kind: defect?` `anchor: scripts/jseval/jseval/ingest.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] main checkout tmp/eval-corpora/mixed/legal-clerc-200 holds 199 materialized .txt files vs 198 corpus.jsonl docs with a present .source_signature sidecar — either an orphan-file hole in the 635 verified-projection guard (skip_existing never deletes files when the corpus shrinks) or a pre-guard stale file; a materialize-clears-orphans check would close the class — `scripts/jseval/jseval/ingest.py:300` (2026-07-17)
+
+### obs:unanchored-missing-8 — Manual observations.d conflict resolution can silently drop content: merge 603cc5bf claimed 'content
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+- [ ] Manual observations.d conflict resolution can silently drop content: merge 603cc5bf claimed 'content-preserving' fold of 3 deleted shards but shard cfa87fbc's record-merge mis-link bullet (from 5a90bf44) was never folded — verified absent from observations.md by exact-string grep; rescued via worktree-rescue-720-docs. Process gap: content-preservation claims in fold merges are checked per-shard, not per-bullet — `docs/observations.md` (2026-07-17)
 
 ## Parked
 

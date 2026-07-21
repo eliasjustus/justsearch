@@ -39,6 +39,7 @@ import asyncio
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -1193,6 +1194,107 @@ def _git_dirty() -> bool | None:
     return state.get("dirty") if state is not None else None
 
 
+_DERIVATION_SAMPLE_N = 20
+
+
+def _verify_corpus_dir_derivation(
+    *,
+    corpus_root: Path,
+    staged_dir: Path,
+    staged_files: list[Path],
+    signature: str,
+    sample_n: int = _DERIVATION_SAMPLE_N,
+) -> None:
+    """Fail CLOSED unless the exploded ``staged_dir`` is the derivation of
+    ``corpus_root/corpus.jsonl`` (tempdoc 624 identity hardening).
+
+    Root mode SIGNS ``corpus.jsonl`` but only *attests* the ``corpus-dir`` the agents
+    actually read (``corpus_dir_files_signature``): a stale or swapped explosion passes
+    every identity gate while agents search divergent text. This re-derives the
+    explosion from the SAME logic the build/ingest paths use — a *projection* of
+    ``corpus_generate.materialize_doc_entry`` + ``materialize.materialize`` (the one
+    place the axis-aware scan-vs-text decision and the on-disk write live), not a second
+    fork of it — and checks two properties:
+
+    1. **Exact file set** — expected filenames (one per ``corpus.jsonl`` doc via
+       ``doc_id_to_filename`` + the materialize sentinel) equal the on-disk file set.
+       A count/name mismatch fails closed naming the delta.
+    2. **Sampled content** — ``sample_n`` docs chosen deterministically by a seed
+       derived from the corpus SIGNATURE; each sampled doc's on-disk bytes must equal
+       its re-materialized bytes. A divergence fails closed naming the doc.
+
+    Cost is one probe render + ``sample_n`` re-materializations — O(sample), not
+    O(corpus) — so it stays fast even on a 10k-doc corpus."""
+    from jseval import corpus_generate
+    from jseval import materialize as mat_mod
+
+    corpus_jsonl = corpus_root / "corpus.jsonl"
+    if not corpus_jsonl.is_file():
+        # The root-mode signature path already requires a signable root; a root with
+        # only qrels/ (no corpus.jsonl) has nothing to derive an explosion from.
+        return
+    docs = [
+        json.loads(line)
+        for line in corpus_jsonl.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    metadata_path = corpus_root / "metadata.json"
+    type_axis: str | None = None
+    if metadata_path.is_file():
+        try:
+            type_axis = json.loads(metadata_path.read_text(encoding="utf-8")).get("type_axis")
+        except (json.JSONDecodeError, OSError):
+            type_axis = None
+
+    # Derive the .txt-vs-.png extension from the REAL helper (a single probe render),
+    # not a hardcoded `type_axis == "scan"` check — projection, not a re-implementation.
+    probe = corpus_generate.materialize_doc_entry(
+        {"_id": "__derivation_probe__", "title": "", "text": ""}, type_axis)
+    ext = "png" if probe.get("image_b64") else "txt"
+
+    expected_names = {mat_mod.doc_id_to_filename(str(d["_id"]), ext=ext) for d in docs}
+    expected_names.add(mat_mod.doc_id_to_filename(mat_mod.SENTINEL_DOC_ID))
+    actual_names = {p.relative_to(staged_dir).as_posix() for p in staged_files}
+    if expected_names != actual_names:
+        missing = sorted(expected_names - actual_names)
+        extra = sorted(actual_names - expected_names)
+        raise ValueError(
+            "corpus-dir is not the derivation of corpus.jsonl (file-set mismatch): "
+            f"expected {len(expected_names)} files, found {len(actual_names)}; "
+            f"missing={missing[:5]} extra={extra[:5]}"
+        )
+
+    if not docs:
+        return
+    # Deterministic sample: the seed is a pure function of the corpus signature, so the
+    # same corpus always samples the same docs (reproducible fail-closed evidence).
+    rng = random.Random(int(signature[:16], 16))
+    sampled = [docs[i] for i in rng.sample(range(len(docs)), min(sample_n, len(docs)))]
+    sampled_entries = [
+        (d, corpus_generate.materialize_doc_entry(d, type_axis)) for d in sampled
+    ]
+    with tempfile.TemporaryDirectory(prefix="jseval-derivation-check-") as tmp:
+        tmp_dir = Path(tmp)
+        # Reuse the exact on-disk write path (content formatting, png decode, filename
+        # encoding, utf-8) rather than re-deriving the byte content here.
+        mat_mod.materialize((e for _, e in sampled_entries), tmp_dir, skip_existing=False)
+        for d, entry in sampled_entries:
+            name = mat_mod.doc_id_to_filename(
+                str(d["_id"]), ext=("png" if entry.get("image_b64") else "txt"))
+            on_disk = staged_dir / name
+            if not on_disk.is_file():
+                raise ValueError(
+                    f"corpus-dir derivation mismatch: doc {d['_id']!r} expected file "
+                    f"{name!r} is absent from the staged corpus-dir"
+                )
+            if on_disk.read_bytes() != (tmp_dir / name).read_bytes():
+                raise ValueError(
+                    f"corpus-dir derivation mismatch: doc {d['_id']!r} on-disk content "
+                    f"({name}) diverges from its derivation of corpus.jsonl"
+                )
+
+
 def _capture_or_load_source_identity(
     *,
     log_dir: str,
@@ -1253,6 +1355,16 @@ def _capture_or_load_source_identity(
             key=lambda path: path.relative_to(root).as_posix(),
         )
         corpus_dir_files_signature = corpus_signature(root, staged_files)
+        # Attestation is not enough: fail CLOSED unless the exploded corpus-dir is
+        # actually the derivation of the signed corpus.jsonl (tempdoc 624 hardening) —
+        # a stale explosion otherwise passes every identity gate while agents search
+        # divergent text.
+        _verify_corpus_dir_derivation(
+            corpus_root=corpus_root_path,
+            staged_dir=root,
+            staged_files=staged_files,
+            signature=signature,
+        )
     else:
         signature = corpus_signature(root)
         if signature is None:

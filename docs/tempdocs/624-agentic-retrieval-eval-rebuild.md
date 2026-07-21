@@ -4881,3 +4881,81 @@ phase is closed and its next entry should be the relaunch pre-registration:
 handoff PR (generator fallback prose + pointer reason now state the active policy, the
 2026-07-18 rejected campaign, and the committed evidence path — no numeric claims, per the
 policy's wording constraints).
+
+### Identity hardening: fail-closed corpus-dir derivation check (2026-07-21)
+
+Closes an open observation (2026-07-17): root mode SIGNS the dataset root (`corpus.jsonl` +
+qrels) but only *attests* the exploded `corpus-dir` the agents actually read
+(`corpus_dir_files_signature`, `agent_utility_inspect.py:1255`). Attestation records the
+staged text's hash — it never checks that hash is the *derivation* of the signed
+`corpus.jsonl`. A stale/swapped explosion therefore passes every identity gate (root signature,
+declared-signature match, certification) while the agents search divergent text.
+
+**What the check enforces.** `_verify_corpus_dir_derivation` (`agent_utility_inspect.py:1198`),
+called from the root-mode branch (`:1268`), fails CLOSED unless `corpus-dir` is the derivation of
+`corpus.jsonl`: (1) **exact file set** — expected filenames (one per corpus.jsonl doc + the
+materialize sentinel) equal the on-disk set; a count/name mismatch names the delta; (2) **sampled
+content** — N=20 docs chosen by `random.Random(int(signature[:16],16))` (seed = corpus signature,
+so reproducible), each sampled doc's on-disk bytes must equal its re-materialized bytes; a
+divergence names the doc.
+
+**Projection, not fork.** The check re-derives through the SAME logic the build/ingest paths use
+— `corpus_generate.materialize_doc_entry` + `materialize.materialize` (the one place the
+axis-aware scan-vs-`.txt` decision and the on-disk write live, `ingest._materialize_into:285`).
+Even the `.txt`/`.png` extension is taken from a one-doc probe render of that helper, not a
+hardcoded `type_axis=="scan"` check.
+
+**Cost.** One probe render + 20 re-materializations — O(sample), not O(corpus). Measured (text
+axis): **0.018s @ 1k docs, 0.071s @ 10k docs** (budget ≤30s). No composed-record schema/digest
+change: the check is pure validation and emits nothing (zero digest re-pins).
+
+Tests: `tests/test_agent_utility_inspect.py` — faithful→passes, extra-file/missing-file→fail-closed
+(file-set message), content-divergence→fail-closed naming the doc, deterministic-sample
+(same doc flagged across runs; a non-sampled divergence is provably not sampled), and an
+env-gated (`JSEVAL_PERF_TESTS=1`) 1k/10k scale/budget check kept out of the default suite. The
+shared root-mode fixtures (`_dataset_root`/`_staged_child`) were made faithful derivations
+(`_id` keys + materialize-produced staged dir with sentinel), since they previously used `id`
+keys and a hand-rolled sentinel-less explosion.
+
+## Relaunch pre-registration (2026-07-21, BEFORE any cell runs; target ratified by founder — "allright i agree")
+
+**Registered target: `accepted / adoption-only`.** The `benefit` (efficiency) tier is
+explicitly NOT sought in this campaign: B-arm wall-clock exhaustions carry no cost receipts in
+the current SDK (757 §G), so the direction-checked efficiency intervals are expected
+unavailable and that is the pre-registered, accepted outcome. A benefit-tier claim is deferred
+to a purpose-built successor campaign whose binding limit is the USD budget (whose receipts
+survive exhaustion — proven live, 757 §H); no rule will be softened for or after this run.
+
+**Matrix (identical to the 2026-07-18 confirmatory campaign; policy-pinned):** 4 strata
+(en-legal-clerc × en-email-enron-raw at 1k/10k verbose) × haiku × A/B × 3 seeds × 20q = 480
+cells; per-cell max-budget $0.50; concurrency 6; equalized-max per-arm timeouts from fresh
+calibrations; root-mode certified identity per stratum; contamination class private-synthetic;
+ITT (resource-exhaustion-as-failure) primary, per-protocol secondary; α=0.05. Cap $100,
+cheapest-first, running guard.
+
+**Policy:** the ACTIVE checked-in policy at launch time, which per launch-gate (1) below must
+be the ratified rate-based amendment (`minimum_surface_verification_rate: 0.9` + single-hash
+consistency + different-hash fatal; evaluator support merged inert in #257). All other gates
+unchanged. Promotion requires ALL FOUR strata in ONE compose (required_strata_exact), one
+search-config cohort, one harness cohort.
+
+**Infrastructure (all merged + verified before this pre-registration):** warm/adopt index
+reuse (751 §Q fix, #256, live two-boot verified); calibration git_sha+CLI stamping with
+fail-closed run-side asserts (758, #251); `DISABLE_AUTOUPDATER=1` harness window (758);
+compose exposure-identity carry-through (756, #252, live-verified on the 2026-07-18 logs);
+corpus-dir derivation enforcement in root mode (#258); partial-usage capture with
+conservative-direction gating incl. duration/turns (757, #254 + #259). Chain:
+`scripts/jseval/chain-confirm-v5.bat` (this PR).
+
+**Launch gates (both founder-explicit, in order):** (1) ratify the v2 amendment into the
+checked-in policy (file-swap + changeset; the draft is
+`scripts/jseval/utility-claim-policy.v2-draft-755.proposed.json`); (2) explicit launch
+authorization (~$90–100). Amendments to this pre-registration before any measured cell follow
+the established dated-amendment convention; nothing may change after the first measured cell.
+
+**Analysis plan:** identical to the confirmatory campaign (per-stratum ITT tables, McNemar
+exact, duration/completion families with censoring, per-arm loss ledgers), plus the amended
+verified_tool_surface gate reported with its {rate, verified, total} observed shape. The
+recompose must be a single 4-stratum compose; no retroactive stratum substitution — a voided
+stratum is rerun under the SAME cohort window or the campaign records a rejected verdict, as
+before.
