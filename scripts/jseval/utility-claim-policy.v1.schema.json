@@ -46,7 +46,8 @@
         "minimum_adoption_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
         "accuracy_noninferiority_margin": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
         "provider_token_equivalence_margin": {"type": ["number", "null"], "minimum": 0},
-        "cost_equivalence_margin_usd": {"type": ["number", "null"], "minimum": 0}
+        "cost_equivalence_margin_usd": {"type": ["number", "null"], "minimum": 0},
+        "minimum_surface_verification_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
       }
     },
     "requirements": {
@@ -71,6 +72,7 @@
         "per_stratum_promotion": {"const": "all_required_strata_pass"}
       }
     },
+    "verified_tool_surface_semantics": {"type": "object"},
     "unresolved": {"type": "array", "items": {"type": "string"}}
   }
 }

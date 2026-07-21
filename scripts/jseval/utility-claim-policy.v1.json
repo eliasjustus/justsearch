@@ -1,7 +1,7 @@
 {
   "schema": "utility-claim-policy.v1",
   "schema_version": 1,
-  "policy_id": "agent-utility-public-v1",
+  "policy_id": "agent-utility-public-v2",
   "status": "active",
   "primary_estimand": "addition_b",
   "required_strata": [
@@ -56,7 +56,8 @@
     "minimum_adoption_rate": 0.9,
     "accuracy_noninferiority_margin": 0.1,
     "provider_token_equivalence_margin": 15000,
-    "cost_equivalence_margin_usd": 0.05
+    "cost_equivalence_margin_usd": 0.05,
+    "minimum_surface_verification_rate": 0.9
   },
   "requirements": {
     "source_identity_complete": true,
@@ -77,6 +78,15 @@
     "intention_to_treat": true,
     "per_protocol_is_secondary": true,
     "per_stratum_promotion": "all_required_strata_pass"
+  },
+  "verified_tool_surface_semantics": {
+    "amendment_of": "agent-utility-public-v1",
+    "supersedes_rule": "every attempted with-tool cell must carry observed_mcp_tool_surface_hash == declared hash (all-cells-verified)",
+    "new_rule": "verified_tool_surface passes iff ALL of: (a) cells_total > 0 AND cells_total == the number of attempted with-tool (arm B) cells; (b) surface verification rate (cells_with_mcp_surface_verified / cells_total) >= minimum_surface_verification_rate (0.9), where a verified cell is a with-tool attempted cell carrying an observed hash obtained from status/status-retry evidence; (c) observed_mcp_tool_surface_consistent == true; (d) exactly one distinct observed hash across the arm and it equals the cohort's declared mcp_tool_surface_hash; (e) zero cells carry a DIFFERENT observed hash (and the declared cohort hash is present).",
+    "gate_observed_shape": "when this rate threshold is present the verified_tool_surface gate reports observed = {\"rate\": cells_with_mcp_surface_verified/cells_total, \"verified\": cells_with_mcp_surface_verified, \"total\": cells_total} and threshold = minimum_surface_verification_rate, so the rate is visible in the verdict.",
+    "missing_hash": "a with-tool cell with no observed hash after Track-1 retry + fallback is a CAPTURE MISS, not a violation — it lowers the verification rate (bounded by 1 - 0.9 = 10%) but does not fail the gate on its own.",
+    "different_hash": "a with-tool cell whose observed hash DIFFERS from the declared hash stays FATAL — this is a genuine surface mismatch, never a capture miss, and any single occurrence fails the gate regardless of rate.",
+    "evidence": "residual measured flake after Track 1 is the trigger; the 2026-07-21 Track-1 acceptance smoke measured 55/60 verified B-cells (8.3% irreducible, zero status-retry rescues), so the residual is real. See tempdoc 755 §A/§B/§F and the 2026-07-18 confirmatory VERDICT record."
   },
   "unresolved": []
 }

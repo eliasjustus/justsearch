@@ -398,7 +398,14 @@ def test_historical_fixture_semantic_digest_repinned_after_624_itt_change():
     evaluates against the checked-in policy, so activating
     `agent-utility-public-v1` (draft -> active, four required strata) moved this
     fixture's verdict payload (still rejected — its strata cannot match the
-    confirmatory matrix) and therefore its digest."""
+    confirmatory matrix) and therefore its digest.
+
+    Re-pinned AGAIN 2026-07-21 (RATIFICATION, tempdoc 755 §J — SAME re-pin class
+    as the #243/624 activation above, cited as precedent): the checked-in policy
+    advanced to `agent-utility-public-v2` (rate-based verified_tool_surface). The
+    digest-covered `claim_verdict` carries `policy_id`/`policy_hash`, so the new
+    policy identity + hash moved this fixture's digest again (still rejected). New
+    value re-captured via `finalize_evidence([path])["semantic_digest"]`."""
     path = (
         Path(__file__).parent
         / "fixtures"
@@ -407,7 +414,7 @@ def test_historical_fixture_semantic_digest_repinned_after_624_itt_change():
     )
     record = finalize_evidence([path], composed_at="fixture")
     assert record["semantic_digest"] == (
-        "2be7446c70b1177353a0c2f1bf127d4d2519299fc4c1d5166ec1ed26bf4071f5"
+        "3d0bf53b1f205bd8e811cd55c74255664468dddda9dd70b689bcb2fbd390f62b"
     )
 
 
