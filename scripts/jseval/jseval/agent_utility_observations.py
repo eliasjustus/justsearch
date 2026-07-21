@@ -95,6 +95,13 @@ def read_inspect_observations(
             observations.append({
                 "source": source,
                 "condition": condition,
+                # tempdoc 768 D4: per-query schema tag (`Sample.metadata`,
+                # agent_utility_inspect.py:1102), threaded through so schema
+                # stratification (utility_comparison._default_schema_stratify)
+                # can key on it. Per-QUERY, not per-cell -- it rides the
+                # observation + per_query projection, never the cell-level
+                # manifest/summary.
+                "question_type": metadata.get("question_type"),
                 "seed": seed,
                 "qid": qid,
                 "attempted": True,
@@ -213,6 +220,9 @@ def successful_summaries(
                 "mcp_tools_offered", "mcp_surface_unverified", "mcp_tools_deferred",
                 "mcp_tool_names_offered", "observed_mcp_tool_surface_hash",
                 "toolsearch_targets", "tool_call_sequence",
+                # tempdoc 768 D4: per-query schema tag reaches the composed
+                # per_query dict so _default_schema_stratify can label each qid.
+                "question_type",
             )
         }
         if obs.get("resolved_model"):
