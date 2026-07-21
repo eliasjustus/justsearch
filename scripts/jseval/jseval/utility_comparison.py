@@ -1271,6 +1271,34 @@ def _compose_cell(
     return cell
 
 
+def _one_cross_corpus_cohort_block(
+    run_summaries: list[dict], field: str
+) -> dict | None:
+    """The single agreed value of a cohort-level manifest block (``field``)
+    across every input run, or ``None`` when absent everywhere.
+
+    Fail closed (``UtilityComposeError``) when the runs DISAGREE -- including a
+    present-on-some / absent-on-others split. Cross-corpus composition pools
+    multiple campaigns, so a silent first-wins copy could fuse two
+    differently-exposed campaigns into one identity-complete-looking record
+    (tempdoc 756); mixing must stay an error, same discipline as the
+    ``agent_cohort_key`` / per-corpus-identity spanning checks in
+    :func:`compose_utility_cross_corpus`. Returns ``None`` (so the caller
+    EXCLUDES the block, never writing ``None``) when absent everywhere, keeping a
+    record composed from pre-725 evidence byte-identical to before the field
+    existed (mirrors ``agent_manifest.agent_cohort_key``).
+    """
+    values = [s["manifest"].get(field) for s in run_summaries]
+    reference = values[0]
+    for value in values[1:]:
+        if value != reference:
+            raise UtilityComposeError(
+                f"cross-corpus runs span multiple {field} values "
+                f"(all input runs must agree exactly): {reference!r} != {value!r}"
+            )
+    return reference
+
+
 def compose_utility_cross_corpus(
     run_summaries: list[dict],
     *,
@@ -1361,6 +1389,14 @@ def compose_utility_cross_corpus(
             raise UtilityComposeError(
                 f"cross-corpus stratum {label!r} mixes source identities"
             )
+    # tempdoc 756: exposure identity (exposure_config + mcp_initialize_identity)
+    # is cohort-level and every post-725 per-run record carries it -- carry it
+    # through the composed cohort so source_identity_complete
+    # (utility_claim_policy) can see it, fail closed if the pooled runs disagree.
+    exposure_config = _one_cross_corpus_cohort_block(run_summaries, "exposure_config")
+    mcp_initialize_identity = _one_cross_corpus_cohort_block(
+        run_summaries, "mcp_initialize_identity"
+    )
     cohort = {
         "agent_cohort_key": cohort_key,
         "git_sha": ref.get("git_sha"),
@@ -1384,6 +1420,13 @@ def compose_utility_cross_corpus(
         "tool_surfacing_mode": _tool_surfacing_mode(run_summaries),
         "executor": _executor_stamp(run_summaries),
     }
+    # EXCLUDED (not written as `None`) when absent everywhere, so a record
+    # composed from pre-725 evidence hashes identically to before this existed
+    # (mirrors compose_utility 364-367 / agent_cohort_key).
+    if exposure_config is not None:
+        cohort["exposure_config"] = exposure_config
+    if mcp_initialize_identity is not None:
+        cohort["mcp_initialize_identity"] = mcp_initialize_identity
 
     # 3. Pool by agent_model only (NOT by corpus) — every model's cell spans
     #    all corpora, namespaced so _compose_cell's shared machinery can pool
