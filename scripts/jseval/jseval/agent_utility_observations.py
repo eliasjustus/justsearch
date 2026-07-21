@@ -106,6 +106,9 @@ def read_inspect_observations(
                 "first_error": metadata.get("first_error"),
                 "correct": correct,
                 "cost_usd": metadata.get("cost_usd"),
+                # tempdoc 757: marks cost_usd/unique_tokens as a partial LOWER BOUND
+                # for a resource-exhausted cell (captured up to the kill point).
+                "usage_truncated": metadata.get("usage_truncated"),
                 "unique_tokens": metadata.get("unique_tokens"),
                 "usage": metadata.get("usage"),
                 "model_usage": metadata.get("model_usage"),

@@ -13,6 +13,7 @@ SCHEMA = "agent-utility-observation.v1"
 _OBSERVATION_KEYS = {
     "schema", "condition", "seed", "qid", "attempted", "excluded",
     "error_class", "attempts", "first_error_class", "correct", "cost_usd",
+    "usage_truncated",
     "working_time", "total_time",
     "provider_usage", "provider_model_usage", "provider_cache_creation_input_tokens",
     "resolved_provider_model", "num_turns", "tool_call_names", "blocked_tool_call_names",
@@ -205,7 +206,7 @@ def _mcp_initialize_identity(value: Any) -> dict | None:
 def sanitize_observation(observation: dict) -> dict:
     source = observation.get("source") or {}
     cohort = source.get("cohort") or {}
-    return {
+    sanitized = {
         "schema": SCHEMA,
         "condition": observation.get("condition"),
         "seed": int(observation.get("seed", 0)),
@@ -266,6 +267,13 @@ def sanitize_observation(observation: dict) -> dict:
             "mcp_initialize_identity": _mcp_initialize_identity(cohort.get("mcp_initialize_identity")),
         },
     }
+    # tempdoc 757: emit `usage_truncated` ONLY when true so completed cells and all
+    # pre-757 evidence stay byte-identical (omitted-when-absent, 755 precedent). A
+    # truncated cell's cost/tokens are already carried in the always-present fields
+    # above -- this flag marks them as a partial LOWER BOUND, not exact.
+    if observation.get("usage_truncated"):
+        sanitized["usage_truncated"] = True
+    return sanitized
 
 
 def sanitize_observations(observations: Iterable[dict]) -> list[dict]:
@@ -335,6 +343,7 @@ def read_evidence(path: str | Path) -> list[dict]:
             "first_error": item.get("first_error_class"),
             "correct": bool(item.get("correct")),
             "cost_usd": item.get("cost_usd"),
+            "usage_truncated": item.get("usage_truncated"),
             "working_time": item.get("working_time"),
             "total_time": item.get("total_time"),
             "unique_tokens": item.get("provider_cache_creation_input_tokens"),
