@@ -32,6 +32,12 @@ _REQUIRED_PROVENANCE_KEYS = (
     "axis", "lang", "seed", "hops", "distractor_ratio", "semantic", "n_chains", "doc_words",
 )
 
+#: The payload-v2 parameter set (tempdoc 767). A corpus that declares `payload_version`
+#: must carry ALL of these, and a missing one FAILS rather than skipping — see
+#: `regeneration_determinism_report` for why the pre-767 skip-on-missing-key behaviour is
+#: unsafe once the key set can change.
+_PAYLOAD_V2_PROVENANCE_KEYS = _REQUIRED_PROVENANCE_KEYS + ("entity_bank", "entity_bank_sha256")
+
 # Default: a corpus passes if at most 15% of its queries are answerable closed-book.
 # Synthetic/fabricated corpora should be ~0%; public-news corpora ran ~38% (624 B2).
 DEFAULT_THRESHOLD = 0.15
@@ -41,6 +47,7 @@ SCIENTIFIC_GATES = (
 _CELL_CHECKS = {
     "size", "signature", "query_variant", "query_family_ids",
     "cross_process_regeneration", "immutable_commitment", "descriptor_collision",
+    "indistinguishability",
 }
 _FAMILY_CHECKS = {
     "queries_identical_across_sizes", "qrels_identical_across_sizes",
@@ -113,6 +120,7 @@ def certify_materialized_family(
                 metadata.get("generation_provenance") or {},
             )
             collisions = descriptor_collision_report(docs, queries)
+            indistinguishability = indistinguishability_report(docs, queries)
             variant_values = {query.get("query_variant") for query in queries}
             family_ids = [query.get("query_family_id") for query in queries]
             checks = {
@@ -127,6 +135,7 @@ def certify_materialized_family(
                 "cross_process_regeneration": regeneration.get("passed") is True,
                 "immutable_commitment": commitment.get("passed") is True,
                 "descriptor_collision": collisions.get("passed") is True,
+                "indistinguishability": indistinguishability.get("passed") is True,
             }
             gate_evidence = {
                 gate: _validate_scientific_evidence(
@@ -167,6 +176,9 @@ def certify_materialized_family(
                 "descriptor_collision": {
                     key: collisions[key]
                     for key in ("n_groups", "n_docs_involved", "n_gold_involved", "passed", "method")
+                },
+                "indistinguishability": {
+                    key: indistinguishability[key] for key in _INDISTINGUISHABILITY_KEYS
                 },
                 "scientific_gates": gate_evidence,
                 "passed": structural_cell_passed,
@@ -801,7 +813,7 @@ def _complete_certification_document(certification: dict) -> bool:
             if set(cell or {}) != {
                 "dataset", "corpus_signature", "query_gold_sha256", "query_count", "checks",
                 "regeneration", "commitment", "descriptor_collision",
-                "scientific_gates", "passed", "fully_certified",
+                "indistinguishability", "scientific_gates", "passed", "fully_certified",
             }:
                 return False
             signature = cell.get("corpus_signature")
@@ -819,6 +831,27 @@ def _complete_certification_document(certification: dict) -> bool:
             regeneration = cell.get("regeneration") or {}
             commitment = cell.get("commitment") or {}
             collision = cell.get("descriptor_collision") or {}
+            indistinguishability = cell.get("indistinguishability") or {}
+            if (
+                set(indistinguishability) != set(_INDISTINGUISHABILITY_KEYS)
+                or indistinguishability.get("passed") is not True
+                or indistinguishability.get("id_shape_passed") is not True
+                or indistinguishability.get("ngram_passed") is not True
+                or indistinguishability.get("method")
+                != "null-calibrated-id-shape-and-ngram-selectivity"
+                # The null is what makes each verdict meaningful; assert the
+                # observation actually sits under it rather than trusting the
+                # boolean a producer could have written by hand.
+                or not isinstance(indistinguishability.get("id_shape_separability"), (int, float))
+                or not isinstance(indistinguishability.get("id_shape_native_base_rate"), (int, float))
+                or indistinguishability["id_shape_separability"]
+                > indistinguishability["id_shape_native_base_rate"]
+                or not isinstance(indistinguishability.get("ngram_max_gold_coverage"), (int, float))
+                or not isinstance(indistinguishability.get("ngram_native_base_rate"), (int, float))
+                or indistinguishability["ngram_max_gold_coverage"]
+                > indistinguishability["ngram_native_base_rate"]
+            ):
+                return False
             if (
                 set(regeneration) != {"passed", "method", "digest", "reason"}
                 or regeneration.get("passed") is not True
@@ -1064,6 +1097,71 @@ def descriptor_collision_report(docs: list[dict], queries: list[dict] | None = N
     }
 
 
+#: The `corpus_leak` reports this certification check consumes. Both are
+#: pass/fail with a null the report computes FROM THE SAME CELL, which is why no
+#: threshold constant appears anywhere in this file for them — see
+#: :func:`indistinguishability_report`.
+_INDISTINGUISHABILITY_KEYS = (
+    "id_shape_separability", "id_shape_native_base_rate", "id_shape_rule",
+    "id_shape_passed", "ngram_max_gold_coverage", "ngram_native_base_rate",
+    "ngram_passed", "passed", "method",
+)
+
+
+def indistinguishability_report(docs: list[dict], queries: list[dict] | None = None) -> dict:
+    """Are the planted gold documents distinguishable from the native distractors
+    that surround them (tempdoc 767)?
+
+    A corpus whose gold set can be isolated by an artifact of its own construction —
+    a document-ID pattern, or a boilerplate n-gram every gold doc shares — does not
+    measure retrieval, it measures whether the agent noticed the artifact. That makes
+    this a structural certification concern rather than a reporting nicety, so it
+    joins ``descriptor_collision`` as a per-cell check rather than living in a report
+    nobody runs.
+
+    **Which of the five `corpus_leak` reports gate here, and why.** Only the two that
+    carry pass/fail semantics against a null: :func:`~.corpus_leak.id_shape_report`
+    (the cheapest channel — it costs an agent nothing to evaluate, no document body
+    required) and :func:`~.corpus_leak.ngram_selectivity_report` (the boilerplate-payload
+    channel). ``length_profile_report`` has a ``passed`` key but its threshold is the
+    degenerate ``separability < 1.0``, which fails only when EVERY gold doc is a length
+    outlier — too coarse to gate on and better read as a distribution.
+    ``query_overlap_report`` is deliberately excluded: it has no ``passed`` key, its
+    polarity is ``low-is-good`` (the inverse of every other measure here), and it
+    computes no null, so there is nothing to compare an observation against without
+    inventing a constant. A directional diagnostic with no null belongs in reporting,
+    not in a gate — gating it would mean pinning a threshold whose only justification
+    is the value we happen to measure today. ``rare_token_leak_report`` is likewise
+    diagnostic (per-query anchors to inspect, not a corpus-level verdict).
+
+    **Why no threshold file.** Both gating reports calibrate against a null drawn from
+    the SAME cell's native documents, so the comparison is already per-corpus and
+    per-host by construction. A pinned ``*-baselines.v1.json`` constant would be
+    strictly worse here: it would have to be re-derived per corpus, and it would go
+    stale the moment a cell's native population changed — exactly the drift the
+    in-corpus null exists to avoid.
+
+    ``passed`` requires both sub-reports to be explicitly ``True``. A ``None`` (no gold
+    or no native documents — nothing to compare) is NOT a pass: an absent measurement
+    never certifies a corpus clean.
+    """
+    from .corpus_leak import id_shape_report, ngram_selectivity_report
+
+    id_shape = id_shape_report(docs, queries)
+    ngram = ngram_selectivity_report(docs, queries)
+    return {
+        "id_shape_separability": id_shape["separability"],
+        "id_shape_native_base_rate": id_shape["native_base_rate"],
+        "id_shape_rule": (id_shape["best_rule"] or {}).get("rule"),
+        "id_shape_passed": id_shape["passed"],
+        "ngram_max_gold_coverage": ngram["max_gold_coverage"],
+        "ngram_native_base_rate": ngram["native_base_rate"],
+        "ngram_passed": ngram["passed"],
+        "passed": id_shape["passed"] is True and ngram["passed"] is True,
+        "method": "null-calibrated-id-shape-and-ngram-selectivity",
+    }
+
+
 def regeneration_determinism_report(generation_provenance: dict | None) -> dict:
     """Verify a corpus's "seeded -> reproducible" claim by actually regenerating it (tempdoc 664).
 
@@ -1076,11 +1174,26 @@ def regeneration_determinism_report(generation_provenance: dict | None) -> dict:
     one process.
 
     Returns a skip verdict (``passed: None``) when the provenance is missing, hand-authored (not
-    ``method: "procedural-fabricated"``), or incomplete (missing any of ``axis/lang/seed/hops/
-    distractor_ratio/semantic/n_chains/doc_words`` — the full parameter set needed to reconstruct
-    the exact ``generate()`` call). A skip is not a failure: it means this check cannot be run, not
-    that the corpus is unreproducible. Confirmed cheap: a full ~280-doc regeneration costs ~0.1s, so
-    running it twice at certify-time is not a performance concern.
+    ``method: "procedural-fabricated"``), or predates the payload the current generator emits.
+    A skip is not a failure: it means this check cannot be run, not that the corpus is
+    unreproducible. Confirmed cheap: a full ~280-doc regeneration costs ~0.1s, so running it
+    twice at certify-time is not a performance concern.
+
+    tempdoc 767 — WHY A DECLARED PAYLOAD VERSION FAILS INSTEAD OF SKIPPING. Pre-767 this
+    function skipped on ANY missing provenance key. That was safe only while the key set was
+    frozen: once the key set can grow (the entity bank became a generation input), a renamed
+    or dropped key silently degrades the determinism proof to ``passed: None``, which reads
+    the same as "nothing to worry about" in a certification report. The discriminator is
+    ``payload_version``:
+
+    - **absent** — a legacy corpus. Its bytes were produced by the syllable-pair minter and
+      counter-derived values, neither of which still exists, so the corpus is not regenerable
+      by this generator at all and the honest verdict is an explicit skip.
+    - **present** — the full v2 parameter set is MANDATORY, an unknown version is a failure,
+      the pinned ``entity_bank_sha256`` must match the on-disk bank, and any shortfall is
+      ``passed: False``. A v2 corpus that somehow lost ``payload_version`` falls into the
+      legacy branch, where ``generate()`` (which now requires ``entity_bank``) raises and the
+      subprocess exits non-zero — also loud, never a silent pass.
     """
     method = "cross-process-regeneration-diff"
     gp = generation_provenance or {}
@@ -1103,13 +1216,49 @@ def regeneration_determinism_report(generation_provenance: dict | None) -> dict:
         return {"passed": None, "method": method,
                 "reason": f"not applicable: generation method is {gp.get('method')!r}, "
                           f"not 'procedural-fabricated'"}
-    missing = [k for k in _REQUIRED_PROVENANCE_KEYS if k not in gp]
-    if missing:
-        return {"passed": None, "method": method,
-                "reason": f"not applicable: generation_provenance is missing {missing} "
-                          f"(a corpus certified before tempdoc 664's provenance-completeness fix)"}
-
     from . import corpus_generate as _cg
+    from . import entity_bank as _eb
+
+    payload_version = gp.get("payload_version")
+    if payload_version is None:
+        # Legacy (pre-767) payload: the old key set, and the old skip-on-incomplete
+        # semantics, which are safe here only because the key set is frozen — a legacy
+        # corpus cannot acquire a new required key.
+        missing = [k for k in _REQUIRED_PROVENANCE_KEYS if k not in gp]
+        if missing:
+            return {"passed": None, "method": method,
+                    "reason": f"not applicable: generation_provenance is missing {missing} "
+                              f"(a corpus certified before tempdoc 664's provenance-completeness fix)"}
+        # A pre-767 corpus is not regenerable by the current generator at all: the
+        # syllable-pair name minter and the counter-derived value space it was produced
+        # with were deleted, and `generate()` now requires an entity bank. Say so rather
+        # than reporting a mismatch as if the generator were non-deterministic.
+        return {"passed": None, "method": method,
+                "reason": "not applicable: generation_provenance predates payload "
+                          f"{_cg.PAYLOAD_VERSION} (no payload_version, no entity_bank); the "
+                          "payload that produced these bytes no longer exists in the generator"}
+
+    if payload_version != _cg.PAYLOAD_VERSION:
+        return {"passed": False, "method": method,
+                "reason": f"unknown payload_version {payload_version!r} "
+                          f"(this generator emits {_cg.PAYLOAD_VERSION!r})"}
+    # A DECLARED payload version with an incomplete parameter set is a hard failure, not a
+    # skip: the pre-767 skip path would silently turn a renamed or dropped provenance key
+    # into "check not run", which is indistinguishable from "check passed" in the report.
+    missing = [k for k in _PAYLOAD_V2_PROVENANCE_KEYS if k not in gp]
+    if missing:
+        return {"passed": False, "method": method,
+                "reason": f"generation_provenance declares {payload_version} but is missing "
+                          f"{missing}; determinism cannot be verified"}
+    bank_root = _eb.resolve_bank_reference(gp["entity_bank"])
+    if not (bank_root / _eb.BANK_FILENAME).is_file():
+        return {"passed": False, "method": method,
+                "reason": f"entity bank {gp['entity_bank']!r} is not present at {bank_root}"}
+    actual_sha = _eb.bank_sha256(bank_root)
+    if actual_sha != gp["entity_bank_sha256"]:
+        return {"passed": False, "method": method,
+                "reason": f"entity bank digest mismatch: provenance pins "
+                          f"{gp['entity_bank_sha256']}, on-disk bank is {actual_sha}"}
 
     with tempfile.TemporaryDirectory() as td:
         result = _cg.regenerate_and_diff(
@@ -1117,6 +1266,7 @@ def regeneration_determinism_report(generation_provenance: dict | None) -> dict:
             axis=gp["axis"], lang=gp["lang"], seed=gp["seed"], hops=gp["hops"],
             distractor_ratio=gp["distractor_ratio"], semantic=gp["semantic"],
             n_chains=gp["n_chains"], doc_words=gp["doc_words"],
+            entity_bank=bank_root,
         )
 
     if not result["ok"]:

@@ -214,8 +214,12 @@ __pycache__/
 # Mirror of .claude/skills/ created by some agent tools
 .agents/
 
-# Evaluation datasets (large, fetched on demand)
+# Evaluation datasets (large, fetched on demand).
+# The trailing wildcard covers per-member staging dirs (datasets-miracl/, etc.):
+# a bare `datasets/` entry left those tracked, and one such dir reached 2.5 GB
+# untracked-but-stageable before this was caught (tempdoc 767 §O).
 datasets/
+datasets-*/
 
 # Eval toolkit scratch (session-specific outputs)
 scripts/jseval/tmp/

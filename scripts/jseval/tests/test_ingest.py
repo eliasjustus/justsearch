@@ -476,7 +476,8 @@ def test_ensure_materialized_renders_scan_docs_as_png(tmp_path, monkeypatch):
     from jseval.materialize import doc_id_to_filename
 
     src = tmp_path / "src"
-    cg.generate(src, axis="scan", n_chains=2, hops=1, distractor_ratio=1, doc_words=40, seed=5)
+    cg.generate(src, axis="scan", n_chains=2, hops=1, distractor_ratio=1, doc_words=40, seed=5,
+                entity_bank=Path(__file__).resolve().parent / "fixtures" / "entity-bank-fixture")
     docs = [json.loads(line) for line in (src / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
 
     base = tmp_path / "datasets"

@@ -2,178 +2,920 @@
   "method": "real-text-injection-v1",
   "seed": 707,
   "style": "interleave",
-  "n_gold_docs": 40,
-  "n_distractors": 9960,
+  "n_gold_docs": 100,
+  "n_distractors": 9900,
   "host_min_words": 60,
   "host_mapping": [
     {
-      "gold_id": "brelby39",
-      "host_id": "maildir__brawner-s__deleted_items__85."
+      "gold_id": "maildir__nemec-g__inbox__1559.",
+      "host_id": "maildir__brawner-s__deleted_items__85.",
+      "fabricated_id": "advanceoral power trhed"
     },
     {
-      "gold_id": "breldell15",
-      "host_id": "maildir__horton-s___sent_mail__191."
+      "gold_id": "maildir__jones-t__all_documents__5747.",
+      "host_id": "maildir__horton-s___sent_mail__191.",
+      "fabricated_id": "aherst, tx"
     },
     {
-      "gold_id": "brelker31",
-      "host_id": "maildir__mann-k___sent_mail__393."
+      "gold_id": "maildir__semperger-c__deleted_items__561.",
+      "host_id": "maildir__mann-k___sent_mail__393.",
+      "fabricated_id": "alloyd martit"
     },
     {
-      "gold_id": "brelker38",
-      "host_id": "maildir__kean-s__all_documents__5728."
+      "gold_id": "maildir__symes-k___sent_mail__1641.",
+      "host_id": "maildir__kean-s__all_documents__5728.",
+      "fabricated_id": "alndy hoin signy weein"
     },
     {
-      "gold_id": "cavby12",
-      "host_id": "maildir__germany-c__all_documents__2700."
+      "gold_id": "maildir__steffes-j__sent_items__1953.",
+      "host_id": "maildir__germany-c__all_documents__2700.",
+      "fabricated_id": "arorge nationaowski wildlrge reowski"
     },
     {
-      "gold_id": "cavgrove40",
-      "host_id": "maildir__beck-s__inbox__633."
+      "gold_id": "maildir__horton-s__all_documents__448.",
+      "host_id": "maildir__beck-s__inbox__633.",
+      "fabricated_id": "asseather managemener outsourockhart arrangson proposal paus"
     },
     {
-      "gold_id": "cavric13",
-      "host_id": "maildir__dasovich-j__all_documents__10481."
+      "gold_id": "maildir__taylor-m__inbox__398.",
+      "host_id": "maildir__dasovich-j__all_documents__10481.",
+      "fabricated_id": "blanca daugherus"
     },
     {
-      "gold_id": "druash5",
-      "host_id": "maildir__presto-k__deleted_items__656."
+      "gold_id": "maildir__rogers-b__all_documents__804.",
+      "host_id": "maildir__presto-k__deleted_items__656.",
+      "fabricated_id": "boarham of gm of unham"
     },
     {
-      "gold_id": "drugrove8",
-      "host_id": "maildir__beck-s__all_documents__2182."
+      "gold_id": "maildir__hyatt-k__deleted_items__847.",
+      "host_id": "maildir__beck-s__all_documents__2182.",
+      "fabricated_id": "brae, nj"
     },
     {
-      "gold_id": "drureach1",
-      "host_id": "maildir__dasovich-j__inbox__1605."
+      "gold_id": "maildir__dasovich-j__all_documents__9542.",
+      "host_id": "maildir__dasovich-j__inbox__1605.",
+      "fabricated_id": "brentwague, tn"
     },
     {
-      "gold_id": "harnvale3",
-      "host_id": "maildir__blair-l__deleted_items__666."
+      "gold_id": "maildir__cuilla-m__sent_items__683.",
+      "host_id": "maildir__blair-l__deleted_items__666.",
+      "fabricated_id": "brigk skileigh avendish for solar pock"
     },
     {
-      "gold_id": "kanfen9",
-      "host_id": "maildir__kean-s__all_documents__6079."
+      "gold_id": "maildir__mann-k___sent_mail__2286.",
+      "host_id": "maildir__kean-s__all_documents__6079.",
+      "fabricated_id": "btt ellimble"
     },
     {
-      "gold_id": "limric21",
-      "host_id": "maildir__kitchen-l___americas__regulatory__12."
+      "gold_id": "maildir__shackleton-s__all_documents__10362.",
+      "host_id": "maildir__kitchen-l___americas__regulatory__12.",
+      "fabricated_id": "buffveler newws"
     },
     {
-      "gold_id": "limvale22",
-      "host_id": "maildir__schwieger-j__all_documents__44."
+      "gold_id": "maildir__wolfe-j__09_saved__31.",
+      "host_id": "maildir__schwieger-j__all_documents__44.",
+      "fabricated_id": "caliary gov"
     },
     {
-      "gold_id": "mirker33",
-      "host_id": "maildir__jones-t__all_documents__10882."
+      "gold_id": "maildir__bass-e__deleted_items__98.",
+      "host_id": "maildir__jones-t__all_documents__10882.",
+      "fabricated_id": "carmkwila, in"
     },
     {
-      "gold_id": "mirven36",
-      "host_id": "maildir__dasovich-j__all_documents__1469."
+      "gold_id": "maildir__mckay-b__deleted_items__698.",
+      "host_id": "maildir__dasovich-j__all_documents__1469.",
+      "fabricated_id": "cenfic ofnd"
     },
     {
-      "gold_id": "mirwick11",
-      "host_id": "maildir__dasovich-j__all_documents__12080."
+      "gold_id": "maildir__germany-c__all_documents__3779.",
+      "host_id": "maildir__dasovich-j__all_documents__12080.",
+      "fabricated_id": "chicagrt, il"
     },
     {
-      "gold_id": "nuthstone34",
-      "host_id": "maildir__scott-s__inbox__314."
+      "gold_id": "maildir__jones-t__all_documents__5412.",
+      "host_id": "maildir__scott-s__inbox__314.",
+      "fabricated_id": "co frequeats fd cted"
     },
     {
-      "gold_id": "olmvale17",
-      "host_id": "maildir__mims-thurston-p__inbox__42."
+      "gold_id": "maildir__hain-m__all_documents__549.",
+      "host_id": "maildir__mims-thurston-p__inbox__42.",
+      "fabricated_id": "corngton, ak"
     },
     {
-      "gold_id": "orrgrove25",
-      "host_id": "maildir__germany-c__sent_items__716."
+      "gold_id": "maildir__watson-k__italy__18.",
+      "host_id": "maildir__germany-c__sent_items__716.",
+      "fabricated_id": "cotd ve"
     },
     {
-      "gold_id": "orrvale7",
-      "host_id": "maildir__hain-m___sent_mail__11."
+      "gold_id": "maildir__scott-s___sent_mail__51.",
+      "host_id": "maildir__hain-m___sent_mail__11.",
+      "fabricated_id": "cua, ca"
     },
     {
-      "gold_id": "pellash4",
-      "host_id": "maildir__symes-k__all_documents__2479."
+      "gold_id": "maildir__hernandez-j__all_documents__893.",
+      "host_id": "maildir__symes-k__all_documents__2479.",
+      "fabricated_id": "daathy marketinlly manaathy"
     },
     {
-      "gold_id": "pellstone2",
-      "host_id": "maildir__arnold-j___sent_mail__452."
+      "gold_id": "maildir__kean-s__pr_crisis_management__51.",
+      "host_id": "maildir__arnold-j___sent_mail__452.",
+      "fabricated_id": "danieen plotksen"
     },
     {
-      "gold_id": "quendell26",
-      "host_id": "maildir__ybarbo-p__procaribe__39."
+      "gold_id": "maildir__dasovich-j__all_documents__9778.",
+      "host_id": "maildir__ybarbo-p__procaribe__39.",
+      "fabricated_id": "dedex barm"
     },
     {
-      "gold_id": "rellholt20",
-      "host_id": "maildir__shapiro-r__deleted_items__198."
+      "gold_id": "maildir__lay-k__deleted_items__1274.",
+      "host_id": "maildir__shapiro-r__deleted_items__198.",
+      "fabricated_id": "dublint, oh"
     },
     {
-      "gold_id": "rellven10",
-      "host_id": "maildir__salisbury-h__read__15."
+      "gold_id": "maildir__bass-e__deleted_items__953.",
+      "host_id": "maildir__salisbury-h__read__15.",
+      "fabricated_id": "ed missiork"
     },
     {
-      "gold_id": "skomond32",
-      "host_id": "maildir__dasovich-j__all_documents__9833."
+      "gold_id": "maildir__lewis-a__deleted_items__557.",
+      "host_id": "maildir__dasovich-j__all_documents__9833.",
+      "fabricated_id": "el paine natural gas companipeline"
     },
     {
-      "gold_id": "skoric37",
-      "host_id": "maildir__bass-e___sent_mail__197."
+      "gold_id": "maildir__parks-j__deleted_items__682.",
+      "host_id": "maildir__bass-e___sent_mail__197.",
+      "fabricated_id": "eme, ca"
     },
     {
-      "gold_id": "skowick14",
-      "host_id": "maildir__dasovich-j__all_documents__1192."
+      "gold_id": "maildir__campbell-l__all_documents__1786.",
+      "host_id": "maildir__dasovich-j__all_documents__1192.",
+      "fabricated_id": "energy commital minergy"
     },
     {
-      "gold_id": "tasdac6",
-      "host_id": "maildir__sager-e__inbox__861."
+      "gold_id": "maildir__kaminski-v__deleted_items__1508.",
+      "host_id": "maildir__sager-e__inbox__861.",
+      "fabricated_id": "enis direcerick"
     },
     {
-      "gold_id": "tasgrove19",
-      "host_id": "maildir__geaccone-t___sent_mail__182."
+      "gold_id": "maildir__sager-e__sent_items__655.",
+      "host_id": "maildir__geaccone-t___sent_mail__182.",
+      "fabricated_id": "enll forlow"
     },
     {
-      "gold_id": "tasreach24",
-      "host_id": "maildir__beck-s__inbox__644."
+      "gold_id": "maildir__haedicke-m__inbox__493.",
+      "host_id": "maildir__beck-s__inbox__644.",
+      "fabricated_id": "enrok cs bustock controings"
     },
     {
-      "gold_id": "tasvale29",
-      "host_id": "maildir__mann-k___sent_mail__1402."
+      "gold_id": "maildir__steffes-j__inbox__71.",
+      "host_id": "maildir__mann-k___sent_mail__1402.",
+      "fabricated_id": "enroly tranric serviceer cews"
     },
     {
-      "gold_id": "vexfen16",
-      "host_id": "maildir__schwieger-j__sent_items__37."
+      "gold_id": "maildir__corman-s__inbox__archives__693.",
+      "host_id": "maildir__schwieger-j__sent_items__37.",
+      "fabricated_id": "evansnited, il"
     },
     {
-      "gold_id": "vexvale28",
-      "host_id": "maildir__heard-m__inbox__164."
+      "gold_id": "maildir__campbell-l__all_documents__1060.",
+      "host_id": "maildir__heard-m__inbox__164.",
+      "fabricated_id": "ewer industrrices refore fewer enes coise"
     },
     {
-      "gold_id": "vorby23",
-      "host_id": "maildir__kean-s__all_documents__1868."
+      "gold_id": "maildir__hyvl-d__all_documents__943.",
+      "host_id": "maildir__kean-s__all_documents__1868.",
+      "fabricated_id": "fon pierce, fl"
     },
     {
-      "gold_id": "vorthorn30",
-      "host_id": "maildir__dasovich-j__inbox__531."
+      "gold_id": "maildir__shackleton-s__all_documents__2355.",
+      "host_id": "maildir__dasovich-j__inbox__531.",
+      "fabricated_id": "futurass commissstomer"
     },
     {
-      "gold_id": "vorwick18",
-      "host_id": "maildir__meyers-a__deleted_items__424."
+      "gold_id": "maildir__campbell-l__inbox__836.",
+      "host_id": "maildir__meyers-a__deleted_items__424.",
+      "fabricated_id": "galvle, tx"
     },
     {
-      "gold_id": "wendcrag27",
-      "host_id": "maildir__corman-s__sent_items__160."
+      "gold_id": "maildir__nemec-g__all_documents__4109.",
+      "host_id": "maildir__corman-s__sent_items__160.",
+      "fabricated_id": "gas tralectric where prician are going-- not"
     },
     {
-      "gold_id": "zelfen35",
-      "host_id": "maildir__mims-thurston-p__deleted_items__363."
+      "gold_id": "maildir__germany-c__sent_items__664.",
+      "host_id": "maildir__mims-thurston-p__deleted_items__363.",
+      "fabricated_id": "gohill butd"
+    },
+    {
+      "gold_id": "maildir__jones-t__all_documents__10375.",
+      "host_id": "maildir__farmer-d__all_documents__2842.",
+      "fabricated_id": "grar chler try"
+    },
+    {
+      "gold_id": "maildir__dasovich-j__all_documents__11720.",
+      "host_id": "maildir__fossum-d___sent_mail__528.",
+      "fabricated_id": "grn, ct"
+    },
+    {
+      "gold_id": "maildir__mims-thurston-p__deleted_items__46.",
+      "host_id": "maildir__nemec-g__inbox__858.",
+      "fabricated_id": "gwest munde"
+    },
+    {
+      "gold_id": "maildir__shackleton-s__all_documents__8161.",
+      "host_id": "maildir__kitchen-l___americas__south_america__15.",
+      "fabricated_id": "hssembly amigos"
+    },
+    {
+      "gold_id": "maildir__taylor-m__all_documents__7828.",
+      "host_id": "maildir__jones-t__sent_items__340.",
+      "fabricated_id": "inc. cossing inc"
+    },
+    {
+      "gold_id": "maildir__mann-k___sent_mail__2257.",
+      "host_id": "maildir__keavey-p__all_documents__230.",
+      "fabricated_id": "inncy separate busiagement unitnt hallibcy co"
+    },
+    {
+      "gold_id": "maildir__hain-m__all_documents__329.",
+      "host_id": "maildir__scott-s___sent_mail__739.",
+      "fabricated_id": "international linetners"
+    },
+    {
+      "gold_id": "maildir__neal-s___sent_mail__887.",
+      "host_id": "maildir__stclair-c__all_documents__1100.",
+      "fabricated_id": "ir dale"
+    },
+    {
+      "gold_id": "maildir__lay-k__all_documents__525.",
+      "host_id": "maildir__shackleton-s__all_documents__2936.",
+      "fabricated_id": "jefary scott govenaipari"
+    },
+    {
+      "gold_id": "maildir__kaminski-v___sent_mail__4443.",
+      "host_id": "maildir__schwieger-j__sent_items__92.",
+      "fabricated_id": "jla, ms"
+    },
+    {
+      "gold_id": "maildir__scott-s___sent_mail__909.",
+      "host_id": "maildir__lay-k__deleted_items__1057.",
+      "fabricated_id": "jupimmercial mermation"
+    },
+    {
+      "gold_id": "maildir__rogers-b__all_documents__536.",
+      "host_id": "maildir__stclair-c__all_documents__617.",
+      "fabricated_id": "kamemt city"
+    },
+    {
+      "gold_id": "maildir__farmer-d__all_documents__477.",
+      "host_id": "maildir__shively-h__deleted_items__450.",
+      "fabricated_id": "kee, nc"
+    },
+    {
+      "gold_id": "maildir__derrick-j__inbox__157.",
+      "host_id": "maildir__nemec-g__all_documents__744.",
+      "fabricated_id": "kmpoc, de"
+    },
+    {
+      "gold_id": "maildir__kean-s__all_documents__5630.",
+      "host_id": "maildir__shackleton-s__all_documents__11943.",
+      "fabricated_id": "langna solational tna"
+    },
+    {
+      "gold_id": "maildir__panus-s__inbox__0.",
+      "host_id": "maildir__kean-s__project_summer__236.",
+      "fabricated_id": "lanidgeland fairview, or"
+    },
+    {
+      "gold_id": "maildir__nemec-g__sent_items__973.",
+      "host_id": "maildir__hyatt-k__sent_items__98.",
+      "fabricated_id": "learnit managemete"
+    },
+    {
+      "gold_id": "maildir__dasovich-j__administrative__92.",
+      "host_id": "maildir__donoho-l__inbox__112.",
+      "fabricated_id": "lng invoiolson dan"
+    },
+    {
+      "gold_id": "maildir__neal-s___sent_mail__33.",
+      "host_id": "maildir__guzman-m__all_documents__39.",
+      "fabricated_id": "macago, fl"
+    },
+    {
+      "gold_id": "maildir__lay-k__deleted_items__51.",
+      "host_id": "maildir__shackleton-s__all_documents__2358.",
+      "fabricated_id": "masaytown portland, or"
+    },
+    {
+      "gold_id": "maildir__parks-j__deleted_items__259.",
+      "host_id": "maildir__stclair-c__all_documents__2483.",
+      "fabricated_id": "mg anducation"
+    },
+    {
+      "gold_id": "maildir__shankman-j__deleted_items__395.",
+      "host_id": "maildir__bass-e__deleted_items__56.",
+      "fabricated_id": "mrham, co"
+    },
+    {
+      "gold_id": "maildir__guzman-m___sent_mail__240.",
+      "host_id": "maildir__derrick-j__sent_items__53.",
+      "fabricated_id": "my crozin"
+    },
+    {
+      "gold_id": "maildir__kaminski-v__deleted_items__505.",
+      "host_id": "maildir__campbell-l__inbox__314.",
+      "fabricated_id": "napoleovi, la"
+    },
+    {
+      "gold_id": "maildir__shackleton-s__all_documents__9075.",
+      "host_id": "maildir__stclair-c__all_documents__523.",
+      "fabricated_id": "norin, il"
+    },
+    {
+      "gold_id": "maildir__kean-s__all_documents__5841.",
+      "host_id": "maildir__south-s__all_documents__12.",
+      "fabricated_id": "norwak, ct"
+    },
+    {
+      "gold_id": "maildir__hyatt-k__inbox__3.",
+      "host_id": "maildir__panus-s__deleted_items__125.",
+      "fabricated_id": "octagoabisco redings"
+    },
+    {
+      "gold_id": "maildir__cash-m__all_documents__887.",
+      "host_id": "maildir__dasovich-j__all_documents__13053.",
+      "fabricated_id": "owenss, ky"
+    },
+    {
+      "gold_id": "maildir__rogers-b___sent_mail__269.",
+      "host_id": "maildir__taylor-m__all_documents__3503.",
+      "fabricated_id": "patchinonference togses"
+    },
+    {
+      "gold_id": "maildir__mann-k__all_documents__3582.",
+      "host_id": "maildir__zipper-a__deleted_items__453.",
+      "fabricated_id": "piance serviding"
+    },
+    {
+      "gold_id": "maildir__rogers-b___sent_mail__324.",
+      "host_id": "maildir__quigley-d__prc__1.",
+      "fabricated_id": "pocar, id"
+    },
+    {
+      "gold_id": "maildir__parks-j__deleted_items__208.",
+      "host_id": "maildir__ward-k__deleted_items__4.",
+      "fabricated_id": "pouleel de bl"
+    },
+    {
+      "gold_id": "maildir__presto-k__deleted_items__559.",
+      "host_id": "maildir__giron-d__inbox__34.",
+      "fabricated_id": "poulet de brmberg"
+    },
+    {
+      "gold_id": "maildir__watson-k__inbox__651.",
+      "host_id": "maildir__kaminski-v___sent_mail__1266.",
+      "fabricated_id": "pried ves partners"
+    },
+    {
+      "gold_id": "maildir__salisbury-h__inbox__146.",
+      "host_id": "maildir__sanders-r__px__36.",
+      "fabricated_id": "pssee enet authority of kpeals"
+    },
+    {
+      "gold_id": "maildir__campbell-l__inbox__289.",
+      "host_id": "maildir__corman-s__inbox__archives__old_messages__2.",
+      "fabricated_id": "public serviego company of new mexigent"
+    },
+    {
+      "gold_id": "maildir__heard-m__sent_items__251.",
+      "host_id": "maildir__jones-t__all_documents__9774.",
+      "fabricated_id": "punterill cornaker"
+    },
+    {
+      "gold_id": "maildir__haedicke-m__all_documents__1031.",
+      "host_id": "maildir__cash-m__inbox__46.",
+      "fabricated_id": "ralif conference newslif"
+    },
+    {
+      "gold_id": "maildir__shackleton-s__all_documents__9541.",
+      "host_id": "maildir__rogers-b__all_documents__1828.",
+      "fabricated_id": "rutlewark, ne"
+    },
+    {
+      "gold_id": "maildir__skilling-j__deleted_items__813.",
+      "host_id": "maildir__kean-s__all_documents__1851.",
+      "fabricated_id": "s. disnergy cy jmerican bnergy enmpany oan"
+    },
+    {
+      "gold_id": "maildir__dasovich-j__all_documents__7061.",
+      "host_id": "maildir__shackleton-s__sent_items__345.",
+      "fabricated_id": "samas, ny"
+    },
+    {
+      "gold_id": "maildir__symes-k___sent_mail__998.",
+      "host_id": "maildir__corman-s__deleted_items__166.",
+      "fabricated_id": "schaereak property"
+    },
+    {
+      "gold_id": "maildir__dasovich-j__inbox__767.",
+      "host_id": "maildir__nemec-g__sent_items__567.",
+      "fabricated_id": "scottsdaloit, az"
+    },
+    {
+      "gold_id": "maildir__dasovich-j__deleted_items__1895.",
+      "host_id": "maildir__rogers-b__all_documents__1889.",
+      "fabricated_id": "sheila exinergy for company"
+    },
+    {
+      "gold_id": "maildir__shankman-j__inbox__79.",
+      "host_id": "maildir__haedicke-m__all_documents__2395.",
+      "fabricated_id": "streverse, ne"
+    },
+    {
+      "gold_id": "maildir__dasovich-j__all_documents__1895.",
+      "host_id": "maildir__germany-c__sent_items__837.",
+      "fabricated_id": "stuking says lning poervice corking"
+    },
+    {
+      "gold_id": "maildir__lay-k__deleted_items__160.",
+      "host_id": "maildir__kaminski-v__sent_items__163.",
+      "fabricated_id": "surid go sporavid"
+    },
+    {
+      "gold_id": "maildir__jones-t__inbox__209.",
+      "host_id": "maildir__scholtes-d__diana_scholtes__saved_sent__111.",
+      "fabricated_id": "sweetwatz, tx"
+    },
+    {
+      "gold_id": "maildir__saibi-e__inbox__891.",
+      "host_id": "maildir__jones-t__all_documents__10442.",
+      "fabricated_id": "switzer poweing physier"
+    },
+    {
+      "gold_id": "maildir__gang-l__deleted_items__733.",
+      "host_id": "maildir__derrick-j__inbox__2.",
+      "fabricated_id": "thanksgiving whstante"
+    },
+    {
+      "gold_id": "maildir__whitt-m__inbox__878.",
+      "host_id": "maildir__dasovich-j__inbox__1007.",
+      "fabricated_id": "thorntolis, co"
+    },
+    {
+      "gold_id": "maildir__dasovich-j__all_documents__11654.",
+      "host_id": "maildir__heard-m__sent_items__662.",
+      "fabricated_id": "thper alleesk revirt"
+    },
+    {
+      "gold_id": "maildir__dasovich-j__all_documents__28550.",
+      "host_id": "maildir__guzman-m__all_documents__104.",
+      "fabricated_id": "transaction sults"
+    },
+    {
+      "gold_id": "maildir__kaminski-v___sent_mail__490.",
+      "host_id": "maildir__shackleton-s__all_documents__4104.",
+      "fabricated_id": "transalind er marketinroduction"
+    },
+    {
+      "gold_id": "maildir__watson-k__sent_items__158.",
+      "host_id": "maildir__holst-k__inbox__75.",
+      "fabricated_id": "updatunita cgin st"
+    },
+    {
+      "gold_id": "maildir__shapiro-r__deleted_items__965.",
+      "host_id": "maildir__taylor-m__inbox__nox_model__16.",
+      "fabricated_id": "us justdburn department'fice civan righoodburn divisiice"
+    },
+    {
+      "gold_id": "maildir__lay-k__inbox__518.",
+      "host_id": "maildir__lewis-a__deleted_items__283.",
+      "fabricated_id": "vin ehen"
+    },
+    {
+      "gold_id": "maildir__zufferli-j__sent_items__79.",
+      "host_id": "maildir__dasovich-j__all_documents__11584.",
+      "fabricated_id": "waighty zoss"
+    },
+    {
+      "gold_id": "maildir__kitchen-l___americas__eol__11.",
+      "host_id": "maildir__jones-t__all_documents__10956.",
+      "fabricated_id": "wiational lowegy gas rateny ch rapidnistration"
+    },
+    {
+      "gold_id": "maildir__sanders-r__all_documents__2054.",
+      "host_id": "maildir__germany-c___sent_mail__1022.",
+      "fabricated_id": "wilminax, de"
     }
   ],
-  "assembled_digest": "769c27655d646e994420f5bbbe419557e79e732de2507a35588f96440ee304c3",
+  "gold_id_mapping": [
+    {
+      "fabricated_id": "advanceoral power trhed",
+      "assembled_id": "maildir__nemec-g__inbox__1559."
+    },
+    {
+      "fabricated_id": "aherst, tx",
+      "assembled_id": "maildir__jones-t__all_documents__5747."
+    },
+    {
+      "fabricated_id": "alloyd martit",
+      "assembled_id": "maildir__semperger-c__deleted_items__561."
+    },
+    {
+      "fabricated_id": "alndy hoin signy weein",
+      "assembled_id": "maildir__symes-k___sent_mail__1641."
+    },
+    {
+      "fabricated_id": "arorge nationaowski wildlrge reowski",
+      "assembled_id": "maildir__steffes-j__sent_items__1953."
+    },
+    {
+      "fabricated_id": "asseather managemener outsourockhart arrangson proposal paus",
+      "assembled_id": "maildir__horton-s__all_documents__448."
+    },
+    {
+      "fabricated_id": "blanca daugherus",
+      "assembled_id": "maildir__taylor-m__inbox__398."
+    },
+    {
+      "fabricated_id": "boarham of gm of unham",
+      "assembled_id": "maildir__rogers-b__all_documents__804."
+    },
+    {
+      "fabricated_id": "brae, nj",
+      "assembled_id": "maildir__hyatt-k__deleted_items__847."
+    },
+    {
+      "fabricated_id": "brentwague, tn",
+      "assembled_id": "maildir__dasovich-j__all_documents__9542."
+    },
+    {
+      "fabricated_id": "brigk skileigh avendish for solar pock",
+      "assembled_id": "maildir__cuilla-m__sent_items__683."
+    },
+    {
+      "fabricated_id": "btt ellimble",
+      "assembled_id": "maildir__mann-k___sent_mail__2286."
+    },
+    {
+      "fabricated_id": "buffveler newws",
+      "assembled_id": "maildir__shackleton-s__all_documents__10362."
+    },
+    {
+      "fabricated_id": "caliary gov",
+      "assembled_id": "maildir__wolfe-j__09_saved__31."
+    },
+    {
+      "fabricated_id": "carmkwila, in",
+      "assembled_id": "maildir__bass-e__deleted_items__98."
+    },
+    {
+      "fabricated_id": "cenfic ofnd",
+      "assembled_id": "maildir__mckay-b__deleted_items__698."
+    },
+    {
+      "fabricated_id": "chicagrt, il",
+      "assembled_id": "maildir__germany-c__all_documents__3779."
+    },
+    {
+      "fabricated_id": "co frequeats fd cted",
+      "assembled_id": "maildir__jones-t__all_documents__5412."
+    },
+    {
+      "fabricated_id": "corngton, ak",
+      "assembled_id": "maildir__hain-m__all_documents__549."
+    },
+    {
+      "fabricated_id": "cotd ve",
+      "assembled_id": "maildir__watson-k__italy__18."
+    },
+    {
+      "fabricated_id": "cua, ca",
+      "assembled_id": "maildir__scott-s___sent_mail__51."
+    },
+    {
+      "fabricated_id": "daathy marketinlly manaathy",
+      "assembled_id": "maildir__hernandez-j__all_documents__893."
+    },
+    {
+      "fabricated_id": "danieen plotksen",
+      "assembled_id": "maildir__kean-s__pr_crisis_management__51."
+    },
+    {
+      "fabricated_id": "dedex barm",
+      "assembled_id": "maildir__dasovich-j__all_documents__9778."
+    },
+    {
+      "fabricated_id": "dublint, oh",
+      "assembled_id": "maildir__lay-k__deleted_items__1274."
+    },
+    {
+      "fabricated_id": "ed missiork",
+      "assembled_id": "maildir__bass-e__deleted_items__953."
+    },
+    {
+      "fabricated_id": "el paine natural gas companipeline",
+      "assembled_id": "maildir__lewis-a__deleted_items__557."
+    },
+    {
+      "fabricated_id": "eme, ca",
+      "assembled_id": "maildir__parks-j__deleted_items__682."
+    },
+    {
+      "fabricated_id": "energy commital minergy",
+      "assembled_id": "maildir__campbell-l__all_documents__1786."
+    },
+    {
+      "fabricated_id": "enis direcerick",
+      "assembled_id": "maildir__kaminski-v__deleted_items__1508."
+    },
+    {
+      "fabricated_id": "enll forlow",
+      "assembled_id": "maildir__sager-e__sent_items__655."
+    },
+    {
+      "fabricated_id": "enrok cs bustock controings",
+      "assembled_id": "maildir__haedicke-m__inbox__493."
+    },
+    {
+      "fabricated_id": "enroly tranric serviceer cews",
+      "assembled_id": "maildir__steffes-j__inbox__71."
+    },
+    {
+      "fabricated_id": "evansnited, il",
+      "assembled_id": "maildir__corman-s__inbox__archives__693."
+    },
+    {
+      "fabricated_id": "ewer industrrices refore fewer enes coise",
+      "assembled_id": "maildir__campbell-l__all_documents__1060."
+    },
+    {
+      "fabricated_id": "fon pierce, fl",
+      "assembled_id": "maildir__hyvl-d__all_documents__943."
+    },
+    {
+      "fabricated_id": "futurass commissstomer",
+      "assembled_id": "maildir__shackleton-s__all_documents__2355."
+    },
+    {
+      "fabricated_id": "galvle, tx",
+      "assembled_id": "maildir__campbell-l__inbox__836."
+    },
+    {
+      "fabricated_id": "gas tralectric where prician are going-- not",
+      "assembled_id": "maildir__nemec-g__all_documents__4109."
+    },
+    {
+      "fabricated_id": "gohill butd",
+      "assembled_id": "maildir__germany-c__sent_items__664."
+    },
+    {
+      "fabricated_id": "grar chler try",
+      "assembled_id": "maildir__jones-t__all_documents__10375."
+    },
+    {
+      "fabricated_id": "grn, ct",
+      "assembled_id": "maildir__dasovich-j__all_documents__11720."
+    },
+    {
+      "fabricated_id": "gwest munde",
+      "assembled_id": "maildir__mims-thurston-p__deleted_items__46."
+    },
+    {
+      "fabricated_id": "hssembly amigos",
+      "assembled_id": "maildir__shackleton-s__all_documents__8161."
+    },
+    {
+      "fabricated_id": "inc. cossing inc",
+      "assembled_id": "maildir__taylor-m__all_documents__7828."
+    },
+    {
+      "fabricated_id": "inncy separate busiagement unitnt hallibcy co",
+      "assembled_id": "maildir__mann-k___sent_mail__2257."
+    },
+    {
+      "fabricated_id": "international linetners",
+      "assembled_id": "maildir__hain-m__all_documents__329."
+    },
+    {
+      "fabricated_id": "ir dale",
+      "assembled_id": "maildir__neal-s___sent_mail__887."
+    },
+    {
+      "fabricated_id": "jefary scott govenaipari",
+      "assembled_id": "maildir__lay-k__all_documents__525."
+    },
+    {
+      "fabricated_id": "jla, ms",
+      "assembled_id": "maildir__kaminski-v___sent_mail__4443."
+    },
+    {
+      "fabricated_id": "jupimmercial mermation",
+      "assembled_id": "maildir__scott-s___sent_mail__909."
+    },
+    {
+      "fabricated_id": "kamemt city",
+      "assembled_id": "maildir__rogers-b__all_documents__536."
+    },
+    {
+      "fabricated_id": "kee, nc",
+      "assembled_id": "maildir__farmer-d__all_documents__477."
+    },
+    {
+      "fabricated_id": "kmpoc, de",
+      "assembled_id": "maildir__derrick-j__inbox__157."
+    },
+    {
+      "fabricated_id": "langna solational tna",
+      "assembled_id": "maildir__kean-s__all_documents__5630."
+    },
+    {
+      "fabricated_id": "lanidgeland fairview, or",
+      "assembled_id": "maildir__panus-s__inbox__0."
+    },
+    {
+      "fabricated_id": "learnit managemete",
+      "assembled_id": "maildir__nemec-g__sent_items__973."
+    },
+    {
+      "fabricated_id": "lng invoiolson dan",
+      "assembled_id": "maildir__dasovich-j__administrative__92."
+    },
+    {
+      "fabricated_id": "macago, fl",
+      "assembled_id": "maildir__neal-s___sent_mail__33."
+    },
+    {
+      "fabricated_id": "masaytown portland, or",
+      "assembled_id": "maildir__lay-k__deleted_items__51."
+    },
+    {
+      "fabricated_id": "mg anducation",
+      "assembled_id": "maildir__parks-j__deleted_items__259."
+    },
+    {
+      "fabricated_id": "mrham, co",
+      "assembled_id": "maildir__shankman-j__deleted_items__395."
+    },
+    {
+      "fabricated_id": "my crozin",
+      "assembled_id": "maildir__guzman-m___sent_mail__240."
+    },
+    {
+      "fabricated_id": "napoleovi, la",
+      "assembled_id": "maildir__kaminski-v__deleted_items__505."
+    },
+    {
+      "fabricated_id": "norin, il",
+      "assembled_id": "maildir__shackleton-s__all_documents__9075."
+    },
+    {
+      "fabricated_id": "norwak, ct",
+      "assembled_id": "maildir__kean-s__all_documents__5841."
+    },
+    {
+      "fabricated_id": "octagoabisco redings",
+      "assembled_id": "maildir__hyatt-k__inbox__3."
+    },
+    {
+      "fabricated_id": "owenss, ky",
+      "assembled_id": "maildir__cash-m__all_documents__887."
+    },
+    {
+      "fabricated_id": "patchinonference togses",
+      "assembled_id": "maildir__rogers-b___sent_mail__269."
+    },
+    {
+      "fabricated_id": "piance serviding",
+      "assembled_id": "maildir__mann-k__all_documents__3582."
+    },
+    {
+      "fabricated_id": "pocar, id",
+      "assembled_id": "maildir__rogers-b___sent_mail__324."
+    },
+    {
+      "fabricated_id": "pouleel de bl",
+      "assembled_id": "maildir__parks-j__deleted_items__208."
+    },
+    {
+      "fabricated_id": "poulet de brmberg",
+      "assembled_id": "maildir__presto-k__deleted_items__559."
+    },
+    {
+      "fabricated_id": "pried ves partners",
+      "assembled_id": "maildir__watson-k__inbox__651."
+    },
+    {
+      "fabricated_id": "pssee enet authority of kpeals",
+      "assembled_id": "maildir__salisbury-h__inbox__146."
+    },
+    {
+      "fabricated_id": "public serviego company of new mexigent",
+      "assembled_id": "maildir__campbell-l__inbox__289."
+    },
+    {
+      "fabricated_id": "punterill cornaker",
+      "assembled_id": "maildir__heard-m__sent_items__251."
+    },
+    {
+      "fabricated_id": "ralif conference newslif",
+      "assembled_id": "maildir__haedicke-m__all_documents__1031."
+    },
+    {
+      "fabricated_id": "rutlewark, ne",
+      "assembled_id": "maildir__shackleton-s__all_documents__9541."
+    },
+    {
+      "fabricated_id": "s. disnergy cy jmerican bnergy enmpany oan",
+      "assembled_id": "maildir__skilling-j__deleted_items__813."
+    },
+    {
+      "fabricated_id": "samas, ny",
+      "assembled_id": "maildir__dasovich-j__all_documents__7061."
+    },
+    {
+      "fabricated_id": "schaereak property",
+      "assembled_id": "maildir__symes-k___sent_mail__998."
+    },
+    {
+      "fabricated_id": "scottsdaloit, az",
+      "assembled_id": "maildir__dasovich-j__inbox__767."
+    },
+    {
+      "fabricated_id": "sheila exinergy for company",
+      "assembled_id": "maildir__dasovich-j__deleted_items__1895."
+    },
+    {
+      "fabricated_id": "streverse, ne",
+      "assembled_id": "maildir__shankman-j__inbox__79."
+    },
+    {
+      "fabricated_id": "stuking says lning poervice corking",
+      "assembled_id": "maildir__dasovich-j__all_documents__1895."
+    },
+    {
+      "fabricated_id": "surid go sporavid",
+      "assembled_id": "maildir__lay-k__deleted_items__160."
+    },
+    {
+      "fabricated_id": "sweetwatz, tx",
+      "assembled_id": "maildir__jones-t__inbox__209."
+    },
+    {
+      "fabricated_id": "switzer poweing physier",
+      "assembled_id": "maildir__saibi-e__inbox__891."
+    },
+    {
+      "fabricated_id": "thanksgiving whstante",
+      "assembled_id": "maildir__gang-l__deleted_items__733."
+    },
+    {
+      "fabricated_id": "thorntolis, co",
+      "assembled_id": "maildir__whitt-m__inbox__878."
+    },
+    {
+      "fabricated_id": "thper alleesk revirt",
+      "assembled_id": "maildir__dasovich-j__all_documents__11654."
+    },
+    {
+      "fabricated_id": "transaction sults",
+      "assembled_id": "maildir__dasovich-j__all_documents__28550."
+    },
+    {
+      "fabricated_id": "transalind er marketinroduction",
+      "assembled_id": "maildir__kaminski-v___sent_mail__490."
+    },
+    {
+      "fabricated_id": "updatunita cgin st",
+      "assembled_id": "maildir__watson-k__sent_items__158."
+    },
+    {
+      "fabricated_id": "us justdburn department'fice civan righoodburn divisiice",
+      "assembled_id": "maildir__shapiro-r__deleted_items__965."
+    },
+    {
+      "fabricated_id": "vin ehen",
+      "assembled_id": "maildir__lay-k__inbox__518."
+    },
+    {
+      "fabricated_id": "waighty zoss",
+      "assembled_id": "maildir__zufferli-j__sent_items__79."
+    },
+    {
+      "fabricated_id": "wiational lowegy gas rateny ch rapidnistration",
+      "assembled_id": "maildir__kitchen-l___americas__eol__11."
+    },
+    {
+      "fabricated_id": "wilminax, de",
+      "assembled_id": "maildir__sanders-r__all_documents__2054."
+    }
+  ],
+  "assembled_digest": "65888efa63310844846d4c9c4515458a35480dde67fe7428fc324c3ea79f769f",
   "real_source_id": "cmu-enron-raw:enron_mail_20150507:seed707:hosts14k",
   "real_source_sha256": "ac96743aafa3e46d8340f114df6fae06aea1190f237bb88f4292bf20d4331c6b",
   "license": "LicenseRef-Enron-FERC-public-record",
   "assembly_determinism": {
     "passed": true,
     "method": "cross-process-regeneration-diff",
-    "digest": "769c27655d646e994420f5bbbe419557e79e732de2507a35588f96440ee304c3"
+    "digest": "65888efa63310844846d4c9c4515458a35480dde67fe7428fc324c3ea79f769f"
   }
 }

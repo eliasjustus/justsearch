@@ -34,6 +34,8 @@ Indexed reference cases that lessons in `CLAUDE.md` and `.claude/rules/agent-les
 | `deep-research-cost-gating` | [§20](#20-deep-research-cost-gating--2026-07-13-run) | 2026-07-13 run |
 | `vague-greenlight-isnt-authorization` | [§21](#21-vague-greenlight-isnt-authorization--tempdoc-667) | tempdoc 667 |
 | `premature-infeasible-verdict` | [§22](#22-premature-infeasible-verdict--tempdoc-668) | tempdoc 668 |
+| `measurement-config-mismatch` | [§23](#23-measurement-config-mismatch--tempdoc-767) | tempdoc 767 |
+| `delegated-wait` | [§24](#24-delegated-wait--session-2026-07-21) | session 2026-07-21 |
 
 ---
 
@@ -153,3 +155,11 @@ The user said "work on making CI better" and asked which tempdoc to pick. After 
 ## 22. `premature-infeasible-verdict` — tempdoc 668
 
 On CI-latency work the agent repeatedly under-called the payoff and stopped too early: it claimed a "~2.8x" win from a partial run, then declared a full migration "blocked / pervasively Windows-coupled" based on truncated `--log-failed` summaries. When the user pushed back, pulling the actual test-results artifacts showed the "pervasive coupling" was mostly one attribute-read bug cascading across roughly 30 tests; the full migration then shipped a measured ~41% cut in CI wall-clock time. **Principle**: before concluding a lever is infeasible or reverting it, pull primary evidence — full stack traces and artifacts, not truncated summaries, and real measurements, not one partial run — and count root causes, since a scary failure list often collapses to a few shared ones.
+
+## 23. `measurement-config-mismatch` — tempdoc 767
+
+Preparing a paid + GPU certification run, an agent compared a fresh pilot measurement against a pre-registered threshold and read the shortfall as a property of the corpus. The certified `union_recall` for `en-legal-clerc-1k-verbose` was 0.75; the pilot returned 0.48 against a 0.65 floor, and the working explanation was that the rebuilt corpus had gotten harder. It had not: the pilot ran `--modes lexical,vector,hybrid` while the threshold was derived from a run whose leg set also included `splade`, and the `staged_recall_accounting` projection computes its union only over legs actually present (`scripts/jseval/jseval/projections/staged_recall_accounting.py:76`, `:240`) — an omitted leg is silently absent, not an error. Arithmetic settled it before any spend: 0.75 is unreachable from vector 0.5952 ∪ lexical 0.0193 (≤ 0.6145 even if disjoint), so a third leg must have contributed, and the pilot's union equalling its vector recall exactly showed only one leg was contributing. Left uncaught, every cell would have failed after the full spend, presenting as corpus regression and inviting a post-hoc threshold re-derivation. **Principle**: before comparing a measurement against a pre-registered threshold, verify the measurement *configuration* matches the one the threshold was derived under — and note that a structural "enough inputs present" check returning `ok` is evidence the run was well-formed, never evidence it was configured the same way.
+
+## 24. `delegated-wait` — session 2026-07-21
+
+A large MIRACL dataset fetch was handed to a subagent, which supervised it by polling in a loop. The agent produced four completion notifications, each reporting essentially a byte count, at roughly 240k tokens apiece — approaching a million tokens for no output beyond "still downloading". Meanwhile the download itself ran as a detached OS process that required no supervision at all: the wait was external, the progress was already durable on disk, and a single `ls -l` at the end would have carried the same information. The cost was structural, not a mistake in the brief — any agent asked to watch a long external operation will spend context proportional to how long it watches. **Principle**: launch long external work detached and check back with one command; delegate *decisions*, not waits — if the only thing a subagent will do is wait, there is nothing to delegate.
