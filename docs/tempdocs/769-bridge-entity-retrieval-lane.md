@@ -1,7 +1,7 @@
 ---
 title: "bridge-entity retrieval lane: fix register F-039 — structure-descriptive queries must reach designer-keyed gold past near-duplicate decoys; the one engine-owned failure class in the agent-utility census, and it scales with corpus size"
 type: tempdocs
-status: "DIAGNOSED (2026-07-21, §E — M1/M2/M3 complete, ~$0): H4 join-key dominates; lane routing decision (dissolve into 770 + scoped fusion-leak item + F-030 residue) is FOUNDER-PENDING. M5 retest deferred to the 767 rebuild."
+status: "CLOSED-BY-ROUTING (2026-07-21, founder-approved): diagnosis complete (§E); all residue items — join-key/evidence-content, fusion-burial, M5 floor-cell retest — transferred to tempdoc 771 (767-gated); original §C acceptance criteria retired. 770's register correction (fetch withdrawn; hit.id IS the path) sharpened item 1 before transfer."
 created: 2026-07-21
 author: agent (Fable orchestration), 766 program charter
 category: search-quality / retrieval
@@ -206,3 +206,17 @@ two-step join the failing ones stop short of.
    camouflaged strata before treating the floor as engine-real.
 
 Register F-039 annotated with this diagnosis (same change).
+
+## §F. Routing closure (2026-07-21)
+
+Founder-approved: this lane's residue transfers to tempdoc 771 (post-rebuild
+retrieval residue, 767-gated), which also absorbs 770's routed-out
+read-amplification item. The original §C acceptance ("the 17 B2 cells reach
+agent-visible top-k") is retired — the diagnosis showed 12/17 of those cells
+cannot be closed by ANY single-query engine change (the answer doc needs the
+join key), and the remainder's magnitudes are old-corpus properties that 767
+invalidates. 770's independent review additionally corrected this lane's §E
+routing sentence: the "two-step affordance (770)" lever was withdrawn there
+on measurement (`hit.id` is the filesystem path; a fetch tool adds nothing) —
+the surviving form of the item is evidence-content (does the delivered
+excerpt carry the bridge entity's name?), now 771 §A.1.

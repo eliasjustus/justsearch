@@ -812,6 +812,12 @@ above)*
   **50.3% of post-search Reads (N=862) targeted documents search never returned**, i.e. the dominant
   agent-side failure is retrieval coverage, not surface ergonomics. Do not wait on 770 for (a); it
   needs an owner.
+- **OWNER ASSIGNED (2026-07-21, founder-approved routing):** tempdoc **771** (post-rebuild retrieval
+  residue) now owns (a) the join-key/evidence-content item, (b) the fusion-burial residue, and the
+  read-amplification item 770 routed out — all HARD-GATED on 767's rebuilt strata (every magnitude
+  above is a property of the uncamouflaged corpus; re-measure before design). Tempdoc 769's original
+  acceptance criteria are retired; its M5 floor-cell retest moves into 771 §C.1. F-039's resolution
+  note lands when 771's re-measurement pass rules each component fixed/shrunk/representation-bound.
 
 ### F-038: RAG chunk retrieval was blind to chunkless (sub-2000-char) docs — a doc-level union leg into the PRIMARY RAG candidate set fixes it with no re-index; interactive hybrid on-baseline (tempdoc 749, 2026-07-18)
 
