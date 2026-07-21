@@ -229,10 +229,18 @@ final class McpEvidenceProjectionTest {
   }
 
   /**
-   * Tempdoc 770 — the maximal fixture shared by the two halves of the totality guard: every field
-   * non-null / non-empty, so the projection's null-omission never hides a component from the
-   * reflective check. {@code path} is deliberately distinct from {@code id} (the projection elides
-   * a path equal to the id), so the field is present to be covered.
+   * Tempdoc 770 — the maximal fixture shared by the two halves of the totality guard: EVERY
+   * per-hit component non-null and non-empty, so the projection's null/empty-omission never hides
+   * a component from the reflective check.
+   *
+   * <p>This matters for the subset half specifically: if {@code matchedFields}, {@code matchSpans}
+   * (→ {@code matchedTerms}) or {@code excerptRegions} were left empty here, they would be absent
+   * from BOTH tiers, the computed omitted-set would still be exactly {@code {trace, legScores}},
+   * and a future change gating one of them behind {@code detail} would leave the guard green while
+   * the field silently stopped shipping by default. Populating them is what makes the guard bite.
+   *
+   * <p>{@code id} is deliberately distinct from {@code path} (the projection elides an {@code id}
+   * equal to the path), so both identity fields are present to be covered.
    */
   private static KnowledgeSearchResponse maximalSearchResponse() {
     TraceStage stage =
@@ -246,12 +254,43 @@ final class McpEvidenceProjectionTest {
             new Degradation(true, "R1", true, "R2", true, "R3"),
             List.of(stage));
     HitStage hitStage = new HitStage(StageId.FUSION, 1, 0.9f, Map.of("cc", 0.9f));
+    // Terms long enough and non-stopword, so McpSearchResultFormatter#filterInformative keeps them
+    // and `matchedTerms` is genuinely non-empty in the projection.
+    KnowledgeSearchResponse.MatchSpan span =
+        new KnowledgeSearchResponse.MatchSpan("content", 4, 13, "diagnostic");
+    KnowledgeSearchResponse.ExcerptRegion region =
+        new KnowledgeSearchResponse.ExcerptRegion(
+            "a diagnostic excerpt body", 0, 25, 3, List.of(span));
     KnowledgeSearchResponse.Hit hit =
         new KnowledgeSearchResponse.Hit(
-            "doc-1", 0.9d, Map.of("title", "T", "path", "P"),
-            List.of(), List.of(), List.of(), List.of(hitStage));
+            "doc-1",
+            0.9d,
+            Map.of("title", "T", "path", "P"),
+            List.of("content", "title"),
+            List.of(span),
+            List.of(region),
+            List.of(hitStage));
     return new KnowledgeSearchResponse(
         1L, 1L, 5L, List.of(hit), null, null, null, null, null, null, null, trace);
+  }
+
+  @Test
+  @DisplayName(
+      "the maximal fixture really is maximal — every per-hit component the projection can emit is"
+          + " present in BOTH tiers, so the subset guard can bite (tempdoc 770 §F)")
+  void maximalFixtureProjectsEveryPerHitComponent() {
+    KnowledgeSearchResponse resp = maximalSearchResponse();
+    for (boolean includeDetail : new boolean[] {false, true}) {
+      Map<String, Object> hit =
+          asMap(asList(McpEvidenceProjection.searchEvidence(resp, includeDetail).get("results")).get(0));
+      for (String key : List.of("id", "path", "title", "score", "matchedTerms", "matchedFields",
+          "excerpts")) {
+        assertTrue(
+            hit.containsKey(key),
+            "maximal fixture must project '" + key + "' (detail=" + includeDetail + ") — an empty"
+                + " component here would silently exempt it from the subset guard");
+      }
+    }
   }
 
   @Test
@@ -289,26 +328,33 @@ final class McpEvidenceProjectionTest {
 
   @Test
   @DisplayName(
-      "search: excerpts survive BOTH tiers (the only document text the agent receives) and `path`"
-          + " is emitted only when it differs from `id` (tempdoc 770)")
-  void excerptsAreUngatedAndPathIsElidedWhenEqualToId() {
+      "search: excerpts survive BOTH tiers (the only document text the agent receives); `path` is"
+          + " always emitted and `id` only when it differs from it (tempdoc 770)")
+  void excerptsAreUngatedAndIdIsElidedWhenEqualToPath() {
     KnowledgeSearchResponse.ExcerptRegion region =
         new KnowledgeSearchResponse.ExcerptRegion("the excerpt body", 0, 16, 1, List.of());
-    // Hit A: path differs from id → path is informative, so it is emitted.
-    KnowledgeSearchResponse.Hit distinctPath =
+    // Hit A: id differs from path (a non-filesystem source class) → id is informative, keep both.
+    KnowledgeSearchResponse.Hit distinctId =
         new KnowledgeSearchResponse.Hit(
             "doc-1", 0.9d, Map.of("path", "C:/corpus/a.md"),
             List.of(), List.of(), List.of(region),
             List.of(new HitStage(StageId.FUSION, 1, 0.9f, null)));
-    // Hit B: path IS the id (the measured case — 14,617/14,617 hits) → duplicate, so elided.
-    KnowledgeSearchResponse.Hit pathEqualsId =
+    // Hit B: id IS the path (the measured case — 14,617/14,617 hits) → duplicate. `path` is the
+    // field kept: it is the affordance-bearing name the agent can act on.
+    KnowledgeSearchResponse.Hit idEqualsPath =
         new KnowledgeSearchResponse.Hit(
             "C:/corpus/b.md", 0.8d, Map.of("path", "C:/corpus/b.md"),
             List.of(), List.of(), List.of(region),
             List.of(new HitStage(StageId.FUSION, 2, 0.8f, null)));
+    // Hit C: no path at all → `id` is the only identity available, so it must still ship.
+    KnowledgeSearchResponse.Hit noPath =
+        new KnowledgeSearchResponse.Hit(
+            "urn:source:c", 0.7d, Map.of(),
+            List.of(), List.of(), List.of(region),
+            List.of(new HitStage(StageId.FUSION, 3, 0.7f, null)));
     KnowledgeSearchResponse resp =
         new KnowledgeSearchResponse(
-            2L, 2L, 5L, List.of(distinctPath, pathEqualsId),
+            3L, 3L, 5L, List.of(distinctId, idEqualsPath, noPath),
             null, null, null, null, null, null, null, null);
 
     for (boolean includeDetail : new boolean[] {false, true}) {
@@ -316,16 +362,21 @@ final class McpEvidenceProjectionTest {
           asList(McpEvidenceProjection.searchEvidence(resp, includeDetail).get("results"));
 
       Map<String, Object> a = asMap(results.get(0));
-      assertEquals("C:/corpus/a.md", a.get("path"), "distinct path is informative — keep it");
+      assertEquals("C:/corpus/a.md", a.get("path"), "path is always emitted when present");
+      assertEquals("doc-1", a.get("id"), "an id that is not the path is informative — keep it");
       assertEquals(
           "the excerpt body",
           asMap(asList(a.get("excerpts")).get(0)).get("text"),
           "excerpts must never be gated (detail=" + includeDetail + ")");
 
       Map<String, Object> b = asMap(results.get(1));
-      assertEquals("C:/corpus/b.md", b.get("id"));
-      assertFalse(b.containsKey("path"), "path equal to id is a verbatim duplicate — elide it");
+      assertEquals("C:/corpus/b.md", b.get("path"), "path survives — it is the actionable name");
+      assertFalse(b.containsKey("id"), "id equal to path is a verbatim duplicate — elide it");
       assertFalse(asList(b.get("excerpts")).isEmpty(), "excerpts must never be gated");
+
+      Map<String, Object> c = asMap(results.get(2));
+      assertEquals("urn:source:c", c.get("id"), "with no path, id is the only identity — keep it");
+      assertFalse(c.containsKey("path"), "no path to emit");
     }
   }
 

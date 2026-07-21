@@ -67,7 +67,10 @@ public final class McpToolSurface {
           + "Supports hybrid (default), text (BM25 keyword), and vector (semantic) search modes. "
           + "The system automatically detects sources, authors, and entities in your query and "
           + "applies soft boosts — check the queryUnderstanding field in the response. "
-          + "Every search returns top facet values (sources, categories, authors). "
+          + "When the matching documents carry them, the response also returns top facet values "
+          + "(sources, categories, authors) to use as filters. "
+          + "Set querySyntax: \"lucene\" for exact-phrase (\"...\") and boolean (AND/OR/NOT) "
+          + "queries; the default is plain-text search. "
           + "Set detail: true to also receive per-hit ranking provenance (stage participation and "
           + "fusion-leg scores); it is omitted by default.";
 
@@ -286,9 +289,18 @@ public final class McpToolSurface {
               "limit", prop("integer", "Max results (default 10, max 50)"),
               "mode", prop("string", "Search mode: hybrid (default), text, or vector"),
               "filters", FILTERS_SCHEMA,
-              // Tempdoc 658: opt-in numeric detail tier. Structured retrieval evidence (the search
-              // trace + per-hit ranking provenance) is always returned in structuredContent; when
-              // detail=true the per-hit numeric fusion-leg detail scores are included too.
+              // Tempdoc 770: `detail` gates the whole per-hit ranking-provenance block. The
+              // query-level search trace, excerpts, and scores are always returned in
+              // structuredContent; per-hit trace/legScores (and the numeric detail sub-map inside
+              // them) ship only when detail=true.
+              "querySyntax",
+                  propEnum(
+                      List.of("simple", "lucene", "advanced"),
+                      "Query syntax. \"simple\" (default) treats the query as plain text."
+                          + " \"lucene\" (alias \"advanced\") enables Lucene query syntax —"
+                          + " exact phrases (\"...\"), boolean operators (AND/OR/NOT), field"
+                          + " qualifiers and grouping. Applies to the keyword leg; combine with"
+                          + " mode: \"text\" for a pure keyword query."),
               "detail",
                   prop(
                       "boolean",
@@ -745,9 +757,13 @@ public final class McpToolSurface {
       String query = (String) args.getOrDefault("query", "");
       int limit = ((Number) args.getOrDefault("limit", 10)).intValue();
       String mode = (String) args.getOrDefault("mode", "hybrid");
-      // Tempdoc 658: the opt-in `detail` arg maps to the request `debug` flag (→ include_detail),
-      // which gates the per-hit numeric detail tier surfaced in the structured ranking evidence.
+      // Tempdoc 658/770: the opt-in `detail` arg maps to the request `debug` flag (→
+      // include_detail), which gates the per-hit numeric detail sub-map upstream in the engine; it
+      // ALSO gates the whole per-hit ranking-provenance block (trace/legScores) at the projection.
       Boolean detail = (args.get("detail") instanceof Boolean b) ? b : null;
+      // Tempdoc 770 §D: the engine's query-syntax lever (SearchPipelinePresets#parseQuerySyntax-
+      // OrDefault), reachable from the agent surface now that the schema declares it.
+      String querySyntax = (args.get("querySyntax") instanceof String s) ? s : null;
       // Tempdoc 725 W2c: concise mode omits the Preview line only — rank/title/score, Path, and
       // Matched/Match-basis lines (plus the summary/degradation/coverage lines below the loop) all
       // carry facts, not bulk, so they stay in both response densities.
@@ -770,8 +786,8 @@ public final class McpToolSurface {
       // instead of a blind head-of-field truncation (see buildHitPreview below).
       KnowledgeSearchRequest req =
           new KnowledgeSearchRequest(
-              query, Math.min(limit, 50), mode, null, null, null, filters, null, facets, null,
-              Boolean.TRUE, detail, null);
+              query, Math.min(limit, 50), mode, null, null, null, filters, null, facets,
+              querySyntax, Boolean.TRUE, detail, null);
       KnowledgeSearchResponse resp = adapter.search(req);
 
       // Tempdoc 735 W6: every response fact — per-hit rationale, hints, facets, coverage —

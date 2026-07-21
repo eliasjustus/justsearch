@@ -74,11 +74,10 @@ public final class McpEvidenceProjection {
       KnowledgeSearchResponse.Hit hit = respHits.get(i);
       McpSearchResponseContent.HitContent hc = hitContents.get(i);
       Map<String, Object> h = new LinkedHashMap<>();
-      h.put("id", hit.id());
+      putIdentity(h, hit.id(), hc.path());
       if (!hc.title().isBlank()) {
         h.put("title", hc.title());
       }
-      putPathIfDistinct(h, hit.id(), hc.path());
       h.put("score", hit.score());
       if (!hc.matchedTerms().isEmpty()) {
         h.put("matchedTerms", hc.matchedTerms());
@@ -131,12 +130,11 @@ public final class McpEvidenceProjection {
     List<Map<String, Object>> results = new ArrayList<>();
     for (KnowledgeSearchResponse.Hit hit : resp.results()) {
       Map<String, Object> h = new LinkedHashMap<>();
-      h.put("id", hit.id());
+      putIdentity(h, hit.id(), hit.fields().getOrDefault("path", ""));
       String title = hit.fields().getOrDefault("title", "");
       if (!title.isBlank()) {
         h.put("title", title);
       }
-      putPathIfDistinct(h, hit.id(), hit.fields().getOrDefault("path", ""));
       h.put("score", hit.score());
 
       // Tempdoc 725 W1: the same informative-term filter that drives the text-block "Matched:"
@@ -157,13 +155,22 @@ public final class McpEvidenceProjection {
   }
 
   /**
-   * Tempdoc 770 — emits {@code path} only when it carries information the {@code id} does not.
-   * Measured across 14,617 v5 hits, the worker doc-id and the path were byte-identical in every
-   * one; the field stays for source classes whose doc-id is not a filesystem path.
+   * Tempdoc 770 — the per-hit identity fields. Measured across 14,617 v5 hits, the worker doc-id
+   * and the path were byte-identical in every one, so one of the two is a verbatim duplicate.
+   *
+   * <p>{@code path} is the one that survives: it is the affordance-bearing name (44.7% of
+   * post-search Reads in the measured cohort target a path from the preceding search), and nothing
+   * in the delivered channel tells a model that an opaque {@code id} happens to be a filesystem
+   * path. {@code id} is emitted only when it carries information {@code path} does not — a source
+   * class whose doc-id is not a path, or a hit with no path at all — so non-filesystem sources are
+   * unaffected.
    */
-  private static void putPathIfDistinct(Map<String, Object> h, String id, String path) {
-    if (!path.isBlank() && !path.equals(id)) {
+  private static void putIdentity(Map<String, Object> h, String id, String path) {
+    if (!path.isBlank()) {
       h.put("path", path);
+    }
+    if (path.isBlank() || !path.equals(id)) {
+      h.put("id", id);
     }
   }
 

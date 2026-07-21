@@ -14,6 +14,7 @@ import io.justsearch.agent.api.registry.OperationResult;
 import io.justsearch.agent.api.registry.RiskTier;
 import io.justsearch.agent.api.registry.SourceTier;
 import io.justsearch.app.api.DocumentService;
+import io.justsearch.app.api.knowledge.KnowledgeSearchRequest;
 import io.justsearch.app.api.knowledge.KnowledgeSearchResponse;
 import io.justsearch.app.api.knowledge.SearchTrace;
 import io.justsearch.app.api.knowledge.SearchTrace.HitStage;
@@ -228,6 +229,14 @@ class McpProtocolHandlerTest {
     Map<String, Object> searchProps =
         (Map<String, Object>) searchInputSchema.get("properties");
     assertTrue(searchProps.containsKey("detail"), "search tool advertises the detail arg");
+    // Tempdoc 770: querySyntax is a declared parameter now, not a description-only claim.
+    assertTrue(searchProps.containsKey("querySyntax"), "search tool advertises the querySyntax arg");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> querySyntaxProp = (Map<String, Object>) searchProps.get("querySyntax");
+    assertEquals(
+        List.of("simple", "lucene", "advanced"),
+        querySyntaxProp.get("enum"),
+        "querySyntax mirrors SearchPipelinePresets#parseQuerySyntaxOrDefault's accepted values");
 
     // Tempdoc 725: tools/list must serialize with a byte-stable key order across JVM restarts —
     // the MCP draft spec SHOULDs deterministic ordering for client-side cache hits. Jackson
@@ -237,7 +246,7 @@ class McpProtocolHandlerTest {
     // would only reveal itself as flakiness across separate process launches, not within one
     // test run).
     assertEquals(
-        List.of("query", "limit", "mode", "filters", "detail", "response_format"),
+        List.of("query", "limit", "mode", "filters", "querySyntax", "detail", "response_format"),
         List.copyOf(searchProps.keySet()),
         "search inputSchema properties must serialize in declared source order");
 
@@ -415,8 +424,168 @@ class McpProtocolHandlerTest {
     assertEquals(1, results.size());
     assertEquals("doc-1", results.get(0).get("id"));
     // Tempdoc 770: per-hit ranking provenance is a detail-gated tier; this call did not set
-    // detail, so the block is absent. McpEvidenceProjectionTest covers the detail:true restore.
+    // detail, so the block is absent. detail:true restore is covered end-to-end by
+    // toolsCall_search_detailTrueRestoresPerHitProvenance below.
     assertNull(results.get(0).get("trace"), "per-hit ranking trace is gated behind detail:true");
+  }
+
+  // =========================================================================
+  // Tempdoc 770 review fixes — the detail restore path and the querySyntax parameter, both
+  // exercised through the REAL tools/call entry point (arg parsing + boundary validation +
+  // dispatch), not by calling the projection directly. The minor-not-major contract argument
+  // rests on "trace/legScores stay recoverable via detail", so that must be tested at the layer
+  // that has to work.
+  // =========================================================================
+
+  /** Canned single-hit response with a populated per-hit trace, for the detail-tier tests. */
+  private static KnowledgeSearchResponse cannedSearchResponse() {
+    SearchTrace trace =
+        new SearchTrace(
+            SearchTrace.SCHEMA_VERSION,
+            "HYBRID",
+            "multi_leg",
+            null,
+            null,
+            List.of(new TraceStage(StageId.SPARSE_RETRIEVAL, StageStatus.EXECUTED, null, 5L, null, null)));
+    KnowledgeSearchResponse.Hit hit =
+        new KnowledgeSearchResponse.Hit(
+            "doc-1",
+            0.9d,
+            Map.of("title", "Troubleshooting", "path", "help/troubleshooting.md"),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(new HitStage(StageId.SPARSE_RETRIEVAL, 1, 3.3f, Map.of("bm25", 3.3f))));
+    return new KnowledgeSearchResponse(
+        1L, 1L, 5L, List.of(hit), null, null, null, null, null, null, null, trace);
+  }
+
+  /** A handler wired to a mock adapter that always returns {@code canned}. */
+  private McpProtocolHandler handlerOver(KnowledgeHttpApiAdapter adapter) {
+    KnowledgeSearchController ctrl = mock(KnowledgeSearchController.class);
+    when(ctrl.getAdapter()).thenReturn(adapter);
+    var surface =
+        new McpToolSurface(
+            List.of(OperationCatalog.of("core", List.of())),
+            dispatcher,
+            () -> ctrl,
+            () -> null,
+            FIXED_CLOCK);
+    return new McpProtocolHandler(surface, List.of(), FIXED_CLOCK);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> structuredOf(String raw) throws Exception {
+    Map<String, Object> response = MAPPER.readValue(raw, Map.class);
+    Map<String, Object> result = (Map<String, Object>) response.get("result");
+    assertEquals(Boolean.FALSE, result.get("isError"), "tool call must succeed: " + raw);
+    return (Map<String, Object>) result.get("structuredContent");
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> firstHitOf(Map<String, Object> structured) {
+    return ((List<Map<String, Object>>) structured.get("results")).get(0);
+  }
+
+  @Test
+  void toolsCall_search_detailTrueRestoresPerHitProvenance() throws Exception {
+    // Tempdoc 770 §B: the whole minor-not-major justification for removing trace/legScores from
+    // the default response is that `detail: true` restores them. Asserted here through the real
+    // entry point — JSON arg parsing, schema validation, callSearch's Boolean unwrap, and the
+    // projection call site — because every other detail=true test calls the projection directly.
+    KnowledgeHttpApiAdapter adapter = mock(KnowledgeHttpApiAdapter.class);
+    when(adapter.search(any())).thenReturn(cannedSearchResponse());
+    McpProtocolHandler h = handlerOver(adapter);
+
+    Map<String, Object> withDetail =
+        firstHitOf(structuredOf(callTool(h, 30, "justsearch_search", "{\"query\":\"x\",\"detail\":true}")));
+    assertNotNull(withDetail.get("trace"), "detail:true must restore the per-hit trace");
+    assertNotNull(withDetail.get("legScores"), "detail:true must restore the per-hit legScores");
+
+    Map<String, Object> explicitFalse =
+        firstHitOf(structuredOf(callTool(h, 31, "justsearch_search", "{\"query\":\"x\",\"detail\":false}")));
+    assertNull(explicitFalse.get("trace"), "detail:false must omit the per-hit trace");
+    assertNull(explicitFalse.get("legScores"), "detail:false must omit the per-hit legScores");
+
+    Map<String, Object> absent =
+        firstHitOf(structuredOf(callTool(h, 32, "justsearch_search", "{\"query\":\"x\"}")));
+    assertNull(absent.get("trace"), "absent detail defaults to omitting the per-hit trace");
+    assertNull(absent.get("legScores"), "absent detail defaults to omitting the per-hit legScores");
+
+    // The ungated facts are identical across tiers — the gate elides, it does not reshape.
+    assertEquals(withDetail.get("path"), absent.get("path"));
+    assertEquals(withDetail.get("score"), absent.get("score"));
+  }
+
+  @Test
+  void toolsCall_search_nonBooleanDetail_rejectedAtBoundary() throws Exception {
+    // Tempdoc 770 review question B: SEARCH_SCHEMA declares detail as {"type":"boolean"} and
+    // validateArgsOrNull runs before dispatch, so a string/number must be a clean boundary error
+    // — NOT silently coerced to false (which would be a costly silent trap: the agent asks for
+    // provenance, gets none, and is told nothing).
+    KnowledgeHttpApiAdapter adapter = mock(KnowledgeHttpApiAdapter.class);
+    when(adapter.search(any())).thenReturn(cannedSearchResponse());
+    McpProtocolHandler h = handlerOver(adapter);
+
+    for (String badDetail : List.of("\"true\"", "1")) {
+      String raw = callTool(h, 33, "justsearch_search", "{\"query\":\"x\",\"detail\":" + badDetail + "}");
+      @SuppressWarnings("unchecked")
+      Map<String, Object> response = MAPPER.readValue(raw, Map.class);
+      @SuppressWarnings("unchecked")
+      Map<String, Object> result = (Map<String, Object>) response.get("result");
+      assertEquals(
+          Boolean.TRUE,
+          result.get("isError"),
+          "detail=" + badDetail + " must be rejected at the boundary, not coerced: " + raw);
+      @SuppressWarnings("unchecked")
+      List<Map<String, Object>> content = (List<Map<String, Object>>) result.get("content");
+      assertTrue(
+          ((String) content.get(0).get("text")).contains("Invalid arguments"),
+          "must be the boundary-validation error: " + raw);
+    }
+  }
+
+  @Test
+  void toolsCall_search_querySyntaxReachesTheRequest() throws Exception {
+    // Tempdoc 770 §E.2 (corrected): querySyntax is a live engine capability
+    // (SearchPipelinePresets#parseQuerySyntaxOrDefault). It is now a declared schema parameter,
+    // so the restored SEARCH_DESC sentence is true only if the value actually reaches the
+    // request — callSearch passed a hard-coded null before this fix.
+    KnowledgeHttpApiAdapter adapter = mock(KnowledgeHttpApiAdapter.class);
+    when(adapter.search(any())).thenReturn(cannedSearchResponse());
+    McpProtocolHandler h = handlerOver(adapter);
+
+    callTool(h, 34, "justsearch_search", "{\"query\":\"\\\"exact phrase\\\"\",\"querySyntax\":\"lucene\"}");
+    ArgumentCaptor<KnowledgeSearchRequest> req =
+        ArgumentCaptor.forClass(KnowledgeSearchRequest.class);
+    verify(adapter).search(req.capture());
+    assertEquals("lucene", req.getValue().querySyntax(), "querySyntax must reach the request");
+
+    // Omitted → null, so the engine applies its SIMPLE default.
+    reset(adapter);
+    when(adapter.search(any())).thenReturn(cannedSearchResponse());
+    callTool(h, 35, "justsearch_search", "{\"query\":\"plain\"}");
+    ArgumentCaptor<KnowledgeSearchRequest> defaulted =
+        ArgumentCaptor.forClass(KnowledgeSearchRequest.class);
+    verify(adapter).search(defaulted.capture());
+    assertNull(defaulted.getValue().querySyntax(), "omitted querySyntax leaves the engine default");
+  }
+
+  @Test
+  void toolsCall_search_undeclaredQuerySyntaxValue_rejectedAtBoundary() throws Exception {
+    // The schema declares an enum, so a value the engine would silently fold to SIMPLE is a clean
+    // error instead — the exact failure mode (silently ignored querySyntax) this lane is fixing.
+    KnowledgeHttpApiAdapter adapter = mock(KnowledgeHttpApiAdapter.class);
+    when(adapter.search(any())).thenReturn(cannedSearchResponse());
+    String raw =
+        callTool(
+            handlerOver(adapter), 36, "justsearch_search",
+            "{\"query\":\"x\",\"querySyntax\":\"regex\"}");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> response = MAPPER.readValue(raw, Map.class);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> result = (Map<String, Object>) response.get("result");
+    assertEquals(Boolean.TRUE, result.get("isError"), "undeclared enum value must be rejected: " + raw);
   }
 
   @Test

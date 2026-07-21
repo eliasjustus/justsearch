@@ -69,17 +69,29 @@ public final class McpContractVersions {
    * {@code hit.path} was byte-identical to {@code hit.id} in all 14,617 measured hits. So the
    * default {@code structuredContent} now omits {@code trace}/{@code legScores} (recoverable via
    * the existing {@code detail} argument, whose meaning widens from "the numeric sub-tier" to "the
-   * whole provenance block") and emits {@code path} only when it differs from {@code id}. Excerpts,
+   * whole provenance block") and emits {@code id} only when it differs from {@code path} —
+   * {@code path} is the field kept, being the affordance-bearing name the agent acts on. Excerpts,
    * scores, and the query-level search trace are unchanged. Three false statements were also
    * corrected in the published {@code tools/list} descriptions (a {@code querySyntax} parameter
-   * that {@code SEARCH_SCHEMA} does not accept and the validator silently ignores; a
-   * "first search returns facets" claim about behavior that happens on every call; and a
-   * "concise returns substantially fewer tokens" promise that measured zero reduction across 336
-   * opt-ins because it trims only the text tier). Finally, {@code justsearch_answer} no longer
-   * fires a second full hybrid search per call for a facet sidecar, so its {@code
-   * structuredContent} no longer carries {@code facets}. Removing default fields is a removal
-   * under the stability policy, permitted by the pre-1.0 clause, and no field becomes
-   * unreachable — so the SemVer minor bumps rather than the major.
+   * that {@code SEARCH_SCHEMA} did not accept and the validator silently ignored — now a declared
+   * schema parameter threaded through to the request, so the sentence is restored and true; a
+   * "first search returns facets" claim about behavior that happens on every call with facetable
+   * hits; and a "concise returns substantially fewer tokens" promise that measured zero reduction
+   * across 336 opt-ins because it trims only the text tier). Finally, {@code justsearch_answer} no
+   * longer fires a second full hybrid search per call for a facet sidecar, so its {@code
+   * structuredContent} no longer carries {@code facets}.
+   *
+   * <p>Removing default fields is a removal under the stability policy. It is deliberate, and the
+   * decision — including that the 90-day deprecation window is overridden here by the pre-1.0
+   * clause — is recorded in the Runtime Contract changelog
+   * ({@code docs/reference/runtime-contract.md}), which also bumps the umbrella contract version
+   * to {@code 0.2.0} because this is the first break to a constituent. The SemVer MINOR (not
+   * major) is a pre-1.0 judgement, not a reachability claim: {@code trace}/{@code legScores} stay
+   * reachable via {@code detail}, but {@code justsearch_answer}'s {@code facets} has no other
+   * source and IS now unreachable. That deletion is justified by measured non-use — facet/hint
+   * affordances produced zero behavioral adoption at haiku across three campaigns
+   * ({@code 735:471-474}) — against the cost of a full extra hybrid search per call, not by
+   * reachability.
    */
   public static final String TOOL_SURFACE_VERSION = "0.5.0";
 

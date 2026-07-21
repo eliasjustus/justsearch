@@ -167,13 +167,25 @@ observations inbox. It is 732's to settle.
 - **Economy:** median + p95 delivered payload per `justsearch_search` call, before
   vs after, measured by the §D harness — **zero LLM spend**. Expected ≈31% median
   reduction; report the measured number.
-- **Zero content loss (hard):** no document text and no retrieval fact leaves the
-  default response. Only (a) per-hit numeric provenance and (b) a verbatim duplicate
-  field are removed. Asserted by test, not by inspection.
+- **Content loss — RECONCILED WITH WHAT SHIPPED (2026-07-21).** The original wording
+  ("zero content loss … no retrieval fact leaves the default response") was written
+  for §E.1 alone and was **not true of the lane as landed**. Accurate statement:
+  - From `justsearch_search`'s default response, only (a) per-hit numeric provenance
+    (`trace`/`legScores`, recoverable via `detail: true`) and (b) a verbatim duplicate
+    identity field (`id` when it equals `path`) are removed. That half *is* zero
+    content loss, and is asserted by test.
+  - From `justsearch_answer`, §F.5 additionally removed the `facets` field from
+    `structuredContent` — a **delivered** field with no other source, so it is now
+    unreachable — and the facet block from the text tier. This is a deliberate
+    deletion justified by measured non-use (`735:471-474`), not by reachability. See
+    §F.5's rationale correction, which this bullet previously contradicted.
 - **Reachability (hard, by construction):** retrieval, ranking, count and `limit`
   semantics are untouched. No document that is returned today stops being returned.
-- **Tier equivalence preserved** (`McpTierEquivalenceTest`); text-tier goldens
-  **unaffected** (this design does not modify text rendering).
+- **Tier equivalence preserved** (`McpTierEquivalenceTest`). The four byte-exact
+  text-tier goldens are unchanged, but the claim "this design does not modify text
+  rendering" is **false as shipped**: §F.5's removal deleted the answer path's facet
+  text block as well as its structured field. Goldens unaffected ≠ rendering
+  untouched.
 - Findings that indict the engine route to the search-quality register (§A.2 already has).
 
 ## §D. Measurement harness (built, zero-spend, reusable)
@@ -202,9 +214,12 @@ model, and no spend.
 
 ## §E. Design
 
-**Net tool surface: 6 tools — unchanged. No new tool, no new parameter, no schema
-change.** Every change is either removing bytes that carry no content, or making an
-existing statement true.
+**Net tool surface: 6 tools — unchanged. No new tool.** Every change is either
+removing bytes that carry no content, or making an existing statement true. *(Amended
+2026-07-21: "no new parameter, no schema change" no longer holds — §E.2's `querySyntax`
+row is resolved by **declaring** the parameter rather than deleting the sentence that
+advertised it, because the underlying engine capability is real. One optional schema
+property added; no tool added, no required shape changed.)*
 
 ### 1. Remove the ~31% that carries no content (default response)
 
@@ -216,6 +231,15 @@ Two removals from the default `structuredContent`, both content-free:
   nothing in the measured cohort loses anything.
 - **`hit.id` (11.5%)** — byte-for-byte identical to `hit.path` in **all 14,617 hits
   measured**. Emit one field. This is a duplicate, not a tier decision.
+
+  **Which one survives — corrected 2026-07-21 (the implementation initially kept the
+  wrong one).** Keep **`path`**; emit `id` only when it differs from `path`, or when
+  there is no path. The byte saving is identical either way, so the tie-break is
+  affordance: this lane's own §A.2 measurement is that **44.7% of post-search `Read`s
+  target a path from the preceding search**, and nothing in the *delivered* channel
+  tells a model that an opaque `id` happens to be a filesystem path it can open.
+  Non-filesystem sources are unaffected — `id` still ships whenever it is not the
+  path.
 
 **This must be a default change.** The opt-in path is proven inert: 336 calls
 requested `concise` and received no reduction. Changing only an opt-in mode moves
@@ -247,10 +271,21 @@ Tool descriptions **are** delivered. Three statements are false today:
 | *"The first search returns top facet values"* (`SEARCH_DESC:71`) | emitted every call (`renderSearchText:926-941`) | claim is false; the block is also undelivered, so it is pure server-side waste |
 | *"`concise` returns substantially fewer tokens per call"* (`RESPONSE_FORMAT_SCHEMA:266`) | omits only the undelivered Preview line — **measured zero reduction** across 336 opt-ins | agents opt into a promise that does not hold |
 
-Fix: delete the `querySyntax` sentence (the parameter does not exist; adding it is a
-schema addition this lane declines). Correct the facet sentence. Correct the
-`concise` claim to state what it actually does for `search` — or, if 732 reopens
-§A.6, let 732 decide whether `concise` should gate structured content instead.
+Fix (as landed, after the 2026-07-21 correction):
+
+- **`querySyntax`** — *not* deleted. Deleting the sentence made the description true
+  by removing a capability the engine actually has, which is the wrong direction for
+  §G's principle. Declared as an optional `SEARCH_SCHEMA` property (`simple` /
+  `lucene` / `advanced`, mirroring `parseQuerySyntaxOrDefault`) and threaded through
+  `callSearch` into `KnowledgeSearchRequest.querySyntax`; an accurate sentence is
+  restored to `SEARCH_DESC`.
+- **Facets** — corrected, but conditionally, not to "every search": `renderSearchText`
+  guards on a non-empty facet map, so a zero-hit query or a corpus without those
+  fields returns none. The replacement sentence says "when the matching documents
+  carry them", which is the checkable claim.
+- **`concise`** — corrected to state what it actually does for `search`. If 732
+  reopens §A.6, let 732 decide whether `concise` should gate structured content
+  instead.
 
 ### 3. Response-size governor — CAP CHARACTERIZED (2026-07-21), design still open
 
@@ -353,9 +388,19 @@ substantially **prompt-injection containment**, not token economy. Design 1's
 
 ## §F. Orphans this tempdoc retires (in-lane, not a later sweep)
 
-1. **`hit.id` duplicate emission** (§E.1) — and with it, design 1's "surface `id` in
-   the text block so fetch is actionable" item, which is moot twice over.
-2. The `querySyntax: "LUCENE"` sentence in `SEARCH_DESC` (§E.2).
+1. **The duplicate identity field** (§E.1) — `id` is elided when it equals `path`;
+   `path` is the field kept (see §E.1's 2026-07-21 correction — the first
+   implementation reversed this). With it goes design 1's "surface `id` in the text
+   block so fetch is actionable" item, which is moot twice over.
+2. The `querySyntax: "LUCENE"` sentence in `SEARCH_DESC` (§E.2) — **superseded
+   2026-07-21.** Deleting the sentence removed exact-phrase and boolean search from
+   the agent surface entirely, even though `querySyntax` is a live engine capability
+   (`KnowledgeSearchRequest.java:22`, `SearchPipelinePresets#parseQuerySyntaxOrDefault`).
+   The defect was the description/schema mismatch, not the capability. Resolution:
+   `querySyntax` is now a declared `SEARCH_SCHEMA` parameter threaded through
+   `callSearch` to the request, and an accurate sentence is restored — the statement
+   is true because the parameter exists, which is exactly what §G's principle asks
+   for.
 3. The "first search returns top facet values" claim, or the every-call behavior (§E.2).
 4. Unconditional per-hit `trace`/`legScores` in the default projection (§E.1).
 5. **The answer-path facet round-trip.** `fetchFacets` fires a *second full hybrid
@@ -467,7 +512,8 @@ local content.
 | 2 — description truth | none | none | **DONE** (d5048033) |
 | §F.5 — answer facet round-trip | none | removes a *delivered* field — see §F.5 rationale correction | **DONE** (d5048033) |
 | §F.7/8 — stale counts + figures | none | none | **DONE** (d5048033) |
-| 1 — remove trace/legScores + duplicate `id` | owner approved bump-now | none to content; `0.5.0` bump landed | **DONE + live-verified** (d5048033) |
+| 1 — remove trace/legScores + duplicate identity field | owner approved bump-now | none to content; `0.5.0` bump landed | **DONE + live-verified** (d5048033); identity direction corrected to keep `path` (independent review) |
+| Review fixes — runtime-contract bump `0.1.0` → `0.2.0`, `querySyntax` wired, §C/§F.5 reconciled, guard fixtures made genuinely maximal | owner-decided (bump now; wire don't delete) | none | **DONE** |
 | 5 — cap-characterization probe | none | none | **DONE** — threshold 46.6k–52.8k, notice 2,322 chars (§E.3) |
 | 3 — response-size governor **design** | cap now known | medium | **no — not this lane** |
 | 4 — `fetch` | withdrawn | — | **no** |

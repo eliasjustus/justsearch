@@ -200,9 +200,11 @@ already render (`SearchTrace`, `ContextCitation`); it introduces no new authorit
 
 - **`justsearch_search` → `structuredContent`**: the query-level `searchTrace` (effective mode,
   decision kind, degradation reason codes, and the per-stage list with status/reason/timing) plus a
-  `results` list carrying, per hit, its `id`, `title`, `score`, `matchedTerms`/`matchedFields`, and
-  `excerpts` — plus `path`, emitted only when it differs from `id` (for filesystem sources the worker
-  doc-id *is* the path, so the field would otherwise be a verbatim duplicate).
+  `results` list carrying, per hit, its `path`, `title`, `score`, `matchedTerms`/`matchedFields`, and
+  `excerpts` — plus `id`, emitted only when it differs from `path` (for filesystem sources the worker
+  doc-id *is* the path, so shipping both would be a verbatim duplicate; `path` is the one kept
+  because it is the name the agent can act on, and `id` still ships for source classes whose doc-id
+  is not a path).
   The query-level `searchTrace` is always present. The **per-hit ranking-provenance tier** —
   `trace` (which legs placed the hit, at what rank/score), `legScores` (sparse/dense/splade/fused),
   and the numeric detail sub-map inside `trace` — is included only when the call sets `detail: true`
@@ -242,8 +244,10 @@ indexed content. It retrieves relevant passages assembled with source
 attribution — more efficient than searching and reading individually.
 
 Use `justsearch_search` when the agent needs to discover what exists,
-browse by source/category, or find specific files. Returns facets on
-every call for filter discovery.
+browse by source/category, or find specific files. When the matching
+documents carry facetable fields, it returns top facet values for filter
+discovery (a zero-hit query, or a corpus without those fields, returns
+none). Pass `querySyntax: "lucene"` for exact-phrase or boolean queries.
 
 Use `justsearch_browse` to explore the folder structure before
 searching — especially useful when the agent doesn't know what's
@@ -270,19 +274,24 @@ Tools return contextual guidance at decision time:
 - **Zero results** → "try broader terms or check justsearch_status"
 - **Many results** → "use facet values as filters to narrow down"
 - **Low enrichment** → "enrichment in progress — semantic search may be limited"
-- **Facet values** → `justsearch_search` returns top sources and entities on
-  every call, as filter values for the next call
+- **Facet values** → `justsearch_search` returns top sources and entities
+  whenever the matching documents carry them, as filter values for the next
+  call (a zero-hit query returns none)
 - **Comparative hint** → after an `answer` that drew on more than one
   document, the response states factually how many distinct documents it
   assembled evidence from in a single call — surfacing the index's
   multi-document advantage at the moment the agent sees it worked, not only
   in the tool description (which agents read once and forget)
 
-Advanced parameters (doc_ids, LUCENE syntax, entity filters) work when
-passed but are NOT in the visible schema. This is intentional — eval
-data shows making them visible degrades small-model accuracy (92% → 71%)
-without increasing usage. Capable agents can use them by reading the
-description carefully.
+Some advanced parameters (doc_ids, entity filters) work when passed but
+are NOT in the visible schema. This is intentional — eval data shows
+making them visible degrades small-model accuracy (92% → 71%) without
+increasing usage. Capable agents can use them by reading the description
+carefully. `querySyntax` is the exception (tempdoc 770): the description
+advertised it while the schema rejected nothing and the validator silently
+dropped it, so agents believed they had enabled exact-phrase search and
+got fuzzy hybrid instead. It is now a declared schema parameter threaded
+through to the request, so the advertised behavior is the real behavior.
 
 ## MCP Prompts (3)
 
