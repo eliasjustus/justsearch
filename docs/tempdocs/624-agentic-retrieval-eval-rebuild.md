@@ -4948,9 +4948,11 @@ conservative-direction gating incl. duration/turns (757, #254 + #259). Chain:
 `scripts/jseval/chain-confirm-v5.bat` (this PR).
 
 **Launch gates (both founder-explicit, in order):** (1) ratify the v2 amendment into the
-checked-in policy (file-swap + changeset; the draft is
-`scripts/jseval/utility-claim-policy.v2-draft-755.proposed.json`); (2) explicit launch
-authorization (~$90–100). Amendments to this pre-registration before any measured cell follow
+checked-in policy (file-swap + changeset; the draft was
+`scripts/jseval/utility-claim-policy.v2-draft-755.proposed.json`) — **SATISFIED 2026-07-21**
+(founder-authorized): ratified as `agent-utility-public-v2` in
+`scripts/jseval/utility-claim-policy.v1.json`, the `.proposed` draft deleted, digests re-pinned
+(tempdoc 755 §J); (2) explicit launch authorization (~$90–100). Amendments to this pre-registration before any measured cell follow
 the established dated-amendment convention; nothing may change after the first measured cell.
 
 **Analysis plan:** identical to the confirmatory campaign (per-stratum ITT tables, McNemar
@@ -4959,3 +4961,31 @@ verified_tool_surface gate reported with its {rate, verified, total} observed sh
 recompose must be a single 4-stratum compose; no retroactive stratum substitution — a voided
 stratum is rerun under the SAME cohort window or the campaign records a rejected verdict, as
 before.
+
+## Relaunch RESULTS (2026-07-21, 07:51–12:0x) — **ACCEPTED / adoption-only: the program's first promoted claim**
+
+Evidence: `scripts/jseval/624-run-2026-07-21-relaunch/`. Launched per the §Relaunch
+pre-registration on a clean tree at ratified squash `3ed766b7`; single uninterrupted cohort
+window (CLI 2.1.216 held throughout — 758's pinned-harness window + stamped calibrations);
+**zero incidents, zero relaunches** (contrast: six incidents on confirmatory night — every
+remediation earned its keep on first contact).
+
+**`claim_verdict: accepted / adoption-only`, policy `agent-utility-public-v2`, failing
+reasons: none.** `verified_tool_surface` passed its first live rate-based evaluation at
+0.9167 (220/240) vs the 0.9 threshold — within a point of the 755 smoke's measured 91.7%.
+480/480 cells, all `claude-haiku`, one harness + one search cohort, derivation check enforced
+per run, exposure identity carried through compose, `git_dirty: false`. Spend: **$89.77
+all-real** (cap $100). The 751 warm/adopt path ran all four runs flawlessly (adopts in
+seconds, union-floor ingest no-ops <1 min).
+
+ITT science (third replication of the regime pattern): legal Δ+0.167 at BOTH scales
+(p=0.013 @1k, p=0.002 @10k), email null (−0.117 p=0.27; −0.017 p=1.0), adoption 0.98–1.00,
+baseline completion collapse at 10k (0.57–0.58 vs 0.75–0.92 with-tool). Efficiency intervals
+fail closed where with-tool wall-clock truncation exists — pre-registered expected outcome;
+the benefit tier remains deferred to the USD-binding successor campaign.
+
+**What this unlocks (founder decision, not taken here):** the promoted record is eligible for
+the 623 publication pipeline — immutable publication manifest + owner-selected pointer →
+README/RESEARCH/benchmarks flip from the no-result fallback to the accepted-result rendering.
+Promotion machinery is now proven end-to-end: pre-registration → fail-closed campaign →
+policy verdict → (pending owner word) public publication.

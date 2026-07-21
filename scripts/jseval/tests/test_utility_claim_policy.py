@@ -181,7 +181,13 @@ def test_checked_in_policy_is_active_confirmatory_four_stratum():
     resolved thresholds (seeds floor 3 = harness SEED_FLOOR; paired >= 54 = 90%%
     of the 60-pair complete matrix; adoption >= 0.9; noninferiority margin 0.10).
     Thresholds were set BEFORE the confirmatory campaign ran — pre-registration,
-    not post-hoc selection."""
+    not post-hoc selection.
+
+    RATIFIED 2026-07-21 (founder-authorized, tempdoc 755 §J): the rate-based
+    verified_tool_surface amendment became part of the ACTIVE policy — policy_id
+    advanced to `agent-utility-public-v2` and thresholds now carry
+    minimum_surface_verification_rate = 0.9. The matrix, other thresholds, and
+    requirements are byte-unchanged from the v1 activation."""
     policy = load_policy()
     jsonschema = pytest.importorskip("jsonschema")
     schema_path = __import__("pathlib").Path(__file__).parents[1] / "utility-claim-policy.v1.schema.json"
@@ -189,7 +195,8 @@ def test_checked_in_policy_is_active_confirmatory_four_stratum():
 
     assert policy["status"] == "active"
     assert policy["unresolved"] == []
-    assert policy["policy_id"] == "agent-utility-public-v1"
+    assert policy["policy_id"] == "agent-utility-public-v2"
+    assert policy["thresholds"]["minimum_surface_verification_rate"] == 0.9
     assert {item["stratum_id"] for item in policy["required_strata"]} == {
         "en-legal-clerc|mixed/en-legal-clerc-1k-verbose|1000|verbose|haiku",
         "en-legal-clerc|mixed/en-legal-clerc-10k-verbose|10000|verbose|haiku",
@@ -719,14 +726,22 @@ def _surface_gate(verdict: dict) -> dict:
 def test_verified_tool_surface_v1_gate_is_bool_and_fails_on_unverified_cell():
     """v1 policy (no minimum_surface_verification_rate): byte-identical behavior --
     the gate observed is a plain bool True/False and a single unverified cell fails
-    it. This guards the digest-covered v1 verdict against the Track-2 rate branch."""
+    it. This guards the digest-covered v1 verdict against the Track-2 rate branch.
+
+    The checked-in policy is now v2 (ratified 2026-07-21, carries the rate
+    threshold), so this test reconstructs a v1-shaped policy by removing
+    minimum_surface_verification_rate — the None-threshold bool branch stays live
+    in the evaluator and load-bearing for historical/v1 verdicts, so it keeps
+    explicit coverage."""
     record = _record()
     assertions = record["tool_call_assertions"]["B"]
     total = assertions["cells_total"]
     assertions["cells_with_mcp_surface_verified"] = total - 1
     assertions["cells_mcp_surface_unverified"] = 1
 
-    verdict = evaluate_claim(record, _active_policy(record))
+    v1_policy = _active_policy(record)
+    v1_policy["thresholds"].pop("minimum_surface_verification_rate", None)
+    verdict = evaluate_claim(record, v1_policy)
 
     gate = _surface_gate(verdict)
     assert gate["observed"] is False
@@ -813,6 +828,32 @@ def test_verified_tool_surface_rate_fails_when_single_hash_not_declared():
     assert gate["passed"] is False
     assert verdict["accepted"] is False
     assert "verified_tool_surface" in verdict["reasons"]
+
+
+def test_checked_in_active_policy_evaluates_surface_via_rate_branch():
+    """RATIFIED v2 (2026-07-21, tempdoc 755 §J): the CHECKED-IN active policy now
+    carries thresholds.minimum_surface_verification_rate, so its
+    verified_tool_surface gate evaluates via the #257 rate branch against the REAL
+    active policy (not only a synthetic _rate_policy fixture). Observed is the
+    {rate, verified, total} shape and threshold is the rate; a within-tolerance
+    capture-miss rate (0.92 >= 0.9) passes. This is the runnable proof that the
+    rate semantics hold against the policy the harness actually loads."""
+    policy = load_policy()
+    assert policy["policy_id"] == "agent-utility-public-v2"
+    assert policy["thresholds"]["minimum_surface_verification_rate"] == 0.9
+
+    record = _record()
+    assertions = record["tool_call_assertions"]["B"]
+    total = assertions["cells_total"]  # 100 attempted with-tool cells
+    assertions["cells_with_mcp_surface_verified"] = 92
+    assertions["cells_mcp_surface_unverified"] = total - 92
+
+    gate = _surface_gate(evaluate_claim(record, policy))
+    assert gate["threshold"] == 0.9
+    assert gate["observed"]["verified"] == 92
+    assert gate["observed"]["total"] == total
+    assert gate["observed"]["rate"] == pytest.approx(0.92)
+    assert gate["passed"] is True
 
 
 def test_source_identity_complete_requires_well_formed_mcp_initialize_identity():
