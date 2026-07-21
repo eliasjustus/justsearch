@@ -1,16 +1,17 @@
 ---
 title: "Installer payload composition: what belongs in the base installer versus the consent-gated download pack — the base installer ships an inference runtime it cannot run, and the pack mechanism that would carry it already exists"
 type: tempdocs
-status: "open — ANALYSIS ONLY (2026-07-21). Evidence measured against a real 815 MB CI artifact (run 29514086160, 743 files, 177 PE binaries, every PE signature-checked). Takeover investigation (2026-07-21, multiple passes) independently re-verified all citations (clean), resolved Q7 (§F: native-bin combined is ~10.4% of installed payload), found a much bigger payload outside the original native-bin-only scope (§G: lib/worker/onnxruntime_gpu-1.24.3.jar is 34.3%, of which ~18.65% is dead Linux native binaries on this Windows-only product and ~15.12% is a Windows CUDA provider DLL inert until GPU+pack), and found a second major lever (§H: the embedded WebView2 offline installer is 203.65 MB / 18.83% — the second-largest single component, ~60% bigger than Tauri's own documented estimate). Resolved Q3 (pack mechanism is NOT ready for a CPU-mandatory package — 4 concrete gaps found), Q4 (only 2 of 9 scripts are real gates, both already characterized), the should_sign upstream claim (confirmed against Tauri source), and Q8's licensing question (ONNX Runtime is MIT; no Windows-only upstream artifact exists). No decision reached, no split recommended, nothing removed or implemented; §Open questions (1-10, several now resolved inline) are for the owner. A /derisk pass, /theorize pass (broader framings + a spun-off idea sketch, tempdoc 773), and /research pass (competitive precedent: Ollama's Windows installer is 1.36 GB, ~1.75x this one; the onnxruntime_gpu fat-jar problem is a known unresolved upstream issue, not a local one-off; Tauri's WebviewInstallMode default is downloadBootstrapper, so JustSearch's offlineInstaller choice was a deliberate historical override) followed. See §Takeover verdict."
+status: "open — ANALYSIS ONLY (2026-07-21). Evidence measured against a real 815 MB CI artifact (run 29514086160, 743 files, 177 PE binaries, every PE signature-checked). Takeover investigation (2026-07-21, multiple passes) independently re-verified all citations (clean), resolved Q7 (§F: native-bin combined is ~10.4% of installed payload), found a much bigger payload outside the original native-bin-only scope (§G: lib/worker/onnxruntime_gpu-1.24.3.jar is 34.3%, of which ~18.65% is dead Linux native binaries on this Windows-only product and ~15.12% is a Windows CUDA provider DLL inert until GPU+pack), and found a second major lever (§H: the embedded WebView2 offline installer is 203.65 MB / 18.83% — the second-largest single component, ~60% bigger than Tauri's own documented estimate). Resolved Q3 (pack mechanism is NOT ready for a CPU-mandatory package — 4 concrete gaps found), Q4 (only 2 of 9 scripts are real gates, both already characterized), the should_sign upstream claim (confirmed against Tauri source), and Q8's licensing question (ONNX Runtime is MIT; no Windows-only upstream artifact exists). No decision reached, no split recommended, nothing removed or implemented; §Open questions (1-10, several now resolved inline) are for the owner. A /derisk pass, /theorize pass (broader framings + a spun-off idea sketch, tempdoc 773), /research pass (competitive precedent: Ollama's Windows installer is 1.36 GB, ~1.75x this one; the onnxruntime_gpu fat-jar problem is a known unresolved upstream issue, not a local one-off; Tauri's WebviewInstallMode default is downloadBootstrapper, so JustSearch's offlineInstaller choice was a deliberate historical override), and a /design pass (§Design: closes Q3 by extending 657's existing tier/intent/hardware model with a package-level `requiresCuda` field rather than building new structure; recommends Gradle Artifact Transforms over the derisk pass's hand-rolled jar task for §G; recommends reverting §H to Tauri's own default) followed. See §Takeover verdict."
 created: 2026-07-21
-updated: 2026-07-21 (takeover, derisk, theorize, research passes)
+updated: 2026-07-21 (takeover, derisk, theorize, research, design passes)
 author: agent (subagent investigation), founder-directed distribution work (2026-07-21)
 category: distribution / installer
 related:
   - 760-installer-distribution-readiness  # distribution TRUST mechanics — disjoint scope, see §Scope
   - 759-mcpb-standalone-feasibility       # sibling distribution lane
   - 761-linux-build-cost-estimate         # sibling distribution lane
-  - 374-installer-alpha                   # the CPU-only alpha decision this payload inherits
+  - 374-app-packaging-and-distribution    # the CPU-only alpha decision this payload inherits (filename corrected)
+  - 657-install-modes-and-model-pack-decomposition  # shipped the CapabilityTier/InstallPlanner substrate §Design extends
 ---
 
 > Charter. The base installer is 815 MB and ships `llama-server.exe` plus ~19 unsigned support
@@ -790,6 +791,132 @@ adding a 👍/comment to an existing issue rather than filing a fresh one) but a
 a fast path — these issues show no sign of upstream movement. It also reinforces that local
 repackaging (the derisk pass's approach) isn't a hacky workaround for a JustSearch-specific problem;
 it's the same fix other consumers of this exact artifact have independently had to consider.
+
+## §Design (2026-07-21)
+
+Run via `/design`, after reading tempdoc 657 (`install-modes-and-model-pack-decomposition`, 2026-07-02
+— the design that shipped the `CapabilityTier`/`InstallIntent`/`InstallPlanner` substrate `772`'s
+own Q3 investigation examined) and re-checking the live source of `CapabilityTier.java`,
+`InstallPlanner.java`, and `ModelPackage.java` in this checkout, rather than relying on the earlier
+subagent's characterization alone. This produced a correction to the theorize pass's framing, and
+three concrete, scoped designs.
+
+### Correction to §Theorize: the general mechanism already exists — extend it, don't replace it
+
+§Theorize proposed a "broader principle... every optional capability... invents its own delivery
+mechanism" and floated an unbuilt "capability-delivery lifecycle" as a future direction. Having now
+read 657 directly: **that system already exists, and it already documents itself as solving exactly
+this.** `CapabilityTier.java`'s own docstring states it is *"Orthogonal to `DownloadProfile` (the
+hardware axis, which picks the precision variant within a wanted package)"* — tier (capability
+grouping) × intent (product mode) × hardware (device capability) were already designed as three
+independent axes in 657, not something this tempdoc needs to invent.
+
+The real gap is much narrower than §Theorize suggested: **one hardcoded conditional in
+`InstallPlanner.java` fuses tier-identity with hardware-gating for exactly one tier**, because until
+now `RUNTIME` has only ever contained a single package (`cuda-runtime`), so "is RUNTIME-tier" and
+"requires CUDA" happened to mean the same thing in practice. This is the correct place to extend the
+existing model, not a case for parallel new structure — matching the instruction to prefer extending
+a usable existing design over replacing it.
+
+### Design 1 — closing Q3: a package-level hardware-gate field, not a new tier or mechanism
+
+**The fix, precisely scoped:**
+
+- Add a package-level field to `ModelPackage` (alongside the existing `minVramBytes`) — e.g.
+  `requiresCuda: boolean`, defaulting to `false`. Change `InstallPlanner`'s skip condition from
+  `pkg.tier() == CapabilityTier.RUNTIME && !profile.usesCuda()` to `pkg.requiresCuda() &&
+  !profile.usesCuda()`, independent of tier identity. `cuda-runtime` sets `requiresCuda: true`
+  (unchanged behavior — this preserves the exact GPU_LITE-vs-full-CUDA-VRAM-threshold fix
+  `InstallPlanner`'s own comment documents; conflating this with `minVramBytes` would reintroduce
+  that bug). A future CPU-mandatory RUNTIME-tier package (a pack-delivered `llama-server-cpu`, if
+  O1/O3/O5 is ever chosen) sets `requiresCuda: false` and is never skipped for hardware reasons —
+  Q3(a) closed.
+- This is not a new idiom — it mirrors `ModelPackage`'s own documented `minVramBytes: 0 = always
+  include` convention, extended to the CUDA-capability axis specifically (kept as a separate field
+  from VRAM-amount because they're different checks, per the reasoning above).
+- **Q3(b)** (the bundled-runtime precondition can hard-fail before any pack download starts):
+  reorder, don't restructure — `AiInstallService`'s presence check should consult the current run's
+  `InstallPlan` (does this run include a package that would satisfy the runtime need?) before
+  treating absence as fatal, rather than checking presence-at-entry unconditionally ahead of the
+  download loop.
+- **Q3(c)** (no precedent for shipping license/notice files inside a downloaded archive): needs no
+  new mechanism in the install/extraction code path at all. Bake the notice/license files into the
+  release archive itself when it's built and uploaded — only self-hosted archives (the ones
+  JustSearch controls the packaging of) are candidates for carrying a GPL-2.0-obligated payload like
+  Tesseract, and for those, the files arrive as ordinary zip entries through the existing
+  `extractZipInPlace` step, no special-casing required.
+- **Q3(d)** (preflight can't distinguish "optionally skipped" from "mandatory and missing"): a
+  *derived* field, not new persisted state. `AiPreflightService`/`PackageStatus` can compute "wanted
+  by the current intent and permitted by current hardware, yet still absent" using the same two
+  checks `InstallPlanner` already makes, reused at read time — no new state to keep in sync.
+
+None of this is implemented here — same standing as everything else in this tempdoc. It is scoped
+narrowly enough (one new field, one reordering, one build-time packaging change, one derived read)
+that it does not itself decide Q1/Q2, and does not require the owner to have chosen an option first —
+it is infrastructure that O1, O3, and O5 all need regardless of which gets picked, if any does.
+
+### Design 2 — §G: Gradle Artifact Transforms, superseding the derisk pass's hand-rolled task
+
+The derisk pass sketched a bespoke `Jar`/`Zip`-type task consuming the resolved `onnxruntime_gpu` jar
+via the `zipTree(...) { exclude(...) }` idiom already precedented in this build (CUDA variant
+staging). **That sketch is superseded by this design**, in favor of Gradle's built-in Artifact
+Transform mechanism: a Transform is registered once against the dependency's coordinates and produces
+a trimmed variant that *any* consumer requesting that variant receives automatically — `indexer-worker`
+today, but also `worker-core` or any future module that resolves the same dependency, without each
+site needing its own copy-filtering logic. This is the more idiomatic, generalizing mechanism for
+"make a resolved dependency smaller for our one deployment target" — the hand-rolled task would only
+have fixed the one export site (`bundleSidecarResources`) this investigation happened to look at.
+
+- **What it orphans:** the derisk pass's `Jar`-task sketch is not needed. `bundleSidecarResources`'s
+  `from(workerInstallDist...)` block (`build.gradle.kts:1417`) would need a variant-selecting
+  attribute on the consuming configuration, not new copy/repackaging logic of its own.
+
+### Design 3 — §H: revert to Tauri's own default, don't invent a third custom mode
+
+Given §Research's findings — `downloadBootstrapper` is Tauri's own considered default;
+`embedBootstrapper` differs from it only by ~1.8 MB and Windows 7 support (irrelevant, not a target
+platform); WebView2 ships built into Windows 11 and is already present on "most active" Windows 10
+machines; and the product already carries a hard network dependency for the ~9 GB model download
+shortly after install regardless — the best-evidenced design is not a bespoke third option, but to
+**stop overriding Tauri's own default**: remove the `webviewInstallMode` override entirely and let it
+fall back to `downloadBootstrapper`.
+
+- **What it orphans:** the current explicit `{ type: "offlineInstaller", silent: true }` block at
+  `tauri.conf.json:25-27` — named exactly, since removing an override is superseding a prior
+  deliberate choice (confirmed as deliberate, not accidental, by §Research), not a silent default.
+
+### §Reach — does this point to a broader principle?
+
+**Principle:** *package mandatoriness and hardware-applicability are orthogonal axes; a
+capability-delivery model should encode them as independent fields on the package, not fuse them into
+the tier (or any other single identity) — which is exactly what `RUNTIME` currently does, for the one
+package that has ever existed in that tier.*
+
+This is not a new invention. `CapabilityTier`'s own docstring already asserts the orthogonality as
+design intent. The gap is that the *implementation* doesn't yet honor that promise for the one case
+where it was tested (RUNTIME), because until this tempdoc's investigation only one RUNTIME-tier
+package had ever existed, so tier-identity and hardware-gate happened to coincide by accident of
+history, not by design.
+
+- **Where else it would apply:** the two live candidates already surfaced *in this same tempdoc* — a
+  pack-delivered CPU-only `llama-server` runtime (§Options O1/O3/O5) and Tesseract, if ever moved to
+  the pack (§Options O2/O3). Both would need `requiresCuda: false` and Design 1's baked-in-notices
+  idiom. No third candidate is known today.
+- **Does existing code already violate it?** Yes — `InstallPlanner.java`'s RUNTIME-tier skip
+  condition, precisely as described in Design 1.
+- **Evidence this would be earning its keep:** a second RUNTIME-tier (or otherwise hardware-gated)
+  package is added later and is representable via `requiresCuda` without a new special-cased
+  conditional — the pattern generalizing past the one instance that motivated it.
+- **Retirement condition:** if neither live candidate (CPU llama-server, Tesseract) is ever actually
+  moved to the pack, `requiresCuda` ends up a field with exactly one value (`true`, on
+  `cuda-runtime`) that nothing else uses. At that point it isn't wrong, just unearned generality —
+  and the honest reading would be that the original hardcoded tier check was fine for the one case
+  that ever existed, and this design overbuilt slightly for a future that didn't arrive.
+
+**Not everything here has reach, and forcing it would be dishonest.** Design 3 (the WebView2 mode
+choice) does not carry a broader principle — it's a bounded, one-time configuration decision with no
+recurring shape behind it. Named explicitly so this section doesn't read as finding reach everywhere
+by default.
 
 ## §Takeover verdict (2026-07-21)
 
