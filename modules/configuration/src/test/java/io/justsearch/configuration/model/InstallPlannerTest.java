@@ -212,6 +212,64 @@ class InstallPlannerTest {
     assertTrue(plan.skipped().stream().anyMatch(s -> s.packageId().equals("cuda-runtime")));
   }
 
+  @Test
+  void hardwareIndependentRuntimePackage_isNeverSkipped_onCudaHardware() {
+    // Tempdoc 772 Q3: a RUNTIME-tier package with requiresCuda=false must be representable and never
+    // skipped for hardware reasons. On CUDA hardware it downloads like any wanted package.
+    ModelRegistry registry = registryWithHardwareIndependentRuntime();
+    HardwareProfile hw = HardwareProfile.gpuFull(12_000_000_000L);
+
+    InstallPlan plan = InstallPlanner.plan(registry, hw, tempDir);
+
+    assertTrue(plan.skipped().stream().noneMatch(s -> s.packageId().equals("runtime-cpu-support")));
+    assertTrue(
+        plan.downloads().stream().anyMatch(d -> d.packageId().equals("runtime-cpu-support")),
+        "a requiresCuda=false RUNTIME package must download on CUDA hardware");
+  }
+
+  @Test
+  void hardwareIndependentRuntimePackage_isNeverSkipped_onNonCudaHardware() {
+    // The point of the tempdoc 772 Q3 change: a RUNTIME-tier package with requiresCuda=false is
+    // NEVER skipped for hardware reasons — unlike cuda-runtime (requiresCuda=true), which the CPU
+    // profile skips (see cpuProfile_skipsCudaRuntime). Before this change RUNTIME tier itself gated
+    // on CUDA, so a hardware-independent runtime package could not be expressed at all.
+    ModelRegistry registry = registryWithHardwareIndependentRuntime();
+    HardwareProfile hw = HardwareProfile.cpuOnly();
+
+    InstallPlan plan = InstallPlanner.plan(registry, hw, tempDir);
+
+    assertEquals(DownloadProfile.CPU, plan.profile());
+    assertTrue(plan.skipped().stream().noneMatch(s -> s.packageId().equals("runtime-cpu-support")));
+    assertTrue(
+        plan.downloads().stream().anyMatch(d -> d.packageId().equals("runtime-cpu-support")),
+        "a requiresCuda=false RUNTIME package must download even without CUDA");
+  }
+
+  /**
+   * A registry carrying a hypothetical hardware-independent RUNTIME-tier package (tempdoc 772 Q3):
+   * RUNTIME tier but {@code requiresCuda=false}, so the planner's CUDA gate never skips it. Does not
+   * correspond to any real production package.
+   */
+  private ModelRegistry registryWithHardwareIndependentRuntime() {
+    ModelPackage embedding = new ModelPackage(
+        "embedding", "Embedding", "Semantic search", "onnx/embed",
+        List.of(
+            new ModelVariant("model.onnx", ModelPrecision.FP32, ExecutionProvider.CPU,
+                "AAAA", 1_000_000, "https://example.com/fp32"),
+            new ModelVariant("model_fp16.onnx", ModelPrecision.FP16, ExecutionProvider.CUDA,
+                "BBBB", 500_000, "https://example.com/fp16")),
+        List.of(new SupportingFile("tokenizer.json", "CCCC", 10_000, "https://example.com/tok")),
+        0, null, null, null, CapabilityTier.RETRIEVAL_CORE);
+    ModelPackage runtimeCpuSupport = new ModelPackage(
+        "runtime-cpu-support", "CPU runtime libraries", "Always-required runtime payload", "cpu-rt",
+        List.of(),
+        List.of(
+            new SupportingFile(
+                "runtime.zip", "GGGG", 50_000_000L, "https://example.com/runtime.zip", true)),
+        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, false);
+    return new ModelRegistry(2, "test registry", List.of(embedding, runtimeCpuSupport));
+  }
+
   private ModelRegistry registryWithRuntimeAndChat() {
     ModelPackage embedding = new ModelPackage(
         "embedding", "Embedding", "Semantic search", "onnx/embed",
@@ -228,7 +286,7 @@ class InstallPlannerTest {
         List.of(
             new SupportingFile(
                 "cuda.zip", "FFFF", 200_000_000L, "https://example.com/cuda.zip", true)),
-        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME);
+        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true);
     ModelPackage chat = new ModelPackage(
         "chat", "Chat", "Conversational AI", "gguf",
         List.of(
@@ -255,7 +313,7 @@ class InstallPlannerTest {
         List.of(
             new SupportingFile(
                 "cuda.zip", "FFFF", 200_000_000L, "https://example.com/cuda.zip", true)),
-        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME);
+        0, null, "native-bin/llama-server/variants", null, CapabilityTier.RUNTIME, true);
     return new ModelRegistry(2, "test registry", List.of(embedding, cudaRuntime));
   }
 

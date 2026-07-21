@@ -147,6 +147,24 @@ class ModelRegistryLoaderTest {
   }
 
   /**
+   * Tempdoc 772 Q3 — production hardware-gating guard. The JSON loader must deserialize
+   * cuda-runtime's {@code "requiresCuda": true} so the planner keeps skipping it on non-CUDA
+   * hardware. A regression here (loader dropping the field, or JSON losing the key) would silently
+   * un-gate cuda-runtime in production. Every other package leaves the field unset → false.
+   */
+  @Test
+  void cudaRuntimeDeclaresRequiresCuda_othersDefaultFalse() {
+    ModelRegistry registry =
+        ModelRegistryLoader.loadFromClasspath("ai/model-registry.v2.json");
+
+    assertTrue(
+        registry.findPackage("cuda-runtime").requiresCuda(),
+        "cuda-runtime must load requiresCuda=true to stay hardware-gated in production");
+    assertFalse(registry.findPackage("embedding").requiresCuda());
+    assertFalse(registry.findPackage("chat").requiresCuda());
+  }
+
+  /**
    * Tempdoc 633 #6 — first-run robustness. Every model/file download must resolve over HTTPS from an
    * allowlisted *public* host, so a stranger can clone → build → first-run without hitting a private or
    * unreachable source. This makes the README's "downloads from public sources" line a checked invariant
