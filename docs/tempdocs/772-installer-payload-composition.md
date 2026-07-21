@@ -692,13 +692,18 @@ recommendation over the hand-rolled task is weaker than §Design implied.**
   → download loop. The runtime-restore check is structurally independent of everything after it — no
   step in the download loop reads state the reorder would change. Confidence on this sub-fix raised,
   not lowered.
-- **Q3(c) (bake notices into the release archive) has no known attachment point in this repo.** Swept
-  `scripts/` and `.github/` for any script that builds/publishes the self-hosted
-  `justsearch-releases` archives (`ort-cuda-runtime-12.4.zip`, `cudnn-9-runtime-12.4.zip`) — found
-  **none**. Either that process lives outside this repo (a private tooling repo, or a manual step) or
-  it doesn't exist as automation yet. This design's premise ("bake the files in when the archive is
-  built") assumes an extension point that isn't visible here — worth a direct owner question before
-  scoping this as "just add three files to an existing build step," since that step may not exist.
+- **Q3(c) (bake notices into the release archive) — RESOLVED (2026-07-22, owner-directed follow-up).**
+  No script in *this* repo builds/publishes the `justsearch-releases` archives because that process
+  doesn't live here — it's a manual runbook (`RELEASING.md`) owned by the separate `justsearch-releases`
+  distribution repo, covering both app-installer releases and model/runtime-asset releases (tag
+  scheme, SHA-256 capture, per-release notes). It is a human-run checklist, not CI automation, and it
+  already has a repo-level `THIRD_PARTY_NOTICES.txt` convention for tracking redistributed-binary
+  license obligations. **The fix for Q3(c) is therefore a runbook step addition** ("include
+  `NOTICE-*.txt`/`LICENSE-*.txt` in the archive before uploading it," mirroring how the existing
+  `THIRD_PARTY_NOTICES.txt` already covers other redistributed content), not new tooling — no code or
+  CI in this repo needs to change to make this feasible. Still real, still owner-executed work (a
+  manual step someone has to remember to do at release time), but the "does an attachment point even
+  exist" uncertainty is closed.
 - **Q3(d) (derived severity field) is not schema-gated, but is confirmed two-sided, not backend-only.**
   `AiPreflightResult`/`PackageStatus` (nested records in `AiPreflightService.java`, not `app-api`
   types) aren't covered by `updateSchemas` either. But `modules/ui-web/src/shell-v0/utils/
@@ -1091,3 +1096,41 @@ tradeoff, not a pure teardown, rename, or config-delete — it does not qualify 
   No design or implementation work was started, per the takeover charter — that stays gated on your
   answers above, including whether the two newly-found levers (Linux natives, WebView2 mode) should
   be fast-tracked ahead of the bigger Q1/Q2 decision.
+
+## §Addendum (2026-07-22) — implementation landed; Q3(c) resolved; Q1/Q2 reopened
+
+Since the verdict above, a `/plan` pass implemented and merged into this branch (not yet a PR) the
+three items that didn't need Q1/Q2 to be answered first: §H's WebView2 revert (commit `7e96d61c`,
+CI-measured −203.6 MB), §G's Linux-native jar trim (commit `c1ee039f`, live-functional-verified —
+real embeddings/SPLADE/NER inference against the trimmed jar, zero failures), and the Q3 pack-
+mechanism infrastructure (commit `5f4d4dec`, full test suite green). Combined estimated installer
+size: ~452 MB, down from 815 MB. Full `./gradlew.bat build -x test` and `./gradlew.bat test` pass
+across all three together. Nothing has been merged to `main` or opened as a PR.
+
+**Q3(c) is now resolved**, not just blocked-pending-owner-input (see the round-2 derisk entry above,
+updated in place): the self-hosted release archives are built via a manual runbook in the separate
+`justsearch-releases` distribution repo, which already has a `THIRD_PARTY_NOTICES.txt` convention for
+tracking redistributed-binary license obligations. The fix is a runbook step addition, not new CI
+tooling — real work, but no longer an open question about whether an attachment point exists.
+
+**Q1/Q2 is reopened, not settled, but the calculus changed.** With §G/§H banked, the pure *size*
+argument for moving `native-bin/tesseract`/`llama-server` to the pack is now weaker than at the start
+of this investigation (815 MB → ~452 MB already, competitive with or smaller than comparable tools
+per §Research) — on size alone, the remaining ~109 MB (tesseract + llama-server combined) is a much
+smaller marginal win than it looked at the outset. **But the owner has since stated that signing-
+pipeline design (tempdoc 760's domain) is a *live blocker* on the next release**, not merely a
+future cost to amortize. That changes which argument in §"Why this matters" / §"Signing consequence"
+actually matters: the 101→~8 signings-per-release reduction was recorded as "one input, not the
+justification" when this tempdoc's main concern was download size — but reducing signing *surface*
+may also reduce the *design complexity* of 760's still-unresolved problems (CI never engaging
+`-Release`; no credential mode for cloud-HSM/USB-token signing) by shrinking the pile of heterogeneous
+third-party binaries (74 MSYS2 Tesseract files + 19 llama.cpp files) that any interim or complete
+signing solution has to correctly handle down to the ~8 Tauri/NSIS-produced artifacts its own
+`should_sign` logic already covers uniformly. This is a genuinely different argument from "815 MB is
+too big" — it's "a smaller, more homogeneous signing surface may unblock work that is blocking a
+release right now" — and it wasn't weighed this way earlier in this tempdoc because the signing
+blocker's *current, active* status wasn't known until the owner said so directly. Whether it actually
+resolves 760's specific blockers (rather than just reducing volume) is a question for whoever is
+doing that design work, not re-litigated here. Q1/Q2 remain unanswered, but this reframes them as
+worth resolving now rather than deferring — see 760 for whether reduced signing surface actually
+unblocks its open items.
