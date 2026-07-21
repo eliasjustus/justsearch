@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -41,10 +42,24 @@ def ingest_and_wait(
     # Get initial doc count for floor calculation
     initial_count = _get_indexed_doc_count(config.base_url)
     if corpus_doc_count > 0:
-        # Expect corpus to be ADDED to whatever already exists.
-        # Use initial + corpus as the floor, not max(initial, corpus),
-        # so a dirty index (with pre-existing data) doesn't pass prematurely.
-        expected_min = initial_count + corpus_doc_count
+        if _root_already_watched(config.base_url, docs_dir):
+            # Tempdoc 751 sec Q sub-bug (a): the SAME root is being (re-)ingested
+            # into a backend that already watches it -- e.g. after cache adoption
+            # (the adopted index already indexed this corpus) or chain re-entry.
+            # Re-adding an already-watched root indexes ZERO new docs (the Worker
+            # dedups by path, IndexingDocumentOps.java), so the additive floor
+            # below would demand an unmeetable 2x-corpus wall (the 1001+1001=2002
+            # wedge). The floor is the UNION of watched content, not the SUM of
+            # ingest requests: max() still requires the full corpus if the index
+            # is somehow not yet complete, so this never weakens the gate for a
+            # genuinely larger corpus -- it only refuses to double-count the same
+            # root.
+            expected_min = max(initial_count, corpus_doc_count)
+        else:
+            # New root: expect corpus to be ADDED to whatever already exists.
+            # Use initial + corpus as the floor, not max(initial, corpus),
+            # so a dirty index (with pre-existing data) doesn't pass prematurely.
+            expected_min = initial_count + corpus_doc_count
     else:
         expected_min = -1
 
@@ -470,6 +485,40 @@ def _get_indexed_doc_count(base_url: str) -> int:
             return flatten_status(resp.json()).get("indexedDocuments", 0)
     except Exception:
         return 0
+
+
+def _watched_root_paths(base_url: str) -> list[str]:
+    """Absolute paths of the backend's current watched roots.
+
+    Reads ``GET /api/indexing/roots`` (payload ``{"roots": [{"path": ...}, ...]}``,
+    IndexingController.handleListRoots). Returns ``[]`` on any error -- an empty
+    list makes :func:`_root_already_watched` report "not watched", which falls the
+    caller back to today's additive floor (fail-SAFE: a lost signal can only
+    over-count the floor, never under-count it).
+    """
+    try:
+        with httpx.Client(base_url=base_url, timeout=10) as client:
+            resp = client.get("/api/indexing/roots")
+            resp.raise_for_status()
+            roots = resp.json().get("roots", [])
+        return [r["path"] for r in roots if isinstance(r, dict) and r.get("path")]
+    except Exception:
+        return []
+
+
+def _root_already_watched(base_url: str, docs_dir: Path) -> bool:
+    """True iff ``docs_dir`` is already among the backend's watched roots.
+
+    Comparison is on the OS-normalized real path of both sides, so a recorded
+    root and a freshly-resolved ``docs_dir`` match regardless of case / symlink /
+    trailing-separator noise. Drives the union-not-sum readiness floor (tempdoc
+    751 sec Q sub-bug a): re-ingesting an already-watched root adds no new docs.
+    """
+    target = os.path.normcase(os.path.realpath(str(docs_dir)))
+    for p in _watched_root_paths(base_url):
+        if os.path.normcase(os.path.realpath(p)) == target:
+            return True
+    return False
 
 
 def _wait_for_backpressure(
