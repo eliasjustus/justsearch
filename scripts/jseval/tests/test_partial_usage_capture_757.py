@@ -28,6 +28,7 @@ import copy
 import pytest
 
 from jseval import agent_utility_inspect as aui
+from jseval.utility_comparison import _stats_from_pairs
 from jseval.utility_evidence import read_evidence, sanitize_observation
 from jseval.utility_governance import RESOURCE_EXHAUSTION, classify_error_kind
 from jseval.utility_recompose import (
@@ -238,3 +239,99 @@ def test_usage_truncated_survives_sanitize_read_roundtrip(tmp_path):
 
     evidence = finalize_evidence([path], composed_at="two")
     assert evidence["semantic_digest"] == raw["semantic_digest"]
+
+
+# --- 6. §I hardening (independent review) -----------------------------------
+
+def test_with_tool_truncation_taints_on_stamp_alone_without_exhaustion_class():
+    # Change A: the taint gates on the AUTHORITATIVE `usage_truncated` stamp ALONE, not
+    # on the exhaustion CLASSIFICATION. A with-tool cell stamped truncated whose
+    # error_class is NOT resource-exhaustion (here excluded=False -> classify -> None)
+    # must still force the efficiency intervals unavailable -- otherwise a stamp-vs-
+    # classification divergence would treat a lower-bound with-tool cost as exact.
+    assert classify_error_kind(None) != RESOURCE_EXHAUSTION  # the taint cell is NOT exhaustion-classed
+    obs = [
+        _cell("A", "q0"),
+        _cell("A", "q1"),
+        _cell("B", "q0", truncated=True),   # stamped truncated, NOT excluded/exhausted
+        _cell("B", "q1"),
+    ]
+    _, stratum = _stratum(obs)
+    assert stratum["usage_complete"] is True  # every value present -> only the stamp taints
+    for metric in ("cost_usd", "provider_cache_creation_input_tokens"):
+        block = stratum[metric]
+        assert block["available"] is False
+        assert "anti-conservative" in block["reason"]
+
+
+def test_with_tool_truncation_forces_duration_delta_unavailable_in_stratum():
+    # Change B (integration): the ITT stratum publishes `duration`; its `delta_mean`
+    # fails closed on with-tool truncation, the same direction/reason as cost. The
+    # exhaustion-ITT censoring machinery (n_censored/completion_rate on the per-arm
+    # `_censored_distribution`s) is NOT removed -- only the tainted delta is withdrawn.
+    obs = [
+        _cell("A", "q0"),
+        _cell("A", "q1"),
+        _cell("B", "q0", error=_EXHAUSTION, truncated=True),
+        _cell("B", "q1"),
+    ]
+    _, stratum = _stratum(obs)
+    duration = stratum["duration"]
+    assert duration["delta_mean"]["available"] is False
+    assert "anti-conservative" in duration["delta_mean"]["reason"]
+    assert "n_censored" in duration["with_tool"]
+    assert "completion_rate" in duration["with_tool"]
+
+
+def test_baseline_truncation_keeps_duration_delta_available_in_stratum():
+    # The untainted (baseline-arm) case is direction-safe: `duration.delta_mean` stays
+    # AVAILABLE as an exact number -- byte-identical availability to a pre-757 record.
+    obs = [
+        _cell("A", "q0", error=_EXHAUSTION, truncated=True),
+        _cell("A", "q1"),
+        _cell("B", "q0"),
+        _cell("B", "q1"),
+    ]
+    _, stratum = _stratum(obs)
+    delta_mean = stratum["duration"]["delta_mean"]
+    assert not (isinstance(delta_mean, dict) and delta_mean.get("available") is False)
+
+
+def _pair(seed, *, a_turns, c_turns, a_dur, c_dur):
+    # Minimal `_stats_from_pairs` pair: only the scalar fields the stat block reads.
+    return {
+        "seed": seed,
+        "a_correct": True, "c_correct": True,
+        "a_cost": 0.1, "c_cost": 0.1,
+        "a_tok": 10, "c_tok": 10,
+        "a_turns": a_turns, "c_turns": c_turns,
+        "a_dur": a_dur, "c_dur": c_dur,
+        "a_censored": False, "c_censored": False,
+        "a_tool_calls": [], "c_tool_calls": [],
+        "c_toolsearch_targets": None, "c_tool_call_sequence": None,
+    }
+
+
+def test_stats_from_pairs_fails_turns_and_duration_closed_on_with_tool_truncation():
+    # Change B (unit, at the computation site): `turns` is only surfaced by the pooled
+    # caller and never by the ITT stratum, so assert its fail-closed behaviour directly.
+    # `with_tool_usage_truncated=True` withdraws the whole `turns` block and the
+    # `duration.delta_mean` (keeping censored distributions); the default (False) leaves
+    # both available with exact statistics -- the byte-identity guarantee for every
+    # pre-757 record and the truncation-free per-protocol/pooled callers.
+    pairs = {
+        "0|q0": _pair(0, a_turns=5, c_turns=4, a_dur=100.0, c_dur=90.0),
+        "1|q1": _pair(1, a_turns=6, c_turns=3, a_dur=110.0, c_dur=80.0),
+    }
+    tainted = _stats_from_pairs(pairs, with_tool_usage_truncated=True)
+    assert tainted["turns"]["available"] is False
+    assert "anti-conservative" in tainted["turns"]["reason"]
+    assert tainted["duration"]["delta_mean"]["available"] is False
+    assert "anti-conservative" in tainted["duration"]["delta_mean"]["reason"]
+    assert "n_censored" in tainted["duration"]["with_tool"]  # censoring retained
+
+    clean = _stats_from_pairs(pairs)  # default with_tool_usage_truncated=False
+    assert clean["turns"].get("available") is not False
+    assert isinstance(clean["turns"]["delta_mean"], (int, float))
+    clean_delta = clean["duration"]["delta_mean"]
+    assert not (isinstance(clean_delta, dict) and clean_delta.get("available") is False)
