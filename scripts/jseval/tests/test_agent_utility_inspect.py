@@ -40,6 +40,7 @@ from inspect_ai.model import ChatMessageUser, ModelName  # noqa: E402
 from inspect_ai.solver import TaskState  # noqa: E402
 
 from jseval import agent_utility_inspect as aui  # noqa: E402
+from jseval.agent_manifest import mcp_tool_surface_hash  # noqa: E402
 from jseval.agent_retrieval_eval import (  # noqa: E402
     build_disallowed_tools,
     find_disallowed_tool_calls,
@@ -454,6 +455,116 @@ def test_record_cell_tool_result_digests_never_stash_raw_content():
         "delivered_fields": None,
     }]
     assert secret not in json.dumps(digests)
+
+
+# --- tempdoc 755 Track 1: MCP surface-capture hardening (retry + integrity-checked fallback) ---
+
+
+def _mcp_status_populated():
+    return {"servers": [{
+        "name": "justsearch", "status": "connected",
+        "tools": [{"name": "search", "description": "Search", "inputSchema": {}}],
+    }]}
+
+
+class _FakeStatusClient:
+    """Minimal stand-in for ClaudeSDKClient: `_mcp_surface` only calls `get_mcp_status`.
+    `responses` is consumed one per call; the LAST entry repeats for any further calls."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = 0
+
+    async def get_mcp_status(self):
+        self.calls += 1
+        idx = min(self.calls - 1, len(self._responses) - 1)
+        return self._responses[idx]
+
+
+def test_mcp_surface_first_probe_reports_status_evidence():
+    client = _FakeStatusClient([_mcp_status_populated()])
+    servers, js_tools, _js_surface, evidence = asyncio.run(aui._mcp_surface(client, with_tool=True))
+    assert client.calls == 1
+    assert js_tools == ["mcp__justsearch__search"]
+    assert evidence == "status"
+
+
+def test_mcp_surface_empty_then_populated_reports_status_retry(monkeypatch):
+    """The core Track 1 retry path: a transient empty get_mcp_status recovers on reprobe."""
+    monkeypatch.setattr(aui, "_MCP_SURFACE_RETRY_BACKOFF_S", 0.0)
+    client = _FakeStatusClient([{}, _mcp_status_populated()])  # empty, then populated
+    servers, js_tools, _js_surface, evidence = asyncio.run(aui._mcp_surface(client, with_tool=True))
+    assert client.calls == 2
+    assert js_tools == ["mcp__justsearch__search"]
+    assert evidence == "status-retry"
+
+
+def test_mcp_surface_permanently_empty_stays_unverified(monkeypatch):
+    monkeypatch.setattr(aui, "_MCP_SURFACE_RETRY_BACKOFF_S", 0.0)
+    client = _FakeStatusClient([{}])  # never reports a surface
+    servers, js_tools, _js_surface, evidence = asyncio.run(aui._mcp_surface(client, with_tool=True))
+    assert client.calls == aui._MCP_SURFACE_PROBE_ATTEMPTS  # exhausted the bounded retry
+    assert js_tools == []
+    assert evidence is None
+
+
+def test_mcp_surface_non_with_tool_probes_once_never_retries(monkeypatch):
+    """A condition-A cell legitimately reports no surface and must not be retried into one."""
+    monkeypatch.setattr(aui, "_MCP_SURFACE_RETRY_BACKOFF_S", 0.0)
+    client = _FakeStatusClient([{"servers": []}])  # known-empty (status available, zero servers)
+    servers, js_tools, _js_surface, evidence = asyncio.run(aui._mcp_surface(client, with_tool=False))
+    assert client.calls == 1
+    assert servers == []
+    assert evidence is None
+
+
+def test_record_cell_fallback_documents_unverified_when_status_empty_but_mcp_executed():
+    """Integrity rule: status never reported a surface but the cell executed a
+    mcp__justsearch__* tool. The executed-subset cross-check is RECORDED, but the cell stays
+    UNVERIFIED (no fabricated hash) -- a subset of executed tools cannot establish that the
+    full offered surface equalled the declared surface."""
+    state = _state()
+    declared = [{"name": "mcp__justsearch__search", "description": "Search", "input_schema": {}}]
+    declared_hash = mcp_tool_surface_hash(declared)
+    got = {
+        "attempts": {"t1": {"tool": "mcp__justsearch__search", "input": {"query": "x"}}},
+        "results": {"t1": {"is_error": False, "content": "ok"}},
+        "texts": [], "rmsg": _rmsg(),
+        "mcp_servers": None, "justsearch_tools": [], "justsearch_tool_surface": [],
+        "surface_evidence": None,
+    }
+
+    aui._record_cell(state, got, "C", build_disallowed_tools("C"), "mcp.json",
+                     declared_hash, declared)
+
+    assert state.metadata["surface_evidence"] is None
+    assert state.metadata["observed_mcp_tool_surface_hash"] is None
+    assert state.metadata["mcp_surface_unverified"] is True
+    fallback = state.metadata["mcp_surface_fallback"]
+    assert fallback["verified"] is False
+    assert fallback["executed_justsearch_subset_of_declared"] is True
+
+
+def test_record_cell_unverified_preserved_with_no_status_and_no_mcp_calls():
+    """No executed mcp call + no status => still unverified, and NO fallback object is
+    fabricated. Gate semantics (a missing hash is a capture miss) are unchanged."""
+    state = _state()
+    declared = [{"name": "mcp__justsearch__search", "description": "Search", "input_schema": {}}]
+    got = {
+        "attempts": {"t1": {"tool": "Read", "input": {"file_path": "/corpus/doc1.txt"}}},
+        "results": {"t1": {"is_error": False}},
+        "texts": [], "rmsg": _rmsg(),
+        "mcp_servers": None, "justsearch_tools": [], "justsearch_tool_surface": [],
+        "surface_evidence": None,
+    }
+
+    aui._record_cell(state, got, "C", build_disallowed_tools("C"), "mcp.json",
+                     mcp_tool_surface_hash(declared), declared)
+
+    assert state.metadata["surface_evidence"] is None
+    assert state.metadata["observed_mcp_tool_surface_hash"] is None
+    assert state.metadata["mcp_surface_unverified"] is True
+    assert "mcp_surface_fallback" not in state.metadata
 
 
 def test_record_cell_tool_result_digests_furniture_markers_block_list_content_shape():
@@ -1484,11 +1595,14 @@ class _StubMcpStatusClient:
     ],
 )
 def test_mcp_surface_first_non_null_key_tri_state(status, expected):
-    servers, tools, surface = asyncio.run(
-        aui._mcp_surface(_StubMcpStatusClient(status)))
+    # with_tool=False isolates the single-probe parse (no retry): these cases assert the
+    # tri-state key resolution, not the tempdoc 755 retry behaviour.
+    servers, tools, surface, evidence = asyncio.run(
+        aui._mcp_surface(_StubMcpStatusClient(status), with_tool=False))
     assert servers == expected
     assert tools == []
     assert surface == []
+    assert evidence is None
 
 
 # --- run_utility_eval: the corpus-dir isolation fix, cleanup-on-raise, the

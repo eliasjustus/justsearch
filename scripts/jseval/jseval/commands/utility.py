@@ -429,6 +429,18 @@ def cmd_utility_run(ctx, queries, corpus_dir, corpus_root, mcp_config, model, co
             else " — reasons: " + "; ".join(comparability["reasons"])))
         click.echo(f"seeds={record['seed_count']} tier={record['confidence_tier']} "
                    f"contamination={record['coverage']['contamination_class']}")
+        # tempdoc 755 Track 1 item 3: surface the per-run MCP-surface verification rate live so
+        # a campaign sees the residual `get_mcp_status()` miss rate (and how it was recovered)
+        # without waiting for a downstream recompose.
+        assertions = record.get("tool_call_assertions") or {}
+        for cond in ("B", "C"):
+            tca = assertions.get(cond)
+            if not tca:
+                continue
+            unverified = tca.get("cells_mcp_surface_unverified", 0)
+            by_kind = tca.get("cells_by_surface_evidence")
+            extra = f" evidence={by_kind}" if by_kind else ""
+            click.echo(f"mcp-surface[{cond}]: {unverified} unverified cell(s){extra}")
     if output_dir:
         _write_bench_output(record, output_dir, "utility-comparison.v1.json")
         click.echo(f"(Inspect logs in {log_dir})")

@@ -80,6 +80,16 @@ from jseval.utility_calibrate import (
 # B = file + JustSearch, C = JustSearch only (substitution).
 _WITH_TOOL = WITH_TOOL_CONDITIONS
 
+# MCP surface-capture retry (tempdoc 755 Track 1 item 1). `get_mcp_status()` returns
+# nothing for ~8%/cell (a transient flake, tempdocs 675/725: the 2026-07-18 confirmatory
+# campaign saw 4-12 unverified B-cells per 60-cell stratum). The call is read-only, so a
+# bounded reprobe with a short backoff is cheap against a ~195s cell. Up to
+# `_MCP_SURFACE_PROBE_ATTEMPTS` total probes (1 initial + retries) for a WITH-TOOL cell whose
+# justsearch surface is still empty; a condition-A cell legitimately reports `servers==[]`
+# and is probed exactly once (never retried into a false surface).
+_MCP_SURFACE_PROBE_ATTEMPTS = 3
+_MCP_SURFACE_RETRY_BACKOFF_S = 1.0
+
 # Generous default per-cell turn cap (tempdoc 675 lever 3): clips the pathological
 # many-turn tail, set well ABOVE the useful range so it does not bias the measured
 # tool-use. Raised 40 -> 100 (tempdoc 675 review F1): live cells were observed at
@@ -282,12 +292,15 @@ def _capture_exposure_config(
     }
 
 
-async def _mcp_surface(client: ClaudeSDKClient) -> tuple[list | None, list[str], list[dict]]:
-    """Return server status, offered names, and canonical full tool definitions.
+async def _mcp_surface(
+    client: ClaudeSDKClient, with_tool: bool
+) -> tuple[list | None, list[str], list[dict], str | None]:
+    """Return server status, offered names, canonical full tool definitions, AND how the
+    surface was obtained (`surface_evidence`).
 
     Replaces the CLI init-event parse (tempdoc 675 finding 2: `query()`'s
     `SystemMessage` init does not list the offered tools). Defensive across the
-    `McpStatusResponse` shape: returns `(None, [], [])` if status is unavailable so
+    `McpStatusResponse` shape: returns `(None, [], [], None)` if status is unavailable so
     the caller can flag "unverified" rather than conflate unknown with healthy.
 
     Tri-state on `servers` (tempdoc 725 A/B smoke fix 2): `[]` (known-empty --
@@ -299,43 +312,66 @@ async def _mcp_surface(client: ClaudeSDKClient) -> tuple[list | None, list[str],
     inconsistent depending on which key the SDK happened to populate. First
     NON-NULL key lookup fixes this: the first key holding a non-None value wins,
     empty list and all; an explicit `null` is treated as absent (typed serializers
-    commonly emit every alternative key with null padding for the unused ones)."""
-    try:
-        status = await client.get_mcp_status()
-    except Exception:
-        return None, [], []
-    if not isinstance(status, dict):
-        return None, [], []
-    servers = None
-    for key in ("servers", "mcp_servers", "mcpServers"):
-        value = status.get(key)
-        if value is not None:
-            servers = value
-            break
-    if servers is None:
-        return None, [], []
+    commonly emit every alternative key with null padding for the unused ones).
+
+    `surface_evidence` (tempdoc 755 Track 1): "status" when the FIRST probe reported the
+    justsearch surface, "status-retry" when a bounded reprobe recovered it (the ~8%/cell
+    `get_mcp_status()` flake is transient -- 675/725 -- and a read-only reprobe is cheap vs
+    a ~195s cell), None when no probe ever reported it (the caller flags the cell unverified;
+    NEVER a fabricated hash). Retry fires ONLY for a with-tool cell whose justsearch surface
+    is still empty; a condition-A cell (`with_tool == False`) legitimately reports
+    `servers==[]` and is probed once, never retried into a false surface."""
+
+    async def _probe_once() -> tuple[list | None, list[str], list[dict]]:
+        try:
+            status = await client.get_mcp_status()
+        except Exception:
+            return None, [], []
+        if not isinstance(status, dict):
+            return None, [], []
+        servers = None
+        for key in ("servers", "mcp_servers", "mcpServers"):
+            value = status.get(key)
+            if value is not None:
+                servers = value
+                break
+        if servers is None:
+            return None, [], []
+        js_tools: list[str] = []
+        js_surface: list[dict] = []
+        for srv in servers:
+            if srv.get("name") != "justsearch":
+                continue
+            for t in (srv.get("tools") or []):
+                tn = t.get("name") if isinstance(t, dict) else str(t)
+                normalized_name = tn if str(tn).startswith("mcp__") else f"mcp__justsearch__{tn}"
+                js_tools.append(normalized_name)
+                if isinstance(t, dict):
+                    js_surface.append({
+                        "name": normalized_name,
+                        "description": t.get("description"),
+                        "input_schema": t.get("inputSchema", t.get("input_schema")),
+                    })
+                else:
+                    js_surface.append({
+                        "name": normalized_name,
+                        "description": None,
+                        "input_schema": None,
+                    })
+        return servers, js_tools, sorted(js_surface, key=lambda item: item["name"])
+
+    servers: list | None = None
     js_tools: list[str] = []
     js_surface: list[dict] = []
-    for srv in servers:
-        if srv.get("name") != "justsearch":
-            continue
-        for t in (srv.get("tools") or []):
-            tn = t.get("name") if isinstance(t, dict) else str(t)
-            normalized_name = tn if str(tn).startswith("mcp__") else f"mcp__justsearch__{tn}"
-            js_tools.append(normalized_name)
-            if isinstance(t, dict):
-                js_surface.append({
-                    "name": normalized_name,
-                    "description": t.get("description"),
-                    "input_schema": t.get("inputSchema", t.get("input_schema")),
-                })
-            else:
-                js_surface.append({
-                    "name": normalized_name,
-                    "description": None,
-                    "input_schema": None,
-                })
-    return servers, js_tools, sorted(js_surface, key=lambda item: item["name"])
+    for attempt in range(_MCP_SURFACE_PROBE_ATTEMPTS):
+        if attempt > 0:
+            await asyncio.sleep(_MCP_SURFACE_RETRY_BACKOFF_S)
+        servers, js_tools, js_surface = await _probe_once()
+        if js_tools:
+            return servers, js_tools, js_surface, ("status" if attempt == 0 else "status-retry")
+        if not with_tool:
+            break  # condition-A: `servers==[]` is legitimate; never retry into a false surface
+    return servers, js_tools, js_surface, None
 
 
 @solver
@@ -392,7 +428,8 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
     def _fresh_capture() -> dict:
         return {"attempts": {}, "results": {}, "texts": [], "rmsg": None,
                 "mcp_servers": None, "justsearch_tools": [],
-                "justsearch_tool_surface": [], "resolved_models": set()}
+                "justsearch_tool_surface": [], "surface_evidence": None,
+                "resolved_models": set()}
 
     async def _one_attempt(condition: str, prompt: str, disallowed: list[str], capture: dict) -> None:
         """Run one SDK session, writing captured objects INCREMENTALLY into the shared
@@ -443,7 +480,9 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                     elif isinstance(msg, ResultMessage):
                         capture["rmsg"] = msg
                 (capture["mcp_servers"], capture["justsearch_tools"],
-                 capture["justsearch_tool_surface"]) = await _mcp_surface(client)
+                 capture["justsearch_tool_surface"],
+                 capture["surface_evidence"]) = await _mcp_surface(
+                    client, condition in _WITH_TOOL)
         finally:
             shutil.rmtree(query_cwd, ignore_errors=True)
 
@@ -862,6 +901,38 @@ def _record_cell(state: TaskState, got: dict, condition: str,
     # legitimately returned `servers == []` (empty list, not None) for a cell
     # that was never given any MCP servers to begin with.
     with_tool_cell = condition in _WITH_TOOL and bool(mcp_config)
+    # How the surface hash was obtained (tempdoc 755 Track 1 item 2). "status"/"status-retry"
+    # come from `_mcp_surface`'s probe/reprobe; None means no probe reported a surface.
+    surface_evidence = got.get("surface_evidence")
+    state.metadata["surface_evidence"] = surface_evidence
+    # Fallback forensic cross-check: a with-tool cell whose status probe never reported a
+    # surface (`observed_surface_hash is None` -> unverified) but which DID execute >=1
+    # `mcp__justsearch__*` tool. INTEGRITY RULE (charter section B item 2): a subset of EXECUTED
+    # tools proves only that those tools were offered -- it does NOT establish that the FULL
+    # offered surface EQUALLED the declared surface (unexecuted extra tools and per-tool
+    # schemas are unobservable; the declared hash fingerprints name+description+input_schema
+    # of the whole set). So this cross-check can NEVER equate the observed hash with the
+    # declared hash; the cell stays UNVERIFIED (`surface_evidence` None, observed hash None).
+    # No genuine independent tools-listing seam exists to upgrade it: `get_server_info()`
+    # returns the cached `initialize` result documented for commands/output-styles only, and
+    # `get_context_usage()` re-issues the same flaky control request as `get_mcp_status()`.
+    # Hence `surface_evidence == "fallback-listing"` is never emitted here (kept in the enum
+    # for forward-compat only); we record the basis and leave verification unmanufactured.
+    if with_tool_cell and not observed_surface_hash:
+        executed_js = sorted({
+            e["tool"] for e in state.metadata["tool_calls"]
+            if str(e.get("tool", "")).startswith("mcp__justsearch__")
+        })
+        if executed_js:
+            state.metadata["mcp_surface_fallback"] = {
+                "executed_justsearch_subset_of_declared": (
+                    bool(declared_names) and set(executed_js) <= set(declared_names)),
+                "verified": False,
+                "reason": (
+                    "status probe empty after retries; executed-tool subset cross-check "
+                    "cannot establish full offered surface == declared surface (integrity "
+                    "rule) -- cell left unverified"),
+            }
     if (with_tool_cell and declared_mcp_tool_surface_hash and observed_surface_hash
             and declared_mcp_tool_surface_hash != observed_surface_hash):
         state.metadata.setdefault(

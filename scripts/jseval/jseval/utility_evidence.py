@@ -19,8 +19,10 @@ _OBSERVATION_KEYS = {
     "disallowed_tool_call_names", "leak_suspect", "mcp_server_statuses",
     "mcp_tools_offered", "mcp_surface_unverified", "mcp_tools_deferred", "source",
     "mcp_tool_names_offered", "observed_mcp_tool_surface_hash",
+    "surface_evidence", "mcp_surface_fallback",
     "toolsearch_targets", "tool_call_sequence", "tool_result_digests",
 }
+_SURFACE_EVIDENCE_KINDS = {"status", "status-retry", "fallback-listing"}
 _SOURCE_KEYS = {
     "model_alias", "corpus", "packages", "source_git_sha", "source_git_dirty", "source_git_state",
     "cli_version", "mcp_tool_surface_hash", "mcp_tool_surface", "judge_kind", "prompt_template_hash",
@@ -158,6 +160,27 @@ def _tool_result_digests(value: Any) -> list[dict] | None:
     return digests
 
 
+def _surface_evidence(value: Any) -> str | None:
+    """tempdoc 755 Track 1: pass through only a declared surface-evidence kind, else null
+    (an unknown/garbled kind is dropped to null, the unverified case, never invented)."""
+    return value if value in _SURFACE_EVIDENCE_KINDS else None
+
+
+def _mcp_surface_fallback(value: Any) -> dict | None:
+    """tempdoc 755 Track 1 item 2: pass through only the three declared cross-check keys.
+    `verified` is coerced to bool (always false in practice -- the integrity rule forbids
+    verifying from execution alone); the subset flag preserves its tri-state None."""
+    if not isinstance(value, dict):
+        return None
+    subset = value.get("executed_justsearch_subset_of_declared")
+    reason = value.get("reason")
+    return {
+        "executed_justsearch_subset_of_declared": None if subset is None else bool(subset),
+        "verified": bool(value.get("verified")),
+        "reason": None if reason is None else str(reason),
+    }
+
+
 def _exposure_config(value: Any) -> dict | None:
     if not isinstance(value, dict):
         return None
@@ -213,6 +236,8 @@ def sanitize_observation(observation: dict) -> dict:
         "mcp_tool_names_offered": observation.get("mcp_tool_names_offered"),
         "observed_mcp_tool_surface_hash": observation.get("observed_mcp_tool_surface_hash"),
         "mcp_surface_unverified": bool(observation.get("mcp_surface_unverified")),
+        "surface_evidence": _surface_evidence(observation.get("surface_evidence")),
+        "mcp_surface_fallback": _mcp_surface_fallback(observation.get("mcp_surface_fallback")),
         "mcp_tools_deferred": observation.get("mcp_tools_deferred"),
         "toolsearch_targets": _toolsearch_targets(observation.get("toolsearch_targets")),
         "tool_call_sequence": _tool_call_sequence(observation.get("tool_call_sequence")),
@@ -331,6 +356,8 @@ def read_evidence(path: str | Path) -> list[dict]:
             "mcp_tool_names_offered": item.get("mcp_tool_names_offered"),
             "observed_mcp_tool_surface_hash": item.get("observed_mcp_tool_surface_hash"),
             "mcp_surface_unverified": bool(item.get("mcp_surface_unverified")),
+            "surface_evidence": item.get("surface_evidence"),
+            "mcp_surface_fallback": item.get("mcp_surface_fallback"),
             "mcp_tools_deferred": item.get("mcp_tools_deferred"),
             "toolsearch_targets": item.get("toolsearch_targets"),
             "tool_call_sequence": item.get("tool_call_sequence"),
