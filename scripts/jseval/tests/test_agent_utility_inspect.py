@@ -477,6 +477,7 @@ def test_record_cell_tool_result_digests_never_stash_raw_content():
         },
         "delivered_tier": "prose",
         "delivered_fields": None,
+        "component_bytes": None,
         "ordered_doc_ids": None,
         "scores": None,
         "gold_rank": None,
@@ -732,6 +733,7 @@ def test_record_cell_tool_result_digests_furniture_markers_block_list_content_sh
         },
         "delivered_tier": "blocks",
         "delivered_fields": None,
+        "component_bytes": None,
         "ordered_doc_ids": None,
         "scores": None,
         "gold_rank": None,
@@ -2672,3 +2674,147 @@ def test_usd_cap_kill_retains_cost_receipt():
     # usd_budget_exhausted (distinct from the wall-clock-exhaustion bucket).
     assert "error_max_budget_usd" in state.metadata.get("error", "")
     assert _error_class(state.metadata["error"]) == "usd_budget_exhausted"
+
+
+# --- tempdoc 770 §D: per-component payload byte decomposition ---
+
+
+def _decomposable_payload():
+    """One structured-json `justsearch_search` delivery whose per-field byte
+    shares are known BY CONSTRUCTION (each expected count below is hand-derived
+    from the JSON text, not read back from the code under test)."""
+    return {"results": [{
+        "id": "X", "path": "X", "excerpts": ["e"], "trace": {"a": 1}, "legScores": [1],
+    }]}
+
+
+def test_delivered_component_bytes_shares_known_by_construction():
+    payload = _decomposable_payload()
+    content = json.dumps(payload)
+
+    comp = aui._delivered_component_bytes(content)
+
+    # Hand-derived entry costs: len('"key"') + 1 (colon) + len(json value text).
+    assert comp["hit_component_bytes"]["id"] == 8          # '"id"'(4) + 1 + '"X"'(3)
+    assert comp["hit_component_bytes"]["path"] == 10       # '"path"'(6) + 1 + '"X"'(3)
+    assert comp["hit_component_bytes"]["excerpts"] == 16   # '"excerpts"'(10) + 1 + '["e"]'(5)
+    assert comp["hit_component_bytes"]["trace"] == 16      # '"trace"'(7) + 1 + '{"a": 1}'(8)
+    assert comp["hit_component_bytes"]["legScores"] == 15  # '"legScores"'(11) + 1 + '[1]'(3)
+    # `results` entry bytes, derived independently of the SUT.
+    expected_results = len('"results"') + 1 + len(json.dumps(payload["results"]))
+    assert comp["results_bytes"] == expected_results
+    assert comp["top_level_bytes"] == {"results": expected_results}
+    # The only unaccounted top-level bytes are structural punctuation: the two
+    # braces plus the one space in json.dumps' default `": "` key separator.
+    assert comp["serialized_bytes"] == len(json.dumps(payload))
+    assert comp["top_level_other_bytes"] == 3
+    # `other` is an explicit remainder, never a measured field.
+    assert comp["hit_component_bytes"]["other"] == expected_results - (8 + 10 + 16 + 16 + 15)
+    assert comp["total_bytes"] == len(content)
+    assert comp["hit_count"] == 1
+
+
+def test_delivered_component_bytes_counts_id_equals_path_duplicates():
+    content = json.dumps({"results": [
+        {"id": "a.txt", "path": "a.txt"},   # byte-identical duplicate
+        {"id": "b.txt", "path": "b.txt"},   # byte-identical duplicate
+        {"id": "c.txt", "path": "other.txt"},  # genuinely different
+        {"id": "d.txt"},                    # no path at all -> not in the denominator
+    ]})
+
+    comp = aui._delivered_component_bytes(content)
+
+    assert comp["hit_count"] == 4
+    assert comp["hits_with_id_and_path"] == 3
+    assert comp["id_equals_path_hits"] == 2
+
+
+def test_delivered_component_bytes_none_for_non_structured_tiers():
+    """Prose / blocks / never-executed deliveries have nothing to decompose --
+    the honest null, never a fabricated all-zero decomposition."""
+    assert aui._delivered_component_bytes("Evidence pack: 3 passages") is None
+    assert aui._delivered_component_bytes([{"type": "text", "text": "hi"}]) is None
+    assert aui._delivered_component_bytes(None) is None
+    prose = aui._tool_result_digest_entry({"is_error": False, "content": "Evidence pack: 1"})
+    assert prose["component_bytes"] is None
+    blocked = aui._tool_result_digest_entry(None)
+    assert blocked["component_bytes"] is None
+
+
+def test_tool_result_digest_entry_carries_component_bytes_for_structured():
+    content = json.dumps(_decomposable_payload())
+    entry = aui._tool_result_digest_entry({"is_error": False, "content": content})
+    assert entry["component_bytes"]["hit_count"] == 1
+    assert entry["delivered_tier"] == "structured-json"
+    # The decomposition is counts-only: no payload VALUE text leaks into the digest
+    # (key names are the product's own schema, the values are corpus-derived).
+    assert "\"e\"" not in json.dumps(entry["component_bytes"])
+
+
+def test_decompose_payload_shares_reports_unavailable_for_digest_only_entries(monkeypatch, tmp_path):
+    """A v5-era log stores digests only (`content_sha256`/`content_len`, never raw
+    content), so its structured deliveries CANNOT be decomposed. The aggregate must
+    report that count honestly instead of estimating or silently skipping."""
+    digest_only = [
+        {"delivered_tier": "structured-json", "content_sha256": "aa", "content_len": 100},
+        {"delivered_tier": "structured-json", "content_sha256": "bb", "content_len": 200},
+        {"delivered_tier": "prose", "content_sha256": "cc", "content_len": 10},
+    ]
+    monkeypatch.setattr(aui, "read_digest_entries", lambda _d: digest_only)
+
+    report = aui.decompose_payload_shares(tmp_path)
+
+    assert report["structured_deliveries"] == 2
+    assert report["decomposed"] == 0
+    assert report["decomposition_unavailable"] == 2
+    assert report["aggregate_serialized_bytes"] == 0
+    # Every statistic reports N=0 and an honest null -- never a fabricated share.
+    for stat in report["components"].values():
+        assert stat["n"] == 0
+        assert stat["median_share"] is None
+        assert stat["aggregate_share"] is None
+    assert report["hits"]["n"] == 0
+    assert report["hits"]["median"] is None
+
+
+def test_decompose_payload_shares_decomposes_component_bytes_captured_at_run_time(monkeypatch, tmp_path):
+    content = json.dumps(_decomposable_payload())
+    entry = aui._tool_result_digest_entry({"is_error": False, "content": content})
+    monkeypatch.setattr(aui, "read_digest_entries", lambda _d: [entry])
+
+    report = aui.decompose_payload_shares(tmp_path)
+
+    assert report["decomposed"] == 1
+    assert report["decomposed_from_log_component_bytes"] == 1
+    assert report["decomposition_unavailable"] == 0
+    assert report["components"]["hit.id"]["n"] == 1
+    assert report["components"]["hit.id"]["aggregate_bytes"] == 8
+    assert report["hits"]["median"] == 1
+
+
+def test_decompose_payload_shares_sha256_verifies_recovered_payloads(monkeypatch, tmp_path):
+    """The tempdoc 770 §D recovery route: raw payloads recovered from CLI session
+    transcripts are decomposed ONLY after their SHA256 matches the campaign digest
+    index. An unmatched file is counted and discarded, never decomposed."""
+    content = json.dumps(_decomposable_payload())
+    digest_only = [{
+        "delivered_tier": "structured-json",
+        "content_sha256": aui._content_sha256(content),
+        "content_len": len(content),
+    }]
+    monkeypatch.setattr(aui, "read_digest_entries", lambda _d: digest_only)
+    payload_dir = tmp_path / "payloads"
+    payload_dir.mkdir()
+    (payload_dir / "verified.json").write_text(content, encoding="utf-8")
+    (payload_dir / "foreign.json").write_text(
+        json.dumps({"results": [{"id": "not-from-this-campaign"}]}), encoding="utf-8")
+
+    report = aui.decompose_payload_shares(tmp_path, payload_dir)
+
+    assert report["payloads_sha256_verified"] == 1
+    assert report["payloads_sha256_unmatched"] == 1
+    assert report["decomposed_from_verified_payloads"] == 1
+    assert report["decomposed_from_log_component_bytes"] == 0
+    assert report["decomposition_unavailable"] == 0
+    assert report["components"]["hit.path"]["aggregate_bytes"] == 10
+    assert report["id_equals_path"]["hits_id_equals_path"] == 1

@@ -209,8 +209,34 @@ Component shares of the delivered payload (N=1056 structured deliveries):
 
 `results[]` is 91.1% of aggregate bytes. Median 10 hits/call (mean 15, max 50).
 
-**Re-run this harness as the before/after gate.** It requires no dev stack, no
-model, and no spend.
+### Reproducing this (committed, with an honest limit)
+
+The decomposition is a committed jseval capability, not a scratchpad script:
+
+- **Instrument** — `_delivered_component_bytes` / `decompose_payload_shares` in
+  `scripts/jseval/jseval/agent_utility_inspect.py`, alongside the existing
+  `_delivered_tier` / `_delivered_fields` / `_content_len` digest derivations. Every
+  structured-json delivery now carries a `component_bytes` block in its
+  `tool_result_digests` entry (counts only, no text; the public-evidence sanitizer
+  deliberately drops it, so the committed evidence schema is unchanged).
+- **CLI** — `jseval utility-payload-decompose --log-dir <inspect-log-dir>
+  [--payload-dir <raw-payloads>]`. Zero-spend: no dev stack, no model.
+- **Tests** — `scripts/jseval/tests/test_agent_utility_inspect.py`
+  (`*_component_bytes_*` / `*_decompose_payload_shares_*`).
+
+**What is and is not reproducible.** Runs *from this increment onward* decompose
+straight from their own Inspect logs — that half is a genuine before/after gate.
+The **v5 numbers in the table above are not re-derivable from this repo alone**:
+campaign logs store digests only (`content_sha256`/`content_len` —
+`agent_utility_inspect.py`, "NEVER the raw content"), and the solver never stashes
+the SDK message stream, so a v5 log contains no bytes to decompose. Those 1,078
+payloads were recovered from Claude Code CLI session transcripts
+(`~/.claude/projects/<project-slug>/*.jsonl`, which do persist tool_result content) —
+a **machine-specific path**, not committed and not reconstructable here. The command
+accepts them via `--payload-dir` and SHA256-verifies each against the log's digest
+index before counting it; unmatched files are counted and discarded. Structured
+deliveries decomposable by neither route are reported as
+`decomposition_unavailable` with their count — never estimated.
 
 ## §E. Design
 

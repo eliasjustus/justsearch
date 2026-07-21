@@ -780,6 +780,95 @@ def _delivered_fields(content) -> dict[str, bool] | None:
     return {key: _present(key) for key in _DELIVERED_FIELD_KEYS}
 
 
+# tempdoc 770 §D: the per-hit components whose byte cost the tool-surface-economy
+# lane reasons about. Verbatim producer sources (2026-07-21):
+#   modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpEvidenceProjection.java
+#     -- the per-hit loop puts `id`/`path`/`excerpts`/`trace`/`legScores` on each
+#        `results[]` element; `id` is `hit.id()` and `path` is `hit.path()`, which
+#        the 770 measurement found byte-identical on every observed hit.
+_HIT_COMPONENT_KEYS = ("trace", "legScores", "excerpts", "id", "path")
+
+
+def _json_entry_bytes(key: str, value) -> int:
+    """Serialized byte cost of one `"key":value` object entry -- the quoted key,
+    one colon, and the value's JSON text. Structural punctuation BETWEEN entries
+    (the `, ` separators, the space in `json.dumps`' default `": "`, the enclosing
+    braces/brackets) is deliberately NOT attributed to any entry: it surfaces as
+    the `other` remainder instead of being silently absorbed into a named
+    component. So components sum to at most the object's own serialization."""
+    return len(json.dumps(key, ensure_ascii=False)) + 1 + len(json.dumps(value, ensure_ascii=False))
+
+
+def _delivered_component_bytes(content) -> dict | None:
+    """Per-component byte decomposition of a `structured-json` delivery
+    (tempdoc 770 §D), computed alongside -- never instead of -- the existing
+    `_delivered_fields` presence booleans and the aggregate `_content_len`.
+
+    `None` for prose/blocks deliveries and for content that no longer parses:
+    decomposition is genuinely not applicable there, and an all-zero dict would
+    be a fabricated number (same honest-null discipline as `delivered_fields`).
+
+    Shape::
+
+        {"total_bytes":            len(content) as actually delivered,
+         "serialized_bytes":       len(canonical re-serialization) -- the denominator
+                                   the component byte counts are commensurate with,
+         "top_level_bytes":        {key: entry bytes} for every top-level key,
+         "top_level_other_bytes":  serialized_bytes - sum(top_level_bytes),
+         "results_bytes":          entry bytes of the `results` key, or None,
+         "hit_count":              len(results[]), or None,
+         "hit_component_bytes":    {trace, legScores, excerpts, id, path, other}, or None,
+         "hits_with_id_and_path":  hits carrying BOTH keys, or None,
+         "id_equals_path_hits":    of those, how many are byte-identical, or None}
+
+    `hit_component_bytes["other"]` is a REMAINDER (`results_bytes` minus the named
+    per-hit components), so it carries the per-hit keys this lane does not name
+    plus the array's own structural punctuation. It is not a measured field.
+
+    Pure and side-effect-free: one `json.loads` plus `json.dumps` over the parsed
+    value; no IO, no mutation of the input."""
+    if _delivered_tier(content) != _DELIVERED_TIER_STRUCTURED:
+        return None
+    parsed = json.loads(content.strip())
+    serialized_bytes = len(json.dumps(parsed, ensure_ascii=False))
+    top_level_bytes = {key: _json_entry_bytes(key, value) for key, value in parsed.items()}
+
+    results = parsed.get("results")
+    hits = [r for r in results if isinstance(r, dict)] if isinstance(results, list) else None
+
+    results_bytes = top_level_bytes.get("results") if hits is not None else None
+    hit_component_bytes = None
+    hits_with_id_and_path = None
+    id_equals_path_hits = None
+    if hits is not None:
+        hit_component_bytes = {key: 0 for key in _HIT_COMPONENT_KEYS}
+        hits_with_id_and_path = 0
+        id_equals_path_hits = 0
+        for hit in hits:
+            for key in _HIT_COMPONENT_KEYS:
+                if key in hit:
+                    hit_component_bytes[key] += _json_entry_bytes(key, hit[key])
+            if "id" in hit and "path" in hit:
+                hits_with_id_and_path += 1
+                if hit["id"] == hit["path"]:
+                    id_equals_path_hits += 1
+        hit_component_bytes["other"] = results_bytes - sum(
+            hit_component_bytes[key] for key in _HIT_COMPONENT_KEYS
+        )
+
+    return {
+        "total_bytes": _content_len(content),
+        "serialized_bytes": serialized_bytes,
+        "top_level_bytes": top_level_bytes,
+        "top_level_other_bytes": serialized_bytes - sum(top_level_bytes.values()),
+        "results_bytes": results_bytes,
+        "hit_count": len(hits) if hits is not None else None,
+        "hit_component_bytes": hit_component_bytes,
+        "hits_with_id_and_path": hits_with_id_and_path,
+        "id_equals_path_hits": id_equals_path_hits,
+    }
+
+
 def _normalize_doc_id(doc_id) -> str | None:
     """Normalize a search-hit id / gold `evidence_id` to a comparable doc key:
     basename, drop a single trailing file extension, lowercase.
@@ -857,7 +946,13 @@ def _tool_result_digest_entry(result: dict | None,
     grepping content that was never delivered as text in the first place).
 
     `evidence_ids` is the query's gold-id list (threaded from `Sample.metadata`
-    via `_record_cell`); it feeds `gold_rank` only -- see `_gold_rank_capture`."""
+    via `_record_cell`); it feeds `gold_rank` only -- see `_gold_rank_capture`.
+
+    `component_bytes` (tempdoc 770 §D) is the per-component byte decomposition of
+    a structured-json delivery -- counts only, no text; `None` for every other
+    tier. The sanitized public-evidence projection (`utility_evidence.
+    _tool_result_digests`) allowlists its declared fields, so this one is
+    log/metadata-tier and does NOT widen the committed evidence schema."""
     if result is None:
         return {
             "content_sha256": None,
@@ -867,6 +962,7 @@ def _tool_result_digest_entry(result: dict | None,
             "furniture_markers": _furniture_marker_flags(None),
             "delivered_tier": None,
             "delivered_fields": None,
+            "component_bytes": None,
             "ordered_doc_ids": None,
             "scores": None,
             "gold_rank": None,
@@ -884,9 +980,177 @@ def _tool_result_digest_entry(result: dict | None,
         ),
         "delivered_tier": tier,
         "delivered_fields": _delivered_fields(content),
+        "component_bytes": _delivered_component_bytes(content),
         "ordered_doc_ids": ordered_doc_ids,
         "scores": scores,
         "gold_rank": gold_rank,
+    }
+
+
+# --- tempdoc 770 §D: offline payload decomposition over banked campaign logs ---
+#
+# HONESTY BOUNDARY -- read before using these numbers.
+#
+# Campaign Inspect logs store DIGESTS ONLY (`content_sha256` / `content_len`;
+# `_tool_result_digest_entry` above, "NEVER the raw content"), and the solver
+# never stashes the SDK message stream into `state.messages`, so a v5-era log
+# contains no bytes to decompose. Decomposition is therefore possible in exactly
+# two situations:
+#
+#   1. Logs written AFTER this increment, whose digests carry the
+#      `component_bytes` block computed at capture time. Nothing extra needed.
+#   2. Logs written BEFORE it, only if the raw payloads are supplied separately
+#      via `payload_dir`. Every supplied payload is SHA256-verified against the
+#      log's own digest index (`_content_sha256`) before it is decomposed; an
+#      unmatched payload is COUNTED AND DISCARDED, never decomposed.
+#
+# Anything decomposable by neither route is reported as
+# `decomposition_unavailable` with its count -- never estimated, never skipped
+# silently.
+#
+# Recovery method used for the tempdoc 770 §D measurement (2026-07-21), recorded
+# here so a future reader can reproduce it: the 1,078 v5 payloads were recovered
+# from Claude Code CLI session transcripts under
+# `~/.claude/projects/<project-slug>/*.jsonl` -- the CLI persists the full
+# tool_result content the campaign logs deliberately do not. Each recovered
+# payload string was written to one file in a scratch directory and passed as
+# `payload_dir`; the SHA256 verification below is what proves each one is
+# genuinely a payload of that campaign and not some other session's. That
+# transcript path is MACHINE-SPECIFIC (it is the measuring machine's home
+# directory, is not committed, and is not reconstructable from this repo) --
+# hence route 2 is a bring-your-own-payloads path, not a self-contained one.
+
+
+def _median(values: list[float]) -> float | None:
+    import statistics
+
+    return statistics.median(values) if values else None
+
+
+def read_digest_entries(log_dir) -> list[dict]:
+    """Every `tool_result_digests` entry in every EvalLog under `log_dir`, flat.
+
+    An unreadable candidate log RAISES (mirroring
+    `agent_utility_observations.read_inspect_observations`): silently skipping it
+    would understate the denominators every share below is computed against."""
+    from inspect_ai.log import read_eval_log
+
+    entries: list[dict] = []
+    root = Path(log_dir)
+    sidecars = {"eval-set.json", "logs.json", "source-identity.v1.json", "judge-overlay.json"}
+    for path in sorted(root.glob("*.eval")) + sorted(root.glob("*.json")):
+        if path.name in sidecars:
+            continue
+        try:
+            log = read_eval_log(path.as_posix())
+        except Exception as exc:
+            raise ValueError(f"failed to read candidate EvalLog {path}") from exc
+        if not getattr(log, "eval", None):
+            continue
+        for sample in log.samples or []:
+            for entry in ((sample.metadata or {}).get("tool_result_digests") or []):
+                if isinstance(entry, dict):
+                    entries.append(entry)
+    return entries
+
+
+def load_verified_payload_components(payload_dir, digest_entries: list[dict]) -> dict:
+    """Decompose raw payload files that SHA256-verify against `digest_entries`.
+
+    Returns `{"components": [...], "verified": n, "unmatched": n}`. `unmatched`
+    counts files whose `_content_sha256` is in no digest of this log set -- they
+    are excluded from every statistic rather than assumed to belong."""
+    index = {e.get("content_sha256") for e in digest_entries if e.get("content_sha256")}
+    components: list[dict] = []
+    verified = 0
+    unmatched = 0
+    for path in sorted(Path(payload_dir).rglob("*")):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if _content_sha256(text) not in index:
+            unmatched += 1
+            continue
+        verified += 1
+        decomposed = _delivered_component_bytes(text)
+        if decomposed is not None:
+            components.append(decomposed)
+    return {"components": components, "verified": verified, "unmatched": unmatched}
+
+
+def decompose_payload_shares(log_dir, payload_dir=None) -> dict:
+    """Aggregate per-component byte shares over a directory of Inspect eval logs
+    (tempdoc 770 §D). Every statistic reports its own N; entries that cannot be
+    decomposed are counted under `decomposition_unavailable`, never estimated."""
+    entries = read_digest_entries(log_dir)
+    structured = [e for e in entries
+                  if e.get("delivered_tier") == _DELIVERED_TIER_STRUCTURED]
+    from_logs = [e["component_bytes"] for e in structured
+                 if isinstance(e.get("component_bytes"), dict)]
+
+    recovery = {"components": [], "verified": 0, "unmatched": 0}
+    if payload_dir is not None:
+        recovery = load_verified_payload_components(payload_dir, entries)
+    components = from_logs + recovery["components"]
+
+    unavailable = len(structured) - len(from_logs) - len(recovery["components"])
+
+    denominators = [c["serialized_bytes"] for c in components if c["serialized_bytes"]]
+    aggregate_total = sum(denominators)
+
+    def _component_values(getter) -> list[tuple[int, int]]:
+        out = []
+        for comp in components:
+            value = getter(comp)
+            if value is not None and comp["serialized_bytes"]:
+                out.append((value, comp["serialized_bytes"]))
+        return out
+
+    def _stat(getter) -> dict:
+        pairs = _component_values(getter)
+        shares = [v / d for v, d in pairs]
+        return {
+            "n": len(pairs),
+            "median_share": _median(shares),
+            "aggregate_share": (sum(v for v, _ in pairs) / aggregate_total) if aggregate_total else None,
+            "aggregate_bytes": sum(v for v, _ in pairs),
+        }
+
+    def _hit(key):
+        return lambda c: (c["hit_component_bytes"] or {}).get(key)
+
+    per_component = {f"hit.{key}": _stat(_hit(key)) for key in _HIT_COMPONENT_KEYS}
+    per_component["hit.other"] = _stat(_hit("other"))
+    per_component["results[]"] = _stat(lambda c: c["results_bytes"])
+    top_level_keys = sorted({k for c in components for k in c["top_level_bytes"]})
+    for key in top_level_keys:
+        per_component[f"top.{key}"] = _stat(lambda c, _k=key: c["top_level_bytes"].get(_k))
+
+    hit_counts = [c["hit_count"] for c in components if c["hit_count"] is not None]
+    id_pairs = [(c["id_equals_path_hits"], c["hits_with_id_and_path"]) for c in components
+                if c["hits_with_id_and_path"]]
+    return {
+        "tool_result_digests": len(entries),
+        "structured_deliveries": len(structured),
+        "decomposed": len(components),
+        "decomposed_from_log_component_bytes": len(from_logs),
+        "decomposed_from_verified_payloads": len(recovery["components"]),
+        "payloads_sha256_verified": recovery["verified"],
+        "payloads_sha256_unmatched": recovery["unmatched"],
+        "decomposition_unavailable": unavailable,
+        "aggregate_serialized_bytes": aggregate_total,
+        "components": per_component,
+        "hits": {
+            "n": len(hit_counts),
+            "median": _median([float(h) for h in hit_counts]),
+            "mean": (sum(hit_counts) / len(hit_counts)) if hit_counts else None,
+            "max": max(hit_counts) if hit_counts else None,
+        },
+        "id_equals_path": {
+            "n_calls": len(id_pairs),
+            "hits_with_id_and_path": sum(t for _, t in id_pairs),
+            "hits_id_equals_path": sum(e for e, _ in id_pairs),
+        },
     }
 
 

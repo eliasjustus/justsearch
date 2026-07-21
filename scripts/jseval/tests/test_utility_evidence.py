@@ -209,7 +209,15 @@ def test_tool_result_digests_echo_leak_absent_from_sanitized_bytes():
     sanitized = sanitize_observation(observation)
     encoded = json.dumps(sanitized)
     assert secret not in encoded
-    assert sanitized["tool_result_digests"] == [digest]  # digest itself carries no raw text
+    # The digest itself carries no raw text, so every field the public allowlist
+    # declares survives the round-trip byte-for-byte. `component_bytes` (tempdoc
+    # 770 §D) is deliberately NOT in that allowlist -- it is a log/metadata-tier
+    # decomposition whose `top_level_bytes` keys come from the payload, so the
+    # sanitizer drops it rather than widening the committed evidence schema with
+    # a dynamically-keyed object. That drop is the assertion below, not an omission.
+    assert "component_bytes" not in sanitized["tool_result_digests"][0]
+    expected = {k: v for k, v in digest.items() if k != "component_bytes"}
+    assert sanitized["tool_result_digests"] == [expected]
 
 
 def test_tool_result_digests_schema_rejects_raw_content_property():
