@@ -748,10 +748,14 @@ def _delivered_tier(content) -> str | None:
 # `results` itself is the top-level array `searchEvidence` always emits
 # (McpEvidenceProjection.java:108).
 # tempdoc 735 W6 (tool-surface 0.4.0) added the tier-equivalence fields
-# `hints`/`facets`/`coverage`/`truncated` to both tools' structured tier --
-# tracked here so structured-delivery cohorts' exposure to the formerly
-# text-only furniture is measurable per call. Absent on <=0.3.1 responses
-# (presence booleans just read False -- no schema impact).
+# `hints`/`coverage`/`truncated` to BOTH tools' structured tier, plus `facets` to
+# `justsearch_search` only -- tracked here so structured-delivery cohorts' exposure
+# to the formerly text-only furniture is measurable per call. Absent on <=0.3.1
+# responses (presence booleans just read False -- no schema impact).
+# tempdoc 770 §F.5 (tool-surface 0.5.0) removed the per-call facet round-trip from
+# `justsearch_answer`, which had briefly carried `facets` too. So at >=0.5.0 the
+# `"facets"` key is permanently False for the answer tool -- that False is a real
+# measured absence for the answer cohort, not a capture gap.
 _DELIVERED_FIELD_KEYS = (
     "quality", "matchedTerms", "degradation", "excerpts", "citations", "searchTrace", "results",
     "hints", "facets", "coverage", "truncated",
@@ -1054,28 +1058,47 @@ def read_digest_entries(log_dir) -> list[dict]:
     return entries
 
 
-def load_verified_payload_components(payload_dir, digest_entries: list[dict]) -> dict:
+def load_verified_payload_components(
+    payload_dir, digest_entries: list[dict], already_decomposed_sha=frozenset()
+) -> dict:
     """Decompose raw payload files that SHA256-verify against `digest_entries`.
 
-    Returns `{"components": [...], "verified": n, "unmatched": n}`. `unmatched`
-    counts files whose `_content_sha256` is in no digest of this log set -- they
-    are excluded from every statistic rather than assumed to belong."""
+    Returns `{"components": [...], "verified": n, "unmatched": n,
+    "skipped_already_decomposed": n}`. `unmatched` counts files whose
+    `_content_sha256` is in no digest of this log set -- they are excluded from
+    every statistic rather than assumed to belong.
+
+    `already_decomposed_sha` is the set of content hashes whose delivery was
+    ALREADY decomposed by the caller from the log's own `component_bytes`. A file
+    matching one of those is a second route to the SAME delivery, not a second
+    delivery: it still counts as `verified` (the file really did SHA-verify) but
+    is not decomposed again, and is reported under `skipped_already_decomposed`."""
     index = {e.get("content_sha256") for e in digest_entries if e.get("content_sha256")}
     components: list[dict] = []
     verified = 0
     unmatched = 0
+    skipped = 0
     for path in sorted(Path(payload_dir).rglob("*")):
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8")
-        if _content_sha256(text) not in index:
+        sha = _content_sha256(text)
+        if sha not in index:
             unmatched += 1
             continue
         verified += 1
+        if sha in already_decomposed_sha:
+            skipped += 1
+            continue
         decomposed = _delivered_component_bytes(text)
         if decomposed is not None:
             components.append(decomposed)
-    return {"components": components, "verified": verified, "unmatched": unmatched}
+    return {
+        "components": components,
+        "verified": verified,
+        "unmatched": unmatched,
+        "skipped_already_decomposed": skipped,
+    }
 
 
 def decompose_payload_shares(log_dir, payload_dir=None) -> dict:
@@ -1088,12 +1111,36 @@ def decompose_payload_shares(log_dir, payload_dir=None) -> dict:
     from_logs = [e["component_bytes"] for e in structured
                  if isinstance(e.get("component_bytes"), dict)]
 
-    recovery = {"components": [], "verified": 0, "unmatched": 0}
+    # tempdoc 770 review fix: the two routes are NOT disjoint -- a delivery can carry
+    # `component_bytes` in the log AND still have its raw payload file on disk. Decomposing
+    # both counted that one delivery twice: every `n` and `aggregate_bytes` doubled and
+    # `decomposition_unavailable` went negative (shares survived only because numerator and
+    # denominator inflated together). De-duplicate on `content_sha256`, the delivery's
+    # identity in both routes. The log's own `component_bytes` wins: it was computed at
+    # capture time from the content as actually delivered, needs no recovery step, and is
+    # the route that exists for every campaign -- payload-file recovery is the FALLBACK for
+    # deliveries whose log lacks it.
+    already_decomposed_sha = {
+        e["content_sha256"] for e in structured
+        if isinstance(e.get("component_bytes"), dict) and e.get("content_sha256")
+    }
+    recovery = {
+        "components": [], "verified": 0, "unmatched": 0, "skipped_already_decomposed": 0,
+    }
     if payload_dir is not None:
-        recovery = load_verified_payload_components(payload_dir, entries)
+        recovery = load_verified_payload_components(payload_dir, entries, already_decomposed_sha)
     components = from_logs + recovery["components"]
 
     unavailable = len(structured) - len(from_logs) - len(recovery["components"])
+    if unavailable < 0:
+        # Invariant: each structured delivery is decomposed at most once, so the two route
+        # counts can never exceed the population they partition. A negative remainder means
+        # double-counting has reappeared -- fail loudly rather than publish inflated Ns.
+        raise ValueError(
+            "decomposition double-count: "
+            f"{len(from_logs)} from logs + {len(recovery['components'])} from payloads "
+            f"exceeds {len(structured)} structured deliveries"
+        )
 
     denominators = [c["serialized_bytes"] for c in components if c["serialized_bytes"]]
     aggregate_total = sum(denominators)
@@ -1137,6 +1184,7 @@ def decompose_payload_shares(log_dir, payload_dir=None) -> dict:
         "decomposed_from_verified_payloads": len(recovery["components"]),
         "payloads_sha256_verified": recovery["verified"],
         "payloads_sha256_unmatched": recovery["unmatched"],
+        "payloads_skipped_already_decomposed": recovery["skipped_already_decomposed"],
         "decomposition_unavailable": unavailable,
         "aggregate_serialized_bytes": aggregate_total,
         "components": per_component,

@@ -2818,3 +2818,34 @@ def test_decompose_payload_shares_sha256_verifies_recovered_payloads(monkeypatch
     assert report["decomposition_unavailable"] == 0
     assert report["components"]["hit.path"]["aggregate_bytes"] == 10
     assert report["id_equals_path"]["hits_id_equals_path"] == 1
+
+
+def test_decompose_payload_shares_counts_a_both_routes_delivery_once(monkeypatch, tmp_path):
+    """A delivery reachable by BOTH routes -- the log carries `component_bytes`
+    AND the raw payload file is still on disk and SHA-verifies -- is ONE delivery,
+    not two. Decomposing both inflated every `n` and every `aggregate_bytes` and
+    drove `decomposition_unavailable` negative, which would destroy the "every
+    statistic reports its own N" contract this module is built on."""
+    content = json.dumps(_decomposable_payload())
+    entry = aui._tool_result_digest_entry({"is_error": False, "content": content})
+    assert isinstance(entry["component_bytes"], dict)  # route 1 is genuinely available
+    monkeypatch.setattr(aui, "read_digest_entries", lambda _d: [entry])
+    payload_dir = tmp_path / "payloads"
+    payload_dir.mkdir()
+    (payload_dir / "same-delivery.json").write_text(content, encoding="utf-8")  # route 2
+
+    report = aui.decompose_payload_shares(tmp_path, payload_dir)
+
+    assert report["structured_deliveries"] == 1
+    assert report["decomposed"] == 1
+    # The log's own component_bytes is the authoritative route; the payload file
+    # still SHA-verifies (a real fact about the dir) but is not decomposed again.
+    assert report["decomposed_from_log_component_bytes"] == 1
+    assert report["decomposed_from_verified_payloads"] == 0
+    assert report["payloads_sha256_verified"] == 1
+    assert report["payloads_skipped_already_decomposed"] == 1
+    assert report["decomposition_unavailable"] == 0
+    # Byte statistics are counted once -- the pre-fix code reported 2 and 16 here.
+    assert report["components"]["hit.id"]["n"] == 1
+    assert report["components"]["hit.id"]["aggregate_bytes"] == 8
+    assert report["hits"]["n"] == 1

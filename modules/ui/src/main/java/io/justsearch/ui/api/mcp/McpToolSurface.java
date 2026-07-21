@@ -52,8 +52,13 @@ public final class McpToolSurface {
           + "for question-answering — it retrieves relevant passages from multiple documents in "
           + "one call, assembled with source attribution, ready to use as evidence for your answer. "
           + "Much more efficient than searching and reading documents individually. "
-          + "The response includes facets showing top sources and entities in the index. "
-          + "Use these facet values as filters to scope retrieval: "
+          // Tempdoc 770 review: §F.5 removed the per-call facet round-trip, so this tool no longer
+          // returns facets on either tier — the pre-770 sentence promising them (already flagged
+          // by tempdoc 733:61) would send an agent looking for a field that is not delivered, and
+          // `filters` is still accepted, so a fabricated value silently over-narrows retrieval.
+          + "This tool does not return facets. To discover valid filter values, call "
+          + "justsearch_search — it returns the top sources, categories, authors and entities for "
+          + "the documents matching a query. Pass known values as filters to scope retrieval: "
           + "filters: {meta_source: [\"the verge\"], entity_persons: [\"Elon Musk\"]}. "
           + "For questions comparing what different sources report, call this tool once per source "
           + "with meta_source filters to get source-specific evidence, then synthesize. "
@@ -65,10 +70,21 @@ public final class McpToolSurface {
           + "relevance scores, and content previews. For answering questions, prefer "
           + "justsearch_answer — it retrieves assembled passages from multiple documents in one call. "
           + "Supports hybrid (default), text (BM25 keyword), and vector (semantic) search modes. "
-          + "The system automatically detects sources, authors, and entities in your query and "
-          + "applies soft boosts — check the queryUnderstanding field in the response. "
+          // Tempdoc 770 review: `queryUnderstanding` is emitted by the REST search controller
+          // (KnowledgeSearchController), NOT by this tool — neither the text block nor
+          // McpEvidenceProjection#searchEvidence carries it, so the pre-770 "check the
+          // queryUnderstanding field" pointer named a field the MCP caller never receives. The
+          // boost itself is real but conditional (KnowledgeSearchEngine: QU runs only when the
+          // local model is loaded and no explicit filters were supplied), so it is stated as such.
+          + "When the local AI model is loaded and no explicit filters are supplied, the system "
+          + "may also detect sources, authors, and entities in your query and soft-boost matching "
+          + "documents. "
+          // Tempdoc 770 review: the requested facet set is 6 fields (callSearch's
+          // defaultFacetFields), not the 3 the pre-770 wording named — and justsearch_answer's
+          // description now redirects here for entity values, so the two must agree.
           + "When the matching documents carry them, the response also returns top facet values "
-          + "(sources, categories, authors) to use as filters. "
+          + "(sources, categories, authors, and person/organization/location entities) to use as "
+          + "filters. "
           + "Set query_syntax: \"lucene\" for exact-phrase (\"...\") and boolean (AND/OR/NOT) "
           + "queries; the default is plain-text search. "
           + "Set detail: true to also receive per-hit ranking provenance (stage participation and "
