@@ -1,7 +1,7 @@
 ---
 title: "Installer payload composition: what belongs in the base installer versus the consent-gated download pack — the base installer ships an inference runtime it cannot run, and the pack mechanism that would carry it already exists"
 type: tempdocs
-status: "open — ANALYSIS ONLY (2026-07-21). Evidence measured against a real 815 MB CI artifact (run 29514086160, 743 files, 177 PE binaries, every PE signature-checked). Takeover investigation (2026-07-21) independently re-verified all citations (spot-checks + subagent pass: no wrong citations, two minor line-range imprecisions) and resolved §Open question 7 (byte-level size win, §F) — combined native-bin payload is ~10.4% of the installed tree, not the dramatic reduction the PE-count framing suggested. §G (same pass) then found a payload OUTSIDE this tempdoc's original native-bin-only scope that dwarfs it: `lib/worker/onnxruntime_gpu-1.24.3.jar` alone is 34.3% of the installer, of which ~18.65% is Linux native binaries with zero use on this Windows-only product (no Linux build exists or is chartered — tempdoc 761) and ~15.12% is a Windows CUDA provider DLL inert until GPU+pack, the same pattern as llama-server but ~5x its size. No decision reached, no split recommended, nothing removed; §Open questions (now 1-10) are for the owner. See §Takeover verdict. Nothing implemented."
+status: "open — ANALYSIS ONLY (2026-07-21). Evidence measured against a real 815 MB CI artifact (run 29514086160, 743 files, 177 PE binaries, every PE signature-checked). Takeover investigation (2026-07-21, multiple passes) independently re-verified all citations (clean), resolved Q7 (§F: native-bin combined is ~10.4% of installed payload), found a much bigger payload outside the original native-bin-only scope (§G: lib/worker/onnxruntime_gpu-1.24.3.jar is 34.3%, of which ~18.65% is dead Linux native binaries on this Windows-only product and ~15.12% is a Windows CUDA provider DLL inert until GPU+pack), and found a second major lever (§H: the embedded WebView2 offline installer is 203.65 MB / 18.83% — the second-largest single component, ~60% bigger than Tauri's own documented estimate). Resolved Q3 (pack mechanism is NOT ready for a CPU-mandatory package — 4 concrete gaps found), Q4 (only 2 of 9 scripts are real gates, both already characterized), the should_sign upstream claim (confirmed against Tauri source), and Q8's licensing question (ONNX Runtime is MIT; no Windows-only upstream artifact exists). No decision reached, no split recommended, nothing removed or implemented; §Open questions (1-10, several now resolved inline) are for the owner. See §Takeover verdict."
 created: 2026-07-21
 updated: 2026-07-21 (takeover investigation)
 author: agent (subagent investigation), founder-directed distribution work (2026-07-21)
@@ -175,12 +175,21 @@ move is free — see §Open question 3 for what remains unverified.
 ## §Signing consequence — a consequence, not the justification
 
 Tauri v2's bundler signs each bundled PE individually and skips those already carrying a valid
-signature (the `should_sign` filter, bundler ≥ 2.6.0). **This is an upstream-behavior claim that
+signature (the `should_sign` filter, bundler ≥ 2.6.0). **This was an upstream-behavior claim that
 could not be verified from this checkout** — `tauri-bundler` is a build-time tool, absent from
 `modules/shell/src-tauri/Cargo.lock`, and `modules/shell/package.json:10` pins only
 `"@tauri-apps/cli": "^2"` (unpinned minor). The app crate is Tauri 2.11.3
-(`Cargo.lock:3914-3915`). A follow-up should confirm against the bundler source before this
-arithmetic is relied on.
+(`Cargo.lock:3914-3915`).
+
+**RESOLVED (takeover investigation, 2026-07-21) — confirmed against upstream source directly.**
+`gh search code "should_sign" --repo tauri-apps/tauri` locates
+`crates/tauri-bundler/src/bundle/windows/sign.rs: pub fn should_sign(file_path: &Path) -> crate::Result<bool>`.
+Fetched the function body: it first checks the file has a `.exe`/`.dll` extension, then (Windows
+only) runs `signtool verify /pa` via a `verify()` helper and returns `!already_signed` — i.e. it
+returns `true` (meaning "go sign this") only when the file does **not** already carry a valid
+Authenticode signature. The claim is confirmed verbatim: the bundler really does skip pre-signed
+PEs, so the 101 → ~8 signings-per-release arithmetic in the table below is sound, not just
+arithmetically consistent with an unverified premise.
 
 Taking the claim as given, and applying it to §A's measured distribution:
 
@@ -231,14 +240,45 @@ consequences, and O5 exists only to name it.
 
 3. **Does the pack mechanism actually support these payloads?** §E establishes that it *already
    carries pure-native-binary packages into `native-bin/`* (`cuda-runtime`), which is stronger
-   evidence than the brief assumed. What is **not** established: (a) whether a package can be
-   *required for a non-GPU code path* — `cuda-runtime` carries `minVramBytes: 0` and `tier:
-   "runtime"`, and preflight/hardware-profile logic (`AiInstallService.java:428-429`, `:666-685`)
-   gates on GPU detection; a CPU-tier native package may need new tier semantics; (b) whether
-   `RuntimeRestoreUtil.ensureRuntimePresent` (`:34-74`) tolerates the bundled source being absent,
-   or fails/degrades badly; (c) whether Tesseract's GPL-2.0/NOTICE obligation is satisfiable through
-   a downloaded archive; (d) whether `AiPreflightService` would report a coherent state for a
-   never-downloaded CPU runtime. **Investigate before assuming.**
+   evidence than the brief assumed. **RESOLVED — no, not without new work (takeover investigation,
+   2026-07-21, subagent pass, all four sub-parts traced with file:line evidence):**
+   - **(a) required-for-non-GPU:** No. `InstallPlanner.java:94-106`'s `RUNTIME`-tier skip is an
+     *unconditional* `!profile.usesCuda()` check — it never consults `minVramBytes` at all, so
+     `cuda-runtime`'s `minVramBytes: 0` is decorative, not load-bearing. `ModelPackage.java` has no
+     `required`/`mandatory` field and `CapabilityTier` (`CapabilityTier.java:17-25`) has no tier
+     meaning "always download regardless of hardware." A CPU-mandatory pack package needs either a
+     new tier or the `RUNTIME` skip check to stop being tier-identity-based.
+   - **(b) bundled-source-absent tolerance:** `RuntimeRestoreUtil.ensureRuntimePresent`
+     (`RuntimeRestoreUtil.java:34-58`) itself degrades gracefully (`Files.isDirectory` guards
+     throughout, silent no-op if the bundled dir is gone) — but its **caller**,
+     `AiInstallService.java:453-456`, hard-fails the entire "Install AI" run with
+     `RUNTIME_MISSING` if it returns `false`, and this check runs **before any pack downloads even
+     start** (`:451-456`, ahead of the download loop at `:458+`). A pack-only llama-server would hit
+     this precondition and fail before ever reaching the step that would fetch it. Load-bearing
+     ordering assumption, not a passive tolerance gap.
+   - **(c) GPL-2.0/NOTICE via download:** No precedent exists. The `cuda-runtime` package's four
+     `supportingFiles` archives (`model-registry.v2.json:264-293`) are pure `{url, sha256, extract}`
+     binary archives with zero license/notice entries — license metadata lives only at the
+     *package* level (`"license"`, `"termsUrl"`) as UI-surfaced strings, never as a file dropped on
+     disk. `AiInstallService.java:1226-1259`'s `extractZipInPlace` does nothing but unzip. Moving
+     Tesseract to pack delivery would need either the hosted archive re-packaged to include the
+     three notice/license files (only possible for the self-hosted, not upstream MSYS2, builds) or
+     a new "always-copy these repo files after this package extracts" primitive — neither exists.
+   - **(d) coherent never-downloaded-CPU-runtime state:** Partially. The *activation-time* signal
+     already works — `LifecycleReasonCode.INFERENCE_RUNTIME_NOT_INSTALLED`
+     (`LifecycleReasonCode.java:66`) is wired from `RuntimeActivationService`/`InferenceHandlers`
+     and would plausibly fire correctly. But the *install-time/preflight* models do not distinguish
+     severity: `AiPreflightResult`/`PackageStatus` (`AiPreflightService.java:36-97`) has no
+     completeness-severity field, and the install-run state machine's `skipped` bucket
+     (`AiInstallService.java:602-645`) is written entirely in "hardware doesn't support it, that's
+     fine" prose — a CPU-mandatory package skipped for any reason would render with the same soft
+     "installed with limitations" banner a user sees today for declined GPU acceleration.
+
+   **Net:** the download/extract/consent machinery (§E) is genuinely reusable, but every place that
+   decides *whether* a package downloads or *how its absence is reported* was built around an
+   implicit "pack content is optional GPU/enrichment" assumption. None of (a)-(d) are fundamental
+   blockers, but all four are real, specific gaps — this leans toward "real work needed" over
+   "basically ready," which matters directly for scoping O1/O3/O5 effort.
 
 4. **Which gates encode the current assumption?** Confirmed and must move in the same change (per
    `retire-with-a-sweep`):
@@ -251,13 +291,26 @@ consequences, and O5 exists only to name it.
    - `scripts/ci/check-notices-regen.mjs` — references `native-bin`; the NOTICE/LICENSE files staged
      at `build.gradle.kts:1455-1467` are generated/checked here. Moving Tesseract moves a licensing
      obligation, not just bytes.
-   - `scripts/smoke-tests/verify-gpu-bundle.ps1`, `scripts/dev/doctor.mjs`,
-     `scripts/dev/run-headless-api.ps1`, `scripts/dev/test-dev-runner-runtime-resolution.mjs`,
-     `scripts/dev/justsearch-dev-mcp/server.mjs`, `scripts/ai/token-probe.ps1`,
-     `scripts/codegen/gen-notices.mjs` (+ its `.test.mjs`) — all reference `native-bin`. Most are
-     dev-path resolution rather than payload assertions, but each needs checking, not assuming.
+   - **RESOLVED — remaining 7 scripts checked (takeover investigation, 2026-07-21, subagent pass,
+     file:line evidence for each): none are hard gates on the base-installer bundled payload.**
+     `scripts/smoke-tests/verify-gpu-bundle.ps1` (`:34-58`) does hard-`throw`, but it asserts the
+     already-pack-delivered cuda12 *variant*, not the bundled CPU payload, and it isn't wired into
+     any CI workflow (grep across `.github/` — zero hits). `scripts/codegen/gen-notices.mjs`'s real
+     hard gate (`nativeDispositionCheck`, `:244-273`) runs over committed manifests
+     (`packaging/runtime/tesseract-bundled-libraries.v1.json`), explicitly designed to work "in CI
+     without native-bin staged" (`:236`) — its presence-check at `:303-310` is skip-when-absent, not
+     assert-must-exist. The remaining five (`doctor.mjs`, `run-headless-api.ps1`,
+     `test-dev-runner-runtime-resolution.mjs`, `justsearch-dev-mcp/server.mjs`, `token-probe.ps1`)
+     are all soft dev-tooling/path-resolution or explicitly report-only (`server.mjs:1672-1674`'s own
+     comment: *"REPORT-ONLY... does NOT gate `ready`"*) — each would just need a resolved path
+     updated, not a design change, if the payload moved.
    - Nothing in `governance/*.json` references `native-bin` or `tesseract` (grep, empty). No
      discipline-gate coupling found.
+   - **Overall for Q4:** the gate surface for a payload move is much smaller than "8 scripts to
+     check" implied — realistically just `verify-installer-nsis-win.ps1` (must change its assertion
+     target) and `gen-notices.mjs`'s disposition manifests (must reflect the new delivery route),
+     both already well-characterized. This is good news for whichever option the owner picks: gate
+     churn is not a reason to avoid O1/O2/O3.
 
 5. **Does `vc_redist` / WebView2 bootstrap change?** Current behavior: `vc_redist.x64.exe` is a
    declared bundle resource (`tauri.conf.json:21`) and WebView2 uses
@@ -266,7 +319,10 @@ consequences, and O5 exists only to name it.
    signing-cost-neutral. **Question:** are they byte-relevant, and is embedding the *offline*
    WebView2 installer still the right call if the product is accepting a network dependency for
    other payloads anyway? Switching to the online bootstrapper is a separate, smaller lever that
-   trades bytes for an install-time network requirement.
+   trades bytes for an install-time network requirement. **RESOLVED (byte-relevance) — see §H: the
+   offline WebView2 installer is 203.65 MB, 18.83% of the entire installed payload** — the "is it
+   byte-relevant" half of this question is answered emphatically yes; the "is it still the right
+   call" half remains an owner call, now with a real number behind it.
 
 6. **Is Tesseract genuinely optional?** Investigated far enough to pose it precisely:
    - Eligibility: OCR is attempted only for `application/pdf` and `image/*`
@@ -416,6 +472,66 @@ bin/` directories it originally measured, and the biggest single lever found so 
 natives, 18.65%, arguably pure waste with no counter-argument found) sits entirely outside the O0-O5
 option set as currently framed.
 
+## §H — Complete top-level accounting + the WebView2 offline installer (takeover investigation, 2026-07-21)
+
+Prompted by the same "what else is unnecessarily in the installer" question that produced §G, and
+directly answering this tempdoc's own pre-existing Open Question 5 (byte-relevance of `vc_redist`/
+WebView2). Same re-extracted CI artifact as §F/§G (run `29514086160`, third independent
+re-download+re-extraction in this pass, still 743 files — no drift across any of the three pulls).
+
+**Full top-level breakdown of the 1,081,771,371-byte installed payload** (this is the complete
+accounting — every byte of the extracted installer is in exactly one row, verified by sum):
+
+| Component | Bytes | % of installed payload |
+|---|---:|---:|
+| `resources/headless/` (everything §A-§G already examined) | 843,940,709 | 78.02% |
+| **`$TEMP/MicrosoftEdgeWebView2RuntimeInstaller.exe`** | **203,654,864** | **18.83%** |
+| `resources/vc_redist.x64.exe` | 25,635,768 | 2.37% |
+| `JustSearch.exe` (root NSIS launcher stub) | 8,449,536 | 0.78% |
+| `$PLUGINSDIR` (NSIS UI plugins) | 90,494 | 0.008% |
+| **Total** | **1,081,771,371** | **100.00%** |
+
+**The finding: the embedded WebView2 offline installer is the second-largest single component in
+the entire installer** — bigger than `native-bin/tesseract` + `native-bin/llama-server` +
+`runtime` (JRE) combined (166.7 MB, §F), and closing in on onnxruntime_gpu's Linux-native waste
+(§G, 201.8 MB). This resolves Q5's byte-relevance half unambiguously.
+
+**Why it's this big, and whether it needs to be.** `tauri.conf.json:25-27` sets
+`webviewInstallMode: { type: "offlineInstaller", silent: true }`. Tauri v2's own documentation
+(`v2.tauri.app/reference/config/`, fetched this pass) describes four alternative modes:
+
+| Mode | Installer size impact | Requires network at install time? |
+|---|---|---|
+| `skip` | none | No (assumes WebView2 already present) |
+| `downloadBootstrapper` | ~1.8 MB | Yes |
+| `embedBootstrapper` | ~1.8 MB | Yes |
+| `offlineInstaller` (current) | Tauri's own docs say "~127 MB" | No |
+
+**The measured 203.65 MB is ~60% larger than Tauri's own documented estimate for this mode** — most
+likely because the WebView2 Runtime itself (a full Chromium build) has grown since that doc figure
+was written, not because of anything JustSearch-specific. Flagging the discrepancy rather than
+resolving it; a follow-up could confirm against Tauri's changelog, but it doesn't change the
+conclusion that this mode is now far heavier than documented.
+
+**Context that bears on the tradeoff, not a recommendation:** WebView2 Runtime ships pre-installed
+on Windows 11 by default and is pushed to most Windows 10 machines via Windows Update, so the
+`downloadBootstrapper`/`embedBootstrapper` modes' "requires network at install time" cost would, in
+practice, rarely trigger an actual download for most users — it only matters on a machine that
+genuinely lacks WebView2 (older/locked-down Windows 10, air-gapped machines). Weighed against that:
+the product already has a hard network dependency for the ~9 GB model download shortly after
+install (§D), so "the installer completes fully offline, but the app can't do much until you're
+online anyway" is arguably close to the status quo's real behavior already — same tension Q1 poses
+for the base-installer-vs-pack question, applied one level down to WebView2 specifically.
+
+**Not evaluated here (owner/design territory, consistent with this tempdoc's stance):** whether
+`skip`/`downloadBootstrapper`/`embedBootstrapper` is the right replacement, what fraction of the
+target audience lacks WebView2 today (no telemetry exists, same empirical gap as Q6's OCR-corpus
+question), and whether trading ~202 MB of installer bytes for a rare install-time network
+dependency is worth it. This is a single Tauri config field — mechanically the cheapest of every
+lever this investigation found (§G's jar-repackaging carries license/lockfile questions; this one
+does not) — but "cheap to flip" is not the same as "should be flipped," and that judgment belongs
+to the owner.
+
 ## §What this tempdoc deliberately does not do
 
 - Does not recommend a payload split, or state which of O0–O5 is right.
@@ -442,10 +558,19 @@ Recorded per `verify, don't guess`; a follow-up agent should carry these forward
    answered — the *shape* is proven, the *fit for a CPU-tier required payload* is not.
 5. **The 815 MB figure is a fifth number, not a confirmation of any existing one.** The brief framed
    §C as three inconsistent surfaces; the measurement makes it four (853 / 815 / ~748 / 741).
-6. **The Tauri `should_sign` claim is not verifiable from this checkout** (§Signing consequence).
-   `tauri-bundler` is not in `Cargo.lock` and the CLI is pinned only to `^2`. The 101 / ~8
-   arithmetic is arithmetically sound given the claim and given §A's measured counts, but the claim
-   itself is upstream-sourced and unverified here. Flagged rather than propagated silently.
+6. **The Tauri `should_sign` claim, flagged as unverifiable from this checkout, is now confirmed**
+   (§Signing consequence, takeover investigation 2026-07-21) — fetched directly from
+   `tauri-apps/tauri`'s `sign.rs` source. The 101 / ~8 arithmetic is sound, not just consistent with
+   an unverified premise.
+8. **The Q8 (§G) licensing question is resolved in the permissive direction.** ONNX Runtime is
+   MIT-licensed (confirmed: `github.com/microsoft/onnxruntime/blob/main/LICENSE`), and the upstream
+   `java/build.gradle`'s `allJar` task (confirmed by fetching it) bundles every built platform's
+   native libraries into one jar with no OS-conditional filtering — there is no Windows-only
+   artifact to switch to instead; repackaging (if ever chartered) would be a JustSearch-side
+   post-resolution step, and MIT's terms permit that modification and redistribution (copyright
+   notice must travel with it — already present as `ThirdPartyNotices.txt`/`pom.xml` inside the
+   jar). This de-risks Q8(a)/(b) but doesn't resolve whether stripping is worth doing — that's still
+   an owner call, now with the licensing uncertainty removed from the decision.
 7. **`README.md` line numbers.** The shared main checkout has `README.md` modified by another
    agent's in-flight work; working-tree lines differ from `HEAD` (e.g. the consent sentence is
    `:44-45` in the working tree, `:40` at `HEAD`). All `README.md` citations above are **`HEAD`**
@@ -477,28 +602,47 @@ distribution lanes), or 374 (the ancestor decision this inherits, not a redo of 
 is explicitly analysis-only, and that is the correct place for it to stop. What it surfaces is
 genuinely owner-gated: Q1 (organizing principle: does "installer ships what first-run *search*
 needs" hollow out the offline-first pitch?) and Q2 (first-run UX cost of new consent prompts) are
-product-shape decisions, not things a follow-up investigation can resolve. §Q3 (does the pack
-mechanism actually support a CPU-tier *required* package, not just an optional GPU one) is
-implementation-adjacent but still needs an owner-approved direction before it's worth spending
-design effort on any one option.
+product-shape decisions, not things a follow-up investigation can resolve. Q3 (pack-mechanism
+readiness) is now **resolved, not just posed** — a dedicated subagent pass traced all four
+sub-questions with file:line evidence and found the mechanism is genuinely *not* ready for a
+CPU-mandatory package (§Open questions, item 3): the `RUNTIME` tier's skip check is unconditionally
+CUDA-gated with no escape hatch, the bundled-runtime restore precondition runs and can hard-fail
+*before* any pack download starts, there's no existing precedent for shipping license/notice files
+inside a downloaded archive, and the install-time state model has no severity distinction between
+"skipped, that's fine" and "skipped, and now chat is broken." None of these are blockers, but
+together they mean O1/O3/O5 carry more implementation weight than §E's "the mechanism already
+exists" framing suggested — worth knowing before scoping effort on any option. Q4 (gate sweep) is
+also now fully resolved: only 2 of 9 checked scripts are real gates, both already well-characterized,
+so gate churn is not a reason to prefer one option over another.
 
 **What was the cheapest validating evidence, and did it already exist?** No — it didn't exist
 before this pass. §Open question 7 (the byte-level size win) was the one purely-empirical,
 non-owner-gated question left on the table, and it was cheap: re-download + re-extract + `du -sb`,
 no owner input needed. It's now answered (§F): moving both `native-bin` payloads to the pack saves
 **~10-11% of the installer** — modest on its own. **But asked to check further whether other files
-were unnecessarily in the installer, the same re-extracted artifact turned up something bigger than
-everything §A-§F examined (§G): `lib/worker/onnxruntime_gpu-1.24.3.jar` is 34.3% of the installer,
-and ~18.65 percentage points of that (the bundled Linux native libraries) has no live justification
-on a Windows-only product with no chartered Linux build.** That is the single largest, most
-one-sided finding in this whole investigation — bigger than tesseract + llama-server combined, and
-unlike the O0-O5 tradeoffs, the Linux-natives portion doesn't obviously trade against any UX or
-signing benefit; no counter-argument for keeping it was found. It was missed originally because
-this tempdoc's own charter and §A's inventory scoped "payload" to `native-bin/` PE binaries only —
-a `.jar`'s embedded native libraries fall outside that framing entirely. **This evidence will not be
-re-obtainable from this exact artifact after 2026-07-23** (its GitHub Actions retention expiry) —
-both §F's and §G's numbers came from the same artifact, re-downloaded a second time in this pass;
-re-measuring later means trusting a different build.
+were unnecessarily in the installer, the same re-extracted artifact turned up two things bigger than
+everything §A-§F examined:**
+
+- **§G: `lib/worker/onnxruntime_gpu-1.24.3.jar` is 34.3% of the installer**, and ~18.65 percentage
+  points of that (bundled Linux native libraries) has no live justification on a Windows-only
+  product with no chartered Linux build. Unlike the O0-O5 tradeoffs, this doesn't obviously trade
+  against any UX or signing benefit — no counter-argument for keeping it was found, though a
+  licensing/lockfile question was (now resolved permissively: ONNX Runtime is MIT, no Windows-only
+  upstream artifact exists to switch to instead — see the updated Corrections list).
+- **§H: the embedded WebView2 offline installer is 203.65 MB, 18.83% of the installer** — the
+  second-largest single component overall, and ~60% bigger than Tauri's own documented estimate for
+  this config mode. A single config field (`webviewInstallMode`), the cheapest-to-flip lever found,
+  though whether to flip it is still a real tradeoff (install-time network dependency on the
+  minority of machines lacking WebView2 — no telemetry on how large that minority is).
+
+Both were missed by the original charter because it scoped "payload" to `native-bin/` PE binaries
+and `resources/`-declared bundle entries only — a `.jar`'s embedded natives and NSIS's `$TEMP`
+staging area both fall outside that framing. Together, §G's Linux natives + §H's WebView2 installer
+sum to more than a third of the entire installer, roughly 3.5x what §A-§F examined. **This evidence
+will not be re-obtainable from this exact artifact after 2026-07-23** (its GitHub Actions retention
+expiry) — §F, §G, and §H's numbers all came from the same artifact, re-downloaded three times across
+this pass with identical file counts (743) each time; re-measuring later means trusting a different
+build.
 
 **What does it displace or duplicate?** Nothing currently shipped or planned — there is no
 competing analysis of installer payload composition, and 760/759/761/374 are confirmed disjoint
@@ -510,15 +654,25 @@ work that would justify the bytes being there. It does not obsolete or conflict 
 tradeoff, not a pure teardown, rename, or config-delete — it does not qualify even provisionally.
 
 **State:**
-- **BLOCKED ON YOU:** Q1/Q2 as before (organizing principle + first-run UX cost, product-shape
-  calls no investigation resolves) — **plus, newly, whether §G's Linux-natives removal (Q8) is
-  worth chartering as a small, separable, near-zero-downside fix.** Unlike Q1/Q2, Q8 doesn't
-  obviously trade against UX — it may not need to wait for the bigger O0-O5 decision at all, but it
-  does need your go-ahead before anyone spends design/implementation effort repackaging a
-  third-party dependency (licensing + lockfile implications noted in Q8, not resolved).
-- **PROCEEDING / DONE (this session):** Independent verification of all prior citations (clean);
-  §Open question 7 answered with measured numbers (§F); a follow-up investigation beyond this
-  tempdoc's original scope (§G) found and quantified a 3x-bigger payload the original charter
-  couldn't have caught by construction; tempdoc updated in place with all of it. No design or
-  implementation work was started, per the takeover charter — that stays gated on your answers
-  above, including whether Q8 should be fast-tracked ahead of Q1/Q2.
+- **BLOCKED ON YOU:**
+  - Q1/Q2 (organizing principle + first-run UX cost) — product-shape calls no investigation
+    resolves; now sharpened by Q3's finding that O1/O3/O5 (moving `native-bin` payloads) carry real
+    implementation weight beyond "the mechanism already exists."
+  - **Whether §G's Linux-natives removal is worth chartering as a small, separable,
+    near-zero-downside fix** — it doesn't obviously trade against UX, doesn't need to wait for the
+    bigger O0-O5 decision, and its licensing question is now resolved permissively (MIT). Still
+    needs your go-ahead before anyone spends effort repackaging a third-party dependency.
+  - **Whether §H's WebView2 install-mode change is worth chartering** — mechanically the cheapest
+    lever of everything found (a single Tauri config field), but trades ~202 MB for an install-time
+    network dependency on an unmeasured minority of machines. A real tradeoff, not a free win, even
+    though it's cheap to implement.
+- **PROCEEDING / DONE (this session):** Independent verification of all prior citations (clean); Q7
+  answered with measured numbers (§F); two follow-up investigations beyond the tempdoc's original
+  charter (§G Linux/CUDA jar bloat, §H WebView2) found and quantified payloads the original charter
+  couldn't have caught by construction, together larger than everything §A-§F examined; Q3 (pack
+  mechanism readiness) and Q4 (gate sweep) both resolved with file:line evidence via subagent
+  investigation; the `should_sign` upstream claim confirmed against Tauri source; Q8's licensing
+  question resolved (MIT, no Windows-only artifact exists). Tempdoc updated in place with all of it.
+  No design or implementation work was started, per the takeover charter — that stays gated on your
+  answers above, including whether the two newly-found levers (Linux natives, WebView2 mode) should
+  be fast-tracked ahead of the bigger Q1/Q2 decision.
