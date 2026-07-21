@@ -609,3 +609,34 @@ which is measurement-cohort identity (`735:102-106`). Campaigns cannot compare a
 the bump. Land Parts 1+2 on **one** bump, and choose the point deliberately relative
 to the 766 hero campaign — 766 §"Hero campaign" wants the campaign to measure the
 improved product, which argues for bumping *before* it, not during.
+
+**Second-pass review closure (2026-07-21).** A *second* independent reviewer (neither
+implementer nor first reviewer) checked whether the first round's fixes were correct
+and looked where the first did not. It found 8 more, all real. The two that matter:
+
+| Finding | Outcome |
+|---|---|
+| **The lane created a fourth false description while fixing three.** `ANSWER_DESC` still told agents *"the response includes facets … use these facet values as filters"* — a sentence **§F.5 falsified** by removing answer-path facets. §E.2 audited `SEARCH_DESC` and `RESPONSE_FORMAT_SCHEMA` and never opened the description of the tool it was changing. `733:61` had already flagged it. | Fixed, and the audit §E.2 should have done was completed across all 6 tools — which surfaced a **fifth**: `SEARCH_DESC` told agents to *"check the `queryUnderstanding` field in the response"*, which the MCP tool emits on **neither** tier (REST-only). Plus a wrong facet-field list, `STATUS_DESC` naming keys absent from the delivered text, and a hint saying *"the facet values above"* that ships inside `structuredContent.hints[]` where there is no "above". |
+| **A recorded fixture pinned a degraded response.** The 0.5.0 refresh ran seconds after a stack restart: `effectiveMode: TEXT`, `hybridFallback: true`, `REBUILD_IN_PROGRESS`, dense skipped. Doc-count and `ready: true` were both satisfied; enrichment needed ~7 more minutes. | Probe now **refuses** to write a fixture carrying degradation markers (sibling to the existing placeholder and size-sweep refusals); fixtures re-captured at 100% embed/splade coverage, index IDLE — search now records the healthy `HYBRID` path. |
+
+Also fixed: a real double-count in the new `decompose_payload_shares` (both recovery
+routes decomposing the same payload → inflated Ns and a **negative**
+`decomposition_unavailable`; now de-duplicated on `content_sha256`, with the
+both-routes case tested and the invariant made a hard error); the §D component table
+was labelled *"median share"* while carrying **aggregate** values (which is why it
+summed to exactly 100.0%); two different medians were circulating in public docs
+(**15,929** over N=1081 all calls vs **16,023** over N=1056 structured deliveries —
+both real, different denominators, and the 401/500 tombstones quoted one while citing
+the other); §E.3 called `limit:40` *"cliffed"* from inside its own unmeasured band;
+and §F's "Kept unchanged" line contradicted the diff.
+
+**The pattern worth keeping.** Both review rounds found the same *shape* of defect:
+this lane's own principle — *"on an agent-facing surface, the description is the
+behavior"* — applied to everything except itself. Round one: a removal that made a
+shipped Javadoc claim false. Round two: a removal that falsified the description of
+the very tool it changed. **A change that removes a field must audit every string
+that mentions it, starting with the tool it belongs to** — and the audit must be
+mechanical, not recalled, which is exactly what §G's proposed description/schema
+conformance check would enforce. Two rounds of human-grade review caught what
+judgment did not; that is the argument for building the check, recorded in §G with
+its retirement condition.
