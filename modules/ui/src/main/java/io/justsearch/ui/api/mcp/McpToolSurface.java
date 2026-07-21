@@ -65,10 +65,11 @@ public final class McpToolSurface {
           + "relevance scores, and content previews. For answering questions, prefer "
           + "justsearch_answer — it retrieves assembled passages from multiple documents in one call. "
           + "Supports hybrid (default), text (BM25 keyword), and vector (semantic) search modes. "
-          + "For exact phrase or boolean queries, set querySyntax: \"LUCENE\" with mode: \"text\". "
           + "The system automatically detects sources, authors, and entities in your query and "
           + "applies soft boosts — check the queryUnderstanding field in the response. "
-          + "The first search returns top facet values (sources, categories, authors).";
+          + "Every search returns top facet values (sources, categories, authors). "
+          + "Set detail: true to also receive per-hit ranking provenance (stage participation and "
+          + "fusion-leg scores); it is omitted by default.";
 
   private static final String BROWSE_DESC =
       "Browse the indexed folder structure. Lists subfolders with file counts and sizes. "
@@ -102,9 +103,9 @@ public final class McpToolSurface {
           + " multiple documents, or when you want to conserve context. For a small set of files or"
           + " an exact string / filename lookup, ordinary file tools are equally good. Use"
           + " justsearch_search to explore what is in the index, and justsearch_status for the live"
-          + " index size and readiness. Both tools accept response_format; \"concise\" returns"
-          + " substantially fewer tokens per call and keeps every line that reports what was"
-          + " elided.";
+          + " index size and readiness. Both tools accept response_format; \"concise\" trims the"
+          + " human-readable text block (not the structured response) and keeps every line that"
+          + " reports what was elided.";
 
   private final List<OperationCatalog> operationCatalogs;
   private final OperationDispatcher dispatcher;
@@ -182,7 +183,7 @@ public final class McpToolSurface {
   }
 
   // =========================================================================
-  // tools/list — 5 curated tools, position-bias ordered
+  // tools/list — 6 curated tools, position-bias ordered
   // =========================================================================
 
   public Map<String, Object> listTools() {
@@ -262,10 +263,12 @@ public final class McpToolSurface {
   private static final Map<String, Object> RESPONSE_FORMAT_SCHEMA =
       propEnum(
           List.of("concise", "detailed"),
-          "Response verbosity. \"detailed\" (default) includes preview snippets and full evidence"
-              + " passages. \"concise\" returns substantially fewer tokens per call: search results"
-              + " omit the preview line and answer packs cap at the 3 highest-ranked passages; the"
-              + " coverage, match, and header lines are kept in both modes.");
+          "Verbosity of the human-readable text block only; it does not change the structured"
+              + " response, so a client that reads structuredContent (the common case) sees no"
+              + " size difference. \"detailed\" (default) includes preview snippets and full"
+              + " evidence passages. \"concise\" drops the per-hit preview line from"
+              + " justsearch_search text and caps justsearch_answer text at the 3 highest-ranked"
+              + " passages; the coverage, match, and header lines are kept in both modes.");
 
   private static final Map<String, Object> ANSWER_SCHEMA =
       schema(
@@ -287,7 +290,12 @@ public final class McpToolSurface {
               // trace + per-hit ranking provenance) is always returned in structuredContent; when
               // detail=true the per-hit numeric fusion-leg detail scores are included too.
               "detail",
-                  prop("boolean", "Include the numeric per-hit detail tier in the ranking evidence"),
+                  prop(
+                      "boolean",
+                      "Include the per-hit ranking-provenance tier (stage participation,"
+                          + " fusion-leg scores, and the numeric detail sub-map). Omitted by"
+                          + " default; excerpts, scores and the query-level search trace are"
+                          + " returned either way."),
               "response_format", RESPONSE_FORMAT_SCHEMA),
           List.of("query"));
 
@@ -577,7 +585,6 @@ public final class McpToolSurface {
         passages,
         distinctDocs,
         result.contextTruncated(),
-        fetchFacets(query),
         comparativeHint,
         enrichmentHintText,
         zeroResultHint,
@@ -654,23 +661,6 @@ public final class McpToolSurface {
     // tempdoc 366's finding that descriptions are forgotten by turn 5).
     if (!content.comparativeHint().isEmpty()) {
       sb.append(content.comparativeHint()).append("\n");
-    }
-
-    // Facet sidecar (parallel discovery)
-    if (content.facets() != null && !content.facets().isEmpty()) {
-      sb.append("\n--- Top sources & entities ---\n");
-      for (var entry : content.facets().entrySet()) {
-        String name = entry.getKey().replace("_raw", "");
-        if (entry.getValue() != null && !entry.getValue().isEmpty()) {
-          sb.append("  ").append(name).append(": ");
-          sb.append(
-              entry.getValue().entrySet().stream()
-                  .limit(5)
-                  .map(e -> String.valueOf(e.getKey()))
-                  .toList());
-          sb.append("\n");
-        }
-      }
     }
 
     // Enrichment hint
@@ -797,7 +787,7 @@ public final class McpToolSurface {
           "content",
           List.of(Map.of("type", "text", "text", text)),
           "structuredContent",
-          McpEvidenceProjection.searchEvidence(resp, content),
+          McpEvidenceProjection.searchEvidence(resp, content, Boolean.TRUE.equals(detail)),
           "isError",
           false);
     } catch (Exception e) {
@@ -1425,31 +1415,6 @@ public final class McpToolSurface {
   // =========================================================================
   // Helpers
   // =========================================================================
-
-  /**
-   * Tempdoc 735 W6: replaces {@code appendFacetSidecar} — fetches the SAME facet sidecar search
-   * (limit 0, hybrid mode, 3 facet fields) but returns the raw facets map instead of writing text,
-   * so it can feed both the text renderer's "--- Top sources & entities ---" block and the
-   * structured tier's {@code facets} field from one call.
-   */
-  private Map<String, Map<String, Long>> fetchFacets(String query) {
-    try {
-      KnowledgeSearchController ctrl = knowledgeLookup.get();
-      if (ctrl == null) return Map.of();
-      var facetReq = new KnowledgeSearchRequest(
-          query, 0, "hybrid", null, null, null, null, null,
-          new KnowledgeSearchRequest.Facets(true, null, List.of(
-              new KnowledgeSearchRequest.FieldSpec("meta_source", 5),
-              new KnowledgeSearchRequest.FieldSpec("entity_persons_raw", 5),
-              new KnowledgeSearchRequest.FieldSpec("entity_organizations_raw", 5))),
-          null, null, null, null);
-      var resp = ctrl.getAdapter().search(facetReq);
-      return resp.facets() == null ? Map.of() : resp.facets();
-    } catch (Exception e) {
-      log.debug("Facet sidecar failed: {}", e.getMessage());
-      return Map.of();
-    }
-  }
 
   /**
    * Tempdoc 735 W6: replaces {@code appendEnrichmentHint}/{@code appendEnrichmentHintToList} —

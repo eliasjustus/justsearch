@@ -27,10 +27,12 @@ import java.util.Map;
  * processing (the handler uses a different Jackson generation than the {@code com.fasterxml}
  * annotations on the records), and it is what gives the projection full control of the agent altitude.
  *
- * <p>Altitude: the structural trace (stage ids/status/reason/timing, per-hit rank/score/leg
- * participation, degradation) is always present; the numeric per-hit {@code detail} tier
- * ({@link SearchTrace.HitStage#detail()}) is populated upstream only when the request set
- * {@code debug=true} (the MCP {@code detail} tool argument), so it appears here only on request.
+ * <p>Altitude (tempdoc 770): the query-level {@code searchTrace} and {@code degradation} summary are
+ * always present. The PER-HIT ranking provenance — {@code trace} + {@code legScores}, measured at
+ * 19.9% of the delivered search payload and carrying no document content — is a declared opt-in tier
+ * gated by the MCP {@code detail} tool argument, which also gates the numeric
+ * {@link SearchTrace.HitStage#detail()} sub-map upstream. Per-hit {@code excerpts} are NOT gated:
+ * they are the only document text the agent receives.
  *
  * <p>Registered as a {@code projection} surface in {@code governance/execution-surfaces.v1.json};
  * guarded by {@code McpEvidenceProjectionTest}.
@@ -46,13 +48,16 @@ public final class McpEvidenceProjection {
    * cannot silently diverge. Per-hit {@code matchedTerms}/{@code matchedFields} are also read
    * from {@code content} rather than independently re-derived (the pre-735 duplication with
    * {@code McpToolSurface}'s own {@code filterInformative} call). This is the overload production
-   * code ({@code McpToolSurface#callSearch}) calls; the single-arg overload below is kept for the
+   * code ({@code McpToolSurface#callSearch}) calls; the response-only overload below is kept for the
    * reflective-totality guard ({@code McpEvidenceProjectionTest}), which asserts the projection's
    * coverage of the canonical evidence record independent of the response-level content-model
    * fields this increment adds.
+   *
+   * <p>{@code includeDetail} is the MCP {@code detail} tool argument: when false (the default) the
+   * per-hit ranking-provenance tier ({@code trace}/{@code legScores}) is omitted (tempdoc 770).
    */
   public static Map<String, Object> searchEvidence(
-      KnowledgeSearchResponse resp, McpSearchResponseContent content) {
+      KnowledgeSearchResponse resp, McpSearchResponseContent content, boolean includeDetail) {
     Map<String, Object> out = new LinkedHashMap<>();
     SearchTrace trace = resp.searchTrace();
     if (trace != null) {
@@ -73,9 +78,7 @@ public final class McpEvidenceProjection {
       if (!hc.title().isBlank()) {
         h.put("title", hc.title());
       }
-      if (!hc.path().isBlank()) {
-        h.put("path", hc.path());
-      }
+      putPathIfDistinct(h, hit.id(), hc.path());
       h.put("score", hit.score());
       if (!hc.matchedTerms().isEmpty()) {
         h.put("matchedTerms", hc.matchedTerms());
@@ -83,7 +86,7 @@ public final class McpEvidenceProjection {
       if (!hc.matchedFields().isEmpty()) {
         h.put("matchedFields", hc.matchedFields());
       }
-      projectHitExcerptsAndTrace(hit, h);
+      projectHitExcerptsAndTrace(hit, h, includeDetail);
       results.add(h);
     }
     out.put("results", results);
@@ -107,9 +110,12 @@ public final class McpEvidenceProjection {
    *
    * <p>Kept for {@code McpEvidenceProjectionTest}'s reflective totality guard over the canonical
    * {@link SearchTrace} record; production calls {@link #searchEvidence(KnowledgeSearchResponse,
-   * McpSearchResponseContent)} (tempdoc 735 W6).
+   * McpSearchResponseContent, boolean)} (tempdoc 735 W6). Carries the same {@code includeDetail}
+   * tier gate as the production overload, so the guard asserts totality over what actually ships
+   * rather than over a test-only path (tempdoc 770 §G).
    */
-  public static Map<String, Object> searchEvidence(KnowledgeSearchResponse resp) {
+  public static Map<String, Object> searchEvidence(
+      KnowledgeSearchResponse resp, boolean includeDetail) {
     Map<String, Object> out = new LinkedHashMap<>();
     SearchTrace trace = resp.searchTrace();
     if (trace != null) {
@@ -130,10 +136,7 @@ public final class McpEvidenceProjection {
       if (!title.isBlank()) {
         h.put("title", title);
       }
-      String path = hit.fields().getOrDefault("path", "");
-      if (!path.isBlank()) {
-        h.put("path", path);
-      }
+      putPathIfDistinct(h, hit.id(), hit.fields().getOrDefault("path", ""));
       h.put("score", hit.score());
 
       // Tempdoc 725 W1: the same informative-term filter that drives the text-block "Matched:"
@@ -146,7 +149,7 @@ public final class McpEvidenceProjection {
       if (hit.matchedFields() != null && !hit.matchedFields().isEmpty()) {
         h.put("matchedFields", hit.matchedFields());
       }
-      projectHitExcerptsAndTrace(hit, h);
+      projectHitExcerptsAndTrace(hit, h, includeDetail);
       results.add(h);
     }
     out.put("results", results);
@@ -154,13 +157,27 @@ public final class McpEvidenceProjection {
   }
 
   /**
+   * Tempdoc 770 — emits {@code path} only when it carries information the {@code id} does not.
+   * Measured across 14,617 v5 hits, the worker doc-id and the path were byte-identical in every
+   * one; the field stays for source classes whose doc-id is not a filesystem path.
+   */
+  private static void putPathIfDistinct(Map<String, Object> h, String id, String path) {
+    if (!path.isBlank() && !path.equals(id)) {
+      h.put("path", path);
+    }
+  }
+
+  /**
    * Per-hit excerpt + ranking-provenance projection shared by both {@code searchEvidence}
    * overloads — the mechanically identical half of the two per-hit loops, extracted so the
-   * legacy single-arg overload (test-only) and the production content-model overload cannot
+   * response-only overload (test-only) and the production content-model overload cannot
    * drift on excerpt/trace/legScores shape (tempdoc 735 W6 review MINOR-3).
+   *
+   * <p>{@code excerpts} is unconditional — it is the only document text the agent receives.
+   * {@code trace}/{@code legScores} are the {@code detail}-gated provenance tier (tempdoc 770).
    */
   private static void projectHitExcerptsAndTrace(
-      KnowledgeSearchResponse.Hit hit, Map<String, Object> h) {
+      KnowledgeSearchResponse.Hit hit, Map<String, Object> h, boolean includeDetail) {
     if (hit.excerptRegions() != null && !hit.excerptRegions().isEmpty()) {
       List<Map<String, Object>> excerpts = new ArrayList<>();
       for (KnowledgeSearchResponse.ExcerptRegion region : hit.excerptRegions()) {
@@ -174,7 +191,7 @@ public final class McpEvidenceProjection {
     }
 
     List<SearchTrace.HitStage> hitTrace = hit.trace();
-    if (hitTrace != null && !hitTrace.isEmpty()) {
+    if (includeDetail && hitTrace != null && !hitTrace.isEmpty()) {
       h.put("trace", projectHitStages(hitTrace));
       SearchTrace.LegScores legs = SearchTrace.legScores(hitTrace, (float) hit.score());
       Map<String, Object> ls = new LinkedHashMap<>();
@@ -231,7 +248,7 @@ public final class McpEvidenceProjection {
 
   /**
    * Tempdoc 735 W6 — {@code justsearch_answer}'s structured evidence PLUS the tier-equivalence
-   * fields ({@code hints}/{@code facets}/{@code coverage}/{@code truncated}) sourced from the
+   * fields ({@code hints}/{@code coverage}/{@code truncated}) sourced from the
    * SAME {@link McpAnswerResponseContent} instance the text renderer consumes. This is the
    * overload production code ({@code McpToolSurface#callAnswer}) calls; {@link
    * #answerEvidence(ContextResult)} is reused internally for the citation/quality projection.
@@ -239,7 +256,6 @@ public final class McpEvidenceProjection {
   public static Map<String, Object> answerEvidence(ContextResult r, McpAnswerResponseContent content) {
     Map<String, Object> out = answerEvidence(r);
     out.put("hints", content.hints());
-    out.put("facets", content.facets());
     Map<String, Object> coverage = new LinkedHashMap<>();
     coverage.put("passages", content.passages());
     coverage.put("documents", content.distinctDocs());

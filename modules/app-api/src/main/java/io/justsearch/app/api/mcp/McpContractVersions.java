@@ -62,8 +62,26 @@ public final class McpContractVersions {
    * shared per-request content model ({@code McpSearchResponseContent} /
    * {@code McpAnswerResponseContent}), so they cannot silently diverge again — a new,
    * agent-visible material addition to the structured surface, so the SemVer minor bumps.
+   *
+   * <p>0.5.0 (tempdoc 770, tool-surface economy): measurement over 1,078 recovered v5 payloads
+   * showed the per-hit ranking-provenance block ({@code trace} + {@code legScores}) is 19.9% of the
+   * delivered {@code justsearch_search} payload while carrying no document content, and that
+   * {@code hit.path} was byte-identical to {@code hit.id} in all 14,617 measured hits. So the
+   * default {@code structuredContent} now omits {@code trace}/{@code legScores} (recoverable via
+   * the existing {@code detail} argument, whose meaning widens from "the numeric sub-tier" to "the
+   * whole provenance block") and emits {@code path} only when it differs from {@code id}. Excerpts,
+   * scores, and the query-level search trace are unchanged. Three false statements were also
+   * corrected in the published {@code tools/list} descriptions (a {@code querySyntax} parameter
+   * that {@code SEARCH_SCHEMA} does not accept and the validator silently ignores; a
+   * "first search returns facets" claim about behavior that happens on every call; and a
+   * "concise returns substantially fewer tokens" promise that measured zero reduction across 336
+   * opt-ins because it trims only the text tier). Finally, {@code justsearch_answer} no longer
+   * fires a second full hybrid search per call for a facet sidecar, so its {@code
+   * structuredContent} no longer carries {@code facets}. Removing default fields is a removal
+   * under the stability policy, permitted by the pre-1.0 clause, and no field becomes
+   * unreachable — so the SemVer minor bumps rather than the major.
    */
-  public static final String TOOL_SURFACE_VERSION = "0.4.0";
+  public static final String TOOL_SURFACE_VERSION = "0.5.0";
 
   private McpContractVersions() {}
 }

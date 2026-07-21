@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.justsearch.agent.api.registry.OperationCatalog;
@@ -95,7 +97,6 @@ final class McpTierEquivalenceTest {
     PASSAGES("passages"),
     DISTINCT_DOCS("distinctDocs"),
     CONTEXT_TRUNCATED("contextTruncated"),
-    FACETS("facets"),
     COMPARATIVE_HINT("comparativeHint"),
     ENRICHMENT_HINT("enrichmentHint"),
     ZERO_RESULT_HINT("zeroResultHint"),
@@ -253,7 +254,7 @@ final class McpTierEquivalenceTest {
   @Test
   @DisplayName(
       "answer: every AnswerFact is present in BOTH the text tier and structuredContent"
-          + " (kitchen-sink fixture: multi-doc citations, facets, truncated context)")
+          + " (kitchen-sink fixture: multi-doc citations, truncated context)")
   void answerFactsAppearInBothTiers() {
     List<ContextCitation> citations =
         List.of(
@@ -278,16 +279,10 @@ final class McpTierEquivalenceTest {
     WorkerServices workers = new WorkerServices(null, documents, null, null, null);
     HeadAssembly facade = mock(HeadAssembly.class);
     when(facade.workers()).thenReturn(workers);
-    // Wire a facet sidecar too (FACETS): a non-null knowledgeLookup that returns a controller
-    // whose adapter.search() (the facet sidecar's own limit=0 call) answers a facet-bearing
-    // response.
-    KnowledgeSearchResponse facetResp =
-        new KnowledgeSearchResponse(
-            0L, 0L, 0L, List.of(), null,
-            Map.of("meta_source", Map.of("legal-corpus", 4L)),
-            null, null, null, null, null, null);
+    // Tempdoc 770 §F.5: a non-null knowledgeLookup is wired so the removed facet sidecar WOULD
+    // have fired here — the never() verification below is the regression guard against the second
+    // full hybrid search returning.
     KnowledgeHttpApiAdapter facetAdapter = mock(KnowledgeHttpApiAdapter.class);
-    when(facetAdapter.search(any())).thenReturn(facetResp);
     KnowledgeSearchController facetCtrl = mock(KnowledgeSearchController.class);
     when(facetCtrl.getAdapter()).thenReturn(facetAdapter);
 
@@ -315,12 +310,12 @@ final class McpTierEquivalenceTest {
     // COMPARATIVE_HINT (part of HINTS too)
     assertTrue(
         text.contains("Assembled evidence from 2 documents in a single retrieval call"), text);
-    // FACETS
-    assertTrue(text.contains("--- Top sources & entities ---"), text);
-    assertTrue(text.contains("legal-corpus"), text);
-    Map<String, Object> structuredFacets = (Map<String, Object>) structured.get("facets");
-    assertFalse(structuredFacets.isEmpty());
-    assertEquals(Map.of("legal-corpus", 4L), structuredFacets.get("meta_source"));
+    // Tempdoc 770 §F.5: the answer path fires NO second search — the facet sidecar (a full hybrid
+    // search at limit 0, per call, for a 3-field block rendered into the undelivered text tier) is
+    // gone, and with it the `facets` fact on both tiers.
+    verify(facetAdapter, never()).search(any());
+    assertFalse(text.contains("--- Top sources & entities ---"), text);
+    assertFalse(structured.containsKey("facets"), structured.toString());
     // HINTS (flattened list carries the comparative hint at minimum)
     List<String> structuredHints = (List<String>) structured.get("hints");
     assertFalse(structuredHints.isEmpty());
@@ -350,10 +345,6 @@ final class McpTierEquivalenceTest {
             Map.of("embeddingCoveragePercent", 50.0, "spladeCoveragePercent", 100.0));
     KnowledgeHttpApiAdapter facetAdapter = mock(KnowledgeHttpApiAdapter.class);
     when(facetAdapter.status()).thenReturn(lowCoverageStatus);
-    when(facetAdapter.search(any()))
-        .thenReturn(
-            new KnowledgeSearchResponse(
-                0L, 0L, 0L, List.of(), null, Map.of(), null, null, null, null, null, null));
     KnowledgeSearchController facetCtrl = mock(KnowledgeSearchController.class);
     when(facetCtrl.getAdapter()).thenReturn(facetAdapter);
 

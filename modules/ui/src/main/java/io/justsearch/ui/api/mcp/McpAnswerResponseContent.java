@@ -2,7 +2,6 @@
 package io.justsearch.ui.api.mcp;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * Tempdoc 735 W6 — the ONE {@code justsearch_answer} response content model, the answer-side twin
@@ -18,12 +17,15 @@ import java.util.Map;
  * lines) — collapsing them into one generic list would force a text-rendering change this
  * increment does not make. {@code hints} is the flattened, order-preserving view of the same
  * three facts for the structured tier, which has no such formatting constraint.
+ *
+ * <p>Tempdoc 770 §F.5 removed the {@code facets} component: it was sourced from a second full
+ * hybrid search fired on every {@code justsearch_answer} call purely to build a 3-field sidecar.
+ * The answer path has no other facet source, so the fact goes with the round-trip.
  */
 record McpAnswerResponseContent(
     long passages,
     long distinctDocs,
     boolean contextTruncated,
-    Map<String, Map<String, Long>> facets,
     String comparativeHint,
     String enrichmentHint,
     String zeroResultHint,

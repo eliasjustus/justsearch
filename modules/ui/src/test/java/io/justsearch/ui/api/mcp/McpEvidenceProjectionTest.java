@@ -87,7 +87,7 @@ final class McpEvidenceProjectionTest {
         new KnowledgeSearchResponse(
             1L, 1L, 5L, List.of(), null, null, null, null, null, null, null, trace);
 
-    Map<String, Object> evidence = McpEvidenceProjection.searchEvidence(resp);
+    Map<String, Object> evidence = McpEvidenceProjection.searchEvidence(resp, false);
     Map<String, Object> t = asMap(evidence.get("searchTrace"));
 
     assertEquals("HYBRID", t.get("effectiveMode"));
@@ -121,7 +121,8 @@ final class McpEvidenceProjectionTest {
   }
 
   @Test
-  @DisplayName("search: per-hit trace + fusion legScores; numeric detail only when present")
+  @DisplayName(
+      "search: per-hit trace + fusion legScores under detail=true; numeric detail only when present")
   void searchProjectsPerHitTraceAndLegScores() {
     HitStage sparse = new HitStage(StageId.SPARSE_RETRIEVAL, 1, 3.3f, null);
     HitStage fused = new HitStage(StageId.FUSION, 1, 0.9f, Map.of("cc_weight_sparse", 0.6f));
@@ -139,7 +140,7 @@ final class McpEvidenceProjectionTest {
         new KnowledgeSearchResponse(
             1L, 1L, 5L, List.of(hit), null, null, null, null, null, null, null, null);
 
-    Map<String, Object> evidence = McpEvidenceProjection.searchEvidence(resp);
+    Map<String, Object> evidence = McpEvidenceProjection.searchEvidence(resp, true);
     List<Object> results = asList(evidence.get("results"));
     assertEquals(1, results.size());
     Map<String, Object> h = asMap(results.get(0));
@@ -227,11 +228,13 @@ final class McpEvidenceProjectionTest {
     assertEquals("FULLTEXT_FALLBACK", asMap(evidence.get("quality")).get("retrievalMode"));
   }
 
-  @Test
-  @DisplayName("totality: every field of every canonical evidence record is projected (reflective guard)")
-  void projectionCoversEveryEvidenceField() {
-    // Maximal fixtures — EVERY field non-null / non-empty, so the projection's null-omission never
-    // hides a component from the reflective check below.
+  /**
+   * Tempdoc 770 — the maximal fixture shared by the two halves of the totality guard: every field
+   * non-null / non-empty, so the projection's null-omission never hides a component from the
+   * reflective check. {@code path} is deliberately distinct from {@code id} (the projection elides
+   * a path equal to the id), so the field is present to be covered.
+   */
+  private static KnowledgeSearchResponse maximalSearchResponse() {
     TraceStage stage =
         new TraceStage(StageId.FUSION, StageStatus.EXECUTED, "reason", 5L, "fusion-detail", 12L);
     SearchTrace trace =
@@ -247,10 +250,96 @@ final class McpEvidenceProjectionTest {
         new KnowledgeSearchResponse.Hit(
             "doc-1", 0.9d, Map.of("title", "T", "path", "P"),
             List.of(), List.of(), List.of(), List.of(hitStage));
+    return new KnowledgeSearchResponse(
+        1L, 1L, 5L, List.of(hit), null, null, null, null, null, null, null, trace);
+  }
+
+  @Test
+  @DisplayName(
+      "totality (b): the DEFAULT tier omits exactly {trace, legScores} relative to the detail tier"
+          + " — nothing else silently stops shipping (tempdoc 770)")
+  void defaultTierOmitsExactlyTheProvenanceBlock() {
+    KnowledgeSearchResponse resp = maximalSearchResponse();
+
+    Map<String, Object> withDetail = McpEvidenceProjection.searchEvidence(resp, true);
+    Map<String, Object> byDefault = McpEvidenceProjection.searchEvidence(resp, false);
+
+    // Response-level shape is identical between tiers — only the per-hit block is tiered.
+    assertEquals(withDetail.keySet(), byDefault.keySet());
+
+    Map<String, Object> detailHit = asMap(asList(withDetail.get("results")).get(0));
+    Map<String, Object> defaultHit = asMap(asList(byDefault.get("results")).get(0));
+
+    Set<String> omitted = new java.util.LinkedHashSet<>(detailHit.keySet());
+    omitted.removeAll(defaultHit.keySet());
+    assertEquals(
+        Set.of("trace", "legScores"),
+        omitted,
+        "the default tier must omit the ranking-provenance block and nothing else");
+    assertTrue(
+        defaultHit.keySet().containsAll(
+            detailHit.keySet().stream().filter(k -> !omitted.contains(k)).toList()),
+        "the default tier must add no field the detail tier lacks");
+
+    // Every retained field is byte-identical between tiers — the gate elides, it does not reshape.
+    for (String key : defaultHit.keySet()) {
+      assertEquals(detailHit.get(key), defaultHit.get(key), "field '" + key + "' differs by tier");
+    }
+  }
+
+  @Test
+  @DisplayName(
+      "search: excerpts survive BOTH tiers (the only document text the agent receives) and `path`"
+          + " is emitted only when it differs from `id` (tempdoc 770)")
+  void excerptsAreUngatedAndPathIsElidedWhenEqualToId() {
+    KnowledgeSearchResponse.ExcerptRegion region =
+        new KnowledgeSearchResponse.ExcerptRegion("the excerpt body", 0, 16, 1, List.of());
+    // Hit A: path differs from id → path is informative, so it is emitted.
+    KnowledgeSearchResponse.Hit distinctPath =
+        new KnowledgeSearchResponse.Hit(
+            "doc-1", 0.9d, Map.of("path", "C:/corpus/a.md"),
+            List.of(), List.of(), List.of(region),
+            List.of(new HitStage(StageId.FUSION, 1, 0.9f, null)));
+    // Hit B: path IS the id (the measured case — 14,617/14,617 hits) → duplicate, so elided.
+    KnowledgeSearchResponse.Hit pathEqualsId =
+        new KnowledgeSearchResponse.Hit(
+            "C:/corpus/b.md", 0.8d, Map.of("path", "C:/corpus/b.md"),
+            List.of(), List.of(), List.of(region),
+            List.of(new HitStage(StageId.FUSION, 2, 0.8f, null)));
     KnowledgeSearchResponse resp =
         new KnowledgeSearchResponse(
-            1L, 1L, 5L, List.of(hit), null, null, null, null, null, null, null, trace);
-    Map<String, Object> searchEvidence = McpEvidenceProjection.searchEvidence(resp);
+            2L, 2L, 5L, List.of(distinctPath, pathEqualsId),
+            null, null, null, null, null, null, null, null);
+
+    for (boolean includeDetail : new boolean[] {false, true}) {
+      List<Object> results =
+          asList(McpEvidenceProjection.searchEvidence(resp, includeDetail).get("results"));
+
+      Map<String, Object> a = asMap(results.get(0));
+      assertEquals("C:/corpus/a.md", a.get("path"), "distinct path is informative — keep it");
+      assertEquals(
+          "the excerpt body",
+          asMap(asList(a.get("excerpts")).get(0)).get("text"),
+          "excerpts must never be gated (detail=" + includeDetail + ")");
+
+      Map<String, Object> b = asMap(results.get(1));
+      assertEquals("C:/corpus/b.md", b.get("id"));
+      assertFalse(b.containsKey("path"), "path equal to id is a verbatim duplicate — elide it");
+      assertFalse(asList(b.get("excerpts")).isEmpty(), "excerpts must never be gated");
+    }
+  }
+
+  @Test
+  @DisplayName(
+      "totality (a): with detail=true, every field of every canonical evidence record is projected"
+          + " (reflective guard)")
+  void projectionCoversEveryEvidenceField() {
+    // Tempdoc 770: totality is asserted over the DETAIL tier — the union of what ships — with the
+    // default tier's exact subset relationship pinned separately by
+    // defaultTierOmitsExactlyTheProvenanceBlock(). A totality guard must describe what actually
+    // ships, not a test-only path (770 §G).
+    Map<String, Object> searchEvidence =
+        McpEvidenceProjection.searchEvidence(maximalSearchResponse(), true);
 
     Map<String, Object> traceMap = asMap(searchEvidence.get("searchTrace"));
     // `version` is the structural-compat hint the FE explain panel also elides (searchTraceExplain.ts).

@@ -381,7 +381,7 @@ Source: slices 491 (substrate), 496 (FreeChat + Extract), 497 (dynamic dispatch)
 
 **Transport:** Streamable HTTP at `POST /mcp` on the existing Javalin server (loopback-only). Protocol version `2025-11-25` (single-sourced in `io.justsearch.app.api.mcp.McpContractVersions`). No separate process. The `/mcp` endpoint + curated tool set is one of the three **Runtime Contract** public surfaces (tempdoc 654); `serverInfo.version` carries the SemVer tool-surface version — see [Runtime Contract](runtime-contract.md).
 
-5-tool curated surface (tempdoc 500, adapted from eval-validated 4-tool TS server in tempdoc 366):
+6-tool curated surface (tempdoc 500, adapted from eval-validated 4-tool TS server in tempdoc 366):
 
 | # | Tool | Purpose | Backend |
 |---|------|---------|---------|
@@ -390,6 +390,7 @@ Source: slices 491 (substrate), 496 (FreeChat + Extract), 497 (dynamic dispatch)
 | 3 | `justsearch_browse` | Folder structure exploration | `core.browse-folders` Operation |
 | 4 | `justsearch_ingest` | File indexing | `core.ingest-files` Operation |
 | 5 | `justsearch_status` | Index health + enrichment | `KnowledgeHttpApiAdapter.status()` |
+| 6 | `justsearch_runtime_manifest` | Redacted runtime manifest for identity-aware caching | `RuntimeManifestPublisher` |
 
 MCP Prompts: 3 onboarding templates (`search_files`, `answer_question`, `index_folder`) with live system context.
 
