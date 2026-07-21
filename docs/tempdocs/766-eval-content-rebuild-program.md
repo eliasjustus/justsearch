@@ -100,7 +100,7 @@ register F-039.
 | Corpus & generator | 767 | D2 + D3 + D4 + D5 + D8: camouflaged payload generator, schema library, certification gates, regenerated strata | — |
 | Harness & attribution | 768 | D6 + D7's harness half: rank-of-gold capture, USD budgets, schema-stratified records, claim-policy v3 draft | — (parallel to 767) |
 | Engine: bridge-entity retrieval | 769 | Register F-039 fix; acceptance = the 17 B2 replay cells reach agent-visible top-k, register baselines unregressed | — (independent) |
-| Tool-surface economy | 770 | Snippet-economy + fetch(doc_id) + result salience (765 §3 / 763 B3-search) | — (independent) |
+| Tool-surface economy | 770 | ~~Snippet-economy + fetch(doc_id) + result salience~~ → **[SUPERSEDED 2026-07-21 — tempdoc 770 landed (PR #268).** `fetch(doc_id)` is **withdrawn**, not deferred: `hit.id` IS the filesystem path (identical in 14,617/14,617 measured hits), so `fetch(id)` reduces to `fetch(path)` — a tool returning a file the agent can already `Read`. The salience/passage-span lever is also withdrawn: the CLI delivers `structuredContent` only, so the text tier this lever reshaped is never sent to the model (0 of 1078 payloads carried `TRUNCATION_REMEDY`). What 770 shipped instead: ~16–31% payload reduction, truthful tool descriptions, and a characterized truncation cliff. Read 770 §0 before relying on this row.]** | — (independent); **LANDED 2026-07-21 (PR #268)** |
 
 **Hero campaign** (not a lane): after 767+768 certify — ideally after
 769+770 land so the campaign measures the improved product — pre-register
