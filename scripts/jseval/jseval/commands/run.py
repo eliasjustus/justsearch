@@ -472,7 +472,15 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
 
     ingest_summary = None
     pipeline_summary = None
-    if not skip_ingest:
+    # Tempdoc 751 sec Q sub-bug (b): an ADOPTED cache entry is a complete,
+    # confirmed index -- the corpus is already indexed. Re-ingesting the same
+    # corpus is redundant (it re-does the ~50-min build the cache exists to skip)
+    # AND, because it re-adds an already-watched root, it triggered the additive
+    # readiness-floor wedge (sec Q). So on adoption, skip ingest entirely; eval
+    # still runs against the adopted index. Only a fresh build (miss / disabled)
+    # ingests -- that single pass is what warm publishes and what the floor is for.
+    adopted = bool(index_cache) and index_cache.get("mode") == "adopted"
+    if not skip_ingest and not adopted:
         ingest_summary = ingest_mod.prepare_corpus(
             dataset_name=dataset,
             config=ingest_config,
@@ -482,6 +490,12 @@ def _do_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding,
             click.echo("Warning: readiness gate did not pass after ingestion", err=True)
             click.echo(f"  Reasons: {ingest_summary.get('failure_reasons')}", err=True)
         pipeline_summary = ingest_summary.get("pipeline_summary")
+    elif adopted:
+        log.info(
+            "Index cache adopted (%s) -- corpus already indexed; skipping ingest "
+            "(tempdoc 751 sec Q).",
+            (index_cache or {}).get("entry"),
+        )
 
     summary = run_module.execute_run(
         dataset_name=dataset,
