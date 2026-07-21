@@ -978,7 +978,7 @@ candidates (GPU-hours ledger, postmortem handle) belong to the agent-environment
 Tests: 156 targeted + full suite green (modulo the 2 known-RED correction-probe). The chain
 can now run `index-cache warm` once per (corpus × config) and adopt in seconds per cell.
 
-## §Q. Live campaign finding (2026-07-17 ~22:23, confirmatory launch 1): warm double-ingest wedges readiness — OPEN
+## §Q. Live campaign finding (2026-07-17 ~22:23, confirmatory launch 1): warm double-ingest wedges readiness — FIXED-PENDING-LIVE-VERIFY (2026-07-21, §R)
 
 First production use of the §P warm seam (chain-confirm.bat, 10k strata) wedged: `index-cache
 warm --corpus-dir` issued TWO ingest passes of the same root within one backend lifetime, and
@@ -991,3 +991,122 @@ cost economics only, not evidence validity. Repro/spec detail in the session sha
 (109145ac, 2026-07-17) and the chain comment at `scripts/jseval/chain-confirm.bat:143-147`.
 This is the lane's next work item; the §P.4 verification steps above all used single-ingest
 lifetimes and remain valid.
+
+### §Q pipeline (2026-07-21, session 109145ac) — design → derisk → plan (terse)
+
+**Design.** Root-cause trace (all `file:line` first-hand):
+
+- **Sub-bug (b), the TRUE root cause of the warm wedge.** `_run_iteration` →
+  `_do_run` (`commands/run.py:475-484`) calls `ingest.prepare_corpus` **unconditionally**,
+  even when `start_backend` → `_run_with_cache` (`backend.py:361-377`) already returned
+  `cache_outcome.mode == "adopted"` — i.e. a *complete pre-built index was copied in and
+  confirmed live*. Adoption's whole purpose is to skip the ~50-min ingest; re-ingesting the
+  same corpus into an already-complete index is redundant, and combined with (a) it wedges.
+  On a warm invocation whose entry already exists in the shared store (a prior launch /
+  §P.5 live-replay published it), warm ADOPTS (index=1001), then `_do_run` re-ingests
+  (`initial=1001 + corpus=1001 = 2002` floor) → unmeetable. **Fix:** `_do_run` skips
+  `prepare_corpus` when `index_cache.mode == "adopted"`. Warm then ingests exactly once
+  (MISS/fresh-build only); zero on adopt. Eval still runs against the adopted index — the
+  §P.4 seam (confirm checks, keys) is untouched.
+- **Sub-bug (a), the deeper structural defect.** `ingest_and_wait` sets
+  `expected_min = initial_count + corpus_doc_count` (`ingest.py:43-47`). Re-ingesting the
+  **same root** (same paths) adds 0 net docs — the Worker dedups by path
+  (`IndexingDocumentOps.java:137`) — but the additive floor assumes growth ⇒ 2×corpus wall.
+  The existing watcher-relaxation net (`ingest.py:65-73`) only fires when the watcher queues
+  *no* jobs; a rescan of an already-watched root can transiently queue dedup-no-op jobs, so
+  the net is unreliable for this class. **Fix:** before the floor, detect whether `docs_dir`
+  is **already a watched root** via `GET /api/indexing/roots` (returns `{"roots":[{path,…}]}`,
+  `IndexingController.java:123-149`). Already-watched ⇒ floor = union =
+  `max(initial_count, corpus_doc_count)` (== `initial_count` when fully indexed), NOT the
+  additive sum. A genuinely new/larger root ⇒ additive floor unchanged ⇒ still raises the
+  bar. Idempotent, no weakening.
+
+**Why both.** (b) alone fixes warm's *in-process* double-ingest but not the chain's
+cross-process topology — `serve_up` adopts inside `serve-eval-backend.py`, then a *separate*
+`jseval run` `:ingest` process (`chain-confirm.bat:204`) ingests against that already-adopted
+backend; (b)'s in-process `mode==adopted` skip cannot see that adopt. (a) alone makes the floor
+reachable but still wastefully re-derives a 50-min index on adopt. Together: adopt ⇒ no ingest
+(fast + correct); any residual same-root ingest is floor-reachable by construction.
+
+**Reach / principle.** *Readiness floors must key off the union of watched content, not the
+count of ingest requests.* The additive assumption ("each ingest ADDS its corpus") holds only
+for disjoint roots and silently breaks under idempotent re-ingest (cache adoption, retries,
+chain re-entry). Companion invariant: *an adopted cache entry is a complete index — re-deriving
+it is both wasteful and a readiness hazard.* Earns-its-keep evidence: same-root re-ingest
+reaches readiness in bounded time across warm/serve/chain topologies. Retire when: watched-root
+idempotency moves server-side (Worker returns an "already-indexed, floor=N" signal), making the
+jseval-side union detection redundant.
+
+**Orphans:** none. The watcher-relaxation net stays as a secondary safety (covers a first-add
+of a pre-indexed root); the new detection is the primary, precise signal.
+
+**Derisk (confidence 8/10).** Risks + mitigations: (1) path-equality false-negative (watched
+root recorded un-normalized vs `docs_dir.resolve()`) → compare on `os.path.normcase(realpath)`
+of both sides; a miss only falls back to today's additive behavior (fail-safe, not fail-open).
+(2) skip-on-adopt starving `execute_run` of `ingest_summary` → already `None` on the existing
+`skip_ingest` path; `execute_run` tolerates it. (3) not weakening: new-root path keeps the
+additive floor verbatim — asserted by a dedicated test. Unit-testable end-to-end (both are pure
+Python, mockable HTTP), matching §O.9/§P's "no Java changes" shape.
+
+**Plan.** (1) `ingest.py`: add `_watched_root_paths(base_url)` + `_root_already_watched(...)`;
+branch the floor in `ingest_and_wait`. (2) `commands/run.py`: `_do_run` skips `prepare_corpus`
+on `mode==adopted` (INFO log). (3) Tests: `test_ingest.py` — same-root ⇒ union floor (reachable),
+new/larger root ⇒ additive floor (no weakening), already-watched detection; `test_index_cache_integration.py`
+— `_do_run` calls `prepare_corpus` on MISS, does NOT on adopted. (4) Full jseval suite green
+(modulo known-RED correction-probe pair). (5) §R log + flip §Q → fixed-pending-live-verify.
+
+## §R. Implementation log (2026-07-21, session 109145ac) — §Q fix
+
+Both sub-bugs fixed; pure Python (no Java changes), matching §P's shape.
+
+**Root cause (a) — cumulative readiness floor.** `ingest.py:43-47` computed
+`expected_min = initial_count + corpus_doc_count` unconditionally. Re-ingesting the *same*
+watched root adds 0 net docs (Worker path-dedup, `IndexingDocumentOps.java:137`), so the additive
+floor demanded `2×corpus` and could never be met (`1001+1001=2002` vs `1001` indexed). The
+watcher-relaxation net (`ingest.py:65-73`) only relaxes when the watcher queues *no* jobs, which a
+rescan of an already-watched root violates — unreliable for this class.
+
+*Fix:* new `_watched_root_paths(base_url)` (reads `GET /api/indexing/roots`) + `_root_already_watched(base_url, docs_dir)` (OS-normalized realpath membership) in `ingest.py`; `ingest_and_wait`
+now branches: already-watched ⇒ `expected_min = max(initial_count, corpus_doc_count)` (union);
+new root ⇒ additive `initial_count + corpus_doc_count` (unchanged — no weakening). Fail-safe: a
+lost roots signal reports "not watched" and falls back to additive (can only over-count, never
+under-count).
+
+**Root cause (b) — warm's second ingest pass.** `_run_iteration` → `_do_run`
+(`commands/run.py:475-484`) called `prepare_corpus` even when `start_backend` → `_run_with_cache`
+(`backend.py:361-377`) had already ADOPTED a complete, live-confirmed index. On a warm whose
+entry already existed in the shared store, warm adopted (index=1001) *and then* re-ingested
+(`initial=1001 + corpus=1001 = 2002` floor) → the wedge. Adoption exists precisely to skip that
+~50-min build.
+
+*Fix:* `_do_run` computes `adopted = index_cache.get("mode") == "adopted"` and skips
+`prepare_corpus` when adopted (INFO log); eval still runs against the adopted index. Warm now
+ingests exactly once (MISS/fresh-build only), zero on adopt.
+
+**Why the other sub-bug also needed its own fix.** (b) alone fixes warm's *in-process* double
+ingest but not the chain's cross-process topology — `serve_up` adopts inside
+`serve-eval-backend.py`, then a *separate* `jseval run` `:ingest` process
+(`chain-confirm.bat:204`) ingests against that already-adopted backend, where (b)'s in-process
+`mode==adopted` check is invisible; only (a)'s union floor saves that path. (a) alone leaves warm
+wastefully rebuilding a 50-min index on every adopt. Both required.
+
+**Change table.**
+
+| File | Change |
+|---|---|
+| `scripts/jseval/jseval/ingest.py` | `import os`; union-vs-additive floor branch in `ingest_and_wait`; new `_watched_root_paths` + `_root_already_watched` |
+| `scripts/jseval/jseval/commands/run.py` | `_do_run` skips `prepare_corpus` on `mode=="adopted"` |
+| `scripts/jseval/tests/test_ingest.py` | +5 tests: union floor (same root, reachable), additive floor (new/larger root, no weakening), `_root_already_watched` true/false/fail-safe |
+| `scripts/jseval/tests/test_index_cache_integration.py` | +2 tests: `_do_run` ingests once on MISS, zero on adopt |
+
+**Verification.** 7 new tests green; full jseval suite green modulo the known-RED
+`test_correction_probe` pair (expected-state-listed). No Java touched. `IngestionSkipPolicy` /
+confirm-checks / selector keys untouched — the §P.4 seam behavior (publish→adopt, distinct
+dataset-mode vs corpus-dir-mode keys) is preserved.
+
+**What the orchestrator's live two-boot verify should assert.** With a legal-10k stratum: (1)
+`index-cache warm --corpus-dir …/corpus-dir` on an EMPTY store → MISS → one ingest → `published`;
+readiness reaches 1001 (not stuck at a 2002 floor). (2) `warm` again (store now hot) → adopts,
+**no second ingest**, prints `already-cached` in seconds — not 25-min GPU-idle. (3) chain topology
+`serve_up`(adopt) + `:ingest`(`jseval run --corpus-dir`) → the `:ingest` readiness passes at the
+union floor 1001, no wedge. (4) a genuinely different corpus still MISSES and builds fresh.
