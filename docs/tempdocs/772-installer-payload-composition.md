@@ -1134,3 +1134,77 @@ resolves 760's specific blockers (rather than just reducing volume) is a questio
 doing that design work, not re-litigated here. Q1/Q2 remain unanswered, but this reframes them as
 worth resolving now rather than deferring — see 760 for whether reduced signing surface actually
 unblocks its open items.
+
+## §Confidence check (2026-07-22) — a critical, not celebratory, read of where things stand
+
+Requested directly by the owner after the implementation above landed: an honest evaluation of
+confidence in the three shipped items, plus a self-correction on part of the §Addendum's Q1/Q2
+reasoning. Two things were checked freshly for this pass (not assumed):
+
+- **The combined CI installer build (all three commits together) was previously left unconfirmed**
+  — a monitor watching it was stopped mid-run for being an inefficient use of CI (the two changes'
+  effects are independently well-measured and additive; a third full build added little). Checked
+  directly afterward: run `29874382035` **completed successfully**. This closes a real gap rather
+  than leaving it as an assumption.
+- **Whether the additive `PackageStatus.blockingIncomplete` field (§Design 1/Q3(d)) could break
+  anything on the `ui-web` side was unverified until now.** Checked: `npm run typecheck` in
+  `modules/ui-web` exits 0 (clean — the known repo-wide TS5101 pre-existing issue, per this
+  worktree's expected-state baseline, did not reproduce here), and `aiInstallPoll.ts` (the confirmed
+  consumer of this response shape) does plain untyped `fetch(...).then(r => r.json())` with no
+  `zod`/strict schema validation — an additive backend field is genuinely inert there, not just
+  probably-fine.
+
+**Per-item confidence, named gaps included (not just "it passed"):**
+
+- **§H (WebView2 revert) — solid on the measurement, unverified on real behavior.** The size delta
+  is real and confirmed twice (CI artifact size directly, and independently by the implementing
+  agent downloading and measuring the actual `.exe`). But nobody has installed and *run* the
+  resulting installer on a machine — a successful CI build proves the Tauri config is well-formed,
+  not that `downloadBootstrapper` mode's install-time behavior is correct end-to-end, particularly
+  under silent (`/S`) install. This is the exact gap tempdoc 760 already named as pre-existing
+  ("silent install never empirically verified") — this change doesn't worsen it, but doesn't retire
+  it either, and the earlier report should not have implied otherwise.
+- **§G (jar stripping) — strong on CPU path, untested (not just unverified) on the GPU/CUDA path.**
+  The live functional check is genuinely good evidence: real embeddings/SPLADE/NER inference against
+  the trimmed jar, zero failures, on an actual dev-stack run. But that run almost certainly exercised
+  the CPU execution provider only — the retained `win-x64` `onnxruntime_providers_cuda.dll` was
+  never actually loaded or exercised by any check in this pass. Its bytes are untouched by the
+  change (only `linux-x64/**` entries were removed), so the risk is low, but "we didn't touch it" is
+  a weaker claim than "we tested it," and the two were presented as more equivalent than they are.
+  The config-cache incompatibility the implementing agent flagged (`bundleSidecarResources` fails
+  config-cache *store*, pre-existing and not caused by this change) is now confirmed not to break the
+  combined CI build in practice (see above) — that part of the concern is resolved by evidence, not
+  assumption.
+- **Q3 infrastructure — solid unit coverage, no live "Install AI" click-through.** The implementing
+  agent's handling of a genuine ambiguity in its own brief (the `planSuppliesRuntime` question) was a
+  real positive signal — it reasoned toward the stated invariant rather than the more literal (and
+  wrong) reading, and locked the choice in with a dedicated test. But every check across this item
+  was a unit test; nobody exercised the real `AiInstallService`/`AiPreflightService` code paths via
+  an actual running dev stack. Low risk since `requiresCuda:false` has no real producer in production
+  today (the new code paths are provably dormant), but "provably dormant" is carrying real weight in
+  that confidence claim, not a substitute for having run it live.
+
+**A walked-back claim, recorded rather than quietly dropped.** The §Addendum above argued that
+reducing `native-bin`'s unsigned-PE surface might reduce the *design complexity* of tempdoc 760's
+signing blockers, not just their per-signature cost. On reconsideration, that's weaker than it was
+made to sound: 760's two specific blockers — CI never passing `-Release`, and `sign-windows.ps1`
+having no credential mode for cloud-HSM/USB-token signing (only PFX) — are both about the *signing
+mechanism itself*, not about how many files pass through it. Building a cloud-HSM code path is
+exactly as much engineering work whether it then runs against 8 files or 101; reducing surface does
+not make that specific design problem easier to solve. What plausibly *does* hold, and is a
+different, narrower claim: (a) lower ongoing *cost* once some paid signing solution is adopted
+(already captured correctly in §"Signing consequence" as "one input, not the justification"), and
+(b) a **manual/interim signing stopgap becomes far more operationally feasible at ~8 files than at
+~101** — someone running `signtool` by hand against a small, homogeneous set is realistic; against a
+large, heterogeneous pile of third-party binaries it likely isn't. Whether (b) is actually what's
+blocking the next release, versus the mechanism problems being the real blocker regardless of
+surface, has **not been checked against tempdoc 760's specifics** — this remains an open, unverified
+question, not a settled part of the case for Q1/Q2, and should be checked directly against 760
+before being relied on.
+
+**Still genuinely open, distinct from "deferred":** Q1/Q2 itself; whether reduced native-bin surface
+actually unblocks any of 760's named blockers (unchecked); actually authoring a real pack-delivered
+package instance if an option is ever chosen (Q3 built the *mechanism* only, no real producer exists
+yet); Q3(c)'s runbook step (a manual, easy-to-forget addition, not automated); Q3(d) (deliberately
+parked, owner-confirmed low priority until a real `requiresCuda:false` package exists). Nothing here
+has a PR open or has been merged to `main`.
