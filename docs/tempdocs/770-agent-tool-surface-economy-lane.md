@@ -135,7 +135,8 @@ is not this lane's target:
 ### A.5 The surface makes false statements to the agent — CONFIRMED, and this channel *is* delivered
 
 Unlike response text, **tool descriptions are delivered** (via `tools/list`). Three
-statements on `justsearch_search` are untrue today — see §E.2.
+statements on `justsearch_search` were untrue when this was written; the full audit
+(§E.2, completed 2026-07-21 after the second review) found **five** across the surface.
 
 ### A.6 OPEN — 732's decision may rest on an undelivered component
 
@@ -165,8 +166,37 @@ observations inbox. It is 732's to settle.
 ## §C. Acceptance
 
 - **Economy:** median + p95 delivered payload per `justsearch_search` call, before
-  vs after, measured by the §D harness — **zero LLM spend**. Expected ≈31% median
-  reduction; report the measured number.
+  vs after — **zero LLM spend**. Expected ≈31% median reduction; report the measured
+  number.
+
+  **DISCHARGED (2026-07-21), by a different method than this criterion named.**
+  N=40 paired calls (20 queries × `limit` 10/20), live stack at surface `0.5.0`,
+  index fully enriched (100% embed/splade, IDLE), corpus = this repo's
+  `docs/tempdocs` (524 verbose markdown docs). Each pair measures the **shipped**
+  default against an **exact reconstruction** of the pre-770 default — the detail
+  tier minus the numeric per-stage `detail` maps (which only ever shipped on
+  `detail: true`), plus the duplicate identity field that used to ride alongside
+  `path`:
+
+  | | pre-770 | post-770 | reduction |
+  |---|---|---|---|
+  | **median** | 27,621 | 21,637 | **21.7%** |
+  | **p95** | 40,340 | 32,797 | **18.7%** |
+  | max | 41,216 | 34,108 | 17.2% |
+
+  **Why not the §D harness, and why that is not goalpost-moving.** This criterion
+  was written assuming the §D harness could produce a v5 before/after. It cannot,
+  and §D says so: campaign logs store digests only, so a v5 *after*-state would
+  require re-running the campaign. The criterion rested on a false premise about its
+  own instrument. Rather than reword the target, the measurement it asks for
+  (median + p95, before vs after, same corpus, N stated) was **actually taken** —
+  on a corpus that can be indexed now instead of the one that no longer has
+  recoverable payloads. Cite it with its corpus.
+
+  **Consistent with, and bounded by, the other two figures:** 21.7% here sits
+  between the 16–19% earlier live reconstruction and the 31% v5 component share
+  (§D). Reduction is corpus-dependent across roughly **16–31%**; no single number
+  generalizes, and none should be published without its corpus.
 - **Content loss — RECONCILED WITH WHAT SHIPPED (2026-07-21).** The original wording
   ("zero content loss … no retrieval fact leaves the default response") was written
   for §E.1 alone and was **not true of the lane as landed**. Accurate statement:
@@ -263,7 +293,7 @@ row is resolved by **declaring** the parameter rather than deleting the sentence
 advertised it, because the underlying engine capability is real. One optional schema
 property added; no tool added, no required shape changed.)*
 
-### 1. Remove the ~31% that carries no content (default response)
+### 1. Remove the content-free bytes (16–31%, corpus-dependent) from the default response
 
 Two removals from the default `structuredContent`, both content-free:
 
@@ -305,7 +335,8 @@ what ships (§G).
 
 ### 2. Make the description true
 
-Tool descriptions **are** delivered. Three statements are false today:
+Tool descriptions **are** delivered. Three statements were identified at design time
+(below); the completed audit found **five** — see "The two the design pass missed".
 
 | Statement | Reality | Cost |
 |---|---|---|
@@ -328,6 +359,35 @@ Fix (as landed, after the 2026-07-21 correction):
 - **`concise`** — corrected to state what it actually does for `search`. If 732
   reopens §A.6, let 732 decide whether `concise` should gate structured content
   instead.
+
+**The two the design pass missed (found only by the second review, 2026-07-21).**
+Both are the same class as the three above, and one was *created by this lane*:
+
+| Statement | Reality | How it was missed |
+|---|---|---|
+| `ANSWER_DESC`: *"the response includes facets showing top sources and entities… use these facet values as filters"* | **Falsified by §F.5's own removal** — `justsearch_answer` no longer returns facets on either tier, and `filters` is still in `ANSWER_SCHEMA`, so an agent acting on this sends a fabricated filter that is accepted and silently over-narrows | The audit above enumerated `SEARCH_DESC` and `RESPONSE_FORMAT_SCHEMA` and **never opened the description of the tool the lane was changing**. `733:61` had already flagged this sentence |
+| `SEARCH_DESC`: *"check the `queryUnderstanding` field in the response"* | `queryUnderstanding` is emitted only on the REST path (`KnowledgeSearchController:380-381`); the MCP tool carries it on **neither** tier | Pre-existing, unrelated to this lane's removals — the audit simply did not extend past the three known statements |
+
+Two further corrections landed with them: the facet sentence named three fields
+when `callSearch` requests **six** (the entity fields matter now that `ANSWER_DESC`
+redirects here for entity discovery); and `STATUS_DESC` named upstream extras-map
+keys (`embeddingCoveragePercent`, …) that appear nowhere in the delivered text —
+`justsearch_status` emits no `structuredContent` at all, so its text is the whole
+contract. A runtime hint saying *"use the facet values **above**"* was also reworded:
+it ships inside `structuredContent.hints[]`, where there is no "above".
+
+**Left as judgment calls, not fixed:** `INGEST_DESC`'s "provide absolute paths" is
+*understated* rather than false (relative paths resolve against indexed roots) and
+the narrower instruction is safe for small models; and facet discovery has a third
+route (`justsearch://index/top-sources` / `top-entities` MCP **resources**) that the
+descriptions do not mention — deliberately, since many MCP clients never surface
+resources to the model, so advertising them risks another undeliverable instruction.
+
+**Why this matters beyond the fix.** A lane whose named principle is *"the
+description is the behavior"* removed a field and did not audit the description of
+the tool it removed it from. That is the argument for §G's mechanical
+description/schema conformance check: judgment missed this twice across two review
+rounds, and a grep-level check would not have.
 
 ### 3. Response-size governor — CAP CHARACTERIZED (2026-07-21), design still open
 
@@ -501,7 +561,10 @@ and contradicted §E's own amendment. What is actually unchanged:
   deliver for `search`, and `detail`'s text described a provenance block that is now
   gated rather than always-on;
 - the match-anchored preview windowing;
-- text rendering (no text-tier change — the goldens are byte-identical);
+- the four byte-exact text-tier **goldens** (byte-identical, no re-pin) — but NOT
+  "text rendering" as such: §F.5 deleted the answer path's facet text block. Goldens
+  unaffected ≠ rendering untouched (§C states this; an earlier draft of this list
+  contradicted it);
 - `McpEvidenceProjection`'s execution-surface registration.
 
 **Not unchanged:** the schema gained `query_syntax` (owner decision, §E.2), so
@@ -518,7 +581,7 @@ implementation does not produce, is a **silent defect with behavioral cost**.
 
 - **Evidence, both directions.** Positive: a description change alone moved organic
   `concise` adoption 5/20 → 19/20 and erased a +15% token regression at zero payload
-  cost (`725:1585-1602`). Negative: three false statements are live today (§E.2), and
+  cost (`725:1585-1602`). Negative: **five** false statements were live (§E.2), and
   agents acted on one of them — 336 calls requested a `concise` mode that returns
   nothing.
 - **Sharpened by this lane:** descriptions are delivered; response *text* may not be.
