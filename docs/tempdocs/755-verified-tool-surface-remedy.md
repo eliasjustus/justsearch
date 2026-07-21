@@ -204,3 +204,23 @@ NONE. Conditional omission keeps every pre-755 record byte-identical: `test_hist
 - Honest-null preserved: `surface_evidence` defaults None and is overwritten only after a successful `receive_response`; timed-out/errored cells stay None → unverified.
 - Integrity: `mcp_surface_fallback.verified` is always False and never sets the observed hash — unverified cells still fail the untouched gate.
 - Test precision: the conditional-omission test asserts omission-when-absent AND digest-equality (None-key vs key-stripped) AND digest-change-when-present — passes for the right reason.
+
+## §F. Track-1 acceptance smoke — MEASURED VERDICT (2026-07-21, orchestrator-run)
+
+60 B-cells (email-1k, haiku, 3 seeds, B-only, no calibration; ~$8 incl. a duplicate-run
+incident — an orphaned first attempt survived a kill and eval_set completed its retry; single
+complete 60-sample log finalized): **55 verified / 5 unverified (8.3%)**,
+`cells_by_surface_evidence = {"status": 55}` — **zero `status-retry` rescues in 5
+opportunities**. The flake is per-session, not per-call: within-session reprobes never recover
+a missing surface. Track 1 therefore CANNOT reach 100%; the ~8%/cell residual is irreducible
+at the current SDK seam (consistent with the campaign's 4–12/60 per stratum).
+
+**Verdict: the §C policy amendment is the necessary remedy.** The draft
+(`scripts/jseval/utility-claim-policy.v2-draft-755.proposed.json`, rate ≥ 0.9 + single-hash
+consistency + different-hash fatal) would have passed this smoke at 91.7% with one consistent
+hash equal to declared. Activation remains founder-gated <!-- founder-decision -->. The Track-1
+code stays: retry is harmless, and `surface_evidence` provenance + per-kind assertion counts
+are what make an amended rate-based gate auditable. Ops note filed: Inspect eval_set task
+retry can legitimately produce a second log file; `loss_accounting_from_observations` fails
+closed on the duplicate (correct), so recompose after any retried run must finalize from the
+surviving complete log.
