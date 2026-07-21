@@ -1,9 +1,9 @@
 ---
 title: "Installer payload composition: what belongs in the base installer versus the consent-gated download pack — the base installer ships an inference runtime it cannot run, and the pack mechanism that would carry it already exists"
 type: tempdocs
-status: "open — ANALYSIS ONLY (2026-07-21). Evidence measured against a real 815 MB CI artifact (run 29514086160, 743 files, 177 PE binaries, every PE signature-checked). Takeover investigation (2026-07-21, multiple passes) independently re-verified all citations (clean), resolved Q7 (§F: native-bin combined is ~10.4% of installed payload), found a much bigger payload outside the original native-bin-only scope (§G: lib/worker/onnxruntime_gpu-1.24.3.jar is 34.3%, of which ~18.65% is dead Linux native binaries on this Windows-only product and ~15.12% is a Windows CUDA provider DLL inert until GPU+pack), and found a second major lever (§H: the embedded WebView2 offline installer is 203.65 MB / 18.83% — the second-largest single component, ~60% bigger than Tauri's own documented estimate). Resolved Q3 (pack mechanism is NOT ready for a CPU-mandatory package — 4 concrete gaps found), Q4 (only 2 of 9 scripts are real gates, both already characterized), the should_sign upstream claim (confirmed against Tauri source), and Q8's licensing question (ONNX Runtime is MIT; no Windows-only upstream artifact exists). No decision reached, no split recommended, nothing removed or implemented; §Open questions (1-10, several now resolved inline) are for the owner. A /derisk pass, /theorize pass (broader framings + a spun-off idea sketch, tempdoc 773), /research pass (competitive precedent: Ollama's Windows installer is 1.36 GB, ~1.75x this one; the onnxruntime_gpu fat-jar problem is a known unresolved upstream issue, not a local one-off; Tauri's WebviewInstallMode default is downloadBootstrapper, so JustSearch's offlineInstaller choice was a deliberate historical override), and a /design pass (§Design: closes Q3 by extending 657's existing tier/intent/hardware model with a package-level `requiresCuda` field rather than building new structure; recommends Gradle Artifact Transforms over the derisk pass's hand-rolled jar task for §G; recommends reverting §H to Tauri's own default) followed. See §Takeover verdict."
+status: "open — ANALYSIS ONLY (2026-07-21). Evidence measured against a real 815 MB CI artifact (run 29514086160, 743 files, 177 PE binaries, every PE signature-checked). Takeover investigation (2026-07-21, multiple passes) independently re-verified all citations (clean), resolved Q7 (§F: native-bin combined is ~10.4% of installed payload), found a much bigger payload outside the original native-bin-only scope (§G: lib/worker/onnxruntime_gpu-1.24.3.jar is 34.3%, of which ~18.65% is dead Linux native binaries on this Windows-only product and ~15.12% is a Windows CUDA provider DLL inert until GPU+pack), and found a second major lever (§H: the embedded WebView2 offline installer is 203.65 MB / 18.83% — the second-largest single component, ~60% bigger than Tauri's own documented estimate). Resolved Q3 (pack mechanism is NOT ready for a CPU-mandatory package — 4 concrete gaps found), Q4 (only 2 of 9 scripts are real gates, both already characterized), the should_sign upstream claim (confirmed against Tauri source), and Q8's licensing question (ONNX Runtime is MIT; no Windows-only upstream artifact exists). No decision reached, no split recommended, nothing removed or implemented; §Open questions (1-10, several now resolved inline) are for the owner. A /derisk pass, /theorize pass (broader framings + a spun-off idea sketch, tempdoc 773), /research pass (competitive precedent: Ollama's Windows installer is 1.36 GB, ~1.75x this one; the onnxruntime_gpu fat-jar problem is a known unresolved upstream issue, not a local one-off; Tauri's WebviewInstallMode default is downloadBootstrapper, so JustSearch's offlineInstaller choice was a deliberate historical override), a /design pass (§Design: closes Q3 by extending 657's existing tier/intent/hardware model with a package-level `requiresCuda` field rather than building new structure; recommends Gradle Artifact Transforms over the derisk pass's hand-rolled jar task for §G; recommends reverting §H to Tauri's own default), and a round-2 /derisk pass (softens the Artifact Transform recommendation — no Transform/buildSrc precedent exists in this repo, so the hand-rolled task is the lower-risk near-term choice — and surfaces a must-not-miss InstallPlannerTest update for Q3a, an unresolved attachment point for Q3c's notice-baking, and confirms Q3d needs matching ui-web work) followed. See §Takeover verdict."
 created: 2026-07-21
-updated: 2026-07-21 (takeover, derisk, theorize, research, design passes)
+updated: 2026-07-21 (takeover, derisk×2, theorize, research, design passes)
 author: agent (subagent investigation), founder-directed distribution work (2026-07-21)
 category: distribution / installer
 related:
@@ -585,7 +585,7 @@ Recorded per `verify, don't guess`; a follow-up agent should carry these forward
    `:44-45` in the working tree, `:40` at `HEAD`). All `README.md` citations above are **`HEAD`**
    line numbers, consistent with 760's `:57` citation.
 
-## §Derisk — implementation-confidence pass on the two fast-track candidates (2026-07-21)
+## §Derisk — implementation-confidence passes (round 1: the two fast-track candidates; round 2: the /design pass's three designs) (2026-07-21)
 
 Run via `/derisk` against the two candidates the takeover verdict flagged as possibly worth
 fast-tracking ahead of the big Q1/Q2 decision: stripping §G's Linux native binaries and switching
@@ -642,6 +642,79 @@ fast-tracking ahead of the big Q1/Q2 decision: stripping §G's Linux native bina
 - **Residual, not fully retired:** this is a one-line config change, but "installer completes
   correctly end-to-end with the new mode, including under `/S` silent install" has not been built and
   tested — mechanically trivial, verification is not.
+
+### Round 2 (2026-07-21) — derisking the /design pass's three designs
+
+Run after §Design settled on specific mechanisms. This round found one design recommendation should
+be **softened** (Design 2) and surfaced concrete, previously-unstated work items for Design 1 that
+change its effort estimate, without invalidating either design's core direction.
+
+**Design 2 (Gradle Artifact Transforms for §G) — the scoping mechanism is confirmed safe, but the
+recommendation over the hand-rolled task is weaker than §Design implied.**
+- Confirmed (Gradle's own docs, fetched this pass): a transform only fires for a configuration that
+  explicitly requests its "to" attribute value — two configurations resolving the *same* dependency
+  coordinate can safely get different variants (one transformed, one not) by declaring different
+  attributes. The Linux-CI blast-radius concern this round set out to check is **not a blocker** — it
+  can be scoped correctly.
+- **But:** this repo has **zero existing precedent** for Artifact Transforms — no
+  `registerTransform`/`TransformAction` anywhere, and **no `buildSrc` or convention-plugin directory
+  at all** (confirmed by direct search), which is where a Transform would normally be registered once,
+  centrally. Adopting Transforms here means introducing an entire new category of build infrastructure
+  this codebase has never used, whereas the previously-derisked hand-rolled task reuses the
+  `zipTree`+`exclude` idiom *already precedented in this exact build* (the CUDA variant staging code).
+  The "generalizes to future consumers" benefit is real but currently theoretical — no second consumer
+  needs a trimmed variant today.
+- **Revised read:** Design 2's recommendation stands as the more idiomatic long-term answer, but is a
+  bigger, less-precedented lift than the write-up conveyed. For a first implementation, the
+  previously-derisked hand-rolled task (scoped inside `bundleSidecarResources`, already Windows-host-
+  gated and structurally isolated from `:test`) is the lower-risk near-term choice; Artifact Transforms
+  are worth adopting once/if a second consumer of a trimmed dependency actually materializes.
+
+**Design 1 (Q3 fixes) — three concrete findings that change scope, none that block it.**
+- **Q3(a) (`requiresCuda` field) is lower-risk on the schema-gate front than assumed, but has a real,
+  specific test obligation.** Confirmed: `model-registry.v2.json`'s two copies
+  (`modules/configuration/src/test/resources/...` and `modules/ui/src/main/resources/...`) are
+  byte-identical today with no automated sync-check — the SSOT-catalog-sync gate does **not** cover
+  this (it's scoped to `SSOT/catalogs/**`, a different catalog family entirely), and `ModelPackage`
+  is not one of the five schema classes `:modules:app-api:updateSchemas` regenerates (confirmed by
+  reading the task's `includeTestsMatching` filter) — so this field addition needs neither gate.
+  It **does** need the same backward-compat constructor-overload chain `ModelPackage` already uses
+  for `installRoot`/`license`/`tier` (precedented, low-risk, mechanical) — **and, concretely,
+  `InstallPlannerTest`'s two `cuda-runtime` package-construction call sites (its explicit
+  hardware-gating regression tests) must be updated to pass `requiresCuda: true`, or the change
+  silently inverts the exact GPU_LITE regression those tests protect** (the old backward-compat
+  overload would default `requiresCuda` to `false`, making `InstallPlanner`'s new check never skip
+  `cuda-runtime` on non-CUDA hardware). This is a real, necessary, well-scoped fix — not a blocker,
+  but a specific item that was not called out in §Design and must not be missed.
+- **Q3(b) (precondition reorder) confirmed safe by reading the full method**, not just cited line
+  ranges. `AiInstallService.runInstallInternal()`'s actual flow: create dirs → load registry → policy
+  check → hardware profile → compute `InstallPlan` → populate status → **`ensureRuntimePresent` check**
+  → download loop. The runtime-restore check is structurally independent of everything after it — no
+  step in the download loop reads state the reorder would change. Confidence on this sub-fix raised,
+  not lowered.
+- **Q3(c) (bake notices into the release archive) has no known attachment point in this repo.** Swept
+  `scripts/` and `.github/` for any script that builds/publishes the self-hosted
+  `justsearch-releases` archives (`ort-cuda-runtime-12.4.zip`, `cudnn-9-runtime-12.4.zip`) — found
+  **none**. Either that process lives outside this repo (a private tooling repo, or a manual step) or
+  it doesn't exist as automation yet. This design's premise ("bake the files in when the archive is
+  built") assumes an extension point that isn't visible here — worth a direct owner question before
+  scoping this as "just add three files to an existing build step," since that step may not exist.
+- **Q3(d) (derived severity field) is not schema-gated, but is confirmed two-sided, not backend-only.**
+  `AiPreflightResult`/`PackageStatus` (nested records in `AiPreflightService.java`, not `app-api`
+  types) aren't covered by `updateSchemas` either. But `modules/ui-web/src/shell-v0/utils/
+  aiInstallPoll.ts` is a confirmed real consumer of this exact shape — adding the field is additive
+  and non-breaking on its own, but for it to actually *do* anything (let a user see "mandatory and
+  missing" vs. "optional and skipped"), `modules/ui-web` needs matching work too, which pulls in the
+  `ui-web-gates` consult recipe. §Design's framing ("a derived field, not new persisted state") was
+  correct about the backend but understated that realizing the point of the fix is a two-module
+  change, not a one-file one.
+
+**Net effect on confidence:** Design 1's four sub-fixes remain sound in direction; this round found
+one concrete must-not-miss test update (Q3a), one open question with no visible answer in this repo
+(Q3c), and one scope correction (Q3d is backend+frontend). Design 2's mechanism is confirmed
+technically safe but its edge over the already-derisked hand-rolled task is smaller than presented —
+recommend the hand-rolled task first, Transforms later if a second consumer appears. Design 3 is
+unchanged from round 1 (re-swept, nothing new found).
 
 ## §Theorize — broader framings, alternative directions, and hidden assumptions (2026-07-21)
 
