@@ -1,5 +1,5 @@
 ---
-title: "post-rebuild retrieval residue lane: the three orphaned engine/surface items — two-hop join-key affordance, hybrid fusion-burial of leg-visible gold, post-search read-amplification — re-measured against 767's camouflaged strata before any design"
+title: "post-rebuild retrieval residue lane: the orphaned engine/surface items — two-hop join-key affordance, hybrid fusion-burial of leg-visible gold, post-search read-amplification, response-size governor — re-measured against 767's camouflaged strata before any design"
 type: tempdocs
 status: "chartered (2026-07-21). GATED ON TEMPDOC 767 (rebuilt certified strata) — no design or implementation before the §C re-measurement pass. Adopts 769's residue per the founder-approved routing; 769's original acceptance criteria are retired."
 created: 2026-07-21
@@ -12,7 +12,7 @@ related:
   - 766-eval-content-rebuild-program
 ---
 
-> Charter, deliberately thin. This lane exists so three real, measured
+> Charter, deliberately thin. This lane exists so real, measured
 > problems don't evaporate in the gap between "the lane that diagnosed them
 > closed" and "the lane that was supposed to fix one of them withdrew its
 > lever." It is HARD-GATED on 767: all three items were measured on the
@@ -23,7 +23,7 @@ related:
 
 # 771 — post-rebuild retrieval residue
 
-## §A. The three items (evidence banked; do not re-derive)
+## §A. The items (evidence banked; do not re-derive)
 
 1. **Two-hop join-key affordance** (from 769 §E / F-039 diagnosis; dominant).
    The answer doc in bridge-schema questions is reachable ONLY via the bridge
@@ -60,6 +60,17 @@ related:
    whether the engine should select/return better spans (excerpt/passage
    quality at the retrieval layer) is this item. Couples to the RAG passage
    machinery (F-038's union leg, chunk evidence) — conform, don't fork.
+4. **Response-size governor design** (from 770 §E.3/§H — cap characterized,
+   design open, previously unowned; added 2026-07-21 when the ownership audit
+   caught it). The MCP delivery cap sits at 46.6k–52.8k chars with a fixed
+   2,322-char truncation notice in which neither content tier is delivered.
+   770 characterized the cliff and measured that its payload-gating moves
+   `limit:30` verbose queries from cliffed to delivered — so this item may
+   have shrunk to nothing. Disposition by measurement: §C.1's re-measurement
+   includes post-770 payload-size distributions; if oversized responses are
+   no longer reachable under realistic limits, close with the measurement
+   cited; otherwise design the governor here (graceful degradation at the
+   cap, not a bigger cap).
 
 ## §B. Why gated, precisely
 
@@ -77,7 +88,7 @@ would repeat the mistake the 762 program existed to end.
    depth probes (tooling: `tmp/analysis-624/{763,769}/` harnesses + the 768
    `--pin-index-selector-key` flag and at-capture `gold_rank`, which make
    this a query not a program) against the rebuilt strata, per schema.
-   Output: fresh magnitudes for items 1–3 + the 769 M5 floor-cell retest
+   Output: fresh magnitudes for items 1–4 + the 769 M5 floor-cell retest
    (the 4 H1-floor cells: real representation floor vs corpus artifact).
 2. **Route on the new numbers**: any item that shrinks below materiality is
    closed with the measurement cited; surviving items get design sections
