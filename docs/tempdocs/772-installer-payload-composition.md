@@ -1,9 +1,9 @@
 ---
 title: "Installer payload composition: what belongs in the base installer versus the consent-gated download pack — the base installer ships an inference runtime it cannot run, and the pack mechanism that would carry it already exists"
 type: tempdocs
-status: "open — ANALYSIS ONLY (2026-07-21). Evidence measured against a real 815 MB CI artifact (run 29514086160, 743 files, 177 PE binaries, every PE signature-checked). Takeover investigation (2026-07-21, multiple passes) independently re-verified all citations (clean), resolved Q7 (§F: native-bin combined is ~10.4% of installed payload), found a much bigger payload outside the original native-bin-only scope (§G: lib/worker/onnxruntime_gpu-1.24.3.jar is 34.3%, of which ~18.65% is dead Linux native binaries on this Windows-only product and ~15.12% is a Windows CUDA provider DLL inert until GPU+pack), and found a second major lever (§H: the embedded WebView2 offline installer is 203.65 MB / 18.83% — the second-largest single component, ~60% bigger than Tauri's own documented estimate). Resolved Q3 (pack mechanism is NOT ready for a CPU-mandatory package — 4 concrete gaps found), Q4 (only 2 of 9 scripts are real gates, both already characterized), the should_sign upstream claim (confirmed against Tauri source), and Q8's licensing question (ONNX Runtime is MIT; no Windows-only upstream artifact exists). No decision reached, no split recommended, nothing removed or implemented; §Open questions (1-10, several now resolved inline) are for the owner. See §Takeover verdict."
+status: "open — ANALYSIS ONLY (2026-07-21). Evidence measured against a real 815 MB CI artifact (run 29514086160, 743 files, 177 PE binaries, every PE signature-checked). Takeover investigation (2026-07-21, multiple passes) independently re-verified all citations (clean), resolved Q7 (§F: native-bin combined is ~10.4% of installed payload), found a much bigger payload outside the original native-bin-only scope (§G: lib/worker/onnxruntime_gpu-1.24.3.jar is 34.3%, of which ~18.65% is dead Linux native binaries on this Windows-only product and ~15.12% is a Windows CUDA provider DLL inert until GPU+pack), and found a second major lever (§H: the embedded WebView2 offline installer is 203.65 MB / 18.83% — the second-largest single component, ~60% bigger than Tauri's own documented estimate). Resolved Q3 (pack mechanism is NOT ready for a CPU-mandatory package — 4 concrete gaps found), Q4 (only 2 of 9 scripts are real gates, both already characterized), the should_sign upstream claim (confirmed against Tauri source), and Q8's licensing question (ONNX Runtime is MIT; no Windows-only upstream artifact exists). No decision reached, no split recommended, nothing removed or implemented; §Open questions (1-10, several now resolved inline) are for the owner. A /derisk pass, /theorize pass (broader framings + a spun-off idea sketch, tempdoc 773), and /research pass (competitive precedent: Ollama's Windows installer is 1.36 GB, ~1.75x this one; the onnxruntime_gpu fat-jar problem is a known unresolved upstream issue, not a local one-off; Tauri's WebviewInstallMode default is downloadBootstrapper, so JustSearch's offlineInstaller choice was a deliberate historical override) followed. See §Takeover verdict."
 created: 2026-07-21
-updated: 2026-07-21 (takeover investigation)
+updated: 2026-07-21 (takeover, derisk, theorize, research passes)
 author: agent (subagent investigation), founder-directed distribution work (2026-07-21)
 category: distribution / installer
 related:
@@ -498,14 +498,22 @@ the entire installer** — bigger than `native-bin/tesseract` + `native-bin/llam
 
 **Why it's this big, and whether it needs to be.** `tauri.conf.json:25-27` sets
 `webviewInstallMode: { type: "offlineInstaller", silent: true }`. Tauri v2's own documentation
-(`v2.tauri.app/reference/config/`, fetched this pass) describes four alternative modes:
+(`v2.tauri.app/reference/config/`, fetched this pass) describes five modes total:
 
 | Mode | Installer size impact | Requires network at install time? |
 |---|---|---|
-| `skip` | none | No (assumes WebView2 already present) |
-| `downloadBootstrapper` | ~1.8 MB | Yes |
+| `downloadBootstrapper` (**Tauri's own default**) | ~1.8 MB | Yes |
 | `embedBootstrapper` | ~1.8 MB | Yes |
-| `offlineInstaller` (current) | Tauri's own docs say "~127 MB" | No |
+| `offlineInstaller` (**current, JustSearch's choice**) | Tauri's own docs say "~127 MB" | No |
+| `fixedRuntime` | ~180 MB (pins an exact WebView2 version rather than the auto-updating "evergreen" one `offlineInstaller` uses) | No |
+| `skip` | none | No (assumes WebView2 already present — installer doesn't check) |
+
+**Confirmed this pass: `offlineInstaller` is not Tauri's default — it's a deliberate override someone
+made at some point.** `windows.webviewInstallMode` defaults to `{ silent: true, type:
+"downloadBootstrapper" }` when unset (confirmed against Tauri's config reference). This reframes
+§H: this isn't an accidental default nobody looked at (unlike §G's Linux binaries) — it's a real past
+decision to trade bytes for offline-installability, made before anyone had measured what it actually
+costs. That's a materially different starting point for the owner's call than "nobody chose this."
 
 **The measured 203.65 MB is ~60% larger than Tauri's own documented estimate for this mode** — most
 likely because the WebView2 Runtime itself (a full Chromium build) has grown since that doc figure
@@ -738,6 +746,50 @@ reports "here is what's inside this release's installer and how it changed since
 gap is a separate, smaller idea worth sketching on its own rather than folding into this tempdoc's
 already-large scope — see tempdoc 773 (`773-installer-composition-observability.md`), sketched
 alongside this theorization pass, not chartered or decided.
+
+## §Research — external context pass (2026-07-21)
+
+Run via `/research`, prompted by asking whether anything in this space is actively evolving or
+already solved elsewhere rather than needing to be re-derived from first principles. Four questions
+turned out to have real external answers; two are recorded above (§H's corrected mode table, the
+`downloadBootstrapper`-is-the-default fact). The other two are recorded here.
+
+### Competitive precedent: comparable local-AI desktop apps ship installers this size or bigger
+
+[Ollama's Windows installer](https://github.com/ollama/ollama/releases) (`OllamaSetup.exe`, latest
+release, confirmed via `gh api repos/ollama/ollama/releases/latest`) is **1,426,451,968 bytes — 1.36
+GB, about 1.75x this installer's measured 815 MB** — and that's before counting the separate
+variant archives Ollama also publishes for the same release (`ollama-windows-amd64-rocm.zip`, 247
+MB; `ollama-windows-amd64-mlx.zip`, 724 MB). A general web search additionally indicates LM Studio
+bundles its CUDA runtime directly into its installer rather than deferring it.
+
+**Reading:** §"Why this matters" reason 1 (815 MB as "a large first ask") is worth weighing against
+this. JustSearch's installer is not large by the standards of comparable, well-adopted local-AI
+desktop tools — if anything it's smaller than at least one popular reference point. This doesn't
+settle Q1/Q2 (JustSearch's zero-issues-filed baseline and Ollama's are different products with
+different audiences and adoption stages), but it's real calibration data that didn't exist in this
+tempdoc before, and it argues against treating "815 MB feels big" as self-evidently true without a
+comparison point.
+
+### The onnxruntime_gpu fat-jar problem (§G) is a known, unresolved upstream complaint — not a local one-off
+
+Three open GitHub issues on `microsoft/onnxruntime` describe the same structural shape §G found,
+independently, some at a considerably larger scale:
+[#22996](https://github.com/microsoft/onnxruntime/issues/22996) states plainly that "the jar file
+from Maven contains native files for multiple operating systems," contributing to jar bloat;
+[#18859](https://github.com/microsoft/onnxruntime/issues/18859) reports a much more extreme instance
+— a 788 MB jar where `libonnxruntime.so` alone accounts for 751 MB (a newer/larger CUDA build than
+JustSearch's 1.24.3, but the identical root cause); and
+[#12084](https://github.com/microsoft/onnxruntime/issues/12084) flagged embedded `.pdb` debug-symbol
+bloat in an older version specifically (confirmed not present in JustSearch's current 1.24.3 jar —
+this particular sub-issue looks fixed upstream since then). **None of these issues have a maintainer
+response, fix, or workaround recorded — #22996 is open with no engagement since filing.**
+
+**Reading:** this confirms §Theorize's "upstream engagement" idea is a real, already-open door (worth
+adding a 👍/comment to an existing issue rather than filing a fresh one) but also confirms it is not
+a fast path — these issues show no sign of upstream movement. It also reinforces that local
+repackaging (the derisk pass's approach) isn't a hacky workaround for a JustSearch-specific problem;
+it's the same fix other consumers of this exact artifact have independently had to consider.
 
 ## §Takeover verdict (2026-07-21)
 
