@@ -576,6 +576,64 @@ Recorded per `verify, don't guess`; a follow-up agent should carry these forward
    `:44-45` in the working tree, `:40` at `HEAD`). All `README.md` citations above are **`HEAD`**
    line numbers, consistent with 760's `:57` citation.
 
+## §Derisk — implementation-confidence pass on the two fast-track candidates (2026-07-21)
+
+Run via `/derisk` against the two candidates the takeover verdict flagged as possibly worth
+fast-tracking ahead of the big Q1/Q2 decision: stripping §G's Linux native binaries and switching
+§H's WebView2 install mode. Read-only investigation only — nothing implemented, no design chosen.
+
+**Linux-native jar stripping (§G) — every identified risk resolved favorably:**
+- **CI blast radius, confirmed real and correctly scoped around.** `.github/workflows/ci.yml`'s
+  `unit-tests` matrix runs `:modules:indexer-worker:test` on `ubuntu-latest` (the "search-worker"
+  lane, `:246-277`) — Linux CI genuinely does resolve and exercise the `onnxruntime_gpu` dependency.
+  This means stripping must happen **only** in the Windows-only installer-staging copy, never at the
+  Gradle dependency-declaration/resolution level — confirming the design constraint already assumed
+  in the takeover verdict was load-bearing, not just cautious.
+- **Native-loader mechanism, confirmed from upstream source.** Fetched `OnnxRuntime.java` directly:
+  `initOsArch()` detects `os.name`/`os.arch` once at class-init into a single `OS_ARCH_STR` (e.g.
+  `"win-x64"`), and `extractFromResources()` builds exactly one resource path,
+  `"/ai/onnxruntime/native/" + OS_ARCH_STR + '/' + libraryFileName` — it never inspects any other
+  platform's folder. Deleting `linux-x64/**` entries is provably side-effect-free on Windows.
+- **Mechanical pattern, already precedented in this exact codebase.** `modules/ui/build.gradle.kts`
+  already does `from(zipTree(cudaZipFile)) { include(...); exclude("**/ggml-rpc.dll") }` (staging the
+  CUDA llama-server variant, excluding one unwanted DLL for an analogous reason — "trips Windows
+  Defender"). The same `zipTree` + `exclude` idiom applies directly; three more `zipTree` sites exist
+  in this build (`modules/ui/build.gradle.kts:815`, `modules/api-contract-projection-java/build.gradle.kts:58`).
+  Producing a valid re-packaged `.jar` (not just a flattened directory, since the loader needs a
+  classpath-resolvable jar) would need a dedicated `Jar`/`Zip`-type task rather than the `Sync`-style
+  flatten these examples use — a standard, well-documented Gradle pattern, just not yet proven in
+  *this* repo verbatim.
+- **Dependency-verification risk, avoided by construction.** `gradle/verification-metadata.xml`
+  (referenced `settings.gradle.kts:67`) verifies resolved artifacts at resolution time; a downstream
+  task consuming the already-resolved jar as a plain file input (not a new dependency coordinate)
+  never touches that file.
+- **Single site of entry, confirmed.** `runtimeOnly(libs.onnxruntime.gpu)` is declared in
+  `indexer-worker`, `worker-core`, and `benchmarks` (`gradle/libs.versions.toml:117` for the
+  coordinate) — but only `indexer-worker`'s `installDist` output feeds `bundleSidecarResources`
+  (`build.gradle.kts:1417`), so the installer-staging fix has exactly one place to change.
+- **No test coupling.** Grep for `linux-x64`/`libonnxruntime` across worker module test sources:
+  zero hits.
+- **Residual, not fully retired:** actually building a trimmed jar and running a live smoke test
+  (embeddings/SPLADE/reranker/NER all depend on this jar loading correctly) hasn't been done — this
+  pass confirms the *design* is sound, not that a built artifact behaves correctly. A silently
+  malformed jar would degrade core retrieval quality, not just fail loudly, so this step should not
+  be skipped once implemented.
+
+**WebView2 install-mode switch (§H) — every identified risk resolved favorably, lower residual risk overall:**
+- **No gate references it.** Swept `verify-installer-nsis-win.ps1`, `package-installer-win.ps1`,
+  `build-installer.yml` — the only hit is a caching comment (`build-installer.yml:80`, "Cache Tauri
+  bundler downloads... WebView2 bootstrapper"), not an assertion on presence, size, or mode.
+- **Version-pinned behavior confirmed stable.** `webviewInstallMode` predates Tauri 2.0's stable
+  release (carried forward from v1, documented at `docs.rs/tauri-utils/latest`) — no risk that
+  2.11.3 (`Cargo.lock:3914-3915`) lacks any of the four modes.
+- **Silent-install interaction is a pre-existing gap, not a new one.** Tempdoc 760 already found CI
+  never empirically verifies silent install (`-SkipVerify`, `build-installer.yml:173`). Switching to
+  a mode requiring network at install time interacts with that same untested surface, but doesn't
+  introduce a new one — worth knowing, not a reason to avoid the change.
+- **Residual, not fully retired:** this is a one-line config change, but "installer completes
+  correctly end-to-end with the new mode, including under `/S` silent install" has not been built and
+  tested — mechanically trivial, verification is not.
+
 ## §Takeover verdict (2026-07-21)
 
 **Method.** Independently re-verified this tempdoc's evidence rather than taking it on faith:
