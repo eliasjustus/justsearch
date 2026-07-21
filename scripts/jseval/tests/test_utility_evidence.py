@@ -405,7 +405,16 @@ def test_historical_fixture_semantic_digest_repinned_after_624_itt_change():
     advanced to `agent-utility-public-v2` (rate-based verified_tool_surface). The
     digest-covered `claim_verdict` carries `policy_id`/`policy_hash`, so the new
     policy identity + hash moved this fixture's digest again (still rejected). New
-    value re-captured via `finalize_evidence([path])["semantic_digest"]`."""
+    value re-captured via `finalize_evidence([path])["semantic_digest"]`.
+
+    Re-pinned AGAIN 2026-07-21 (tempdoc 768 D4 — SAME re-pin class as the 624 ITT
+    change above): the ITT estimand now emits the third of the ITT/per-protocol/
+    completion triple (762 §T4). `estimands.completion` is digest-covered
+    measurement content (per-arm completion rates), so its addition moved the
+    digest. Verified empirically that completion is the SOLE mover: stripping
+    `estimands.completion` from the semantic projection reproduces the prior pin
+    `3d0bf53b…` byte-for-byte. `tool_result_digests`' new gold_rank/ordered_doc_ids/
+    scores fields stay digest-EXCLUDED (evidence/sanitizer tier only, per U1)."""
     path = (
         Path(__file__).parent
         / "fixtures"
@@ -414,7 +423,7 @@ def test_historical_fixture_semantic_digest_repinned_after_624_itt_change():
     )
     record = finalize_evidence([path], composed_at="fixture")
     assert record["semantic_digest"] == (
-        "3d0bf53b1f205bd8e811cd55c74255664468dddda9dd70b689bcb2fbd390f62b"
+        "ed81f79b34a3537da84c20bc3b978b804dc0419dedaae88597bfc95c5827876b"
     )
 
 
@@ -439,6 +448,17 @@ def test_observation_keys_match_schema_properties_exactly():
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     assert _OBSERVATION_KEYS == set(schema["properties"])
     assert _SOURCE_KEYS == set(schema["properties"]["source"]["properties"])
+
+
+def test_sanitize_observation_carries_question_type():
+    # tempdoc 768 D4: the per-query schema tag survives the sanitizer boundary.
+    obs = _observation()
+    obs["question_type"] = "2_hop"
+    sanitized = sanitize_observation(obs)
+    assert sanitized["question_type"] == "2_hop"
+    # Absent on the source observation -> emitted as None, never fabricated, and
+    # still schema-valid (question_type is optional for historical evidence).
+    assert sanitize_observation(_observation())["question_type"] is None
 
 
 def _load_rejected_2026_07_12_fixture_rows() -> list[dict]:

@@ -48,6 +48,7 @@ from jseval.agent_retrieval_eval import (  # noqa: E402
     find_disallowed_tool_calls,
     find_leak_suspect_tool_calls,
 )
+from jseval.utility_evidence import _error_class  # noqa: E402
 
 
 def _state(input_text="what is x?", sample_id="q0"):
@@ -101,6 +102,27 @@ def test_agent_utility_task_builds_one_task_over_the_full_cross_product(tmp_path
     assert "corpus" in t.metadata
     assert "cohort" in t.metadata
     assert "condition" not in t.metadata
+
+
+def test_sample_metadata_carries_evidence_ids(tmp_path):
+    # D6 (768 step 1): the gold identity per query (`evidence_ids`) must reach
+    # Sample.metadata so rank-of-gold capture (step 2) can resolve gold hits.
+    queries_path = tmp_path / "queries.json"
+    queries_path.write_text(json.dumps([
+        {"query": "q1", "answer": "a1", "question_type": "2_hop",
+         "evidence_ids": ["g1", "g2"]},
+        {"query": "q2", "answer": "a2", "question_type": "1_hop"},  # no evidence_ids
+    ]), encoding="utf-8")
+
+    t = aui.agent_utility_task(
+        conditions=("A", "C"), queries_path=str(queries_path), corpus_dir=str(tmp_path),
+        mcp_config=None, model="haiku",
+    )
+    by_id = {s.id: s for s in list(t.dataset)}
+    assert by_id["A|q0"].metadata["evidence_ids"] == ["g1", "g2"]
+    assert by_id["C|q0"].metadata["evidence_ids"] == ["g1", "g2"]
+    # A query without the field carries None, never a fabricated empty list.
+    assert by_id["A|q1"].metadata["evidence_ids"] is None
 
 
 def test_agent_utility_task_respects_max_queries(tmp_path):
@@ -455,8 +477,113 @@ def test_record_cell_tool_result_digests_never_stash_raw_content():
         },
         "delivered_tier": "prose",
         "delivered_fields": None,
+        "ordered_doc_ids": None,
+        "scores": None,
+        "gold_rank": None,
     }]
     assert secret not in json.dumps(digests)
+
+
+# --- tempdoc 768 D6 (step 2): rank-of-gold at capture ---
+
+
+def _search_content(ordered_ids, scores=None):
+    """A structured-json `justsearch_search` delivery (a JSON *object* string, the
+    `structured-json` tier) with `results[]` in rank order -- mirrors
+    `McpEvidenceProjection.searchEvidence` (`id`/`score` per hit)."""
+    scores = scores if scores is not None else [1.0 - 0.1 * i for i in range(len(ordered_ids))]
+    return json.dumps({
+        "results": [{"id": did, "score": sc} for did, sc in zip(ordered_ids, scores)],
+        "coverage": {"totalHits": len(ordered_ids)},
+    })
+
+
+def test_tool_result_digest_entry_gold_rank_hit():
+    content = _search_content(["docA", "docB", "goldZ", "docC"], [0.9, 0.8, 0.7, 0.6])
+    entry = aui._tool_result_digest_entry(
+        {"is_error": False, "content": content}, evidence_ids=["goldZ", "goldY"])
+    assert entry["ordered_doc_ids"] == ["docA", "docB", "goldZ", "docC"]
+    assert entry["scores"] == [0.9, 0.8, 0.7, 0.6]
+    assert entry["gold_rank"] == 2  # 0-based rank of the first gold id
+
+
+def test_tool_result_digest_entry_gold_rank_miss():
+    # Search ran, ranking captured, but no gold id present -> gold_rank is None
+    # (never a fabricated -1).
+    content = _search_content(["docA", "docB", "docC"])
+    entry = aui._tool_result_digest_entry(
+        {"is_error": False, "content": content}, evidence_ids=["goldZ"])
+    assert entry["ordered_doc_ids"] == ["docA", "docB", "docC"]
+    assert entry["gold_rank"] is None
+
+
+def test_tool_result_digest_entry_gold_rank_non_search_null():
+    # A prose / non-`justsearch_search` delivery (no structured `results[]`):
+    # ordered_doc_ids/scores/gold_rank are all None, never fabricated.
+    prose = aui._tool_result_digest_entry(
+        {"is_error": False, "content": "Evidence pack: 3 passages"}, evidence_ids=["goldZ"])
+    assert prose["ordered_doc_ids"] is None
+    assert prose["scores"] is None
+    assert prose["gold_rank"] is None
+    # A structured `justsearch_answer`-shape delivery (quality/citations, no
+    # results[]) is likewise null for the rank fields.
+    answer = aui._tool_result_digest_entry(
+        {"is_error": False, "content": json.dumps({"quality": {}, "citations": []})},
+        evidence_ids=["goldZ"])
+    assert answer["ordered_doc_ids"] is None
+    assert answer["gold_rank"] is None
+
+
+def test_tool_result_digest_entry_gold_rank_normalizes_path_ids_to_basenames():
+    # tempdoc 768 §E: the LIVE McpEvidenceProjection results[*].id is an absolute
+    # corpus path (e.g. ...\corpus-dir\limker1.txt) while the queries file's
+    # evidence_ids are extensionless basenames (limker1). gold_rank must normalize
+    # both sides (basename/ext/case) or it would ALWAYS miss. ordered_doc_ids stay
+    # the RAW delivered ids.
+    path_ids = [
+        r"f:\corpus-dir\cavby8.txt",
+        r"f:\corpus-dir\Limker1.TXT",   # gold, different case + ext
+        r"f:\corpus-dir\other9.txt",
+    ]
+    content = _search_content(path_ids, [0.9, 0.8, 0.7])
+    entry = aui._tool_result_digest_entry(
+        {"is_error": False, "content": content}, evidence_ids=["limker1", "tasholt2"])
+    assert entry["ordered_doc_ids"] == path_ids            # raw ids preserved
+    assert entry["gold_rank"] == 1                          # matched despite path+case+ext
+    # A gold id that is not present anywhere -> None (never fabricated).
+    miss = aui._tool_result_digest_entry(
+        {"is_error": False, "content": content}, evidence_ids=["absent42"])
+    assert miss["gold_rank"] is None
+
+
+def test_normalize_doc_id_basename_ext_lower():
+    assert aui._normalize_doc_id(r"f:\a\b\Limker1.TXT") == "limker1"
+    assert aui._normalize_doc_id("limker1") == "limker1"
+    assert aui._normalize_doc_id("dir/3467622") == "3467622"
+    assert aui._normalize_doc_id(None) is None
+
+
+def test_tool_result_digest_entry_gold_rank_null_without_evidence_ids():
+    # Ranking still captured, but with no gold list gold_rank stays None.
+    content = _search_content(["docA", "goldZ"])
+    entry = aui._tool_result_digest_entry({"is_error": False, "content": content})
+    assert entry["ordered_doc_ids"] == ["docA", "goldZ"]
+    assert entry["gold_rank"] is None
+
+
+def test_record_cell_threads_evidence_ids_into_gold_rank():
+    # End-to-end through _record_cell: evidence_ids on state.metadata (step 1)
+    # reaches the per-call digest's gold_rank (step 2).
+    state = _state()
+    state.metadata["evidence_ids"] = ["goldZ"]
+    got = {
+        "attempts": {"t1": {"tool": "mcp__justsearch__justsearch_search", "input": {}}},
+        "results": {"t1": {"is_error": False,
+                           "content": _search_content(["docA", "goldZ", "docC"])}},
+        "texts": [], "rmsg": _rmsg(), "mcp_servers": None, "justsearch_tools": [],
+    }
+    aui._record_cell(state, got, "C", [], None)
+    assert state.metadata["tool_result_digests"][0]["gold_rank"] == 1
 
 
 # --- tempdoc 755 Track 1: MCP surface-capture hardening (retry + integrity-checked fallback) ---
@@ -605,6 +732,9 @@ def test_record_cell_tool_result_digests_furniture_markers_block_list_content_sh
         },
         "delivered_tier": "blocks",
         "delivered_fields": None,
+        "ordered_doc_ids": None,
+        "scores": None,
+        "gold_rank": None,
     }]
     assert secret not in json.dumps(digests)
 
@@ -2489,28 +2619,56 @@ def _drive_solver_budget(monkeypatch, tmp_path, *, condition, timeout_s,
 
 
 def test_solver_resolves_timeout_by_condition(tmp_path, monkeypatch):
+    # tempdoc 768 D7: the resolved per-condition wall-clock is widened by the
+    # generous backstop multiple (USD is the binding budget); the per-condition
+    # ORDERING and calibration inputs are preserved (a > c still holds).
+    mult = aui._WALL_CLOCK_BACKSTOP_MULT
     m = '{"A":300,"C":150}'
     a = _drive_solver_budget(monkeypatch, tmp_path, condition="A", timeout_s=180,
                              timeout_s_by_condition_json=m)
     c = _drive_solver_budget(monkeypatch, tmp_path, condition="C", timeout_s=180,
                              timeout_s_by_condition_json=m)
-    assert a == pytest.approx(300, abs=5)
-    assert c == pytest.approx(150, abs=5)
+    assert a == pytest.approx(300 * mult, abs=5)
+    assert c == pytest.approx(150 * mult, abs=5)
     assert a > c
 
 
 def test_solver_falls_back_to_scalar_for_condition_absent_from_map(tmp_path, monkeypatch):
-    # A requested but only C is in the map -> A uses the scalar timeout_s.
+    # A requested but only C is in the map -> A uses the scalar timeout_s (x backstop).
     budget = _drive_solver_budget(monkeypatch, tmp_path, condition="A", timeout_s=180,
                                   timeout_s_by_condition_json='{"C":150}')
-    assert budget == pytest.approx(180, abs=5)
+    assert budget == pytest.approx(180 * aui._WALL_CLOCK_BACKSTOP_MULT, abs=5)
 
 
 def test_solver_empty_map_uses_scalar_for_every_condition(tmp_path, monkeypatch):
-    # Old-calibration-file behavior byte-for-byte: "{}" -> scalar for all cells.
+    # Old-calibration-file behavior: "{}" -> scalar for all cells (x backstop).
+    mult = aui._WALL_CLOCK_BACKSTOP_MULT
     a = _drive_solver_budget(monkeypatch, tmp_path, condition="A", timeout_s=180,
                              timeout_s_by_condition_json="{}")
     c = _drive_solver_budget(monkeypatch, tmp_path, condition="C", timeout_s=180,
                              timeout_s_by_condition_json="{}")
-    assert a == pytest.approx(180, abs=5)
-    assert c == pytest.approx(180, abs=5)
+    assert a == pytest.approx(180 * mult, abs=5)
+    assert c == pytest.approx(180 * mult, abs=5)
+
+
+def test_usd_cap_kill_retains_cost_receipt():
+    # tempdoc 768 D7 / §B acceptance ("exhausted-cell receipts"): a USD-cap kill
+    # DOES deliver a terminal ResultMessage (is_error, subtype error_max_budget_usd)
+    # with cost intact -- unlike a wall-clock cancel (no ResultMessage, cost lost).
+    # _record_cell populates cost_usd/unique_tokens BEFORE the is_error early-return,
+    # so the receipt survives. This is the regression guard for the 765 §E loss.
+    state = _state()
+    rmsg = _rmsg(is_error=True, subtype="error_max_budget_usd", stop_reason="budget",
+                 total_cost_usd=0.49, usage={"cache_creation_input_tokens": 1234},
+                 result=None)
+    got = {
+        "attempts": {}, "results": {}, "texts": [], "rmsg": rmsg,
+        "mcp_servers": None, "justsearch_tools": [],
+    }
+    aui._record_cell(state, got, "A", [], None)  # A = no-tool, no MCP surface gate
+    assert state.metadata["cost_usd"] == 0.49          # receipt retained
+    assert state.metadata["unique_tokens"] == 1234     # token lower bound retained
+    # The error carries the USD-cap subtype, which utility_evidence classifies as
+    # usd_budget_exhausted (distinct from the wall-clock-exhaustion bucket).
+    assert "error_max_budget_usd" in state.metadata.get("error", "")
+    assert _error_class(state.metadata["error"]) == "usd_budget_exhausted"

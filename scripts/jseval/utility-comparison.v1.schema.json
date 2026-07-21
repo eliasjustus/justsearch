@@ -222,6 +222,41 @@
         "intention_to_treat": {
           "type": "object", "additionalProperties": false, "required": ["strata"],
           "properties": {"strata": {"type": "array", "items": {"$ref": "#/definitions/ittStratum"}}}
+        },
+        "completion": {
+          "type": "object",
+          "description": "tempdoc 768 D4 / 762 §T4: the third of the ITT/per-protocol/completion triple. Per-arm completion rate (finished within budget; a budget-exhausted cell is a non-completion under exhaustion-as-failure) that separates the ITT accuracy from the per-protocol accuracy. NOT required: pre-768 records omit it; always emitted on fresh compositions.",
+          "required": ["role", "strata"],
+          "properties": {
+            "role": {"const": "secondary"},
+            "source": {"const": "measured"},
+            "strata": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["stratum_id", "corpus", "model", "by_arm"],
+                "properties": {
+                  "stratum_id": {"type": ["string", "null"]},
+                  "corpus": {"type": ["string", "null"]},
+                  "model": {"type": ["string", "null"]},
+                  "by_arm": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "required": ["n_expected", "n_attempted", "n_completed", "completion_rate"],
+                      "properties": {
+                        "n_expected": {"type": "integer", "minimum": 0},
+                        "n_attempted": {"type": "integer", "minimum": 0},
+                        "n_completed": {"type": "integer", "minimum": 0},
+                        "n_exhausted": {"type": "integer", "minimum": 0},
+                        "completion_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },

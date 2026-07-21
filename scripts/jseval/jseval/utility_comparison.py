@@ -1130,11 +1130,35 @@ def _stats_from_pairs(
     return result
 
 
+def _stratified_breakdown(
+    pairs: dict, stratify_by: dict[str, str], *, statistical_alpha: float,
+) -> dict | None:
+    """Independent per-stratum McNemar+bootstrap re-run over ``pairs`` under one
+    ``qid -> label`` map, returning ``{"by_stratum": {label: stats}}`` or ``None``
+    when no stratum yields a result. One derivation shared by every stratification
+    axis (corpus §T.4, schema 768 D4) so a stratum's stats are computed exactly
+    one way regardless of which axis produced the label."""
+    labels = sorted({
+        stratify_by[p["qid"]] for p in pairs.values() if p["qid"] in stratify_by
+    })
+    by_stratum: dict = {}
+    for label in labels:
+        sub_pairs = {
+            obs: p for obs, p in pairs.items()
+            if stratify_by.get(p["qid"]) == label
+        }
+        sub_stats = _stats_from_pairs(sub_pairs, statistical_alpha=statistical_alpha)
+        if sub_stats is not None:
+            by_stratum[label] = sub_stats
+    return {"by_stratum": by_stratum} if by_stratum else None
+
+
 def _arm_comparison(
     baseline: list[dict],
     with_tool: list[dict],
     *,
     stratify_by: dict[str, str] | None = None,
+    schema_stratify_by: dict[str, str] | None = None,
     statistical_alpha: float = 0.05,
 ) -> dict | None:
     """One paired baseline(A)-vs-with-tool-arm comparison: McNemar accuracy +
@@ -1149,6 +1173,13 @@ def _arm_comparison(
     by this parameter, and when ``stratify_by`` is ``None`` (the default) no
     ``"stratified"`` key is added at all — byte-identical to the
     pre-stratification behavior.
+
+    ``schema_stratify_by`` (tempdoc 768 D4) is the independent SECOND axis: when
+    present it adds a sibling ``"schema_stratified": {"by_stratum": {question_type:
+    {...}}}`` computed the same way over ONLY that schema's paired observations,
+    never touching the pooled top-level fields or the corpus ``"stratified"`` key.
+    ``None`` (single-schema cell / default) adds no key — byte-identical to the
+    pre-768 behavior.
 
     ``leak_suspect_cells`` (tempdoc 624 §As-built #7) is always present when a
     result is returned — the additive per-arm honesty field: the (seed, qid)
@@ -1166,20 +1197,14 @@ def _arm_comparison(
     result["leak_suspect_cells"] = leak_suspect_cells
 
     if stratify_by:
-        labels = sorted({
-            stratify_by[p["qid"]] for p in pairs.values() if p["qid"] in stratify_by
-        })
-        by_stratum: dict = {}
-        for label in labels:
-            sub_pairs = {
-                obs: p for obs, p in pairs.items()
-                if stratify_by.get(p["qid"]) == label
-            }
-            sub_stats = _stats_from_pairs(sub_pairs, statistical_alpha=statistical_alpha)
-            if sub_stats is not None:
-                by_stratum[label] = sub_stats
-        if by_stratum:
-            result["stratified"] = {"by_stratum": by_stratum}
+        strat = _stratified_breakdown(pairs, stratify_by, statistical_alpha=statistical_alpha)
+        if strat is not None:
+            result["stratified"] = strat
+    if schema_stratify_by:
+        schema_strat = _stratified_breakdown(
+            pairs, schema_stratify_by, statistical_alpha=statistical_alpha)
+        if schema_strat is not None:
+            result["schema_stratified"] = schema_strat
 
     return result
 
@@ -1213,6 +1238,28 @@ def _default_corpus_stratify(cell_summaries: list[dict]) -> dict[str, str] | Non
         label = _corpus_label(s.get("corpus") or {})
         for qid in (s.get("per_query") or {}):
             qid_to_label[qid] = label
+    if len({*qid_to_label.values()}) < 2:
+        return None
+    return qid_to_label
+
+
+def _default_schema_stratify(cell_summaries: list[dict]) -> dict[str, str] | None:
+    """Default ``qid -> question_type`` stratum mapping (tempdoc 768 D4).
+
+    A sibling of :func:`_default_corpus_stratify`, keyed on the per-query
+    ``question_type`` schema tag (threaded into each ``per_query`` entry by
+    ``agent_utility_observations`` — tempdoc 768 D4) rather than the corpus
+    signature. Each query's label is its own ``question_type``; a query with no
+    tag contributes no label. Returns ``None`` (no stratification) when every
+    query resolves to the same schema — the single-population no-op contract, so
+    a single-schema cell composes byte-identically to the pre-768 behavior
+    (mirrors the corpus stratifier)."""
+    qid_to_label: dict[str, str] = {}
+    for s in cell_summaries:
+        for qid, pq in (s.get("per_query") or {}).items():
+            qt = (pq or {}).get("question_type")
+            if qt is not None:
+                qid_to_label[qid] = qt
     if len({*qid_to_label.values()}) < 2:
         return None
     return qid_to_label
@@ -1274,8 +1321,13 @@ def _compose_cell(
     # Auto-derived qid -> corpus-signature stratum map (§T.4); None (no field
     # added) unless this cell actually spans more than one corpus signature.
     stratify_by = _default_corpus_stratify(cell_summaries)
+    # Auto-derived qid -> question_type schema stratum map (768 D4); None (no
+    # schema_stratified field added) unless this cell spans >1 schema. Composed
+    # alongside the corpus axis, same generic stratify machinery.
+    schema_stratify_by = _default_schema_stratify(cell_summaries)
     cell = _arm_comparison(
         baseline, primary, stratify_by=stratify_by,
+        schema_stratify_by=schema_stratify_by,
         statistical_alpha=statistical_alpha,
     )
     if cell is None:
@@ -1284,11 +1336,13 @@ def _compose_cell(
     if substitution:
         arms["substitution_c"] = _arm_comparison(
             baseline, substitution, stratify_by=stratify_by,
+            schema_stratify_by=schema_stratify_by,
             statistical_alpha=statistical_alpha,
         )
     if addition:
         arms["addition_b"] = _arm_comparison(
             baseline, addition, stratify_by=stratify_by,
+            schema_stratify_by=schema_stratify_by,
             statistical_alpha=statistical_alpha,
         )
     cell["arms"] = arms

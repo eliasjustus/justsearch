@@ -1071,6 +1071,58 @@ def test_no_stratify_field_when_cell_is_single_corpus():
     assert "stratified" not in cell["arms"]["substitution_c"]
 
 
+# --- Schema-stratified capability-coverage (tempdoc 768 D4) ------------------
+
+def _schema_pq(corrects, question_types):
+    """4-query per_query dict carrying a per-query question_type schema tag."""
+    return {
+        f"q{i}": {
+            "correct": corrects[i], "cost_usd": 0.1, "unique_tokens": 1000,
+            "num_turns": 5, "question_type": question_types[i],
+        }
+        for i in range(4)
+    }
+
+
+def test_compose_cell_schema_stratified_by_question_type():
+    """tempdoc 768 D4: a cell spanning >1 question_type gains a
+    ``schema_stratified.by_stratum`` breakdown keyed on question_type, computed
+    the same way as the corpus ``stratified`` axis and independent of it."""
+    qtypes = ["1_hop", "1_hop", "2_hop", "2_hop"]
+    a_pq = _schema_pq([True, True, False, False], qtypes)
+    c_pq = _schema_pq([True, True, True, True], qtypes)
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="search-XYZ")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    by_stratum = cell["schema_stratified"]["by_stratum"]
+    assert set(by_stratum) == {"1_hop", "2_hop"}
+    # 2_hop is where the tool rescues both queries (A 0/2 -> C 2/2).
+    assert by_stratum["2_hop"]["accuracy"]["baseline"] == 0.0
+    assert by_stratum["2_hop"]["accuracy"]["with_tool"] == 1.0
+    # The corpus axis stays single-population (single corpus) -> no key.
+    assert "stratified" not in cell
+    # Also present on the substitution arm.
+    assert "schema_stratified" in cell["arms"]["substitution_c"]
+
+
+def test_no_schema_stratify_field_when_cell_is_single_schema():
+    """Single-schema cell (or pre-768 evidence lacking question_type) adds no
+    ``schema_stratified`` key — byte-identical to the pre-768 composed shape."""
+    # Uniform question_type across all queries -> single population -> no key.
+    a_pq = _schema_pq([False, True, False, True], ["2_hop"] * 4)
+    c_pq = _schema_pq([True, True, True, False], ["2_hop"] * 4)
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="search-XYZ")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
+    assert "schema_stratified" not in cell
+    assert "schema_stratified" not in cell["arms"]["substitution_c"]
+    # And when question_type is absent entirely (pre-768 per_query), still no key.
+    a_pq2, c_pq2 = _cell_pq([False, True, False, True], [True, True, True, False])
+    rec2 = utility_comparison.compose_utility(
+        [_summary("A", a_pq2), _summary("C", c_pq2, search_key="s")], composed_at="t")
+    assert "schema_stratified" not in rec2["measured"]["mixed/multihop-rag"]["haiku"]
+
+
 # --- Inspect-AI execution path (tempdoc 624 execution design) ----------------
 
 def test_inspect_path_roundtrip(tmp_path):
