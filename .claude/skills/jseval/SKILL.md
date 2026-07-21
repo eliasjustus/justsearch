@@ -304,8 +304,9 @@ a run feeds `union_recall` / `leak_floor` gates, or is compared against a
 threshold derived elsewhere, pass all three leg modes:**
 `--modes lexical,vector,splade,hybrid --embedding --splade`. Calibration
 runs additionally require `--embedding` with `hybrid` as the headline
-mode (`docs/tempdocs/707-pillar1-inband-utility-corpus.md:491-492`). Full
-write-up: `docs/tempdocs/767-certification-runbook.md` §1 B4.
+mode. The structural check is satisfied by two legs, so an omitted
+`splade` produces a green-looking projection with a silently lowered
+`leg_union_recall` — every `union_recall` gate then fails after the run.
 
 ## What jseval Handles
 
@@ -393,8 +394,7 @@ against **cwd** (`commands/corpus.py:184-197`). Materializing into
 `FileNotFoundError: corpus.jsonl not found at <repo-root>/datasets/...`.
 Materialize into the **repo-root `datasets/`** and pass `--datasets-dir`
 as an absolute path. Both `datasets/` and `datasets-*/` are gitignored,
-so nothing there survives a fresh checkout. See
-`docs/tempdocs/767-certification-runbook.md` §1 B5.
+so nothing there survives a fresh checkout.
 
 ## Output Structure
 
