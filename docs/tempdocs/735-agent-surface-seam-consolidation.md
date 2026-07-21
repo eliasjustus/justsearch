@@ -478,6 +478,30 @@ this tempdoc's thesis:
    Consequences: (a) a server-side response-size governor is a real product item; (b) any
    future full-passage parity proposal must argue against the truncation cliff, not just token
    cost. Posture: versioned recorded fixtures + refresh probe + per-campaign tier capture.
+
+   **CAP NOW CHARACTERIZED (2026-07-21, tempdoc 770 §E.3 — closes this item's "unknown
+   threshold/notice/layer" caveat at `735:501-504`).** Measured live through the real CLI
+   via this file's own `experiments/delivery_tier_probe_735.py` (extended with opt-in
+   `--search-limit` / `--search-query` for a size sweep, both refusing `--write-fixtures`):
+   **46,617 chars delivered as `structured-json`; 52,825 chars replaced by a prose notice
+   of exactly 2,322 chars with `delivered_fields: null`.** So the threshold lies in
+   **(46.6k, 52.8k]** — a round 50,000 is the natural guess but is *not* measured. The
+   notice length reproduces this item's ~2.3KB observation (2,286 → 2,322; likely a CLI
+   version delta). "Neither tier arrives" is confirmed, not inferred: `delivered_fields`
+   is null past the cap.
+
+   Consequence for (a): a governor can now be designed against a real budget rather than
+   an unknown. 770 deliberately did **not** build it — it removed ~16–31% of the payload
+   instead, which measurably moves `limit:30` verbose queries from cliffed to delivered
+   (pre-770 53,756 → post-770 44,603). The cliff still bites at `limit:50` on verbose
+   corpora, so the governor remains a real open item, now with a number.
+
+   Also fixed while here: `_write_fixtures` hard-coded `mcp_tool_surface_version: None`,
+   so every recorded fixture this posture produced was blind to surface drift — the
+   0.4.0 fixtures went on asserting a removed response shape under
+   `provenance: "recorded"` and nothing detected it. The stamp is now read from the
+   `initialize` handshake, and the probe refuses to write a capture taken while the
+   backend served a degraded retrieval path.
 4. **Environment intent works end-to-end.** The reaper incident (first labeled kill via 730
    stop reports: `reaped_abandoned` mid-enrichment) closed G6's real gap same-day — declared
    holds now govern both the lease and the reaper. Prior "takeover deaths" likely include
