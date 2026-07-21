@@ -1,7 +1,7 @@
 ---
 title: "eval validity lane: does the instrument measure what we think — question-level discrimination (the email null), judge error rate (local-model re-judge), and the noise floor / power at n=60"
 type: tempdocs
-status: "chartered (2026-07-21). Awaiting lane orchestrator pickup."
+status: "EXECUTED (2026-07-21, same day — orchestrator-run: opus worker for §A.1/§A.3/§A.4 + mechanism probe worker + inline judge adjudication). Judge audit closed at zero cost; see §E Results."
 created: 2026-07-21
 author: agent (Fable orchestration), founder-directed analysis program (umbrella: 762)
 category: eval-analysis / eval-design
@@ -91,3 +91,47 @@ related:
   never raw-Read.
 - Statistical work is main-loop judgment; transcript/qid bulk reads are worker
   tasks (pin models per CLAUDE.md routing).
+
+## §E. Results (2026-07-21)
+
+Artifacts: `tmp/analysis-624/764/` (per-qid outcome matrix across 14 runs,
+email qid classification, power tables, dead/ceiling lists, mechanism
+findings). Every ITT number reproduced the umbrella §A table exactly.
+
+**Structural finding that reframed the lane:** the production scorer is
+`substring_scorer` (gold string ⊆ answer), NOT an LLM judge. §A.2 therefore
+collapsed from a re-judging campaign to adjudicating 4 FN suspects — done
+inline, all four resolved as CORRECT rejections: 3 were number-only answers
+whose numeric suffix is derivable from the designer's name (the
+`corpus_generate.py:320-323` naming leak) with zero tool calls ever touching
+the hop-2 doc (verified across all 3 epochs each — the agents fabricated
+file citations around pattern-guesses); 1 was a give-up with coincidental
+word hits. **Effective judge error ≈ 0/1,269 completed cells; the v5 ITT
+table needs no correction.** The scorer's full-string requirement is
+currently the ONLY thing neutralizing the naming leak — the leak dies in the
+767 rebuild.
+
+**Email verdict: the null is a vocabulary confound, not a domain finding.**
+The corpora are identical by construction (same generator/seed/gold
+templates; only the 960 real distractors differ). The fabricated questions'
+architecture/geography vocabulary floods legal text (`spa` = 22% of legal
+docs) and is near-absent from Enron — so baseline grep drowns in legal
+(43/60 baseline cells open neither gold doc) and cruises in email. Once both
+gold docs are found, both corpora solve at 74–100% — finding, not
+extraction, is the bottleneck; the with-tool uplift's mechanism is "the
+engine cuts through distractor flood grep can't." Recommendation upgraded
+from replace-or-demote to **rebuild with domain-matched (camouflaged)
+vocabulary** — tempdoc 767; demoting would bank an artifact as a domain
+finding.
+
+**Power/noise:** exact McNemar at n=60 reliably sees Δ≥0.20 (power 0.89 at
+discordant rate 0.25) but is badly underpowered for Δ≤0.15 (n@80%: 92 for
+Δ=0.15, 208 for Δ=0.10; 32 for Δ=0.25). Test-retest: legal-1k Δ sd 0.024
+(real signal), email sign-unstable inside noise. §P.5's "+0.255 vs +0.167"
+was paired-vs-ITT, not test-retest — never pool the two estimands.
+
+**Dead/ceiling:** legal-10k has 9/20 dead qids (never answered by any arm in
+any campaign — the haiku hop-2 floor), halving its visible delta (0.094
+full vs 0.172 live, 1.8×); legal-1k 4/20; email ~0; ceiling = 0 everywhere.
+Superseded as a standalone lever by the 767 rebuild (which replaces the
+question set wholesale) — recorded here as the dilution mechanism.
