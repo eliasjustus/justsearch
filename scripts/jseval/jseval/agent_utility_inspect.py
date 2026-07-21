@@ -70,6 +70,7 @@ from jseval.agent_retrieval_eval import (
     stage_corpus_dir,
 )
 from jseval.agent_utility_observations import WITH_TOOL_CONDITIONS
+from jseval.utility_governance import RESOURCE_EXHAUSTION, classify_error_kind
 from jseval.utility_calibrate import (
     assert_mcp_config_http_typed,
     assert_watched_roots_scoped,
@@ -429,7 +430,7 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
         return {"attempts": {}, "results": {}, "texts": [], "rmsg": None,
                 "mcp_servers": None, "justsearch_tools": [],
                 "justsearch_tool_surface": [], "surface_evidence": None,
-                "resolved_models": set()}
+                "resolved_models": set(), "usage_accum": {}}
 
     async def _one_attempt(condition: str, prompt: str, disallowed: list[str], capture: dict) -> None:
         """Run one SDK session, writing captured objects INCREMENTALLY into the shared
@@ -458,6 +459,19 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                     if isinstance(msg, AssistantMessage):
                         if getattr(msg, "model", None):
                             capture["resolved_models"].add(msg.model)
+                        # tempdoc 757: accumulate a partial token LOWER BOUND from the
+                        # streamed per-message usage so a cell KILLED before its terminal
+                        # ResultMessage (wall-clock cancel) still carries some usage. Use
+                        # per-field MAX, not SUM: MAX is a valid lower bound whether the
+                        # SDK's `usage` is per-turn (max_turn <= sum_turns = true) or
+                        # cumulative (max = last = true); SUM would over-count under
+                        # cumulative semantics -> over-state cost -> anti-conservative.
+                        _u = getattr(msg, "usage", None)
+                        if isinstance(_u, dict):
+                            _acc = capture["usage_accum"]
+                            for _k, _v in _u.items():
+                                if isinstance(_v, (int, float)) and not isinstance(_v, bool):
+                                    _acc[_k] = max(_acc.get(_k, 0), _v)
                         for b in (msg.content or []):
                             if isinstance(b, ToolUseBlock):
                                 capture["attempts"][b.id] = {"tool": b.name, "input": b.input}
@@ -538,6 +552,21 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
         state.metadata["attempts"] = attempt
         if first_error is not None:
             state.metadata["first_error"] = first_error
+        # tempdoc 757: flag a resource-exhausted cell whose cost/tokens survived as a
+        # partial LOWER BOUND (usd-budget: cost + tokens from the is_error ResultMessage;
+        # wall-clock: tokens from the streamed usage accumulation). Stamped here, after
+        # `_record_cell` (whose is_error path early-returns), so BOTH exhaustion shapes are
+        # covered from one site. The composer treats a lower bound as exact only in the
+        # conservative baseline-arm direction; a `None`-usage residual `other` error stays
+        # unflagged. `working_time`/`total_time` are read off the sample, not here.
+        _final_error = state.metadata.get("error")
+        if (
+            _final_error is not None
+            and classify_error_kind(_final_error) == RESOURCE_EXHAUSTION
+            and (state.metadata.get("cost_usd") is not None
+                 or state.metadata.get("unique_tokens") is not None)
+        ):
+            state.metadata["usage_truncated"] = True
         return state
 
     return solve
@@ -987,6 +1016,10 @@ def _record_cell(state: TaskState, got: dict, condition: str,
         state.metadata.update({
             "cost_usd": getattr(rmsg, "total_cost_usd", None),
             "num_turns": getattr(rmsg, "num_turns", None),
+            # tempdoc 757: set tokens here, BEFORE the is_error early-return below, so a
+            # usd-budget-exhausted cell (which DOES deliver an is_error ResultMessage)
+            # keeps its cache-creation token count instead of dropping it at the return.
+            "unique_tokens": usage.get("cache_creation_input_tokens"),
         })
         if getattr(rmsg, "is_error", False):
             # Forensically complete (tempdoc 675): a bare "result error: None" is
@@ -1003,10 +1036,18 @@ def _record_cell(state: TaskState, got: dict, condition: str,
                 "error", (f"result error: {str(getattr(rmsg, 'result', ''))[:200]} | {err_bits}")[:600])
             return
         state.output.completion = getattr(rmsg, "result", "") or ""
-        state.metadata["unique_tokens"] = usage.get("cache_creation_input_tokens")
     else:
         state.metadata.setdefault(
             "error", "no ResultMessage (stream ended without a terminal result)")
+        # tempdoc 757: no terminal ResultMessage (wall-clock cancel) -> fall back to the
+        # partial token LOWER BOUND accumulated from the streamed AssistantMessages. Cost
+        # is genuinely unrecoverable here (it lives only on the ResultMessage), so it stays
+        # null and the composer fails the cost interval closed for this cell.
+        accum = got.get("usage_accum") or {}
+        if accum:
+            state.metadata.setdefault("usage", accum)
+            if state.metadata.get("unique_tokens") is None:
+                state.metadata["unique_tokens"] = accum.get("cache_creation_input_tokens")
 
 
 @scorer(metrics=[accuracy()])

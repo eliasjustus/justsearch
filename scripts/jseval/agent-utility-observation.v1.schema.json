@@ -24,6 +24,10 @@
     "first_error_class": {"type": ["string", "null"]},
     "correct": {"type": "boolean"},
     "cost_usd": {"type": ["number", "null"], "minimum": 0},
+    "usage_truncated": {
+      "type": ["boolean", "null"],
+      "$comment": "tempdoc 757: TRUE when this cell is a resource-exhausted (wall-clock / usd-budget) API session whose recorded token/cost usage is a partial LOWER BOUND captured up to the kill point, not the complete session accounting. Optional and emitted ONLY when true -- absent (=> None) on every completed cell and on all pre-757 evidence, so historical records project byte-identically. The composer (utility_recompose) may treat a lower bound as exact only when doing so cannot flatter the with-tool arm (baseline-arm truncation is conservative for a B-favouring efficiency claim; any with-tool-arm truncation is anti-conservative and forces the efficiency intervals unavailable, fail-closed)."
+    },
     "working_time": {"type": ["number", "null"], "minimum": 0},
     "total_time": {"type": ["number", "null"], "minimum": 0},
     "provider_usage": {"type": "object"},
