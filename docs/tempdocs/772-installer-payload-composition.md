@@ -634,6 +634,111 @@ fast-tracking ahead of the big Q1/Q2 decision: stripping §G's Linux native bina
   correctly end-to-end with the new mode, including under `/S` silent install" has not been built and
   tested — mechanically trivial, verification is not.
 
+## §Theorize — broader framings, alternative directions, and hidden assumptions (2026-07-21)
+
+Run via `/theorize`, before any design is settled. Nothing below is a recommendation or a decision —
+it's the space of ideas worth having in view when the owner (or a future implementer) does settle one.
+
+### A governing distinction the tempdoc has been circling without naming: waste vs. tradeoff
+
+§A-§F's original options (O0-O5) are all genuine tradeoffs — moving `tesseract`/`llama-server` trades
+installer bytes against first-run UX and signing cost. There's a real decision to make, and reasonable
+people could land on either side. §G's Linux native binaries are a **different kind of thing**: nobody
+chose to ship them, no UX or functionality depends on them, and no counter-argument for keeping them
+was found. §H's WebView2 sizing is somewhere in between — a real default someone picked (for good
+reasons: no install-time network dependency), just never revisited as the runtime grew.
+
+Naming this distinction explicitly might be more useful than the O0-O5 framing alone: **"is this bytes
+someone decided to ship for a reason, or bytes that accumulated because no one had cause to look?"**
+The former deserves the full options-and-tradeoffs treatment this tempdoc already gives O0-O5. The
+latter deserves a much lower-friction path — closer to a bug fix than a product decision. Reading
+§G and §H through this lens is *why* they were flagged as fast-track candidates rather than folded
+into the O0-O5 option set — but the tempdoc never said so explicitly until now.
+
+### Alternative solution shapes not yet considered
+
+The tempdoc's option space (§Options) is built entirely around one axis: *bundled now vs. downloaded
+later, after first launch*. A few structurally different shapes exist that weren't on that axis:
+
+1. **Install-time component selection (NSIS-native).** NSIS supports a classic component-picker page
+   — the installer itself could ask "Chat (requires ~9 GB)? OCR?" as checkboxes *during* setup,
+   using the same consent moment as today's post-launch prompt, just moved earlier. This sidesteps
+   Q3's pack-mechanism engineering gaps entirely (no new tier semantics, no preflight-severity model
+   needed) at the cost of a real limitation: a component picker doesn't survive silent (`/S`) install,
+   so winget/scripted installs would need a hardcoded default selection, which reintroduces a version
+   of Q1 (what does the silent/default path ship?) in a different guise. Worth having in view as a
+   materially different mechanism from "pack download," not just a smaller version of it.
+2. **Bootstrapper-first setup** — the opposite extreme from the status quo. Instead of one large
+   installer with some content deferred, ship a genuinely tiny launcher that downloads everything
+   (search core, chat runtime, OCR) through a guided first-run wizard with visible progress — closer
+   to how some modern desktop apps handle large runtimes. This turns the network dependency from a
+   surprise after install into the explicit main event of setup, which might resolve the Q1/Q2 tension
+   by changing the frame rather than answering it within the current one. It's a much bigger
+   architectural lift (changes what "the installer" *is*, interacts with 760's signing/trust
+   questions in new ways) — named here as the north star of one direction, not a proposal.
+3. **Gradle Artifact Transforms, as an alternative mechanism for the §G jar fix.** The derisk pass
+   sketched a hand-rolled `Jar`/`Zip` task consuming the resolved `onnxruntime_gpu` jar. Gradle's
+   built-in Artifact Transform API exists specifically for "make a resolved dependency smaller/
+   different without changing its coordinates," is cacheable, and would apply uniformly wherever the
+   dependency resolves rather than needing separate wiring at each staging site. Worth a real look
+   before committing to the hand-rolled task if/when this is implemented — not evaluated in depth
+   here, but a strictly more idiomatic-Gradle alternative to the mechanism the derisk pass exercised.
+4. **Upstream engagement, as a slower parallel track.** The Linux-binary bloat in `onnxruntime_gpu`
+   is a known shape of complaint for other JVM consumers of this artifact (a multi-platform fat jar
+   is how Microsoft publishes it, confirmed from source during the derisk pass). Filing or finding an
+   upstream issue asking for a per-OS classifier is a legitimate parallel path to a local repackaging
+   fix — slower, not guaranteed, but the actual fix rather than a local workaround, and useful even if
+   JustSearch repackages locally in the meantime.
+
+### Hidden assumptions and risks not yet named
+
+- **"Smaller installer is strictly better" is itself an assumption.** Every post-install download this
+  tempdoc's options add is a new failure point (partial download, network hiccup, a user confused
+  about why a feature "doesn't work yet"). There is a real tension between *download size* and
+  *number of moving parts / predictability of the first-run experience* that the options table doesn't
+  price in — reducing MB is not free of cost even when it looks free of tradeoff.
+- **Repackaging a vendored third-party binary (§G) has an auditability cost the licensing check
+  didn't cover.** MIT permits the modification (§Corrections item 8), but a security-conscious user
+  can no longer verify the shipped `onnxruntime_gpu` bytes against Microsoft's published artifact
+  hash once it's been repackaged — the installer would contain a custom-built artifact instead of a
+  verifiable upstream one. Minor in absolute terms (it's already inside a larger unsigned-by-us
+  installer today), but worth naming since "MIT license, so no legal issue" isn't the same claim as
+  "no auditability cost."
+- **Removing the offline WebView2 installer (§H) may disproportionately affect exactly the audience
+  this product is built for.** JustSearch's own pitch is offline-first, privacy-first, local search.
+  A user who deliberately runs an air-gapped or bandwidth-constrained machine — plausibly overrepresented
+  among people drawn to that pitch specifically — is exactly who loses the most from trading the
+  offline installer for a smaller download. This is a real tension between the size-optimization goal
+  and the product's own stated values, not just an edge case to note in passing.
+
+### A broader principle this tempdoc's evidence points toward, without settling it
+
+Every capability this investigation touched — Tesseract, the CPU llama-server runtime, the CUDA
+runtime pack, the ONNX Runtime GPU providers, and now WebView2 — is an **optional capability with its
+own bespoke delivery decision**: build-time bundling behind a Windows-host gate, a consent-gated
+download with hardcoded GPU-tier semantics, an embedded jar, or an embedded installer, each invented
+independently as the need arose. Q3's investigation already surfaced one symptom of this (the pack
+mechanism's tier model assumes "optional and GPU-gated," so it can't yet represent "required and
+hardware-independent" without new work).
+
+A more general shape may be worth having in view for later: a single **capability-delivery lifecycle**
+— declare a capability's tier (always-required / hardware-optional / feature-optional), its size, and
+its activation trigger, and have every one of these payloads (Tesseract, llama-server-cpu,
+cuda-runtime, onnxruntime GPU providers, and even WebView2) expressed as an instance of the same model
+rather than a one-off mechanism. This is **not a design proposed here** — it's a pattern the accumulated
+evidence makes visible, worth recognizing if a future design session reaches for it independently
+rather than re-deriving it from scratch.
+
+### A meta-observation: this investigation was archaeology, not monitoring
+
+Two of this tempdoc's three largest findings (§G, §H) were only found because a takeover investigation
+happened to re-extract and manually inspect a real installer artifact, byte by byte, by hand, three
+times over. Nothing about installer composition is visible on an ongoing basis today — no CI step
+reports "here is what's inside this release's installer and how it changed since the last one." That
+gap is a separate, smaller idea worth sketching on its own rather than folding into this tempdoc's
+already-large scope — see tempdoc 773 (`773-installer-composition-observability.md`), sketched
+alongside this theorization pass, not chartered or decided.
+
 ## §Takeover verdict (2026-07-21)
 
 **Method.** Independently re-verified this tempdoc's evidence rather than taking it on faith:
