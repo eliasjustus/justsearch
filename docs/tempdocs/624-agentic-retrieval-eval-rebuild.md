@@ -4948,9 +4948,11 @@ conservative-direction gating incl. duration/turns (757, #254 + #259). Chain:
 `scripts/jseval/chain-confirm-v5.bat` (this PR).
 
 **Launch gates (both founder-explicit, in order):** (1) ratify the v2 amendment into the
-checked-in policy (file-swap + changeset; the draft is
-`scripts/jseval/utility-claim-policy.v2-draft-755.proposed.json`); (2) explicit launch
-authorization (~$90–100). Amendments to this pre-registration before any measured cell follow
+checked-in policy (file-swap + changeset; the draft was
+`scripts/jseval/utility-claim-policy.v2-draft-755.proposed.json`) — **SATISFIED 2026-07-21**
+(founder-authorized): ratified as `agent-utility-public-v2` in
+`scripts/jseval/utility-claim-policy.v1.json`, the `.proposed` draft deleted, digests re-pinned
+(tempdoc 755 §J); (2) explicit launch authorization (~$90–100). Amendments to this pre-registration before any measured cell follow
 the established dated-amendment convention; nothing may change after the first measured cell.
 
 **Analysis plan:** identical to the confirmatory campaign (per-stratum ITT tables, McNemar

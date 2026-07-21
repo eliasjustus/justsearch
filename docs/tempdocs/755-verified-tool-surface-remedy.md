@@ -1,7 +1,7 @@
 ---
 title: "verified_tool_surface is structurally unsatisfiable at current SDK flake rate — capture hardening first, staged policy amendment as the ready-to-ratify fallback"
 type: tempdocs
-status: "Track 1 IMPLEMENTED (2026-07-21, unit-tested; live smoke pending, orchestrator-run). Track 2 draft authored (unratified, inert). ONLY the policy-amendment ratification (§D) is founder-gated."
+status: "RATIFIED 2026-07-21 (founder-authorized): the rate-based verified_tool_surface amendment is now the ACTIVE policy (agent-utility-public-v2); the .proposed draft is deleted, folded into utility-claim-policy.v1.json — see §J. Track 1 capture-hardening + Track 2 evaluator support both IMPLEMENTED and merged prior."
 created: 2026-07-18
 author: agent (Fable orchestration), chartered after the 624 confirmatory campaign's rejected verdict; founder-directed handoff ("proceed accordingly", 2026-07-18)
 category: eval-infrastructure / claim-policy / agent-utility
@@ -16,6 +16,12 @@ related:
 > before building.
 
 # 755 — verified_tool_surface remedy
+
+> **RATIFIED 2026-07-21 (founder-authorized) — see §J.** The Track-2 rate-based amendment is now
+> the ACTIVE policy `agent-utility-public-v2` (`scripts/jseval/utility-claim-policy.v1.json`); the
+> `utility-claim-policy.v2-draft-755.proposed.json` draft has been DELETED (folded into the active
+> file). Dated implementation-log references to the `.proposed` draft in §C–§H below are preserved
+> as history — the file no longer exists; §J is the authoritative forward record.
 
 ## §A. Problem (measured, 2026-07-18)
 
@@ -278,3 +284,53 @@ v1 branch is unchanged: `"observed": <bool>, "threshold": true`.
   `test_correction_probe.py::TestLoadManifest` pair (missing data file, expected-state.v1.json). No new failures.
 - Offline only; no dev stack / API spend. Draft remains inert (`policy_path()` hardcodes v1; grep of
   `scripts/jseval/jseval` for `v2-draft-755` = 0 hits).
+
+## §J. RATIFIED (2026-07-21, founder-authorized)
+
+Founder authorization on record (2026-07-21): *"fix the loose ends you mentioned. then ill authorise
+you to ratify and swap what you mentioned. once nothing else remain, you can launch"* — the
+ratification target defined in §C/§F here and in the 624 relaunch pre-registration (launch-gate (1),
+merged #260). The §D founder gate is thereby satisfied, and launch-gate (1) of the 624 relaunch
+pre-registration is marked SATISFIED.
+
+### What changed
+- **Active policy swapped in place.** `scripts/jseval/utility-claim-policy.v1.json` now carries
+  `policy_id: agent-utility-public-v2`, `thresholds.minimum_surface_verification_rate: 0.9`, and the
+  `verified_tool_surface_semantics` block (evaluator-aligned; the draft-only `draft_note` /
+  `evaluator_status` / `activation_note` fields stripped). `status` stays `active`; the required
+  four-stratum matrix, all other thresholds, and requirements are BYTE-UNCHANGED from the v1
+  activation. `schema`/`schema_version` stay `utility-claim-policy.v1` / `1` (same governing schema).
+- **Draft deleted.** `scripts/jseval/utility-claim-policy.v2-draft-755.proposed.json` removed — its
+  purpose (a ready-to-ratify fallback) is served. Per retire-with-a-sweep, the `.proposed` /
+  `v2-draft-755` references remaining in §C–§H are dated implementation-log history, labeled at
+  document scope by the banner under the H1 and this section; the file itself no longer exists.
+- **Schema extended.** `utility-claim-policy.v1.schema.json` gained optional
+  `thresholds.minimum_surface_verification_rate` (number 0–1) and top-level
+  `verified_tool_surface_semantics` (object) so the ratified shape validates (both `additionalProperties:
+  false` scopes previously rejected the new keys). Schema is not digest-covered — no verdict moves from
+  this.
+- **Evaluator unchanged.** The rate branch (`utility_claim_policy.py:394-449`, merged inert in #257)
+  now fires against the checked-in active policy because the threshold key is present. No code change was
+  needed to activate it — ratification is the config flip §H predicted.
+
+### Digest re-pins (old → new) — SAME class as the #243/624 activation re-pin (cited precedent)
+`claim_verdict` carries digest-covered `policy_id` + `policy_hash`, so swapping the active policy moves
+any record's composed digest.
+
+| Artifact | Old | New |
+|---|---|---|
+| Active policy digest (`policy_digest`) | `80b9a6b9c52bbac515084732cf1f95b96c3369d96a7f6c9656b4a0210244d86e` (v1) | `b3697c7aa49e171c405f42cac7cbbda2396f71eb5edf3ea55136455006c6e01e` (v2) |
+| Rejected-2026-07-12 fixture `semantic_digest` (`test_historical_fixture_semantic_digest_repinned_after_624_itt_change`) | `2be7446c70b1177353a0c2f1bf127d4d2519299fc4c1d5166ec1ed26bf4071f5` | `3d0bf53b1f205bd8e811cd55c74255664468dddda9dd70b689bcb2fbd390f62b` |
+
+The fixture stays REJECTED (its strata cannot match the confirmatory matrix); only its digest moved.
+
+### Tests
+- `test_checked_in_policy_is_active_confirmatory_four_stratum` re-pinned to the v2 shape (`policy_id ==
+  agent-utility-public-v2`, `minimum_surface_verification_rate == 0.9`).
+- New `test_checked_in_active_policy_evaluates_surface_via_rate_branch` (task-4): the CHECKED-IN active
+  policy's `verified_tool_surface` gate evaluates via the rate branch (observed `{rate, verified,
+  total}`, threshold `0.9`), not only the synthetic `_rate_policy` fixture.
+- `test_verified_tool_surface_v1_gate_is_bool_and_fails_on_unverified_cell` reconstructs a v1-shaped
+  policy (pops the rate threshold) so the still-live None-threshold bool branch keeps coverage.
+- Affected files: 108 passed. Full jseval suite green except the pre-existing known-RED
+  `test_correction_probe` pair.
