@@ -115,9 +115,9 @@ ABANDONING the tool for filesystem grep. No late-start class exists.
 median AND p95 = 1 in all strata; do not add "encourage tool use"
 scaffolding. (2) Search payloads eat the synthesis budget: median ~13k
 chars/result-set, ~15–20k tokens/cell on payloads → snippet-economy +
-`fetch(doc_id)` lever (tempdoc 770). (3) `mcp_call_share` ≈ 0.5 — the B-arm
+`fetch(doc_id)` lever (tempdoc 770 — **lever WITHDRAWN 2026-07-21; `hit.id` is the filesystem path, so `fetch(id)` returns a file the agent can already `Read`. 770 shipped payload reduction instead**). (3) `mcp_call_share` ≈ 0.5 — the B-arm
 re-Reads full files after search (157 full-file Reads at legal-10k, max 92k
-chars) → passage-span/salience lever (770).
+chars) → passage-span/salience lever (770 — **WITHDRAWN 2026-07-21: the CLI delivers structuredContent only, so the text tier this lever reshaped never reaches the model. 770 §A.2 also re-tested the CAUSE: 50.3% of post-search Reads (N=862) target documents search never returned, so read-amplification is routed to the ENGINE lane, not the surface**).
 
 **Campaign options (DRAFT; price basis 2026-06; n finalized by 764 power).**
 haiku actual $0.187/cell; sonnet intro (≤2026-08-31) ~$0.37, standard ~$0.56;
