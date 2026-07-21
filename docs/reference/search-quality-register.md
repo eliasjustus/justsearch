@@ -789,6 +789,35 @@ above)*
   neighborhood, different stages.
 - **Owner / fix lane:** tempdoc 769 (engine lane, chartered 2026-07-21). Acceptance: the 17 B2
   cells' issued queries reach agent-visible top-k on replay, no regression on register baselines.
+- **DIAGNOSIS UPDATE (2026-07-21, tempdoc 769 §E — M1/M2/M3, ~$0 on pinned campaign indexes):** the
+  "near-duplicate decoys outrank gold" mechanism in this finding's headline did NOT survive the depth
+  probe — burial is by genuine CLERC hard negatives; the root causes decompose as: (a) DOMINANT: a
+  missing two-hop JOIN KEY — the answer doc is reachable ONLY via the designer name (oracle: rank 1–2
+  in hybrid AND lexical for every qid once the name is queried), which structure-phrased queries never
+  carry → routes to the tool-surface two-step affordance (tempdoc 770), not engine ranking; (b) a
+  bounded, real fusion-leak residue — in 3/17 cells a leg had gold ≤20 (q3: vector both golds ≤10)
+  while hybrid buried it to 23–24 (D-005 "fusion is a ranking step, not a recall gate"), and 10/17
+  more had the bridge doc at rank 21–100 in a semantic leg; (c) 4/17 cells are representation-floor
+  (no leg, any depth — F-030 territory, paraphrase barrier × weak-dense-on-legal), pending re-test on
+  the 767 camouflaged rebuild (corpus-artifact modifier). Lane restructuring pending founder decision;
+  the (b) residue is the surviving engine-owned item.
+- **ROUTING CORRECTION (2026-07-21, tempdoc 770 §E.4):** (a) above routes to *"the tool-surface
+  two-step affordance (tempdoc 770)"* — **770 will not deliver that affordance.** 770 measured that
+  the MCP surface's `hit.id` **is the filesystem path** (byte-identical in 14,617/14,617 hits), so the
+  proposed `justsearch_fetch(id)` reduces to `fetch(path)` — a tool returning a file the agent can
+  already `Read`, in a channel it already has. `fetch` is **withdrawn**, not deferred. **What (a)
+  actually needs is unowned:** the second hop requires the *bridge entity's name* to reach the agent
+  so it can re-query. That is a retrieval/evidence-content question (does the returned excerpt carry
+  the designer name?), not a tool-shape one — and 770's own §A.2 measurement points the same way:
+  **50.3% of post-search Reads (N=862) targeted documents search never returned**, i.e. the dominant
+  agent-side failure is retrieval coverage, not surface ergonomics. Do not wait on 770 for (a); it
+  needs an owner.
+- **OWNER ASSIGNED (2026-07-21, founder-approved routing):** tempdoc **771** (post-rebuild retrieval
+  residue) now owns (a) the join-key/evidence-content item, (b) the fusion-burial residue, and the
+  read-amplification item 770 routed out — all HARD-GATED on 767's rebuilt strata (every magnitude
+  above is a property of the uncamouflaged corpus; re-measure before design). Tempdoc 769's original
+  acceptance criteria are retired; its M5 floor-cell retest moves into 771 §C.1. F-039's resolution
+  note lands when 771's re-measurement pass rules each component fixed/shrunk/representation-bound.
 
 ### F-038: RAG chunk retrieval was blind to chunkless (sub-2000-char) docs — a doc-level union leg into the PRIMARY RAG candidate set fixes it with no re-index; interactive hybrid on-baseline (tempdoc 749, 2026-07-18)
 
