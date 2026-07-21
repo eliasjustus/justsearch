@@ -26,7 +26,9 @@ import asyncio
 import json
 import hashlib
 import os
+import random
 import subprocess
+import time
 import types
 from pathlib import Path
 
@@ -876,22 +878,33 @@ def test_source_identity_captures_and_rechecks_corpus_certification(tmp_path, mo
 
 def _dataset_root(base: Path) -> Path:
     """A minimal dataset ROOT (corpus.jsonl + qrels/test.tsv) — dataset-dir mode
-    signable by corpus_signature."""
+    signable by corpus_signature. BEIR `_id` keys so the corpus-dir derivation check
+    (`_verify_corpus_dir_derivation`) can re-materialize each doc."""
     root = base / "dataset-root"
     (root / "qrels").mkdir(parents=True)
     (root / "corpus.jsonl").write_text(
-        '{"id":"d1","text":"body one"}\n{"id":"d2","text":"body two"}\n', encoding="utf-8")
+        '{"_id":"d1","title":"","text":"body one"}\n'
+        '{"_id":"d2","title":"","text":"body two"}\n', encoding="utf-8")
     (root / "qrels" / "test.tsv").write_text("q1\t0\td1\t1\n", encoding="utf-8")
     return root
 
 
 def _staged_child(root: Path) -> Path:
     """The leak-safe staged subdir: an immediate child of `root` holding exploded
-    text only (no corpus.jsonl/qrels — so it is NOT itself a dataset root)."""
+    text only (no corpus.jsonl/qrels — so it is NOT itself a dataset root).
+
+    A FAITHFUL derivation of `root/corpus.jsonl` — materialized through the same
+    `materialize.materialize` production uses (so the sentinel + exact per-doc bytes
+    match), which the root-mode derivation check now enforces."""
+    from jseval import materialize as mat_mod
+
     staged = root / "corpus-dir"
-    staged.mkdir()
-    (staged / "d1.txt").write_text("body one", encoding="utf-8")
-    (staged / "d2.txt").write_text("body two", encoding="utf-8")
+    docs = [
+        json.loads(line)
+        for line in (root / "corpus.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    mat_mod.materialize(iter(docs), staged, skip_existing=False)
     return staged
 
 
@@ -1038,6 +1051,155 @@ def test_source_identity_root_mode_attaches_certification_that_declared_mode_rej
     with pytest.raises(ValueError, match="corpus_certification|signature"):
         aui._capture_or_load_source_identity(
             log_dir=str(tmp_path / "logs-declared"), corpus_root=None, **kwargs)
+
+
+# --- corpus-dir derivation check (tempdoc 624 identity hardening) --------------------
+#
+# Root mode signs corpus.jsonl but only ATTESTS the exploded corpus-dir the agents read.
+# `_verify_corpus_dir_derivation` fails CLOSED unless the corpus-dir is the derivation of
+# corpus.jsonl (exact file set + deterministically-sampled content).
+
+
+def _faithful_dataset(base: Path, n_docs: int) -> tuple[Path, Path]:
+    """A dataset ROOT + its FAITHFULLY-materialized corpus-dir (n_docs docs).
+
+    corpus.jsonl is the BEIR source; corpus-dir is produced through the same
+    `materialize.materialize` production uses, so it is a genuine derivation (sentinel
+    + exact per-doc bytes) — the intact baseline the check must accept."""
+    from jseval import materialize as mat_mod
+
+    root = base / "ds"
+    (root / "qrels").mkdir(parents=True)
+    docs = [{"_id": f"d{i}", "title": "", "text": f"body of document number {i}"}
+            for i in range(n_docs)]
+    with (root / "corpus.jsonl").open("w", encoding="utf-8") as f:
+        for d in docs:
+            f.write(json.dumps(d, ensure_ascii=False) + "\n")
+    (root / "qrels" / "test.tsv").write_text("q1\t0\td0\t1\n", encoding="utf-8")
+    staged = root / "corpus-dir"
+    mat_mod.materialize(iter(docs), staged, skip_existing=False)
+    return root, staged
+
+
+def _sampled_doc_ids(base: Path, n_docs: int, sample_n: int) -> list[str]:
+    """Reproduce the check's deterministic sample (seed = corpus signature) so a test
+    can target a doc that IS vs is NOT in the sample. `_faithful_dataset` content is
+    deterministic in `n_docs`, so this signature equals every `_run`'s signature."""
+    from jseval.corpus_identity import corpus_signature
+
+    root, _ = _faithful_dataset(base, n_docs)
+    sig = corpus_signature(root)
+    rng = random.Random(int(sig[:16], 16))
+    idx = rng.sample(range(n_docs), min(sample_n, n_docs))
+    return [f"d{i}" for i in idx]
+
+
+def test_derivation_check_passes_on_faithful_corpus_dir(tmp_path):
+    root, staged = _faithful_dataset(tmp_path, 8)
+    from jseval.corpus_identity import corpus_signature
+    staged_files = sorted(
+        (p for p in staged.rglob("*") if p.is_file()),
+        key=lambda p: p.relative_to(staged).as_posix())
+    # No raise == intact derivation accepted.
+    aui._verify_corpus_dir_derivation(
+        corpus_root=root, staged_dir=staged, staged_files=staged_files,
+        signature=corpus_signature(root))
+
+
+def test_derivation_check_fails_closed_on_extra_file(tmp_path, monkeypatch):
+    root = _dataset_root(tmp_path)
+    staged = _staged_child(root)
+    (staged / "d3.txt").write_text("body three (not in corpus.jsonl)", encoding="utf-8")
+    _pin_git(monkeypatch)
+    with pytest.raises(ValueError, match="file-set mismatch"):
+        aui._capture_or_load_source_identity(
+            log_dir=str(tmp_path / "logs"), corpus_dir=str(staged), corpus_root=str(root),
+            corpus_dataset="fixture", declared_corpus_signature="",
+            search_config_cohort_key="search-1",
+        )
+
+
+def test_derivation_check_fails_closed_on_missing_file(tmp_path, monkeypatch):
+    root = _dataset_root(tmp_path)
+    staged = _staged_child(root)
+    (staged / "d2.txt").unlink()  # a doc from corpus.jsonl is absent from the explosion
+    _pin_git(monkeypatch)
+    with pytest.raises(ValueError, match="file-set mismatch"):
+        aui._capture_or_load_source_identity(
+            log_dir=str(tmp_path / "logs"), corpus_dir=str(staged), corpus_root=str(root),
+            corpus_dataset="fixture", declared_corpus_signature="",
+            search_config_cohort_key="search-1",
+        )
+
+
+def test_derivation_check_fails_closed_on_content_divergence(tmp_path, monkeypatch):
+    # 2-doc corpus → sample covers both docs, so any content edit is caught and named.
+    root = _dataset_root(tmp_path)
+    staged = _staged_child(root)
+    (staged / "d1.txt").write_text("SILENTLY DIVERGENT TEXT", encoding="utf-8")
+    _pin_git(monkeypatch)
+    with pytest.raises(ValueError, match=r"derivation mismatch.*'d1'"):
+        aui._capture_or_load_source_identity(
+            log_dir=str(tmp_path / "logs"), corpus_dir=str(staged), corpus_root=str(root),
+            corpus_dataset="fixture", declared_corpus_signature="",
+            search_config_cohort_key="search-1",
+        )
+
+
+def test_derivation_check_sample_is_deterministic(tmp_path):
+    # 40-doc corpus, sample_n=8 → a strict subset. Corrupting a SAMPLED doc is caught and
+    # names the SAME doc on every call; corrupting a NON-sampled doc's content passes the
+    # file-set check and is not sampled — proving the sample is deterministic AND a subset.
+    from jseval.corpus_identity import corpus_signature
+
+    n, k = 40, 8
+    sampled = set(_sampled_doc_ids(tmp_path / "a", n, k))
+    assert 0 < len(sampled) < n  # a genuine subset
+
+    def _run(base: Path, corrupt_id: str):
+        root, staged = _faithful_dataset(base, n)
+        (staged / f"{corrupt_id}.txt").write_text("mutated", encoding="utf-8")
+        staged_files = sorted(
+            (p for p in staged.rglob("*") if p.is_file()),
+            key=lambda p: p.relative_to(staged).as_posix())
+        return lambda: aui._verify_corpus_dir_derivation(
+            corpus_root=root, staged_dir=staged, staged_files=staged_files,
+            signature=corpus_signature(root), sample_n=k)
+
+    in_sample = sorted(sampled)[0]
+    not_in_sample = next(f"d{i}" for i in range(n) if f"d{i}" not in sampled)
+
+    # Deterministic: two independent invocations flag the SAME sampled doc.
+    msgs = []
+    for base in ("run1", "run2"):
+        with pytest.raises(ValueError) as exc:
+            _run(tmp_path / base, in_sample)()
+        msgs.append(str(exc.value))
+    assert msgs[0] == msgs[1]
+    assert repr(in_sample) in msgs[0]
+
+    # A non-sampled content divergence is (deterministically) NOT sampled → no raise.
+    _run(tmp_path / "unsampled", not_in_sample)()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("JSEVAL_PERF_TESTS"),
+    reason="perf/scale check — set JSEVAL_PERF_TESTS=1 to run (kept out of the default suite)")
+@pytest.mark.parametrize("n_docs", [1000, 10000])
+def test_derivation_check_scale_under_budget(tmp_path, n_docs):
+    from jseval.corpus_identity import corpus_signature
+
+    root, staged = _faithful_dataset(tmp_path, n_docs)
+    staged_files = sorted(
+        (p for p in staged.rglob("*") if p.is_file()),
+        key=lambda p: p.relative_to(staged).as_posix())
+    sig = corpus_signature(root)
+    start = time.perf_counter()
+    aui._verify_corpus_dir_derivation(
+        corpus_root=root, staged_dir=staged, staged_files=staged_files, signature=sig)
+    elapsed = time.perf_counter() - start
+    print(f"\n[derivation-check] {n_docs} docs: {elapsed:.3f}s")
+    assert elapsed < 30.0, f"derivation check took {elapsed:.1f}s at {n_docs} docs (budget 30s)"
 
 
 def test_source_identity_declared_mode_sidecar_has_no_root_keys(tmp_path, monkeypatch):

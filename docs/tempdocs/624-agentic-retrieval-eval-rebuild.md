@@ -4881,3 +4881,38 @@ phase is closed and its next entry should be the relaunch pre-registration:
 handoff PR (generator fallback prose + pointer reason now state the active policy, the
 2026-07-18 rejected campaign, and the committed evidence path — no numeric claims, per the
 policy's wording constraints).
+
+### Identity hardening: fail-closed corpus-dir derivation check (2026-07-21)
+
+Closes an open observation (2026-07-17): root mode SIGNS the dataset root (`corpus.jsonl` +
+qrels) but only *attests* the exploded `corpus-dir` the agents actually read
+(`corpus_dir_files_signature`, `agent_utility_inspect.py:1255`). Attestation records the
+staged text's hash — it never checks that hash is the *derivation* of the signed
+`corpus.jsonl`. A stale/swapped explosion therefore passes every identity gate (root signature,
+declared-signature match, certification) while the agents search divergent text.
+
+**What the check enforces.** `_verify_corpus_dir_derivation` (`agent_utility_inspect.py:1198`),
+called from the root-mode branch (`:1268`), fails CLOSED unless `corpus-dir` is the derivation of
+`corpus.jsonl`: (1) **exact file set** — expected filenames (one per corpus.jsonl doc + the
+materialize sentinel) equal the on-disk set; a count/name mismatch names the delta; (2) **sampled
+content** — N=20 docs chosen by `random.Random(int(signature[:16],16))` (seed = corpus signature,
+so reproducible), each sampled doc's on-disk bytes must equal its re-materialized bytes; a
+divergence names the doc.
+
+**Projection, not fork.** The check re-derives through the SAME logic the build/ingest paths use
+— `corpus_generate.materialize_doc_entry` + `materialize.materialize` (the one place the
+axis-aware scan-vs-`.txt` decision and the on-disk write live, `ingest._materialize_into:285`).
+Even the `.txt`/`.png` extension is taken from a one-doc probe render of that helper, not a
+hardcoded `type_axis=="scan"` check.
+
+**Cost.** One probe render + 20 re-materializations — O(sample), not O(corpus). Measured (text
+axis): **0.018s @ 1k docs, 0.071s @ 10k docs** (budget ≤30s). No composed-record schema/digest
+change: the check is pure validation and emits nothing (zero digest re-pins).
+
+Tests: `tests/test_agent_utility_inspect.py` — faithful→passes, extra-file/missing-file→fail-closed
+(file-set message), content-divergence→fail-closed naming the doc, deterministic-sample
+(same doc flagged across runs; a non-sampled divergence is provably not sampled), and an
+env-gated (`JSEVAL_PERF_TESTS=1`) 1k/10k scale/budget check kept out of the default suite. The
+shared root-mode fixtures (`_dataset_root`/`_staged_child`) were made faithful derivations
+(`_id` keys + materialize-produced staged dir with sentinel), since they previously used `id`
+keys and a hand-rolled sentinel-less explosion.
