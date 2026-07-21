@@ -89,6 +89,12 @@ All from 50-query Haiku eval (tempdoc 366):
 **Token efficiency:** 10-result search = 1,749 tokens (MCP slim) vs
 19,902 raw (~91% reduction).
 
+> **STALE (tombstone, tempdoc 770 §F.8).** This ~2026-03 figure (originating at
+> `366:158-163`) is ~2.5x low against the v5 surface. Measured over 1,081
+> `justsearch_search` calls (1,078 payloads SHA256-verified against the campaign
+> digest index): **median 15,929 chars**, p95 35,636, max 49,969. Cite tempdoc
+> 770 §A.1, not this line.
+
 **Cost asymmetry:** answer-first agents $0.023 avg, search-explore
 $0.069. 3× cheaper for similar quality when the agent takes the
 first-listed tool.

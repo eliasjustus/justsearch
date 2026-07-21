@@ -810,6 +810,17 @@ above)*
   (no leg, any depth — F-030 territory, paraphrase barrier × weak-dense-on-legal), pending re-test on
   the 767 camouflaged rebuild (corpus-artifact modifier). Lane restructuring pending founder decision;
   the (b) residue is the surviving engine-owned item.
+- **ROUTING CORRECTION (2026-07-21, tempdoc 770 §E.4):** (a) above routes to *"the tool-surface
+  two-step affordance (tempdoc 770)"* — **770 will not deliver that affordance.** 770 measured that
+  the MCP surface's `hit.id` **is the filesystem path** (byte-identical in 14,617/14,617 hits), so the
+  proposed `justsearch_fetch(id)` reduces to `fetch(path)` — a tool returning a file the agent can
+  already `Read`, in a channel it already has. `fetch` is **withdrawn**, not deferred. **What (a)
+  actually needs is unowned:** the second hop requires the *bridge entity's name* to reach the agent
+  so it can re-query. That is a retrieval/evidence-content question (does the returned excerpt carry
+  the designer name?), not a tool-shape one — and 770's own §A.2 measurement points the same way:
+  **50.3% of post-search Reads (N=862) targeted documents search never returned**, i.e. the dominant
+  agent-side failure is retrieval coverage, not surface ergonomics. Do not wait on 770 for (a); it
+  needs an owner.
 
 ### F-038: RAG chunk retrieval was blind to chunkless (sub-2000-char) docs — a doc-level union leg into the PRIMARY RAG candidate set fixes it with no re-index; interactive hybrid on-baseline (tempdoc 749, 2026-07-18)
 

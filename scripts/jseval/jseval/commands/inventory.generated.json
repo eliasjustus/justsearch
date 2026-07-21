@@ -328,6 +328,10 @@
     "group": "utility"
   },
   {
+    "name": "utility-payload-decompose",
+    "group": "utility"
+  },
+  {
     "name": "utility-publication-build",
     "group": "utility"
   },

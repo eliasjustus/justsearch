@@ -90,9 +90,20 @@ def test_delivered_fields_on_answer_fixture_top_level_only():
         "searchTrace": False,
         "results": False,
         # tempdoc 735 W6 tier-equivalence fields -- delivered True on the
-        # RECORDED 0.4.0 fixture (genuine CLI-mediated capture, 2026-07-14).
+        # RECORDED fixture (genuine CLI-mediated capture).
         "hints": True,
-        "facets": True,
+        # tempdoc 770: `facets` LEFT justsearch_answer's structuredContent at
+        # surface 0.5.0. The answer path built its 3-field sidecar by firing a
+        # SECOND full hybrid search per call (`fetchFacets`), and facet/hint
+        # affordances have zero measured behavioral adoption at haiku across
+        # three campaigns (735:471-474) -- so the round-trip was removed and the
+        # field went with it (the answer path has no other facet source).
+        # This assertion read True only because the fixture was stale at 0.4.0;
+        # the 0.5.0 refresh made the drift visible -- which is what the new
+        # mcp_tool_surface_version stamp exists to keep legible.
+        # NOTE: justsearch_SEARCH keeps its facets (inline on the primary query,
+        # no extra round-trip) -- see the search fixture test below.
+        "facets": False,
         "coverage": True,
         "truncated": True,
     }
@@ -101,8 +112,15 @@ def test_delivered_fields_on_answer_fixture_top_level_only():
 def test_delivered_fields_on_search_fixture_including_nested_placement():
     """`matchedTerms`/`excerpts` live per-hit under `results[]` for
     `justsearch_search` (McpEvidenceProjection.java:75-93), never at the top
-    level -- this fixture's second hit (doc-2) carries them nested, and
-    `_delivered_fields` must still report them True."""
+    level -- the fixture's hits carry them nested, and `_delivered_fields` must
+    still report them True.
+
+    The cross-check below is deliberately index-INDEPENDENT: the rule under test
+    is `_delivered_fields`' own `any(... for r in results)`, so pinning a
+    particular hit would assert something narrower than the behaviour and would
+    re-break on the next fixture recapture (it already did once -- the pre-0.5.0
+    wording named a "second hit (doc-2)" that the refreshed fixture no longer
+    contains)."""
     fixture = _load_fixture("justsearch_search_structured.json")
     fields = _delivered_fields(fixture["result"]["content"])
     assert fields == {
@@ -114,7 +132,10 @@ def test_delivered_fields_on_search_fixture_including_nested_placement():
         "searchTrace": True,
         "results": True,
         # tempdoc 735 W6 tier-equivalence fields -- delivered True on the
-        # RECORDED 0.4.0 fixture (genuine CLI-mediated capture, 2026-07-14).
+        # RECORDED 0.5.0 fixture (genuine CLI-mediated capture, 2026-07-21).
+        # `facets` stays True here: tempdoc 770 §F.5 removed it from
+        # justsearch_ANSWER only -- search computes its facets inline on the
+        # primary query, with no extra round-trip to remove.
         "hints": True,
         "facets": True,
         "coverage": True,
@@ -126,8 +147,8 @@ def test_delivered_fields_on_search_fixture_including_nested_placement():
     parsed = json.loads(fixture["result"]["content"])
     assert "matchedTerms" not in parsed
     assert "excerpts" not in parsed
-    assert "matchedTerms" in parsed["results"][1]
-    assert "excerpts" in parsed["results"][1]
+    assert any("matchedTerms" in hit for hit in parsed["results"])
+    assert any("excerpts" in hit for hit in parsed["results"])
 
 
 def test_delivered_fields_none_for_prose_and_blocks():

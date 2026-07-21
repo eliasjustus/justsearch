@@ -129,7 +129,7 @@ same JVM as the Head process. No Node.js required.
 Protocol version: `2025-11-25`. Capabilities: tools, resources,
 prompts. Curated tool-surface version (MCP `serverInfo.version`,
 single-sourced from `McpContractVersions.TOOL_SURFACE_VERSION`):
-`0.4.0`.
+`0.5.0`.
 
 ## Available Tools (6, position-bias ordered)
 
@@ -161,9 +161,11 @@ descriptive lines beyond the raw results, so an agent can judge a response witho
   fell back, and a "showing N of M" line when a response was capped below the total hit count.
 
 **`response_format`** (optional on both tools; default `"detailed"`, which includes preview
-snippets and full evidence passages). `"concise"` returns substantially fewer tokens per call:
-`justsearch_search` results omit the preview line, and `justsearch_answer` packs cap at the 3
-highest-ranked passages; the coverage, match, and header lines are kept in both modes.
+snippets and full evidence passages). `"concise"` trims the **human-readable text block only** —
+`justsearch_search` text omits the preview line, and `justsearch_answer` text caps at the 3
+highest-ranked passages; the coverage, match, and header lines are kept in both modes. It does not
+change `structuredContent`, so a client that consumes the structured tier (the common case) sees no
+size difference (tempdoc 770: measured zero reduction across 336 opt-ins).
 
 ### What these tools do and do not do (multi-step lookups)
 
@@ -198,9 +200,16 @@ already render (`SearchTrace`, `ContextCitation`); it introduces no new authorit
 
 - **`justsearch_search` → `structuredContent`**: the query-level `searchTrace` (effective mode,
   decision kind, degradation reason codes, and the per-stage list with status/reason/timing) plus a
-  `results` list carrying, per hit, its ranking `trace` (which legs placed it, at what rank/score) and
-  the fused-leg `legScores` (sparse/dense/splade/fused). The structural trace is always present; the
-  numeric per-hit detail tier is included only when the call sets `detail: true`.
+  `results` list carrying, per hit, its `path`, `title`, `score`, `matchedTerms`/`matchedFields`, and
+  `excerpts` — plus `id`, emitted only when it differs from `path` (for filesystem sources the worker
+  doc-id *is* the path, so shipping both would be a verbatim duplicate; `path` is the one kept
+  because it is the name the agent can act on, and `id` still ships for source classes whose doc-id
+  is not a path).
+  The query-level `searchTrace` is always present. The **per-hit ranking-provenance tier** —
+  `trace` (which legs placed the hit, at what rank/score), `legScores` (sparse/dense/splade/fused),
+  and the numeric detail sub-map inside `trace` — is included only when the call sets `detail: true`
+  (tempdoc 770: measured at 19.9% of the delivered payload while carrying no document content).
+  `excerpts` are never gated — they are the only document text the tool returns.
 - **`justsearch_answer` → `structuredContent`**: the `citations` list (per-chunk provenance —
   `parentDocId`, char/line span, heading, score, excerpt) plus `quality` (chunks found/used, retrieval
   mode + reason code, and the CRAG-style confidence signals: coverage, best-chunk score, score gap,
@@ -208,10 +217,13 @@ already render (`SearchTrace`, `ContextCitation`); it introduces no new authorit
 
 **Tier equivalence (tempdoc 735 W6).** Both tools' `structuredContent` also carry `hints` (the
 same progressive-disclosure hint strings the text tier's `Hints:` block / `Hint:` lines render),
-`facets` (the same facet-value facts the text tier's facet block renders), `coverage`
+`coverage`
 (`justsearch_search`: `totalHits`/`shown`/`tookMs`; `justsearch_answer`: `passages`/`documents`),
 and `truncated` (`justsearch_search`: the response was capped below `totalHits`;
-`justsearch_answer`: `contextTruncated`). These fields close the gap a structured-preferring
+`justsearch_answer`: `contextTruncated`). `justsearch_search` also carries `facets` (the same
+facet-value facts its text tier renders); `justsearch_answer` does **not** — tempdoc 770 §F.5
+removed the second full hybrid search it fired per call purely to build that sidecar, and the
+answer path has no other facet source. These fields close the gap a structured-preferring
 client would otherwise hit: before this increment, hints/facets/coverage/truncation facts existed
 in the `content` text only, so a client that delivers `structuredContent` instead of text (see
 Delivery tiers, above) never received them. Full evidence-passage parity (the text tier's ~10KB
@@ -232,8 +244,10 @@ indexed content. It retrieves relevant passages assembled with source
 attribution — more efficient than searching and reading individually.
 
 Use `justsearch_search` when the agent needs to discover what exists,
-browse by source/category, or find specific files. Returns facets on
-first call for filter discovery.
+browse by source/category, or find specific files. When the matching
+documents carry facetable fields, it returns top facet values for filter
+discovery (a zero-hit query, or a corpus without those fields, returns
+none). Pass `query_syntax: "lucene"` for exact-phrase or boolean queries.
 
 Use `justsearch_browse` to explore the folder structure before
 searching — especially useful when the agent doesn't know what's
@@ -260,18 +274,24 @@ Tools return contextual guidance at decision time:
 - **Zero results** → "try broader terms or check justsearch_status"
 - **Many results** → "use facet values as filters to narrow down"
 - **Low enrichment** → "enrichment in progress — semantic search may be limited"
-- **Facet sidecar** → answer tool includes top sources and entities
+- **Facet values** → `justsearch_search` returns top sources and entities
+  whenever the matching documents carry them, as filter values for the next
+  call (a zero-hit query returns none)
 - **Comparative hint** → after an `answer` that drew on more than one
   document, the response states factually how many distinct documents it
   assembled evidence from in a single call — surfacing the index's
   multi-document advantage at the moment the agent sees it worked, not only
   in the tool description (which agents read once and forget)
 
-Advanced parameters (doc_ids, LUCENE syntax, entity filters) work when
-passed but are NOT in the visible schema. This is intentional — eval
-data shows making them visible degrades small-model accuracy (92% → 71%)
-without increasing usage. Capable agents can use them by reading the
-description carefully.
+Some advanced parameters (doc_ids, entity filters) work when passed but
+are NOT in the visible schema. This is intentional — eval data shows
+making them visible degrades small-model accuracy (92% → 71%) without
+increasing usage. Capable agents can use them by reading the description
+carefully. `query_syntax` is the exception (tempdoc 770): the description
+advertised it while the schema rejected nothing and the validator silently
+dropped it, so agents believed they had enabled exact-phrase search and
+got fuzzy hybrid instead. It is now a declared schema parameter threaded
+through to the request, so the advertised behavior is the real behavior.
 
 ## MCP Prompts (3)
 
