@@ -283,7 +283,7 @@ intuition. The key measurements from tempdoc 366's 50-query Haiku eval:
   vs 19,902 raw (~91% reduction).
   > **STALE (tombstone, tempdoc 770 §F.8).** This ~2026-03 figure (from
   > `366:158-163`) is ~2.5x low against the v5 surface: measured median
-  > **16,023 chars** per `justsearch_search` payload (N=1,081 calls, 1,078
+  > **15,929 chars** per `justsearch_search` payload (N=1,081 calls, 1,078
   > payloads SHA256-verified). Cite tempdoc 770 §A.1, not this line.
 - **Cost asymmetry:** Answer-first agents $0.023 avg vs search-explore
   $0.069. 3x cheaper when the model takes the first-listed tool.

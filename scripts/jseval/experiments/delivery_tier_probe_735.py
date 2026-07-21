@@ -311,6 +311,31 @@ def _is_placeholder_capture(content) -> bool:
     )
 
 
+def _degraded_capture_reason(content) -> str | None:
+    """Tempdoc 770: the reason a capture must NOT become a ``recorded`` fixture because the
+    backend was serving a DEGRADED retrieval path when it answered.
+
+    Why this exists: a 770 refresh captured `justsearch_search` seconds after a stack restart,
+    while the index was still enriching. The response was well-formed and the probe wrote it
+    happily -- but it carried ``hybridFallback: true`` / ``REBUILD_IN_PROGRESS`` with the dense
+    leg skipped, so the canonical delivery-tier reference pinned a fallback-path response
+    instead of the healthy HYBRID shape it replaced. Doc-count and ``ready: true`` do not catch
+    this; the degradation markers in the payload do.
+
+    Sibling in spirit to ``_is_placeholder_capture`` and to the ``--search-limit/--search-query``
+    refusal: the probe already refuses to pin a non-representative capture, and an
+    enrichment-in-progress capture is non-representative in exactly the same way.
+    """
+    if not isinstance(content, str):
+        return None
+    for marker in ("REBUILD_IN_PROGRESS", "ENRICHMENT_IN_PROGRESS", "NO_EMBEDDING_SERVICE"):
+        if marker in content:
+            return marker
+    if '"hybridFallback":true' in content.replace(" ", ""):
+        return "hybridFallback"
+    return None
+
+
 def _report(captured: dict[str, dict]) -> list[dict]:
     rows = []
     for tool, entry in captured.items():
@@ -349,6 +374,17 @@ def _write_fixtures(
                 "(tool_reference block), not a delivery -- fixture NOT written. The CLI "
                 "deferred the tool instead of executing it; re-run, or inspect why the "
                 "session did not execute the forced call."
+            )
+            continue
+        degraded = _degraded_capture_reason(content)
+        if degraded is not None:
+            print(
+                f"CAPTURE REFUSED for {tool}: the backend was serving a DEGRADED retrieval "
+                f"path ({degraded}) -- fixture NOT written. This is an enrichment/rebuild "
+                "state, not a delivery-tier fact; pinning it would make the canonical "
+                "reference a fallback-path response. Wait for full enrichment "
+                "(embeddingCoveragePercent/spladeCoveragePercent at 100, no pending jobs) "
+                "and re-run."
             )
             continue
         content = _sanitize_content_for_fixture(content)

@@ -104,7 +104,7 @@ public final class McpToolSurface {
   private static final String STATUS_DESC =
       "Get the current status of the JustSearch knowledge index. Returns document count, "
           + "queue depth, readiness state, health, and enrichment coverage "
-          + "(embeddingCoveragePercent, spladeCoveragePercent, pendingNerCount, completedNerCount). "
+          + "(reported as embeddingCoverage, spladeCoverage, and nerCompleted N (M pending)). "
           + "After ingesting documents, poll this to check if enrichment (embeddings, NER, SPLADE) "
           + "is complete before using entity filters or semantic search.";
 
@@ -872,7 +872,7 @@ public final class McpToolSurface {
           "No results found. Try broader terms, or use justsearch_status to check what's"
               + " indexed.");
     } else if (resp.totalHits() > 100 && args.get("filters") == null) {
-      hints.add("Many results. Use the facet values above as filters to narrow down.");
+      hints.add("Many results. Use the returned facet values as filters to narrow down.");
     }
     // Tempdoc 655: comparative response hint — searched the whole index in one call, which beats
     // listing-and-reading files for a topical/semantic query. Factual, only on a productive search.

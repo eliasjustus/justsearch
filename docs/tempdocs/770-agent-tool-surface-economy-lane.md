@@ -195,17 +195,33 @@ campaign logs (digest-only by design, `agent_utility_inspect.py:766-800`); they 
 recovered from CLI session transcripts and **SHA256-verified against the campaign
 digest index**, so every decomposed payload is provably a v5 payload.
 
-Component shares of the delivered payload (N=1056 structured deliveries):
+Component shares of the delivered payload, **N=1056 structured deliveries**
+(median total **16,023** chars over that subset).
 
-| Component | median share | note |
+> **Denominator note (corrected 2026-07-21, second-pass review).** §A.1's median
+> **15,929** is over **all N=1081** search calls; the **16,023** here is over the
+> **N=1056** that were delivered as `structured-json` (the other 22 came back as
+> prose and have no components to decompose). Both are measured and neither is
+> wrong — they answer different questions. Cite the figure with its denominator;
+> do not present them as one number.
+
+| Component | **aggregate** share | note |
 |---|---|---|
 | text tier (rank lines, `Preview:`, facets, headers) | **0%** | built, discarded by transport |
-| per-hit `trace` + `legScores` | **19.9%** | numeric provenance |
-| `excerpts` | 40.2% | **the only document text delivered — not waste** |
+| per-hit `trace` + `legScores` | **19.7%** | numeric provenance (per-payload *median* share 19.9%) |
+| `excerpts` | 40.5% | **the only document text delivered — not waste** (median share 40.2%) |
 | `hit.id` | 11.5% | **verbatim duplicate of `hit.path` in 14,617/14,617 hits** |
 | `hit.path` | 11.1% | |
 | top-level `searchTrace` | 5.3% | |
-| remainder | ~12% | |
+| remainder | ~11.9% | **derived** as `100 − Σ`, not separately measured |
+
+> **Correction (2026-07-21, second-pass review).** This table was previously
+> labelled *"median share"* while carrying aggregate values — which is why it
+> summed to exactly 100.0%. Per-payload median shares do not sum to 1. The column
+> is aggregate; the two components for which a median was also measured carry it
+> inline; the remainder is explicitly derived. The reusable lesson matches §E.3's:
+> **a share table that sums to exactly 100% is aggregate, or it is a plug — check
+> which before citing it.**
 
 `results[]` is 91.1% of aggregate bytes. Median 10 hits/call (mean 15, max 50).
 
@@ -242,7 +258,7 @@ deliveries decomposable by neither route are reported as
 
 **Net tool surface: 6 tools — unchanged. No new tool.** Every change is either
 removing bytes that carry no content, or making an existing statement true. *(Amended
-2026-07-21: "no new parameter, no schema change" no longer holds — §E.2's `querySyntax`
+2026-07-21: "no new parameter, no schema change" no longer holds — §E.2's `query_syntax`
 row is resolved by **declaring** the parameter rather than deleting the sentence that
 advertised it, because the underlying engine capability is real. One optional schema
 property added; no tool added, no required shape changed.)*
@@ -299,7 +315,7 @@ Tool descriptions **are** delivered. Three statements are false today:
 
 Fix (as landed, after the 2026-07-21 correction):
 
-- **`querySyntax`** — *not* deleted. Deleting the sentence made the description true
+- **`query_syntax`** — *not* deleted. Deleting the sentence made the description true
   by removing a capability the engine actually has, which is the wrong direction for
   §G's principle. Declared as an optional `SEARCH_SCHEMA` property (`simple` /
   `lucene` / `advanced`, mirroring `parseQuerySyntaxOrDefault`) and threaded through
@@ -346,8 +362,20 @@ maps that only ever shipped on `detail: true`, re-add the duplicated `path`):
 |---|---|---|---|---|---|
 | 20 | 39,154 | 32,730 | 16.4% | delivered | delivered |
 | **30** | **53,756** | **44,603** | **17.0%** | **CLIFFED** | **delivers** |
-| 40 | 64,223 | 52,454 | 18.3% | cliffed | cliffed |
+| 40 | 64,223 | 52,454 | 18.3% | cliffed | **unknown — inside the band** |
 | 50 | 79,543 | 64,482 | 18.9% | cliffed | cliffed |
+
+> **Correction (2026-07-21, second-pass review).** The `limit: 40` post-770 cell
+> (52,454) previously read *"cliffed"*. It is **not measured** — it falls inside
+> the unresolved 46,617–52,825 band, and the highest payload observed *delivered*
+> is 46,617. Only the `limit: 50` post-770 cell (64,482) is above the highest
+> *observed cliff* (52,825) and can be called cliffed. This section elsewhere
+> insists the round 50,000 guess is *"not measured, do not state as fact"* — that
+> discipline has to apply to its own outcome column too, especially in the table
+> the lane calls its strongest result. The load-bearing claim is unaffected: it
+> rests on **`limit: 30`**, where pre-770 (53,756) is above the highest observed
+> cliff and post-770 (44,603) is below the highest observed delivery — both
+> outside the band, both measured.
 
 At `limit: 30` on a verbose corpus the old surface lost the entire payload and the new
 one delivers it. That is a **correctness** win, independent of the economy argument —
@@ -420,10 +448,10 @@ substantially **prompt-injection containment**, not token economy. Design 1's
    block so fetch is actionable" item, which is moot twice over.
 2. The `querySyntax: "LUCENE"` sentence in `SEARCH_DESC` (§E.2) — **superseded
    2026-07-21.** Deleting the sentence removed exact-phrase and boolean search from
-   the agent surface entirely, even though `querySyntax` is a live engine capability
+   the agent surface entirely, even though `query_syntax` is a live engine capability
    (`KnowledgeSearchRequest.java:22`, `SearchPipelinePresets#parseQuerySyntaxOrDefault`).
    The defect was the description/schema mismatch, not the capability. Resolution:
-   `querySyntax` is now a declared `SEARCH_SCHEMA` parameter threaded through
+   `query_syntax` is now a declared `SEARCH_SCHEMA` parameter threaded through
    `callSearch` to the request, and an accurate sentence is restored — the statement
    is true because the parameter exists, which is exactly what §G's principle asks
    for.
@@ -463,8 +491,22 @@ substantially **prompt-injection containment**, not token economy. Design 1's
    `fetchFacets` misattribution, the "converged MCP practice" framing; and design 2's
    excerpts-gating proposal.
 
-**Kept unchanged:** `response_format` and `detail` (no schema change); the
-match-anchored preview windowing; text rendering; `McpEvidenceProjection` registration.
+**Kept unchanged — corrected 2026-07-21 (second-pass review).** The earlier wording
+here (*"`response_format` and `detail` (no schema change)"*) is **false as shipped**
+and contradicted §E's own amendment. What is actually unchanged:
+
+- the **behavior** of `response_format` and `detail` as dials (neither changed what
+  it selects) — but **both descriptions were rewritten** (`McpToolSurface.java:266-274`,
+  `:307-313`), because both were untrue: `concise` promised token savings it does not
+  deliver for `search`, and `detail`'s text described a provenance block that is now
+  gated rather than always-on;
+- the match-anchored preview windowing;
+- text rendering (no text-tier change — the goldens are byte-identical);
+- `McpEvidenceProjection`'s execution-surface registration.
+
+**Not unchanged:** the schema gained `query_syntax` (owner decision, §E.2), so
+"no new parameter, no schema change" holds for the *economy* work but not for this
+lane as shipped.
 
 ## §G. Reach
 
@@ -539,7 +581,7 @@ local content.
 | §F.5 — answer facet round-trip | none | removes a *delivered* field — see §F.5 rationale correction | **DONE** (d5048033) |
 | §F.7/8 — stale counts + figures | none | none | **DONE** (d5048033) |
 | 1 — remove trace/legScores + duplicate identity field | owner approved bump-now | none to content; `0.5.0` bump landed | **DONE + live-verified** (d5048033); identity direction corrected to keep `path` (independent review) |
-| Review fixes — runtime-contract bump `0.1.0` → `0.2.0`, `querySyntax` wired, §C/§F.5 reconciled, guard fixtures made genuinely maximal | owner-decided (bump now; wire don't delete) | none | **DONE** |
+| Review fixes — runtime-contract bump `0.1.0` → `0.2.0`, `query_syntax` wired, §C/§F.5 reconciled, guard fixtures made genuinely maximal | owner-decided (bump now; wire don't delete) | none | **DONE** |
 | 5 — cap-characterization probe | none | none | **DONE** — threshold 46.6k–52.8k, notice 2,322 chars (§E.3) |
 | 3 — response-size governor **design** | cap now known | medium | **no — not this lane** |
 | 4 — `fetch` | withdrawn | — | **no** |
