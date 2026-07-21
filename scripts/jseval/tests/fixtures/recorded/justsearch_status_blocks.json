@@ -11,7 +11,7 @@
     "content": [
       {
         "type": "text",
-        "text": "state: READY\nready: true\ndocuments: 524\nqueueDepth: 0\nhealthy: true\nindexState: IDLE\nembeddingCoverage: 0,2%\nspladeCoverage: 0,2%\nnerCompleted: 15244 (5 pending)\n"
+        "text": "state: READY\nready: true\ndocuments: 524\nqueueDepth: 0\nhealthy: true\nindexState: IDLE\nembeddingCoverage: 100,0%\nspladeCoverage: 100,0%\nnerCompleted: 15251 (0 pending)\n"
       }
     ]
   }
