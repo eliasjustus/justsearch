@@ -798,6 +798,18 @@ above)*
   neighborhood, different stages.
 - **Owner / fix lane:** tempdoc 769 (engine lane, chartered 2026-07-21). Acceptance: the 17 B2
   cells' issued queries reach agent-visible top-k on replay, no regression on register baselines.
+- **DIAGNOSIS UPDATE (2026-07-21, tempdoc 769 §E — M1/M2/M3, ~$0 on pinned campaign indexes):** the
+  "near-duplicate decoys outrank gold" mechanism in this finding's headline did NOT survive the depth
+  probe — burial is by genuine CLERC hard negatives; the root causes decompose as: (a) DOMINANT: a
+  missing two-hop JOIN KEY — the answer doc is reachable ONLY via the designer name (oracle: rank 1–2
+  in hybrid AND lexical for every qid once the name is queried), which structure-phrased queries never
+  carry → routes to the tool-surface two-step affordance (tempdoc 770), not engine ranking; (b) a
+  bounded, real fusion-leak residue — in 3/17 cells a leg had gold ≤20 (q3: vector both golds ≤10)
+  while hybrid buried it to 23–24 (D-005 "fusion is a ranking step, not a recall gate"), and 10/17
+  more had the bridge doc at rank 21–100 in a semantic leg; (c) 4/17 cells are representation-floor
+  (no leg, any depth — F-030 territory, paraphrase barrier × weak-dense-on-legal), pending re-test on
+  the 767 camouflaged rebuild (corpus-artifact modifier). Lane restructuring pending founder decision;
+  the (b) residue is the surviving engine-owned item.
 
 ### F-038: RAG chunk retrieval was blind to chunkless (sub-2000-char) docs — a doc-level union leg into the PRIMARY RAG candidate set fixes it with no re-index; interactive hybrid on-baseline (tempdoc 749, 2026-07-18)
 

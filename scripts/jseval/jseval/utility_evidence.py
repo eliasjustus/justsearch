@@ -11,7 +11,7 @@ from jseval.env_fingerprint import safe_environment_identity
 
 SCHEMA = "agent-utility-observation.v1"
 _OBSERVATION_KEYS = {
-    "schema", "condition", "seed", "qid", "attempted", "excluded",
+    "schema", "condition", "question_type", "seed", "qid", "attempted", "excluded",
     "error_class", "attempts", "first_error_class", "correct", "cost_usd",
     "usage_truncated",
     "working_time", "total_time",
@@ -149,6 +149,13 @@ def _tool_result_digests(value: Any) -> list[dict] | None:
             if isinstance(delivered_fields, dict) else None
         )
         tier = item.get("delivered_tier")
+        # tempdoc 768 D6: rank-of-gold capture. ids+ranks ONLY (never payload
+        # text -- the redaction boundary is unchanged, doc ids/scores are the
+        # committed-safe tier per the plan), passed through as-is when well-formed
+        # lists / int, else the honest null.
+        ordered = item.get("ordered_doc_ids")
+        scores = item.get("scores")
+        gold_rank = item.get("gold_rank")
         digests.append({
             "content_sha256": item.get("content_sha256"),
             "content_len": item.get("content_len"),
@@ -157,6 +164,11 @@ def _tool_result_digests(value: Any) -> list[dict] | None:
             "furniture_markers": markers_out,
             "delivered_tier": tier if tier in _DELIVERED_TIERS else None,
             "delivered_fields": delivered_fields_out,
+            "ordered_doc_ids": ordered if isinstance(ordered, list) else None,
+            "scores": scores if isinstance(scores, list) else None,
+            "gold_rank": (
+                gold_rank if isinstance(gold_rank, int) and not isinstance(gold_rank, bool) else None
+            ),
         })
     return digests
 
@@ -209,6 +221,9 @@ def sanitize_observation(observation: dict) -> dict:
     sanitized = {
         "schema": SCHEMA,
         "condition": observation.get("condition"),
+        # tempdoc 768 D4: per-query schema tag, carried through sanitized evidence
+        # so an offline replay can stratify by question_type without the raw log.
+        "question_type": observation.get("question_type"),
         "seed": int(observation.get("seed", 0)),
         "qid": str(observation.get("qid")),
         "attempted": True,

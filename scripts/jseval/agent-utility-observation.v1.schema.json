@@ -15,6 +15,10 @@
   "properties": {
     "schema": {"const": "agent-utility-observation.v1"},
     "condition": {"enum": ["A", "B", "C"]},
+    "question_type": {
+      "type": ["string", "null"],
+      "$comment": "tempdoc 768 D4: per-query schema tag (e.g. \"2_hop\") from the queries file, carried through so an offline replay can stratify by question_type. NOT required: sanitize_observation() always emits it (null when absent), but pre-768 evidence omits the key entirely -- required-ness is relaxed to admit historical evidence, additionalProperties:false still rejects unknown keys."
+    },
     "seed": {"type": "integer", "minimum": 0},
     "qid": {"type": "string", "minLength": 1},
     "attempted": {"const": true},
@@ -141,6 +145,21 @@
               "results": {"type": "boolean"}
             },
             "$comment": "tempdoc 735 G2: top-level structured-evidence field presence, populated only for a structured-json delivery (null otherwise). matchedTerms/excerpts are true if present either at the top level OR nested under any results[] entry (McpEvidenceProjection.java:75-93 puts them per-hit for justsearch_search). Absent on pre-735 historical entries -- schema-optional."
+          },
+          "ordered_doc_ids": {
+            "type": ["array", "null"],
+            "items": {"type": ["string", "null"]},
+            "$comment": "tempdoc 768 D6: rank-ordered doc ids (results[*].id) from a structured-json justsearch_search delivery -- ids ONLY, never payload text (committed-safe tier). null for non-search / non-structured deliveries and on pre-768 historical entries (schema-optional)."
+          },
+          "scores": {
+            "type": ["array", "null"],
+            "items": {"type": ["number", "null"]},
+            "$comment": "tempdoc 768 D6: per-hit scores (results[*].score), aligned 1:1 with ordered_doc_ids. null when ordered_doc_ids is null."
+          },
+          "gold_rank": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "$comment": "tempdoc 768 D6: 0-based rank of the first gold evidence_id in ordered_doc_ids; null (never a fabricated -1) for non-search calls, no gold hit, or absent evidence_ids. Absent on pre-768 historical entries -- schema-optional."
           }
         }
       },

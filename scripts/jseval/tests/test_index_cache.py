@@ -509,3 +509,61 @@ def test_cache_root_main_checkout_unresolvable_returns_none(monkeypatch):
 
     monkeypatch.setattr(index_cache, "main_repo_root", _boom)
     assert index_cache.cache_root() is None
+
+
+# --- tempdoc 768 item 5: replay-tooling pinned adoption ---------------------
+
+def test_run_with_cache_pinned_selector_key_bypasses_compute_selector(tmp_path, monkeypatch):
+    """A `pin_selector_key` looks the pinned entry up DIRECTLY and never calls
+    compute_selector (which would resolve the CURRENT key) — the 763 §F replay
+    need. It also bypasses the no-corpus-axis fail-closed that the same
+    (corpus_dir=None, dataset_name=None) args would otherwise trigger."""
+    from jseval import backend, index_cache as ic, index_identity
+
+    calls = {"compute": 0, "lookup": []}
+
+    def _no_compute(*a, **k):
+        calls["compute"] += 1
+        raise AssertionError("compute_selector must not run when a pin is set")
+
+    def _lookup(key):
+        calls["lookup"].append(key)
+        return None  # miss -> fall through to a (mocked) fresh build
+
+    monkeypatch.setattr(index_identity, "compute_selector", _no_compute)
+    monkeypatch.setattr(ic, "lookup", _lookup)
+    sentinel_proc = object()
+    monkeypatch.setattr(backend, "_boot_and_wait", lambda **k: sentinel_proc)
+
+    proc, outcome = backend._run_with_cache(
+        resolved_root=tmp_path, resolved_data=tmp_path / "data",
+        gradlew=tmp_path / "gradlew", env={}, port=33333, llm=False,
+        health_timeout_sec=1.0, corpus_dir=None, dataset_name=None,
+        pin_selector_key="PINNED-KEY-abc123",
+    )
+    assert calls["compute"] == 0
+    assert calls["lookup"] == ["PINNED-KEY-abc123"]
+    assert outcome["selector_key"] == "PINNED-KEY-abc123"
+    assert outcome["mode"] == "miss:selector"
+    assert proc is sentinel_proc
+
+
+def test_run_with_cache_without_pin_still_fails_closed_on_no_axis(tmp_path, monkeypatch):
+    """Contrast: the SAME no-axis args WITHOUT a pin take the fail-closed
+    no-corpus-axis path (compute_selector is never reached either, but the
+    outcome is the disabled fresh build, not a lookup)."""
+    from jseval import backend, index_cache as ic, index_identity
+
+    monkeypatch.setattr(index_identity, "compute_selector",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("unreached")))
+    monkeypatch.setattr(ic, "lookup",
+                        lambda key: (_ for _ in ()).throw(AssertionError("unreached")))
+    monkeypatch.setattr(backend, "_boot_and_wait", lambda **k: object())
+
+    _proc, outcome = backend._run_with_cache(
+        resolved_root=tmp_path, resolved_data=tmp_path / "data",
+        gradlew=tmp_path / "gradlew", env={}, port=33333, llm=False,
+        health_timeout_sec=1.0, corpus_dir=None, dataset_name=None,
+    )
+    assert outcome["mode"] == "disabled:no-corpus-axis"
+    assert outcome["selector_key"] is None

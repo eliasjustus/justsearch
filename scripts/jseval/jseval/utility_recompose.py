@@ -188,6 +188,7 @@ def _intention_to_treat_estimand(
         ] = observation
 
     strata = []
+    completion_strata = []
     for (
         dataset, signature, model, resolved_model, certification_bytes,
         _exposure_mode, _instructions_sha256,
@@ -430,12 +431,45 @@ def _intention_to_treat_estimand(
         if stats and "duration" in stats:
             stratum["duration"] = stats["duration"]
         strata.append(stratum)
+        # Completion estimand (762 §T4, the third of the ITT/per-protocol/
+        # completion triple). Completion = finished within budget; under the
+        # exhaustion-as-failure rule a budget-exhausted cell is a NON-completion,
+        # so completion_rate = n_completed / n_attempted (n_completed already
+        # excludes exhausted + errored cells). This is the per-arm rate that
+        # SEPARATES the ITT accuracy (exhaustion scored incorrect) from the
+        # per-protocol accuracy (exhausted cells dropped) — reported per arm
+        # (A vs B) so the "tool rescues completion at scale" story is legible.
+        completion_by_arm = {}
+        for cond in ("A", "B"):
+            loss = per_arm_loss[cond]
+            n_attempted = loss["n_attempted"]
+            completion_by_arm[cond] = {
+                "n_expected": loss["n_expected"],
+                "n_attempted": n_attempted,
+                "n_completed": loss["n_completed"],
+                "n_exhausted": n_exhausted_by_arm[cond],
+                "completion_rate": (
+                    loss["n_completed"] / n_attempted if n_attempted else None
+                ),
+            }
+        completion_strata.append({
+            "stratum_id": stratum_id,
+            "corpus": dataset,
+            "model": model,
+            "by_arm": completion_by_arm,
+        })
     return {
         "primary": "intention_to_treat",
         "intention_to_treat": {"strata": strata},
         "per_protocol": {
             "role": "secondary",
             "source": "measured",
+        },
+        # 762 §T4 completion triple: always emitted alongside ITT + per-protocol.
+        "completion": {
+            "role": "secondary",
+            "source": "measured",
+            "strata": completion_strata,
         },
     }
 
