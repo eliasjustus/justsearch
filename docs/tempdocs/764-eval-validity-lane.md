@@ -124,6 +124,45 @@ from replace-or-demote to **rebuild with domain-matched (camouflaged)
 vocabulary** — tempdoc 767; demoting would bank an artifact as a domain
 finding.
 
+> **[CORRECTED 2026-07-21 — tempdoc 767 §H.0]** The paragraph above mixes a
+> finding that stands with an explanation that does not. Read it as follows.
+>
+> **REFUTED — the vocabulary confound.** The heading "the null is a vocabulary
+> confound, not a domain finding", the claim that the questions' vocabulary
+> "floods legal text and is near-absent from Enron", and the `spa` = 22% of
+> legal docs figure are all withdrawn. The source measurement
+> (`tmp/analysis-624/764/mechanism/grep_flood.csv`) has two independent
+> defects: it is a **substring** match, not a token match (`spa` was matching
+> `space`/`newspaper`/`disparate`/`aerospace` — the token `\bspa\b` occurs in
+> **0 of 199** real CLERC opinions), and it compares legal **per-file** against
+> Enron **per-line**, as the CSV's own header admits
+> (`legal_10k_staged_files_matching(of 10001)` vs
+> `enron_raw_lines_matching(of 150000 sampled)`). Unit-normalized,
+> token-boundary, per-document: `spa` is 0.25% legal vs 0.26% enron — **0.96×,
+> not 247×**; across all 20 payload terms the operational grep asymmetry is
+> **4.39×**, and 0/20 queries in either domain return >1% of the host corpus.
+>
+> **STANDS — the behavioural asymmetry.** "43/60 baseline cells open neither
+> gold doc" vs 6/60 in email, "cruises in email", accuracy **0.033 legal vs
+> 0.533 email**, and "once both gold docs are found, both corpora solve at
+> 74–100% — finding, not extraction, is the bottleneck" are **unaffected**.
+> These come from `findings.csv`, produced by two preserved, reproducible
+> scripts (`measure_perq_gold.py`, `measure_reads.py`) over real eval logs.
+> The refuted flood numbers have **no** preserved script — they were ad-hoc
+> shell. The phenomenon is real; the explanation is not. The behaviour is
+> therefore **currently unexplained**, and tempdoc 769's M1 measurement is the
+> leading candidate to explain it.
+>
+> **REFUTED — the recommendation's justification.** "Demoting would bank an
+> artifact as a domain finding" is no longer supported: the behaviour was
+> never shown to be an artifact. The 767 rebuild proceeds on two
+> **independently verified** payload defects instead of the vocabulary thesis —
+> payload enumerability (one literal `_FILLER` phrase selects **280/280** gold
+> docs) and a live entity-uid→gold-value coupling (`Tasdell272` → `…0272`,
+> exploited in §E above). 767's own framing has since moved from camouflage to
+> **payload integrity**: §H.3 measured host-derived camouflage making the
+> cross-domain asymmetry *worse* (4.39× → 10.5×).
+
 **Power/noise:** exact McNemar at n=60 reliably sees Δ≥0.20 (power 0.89 at
 discordant rate 0.25) but is badly underpowered for Δ≤0.15 (n@80%: 92 for
 Δ=0.15, 208 for Δ=0.10; 32 for Δ=0.25). Test-retest: legal-1k Δ sd 0.024

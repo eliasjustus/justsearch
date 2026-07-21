@@ -9,11 +9,14 @@
     "lang": "en",
     "seed": 638,
     "hops": 1,
-    "distractor_ratio": 5,
+    "distractor_ratio": 0,
     "semantic": true,
     "templated": true,
-    "n_chains": 20,
-    "doc_words": 520
+    "n_chains": 50,
+    "doc_words": null,
+    "payload_version": "payload.v2",
+    "entity_bank": "707-corpora/en-email-enron-raw/entity-bank",
+    "entity_bank_sha256": "28864e9b116d32f5b5be6dfd4c79a824911c6994a112704ed38f37824efcc73f"
   },
   "query_variant_provenance": {
     "variant": "short-natural",

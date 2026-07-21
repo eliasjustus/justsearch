@@ -793,7 +793,7 @@ above)*
 - **Conditions/caveats:** measured on the 707 fabricated-chain corpora (synthetic gold payload,
   uncamouflaged — see tempdoc 766's rebuild); the near-duplicate-decoy crowding is partly a
   corpus artifact (40 template-identical gold/decoy docs), so the fix lane (tempdoc 769) must
-  verify against both the existing reproductions AND the rebuilt camouflaged corpora. Related:
+  verify against both the existing reproductions AND the rebuilt corpora (tempdoc 767). Related:
   F-025's legal leg-miss profile (leg_miss 0.28) and F-037's pack-curation disagreement — same
   neighborhood, different stages.
 - **Owner / fix lane:** tempdoc 769 (engine lane, chartered 2026-07-21). Acceptance: the 17 B2
@@ -962,7 +962,7 @@ above)*
   --out tmp/712-splade-check --device cuda --batch-size 8`; artifact `tmp/712-splade-check/results.json`.
   Evidence: tempdoc 712 §Takeover experiment.
 
-### F-030: scanned-PDF OCR execution engine replaced (tempdoc 706, 2026-07-10) — extraction-content comparability boundary
+### F-030(706): scanned-PDF OCR execution engine replaced (tempdoc 706, 2026-07-10) — extraction-content comparability boundary
 
 - **Finding:** Tika-internal serial per-page tesseract OCR was replaced by an owned parallel engine
   (`PdfOcrEngine`: 300 DPI GRAY, bounded pool, one spawn/page, per-document budget, forceful child
@@ -978,7 +978,7 @@ above)*
   `extraction_method`/reason-code semantics are unchanged (671 classifiers green unmodified).
 - **Evidence:** tempdoc 706 §Execution log (before/after harness, word-overlap parity).
 
-### F-030: dense/SPLADE death on legal-shaped retrieval is an ENCODER-DOMAIN MISMATCH — not gating, not query length, not granularity, not query naturalness (tempdoc 678 §Pillar-5 campaign, 2026-07-10; answers Q-015)
+### F-030(678): dense/SPLADE death on legal-shaped retrieval is an ENCODER-DOMAIN MISMATCH — not gating, not query length, not granularity, not query naturalness (tempdoc 678 §Pillar-5 campaign, 2026-07-10; answers Q-015)
 
 - **REFINEMENT (2026-07-11, tempdoc 708 closure — original text below kept intact; annotate-don't-rewrite):**
   the "encoder-domain mismatch" verdict is **superseded in mechanism** by F-031 + F-032 + F-034: the
@@ -1639,10 +1639,10 @@ above)*
 - **Recommendation (636 §Adjacent-work-coordination, not yet a decision):** 639's design should **extend** `staged_recall_accounting` (a per-leg ANN-recall sub-measure + a dedup/redundancy measure over the same returned set), reusing the projection + reconciliation seam; 636's dropped `ann_proof FAIL` comparability flag is the natural input. **Status:** 639 is a no-implementation stub — flagged here so its design phase conforms rather than forks.
 - **Coupling with 643 found during the 643 investigation (2026-07-01):** the "symmetric siblings" framing (639 = candidate-set, 643 = judge) under-states a real coupling — a doc that out-ranks the gold in the `JUDGE_RANK_LOW` bucket is often a **near-duplicate distractor**, which is 639's dedup half, not a judge defect. 639's design should attribute how much of `judge_low` is near-dup-driven (→ fixed by 639's dedup, for free) vs genuine mis-rank (→ 643's territory) before either stub commits further design effort on an assumed split.
 
-### Q-015: Why do the dense and SPLADE legs collapse on the legal corpus (nDCG@10 ≈ 0.06), and what engine change recovers them? → ANSWERED → F-030
+### Q-015: Why do the dense and SPLADE legs collapse on the legal corpus (nDCG@10 ≈ 0.06), and what engine change recovers them? → ANSWERED → F-030(678)
 
 - **Answered (2026-07-10, tempdoc 678 §Pillar-5, campaign E5-A..E5-C-v2):** the collapse is an
-  **encoder-domain mismatch** — see F-030. Eliminated in order: gate/fusion capping (E5-A/B, with
+  **encoder-domain mismatch** — see F-030(678). Eliminated in order: gate/fusion capping (E5-A/B, with
   tempdoc 702's threshold recalibration eval-gated and shipped as correctness-only, PR #121), query
   length (E5-C keyword control), doc granularity (E5-D: dense adds only +3.0 pts at chunk level),
   query naturalness (E5-C-v2 LLM-reduced). No engine change recovers the legs short of the encoder/
@@ -1664,7 +1664,7 @@ above)*
   whether gold docs are even embedded/indexed at useful granularity (doc length vs encoder window);
   compare chunk-granularity retrieval; then route the fix to its owner (639 for ANN/dedup, a new doc
   for representation/granularity if that's the finding).
-- **Refinement (2026-07-11, tempdoc 712 → F-033):** the SPLADE half of F-030's "encoder-domain
+- **Refinement (2026-07-11, tempdoc 712 → F-033):** the SPLADE half of F-030(678)'s "encoder-domain
   mismatch at any granularity" is narrowed — 678 never measured chunk-level SPLADE, and per-chunk
   SPLADE revives the sparse leg 6–10× offline. The sparse deadness is substantially truncation, not
   domain. The dense half stands as F-031/F-032 scoped it.

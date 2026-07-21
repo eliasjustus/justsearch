@@ -1,0 +1,258 @@
+{
+  "schema": "entity-bank.v2",
+  "harvester_version": "entity-harvest.v1",
+  "host": {
+    "corpus": "entity-bank-fixture",
+    "domain": "legal",
+    "n_docs": 12,
+    "source_revision": "fixture",
+    "raw_source_signature": "fixture",
+    "corpus_signature": null
+  },
+  "parameters": {
+    "min_length": 2,
+    "max_length": 100,
+    "min_alpha_chars": 3,
+    "alpha_filtered_types": [
+      "CASE",
+      "LOC",
+      "ORG",
+      "PER"
+    ],
+    "types": [
+      "PER",
+      "ORG",
+      "LOC",
+      "CASE",
+      "CITATION",
+      "DOCKET",
+      "EMAIL",
+      "DATE",
+      "CARDINAL"
+    ],
+    "priority": [
+      "CASE",
+      "CITATION",
+      "DOCKET",
+      "EMAIL",
+      "DATE",
+      "PER",
+      "ORG",
+      "LOC",
+      "CARDINAL"
+    ],
+    "length_band": {
+      "min_ratio": 0.3,
+      "max_ratio": 3.0,
+      "max_resamples": 5
+    },
+    "exemplars_per_length": 64
+  },
+  "counts": {
+    "PER": {
+      "total": 60,
+      "unique": 42
+    },
+    "ORG": {
+      "total": 45,
+      "unique": 30
+    },
+    "LOC": {
+      "total": 20,
+      "unique": 20
+    }
+  },
+  "exemplars": {
+    "PER": {
+      "14": [
+        "Rowan Oakhurst",
+        "Rupert Wexford",
+        "Sylvia Yardley"
+      ],
+      "15": [
+        "Alaric Grantley",
+        "Ambrose Stavely",
+        "Barnaby Ferrers",
+        "Everard Quillon",
+        "Imogen Gaveston",
+        "Leopold Cadogan",
+        "Marden Dunsmore",
+        "Thaddeus Zouche"
+      ],
+      "16": [
+        "Cecily Pemberton",
+        "Winifred Danvers"
+      ],
+      "17": [
+        "Beatrix Lockridge",
+        "Clement Ellingham",
+        "Marguerite Jarrow",
+        "Olivia Brightwell",
+        "Philippa Halloway",
+        "Rosalind Netherby"
+      ],
+      "18": [
+        "Colwell Kingsleigh",
+        "Cornelius Ashworth",
+        "Desmond Marchbanks",
+        "Eleanora Thornbury",
+        "Gwendolyn Braddock",
+        "Percival Underhill"
+      ],
+      "19": [
+        "Adelaide Vansittart",
+        "Bernard Inglethorpe",
+        "Fitzgerald Chalmers",
+        "Harriet Ravensworth"
+      ],
+      "21": [
+        "Constance Fairweather"
+      ],
+      "22": [
+        "APPEALS Rupert Wexford"
+      ],
+      "23": [
+        "APPEALS Alaric Grantley",
+        "APPEALS Imogen Gaveston",
+        "APPEALS Marden Dunsmore",
+        "APPEALS Thaddeus Zouche"
+      ],
+      "24": [
+        "APPEALS Cecily Pemberton"
+      ],
+      "25": [
+        "APPEALS Olivia Brightwell",
+        "APPEALS Rosalind Netherby"
+      ],
+      "26": [
+        "APPEALS Colwell Kingsleigh",
+        "APPEALS Percival Underhill"
+      ],
+      "27": [
+        "APPEALS Bernard Inglethorpe",
+        "APPEALS Harriet Ravensworth"
+      ]
+    },
+    "ORG": {
+      "14": [
+        "Ormsby Systems",
+        "Wexley Systems"
+      ],
+      "16": [
+        "Ashland Networks",
+        "Fenwick Networks",
+        "Halcyon Holdings",
+        "Pinnacle Systems",
+        "Sudbury Holdings"
+      ],
+      "17": [
+        "Ashland Resources",
+        "Brampton Partners",
+        "Fenwick Resources",
+        "Meridian Holdings",
+        "Ormsby Industries",
+        "Thackery Partners",
+        "Torrance Partners",
+        "Wexley Industries"
+      ],
+      "18": [
+        "Calder Enterprises",
+        "Kelvin Enterprises",
+        "Ridgemont Networks"
+      ],
+      "19": [
+        "Brampton Foundation",
+        "Calder Technologies",
+        "Kelvin Technologies",
+        "Pinnacle Industries",
+        "Ridgemont Resources",
+        "Thackery Foundation",
+        "Torrance Foundation"
+      ],
+      "20": [
+        "Halcyon Laboratories",
+        "Sudbury Laboratories"
+      ],
+      "21": [
+        "Larchmont Enterprises",
+        "Meridian Laboratories"
+      ],
+      "22": [
+        "Larchmont Technologies"
+      ]
+    },
+    "LOC": {
+      "9": [
+        "Dover, DE",
+        "Salem, OR"
+      ],
+      "10": [
+        "Aurora, CO",
+        "Austin, TX",
+        "Bangor, ME",
+        "Boston, MA",
+        "Dallas, TX",
+        "Denver, CO",
+        "Fresno, CA",
+        "Mobile, AL"
+      ],
+      "11": [
+        "Atlanta, GA",
+        "Buffalo, NY",
+        "Chicago, IL",
+        "Detroit, MI",
+        "Houston, TX",
+        "Norfolk, VA",
+        "Phoenix, AZ",
+        "Seattle, WA",
+        "Trenton, NJ"
+      ],
+      "12": [
+        "Portland, OR"
+      ]
+    }
+  },
+  "length_weights": {
+    "PER": {
+      "14": 3,
+      "15": 8,
+      "16": 2,
+      "17": 6,
+      "18": 6,
+      "19": 4,
+      "21": 1,
+      "22": 1,
+      "23": 4,
+      "24": 1,
+      "25": 2,
+      "26": 2,
+      "27": 2
+    },
+    "ORG": {
+      "14": 2,
+      "16": 5,
+      "17": 8,
+      "18": 3,
+      "19": 7,
+      "20": 2,
+      "21": 2,
+      "22": 1
+    },
+    "LOC": {
+      "9": 2,
+      "10": 8,
+      "11": 9,
+      "12": 1
+    }
+  },
+  "collision_index": {
+    "algorithm": "sha256-trunc36-base64url",
+    "bits": 36,
+    "chars_per_key": 6,
+    "chunk_keys": 256,
+    "count": 92,
+    "chunks": [
+      "0QQwUm0y9Cng12A0o21Ihp0E1NoHqf2tpQk230s8Dd39piD-3Mfrib4OcPaN4d8os66TMaPm7OTEMx7eN4Ic82jonf8d0i_t93S0LK9M9i6ECrSBVZDOvc9uDROc1vDRyo53EWFvofEY6r94Ehs1kKG1ZJOHGV8LL2GdmpiPK7OwY9KdPRHUKiWQJPLiY1yPMPqxqtNMhUjYNUNQ3fORhFu5OYsNwWQ-FZL2RVgCrVRwXeviT3Ugl5TQ46B8Tf1W1qV665L8VmVaX3W6RJa5X3rc6oXYeQp_Y0FnshYXwjfzZ8U0CyZADiSpZPTsbTZlGFeq_aSZD0aUoEJVcbtFRoedQUiifQo-uogDLgRVgzlabph1F9H4hWYaaOipEqVKixNI-Hj01DLwjyddbdk9HQJJl2Jz0Ilm5MUFnKKWo0pP_0qOqxAJDXr-MwDnsZ6k9qsjfa-jtTEv9rt_VgBgtl7KVKuBUlPhuogHEIvJmr6rvP_bBFvVhQuyw7HZIUx7Hs-2xJ4P8mxeZ96uxp-paixuISgPyjGaPYzwc3Wb"
+    ]
+  }
+}
