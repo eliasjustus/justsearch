@@ -290,3 +290,57 @@ so only the baseline A arm truncates). Whether to keep this strict blanket rule 
 magnitude-aware sign-preservation check (which could admit a B-truncated HARM/NULL conclusion the
 blanket rule over-conservatively suppresses) is a founder call — the current implementation is the
 safe, brief-mandated choice. <!-- founder-decision -->
+
+## §I. Hardening log (agent, 2026-07-21 — two independent-review findings)
+
+**Design (terse).** Two follow-up findings on the merged §G work; both are the SAME §D.3
+conservative-direction seam applied more completely, not new structure. No schema/policy-json
+change, no new record fields.
+
+- **Change A — taint on the authoritative flag alone.** The with-tool taint fired on
+  `b_exhausted and with_tool.usage_truncated is True` (`utility_recompose.py`, was :245).
+  `usage_truncated` is the authoritative lower-bound stamp; `b_exhausted` (error-classification)
+  is redundant *today* (classification implies the stamp) but a silent hole if they ever diverge
+  — a truncated-but-unclassified with-tool cell (stamp present, `excluded=False` → `classify → None`,
+  so it survives the `OTHER_ERROR` drop and reaches the check) would be treated as exact and
+  flatter the with-tool arm. Fixed: gate on `usage_truncated is True` alone.
+- **Change B — turns/duration deltas fail closed under with-tool truncation.** The §G fail-closed
+  override covered `cost_usd` + provider tokens but not `turns` / `duration.delta_mean`, which are
+  understated in the with-tool arm by a truncated cell exactly as cost is (`float(None or 0)==0`;
+  a lower-bound count/duration flatters a lower-is-better metric).
+  - **Fix site.** The ITT stratum record (`utility_recompose`) projects `duration` but **not**
+    `turns` (stratum dict has no turns key; `turns` is only surfaced by the pooled `_arm_comparison`
+    caller, whose per-protocol pairs exclude all truncated cells). So the consistent, single-site
+    fix is in `_stats_from_pairs` itself (`utility_comparison.py`) — where both `turns` and
+    `duration` deltas are computed — driven by a new `with_tool_usage_truncated: bool = False`
+    kwarg threaded from the recompose stratum flag. `turns` (no censoring context) is withdrawn
+    wholesale like cost; `duration` **keeps** its per-arm censored distributions
+    (`n_censored`/`completion_rate` from the exhaustion-ITT work) and withdraws only the tainted
+    `delta_mean`. Same `{available:false, reason:<anti-conservative>}` shape/reason as cost.
+
+**Byte-identity / derisk.** The kwarg defaults `False`; the pooled/per-protocol callers
+(`_arm_comparison`, stratified sub-stats) never pass it, and every pre-757 record has no
+`usage_truncated` cell, so the stratum flag is `False` → the new block is inert → **byte-identical,
+zero digest re-pins** (guaranteed by construction, confirmed by the unchanged 624 roundtrip digest
+test + the 757 baseline-invisibility digest test staying green). Honest boundary: turns-fail-closed
+is defense-in-depth — currently a no-op in every *published* surface (ITT omits turns; per-protocol
+excludes truncated cells) — but keeps the whole delta family consistent for any future ITT-style
+consumer that publishes turns.
+
+**Tests** (`tests/test_partial_usage_capture_757.py`, +4): Change-A stamp-alone taint (with-tool
+cell truncated but NOT exhaustion-classified → cost/tokens unavailable, `usage_complete` still
+True — fails under the old `b_exhausted` gate, passes under the stamp-alone gate); Change-B
+duration `delta_mean` unavailable in-stratum with censoring retained; baseline-truncation duration
+stays available (untainted); direct `_stats_from_pairs` unit — truncated ⇒ turns + duration
+`delta_mean` unavailable (censoring kept), default ⇒ both available with exact stats. All assert the
+anti-conservative reason string, not mere absence.
+
+### I.1 Change table (file:line)
+
+| File | Change |
+|---|---|
+| `utility_recompose.py:245-250` | Change A: taint gates on `with_tool.get("usage_truncated") is True` alone (dropped `b_exhausted` conjunct) + rationale comment |
+| `utility_recompose.py:266-273` | `_stats_from_pairs(...)` call threads `with_tool_usage_truncated=with_tool_usage_truncated` |
+| `utility_comparison.py:935-945` | `_TRUNCATED_WITH_TOOL_USAGE_REASON` constant + `with_tool_usage_truncated: bool = False` kwarg on `_stats_from_pairs` |
+| `utility_comparison.py:1100-1120` | Change B: fail-close `turns` (wholesale) + `duration.delta_mean` (censoring kept) on with-tool truncation |
+| `tests/test_partial_usage_capture_757.py` | +4 tests (Change A + Change B stratum/unit) + `_stats_from_pairs` import |

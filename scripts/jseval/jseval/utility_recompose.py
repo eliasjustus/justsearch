@@ -242,7 +242,12 @@ def _intention_to_treat_estimand(
             # family (its lower-bound cost/tokens cannot be treated as exact without
             # flattering the with-tool arm). Baseline-arm truncation is NOT tracked here --
             # it is direction-safe and already admitted by the non-None `usage_complete`.
-            if b_exhausted and with_tool.get("usage_truncated") is True:
+            # §I (independent review): gate on the AUTHORITATIVE `usage_truncated` stamp
+            # ALONE, not on `b_exhausted`. Classification implies the stamp today, so the
+            # `b_exhausted` conjunct was redundant -- but it becomes a silent hole if the
+            # stamp and the error-classification ever diverge: a truncated-but-unclassified
+            # with-tool cell would then be treated as exact and flatter the with-tool arm.
+            if with_tool.get("usage_truncated") is True:
                 with_tool_usage_truncated = True
             pairs[f"{seed}|{qid}"] = {
                 "seed": seed,
@@ -264,7 +269,11 @@ def _intention_to_treat_estimand(
                 "c_tool_call_sequence": with_tool.get("tool_call_sequence"),
             }
         stats = (
-            _stats_from_pairs(pairs, statistical_alpha=statistical_alpha)
+            _stats_from_pairs(
+                pairs,
+                statistical_alpha=statistical_alpha,
+                with_tool_usage_truncated=with_tool_usage_truncated,
+            )
             if pairs else None
         )
         if stats and (not usage_complete or with_tool_usage_truncated):

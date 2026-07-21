@@ -932,7 +932,18 @@ def _funnel_metrics(
     }
 
 
-def _stats_from_pairs(pairs: dict, *, statistical_alpha: float = 0.05) -> dict | None:
+_TRUNCATED_WITH_TOOL_USAGE_REASON = (
+    "with-tool usage truncated (lower bound); treating as exact would overstate "
+    "the with-tool efficiency advantage (anti-conservative)"
+)
+
+
+def _stats_from_pairs(
+    pairs: dict,
+    *,
+    statistical_alpha: float = 0.05,
+    with_tool_usage_truncated: bool = False,
+) -> dict | None:
     """The full per-comparison stat block — McNemar accuracy + bootstrap-CI
     cost/token/turn deltas + seed envelope — computed independently over
     whichever paired-observation set is handed in: the pooled set, or one
@@ -1097,6 +1108,25 @@ def _stats_from_pairs(pairs: dict, *, statistical_alpha: float = 0.05) -> dict |
                 "record's top-level `denominators` block."
             ),
         }
+    # tempdoc 757 §I (independent review, MEDIUM): the turns/duration DELTA
+    # statistics are understated in the with-tool arm by a truncated (lower-bound)
+    # cell exactly as cost/tokens are -- `float(None or 0) == 0`, and a lower-bound
+    # count/duration flatters the with-tool arm on these lower-is-better metrics.
+    # So they fail closed on with-tool truncation in the SAME conservative direction
+    # as cost (§D.3), with the anti-conservative reason and no new labelling field.
+    # Default False keeps every pre-757 record and the per-protocol/pooled callers
+    # (which exclude truncated cells) byte-identical. `turns` carries no censoring
+    # context so the whole block is withdrawn as cost is; `duration` KEEPS its
+    # per-arm censored distributions (n_censored/completion_rate) and withdraws only
+    # the tainted `delta_mean`.
+    if with_tool_usage_truncated:
+        result["turns"] = {
+            "available": False, "reason": _TRUNCATED_WITH_TOOL_USAGE_REASON,
+        }
+        if "duration" in result:
+            result["duration"]["delta_mean"] = {
+                "available": False, "reason": _TRUNCATED_WITH_TOOL_USAGE_REASON,
+            }
     return result
 
 
