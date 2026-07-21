@@ -1,7 +1,7 @@
 ---
 title: "bridge-entity retrieval lane: fix register F-039 — structure-descriptive queries must reach designer-keyed gold past near-duplicate decoys; the one engine-owned failure class in the agent-utility census, and it scales with corpus size"
 type: tempdocs
-status: "chartered (2026-07-21); theorized 2026-07-21 (§D) — diagnosis-before-design MANDATED: run the §D measurement plan (M1 first) before any fix design. Founder-run implementation lane."
+status: "DIAGNOSED (2026-07-21, §E — M1/M2/M3 complete, ~$0): H4 join-key dominates; lane routing decision (dissolve into 770 + scoped fusion-leak item + F-030 residue) is FOUNDER-PENDING. M5 retest deferred to the 767 rebuild."
 created: 2026-07-21
 author: agent (Fable orchestration), 766 program charter
 category: search-quality / retrieval
@@ -153,3 +153,56 @@ signal per D-005, so no LLM judge is needed):**
 **First to run: M1** — it forks the entire tree at near-zero cost before any
 backend spins up. M2 is the first backend measurement. Only after M1–M4 return
 does the lane pick a fix (or reframe/close); no design precedes them.
+
+## §E. Diagnosis results (2026-07-21 — M1/M2/M3 executed same day; M4 subsumed, M5 deferred)
+
+Artifacts: `tmp/analysis-624/769/` (per-query per-leg gold ranks at limit=100,
+per-cell verdict CSV, driver + logs). Both strata replayed on the pinned
+campaign indexes (adopt-verified doc counts, clean shutdowns). All ~$0.
+
+**M1 (gold-doc inspection).** All 17 B2 cells: ZERO content-word overlap
+between the question and BOTH gold docs (the one B2-marginal qid shares
+exactly one word, "records"). The structure descriptor is paraphrased in the
+bridge doc by construction (question "power station in the upper wetlands" →
+doc "reactor in the northern marshlands"). Gold is lexically unreachable from
+structure-phrased queries; only semantic bridging can reach it. H3 (near-dup
+crowd-out) dies as the primary mechanism — and the M2 depth probe confirms
+the docs burying the bridge are genuine CLERC hard negatives, not a template
+near-dup wall, which also decouples this lane from Q-013's dedup question.
+
+**M2 (per-leg depth probe, limit=100, 4 modes, all issued queries).** For the
+BRIDGE doc: 4/17 cells H1-floor (no leg, no query, top-100); 10/17
+depth-ranked 21–100 (carried by vector/hybrid/splade, essentially never
+lexical); 3/17 visible ≤20 in SOME leg while the agent's mcp-hybrid@k missed
+it — including q3, where vector had BOTH golds ≤10 and hybrid buried them to
+23–24 (a genuine fusion-as-recall-gate leak instance, D-005). For the ANSWER
+doc: absent from every leg's top-100 in 12/17 cells — single-shot
+structure-query retrieval structurally cannot produce it.
+
+**M3 (join-key oracle — decisive).** Querying the designer name surfaces BOTH
+golds at rank 1–2, in hybrid AND plain lexical, for every distinct qid in
+both strata, no exceptions (answer doc r1, bridge doc r2). The structure
+entity name surfaces only the bridge; the template signature "designed by
+the engineer" surfaces the bridge weakly and the answer never. The miss is a
+missing JOIN KEY the query never carries — not an engine ranking defect.
+
+**B3 contrast (6/6 successes probed).** Every success = some issued query's
+vocabulary happened to overlap the bridge doc (proper-name guess or right
+paraphrase); leg mixed. Success means "got hop-1, then chained hop-2 by
+querying the designer" — i.e. the winning agents already perform the
+two-step join the failing ones stop short of.
+
+**Evidence-based routing (decision FOUNDER-PENDING):**
+1. **Dominant → 770 (surface/behavior):** the two-step retrieve affordance —
+   agents that query the extracted bridge entity always win; the tool surface
+   should make that continuation the path of least resistance. D-005-clean
+   (reacts to the query's own results; no per-corpus router).
+2. **Scoped 769 engine residue:** the hybrid-fusion burial of a
+   leg-visible gold (q3 class) is a real, bounded leak item; deeper hop-1
+   k / fusion-depth handling could lift 10 depth-ranked bridges into
+   agent-visible k. Necessary-not-sufficient: hop-2 still needs the join.
+3. **4 H1-floor cells → F-030 representation territory** (wontfix here;
+   model swap already rejected) + H5 modifier: M5 re-test on the 767-rebuilt
+   camouflaged strata before treating the floor as engine-real.
+
+Register F-039 annotated with this diagnosis (same change).
