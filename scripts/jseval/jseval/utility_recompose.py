@@ -196,6 +196,15 @@ def _intention_to_treat_estimand(
         pairs = {}
         adopted = 0
         usage_complete = True
+        # tempdoc 757 conservative-direction rule. Truncated usage is a LOWER BOUND; the
+        # efficiency delta is `with_tool - baseline` (lower is better). Treating a lower
+        # bound as exact is conservative for a B-favouring efficiency claim ONLY when the
+        # truncation is in the BASELINE (A) arm -- understating A understates B's advantage
+        # (safe, handled automatically because A's captured values are non-None so
+        # `usage_complete` stays True). A truncated WITH-TOOL (B) arm understates B's own
+        # cost -> over-states B's advantage -> anti-conservative -> the efficiency intervals
+        # are forced unavailable (fail closed), exactly as the incomplete-evidence path.
+        with_tool_usage_truncated = False
         per_protocol_pairs = 0
         for seed, qid in shared:
             baseline = arms["A"][(seed, qid)]
@@ -229,6 +238,12 @@ def _intention_to_treat_estimand(
                 baseline.get("unique_tokens"), with_tool.get("unique_tokens"),
             )
             usage_complete = usage_complete and all(value is not None for value in values)
+            # tempdoc 757: a truncated WITH-TOOL cell taints the whole stratum's efficiency
+            # family (its lower-bound cost/tokens cannot be treated as exact without
+            # flattering the with-tool arm). Baseline-arm truncation is NOT tracked here --
+            # it is direction-safe and already admitted by the non-None `usage_complete`.
+            if b_exhausted and with_tool.get("usage_truncated") is True:
+                with_tool_usage_truncated = True
             pairs[f"{seed}|{qid}"] = {
                 "seed": seed,
                 "a_correct": bool(baseline.get("correct")) and not a_exhausted,
@@ -252,12 +267,22 @@ def _intention_to_treat_estimand(
             _stats_from_pairs(pairs, statistical_alpha=statistical_alpha)
             if pairs else None
         )
-        if stats and not usage_complete:
+        if stats and (not usage_complete or with_tool_usage_truncated):
+            # tempdoc 757: distinguish the two fail-closed causes. The anti-conservative
+            # reason fires only when usage is otherwise COMPLETE (all values present) but a
+            # with-tool cell's usage is a lower bound; when values are outright missing the
+            # incomplete-evidence reason wins (byte-identical to the pre-757 path).
+            reason = (
+                "with-tool usage truncated (lower bound); treating as exact would overstate "
+                "the with-tool efficiency advantage (anti-conservative)"
+                if usage_complete and with_tool_usage_truncated
+                else "incomplete ITT usage evidence"
+            )
             stats["provider_cache_creation_input_tokens"] = {
-                "available": False, "reason": "incomplete ITT usage evidence",
+                "available": False, "reason": reason,
             }
             stats["cost_usd"] = {
-                "available": False, "reason": "incomplete ITT usage evidence",
+                "available": False, "reason": reason,
             }
         source_cohorts = [
             ((observation.get("source") or {}).get("cohort") or {})
