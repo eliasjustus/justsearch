@@ -231,3 +231,62 @@ confirmatory case is NOT unstuck by capture alone; that needs §B option 2 (impu
 founder-gated. The orchestrator's live smoke should use a tiny **USD** budget to demonstrate the
 capture win end-to-end (cost_usd available → benefit reachable); a tiny wall budget will
 correctly still show cost unavailable. <!-- founder-decision -->
+
+## §H. Live smoke validation (agent, 2026-07-21 — orchestrator forced-USD-exhaustion run)
+
+Smoke: 16 samples (8 queries × 1 seed × A,B), SDK `max_budget_usd 0.06`. Data under
+`scripts/jseval/tmp/smoke757/{logs,out,out-itt}`. **Both flagged anomalies are the DESIGNED
+behavior; no code change.** The two reported numbers came from the per-protocol `measured`
+block, not the ITT primary — a reading-map issue, not a bug.
+
+### H.1 The n=3 / cost-available numbers are the per-protocol secondary, not ITT
+
+Both records carry TWO efficiency views for the one stratum:
+
+| path in `utility-comparison.v1.json` | n_paired | cost_usd | which view |
+|---|---|---|---|
+| `/estimands/intention_to_treat/strata[0]` | **8** | **unavailable** (anti-conservative) | ITT primary (retains exhausted) |
+| `/measured/mixed/en-email-enron-raw-1k-verbose/haiku` | **3** | available (`delta_ci` present) | per-protocol secondary (drops exhausted) |
+
+The reported "n_paired=3" and "cost available" are the `/measured/…` values (verified by
+walking both files). This is exactly the sensitivity pair §C asked for: the WITH-truncation
+view (ITT: unavailable) and the WITHOUT view (per-protocol: available) are both present.
+
+### H.2 Anomaly 1 (retention) — RESOLVED, no gap
+
+ITT `per_arm_loss`: A `n_completed=3, n_exhausted=5`; B `n_completed=6, n_exhausted=2`;
+`n_paired_observations=8` — all 8 pairs retained, exactly the ITT rule. Root evidence
+(`read_inspect_observations` over the raw logs): all 7 budget-killed cells have
+`error_class=usd_budget_exhausted` and `classify_error_kind → resource_exhaustion`; a sample
+carries `cost_usd=0.061236, unique_tokens=14883, usage_truncated=True` (capture worked). The
+kill was the SDK `max_budget_usd` → SDK `is_error` ResultMessage with
+`subtype=error_max_budget_usd` → `_error_class` (`utility_evidence.py:48-49`) →
+`usd_budget_exhausted` → `classify_error_kind` marker match (`utility_governance.py:34`) →
+RESOURCE_EXHAUSTION. Retention: exhaustion falls through to `per_protocol_pairs += 1`
+(`utility_recompose.py:235`); only `OTHER_ERROR` pairs `continue`/drop (`:228-229`).
+**No smoke-vs-campaign kill-path gap for the USD path** — the smoke's SDK budget produces the
+exact `error_max_budget_usd` category the campaign path uses. (The wall-clock-cost gap of §D.2
+is a DIFFERENT kill path and is unaffected by this smoke.)
+
+### H.3 Anomaly 2 (direction rule) — RESOLVED, fired correctly, no bug
+
+ITT `cost_usd`/tokens = `{available:false, reason:"…anti-conservative"}` — the rule DID fire:
+2 truncated B cells tainted the efficiency family. The taint check
+(`utility_recompose.py:245`, `if b_exhausted and with_tool.get("usage_truncated") is True`) sits
+INSIDE the `for seed, qid in shared` loop (`:209`) AFTER the `OTHER_ERROR … continue` (`:228-229`)
+and the `per_protocol_pairs += 1` (`:235`) — so taint is scoped to RETAINED/CONTRIBUTING pairs
+only (coordinator reading (i), confirmed): a pair dropped as missing data never reaches the
+check and cannot taint. Here all 8 pairs were retained (`n_excluded=0` both arms), so both
+truncated B cells contribute and correctly taint. Not case (ii); no fix.
+
+### H.4 Consequence the founder should note (strict rule vs mixed A/B exhaustion)
+
+The rule fails the efficiency family closed on **any** with-tool truncation (parent-brief
+directive: a truncated B value can only make B look better → fail closed). So a smoke/campaign
+with even a few B-arm exhaustions (this smoke: 2; real legal-1k: 3–11) yields cost UNAVAILABLE —
+capture unsticks the efficiency family only when with-tool truncation is **zero** (all exhaustion
+in arm A). To demonstrate `benefit`-reachable end-to-end, force **asymmetric** exhaustion (budget
+so only the baseline A arm truncates). Whether to keep this strict blanket rule or refine to a
+magnitude-aware sign-preservation check (which could admit a B-truncated HARM/NULL conclusion the
+blanket rule over-conservatively suppresses) is a founder call — the current implementation is the
+safe, brief-mandated choice. <!-- founder-decision -->
