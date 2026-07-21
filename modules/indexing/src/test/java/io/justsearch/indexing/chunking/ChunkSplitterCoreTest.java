@@ -707,6 +707,184 @@ class ChunkSplitterCoreTest {
     }
   }
 
+  @Nested
+  @DisplayName("End-of-text overlap-tail regression (tempdoc 749)")
+  class EndOfTextOverlapTailTests {
+
+    @Test
+    @DisplayName("plain text within [minChars, targetChars] band yields exactly one chunk")
+    void singleChunkAcrossMinToTargetBand() {
+      int[] lengths = {385, 500, 1000, 1900, 1923};
+      for (int length : lengths) {
+        String text = plainText(length);
+
+        List<String> chunks = ChunkSplitter.split(text);
+        assertEquals(
+            1,
+            chunks.size(),
+            "split() should produce exactly 1 chunk for length " + length + ", got " + chunks.size());
+        assertEquals(
+            text, chunks.get(0), "single chunk should equal the full text for length " + length);
+
+        List<ChunkSplitter.Chunk> metaChunks =
+            ChunkSplitter.splitWithMetadata(
+                text,
+                ChunkSplitter.DEFAULT_CHUNK_TOKENS,
+                ChunkSplitter.DEFAULT_OVERLAP_TOKENS,
+                ChunkSplitter.Mode.DEFAULT);
+        assertEquals(
+            1,
+            metaChunks.size(),
+            "splitWithMetadata() should produce exactly 1 chunk for length "
+                + length
+                + ", got "
+                + metaChunks.size());
+        ChunkSplitter.Chunk chunk = metaChunks.get(0);
+        assertEquals(0, chunk.startChar(), "startChar should be 0 for length " + length);
+        assertEquals(length, chunk.endChar(), "endChar should cover full text for length " + length);
+      }
+    }
+
+    @Test
+    @DisplayName("no chunk span is fully contained within its predecessor's span")
+    void noChunkSpanContainedInPredecessor() {
+      String text = plainText(4000);
+
+      List<ChunkSplitter.Chunk> chunks =
+          ChunkSplitter.splitWithMetadata(
+              text,
+              ChunkSplitter.DEFAULT_CHUNK_TOKENS,
+              ChunkSplitter.DEFAULT_OVERLAP_TOKENS,
+              ChunkSplitter.Mode.DEFAULT);
+
+      assertTrue(chunks.size() >= 2, "Should produce multiple chunks for a 4000-char document");
+
+      for (int i = 1; i < chunks.size(); i++) {
+        ChunkSplitter.Chunk prev = chunks.get(i - 1);
+        ChunkSplitter.Chunk curr = chunks.get(i);
+        boolean contained = curr.startChar() >= prev.startChar() && curr.endChar() <= prev.endChar();
+        assertFalse(
+            contained,
+            "Chunk "
+                + i
+                + " ["
+                + curr.startChar()
+                + ","
+                + curr.endChar()
+                + ") is fully contained within predecessor "
+                + (i - 1)
+                + " ["
+                + prev.startChar()
+                + ","
+                + prev.endChar()
+                + ")");
+      }
+    }
+
+    @Test
+    @DisplayName("trimmed all-whitespace-tail window does not emit a contained chunk (CJK counterexample)")
+    void trimmedWhitespaceTailWindowDoesNotEmitContainedChunk() {
+      // Deterministic reconstruction of the jqwik-shrunk counterexample from
+      // ChunkTilingPropertyTest ("chunk 1 [33,34) is fully contained within predecessor [0,34)").
+      // The property found it with CJK content in JSON mode; rebuilt here in the same regime —
+      // CJK-dominant content has chars-per-token = 1.0, so targetChars == targetTokens — using a
+      // DEFAULT-mode sentence boundary to extend the first window one past its target end.
+      //
+      // Layout (0-based indices): 0..10 = 11 CJK; 11 = '.'; 12..20 = 9 spaces; 21..35 = 15 CJK
+      // (length 36). With targetTokens=10, overlapTokens=10 (targetChars = minChars = overlapChars
+      // = 10) the PRE-FIX loop trace is:
+      //   window0: pos=0, targetEnd=10; the sentence boundary after '.'+9 spaces returns endPos=21;
+      //            raw [0,21) trims its trailing 9 spaces -> chunk0 span [0,12) ("<11 CJK>.").
+      //   advance = max(21-0-10, 10) = 11 -> pos=11.
+      //   window1: pos=11, targetEnd=21, endPos=21; raw [11,21) = '.'+9 spaces trims to "." ->
+      //            span [11,12), which is fully contained in chunk0 [0,12). (This is the bug.)
+      // The '.' at index 11 is already inside chunk0, so dropping the contained window loses no
+      // coverage. POST-FIX chunks are [0,12), [21,31), [31,36).
+      String cjk = "中"; // 中 (CJK Unified Ideograph)
+      String content = cjk.repeat(11) + "." + " ".repeat(9) + cjk.repeat(15);
+
+      List<ChunkSplitter.Chunk> chunks =
+          ChunkSplitter.splitWithMetadata(content, 10, 10, ChunkSplitter.Mode.DEFAULT);
+
+      assertTrue(
+          chunks.size() >= 2,
+          "Scenario must produce multiple chunks so the containment invariant is exercised; got "
+              + chunks.size());
+
+      // Invariant under test: no chunk's span may be contained in its predecessor's.
+      for (int i = 1; i < chunks.size(); i++) {
+        ChunkSplitter.Chunk prev = chunks.get(i - 1);
+        ChunkSplitter.Chunk curr = chunks.get(i);
+        boolean contained =
+            curr.startChar() >= prev.startChar() && curr.endChar() <= prev.endChar();
+        assertFalse(
+            contained,
+            "Chunk "
+                + i
+                + " ["
+                + curr.startChar()
+                + ","
+                + curr.endChar()
+                + ") is fully contained within predecessor "
+                + (i - 1)
+                + " ["
+                + prev.startChar()
+                + ","
+                + prev.endChar()
+                + ")");
+      }
+
+      // The offset law must still hold for every surviving chunk.
+      for (ChunkSplitter.Chunk chunk : chunks) {
+        assertEquals(
+            chunk.content(),
+            content.substring(chunk.startChar(), chunk.endChar()),
+            "chunk offsets must reconstruct content");
+      }
+
+      // Full content coverage: every non-whitespace char falls inside some chunk span.
+      for (int i = 0; i < content.length(); i++) {
+        if (Character.isWhitespace(content.charAt(i))) {
+          continue;
+        }
+        final int idx = i;
+        boolean covered = chunks.stream().anyMatch(c -> idx >= c.startChar() && idx < c.endChar());
+        assertTrue(
+            covered,
+            "non-whitespace char at index "
+                + idx
+                + " ('"
+                + content.charAt(idx)
+                + "') must be covered by some chunk span");
+      }
+    }
+  }
+
+  /**
+   * Deterministic plain-text string of exactly {@code length} chars: words separated by single
+   * spaces, no leading or trailing whitespace.
+   */
+  private static String plainText(int length) {
+    String[] words = {
+      "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel",
+      "india", "juliet", "kilo", "lima", "mike", "november", "oscar", "papa"
+    };
+    StringBuilder sb = new StringBuilder(length);
+    int wordIndex = 0;
+    while (sb.length() < length) {
+      if (sb.length() > 0) {
+        sb.append(' ');
+      }
+      sb.append(words[wordIndex % words.length]);
+      wordIndex++;
+    }
+    String result = sb.substring(0, length);
+    if (Character.isWhitespace(result.charAt(length - 1))) {
+      result = result.substring(0, length - 1) + "x";
+    }
+    return result;
+  }
+
   private static int countOccurrences(String text, String needle) {
     if (text == null || text.isEmpty() || needle == null || needle.isEmpty()) {
       return 0;

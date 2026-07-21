@@ -35,6 +35,13 @@ set "PYTHONPATH=%JS%"
 set "PYTHONUTF8=1"
 set "INSPECT_DISPLAY=none"
 set "JSEVAL_HEALTH_TIMEOUT_SEC=600"
+rem Pin the harness for the whole chain lifetime -- tempdoc 758 sec B, incident #6: the claude
+rem CLI auto-updated 2.1.212 -> 2.1.214 mid-night, hashing a NEW cli_version into
+rem agent_cohort_key so the same-night stratum rerun could not rejoin the cohort. Supported
+rem env var, verified against https://code.claude.com/docs/en/settings. Belt; the suspenders
+rem is the jseval-side cli_version stamp+assert on each calibration.json - utility-run fails
+rem closed on drift even if this knob is ineffective.
+set "DISABLE_AUTOUPDATER=1"
 
 set "PORT=33221"
 set "BASEURL=http://127.0.0.1:%PORT%"

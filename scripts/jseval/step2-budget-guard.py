@@ -51,12 +51,24 @@ def main() -> int:
     n_missing = max(0, a.total - len(known))
     extrapolated = max(known) * n_missing
     projected = sum(known) + extrapolated
+    # Authoritative (max-based) projection drives the abort decision below, UNCHANGED. The
+    # mean-based projection is printed alongside purely for legibility (tempdoc 758 §C): it
+    # exposes how much the max-extrapolation's conservatism is inflating the number, so a chain
+    # author can see whether a max-based abort is a genuine over-cap or an ordering artifact.
+    mean_known = sum(known) / len(known)
+    projected_mean = sum(known) + mean_known * n_missing
     print(f"known={len(known)}/{a.total}  sum(known)=${sum(known):.2f}  "
           f"+ max(known)${max(known):.2f} x {n_missing} missing = ${extrapolated:.2f}")
-    print(f"PROJECTED TOTAL = ${projected:.2f}  (cap ${a.cap:.2f})")
+    print(f"PROJECTED TOTAL = ${projected:.2f}  (cap ${a.cap:.2f})  "
+          f"[max-based, authoritative]")
+    print(f"  (mean-based projection = sum + mean(known)${mean_known:.2f} x {n_missing} missing "
+          f"= ${projected_mean:.2f}  -- informational, does NOT drive the abort)")
     if projected > a.cap:
         print(f"ABORT: projected total ${projected:.2f} exceeds hard cap ${a.cap:.2f} "
-              f"-- refusing to launch this or any further utility-run.", file=sys.stderr)
+              f"-- refusing to launch this or any further utility-run. "
+              f"NOTE: max-extrapolation over-projects when the most expensive dataset calibrates "
+              f"first -- cheapest-first ordering recommended. Mean-based projection for reference "
+              f"= ${projected_mean:.2f}.", file=sys.stderr)
         return 1
     return 0
 

@@ -40,6 +40,7 @@ from pathlib import Path
 
 import httpx
 
+from jseval.chunk_completeness import CHUNK_THRESHOLD_CHARS, iter_corpus_docs
 from jseval.utility_calibrate import assert_watched_roots_scoped, base_url_from_mcp_config
 
 log = logging.getLogger(__name__)
@@ -269,6 +270,115 @@ def _extract_title_from_path(path: str) -> str:
 # ============================================================
 
 
+def rag_reachability_probe(
+    corpus_path: str | Path,
+    api_base_or_session: str | httpx.Client = _DEFAULT_BASE_URL,
+    n: int = 10,
+    top_k: int = 5,
+) -> dict:
+    """Fail-closed check of the retrieval-completeness invariant (tempdoc 749): every
+    sub-threshold (chunkless-by-construction) doc must still be reachable via the PRIMARY
+    RAG path, not silently dropped by the ``IS_CHUNK:true`` chunk-retrieval filter.
+
+    Samples the ``n`` shortest docs in ``corpus_path`` (a BEIR-format ``corpus.jsonl`` --
+    see :func:`jseval.chunk_completeness.iter_corpus_docs`) whose materialized content length
+    is < :data:`jseval.chunk_completeness.CHUNK_THRESHOLD_CHARS` -- these are the docs
+    ``ChunkDocumentWriter`` writes zero chunk documents for (tempdoc 749's root cause), so a
+    silent regression of the doc-level-union fix would make them invisible to
+    ``/api/knowledge/retrieve-context`` again. Sample order is deterministic: ascending
+    length, then doc id (ties broken lexically) -- so a fixed ``n`` samples the same docs
+    run-to-run for a given corpus.
+
+    For each sampled doc, probes with a scoped ``retrieve-context`` call (``doc_ids:
+    [docid]``) using the doc's title as the question (falling back to the first 12
+    whitespace-separated words of its text when the title is blank -- titles are usually a
+    much better retrieval query than an arbitrary text prefix, but not every corpus doc has
+    one). A doc PASSES iff the response's ``quality.retrieval_mode`` is not
+    ``"FULLTEXT_FALLBACK"`` AND some returned chunk's ``parent_doc_id`` equals the doc id --
+    i.e. the doc was actually found via the primary chunk-retrieval path, not the whole-doc
+    BM25 fallback tempdoc 749 diagnosed as blind to this doc class.
+
+    ``api_base_or_session`` accepts either a base URL (a fresh, self-closed
+    ``httpx.Client(base_url=..., timeout=30.0)`` is created and used exactly like
+    :func:`run_retrieval_eval`'s own client) or an already-open ``httpx.Client`` to reuse
+    (e.g. ``run_retrieval_eval`` passing its own client so the probe doesn't open a second
+    connection) -- the caller-supplied client is never closed here.
+
+    Returns ``{"sampled": int, "passed": int, "failed": [docid, ...], "verdict": "ok"|"fail"|
+    "not-applicable"}``. ``"not-applicable"`` (not a failure) means the corpus has no
+    sub-threshold doc to check -- either ``corpus_path`` doesn't exist/is unreadable (mirrors
+    :func:`jseval.chunk_completeness.expected_chunk_docs`'s graceful degradation for corpora
+    with no local ``corpus.jsonl``, e.g. BEIR datasets materialized via ``ir_datasets``) or
+    every doc in it reaches the chunk threshold on its own.
+    """
+    docs = list(iter_corpus_docs(corpus_path))
+    chunkless = sorted(
+        (d for d in docs if d.length < CHUNK_THRESHOLD_CHARS),
+        key=lambda d: (d.length, d.doc_id),
+    )
+    if not chunkless:
+        return {"sampled": 0, "passed": 0, "failed": [], "verdict": "not-applicable"}
+
+    sample = chunkless[:n]
+
+    owns_client = isinstance(api_base_or_session, str)
+    client: httpx.Client = (
+        httpx.Client(base_url=api_base_or_session, timeout=30.0)
+        if owns_client
+        else api_base_or_session
+    )
+
+    failed: list[str] = []
+    passed = 0
+    try:
+        for d in sample:
+            title = d.title.strip()
+            question = title if title else " ".join(d.text.split()[:12])
+            try:
+                # UNSCOPED on purpose: reachability means the doc surfaces via the primary
+                # RAG path on its own content — scoping to a doc_id (a) defeats the test and
+                # (b) can't be expressed here anyway, since the backend keys docs by ingest
+                # PATH, not the corpus doc id.
+                resp = client.post("/api/knowledge/retrieve-context", json={
+                    "query": question,
+                    "top_k": top_k,
+                })
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception as e:
+                log.warning("rag_reachability_probe: doc %s failed: %s", d.doc_id, e)
+                failed.append(d.doc_id)
+                continue
+
+            quality = data.get("quality", {})
+            retrieval_mode = quality.get("retrieval_mode", "")
+            chunks = data.get("chunks", [])
+            # parent_doc_id is a full ingest path (…/<doc_id>.txt), not the bare corpus
+            # doc id, so compare by filename stem via the same path↔id matcher the Tier-1
+            # metrics use — an exact `==` never matches a corpus-dir-ingested doc.
+            reachable = (
+                retrieval_mode != "FULLTEXT_FALLBACK"
+                and any(
+                    _doc_id_matches_title(c.get("parent_doc_id", ""), d.doc_id)
+                    for c in chunks
+                )
+            )
+            if reachable:
+                passed += 1
+            else:
+                failed.append(d.doc_id)
+    finally:
+        if owns_client:
+            client.close()
+
+    return {
+        "sampled": len(sample),
+        "passed": passed,
+        "failed": failed,
+        "verdict": "fail" if failed else "ok",
+    }
+
+
 def run_retrieval_eval(
     queries: list[dict],
     base_url: str = _DEFAULT_BASE_URL,
@@ -277,6 +387,13 @@ def run_retrieval_eval(
     question_types: list[str] | None = None,
     max_queries: int | None = None,
     corpus_dir: Path | None = None,  # kept for CLI compat, not used for matching
+    corpus_jsonl: str | Path | None = None,
+    skip_reachability: bool = False,
+    reachability_n: int = 10,
+    # Test reachability at the same depth the eval/product retrieves (command --top-k
+    # default is 10); a stricter hidden default made the guard over-strict — a doc reachable
+    # at the product's top_k could false-fail on a smaller over-retrieve pool.
+    reachability_top_k: int = 10,
 ) -> dict:
     """Run Tier 1 retrieval eval against the retrieve-context REST API.
 
@@ -285,6 +402,13 @@ def run_retrieval_eval(
       (matched by comparing evidence titles against parent_doc_id paths)
     - Whether the ground-truth answer string appears in the context
     - Hits@K (K=1,3,5,10) and MRR for evidence document retrieval
+
+    Unless ``skip_reachability``, also runs :func:`rag_reachability_probe` (tempdoc 749) after
+    the main loop and embeds its result under ``result["rag_reachability"]``. FAIL-CLOSED: a
+    ``"fail"`` verdict adds/appends to ``result["error"]`` -- the same dict-embedded failure
+    signal :func:`_aggregate_retrieval` already uses for "no results"/"all queries failed", so
+    ``cmd_retrieval_eval`` (mirroring its sibling ``cmd_rag_eval``'s ``if "error" in candidate:
+    sys.exit(1)``) turns it into a non-zero exit without a second failure-signaling mechanism.
     """
     client = httpx.Client(base_url=base_url, timeout=30.0)
     results: list[RetrievalResult] = []
@@ -383,8 +507,37 @@ def run_retrieval_eval(
         if (i + 1) % 50 == 0 or (i + 1) == len(filtered):
             log.info("  %d/%d queries processed", i + 1, len(filtered))
 
+    result = _aggregate_retrieval(results)
+
+    if not skip_reachability:
+        # tempdoc 749: fail-closed guard for the retrieval-completeness invariant. Reuses this
+        # function's already-open `client` (same base_url, same HTTP mechanism) rather than
+        # opening a second connection. `corpus_dir` is the MultiHop-RAG .md article directory
+        # (no corpus.jsonl inside it, so the probe naturally reports "not-applicable" there,
+        # never a false failure) -- `corpus_jsonl` is how a caller with an actual BEIR-format
+        # corpus.jsonl (golden/mixed self-demo corpora) opts the guard in for real.
+        reachability_corpus = (
+            Path(corpus_jsonl) if corpus_jsonl is not None
+            else (Path(corpus_dir) / "corpus.jsonl" if corpus_dir is not None else None)
+        )
+        if reachability_corpus is not None:
+            reachability = rag_reachability_probe(
+                reachability_corpus, client, n=reachability_n, top_k=reachability_top_k,
+            )
+        else:
+            reachability = {"sampled": 0, "passed": 0, "failed": [], "verdict": "not-applicable"}
+
+        result["rag_reachability"] = reachability
+        if reachability["verdict"] == "fail":
+            msg = (
+                f"rag_reachability guard: {len(reachability['failed'])}/{reachability['sampled']} "
+                f"sub-threshold (chunkless-by-construction) doc(s) not reachable via the primary "
+                f"RAG chunk path: {reachability['failed']}"
+            )
+            result["error"] = f"{result['error']}; {msg}" if "error" in result else msg
+
     client.close()
-    return _aggregate_retrieval(results)
+    return result
 
 
 def _aggregate_retrieval(results: list[RetrievalResult]) -> dict:
@@ -1109,6 +1262,16 @@ def format_retrieval_console(result: dict) -> str:
             f"MRR={stats.get('mrr', 0):.3f} "
             f"answer_in_ctx={stats['answer_in_context_rate']:.0%}"
         )
+    reachability = result.get("rag_reachability")
+    if reachability is not None:
+        lines += [
+            "",
+            "--- RAG Reachability Guard (tempdoc 749) ---",
+            f"  Verdict: {reachability['verdict']} "
+            f"({reachability['passed']}/{reachability['sampled']} sub-threshold docs reachable)",
+        ]
+        if reachability["failed"]:
+            lines.append(f"  Unreachable: {reachability['failed']}")
     return "\n".join(lines)
 
 

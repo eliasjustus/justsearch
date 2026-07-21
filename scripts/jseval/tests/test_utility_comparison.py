@@ -1752,6 +1752,96 @@ def test_cross_corpus_refuses_mixed_harness_cohort():
         utility_comparison.compose_utility_cross_corpus(fixture, composed_at="t")
 
 
+# --- exposure-identity carry-through (tempdoc 756) --------------------------
+# compose_utility_cross_corpus dropped cohort.exposure_config +
+# cohort.mcp_initialize_identity that every post-725 per-run record carries, so
+# source_identity_complete (utility_claim_policy) failed on composed evidence
+# that was complete per-run. These prove the blocks are carried through verbatim
+# and that mixing differently-exposed campaigns fails closed (never first-wins).
+
+_XCORPUS_EXPOSURE_CONFIG = {
+    "enable_tool_search": "true", "always_load": False, "exposure_mode": "deferred",
+}
+_XCORPUS_MCP_INIT_IDENTITY = {
+    "instructions": "search the corpus", "instructions_sha256": "d" * 64,
+    "server_version": "0.4.0", "protocol_version": "2025-06-18",
+}
+
+
+def _xcorpus_identity_summary(dataset, condition, per_query, *, search_key=None,
+                              exposure_config=None, mcp_initialize_identity=None):
+    return _summary(
+        condition, per_query, search_key=search_key, seed=0,
+        corpus={"dataset": dataset, "signature": "v1"},
+        exposure_config=(_XCORPUS_EXPOSURE_CONFIG if exposure_config is None
+                         else exposure_config),
+        mcp_initialize_identity=(_XCORPUS_MCP_INIT_IDENTITY if mcp_initialize_identity is None
+                                 else mcp_initialize_identity),
+        # Scalars folded into agent_cohort_key -- held constant across every run so
+        # the cohort-key spanning check passes and the block-level carry-through
+        # (which agent_cohort_key does NOT cover) is what is under test.
+        exposure_mode="deferred",
+        instructions_sha256="d" * 64,
+    )
+
+
+def _xcorpus_identity_fixture():
+    en_a, en_c = _xcorpus_pq([False, True, False, True], [True, True, True, True])
+    de_a, de_c = _xcorpus_pq([True, True, True, True], [True, False, True, False])
+    return [
+        _xcorpus_identity_summary("golden/battlefield-en-v1", "A", en_a),
+        _xcorpus_identity_summary("golden/battlefield-en-v1", "C", en_c, search_key="s"),
+        _xcorpus_identity_summary("golden/battlefield-de-v1", "A", de_a),
+        _xcorpus_identity_summary("golden/battlefield-de-v1", "C", de_c, search_key="s"),
+    ]
+
+
+def test_cross_corpus_carries_exposure_identity_and_satisfies_source_identity_gate():
+    from jseval.utility_claim_policy import evaluate_claim
+    from tests.test_utility_claim_policy import _record
+
+    rec = utility_comparison.compose_utility_cross_corpus(
+        _xcorpus_identity_fixture(), composed_at="t",
+        contamination_class="private-synthetic")
+
+    # Carried through verbatim (the bug dropped both -> exposure_mode: None).
+    assert rec["cohort"]["exposure_config"] == _XCORPUS_EXPOSURE_CONFIG
+    assert rec["cohort"]["mcp_initialize_identity"] == _XCORPUS_MCP_INIT_IDENTITY
+
+    # ...and those carried blocks satisfy source_identity_complete on an
+    # otherwise-complete record (the gate that was failing on complete evidence).
+    complete = _record()
+    complete["cohort"]["exposure_config"] = rec["cohort"]["exposure_config"]
+    complete["cohort"]["mcp_initialize_identity"] = rec["cohort"]["mcp_initialize_identity"]
+    verdict = evaluate_claim(complete)
+    gate = next(g for g in verdict["gates"] if g["name"] == "source_identity_complete")
+    assert gate["passed"] is True
+
+
+def test_cross_corpus_fails_closed_on_mismatched_exposure_config():
+    fixture = _xcorpus_identity_fixture()
+    # One corpus's run was exposed in a different mode -- mixing differently-exposed
+    # campaigns must stay an error, never a silent first-wins (tempdoc 756). The
+    # folded scalar exposure_mode is held equal (see helper) so the agent_cohort_key
+    # spanning check passes and THIS block-level check is what fires.
+    fixture[2]["manifest"]["exposure_config"] = {
+        **_XCORPUS_EXPOSURE_CONFIG, "exposure_mode": "eager",
+    }
+    with pytest.raises(utility_comparison.UtilityComposeError, match="exposure_config"):
+        utility_comparison.compose_utility_cross_corpus(fixture, composed_at="t")
+
+
+def test_cross_corpus_fails_closed_on_mismatched_mcp_initialize_identity():
+    fixture = _xcorpus_identity_fixture()
+    # A differing MCP server_version (instructions_sha256 held equal, so the
+    # cohort key still agrees) must fail closed rather than first-wins.
+    fixture[2]["manifest"]["mcp_initialize_identity"] = {
+        **_XCORPUS_MCP_INIT_IDENTITY, "server_version": "9.9.9",
+    }
+    with pytest.raises(utility_comparison.UtilityComposeError, match="mcp_initialize_identity"):
+        utility_comparison.compose_utility_cross_corpus(fixture, composed_at="t")
+
+
 def test_cross_corpus_governance_derives_tier_from_least_comparable_input():
     gov = {"comparable": False, "reasons": ["logs-de: asymmetric_exclusion"], "metrics": {},
            "per_arm_loss": {}}

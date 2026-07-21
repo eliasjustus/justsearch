@@ -17,6 +17,7 @@ the post-enrichment observed counts; :mod:`jseval.ratchet_kernel` enforces it at
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,42 +31,66 @@ from pathlib import Path
 CHUNK_THRESHOLD_CHARS = 2000
 
 
-def expected_chunk_docs(corpus_jsonl_path: Path | str) -> int:
-    """Offline (spoof-proof) count of corpus docs that SHOULD produce chunk docs.
+@dataclass
+class CorpusDoc:
+    """One BEIR-format corpus.jsonl row, with its materialized (index-time) content and length.
 
-    Reads a BEIR-format ``corpus.jsonl`` (``{"_id", "title", "text"}`` lines -- the format
-    ``corpus_build.build_golden`` writes for every golden/mixed self-demo corpus) and
-    reconstructs each doc's ingested content exactly as
-    ``jseval.materialize.materialize()`` does: ``f"{title}\\n\\n{text}"`` when a title is
-    present, else bare ``text`` (materialize.py:57) -- the same string
-    ``ChunkDocumentWriter``/``IndexingDocumentOps`` apply the threshold to at index time.
-    A doc counts when ``len(content) >= CHUNK_THRESHOLD_CHARS``.
+    ``content``/``length`` mirror the exact string ``ChunkDocumentWriter``/``IndexingDocumentOps``
+    apply ``CHUNK_THRESHOLD_CHARS`` to at index time -- see :func:`iter_corpus_docs`.
+    """
 
-    This is a pure read of the corpus TEXT, computed before/independent of any ingest --
-    the enrichment pipeline's own failure can never move it. ``expected_chunk_docs() > 0``
-    means "this corpus SHOULD produce chunk docs."
+    doc_id: str
+    title: str
+    text: str
+    content: str
+    length: int
 
-    Returns ``0`` when ``corpus_jsonl_path`` doesn't exist -- e.g. a BEIR dataset materialized
+
+def iter_corpus_docs(corpus_jsonl_path: Path | str) -> Iterator[CorpusDoc]:
+    """Yield each doc in a BEIR-format ``corpus.jsonl`` with its materialized content length.
+
+    Reads ``{"_id", "title", "text"}`` lines -- the format ``corpus_build.build_golden`` writes
+    for every golden/mixed self-demo corpus -- and reconstructs each doc's ingested content
+    exactly as ``jseval.materialize.materialize()`` does: ``f"{title}\\n\\n{text}"`` when a
+    title is present, else bare ``text`` (materialize.py:57) -- the same string
+    ``ChunkDocumentWriter``/``IndexingDocumentOps`` apply the chunk threshold to at index time.
+
+    Yields nothing when ``corpus_jsonl_path`` doesn't exist -- e.g. a BEIR dataset materialized
     on the fly via ``ir_datasets`` (no local ``corpus.jsonl``, tempdoc 718 scope: golden/mixed
-    self-demo corpora, where the twice-observed 717 degeneracy was measured). A corpus this
-    function cannot read has nothing to expect chunks from, so BEIR runs correctly get a
-    ``chunk-free`` verdict (never gated) rather than a spurious "0 expected."
+    self-demo corpora). Callers (``expected_chunk_docs``, ``rag_reachability_probe``) treat an
+    empty iteration as "nothing to expect/sample," never an error.
     """
     path = Path(corpus_jsonl_path)
     if not path.is_file():
-        return 0
-    count = 0
+        return
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
         doc = json.loads(line)
+        doc_id = doc.get("_id") or ""
         title = doc.get("title") or ""
         text = doc.get("text") or ""
         content = f"{title}\n\n{text}" if title else text
-        if len(content) >= CHUNK_THRESHOLD_CHARS:
-            count += 1
-    return count
+        yield CorpusDoc(doc_id=doc_id, title=title, text=text, content=content, length=len(content))
+
+
+def expected_chunk_docs(corpus_jsonl_path: Path | str) -> int:
+    """Offline (spoof-proof) count of corpus docs that SHOULD produce chunk docs.
+
+    A doc counts when ``len(content) >= CHUNK_THRESHOLD_CHARS`` (see :func:`iter_corpus_docs`
+    for the materialization rule). This is a pure read of the corpus TEXT, computed
+    before/independent of any ingest -- the enrichment pipeline's own failure can never move it.
+    ``expected_chunk_docs() > 0`` means "this corpus SHOULD produce chunk docs."
+
+    Returns ``0`` when ``corpus_jsonl_path`` doesn't exist, matching :func:`iter_corpus_docs`'s
+    empty-iteration behavior: a corpus this function cannot read has nothing to expect chunks
+    from, so BEIR runs correctly get a ``chunk-free`` verdict (never gated) rather than a
+    spurious "0 expected."
+    """
+    return sum(
+        1 for d in iter_corpus_docs(corpus_jsonl_path) if d.length >= CHUNK_THRESHOLD_CHARS
+    )
 
 
 @dataclass

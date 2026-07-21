@@ -301,11 +301,15 @@ final class GrpcSearchServiceReasonCodeContractTest {
     String prevConfig = System.getProperty("justsearch.config");
     try (RunningRuntime lifecycle = newLifecycleWithOneDoc("doc-1", "Hello world")) {
       var service = new GrpcSearchService(lifecycle);
+      // Tempdoc 749: a term-matching question is now served via the doc-level union leg in
+      // the PRIMARY path, so the fallback (and its NO_CHUNKS_FOUND reason) is only reachable
+      // when neither the chunk search nor the union matches — use a no-overlap question to
+      // keep this reason-string contract exercised on its genuine remaining path.
       RetrieveContextResponse response =
           invokeRetrieveContext(
               service,
               RetrieveContextRequest.newBuilder()
-                  .setQuestion("Hello")
+                  .setQuestion("zebra migration seasons")
                   .addDocIds("doc-1")
                   .setTopK(5)
                   .build());

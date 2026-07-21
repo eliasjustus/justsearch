@@ -343,6 +343,16 @@ def cmd_utility_run(ctx, queries, corpus_dir, corpus_root, mcp_config, model, co
     if calibration:
         from ..types import ReadinessResult
         calib = json.loads(Path(calibration).read_text(encoding="utf-8"))
+        # Provenance binding (tempdoc 758 §A/§B) — fail closed BEFORE spending if the banked
+        # calibration was pinned at a different git checkout, or the `claude` CLI drifted, since
+        # it was written. Both name the offending pair + the recalibrate remedy in the message.
+        from .. import manifest as _mf
+        from ..utility_calibrate import (
+            assert_calibration_cli_version,
+            assert_calibration_git_sha,
+        )
+        assert_calibration_git_sha(calib, current_git_sha=_mf._git_sha_full())
+        assert_calibration_cli_version(calib, current_cli_version=cli_version)
         timeout_s = calib.get("timeout_s", timeout_s)
         timeout_s_by_condition = calib.get("timeout_s_by_condition")
         concurrency = calib.get("concurrency", concurrency)
