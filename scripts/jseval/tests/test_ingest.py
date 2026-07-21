@@ -15,6 +15,7 @@ from jseval.ingest import (
     _get_indexed_doc_count,
     _iter_corpus_jsonl,
     _raw_corpus_dir,
+    _root_already_watched,
     _source_signature,
     _wait_for_backpressure,
     _watcher_settle_timeout,
@@ -292,6 +293,106 @@ def test_ingest_and_wait_settles_embed_compat_on_pipeline_path_too(
 
     mock_settle.assert_called_once_with("http://localhost:33221")
     assert summary["embed_compat_state_settled"] == "REBUILDING"
+
+
+# ---------------------------------------------------------------------------
+# ingest_and_wait — idempotent readiness floor for repeated same-root ingest
+# (tempdoc 751 sec Q sub-bug a: the 1001+1001=2002 cumulative-floor wedge)
+#
+# When the SAME root is re-ingested into a backend that already watches it (cache
+# adoption, chain re-entry), path-dedup means 0 net new docs -- the additive floor
+# (initial + corpus) becomes an unmeetable 2x wall. The floor must reflect the
+# UNION of watched content (max), NOT the sum of ingest requests. A genuinely new
+# / larger root must still raise the floor additively (no weakening).
+# ---------------------------------------------------------------------------
+
+@patch("jseval.ingest.wait_embed_compat_settled")
+@patch("jseval.ingest.wait_pipeline_complete")
+@patch("jseval.ingest._wait_for_watcher_activity")
+@patch("jseval.ingest.add_watched_root")
+@patch("jseval.ingest._root_already_watched")
+@patch("jseval.ingest._get_indexed_doc_count")
+def test_floor_is_union_not_sum_when_root_already_watched(
+    mock_doc_count, mock_already, mock_add_root, mock_watcher,
+    mock_wait_pipeline, mock_settle, tmp_path,
+):
+    """Re-ingesting an already-watched root of 1001 docs into an index that
+    already holds them uses a floor of 1001 (union), NOT 2002 (sum) -- the
+    exact wedge from sec Q."""
+    mock_doc_count.return_value = 1001       # index already has the corpus
+    mock_already.return_value = True          # same root already watched
+    mock_watcher.return_value = True
+    mock_wait_pipeline.return_value = ReadinessResult(
+        passed=True, snapshot={"indexedDocuments": 1001, "indexSizeBytes": 1000},
+    )
+    mock_settle.return_value = "COMPATIBLE"
+
+    config = IngestConfig(base_url="http://localhost:33221", pipeline=True)
+    summary = ingest_and_wait(config, tmp_path, corpus_doc_count=1001)
+
+    passed_floor = mock_wait_pipeline.call_args.kwargs["expected_doc_count_min"]
+    assert passed_floor == 1001, f"expected union floor 1001, got {passed_floor}"
+    assert passed_floor != 2002, "additive floor 2002 is the unmeetable wedge"
+    assert summary["readiness_passed"] is True
+
+
+@patch("jseval.ingest.wait_embed_compat_settled")
+@patch("jseval.ingest.wait_pipeline_complete")
+@patch("jseval.ingest._wait_for_watcher_activity")
+@patch("jseval.ingest.add_watched_root")
+@patch("jseval.ingest._root_already_watched")
+@patch("jseval.ingest._get_indexed_doc_count")
+def test_floor_stays_additive_for_a_genuinely_new_larger_root(
+    mock_doc_count, mock_already, mock_add_root, mock_watcher,
+    mock_wait_pipeline, mock_settle, tmp_path,
+):
+    """A DIFFERENT root (not yet watched) added on top of an existing index
+    keeps the additive floor -- the union fix must not weaken the gate for a
+    genuinely larger corpus (a partially-built index cannot pass early)."""
+    mock_doc_count.return_value = 1001        # index already holds corpus A (1001)
+    mock_already.return_value = False          # corpus B is a NEW root
+    mock_watcher.return_value = True
+    mock_wait_pipeline.return_value = ReadinessResult(
+        passed=True, snapshot={"indexedDocuments": 3001, "indexSizeBytes": 1000},
+    )
+    mock_settle.return_value = "COMPATIBLE"
+
+    config = IngestConfig(base_url="http://localhost:33221", pipeline=True)
+    ingest_and_wait(config, tmp_path, corpus_doc_count=2000)  # corpus B = 2000
+
+    passed_floor = mock_wait_pipeline.call_args.kwargs["expected_doc_count_min"]
+    assert passed_floor == 3001, f"expected additive floor 3001, got {passed_floor}"
+
+
+# _root_already_watched — path-normalized membership against GET /api/indexing/roots
+
+@patch("jseval.ingest.httpx.Client")
+def test_root_already_watched_true_for_recorded_path(MockClient, tmp_path):
+    client = MockClient.return_value.__enter__.return_value
+    resp = MagicMock()
+    resp.json.return_value = {"roots": [{"path": str(tmp_path.resolve())}]}
+    client.get.return_value = resp
+
+    assert _root_already_watched("http://localhost:33221", tmp_path) is True
+    assert client.get.call_args[0][0] == "/api/indexing/roots"
+
+
+@patch("jseval.ingest.httpx.Client")
+def test_root_already_watched_false_for_other_path(MockClient, tmp_path):
+    client = MockClient.return_value.__enter__.return_value
+    resp = MagicMock()
+    resp.json.return_value = {"roots": [{"path": str(tmp_path / "somewhere-else")}]}
+    client.get.return_value = resp
+
+    assert _root_already_watched("http://localhost:33221", tmp_path) is False
+
+
+@patch("jseval.ingest.httpx.Client")
+def test_root_already_watched_false_on_error_is_failsafe(MockClient, tmp_path):
+    """A lost roots signal reports 'not watched' -> caller falls back to the
+    additive floor. Fail-safe: can only over-count the floor, never under-count."""
+    MockClient.return_value.__enter__.return_value.get.side_effect = RuntimeError("boom")
+    assert _root_already_watched("http://localhost:33221", tmp_path) is False
 
 
 # ---------------------------------------------------------------------------

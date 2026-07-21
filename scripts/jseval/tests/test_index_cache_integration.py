@@ -305,6 +305,59 @@ def test_publish_skipped_when_adopted():
 
 
 # --------------------------------------------------------------------------- #
+# _do_run ingest-skip on adoption (tempdoc 751 sec Q sub-bug b).
+#
+# An adopted cache entry is a complete, confirmed index; re-ingesting the same
+# corpus is redundant and (with the additive readiness floor) wedged the chain
+# (the 1001+1001=2002 wall). _do_run must ingest EXACTLY ONCE on a fresh build
+# (miss/disabled) and ZERO times on adoption -- eval still runs against the
+# adopted index. warm drives ONE _run_iteration -> _do_run, so this is the
+# "warm flow issues exactly one ingest pass" guarantee: a miss warms with a
+# single ingest; an adopt-hit warm reuses the index without a second pass.
+# --------------------------------------------------------------------------- #
+
+
+def _do_run_kwargs(index_cache):
+    ctx = SimpleNamespace(obj={"json": False})
+    return dict(
+        ctx=ctx, dataset="mixed/legal-clerc-200", modes=None, base_url="http://x",
+        output_dir=str(Path("out")), top_k=10, embedding=False, splade=False,
+        lambdamart=False, cross_encoder=False, allow_errors=False, max_queries=0,
+        context_coverage=False, thresholds="0.25,0.5", history_db=None,
+        corpus_dir=None, skip_ingest=False, ingest_config=MagicMock(),
+        env_overrides={}, suppress_stdout=True, index_cache=index_cache,
+    )
+
+
+def test_do_run_ingests_once_on_fresh_build():
+    """miss:selector -> exactly one prepare_corpus pass (the build warm publishes)."""
+    from jseval.commands import run as run_cmd
+
+    with patch("jseval.ingest.prepare_corpus") as prep, \
+         patch("jseval.run.execute_run") as ex:
+        prep.return_value = {"readiness_passed": True, "pipeline_summary": None}
+        ex.return_value = {"dataset": "x"}
+        run_cmd._do_run(**_do_run_kwargs({"mode": "miss:selector"}))
+
+    prep.assert_called_once()
+    ex.assert_called_once()
+
+
+def test_do_run_skips_ingest_on_adopt():
+    """adopted -> zero prepare_corpus passes (no redundant second ingest), but
+    eval still runs against the adopted index."""
+    from jseval.commands import run as run_cmd
+
+    with patch("jseval.ingest.prepare_corpus") as prep, \
+         patch("jseval.run.execute_run") as ex:
+        ex.return_value = {"dataset": "x"}
+        run_cmd._do_run(**_do_run_kwargs({"mode": "adopted", "entry": "abc123"}))
+
+    prep.assert_not_called()
+    ex.assert_called_once()
+
+
+# --------------------------------------------------------------------------- #
 # Provenance block + manifest isolation (run.py).
 # --------------------------------------------------------------------------- #
 

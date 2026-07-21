@@ -224,3 +224,57 @@ are what make an amended rate-based gate auditable. Ops note filed: Inspect eval
 retry can legitimately produce a second log file; `loss_accounting_from_observations` fails
 closed on the duplicate (correct), so recompose after any retried run must finalize from the
 surviving complete log.
+
+## §H. Track 2 — evaluator support (pre-ratification) — implementation log (2026-07-21, worktree agent-a99c…)
+
+Chartered under §C + §F: §F's measured verdict is that the amendment is necessary (8.3% irreducible
+miss). This lands the evaluator semantics NOW, **inert under v1**, so ratification (§D founder gate) is
+a config flip, not new code. Base verified: `git log -1` on the draft file = 29ad7f6d (the 755 Track-1
+merge); v1.json + publication pointer untouched.
+
+### Design (terse)
+`evaluate_claim` gets a rate branch keyed on `thresholds.minimum_surface_verification_rate`. Absent
+(v1) → the existing all-cells-verified expression is left byte-for-byte, emitting `observed=bool,
+threshold=True` — required because `claim_verdict` is digest-covered (`test_utility_evidence.py:397`).
+Present (v2 draft) → `verified_tool_surface` passes iff: cells_total>0 AND cells_total==attempted
+with-tool cells AND rate(=verified/total)≥threshold AND `observed_mcp_tool_surface_consistent` is True
+AND exactly one distinct observed hash == declared cohort hash AND no different hash (declared present).
+No fork: this reuses the same `with_tool_assertions` rollup + `attempted_with_tool` the v1 gate already
+reads; only the pass predicate + observed shape change.
+
+### Derisk (terse) — confidence 9/10
+- **Byte-stability** — the only risk. v1 path is textually unchanged inside an `if min is None:` guard;
+  proven by the pinned historical digest (`test_historical_fixture_semantic_digest_repinned_after_624_itt_change`)
+  and the active-policy pin both passing UNMODIFIED. LOW.
+- **different-hash-fatal independence** — asserted directly: a second distinct hash fails at rate 1.0
+  even with `observed_mcp_tool_surface_consistent` forced True (`single_declared`/`no_different` catch it
+  without leaning on the consistency flag). LOW.
+- **threshold whitelist** — thresholds are not validated against a whitelist (only `requirements` are, vs
+  `SUPPORTED_REQUIREMENTS`), so the new key needs no schema/enum change. Verified by reading the
+  `supported_policy_requirements` gate. LOW.
+(Skill pipeline note: design/derisk/plan produced terse inline — the semantics were fully specified by
+§C, so the value is the appended reasoning, not plan-mode ceremony.)
+
+### Change table (file:line)
+| File | Change |
+|---|---|
+| `scripts/jseval/jseval/utility_claim_policy.py:394-448` | `verified_tool_surface` gate split on `thresholds.minimum_surface_verification_rate`: `None`→ unchanged v1 all-cells-verified expression (`observed=bool, threshold=True`); present→ rate branch (rate≥threshold + single-declared-hash + no-different-hash), `observed={"rate","verified","total"}`, `threshold=<rate>`. |
+| `scripts/jseval/utility-claim-policy.v2-draft-755.proposed.json:83-93` | `verified_tool_surface_semantics` block re-aligned to the implemented conditions (added the cells_total==attempted clause + a `gate_observed_shape` + `evaluator_status` field; refreshed `evidence`/`activation_note`). v1.json + pointer untouched; file NOT renamed. |
+| `scripts/jseval/tests/test_utility_claim_policy.py:698-…` | +5 tests: v1 gate stays bool + fails on unverified cell; rate passes @0.92 (observed exposes rate); fails @0.88; second distinct hash fatal @rate 1.0; single hash≠declared fails. |
+
+### Gate observed shape (rate branch)
+```
+{"name": "verified_tool_surface",
+ "observed": {"rate": <verified/total float>, "verified": <int>, "total": <int>},
+ "threshold": <minimum_surface_verification_rate>,
+ "passed": <bool>, "reason": ""}
+```
+v1 branch is unchanged: `"observed": <bool>, "threshold": true`.
+
+### Verification
+- `tests/test_utility_claim_policy.py` + `tests/test_utility_evidence.py`: 107 passed (was 102; +5 new).
+  The digest-pinned fixture test and the active-policy pin passed **UNMODIFIED** (byte-stability proof).
+- Full jseval suite: 2214 passed, 2 failed — both the pre-existing known-RED
+  `test_correction_probe.py::TestLoadManifest` pair (missing data file, expected-state.v1.json). No new failures.
+- Offline only; no dev stack / API spend. Draft remains inert (`policy_path()` hardcodes v1; grep of
+  `scripts/jseval/jseval` for `v2-draft-755` = 0 hits).
