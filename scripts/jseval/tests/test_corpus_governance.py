@@ -8,6 +8,7 @@ mocked). Mirrors ``test_corpora.py`` + ``test_utility_comparison.py`` inline-fix
 from __future__ import annotations
 
 import json
+import re
 import warnings
 from pathlib import Path
 from unittest.mock import patch
@@ -17,6 +18,13 @@ import pytest
 from jseval import corpus_build, corpus_certify, corpus_fidelity, corpus_identity, corpora
 from jseval import corpus_generate
 from jseval.types import CorpusMeta, QueryRecord
+
+#: The committed fixture entity bank (tempdoc 767). `generate()` mints chain entities
+#: type- and length-matched against a frozen bank instead of the deleted syllable pools,
+#: so every call site needs one. `tests/fixtures/entity-bank-fixture/host-docs/` holds the
+#: synthetic host documents it was harvested from — `test_entity_harvest.py` re-harvests
+#: them and asserts the committed bank bytes still reproduce.
+BANK = Path(__file__).resolve().parent / "fixtures" / "entity-bank-fixture"
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +50,7 @@ def test_gold_triples_distinct_and_queries_unambiguous_above_old_cap(tmp_path):
     n = 130
     corpus_generate.generate(tmp_path, axis="prose", lang="en", n_chains=n, hops=2,
                              distractor_ratio=1, doc_words=60, suite="test", seed=7,
-                             semantic=True)
+                             semantic=True, entity_bank=BANK)
     queries = json.loads((tmp_path / "queries.json").read_text(encoding="utf-8"))
     # cap no longer clamps to 26 — all n gold chains (hence n distinct queries) are emitted.
     assert len(queries) == n
@@ -337,10 +345,24 @@ def test_descriptor_collision_report_without_queries_reports_but_cannot_fail():
 # verification check (tempdoc 664, seventh pass)
 # ---------------------------------------------------------------------------
 
-_FULL_PROVENANCE = {
-    "method": "procedural-fabricated", "axis": "prose", "lang": "en", "seed": 1,
-    "hops": 1, "distractor_ratio": 3, "semantic": True, "n_chains": 3, "doc_words": 60,
-}
+def _full_provenance(**overrides):
+    """A complete payload-v2 `generation_provenance` (tempdoc 767).
+
+    The bank reference is recorded exactly as `generate()` would record it — POSIX-relative
+    to the jseval package root — so `regeneration_determinism_report` resolves it the same
+    way a committed corpus's provenance is resolved.
+    """
+    from jseval import corpus_generate, entity_bank as _eb
+
+    gp = {
+        "method": "procedural-fabricated", "axis": "prose", "lang": "en", "seed": 1,
+        "hops": 1, "distractor_ratio": 3, "semantic": True, "n_chains": 3, "doc_words": 60,
+        "payload_version": corpus_generate.PAYLOAD_VERSION,
+        "entity_bank": _eb.bank_reference(BANK),
+        "entity_bank_sha256": _eb.bank_sha256(BANK),
+    }
+    gp.update(overrides)
+    return gp
 
 
 def test_regeneration_determinism_skips_when_provenance_missing():
@@ -355,19 +377,51 @@ def test_regeneration_determinism_skips_hand_authored_corpus():
     assert "hand-authored-fabricated" in report["reason"]
 
 
-def test_regeneration_determinism_skips_incomplete_provenance():
-    # missing n_chains/doc_words — a corpus certified before the tempdoc 664 provenance fix.
-    incomplete = {k: v for k, v in _FULL_PROVENANCE.items() if k not in ("n_chains", "doc_words")}
+def test_regeneration_determinism_skips_incomplete_legacy_provenance():
+    # missing n_chains/doc_words AND payload_version — a corpus certified before the
+    # tempdoc 664 provenance fix, i.e. the legacy (pre-767) key set.
+    incomplete = {k: v for k, v in _full_provenance().items()
+                  if k not in ("n_chains", "doc_words", "payload_version",
+                               "entity_bank", "entity_bank_sha256")}
     report = corpus_certify.regeneration_determinism_report(incomplete)
     assert report["passed"] is None
     assert "n_chains" in report["reason"] and "doc_words" in report["reason"]
+
+
+def test_regeneration_determinism_fails_loudly_on_incomplete_v2_provenance():
+    """tempdoc 767 coupling guard: a corpus that DECLARES a payload version but is missing a
+    required key must FAIL, not skip. The pre-767 behaviour returned `passed: None` for any
+    missing key, so renaming or dropping a provenance key would have silently converted the
+    determinism proof into "check not run" — indistinguishable from "check passed" in the
+    certification report."""
+    for dropped in ("entity_bank", "entity_bank_sha256", "n_chains", "doc_words"):
+        gp = {k: v for k, v in _full_provenance().items() if k != dropped}
+        report = corpus_certify.regeneration_determinism_report(gp)
+        assert report["passed"] is False, dropped
+        assert dropped in report["reason"], report
+
+
+def test_regeneration_determinism_fails_on_unknown_payload_version():
+    report = corpus_certify.regeneration_determinism_report(
+        _full_provenance(payload_version="payload.v999"))
+    assert report["passed"] is False
+    assert "payload.v999" in report["reason"]
+
+
+def test_regeneration_determinism_fails_on_entity_bank_digest_mismatch():
+    """The bank is an INPUT to generation, so a corpus whose pinned bank digest no longer
+    matches the on-disk bank is not reproducible — that must be a failure, not a pass."""
+    report = corpus_certify.regeneration_determinism_report(
+        _full_provenance(entity_bank_sha256="0" * 64))
+    assert report["passed"] is False
+    assert "digest mismatch" in report["reason"]
 
 
 def test_regeneration_determinism_real_regeneration_passes():
     """Unmocked — a real end-to-end run of the certify-level check (mirrors
     test_generate_is_deterministic_across_processes but through the public certify-level
     function, confirming the wiring, not just the underlying generate() fix)."""
-    report = corpus_certify.regeneration_determinism_report(_FULL_PROVENANCE)
+    report = corpus_certify.regeneration_determinism_report(_full_provenance())
     assert report["passed"] is True
     assert report["method"] == "cross-process-regeneration-diff"
 
@@ -380,8 +434,10 @@ def test_regeneration_determinism_flags_a_real_mismatch():
     calls = {"n": 0}
 
     def fake_run(cmd, **kwargs):
-        # cmd = [python, "-c", script, out_dir, axis, lang, seed, hops, ratio, semantic,
-        #        n_chains, doc_words] -- the output dir is always the 4th element (index 3).
+        # cmd = [python, "-c", script, out_dir, params_json] -- tempdoc 767 replaced the
+        # by-name-positionally-decoded argv tail with a single json blob (doc_words=None
+        # is not expressible as `int(sys.argv[9])`), but the output dir is still the 4th
+        # element (index 3), which is all this fake needs.
         out_dir = Path(cmd[3])
         out_dir.mkdir(parents=True, exist_ok=True)
         calls["n"] += 1
@@ -392,7 +448,7 @@ def test_regeneration_determinism_flags_a_real_mismatch():
     # tempdoc 664 (twelfth pass): the subprocess call now lives in corpus_generate.regenerate_and_diff
     # (extracted, shared with the pytest determinism test) rather than in corpus_certify itself.
     with patch("jseval.corpus_generate.subprocess.run", side_effect=fake_run):
-        report = corpus_certify.regeneration_determinism_report(_FULL_PROVENANCE)
+        report = corpus_certify.regeneration_determinism_report(_full_provenance())
     assert report["passed"] is False
     assert "docs.jsonl" in report["mismatched_files"]
 
@@ -636,7 +692,7 @@ def test_validator_quiet_on_skipped_regeneration_determinism():
 def test_generate_produces_unique_multihop_source(tmp_path):
     from jseval import corpus_generate as cg
     stats = cg.generate(tmp_path / "g", axis="prose", n_chains=5, hops=2,
-                        distractor_ratio=4, doc_words=80, seed=1)
+                        distractor_ratio=4, doc_words=80, seed=1, entity_bank=BANK)
     import json as _j
     docs = [_j.loads(l) for l in (tmp_path / "g" / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
     ids = [d["_id"] for d in docs]
@@ -661,7 +717,7 @@ def test_generate_is_deterministic_across_processes(tmp_path):
     out1, out2 = tmp_path / "run1", tmp_path / "run2"
     result = cg.regenerate_and_diff(
         out1, out2, axis="prose", lang="en", n_chains=5, hops=1,
-        distractor_ratio=3, doc_words=60, seed=42, semantic=True,
+        distractor_ratio=3, doc_words=60, seed=42, semantic=True, entity_bank=BANK,
     )
     assert result["ok"], result.get("error")
     assert not result["mismatched_files"], f"differs between two same-seed regenerations: {result['mismatched_files']}"
@@ -706,7 +762,8 @@ def test_generate_excludes_gold_reserved_descriptors_from_distractors(tmp_path):
     from jseval import corpus_generate as cg
 
     stats = cg.generate(tmp_path / "g", axis="prose", lang="en", n_chains=26, hops=2,
-                         distractor_ratio=30, doc_words=60, seed=624, semantic=True)
+                         distractor_ratio=30, doc_words=60, seed=624, semantic=True,
+                         entity_bank=BANK)
     docs = [json.loads(line) for line in
             (tmp_path / "g" / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
     queries = json.loads((tmp_path / "g" / "queries.json").read_text(encoding="utf-8"))
@@ -731,7 +788,8 @@ def test_generate_excludes_gold_reserved_descriptors_from_distractors_multi_seed
     for seed in range(10):
         out = tmp_path / f"g{seed}"
         cg.generate(out, axis="prose", lang=lang, n_chains=26, hops=2,
-                    distractor_ratio=15, doc_words=60, seed=seed, semantic=True)
+                    distractor_ratio=15, doc_words=60, seed=seed, semantic=True,
+                    entity_bank=BANK)
         docs = [json.loads(line) for line in
                 (out / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
         queries = json.loads((out / "queries.json").read_text(encoding="utf-8"))
@@ -754,7 +812,8 @@ def test_generate_third_axis_keeps_distractor_duplication_low_at_scale(tmp_path)
     from jseval import corpus_generate as cg
 
     stats = cg.generate(tmp_path / "g", axis="prose", lang="en", n_chains=26, hops=2,
-                         distractor_ratio=30, doc_words=60, seed=624, semantic=True)
+                         distractor_ratio=30, doc_words=60, seed=624, semantic=True,
+                         entity_bank=BANK)
     docs = [json.loads(line) for line in
             (tmp_path / "g" / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
     queries = json.loads((tmp_path / "g" / "queries.json").read_text(encoding="utf-8"))
@@ -783,7 +842,7 @@ def test_semantic_mode_defeats_grep_on_all_axes(tmp_path, axis, lang):
     from jseval import corpus_generate as cg
     out = tmp_path / "g"
     cg.generate(out, axis=axis, lang=lang, n_chains=5, hops=2,
-                distractor_ratio=4, doc_words=80, seed=1, semantic=True)
+                distractor_ratio=4, doc_words=80, seed=1, semantic=True, entity_bank=BANK)
     import json as _j
     qs = _j.loads((out / "queries.json").read_text(encoding="utf-8"))
     docs = {d["_id"]: d for d in
@@ -910,7 +969,7 @@ def test_generate_scan_axis_source_is_plain_text_like_every_other_axis(tmp_path)
 
     out = tmp_path / "g"
     stats = cg.generate(out, axis="scan", n_chains=3, hops=2, distractor_ratio=2,
-                         doc_words=520, seed=1)
+                         doc_words=520, seed=1, entity_bank=BANK)
     docs = [json.loads(line) for line in (out / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
     assert len(docs) == stats["docs"]
     for d in docs:
@@ -933,7 +992,7 @@ def test_generate_scan_axis_deterministic_across_processes(tmp_path):
     out1, out2 = tmp_path / "run1", tmp_path / "run2"
     result = cg.regenerate_and_diff(
         out1, out2, axis="scan", lang="en", n_chains=2, hops=1,
-        distractor_ratio=2, doc_words=40, seed=9, semantic=False,
+        distractor_ratio=2, doc_words=40, seed=9, semantic=False, entity_bank=BANK,
     )
     assert result["ok"], result.get("error")
     assert not result["mismatched_files"], f"scan axis differs between two same-seed regenerations: {result['mismatched_files']}"
@@ -962,7 +1021,8 @@ def test_build_golden_materializes_scan_docs_as_png(tmp_path):
     from jseval.materialize import doc_id_to_filename
 
     src = tmp_path / "src"
-    cg.generate(src, axis="scan", n_chains=2, hops=1, distractor_ratio=1, doc_words=40, seed=3)
+    cg.generate(src, axis="scan", n_chains=2, hops=1, distractor_ratio=1, doc_words=40, seed=3,
+                entity_bank=BANK)
     docs = [json.loads(line) for line in (src / "docs.jsonl").read_text(encoding="utf-8").splitlines()]
     assert all("image_b64" not in d for d in docs), "committed source must carry no image bytes"
 
@@ -992,7 +1052,8 @@ def test_build_golden_scan_materialization_is_reproducible_from_source(tmp_path)
     from jseval import corpus_generate as cg
 
     src = tmp_path / "src"
-    cg.generate(src, axis="scan", n_chains=2, hops=1, distractor_ratio=1, doc_words=80, seed=11)
+    cg.generate(src, axis="scan", n_chains=2, hops=1, distractor_ratio=1, doc_words=80, seed=11,
+                entity_bank=BANK)
 
     ds1, ds2 = tmp_path / "ds1", tmp_path / "ds2"
     corpus_build.build_golden(src, ds1, now="2026-07-02")
@@ -1120,7 +1181,7 @@ def test_generated_gold_source_is_checkout_stable(tmp_path):
     platform-default newlines on Windows."""
     corpus_generate.generate(tmp_path, axis="prose", lang="en", n_chains=3, hops=1,
                              distractor_ratio=1, doc_words=40, suite="test", seed=3,
-                             semantic=True)
+                             semantic=True, entity_bank=BANK)
     for name in ("docs.jsonl", "queries.json", "meta.json"):
         raw = (tmp_path / name).read_bytes()
         assert b"\r" not in raw, f"{name} contains CR bytes — git eol=lf will rewrite it after commit"
@@ -1139,7 +1200,7 @@ def test_two_axis_regime_below_pair_bound(tmp_path):
         out = tmp_path / f"gold-{lang}"
         corpus_generate.generate(out, axis="prose", lang=lang, n_chains=20, hops=1,
                                  distractor_ratio=2, doc_words=60, suite="test",
-                                 seed=635, semantic=True)
+                                 seed=635, semantic=True, entity_bank=BANK)
         queries = json.loads((out / "queries.json").read_text(encoding="utf-8"))
         quals = corpus_generate._SEM_QUAL_DE if lang == "de" else corpus_generate._SEM_QUAL
         for q in queries:
@@ -1151,17 +1212,101 @@ def test_two_axis_regime_below_pair_bound(tmp_path):
         assert sn["query_count"] == 20
 
 
-def test_three_axis_regime_above_pair_bound(tmp_path):
-    """Above min(T, P) chains the 624 T.1 triple regime must still be active — the
-    qualifier is what carries injectivity at scale."""
-    out = tmp_path / "gold-scale"
-    corpus_generate.generate(out, axis="prose", lang="en", n_chains=30, hops=1,
-                             distractor_ratio=1, doc_words=60, suite="test",
-                             seed=7, semantic=True)
-    queries = json.loads((out / "queries.json").read_text(encoding="utf-8"))
+def _qualifier_hits(out_dir):
+    queries = json.loads((out_dir / "queries.json").read_text(encoding="utf-8"))
     qual_syns = {qq for _dq, qq in corpus_generate._SEM_QUAL}
-    hits = sum(1 for q in queries if any(qq in q["query"] for qq in qual_syns))
-    assert hits == len(queries), f"only {hits}/{len(queries)} scale-regime queries carry a qualifier"
+    return sum(1 for q in queries if any(qq in q["query"] for qq in qual_syns)), len(queries)
+
+
+def test_two_axis_pair_bound_is_exactly_924():
+    """The two-axis (type, place) descriptor bound is 924, not min(T, P) = 21.
+
+    `_sem_for` gives gold chain g the index pair (g % 21, g % 44); 21 and 44 are coprime, so
+    by the CRT that pair is injective on [0, lcm(21, 44)) = [0, 924) and lossy from 925 on.
+    924 is now a load-bearing constant — `generate()`'s descriptor-width guard uses it as the
+    *uniqueness* half of the two-concern condition — so it is pinned here rather than
+    re-derived. tempdoc 767."""
+    for lang in ("en", "de"):
+        assert corpus_generate._max_semantic_pair_chains(lang) == 924, lang
+        for n in (1, 21, 22, 100, 923, 924):
+            pairs = corpus_generate._gold_descriptor_reservations(n, lang, use_qual=False)
+            assert len(pairs) == n, f"{lang}: n={n} gave {len(pairs)} distinct pairs"
+        lossy = corpus_generate._gold_descriptor_reservations(925, lang, use_qual=False)
+        assert len(lossy) == 924, f"{lang}: n=925 gave {len(lossy)} distinct pairs, expected 924"
+
+
+def test_qualifier_switches_on_for_uniqueness_and_for_distractor_diversity(tmp_path):
+    """The descriptor-width guard's two SEPARATE triggers, and that neither fires alone
+    below its own bound (tempdoc 767).
+
+    Supersedes `test_three_axis_regime_above_pair_bound`, which asserted the qualifier was
+    active at n_chains=30. That pinned the OLD single condition `n_chains > min(T, P) = 21`,
+    which conflated two concerns and was 44x over-conservative as a uniqueness bound; 30
+    chains need neither trigger. What must hold instead:
+
+      * uniqueness  — above the 924 pair bound the qualifier is what keeps gold descriptors
+        distinct, so it must be on there;
+      * diversity   — with many generated distractor chains drawn from the pair space the
+        qualifier is what keeps them from colliding with each other, so it must be on there
+        too, at any n_chains;
+      * neither     — a caller below both bounds must NOT pay the qualifier's query-length
+        cost (this is the regression the old assertion prevented from being fixed).
+    """
+    # neither trigger: 30 chains, few distractors -> two-axis
+    modest = tmp_path / "modest"
+    corpus_generate.generate(modest, axis="prose", lang="en", n_chains=30, hops=1,
+                             distractor_ratio=1, doc_words=60, suite="test",
+                             seed=7, semantic=True, entity_bank=BANK)
+    hits, total = _qualifier_hits(modest)
+    assert (hits, total) == (0, 30), f"{hits}/{total} queries carry a qualifier they do not need"
+
+    # diversity trigger: 26 chains but 780 distractor chains into the 898 free pair bins
+    crowded = tmp_path / "crowded"
+    corpus_generate.generate(crowded, axis="prose", lang="en", n_chains=26, hops=1,
+                             distractor_ratio=30, doc_words=60, suite="test",
+                             seed=7, semantic=True, entity_bank=BANK)
+    hits, total = _qualifier_hits(crowded)
+    assert (hits, total) == (26, 26), f"only {hits}/{total} crowded-distractor queries carry a qualifier"
+
+    # uniqueness trigger: above the 924 pair bound, with no distractors at all
+    scale = tmp_path / "scale"
+    corpus_generate.generate(scale, axis="prose", lang="en", n_chains=925, hops=1,
+                             distractor_ratio=0, doc_words=60, suite="test",
+                             seed=7, semantic=True, entity_bank=BANK)
+    hits, total = _qualifier_hits(scale)
+    assert (hits, total) == (925, 925), f"only {hits}/{total} above-pair-bound queries carry a qualifier"
+
+
+def test_distractor_ratio_zero_leaves_the_gold_payload_identical(tmp_path):
+    """`distractor_ratio=0` is a valid call and changes nothing a discarding caller keeps.
+
+    `corpus_inject.assemble` filters the fabricated source down to the docs named by
+    `evidence_ids` (corpus_inject.py:282-285) and takes every distractor from the REAL host
+    corpus instead — so the generated distractors in a 707 cell are produced and thrown away.
+    They are also the sole reason that path could ever hit the descriptor-width guard's
+    diversity trigger. This pins the two halves of the claim: the call is legal, and the gold
+    payload (docs + queries) it hands to `assemble` is byte-identical either way. tempdoc 767.
+    """
+    kwargs = dict(axis="prose", lang="en", n_chains=20, hops=1, doc_words=None,
+                  suite="test", seed=636, semantic=True, entity_bank=BANK)
+    with_distractors = tmp_path / "r6"
+    without = tmp_path / "r0"
+    stats6 = corpus_generate.generate(with_distractors, distractor_ratio=6, **kwargs)
+    stats0 = corpus_generate.generate(without, distractor_ratio=0, **kwargs)
+    assert stats6["distractor_docs"] == 240 and stats0["distractor_docs"] == 0
+
+    def gold_payload(out):
+        queries = json.loads((out / "queries.json").read_text(encoding="utf-8"))
+        keep = {evidence for q in queries for evidence in q["evidence_ids"]}
+        docs = [json.loads(line) for line in
+                (out / "docs.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+        return sorted((d for d in docs if d["_id"] in keep), key=lambda d: d["_id"]), queries
+
+    docs6, queries6 = gold_payload(with_distractors)
+    docs0, queries0 = gold_payload(without)
+    assert len(docs0) == 40, len(docs0)
+    assert docs6 == docs0
+    assert queries6 == queries0
 
 
 def test_two_axis_regime_collision_gate_still_clean(tmp_path):
@@ -1171,9 +1316,324 @@ def test_two_axis_regime_collision_gate_still_clean(tmp_path):
     out = tmp_path / "gold-de"
     corpus_generate.generate(out, axis="prose", lang="de", n_chains=20, hops=1,
                              distractor_ratio=5, doc_words=60, suite="test",
-                             seed=635, semantic=True)
+                             seed=635, semantic=True, entity_bank=BANK)
     docs = [json.loads(l) for l in (out / "docs.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
     queries = json.loads((out / "queries.json").read_text(encoding="utf-8"))
     report = corpus_certify.descriptor_collision_report(docs, queries)
     assert report["n_gold_involved"] == 0, report
     assert report["passed"] is True, report
+
+
+# ---------------------------------------------------------------------------
+# tempdoc 767 §I.3 — payload template / descriptor leak channels
+#
+# Two standing guards for defect classes the leak gates found on a real end-to-end
+# dry run of the en-legal-clerc 1k-verbose cell:
+#
+#   * a single relation/tail phrasing shared by every gold chain, giving one grep
+#     anchor that selects half the gold set (measured max_gold_coverage 0.500
+#     against a 0.225 native base rate);
+#   * a descriptor pair whose doc-side and query-side members share a root word
+#     ("Carpathian highlands" / "Carpathian uplands"), so the query and its gold
+#     doc share a corpus-wide df=1 token that pins exactly one document.
+# ---------------------------------------------------------------------------
+
+#: Unicode-aware token split for the pool guards. Deliberately STRICTER than
+#: `corpus_leak._TOKEN_RE` (`[a-z0-9']+`, which mangles German umlauts into
+#: fragments): a shared token must be caught in both languages' pools, not only in
+#: the one the ASCII gate can see.
+_POOL_TOKEN_RE = re.compile(r"[\w']+", re.UNICODE)
+
+
+def _pool_tokens(phrase: str) -> set[str]:
+    return {t.lower() for t in _POOL_TOKEN_RE.findall(phrase)}
+
+
+@pytest.mark.parametrize("pool_name", [
+    "_SEM_TYPE", "_SEM_PLACE", "_SEM_QUAL",
+    "_SEM_TYPE_DE", "_SEM_PLACE_DE", "_SEM_QUAL_DE",
+])
+def test_sem_pools_are_root_disjoint(pool_name):
+    """No `_SEM_*` pair may share a token between its doc-side and query-side member.
+
+    The pools ARE the semantic bridge: the doc says one thing, the query says a synonym,
+    and a grep/BM25 agent fails at the entry point while dense retrieval succeeds. A pair
+    that varies only the head noun and leaves a distinctive modifier verbatim hands that
+    modifier back as an exact-match anchor — and when the modifier is minted purely by the
+    pool (no real host document contains "carpathian"), its corpus document frequency is 1,
+    so the anchor pins the single gold document the query is about. Standing guard: this
+    defect class cannot return by someone appending a plausible-looking pair.
+    """
+    pool = getattr(corpus_generate, pool_name)
+    offenders = [
+        (doc_side, query_side, sorted(_pool_tokens(doc_side) & _pool_tokens(query_side)))
+        for doc_side, query_side in pool
+        if _pool_tokens(doc_side) & _pool_tokens(query_side)
+    ]
+    assert not offenders, (
+        f"{pool_name}: {len(offenders)} pair(s) share a token between the doc-side and "
+        f"query-side member, leaking a lexical anchor across the semantic bridge: {offenders}")
+
+
+def test_relation_phrasings_are_token_disjoint():
+    """A relation's doc phrasing and question phrasing must share no content token.
+
+    "designed"/"designer", "financed"/"financier" are distinct tokens; a pair that reused
+    one verbatim would put the same surface in the query and the gold doc, defeating the
+    same synonym bridge `_SEM_*` implements and raising `query_overlap_report`.
+    """
+    stop = {"was", "by", "the", "of", "a", "an"}
+    offenders = []
+    for kind, doc_phrasing, question_phrasing in corpus_generate._RELATIONS["prose"]:
+        shared = (_pool_tokens(doc_phrasing) & _pool_tokens(question_phrasing)) - stop
+        if shared:
+            offenders.append((kind, doc_phrasing, question_phrasing, sorted(shared)))
+    assert not offenders, f"relation phrasings leak a shared content token: {offenders}"
+
+
+def test_tail_phrasings_have_no_fixed_5gram():
+    """No tail template may contain 5 consecutive LITERAL tokens.
+
+    Spreading the templates across chains caps how many gold docs any ONE template covers,
+    but a template carrying a fixed 5-token run is still a `ngram_selectivity_report(n=5)`
+    anchor within its own share. The `{last}`/`{attr}` slots are what break the runs, so the
+    guard is on the literal spans between them.
+    """
+    offenders = []
+    for tpl in corpus_generate._TAIL_PHRASINGS:
+        for span in re.split(r"\{\w+\}", tpl):
+            literal = _POOL_TOKEN_RE.findall(span)
+            if len(literal) >= 5:
+                offenders.append((tpl, literal))
+    assert not offenders, f"tail templates carry a fixed 5-gram anchor: {offenders}"
+
+
+def test_relation_and_tail_templates_are_spread_across_gold(tmp_path):
+    """No single relation or tail phrasing may dominate a generated gold set.
+
+    The measured defect: `_render_prose` indexes the relation pool by HOP
+    (`rels[i % len(rels)]`) and every 707 cell is `hops=1`, so all 20 gold heads carried
+    the byte-identical "was designed by the engineer" — 20 of 40 gold docs, one grep. The
+    fix rotates both pools per CHAIN. Asserted against the native base rate the real
+    en-legal-clerc dry run measured (0.225): every template's gold coverage must sit
+    comfortably under it, not merely under 0.500.
+    """
+    out = tmp_path / "gold-spread"
+    corpus_generate.generate(out, axis="prose", lang="en", n_chains=20, hops=1,
+                             distractor_ratio=2, doc_words=None, suite="test",
+                             seed=636, semantic=True, entity_bank=BANK)
+    docs = [json.loads(l) for l in
+            (out / "docs.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    queries = json.loads((out / "queries.json").read_text(encoding="utf-8"))
+    gold_ids = {e for q in queries for e in q["evidence_ids"]}
+    gold = [d for d in docs if d["_id"] in gold_ids]
+    assert len(gold) == 40, f"expected 40 gold docs (20 chains x 2 hops), got {len(gold)}"
+
+    native_base_rate = 0.225
+    for _kind, doc_phrasing, _q in corpus_generate._RELATIONS["prose"]:
+        hits = sum(1 for d in gold if doc_phrasing in d["text"])
+        assert hits / len(gold) <= native_base_rate, (
+            f"relation phrasing {doc_phrasing!r} covers {hits}/{len(gold)} gold docs, "
+            f"above the {native_base_rate} native base rate — a grep anchor")
+
+    for tpl in corpus_generate._TAIL_PHRASINGS:
+        pattern = re.escape(tpl.strip()).replace(r"\{last\}", ".+?").replace(r"\{attr\}", ".+?")
+        hits = sum(1 for d in gold if re.search(pattern, d["text"]))
+        assert hits / len(gold) <= native_base_rate, (
+            f"tail phrasing {tpl!r} covers {hits}/{len(gold)} gold docs, above the "
+            f"{native_base_rate} native base rate — a grep anchor")
+
+    # Every phrasing must actually be reachable, or "spread" would be satisfied trivially
+    # by a pool whose extra members are dead code.
+    used_relations = {dp for _k, dp, _q in corpus_generate._RELATIONS["prose"]
+                      if any(dp in d["text"] for d in gold)}
+    assert len(used_relations) == len(corpus_generate._RELATIONS["prose"]), (
+        f"only {len(used_relations)} of {len(corpus_generate._RELATIONS['prose'])} relation "
+        f"phrasings appear in a 20-chain gold set")
+
+
+# ---------------------------------------------------------------------------
+# indistinguishability — the gold-vs-native leak check, wired as a per-cell
+# structural certification check (tempdoc 767 defect #2: corpus_leak.py shipped
+# with no caller at all, so its verdicts gated nothing)
+# ---------------------------------------------------------------------------
+
+def _leaky_cell_docs(n_gold: int = 8, n_native: int = 48) -> tuple[list[dict], list[dict]]:
+    """Gold numbered 1..N behind an alphabetic stem, distractors N+1..M — the
+    `635-corpora` shape, perfectly separable by `trailing_int(id) <= N`."""
+    gold = [
+        {"_id": f"brel{index + 1}", "title": f"gold {index}", "text": f"alpha beta {index} gamma"}
+        for index in range(n_gold)
+    ]
+    native = [
+        {"_id": f"stone{n_gold + index + 1}", "title": f"native {index}",
+         "text": f"delta epsilon {index} zeta"}
+        for index in range(n_native)
+    ]
+    return gold, native
+
+
+def _clean_cell_docs(n_gold: int = 8, n_native: int = 48) -> tuple[list[dict], list[dict]]:
+    """Gold ids drawn from the SAME integer population as the natives (what
+    `corpus_inject.mint_native_shaped_ids` produces)."""
+    all_ids = [str(1000731 + index * 7919) for index in range(n_gold + n_native)]
+    gold_ids = [all_ids[index] for index in range(3, len(all_ids), 7)][:n_gold]
+    gold_set = set(gold_ids)
+    gold = [
+        {"_id": i, "title": f"t {i}", "text": f"varied body {i} unique {i} words here"}
+        for i in gold_ids
+    ]
+    native = [
+        {"_id": i, "title": f"t {i}", "text": f"other body {i} distinct {i} tokens here"}
+        for i in all_ids if i not in gold_set
+    ]
+    return gold, native
+
+
+def test_indistinguishability_report_fails_on_numerically_enumerable_gold():
+    gold, native = _leaky_cell_docs()
+    queries = [{"query": "q", "evidence_ids": [d["_id"] for d in gold]}]
+
+    report = corpus_certify.indistinguishability_report(gold + native, queries)
+    assert report["passed"] is False
+    assert report["id_shape_passed"] is False
+    assert report["id_shape_rule"] == "trailing_int(id) <= 8"
+    assert report["id_shape_separability"] == 1.0
+    assert report["method"] == "null-calibrated-id-shape-and-ngram-selectivity"
+    assert set(report) == set(corpus_certify._INDISTINGUISHABILITY_KEYS)
+
+
+def test_indistinguishability_report_fails_on_shared_boilerplate_ngram():
+    # Ids are clean; the leak is a byte-identical paragraph in every gold doc
+    # (tempdoc 767 defect #1), which only the n-gram half can see.
+    gold, native = _clean_cell_docs()
+    for doc in gold:
+        doc["text"] += " this exact sentence appears in every planted document verbatim"
+    queries = [{"query": "q", "evidence_ids": [d["_id"] for d in gold]}]
+
+    report = corpus_certify.indistinguishability_report(gold + native, queries)
+    assert report["passed"] is False
+    assert report["ngram_passed"] is False
+    assert report["ngram_max_gold_coverage"] == 1.0
+    assert report["id_shape_passed"] is True, "the id half must not be what failed here"
+
+
+def test_indistinguishability_report_passes_on_shape_matched_cell():
+    gold, native = _clean_cell_docs()
+    queries = [{"query": "q", "evidence_ids": [d["_id"] for d in gold]}]
+
+    report = corpus_certify.indistinguishability_report(gold + native, queries)
+    assert report["passed"] is True
+    assert report["id_shape_passed"] is True and report["ngram_passed"] is True
+
+
+def test_indistinguishability_report_absent_measurement_is_not_a_pass():
+    # No gold docs at all -> both halves return `passed: None`. A check that could
+    # not run must never certify a corpus clean.
+    docs = [{"_id": "1000731", "title": "t", "text": "body"}]
+    report = corpus_certify.indistinguishability_report(docs, [])
+    assert report["id_shape_passed"] is None
+    assert report["passed"] is False
+
+
+def _materialize_cell(root: Path, gold: list[dict], native: list[dict], variant: str) -> None:
+    """Write the four files `certify_materialized_family` reads for one cell."""
+    root.mkdir(parents=True, exist_ok=True)
+    docs = gold + native
+    (root / "corpus.jsonl").write_text(
+        "".join(json.dumps(d) + "\n" for d in docs), encoding="utf-8")
+    queries = [{
+        "query": f"{variant} question {index}",
+        "query_variant": variant,
+        "query_family_id": f"fam-{index}",
+        "answer": f"answer {index}",
+        "evidence_ids": [doc["_id"]],
+    } for index, doc in enumerate(gold)]
+    (root / "queries.json").write_text(json.dumps(queries), encoding="utf-8")
+    (root / "metadata.json").write_text(json.dumps({"corpus_size": len(docs)}), encoding="utf-8")
+    (root / "qrels").mkdir(exist_ok=True)
+    (root / "qrels" / "test.tsv").write_text("q\t0\td\t1\n", encoding="utf-8")
+
+
+def test_certify_computes_indistinguishability_end_to_end(tmp_path):
+    """Drive the real `certify_materialized_family` over a materialized family and
+    assert the per-cell indistinguishability verdict actually lands in the report.
+
+    This is the end-to-end half the repo requires alongside the pure-function tests
+    above: `test_certify_computes_descriptor_collisions_end_to_end` exists because a
+    pure-function-only test once hid a wrong filename, and the same class of wiring
+    bug (a check computed but never projected into the cell, or projected under a key
+    the boundary validator does not accept) is invisible to the tests above.
+    """
+    datasets_dir = tmp_path / "datasets"
+    leaky_gold, leaky_native = _leaky_cell_docs()
+    clean_gold, clean_native = _clean_cell_docs()
+    names, commitments = {}, {}
+    for size in ("1000", "10000"):
+        names[size], commitments[size] = {}, {}
+        for variant in ("verbose", "short-natural"):
+            name = f"cell-{size}-{variant}"
+            # verbose cells carry the enumerable-id leak, short-natural cells are clean —
+            # so one run exercises both verdicts through the identical code path.
+            gold, native = (
+                (leaky_gold, leaky_native) if variant == "verbose"
+                else (clean_gold, clean_native)
+            )
+            _materialize_cell(datasets_dir / "mixed" / name, gold, native, variant)
+            names[size][variant] = name
+            commitments[size][variant] = str(tmp_path / "commit" / name)
+
+    report = corpus_certify.certify_materialized_family(
+        datasets_dir, member="fixture", dataset_names=names,
+        commitment_dirs=commitments)
+
+    for size in ("1000", "10000"):
+        for variant in ("verbose", "short-natural"):
+            cell = report["datasets"][size][variant]
+            assert "indistinguishability" in cell, (
+                "indistinguishability was never projected into the cell by the real "
+                "certify path")
+            detail = cell["indistinguishability"]
+            assert set(detail) == set(corpus_certify._INDISTINGUISHABILITY_KEYS)
+            expected = variant == "short-natural"
+            assert detail["passed"] is expected
+            assert cell["checks"]["indistinguishability"] is expected, (
+                "the detail block and the boolean in `checks` disagree")
+            if not expected:
+                assert detail["id_shape_rule"] == "trailing_int(id) <= 8"
+
+    # The check is part of the cell key-set the boundary validator enforces.
+    assert "indistinguishability" in corpus_certify._CELL_CHECKS
+    assert set(report["datasets"]["1000"]["verbose"]["checks"]) == corpus_certify._CELL_CHECKS
+
+
+def test_complete_certification_document_rejects_failed_indistinguishability():
+    """The boundary validator must refuse a certificate whose indistinguishability
+    verdict is false or whose observation sits above its own null — otherwise a
+    hand-edited boolean would carry a leaking corpus through certification."""
+    from tests.test_corpus_inject import _complete_certificate, _gate_evidence
+
+    def certificate() -> dict:
+        gates = {
+            gate: _gate_evidence(
+                gate, member="fixture", dataset="mixed/fixture",
+                signature="c" * 64, query_gold_sha256="b" * 64, query_count=20)
+            for gate in corpus_certify.SCIENTIFIC_GATES
+        }
+        return _complete_certificate("fixture", "mixed/fixture", "c" * 64, gates)
+
+    assert corpus_certify._complete_certification_document(certificate()) is True
+
+    for mutate in (
+        lambda d: d.update(passed=False),
+        lambda d: d.update(id_shape_passed=False),
+        lambda d: d.update(ngram_passed=False),
+        lambda d: d.update(method="hand-waved"),
+        # observation above its own null, with `passed` still asserted True
+        lambda d: d.update(id_shape_separability=0.9),
+        lambda d: d.update(ngram_max_gold_coverage=0.9),
+        lambda d: d.pop("id_shape_rule"),
+    ):
+        doc = certificate()
+        mutate(doc["datasets"]["1000"]["verbose"]["indistinguishability"])
+        assert corpus_certify._complete_certification_document(doc) is False

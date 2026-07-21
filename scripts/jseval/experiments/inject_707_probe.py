@@ -67,6 +67,11 @@ SEMANTIC = True
 # actual feasibility risk) dominates the statistics, not the injected text.
 DOC_WORDS = 100
 SUITE = "707-real-text-injection-probe"
+# tempdoc 767 made the entity bank a required `generate()` input (chain entities are now
+# minted type- and length-matched against a frozen committed bank instead of syllable
+# pairs). This probe is kept RUNNABLE, but note its output is no longer byte-comparable
+# with the recorded pre-767 run — the payload itself changed.
+ENTITY_BANK = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "entity-bank-fixture"
 N_DISTRACTORS = 400
 HOST_SOURCE = "enron-qa/dasovich-j (MichaelR207/enron_qa_0922, train split, via convert-enronqa-to-beir.py)"
 
@@ -161,10 +166,12 @@ def main() -> None:
     corpus_generate.generate(
         CONTROL_FAB_DIR, axis="prose", lang="en", n_chains=N_CHAINS, hops=HOPS,
         seed=SEED, suite=SUITE, semantic=SEMANTIC, doc_words=DOC_WORDS,
+        entity_bank=ENTITY_BANK,
     )
     corpus_generate.generate(
         DETERMINISM_SCRATCH_DIR, axis="prose", lang="en", n_chains=N_CHAINS, hops=HOPS,
         seed=SEED, suite=SUITE, semantic=SEMANTIC, doc_words=DOC_WORDS,
+        entity_bank=ENTITY_BANK,
     )
     docs_a = (CONTROL_FAB_DIR / "docs.jsonl").read_text(encoding="utf-8")
     docs_b = (DETERMINISM_SCRATCH_DIR / "docs.jsonl").read_text(encoding="utf-8")

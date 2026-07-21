@@ -289,6 +289,24 @@ Use `python -m jseval modes` to list all modes with their components.
 Client-resolved modes send an explicit pipeline config. Server-resolved
 modes (like `hybrid`) send a mode string for backend resolution.
 
+**Trap — an omitted leg mode silently lowers union recall.** The
+`staged_recall_accounting` projection computes its leg union over
+`LEG_MODES = ("vector", "lexical", "splade")` and keeps only the modes
+actually present (`projections/staged_recall_accounting.py:76`, `:240`).
+A mode you did not run is *absent from the union*, not an error, and the
+projection still reports `status: "ok"` as long as one leg plus a final
+mode (`hybrid`/`full`) is present. So `--modes lexical,vector,hybrid`
+looks green while under-measuring `leg_union_recall`. Measured instance:
+a cell certified at union 0.75 with all three legs re-measured at 0.48 —
+exactly its vector recall, i.e. one contributing leg — with `splade`
+omitted, enough to fail a 0.65 floor after a full paid + GPU run. **When
+a run feeds `union_recall` / `leak_floor` gates, or is compared against a
+threshold derived elsewhere, pass all three leg modes:**
+`--modes lexical,vector,splade,hybrid --embedding --splade`. Calibration
+runs additionally require `--embedding` with `hybrid` as the headline
+mode (`docs/tempdocs/707-pillar1-inband-utility-corpus.md:491-492`). Full
+write-up: `docs/tempdocs/767-certification-runbook.md` §1 B4.
+
 ## What jseval Handles
 
 - **Corpus materialization**: Downloads and converts datasets to .txt
@@ -364,6 +382,19 @@ modes (like `hybrid`) send a mode string for backend resolution.
 | `--json` | NDJSON progress to stderr, JSON result to stdout |
 | `-v` / `--verbose` | DEBUG logging (httpcore/httpx suppressed) |
 | `--history-db PATH` | Shared history database for trend tracking |
+
+**Trap — `datasets/` resolves differently per command.** `jseval run`
+resolves `datasets/` from the **repo root** and ignores the current
+working directory (`corpora.py:306` → `REPO_ROOT / "datasets"`), while
+`corpus-certify --datasets-dir datasets` is a `click.Path` resolved
+against **cwd** (`commands/corpus.py:184-197`). Materializing into
+`scripts/jseval/datasets/` therefore satisfies `corpus-certify` run from
+`scripts/jseval/` and then fails `jseval run` with
+`FileNotFoundError: corpus.jsonl not found at <repo-root>/datasets/...`.
+Materialize into the **repo-root `datasets/`** and pass `--datasets-dir`
+as an absolute path. Both `datasets/` and `datasets-*/` are gitignored,
+so nothing there survives a fresh checkout. See
+`docs/tempdocs/767-certification-runbook.md` §1 B5.
 
 ## Output Structure
 

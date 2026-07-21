@@ -227,12 +227,14 @@ function referenceStratum(cell, outcome) {
   ].join("\n");
 }
 
-function noResult(selection, target) {
+function noResult(selection, target, root) {
   const reason = selection.pointer.reason;
   const state = selection.pointer.previous ? "The previously selected result was withdrawn. " : "";
+  const policyPath = path.join(root, "scripts", "jseval", "utility-claim-policy.v1.json");
+  const policyId = readJson(policyPath).policy_id;
   const common =
     `No agent-utility result is currently accepted for publication. ${state}${reason} ` +
-    "The checked-in claim policy (`agent-utility-public-v1`) is active and fully resolved: it pins a required four-stratum " +
+    `The checked-in claim policy (\`${policyId}\`) is active and fully resolved: it pins a required four-stratum ` +
     "campaign matrix (CLERC legal + Enron email, each at 1k and 10k documents), a model cohort, and its scientific margins. " +
     "One pre-registered confirmatory campaign has run against it (2026-07-18); the policy rejected promotion on " +
     "identity-verification gates, and the complete evidence — including both voided runs — is committed under " +
@@ -314,8 +316,8 @@ function accepted(selection, target) {
   ].join("\n");
 }
 
-function generated(selection, target) {
-  return [START, "", selection.record ? accepted(selection, target) : noResult(selection, target), "", END].join("\n");
+function generated(selection, target, root) {
+  return [START, "", selection.record ? accepted(selection, target) : noResult(selection, target, root), "", END].join("\n");
 }
 
 /**
@@ -351,7 +353,7 @@ function main() {
   ];
 
   let results = targets.map(([relative, target]) =>
-    evaluate(path.join(root, relative), generated(selection, target), root),
+    evaluate(path.join(root, relative), generated(selection, target, root), root),
   );
 
   // A target lacking the marker region blocks every write this run, so a later failing target can
