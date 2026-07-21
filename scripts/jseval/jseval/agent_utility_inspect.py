@@ -100,6 +100,18 @@ _MCP_SURFACE_RETRY_BACKOFF_S = 1.0
 # safety net. Overridable via `--max-turns`.
 _DEFAULT_MAX_TURNS = 100
 
+# tempdoc 768 D7: USD (`max_budget_usd`) is the BINDING per-cell budget; the
+# wall-clock is only a safety backstop for a genuine hang. The calibrated timeout
+# (~2x contended-p95) used as a tight wall-clock RACED the SDK's USD cap and often
+# fired first, cancelling the coroutine before any terminal ResultMessage arrived
+# -> `cost_usd` null (765 §E: 69/86 exhausted cells lost their cost receipt). The
+# resolved wall-clock is widened by this generous multiple so the USD cap fires
+# first in the modal exhausted-cell case (a USD-cap kill DOES deliver a terminal
+# ResultMessage with cost intact), while a truly hung cell is still caught at
+# N x the calibrated bound. Multiplying preserves the per-condition calibration
+# ordering (a long-tail A arm still gets more headroom than C).
+_WALL_CLOCK_BACKSTOP_MULT = 3
+
 # Neutral prompt (tempdoc 624 §M.8 pre-registration, Step 0 item 1): the prior
 # "using only the documents in {corpus_dir}" wording primed the agent toward
 # filesystem tools before it ever saw its actual tool surface -- an experimental
@@ -513,8 +525,12 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
         capture: dict | None = None
         # Per-arm budget: resolve this cell's wall-clock timeout by its condition, falling
         # back to the scalar `timeout_s` (tempdoc 624 §Harness lessons — a pooled timeout
-        # under-budgets the long-tail A arm on large corpora).
-        cell_timeout_s = timeout_s_by_condition.get(condition, timeout_s)
+        # under-budgets the long-tail A arm on large corpora). tempdoc 768 D7: widen the
+        # resolved value by the generous backstop multiple so USD (`max_budget_usd`) is the
+        # binding budget and the wall-clock only catches a genuine hang (see the constant).
+        cell_timeout_s = (
+            timeout_s_by_condition.get(condition, timeout_s) * _WALL_CLOCK_BACKSTOP_MULT
+        )
         deadline = asyncio.get_event_loop().time() + cell_timeout_s
         for attempt in (1, 2):
             remaining = deadline - asyncio.get_event_loop().time()
@@ -764,21 +780,84 @@ def _delivered_fields(content) -> dict[str, bool] | None:
     return {key: _present(key) for key in _DELIVERED_FIELD_KEYS}
 
 
-def _tool_result_digest_entry(result: dict | None) -> dict:
+def _normalize_doc_id(doc_id) -> str | None:
+    """Normalize a search-hit id / gold `evidence_id` to a comparable doc key:
+    basename, drop a single trailing file extension, lowercase.
+
+    The live `McpEvidenceProjection` `results[*].id` is `hit.id()` -- an absolute
+    corpus path (e.g. `...\\corpus-dir\\limker1.txt`), while the queries file's
+    `evidence_ids` are extensionless basenames (`limker1`). A raw exact-match
+    would therefore NEVER find a gold hit (empirically confirmed on the 763
+    replay ids, tempdoc 768 §E). Normalizing BOTH sides the same way is what
+    connects them, and mirrors the 763 oracle's own normalization
+    (`replay_stratum.py`: basename -> strip `.txt` -> lower) so the captured
+    `gold_rank` and the oracle's replay agree by construction."""
+    if not isinstance(doc_id, str):
+        return None
+    base = os.path.basename(doc_id.replace("\\", "/"))
+    base, _ext = os.path.splitext(base)
+    return base.lower()
+
+
+def _gold_rank_capture(content, tier, evidence_ids: list[str] | None):
+    """Rank-of-gold at capture (tempdoc 768 D6, item 2). From a structured-json
+    `justsearch_search` delivery, return `(ordered_doc_ids, scores, gold_rank)`:
+    the rank-ordered doc ids and per-hit scores (ids+ranks ONLY -- never any
+    payload text; the redaction rationale is unchanged) and the 0-based rank of
+    the first `evidence_ids` (gold) doc found in that ranking.
+
+    `ordered_doc_ids` are the RAW delivered ids (the real ranking identifiers);
+    the gold match normalizes both the delivered ids and `evidence_ids` via
+    :func:`_normalize_doc_id` (basename/ext/case), because the delivered ids are
+    absolute paths and the gold ids are basenames.
+
+    `(None, None, None)` for non-structured deliveries and for structured
+    deliveries without a `results[]` array -- the latter is exactly the
+    non-`justsearch_search` case (`answerEvidence`/`justsearch_answer` emits
+    `quality`/`citations`, never a top-level `results` list;
+    `McpEvidenceProjection.java:65-89` is the only producer of `results[]`, in
+    `resp.results()` rank order). `gold_rank` is `None` -- NEVER a fabricated
+    `-1` -- when `evidence_ids` is absent or no gold doc hits the ranking."""
+    if tier != _DELIVERED_TIER_STRUCTURED:
+        return None, None, None
+    parsed = json.loads(content.strip())
+    results = parsed.get("results")
+    if not isinstance(results, list):
+        return None, None, None
+    hits = [r for r in results if isinstance(r, dict)]
+    ordered_doc_ids = [h.get("id") for h in hits]
+    scores = [h.get("score") for h in hits]
+    gold_rank = None
+    if evidence_ids:
+        gold = {_normalize_doc_id(g) for g in evidence_ids}
+        gold.discard(None)
+        for idx, doc_id in enumerate(ordered_doc_ids):
+            if _normalize_doc_id(doc_id) in gold:
+                gold_rank = idx
+                break
+    return ordered_doc_ids, scores, gold_rank
+
+
+def _tool_result_digest_entry(result: dict | None,
+                              evidence_ids: list[str] | None = None) -> dict:
     """Redacted, committed-safe derivation of one tool result (tempdoc 736 D9,
-    extended by tempdoc 735 G2 with `delivered_tier`/`delivered_fields`):
+    extended by tempdoc 735 G2 with `delivered_tier`/`delivered_fields`, and by
+    tempdoc 768 D6 with `ordered_doc_ids`/`scores`/`gold_rank`):
     hash/len/is_error/shape/furniture-marker booleans plus the delivered-tier
-    classification -- NEVER the raw content, which stays in the ephemeral
-    (gitignored) log only. `result` is None when the call never executed
-    (blocked/disallowed) -- honest nulls throughout, never a fabricated
-    zero/empty for the size/hash/is_error fields.
+    classification and rank-of-gold capture -- NEVER the raw content, which
+    stays in the ephemeral (gitignored) log only. `result` is None when the call
+    never executed (blocked/disallowed) -- honest nulls throughout, never a
+    fabricated zero/empty for the size/hash/is_error fields.
 
     `furniture_markers` is computed (as before) for `prose`/`blocks` deliveries;
     for `structured-json` deliveries it is `None` and `delivered_fields` carries
     the signal instead -- text-grepping a delivered JSON string for product
     furniture strings is measuring the wrong tier (this is the exact bug this
     increment fixes: tempdoc 735's 0/153 furniture-marker mystery was caused by
-    grepping content that was never delivered as text in the first place)."""
+    grepping content that was never delivered as text in the first place).
+
+    `evidence_ids` is the query's gold-id list (threaded from `Sample.metadata`
+    via `_record_cell`); it feeds `gold_rank` only -- see `_gold_rank_capture`."""
     if result is None:
         return {
             "content_sha256": None,
@@ -788,9 +867,13 @@ def _tool_result_digest_entry(result: dict | None) -> dict:
             "furniture_markers": _furniture_marker_flags(None),
             "delivered_tier": None,
             "delivered_fields": None,
+            "ordered_doc_ids": None,
+            "scores": None,
+            "gold_rank": None,
         }
     content = result.get("content")
     tier = _delivered_tier(content)
+    ordered_doc_ids, scores, gold_rank = _gold_rank_capture(content, tier, evidence_ids)
     return {
         "content_sha256": _content_sha256(content),
         "content_len": _content_len(content),
@@ -801,6 +884,9 @@ def _tool_result_digest_entry(result: dict | None) -> dict:
         ),
         "delivered_tier": tier,
         "delivered_fields": _delivered_fields(content),
+        "ordered_doc_ids": ordered_doc_ids,
+        "scores": scores,
+        "gold_rank": gold_rank,
     }
 
 
@@ -879,7 +965,8 @@ def _record_cell(state: TaskState, got: dict, condition: str,
     # here and the `errored` status above are cross-consistent BY CONSTRUCTION
     # (both derive from the same `results[tid]["is_error"]`).
     state.metadata["tool_result_digests"] = [
-        _tool_result_digest_entry(results.get(tid)) for tid in attempts
+        _tool_result_digest_entry(results.get(tid), state.metadata.get("evidence_ids"))
+        for tid in attempts
     ]
 
     # Offered MCP surface from the SDK's own status (tempdoc 675 finding 2).
@@ -1099,7 +1186,8 @@ def agent_utility_task(conditions=("A", "C"), queries_path: str = "", corpus_dir
         rows = rows[:max_queries]
     samples = [
         Sample(id=f"{c}|q{i}", input=r["query"], target=r["answer"],
-               metadata={"condition": c, "question_type": r.get("question_type")})
+               metadata={"condition": c, "question_type": r.get("question_type"),
+                         "evidence_ids": r.get("evidence_ids")})
         for c in conditions
         for i, r in enumerate(rows)
     ]
