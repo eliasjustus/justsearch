@@ -695,6 +695,126 @@ def test_verified_exposure_mode_gate_fails_when_not_every_cell_verified():
     assert verdict["accepted"] is False
 
 
+# --- tempdoc 755 Track 2: rate-based verified_tool_surface (INERT under v1) ----
+#
+# When a policy carries `thresholds.minimum_surface_verification_rate`, the gate
+# switches from all-cells-verified to: rate >= threshold AND single declared hash
+# AND no different hash. A MISSING per-cell hash is a tolerated capture miss; a
+# DIFFERENT hash stays fatal regardless of rate. Absent the threshold (v1), the
+# gate is byte-identical to before (observed is a plain bool).
+
+
+def _rate_policy(record: dict, rate: float = 0.9) -> dict:
+    policy = _active_policy(record)
+    policy["thresholds"]["minimum_surface_verification_rate"] = rate
+    return policy
+
+
+def _surface_gate(verdict: dict) -> dict:
+    return next(
+        item for item in verdict["gates"] if item["name"] == "verified_tool_surface"
+    )
+
+
+def test_verified_tool_surface_v1_gate_is_bool_and_fails_on_unverified_cell():
+    """v1 policy (no minimum_surface_verification_rate): byte-identical behavior --
+    the gate observed is a plain bool True/False and a single unverified cell fails
+    it. This guards the digest-covered v1 verdict against the Track-2 rate branch."""
+    record = _record()
+    assertions = record["tool_call_assertions"]["B"]
+    total = assertions["cells_total"]
+    assertions["cells_with_mcp_surface_verified"] = total - 1
+    assertions["cells_mcp_surface_unverified"] = 1
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    gate = _surface_gate(verdict)
+    assert gate["observed"] is False
+    assert gate["threshold"] is True
+    assert gate["passed"] is False
+    assert verdict["accepted"] is False
+    assert "verified_tool_surface" in verdict["reasons"]
+
+
+def test_verified_tool_surface_rate_passes_above_threshold_and_exposes_rate():
+    """0.92 verified >= 0.9 threshold, single declared hash, consistent -> passes;
+    the gate observed makes the rate visible as {rate, verified, total}."""
+    record = _record()
+    assertions = record["tool_call_assertions"]["B"]
+    total = assertions["cells_total"]  # 100 attempted with-tool cells
+    assertions["cells_with_mcp_surface_verified"] = 92
+    assertions["cells_mcp_surface_unverified"] = total - 92
+
+    verdict = evaluate_claim(record, _rate_policy(record, 0.9))
+
+    gate = _surface_gate(verdict)
+    assert gate["passed"] is True
+    assert gate["threshold"] == 0.9
+    assert gate["observed"]["verified"] == 92
+    assert gate["observed"]["total"] == 100
+    assert gate["observed"]["rate"] == pytest.approx(0.92)
+    assert "verified_tool_surface" not in verdict["reasons"]
+    assert verdict["accepted"] is True
+
+
+def test_verified_tool_surface_rate_fails_below_threshold():
+    """0.88 verified < 0.9 threshold fails, even though every observed hash matches
+    the declared hash (a missing hash is a capture miss, but too many of them)."""
+    record = _record()
+    assertions = record["tool_call_assertions"]["B"]
+    total = assertions["cells_total"]
+    assertions["cells_with_mcp_surface_verified"] = 88
+    assertions["cells_mcp_surface_unverified"] = total - 88
+
+    verdict = evaluate_claim(record, _rate_policy(record, 0.9))
+
+    gate = _surface_gate(verdict)
+    assert gate["passed"] is False
+    assert gate["observed"]["rate"] == pytest.approx(0.88)
+    assert verdict["accepted"] is False
+    assert "verified_tool_surface" in verdict["reasons"]
+
+
+def test_verified_tool_surface_rate_fails_fatally_on_second_distinct_hash():
+    """A different observed hash is a genuine surface mismatch, never a capture
+    miss: it fails the gate at ANY rate (here rate == 1.0) even if the consistency
+    flag were (incorrectly) True -- the single-declared-hash / no-different-hash
+    checks catch it independently of the rate."""
+    record = _record()
+    assertions = record["tool_call_assertions"]["B"]
+    total = assertions["cells_total"]
+    assertions["cells_with_mcp_surface_verified"] = total  # rate == 1.0
+    assertions["cells_mcp_surface_unverified"] = 0
+    assertions["observed_mcp_tool_surface_hashes"] = ["f" * 64, "e" * 64]
+    assertions["observed_mcp_tool_surface_consistent"] = True  # deliberately optimistic
+
+    verdict = evaluate_claim(record, _rate_policy(record, 0.9))
+
+    gate = _surface_gate(verdict)
+    assert gate["passed"] is False
+    assert gate["observed"]["rate"] == pytest.approx(1.0)
+    assert verdict["accepted"] is False
+    assert "verified_tool_surface" in verdict["reasons"]
+
+
+def test_verified_tool_surface_rate_fails_when_single_hash_not_declared():
+    """A single observed hash that does NOT equal the declared cohort hash fails
+    regardless of a passing rate -- it is a mismatch, not a miss."""
+    record = _record()
+    assertions = record["tool_call_assertions"]["B"]
+    total = assertions["cells_total"]
+    assertions["cells_with_mcp_surface_verified"] = total  # rate == 1.0
+    assertions["cells_mcp_surface_unverified"] = 0
+    assertions["observed_mcp_tool_surface_hashes"] = ["e" * 64]  # != declared "f"*64
+
+    verdict = evaluate_claim(record, _rate_policy(record, 0.9))
+
+    gate = _surface_gate(verdict)
+    assert gate["passed"] is False
+    assert verdict["accepted"] is False
+    assert "verified_tool_surface" in verdict["reasons"]
+
+
 def test_source_identity_complete_requires_well_formed_mcp_initialize_identity():
     """tempdoc 725 increment 2: source_identity_complete additionally requires
     exposure_config.exposure_mode resolved past "unknown" AND a well-formed
