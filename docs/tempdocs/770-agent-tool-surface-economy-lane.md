@@ -520,6 +520,22 @@ local content.
 | §A.2 read-amplification | routed to engine/relevance lane | — | **not this lane** |
 | §A.6 — 732 attribution | 732's to settle; logged to inbox | — | **not this lane** |
 
+**Post-review closure (2026-07-21).** An independent refute-first review (reviewer ≠
+implementer) found 11 issues; all 9 code/doc findings are fixed, and 2 were owner
+decisions. What that pass changed, beyond the fixes already noted above:
+
+| Item | Outcome |
+|---|---|
+| **Runtime contract version** | The doc's own *"a removal … is a breaking change"* rule fires here for the **first** time (0.2.0→0.4.0 were all additive). `RuntimeContract.CURRENT_VERSION` `0.1.0` → **`0.2.0`** + changelog row. **This was an orchestrator error** — the implementation brief asserted the changelog does not change. |
+| **Deprecation window** | The 90-day clause is *not* scoped to ≥1.0. Owner decision: the "Pre-1.0 by design" clause overrides it — recorded as a **decision in the changelog**, not asserted as settled in a Javadoc aside (which is what the first pass did). |
+| **`detail: true` restore path** | Had **zero** end-to-end coverage — every test called the projection directly, bypassing arg parsing and the call site, while the whole minor-not-major argument rests on recoverability (`audit-without-test`). Now covered through the real tool-call entry point. Bonus: non-Boolean `detail` was verified to **reject cleanly** at the schema boundary (no silent-false trap); pinned by a test. |
+| **Identity field direction** | The first pass kept `id` and elided `path` — the reverse of what this tempdoc described, and wrong on merit: `path` is the affordance-bearing name on a surface where **44.7%** of post-search Reads target a returned path. Corrected to keep `path`. |
+| **`query_syntax`** | Owner decision: **wire it**, not delete it. It is a live engine capability that the schema never declared, so it was silently ignored. Deleting the sentence would have removed exact-phrase/boolean search from the agent surface entirely. (Declining the schema addition on F-016's authority also contradicted §A.4, which downgraded F-016 to a weak prior.) Named `query_syntax` to match the surface's snake_case convention. |
+| **Totality guard** | Proven to **bite**: temporarily gating an extra field failed 2 tests. With the previous (empty-component) fixture the same change stayed silently green — the exact hole the review named. |
+| **Recorded fixtures** | Root cause was **not** stale data: `_write_fixtures` hard-coded `mcp_tool_surface_version: None`, so every fixture ever written was blind to surface drift. Version now stamped from the `initialize` handshake; fixtures re-captured live at `0.5.0`. The refresh immediately exposed a test assertion that had been passing only because the fixture was stale. |
+| **F-039 routing** | The search-quality register routed its dominant root cause to *"the tool-surface two-step affordance (tempdoc 770)"* — which this lane **withdrew**. Corrected in the register so 769 does not wait on a lane that isn't coming. |
+| **`McpContractVersions` claim** | *"no field becomes unreachable"* was **false** (answer `facets` has no other source). Corrected — the removal is justified by measured non-use (`735:471-474`), not by reachability. |
+
 **Cohort note.** §E.1 bumps `TOOL_SURFACE_VERSION`, changing the `tools/list` hash,
 which is measurement-cohort identity (`735:102-106`). Campaigns cannot compare across
 the bump. Land Parts 1+2 on **one** bump, and choose the point deliberately relative
