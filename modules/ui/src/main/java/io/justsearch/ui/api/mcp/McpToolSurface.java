@@ -69,7 +69,7 @@ public final class McpToolSurface {
           + "applies soft boosts — check the queryUnderstanding field in the response. "
           + "When the matching documents carry them, the response also returns top facet values "
           + "(sources, categories, authors) to use as filters. "
-          + "Set querySyntax: \"lucene\" for exact-phrase (\"...\") and boolean (AND/OR/NOT) "
+          + "Set query_syntax: \"lucene\" for exact-phrase (\"...\") and boolean (AND/OR/NOT) "
           + "queries; the default is plain-text search. "
           + "Set detail: true to also receive per-hit ranking provenance (stage participation and "
           + "fusion-leg scores); it is omitted by default.";
@@ -293,7 +293,7 @@ public final class McpToolSurface {
               // query-level search trace, excerpts, and scores are always returned in
               // structuredContent; per-hit trace/legScores (and the numeric detail sub-map inside
               // them) ship only when detail=true.
-              "querySyntax",
+              "query_syntax",
                   propEnum(
                       List.of("simple", "lucene", "advanced"),
                       "Query syntax. \"simple\" (default) treats the query as plain text."
@@ -763,7 +763,7 @@ public final class McpToolSurface {
       Boolean detail = (args.get("detail") instanceof Boolean b) ? b : null;
       // Tempdoc 770 §D: the engine's query-syntax lever (SearchPipelinePresets#parseQuerySyntax-
       // OrDefault), reachable from the agent surface now that the schema declares it.
-      String querySyntax = (args.get("querySyntax") instanceof String s) ? s : null;
+      String querySyntax = (args.get("query_syntax") instanceof String s) ? s : null;
       // Tempdoc 725 W2c: concise mode omits the Preview line only — rank/title/score, Path, and
       // Matched/Match-basis lines (plus the summary/degradation/coverage lines below the loop) all
       // carry facts, not bulk, so they stay in both response densities.

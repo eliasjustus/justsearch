@@ -230,13 +230,13 @@ class McpProtocolHandlerTest {
         (Map<String, Object>) searchInputSchema.get("properties");
     assertTrue(searchProps.containsKey("detail"), "search tool advertises the detail arg");
     // Tempdoc 770: querySyntax is a declared parameter now, not a description-only claim.
-    assertTrue(searchProps.containsKey("querySyntax"), "search tool advertises the querySyntax arg");
+    assertTrue(searchProps.containsKey("query_syntax"), "search tool advertises the query_syntax arg");
     @SuppressWarnings("unchecked")
-    Map<String, Object> querySyntaxProp = (Map<String, Object>) searchProps.get("querySyntax");
+    Map<String, Object> querySyntaxProp = (Map<String, Object>) searchProps.get("query_syntax");
     assertEquals(
         List.of("simple", "lucene", "advanced"),
         querySyntaxProp.get("enum"),
-        "querySyntax mirrors SearchPipelinePresets#parseQuerySyntaxOrDefault's accepted values");
+        "query_syntax mirrors SearchPipelinePresets#parseQuerySyntaxOrDefault's accepted values");
 
     // Tempdoc 725: tools/list must serialize with a byte-stable key order across JVM restarts —
     // the MCP draft spec SHOULDs deterministic ordering for client-side cache hits. Jackson
@@ -246,7 +246,7 @@ class McpProtocolHandlerTest {
     // would only reveal itself as flakiness across separate process launches, not within one
     // test run).
     assertEquals(
-        List.of("query", "limit", "mode", "filters", "querySyntax", "detail", "response_format"),
+        List.of("query", "limit", "mode", "filters", "query_syntax", "detail", "response_format"),
         List.copyOf(searchProps.keySet()),
         "search inputSchema properties must serialize in declared source order");
 
@@ -555,7 +555,7 @@ class McpProtocolHandlerTest {
     when(adapter.search(any())).thenReturn(cannedSearchResponse());
     McpProtocolHandler h = handlerOver(adapter);
 
-    callTool(h, 34, "justsearch_search", "{\"query\":\"\\\"exact phrase\\\"\",\"querySyntax\":\"lucene\"}");
+    callTool(h, 34, "justsearch_search", "{\"query\":\"\\\"exact phrase\\\"\",\"query_syntax\":\"lucene\"}");
     ArgumentCaptor<KnowledgeSearchRequest> req =
         ArgumentCaptor.forClass(KnowledgeSearchRequest.class);
     verify(adapter).search(req.capture());
@@ -580,7 +580,7 @@ class McpProtocolHandlerTest {
     String raw =
         callTool(
             handlerOver(adapter), 36, "justsearch_search",
-            "{\"query\":\"x\",\"querySyntax\":\"regex\"}");
+            "{\"query\":\"x\",\"query_syntax\":\"regex\"}");
     @SuppressWarnings("unchecked")
     Map<String, Object> response = MAPPER.readValue(raw, Map.class);
     @SuppressWarnings("unchecked")

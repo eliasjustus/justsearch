@@ -247,7 +247,7 @@ Use `justsearch_search` when the agent needs to discover what exists,
 browse by source/category, or find specific files. When the matching
 documents carry facetable fields, it returns top facet values for filter
 discovery (a zero-hit query, or a corpus without those fields, returns
-none). Pass `querySyntax: "lucene"` for exact-phrase or boolean queries.
+none). Pass `query_syntax: "lucene"` for exact-phrase or boolean queries.
 
 Use `justsearch_browse` to explore the folder structure before
 searching — especially useful when the agent doesn't know what's
@@ -287,7 +287,7 @@ Some advanced parameters (doc_ids, entity filters) work when passed but
 are NOT in the visible schema. This is intentional — eval data shows
 making them visible degrades small-model accuracy (92% → 71%) without
 increasing usage. Capable agents can use them by reading the description
-carefully. `querySyntax` is the exception (tempdoc 770): the description
+carefully. `query_syntax` is the exception (tempdoc 770): the description
 advertised it while the schema rejected nothing and the validator silently
 dropped it, so agents believed they had enabled exact-phrase search and
 got fuzzy hybrid instead. It is now a declared schema parameter threaded
