@@ -172,7 +172,13 @@ final class LlamaServerOpsCrashTelemetryTest {
     record HealthFailureCall(
         InferenceFailure.HealthFailure failure, int consecutiveCount, boolean restartTriggered) {}
 
-    final java.util.List<HealthFailureCall> healthFailures = new java.util.ArrayList<>();
+    // CopyOnWriteArrayList, not ArrayList: handleServerCrash() schedules a delay=0 async recovery
+    // task that also calls onHealthFailure -> add() here. maxCrashes_triggersTerminalGiveUp reads
+    // this list via .stream() on the test thread while that async writer runs, so a plain ArrayList
+    // throws ConcurrentModificationException (CI flake, tempdoc 668 lane). COW's snapshot iteration
+    // is CME-free; the synchronous cap-th emit still deterministically satisfies the anyMatch(>=cap).
+    final java.util.List<HealthFailureCall> healthFailures =
+        new java.util.concurrent.CopyOnWriteArrayList<>();
     final AtomicInteger ignoredCallCount = new AtomicInteger();
 
     @Override
