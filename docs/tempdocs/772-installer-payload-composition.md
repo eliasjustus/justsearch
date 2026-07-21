@@ -1,7 +1,7 @@
 ---
 title: "Installer payload composition: what belongs in the base installer versus the consent-gated download pack — the base installer ships an inference runtime it cannot run, and the pack mechanism that would carry it already exists"
 type: tempdocs
-status: "open — ANALYSIS ONLY (2026-07-21). Evidence measured against a real 815 MB CI artifact (run 29514086160, 743 files, 177 PE binaries, every PE signature-checked). Takeover investigation (2026-07-21) independently re-verified all citations (spot-checks + subagent pass: no wrong citations, two minor line-range imprecisions) and resolved §Open question 7 (byte-level size win, §F) — combined payload is ~10.4% of the installed tree, not the dramatic reduction the PE-count framing suggested. No decision reached, no split recommended; §Open questions are for the owner. See §Takeover verdict. Nothing implemented."
+status: "open — ANALYSIS ONLY (2026-07-21). Evidence measured against a real 815 MB CI artifact (run 29514086160, 743 files, 177 PE binaries, every PE signature-checked). Takeover investigation (2026-07-21) independently re-verified all citations (spot-checks + subagent pass: no wrong citations, two minor line-range imprecisions) and resolved §Open question 7 (byte-level size win, §F) — combined native-bin payload is ~10.4% of the installed tree, not the dramatic reduction the PE-count framing suggested. §G (same pass) then found a payload OUTSIDE this tempdoc's original native-bin-only scope that dwarfs it: `lib/worker/onnxruntime_gpu-1.24.3.jar` alone is 34.3% of the installer, of which ~18.65% is Linux native binaries with zero use on this Windows-only product (no Linux build exists or is chartered — tempdoc 761) and ~15.12% is a Windows CUDA provider DLL inert until GPU+pack, the same pattern as llama-server but ~5x its size. No decision reached, no split recommended, nothing removed; §Open questions (now 1-10) are for the owner. See §Takeover verdict. Nothing implemented."
 created: 2026-07-21
 updated: 2026-07-21 (takeover investigation)
 author: agent (subagent investigation), founder-directed distribution work (2026-07-21)
@@ -320,12 +320,101 @@ cannot attribute compressed bytes per-file), moving O3 to the pack would save **
 of 85-95 MB off the 815 MB download — roughly 10-11%, not the dramatic reduction "93 unsigned PEs"
 might suggest.**
 
-**Reading — this narrows §"Why this matters" reason 1.** A ~10% download-size reduction is real but
-modest; it is unlikely to be the deciding factor on its own for a product with zero recorded user
-complaints about install size (§"Why this matters" #1). The signing-cost reduction (101→~8
-signings/release, §Signing consequence) and the first-run UX/parity questions (Q1, Q2) are where
-the actual decision weight sits, not size. This is evidence *against* over-weighting the size
-argument in isolation — it does not by itself favor any option in §Options.
+**Reading — this narrows §"Why this matters" reason 1, *within this tempdoc's original scope*.**
+A ~10% download-size reduction from the two native-binary payloads examined in §A-§F is real but
+modest. **However, §G below finds a single dependency, outside this tempdoc's original
+native-bin-only framing, that is more than 3x bigger than tesseract + llama-server combined** —
+so "is size a weak argument" does not generalize past the two payloads this tempdoc set out to
+measure. Read §G before concluding size is a minor factor overall.
+
+## §G — A bigger, previously unexamined payload: `onnxruntime_gpu-1.24.3.jar` (takeover investigation, 2026-07-21)
+
+This tempdoc's charter (and §A's inventory) scoped "payload composition" to native-bin PE binaries
+only. Prompted by a direct question during the takeover investigation ("did you also look at other
+files unnecessary to be in the installer?"), the JAR dependency tree was checked too. It was not in
+scope for §A-§F, and the finding is large enough to change the overall picture.
+
+**What it is.** `lib/worker/onnxruntime_gpu-1.24.3.jar` — staged unconditionally by
+`bundleSidecarResources` (`modules/ui/build.gradle.kts:1417`: `from(workerInstallDist...) {
+into("lib/worker") }`, no exclusion) from the Worker module's runtime classpath
+(`modules/indexer-worker/build.gradle.kts:24`: `runtimeOnly(libs.onnxruntime.gpu)`). Confirmed
+present in the same re-extracted, re-verified CI artifact as §F (run `29514086160`).
+
+| Component | Bytes (as shipped in the jar) | % of installed payload |
+|---|---:|---:|
+| **Whole jar, on disk** | 370,985,729 | **34.3%** |
+| `ai/onnxruntime/native/linux-x64/*` (5 files, incl. `libonnxruntime_providers_cuda.so`) | 201,758,934 | **18.65%** |
+| `ai/onnxruntime/native/win-x64/onnxruntime_providers_cuda.dll` alone | 163,557,127 | **15.12%** |
+| `ai/onnxruntime/native/win-x64/*` (remaining: `onnxruntime.dll`, jni, shared/tensorrt providers) | ~5.5 MB | ~0.5% |
+| Java classes + `pom.xml`/notices | ~140 KB | ~0.01% |
+
+(Byte figures for the sub-components are the in-jar *compressed* sizes reported by `7z l` on the
+jar itself, which sum to the jar's actual on-disk size — 201,758,934 + 163,557,127 + ~5.5M + ~140K
+≈ 370,985,729 — so these percentages are additive against the same 1,081,771,371-byte installed-
+payload denominator used throughout §F.)
+
+**Two distinct problems, confirmed separately:**
+
+1. **The Linux natives (18.65% of the installer) serve no purpose on this product.** JustSearch is
+   Windows-only (`CLAUDE.md` architecture table; `README.md` Status section). Tempdoc 761
+   (`linux-build-cost-estimate`, sibling lane, status "investigation COMPLETE... no implementation
+   chartered") confirms no Linux build exists or is chartered — so this isn't latent prep for a
+   planned port, it is very likely simply how the upstream Maven artifact
+   `com.microsoft.onnxruntime:onnxruntime_gpu` is published (a single fat jar bundling `win-x64` +
+   `linux-x64` natives; no per-OS classifier was found in use). **Every Windows installer built
+   today ships a full Linux CUDA provider `.so` (316 MB uncompressed, 192 MB compressed) that can
+   never execute.**
+2. **The Windows CUDA provider DLL (15.12%) is inert until a GPU is present *and* the separate
+   ~1.82 GB `cuda-runtime` pack (§E) is downloaded** — the exact same "runtime shipped ahead of its
+   weights" pattern §D describes for `native-bin/llama-server`, except here the inert component
+   (163.6 MB compressed) is ~5x bigger than the *entire* `native-bin/llama-server` directory (33.1
+   MB) that §A-§F already flagged for the same reason.
+
+**Why CI's existing exclusion pattern didn't catch this.** §B already establishes that CI
+deliberately excludes GPU/model bulk via `includeOrtCuda=false` / `skipOnnxModels=true`
+(`build-installer.yml:145-152`) — but those flags gate the *separate* `native-bin/onnxruntime/cuda12`
+staging step (`build.gradle.kts:1470-1474`) and the ONNX model files, not the Worker's own classpath
+jar. The jar is pulled in unconditionally as part of `workerInstallDist`, with no equivalent gate.
+The project's own build already reasons about this jar's size elsewhere — a comment at
+`modules/indexer-worker/build.gradle.kts:163` explicitly avoids content-hashing it on every build
+("avoids reading 371MB onnxruntime_gpu on every stamp") — so its size was known, just not connected
+to the installer-payload question this tempdoc asks.
+
+**Open questions this raises (additive to §Open questions, not replacing them):**
+
+8. **Can the Linux natives be stripped without touching functionality?** The Worker needs the
+   `win-x64` entries only. Options include: (a) a build step that repackages the resolved jar,
+   deleting `native/linux-x64/**`, before staging into `lib/worker`; (b) checking whether
+   `com.microsoft.onnxruntime` publishes a Windows-only or per-classifier artifact upstream (not
+   confirmed in this pass — needs a Maven Central check); (c) accepting the waste as a known,
+   bounded cost. Repackaging a vendored third-party binary artifact touches the dependency-lock /
+   verification surface (`lockfile-hint`) and raises a redistribution-terms question (is
+   reconstituting a modified Microsoft-published artifact inside our installer still within its
+   license?) — **investigate before assuming (b) or (a) is free**, same discipline §Q3 already
+   applies to the pack-mechanism question.
+9. **Does the CUDA provider DLL belong in the base install at all, or should it move the same way
+   `native-bin/llama-server`'s CUDA variant already does** — i.e., is `onnxruntime_gpu` a candidate
+   for the exact same bundled-vs-packed route change §E describes, just one level down (inside a
+   jar instead of a `native-bin/` directory)? This is a larger, more consequential version of
+   Option O1/O3 with a bigger size payoff (up to ~33.8% combined vs. §F's 10.4%) and the same open
+   dependency on Q3's "does the pack mechanism actually support a CPU-tier required payload"
+   finding.
+10. **Was this a case of a much bigger fish being missed by scope, or is it out of scope for a
+    reason?** This tempdoc's own charter framed the problem entirely in terms of `native-bin/` PE
+    binaries (§A: "177 PE binaries", "every PE signature-checked") — a JAR containing embedded
+    native libraries is invisible to that framing (a `.jar` is not itself a PE, and
+    `Get-AuthenticodeSignature` was run only on already-identified PE files, per §A). **Any signing-
+    cost arithmetic in §"Signing consequence" is unaffected** (the embedded `.dll`/`.so` inside a
+    `.jar` are not independently Authenticode-signed as bundle resources — they are opaque zip
+    entries, not scanned by the installer's PE enumeration), but the *size* argument in
+    §"Why this matters" #1 should be re-read with this component included, not excluded.
+
+**This is not a recommendation to remove anything** — consistent with this tempdoc's own
+deliberate no-decision stance (§"What this tempdoc deliberately does not do"). It is a correction to
+this tempdoc's own scope: the payload-composition question it asks is bigger than the two `native-
+bin/` directories it originally measured, and the biggest single lever found so far (the Linux
+natives, 18.65%, arguably pure waste with no counter-argument found) sits entirely outside the O0-O5
+option set as currently framed.
 
 ## §What this tempdoc deliberately does not do
 
@@ -396,27 +485,40 @@ design effort on any one option.
 **What was the cheapest validating evidence, and did it already exist?** No — it didn't exist
 before this pass. §Open question 7 (the byte-level size win) was the one purely-empirical,
 non-owner-gated question left on the table, and it was cheap: re-download + re-extract + `du -sb`,
-no owner input needed. It's now answered (§F): moving both payloads to the pack saves **~10-11% of
-the installer**, not the dramatic cut the "93 unsigned PEs" / "101→~8 signings" framing might
-imply on its own. That reframes the decision — the size argument is real but minor, so whichever
-way the owner leans on Q1/Q2/signing cost should be understood as the actual driver, not size.
-**This evidence will not be re-obtainable from this exact artifact after 2026-07-23** (its GitHub
-Actions retention expiry) — worth noting since re-measuring later means trusting a different build.
+no owner input needed. It's now answered (§F): moving both `native-bin` payloads to the pack saves
+**~10-11% of the installer** — modest on its own. **But asked to check further whether other files
+were unnecessarily in the installer, the same re-extracted artifact turned up something bigger than
+everything §A-§F examined (§G): `lib/worker/onnxruntime_gpu-1.24.3.jar` is 34.3% of the installer,
+and ~18.65 percentage points of that (the bundled Linux native libraries) has no live justification
+on a Windows-only product with no chartered Linux build.** That is the single largest, most
+one-sided finding in this whole investigation — bigger than tesseract + llama-server combined, and
+unlike the O0-O5 tradeoffs, the Linux-natives portion doesn't obviously trade against any UX or
+signing benefit; no counter-argument for keeping it was found. It was missed originally because
+this tempdoc's own charter and §A's inventory scoped "payload" to `native-bin/` PE binaries only —
+a `.jar`'s embedded native libraries fall outside that framing entirely. **This evidence will not be
+re-obtainable from this exact artifact after 2026-07-23** (its GitHub Actions retention expiry) —
+both §F's and §G's numbers came from the same artifact, re-downloaded a second time in this pass;
+re-measuring later means trusting a different build.
 
 **What does it displace or duplicate?** Nothing currently shipped or planned — there is no
 competing analysis of installer payload composition, and 760/759/761/374 are confirmed disjoint
-(see §Method). It does not obsolete or conflict with any of them.
+(see §Method). §G's Linux-binary finding doesn't displace anything either — it's not something
+another tempdoc already tracks; 761 (Linux build cost) only confirms there's no active Linux-build
+work that would justify the bytes being there. It does not obsolete or conflict with any of them.
 
 **LITE-CLASS: no.** This is evidence-gathering and decision-framing for a payload/UX/signing
 tradeoff, not a pure teardown, rename, or config-delete — it does not qualify even provisionally.
 
 **State:**
-- **BLOCKED ON YOU:** Q1 (organizing principle for what belongs in the base installer vs. the
-  consent-gated pack — does excluding chat/OCR from first-run "hollow out" the offline-first
-  pitch, or just make explicit what's already true?) and Q2 (how much first-run UX friction, in
-  the form of new consent prompts, is acceptable in exchange for the ~10-11% size win described
-  above). Both are owner product-shape calls; no amount of further investigation resolves them.
+- **BLOCKED ON YOU:** Q1/Q2 as before (organizing principle + first-run UX cost, product-shape
+  calls no investigation resolves) — **plus, newly, whether §G's Linux-natives removal (Q8) is
+  worth chartering as a small, separable, near-zero-downside fix.** Unlike Q1/Q2, Q8 doesn't
+  obviously trade against UX — it may not need to wait for the bigger O0-O5 decision at all, but it
+  does need your go-ahead before anyone spends design/implementation effort repackaging a
+  third-party dependency (licensing + lockfile implications noted in Q8, not resolved).
 - **PROCEEDING / DONE (this session):** Independent verification of all prior citations (clean);
-  §Open question 7 answered with measured numbers (§F); tempdoc updated in place with both. No
-  design or implementation work was started, per the takeover charter — that stays gated on your
-  answer to Q1/Q2 above.
+  §Open question 7 answered with measured numbers (§F); a follow-up investigation beyond this
+  tempdoc's original scope (§G) found and quantified a 3x-bigger payload the original charter
+  couldn't have caught by construction; tempdoc updated in place with all of it. No design or
+  implementation work was started, per the takeover charter — that stays gated on your answers
+  above, including whether Q8 should be fast-tracked ahead of Q1/Q2.
