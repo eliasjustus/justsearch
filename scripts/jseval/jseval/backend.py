@@ -74,6 +74,7 @@ def start_backend(
     index_cache_mode: str = "off",
     corpus_dir: Path | None = None,
     dataset_name: str | None = None,
+    pin_selector_key: str | None = None,
 ) -> BackendInfo:
     """Start runHeadlessEval and wait for the backend to become healthy.
 
@@ -168,6 +169,7 @@ def start_backend(
             health_timeout_sec=health_timeout_sec,
             corpus_dir=corpus_dir,
             dataset_name=dataset_name,
+            pin_selector_key=pin_selector_key,
         )
         return BackendInfo(
             proc=proc, data_dir=resolved_data,
@@ -265,12 +267,20 @@ def _run_with_cache(
     health_timeout_sec: float,
     corpus_dir: Path | None,
     dataset_name: str | None = None,
+    pin_selector_key: str | None = None,
 ) -> tuple[subprocess.Popen, dict]:
     """Two-phase adopt (tempdoc 751 sec M.2); returns (healthy proc, cache_outcome).
 
     Fail-closed for adoption: a null selector, a lookup miss, an adopt error, or a
     confirm failure all fall through to the identical fresh build today's callers
     get (via :func:`_boot_and_wait`). Only a confirmed hit skips the rebuild.
+
+    ``pin_selector_key`` (tempdoc 768 item 5): when set, bypass ``compute_selector``
+    and look the pinned key up directly — the 763 §F forensic-replay path needs to
+    adopt a SPECIFIC historical index-cache entry even after HEAD advances past the
+    campaign commit (``compute_selector`` would resolve a different, current key,
+    which 763 §F had to monkeypatch around). All miss/adopt/confirm handling below
+    is identical; only the key derivation changes.
     """
     from . import index_cache, index_identity
 
@@ -287,13 +297,18 @@ def _run_with_cache(
             health_timeout_sec=health_timeout_sec,
         )
 
-    # Without a corpus axis the selector key would collide across corpora that
-    # share a config: adoption stays safe (confirm's count/canary checks catch
-    # it) but every cross-corpus run would thrash the same entry slot. Fail
-    # closed when there is no axis intent at all (no --corpus-dir AND no dataset).
-    # A resolvable-but-bad axis (subdir garbage, missing corpus.jsonl) is reported
-    # by compute_selector's resolve_corpus_axis below.
-    if corpus_dir is None and not dataset_name:
+    # tempdoc 768 item 5: an explicit historical selector-key pin bypasses the
+    # corpus-axis resolution and compute_selector entirely (the 763 §F replay
+    # need). Otherwise resolve the key from the corpus axis as before.
+    if pin_selector_key is not None:
+        selector_key = pin_selector_key
+    elif corpus_dir is None and not dataset_name:
+        # Without a corpus axis the selector key would collide across corpora that
+        # share a config: adoption stays safe (confirm's count/canary checks catch
+        # it) but every cross-corpus run would thrash the same entry slot. Fail
+        # closed when there is no axis intent at all (no --corpus-dir AND no dataset).
+        # A resolvable-but-bad axis (subdir garbage, missing corpus.jsonl) is reported
+        # by compute_selector's resolve_corpus_axis below.
         log.warning(
             "Index cache requested but no corpus axis (no --corpus-dir, no dataset) "
             "-- fresh build."
@@ -305,34 +320,35 @@ def _run_with_cache(
             "selector_key": None,
             "would_have_hit_scoped_pin": None,
         }
-
-    selector = index_identity.compute_selector(
-        resolved_root, corpus_dir, env, dataset_name=dataset_name,
-    )
-    if selector.key is None:
-        # Finding 1: this used to log at INFO -- a chain that passed the exploded
-        # corpus-dir subdir lost ALL caching with only an easily-missed INFO line.
-        # Requested-but-disabled is a WARNING now, naming the remedy verbatim.
-        log.warning(
-            "Index cache requested but disabled for this run (%s) -- fresh build.",
-            selector.unavailable_reason,
+    else:
+        selector = index_identity.compute_selector(
+            resolved_root, corpus_dir, env, dataset_name=dataset_name,
         )
-        return _boot_fresh(), {
-            "mode": f"disabled:{selector.unavailable_reason}",
-            "entry": None,
-            "detail": {"reason": selector.unavailable_reason},
-            "selector_key": None,
-            "would_have_hit_scoped_pin": None,
-        }
+        if selector.key is None:
+            # Finding 1: this used to log at INFO -- a chain that passed the exploded
+            # corpus-dir subdir lost ALL caching with only an easily-missed INFO line.
+            # Requested-but-disabled is a WARNING now, naming the remedy verbatim.
+            log.warning(
+                "Index cache requested but disabled for this run (%s) -- fresh build.",
+                selector.unavailable_reason,
+            )
+            return _boot_fresh(), {
+                "mode": f"disabled:{selector.unavailable_reason}",
+                "entry": None,
+                "detail": {"reason": selector.unavailable_reason},
+                "selector_key": None,
+                "would_have_hit_scoped_pin": None,
+            }
+        selector_key = selector.key
 
-    entry = index_cache.lookup(selector.key)
+    entry = index_cache.lookup(selector_key)
     if entry is None:
         log.info("Index cache miss (no entry for selector) -- fresh build.")
         return _boot_fresh(), {
             "mode": "miss:selector",
             "entry": None,
             "detail": {},
-            "selector_key": selector.key,
+            "selector_key": selector_key,
             "would_have_hit_scoped_pin": None,
         }
 
@@ -353,7 +369,7 @@ def _run_with_cache(
             "mode": "miss:adopt-error",
             "entry": entry.dir.name,
             "detail": {"error": f"{type(exc).__name__}: {exc}"},
-            "selector_key": selector.key,
+            "selector_key": selector_key,
             "would_have_hit_scoped_pin": None,
         }
 
@@ -372,7 +388,7 @@ def _run_with_cache(
             "mode": "adopted",
             "entry": entry.dir.name,
             "detail": {"checks": confirm.checks},
-            "selector_key": selector.key,
+            "selector_key": selector_key,
             "would_have_hit_scoped_pin": None,
         }
 
@@ -388,7 +404,7 @@ def _run_with_cache(
         "mode": "miss:confirm",
         "entry": entry.dir.name,
         "detail": {"failures": confirm.failures, "checks": confirm.checks},
-        "selector_key": selector.key,
+        "selector_key": selector_key,
         "would_have_hit_scoped_pin": _scoped_pin_would_hit(confirm),
     }
 

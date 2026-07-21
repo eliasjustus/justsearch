@@ -1,7 +1,7 @@
 ---
 title: "harness attribution lane: rank-of-gold capture at run time, USD-binding budgets, schema-stratified records, claim-policy v3 draft — the 766 program's instrument half"
 type: tempdocs
-status: "chartered (2026-07-21). Founder-run implementation lane. §D plan added 2026-07-21 (all anchors code-verified against step2-powered worktree); implementation not yet started."
+status: "IMPLEMENTED (2026-07-21) in worktree agent-a978d255079b4c6ce. All §D steps 1-10 landed and GREEN; smoke oracle PASS 18/18 gold_rank vs replay; §E log added. Awaiting orchestrator review + publish. Claim-policy v3 is a DRAFT only — founder ratifies."
 created: 2026-07-21
 author: agent (Fable orchestration), 766 program charter
 category: eval-infrastructure / agent-utility
@@ -219,3 +219,145 @@ worktree — step 8 below copies it in as a prerequisite.
     ```
     Known-RED correction-probe pair (762 §D) is the only permitted exception —
     confirm it is still exactly that pair, not a new failure, before closing.
+
+## §E. Implementation log (2026-07-21)
+
+Implemented end-to-end in worktree `agent-a978d255079b4c6ce` (branch
+`worktree-agent-a978d255079b4c6ce`), §D steps in order. All paths below are in
+that worktree's `scripts/jseval` tree.
+
+### What landed, by step
+
+1. **Gold identity into `Sample.metadata`** — `agent_utility_inspect.py:1102`
+   now emits `"evidence_ids": r.get("evidence_ids")`. Test
+   `test_sample_metadata_carries_evidence_ids` (a query without the field → `None`,
+   never a fabricated `[]`). GREEN.
+
+2. **`gold_rank`/`ordered_doc_ids`/`scores` at capture** — new `_gold_rank_capture`
+   + `_normalize_doc_id` helpers and a 3-key extension to `_tool_result_digest_entry`
+   (`agent_utility_inspect.py`); call site threads `state.metadata.get("evidence_ids")`.
+   Tests: `test_tool_result_digest_entry_gold_rank_{hit,miss,non_search_null,
+   null_without_evidence_ids,normalizes_path_ids_to_basenames}`,
+   `test_normalize_doc_id_basename_ext_lower`,
+   `test_record_cell_threads_evidence_ids_into_gold_rank`. GREEN.
+   - **DEVIATION / bug found by the smoke pre-check (§E oracle).** The plan assumed a
+     direct `evidence_ids`↔`results[*].id` match. The LIVE
+     `McpEvidenceProjection.results[*].id` is an *absolute corpus path*
+     (`…\corpus-dir\limker1.txt`) while the queries file's `evidence_ids` are
+     extensionless basenames (`limker1`) — a raw exact-match would return
+     `gold_rank=None` on every real gold hit. Fix: `_normalize_doc_id`
+     (basename → strip one extension → lowercase) applied to BOTH sides for the
+     gold match, mirroring the 763 oracle's own normalization; `ordered_doc_ids`
+     stay the RAW delivered ids. Every synthetic unit test missed this (simple ids);
+     the smoke oracle is exactly what caught it.
+
+3. **`question_type` propagation** — added to the `read_inspect_observations`
+   observation dict AND the `successful_summaries` `per_query` projection tuple
+   (`agent_utility_observations.py`), plus `_OBSERVATION_KEYS` + the `sanitized`
+   dict in `utility_evidence.py`, plus a `question_type` property in
+   `agent-utility-observation.v1.schema.json`. Test
+   `test_sanitize_observation_carries_question_type`. GREEN.
+   - **DEVIATION from the plan's named sites.** The plan cited `:97, :197, :249, :272`
+     mirroring `condition`. Those latter three are *cell-level* (condition), but
+     `question_type` is *per-query*; putting one value at cell granularity
+     misrepresents a multi-schema cell. Step 4's `_default_schema_stratify` actually
+     reads it from `per_query[qid]`, so the required (and semantically correct)
+     threading is the observation dict + the `per_query` tuple + the sanitizer — not
+     the cell-level manifest/summary. Implemented the correct threading.
+
+4. **Schema-stratified records + completion triple.**
+   - `utility_comparison.py`: `_default_schema_stratify` (sibling of
+     `_default_corpus_stratify`, keyed on `question_type`, `None` when single-schema);
+     `_arm_comparison` refactored to share `_stratified_breakdown` and gained a
+     `schema_stratify_by` param emitting a sibling `schema_stratified` key
+     (corpus `stratified` untouched); wired into `_compose_cell`. The measured-cell
+     schema has no `additionalProperties:false`, so no schema change was needed there.
+     Tests `test_compose_cell_schema_stratified_by_question_type`,
+     `test_no_schema_stratify_field_when_cell_is_single_schema`.
+   - `utility_recompose.py`: `_intention_to_treat_estimand` now emits the third
+     estimand `completion` (`role/source/strata`, per-arm `completion_rate =
+     n_completed / n_attempted`, an exhausted cell is a non-completion per 762 §T4).
+     Added `completion` to the estimands block of `utility-comparison.v1.schema.json`
+     (property, not required — pre-768 records lack it). Test
+     `test_itt_estimand_emits_completion_triple` (A exhausted→0.5, B→1.0). GREEN.
+
+5. **USD-binding per-cell budget** — new constant `_WALL_CLOCK_BACKSTOP_MULT = 3`;
+   the resolved `cell_timeout_s` is widened by it so the SDK `max_budget_usd` cap
+   (which delivers a terminal `ResultMessage` with cost intact) fires before the
+   wall-clock (which loses cost) in the modal exhausted case. Regression test
+   `test_usd_cap_kill_retains_cost_receipt` (a USD-cap `is_error` ResultMessage
+   retains `cost_usd`/`unique_tokens`; error classifies as `usd_budget_exhausted`).
+   Re-pinned the 3 timeout-resolution tests to `× _WALL_CLOCK_BACKSTOP_MULT`
+   (per-condition ordering preserved). GREEN.
+
+6. **Replay-tooling pinned adoption** — `backend.py:_run_with_cache` gained
+   `pin_selector_key` (bypasses `compute_selector`, looks the pinned key up directly,
+   keeps miss/adopt/confirm handling); threaded through `start_backend` and a new
+   `--pin-index-selector-key` CLI flag on `jseval run` (`commands/run.py`). Tests
+   `test_run_with_cache_pinned_selector_key_bypasses_compute_selector`,
+   `test_run_with_cache_without_pin_still_fails_closed_on_no_axis`. GREEN — and the
+   smoke cell (step 8) live-verified it (`cache_outcome.mode == "adopted"`,
+   `selector_key == 7a2b8823…`).
+
+7. **Claim-policy v3 DRAFT** — new file `utility-claim-policy.v3-DRAFT.json`
+   (`status: "draft"`, `policy_id agent-utility-public-v3-DRAFT`): schema/strata
+   matrix (`required_schema_strata` keyed on `question_type`), the carried-over
+   rate-based `verified_tool_surface_semantics`, `hero_tier.closed_book_required`,
+   and `triple_reporting_semantics` (headline ITT + per-protocol + completion,
+   budget-explicit, forbidden headlines). Inert accessors `v3_draft_policy_path` /
+   `load_v3_draft_policy` + a module-docstring note added to `utility_claim_policy.py`;
+   v2's ACTIVE gate logic and `utility-claim-policy.v1.json` are UNTOUCHED. Not wired
+   to any gate; ratification is a founder action (766 §D.3).
+
+8. **Smoke-cell oracle verification — PASS (18/18).** Copied
+   `tmp/analysis-624/763/replay/replay_stratum.py` into the working area, booted the
+   eval backend from `step2-powered` adopting the pinned `en-legal-clerc-1k` index
+   via the new `--pin-index-selector-key` path (boot 25.5s, `mode=adopted`,
+   `live embeddingDocCount=1001` == expected), ran **3 real haiku condition-C cells**
+   (`max_budget=0.30`/cell; order-$1 authorized) with the step-2 capture live, then
+   replayed each agent-issued search query via `/api/knowledge/search` (the 763 oracle
+   path) and compared. **Verdict: 18/18 captured `gold_rank` values MATCH the
+   independent replay** across 13+2+3 search calls, and `ranking_prefix_match` held on
+   every call (the captured MCP ranking equals the REST replay ranking). The matches
+   include genuine gold HITS (rank 3, rank 0) — not just concordant `None`s — so the
+   normalization fix from step 2 is exercised, not bypassed. Port 33221 was FREE before
+   start and the backend shut down cleanly (port released). No paid-run auth/port
+   blocker occurred.
+
+9. **Digest/fixture re-pin (verify-empirically, 756 §F).** The full suite surfaced two
+   movers, both verified field-by-field before re-pinning:
+   - `test_utility_evidence.py::test_tool_result_digests_echo_leak_absent_from_sanitized_bytes`
+     and `test_agent_utility_inspect.py::…furniture_markers_block_list…` and the
+     `never_stash_raw_content` exact-dict — the digest now carries the 3 new
+     redaction-safe keys (`ordered_doc_ids`/`scores`/`gold_rank`); the sanitizer
+     `_tool_result_digests` was extended to pass them through (ids+ranks only) and the
+     observation-schema digest item gained the three (additive, not required). Exact
+     dicts re-pinned with the 3 keys (all `None` for prose/blocks deliveries).
+   - `test_historical_fixture_semantic_digest_repinned_after_624_itt_change` — the
+     `estimands.completion` addition is digest-COVERED measurement content. **Proven
+     empirically that completion is the SOLE mover**: stripping it from the semantic
+     projection reproduces the prior pin `3d0bf53b…` byte-for-byte; the new pin is
+     `ed81f79b34a3537da84c20bc3b978b804dc0419dedaae88597bfc95c5827876b`. Docstring
+     updated with the derivation. `tool_result_digests`' new fields stay
+     digest-EXCLUDED (evidence/sanitizer tier only, U1).
+
+10. **Full suite** — `python -m pytest scripts/jseval/tests -q`: **2241+ passed**,
+    only the known-RED `test_correction_probe.py::TestLoadManifest` pair (762 §D,
+    `correction-eval-queries.v1.json` absent from history) remains RED — confirmed it
+    is exactly that pair, no new failures. Diff is UTF-8-clean (`§`/`—` are valid
+    UTF-8, matching codebase style; no mojibake introduced).
+
+### Register duty (§A item 7)
+
+All changes are confined to the `scripts/jseval` eval harness — no search-orchestration
+or inference-runtime code touched — so `/search-quality` and `/inference-runtime` need
+no updates, and no out-of-scope findings arose that would require an observation.
+
+### Files touched
+
+Code: `agent_utility_inspect.py`, `agent_utility_observations.py`, `utility_evidence.py`,
+`utility_comparison.py`, `utility_recompose.py`, `utility_claim_policy.py`, `backend.py`,
+`commands/run.py`. Schemas: `agent-utility-observation.v1.schema.json`,
+`utility-comparison.v1.schema.json`. New: `utility-claim-policy.v3-DRAFT.json`. Tests:
+`test_agent_utility_inspect.py`, `test_utility_comparison.py`, `test_duration_exhaustion_624.py`,
+`test_index_cache.py`, `test_utility_evidence.py`.

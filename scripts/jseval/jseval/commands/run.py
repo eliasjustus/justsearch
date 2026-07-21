@@ -48,6 +48,11 @@ log = logging.getLogger(__name__)
                    "corpus x engine identity matches (requires --start-backend --clean). Default: "
                    "fresh build (byte-identical to today). Env JUSTSEARCH_INDEX_CACHE_ADOPT=1 also "
                    "enables; an explicit flag wins (--fresh-index beats the env).")
+@click.option("--pin-index-selector-key", "pin_index_selector_key", default=None,
+              help="Tempdoc 768 item 5: adopt a SPECIFIC historical index-cache entry by its "
+                   "selector key, bypassing compute_selector (which resolves the CURRENT key). "
+                   "The 763 forensic-replay path needs this when HEAD has advanced past the "
+                   "campaign commit. Requires --index-cache --start-backend --clean.")
 @click.option("--config", "config_path", type=click.Path(exists=True), default=None, help="YAML run config file.")
 @click.option("--warmup", "warmup_count", type=int, default=0, show_default=True,
               help=(
@@ -70,7 +75,7 @@ log = logging.getLogger(__name__)
          "a single flaky projection without losing other signals.",
 )
 @click.pass_context
-def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, allow_degraded, index_cache_flag, config_path, warmup_count, json_flag, skip_projections):
+def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade, lambdamart, cross_encoder, allow_errors, max_queries, context_coverage, thresholds, history_db, corpus_dir, skip_ingest, pipeline, timeline_path, start_backend, llm, qu, filter_norm, clean, reset, cpu, allow_degraded, index_cache_flag, pin_index_selector_key, config_path, warmup_count, json_flag, skip_projections):
     """Execute an evaluation run."""
     if json_flag:
         ctx.obj["json"] = True
@@ -214,6 +219,7 @@ def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade,
             reset=reset,
             allow_degraded=allow_degraded,
             index_cache_enabled=index_cache_enabled,
+            pin_index_selector_key=pin_index_selector_key,
             env_overrides=env_overrides,
             json_flag=json_flag,
             is_warmup=is_warmup,
@@ -286,6 +292,7 @@ def _run_iteration(
     reset,
     allow_degraded,
     index_cache_enabled,
+    pin_index_selector_key=None,
     env_overrides,
     json_flag,
     is_warmup,
@@ -320,6 +327,7 @@ def _run_iteration(
             index_cache_mode=("on" if index_cache_enabled else "off"),
             corpus_dir=cache_corpus_dir,
             dataset_name=dataset,
+            pin_selector_key=pin_index_selector_key,
         )
         effective_base_url = f"http://127.0.0.1:{port}"
 

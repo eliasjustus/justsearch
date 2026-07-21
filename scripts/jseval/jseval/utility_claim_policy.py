@@ -1,4 +1,19 @@
-"""Versioned, outcome-neutral claim policy evaluation for tempdoc 719."""
+"""Versioned, outcome-neutral claim policy evaluation for tempdoc 719.
+
+The ACTIVE policy is ``utility-claim-policy.v1.json`` (``policy_id
+agent-utility-public-v2``); ``evaluate_claim`` reads it via :func:`policy_path` /
+:func:`load_policy` and every gate below is defined against it.
+
+tempdoc 768 item 6 adds a v3 DRAFT (``utility-claim-policy.v3-DRAFT.json``),
+accessible via :func:`v3_draft_policy_path` / :func:`load_v3_draft_policy`. The
+draft is **inert**: it is NOT wired to any gate, NOT selected by the evaluator
+(``status: "draft"``), and does NOT change v2's active gate logic. It records the
+schema/strata matrix, the carried-over rate-based surface gate, the
+closed_book-at-hero-tier requirement, and the ITT/per-protocol/completion
+triple-reporting wording constraints that the 766 program is converging on.
+Ratifying it (flipping ``status`` to ``active`` and orphaning v2, 766 §D.3) is a
+FOUNDER action, not an agent one.
+"""
 
 from __future__ import annotations
 
@@ -42,6 +57,21 @@ def policy_path() -> Path:
 
 def load_policy(path: str | Path | None = None) -> dict:
     return json.loads(Path(path or policy_path()).read_text(encoding="utf-8"))
+
+
+def v3_draft_policy_path() -> Path:
+    """Path to the INERT v3 DRAFT policy (tempdoc 768 item 6).
+
+    The draft is not wired to any gate and not selected by :func:`evaluate_claim`
+    (its ``status`` is ``"draft"``, not ``"active"``). Ratification is a founder
+    action (766 §D.3); see the module docstring.
+    """
+    return Path(__file__).parents[1] / "utility-claim-policy.v3-DRAFT.json"
+
+
+def load_v3_draft_policy() -> dict:
+    """Load the inert v3 DRAFT policy document. Read-only; changes no active gate."""
+    return json.loads(v3_draft_policy_path().read_text(encoding="utf-8"))
 
 
 def canonical_bytes(value: object) -> bytes:

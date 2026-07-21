@@ -186,6 +186,37 @@ def test_itt_scores_exhaustion_incorrect_and_retained():
     assert record["comparability"]["comparable"] is True
 
 
+def test_itt_estimand_emits_completion_triple():
+    # tempdoc 768 D4 / 762 §T4: the ITT/per-protocol/completion triple is always
+    # emitted, and completion is the per-arm "finished within budget" rate that
+    # separates ITT from per-protocol. A/q0 is budget-exhausted (a NON-completion
+    # under exhaustion-as-failure); A/q1 and both B cells complete.
+    obs = [
+        _cell("A", "q0", error=_EXHAUSTION_ERROR),
+        _cell("A", "q1"),
+        _cell("B", "q0"),
+        _cell("B", "q1"),
+    ]
+    record = finalize_observation_groups([obs], composed_at="t")
+    estimands = record["estimands"]
+    # The full triple is present.
+    assert estimands["primary"] == "intention_to_treat"
+    assert estimands["per_protocol"]["role"] == "secondary"
+    assert "intention_to_treat" in estimands
+    completion = estimands["completion"]
+    assert completion["role"] == "secondary"
+    assert completion["source"] == "measured"
+    by_arm = completion["strata"][0]["by_arm"]
+    # A: 2 attempted, 1 completed (q1), 1 exhausted (q0) -> completion 0.5.
+    assert by_arm["A"]["n_attempted"] == 2
+    assert by_arm["A"]["n_completed"] == 1
+    assert by_arm["A"]["n_exhausted"] == 1
+    assert by_arm["A"]["completion_rate"] == 0.5
+    # B: both completed -> completion 1.0 (the "tool rescues completion" shape).
+    assert by_arm["B"]["n_completed"] == 2
+    assert by_arm["B"]["completion_rate"] == 1.0
+
+
 def test_itt_drops_other_errors_as_missing_data():
     # A/q1 has an `other` error; its q1 pair must be dropped from the estimand,
     # but stay a residual exclusion in the comparability loss accounting.
