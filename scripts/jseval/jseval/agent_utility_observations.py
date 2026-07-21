@@ -120,6 +120,11 @@ def read_inspect_observations(
                 "mcp_tool_names_offered": metadata.get("mcp_tool_names_offered"),
                 "observed_mcp_tool_surface_hash": metadata.get("observed_mcp_tool_surface_hash"),
                 "mcp_surface_unverified": bool(metadata.get("mcp_surface_unverified")),
+                # tempdoc 755 Track 1: HOW the surface hash was obtained ("status"/
+                # "status-retry"/None) + the fallback cross-check basis when a with-tool
+                # cell's status probe stayed empty (documented-unverified, never manufactured).
+                "surface_evidence": metadata.get("surface_evidence"),
+                "mcp_surface_fallback": metadata.get("mcp_surface_fallback"),
                 "mcp_tools_deferred": metadata.get("mcp_tools_deferred"),
                 "resolved_model": metadata.get("resolved_model"),
                 "toolsearch_targets": metadata.get("toolsearch_targets"),
@@ -286,6 +291,12 @@ def all_attempt_tool_call_assertions(observations: Iterable[dict]) -> dict:
             "cells_with_mcp_surface_verified": 0,
             "cells_mcp_surface_unverified": 0,
             "observed_mcp_tool_surface_hashes": set(),
+            # tempdoc 755 Track 1 item 3: per-evidence-kind counts so a composed record
+            # shows HOW verification was obtained (status / status-retry / unverified). Like
+            # the exposure_* keys below, OMITTED entirely (not zero-valued) for a condition
+            # composed purely from pre-755 evidence -- see `_surface_evidence_seen`.
+            "cells_by_surface_evidence": {},
+            "_surface_evidence_seen": False,
             "cells_with_exposure_mode_verified": 0,
             "observed_exposure_modes": set(),
             # Private bookkeeping, popped before return -- tracks whether ANY
@@ -315,6 +326,23 @@ def all_attempt_tool_call_assertions(observations: Iterable[dict]) -> dict:
             aggregate["cells_mcp_surface_unverified"] += 1
         if observed_hash:
             aggregate["observed_mcp_tool_surface_hashes"].add(observed_hash)
+        # Per-evidence-kind bucketing (tempdoc 755 Track 1 item 3). A captured kind
+        # ("status"/"status-retry") flips `_surface_evidence_seen`; a with-tool attempted
+        # non-excluded cell with no kind buckets as "unverified" (mirrors
+        # cells_mcp_surface_unverified above). The whole dict is dropped for a condition that
+        # never captured any kind (pre-755 evidence), keeping historical record digests
+        # byte-identical -- same discipline as the exposure_* keys (agent_manifest.py:186).
+        surface_evidence = observation.get("surface_evidence")
+        if surface_evidence is not None:
+            aggregate["_surface_evidence_seen"] = True
+            bucket = surface_evidence
+        elif condition in WITH_TOOL_CONDITIONS and not observation.get("excluded"):
+            bucket = "unverified"
+        else:
+            bucket = None
+        if bucket is not None:
+            aggregate["cells_by_surface_evidence"][bucket] = (
+                aggregate["cells_by_surface_evidence"].get(bucket, 0) + 1)
         # Exposure-mode consistency (tempdoc 725 increment 2 claim-policy gate
         # `verified_exposure_mode`): `exposure_config` is cohort-level (same
         # source.cohort dict on every observation of one campaign), so this is a
@@ -336,6 +364,12 @@ def all_attempt_tool_call_assertions(observations: Iterable[dict]) -> dict:
         hashes = aggregate["observed_mcp_tool_surface_hashes"]
         aggregate["observed_mcp_tool_surface_hashes"] = sorted(hashes)
         aggregate["observed_mcp_tool_surface_consistent"] = bool(hashes) and len(hashes) == 1
+        # Omit cells_by_surface_evidence entirely for a condition composed purely from
+        # pre-755 evidence (tempdoc 755 item 4 -- digest stability, mirrors exposure below).
+        surface_evidence_seen = aggregate.pop("_surface_evidence_seen")
+        surface_evidence_counts = aggregate.pop("cells_by_surface_evidence")
+        if surface_evidence_seen:
+            aggregate["cells_by_surface_evidence"] = surface_evidence_counts
         exposure_config_seen = aggregate.pop("_exposure_config_seen")
         modes = aggregate.pop("observed_exposure_modes")
         cells_with_exposure_mode_verified = aggregate.pop("cells_with_exposure_mode_verified")

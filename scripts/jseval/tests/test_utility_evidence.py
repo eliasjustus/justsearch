@@ -306,6 +306,52 @@ def test_excluded_unverified_b_cell_remains_in_authoritative_assertions():
     assert "verified_tool_surface" in record["claim_verdict"]["reasons"]
 
 
+def test_surface_evidence_counts_conditionally_emitted_and_omitted_pre_755(tmp_path):
+    """tempdoc 755 Track 1 items 3/4: `cells_by_surface_evidence` appears (with per-kind
+    counts) once ANY observation carries surface_evidence, and is OMITTED entirely for
+    evidence that never captured it -- keeping pre-755 record digests byte-identical."""
+    # WITHOUT surface_evidence (pre-755-shaped): the key is omitted, and the digest is
+    # byte-identical to composing the same observations after we DELETE the (None) key.
+    baseline_obs = [_observation("A", qid="q0"), _observation("B", qid="q0")]
+    without = finalize_observation_groups(
+        [copy.deepcopy(baseline_obs)], composed_at="x")
+    assert "cells_by_surface_evidence" not in without["tool_call_assertions"]["B"]
+    assert "cells_by_surface_evidence" not in without["tool_call_assertions"]["A"]
+
+    stripped = copy.deepcopy(baseline_obs)
+    for obs in stripped:
+        obs.pop("surface_evidence", None)
+    without_stripped = finalize_observation_groups([stripped], composed_at="x")
+    assert without_stripped["semantic_digest"] == without["semantic_digest"]
+
+    # WITH surface_evidence on the B cell: counts are emitted for B, still omitted for A.
+    with_obs = copy.deepcopy(baseline_obs)
+    with_obs[1]["surface_evidence"] = "status"
+    with_ev = finalize_observation_groups([with_obs], composed_at="x")
+    assert with_ev["tool_call_assertions"]["B"]["cells_by_surface_evidence"] == {"status": 1}
+    assert "cells_by_surface_evidence" not in with_ev["tool_call_assertions"]["A"]
+    # The new field changes the record's digest (new discriminating measurement content).
+    assert with_ev["semantic_digest"] != without["semantic_digest"]
+
+
+def test_surface_evidence_unverified_bucket_counts_uncaptured_with_tool_cells():
+    """A with-tool attempted non-excluded cell with no surface_evidence buckets as
+    'unverified' -- but only once SOME cell in the arm captured a kind (else the whole dict
+    is omitted). Here one B cell is status-verified and another is unverified."""
+    verified = _observation("B", qid="q0")
+    verified["surface_evidence"] = "status"
+    unverified = _observation("B", qid="q1")
+    unverified["surface_evidence"] = None
+    # expand the expected matrix so require_complete passes for two B cells + one A cell
+    obs = [_observation("A", qid="q0"), verified, unverified]
+    for item in obs:
+        item["source"]["cohort"]["campaign_identity"]["expected_cells"] = [
+            "A|0|q0", "B|0|q0", "B|0|q1"]
+    record = finalize_observation_groups([obs], composed_at="x")
+    counts = record["tool_call_assertions"]["B"]["cells_by_surface_evidence"]
+    assert counts == {"status": 1, "unverified": 1}
+
+
 def test_real_2026_07_12_rejected_fixture_reproduces_false_green_loss():
     path = (
         Path(__file__).parent
