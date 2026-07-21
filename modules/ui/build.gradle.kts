@@ -1393,6 +1393,42 @@ val verifyTesseractRuntime by tasks.registering {
   }
 }
 
+// Tempdoc 772 §G — Trim the Linux natives out of the worker's onnxruntime_gpu jar before it is
+// staged into the shipped Windows installer. The upstream Maven artifact
+// `com.microsoft.onnxruntime:onnxruntime_gpu` is published as a single fat jar that bundles native
+// libraries for EVERY platform (win-x64 AND linux-x64) — no per-OS classifier exists. ONNX
+// Runtime's Java loader (`OnnxRuntime.initOsArch()` / `extractFromResources()`) only ever reads
+// `/ai/onnxruntime/native/<current-JVM-OS_ARCH>/…`, so on this Windows-only product the
+// `ai/onnxruntime/native/linux-x64/**` entries (~201 MB, incl. a ~316 MB-uncompressed
+// `libonnxruntime_providers_cuda.so`) are provably dead weight — 18.65% of the whole installer.
+// Same shape as stageLlamaCudaVariant's `exclude("**/ggml-rpc.dll")`: repackage a zip/jar with an
+// `exclude` during staging. Windows-only packaging path — indexer-worker's own installDist jar
+// (used by the ubuntu-latest search-worker CI test lane) is untouched.
+val trimmedOnnxRuntimeGpuDir = layout.buildDirectory.dir("onnxruntime-gpu-trimmed")
+val stageTrimmedOnnxRuntimeGpu by tasks.registering(Jar::class) {
+  group = "distribution"
+  description = "Repackage the worker onnxruntime_gpu jar without its Linux natives (Windows-only installer). Tempdoc 772 §G."
+  val workerInstallDist =
+      project(":modules:indexer-worker").tasks.named("installDist", Sync::class)
+  dependsOn(workerInstallDist)
+  // The worker's installDist copies runtimeClasspath jars into lib/ under their original Maven
+  // names, so the untrimmed jar lands at a path we can derive statically from the single source of
+  // truth for the version — the version catalog (libs.versions.onnxruntime), NOT a hardcoded
+  // string — so a future onnxruntime bump needs no change here. A static file path (rather than a
+  // glob resolved at configuration time) is also what keeps the enclosing `zipTree(...)` off the
+  // config-cache-hostile path, mirroring stageLlamaCudaVariant's `zipTree(cudaZipFile)`.
+  val onnxGpuJarName = "onnxruntime_gpu-${libs.versions.onnxruntime.get()}.jar"
+  val originalJar =
+      workerInstallDist.get().destinationDir.resolve("lib").resolve(onnxGpuJarName)
+  from(zipTree(originalJar)) {
+    exclude("ai/onnxruntime/native/linux-x64/**")
+  }
+  destinationDirectory.set(trimmedOnnxRuntimeGpuDir)
+  // Fixed output name (not the version-stamped original): the worker loads it via `-cp lib/*`, so
+  // the exact jar filename is immaterial.
+  archiveFileName.set("onnxruntime_gpu-trimmed.jar")
+}
+
 val bundleSidecarResources by tasks.registering(Sync::class) {
   group = "distribution"
   description = "Stage headless jar, libs, and custom runtime into the Tauri shell resources"
@@ -1400,7 +1436,7 @@ val bundleSidecarResources by tasks.registering(Sync::class) {
       project(":modules:indexer-worker").tasks.named("installDist", Sync::class)
   dependsOn(headlessDist, createHeadlessRuntime, copyJavawToRuntime, workerInstallDist,
       generateHeadAotCache, generateWorkerAotCache, stageLlamaServer, stageOnnxModels,
-      stageOrtCudaVariant, verifyTesseractRuntime)
+      stageOrtCudaVariant, verifyTesseractRuntime, stageTrimmedOnnxRuntimeGpu)
   includeEmptyDirs = false
   into(tauriHeadlessResourcesDir)
   from(headlessDistDir) {
@@ -1413,7 +1449,15 @@ val bundleSidecarResources by tasks.registering(Sync::class) {
     include("justsearch-headless.cmd", "justsearch-headless.ps1")
   }
   // Worker distribution lib/ directory — staged under lib/worker/ so Head's -cp lib/* does not pick it up.
+  // The untrimmed onnxruntime_gpu jar is excluded here and replaced (below) by the Linux-natives-stripped
+  // variant from stageTrimmedOnnxRuntimeGpu — Tempdoc 772 §G.
   from(workerInstallDist.map { it.destinationDir.resolve("lib") }) {
+    into("lib/worker")
+    exclude("onnxruntime_gpu-*.jar")
+  }
+  // Tempdoc 772 §G — the trimmed onnxruntime_gpu jar (Linux natives removed) lands at the same
+  // lib/worker/ path the original occupied.
+  from(stageTrimmedOnnxRuntimeGpu.map { it.archiveFile }) {
     into("lib/worker")
   }
   // AOT cache files for Head and Worker (JEP 514).
