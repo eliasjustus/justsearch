@@ -55,6 +55,20 @@
       "pattern": "^[0-9a-f]{64}$"
     },
     "mcp_surface_unverified": {"type": "boolean"},
+    "surface_evidence": {
+      "enum": ["status", "status-retry", "fallback-listing", null],
+      "$comment": "tempdoc 755 Track 1: HOW the observed_mcp_tool_surface_hash was obtained. 'status' = get_mcp_status() reported the surface on the first probe; 'status-retry' = a bounded reprobe recovered it after the transient ~8%/cell flake (675/725); null = no probe reported it (cell unverified -- never a fabricated hash). 'fallback-listing' is reserved for a genuine independent tools-listing seam and is NOT emitted today (no such seam exists; see mcp_surface_fallback). Optional: absent on pre-755 evidence."
+    },
+    "mcp_surface_fallback": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "executed_justsearch_subset_of_declared": {"type": ["boolean", "null"]},
+        "verified": {"type": "boolean"},
+        "reason": {"type": ["string", "null"]}
+      },
+      "$comment": "tempdoc 755 Track 1 item 2: forensic cross-check recorded when a with-tool cell's status probe stayed empty but the cell executed >=1 mcp__justsearch__* tool. `verified` is always false -- a subset of executed tools cannot establish that the full offered surface equalled the declared surface (integrity rule), so the cell stays unverified. Optional: absent when the fallback path did not run."
+    },
     "mcp_tools_deferred": {
       "type": ["boolean", "null"],
       "$comment": "Protocol-level end-of-session echo (was the justsearch server connected but its tools reachable only via ToolSearch). Superseded as AUTHORITY by source.exposure_config.exposure_mode (tempdoc 725 increment 2, config-derived, never inferred from the SDK) -- this field stays for its own record, no longer the last word on eager-vs-deferred."
