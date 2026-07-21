@@ -1374,7 +1374,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: follow-up?` `anchor: scripts/jseval/jseval/agent_utility_inspect.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
 - [ ] corpus-root review nit (follow-up): root mode ATTESTS the staged corpus-dir hash (corpus_dir_files_signature) but never enforces corpus-dir ≡ corpus.jsonl derivation — a stale explosion would pass all checks while agents search divergent text; add a fail-closed derivation check (count + sampled-content or a derivation signature) to root mode — `scripts/jseval/jseval/agent_utility_inspect.py:1143` (2026-07-17)
 
-### obs:index-cache-cmd — 751 warm bug (live, confirmatory launch 22:23): index-cache warm --corpus-dir ran TWO ingest passes 
+### obs:index-cache-cmd — 751 warm bug (live, confirmatory launch 22:23): index-cache warm --corpus-dir ran TWO ingest passes
 `kind: defect?` `anchor: scripts/jseval/jseval/commands/index_cache_cmd.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
 - [ ] 751 warm bug (live, confirmatory launch 22:23): index-cache warm --corpus-dir ran TWO ingest passes of the same root within one backend lifetime — the readiness doc-count floor ACCUMULATED (1001+1001=2002 expected) while path-dedup keeps the index at 1001 → unmeetable readiness wall, warm spun 25+ min GPU-idle past the 600s health timeout. Two sub-bugs: (a) cumulative floor across repeated same-root ingest requests, (b) the warm's second ingest pass itself; campaign reverted to fresh-build — `scripts/jseval/jseval/commands/index_cache_cmd.py` (2026-07-17)
 
@@ -1390,7 +1390,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: environment?` `anchor: scripts/jseval/jseval/agent_utility_inspect.py` `seen: 1` `first: 2026-07-18` `last: 2026-07-18`
 - [ ] verified_tool_surface claim gate is structurally unsatisfiable at current SDK flake rate: observed_mcp_tool_surface_hash is None whenever the agent SDK's get_mcp_status() returns nothing (known-flaky, tempdoc 675/725) — confirmatory campaign saw 4-12 unverified B-cells per 60-cell stratum (~8%); P(all ~240 cells verified) ≈ 0. Needs either capture hardening (retry/fallback surface evidence) or a founder-ratified policy amendment (e.g. minimum surface-verification rate + single-hash consistency) — `scripts/jseval/jseval/agent_utility_inspect.py:848` (2026-07-18)
 
-### obs:chain-confirm — Claude Code CLI auto-updated 2.1.212→2.1.214 mid-campaign-night, splitting agent_cohort_key between 
+### obs:chain-confirm — Claude Code CLI auto-updated 2.1.212→2.1.214 mid-campaign-night, splitting agent_cohort_key between
 `kind: defect?` `anchor: scripts/jseval/chain-confirm.bat` `seen: 1` `first: 2026-07-18` `last: 2026-07-18`
 - [ ] Claude Code CLI auto-updated 2.1.212→2.1.214 mid-campaign-night, splitting agent_cohort_key between the v4 strata and the email-1k rerun (incident #6, tempdoc 624) — future campaign chains should pin harness identity for the whole cohort window (e.g. DISABLE_AUTOUPDATER=1 in the chain env) so a multi-run cohort can't be torn by a background update — `scripts/jseval/chain-confirm.bat` env block (2026-07-18)
 
@@ -1421,6 +1421,22 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:unanchored-missing-8 — Manual observations.d conflict resolution can silently drop content: merge 603cc5bf claimed 'content
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
 - [ ] Manual observations.d conflict resolution can silently drop content: merge 603cc5bf claimed 'content-preserving' fold of 3 deleted shards but shard cfa87fbc's record-merge mis-link bullet (from 5a90bf44) was never folded — verified absent from observations.md by exact-string grep; rescued via worktree-rescue-720-docs. Process gap: content-preservation claims in fold merges are checked per-shard, not per-bullet — `docs/observations.md` (2026-07-17)
+
+### obs:unanchored-general-79 — Installer size stated inconsistently across surfaces: 853 MB (README.md:57) vs ~748 MB (.claude/skil
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
+- [ ] Installer size stated inconsistently across surfaces: 853 MB (README.md:57) vs ~748 MB (.claude/skills/installer/SKILL.md:16) vs 741 MB (build-installer.yml:202) — found during tempdoc 760 Phase-1 gap audit (2026-07-21)
+
+### obs:732-response-surface-residuals — 732's concise-default decision attributes the halved Reads-per-search to the text-tier Preview line,
+`kind: defect?` `anchor: docs/tempdocs/732-response-surface-residuals.md` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
+- [ ] 732's concise-default decision attributes the halved Reads-per-search to the text-tier Preview line, but delivery-tier measurement only began at campaign V (725:1714) and shows 98.9% structured-json — the Preview line is not delivered to structured-preferring clients, so the D->T->U Reads-halving (725:1492) may be attributable to structuredContent excerpts instead. 732's "no measurement changes it" conclusion may rest on an undelivered component — `docs/tempdocs/732-response-surface-residuals.md:126` (2026-07-21)
+
+### obs:test-delivery-tier-735 — RESOLVED — NOT a flake. jseval `test_delivery_tier_735.py::test_delivered_fields_on_answer_fixture_t
+`kind: environment?` `anchor: scripts/jseval/tests/test_delivery_tier_735.py` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
+- [x] RESOLVED — NOT a flake. jseval `test_delivery_tier_735.py::test_delivered_fields_on_answer_fixture_top_level_only` failed once in a full-suite run, then passed everywhere. Cause: a concurrent-edit race inside one worktree, not test-order dependence. The orchestrator re-captured the recorded fixture (answer `facets` removed at surface 0.5.0) at **17:37:24** and updated that test's assertion (`facets: True` → `False`) at **17:38:17** — a **53-second window** in which the fixture on disk and the assertion disagreed. A subagent's full-suite run started inside that window and hit exactly that test. Lesson (orchestration, mine): do not run a live fixture refresh in a worktree while a delegated agent is running the suite there — two agents mutating one worktree concurrently produces exactly this phantom. The subagent was right to refuse to wave it through; it simply could not see the concurrent edits. No code defect; nothing to fix — `scripts/jseval/tests/test_delivery_tier_735.py:81` (2026-07-21)
+
+### obs:delivery-tier-probe-735 — delivery_tier_probe_735.py's `_LOCAL_PATH_RE` redaction only matches drive-letter paths (`X:\...`) —
+`kind: defect?` `anchor: scripts/jseval/experiments/delivery_tier_probe_735.py` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
+- [ ] delivery_tier_probe_735.py's `_LOCAL_PATH_RE` redaction only matches drive-letter paths (`X:\...`) — a UNC capture (`\server\share`) would survive into a committed fixture. Not hit by any current capture; found during the 770 pre-push scan — `scripts/jseval/experiments/delivery_tier_probe_735.py` (2026-07-21)
 
 ## Parked
 
