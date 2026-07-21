@@ -1,7 +1,7 @@
 ---
-title: "agent tool-surface economy lane: remove the ~31% of the search payload that carries no content, and make the tool description true — economy as measured waste removal, not as a new result shape"
+title: "agent tool-surface economy lane: remove the search-payload bytes that carry no content (16–31%, corpus-dependent), make the tool description true, and characterize the client truncation cliff — economy as measured waste removal, not as a new result shape"
 type: tempdocs
-status: "REDESIGNED TWICE (2026-07-21). A zero-spend offline measurement over 1,078 recovered v5 payloads invalidated premises of BOTH prior designs. Part 1/2 ready to plan; Part 3 needs a probe; `fetch` withdrawn; §A.2 routed out of the lane."
+status: "IMPLEMENTED on branch (2026-07-21), NOT merged — awaiting owner. Parts 1/2/orphan-sweep/version-bump landed + live-verified; the truncation cap is CHARACTERIZED (threshold 46.6k–52.8k chars, fixed 2,322-char notice, neither tier delivered) and the change is measured to move `limit:30` verbose queries from cliffed to delivered. Redesigned twice before implementation: a zero-spend measurement over 1,078 recovered v5 payloads invalidated premises of BOTH prior designs. `fetch` withdrawn; §A.2 routed to the engine lane; governor design still open."
 created: 2026-07-21
 updated: 2026-07-21
 author: agent (Fable orchestration), 766 program charter; redesigned after takeover verification + offline measurement
@@ -252,7 +252,69 @@ schema addition this lane declines). Correct the facet sentence. Correct the
 `concise` claim to state what it actually does for `search` — or, if 732 reopens
 §A.6, let 732 decide whether `concise` should gate structured content instead.
 
-### 3. Response-size governor — probe first, design after
+### 3. Response-size governor — CAP CHARACTERIZED (2026-07-21), design still open
+
+**The probe ran. 735's three unknowns (`735:501-504`) are now measured**, live through
+the real Claude Code CLI via `experiments/delivery_tier_probe_735.py --mode sdk`
+(extended this lane with opt-in `--search-limit` / `--search-query` overrides, both
+refusing `--write-fixtures` so a size-swept capture can never be mistaken for the
+canonical recorded fixture). Corpus: this repo's `docs/tempdocs` (524 docs, verbose
+markdown) on a live dev stack.
+
+| delivered payload | `delivered_tier` | `delivered_fields` |
+|---|---|---|
+| 42,980 chars | `structured-json` | full |
+| 46,617 chars | `structured-json` | full |
+| **52,825 chars** | **`prose`, 2,322 chars** | **`null`** |
+| **61,634 chars** | **`prose`, 2,322 chars** | **`null`** |
+
+- **Threshold: between 46,617 and 52,825 chars** of serialized `structuredContent`.
+  A round **50,000** sits in the middle and is the natural guess — *not measured, do
+  not state as fact.*
+- **Notice: a fixed 2,322 chars**, identical at both cliff points. Reproduces 725's
+  observation (`content_len` 2286, `limit: 50`) — the ~36-char delta is most likely a
+  CLI version difference between the two captures.
+- **Confirmed: neither tier arrives.** `delivered_fields: null` — this is evidence
+  *loss*, not degradation. The correctness framing in §0.3 holds exactly.
+
+**This change already moves a band of queries across the cliff.** Reconstructing the
+pre-770 default exactly (take the detail tier, strip the numeric per-stage `detail`
+maps that only ever shipped on `detail: true`, re-add the duplicated `path`):
+
+| `limit` | pre-770 default | post-770 default | reduction | pre-770 outcome | post-770 outcome |
+|---|---|---|---|---|---|
+| 20 | 39,154 | 32,730 | 16.4% | delivered | delivered |
+| **30** | **53,756** | **44,603** | **17.0%** | **CLIFFED** | **delivers** |
+| 40 | 64,223 | 52,454 | 18.3% | cliffed | cliffed |
+| 50 | 79,543 | 64,482 | 18.9% | cliffed | cliffed |
+
+At `limit: 30` on a verbose corpus the old surface lost the entire payload and the new
+one delivers it. That is a **correctness** win, independent of the economy argument —
+and it is the strongest result this lane produced.
+
+**Honest reconciliation of the reduction figures.** Three numbers appear in this
+tempdoc's history and only two are right:
+- **31%** — the v5 measurement (N=1081, legal/enron), §D. Authoritative for the eval
+  corpora.
+- **16–19%** — this live spot-check on `docs/tempdocs`. Also correct; the corpus has
+  large markdown excerpts that dilute the provenance share, and shorter relative paths.
+- **~40–49% — WRONG, retracted.** An in-session estimate that computed the provenance
+  block as `detail:true − default`. That difference *includes* the numeric detail maps,
+  which never shipped by default, so it overstated the removable bytes roughly
+  two-fold. Caught by the exact reconstruction above. Recorded because the method error
+  is the reusable lesson: **do not size a removal by differencing against a tier that
+  contains more than the thing being removed.**
+
+Reduction is corpus-dependent in the range **16–31%**. Any public claim must cite a
+specific corpus and run.
+
+**Still open — governor design.** The cap is now characterized, so a governor can be
+designed against a real number (budget below ~46k, with margin for CLI drift). Its
+degradation order remains: numeric provenance → tail-rank compaction (never dropping a
+returned `id`) → state what was elided (725's self-describing-results pattern). Not
+built in this lane.
+
+### 3b. Original probe framing (superseded by 3, kept for the record)
 
 At `limit: 50` the client replaces the payload with a notice and the agent receives
 **neither tier** — total evidence loss (`735:477-479`). Now better motivated:
@@ -402,11 +464,12 @@ local content.
 
 | Part | Gate | Risk | Ready? |
 |---|---|---|---|
-| 2 — description truth | none | none | **yes** |
-| §F.5 — answer facet round-trip | none (unconditional waste, undelivered consumer) | none | **yes** |
-| §F.7/8 — stale counts + figures | none | none | **yes** |
-| 1 — remove trace/legScores + duplicate `id` | owner: version-bump timing vs 766 cohort | none to content; contract bump required | **yes, pending §H note** |
-| 3 — response-size governor | cap-characterization probe (`735:501-504`) | medium | **no — probe first** |
+| 2 — description truth | none | none | **DONE** (d5048033) |
+| §F.5 — answer facet round-trip | none | removes a *delivered* field — see §F.5 rationale correction | **DONE** (d5048033) |
+| §F.7/8 — stale counts + figures | none | none | **DONE** (d5048033) |
+| 1 — remove trace/legScores + duplicate `id` | owner approved bump-now | none to content; `0.5.0` bump landed | **DONE + live-verified** (d5048033) |
+| 5 — cap-characterization probe | none | none | **DONE** — threshold 46.6k–52.8k, notice 2,322 chars (§E.3) |
+| 3 — response-size governor **design** | cap now known | medium | **no — not this lane** |
 | 4 — `fetch` | withdrawn | — | **no** |
 | §A.2 read-amplification | routed to engine/relevance lane | — | **not this lane** |
 | §A.6 — 732 attribution | 732's to settle; logged to inbox | — | **not this lane** |

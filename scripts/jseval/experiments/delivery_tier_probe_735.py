@@ -335,7 +335,38 @@ def main() -> int:
     parser.add_argument("--model", default="haiku", help="model alias for --mode sdk")
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--write-fixtures", action="store_true")
+    parser.add_argument(
+        "--search-limit",
+        type=int,
+        default=None,
+        help="Tempdoc 770: override justsearch_search's `limit` for a response-SIZE sweep "
+             "(the truncation-cliff probe, 735 open item). Off by default so the fixture-refresh "
+             "arguments stay the deliberately fixed, corpus-independent set. Refuses "
+             "--write-fixtures: a size-swept capture is NOT the representative call the recorded "
+             "fixtures pin.",
+    )
+    parser.add_argument(
+        "--search-query",
+        default=None,
+        help="Tempdoc 770: override justsearch_search's `query` for the size sweep. A broader "
+             "query yields more/larger excerpts, which is how the sweep crosses the client cap "
+             "while `limit` is schema-capped at 50. Refuses --write-fixtures.",
+    )
     args = parser.parse_args()
+
+    if (args.search_limit is not None or args.search_query is not None) and args.write_fixtures:
+        parser.error(
+            "--search-limit/--search-query cannot be combined with --write-fixtures: the "
+            "recorded fixtures pin the representative call, not a size-swept one."
+        )
+    if args.search_limit is not None:
+        _PROBE_CALLS["justsearch_search"]["arguments"]["limit"] = args.search_limit
+        print(f"NOTE: justsearch_search limit overridden to {args.search_limit} "
+              f"(tempdoc 770 size sweep; fixtures disabled).")
+    if args.search_query is not None:
+        _PROBE_CALLS["justsearch_search"]["arguments"]["query"] = args.search_query
+        print(f"NOTE: justsearch_search query overridden (tempdoc 770 size sweep; "
+              f"fixtures disabled).")
 
     if args.mode == "direct-mcp":
         print("WARNING: --mode direct-mcp does NOT observe real CLI delivery behavior -- it "
