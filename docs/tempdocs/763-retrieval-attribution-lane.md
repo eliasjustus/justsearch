@@ -126,7 +126,7 @@ reformulations missed — bad-query is not a driver. (3) B3 = 39 (31%), the
 largest addressable bucket — the engine RETURNED gold within the
 agent-visible k (28 via `justsearch_answer`'s passage pack → effectively
 synthesis failures; 11 via `justsearch_search` rank 1–7, never opened →
-salience/ergonomics, feeds tempdoc 770). (4) B4 = 70 — dominated by
+salience/ergonomics, fed tempdoc 770 — **which found this class already closed: response-shape work is justified by correctness/economics only, behavioural adoption refuted 3x at haiku (735:471-474). The 11 cells were NOT addressed by 770 and remain unowned**). (4) B4 = 70 — dominated by
 partial-hop behavior (opened hop-1, extracted the bridge fact, never fetched
 hop-2); with B3-answer, ~77% of all failures are model-synthesis-owned
 (prior §P.1 confirmed). (5) B5 = 0 and B0 ≈ 0.
