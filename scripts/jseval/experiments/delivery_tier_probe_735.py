@@ -109,6 +109,41 @@ def _mcp_call(base_url: str, method: str, params: dict, request_id: str, timeout
     return result
 
 
+def _fetch_tool_surface_version(base_url: str, timeout: float) -> str | None:
+    """Tempdoc 770: read the server's OWN tool-surface version from the MCP ``initialize``
+    handshake (``serverInfo.version`` is ``McpContractVersions.TOOL_SURFACE_VERSION``, wired at
+    ``McpProtocolHandler.SERVER_VERSION``), so a written fixture records WHICH surface it captured.
+
+    Why this exists: the fixture schema always had an ``mcp_tool_surface_version`` slot and the
+    writer hard-coded it to ``None``, so every recorded fixture was born blind to surface drift.
+    Tempdoc 770 removed fields from the default response and the stale fixtures went on asserting
+    the old shape with ``provenance: "recorded"`` and nothing detected it. Stamping the version is
+    the signal that makes the next such drift legible.
+
+    Best-effort by design: a probe run must not fail because the handshake did not answer.
+    """
+    try:
+        result = _mcp_call(
+            base_url,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "jseval-delivery-tier-probe-735", "version": "1"},
+            },
+            "surface-version",
+            timeout,
+        )
+        server_info = result.get("serverInfo")
+        if isinstance(server_info, dict):
+            version = server_info.get("version")
+            if isinstance(version, str) and version:
+                return version
+    except Exception as exc:  # noqa: BLE001 - best-effort stamp, never fail the probe
+        print(f"NOTE: could not read tool-surface version from {base_url}: {exc}")
+    return None
+
+
 def _apply_known_delivery_rule(server_result: dict) -> str | list:
     """Reconstruct what a rule-following CLI (tempdoc 735's established rule) would deliver to
     the model, from the SERVER's raw tool-call result (which always carries both tiers when
@@ -295,7 +330,13 @@ def _report(captured: dict[str, dict]) -> list[dict]:
     return rows
 
 
-def _write_fixtures(captured: dict[str, dict], *, provenance: str, cli_version: str | None) -> None:
+def _write_fixtures(
+    captured: dict[str, dict],
+    *,
+    provenance: str,
+    cli_version: str | None,
+    tool_surface_version: str | None,
+) -> None:
     stamped = datetime.now(timezone.utc).date().isoformat()
     for tool, entry in captured.items():
         path = _FIXTURE_FILES.get(tool)
@@ -320,7 +361,7 @@ def _write_fixtures(captured: dict[str, dict], *, provenance: str, cli_version: 
                 f"Refreshed by experiments/delivery_tier_probe_735.py on {stamped}."
             ),
             "cli_version": cli_version,
-            "mcp_tool_surface_version": None,
+            "mcp_tool_surface_version": tool_surface_version,
             "stamped": stamped,
             "result": {"is_error": bool(entry.get("is_error")), "content": content},
         }
@@ -384,7 +425,14 @@ def main() -> int:
         print(json.dumps(row, indent=2, default=str))
 
     if args.write_fixtures:
-        _write_fixtures(captured, provenance=provenance, cli_version=cli_version)
+        # Tempdoc 770: stamp WHICH tool surface produced this capture, so the next default-shape
+        # change is legible as drift instead of silently outliving its reason.
+        _write_fixtures(
+            captured,
+            provenance=provenance,
+            cli_version=cli_version,
+            tool_surface_version=_fetch_tool_surface_version(args.base_url, args.timeout),
+        )
 
     return 0
 

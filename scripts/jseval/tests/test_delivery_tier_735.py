@@ -90,9 +90,20 @@ def test_delivered_fields_on_answer_fixture_top_level_only():
         "searchTrace": False,
         "results": False,
         # tempdoc 735 W6 tier-equivalence fields -- delivered True on the
-        # RECORDED 0.4.0 fixture (genuine CLI-mediated capture, 2026-07-14).
+        # RECORDED fixture (genuine CLI-mediated capture).
         "hints": True,
-        "facets": True,
+        # tempdoc 770: `facets` LEFT justsearch_answer's structuredContent at
+        # surface 0.5.0. The answer path built its 3-field sidecar by firing a
+        # SECOND full hybrid search per call (`fetchFacets`), and facet/hint
+        # affordances have zero measured behavioral adoption at haiku across
+        # three campaigns (735:471-474) -- so the round-trip was removed and the
+        # field went with it (the answer path has no other facet source).
+        # This assertion read True only because the fixture was stale at 0.4.0;
+        # the 0.5.0 refresh made the drift visible -- which is what the new
+        # mcp_tool_surface_version stamp exists to keep legible.
+        # NOTE: justsearch_SEARCH keeps its facets (inline on the primary query,
+        # no extra round-trip) -- see the search fixture test below.
+        "facets": False,
         "coverage": True,
         "truncated": True,
     }
