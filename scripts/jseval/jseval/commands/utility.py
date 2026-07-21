@@ -938,7 +938,83 @@ def cmd_utility_compose_cross_corpus(ctx, log_dirs, contamination_class,
         write_record(record, output_dir)
 
 
+@click.command("utility-payload-decompose")
+@click.option("--log-dir", "log_dirs", multiple=True, required=True,
+              type=click.Path(exists=True, file_okay=False),
+              help="Repeatable completed Inspect log directory.")
+@click.option("--payload-dir", default=None, type=click.Path(exists=True, file_okay=False),
+              help="Optional directory of RAW tool-result payload files (one payload "
+                   "per file, UTF-8). Each is SHA256-verified against the log's own "
+                   "digest index before use; unmatched files are counted and discarded.")
+@click.option("--out", default=None, type=click.Path(dir_okay=False),
+              help="Write the full aggregate as JSON.")
+@click.pass_context
+def cmd_utility_payload_decompose(ctx, log_dirs, payload_dir, out):
+    """Decompose MCP tool-result payload bytes by component (tempdoc 770 §D).
+
+    Reports, per component (per-hit `trace`/`legScores`/`excerpts`/`id`/`path`,
+    `results[]`, and each top-level key), the median and aggregate share of the
+    delivered payload, plus the `id == path` duplicate-hit count. Every statistic
+    reports its own N. No dev stack, no model, no spend.
+
+    HONESTY BOUNDARY. Campaign Inspect logs store digests only (`content_sha256` /
+    `content_len`) -- raw content is deliberately never persisted -- so payloads
+    are decomposable only when either (a) the log was written after the
+    `component_bytes` capture landed, or (b) the raw payloads are supplied with
+    `--payload-dir`. Structured deliveries covered by neither are reported as
+    `decomposition_unavailable` with their count; they are never estimated.
+
+    The tempdoc 770 §D measurement used route (b): the 1,078 v5 payloads were
+    recovered from Claude Code CLI session transcripts
+    (`~/.claude/projects/<project-slug>/*.jsonl`, which do persist tool_result
+    content), written one-per-file into a scratch directory, and passed here --
+    each one SHA256-verified against the campaign digest index before it counted.
+    That transcript path is machine-specific and not reproducible from this repo
+    alone, so route (b) is bring-your-own-payloads by construction.
+    """
+    from ..agent_utility_inspect import decompose_payload_shares
+
+    reports = []
+    for log_dir in log_dirs:
+        report = decompose_payload_shares(log_dir, payload_dir)
+        report["log_dir"] = str(log_dir)
+        reports.append(report)
+        if ctx.obj.get("json"):
+            click.echo(json.dumps(report, indent=2))
+            continue
+        click.echo(f"[{log_dir}]")
+        click.echo(f"  digests={report['tool_result_digests']} "
+                   f"structured={report['structured_deliveries']} "
+                   f"decomposed={report['decomposed']} "
+                   f"(log={report['decomposed_from_log_component_bytes']}, "
+                   f"verified-payloads={report['decomposed_from_verified_payloads']}) "
+                   f"unavailable={report['decomposition_unavailable']}")
+        if payload_dir:
+            click.echo(f"  payloads: sha256-verified={report['payloads_sha256_verified']} "
+                       f"unmatched-discarded={report['payloads_sha256_unmatched']}")
+        if not report["decomposed"]:
+            click.echo("  no decomposable payload -- component table omitted (not estimated)")
+            continue
+        click.echo(f"  {'component':<24}{'median share':>14}{'agg share':>12}{'N':>8}")
+        for name, stat in sorted(report["components"].items(),
+                                 key=lambda kv: -(kv[1]["aggregate_share"] or 0)):
+            med = "n/a" if stat["median_share"] is None else f"{stat['median_share']:.1%}"
+            agg = "n/a" if stat["aggregate_share"] is None else f"{stat['aggregate_share']:.1%}"
+            click.echo(f"  {name:<24}{med:>14}{agg:>12}{stat['n']:>8}")
+        hits = report["hits"]
+        click.echo(f"  hits/call: median={hits['median']} mean={hits['mean']} "
+                   f"max={hits['max']} (N={hits['n']})")
+        dup = report["id_equals_path"]
+        click.echo(f"  id == path: {dup['hits_id_equals_path']}/{dup['hits_with_id_and_path']} hits "
+                   f"(N={dup['n_calls']} calls)")
+
+    if out:
+        payload = reports[0] if len(reports) == 1 else reports
+        Path(out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        click.echo(f"Wrote {out}")
+
+
 COMMANDS = [cmd_utility_publication_build, cmd_utility_publication_select, cmd_utility_replay,
            cmd_utility_evidence_export, cmd_utility_recompose, cmd_utility_compose, cmd_utility_run, cmd_utility_calibrate, cmd_utility_status,
            cmd_utility_judge, cmd_utility_judge_cross_family, cmd_utility_judge_local_swap_smoketest,
-           cmd_utility_compose_cross_corpus]
+           cmd_utility_compose_cross_corpus, cmd_utility_payload_decompose]

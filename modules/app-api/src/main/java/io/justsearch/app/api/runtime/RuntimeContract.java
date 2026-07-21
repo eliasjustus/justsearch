@@ -34,8 +34,13 @@ public record RuntimeContract(String version, Constituents constituents) {
   /**
    * The coarse Runtime Contract umbrella version. Pre-1.0 by the under-promise stance
    * (tempdoc 654 §D3). Bumped only on a break to a constituent, never on an additive change.
+   *
+   * <p>0.2.0 (tempdoc 770): the first break to a constituent. MCP tool surface {@code 0.5.0}
+   * removes default {@code structuredContent} fields from the curated tool set — a
+   * public-contract constituent — where {@code 0.2.0}-{@code 0.4.0} had been purely additive.
+   * See the changelog in {@code docs/reference/runtime-contract.md}.
    */
-  public static final String CURRENT_VERSION = "0.1.0";
+  public static final String CURRENT_VERSION = "0.2.0";
 
   public RuntimeContract {
     if (version == null || version.isBlank()) {

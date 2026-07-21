@@ -37,7 +37,7 @@ is the row of constituent versions below. The current build:
 
 | Runtime Contract | manifest schema | lifecycle schema | MCP protocol | MCP tool surface |
 |---|---|---|---|---|
-| `0.1.0` | `1` | `1` | `2025-11-25` | `0.1.0` |
+| `0.2.0` | `1` | `1` | `2025-11-25` | `0.5.0` |
 
 **Skew rule.** A client built for Runtime Contract vN works against a runtime
 advertising vN. Older clients degrade gracefully: the manifest is
@@ -67,7 +67,11 @@ maintain — the manifest advertises the live versions, and a client reads them.
   surfaces (SemVer clause 5).
 - **Deprecation window.** Anything promised is kept for **at least 90 days**
   after a deprecation notice before removal, so a JustSearch consumer never
-  faces a shorter fuse than MCP's own expedited-removal floor.
+  faces a shorter fuse than MCP's own expedited-removal floor. While the
+  contract is `0.x`, the "Pre-1.0 by design" clause above can override this
+  window for a specific removal; every such override is a recorded decision in
+  the changelog (the `0.2.0` row is the first). From a scoped `1.0` onward the
+  window is unconditional.
 
 ## Changelog
 
@@ -78,6 +82,7 @@ not per release. Mirrors the internal `contracts/wire/CHANGELOG.md` convention.
 | Contract | Date | Change |
 |---|---|---|
 | `0.1.0` | 2026-07-02 | Initial contract. Names the three public-contract surfaces (runtime manifest, health/status lifecycle subset, MCP endpoint + curated tools) and pins their constituent versions (manifest schema `1`, lifecycle schema `1`, MCP protocol `2025-11-25`, MCP tool surface `0.1.0`). Pre-1.0 — the surface may still change while it settles. |
+| `0.2.0` | 2026-07-21 | **First break to a constituent** (tempdoc 770). MCP tool surface `0.4.0` → `0.5.0` removes fields from the default `structuredContent` of the curated tool set: `justsearch_search` no longer emits per-hit `trace`/`legScores` by default (recoverable by passing `detail: true`) nor a `path`-duplicating `id` (`id` now ships only when it differs from `path`), and `justsearch_answer` no longer emits `facets` at all — the second full hybrid search that sourced it was removed, and the answer path has no other facet source. **Owner decision:** the 90-day deprecation window below is *overridden here by the "Pre-1.0 by design" clause* — these fields are removed without a prior deprecation notice, which `0.x` permits and which the measured evidence supports (per-hit provenance was requested in 0 of 1,081 calls; facet affordances produced zero behavioral adoption across three campaigns). The window applies again as stated once a scoped `1.0` is declared. **Correction:** the compatibility matrix above had continued to show MCP tool surface `0.1.0` through the additive `0.2.0`/`0.3.0`/`0.3.1`/`0.4.0` bumps; the matrix is a snapshot of constituent versions, not only of breaking ones, so it was stale by four bumps and is now current. |
 
 ## Surface classification
 

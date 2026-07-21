@@ -109,6 +109,41 @@ def _mcp_call(base_url: str, method: str, params: dict, request_id: str, timeout
     return result
 
 
+def _fetch_tool_surface_version(base_url: str, timeout: float) -> str | None:
+    """Tempdoc 770: read the server's OWN tool-surface version from the MCP ``initialize``
+    handshake (``serverInfo.version`` is ``McpContractVersions.TOOL_SURFACE_VERSION``, wired at
+    ``McpProtocolHandler.SERVER_VERSION``), so a written fixture records WHICH surface it captured.
+
+    Why this exists: the fixture schema always had an ``mcp_tool_surface_version`` slot and the
+    writer hard-coded it to ``None``, so every recorded fixture was born blind to surface drift.
+    Tempdoc 770 removed fields from the default response and the stale fixtures went on asserting
+    the old shape with ``provenance: "recorded"`` and nothing detected it. Stamping the version is
+    the signal that makes the next such drift legible.
+
+    Best-effort by design: a probe run must not fail because the handshake did not answer.
+    """
+    try:
+        result = _mcp_call(
+            base_url,
+            "initialize",
+            {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "jseval-delivery-tier-probe-735", "version": "1"},
+            },
+            "surface-version",
+            timeout,
+        )
+        server_info = result.get("serverInfo")
+        if isinstance(server_info, dict):
+            version = server_info.get("version")
+            if isinstance(version, str) and version:
+                return version
+    except Exception as exc:  # noqa: BLE001 - best-effort stamp, never fail the probe
+        print(f"NOTE: could not read tool-surface version from {base_url}: {exc}")
+    return None
+
+
 def _apply_known_delivery_rule(server_result: dict) -> str | list:
     """Reconstruct what a rule-following CLI (tempdoc 735's established rule) would deliver to
     the model, from the SERVER's raw tool-call result (which always carries both tiers when
@@ -276,6 +311,31 @@ def _is_placeholder_capture(content) -> bool:
     )
 
 
+def _degraded_capture_reason(content) -> str | None:
+    """Tempdoc 770: the reason a capture must NOT become a ``recorded`` fixture because the
+    backend was serving a DEGRADED retrieval path when it answered.
+
+    Why this exists: a 770 refresh captured `justsearch_search` seconds after a stack restart,
+    while the index was still enriching. The response was well-formed and the probe wrote it
+    happily -- but it carried ``hybridFallback: true`` / ``REBUILD_IN_PROGRESS`` with the dense
+    leg skipped, so the canonical delivery-tier reference pinned a fallback-path response
+    instead of the healthy HYBRID shape it replaced. Doc-count and ``ready: true`` do not catch
+    this; the degradation markers in the payload do.
+
+    Sibling in spirit to ``_is_placeholder_capture`` and to the ``--search-limit/--search-query``
+    refusal: the probe already refuses to pin a non-representative capture, and an
+    enrichment-in-progress capture is non-representative in exactly the same way.
+    """
+    if not isinstance(content, str):
+        return None
+    for marker in ("REBUILD_IN_PROGRESS", "ENRICHMENT_IN_PROGRESS", "NO_EMBEDDING_SERVICE"):
+        if marker in content:
+            return marker
+    if '"hybridFallback":true' in content.replace(" ", ""):
+        return "hybridFallback"
+    return None
+
+
 def _report(captured: dict[str, dict]) -> list[dict]:
     rows = []
     for tool, entry in captured.items():
@@ -295,7 +355,13 @@ def _report(captured: dict[str, dict]) -> list[dict]:
     return rows
 
 
-def _write_fixtures(captured: dict[str, dict], *, provenance: str, cli_version: str | None) -> None:
+def _write_fixtures(
+    captured: dict[str, dict],
+    *,
+    provenance: str,
+    cli_version: str | None,
+    tool_surface_version: str | None,
+) -> None:
     stamped = datetime.now(timezone.utc).date().isoformat()
     for tool, entry in captured.items():
         path = _FIXTURE_FILES.get(tool)
@@ -310,6 +376,17 @@ def _write_fixtures(captured: dict[str, dict], *, provenance: str, cli_version: 
                 "session did not execute the forced call."
             )
             continue
+        degraded = _degraded_capture_reason(content)
+        if degraded is not None:
+            print(
+                f"CAPTURE REFUSED for {tool}: the backend was serving a DEGRADED retrieval "
+                f"path ({degraded}) -- fixture NOT written. This is an enrichment/rebuild "
+                "state, not a delivery-tier fact; pinning it would make the canonical "
+                "reference a fallback-path response. Wait for full enrichment "
+                "(embeddingCoveragePercent/spladeCoveragePercent at 100, no pending jobs) "
+                "and re-run."
+            )
+            continue
         content = _sanitize_content_for_fixture(content)
         tier = _delivered_tier(content)
         payload = {
@@ -320,7 +397,7 @@ def _write_fixtures(captured: dict[str, dict], *, provenance: str, cli_version: 
                 f"Refreshed by experiments/delivery_tier_probe_735.py on {stamped}."
             ),
             "cli_version": cli_version,
-            "mcp_tool_surface_version": None,
+            "mcp_tool_surface_version": tool_surface_version,
             "stamped": stamped,
             "result": {"is_error": bool(entry.get("is_error")), "content": content},
         }
@@ -335,7 +412,38 @@ def main() -> int:
     parser.add_argument("--model", default="haiku", help="model alias for --mode sdk")
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--write-fixtures", action="store_true")
+    parser.add_argument(
+        "--search-limit",
+        type=int,
+        default=None,
+        help="Tempdoc 770: override justsearch_search's `limit` for a response-SIZE sweep "
+             "(the truncation-cliff probe, 735 open item). Off by default so the fixture-refresh "
+             "arguments stay the deliberately fixed, corpus-independent set. Refuses "
+             "--write-fixtures: a size-swept capture is NOT the representative call the recorded "
+             "fixtures pin.",
+    )
+    parser.add_argument(
+        "--search-query",
+        default=None,
+        help="Tempdoc 770: override justsearch_search's `query` for the size sweep. A broader "
+             "query yields more/larger excerpts, which is how the sweep crosses the client cap "
+             "while `limit` is schema-capped at 50. Refuses --write-fixtures.",
+    )
     args = parser.parse_args()
+
+    if (args.search_limit is not None or args.search_query is not None) and args.write_fixtures:
+        parser.error(
+            "--search-limit/--search-query cannot be combined with --write-fixtures: the "
+            "recorded fixtures pin the representative call, not a size-swept one."
+        )
+    if args.search_limit is not None:
+        _PROBE_CALLS["justsearch_search"]["arguments"]["limit"] = args.search_limit
+        print(f"NOTE: justsearch_search limit overridden to {args.search_limit} "
+              f"(tempdoc 770 size sweep; fixtures disabled).")
+    if args.search_query is not None:
+        _PROBE_CALLS["justsearch_search"]["arguments"]["query"] = args.search_query
+        print(f"NOTE: justsearch_search query overridden (tempdoc 770 size sweep; "
+              f"fixtures disabled).")
 
     if args.mode == "direct-mcp":
         print("WARNING: --mode direct-mcp does NOT observe real CLI delivery behavior -- it "
@@ -353,7 +461,14 @@ def main() -> int:
         print(json.dumps(row, indent=2, default=str))
 
     if args.write_fixtures:
-        _write_fixtures(captured, provenance=provenance, cli_version=cli_version)
+        # Tempdoc 770: stamp WHICH tool surface produced this capture, so the next default-shape
+        # change is legible as drift instead of silently outliving its reason.
+        _write_fixtures(
+            captured,
+            provenance=provenance,
+            cli_version=cli_version,
+            tool_surface_version=_fetch_tool_surface_version(args.base_url, args.timeout),
+        )
 
     return 0
 

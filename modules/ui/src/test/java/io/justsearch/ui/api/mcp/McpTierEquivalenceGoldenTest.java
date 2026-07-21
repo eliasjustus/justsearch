@@ -50,8 +50,14 @@ import org.junit.jupiter.api.Test;
  * (+ facet-bearing first call + hints), degradation, truncation, zero-result (search); multi-doc
  * answer with hints, and answer-side truncation (answer). No divergence was found — every fixture
  * is byte-identical between 0.3.1 and 0.4.0's text tier.
+ *
+ * <p>Still byte-identical at 0.5.0 (tempdoc 770): that increment gated the per-hit provenance tier
+ * and removed the answer-path facet round-trip, both of which touch structuredContent and the
+ * answer's facet block only — and these fixtures were captured with a null {@code knowledgeLookup},
+ * so the sidecar never populated them. The capture harness is deleted, so a text change here means
+ * hand-re-pinning byte-exact fixtures; keep text-tier changes out of structured-tier work.
  */
-@DisplayName("McpToolSurface: 0.3.1 -> 0.4.0 text-tier golden equivalence (tempdoc 735 W6)")
+@DisplayName("McpToolSurface: 0.3.1 -> 0.5.0 text-tier golden equivalence (tempdoc 735 W6 / 770)")
 final class McpTierEquivalenceGoldenTest {
 
   private static final Clock FIXED_CLOCK =

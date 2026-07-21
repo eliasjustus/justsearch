@@ -2,16 +2,16 @@
   "tool": "justsearch_status",
   "delivered_tier": "blocks",
   "provenance": "recorded",
-  "provenance_note": "Refreshed by experiments/delivery_tier_probe_735.py on 2026-07-14.",
+  "provenance_note": "Refreshed by experiments/delivery_tier_probe_735.py on 2026-07-21.",
   "cli_version": "observed at runtime -- see `claude --version` on the machine that ran this probe",
-  "mcp_tool_surface_version": null,
-  "stamped": "2026-07-14",
+  "mcp_tool_surface_version": "0.5.0",
+  "stamped": "2026-07-21",
   "result": {
     "is_error": false,
     "content": [
       {
         "type": "text",
-        "text": "state: READY\nready: true\ndocuments: 1006\nqueueDepth: 0\nhealthy: true\nindexState: IDLE\nembeddingCoverage: 100,0%\nspladeCoverage: 100,0%\nnerCompleted: 12605 (0 pending)\n"
+        "text": "state: READY\nready: true\ndocuments: 524\nqueueDepth: 0\nhealthy: true\nindexState: IDLE\nembeddingCoverage: 100,0%\nspladeCoverage: 100,0%\nnerCompleted: 15251 (0 pending)\n"
       }
     ]
   }
