@@ -391,19 +391,62 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
         ((cell.get("per_arm_loss") or {}).get("B") or {}).get("n_attempted", 0)
         for cell in cells
     )
-    verified_surface = (
-        with_tool_assertions.get("cells_total", 0) > 0
-        and with_tool_assertions.get("cells_total")
-        == attempted_with_tool
-        and with_tool_assertions.get("cells_with_mcp_surface_verified")
-        == with_tool_assertions.get("cells_total")
-        and with_tool_assertions.get("cells_mcp_surface_unverified", 0) == 0
-        and with_tool_assertions.get("observed_mcp_tool_surface_consistent") is True
-        and len(with_tool_assertions.get("observed_mcp_tool_surface_hashes") or []) == 1
-        and cohort.get("mcp_tool_surface_hash")
-        == (with_tool_assertions.get("observed_mcp_tool_surface_hashes") or [None])[0]
-    )
-    gate("verified_tool_surface", verified_surface, True, verified_surface)
+    min_surface_rate = thresholds.get("minimum_surface_verification_rate")
+    if min_surface_rate is None:
+        # v1 (ratified) semantics: EVERY attempted with-tool cell must carry an
+        # observed surface hash equal to the declared hash. Left byte-identical
+        # (observed=bool, threshold=True) so historical/v1-policy verdicts -- which
+        # are digest-covered -- do not move.
+        verified_surface = (
+            with_tool_assertions.get("cells_total", 0) > 0
+            and with_tool_assertions.get("cells_total")
+            == attempted_with_tool
+            and with_tool_assertions.get("cells_with_mcp_surface_verified")
+            == with_tool_assertions.get("cells_total")
+            and with_tool_assertions.get("cells_mcp_surface_unverified", 0) == 0
+            and with_tool_assertions.get("observed_mcp_tool_surface_consistent") is True
+            and len(with_tool_assertions.get("observed_mcp_tool_surface_hashes") or []) == 1
+            and cohort.get("mcp_tool_surface_hash")
+            == (with_tool_assertions.get("observed_mcp_tool_surface_hashes") or [None])[0]
+        )
+        gate("verified_tool_surface", verified_surface, True, verified_surface)
+    else:
+        # tempdoc 755 Track 2 (INERT under v1; active only when a policy declares
+        # `thresholds.minimum_surface_verification_rate`, e.g. the ready-to-ratify
+        # v2 draft). A MISSING per-cell hash is a capture miss tolerated within the
+        # rate; a DIFFERENT observed hash is a genuine surface mismatch and stays
+        # FATAL regardless of the rate (single occurrence fails the gate).
+        declared_surface_hash = cohort.get("mcp_tool_surface_hash")
+        surface_total = with_tool_assertions.get("cells_total", 0)
+        surface_verified = with_tool_assertions.get("cells_with_mcp_surface_verified", 0)
+        observed_surface_hashes = (
+            with_tool_assertions.get("observed_mcp_tool_surface_hashes") or []
+        )
+        surface_rate = surface_verified / surface_total if surface_total else 0.0
+        # A different observed hash is never a capture miss; it appears as a hash
+        # != declared in the distinct-hash rollup and fails independently of rate.
+        no_different_surface_hash = all(
+            value == declared_surface_hash for value in observed_surface_hashes
+        )
+        single_declared_surface_hash = (
+            len(observed_surface_hashes) == 1
+            and observed_surface_hashes[0] == declared_surface_hash
+        )
+        verified_surface = (
+            surface_total > 0
+            and surface_total == attempted_with_tool
+            and declared_surface_hash is not None
+            and surface_rate >= min_surface_rate
+            and with_tool_assertions.get("observed_mcp_tool_surface_consistent") is True
+            and single_declared_surface_hash
+            and no_different_surface_hash
+        )
+        gate(
+            "verified_tool_surface",
+            {"rate": surface_rate, "verified": surface_verified, "total": surface_total},
+            min_surface_rate,
+            verified_surface,
+        )
 
     # tempdoc 725 increment 2: only add this gate when the record actually
     # captured exposure identity somewhere (`cohort.exposure_config` is present
