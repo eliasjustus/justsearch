@@ -487,3 +487,92 @@ class TestEqualizeTimeoutsAcrossConditions:
         assert equalize_timeouts_across_conditions(
             {"A": 250}, fallback=180
         ) == {"A": 250}
+
+
+# --- tempdoc 758 §A: banked calibration must be SHA-bound (incident #5). The run side fails
+# closed when calibration.json's git_sha stamp does not match the current checkout HEAD, or
+# is absent (legacy). ---
+
+_SHA_A = "92ec2e6d" + "0" * 32   # the aborted-attempt commit (v4 confirmatory)
+_SHA_B = "079e63e5" + "0" * 32   # the later chain's HEAD it was wrongly adopted into
+
+
+class TestAssertCalibrationGitSha:
+    def test_mismatch_refuses_naming_both_shas_and_remedy(self):
+        from jseval.utility_calibrate import (
+            StaleCalibrationError,
+            assert_calibration_git_sha,
+        )
+
+        with pytest.raises(StaleCalibrationError) as exc_info:
+            assert_calibration_git_sha({"git_sha": _SHA_A}, current_git_sha=_SHA_B)
+        msg = str(exc_info.value)
+        assert _SHA_A in msg and _SHA_B in msg  # both SHAs named
+        assert "recalibrate" in msg.lower()     # the remedy named
+
+    def test_match_proceeds(self):
+        from jseval.utility_calibrate import assert_calibration_git_sha
+
+        # Must not raise when the stamp matches the current checkout.
+        assert_calibration_git_sha({"git_sha": _SHA_A}, current_git_sha=_SHA_A)
+
+    def test_missing_stamp_refuses_as_legacy(self):
+        from jseval.utility_calibrate import (
+            StaleCalibrationError,
+            assert_calibration_git_sha,
+        )
+
+        with pytest.raises(StaleCalibrationError) as exc_info:
+            assert_calibration_git_sha({}, current_git_sha=_SHA_B)
+        msg = str(exc_info.value).lower()
+        assert "legacy calibration without git_sha stamp" in msg
+        assert "recalibrate" in msg
+
+    def test_unresolvable_current_sha_refuses(self):
+        # If HEAD can't be resolved we cannot prove a match — fail closed, never spend blind.
+        from jseval.utility_calibrate import (
+            StaleCalibrationError,
+            assert_calibration_git_sha,
+        )
+
+        with pytest.raises(StaleCalibrationError):
+            assert_calibration_git_sha({"git_sha": _SHA_A}, current_git_sha=None)
+
+
+# --- tempdoc 758 §B: pinned-harness cohort window (incident #6). The run side fails closed
+# when calibration.json's cli_version stamp does not match the live `claude --version`. ---
+
+
+class TestAssertCalibrationCliVersion:
+    def test_version_changed_refuses_naming_pair_and_env_knob(self):
+        from jseval.utility_calibrate import (
+            HarnessVersionDriftError,
+            assert_calibration_cli_version,
+        )
+
+        with pytest.raises(HarnessVersionDriftError) as exc_info:
+            assert_calibration_cli_version(
+                {"cli_version": "2.1.212 (Claude Code)"},
+                current_cli_version="2.1.214 (Claude Code)")
+        msg = str(exc_info.value)
+        assert "2.1.212" in msg and "2.1.214" in msg   # the version pair named
+        assert "DISABLE_AUTOUPDATER" in msg            # the remedy env knob named
+        assert "recalibrate" in msg.lower()
+
+    def test_unchanged_proceeds(self):
+        from jseval.utility_calibrate import assert_calibration_cli_version
+
+        # Must not raise when the recorded CLI version matches the live one.
+        assert_calibration_cli_version(
+            {"cli_version": "2.1.214 (Claude Code)"},
+            current_cli_version="2.1.214 (Claude Code)")
+
+    def test_missing_stamp_refuses_as_legacy(self):
+        from jseval.utility_calibrate import (
+            HarnessVersionDriftError,
+            assert_calibration_cli_version,
+        )
+
+        with pytest.raises(HarnessVersionDriftError) as exc_info:
+            assert_calibration_cli_version({}, current_cli_version="2.1.214 (Claude Code)")
+        assert "legacy calibration without cli_version stamp" in str(exc_info.value).lower()
