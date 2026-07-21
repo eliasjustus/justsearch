@@ -20,6 +20,7 @@ The output is a `calibration` dict that `jseval utility-run --calibration` consu
 from __future__ import annotations
 
 import concurrent.futures
+import datetime as _dt
 import json
 import subprocess
 import tempfile
@@ -230,6 +231,85 @@ def assert_mcp_config_http_typed(mcp_config_path: str) -> None:
             )
 
 
+class StaleCalibrationError(RuntimeError):
+    """A banked `calibration.json` was pinned to a different git checkout than the one about
+    to spend against it — or carries no git stamp at all (tempdoc 758 §A, incident #5).
+
+    `utility-calibrate` writes a `calibration.json` that pins a `config_cohort_key` snapshot of
+    the live backend at a specific commit. Chains skip recalibration when the file already
+    exists, so a leftover from an aborted launch attempt silently imports a *stale* cohort key
+    into a later run at a different HEAD (v4 confirmatory: a 23:33 calibration at `92ec2e6d`
+    adopted into the `079e63e5` chain → recompose refused, $12.92 voided). The run side must
+    fail closed on a SHA mismatch (or a missing stamp) BEFORE spending, naming both SHAs and the
+    remedy, rather than discovering the stale identity only after the money is gone.
+    """
+
+
+class HarnessVersionDriftError(RuntimeError):
+    """The `claude` CLI version changed between calibration and run (tempdoc 758 §B, incident #6).
+
+    The CLI auto-updated 2.1.212→2.1.214 mid-night, splitting `agent_cohort_key` (`cli_version`
+    is hashed into it) between the main campaign and a same-night rerun, which could not rejoin
+    the cohort without downgrading the founder's shared global CLI. `utility-calibrate` records
+    the live `claude --version` string; the run side fails closed when it no longer matches,
+    naming the version pair + `DISABLE_AUTOUPDATER=1` + the recalibrate remedy, so a silent
+    cohort tear becomes a legible pre-spend failure.
+    """
+
+
+def assert_calibration_git_sha(calib: dict, *, current_git_sha: str | None) -> None:
+    """Fail closed (`StaleCalibrationError`) unless `calib`'s `git_sha` stamp matches the current
+    checkout HEAD (tempdoc 758 §A). A missing stamp (legacy calibration) also fails closed —
+    an un-stamped calibration cannot be proven to match this checkout, so it must be recalibrated
+    rather than trusted. See `StaleCalibrationError` for the incident this prevents.
+    """
+    pinned = calib.get("git_sha")
+    if not pinned:
+        raise StaleCalibrationError(
+            "legacy calibration without git_sha stamp -- recalibrate: this calibration.json "
+            "predates SHA-binding (tempdoc 758 A) and cannot be proven to match the current "
+            "checkout, so its pinned config_cohort_key is not trustworthy. Delete it and re-run "
+            "`jseval utility-calibrate` against the live backend at this HEAD."
+        )
+    if current_git_sha is None:
+        raise StaleCalibrationError(
+            f"cannot resolve the current git SHA to validate a banked calibration pinned at "
+            f"{pinned} -- refusing to spend. Ensure `git rev-parse HEAD` works in this checkout, "
+            "then recalibrate if the checkout has moved."
+        )
+    if pinned != current_git_sha:
+        raise StaleCalibrationError(
+            f"recalibrate: banked calibration pinned at {pinned}, checkout is {current_git_sha}. "
+            "A leftover calibration.json from an aborted launch imports a stale config_cohort_key "
+            "into this run (tempdoc 758 A, incident #5). Delete it and re-run "
+            "`jseval utility-calibrate` against the live backend at this HEAD."
+        )
+
+
+def assert_calibration_cli_version(calib: dict, *, current_cli_version: str | None) -> None:
+    """Fail closed (`HarnessVersionDriftError`) unless `calib`'s `cli_version` stamp matches the
+    live `claude --version` (tempdoc 758 §B). A missing stamp (legacy calibration) also fails
+    closed — an un-stamped calibration cannot prove the harness didn't drift under it, and a
+    silent CLI auto-update tears `agent_cohort_key`. See `HarnessVersionDriftError`.
+    """
+    pinned = calib.get("cli_version")
+    if not pinned:
+        raise HarnessVersionDriftError(
+            "legacy calibration without cli_version stamp -- recalibrate: this calibration.json "
+            "predates harness-pinning (tempdoc 758 B) and cannot prove the `claude` CLI version "
+            "is unchanged since it was banked. Set DISABLE_AUTOUPDATER=1 for the chain and re-run "
+            "`jseval utility-calibrate`."
+        )
+    if pinned != current_cli_version:
+        raise HarnessVersionDriftError(
+            f"recalibrate: banked calibration recorded claude CLI {pinned!r}, current CLI is "
+            f"{current_cli_version!r}. The CLI changed between calibration and run (tempdoc 758 "
+            "B, incident #6), which tears agent_cohort_key so a rerun cannot rejoin the cohort. "
+            "Set DISABLE_AUTOUPDATER=1 for the whole chain lifetime and re-run "
+            "`jseval utility-calibrate`."
+        )
+
+
 def check_readiness(
     base_url: str, corpus_dir: str, *, require_dense: bool = True, timeout_sec: float = 15.0
 ) -> ReadinessResult:
@@ -392,6 +472,14 @@ def calibrate(*, base_url: str, queries: list[dict], corpus_dir: str, mcp_config
     """Orchestrate the pre-run calibration. Needs the live backend (readiness/pin/pilot)."""
     from jseval import agent_utility_inspect as aui
     from jseval import agent_utility_run as aur
+    from jseval import manifest as mf
+
+    # Provenance stamps for the banked calibration.json (tempdoc 758 §A/§B): the git SHA of the
+    # checkout this calibration pinned its config_cohort_key against, and the `claude` CLI version
+    # whose hash feeds agent_cohort_key. `utility-run --calibration` fails closed if either has
+    # drifted before it spends (assert_calibration_git_sha / assert_calibration_cli_version).
+    git_sha = mf._git_sha_full()
+    cli_version = aur.claude_cli_version()
 
     rd = check_readiness(base_url, corpus_dir, require_dense=require_dense)
     cck, commit_meta = pin_config_cohort_key(base_url)
@@ -403,7 +491,7 @@ def calibrate(*, base_url: str, queries: list[dict], corpus_dir: str, mcp_config
     aui.run_utility_eval(
         queries_path=pq.name, corpus_dir=corpus_dir, mcp_config=mcp_config, model=model,
         conditions=conditions, seeds=1, concurrency=concurrency, log_dir=pilot_dir,
-        max_queries=pilot_n, max_budget=max_budget, cli_version=aur.claude_cli_version(),
+        max_queries=pilot_n, max_budget=max_budget, cli_version=cli_version,
         corpus_dataset="pilot", corpus_signature="pilot")
     timeout_s = calibrate_timeout(pilot_dir)
     # Per-condition MEASUREMENT, EQUALIZED-MAX application (tempdoc 624 Phase-2
@@ -435,6 +523,10 @@ def calibrate(*, base_url: str, queries: list[dict], corpus_dir: str, mcp_config
         per_cell_cost = sum(costs) / len(costs)
     n_cells = len(retained) * len(conditions) * seeds
     return {
+        # Provenance binding (tempdoc 758 §A/§B) — the run side fails closed if either drifts.
+        "git_sha": git_sha,
+        "cli_version": cli_version,
+        "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
         "readiness_passed": rd.passed,
         "readiness_reasons": rd.failure_reasons,
         "config_cohort_key": cck,
