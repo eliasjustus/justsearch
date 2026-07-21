@@ -763,6 +763,33 @@ above)*
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
 
+### F-039: bridge-entity retrieval miss on legal agent-utility strata — structure-descriptive queries never reach designer-keyed gold; near-duplicate synthetic decoys outrank it, worsening 6%→28% of with-tool failures from 1k→10k (tempdoc 763 replay census, 2026-07-21)
+
+- **Answer:** in the 624 v5 campaign's with-tool (B-arm) failure census (127 cells, all replayed
+  against the exact cached indexes via the 751 adopt path), the engine owns **17/127 = 13.4%**
+  of failures (15 B2-hard: gold absent from top-20 for every issued AND reformulated query;
+  2 B2-marginal: reachable only at rank ~14) — **100% concentrated in legal, zero in email**,
+  and scaling with corpus size (legal-1k 3/48 = 6% → legal-10k 14/50 = 28%). Mechanism: the
+  `1_hop` "value associated with the designer of ⟨structure⟩" questions carry *structure*
+  vocabulary while the gold docs are keyed on the *bridge entity* (the designer), so a
+  structure-descriptive query retrieves near-duplicate synthetic decoys (e.g. `wendcrag32`,
+  `kancrag5`) and high-scoring real CLERC hard negatives instead of gold. Reproductions (query,
+  expected doc, observed top-5) in `tmp/analysis-624/763/replay/classification_summary.json`;
+  replay harness `replay_stratum.py` re-adopts the campaign index in ~16s.
+- **Context that scopes it:** retrieval is otherwise exonerated in that census — B1 bad-query = 0
+  (agents' own reformulations were adequate), B3 result-returned-unused = 39 (engine returned
+  gold within the agent-visible k; agent/model failed downstream), B4 synthesis = 70. So this is
+  the *only* engine-owned failure class in the agent-utility eval, and it matters because it
+  grows with scale — the direction the product's scale story depends on.
+- **Conditions/caveats:** measured on the 707 fabricated-chain corpora (synthetic gold payload,
+  uncamouflaged — see tempdoc 766's rebuild); the near-duplicate-decoy crowding is partly a
+  corpus artifact (40 template-identical gold/decoy docs), so the fix lane (tempdoc 769) must
+  verify against both the existing reproductions AND the rebuilt camouflaged corpora. Related:
+  F-025's legal leg-miss profile (leg_miss 0.28) and F-037's pack-curation disagreement — same
+  neighborhood, different stages.
+- **Owner / fix lane:** tempdoc 769 (engine lane, chartered 2026-07-21). Acceptance: the 17 B2
+  cells' issued queries reach agent-visible top-k on replay, no regression on register baselines.
+
 ### F-038: RAG chunk retrieval was blind to chunkless (sub-2000-char) docs — a doc-level union leg into the PRIMARY RAG candidate set fixes it with no re-index; interactive hybrid on-baseline (tempdoc 749, 2026-07-18)
 
 - **Answer:** `/api/chat/ask` (RAG) silently missed documents whose best answer lives in a short doc.
