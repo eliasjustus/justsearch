@@ -1,7 +1,7 @@
 ---
 title: "agent economics & ergonomics lane: token/time anatomy of all 480 cells, exhaustion post-mortems, MCP friction, A-arm behavior — the empirical inputs for the USD-binding benefit campaign design"
 type: tempdocs
-status: "chartered (2026-07-21). Awaiting lane orchestrator pickup."
+status: "EXECUTED (2026-07-21, same day — orchestrator-run, pinned opus worker). Cost anatomy + exhaustion taxonomy + friction findings complete; campaign options drafted; see §E Results."
 created: 2026-07-21
 author: agent (Fable orchestration), founder-directed analysis program (umbrella: 762)
 category: eval-analysis / agent-economics / tool-ergonomics
@@ -87,3 +87,43 @@ related:
   dollar numbers are planning figures, not commitments — the founder sets the
   actual cap at pre-registration.
 - Coordinate with 763/764 through 762 §L rows, not by editing their tempdocs.
+
+## §E. Results (2026-07-21)
+
+Artifacts: `tmp/analysis-624/765/` (`cells.csv` 960 rows = 480 v5 + 480 v4,
+`summary_by_arm.csv`, `campaign_cost_projection.csv`, scripts). Extraction
+validated against all five 762 §P priors exactly. Charter correction: the
+per-cell fields live in the Inspect logs' `state.metadata`, not the per-run
+record (762 §D inaccuracy, same as 763's).
+
+**Cost anatomy.** The with-tool arm is CHEAPER per cell in every stratum
+(mean capturable $0.197 vs baseline $0.280) by converging in ~half the turns
+(medians 27→14 legal-1k, 27→10 email-1k). Reconciliation: SDK per-cell costs
+sum to $96.86 over 411 capturable cells vs the $89.77 ledger (~+8% SDK
+price-table skew); 69 wall-clock-cancelled cells carry null cost by design
+(757 §D.2) — segmented, never imputed.
+
+**Exhaustion taxonomy: one dominant class.** All 86 non-completions are
+budget exhaustions (zero max-turns/API/harness deaths): 17 USD-exhausted
+(receipts retained), 69 wall-clock (receipts lost), concentrated in the
+baseline arm at 10k (23+23 cells). Final turns are pure grep-reformulate →
+read-one-candidate churn; no cell reached synthesis; 719's exploratory-churn
+hypothesis confirmed with transcripts. Rare B-arm deaths are the agent
+ABANDONING the tool for filesystem grep. No late-start class exists.
+
+**Friction findings.** (1) No adoption latency — `first_mcp_call_index`
+median AND p95 = 1 in all strata; do not add "encourage tool use"
+scaffolding. (2) Search payloads eat the synthesis budget: median ~13k
+chars/result-set, ~15–20k tokens/cell on payloads → snippet-economy +
+`fetch(doc_id)` lever (tempdoc 770). (3) `mcp_call_share` ≈ 0.5 — the B-arm
+re-Reads full files after search (157 full-file Reads at legal-10k, max 92k
+chars) → passage-span/salience lever (770).
+
+**Campaign options (DRAFT; price basis 2026-06; n finalized by 764 power).**
+haiku actual $0.187/cell; sonnet intro (≤2026-08-31) ~$0.37, standard ~$0.56;
+opus ~$0.93 — price-ratio lower bounds. Option A (recommended): sonnet,
+legal 1k+10k, both arms, 240 cells ≈ $90 intro / $135 standard. Option B:
+legal-10k only at larger n. Option C: full 4-strata replication ≈ $180/$270.
+All superseded in the strata dimension by the 767 rebuild — re-costed at 766
+pre-registration. USD-cap (not wall-clock) is the standing recommendation so
+100% of cells keep receipts.

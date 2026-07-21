@@ -1,7 +1,7 @@
 ---
 title: "retrieval attribution lane: replay every failed with-tool cell's queries against the cached indexes and attribute each failure to one of five buckets — the engine only owns the bucket it actually caused"
 type: tempdocs
-status: "chartered (2026-07-21). Awaiting lane orchestrator pickup."
+status: "EXECUTED (2026-07-21, same day — orchestrator-run, two pinned opus workers: extraction + live replay). Census complete; engine finding promoted to register F-039; see §F Results."
 created: 2026-07-21
 author: agent (Fable orchestration), founder-directed analysis program (umbrella: 762)
 category: eval-analysis / retrieval-quality
@@ -101,3 +101,52 @@ before a usable retrieval round) — count it and hand the anatomy to 765.
 - Time budget: replay is minutes per boot; the expensive part is transcript
   reading — delegate per-stratum reads to pinned workers, keep classification
   judgment with the lane orchestrator.
+
+## §F. Results (2026-07-21)
+
+Two phases, both complete. Artifacts: `tmp/analysis-624/763/` (dossier,
+156-cell summary CSV) + `763/replay/` (raw top-20 per query, per-cell
+classification, reformulation probes). Census, not sample: all 127 failed
+B-cells classified.
+
+**Final taxonomy (per stratum, count):**
+
+| stratum | B0 | B1 | B2-hard | B2-marginal | B3 | B4 | B5 | total |
+|---|---|---|---|---|---|---|---|---|
+| legal-1k | 0 | 0 | 3 | 0 | 14 | 31 | 0 | 48 |
+| legal-10k | 1 | 0 | 12 | 2 | 17 | 18 | 0 | 50 |
+| email-1k | 0 | 0 | 0 | 0 | 4 | 14 | 0 | 18 |
+| email-10k | 0 | 0 | 0 | 0 | 4 | 7 | 0 | 11 |
+
+**Headlines.** (1) The engine owns 17/127 = 13.4% of with-tool failures —
+all legal, scaling 6%→28% from 1k→10k: the bridge-entity retrieval miss,
+promoted to **search-quality register F-039** with reproductions; fix lane =
+tempdoc 769. (2) B1 = 0: no reformulation rescued what the agents' own 4–12
+reformulations missed — bad-query is not a driver. (3) B3 = 39 (31%), the
+largest addressable bucket — the engine RETURNED gold within the
+agent-visible k (28 via `justsearch_answer`'s passage pack → effectively
+synthesis failures; 11 via `justsearch_search` rank 1–7, never opened →
+salience/ergonomics, feeds tempdoc 770). (4) B4 = 70 — dominated by
+partial-hop behavior (opened hop-1, extracted the bridge fact, never fetched
+hop-2); with B3-answer, ~77% of all failures are model-synthesis-owned
+(prior §P.1 confirmed). (5) B5 = 0 and B0 ≈ 0.
+
+**Charter corrections discovered (code/data win):** §C.1's "the transcript
+carries the visible payloads" is FALSE — search-result payloads are redacted
+to sha256/len before persistence (`agent_utility_inspect.py:481-490,
+877-883`), which is why phase-1's "gold never returned" lean was wrong for
+39/56 replay cells and why live replay was load-bearing. The durable fix
+(capture ids+ranks at run time) is chartered as tempdoc 768. Also: per-cell
+observability fields live in the Inspect log sample metadata, not in
+`out/utility-comparison.v1.json` (aggregate-only) — 762 §D described this
+inaccurately at charter time.
+
+**Adopt verification:** all four strata warm-adopted the exact campaign
+index entries (git_sha 3ed766b7) in ~16s each, doc counts 1001/10001
+verified; selector bypass via `index_cache.lookup(known_selector_key)` was
+required because HEAD had advanced past the campaign commit — noted for 768
+(replay tooling should support pinned-entry adoption first-class).
+
+**Register duty discharged:** F-039 filed (this PR). Email discordant reads
+fed 764's email verdict (single answer-shaped search → hop-1 overconfidence
+vs grep-forced thoroughness).

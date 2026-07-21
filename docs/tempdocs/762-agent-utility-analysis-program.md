@@ -1,7 +1,7 @@
 ---
 title: "agent-utility analysis program (post-v5): decompose the accepted-but-small numbers into ranked levers before spending on another campaign — umbrella roadmap + targets + cross-lane synthesis"
 type: tempdocs
-status: "chartered (2026-07-21). Lanes 763/764/765 chartered; §T targets folded in (researched 2026-07-21); §L synthesis open until all lanes close."
+status: "analysis complete (2026-07-21). Lanes 763/764/765 EXECUTED same day (orchestrator-run with pinned opus workers — founder redirected execution from founder-run lanes); §L filled; §X theorization + §X.6 research answers folded; successor program: tempdoc 766 (eval-content rebuild)."
 created: 2026-07-21
 author: agent (Fable orchestration), founder-directed 2026-07-21 ("hold off from running any more of these runs … analyse the current run and try to find all issues/areas that need improvement, so we can actually produce real big numbers")
 category: eval-analysis / agent-utility / program-umbrella
@@ -45,8 +45,10 @@ compute + a few dollars.
 ## §B. Program structure
 
 Three lanes, grouped by **remedy owner** (who has to act on the finding), not by
-data source — each lane is a self-contained charter executed by its own
-orchestrating agent in its own session/worktree (founder-owned):
+data source — each lane is a self-contained charter. (Execution correction,
+2026-07-21: the founder redirected these ANALYSIS lanes to the program
+orchestrator — all three were executed same-day by pinned opus workers;
+founder-run lanes are the IMPLEMENTATION lanes chartered under tempdoc 766.)
 
 | Lane | Tempdoc | Remedy owner | Core question |
 |---|---|---|---|
@@ -273,12 +275,199 @@ magnitudes, 765 what it costs.)
 
 Filled as lanes close. Each lane appends rows; the umbrella owner ranks them.
 
-| Rank | Lever | Owner tag | Evidence (lane §) | Expected effect on headline numbers | Cost to pull |
+| Rank | Lever | Owner tag | Evidence (lane results) | Expected effect on headline numbers | Cost to pull |
 |---|---|---|---|---|---|
-| — | *(open until lanes report)* | engine / eval / model-tier / campaign-design | | | |
+| 1 | Rebuild eval content on camouflaged real-doc injection + multi-schema questions (supersedes the narrower "re-fabricate email / cull dead qids" levers) | eval-design | 763 replay + 764 email verdict + mechanism probe + §X | makes every other number defensible; removes the −0.117 email drag and the 1.8× dead-qid dilution at 10k | tempdoc 767 |
+| 2 | Sonnet-class hero campaign, USD-capped | model-tier / campaign-design | 765 §5 (~$0.37/cell intro); §P.1 probe sonnet-B 0.600; §T.5 | 0.167 → plausibly 0.55–0.70 with-tool (the §T.2 credibility floor) | ~$90–135 (Option A) |
+| 3 | Rank-of-gold capture at run time + closed-book gate at hero tier | eval-infra | 763 phase-1 (payloads redacted → replay was forced); research Q4 (S effort, exact change points) | every future campaign self-attributes; no forensic replay program again | tempdoc 768 |
+| 4 | Engine: bridge-entity retrieval fix (register F-039) | engine | 763 replay: 17 B2 cells, legal-only, 6%→28% with scale | unblocks up to 13% of with-tool failures; protects the scale story | tempdoc 769 |
+| 5 | Tool surface: snippet economy + fetch(doc_id) + result salience | engine / tool-surface | 765 §3 (payload median ~13k chars; mcp_call_share ~0.5; 157 full-file Reads) + 763 B3-search (11 cells, gold rank 1–7 unopened) | recovers ~9% of failures; frees hop-2 synthesis budget at 10k | tempdoc 770 |
+| 6 | USD-cap per-cell budgets (not wall-clock) + ITT/per-protocol/completion triple reporting | campaign-design | 765 §1 (69/86 exhausted cells lost cost receipts); §T.4 bridge | 100% cost receipts → defensible cost-per-correct headline (B $0.197 < A $0.280/cell) | config |
+| 7 | n=120/stratum only if certifying Δ≈0.15; n=60 suffices at the §T target Δ≥0.25 | campaign-design | 764 power tables (n@80%: 92 for 0.15, 32 for 0.25) | right-sizes the next campaign's spend | config |
+
+Lane results are folded into each lane tempdoc (763/764/765 §Results); raw
+artifacts under `tmp/analysis-624/` (unversioned, session-machine). Instrument
+verdicts worth pinning: judge error ~0/1,269 (substring scorer, anti-leak by
+construction — the naming-leak numeric suffix is neutralized ONLY by
+full-string matching); B1 bad-query = 0; B5 judge-error = 0; B0
+died-before-retrieval ≈ 0.
 
 Closure: when all three lanes are folded, this table + §T becomes the design
 input for the next paid campaign (expected shape: USD-binding benefit campaign,
 757's receipts groundwork; model tier and corpus/question set chosen from the
 levers above). The program closes with that campaign's pre-registration, not
 with this tempdoc.
+
+## §X. Theorization — rebuilding the eval content on real-document injection (2026-07-21, founder-directed)
+
+> Context. All three lanes + two follow-up probes completed 2026-07-21 (results
+> fold pending). They exposed structural issues beyond the §L lever framing,
+> and the founder directed a rebuild of the test *content* on the
+> real-text-injection mode. This section theorizes the rebuild before design;
+> it is exploration, not the design. The lane tempdocs opened by the design
+> phase supersede anything here.
+
+### §X.1 The five structural findings the rebuild must answer
+
+1. **Construct validity**: all 480 v5 cells instantiate ONE question schema
+   (2-hop structure→designer→value) over 40 synthetic gold payloads placed
+   among real distractors. The 3×-replicated "legal wins / email null"
+   regime pattern reduced to vocabulary overlap between the generator's
+   wording and the distractor domain (mechanism probe: `spa` matches 22% of
+   legal docs, ~0 of Enron) — a generator artifact, not a domain finding.
+2. **Instrument aim**: replay census attributed ~77% of with-tool failures to
+   model synthesis over already-surfaced evidence, ~13% to the engine. The
+   benchmark mostly meters the model, not the product.
+3. **Parameter dependence**: the completion-rescue headline is a function of
+   the arbitrary ~215s wall-clock cap; a skeptic asks "who picked 215s?".
+4. **Optics under reproduction**: a clone-and-inspect skeptic finds toy
+   template docs ("crimson ferrolite 0002") and a naming convention that leaks
+   the gold's numeric suffix (designer *N* ↔ value 000*N*; neutralized today
+   only by the full-string substring scorer).
+5. **Epicycle risk**: patching the current generator (vocab swap, dead-qid
+   cull, leak fix) yields bigger numbers a skeptic can still dismantle at
+   layer 1-2. CORRECTED AT RESEARCH (2026-07-21, code wins over this
+   section's earlier draft): the 707 pipeline's real-text-injection mode IS
+   implemented and WAS used — `corpus_inject.py:assemble` interleaves each
+   gold payload into a real host document (live-confirmed: gold sentences
+   inside a genuine legal memorandum), with host mapping + cross-interpreter
+   determinism proof. What is missing is **camouflage**: the injected payload
+   (entity names from syllable-pair minting, `_FILLER` sentences) is
+   domain-alien and trivially greppable inside the real host — so the
+   substrate is real, the payload is not. The rebuild is therefore a payload
+   problem, not an injection-machinery problem.
+
+**What survives untouched** (do not redesign): paired ITT + exhaustion
+semantics, identity/provenance gates, cost receipts (757), the
+reject-until-clean promotion pipeline, substring-scorable golds (~0 judge
+error over 1,269 cells), the 751 index-cache, and the now-proven zero-spend
+replay/attribution method.
+
+### §X.2 Framings considered
+
+- **Frame A — fix the corpus only** (inject facts into real docs, keep one
+  schema): answers #4-5, partially #1; leaves #2-3. Insufficient alone.
+- **Frame B — fix the instrument aim**: make the engine's contribution a
+  *measured quantity*, not a forensic reconstruction — capture rank-of-gold
+  per search call at run time (this analysis needed a replay program to get
+  it; ids+ranks are tiny and dodge the payload-redaction problem), and report
+  an "evidence surfaced" metric beside task accuracy. Also: run the hero on a
+  model tier strong enough that synthesis stops dominating (sonnet probe
+  0.600), so residual failure variance points at the engine.
+- **Frame C — claim-first design**: fix the marketable claim shapes first (§T3:
+  scale-dependent rescue, cost-per-correct, uplift-with-floor) and design
+  measurement backwards from them, so we don't build another instrument that
+  is precise about the wrong thing.
+- **Frame D — evidence portfolio**: private injected corpus as the hero
+  (contamination-proof) + one public established benchmark as a comparability
+  anchor (accepting its contamination risk, labeled as such). Anchor is
+  optional scope; the hero is the requirement.
+
+The rebuild should take B + C as governing frames, A as one workstream inside
+them, D as optional later scope.
+
+### §X.3 Key design tensions to resolve at design time
+
+- **Camouflage (inverse confound)**: injected sentences with vocabulary alien
+  to the host doc are trivially greppable — the current failure inverted.
+  Injected facts must be lexically domain-native (entity names shaped like the
+  domain's names, sentences in the host register). This is the hard technical
+  problem of injection; it deserves its own certification metric, not hope.
+- **Machine-checkable vs pattern-greppable golds**: substring scoring is a
+  proven asset, but format-uniform golds ("xxx yyy 0NNN") are greppable *by
+  format*. Golds should be domain-plausible, format-diverse, exact-matchable
+  after normalization — and the numeric naming leak must die.
+- **Certification as gates, not audits**: this analysis' one-off measurements
+  should become automated corpus-certification checks — distractor-flood index
+  (grep-hit rate of question vocabulary against the distractor pile),
+  no-corpus-arm solvability probe (contamination control ≈ 0), naming-leak
+  check, gold dispersion, dead/ceiling calibration band. A corpus that fails
+  certification never reaches a paid campaign.
+- **Question-schema diversity**: ≥3 schemas (single-fact lookup, 2-hop bridge,
+  aggregation/multi-doc synthesis; candidates: temporal "latest", negation) —
+  each stresses different engine behavior, and schema-stratified reporting
+  stops one template from being the whole benchmark.
+- **Parameter robustness**: report at ≥2 budget points and ≥2 model tiers
+  (haiku floor + sonnet hero); USD-binding budgets (765: closes cost receipts
+  for 100% of cells).
+- **Third arm**: a no-corpus-access arm as the contamination/leak control —
+  cheap (short cells) and answers the strongest skeptic objection directly.
+- **Licensing**: a reproducible-by-clone benchmark needs redistributable or
+  fetch-scripted corpora (Enron/CLERC via the 709 cache pattern; verify
+  redistribution posture at research).
+- **Comparability break**: v4/v5 strata are retired history, not a baseline to
+  preserve; do not contort the new design for continuity.
+
+### §X.4 Candidate lane decomposition (to validate in design)
+
+- **R1 — corpus & generator lane**: injection engine (camouflage, schema
+  library, gold format), deterministic recipe regeneration (741:
+  corpora are derived artifacts), certification gate suite (§X.3).
+- **R2 — harness & attribution lane**: rank-of-gold capture at run time,
+  third arm, USD budgets, dual-budget reporting, schema-stratified records +
+  claim-policy/pre-registration update (power-informed n from 764: n=60
+  suffices at Δ≥0.20-0.25; n≈120 for Δ=0.15).
+- **R3 — engine lane** (independent, from §L): bridge-entity/near-dup ranking
+  fix — the 17-cell B2 class, reproductions banked; register F-number.
+- **R4 — tool-surface lane** (independent, from §L): snippet economy +
+  result salience (11 B3-search cells; payload median ~13k chars).
+- **Hero campaign**: founder-gated run after R1+R2 certify and (ideally)
+  R3+R4 land, so the campaign measures the improved product on the credible
+  instrument. Not a lane — a pre-registered event.
+
+Recurring shape worth naming: **attributable-by-construction evaluation** —
+every failure mechanically attributable to engine/model/eval from captured
+fields alone, no forensic replay program. This is `verify-don't-guess` applied
+to the eval substrate, and it is what made this analysis cost ~$0 where the
+next one should cost ~nothing.
+
+### §X.5 Open questions for the research pass
+
+1. What does the 707 pipeline actually implement for real-text-injection
+   (code, not recipe prose)? Effort to a working camouflaged injector?
+2. Corpus redistribution/licensing posture for Enron + CLERC (and candidates
+   for a third domain, e.g. code or wiki-style docs)?
+3. What do published injection-style benchmarks do about camouflage and leak
+   certification (NIAH descendants, RULER-class, fiction-QA designs)?
+4. Rank-of-gold capture: where in the agent harness do search results pass
+   through capture (McpToolSurface → agent_utility_inspect), and what is the
+   cheapest persistence point that avoids the payload-redaction constraint?
+5. Is there an established public anchor benchmark worth adopting for Frame D
+   that JustSearch can index locally?
+
+### §X.6 Research answers (2026-07-21, two opus researchers; condensed)
+
+1. **707 injection status (Q1)**: implemented and used — see the §X.1.5
+   correction. Effort for the camouflaged rebuild: **M-L**, dominated by
+   domain-native entity naming + host-register sentence generation; the
+   injection / determinism-proof / certification machinery is all reusable.
+   Naming-leak source: `corpus_generate.py:320-323` (value code minted from
+   the same monotonic counter as the last entity uid). Certification today:
+   structural checks + SCIENTIFIC_GATES {closed_book (threshold 0.15),
+   retrieval_calibration, union_recall, leak_floor}; missing: distractor-flood
+   index, naming/format-leak check, gold-dispersion metric.
+2. **Licensing (Q2)**: Enron = public-domain with a live privacy duty (fetch +
+   inject locally; never republish modified mailboxes; PII-scrub published
+   samples). CLERC rests on the Caselaw Access Project = **CC0 since 2024-03**
+   (legally clear; every modified opinion must carry a machine-visible
+   "synthetically altered" banner — integrity, not copyright). Third-stratum
+   candidate: US gov documents (17 USC §105). Standard for all strata:
+   fetch-then-inject deterministic recipes (741/709 patterns).
+3. **Camouflage practice (Q3)**: lift Faithfulness-QA's recipe — NER-type +
+   length-band-matched entity substitution from a host-derived entity bank
+   (arXiv 2604.25313), with automated construction filters as gates; NoCha's
+   minimal-pair device as the un-guessability certifier; the fabricated
+   entity is itself the contamination control (closed-book arm floors ≈0 by
+   construction — the current 707 closed_book gate already measures this).
+4. **Rank-of-gold capture (Q4)**: **S effort** — (a) propagate `evidence_ids`
+   into `Sample.metadata` (`agent_utility_inspect.py:1101-1102`); (b) extend
+   `_tool_result_digest_entry` (:767-804, call site :881-883) to parse the
+   structured `content.results[]` (ids + scores are rank-ordered at
+   `McpEvidenceProjection.java:72/79`) into
+   `ordered_doc_ids`/`scores`/`gold_rank`. Ids+ranks are tiny — outside the
+   payload-redaction rationale.
+5. **Public anchor (Q5)**: FRAMES (Apache-2.0; 824 multi-hop questions;
+   publishes the exact same-model 40.8%→66% paired-uplift shape); fallback
+   MultiHop-RAG (ODC-BY, self-contained 609 docs). Optional Frame-D scope —
+   deliberately NOT chartered in the 766 program v1.
+
