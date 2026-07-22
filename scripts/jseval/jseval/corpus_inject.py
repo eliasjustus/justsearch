@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from jseval.corpus_build import read_jsonl
+from jseval.evidence_offset import locate_offset
 
 METHOD = "real-text-injection-v1"
 
@@ -465,6 +466,47 @@ def assemble(
     return docs, remapped_queries, report
 
 
+def evidence_offsets_for_injection(
+    docs: list[dict], report: dict, fabricated_docs: list[dict],
+) -> dict:
+    """Record where each injected gold sentence lands in its host document (tempdoc 783 §B.1).
+
+    The generator-metadata source (a) for the per-offset recall instrument. For every
+    gold doc in ``report["host_mapping"]``, locate the FIRST fabricated gold sentence
+    within the assembled (host+injection) text and record its character offset. This is
+    the F-040-relevant deep offset — a bridge/answer sentence interleaved into a long real
+    host document. Additive: a NEW sidecar artifact, never a change to committed corpus
+    bytes (``docs.jsonl`` / ``queries.json`` are untouched).
+
+    A gold sentence that cannot be relocated (should not happen — interleave places it
+    verbatim) is omitted rather than recorded at a fabricated offset; the analysis fallback
+    then resolves that doc by string-location, so nothing is silently faked.
+    """
+    fab_text = {str(d.get("_id")): str(d.get("text", "")) for d in fabricated_docs}
+    doc_text = {str(d.get("_id")): str(d.get("text", "")) for d in docs}
+    offsets: dict[str, dict] = {}
+    for entry in report.get("host_mapping", []):
+        assembled_id = str(entry.get("gold_id"))
+        fabricated_id = str(entry.get("fabricated_id"))
+        gold_sentences = [
+            part.strip() for part in _split_sentences(fab_text.get(fabricated_id, "").strip())
+            if part.strip()
+        ]
+        if not gold_sentences:
+            continue
+        first = gold_sentences[0]
+        assembled = doc_text.get(assembled_id, "")
+        off = locate_offset(assembled, first)
+        if off is None:
+            continue
+        offsets[assembled_id] = {
+            "char_offset": off,
+            "doc_len": len(assembled),
+            "evidence": first,
+        }
+    return {"schema": "evidence-offsets.v1", "method": "injection-assembly", "offsets": offsets}
+
+
 def _cross_process_assembly(
     real_path: Path,
     fabricated_path: Path,
@@ -612,6 +654,13 @@ def build_source(
         "generation_provenance": provenance,
     }
     (output / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    # tempdoc 783 §B.1: additive evidence-offset sidecar (generator-metadata source for the
+    # per-offset recall instrument). Records where each injected gold sentence lands in its
+    # host doc; NOT committed by write_commitment and never touches docs.jsonl/queries.json.
+    side = evidence_offsets_for_injection(docs, report, fabricated_docs)
+    (output / "evidence_offsets.json").write_text(
+        json.dumps(side, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return meta
 
 
