@@ -1,7 +1,7 @@
 ---
 title: "passage-first retrieval program: make the passage the retrieval unit end-to-end — the one architectural direction that attacks the measured long-document floor no model swap can fix"
 type: tempdocs
-status: "chartered (2026-07-22). Theorize-first: the full theorize→research→design sequence is MANDATED before any implementation — this is rewrite-scale."
+status: "chartered (2026-07-22); takeover (§E), code audit (§F), theorize (§G), research (§H), design theorization (§I) complete same day. The §F.3 go/no-go probe and §C.3 measurements are NOT yet run — §I's Stage 3 is explicitly conditional on them. Implementation not licensed (founder review pending per §C.5)."
 created: 2026-07-22
 author: agent (Fable orchestration), chartered from the 762→771 measurement program's inventory (founder-directed 2026-07-22)
 category: search-engine / retrieval-architecture
@@ -501,6 +501,164 @@ depth (~100 chunks, ~20 parents post-collapse) sits at the low end** of the
 5. License duties recorded: no external code adopted; any future
    late-interaction model pick must re-run the F-034 eligibility screen
    (named ineligible: jina-colbert-v2 CC-BY-NC).
+
+## §I. Design theorization (2026-07-22, same session — general shape, not implementation; Stage 3 probe-conditional)
+
+### I.1 Thesis and chosen framing
+
+The design realizes G.1's framings **C + E through D**: retrieval's product
+job is delivering answer-bearing evidence (C); the engine discipline is a
+dumb, broad, lossless funnel with judge-aligned truncation (E); the
+implementation shape is hierarchical — **passages are the evidence and
+ranking substrate; the document is a context feature and the
+presentation/citation unit** (D). Framing A (passage-only index) is
+**rejected**: TEXT-only features are doc-native Lucene collector features
+(§F.2), short docs are the product's healthy majority case, and both F-035
+and the external DAPR result (H.1) show document context carries real signal.
+The existing design being *extended* rather than replaced: the RAG path's
+chunk-first machinery, F-038's union pattern (chunkless doc = its own single
+passage), and F-024's recall-complete pool. The interactive path converges on
+what the RAG path already proves out, instead of the two continuing to drift.
+
+### I.2 Staged shape (each stage independently measurable; later stages gated)
+
+**Stage 1 — un-handicap the passage branch** (unconditional; pure
+capability/guarantee fixes, D-005-clean, corpus-agnostic):
+- The chunk branch gets its **own leg-weight config**, decoupled from the
+  doc-level `cc_weight_*` keys (§F.1-2's silent coupling), with zero-exclude
+  semantics matching branch fusion (a passage found by a single leg is not
+  penalized for the other legs' absence).
+- The **collapse cap** (2×limit parents) is raised to CE-window scale; the
+  chunk branch's per-leg top-N gains the same **recall-complete guarantee**
+  into the judge window that doc legs already have (extends F-024's pool —
+  same mechanism, second granularity).
+- The **base-results gate falls**: the passage branch runs even when doc
+  legs return empty ("fusion is a ranking step, not a recall gate", applied
+  at the branch level).
+- Stated guarantee: *no stage may drop a passage-leg top-N candidate before
+  the judge sees it* — the passage-granularity twin of F-024/F-028.
+
+**Stage 2 — evidence-coherent judging** (unconditional; H.3
+field-standard):
+- Every CE candidate is scored on its **evidence text**: the winning
+  passage's text when the hit has passage provenance; the head preview only
+  for short/chunkless docs (where head ≈ whole doc — which is exactly why
+  the CE works on email today). One selection, two consumers: the same
+  selected span feeds 775's delivery representation.
+- Follow-on (2b, measured before adopting): for long-doc hits with no
+  passage provenance, CE-score top-M passages and aggregate — the
+  passage-CE aggregation the literature recommends and the RAG path already
+  practices.
+- Cleanup candidate discovered here: the CE's `DOCS_TOO_LONG` /
+  `maxAvgDocLengthChars` corpus-level skip exists because CE input was
+  doc-head-shaped; with evidence-sized input, average doc length no longer
+  disqualifies the judge. Verify the gate's set-site before touching
+  (wrong-gate discipline).
+
+**Stage 3 — passage-primacy inversion** (CONDITIONAL on the §F.3 probe
+landing in a recoverable band):
+- Candidate generation flips: passage legs (+ the generalized union leg for
+  chunkless parents) produce the primary pool at production depth (raise
+  passage depth toward the 20–200 industry norm, §H.5); parent collapse
+  happens late; the whole-doc branch stops being a competing candidate list
+  and becomes an **aggregation feature** (doc-gist prior — F-035's signal
+  preserved in its defensible role, per G.2-6/H.1).
+- Aggregation function: MaxP incumbent (the existing collapse primitive),
+  A/B'd against top-k-sum on 776's multi-schema cells before pinning.
+- Branch-fusion machinery is retired (orphan inventory I.4).
+**Stage 4 — optional quality tiers** (each self-gated):
+chunk-SPLADE default re-litigation on camouflaged strata (§C.3a; also a
++108% enrichment cost decision); passage contextualization free tier
+(title/heading prepend, H.4) then resident-LLM tier (777-coupled);
+Lucene-native late-interaction rescoring (H.2 — gated on a D-003-eligible
+multilingual model existing); MUVERA-class primary multi-vector
+(research-tier only).
+
+### I.3 What stays doc-level (explicit carve-outs)
+
+TEXT-syntax collector features (facets, sort, cursor, fuzzy correction,
+LUCENE syntax) remain doc-level — the planner's existing skip gates remain
+their contract. Entity/metadata filters keep the two-stage parent-prefilter
+pattern. Titles/filenames/citations remain doc-anchored. The parent
+single-pass vector and its enrichment (F-031/F-032 machinery) remain — role
+re-scoped in Stage 3, never deleted on this evidence.
+
+### I.4 Orphan inventory (deletion/tombstone belongs to THIS lane's stages)
+
+- Stage 1: chunk-branch reuse of `cc_weight_*` (the coupling, not the keys);
+  the collapse-cap constant; the `SKIPPED_EMPTY_BASE_RESULTS` behavior (its
+  reason code becomes unreachable → remove per operation-surface duties).
+- Stage 2: the CE preview-snippet path as sole input
+  (`extractQueryFocusedSnippet` on `content_preview`); likely the
+  `DOCS_TOO_LONG` corpus-level CE skip (verify set-site first).
+- Stage 3: `ChunkMergeDirective` + branch-fusion execution
+  (`fuseWithCCNamed`/`fuseWithRRFNamed` branch usage,
+  `chunkBranchParentLengthMultiplier`, `branch_cc_*` config keys,
+  `chunkMergeApplied`/branch-fusion trace stages + reason codes),
+  `computeRetrievalLimit`'s 2× doubling, `CorpusProfile`'s chunk-merge
+  eligibility role (per-corpus profile yields to per-doc structure).
+  Retire-with-a-sweep applies at each stage boundary — no residue rides to a
+  later cleanup.
+
+### I.5 Boundaries with sibling lanes
+
+- **775**: owns the canonical evidence-span *representation* and delivery
+  governor; 774 Stage 2 makes ranking *produce and consume* that same
+  representation. One record, two producers is forbidden — if 775 lands
+  first (its charter says it should), Stage 2 conforms to its type.
+- **733**: hop-absorption and entity-neighbor expansion stay in 733; the
+  charter's "entity linking as join substrate" ingredient is **severed from
+  774's core scope** (G.5) — revisit only as its own lane.
+- **776**: supplies the multi-schema cells the aggregation A/B needs; the
+  register-provenance sweep must precede any 774 headline number.
+- **777**: the listwise resident-LLM judge is a rescoring tier over the same
+  evidence pool — Stage 2's evidence-text contract is written so a second
+  judge can consume it unchanged.
+- **778**: click/citation capture will eventually supply real labels for the
+  aggregation function — the design keeps aggregation a pluggable policy,
+  not a hardcoded formula, for that reason alone (no learned structure now).
+- **779**: downstream consumer via 775; no direct coupling.
+
+### I.6 Measurement and register duties bound to this design
+
+Probe first (§F.3 bands decide Stage 3); free cert-artifact vector-vs-hybrid
+reading before that (G.5); heading-prepend A/B as an early cheap measurement
+(H.6-4); every stage re-runs the guard set (relevance + perf + leak +
+union-recall) with enron strata as the regression sentinels; baselines
+re-pinned measured-derived per stage that changes defaults;
+`staged_recall_accounting` extended with passage-granularity leg-recall
+(Q-013's extend-don't-fork); trace/reason-code changes go through the
+execution-surfaces / operation-surfaces registers; no default flips between
+hero-campaign cohort pinning and campaign completion (§E.6).
+
+### I.7 Reach judgment
+
+**Conformance (instances of existing seams, not new ones):** this design is
+D-005's funnel-and-judge stance applied at passage granularity — nothing in
+it invents a new discipline; Stage 1's guarantee is F-024/F-028's pattern at
+a second granularity; the union generalization is F-038's pattern; the
+recall-accounting extension follows Q-013's ruling; orphan handling follows
+retire-with-a-sweep.
+
+**Principle 1 — evidence coherence** (from G.4, now design-anchored): *the
+span that makes a hit rank is the span the judge scores and the span the
+surface delivers.* Applies beyond 774: RAG citation resolution (already
+conforms), MCP/UI delivery (775/779), the evidence-pack curation
+disagreement (F-037's open half is an evidence-coherence violation between
+search ranking and pack curation). Earning-its-keep evidence: 771 §E's
+legal evidence-carriage rises toward enron parity; CE regression-rate
+(judge-arbitration-report) falls on long-doc strata; read-amplification
+drops at hero capture. Retirement: if Stage 2 ships and none of those move
+outside noise, the invariant reverts to a delivery-only concern (775's) and
+774 stops citing it.
+
+**Principle 2 — guarantees are granularity-scoped** (recognized, NOT built):
+every recall guarantee should name the granularity it protects; today's
+leak/union gates are doc-level and were blind to the passage branch's caps.
+Candidate scope: a passage-level union-recall floor twin IF Stage 3 ships.
+Earning-its-keep: the passage-granularity accounting catches a real
+regression the doc-level gates miss. Retirement: if Stage 3 never ships,
+the doc-level gates remain sufficient and no twin is built.
 
 Nothing structural — it confirms §E.2's probe-first amendment and adds:
 (a) the probe should be read against the G.1 framings (B vs A/E is the real
