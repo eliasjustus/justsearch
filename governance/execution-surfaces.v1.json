@@ -21,6 +21,12 @@
       "feMirror": "modules/ui-web/src/shell-v0/components/chat/CitationsPanel.ts (RetrievalCitation)",
       "feProjection": "modules/ui-web/src/shell-v0/components/chat/evidenceProjection.ts (EvidenceItem + a labeled EvidenceScore)",
       "note": "RAG-retrieval evidence \u2014 the citations behind a generated answer (parentDocId, score, excerpt, startLine/endLine/headingText). The sibling of SearchTrace (559 Authority IV): a SECOND evidence record, NOT a SearchTrace projection (no shared field; the RAG ask flow emits no trace). Registered here so it cannot drift unregistered. PRODUCER-OWNED BOUNDARY (559 \u00a75, cross-process follow-up): the excerpt is a backend character window (startChar/endChar) that clips mid-word; the boundary-aware fields (startLine/endLine/headingText) already ride alongside and should drive a clean window at the Worker that mints the record \u2014 the FE never re-windows. Logged in docs/observations.md."
+    },
+    {
+      "name": "EvidenceSpan",
+      "tempdoc": 775,
+      "definition": "modules/worker-services/src/main/java/io/justsearch/indexerworker/services/evidence/EvidenceSpan.java",
+      "note": "775 step 1: the answer-bearing selection authority \u2014 which window of a document IS the evidence, minted worker-side once at retrieval time by EvidenceSpanSelector at the HighlightingOps.computeExcerptRegions locus (full-content MemoryIndex pass). The THIRD sibling evidence record: a projection substrate UNDER both ExcerptRegion (delivery) and ContextCitation.excerpt (RAG, step 2), NOT a SearchTrace projection \u2014 no shared field, same reasoning that keeps SearchTrace/ContextCitation siblings (decision (a), 775 deferred item: new-sibling not a ContextCitation generalization, since search excerpts have no parentDocId semantics for a chunkless doc). Selection is answer-bearing (query-term AND distinguishing-entity coverage) and D-005-clean (reacts to query + document content, never corpus identity). Fields: parentDocId, charStart/charEnd, lineStart/lineEnd, headingText, text, and selection provenance selectingLegs + entityCoverage. Step 1 wires only the delivery projection (ExcerptRegion); flag-gated (search.evidence_span.enabled, default off \u2014 flag-off reproduces the IDF-only delivery excerpt byte-for-byte)."
     }
   ],
   "scan": {
@@ -28,7 +34,8 @@
     "javaImportPatterns": [
       "io.justsearch.app.api.knowledge.SearchTrace",
       "io.justsearch.ipc.SearchTrace",
-      "io.justsearch.app.api.DocumentService.ContextCitation"
+      "io.justsearch.app.api.DocumentService.ContextCitation",
+      "io.justsearch.indexerworker.services.evidence.EvidenceSpan"
     ],
     "javaMainRoots": [
       "modules"
@@ -397,6 +404,32 @@
       "path": "modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java",
       "guard": "test:McpSearchTraceLegibilityTest",
       "note": "Tempdoc 725 W1: the justsearch_search text block reads SearchTrace.Degradation directly (imports SearchTrace) to render a once-per-response DESCRIPTIVE 'semantic ranking degraded' note (appendDegradationNote), null-safe on trace/degradation. Sibling to mcp-evidence-projection's structuredContent projection of the same canonical record \u2014 this is the human-text rendering half. Guarded by McpSearchTraceLegibilityTest, which also covers the informative-term filter and preview-window helpers in the package-private McpSearchResultFormatter (no independent import of SearchTrace, so not separately registered)."
+    },
+    {
+      "id": "evidence-span-source",
+      "kind": "source",
+      "lang": "java",
+      "path": "modules/worker-services/src/main/java/io/justsearch/indexerworker/services/evidence/EvidenceSpan.java",
+      "guard": "exempt:canonical record type \u2014 source of truth, nothing to project-guard",
+      "note": "775 step 1: defines the EvidenceSpan sibling record (the answer-bearing selection authority)."
+    },
+    {
+      "id": "evidence-span-selector",
+      "kind": "producer",
+      "lang": "java",
+      "path": "modules/worker-services/src/main/java/io/justsearch/indexerworker/services/evidence/EvidenceSpanSelector.java",
+      "guard": "test:EvidenceSpanProjectionConformanceTest",
+      "recordId": "EvidenceSpan",
+      "guardKind": "reflective",
+      "note": "775 step 1: mints EvidenceSpan (answer-bearing selection \u2014 distinguishing-entity coverage ranks candidate windows above the densest query-term cluster) and projects the delivery ExcerptRegion envelope (toExcerptRegion). The reflective conformance test asserts every EvidenceSpan record component is projected-or-deliberately-dropped onto ExcerptRegion (text/charStart/charEnd/lineStart projected + matchSpans added by the envelope; parentDocId/lineEnd/headingText/selectingLegs/entityCoverage deliberately dropped from the interactive excerpt \u2014 they serve the step-2/3 envelopes + provenance)."
+    },
+    {
+      "id": "evidence-span-delivery-consumer",
+      "kind": "consumer",
+      "lang": "java",
+      "path": "modules/worker-services/src/main/java/io/justsearch/indexerworker/services/respond/SearchResponseBuilder.java",
+      "guard": "exempt:consumer projects the delivery envelope via EvidenceSpanSelector.toExcerptRegion; the projection law lives on evidence-span-selector, this is the flag-gated wiring site",
+      "note": "775 step 1: the interactive delivery consumer \u2014 when search.evidence_span.enabled is on it swaps the IDF-only HighlightingOps.computeExcerptRegions call for EvidenceSpanSelector.select + toExcerptRegion. Registered for discovery (do not fork a second selection); it references EvidenceSpanSelector, not EvidenceSpan directly."
     }
   ]
 }

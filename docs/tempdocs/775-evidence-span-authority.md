@@ -1,7 +1,7 @@
 ---
 title: "evidence-span authority + delivery governor: one canonical answer-bearing-span representation for search excerpts, RAG passages, and the MCP preview — plus graceful degradation at the delivery cap; absorbs 771's two surviving items"
 type: tempdocs
-status: "designed (§E, 2026-07-22) — awaiting plan/implementation. Settled: one canonical EvidenceSpan (worker-side selector, N consumer envelopes) + deterministic delivery governor; migration order delivery→RAG→CE-input (CE-input = 774 Stage 2); orphans named. Absorbs tempdoc 771 items 1b (evidence-content excerpt gap) and 4 (response-size governor). Pre-hero-campaign: surface changes here bump cohort identity, so this lands (one TOOL_SURFACE_VERSION bump, sequenced with 770) BEFORE the hero pre-registration or not at all. Unsettled: EvidenceSpan-as-new-record vs ContextCitation-generalization, entity-coverage signal, governor budget constant — all deferred to implementation with a measurement."
+status: "STEP 1 IMPLEMENTED (§F, 2026-07-22) — EvidenceSpan record + EvidenceSpanSelector minted at the computeExcerptRegions locus; ExcerptRegion projects from it; flag-gated (search.evidence_span.enabled, default off = today's IDF-only output byte-for-byte). Deferred items settled: (a) new sibling record (registered in execution-surfaces.v1.json); (b) entity signal = ner_membership (§F probe: 100% carriage vs df_rarity 28%). Live probe: excerpt carriage 0%→100% flag-on, gold reachability unchanged (50/50), no measurable excerpt-stage latency regression. REMAINING (out of this step): step 2 RAG/ContextCitation conformance, step 3 CE input (= 774 Stage 2), the delivery governor, and the MCP TOOL_SURFACE_VERSION bump (freeze-coordinated). Design (§E): one canonical EvidenceSpan (worker-side selector, N consumer envelopes) + deterministic delivery governor; migration order delivery→RAG→CE-input; absorbs tempdoc 771 items 1b + 4."
 created: 2026-07-22
 author: agent (Fable orchestration), chartered from the 762→771 measurement program's inventory (founder-directed 2026-07-22)
 category: search-engine / evidence-delivery / agent-tool-surface
@@ -204,3 +204,81 @@ df-rarity threshold) — pick against the 771 §E 1b offline probe, not a priori
 (c) Governor budget constant (≈46 KB) pending a production-tool delivered-size
 measurement (771 §E item-4's stated gap: dev MCP previews didn't truncate at
 limit 30).
+
+## §F. Step-1 implementation log (2026-07-22)
+
+STEP 1 only (delivery excerpt): the `EvidenceSpan` record + `EvidenceSpanSelector`
+minted worker-side at the `computeExcerptRegions` locus; `ExcerptRegion` projects
+from the span; flag-gated (default = today's IDF-only output byte-for-byte). RAG
+(step 2), CE-input (step 3 = 774 Stage 2), the MCP TOOL_SURFACE_VERSION bump, and
+the governor are OUT of scope and untouched.
+
+**Implementation (`file:line`).**
+- `EvidenceSpan` record — `modules/worker-services/.../services/evidence/EvidenceSpan.java`
+  (fields per §E: parentDocId, charStart/charEnd, lineStart/lineEnd, headingText, text,
+  selectingLegs, entityCoverage).
+- `EvidenceSpanSelector` — `.../services/evidence/EvidenceSpanSelector.java:35`. Reuses the
+  existing candidate windows (`HighlightingOps.buildClusters`/`projectWindow`/`windowMatchSpans`,
+  `collectMatchOffsets`/`scoreCluster` — all extracted/made-public, behavior-preserving); the ONE
+  change is ranking: `(entityScore desc, base desc)` so the entity-bearing window beats the densest
+  query-term cluster. `toExcerptRegion(...)` is the delivery projection (adds matchSpans; drops the
+  step-2/3 + provenance fields).
+- `HighlightingOps.computeExcerptRegions` refactor (`.../services/HighlightingOps.java`) — extracted
+  the clustering + window geometry into shared helpers, computeExcerptRegions output UNCHANGED
+  (guarded by the golden test).
+- Flag wiring — `SearchResponseBuilder.java:410` (`buildEvidenceSelector`) + `:526` (project via
+  `EvidenceSpanSelector.toExcerptRegion`) + `:530` (unchanged IDF-only fallback); config threaded via
+  `SearchOrchestrator` `lifecycle::resolvedConfig`.
+- Flag (D-004 template) — `ConfigKey.java`, `EnvRegistry.java`
+  (`JUSTSEARCH_SEARCH_EVIDENCE_SPAN_ENABLED`, `..._ENTITY_SIGNAL`), `ResolvedConfigBuilder.java`,
+  `ResolvedConfig.Search` (evidenceSpanEnabled / evidenceSpanEntitySignal). Worker reads it from the
+  Head→Worker config snapshot (worker is ArchUnit-forbidden from env/sysprop reads).
+- Register — `governance/execution-surfaces.v1.json`: `EvidenceSpan` added as the THIRD sibling
+  record + `EvidenceSpanSelector` producer (guardKind `reflective`, recordId `EvidenceSpan`) +
+  `SearchResponseBuilder` delivery consumer + import pattern. `execution-surface` gate GREEN.
+- Tests — `EvidenceSpanSelectorTest` (selection-law unit test), `EvidenceSpanProjectionConformanceTest`
+  (reflective totality guard), `ExcerptRegionDefaultsByteEquivalenceTest` (flag-off byte-golden).
+
+**Deferred-item decisions.**
+- (a) new-record vs ContextCitation-generalization → **new sibling record** (§E lean confirmed): search
+  excerpts have no `parentDocId` semantics for a chunkless doc; registered as the third sibling in the
+  execution-surfaces register (not a SearchTrace projection — no shared field).
+- (b) entity-coverage signal (NER-membership vs df-rarity) → **NER_MEMBERSHIP wins** on the §F probe and
+  is the shipped default; df-rarity is the measured loser (kept selectable via the config key):
+
+| config (flag) | excerpt carriage | gold reachability (ranks == flag-off) | latency p50 limit30 |
+|---|---|---|---|
+| OFF (IDF-only, pre-change) | **0 / 50 (0%)** | — (baseline) | 230 ms |
+| ON — df_rarity | **14 / 50 (28%)** | 50/50 identical | 218 ms |
+| ON — ner_membership | **50 / 50 (100%)** | 50/50 identical | 205 ms |
+
+**Acceptance vs targets.** Carriage rises materially from 0% (flag-off) to 100% (flag-on ner_membership,
+reaching the enron parity band) on the buried-entity stratum; spot-checked genuine (delivered region at
+the ~5 KB buried offset contains the actual bridge name). **No gold-reachability change** — ranks are
+byte-identical flag-on vs flag-off for all 50 (the flag only changes excerpt text, never ranking; empirical
++ by-construction). **Perf**: flag-on excerpt-stage adds no measurable latency (p50 205–218 ms vs 230 ms
+off — within noise, well under the 20% budget); the selector reuses the existing post-fusion MemoryIndex
+pass (df-rarity adds one batched df lookup, ner-membership a stored-field tokenize — both negligible).
+
+**Probe method + deviations (honest).** Live boot from THIS worktree's dist (df/ner/off each a
+rebuild-flip of the default + restart on the same index; the worker cannot read env/sysprop, so the flag
+is toggled via the compile-time default and verified present in the worker config snapshot). The certified
+1001-doc cell could **not** be re-materialized (767 §B2 HARD STOP: `datasets/` gitignored + gone,
+`corpus-inject-real` needs a network CLERC fetch, exact rebuild command unrecorded). So the burial
+condition was **faithfully reconstructed** from the committed 707 material: 50 long gold docs (median ~9 KB,
+matching 771's 9191) each carrying 4 dense decoy query-term clusters + the committed fabricated bridge
+sentence (with the df=1 bridge names) buried at ~offset 5000 (matching 771's 5005) — the densest-cluster ≠
+entity-sentence divergence, so flag-off's top-3 excerpts are decoys (0% carriage). Deviations: a
+reconstruction, not the certified cell (absolute baseline differs from 771's 45% preview-carriage — this
+probe measures **excerptRegions** carriage, the surface this lane changes, whose flag-off baseline is 0%);
+the probe uses the content-word (keyword) query form because the full natural question yields a single
+excerpt region (a query-parse artifact worth a follow-up look). Two findings logged for later steps: (i)
+on CHUNKED long docs the delivery excerpt is bounded to the winning chunk (design's "winning passage IS the
+span") — cross-chunk delivery is a step-2 (RAG passage) concern, measured here with `chunk_aware` off to
+isolate the full-content lever; (ii) the pure-paraphrase case where the answer window shares NO query term
+with the query is not reachable by any query-match-window selector (incl. this one) — it needs the "scan
+full content for entity regions even without a query match" extension, out of step-1 scope. Artifacts +
+scripts: `tmp/analysis-624/775/step1/` (`prep.py`, `probe.py`, `results_{off,on_df,on_ner}.json`).
+
+**Suites.** `./gradlew.bat build -x test` GREEN (PMD/spotbugs incl.); worker-services + configuration
+module tests GREEN; full unit suite GREEN; `spotlessApply` clean; `execution-surface` gate GREEN.

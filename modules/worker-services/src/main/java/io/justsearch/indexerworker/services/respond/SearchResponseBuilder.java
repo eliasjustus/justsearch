@@ -11,6 +11,7 @@ import io.justsearch.indexerworker.disambiguation.EntityClusterSnapshot;
 import io.justsearch.indexerworker.metrics.OperationalMetrics;
 import io.justsearch.indexerworker.services.HighlightingOps;
 import io.justsearch.indexerworker.services.SearchOutcome;
+import io.justsearch.indexerworker.services.evidence.EvidenceSpanSelector;
 import io.justsearch.indexerworker.services.SearchReasonCode;
 import io.justsearch.indexerworker.services.input.SearchInputs;
 import io.justsearch.indexerworker.services.input.SpladeEncoding;
@@ -74,7 +75,17 @@ public final class SearchResponseBuilder {
   private final TextQueryOps textQueryOps;
   private final FacetingEngine facetingEngine;
   private final Supplier<Analyzer> indexAnalyzerSupplier;
+  // Tempdocs 774/775: null → both evidence flags read false (tests; byte-for-byte defaults).
   private final Supplier<ResolvedConfig> resolvedConfigSupplier;
+
+  public SearchResponseBuilder(
+      IndexCountOps indexCountOps,
+      DocumentFieldOps documentFieldOps,
+      TextQueryOps textQueryOps,
+      FacetingEngine facetingEngine,
+      Supplier<Analyzer> indexAnalyzerSupplier) {
+    this(indexCountOps, documentFieldOps, textQueryOps, facetingEngine, indexAnalyzerSupplier, null);
+  }
 
   public SearchResponseBuilder(
       IndexCountOps indexCountOps,
@@ -406,6 +417,13 @@ public final class SearchResponseBuilder {
                 TextAnalysisUtils.analyzeTerms(analyzer, SchemaFields.CONTENT, queryString))
             : Map.of();
 
+    // Tempdoc 775 step 1: flag-gated answer-bearing EvidenceSpan selection for the delivery excerpt.
+    // Default off → the IDF-only computeExcerptRegions path below runs unchanged (byte-for-byte).
+    io.justsearch.configuration.resolved.ResolvedConfig resolvedConfig =
+        resolvedConfigSupplier != null ? resolvedConfigSupplier.get() : null;
+    EvidenceSpanSelector evidenceSelector =
+        buildEvidenceSelector(resolvedConfig, includeExcerpts, analyzer);
+
     for (LuceneRuntimeTypes.SearchHit hit : result.hits()) {
       SearchResult.Builder resultBuilder = SearchResult.newBuilder().setScore(hit.score());
 
@@ -525,18 +543,29 @@ public final class SearchResponseBuilder {
             lineOffset = 0;
           }
           if (excerptContent != null && !excerptContent.isEmpty()) {
-            List<ExcerptRegion> regions =
-                HighlightingOps.computeExcerptRegions(
-                    analyzer, excerptQuery, excerptContent, 3, termIdfWeights);
-            for (ExcerptRegion region : regions) {
-              if (lineOffset > 0) {
+            if (evidenceSelector != null) {
+              String docEntityText = concatDocEntityText(hit.fields());
+              String spanParentDocId = isChunkHit ? parentDocId : hit.docId();
+              for (EvidenceSpanSelector.SelectedSpan sel :
+                  evidenceSelector.select(
+                      analyzer, excerptQuery, excerptContent, 3, termIdfWeights, docEntityText, spanParentDocId)) {
                 resultBuilder.addExcerptRegions(
-                    region
-                        .toBuilder()
-                        .setApproxLine(region.getApproxLine() + lineOffset)
-                        .build());
-              } else {
-                resultBuilder.addExcerptRegions(region);
+                    EvidenceSpanSelector.toExcerptRegion(sel, lineOffset));
+              }
+            } else {
+              List<ExcerptRegion> regions =
+                  HighlightingOps.computeExcerptRegions(
+                      analyzer, excerptQuery, excerptContent, 3, termIdfWeights);
+              for (ExcerptRegion region : regions) {
+                if (lineOffset > 0) {
+                  resultBuilder.addExcerptRegions(
+                      region
+                          .toBuilder()
+                          .setApproxLine(region.getApproxLine() + lineOffset)
+                          .build());
+                } else {
+                  resultBuilder.addExcerptRegions(region);
+                }
               }
             }
           }
@@ -572,6 +601,41 @@ public final class SearchResponseBuilder {
     } catch (NumberFormatException e) {
       return 0;
     }
+  }
+
+  /**
+   * Tempdoc 775 step 1: builds the flag-gated {@link EvidenceSpanSelector}, or null when the flag
+   * is off / prerequisites are absent (null resolvedConfig, excerpts disabled, no analyzer) — in
+   * which case the delivery excerpt falls back to the byte-for-byte IDF-only path.
+   */
+  private EvidenceSpanSelector buildEvidenceSelector(
+      io.justsearch.configuration.resolved.ResolvedConfig resolvedConfig,
+      boolean includeExcerpts,
+      Analyzer analyzer) {
+    if (resolvedConfig == null || !includeExcerpts || analyzer == null) return null;
+    if (!resolvedConfig.search().evidenceSpanEnabled()) return null;
+    EvidenceSpanSelector.EntitySignal signal =
+        "ner_membership".equalsIgnoreCase(resolvedConfig.search().evidenceSpanEntitySignal())
+            ? EvidenceSpanSelector.EntitySignal.NER_MEMBERSHIP
+            : EvidenceSpanSelector.EntitySignal.DF_RARITY;
+    long numDocs = indexCountOps.docCount();
+    return new EvidenceSpanSelector(
+        signal, terms -> textQueryOps.getTermDocFreqs(SchemaFields.CONTENT, terms), numDocs);
+  }
+
+  /** Concatenates a hit's stored NER entity-text fields for the NER-membership entity signal. */
+  private static String concatDocEntityText(Map<String, String> fields) {
+    if (fields == null || fields.isEmpty()) return "";
+    StringBuilder sb = new StringBuilder();
+    for (String f :
+        List.of(
+            SchemaFields.ENTITY_PERSONS_TEXT,
+            SchemaFields.ENTITY_ORGANIZATIONS_TEXT,
+            SchemaFields.ENTITY_LOCATIONS_TEXT)) {
+      String v = fields.get(f);
+      if (v != null && !v.isBlank()) sb.append(v).append(' ');
+    }
+    return sb.toString();
   }
 
   private Map<String, Double> computeTermIdfWeights(Set<String> terms) {

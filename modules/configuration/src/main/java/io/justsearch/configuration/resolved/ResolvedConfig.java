@@ -445,6 +445,10 @@ public record ResolvedConfig(
    * @param queryClassificationEnabled 306: enable query classification for CE/expansion gating
    * @param titleBoost 306: title field boost in DisjunctionMaxQuery (0 to disable)
    * @param entityBoost 326: NER entity field boost in DisjunctionMaxQuery (0 to disable)
+   * @param evidenceSpanEnabled 775: enable answer-bearing EvidenceSpan-backed excerpt selection
+   *     (default false — flag-off reproduces the IDF-only delivery excerpt byte-for-byte)
+   * @param evidenceSpanEntitySignal 775: the distinguishing-entity signal used by the EvidenceSpan
+   *     selector — {@code df_rarity} or {@code ner_membership}
    */
   public record Search(
       String profile,
@@ -459,6 +463,8 @@ public record ResolvedConfig(
       // to today (chunk text is never emitted). §F.1-5/§I.2 Stage-2.
       boolean evidencePreviewEnabled,
       boolean lambdamartEnabled,
+      boolean evidenceSpanEnabled,
+      String evidenceSpanEntitySignal,
       Corrections corrections) {
 
     /** Spelling/fuzzy correction settings. */
