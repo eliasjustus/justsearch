@@ -139,6 +139,23 @@ pipeline cannot even be *rehearsed* without a production cert.
    mirrors) is designed after reading the staging sources — it must not disturb 618 §3's
    no-mirror-task constraint.
 
+**Mirror consumption wiring — investigated, deliberately DESIGN-ONLY (2026-07-22).** The sign-once
+producer (`scripts/release/sign-vendored-payload.ps1`, landed, rehearsed end-to-end fail-closed and
+`-AllowUnsigned` modes, layout-preservation and deterministic-output proven) intentionally ships
+WITHOUT build-side consumption wiring, because that wiring is not a clean small change: the llama
+CPU prebuilt download fail-closes against a hardcoded `llamaPrebuiltSha256`
+(`modules/ui/build.gradle.kts:470,524-530`), so a mirror-URL swap alone breaks the build, and a
+paired URL+SHA override weakens the exact supply-chain pin it would bypass — an explicit-opt-in
+design decision, not a drive-by property. Tesseract is harder still (source = a self-extracting
+installer whose `sourceSha256` + 74 per-file SHAs are pinned in
+`packaging/runtime/tesseract-windows.v1.json`; signed binaries can't ride the original installer
+format). Wiring design for the implementer: paired `llamaPrebuiltUrlOverride`/`llamaPrebuiltSha256Override`
+gradle properties mirroring the `includeCuda` pattern (`:370`), applied at `:359-362`; CUDA/cudart
+additionally need pins introduced (they have NONE today — observation logged); Tesseract needs
+`sourceUrl`/`sourceSha256` override handling plus post-signing regeneration of the manifest's
+`files[]` SHAs. Constraint honored: no gradle task may mirror into `native-bin`
+(`build.gradle.kts:882-887`, tempdoc 618 §3 — it would clobber the user-installed cuda12 variant).
+
 Items 2 (winget manifest skeleton + runbook, GA-gated values marked) and 4
 (`docs/how-to/verify-your-download.md` consolidation + README link) proceed as chartered.
 Item 1 (sandbox silent-install verification) is prepared as an automated `.wsb` LogonCommand

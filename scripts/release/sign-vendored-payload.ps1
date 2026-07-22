@@ -1,0 +1,253 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+  Sign-once mirror producer for vendored third-party payload archives (tempdoc 760 §"Takeover + Phase 2 design" item 5; origin tempdoc 772 §K).
+
+.DESCRIPTION
+  Vendored third-party payloads (llama.cpp prebuilt zip, Tesseract runtime, ...) ship
+  ~93 unsigned PEs that are pin-stable across releases. Tauri's `should_sign` re-signs every
+  unsigned PE on EVERY release build, so per-release signings balloon. This tool signs those
+  PEs ONCE per upstream pin bump; the signed archive is hosted as a mirror on
+  `justsearch-releases`, so subsequent release builds see already-Valid signatures and skip them
+  (mirror of Tauri's should_sign). Collapses per-release signings from ~101 to ~8.
+
+  Flow: archive in -> extract (7z) -> for each PE matching -Include: if Authenticode already
+  Valid, SKIP (do not re-sign vendor-signed files); else sign it by invoking the existing
+  scripts/ci/sign-windows.ps1 as a child (so all JUSTSEARCH_CODESIGN_MODE credential modes work
+  here for free) -> re-zip preserving the archive's internal directory layout exactly ->
+  emit <basename>-signed.zip + <output>.sha256.
+
+  Credential modes / secrets are the child sign-windows.ps1's contract (JUSTSEARCH_CODESIGN_*
+  env). This script sets JUSTSEARCH_REQUIRE_SIGNING=true for the child (its whole purpose is to
+  sign) UNLESS -AllowUnsigned is passed, and independently re-verifies each PE's Authenticode
+  status after the child returns (defense in depth: child exit code + independent re-verify).
+
+  Fail-closed: any PE that should be signed but is still not Valid after the signing attempt
+  fails the run and lists the offending files -- UNLESS -AllowUnsigned (rehearsal only) is set.
+
+.PARAMETER ArchivePath
+  Input archive (zip) containing the vendored payload.
+
+.PARAMETER OutDir
+  Output directory for the signed mirror + sha256. Default: dist/signed-mirrors.
+
+.PARAMETER Include
+  Glob(s) selecting which archive members to treat as signable PEs. Default: *.exe,*.dll.
+
+.PARAMETER AllowUnsigned
+  REHEARSAL ONLY. Do not fail closed when a PE remains unsigned after the signing attempt
+  (e.g. no credentials configured). Never use for a real mirror -- it produces an unsigned
+  archive that defeats the whole purpose.
+
+.EXAMPLE
+  # Real pin-bump run (PFX mode):
+  $env:JUSTSEARCH_CODESIGN_MODE='pfx'; $env:JUSTSEARCH_CODESIGN_PFX_PATH='C:\keys\cs.pfx'; $env:JUSTSEARCH_CODESIGN_PFX_PASSWORD='***'; $env:JUSTSEARCH_CODESIGN_TIMESTAMP_URL='http://timestamp.digicert.com'
+  scripts\release\sign-vendored-payload.ps1 -ArchivePath build\llama-b8571-bin-win-cpu-x64.zip
+#>
+[CmdletBinding()]
+param(
+  [Parameter(Mandatory = $true, Position = 0)]
+  [string]$ArchivePath,
+
+  [string]$OutDir = "dist/signed-mirrors",
+
+  [string[]]$Include = @('*.exe', '*.dll'),
+
+  [switch]$AllowUnsigned
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+function Fail([string]$Message) {
+  Write-Error $Message
+  exit 1
+}
+
+function Info([string]$Message) {
+  Write-Host $Message
+}
+
+function Resolve-SevenZip {
+  $candidates = @(
+    'F:\scoop\apps\7zip\current\7z.exe',
+    (Join-Path ${env:ProgramFiles} '7-Zip\7z.exe')
+  )
+  foreach ($c in $candidates) {
+    if ($c -and (Test-Path -LiteralPath $c)) { return (Resolve-Path -LiteralPath $c).Path }
+  }
+  # Scoop shims are broken in some environments, so PATH is the last resort.
+  $onPath = Get-Command '7z.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($onPath -and $onPath.Path) { return $onPath.Path }
+  return $null
+}
+
+# A PE begins with the ASCII "MZ" DOS-header magic. Files matched by the include glob that are
+# not real PEs (e.g. a text .dll) are reported as non-PE and left untouched.
+function Test-IsPE([string]$Path) {
+  try {
+    $fs = [System.IO.File]::OpenRead($Path)
+    try {
+      if ($fs.Length -lt 2) { return $false }
+      $b0 = $fs.ReadByte(); $b1 = $fs.ReadByte()
+      return ($b0 -eq 0x4D -and $b1 -eq 0x5A)  # 'M','Z'
+    } finally { $fs.Dispose() }
+  } catch { return $false }
+}
+
+function Test-MatchesInclude([string]$Name, [string[]]$Globs) {
+  foreach ($g in $Globs) {
+    if ($Name -like $g) { return $true }
+  }
+  return $false
+}
+
+# --- Resolve inputs ------------------------------------------------------------------------
+$resolvedArchive = if ([System.IO.Path]::IsPathRooted($ArchivePath)) { $ArchivePath } else { (Resolve-Path -LiteralPath $ArchivePath -ErrorAction SilentlyContinue).Path }
+if (-not $resolvedArchive -or -not (Test-Path -LiteralPath $resolvedArchive)) {
+  Fail "ArchivePath not found: $ArchivePath"
+}
+
+$sevenZip = Resolve-SevenZip
+if (-not $sevenZip) {
+  Fail "7z.exe not found (looked in F:\scoop\apps\7zip\current, `${env:ProgramFiles}\7-Zip, then PATH). Install 7-Zip."
+}
+
+$scriptDir = Split-Path -Parent $PSCommandPath
+$signWindows = Join-Path $scriptDir "..\ci\sign-windows.ps1"
+if (-not (Test-Path -LiteralPath $signWindows)) {
+  Fail "sign-windows.ps1 not found at expected path: $signWindows"
+}
+$signWindows = (Resolve-Path -LiteralPath $signWindows).Path
+
+if (-not (Test-Path -LiteralPath $OutDir)) {
+  New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
+}
+$resolvedOutDir = (Resolve-Path -LiteralPath $OutDir).Path
+
+$baseName = [System.IO.Path]::GetFileNameWithoutExtension($resolvedArchive)
+$outputZip = Join-Path $resolvedOutDir ($baseName + "-signed.zip")
+$outputSha = $outputZip + ".sha256"
+
+Info "sign-vendored-payload: input   = $resolvedArchive"
+Info "                       output  = $outputZip"
+Info "                       include = $($Include -join ', ')"
+Info "                       7z      = $sevenZip"
+if ($AllowUnsigned) { Info "                       MODE    = REHEARSAL (-AllowUnsigned; unsigned PEs tolerated)" }
+
+# --- Extract -------------------------------------------------------------------------------
+$workRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("svp-" + [guid]::NewGuid().ToString("N"))
+$extractDir = Join-Path $workRoot "extract"
+New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+
+try {
+  Info ""
+  Info "Extracting..."
+  & $sevenZip x "-o$extractDir" -y -- $resolvedArchive | Out-Null
+  if ($LASTEXITCODE -ne 0) { Fail "7z extraction failed (exit=$LASTEXITCODE) for $resolvedArchive" }
+
+  # --- Sign pass ---------------------------------------------------------------------------
+  $signed = 0
+  $skipped = 0
+  $nonPe = 0
+  $unsignable = New-Object System.Collections.Generic.List[string]
+
+  $allFiles = Get-ChildItem -LiteralPath $extractDir -Recurse -File
+  foreach ($f in $allFiles) {
+    if (-not (Test-MatchesInclude $f.Name $Include)) { continue }
+
+    $rel = $f.FullName.Substring($extractDir.Length).TrimStart('\', '/')
+
+    if (-not (Test-IsPE $f.FullName)) {
+      Info "  non-PE (skip): $rel"
+      $nonPe++
+      continue
+    }
+
+    $sig = Get-AuthenticodeSignature -LiteralPath $f.FullName
+    if ($sig.Status -eq 'Valid') {
+      Info "  already-signed (skip): $rel"
+      $skipped++
+      continue
+    }
+
+    Info "  signing: $rel  (was: $($sig.Status))"
+
+    # Invoke the existing signer as a child so every credential mode (pfx/store/command) works
+    # here for free (its JUSTSEARCH_CODESIGN_* env contract is respected as-set, not overridden).
+    # A NON-ZERO child exit is a genuine signtool/credential failure -> fail closed immediately.
+    # A ZERO exit is necessary but not sufficient (the child exits 0 when it deliberately SKIPS,
+    # e.g. no credentials): the independent Authenticode re-verification below is what collects
+    # the full unsigned-and-unsignable list so the operator sees every offender at once.
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $signWindows -BinaryPath $f.FullName
+    $childExit = $LASTEXITCODE
+
+    if ($childExit -ne 0 -and -not $AllowUnsigned) {
+      Fail "sign-windows.ps1 failed (exit=$childExit) for $rel"
+    }
+
+    # Independent re-verification: the child exiting 0 is necessary but not sufficient (it exits
+    # 0 when it deliberately SKIPS signing). Confirm the PE is actually Valid now.
+    $post = Get-AuthenticodeSignature -LiteralPath $f.FullName
+    if ($post.Status -eq 'Valid') {
+      Info "    -> signed OK"
+      $signed++
+    } else {
+      if ($AllowUnsigned) {
+        Info "    -> STILL UNSIGNED ($($post.Status)) -- tolerated (rehearsal)"
+        $unsignable.Add($rel)
+      } else {
+        # Collect all before failing so the operator sees the full list.
+        $unsignable.Add($rel)
+      }
+    }
+  }
+
+  if ($unsignable.Count -gt 0 -and -not $AllowUnsigned) {
+    Info ""
+    Info "Unsigned-and-unsignable PEs (no valid signature after signing attempt):"
+    foreach ($u in $unsignable) { Info "  - $u" }
+    Fail "Fail-closed: $($unsignable.Count) PE(s) could not be signed. Configure JUSTSEARCH_CODESIGN_* credentials, or pass -AllowUnsigned for a rehearsal."
+  }
+
+  # --- Re-zip preserving internal layout exactly -------------------------------------------
+  # 7z 'a' from inside the extract root with '*' recurses and stores paths relative to cwd,
+  # reproducing the original archive's internal directory structure.
+  if (Test-Path -LiteralPath $outputZip) { Remove-Item -LiteralPath $outputZip -Force }
+  Info ""
+  Info "Re-zipping..."
+  Push-Location -LiteralPath $extractDir
+  try {
+    & $sevenZip a -tzip -- $outputZip "*" | Out-Null
+    $zipExit = $LASTEXITCODE
+  } finally {
+    Pop-Location
+  }
+  if ($zipExit -ne 0) { Fail "7z re-zip failed (exit=$zipExit)" }
+  if (-not (Test-Path -LiteralPath $outputZip)) { Fail "Re-zip produced no output: $outputZip" }
+
+  # --- SHA256 sidecar (uppercase hex; sha256sum line format: hash + two spaces + basename) ---
+  $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $outputZip).Hash.ToUpperInvariant()
+  $outBase = [System.IO.Path]::GetFileName($outputZip)
+  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText($outputSha, "$hash  $outBase`n", $utf8NoBom)
+
+  # --- Summary -----------------------------------------------------------------------------
+  Info ""
+  Info "==================== sign-vendored-payload summary ===================="
+  Info ("  signed (newly):          {0}" -f $signed)
+  Info ("  skipped (already-signed): {0}" -f $skipped)
+  Info ("  non-PE (unmodified):      {0}" -f $nonPe)
+  if ($AllowUnsigned -and $unsignable.Count -gt 0) {
+    Info ("  UNSIGNED (rehearsal):     {0}" -f $unsignable.Count)
+  }
+  Info ("  output:  {0}" -f $outputZip)
+  Info ("  sha256:  {0}  {1}" -f $hash, $outBase)
+  Info ("  sidecar: {0}" -f $outputSha)
+  Info "======================================================================="
+}
+finally {
+  if (Test-Path -LiteralPath $workRoot) {
+    Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
