@@ -822,4 +822,47 @@ def cmd_perf_report(ctx, run_dir, mode):
         _print_perf_report(report)
 
 
-COMMANDS = [cmd_counterfactual, cmd_shadow_eval, cmd_bisect, cmd_compare, cmd_trend, cmd_spot_check, cmd_correction_probe, cmd_diff, cmd_perf_report]
+@click.command("offset-recall")
+@click.argument("run_dir", type=click.Path(exists=True))
+@click.option("--corpus-dir", type=click.Path(exists=True), required=True,
+              help="Corpus dir (corpus.jsonl/docs.jsonl + queries.json [+ evidence_offsets.json]).")
+@click.option("--k", "top_k", default=10, show_default=True, help="Recall@k / hit cutoff.")
+@click.option("--bins", "bins", default=None,
+              help="Comma-separated upper-exclusive offset edges (default: 1000,2000,4000,8000).")
+@click.option("--out", "out_path", type=click.Path(), default=None,
+              help="Write the JSON report here (default: <run_dir>/offset_recall.json).")
+@click.pass_context
+def cmd_offset_recall(ctx, run_dir, corpus_dir, top_k, bins, out_path):
+    """Per-offset recall instrument (tempdoc 783 §B.1).
+
+    Recall-vs-evidence-offset curves for an eval-results run: bins each query by the
+    character offset of its gold evidence within the gold document, and reports per-bin
+    recall@k + rank-of-gold PER MODE/LEG the run captured. Offset resolution prefers a
+    generator-metadata sidecar (evidence_offsets.json) and falls back to string-locating
+    the answer/evidence in the gold doc — the fallback is what makes it work on real
+    corpora. Offline: no backend needed. Deterministic given the same inputs.
+    """
+    from .. import offset_recall
+
+    bin_edges = offset_recall.DEFAULT_BIN_EDGES
+    if bins:
+        try:
+            bin_edges = tuple(int(x.strip()) for x in bins.split(",") if x.strip())
+        except ValueError as e:
+            raise click.ClickException(f"invalid --bins: {e}")
+        if not bin_edges or list(bin_edges) != sorted(bin_edges) or bin_edges[0] <= 0:
+            raise click.ClickException("--bins must be positive, strictly increasing edges")
+
+    report = offset_recall.analyze(run_dir, corpus_dir, k=top_k, bin_edges=bin_edges)
+
+    dest = Path(out_path) if out_path else Path(run_dir) / "offset_recall.json"
+    dest.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(report, indent=2, default=str))
+    else:
+        click.echo(offset_recall.format_table(report))
+        click.echo(f"Wrote {dest}")
+
+
+COMMANDS = [cmd_counterfactual, cmd_shadow_eval, cmd_bisect, cmd_compare, cmd_trend, cmd_spot_check, cmd_correction_probe, cmd_diff, cmd_perf_report, cmd_offset_recall]
