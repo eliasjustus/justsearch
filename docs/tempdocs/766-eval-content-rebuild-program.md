@@ -197,3 +197,29 @@ $135–250; closed-book-at-hero-tier pre-flight required). Pre-hero ordering:
 775 (surface, cohort bump once) and 776 (multi-schema + baseline
 characterization + leak audit + register sweep) land first. This umbrella
 stays open until the campaign's pre-registration, per §C.
+
+## §G. Founder decisions (2026-07-22, recorded verbatim from review)
+
+1. **Default flips APPROVED**: `search.evidence_preview.enabled` (F-041) and
+   `search.evidence_span.enabled` (775 step 1) flip default-ON together in ONE
+   cohort bump, executed with the 775 unification pass; baseline re-pins +
+   re-certification ride the same change. Rationale: measured wins
+   (+15% legal hybrid, CE flipped helpful on email, evidence carriage
+   0→100%), regression-free sentinels, and the hero campaign must measure
+   the product users get.
+2. **Hero trigger = distribution readiness** (signing + installer final),
+   not the eval program's readiness. Composition as staged: sonnet-class,
+   enron-1k/10k + legal-1k, n=60/stratum, USD-binding, closed-book
+   pre-flight at hero tier, cap ~$300; legal-10k stays excluded from claims.
+3. **No public number before the hero**; the benchmark-leak narrative
+   ("found and fixed our own leak, rebuilt with certification gates") is
+   earmarked as a credibility artifact for founder-timed public comms.
+4. **Leaky corpora: REBUILD, not retire** — needle-burial + both battlefields
+   regenerate on the camouflaged generator ONCE the per-field
+   gold-selectivity instrument (776 §H gap) exists to certify them; the DE
+   member waits on 748's defillered rebuild. Annotated-ambient acceptable
+   short-term only.
+5. **Contextualization recipe lane stays closed until hero v1 has run**
+   (campaign-v2 lever; competes with distribution otherwise).
+6. **pub-cme flake fix**: fold into the next CI-touching PR (the flip PR is
+   the natural carrier); 749 closes via its own session or explicit handover.
