@@ -1,7 +1,7 @@
 ---
 title: "Installer payload composition: what belongs in the base installer versus the consent-gated download pack — the base installer ships an inference runtime it cannot run, and the pack mechanism that would carry it already exists"
 type: tempdocs
-status: "open — ANALYSIS ONLY (2026-07-21). Evidence measured against a real 815 MB CI artifact (run 29514086160, 743 files, 177 PE binaries, every PE signature-checked). Takeover investigation (2026-07-21, multiple passes) independently re-verified all citations (clean), resolved Q7 (§F: native-bin combined is ~10.4% of installed payload), found a much bigger payload outside the original native-bin-only scope (§G: lib/worker/onnxruntime_gpu-1.24.3.jar is 34.3%, of which ~18.65% is dead Linux native binaries on this Windows-only product and ~15.12% is a Windows CUDA provider DLL inert until GPU+pack), and found a second major lever (§H: the embedded WebView2 offline installer is 203.65 MB / 18.83% — the second-largest single component, ~60% bigger than Tauri's own documented estimate). Resolved Q3 (pack mechanism is NOT ready for a CPU-mandatory package — 4 concrete gaps found), Q4 (only 2 of 9 scripts are real gates, both already characterized), the should_sign upstream claim (confirmed against Tauri source), and Q8's licensing question (ONNX Runtime is MIT; no Windows-only upstream artifact exists). No decision reached, no split recommended, nothing removed or implemented; §Open questions (1-10, several now resolved inline) are for the owner. A /derisk pass, /theorize pass (broader framings + a spun-off idea sketch, tempdoc 773), /research pass (competitive precedent: Ollama's Windows installer is 1.36 GB, ~1.75x this one; the onnxruntime_gpu fat-jar problem is a known unresolved upstream issue, not a local one-off; Tauri's WebviewInstallMode default is downloadBootstrapper, so JustSearch's offlineInstaller choice was a deliberate historical override), a /design pass (§Design: closes Q3 by extending 657's existing tier/intent/hardware model with a package-level `requiresCuda` field rather than building new structure; recommends Gradle Artifact Transforms over the derisk pass's hand-rolled jar task for §G; recommends reverting §H to Tauri's own default), and a round-2 /derisk pass (softens the Artifact Transform recommendation — no Transform/buildSrc precedent exists in this repo, so the hand-rolled task is the lower-risk near-term choice — and surfaces a must-not-miss InstallPlannerTest update for Q3a, an unresolved attachment point for Q3c's notice-baking, and confirms Q3d needs matching ui-web work) followed. See §Takeover verdict."
+status: "IMPLEMENTED & MEASURED — green-and-ready, merge pending owner word (2026-07-22). Final measured installer: 259.8 MB (CI run 29901314606), down from 815 MB (−68%), zero first-run UX regression. Landed on this branch: WebView2 offline-installer removal (−204 MB, 7e96d61c), Linux-natives jar trim (−190 MB, c1ee039f), Q3 pack infrastructure/requiresCuda (5f4d4dec), lzma NSIS revert (−25.6 MB, 53229f4a), CUDA EP relocation to the cuda-runtime pack (jar 172→5.5 MB, 732387cd + bd7b82ce; pack asset PUBLISHED to justsearch-releases and hash-verified; ONNX Runtime MIT notice added there). §I completes the owner's stated main intention (full needs audit: every byte inventoried and classified; Q9 resolved keep — CUDA EP DLL is load-bearing, full trace; one remaining waste finding: 96.9 MB duplicate jars across head/worker classpaths, deferred). Q1/Q2 closed as O0 (keep tesseract/llama-server bundled) per §Second takeover verdict; signing thesis routed to 760 (§K): payload composition has done all it can for signing — sign-once-per-upstream-bump + should_sign skip collapses per-release signings to ~8 with no payload move. Migration gap resolved by owner fact (no users). Residual: no live dev-stack run of the pack-detection wiring (probe-verified at JVM level with real CUDA sessions); Q3(d) ui-web half re-parked. History: created 2026-07-21 as analysis-only (measured against 815 MB artifact run 29514086160, 743 files, 177 PEs); takeover/derisk×2/theorize/research/design passes same day; implementation + second takeover + needs audit + §J follow-ups 2026-07-22. Full pass history in-body."
 created: 2026-07-21
 updated: 2026-07-22 (implementation addendum, confidence check, second takeover verdict — recommends closing Q1/Q2 with O0; §I completes the needs audit against the owner's stated main intention — full inventory of the post-fix 452.7 MB artifact, Q9 resolved as load-bearing/keep, 96.9 MB head/worker duplicate-jar finding)
 author: agent (subagent investigation), founder-directed distribution work (2026-07-21)
@@ -1450,6 +1450,49 @@ download cost remains.
      (+ EP trim). Against the tempdoc's 815 MB starting point: **−68%**, with zero first-run UX
      regression — CPU users lose nothing; GPU users receive the EP through the same consent-gated
      pack that already carries its CUDA dependencies (asset published + hash-verified, see above).
+
+### §K — Signing considerations: what 772 settled, and what it hands to 760 (2026-07-22, owner-prompted)
+
+The owner named signing as a second motivation for setting this tempdoc in motion. The honest
+accounting of what this tempdoc's work means for it, decomposed into the four distinct problems
+that tend to get conflated:
+
+1. **Trust** (SmartScreen warnings; Smart App Control blocks unsigned executables *at launch*) —
+   760's lane: winget listing (installs without SAC interference), SHA256SUMS, verify-your-download.
+2. **Per-release cost** — the bundler signs every unsigned bundled PE: 93 third-party (74 Tesseract
+   MSYS2 + 19 llama.cpp) + ~8 own ≈ 101 signatures/release ≈ 2,400/yr at current cadence; metered
+   tiers price per signature.
+3. **Pipeline mechanics (the live release blocker, 760)** — CI never engages `-Release`;
+   `sign-windows.ps1` is PFX-only while modern certs effectively require HSM-backed keys. This
+   work is the same size at 8 files or 101 (confirmed twice: the §Confidence-check walk-back, and
+   the second takeover's direct read of 760).
+4. **Vendor eligibility** — out of scope for this repo (private business repo), but it constrains
+   which pricing models from #2 are even available.
+
+**What 772 delivered for signing — deliberately NOT a surface reduction.** Bytes fell 68%; the
+unsigned-PE signing surface fell 0%, because the payload-move lever (O1-O3) was analyzed and
+rejected for signing purposes on two grounds now settled in this tempdoc:
+
+- **SAC gates execution, not delivery** (§Second takeover verdict obs. 1): pack-moving unsigned
+  binaries relocates the trust problem without solving it — they still launch unsigned.
+- **Sign-once-per-upstream-bump beats moving payloads** (§Second takeover verdict obs. 2): the 93
+  third-party PEs are pin-stable across releases, and Tauri's `should_sign` verifiably skips
+  already-signed PEs (confirmed from upstream source, §Signing consequence). Signing the vendored
+  binaries once per llama.cpp/Tesseract pin bump (~a few times/yr) — e.g. as signed mirrors on
+  `justsearch-releases` that the build downloads instead of upstream — collapses per-release
+  signings to ~8 with zero payload movement and zero UX cost. **This is 772's concrete design
+  input to 760.**
+
+**Two verified facts that improve the signing picture** (this pass): all four ORT DLLs published
+to the pack are **validly Microsoft-signed** (`Get-AuthenticodeSignature`: Valid, CN=Microsoft
+Corporation, all four) — the CUDA relocation added zero unsigned surface and works under SAC; and
+the WebView2/vc_redist components were already Microsoft-signed, so no landed 772 change touched
+signing arithmetic in either direction. Remaining unsigned pack content: the upstream llama.cpp
+CUDA variant builds — same class and same sign-once answer as the bundled ones.
+
+**Bottom line: payload composition has done everything it can for signing. The rest is 760's
+mechanism work** — a `-Sign` flag decoupled from `installer_verify` with secret plumbing, an
+HSM/token credential mode, and the sign-once cache design above.
 
 ### Where this leaves the intention
 
