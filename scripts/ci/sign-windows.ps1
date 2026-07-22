@@ -29,6 +29,16 @@ function Write-SignLog([string]$Message) {
   try { Add-Content -LiteralPath $script:signLogPath -Value ("[" + (Get-Date).ToString("HH:mm:ss") + "] " + $Message) } catch { }
 }
 
+# Last-resort diagnosability: ANY terminating error that escapes normal handling gets tee'd with
+# its position before the script dies — under the bundler, stderr is swallowed, so without this a
+# terminating error is invisible (the failure mode that cost CI runs 29911439832 + 29912444815).
+trap {
+  Write-SignLog ("TRAP terminating error: " + $_.Exception.GetType().Name + ": " + $_.Exception.Message +
+    " at " + (([string]$_.InvocationInfo.PositionMessage) -replace "\r?\n", " "))
+  Write-Error $_
+  exit 1
+}
+
 function Fail([string]$Message) {
   Write-SignLog ("FAIL: " + $Message)
   Write-Error $Message
@@ -177,8 +187,24 @@ function Skip-Or-Fail([string]$SkipMessage) {
 # JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED a present-and-hash-valid but chain-untrusted signature
 # is accepted (SignerCertificate present AND status != NotSigned); NotSigned still fails.
 function Assert-Signed([string]$Path, [string]$SigntoolPath) {
+  Write-SignLog ("Assert-Signed enter (allowUntrusted=" + $allowUntrusted + "): " + $Path)
   if ($allowUntrusted) {
-    $sig = Get-AuthenticodeSignature -FilePath $Path
+    # Freshly-signed bundler outputs can be transiently locked/settling (CI run 29912444815 died
+    # exactly here with nothing logged: signtool exit=0, then silent death before any Info).
+    # Read the signature defensively: catch + retry a few times, never die without a log line.
+    $sig = $null
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+      try {
+        $sig = Get-AuthenticodeSignature -FilePath $Path -ErrorAction Stop
+        break
+      } catch {
+        Write-SignLog ("Get-AuthenticodeSignature attempt " + $attempt + "/3 failed: " + $_.Exception.Message)
+        if ($attempt -lt 3) { Start-Sleep -Milliseconds 500 }
+      }
+    }
+    if ($null -eq $sig) {
+      Fail ("Get-AuthenticodeSignature failed 3x for " + $Path + " (see sign log)")
+    }
     if ($sig.Status -eq "Valid") {
       Info "Signed OK: $Path"
       return
