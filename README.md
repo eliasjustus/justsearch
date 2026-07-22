@@ -49,6 +49,9 @@ f6336a668b8f6abd66b1ff483def6ae17ac34f64d406a8edab16b45d2b61ae38  JustSearch_0.1
 <!-- hash verified 2026-07-14 against the asset downloaded from the v0.1.0 GitHub release
      (identical to the local build). -->
 
+Full walkthrough (hash verification, why SmartScreen/Smart App Control react to an unsigned
+installer, build-from-source alternative): [`docs/how-to/verify-your-download.md`](docs/how-to/verify-your-download.md).
+
 ## System requirements
 
 | | |
