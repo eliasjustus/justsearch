@@ -19,12 +19,24 @@ function To-Bool([string]$Value) {
   }
 }
 
+# Tee everything to a log file too: Tauri's bundler swallows this script's stdout/stderr on
+# failure ("failed to run powershell.exe" with zero detail — tempdoc 760 rehearsal run
+# 29910543640), so the log file is the only way a CI failure here is diagnosable. The workflow
+# prints it in an if:failure() step.
+$script:signLogPath = Join-Path $env:TEMP "justsearch-sign-windows.log"
+
+function Write-SignLog([string]$Message) {
+  try { Add-Content -LiteralPath $script:signLogPath -Value ("[" + (Get-Date).ToString("HH:mm:ss") + "] " + $Message) } catch { }
+}
+
 function Fail([string]$Message) {
+  Write-SignLog ("FAIL: " + $Message)
   Write-Error $Message
   exit 1
 }
 
 function Info([string]$Message) {
+  Write-SignLog $Message
   Write-Host $Message
 }
 
@@ -43,18 +55,29 @@ $requireSigning = To-Bool $env:JUSTSEARCH_REQUIRE_SIGNING
 $allowUntrusted = To-Bool $env:JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED
 
 # pfx-mode inputs (also the back-compat default set).
-$pfxPath = $env:JUSTSEARCH_CODESIGN_PFX_PATH
+# Trailing CR/LF stripping: secrets piped into `gh secret set` from files easily pick up a
+# trailing newline (Set-Content/echo both append one), and signtool then fails with "The
+# specified PFX password is not correct" while the bundler swallows this script's output —
+# an opaque CI failure for a whitespace bug (empirically hit, tempdoc 760 rehearsal run
+# 29910543640). A trailing newline is never a legitimate part of any of these values; inner
+# and leading characters are preserved (passwords may contain spaces).
+function Strip-TrailingNewlines([string]$Value) {
+  if ($null -eq $Value) { return $Value }
+  return $Value.TrimEnd("`r", "`n")
+}
+
+$pfxPath = Strip-TrailingNewlines $env:JUSTSEARCH_CODESIGN_PFX_PATH
 $pfxB64 = $env:JUSTSEARCH_CODESIGN_PFX_B64
-$pfxPassword = $env:JUSTSEARCH_CODESIGN_PFX_PASSWORD
-$timestampUrl = $env:JUSTSEARCH_CODESIGN_TIMESTAMP_URL
+$pfxPassword = Strip-TrailingNewlines $env:JUSTSEARCH_CODESIGN_PFX_PASSWORD
+$timestampUrl = Strip-TrailingNewlines $env:JUSTSEARCH_CODESIGN_TIMESTAMP_URL
 
 # store-mode inputs.
-$thumbprint = $env:JUSTSEARCH_CODESIGN_THUMBPRINT
-$certStore = $env:JUSTSEARCH_CODESIGN_STORE
+$thumbprint = Strip-TrailingNewlines $env:JUSTSEARCH_CODESIGN_THUMBPRINT
+$certStore = Strip-TrailingNewlines $env:JUSTSEARCH_CODESIGN_STORE
 if (-not $certStore -or -not $certStore.Trim()) { $certStore = "My" }
 
 # command-mode input.
-$commandTemplate = $env:JUSTSEARCH_CODESIGN_COMMAND
+$commandTemplate = Strip-TrailingNewlines $env:JUSTSEARCH_CODESIGN_COMMAND
 
 if (-not $BinaryPath) {
   Fail "BinaryPath is required"

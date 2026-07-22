@@ -201,6 +201,15 @@ jobs:
           if ($signConfigured) { $extra['Sign'] = $true }
           ./scripts/ci/package-installer-win.ps1 -OutDir dist/installer -SkipVerify -AssembleReleaseAssets @extra
 
+      # The bundler swallows the signCommand child's output on failure, so sign-windows.ps1 tees
+      # its messages to a log; print it when the build fails (tempdoc 760 rehearsal lesson).
+      - name: Debug - sign-windows log (on failure)
+        if: failure()
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:TEMP "justsearch-sign-windows.log"
+          if (Test-Path $log) { Write-Host "=== sign-windows.ps1 log ==="; Get-Content $log } else { Write-Host "no sign-windows log at $log" }
+
       # Diagnostic: log modules/ui/build contents + sizes so we can see what the
       # Post Cache step will save. Tempdoc 374 speed investigation: the cache
       # restores only ~187 MB even though the dir should contain more, yet the
