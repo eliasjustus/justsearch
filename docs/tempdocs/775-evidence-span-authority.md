@@ -15,6 +15,22 @@ related:
 > Charter. Evidence is banked (771 §E, 770 §E.3) — this lane designs and
 > ships; re-measurement is only needed where the design changes what 771
 > measured.
+>
+> **Dated addendum (2026-07-22, from tempdoc 774 §K — read before designing):**
+> 774 Stages 1-2 landed on `worktree-774-passage-first` and partially
+> supersede this charter's banked evidence: a default-off flag
+> `search.evidence_preview.enabled` already delivers the winning chunk's
+> text as `content_preview` for chunk-sourced hits (F-041: legal hybrid
+> +15%, enron +5.9%), deliberately overloading the existing field as a
+> TRANSITIONAL contract for this lane to replace with the canonical span
+> authority (774 §I.5/§K.4 tombstones). Consequences: (a) re-measure §A.1's
+> 45% evidence-carriage with that flag ON before designing against the old
+> number; (b) this lane owns absorbing the transitional `content_preview`
+> overload into its one-span-authority type — the proxy-path sweep (lexical
+> excerpt anchoring as sole evidence path, CE preview-snippet assembly, MCP
+> snippet logic) is this lane's completion criterion per 774 §L family-A
+> analysis; (c) 774 §F.1-5/6 + §L carry the code-level map of all four
+> existing proxies with file:line anchors.
 
 # 775 — evidence-span authority + delivery governor
 
