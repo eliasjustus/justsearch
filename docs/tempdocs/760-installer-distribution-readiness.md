@@ -139,6 +139,22 @@ pipeline cannot even be *rehearsed* without a production cert.
    mirrors) is designed after reading the staging sources — it must not disturb 618 §3's
    no-mirror-task constraint.
 
+**Mirror consumption wiring — UPDATE (2026-07-22, later same day): IMPLEMENTED under the explicit
+opt-in trigger** (a metered signing plan under consideration is exactly the moment this design
+waited for). Paired `llamaPrebuiltUrlOverride`/`llamaPrebuiltSha256Override` and
+`tesseractSourceUrlOverride`/`tesseractSourceSha256Override` gradle properties, all-or-nothing
+enforced at configuration time (providing exactly one fails with a message naming the
+supply-chain-pin defeat); defaults byte-identical (pins remain the floor); override URL+hash
+declared as task `inputs.property` so an override busts the up-to-date check (without this an
+incremental build silently ignored the override — caught during implementation). Tesseract scope
+limit: archive-level pin only; the manifest's per-file `files[]` SHAs are NOT skipped — with an
+active override a per-file mismatch fails with an explicit manifest-regeneration instruction
+(no in-repo generator exists; it is hand-authored). Verified with three live gradle runs:
+default path (exit 0, pinned artifact), lone-override (exit 1, pairing message), both-overrides
+against a loopback-served mirror copy (exit 0, mirror fetch proven via httpd access log after
+deleting the cache). `gradle/verification-metadata.xml` confirmed non-interacting (these tasks
+use raw HttpClient outside Gradle dependency resolution). Original design rationale kept below.
+
 **Mirror consumption wiring — investigated, deliberately DESIGN-ONLY (2026-07-22).** The sign-once
 producer (`scripts/release/sign-vendored-payload.ps1`, landed, rehearsed end-to-end fail-closed and
 `-AllowUnsigned` modes, layout-preservation and deterministic-output proven) intentionally ships
