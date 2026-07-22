@@ -180,3 +180,20 @@ constraint (762 §C.1 stands: no paid campaign runs until then).
   `corpus_certify` SCIENTIFIC_GATES; capture fields → `tool_result_digests`;
   corpora → 741 derived-artifacts + 709 fetch cache; engine findings →
   search-quality register (F-039); budget semantics → 757.
+
+## §F. Program status + hero-timing decision (2026-07-22)
+
+All four lanes complete: 767 certified leak-free (32/32 gates, #272/#273 —
+including the §Q finding that the prior thresholds were calibrated on the
+`_FILLER` leak), 768 shipped (#266), 769 closed-by-routing, 770 shipped
+(#268), 771 re-measured and closed (#274, charters PR). **Founder decision
+(2026-07-22): the hero campaign is DEFERRED to product freeze** — benchmark
+numbers are cohort-perishable, planned surface work (775) bumps cohort
+identity, and the audience for a promotable number arrives with
+distribution, not before. The pre-registration package is staged (viable
+strata enron-1k/10k + legal-1k; legal-10k excluded as a corpus-wide
+retrieval floor; n=60/stratum powered for the §T target; USD-binding; est.
+$135–250; closed-book-at-hero-tier pre-flight required). Pre-hero ordering:
+775 (surface, cohort bump once) and 776 (multi-schema + baseline
+characterization + leak audit + register sweep) land first. This umbrella
+stays open until the campaign's pre-registration, per §C.

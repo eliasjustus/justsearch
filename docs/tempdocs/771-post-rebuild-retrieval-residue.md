@@ -1,7 +1,7 @@
 ---
 title: "post-rebuild retrieval residue lane: the orphaned engine/surface items — two-hop join-key affordance, hybrid fusion-burial of leg-visible gold, post-search read-amplification, response-size governor — re-measured against 767's camouflaged strata before any design"
 type: tempdocs
-status: "RE-MEASURED 2026-07-22 (§E; gate satisfied — 767 strata certified 32/32, PR #273). Routing: item 1a close-with-measurement (join-key affordance confirmed, not a defect); item 1b design-here (long-doc evidence-content excerpt gap, couples to item 3); item 2 close-with-measurement (fusion-burial bounded ~5%, leak-gate-guarded); item 3 defer to hero at-capture; item 4 design-here (payload cliff reachable at limit 10-30). M5: legal-10k is a corpus-wide representation floor (0.82-0.90) — old '4 floor cells' question subsumed. F-039 resolution note drafted (§E) for the register. Surviving engine-owned design items: 1b evidence-content + item 4 governor. Adopts 769's residue; 769's original acceptance criteria are retired."
+status: "CLOSED (2026-07-22). All items dispositioned: 1a + 2 closed-with-measurement, 3 deferred to hero at-capture instrumentation, 1b + 4 TRANSFERRED to tempdoc 775 (evidence-span authority + delivery governor). M5 answered (legal-10k corpus-wide floor); F-039 resolved-decomposed in the register (#274). This lane is complete history."
 created: 2026-07-21
 author: agent (Fable orchestration), chartered after 770's reviews correctly de-routed F-039's dominant root cause from a withdrawn lever, leaving three measured items unowned
 category: search-quality / agent-tool-surface
@@ -250,3 +250,11 @@ swap* recovers it). Enron degrades gracefully (0.12→0.50); legal collapses (0.
   (`chunkEmbeddingReady` flipped True); re-measured after commit — the reported live numbers are all
   post-commit (dense alive), reconciled against cert hybrid recall (live struct-recall 29/50 ≈ cert 0.54).
 - Stack driven solo, clean-stopped after each cell. ~$0 (local backend only; no paid API).
+
+## §F. Closure (2026-07-22)
+
+Items 1b (evidence-content excerpt gap) and 4 (response-size governor) —
+the two design-here survivors of §E — transfer to tempdoc 775, which owns
+the unified evidence-span authority they both point at. Item 3
+(read-amplification) remains deferred to the hero campaign's at-capture
+instrumentation. Nothing else remains; this lane closes.
