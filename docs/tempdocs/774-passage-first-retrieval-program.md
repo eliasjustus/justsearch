@@ -864,3 +864,80 @@ before even the probe; (c) the design pass owes explicit positions on
 assumptions G.2-3 (chunker as ranking substrate), G.2-4 (aggregation
 function), G.2-5 (TEXT carve-out), G.2-6 (parent's role), and the G.4
 invariant's ownership boundary with 775.
+
+## §K. Implementation log (2026-07-22, same session — Stages 1-2 + measurements; flags default-off; NO PR yet)
+
+### K.1 What shipped (branch `worktree-774-passage-first`, full unit suite green at `cb106245`)
+
+- **Stage 1** (`95099375`): four independent chunk-branch levers, defaults
+  byte-equivalent (equivalence-tested): `chunk_cc_weight_*` +
+  `chunk_cc_zero_exclude` (decoupled from doc-level keys, doc-resolved
+  fallback), `chunk_collapse_limit_multiplier` (default 2),
+  `chunk_leg_recall_complete_{enabled,top_n}` (protected set computed
+  PRE-collapse from raw leg results — the collapse itself may not drop a
+  leg-top-N candidate), `chunk_branch_requires_base_results` (default true).
+- **Stage 2** (`cb106245`): `search.evidence_preview.enabled` (default off) —
+  chunk-sourced hits deliver the winning chunk's text (≤4096 chars) as
+  `content_preview`, making the Head CE's snippet source, the delivered
+  preview, and highlight offsets evidence-coherent in one change (no proto
+  change); CE docText assembly extracted + unit-covered (the §J.2 test gap);
+  CE doc-length gate default `max_avg_doc_length_chars` 16000 → **0**
+  (measured §K-probe divergence; both default sites flipped, tombstone at the
+  gate; operator override preserved).
+
+### K.2 P4 eval validation (same-session A/Bs, jseval `--start-backend --clean
+--pipeline`, artifacts `tmp/analysis-624/774/evals/` + run dirs cited; CE on
+CPU in eval env — both arms equally, A/B-valid)
+
+| corpus (hybrid) | OFF | Stage-1 set¹ | Stage-2 preview |
+|---|---|---|---|
+| mixed/legal-clerc-200 | 0.5557 (reproduces register 0.5497-0.5609) | 0.5448 (−0.011, ≈wobble band) | **0.6388 (+0.083, +15%)** — P@1 0.425→0.465, R@10 0.690→0.810 |
+| mixed/enron-qa | 0.7445 (register 0.736-0.742 band) | 0.7476 (+0.003, noise) | **0.7882 (+0.044, +5.9%)** — P@1 0.600→0.643, R@10 0.867→0.913 |
+| beir/scifact (both flags) | — | — | 0.7603 = baseline; observed legs carry NO chunk_merge/branch_fusion → structural no-op confirmed |
+
+¹ Stage-1 A/B setting: `chunk_cc_zero_exclude=true`,
+`chunk_leg_recall_complete_enabled=true`, `chunk_collapse_limit_multiplier=4`,
+`chunk_branch_requires_base_results=false`. Vector-mode cross-check on legal:
+0.6202 OFF / 0.6230 S1 (noise) — arm comparability anchor.
+
+Run dirs: `20260722T135408/T140105/T140425_mixed_legal-clerc-200`,
+`20260722T141501/T142555/T143646_mixed_enron-qa`, `20260722T144058_scifact`
+(this worktree's `scripts/jseval/tmp/eval-results/`).
+
+**Readings.** (a) The evidence-preview result is the program's payoff: judged
+evidence beats judged doc-heads by +15% on long-doc legal and — decisively —
+**flips the CE from harmful to helpful on email** (F-002's corpus): the
+CE-hurts-email mechanism was substantially preview-blindness, not a CE
+defect. (b) The Stage-1 guarantee set is regression-free everywhere —
+guarantees for free, as designed; no nDCG win at k=10, consistent with §J.1.
+(c) scifact untouched structurally, as predicted (§J.3).
+
+### K.3 Live UI verification (user-visible change, flag ON)
+
+Dev stack from this worktree's dist with
+`JUSTSEARCH_SEARCH_EVIDENCE_PREVIEW_ENABLED=true` (run d0bd5726): API check —
+top hit's `content_preview` = chunk 3 text at char-offset 5307 (the COBRA
+"gross misconduct" analysis) instead of the "MEMORANDUM OPINION AND ORDER"
+head; a rank-2 hit delivered content from char ~48,839. Browser check on the
+real Search surface: the hit renders the deep evidence passage with aligned
+term highlights. Flag-off behavior separately confirmed live (identical
+query, head-preview delivered) during the §J.2 probe session (run 96da7851).
+
+### K.4 Residue, tombstones, and follow-ups (named, not silently dropped)
+
+- Default flips (evidence_preview → on; Stage-1 levers) are FOUNDER decisions:
+  they re-pin register baselines + interact with hero-campaign cohort timing
+  (§E.6); the measured case for evidence_preview default-on is strong (two
+  corpora up, one structurally untouched, guard implications: leak/union
+  unaffected — retrieval unchanged; CE window unchanged; perf: ce_p50 no
+  worse in-eval).
+- Tombstoned for the default-flip sweep: CE doc-length gate mechanism +
+  `WorkerStatusCache.cachedAvgContentLengthChars` plumbing;
+  `SKIPPED_EMPTY_BASE_RESULTS` reason code (unreachable only if
+  requires_base_results defaults false later).
+- H.4 engine-side contextualization recipe = chartered follow-up (J.7);
+  variant-B title leak reported to 776/767 (observation shard).
+- `reranker_cpu_only` in eval env (GPU CE unexercised in A/Bs) — pre-existing
+  eval-env property, noted for any latency claims.
+- Register duties executed in this session: F-040/F-041 + ablation rows +
+  Q-001 refinement (see register diff in the same branch).
