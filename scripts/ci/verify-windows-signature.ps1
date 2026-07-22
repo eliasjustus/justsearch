@@ -17,6 +17,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# PSModulePath edition fix (same as sign-windows.ps1): spawned as a 5.1 child of a pwsh parent,
+# the inherited PS7 PSModulePath breaks loading of Microsoft.PowerShell.Security
+# (Get-AuthenticodeSignature, used by the ALLOW_UNTRUSTED rehearsal branch below). Reset to
+# Windows PowerShell defaults. (Tempdoc 760 rehearsal run 29913294778.)
+if ($PSVersionTable.PSEdition -eq "Desktop") {
+  $env:PSModulePath = ($env:ProgramFiles + "\WindowsPowerShell\Modules;" + $env:SystemRoot + "\System32\WindowsPowerShell\v1.0\Modules")
+}
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath "..\\..")).Path
 $evidenceEnabled = -not $NoEvidence.IsPresent

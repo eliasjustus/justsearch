@@ -9,6 +9,16 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# PSModulePath edition fix: when a pwsh (PowerShell 7) parent — a CI `shell: pwsh` step, or the
+# Tauri bundler running under one — spawns this 5.1 script, the inherited PSModulePath points at
+# PS7's Core-edition modules and Windows PowerShell can no longer load its OWN
+# Microsoft.PowerShell.Security ("module could not be loaded" on Get-AuthenticodeSignature —
+# tempdoc 760 rehearsal run 29913294778, caught verbatim by the trap log). Reset to the Windows
+# PowerShell defaults so built-in cmdlets resolve regardless of who spawned us.
+if ($PSVersionTable.PSEdition -eq "Desktop") {
+  $env:PSModulePath = ($env:ProgramFiles + "\WindowsPowerShell\Modules;" + $env:SystemRoot + "\System32\WindowsPowerShell\v1.0\Modules")
+}
+
 function To-Bool([string]$Value) {
   if (-not $Value) { return $false }
   switch ($Value.Trim().ToLowerInvariant()) {
