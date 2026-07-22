@@ -64,6 +64,7 @@ function buildGuidance(input = {}) {
     '- Explore existing helpers before creating new ones. The most common mistake is reinventing utilities that exist two packages over.',
     '- Do not introduce backwards-compatibility shims, dead-code comments, or speculative abstractions.',
     '- Default to writing no comments. Only add WHY-comments for non-obvious invariants.',
+    '- Execute synchronously end-to-end within your turns: use bounded in-turn condition-polls for waits; NEVER stop your turn to "wait for" an external event or monitor — a stopped agent receives no events and stalls until manually resumed.',
   );
 
   sections.push(
