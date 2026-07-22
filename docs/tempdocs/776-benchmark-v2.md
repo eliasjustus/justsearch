@@ -475,3 +475,15 @@ paid calls. Item B and all retrieval/structural gates are $0 (backend + offline)
   nDCG/recall via `ir_measures` + qrels) rather than via a full `jseval run` staged_recall_accounting
   envelope, for per-schema control; the exact `staged_recall_accounting` leak_rate envelope is the
   certification-wrapper step (blocked as above).
+
+## §H. Post-audit addendum (2026-07-22): a fifth leak instance the §D audit missed — gold-only TITLE fields
+
+774 §J.7 found the 767 strata's `title` field is gold-selective (100/10,000
+docs titled, all 50 golds among them, titles = the structure descriptors).
+The §D audit's instruments (filler blocks, id-shape, rare tokens, sentence
+shape) did not check per-FIELD gold-selectivity — titles never reach the
+index (lexical 0.00 proves it), so the engine is blind to it, but any
+offline probe or baseline agent reading corpus.jsonl/materialized files is
+exposed. Instrument gap to close in the leak-gate family: a per-field
+gold-vs-native presence profile (title, and any future metadata field).
+Already claimed one victim (the invalidated title-prepend arm).
