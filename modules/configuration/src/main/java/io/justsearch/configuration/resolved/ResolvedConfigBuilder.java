@@ -451,6 +451,32 @@ public final class ResolvedConfigBuilder {
         "index.hybrid.branch_chunk_min_weight_multiplier",
         root,
         "index.hybrid.branch_chunk_min_weight_multiplier");
+    // Tempdoc 774 Stage 1 — independent chunk-branch levers. No putDefault for the chunk weights:
+    // their default is the resolved doc-level cc_weight_* value, computed in buildHybridSearch (a
+    // static putDefault at ordinal 100 would shadow that fallback).
+    putYamlDouble(
+        "index.hybrid.chunk_cc_weight_sparse", root, "index.hybrid.chunk_cc_weight_sparse");
+    putYamlDouble("index.hybrid.chunk_cc_weight_dense", root, "index.hybrid.chunk_cc_weight_dense");
+    putYamlDouble(
+        "index.hybrid.chunk_cc_weight_splade", root, "index.hybrid.chunk_cc_weight_splade");
+    putYamlBoolean(
+        "index.hybrid.chunk_cc_zero_exclude", root, "index.hybrid.chunk_cc_zero_exclude");
+    putYamlInt(
+        "index.hybrid.chunk_collapse_limit_multiplier",
+        root,
+        "index.hybrid.chunk_collapse_limit_multiplier");
+    putYamlBoolean(
+        "index.hybrid.chunk_leg_recall_complete_enabled",
+        root,
+        "index.hybrid.chunk_leg_recall_complete_enabled");
+    putYamlInt(
+        "index.hybrid.chunk_leg_recall_complete_top_n",
+        root,
+        "index.hybrid.chunk_leg_recall_complete_top_n");
+    putYamlBoolean(
+        "index.hybrid.chunk_branch_requires_base_results",
+        root,
+        "index.hybrid.chunk_branch_requires_base_results");
     // 347: hybrid search env/sysprop overrides now handled by EnvRegistry entries.
 
     // Register programmatic defaults so they appear in startup logs and
@@ -464,6 +490,13 @@ public final class ResolvedConfigBuilder {
     putDefault("index.hybrid.branch_cc_weight_whole", "0.50");
     putDefault("index.hybrid.branch_cc_weight_chunk", "0.50");
     putDefault("index.hybrid.branch_chunk_min_weight_multiplier", "0.25");
+    // Tempdoc 774 Stage 1 — static chunk-branch lever defaults. The chunk weights AND
+    // chunk_cc_zero_exclude are omitted deliberately: their default is the resolved doc-level value
+    // (computed in buildHybridSearch), and a putDefault at ordinal 100 would shadow that fallback.
+    putDefault("index.hybrid.chunk_collapse_limit_multiplier", "2");
+    putDefault("index.hybrid.chunk_leg_recall_complete_enabled", "false");
+    putDefault("index.hybrid.chunk_leg_recall_complete_top_n", "10");
+    putDefault("index.hybrid.chunk_branch_requires_base_results", "true");
   }
 
   private void contributeYamlSearch(JsonNode root) {
@@ -1423,6 +1456,16 @@ public final class ResolvedConfigBuilder {
   }
 
   private ResolvedConfig.HybridSearch buildHybridSearch() {
+    // Tempdoc 774 Stage 1 — resolve the doc-level CC leg weights first so the chunk-branch weights
+    // can fall back to them (an explicit doc-level override still flows through unless the chunk key
+    // is set). No putDefault is registered for the chunk keys — that would shadow this fallback.
+    double ccWeightSparse =
+        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.cc_weight_sparse", 0.60)));
+    double ccWeightDense =
+        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.cc_weight_dense", 0.20)));
+    double ccWeightSplade =
+        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.cc_weight_splade", 0.20)));
+    boolean ccZeroExclude = resolveBoolean("index.hybrid.cc_zero_exclude", false);
     return new ResolvedConfig.HybridSearch(
         resolveInt("index.hybrid.rrf_k", 60),
         resolveInt("index.hybrid.vector_skip_min_chars", 4),
@@ -1440,10 +1483,10 @@ public final class ResolvedConfigBuilder {
         Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.vector_rrf_weight_low_signal", 0.25))),
         resolveStringLower("index.hybrid.fusion_strategy", "cc"),
         Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.cc_alpha", 0.5))),
-        resolveBoolean("index.hybrid.cc_zero_exclude", false),
-        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.cc_weight_sparse", 0.60))),
-        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.cc_weight_dense", 0.20))),
-        Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.cc_weight_splade", 0.20))),
+        ccZeroExclude,
+        ccWeightSparse,
+        ccWeightDense,
+        ccWeightSplade,
         resolveStringLower("index.hybrid.branch_fusion_strategy", "cc"),
         resolveBoolean("index.hybrid.branch_cc_zero_exclude", true),
         Math.max(0.0, Math.min(1.0, resolveDouble("index.hybrid.branch_cc_weight_whole", 0.50))),
@@ -1477,7 +1520,23 @@ public final class ResolvedConfigBuilder {
         // needle-burial-v1 buried-fact target, −0.04% (neutral) on mixed/enron-qa real email →
         // earns default-on. Set the env/sysprop to false to disable.
         resolveBoolean("index.hybrid.leg_recall_complete_enabled", true),
-        Math.max(1, resolveInt("index.hybrid.leg_recall_complete_top_n", 10)));
+        Math.max(1, resolveInt("index.hybrid.leg_recall_complete_top_n", 10)),
+        // Tempdoc 774 Stage 1 — chunk-branch CC leg weights: default to the resolved doc-level value
+        // (byte-for-byte today's behavior) unless the chunk key is set.
+        Math.max(
+            0.0, Math.min(1.0, resolveDouble("index.hybrid.chunk_cc_weight_sparse", ccWeightSparse))),
+        Math.max(
+            0.0, Math.min(1.0, resolveDouble("index.hybrid.chunk_cc_weight_dense", ccWeightDense))),
+        Math.max(
+            0.0,
+            Math.min(1.0, resolveDouble("index.hybrid.chunk_cc_weight_splade", ccWeightSplade))),
+        // Zero-exclude inherits the resolved doc-level cc_zero_exclude unless the chunk key is set
+        // (same fallback semantics as the chunk weights; no putDefault, which would shadow it).
+        resolveBoolean("index.hybrid.chunk_cc_zero_exclude", ccZeroExclude),
+        Math.max(1, resolveInt("index.hybrid.chunk_collapse_limit_multiplier", 2)),
+        resolveBoolean("index.hybrid.chunk_leg_recall_complete_enabled", false),
+        Math.max(1, resolveInt("index.hybrid.chunk_leg_recall_complete_top_n", 10)),
+        resolveBoolean("index.hybrid.chunk_branch_requires_base_results", true));
   }
 
   private ResolvedConfig.Worker buildWorker() {

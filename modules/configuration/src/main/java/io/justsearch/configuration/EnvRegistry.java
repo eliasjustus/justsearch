@@ -1103,6 +1103,30 @@ public enum EnvRegistry {
     /** Branch chunk minimum weight multiplier. */
     HYBRID_BRANCH_CHUNK_MIN_WEIGHT_MULTIPLIER("index.hybrid.branch_chunk_min_weight_multiplier",
         "JUSTSEARCH_HYBRID_BRANCH_CHUNK_MIN_WEIGHT_MULTIPLIER"),
+    /** Tempdoc 774 Stage 1: chunk-branch CC sparse weight (defaults to the doc-level cc_weight_sparse). */
+    HYBRID_CHUNK_CC_WEIGHT_SPARSE("index.hybrid.chunk_cc_weight_sparse",
+        "JUSTSEARCH_HYBRID_CHUNK_CC_WEIGHT_SPARSE"),
+    /** Tempdoc 774 Stage 1: chunk-branch CC dense weight (defaults to the doc-level cc_weight_dense). */
+    HYBRID_CHUNK_CC_WEIGHT_DENSE("index.hybrid.chunk_cc_weight_dense",
+        "JUSTSEARCH_HYBRID_CHUNK_CC_WEIGHT_DENSE"),
+    /** Tempdoc 774 Stage 1: chunk-branch CC SPLADE weight (defaults to the doc-level cc_weight_splade). */
+    HYBRID_CHUNK_CC_WEIGHT_SPLADE("index.hybrid.chunk_cc_weight_splade",
+        "JUSTSEARCH_HYBRID_CHUNK_CC_WEIGHT_SPLADE"),
+    /** Tempdoc 774 Stage 1: chunk-branch CC zero-exclude (single-leg passage keeps that leg's weight). */
+    HYBRID_CHUNK_CC_ZERO_EXCLUDE("index.hybrid.chunk_cc_zero_exclude",
+        "JUSTSEARCH_HYBRID_CHUNK_CC_ZERO_EXCLUDE"),
+    /** Tempdoc 774 Stage 1: chunk-branch collapse cap multiplier (parents = limit × this). */
+    HYBRID_CHUNK_COLLAPSE_LIMIT_MULTIPLIER("index.hybrid.chunk_collapse_limit_multiplier",
+        "JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_LIMIT_MULTIPLIER"),
+    /** Tempdoc 774 Stage 1: chunk-side recall-complete — splice chunk-leg top-N parents into the pool. */
+    HYBRID_CHUNK_LEG_RECALL_COMPLETE_ENABLED("index.hybrid.chunk_leg_recall_complete_enabled",
+        "JUSTSEARCH_HYBRID_CHUNK_LEG_RECALL_COMPLETE_ENABLED"),
+    /** Tempdoc 774 Stage 1: chunk-side recall-complete per-leg top-N. */
+    HYBRID_CHUNK_LEG_RECALL_COMPLETE_TOP_N("index.hybrid.chunk_leg_recall_complete_top_n",
+        "JUSTSEARCH_HYBRID_CHUNK_LEG_RECALL_COMPLETE_TOP_N"),
+    /** Tempdoc 774 Stage 1: when false, the chunk branch runs even when the doc legs return empty. */
+    HYBRID_CHUNK_BRANCH_REQUIRES_BASE_RESULTS("index.hybrid.chunk_branch_requires_base_results",
+        "JUSTSEARCH_HYBRID_CHUNK_BRANCH_REQUIRES_BASE_RESULTS"),
     /**
      * UI exclude patterns (JSON array string). User-side preference, written by the SettingsController
      * Apply Excludes flow and read by IndexingController.applyExcludes + KnowledgeSearchController

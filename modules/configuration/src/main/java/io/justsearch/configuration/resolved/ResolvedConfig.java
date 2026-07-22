@@ -712,7 +712,25 @@ public record ResolvedConfig(
       double legArbitrationAlphaDiverge,
       double legArbitrationBm25IncoherenceMin,
       boolean legRecallCompleteEnabled,
-      int legRecallCompleteTopN) {}
+      int legRecallCompleteTopN,
+      // Tempdoc 774 Stage 1 — independent chunk-branch CC leg weights + zero-exclude. Each defaults
+      // to the resolved doc-level value (cc_weight_* / cc_zero_exclude), so an explicit doc-level
+      // override still flows through unless the chunk key is set. Decouples the chunk branch from the
+      // doc legs (§F.1-2 silent coupling).
+      double chunkCcWeightSparse,
+      double chunkCcWeightDense,
+      double chunkCcWeightSplade,
+      boolean chunkCcZeroExclude,
+      // Tempdoc 774 Stage 1 — chunk-branch collapse cap multiplier (parents delivered to branch
+      // fusion = limit × this; default 2 reproduces the old hardcoded 2×limit).
+      int chunkCollapseLimitMultiplier,
+      // Tempdoc 774 Stage 1 — chunk-side recall-complete: splice the chunk branch's per-leg top-N
+      // parents into the merged list (the passage-granularity twin of the doc-side guarantee).
+      boolean chunkLegRecallCompleteEnabled,
+      int chunkLegRecallCompleteTopN,
+      // Tempdoc 774 Stage 1 — when false, the chunk branch runs even when the doc legs return empty
+      // ("fusion is a ranking step, not a recall gate"); default true reproduces today's base-gate.
+      boolean chunkBranchRequiresBaseResults) {}
 
 
   /**
