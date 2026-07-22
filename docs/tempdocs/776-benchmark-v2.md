@@ -487,3 +487,55 @@ offline probe or baseline agent reading corpus.jsonl/materialized files is
 exposed. Instrument gap to close in the leak-gate family: a per-field
 gold-vs-native presence profile (title, and any future metadata field).
 Already claimed one victim (the invalidated title-prepend arm).
+
+## §I. Instrument built (2026-07-22): per-field gold-selectivity gate — closes the §H gap
+
+The §H instrument gap is now filled. `corpus_leak.field_selectivity_report`
+(`scripts/jseval/jseval/corpus_leak.py`) measures, for every field present on any
+document except `_id` (whose value shape is `id_shape_report`'s concern):
+
+- **population rate** — fraction of gold vs native docs where the field is *populated*
+  (non-`None`, non-empty/whitespace string, non-empty container). This is what makes the
+  §J.7 leak visible: `corpus_inject.assemble` writes `title: ""` onto every native
+  distractor (`corpus_inject.py:~349`) while gold docs carry a real title (`:~343`).
+- **presence separability** — `abs(gold_population_rate − native_population_rate)`, i.e.
+  Youden's J of the trivial "field populated" classifier (sign-invariant). This is the
+  channel none of the §D content-level instruments (id-shape, n-gram, word-count, query
+  overlap) can see: the per-gold titles are distinct (no shared n-gram) and natives'
+  empty title carries no length signal.
+
+**Threshold — null-calibrated, no pinned constant** (same rationale as
+`indistinguishability_report`): the null (`native_base_rate`) is the MAX over 25 seeded
+gold-sized native relabellings of the presence separability such a draw achieves — drawn
+from *inside the same cell*, so the comparison is per-corpus/per-host by construction and
+never goes stale when a native population changes. A field passes iff
+`separability <= native_base_rate`. A field uniformly present (or absent) nulls out near
+zero; a gold-selective field does not. `None` (no gold/no native/no field beyond `_id`)
+is never a pass.
+
+**Wiring.** Added as a per-cell structural check exactly like `indistinguishability`
+(tempdoc 767 defect #2's pattern — a leak measure must gate, not sit in a report nobody
+runs): `certify_materialized_family` projects the flat summary
+(`_FIELD_SELECTIVITY_KEYS`) into each cell and sets `checks["field_selectivity"]`, so
+`structural_passed` (and the `corpus-certify` CLI exit code) now fails a title-leaking
+corpus. `_complete_certification_document` re-asserts the observation sits under its own
+null (`max_field_separability <= native_base_rate`), so a hand-edited boolean cannot carry
+a leak through. Corpora bytes/digests/commitments are untouched — the instrument only reads.
+
+**Demonstration (§J.7 title leak flagged; body NOT flagged).** A cell materialized via the
+production `corpus_inject.assemble()` from the committed
+`707-corpora/en-legal-clerc/1000-verbose` fabricated gold + a representative CLERC-shape
+host pool (bare-integer ids, no `title` key — the documented CLERC/Enron host shape) —
+100 gold / 200 native:
+
+```
+passed=False  worst_field='title'  max_field_separability=1.0  native_base_rate=0.0
+  text : gold_pop=1.000 native_pop=1.000 sep=0.000 null=0.000 passed=True
+  title: gold_pop=1.000 native_pop=0.000 sep=1.000 null=0.000 passed=False
+```
+
+`title` is flagged (separability 1.0 against a 0.0 null); `text` (body/content), present on
+every doc, is correctly NOT flagged. Tests: `tests/test_corpus_governance.py`
+(pure-function flag/pass/absent + end-to-end `certify_materialized_family` wiring +
+boundary-validator rejection), all green alongside the digest-bound
+`test_corpus_inject.py` / `test_agent_utility_inspect.py` suites (0 regressions).

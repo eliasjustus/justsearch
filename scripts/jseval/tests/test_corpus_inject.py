@@ -166,7 +166,7 @@ def _complete_certificate(
                     "size": True, "signature": True, "query_variant": True,
                     "query_family_ids": True, "cross_process_regeneration": True,
                     "immutable_commitment": True, "descriptor_collision": True,
-                    "indistinguishability": True,
+                    "indistinguishability": True, "field_selectivity": True,
                 },
                 "regeneration": {
                     "passed": True,
@@ -196,6 +196,14 @@ def _complete_certificate(
                     "ngram_passed": True,
                     "passed": True,
                     "method": "null-calibrated-id-shape-and-ngram-selectivity",
+                },
+                "field_selectivity": {
+                    "worst_field": "title",
+                    "max_field_separability": 0.1,
+                    "native_base_rate": 0.2,
+                    "n_fields_compared": 2,
+                    "passed": True,
+                    "method": "field-presence-null-calibrated-separability",
                 },
                 "scientific_gates": cell_gates,
                 "passed": True,
