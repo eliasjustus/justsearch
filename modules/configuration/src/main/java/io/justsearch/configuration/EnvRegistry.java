@@ -428,6 +428,13 @@ public enum EnvRegistry {
     SEARCH_CHUNK_AWARE_ENABLED(
         "search.chunk_aware.enabled", "JUSTSEARCH_SEARCH_CHUNK_AWARE_ENABLED"),
 
+    /**
+     * Tempdoc 774 Stage 2: when enabled, chunk-sourced hits carry the winning chunk's text as
+     * {@code content_preview} (evidence-coherent CE input + delivery). Default false via builder.
+     */
+    SEARCH_EVIDENCE_PREVIEW_ENABLED(
+        "search.evidence_preview.enabled", "JUSTSEARCH_SEARCH_EVIDENCE_PREVIEW_ENABLED"),
+
     /** UI automation mode enabled flag. */
     UI_AUTOMATION_ENABLED("justsearch.ui.automation.enabled", "JUSTSEARCH_UI_AUTOMATION"),
 
@@ -721,11 +728,19 @@ public enum EnvRegistry {
     /** Max token sequence length for reranker inference (default 512; model supports 8192 but O(n²) attention cost and GPU VRAM make that impractical). */
     RERANK_MAX_SEQ_LEN("justsearch.rerank.max_seq_len", "JUSTSEARCH_RERANK_MAX_SEQ_LEN", "512"),
 
-    /** Max average document length in chars for reranker eligibility (default 16000). */
+    /**
+     * Max average document length in chars for reranker eligibility (default 0 = gate disabled).
+     * Tempdoc 774 §J.2/§K live probe (run 96da7851): the {@code DOCS_TOO_LONG} gate reads a
+     * Head-side cache populated ONLY by {@code GET /api/knowledge/status}, which evals never poll,
+     * so every register/eval baseline measured the CE-on (gate-off) pipeline while a production
+     * session whose client polls {@code /api/knowledge/status} silently loses the CE on long-doc
+     * corpora. Default flipped 16000 → 0 so production matches the measured configuration; an
+     * operator can still set &gt;0 to restore the gate.
+     */
     RERANK_MAX_AVG_DOC_LENGTH_CHARS(
         "justsearch.rerank.max_avg_doc_length_chars",
         "JUSTSEARCH_RERANK_MAX_AVG_DOC_LENGTH_CHARS",
-        "16000"),
+        "0"),
 
     /**
      * Tempdoc 643: judge-stage refinement floor — blend the cross-encoder's reorder with the

@@ -264,6 +264,19 @@ final class ResolvedConfigBuilderTest {
     }
 
     @Test
+    @DisplayName("maxAvgDocLengthChars default is 0 — DOCS_TOO_LONG gate off (tempdoc 774 §J.2/§K)")
+    void docsTooLongGateDefaultsDisabled() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeEnvRegistry();
+      ResolvedConfig config = builder.build();
+      // Tempdoc 774 §J.2/§K live probe: the DOCS_TOO_LONG gate diverged eval (gate-off) from
+      // production (gate-on when a client polls /api/knowledge/status). Default flipped 16000 → 0 so
+      // production matches every measured register baseline. Pins the intended value directly (the
+      // cross-check above only proves self-consistency, not the chosen number).
+      assertEquals(0, config.ai().reranker().maxAvgDocLengthChars());
+    }
+
+    @Test
     @DisplayName("embedGpuMemMb honors explicit override")
     void embedGpuMemMbExplicitOverride() {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();

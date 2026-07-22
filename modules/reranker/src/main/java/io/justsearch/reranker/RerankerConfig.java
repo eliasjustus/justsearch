@@ -68,10 +68,14 @@ public record RerankerConfig(
    *       sequence length (default: 512; model supports 8192 but O(n²) attention cost and GPU VRAM make that impractical)
    *   <li>{@code JUSTSEARCH_RERANK_MAX_AVG_DOC_LENGTH_CHARS} / {@code
    *       justsearch.rerank.max_avg_doc_length_chars} - Auto-disable cross-encoder when index
-   *       average document length exceeds this threshold (default: 16000 chars ≈ 4K tokens).
-   *       MiniLM-L6-v2 truncates at 512 tokens; documents longer than ~4K tokens lose most content,
-   *       causing catastrophic ranking degradation (measured: -0.606 nDCG on 6K-token docs).
-   *       Set to 0 to disable this gate.
+   *       average document length exceeds this threshold (default: 0 = gate disabled). Tempdoc 774
+   *       §J.2/§K flipped the default 16000 → 0: the gate's input is a Head-side session-average
+   *       cache populated only by {@code GET /api/knowledge/status} (which evals never poll), so
+   *       every register baseline measured the CE-on pipeline while production sessions polling that
+   *       endpoint silently lost the CE on long-doc corpora. Set to &gt;0 to restore the gate — its
+   *       original rationale: MiniLM-L6-v2 truncates at 512 tokens; documents longer than ~4K tokens
+   *       lose most content, causing catastrophic ranking degradation (measured: -0.606 nDCG on
+   *       6K-token docs).
    *   <li>{@code JUSTSEARCH_RERANK_JUDGE_BLEND_ENABLED} / {@code
    *       justsearch.rerank.judge_blend_enabled} - Tempdoc 643: blend the cross-encoder's reorder
    *       with the pre-rerank order instead of replacing it outright (default: false)

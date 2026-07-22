@@ -517,6 +517,8 @@ public final class ResolvedConfigBuilder {
         "corrections.zero_hit_retry_enabled");
     putYamlFromNode("search.chunk_aware.enabled", searchRoot, "chunk_aware.enabled");
     putDefault("search.chunk_aware.enabled", "true");
+    putYamlFromNode("search.evidence_preview.enabled", searchRoot, "evidence_preview.enabled");
+    putDefault("search.evidence_preview.enabled", "false");
     // Facet fields list
     JsonNode fieldsNode = searchRoot.path("facets").path("fields");
     if (fieldsNode.isArray()) {
@@ -1151,7 +1153,14 @@ public final class ResolvedConfigBuilder {
         resolveInt("justsearch.rerank.deadline_ms", 200),
         resolveInt("justsearch.rerank.min_hits", 5),
         resolveInt("justsearch.rerank.max_seq_len", 512),
-        resolveInt("justsearch.rerank.max_avg_doc_length_chars", 16000),
+        // Tempdoc 774 §J.2/§K live probe (run 96da7851): default flipped 16000 → 0 (gate disabled).
+        // The DOCS_TOO_LONG gate's input is a Head-side session-average cache populated ONLY by
+        // GET /api/knowledge/status (which evals never poll), so every register baseline measured
+        // the CE-on pipeline while production sessions that poll it silently lost the CE on long-doc
+        // corpora. 0 = the measured configuration; operator can set >0 to restore. TOMBSTONE: the
+        // gate mechanism + WorkerStatusCache plumbing are retained for now; their teardown belongs
+        // to the later default-flip sweep (§I.4 / §J.6), not this change.
+        resolveInt("justsearch.rerank.max_avg_doc_length_chars", 0),
         // Tempdoc 643: judge-stage refinement floor — default off (D-004 template).
         resolveBoolean("justsearch.rerank.judge_blend_enabled", false),
         resolveDouble("justsearch.rerank.judge_blend_alpha", 0.5),
@@ -1243,6 +1252,7 @@ public final class ResolvedConfigBuilder {
         resolveDouble("justsearch.search.title_boost", 3.0),
         resolveDouble("justsearch.search.entity_boost", 0.0),
         resolveBoolean("search.chunk_aware.enabled", true),
+        resolveBoolean("search.evidence_preview.enabled", false),
         resolveBoolean("justsearch.lambdamart.enabled", false),
         buildSearchCorrections());
   }

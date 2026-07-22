@@ -55,7 +55,8 @@ final class SearchResponseBuilderEnrichmentCapTest {
             lifecycle.documentFieldOps(),
             lifecycle.textQueryOps(),
             lifecycle.facetingEngine(),
-            lifecycle::indexAnalyzerOrNull);
+            lifecycle::indexAnalyzerOrNull,
+            lifecycle::resolvedConfig);
   }
 
   @AfterEach

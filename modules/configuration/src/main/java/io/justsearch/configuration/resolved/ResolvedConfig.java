@@ -454,6 +454,10 @@ public record ResolvedConfig(
       double titleBoost,
       double entityBoost,
       boolean chunkAwareEnabled,
+      // Tempdoc 774 Stage 2 — when true, chunk-sourced hits emit the winning chunk's text as
+      // content_preview (evidence-coherent CE input + delivery); default false is byte-equivalent
+      // to today (chunk text is never emitted). §F.1-5/§I.2 Stage-2.
+      boolean evidencePreviewEnabled,
       boolean lambdamartEnabled,
       Corrections corrections) {
 
