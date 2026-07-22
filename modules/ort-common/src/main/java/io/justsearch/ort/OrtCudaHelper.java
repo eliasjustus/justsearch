@@ -354,10 +354,12 @@ public final class OrtCudaHelper {
    * point of {@code IndexerWorker.main} (after config load, before the Knowledge Server that creates
    * ORT sessions).
    *
-   * <p>On any non-{@code SET} outcome the property is left unset and one WARN is logged naming what
-   * was missing; ORT then serves the CPU path from the jar's retained core natives (CUDA fails with
-   * the legible {@code ORT_EP_FAIL "Failed to find CUDA shared provider"} shape). An externally
-   * pre-set property (user override) is respected and never clobbered.
+   * <p>On any non-{@code SET} outcome the property is left unset and ORT serves the CPU path from
+   * the jar's retained core natives (CUDA fails with the legible {@code ORT_EP_FAIL "Failed to find
+   * CUDA shared provider"} shape). {@code DIR_ABSENT} — the normal pack-not-installed / CPU-only
+   * path — logs one INFO; the genuinely-wrong states {@code INCOMPLETE} and {@code VERSION_MISMATCH}
+   * log one WARN naming what was missing. An externally pre-set property (user override) is
+   * respected and never clobbered.
    *
    * @param packDir the {@code cuda-runtime} pack's cuda12 dir (from
    *     {@code justsearch.onnxruntime.native_path}), or {@code null} if unconfigured
@@ -383,9 +385,9 @@ public final class OrtCudaHelper {
               ORT_NATIVE_PATH_PROPERTY,
               decision.detail());
       case DIR_ABSENT ->
-          log.warn(
+          log.info(
               "ORT CUDA native pack not installed (dir {}). ONNX inference will run on CPU; GPU"
-                  + " requires the consent-gated cuda-runtime pack. (Expected on CPU-only setups.)",
+                  + " requires the consent-gated cuda-runtime pack. (Normal on CPU-only setups.)",
               decision.detail());
       case INCOMPLETE ->
           log.warn(

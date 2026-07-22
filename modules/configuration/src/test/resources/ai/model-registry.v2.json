@@ -293,7 +293,7 @@
         },
         {
           "filename": "ort-native-cuda12-v1.24.3.zip",
-          "sha256": "16E0BA21C5BD6C08868C1B76FD304CDB8AE9F96C011705A7F9C1C7AEEC3FA650",
+          "sha256": "94DE9A29C8513A8CDE3AF4447966CB5A169BB85610A7BDA57C06D1649A2FC212",
           "sizeBytes": 167772095,
           "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/cuda-runtime-12.4/ort-native-cuda12-v1.24.3.zip",
           "extract": true
