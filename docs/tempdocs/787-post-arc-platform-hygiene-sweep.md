@@ -30,10 +30,24 @@ related:
    exception (fix root cause, don't keep the suppression).
 4. **Harness drift pair.** (a) Register catalog slugs vs jseval CLI dataset names diverge
    (`beir/scifact` in the catalog, `scifact` at the CLI — hit live 2026-07-22): make the
-   CLI accept catalog slugs or fix the catalog, one authority either way. (b) The eval
+   CLI accept catalog slugs or fix the catalog, one authority either way. (b) ~~The eval
    query path triggers the worker's `deprecated_mode_fallback` WARN on every request —
    jseval still sends the deprecated mode shape; migrate it to the pipeline-config shape
-   so evals exercise what production runs.
+   so evals exercise what production runs.~~ **REFUTED as charted (2026-07-22, worker
+   source-trace + orchestrator verification):** jseval's eval ranking path CANNOT trigger
+   the WARN — `KnowledgeSearchEngine.java:683` unconditionally sets the wire
+   `PipelineConfig` (":672 PipelineConfig is the sole pipeline control on wire"), so
+   `SearchPlanner.plan` never reaches the `deprecated_mode_fallback` branch for
+   `/api/knowledge/search` callers; and a client-side static pipeline for `mode=hybrid`
+   would have DROPPED cross-encoder + freshness from the headline baseline
+   (`SearchPipelinePresets.expandPreset` resolves `ce=rerankConfig.enabled()` at runtime;
+   jseval deliberately treats `hybrid` as server-resolved — `retriever.py SERVER_MODES`,
+   `preflight._CE_BEARING_SERVER_MODES`). The WARN observed live (2026-07-22, worker log,
+   `search_mode=SEARCH_MODE_TEXT`) comes from a bare-request caller OUTSIDE the eval
+   ranking path (candidate per F-037 note: `RemoteDocumentService`'s hand-built requests).
+   **Re-scoped residue:** identify the actual bare-request caller and migrate IT —
+   tracked as this item's remaining half; no jseval change, no 781-sequencing
+   constraint (the eval harness already exercises the current wire shape).
 5. **subagent-guide parks-to-wait line.** Five same-arc incidents of workers parking to
    "wait for events" (a stopped agent receives no events). Add the standing line to the
    SubagentStart baseline brief: synchronous end-to-end execution, bounded in-turn

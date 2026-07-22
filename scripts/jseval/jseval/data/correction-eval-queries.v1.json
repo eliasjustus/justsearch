@@ -1,0 +1,58 @@
+{
+  "_meta": {
+    "schema": "correction-eval-queries.v1",
+    "consumer": "jseval.correction_probe.load_manifest",
+    "purpose": "Seeded spell-correction probe manifest: generic everyday queries with deterministically-derived misspellings, so the correction feature has a working eval (tempdoc 787 item 3).",
+    "leak_avoidance": "Clean queries are generic consumer/everyday phrases (cooking, travel, weather, consumer electronics). None are drawn from any committed eval corpus (beir/scifact=academic, mixed/enron-qa=email, mixed/legal-clerc-200=case-law, mixed/miracl-*=wikipedia factoid, mixed/cord19-qddf=biomedical). expected_correction carries only the corrected query spelling — never a doc id, qrel key, or gold answer — so this manifest cannot leak any corpus's answer key.",
+    "derivation": {
+      "correct_spelling": "control: the clean query verbatim; expected_correction=null (no correction expected).",
+      "typo": "single-character deletion or substitution in exactly one word of the clean query.",
+      "transposition": "swap of two adjacent characters in exactly one word of the clean query.",
+      "missing_space": "the space between two adjacent words removed (word-boundary error).",
+      "note": "expected_correction is always the full clean query the misspelling was derived from (matching classify()'s full-query comparison)."
+    }
+  },
+  "queries": [
+    {"query": "how to boil an egg", "expected_correction": null, "type": "correct_spelling"},
+    {"query": "best coffee beans", "expected_correction": null, "type": "correct_spelling"},
+    {"query": "weather forecast tomorrow", "expected_correction": null, "type": "correct_spelling"},
+    {"query": "chocolate chip cookie recipe", "expected_correction": null, "type": "correct_spelling"},
+    {"query": "nearest gas station", "expected_correction": null, "type": "correct_spelling"},
+    {"query": "wireless headphones review", "expected_correction": null, "type": "correct_spelling"},
+    {"query": "laptop battery life", "expected_correction": null, "type": "correct_spelling"},
+    {"query": "italian restaurant near me", "expected_correction": null, "type": "correct_spelling"},
+    {"query": "budget travel tips", "expected_correction": null, "type": "correct_spelling"},
+    {"query": "running shoes for beginners", "expected_correction": null, "type": "correct_spelling"},
+    {"query": "electric car charging", "expected_correction": null, "type": "correct_spelling"},
+    {"query": "healthy breakfast ideas", "expected_correction": null, "type": "correct_spelling"},
+
+    {"query": "how to bol an egg", "expected_correction": "how to boil an egg", "type": "typo"},
+    {"query": "chocolate chp cookie recipe", "expected_correction": "chocolate chip cookie recipe", "type": "typo"},
+    {"query": "wireles headphones review", "expected_correction": "wireless headphones review", "type": "typo"},
+    {"query": "laptop batery life", "expected_correction": "laptop battery life", "type": "typo"},
+    {"query": "healthy breakfst ideas", "expected_correction": "healthy breakfast ideas", "type": "typo"},
+    {"query": "how to grow tomatos", "expected_correction": "how to grow tomatoes", "type": "typo"},
+    {"query": "morning yoga routne", "expected_correction": "morning yoga routine", "type": "typo"},
+    {"query": "electic car charging", "expected_correction": "electric car charging", "type": "typo"},
+    {"query": "how to save mony", "expected_correction": "how to save money", "type": "typo"},
+    {"query": "homemade pizza dogh", "expected_correction": "homemade pizza dough", "type": "typo"},
+
+    {"query": "chaep flights to paris", "expected_correction": "cheap flights to paris", "type": "transposition"},
+    {"query": "budget travle tips", "expected_correction": "budget travel tips", "type": "transposition"},
+    {"query": "italain restaurant near me", "expected_correction": "italian restaurant near me", "type": "transposition"},
+    {"query": "running shoes for begniners", "expected_correction": "running shoes for beginners", "type": "transposition"},
+    {"query": "how to tie a tei", "expected_correction": "how to tie a tie", "type": "transposition"},
+    {"query": "nearest gas statoin", "expected_correction": "nearest gas station", "type": "transposition"},
+    {"query": "change a lfat tire", "expected_correction": "change a flat tire", "type": "transposition"},
+    {"query": "best coffee baens", "expected_correction": "best coffee beans", "type": "transposition"},
+
+    {"query": "howto boil an egg", "expected_correction": "how to boil an egg", "type": "missing_space"},
+    {"query": "chocolatechip cookie recipe", "expected_correction": "chocolate chip cookie recipe", "type": "missing_space"},
+    {"query": "weatherforecast tomorrow", "expected_correction": "weather forecast tomorrow", "type": "missing_space"},
+    {"query": "wirelessheadphones review", "expected_correction": "wireless headphones review", "type": "missing_space"},
+    {"query": "laptopbattery life", "expected_correction": "laptop battery life", "type": "missing_space"},
+    {"query": "healthybreakfast ideas", "expected_correction": "healthy breakfast ideas", "type": "missing_space"},
+    {"query": "budgettravel tips", "expected_correction": "budget travel tips", "type": "missing_space"},
+    {"query": "electriccar charging", "expected_correction": "electric car charging", "type": "missing_space"}
+  ]
+}

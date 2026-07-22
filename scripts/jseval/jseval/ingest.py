@@ -203,6 +203,12 @@ def prepare_corpus(
     Returns an ingest summary dict with timing/throughput info.
     """
     from ._paths import default_corpus_dir
+    from .corpora import normalize_dataset_name
+
+    # Accept the register's catalog-qualified BEIR slug (`beir/scifact`) as well as the bare
+    # registry key (`scifact`), matching corpora.load (tempdoc 787 item 4a). Normalize before any
+    # corpus-dir resolution so cache/materialization paths key on the same canonical name.
+    dataset_name = normalize_dataset_name(dataset_name) if dataset_name else dataset_name
 
     raw_dir = _raw_corpus_dir(dataset_name)
     if raw_dir is not None and corpus_dir is None:
@@ -303,7 +309,12 @@ def _materialize_into(dataset_name: str, resolved_dir: Path) -> None:
         )
         mat_mod.materialize(docs, resolved_dir, skip_existing=True)
     else:
-        raise ValueError(f"Cannot materialize unknown dataset: {dataset_name!r}")
+        valid = ", ".join(sorted(BEIR_DATASETS))
+        raise ValueError(
+            f"Cannot materialize unknown dataset: {dataset_name!r}. "
+            f"Expected a BEIR name ({valid}), its catalog slug (e.g. 'beir/scifact'), "
+            f"or a name starting with 'golden/' or 'mixed/'."
+        )
 
 
 _MATERIALIZED_EXTS = ("*.txt", "*.png")  # kept in sync with materialize.py's two output kinds

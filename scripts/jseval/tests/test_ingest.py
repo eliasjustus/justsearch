@@ -14,6 +14,7 @@ from jseval.ingest import (
     _ensure_materialized,
     _get_indexed_doc_count,
     _iter_corpus_jsonl,
+    _materialize_into,
     _raw_corpus_dir,
     _root_already_watched,
     _source_signature,
@@ -497,6 +498,21 @@ def test_ensure_materialized_renders_scan_docs_as_png(tmp_path, monkeypatch):
 
     sentinel = cache / doc_id_to_filename("__jseval_sentinel__")
     assert sentinel.is_file()  # sentinel is unaffected — always plain .txt
+
+
+def test_materialize_into_unknown_dataset_lists_valid_names(tmp_path):
+    """Tempdoc 787 item 4a: the unknown-dataset error names the valid forms (bare BEIR name,
+    `beir/` catalog slug, and the `golden/`/`mixed/` prefixes) instead of a bare repr."""
+    from jseval.corpora import BEIR_DATASETS
+
+    with pytest.raises(ValueError) as exc:
+        _materialize_into("totally-bogus", tmp_path)
+    msg = str(exc.value)
+    assert "totally-bogus" in msg
+    assert "beir/scifact" in msg  # catalog slug form is mentioned
+    assert "golden/" in msg and "mixed/" in msg
+    for name in BEIR_DATASETS:
+        assert name in msg
 
 
 def test_ensure_materialized_plain_axis_unaffected(tmp_path, monkeypatch):
