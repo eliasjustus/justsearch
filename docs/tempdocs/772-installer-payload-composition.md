@@ -1399,6 +1399,44 @@ Declined-with-reasons (per §I): O1-O3, AOT removal, deeper JRE trim, vc_redist 
 Tesseract ICU trimming. Jar dedup: deferred until the lzma measurement shows whether a material
 download cost remains.
 
+**§J outcomes (2026-07-22, same day):**
+
+1. **lzma revert — MEASURED: 452.4 MB → 426.9 MB artifact (−25.6 MB, −5.6%), CI run `29898978439`
+   green.** Modest as predicted (jar content dominated that build); relative value rises after
+   item 2 removes ~164 MB of already-deflated jar bytes.
+2. **CUDA EP relocation — IMPLEMENTED, commits `732387cd` + `bd7b82ce` (opus worker; orchestrator
+   critical-analysis pass in between).** Trimmed jar 172 MB → **5.5 MB**; complete ORT native set
+   (core + JNI + shared + CUDA EP + version marker) delivered as a new `cuda-runtime`
+   supportingFile; `OrtCudaHelper.evaluateOrtNativePack`/`applyOrtNativePackProperty` does
+   file-existence + version-marker detection and sets `onnxruntime.native.path` at the earliest
+   pre-ORT point in `IndexerWorker.main` (call-chain cited in-code); pre-set property respected;
+   INCOMPLETE/VERSION_MISMATCH → WARN, DIR_ABSENT (normal CPU-only) → INFO. Unit tests cover all
+   decision outcomes; full build + ort-common/configuration/indexer-worker suites green.
+   - **Critical-analysis correction applied:** the pack archive was first built from the local
+     reference dir; rebuilt from the **Maven jar's own win-x64 natives** for provenance. The
+     rebuild also *dissolved* the worker's "275 vs 164 MB build variance" flag — all four DLLs
+     are **sha256-identical** between reference dir and jar (the delta was compressed-in-jar vs
+     uncompressed); no EP-build change was ever in play, and now provenance is traceable to the
+     Maven Central artifact either way.
+   - **Probe re-run against the exact ship bytes** (trimmed jar + archive contents + CUDA deps,
+     RTX 4070): `addCUDA` SUCCESS + real `createSession(CUDA)` SUCCESS.
+   - **Archive (owner uploads to the `cuda-runtime-12.4` release tag BEFORE merge — hard
+     precondition, else GPU users silently lose ORT CUDA):** `tmp/ort-native-cuda12-v1.24.3.zip`,
+     sha256 `94DE9A29C8513A8CDE3AF4447966CB5A169BB85610A7BDA57C06D1649A2FC212`, 167,772,095 B.
+   - **Named migration gap (real, needs an owner-visible answer before release):** existing GPU
+     users already have the pre-772 `cuda-runtime` pack (no ORT DLLs in cuda12). On updating to a
+     trimmed-jar build they hit INCOMPLETE → ORT CUDA unavailable → embeddings/enrichment fall
+     back to CPU (functional, slower; llama-server's own CUDA variant is unaffected) until they
+     re-run Install AI, which fetches the missing archive. The `blockingIncomplete` preflight
+     field (commit `5f4d4dec`) is exactly the signal for this state, but **whether the UI
+     surfaces it prominently is unverified** (Q3(d)'s parked ui-web half). Mitigations to choose
+     from: verify/improve the preflight banner, release-note instruction, or an explicit
+     re-install prompt. Logged here, not silently shipped.
+   - **Residual verification, honestly named:** the wiring is probe-verified at the JVM level and
+     unit-tested, but a full dev-stack run against a pack-complete cuda12 dir (SET path) and a
+     pack-stale dir (INCOMPLETE path) has not been done; final combined installer size measured
+     by the CI run triggered after these commits.
+
 ### Where this leaves the intention
 
 The needs audit is now **complete**: every byte of the shipped installer is inventoried, classified
