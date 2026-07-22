@@ -294,3 +294,16 @@ Residual risk is vendor-CLI-specific quirks (`command` mode with the actual eSig
 retire via the vendor's sandbox before purchase). Rehearsal secrets/variable are removed after the
 artifact-signature census; re-rehearsing later just means re-running `test-sign-windows.ps1`-style
 setup (self-signed certs are generated on demand).
+
+**Artifact-signature census of the green run (run `29914075529`, artifact downloaded and every PE
+checked): PERFECT.** 177 embedded PEs → **99 rehearsal-signed, all 99 with DigiCert timestamp
+countersignatures** (74 tesseract + 19 llama-server + 6 own/NSIS — reconciles exactly with
+tempdoc 772's 93-third-party estimate); **78 vendor-signed originals untouched** (48 Microsoft +
+26 Eclipse Temurin + 4 vc_redist, all still `Valid` with their own timestamps — empirical proof
+of the `should_sign` skip, upgrading it from source-verified to behavior-verified); **zero
+NotSigned, zero anomalous**. Outer setup exe: rehearsal-signed + timestamped. Size: 259.9 MB —
+signing 100 PEs added negligible bytes to the 259.8 MB unsigned baseline. Per-release signing
+count confirmed empirically: 99 + outer ≈ 100 today → ~7-8 once the vendored mirrors (93) are
+adopted. **Rehearsal secrets and the ALLOW_UNTRUSTED variable have been deleted from the repo**
+(verified empty) — dispatches are back to unsigned builds; production onboarding = set real
+`JUSTSEARCH_CODESIGN_*` secrets in the chosen mode, nothing else.
