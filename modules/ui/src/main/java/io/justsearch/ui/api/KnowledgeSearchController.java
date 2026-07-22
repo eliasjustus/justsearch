@@ -64,6 +64,11 @@ public class KnowledgeSearchController {
   private volatile NdjsonAppendStore<FeatureSnapshot> featureSnapshots;
   // Tempdoc 580 §17 P3 — lazily-built disposition store (the search-interaction contributor sink).
   private volatile NdjsonAppendStore<ResultDisposition> dispositions;
+  // Tempdoc 778 — the AUTHORED feedback-store cipher, injected post-construction (default passthrough).
+  private volatile io.justsearch.agent.api.encryption.StoreCipher feedbackCipher =
+      io.justsearch.agent.api.encryption.StoreCipher.disabled();
+  // Tempdoc 778 — the default-on local capture flag; when absent (test path) capture stays on.
+  private volatile io.justsearch.app.services.feedback.FeedbackCaptureSettings feedbackCaptureSettings;
 
   // L160: cache the last successful KnowledgeStatusView so the sparse fallback
   // during migration/Worker-restart serves useful data instead of {state, ready}.
@@ -78,6 +83,29 @@ public class KnowledgeSearchController {
 
   public void setWorkerCapability(io.justsearch.app.services.lifecycle.WorkerCapability cap) {
     this.workerCapability = cap;
+  }
+
+  /**
+   * Tempdoc 778 — inject the AUTHORED feedback-store cipher (a projection of {@code
+   * StoreCatalog.FEEDBACK}) so the disposition + feature-snapshot streams seal at rest with the same
+   * key the agent contributor + label rebuild use. Called post-construction where {@code HeadAssembly}
+   * is available; before it (or on the test path) the default disabled cipher is passthrough.
+   */
+  public void setFeedbackCipher(io.justsearch.agent.api.encryption.StoreCipher cipher) {
+    if (cipher != null) {
+      this.feedbackCipher = cipher;
+    }
+  }
+
+  /** Tempdoc 778 — inject the default-on local capture flag governing disposition writes. */
+  public void setFeedbackCaptureSettings(
+      io.justsearch.app.services.feedback.FeedbackCaptureSettings settings) {
+    this.feedbackCaptureSettings = settings;
+  }
+
+  private boolean captureEnabled() {
+    var s = feedbackCaptureSettings;
+    return s == null || s.isEnabled();
   }
 
   private boolean isWorkerReady() {
@@ -108,7 +136,8 @@ public class KnowledgeSearchController {
                     PlatformPaths.resolveDataDir()
                         .resolve("feedback")
                         .resolve("feature-snapshots.ndjson"),
-                    FeatureSnapshot.class);
+                    FeatureSnapshot.class,
+                    feedbackCipher);
             featureSnapshots = store;
           }
         }
@@ -127,6 +156,11 @@ public class KnowledgeSearchController {
    * the disposition lands in the ONE canonical stream and joins its {@link FeatureSnapshot} by
    * {@code interactionId} (the §17.4 join, working on the HTTP path). Best-effort: feedback never
    * fails the FE (always 204).
+   *
+   * <p>Tempdoc 778 — an optional {@code contributor} field distinguishes the surface: absent/{@code
+   * "search"} is the default {@code SEARCH_INTERACTION} (unchanged); {@code "chat-citation"} records a
+   * {@code USER_CITATION_CLICK} — a USER clicking a citation in a chat answer, distinct from the
+   * LLM's own {@code AGENT_CITATION} harvest. Both land in the same canonical stream.
    */
   public void handleDisposition(io.javalin.http.Context ctx) {
     try {
@@ -139,6 +173,12 @@ public class KnowledgeSearchController {
         ctx.status(400).json(Map.of("error", "interactionId, docId, kind required"));
         return;
       }
+      // Tempdoc 778 — respect the default-on local capture flag: off ⇒ accept (204) but persist
+      // nothing. Loopback-only either way; the flag lets the user stop even local capture.
+      if (!captureEnabled()) {
+        ctx.status(204);
+        return;
+      }
       ResultDisposition.Kind kind;
       try {
         kind = ResultDisposition.Kind.valueOf(kindStr.trim().toUpperCase(java.util.Locale.ROOT));
@@ -146,16 +186,29 @@ public class KnowledgeSearchController {
         ctx.status(400).json(Map.of("error", "unknown disposition kind: " + kindStr));
         return;
       }
+      String contributorStr = body.get("contributor") instanceof String s ? s : null;
+      ResultDisposition.Contributor contributor = contributorFor(contributorStr);
       dispositionStore()
           .append(
               new ResultDisposition(
-                  interactionId, docId, kind, ResultDisposition.Contributor.SEARCH_INTERACTION,
+                  interactionId, docId, kind, contributor,
                   java.time.Instant.now().toEpochMilli()));
       ctx.status(204);
     } catch (Exception e) {
       log.debug("disposition capture failed (non-fatal): {}", e.toString());
       ctx.status(204); // never fail the FE on feedback
     }
+  }
+
+  /**
+   * Tempdoc 778 — map the optional wire {@code contributor} to the enum. {@code "chat-citation"} →
+   * {@code USER_CITATION_CLICK}; anything else (incl. absent / {@code "search"}) → the default
+   * {@code SEARCH_INTERACTION}, preserving the pre-778 search-only behaviour.
+   */
+  private static ResultDisposition.Contributor contributorFor(String contributor) {
+    return "chat-citation".equals(contributor)
+        ? ResultDisposition.Contributor.USER_CITATION_CLICK
+        : ResultDisposition.Contributor.SEARCH_INTERACTION;
   }
 
   private NdjsonAppendStore<ResultDisposition> dispositionStore() {
@@ -169,7 +222,8 @@ public class KnowledgeSearchController {
                   PlatformPaths.resolveDataDir()
                       .resolve("feedback")
                       .resolve("result-dispositions.ndjson"),
-                  ResultDisposition.class);
+                  ResultDisposition.class,
+                  feedbackCipher);
           dispositions = s;
         }
       }

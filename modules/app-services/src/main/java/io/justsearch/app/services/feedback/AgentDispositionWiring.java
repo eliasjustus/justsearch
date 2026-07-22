@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.feedback;
 
+import io.justsearch.agent.api.encryption.StoreCipher;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -38,22 +39,32 @@ public final class AgentDispositionWiring {
    *
    * @param addEventListener the store's {@code addEventListener} (e.g. {@code agentRunStore::addEventListener})
    * @param dataDir the resolved data directory
+   * @param cipher the AUTHORED feedback-store cipher (tempdoc 778) — seals each ndjson line; must be
+   *     the SAME key the other writers/readers use, or the LabelProjection join breaks
    */
   public static void register(
-      Consumer<BiConsumer<String, Map<String, Object>>> addEventListener, Path dataDir) {
+      Consumer<BiConsumer<String, Map<String, Object>>> addEventListener,
+      Path dataDir,
+      StoreCipher cipher,
+      FeedbackCaptureSettings captureSettings) {
     Path feedback = dataDir.resolve("feedback");
     NdjsonAppendStore<ResultDisposition> dispositions =
         new NdjsonAppendStore<>(
-            feedback.resolve("result-dispositions.ndjson"), ResultDisposition.class);
+            feedback.resolve("result-dispositions.ndjson"), ResultDisposition.class, cipher);
     NdjsonAppendStore<FeatureSnapshot> snapshots =
-        new NdjsonAppendStore<>(feedback.resolve("feature-snapshots.ndjson"), FeatureSnapshot.class);
+        new NdjsonAppendStore<>(
+            feedback.resolve("feature-snapshots.ndjson"), FeatureSnapshot.class, cipher);
     addEventListener.accept(
         (eventType, payload) -> {
           long now = Instant.now().toEpochMilli();
           String sessionId = str(payload.get("sessionId"));
           if ("tool_exec_completed".equals(eventType)) {
+            // Feature snapshots are engine score-vectors (not user behaviour), and the join needs them
+            // even when a disposition is later re-enabled — so they are NOT gated by the capture flag.
             captureAgentSnapshot(snapshots, sessionId, payload, now);
-          } else if ("done".equals(eventType)) {
+          } else if ("done".equals(eventType) && captureSettings.isEnabled()) {
+            // Tempdoc 778 — the disposition (the behavioural signal) is gated by the default-on local
+            // capture flag; off ⇒ the answer's citations are not recorded as dispositions.
             // The run's sessionId is the join key. Fall back to a fresh id only if it is absent — then
             // the disposition is still recorded but won't join (the honest pre-fix behavior).
             String iid =

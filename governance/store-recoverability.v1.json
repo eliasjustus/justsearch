@@ -9,6 +9,7 @@
     { "dirName": "conversations", "recoverability": "AUTHORED" },
     { "dirName": "memories", "recoverability": "AUTHORED" },
     { "dirName": "agent-runs", "recoverability": "AUTHORED" },
+    { "dirName": "feedback", "recoverability": "AUTHORED" },
     { "dirName": "index", "recoverability": "DERIVED" },
     { "dirName": "jobs.db", "recoverability": "DERIVED" }
   ],
