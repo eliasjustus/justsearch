@@ -499,6 +499,13 @@ public final class SearchExecutor {
       boolean chunkRetry,
       long branchFusionNs) {}
 
+  /** Tempdoc 774 Stage 1 — base-results gate lever; default true when config is absent. */
+  private boolean chunkBranchRequiresBaseResults() {
+    ResolvedConfig rc = resolvedConfigSupplier.get();
+    ResolvedConfig.HybridSearch hs = rc != null ? rc.hybridSearch() : null;
+    return hs == null || hs.chunkBranchRequiresBaseResults();
+  }
+
   private ChunkRunOutcome maybeApplyChunkMerge(
       ChunkMergeDirective directive,
       LuceneRuntimeTypes.SearchResult baseResult,
@@ -510,7 +517,10 @@ public final class SearchExecutor {
     }
     var apply = (ChunkMergeDirective.EligibleApply) directive;
     boolean hasBaseResults = baseResult.hits() != null && !baseResult.hits().isEmpty();
-    if (!hasBaseResults) {
+    // Tempdoc 774 Stage 1 — base-results gate lever. Default true reproduces today's behavior
+    // (chunk merge is a recall gate on the doc legs). When false, the chunk branch runs even when
+    // the doc legs return empty ("fusion is a ranking step, not a recall gate", at the branch level).
+    if (!hasBaseResults && chunkBranchRequiresBaseResults()) {
       return new ChunkRunOutcome(
           baseResult,
           false,
@@ -592,7 +602,11 @@ public final class SearchExecutor {
       boolean anyLegSaturated,
       long bm25Ns,
       long knnNs,
-      long spladeNs) {}
+      long spladeNs,
+      // Tempdoc 774 Stage 1 — chunk-side recall-complete protected set, computed from the RAW
+      // per-leg chunk results BEFORE the collapse cap (so a leg-top-N parent the collapse would drop
+      // is still rescuable). Empty unless chunk_leg_recall_complete is enabled.
+      List<LuceneRuntimeTypes.SearchHit> legTopNParents) {}
 
   private ChunkMergeResult mergeChunkResults(
       LuceneRuntimeTypes.SearchResult wholeDocResult,
@@ -619,12 +633,26 @@ public final class SearchExecutor {
     ResolvedConfig resolvedConfig = resolvedConfigSupplier.get();
     ResolvedConfig.HybridSearch hybridConfig =
         resolvedConfig != null ? resolvedConfig.hybridSearch() : null;
+    // Tempdoc 774 Stage 1 — the chunk branch reads its OWN CC leg weights + zero-exclude, decoupled
+    // from the doc-level cc_weight_* keys (§F.1-2 silent coupling). Defaults equal the resolved
+    // doc-level values byte-for-byte (ResolvedConfigBuilder fallback), so this is a no-op until set.
     double[] weights = {
-      chunkBm25 ? hybridWeight(hybridConfig != null ? hybridConfig.ccWeightSparse() : 0.35) : 0.0,
-      chunkKnn ? hybridWeight(hybridConfig != null ? hybridConfig.ccWeightDense() : 0.35) : 0.0,
-      chunkSplade ? hybridWeight(hybridConfig != null ? hybridConfig.ccWeightSplade() : 0.30) : 0.0
+      chunkBm25 ? hybridWeight(hybridConfig != null ? hybridConfig.chunkCcWeightSparse() : 0.35) : 0.0,
+      chunkKnn ? hybridWeight(hybridConfig != null ? hybridConfig.chunkCcWeightDense() : 0.35) : 0.0,
+      chunkSplade ? hybridWeight(hybridConfig != null ? hybridConfig.chunkCcWeightSplade() : 0.30) : 0.0
     };
-    boolean zeroExclude = hybridConfig != null && hybridConfig.ccZeroExclude();
+    boolean zeroExclude = hybridConfig != null && hybridConfig.chunkCcZeroExclude();
+
+    // Tempdoc 774 Stage 1 — collapse-cap lever (default 2 reproduces the old hardcoded 2×limit).
+    int collapseLimit =
+        Math.max(limit, limit * (hybridConfig != null ? hybridConfig.chunkCollapseLimitMultiplier() : 2));
+
+    // Tempdoc 774 Stage 1 — chunk-side recall-complete per-leg top-N to protect (0 = disabled, so no
+    // per-leg protected-set work is done in executeChunkBranchFusion when the lever is off).
+    int chunkRecallTopN =
+        hybridConfig != null && hybridConfig.chunkLegRecallCompleteEnabled()
+            ? hybridConfig.chunkLegRecallCompleteTopN()
+            : 0;
 
     int candidateBudget = Math.max(limit, limit * CHUNK_INITIAL_CANDIDATE_MULTIPLIER);
     boolean retryTriggered = false;
@@ -638,10 +666,11 @@ public final class SearchExecutor {
             chunkKnn,
             chunkSplade,
             candidateBudget,
-            Math.max(limit * 2, limit),
+            collapseLimit,
             weights,
             debug,
-            zeroExclude);
+            zeroExclude,
+            chunkRecallTopN);
     if (chunkBranchResult.parentResult().hits() == null
         || chunkBranchResult.parentResult().hits().isEmpty()) {
       return new ChunkMergeResult(
@@ -672,17 +701,19 @@ public final class SearchExecutor {
               chunkKnn,
               chunkSplade,
               retryBudget,
-              Math.max(limit * 2, limit),
+              collapseLimit,
               weights,
               debug,
-              zeroExclude);
+              zeroExclude,
+              chunkRecallTopN);
       chunkBranchResult =
           new ChunkBranchResult(
               chunkBranchResult.parentResult(),
               chunkBranchResult.anyLegSaturated(),
               initialBm25Ns + chunkBranchResult.bm25Ns(),
               initialKnnNs + chunkBranchResult.knnNs(),
-              initialSpladeNs + chunkBranchResult.spladeNs());
+              initialSpladeNs + chunkBranchResult.spladeNs(),
+              chunkBranchResult.legTopNParents());
       if (chunkBranchResult.parentResult().hits() == null
           || chunkBranchResult.parentResult().hits().isEmpty()) {
         return new ChunkMergeResult(
@@ -787,6 +818,22 @@ public final class SearchExecutor {
       }
     }
 
+    // Tempdoc 774 Stage 1 — chunk-side recall-complete (default off): the passage-granularity twin
+    // of the doc-side guarantee above. The protected set is the RAW per-leg top-N parents captured
+    // in executeChunkBranchFusion BEFORE the collapse cap — so a parent a chunk leg ranked top-N but
+    // whose fused rank fell outside the collapse cap is still rescued (the collapse is itself a
+    // "stage that may not drop a passage-leg top-N candidate", §I.2). Spliced before attachBranchFusion
+    // so provenance is re-mapped — same ordering as the doc-side block.
+    if (hybridConfig != null && hybridConfig.chunkLegRecallCompleteEnabled()) {
+      List<LuceneRuntimeTypes.SearchHit> spliced =
+          HybridFusionUtils.spliceRecallComplete(
+              merged.hits(), chunkBranchResult.legTopNParents(), limit);
+      if (spliced != merged.hits()) {
+        merged =
+            new LuceneRuntimeTypes.SearchResult(spliced, merged.totalHits(), merged.tookMs());
+      }
+    }
+
     // Tempdoc 549 Slice 3c (U2): branch fusion makes fresh hits (fuser drops typed provenance),
     // so re-map by docId — whole-doc branch carries retriever/fusion legs, chunk branch the
     // chunk-merge leg, branch scores + fused score the branch-fusion leg.
@@ -817,7 +864,8 @@ public final class SearchExecutor {
       int collapseLimit,
       double[] weights,
       boolean debug,
-      boolean zeroExclude) {
+      boolean zeroExclude,
+      int recallCompleteTopN) {
     LuceneRuntimeTypes.SearchResult bm25Result = emptySearchResult();
     LuceneRuntimeTypes.SearchResult denseResult = emptySearchResult();
     LuceneRuntimeTypes.SearchResult spladeResult = emptySearchResult();
@@ -873,10 +921,55 @@ public final class SearchExecutor {
     fusedChunkResult =
         HitProvenanceProjector.attachChunkMerge(
             fusedChunkResult, bm25Result, denseResult, spladeResult);
+    // Tempdoc 774 Stage 1 — capture the recall-complete protected set from the RAW per-leg results
+    // BEFORE collapse: a parent a leg ranked top-N but whose fused rank falls beyond the collapse cap
+    // would otherwise be unrescuable (it never reaches parentNormalizedChunkResult).
+    List<LuceneRuntimeTypes.SearchHit> legTopNParents =
+        collectRawLegTopNParents(bm25Result, denseResult, spladeResult, recallCompleteTopN);
     LuceneRuntimeTypes.SearchResult parentNormalizedChunkResult =
         collapseChunkHitsToParents(fusedChunkResult, collapseLimit);
     return new ChunkBranchResult(
-        parentNormalizedChunkResult, anyLegSaturated, bm25Ns, knnNs, spladeNs);
+        parentNormalizedChunkResult, anyLegSaturated, bm25Ns, knnNs, spladeNs, legTopNParents);
+  }
+
+  /**
+   * Tempdoc 774 Stage 1 — the chunk-side recall-complete protected set: each raw chunk leg's top-N
+   * chunks (native leg order), mapped to their parent and normalized to parent form, deduped by
+   * parent (first-seen across legs in bm25→dense→splade order). Computed on the pre-collapse leg
+   * results so a parent a leg ranked top-N is protected even when the collapse cap drops it.
+   */
+  static List<LuceneRuntimeTypes.SearchHit> collectRawLegTopNParents(
+      LuceneRuntimeTypes.SearchResult bm25Result,
+      LuceneRuntimeTypes.SearchResult denseResult,
+      LuceneRuntimeTypes.SearchResult spladeResult,
+      int topN) {
+    if (topN <= 0) {
+      return List.of();
+    }
+    Map<String, LuceneRuntimeTypes.SearchHit> byParent = new LinkedHashMap<>();
+    addLegTopNParents(byParent, bm25Result, topN);
+    addLegTopNParents(byParent, denseResult, topN);
+    addLegTopNParents(byParent, spladeResult, topN);
+    return new ArrayList<>(byParent.values());
+  }
+
+  private static void addLegTopNParents(
+      Map<String, LuceneRuntimeTypes.SearchHit> byParent,
+      LuceneRuntimeTypes.SearchResult leg,
+      int topN) {
+    if (leg == null || leg.hits() == null) {
+      return;
+    }
+    List<LuceneRuntimeTypes.SearchHit> hits = leg.hits();
+    int n = Math.min(topN, hits.size());
+    for (int i = 0; i < n; i++) {
+      LuceneRuntimeTypes.SearchHit hit = hits.get(i);
+      String parentId = hit.fields().get(SchemaFields.PARENT_DOC_ID);
+      if (parentId == null || parentId.isEmpty()) {
+        parentId = hit.docId();
+      }
+      byParent.putIfAbsent(parentId, normalizeChunkHitToParent(hit, parentId));
+    }
   }
 
   private static boolean isCandidateBudgetSaturated(

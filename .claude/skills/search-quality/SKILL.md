@@ -210,6 +210,9 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 | splade-ml+gte | gte-ml-reranker | bm25-dom | lexical | 0.799 | 0.697 | 0.887 | bm25+chunk_merge+CE | A | 5d19ff2c1 | 343 D |
 | splade-ml+gte | gte-ml-reranker | bm25-dom | bm25_splade | 0.787 | 0.680 | 0.880 | bm25+splade+chunk_merge+CE | A | 5d19ff2c1 | 343 D |
 | splade-ml+gte | gte-ml-reranker | bm25-dom | full | 0.777 | 0.667 | 0.863 | bm25+splade+dense+chunk_merge+CE | A | 5d19ff2c1 | 343 D |
+| (HEAD default re-verify, 774 same-session OFF arm) | (default) | (default) | hybrid | 0.7445 | 0.600 | 0.867 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
+| (774 Stage-1 chunk-lever A/B set, flags non-default) | (default) | (default) | hybrid | 0.7476 | 0.597 | 0.877 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
+| (**`search.evidence_preview.enabled=true`**, default-off flag) | (default) | (default) | hybrid | **0.7882** | 0.643 | 0.913 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 / F-041 |
 
 **Best known:** bge-m3 / minilm-512 / balanced / bm25_splade = **0.830**
 **Note:** CE hurts EnronQA by 3-5% across all modes (CE-on vs CE-off isolation). Model swaps are quality-neutral on English email (CE-off post-swap matches pre-swap exactly). Confirms FW-001: corpus-adaptive CE gating needed.
@@ -255,6 +258,9 @@ catalog — see Corpus provenance note above)*
 | (HEAD default re-verify, FRESH build) | (default) | (default) | hybrid | 0.5588 | 0.425 | 0.700 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid | A | bc4bcd8 | 713 §M-5 |
 | (single-pass OFF: `late_chunking_enabled=false`, chunks ON — the F-031-less cell) | (default) | (default) | vector | **0.4147** | 0.150 | 0.725 | branch_fusion+chunk_merge+dense | B | 7b7c485 | 713 |
 | (single-pass OFF, chunks ON) | (default) | (default) | hybrid | 0.5339 | 0.375 | 0.690 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid | B | 7b7c485 | 713 |
+| (HEAD default re-verify, 774 same-session OFF arm) | (default) | (default) | hybrid | 0.5557 | 0.425 | 0.690 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
+| (774 Stage-1 chunk-lever A/B set, flags non-default) | (default) | (default) | hybrid | 0.5448 | 0.420 | 0.685 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
+| (**`search.evidence_preview.enabled=true`**, default-off flag) | (default) | (default) | hybrid | **0.6388** | 0.465 | 0.810 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 / F-041 |
 
 **Best known:** (HEAD default, RMW preservation) / hybrid = **0.5609**; vector = **0.6184** (711,
 2026-07-11 — supersedes 691 §N's 0.5497/0.3401: those were measured against an index whose 4,293
@@ -812,6 +818,73 @@ above)*
 - **Evidence:** tempdoc 708 (final table, protocol application, sign tests, run pointers); F-030(678)
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
+
+### F-041: the Head cross-encoder was judging doc-head previews, not evidence — feeding it the winning passage lifts legal hybrid +15% and FLIPS the CE from harmful to helpful on email; shipped default-off (tempdoc 774 Stages 1-2, 2026-07-22; answers Q-001's mechanism)
+
+- **Answer:** the Head CE's per-candidate input was `title + a ~1500-char query-focused
+  snippet cut from content_preview` — the first ~4KB of the document, centered on LEXICAL
+  match spans; chunk-branch-only hits carried no preview at all and reached the CE
+  title-only (774 §F.1-5, live-confirmed). A default-off flag
+  `search.evidence_preview.enabled` makes chunk-sourced hits deliver the winning chunk's
+  text (≤4096 chars) as `content_preview` — one change that makes the CE input, the
+  delivered preview, and highlight offsets evidence-coherent (no proto change). Measured
+  (same-session A/B, hybrid, full enrichment, CE-on): **mixed/legal-clerc-200 0.5557 →
+  0.6388 (+15%)**, P@1 0.425→0.465, R@10 0.690→0.810 (evidence-aware CE pulls gold from
+  the 11-20 window into top-10); **mixed/enron-qa 0.7445 → 0.7882 (+5.9%)**, P@1
+  0.600→0.643 — on the corpus where the CE was measured HARMFUL (F-002, −2-5%), i.e. the
+  CE-hurts-email mechanism was substantially preview-blindness, not a reranking defect;
+  **beir/scifact 0.7603 = baseline** (structural no-op: no chunk branch legs on the short
+  corpus). Stage-1 chunk-branch guarantee levers (independent weights/zero-exclude,
+  collapse-cap, PRE-collapse chunk-side recall-complete, base-results gate lever — all
+  default-equivalent) measured regression-free on both sentinels (leak-class guarantees
+  for free; no k=10 nDCG effect, consistent with 774 §J.1).
+- **Adjacent defect found + fixed (same lane):** the CE `DOCS_TOO_LONG` auto-disable read
+  a Head-side worker-session-average cache populated ONLY by `GET /api/knowledge/status`
+  — evals (which poll `/api/status`) always measured CE-on while production clients
+  polling `/api/knowledge/status` silently lost the CE on long-doc corpora (live-proved
+  both directions, run 96da7851). Default `max_avg_doc_length_chars` flipped 16000 → 0
+  (gate off = the measured configuration; operator override kept; teardown tombstoned).
+- **Conditions/caveats:** flags DEFAULT-OFF pending founder default-flip decision
+  (baseline re-pins + hero-cohort timing); eval-env CE ran on CPU (both arms equally —
+  A/B-valid, latency claims unmeasured on GPU); enron/legal numbers are same-session A/B
+  arms, not multi-seed. Live UI verification: deep-document evidence passage rendered
+  with aligned highlights (774 §K.3).
+- **Evidence:** tempdoc 774 §K; run dirs 20260722T135408/T140105/T140425 (legal),
+  T141501/T142555/T143646 (enron), T144058 (scifact) in the 774 worktree;
+  branch `worktree-774-passage-first`.
+
+### F-040: passage granularity does NOT bridge camouflaged paraphrase — the legal-10k floor is representational at every granularity, the engine already beats its own offline passage ceiling there, and the recoverable share is CONTEXT, not architecture (tempdoc 774 §J.5/§J.7 probes, 2026-07-22; re-scopes the 774 charter; Stage-3 primacy inversion shelved)
+
+- **Answer:** a Gate-0-anchored offline exact-NN passage probe (chunk-MaxP, 500/50
+  production parity, incumbent encoder; anchor reproduced F-034 on legal-clerc-200 to
+  Δ≤0.011 AND F-030's doc-level 0.100/0.060 exactly) measured the certified camouflaged
+  strata: **en-legal-clerc-10k-verbose gold-parent MaxP rank >100/not-found for 80% of
+  queries** (median gold-chunk rank 2,506 of 109,061; R@100 0.20), 1k: 50% beyond 100.
+  Decisive inversion: the **shipped engine hybrid (0.54/0.16 recall@10 at 1k/10k) BEATS
+  the offline passage exact-NN ceiling (0.20/0.04)** — isolated passage vectors are worse
+  than what ships, because the engine's edge is the F-031 whole-doc (context-bearing)
+  representation + CE. F-034's 0.855 passage ceiling was a citation-task property, not a
+  granularity property. **Consequence: 774's Stage-3 (passage-primacy inversion) is
+  measurement-rejected** — no headroom on the real task (engine already captures ~96-98%
+  of its own passage ceiling, F-034) and representation-bound on the synthetic floor.
+- **The context half (H.4 A/B, leak-controlled):** a uniform, leak-free 150-char doc-lead
+  prefix on every chunk embed lifts the camouflaged floor **10k R@100 0.20 → 0.42 (2.1×),
+  median rank 887 → 188**; 1k R@100 0.50 → 0.78 — but costs −0.04 R@10 on the real-task
+  Gate-0 control (fails the pre-registered tolerance) → mechanism confirmed (the floor is
+  substantially CONTEXT STARVATION of isolated chunk embeddings), recipe not shippable
+  as-is; engine-side contextualization recipe = chartered follow-up. A title-prepend
+  variant measured larger gains and was **INVALIDATED as a leak**: the 767 strata's
+  `title` field is gold-only (100/10,000 docs titled, all 50 golds among them, titles =
+  the structure descriptors) — reported to the 776/767 lane; invisible to the engine
+  (lexical 0.00 → titles never indexed), poisonous to offline probes/baseline-arms.
+- **Conditions/caveats:** offline exact-NN (no ANN/fusion) — deltas are the load-bearing
+  result per the F-033/F-034 treatment; n=50 queries/cell; corpus signatures recorded in
+  the artifacts. Engine-integrated depth effects were separately bounded by the 771 cert
+  data (774 §J.1: vector ≈ hybrid at k=10, so chunk-branch weight dilution is not the
+  binding constraint).
+- **Evidence:** tempdoc 774 §J.5/§J.7/§F.3; artifacts
+  `tmp/analysis-624/774/probe/` (774 worktree: per-cell summaries + per-query ranks +
+  `probe_774.py`/`h4_ab.py`, hashes + reproduction commands inside).
 
 ### F-039: bridge-entity retrieval miss on legal agent-utility strata — structure-descriptive queries never reach designer-keyed gold; near-duplicate synthetic decoys outrank it, worsening 6%→28% of with-tool failures from 1k→10k (tempdoc 763 replay census, 2026-07-21)
 
@@ -1625,9 +1698,15 @@ Design choices in the current production pipeline, with rationale.
 Unanswered questions that need investigation. Agents should prefer
 picking up items here over inventing new experiments.
 
-### Q-001: Why does CE hurt on personal email?
+### Q-001: Why does CE hurt on personal email? → MECHANISM SUBSTANTIALLY ANSWERED → F-041
 
-- **Question:** What is the mechanism by which cross-encoder reranking degrades nDCG on EnronQA by ~2%?
+- **Disposition (2026-07-22, tempdoc 774):** the dominant mechanism is **preview-blindness**
+  — the CE judged `title + doc-head preview snippet`, not the matching content; with the
+  winning passage as input (`search.evidence_preview.enabled`, default-off) the CE flips
+  to +5.9% on enron-qa (0.7445 → 0.7882, F-041). The original per-query-analysis question
+  is retired; any residual CE-hurts effect should be re-measured only under evidence-
+  coherent input.
+- **Question (historical):** What is the mechanism by which cross-encoder reranking degrades nDCG on EnronQA by ~2%?
 - **Why it matters:** If understood, we could gate CE off for corpus types where it hurts, improving quality automatically.
 - **Prior art:** F-002 measured the effect. No per-query analysis yet.
 - **Suggested approach:** Per-query failure analysis on EnronQA `full` vs `bm25_splade` — identify which queries CE helps vs hurts, categorize by query type.
