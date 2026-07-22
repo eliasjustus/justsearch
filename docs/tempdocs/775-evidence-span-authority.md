@@ -434,3 +434,125 @@ before any counted run; all five re-pin runs show GPU-band CE p50 (143–190 ms)
 *Process note (P-C inline exception): the register/tempdoc edits of this pass
 were done in the main loop — the numbers and row formats were already in
 orchestrator context, putting the pass below the delegation break-even.*
+
+## §J. Delivery governor implemented (2026-07-22)
+
+The §E "Governor (deterministic degradation at the cap)" / §C acceptance item 2
+is now implemented — the last of §I's three deferred unification-pass items to
+land as a code-only pass, because §E-unsettled (c) (the budget constant) was
+settled by a live measurement (below).
+
+**Settled input (orchestrator live measurement 2026-07-22, artifacts
+`tmp/analysis-785/governor-sizes*.json`).** Production `justsearch_search` on a
+legal corpus (198 CLERC docs, fully enriched, defaults):
+- `limit:30`, default detail → serialized result JSON p50 29.1 KB, max 30.8 KB —
+  UNDER the cliff (770's economy pass works; no governor action).
+- `limit:30, detail:true` → **p50 56.9 KB, max 62.4 KB; 11/12 queries over
+  46,600 bytes, 10/12 over 52,800** — sails past the characterized client
+  truncation band (770 §E.3: 46.6–52.8 k, fixed 2,322-char notice, neither
+  content tier delivered) with NO notice. This is the cell the governor fixes,
+  and it settles §E-unsettled (c).
+
+**Budget constant + config key.** `search.mcp_delivery.budget_bytes`, default
+**45000** (`ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES`) — a margin
+under the lowest characterized cliff (46,617). `0` disables the governor (escape
+hatch). Wired through the same config machinery as the evidence flags: `ConfigKey`
++ `EnvRegistry` (`JUSTSEARCH_SEARCH_MCP_DELIVERY_BUDGET_BYTES`) +
+`ResolvedConfigBuilder` (`putYamlIntFromNode` + `putDefault` + `resolveInt` in
+`buildSearch`) + `ResolvedConfig.Search.mcpDeliveryBudgetBytes`. Documented in
+`docs/reference/configuration/environment-variables.md`; the generated
+`runtime-config-ownership-matrix.md` was regenerated (it had also accumulated the
+pre-existing evidence_span/evidence_preview/chunk_* drift — swept in the regen).
+
+**Governed quantity = the WHOLE tool result (live-verify correction, 2026-07-22).**
+The first cut budgeted only `structuredContent`, but the 770 §E.3 client truncation
+cliff operates on the ENTIRE delivered tool result — `content[].text` (the
+human-readable block) + `structuredContent` + envelope keys. Live verification at
+the failing cell FAILED the bar: 4/12 responses still exceeded 45,000 bytes on the
+wire (max 52,260) even though every response carried the notice — the worst
+decomposed as `structuredContent`=35,376 B (under budget → the loop stopped) +
+`content[0].text`=16,339 B, total 52,260 B. Budgeting the structured tier alone
+under-counts by the text block. **Fix:** the governor now governs the full result
+via a `ResultView` that re-renders BOTH tiers (text + structuredContent) from the
+surviving results at each step and measures the whole result; the text block, being
+a rendering of the same results, shrinks with the structured tier so they never
+diverge. "Strip provenance" = re-render with `includeProvenance=false` (the
+searchEvidence `detail` gate); "drop a tail result" = re-render with one fewer hit.
+
+**Degradation order (§E, verbatim).** Head-side (it reads the already-returned
+response objects via the view, never Lucene/Worker — Hard Invariant #1). While the
+serialized FULL result exceeds the budget it degrades in order: **(a) strip numeric
+provenance first** — the per-hit `trace` + `legScores` block, the `detail`-gated
+tier 770 measured at 19.9% of the delivered search payload and carrying no document
+content; **(b) then drop WHOLE tail results**, lowest-ranked-first, one at a time,
+never below one result and never truncating a result or a span mid-way (a single
+oversized result is delivered whole with the notice, not split — the
+"never mid-payload/mid-span" guarantee is by construction); **(c) emit an explicit
+notice** — a machine-readable `governor` object in `structuredContent`
+(`budgetBytes`, `originalResultCount`, `deliveredResultCount`, `resultsDropped`,
+`provenanceStripped`, a human `notice` string) replacing the client-side 2,322-char
+neither-tier loss. Deterministic: same inputs → same size decisions → byte-stable
+governed output (rank-ordered tail drop + `LinkedHashMap` key order + one
+serializer).
+
+**Implementation (`file:line`).**
+- Governor — `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpDeliveryGovernor.java`
+  (`govern(totalResults, detailRequested, budgetBytes, mapper, ResultView)`; the
+  `ResultView` re-renders the full result for a `(keepResults, includeProvenance)`
+  pair).
+- Wiring — `McpToolSurface.callSearch` builds the `ResultView` (each render:
+  `truncateResults` → `buildSearchContent` → `renderSearchText` +
+  `McpEvidenceProjection.searchEvidence`) and calls `govern(...)`;
+  `McpToolSurface.truncateResults` yields a top-`keep` copy of the response;
+  budget resolved via `McpToolSurface.resolveDeliveryBudgetBytes()` (reads
+  `ConfigStore.globalOrNull()`, defaults to the constant when the store is not yet
+  initialized — always safe to call).
+- Config — `ConfigKey.SEARCH_MCP_DELIVERY_BUDGET_BYTES`,
+  `EnvRegistry.SEARCH_MCP_DELIVERY_BUDGET_BYTES`, `ResolvedConfigBuilder`
+  (contributeYamlSearch + `buildSearch`), `ResolvedConfig.Search`.
+- Tests — `McpDeliveryGovernorTest` (9 tests): boundary (just-under untouched;
+  just-over → provenance-strip suffices; far-over → tail-drop with correct count;
+  single-oversized floor never-split), 0-disables, byte-stable determinism, notice
+  shape, **the live-composition regression** (`structuredUnderButFullOverStillDegrades`
+  — structuredContent under budget but a fat text block puts the full result over →
+  the governor must keep dropping tails; a structured-only budget would have wrongly
+  declared success), and the §C integration through `McpToolSurface.callSearch` at
+  `detail:true limit:30` asserting the delivered FULL result (text + structuredContent
+  + envelope) ≤ 45,000, result-count reduction + notice, every delivered excerpt
+  intact. Extends the 770 golden/totality guards (`McpEvidenceProjectionTest`,
+  `McpTierEquivalenceGoldenTest` are unaffected — the governor is a no-op under
+  budget, so the text-tier goldens and the projection-shape totality guards stay
+  byte-identical).
+
+**Verification done.** `spotlessApply` clean; `./gradlew.bat build -x test` GREEN
+(PMD/spotbugs incl.); full `./gradlew.bat test` GREEN; `McpDeliveryGovernorTest`
+9/9; runtime-config-matrix verify GREEN post-regen.
+
+**Handoff — LIVE re-verification is the orchestrator's step.** This pass is
+unit/integration-verified: the integration test now asserts the delivered FULL
+result ≤ budget (the exact quantity the live measurement showed over the cliff).
+The orchestrator re-verifies against this commit at the failing cell —
+`justsearch_search detail:true limit:30` on the legal CLERC corpus through the real
+MCP client, confirming all responses' full wire payload is now ≤ 45,000 with a
+`governor` notice + reduced result set instead of the 770 §E.3 neither-tier loss.
+
+### §J.1 Live verification at the failing cell (2026-07-22, orchestrator)
+
+Two-round live verify on the lane build (`distFrom` dev stack, legal CLERC 199
+docs fully enriched, `justsearch_search detail:true limit:30`, 12 real queries):
+
+- **Round 1 (commit 7f2f5aeb) FAILED:** all 12 carried the notice with
+  provenance stripped, but 4/12 full wire results still exceeded 45 KB (max
+  52,260 B) — the budget counted `structuredContent` only while the
+  `content[0].text` rendering (16,339 B on the worst response) rode the wire
+  uncounted. Exactly the `static-green ≠ live-working` class: 8/8 unit tests
+  green around the wrong measured quantity.
+- **Fix (f8652114):** govern the FULL assembled result (both tiers re-rendered
+  together per degradation step, notice bytes included in the measurement).
+- **Round 2 PASSED:** wire-faithful (compact-serialization) max = 44,935 B,
+  0/12 over budget; tails dropped 0-3 per query (27-30 delivered); notices
+  machine-readable; no mid-result truncation. Artifacts:
+  `tmp/analysis-785/governor-live-{verify,reverify}.json` (session machine).
+
+§C acceptance item 2 is satisfied live. The 771 item-4 defect (neither-tier
+loss past the cliff) is closed at the delivery layer.

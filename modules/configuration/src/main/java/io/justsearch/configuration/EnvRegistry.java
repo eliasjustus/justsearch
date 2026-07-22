@@ -440,6 +440,13 @@ public enum EnvRegistry {
     /** 775: EvidenceSpan distinguishing-entity signal — df_rarity|ner_membership (default: ner_membership, the §F probe winner). */
     SEARCH_EVIDENCE_SPAN_ENTITY_SIGNAL(
         "search.evidence_span.entity_signal", "JUSTSEARCH_SEARCH_EVIDENCE_SPAN_ENTITY_SIGNAL"),
+    /**
+     * 775 §E: MCP delivery-governor serialized-JSON budget in bytes (default: 45000 via builder; 0
+     * disables the governor). Escape-hatch operator override for the 770 §E.3 truncation-cliff
+     * degradation.
+     */
+    SEARCH_MCP_DELIVERY_BUDGET_BYTES(
+        "search.mcp_delivery.budget_bytes", "JUSTSEARCH_SEARCH_MCP_DELIVERY_BUDGET_BYTES"),
 
     /** UI automation mode enabled flag. */
     UI_AUTOMATION_ENABLED("justsearch.ui.automation.enabled", "JUSTSEARCH_UI_AUTOMATION"),

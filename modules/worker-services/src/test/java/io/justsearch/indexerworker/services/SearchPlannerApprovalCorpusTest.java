@@ -356,7 +356,9 @@ final class SearchPlannerApprovalCorpusTest {
         new ResolvedConfig.Search(
             "default", "search.v1", "main", false, 0.0, 0.0, chunkAwareEnabled,
             /* evidencePreviewEnabled= */ false, /* lambdamartEnabled= */ false,
-            /* evidenceSpanEnabled= */ false, /* entitySignal= */ "df_rarity", corrections);
+            /* evidenceSpanEnabled= */ false, /* entitySignal= */ "df_rarity",
+            /* mcpDeliveryBudgetBytes= */ ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES,
+            corrections);
     ResolvedConfig config = mock(ResolvedConfig.class);
     when(config.search()).thenReturn(search);
     return new SearchPlanner(() -> config);
