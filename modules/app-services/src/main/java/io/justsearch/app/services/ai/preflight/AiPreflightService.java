@@ -4,6 +4,9 @@ package io.justsearch.app.services.ai.preflight;
 import io.justsearch.app.api.AiRuntimeStatusResponse;
 import io.justsearch.app.services.ai.install.AiInstallService;
 import io.justsearch.app.services.ai.runtime.RuntimeActivationService;
+import io.justsearch.configuration.model.HardwareProfile;
+import io.justsearch.configuration.model.InstallIntent;
+import io.justsearch.configuration.model.InstallPlanner;
 import io.justsearch.configuration.model.ModelPackage;
 import io.justsearch.configuration.model.ModelRegistry;
 import io.justsearch.configuration.model.ModelVariant;
@@ -37,7 +40,30 @@ public final class AiPreflightService {
     ModelRegistry registry = installService.getManifest();
     Path modelsDir = installService.modelsDir();
     Path aiHome = installService.aiHome();
+    // Tempdoc 772 Q3: the severity signal (blockingIncomplete) needs the same intent + hardware the
+    // planner uses to decide what's actually wanted on THIS machine. Reuse the install service's own
+    // resolvers rather than re-deriving them here.
+    HardwareProfile hardware = installService.buildHardwareProfile();
+    InstallIntent intent = installService.installIntent();
+    AiRuntimeStatusResponse runtimeStatus = runtimeService.getStatus();
 
+    return computePreflight(registry, modelsDir, aiHome, hardware, intent, runtimeStatus);
+  }
+
+  /**
+   * Pure reconciliation of registry + on-disk presence + hardware/intent into a preflight result —
+   * package-private + static so the {@code blockingIncomplete} severity logic (tempdoc 772 Q3) can be
+   * unit-tested deterministically by staging files under a temp {@code modelsDir} and passing a
+   * chosen {@link HardwareProfile} / {@link InstallIntent}, without a live GPU probe or classpath
+   * registry.
+   */
+  static AiPreflightResult computePreflight(
+      ModelRegistry registry,
+      Path modelsDir,
+      Path aiHome,
+      HardwareProfile hardware,
+      InstallIntent intent,
+      AiRuntimeStatusResponse runtimeStatus) {
     List<PackageStatus> packages = new ArrayList<>();
     for (ModelPackage pkg : registry.packages()) {
       Path baseDir = pkg.installRoot() != null ? aiHome.resolve(pkg.installRoot()) : modelsDir;
@@ -63,12 +89,25 @@ public final class AiPreflightService {
       boolean variantsSatisfied = pkg.variants().isEmpty() || !presentVariantFiles.isEmpty();
       boolean complete = variantsSatisfied && missingSupportingFiles.isEmpty();
 
+      // Tempdoc 772 Q3: derived severity. A package is BLOCKING-incomplete iff it is wanted by the
+      // current intent AND hardware-permitted (i.e. would be part of the plan — reuses the planner's
+      // own include/skip verdict, not a re-implemented CUDA/tier check) YET not complete. A package
+      // unwanted-by-intent or hardware-gated-off stays blockingIncomplete=false even when incomplete
+      // (that's the implicit "that's fine" case); a wanted+permitted incomplete package is the new
+      // severity signal.
+      boolean blockingIncomplete =
+          !complete && InstallPlanner.isIncludedByPlan(pkg, intent, hardware);
+
       packages.add(
           new PackageStatus(
-              pkg.id(), pkg.label(), complete, presentVariantFiles, missingSupportingFiles));
+              pkg.id(),
+              pkg.label(),
+              complete,
+              blockingIncomplete,
+              presentVariantFiles,
+              missingSupportingFiles));
     }
 
-    AiRuntimeStatusResponse runtimeStatus = runtimeService.getStatus();
     boolean runtimeInstalled =
         !runtimeStatus.installedVariants().isEmpty()
             || (runtimeStatus.active() != null
@@ -96,11 +135,20 @@ public final class AiPreflightService {
     return new AiPreflightResult(packages, runtimeInstalled, canActivateDefault);
   }
 
-  /** Per-package presence, projected from the registry's own identity fields (id/label). */
+  /**
+   * Per-package presence, projected from the registry's own identity fields (id/label).
+   *
+   * @param blockingIncomplete tempdoc 772 Q3 — true iff this package is wanted by the current install
+   *     intent AND hardware-permitted (would be part of the plan) YET not complete. A package that is
+   *     unwanted-by-intent or hardware-gated-off stays false even when incomplete; only a
+   *     wanted+permitted+incomplete package is blocking. Lets a consumer distinguish an incompleteness
+   *     that actually matters on this machine from one that is expected ("that's fine").
+   */
   public record PackageStatus(
       String id,
       String label,
       boolean complete,
+      boolean blockingIncomplete,
       List<String> presentVariantFiles,
       List<String> missingFiles) {}
 

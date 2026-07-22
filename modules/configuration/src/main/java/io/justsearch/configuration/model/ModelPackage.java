@@ -33,6 +33,11 @@ import java.util.List;
  *     selects over, orthogonal to the hardware {@link DownloadProfile}. Nullable for
  *     backward-compatibility (registries predating the field); an untagged package is treated as
  *     always-wanted by every intent.
+ * @param requiresCuda true if this package requires a CUDA-capable GPU regardless of any other
+ *     hardware threshold — distinct from {@code minVramBytes} (a VRAM floor within a
+ *     hardware-eligible package); false (default) means this package's hardware-eligibility is
+ *     governed by tier/VRAM only. Added for RUNTIME-tier packages that may need to be
+ *     hardware-independent (tempdoc 772 Q3).
  */
 public record ModelPackage(
     String id,
@@ -45,7 +50,8 @@ public record ModelPackage(
     String termsUrl,
     String installRoot,
     String license,
-    CapabilityTier tier) {
+    CapabilityTier tier,
+    boolean requiresCuda) {
 
   /** Compact constructor — normalize nulls to empty lists. */
   public ModelPackage {
@@ -97,6 +103,28 @@ public record ModelPackage(
     this(
         id, label, description, targetDir, variants, supportingFiles, minVramBytes, termsUrl,
         installRoot, license, null);
+  }
+
+  /**
+   * Backwards-compat constructor — no requiresCuda (predates tempdoc 772's hardware-independence
+   * field); defaults to false, preserving prior tier-based-only hardware gating for any existing
+   * caller.
+   */
+  public ModelPackage(
+      String id,
+      String label,
+      String description,
+      String targetDir,
+      List<ModelVariant> variants,
+      List<SupportingFile> supportingFiles,
+      long minVramBytes,
+      String termsUrl,
+      String installRoot,
+      String license,
+      CapabilityTier tier) {
+    this(
+        id, label, description, targetDir, variants, supportingFiles, minVramBytes, termsUrl,
+        installRoot, license, tier, false);
   }
 
   /** Returns true if this package requires a minimum VRAM threshold to be useful. */

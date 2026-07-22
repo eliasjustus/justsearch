@@ -259,6 +259,7 @@
       "termsUrl": "https://docs.nvidia.com/cuda/eula/index.html",
       "license": "LicenseRef-NVIDIA-CUDA-EULA",
       "tier": "runtime",
+      "requiresCuda": true,
       "minVramBytes": 0,
       "variants": [],
       "supportingFiles": [
@@ -288,6 +289,13 @@
           "sha256": "EACE9A2186DD3452F6351358EEDB21D70485B64C461787ED12D3DFC27ACB3139",
           "sizeBytes": 634283692,
           "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/cuda-runtime-12.4/cudnn-9-runtime-12.4.zip",
+          "extract": true
+        },
+        {
+          "filename": "ort-native-cuda12-v1.24.3.zip",
+          "sha256": "94DE9A29C8513A8CDE3AF4447966CB5A169BB85610A7BDA57C06D1649A2FC212",
+          "sizeBytes": 167772095,
+          "downloadUrl": "https://github.com/eliasjustus/justsearch-releases/releases/download/cuda-runtime-12.4/ort-native-cuda12-v1.24.3.zip",
           "extract": true
         }
       ]

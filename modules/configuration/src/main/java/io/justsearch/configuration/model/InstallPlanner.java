@@ -91,12 +91,15 @@ public final class InstallPlanner {
         continue;
       }
 
-      // Runtime-tier packages (the CUDA DLLs) are a hardware-support payload, not a capability:
-      // include them iff the profile uses CUDA — the same axis selectVariant uses to pick the
-      // FP16/CUDA model variants those DLLs make runnable — independent of the GGUF VRAM floor.
-      // Gating them on the chat threshold wrongly skipped them for GPU_LITE (CUDA functional,
-      // VRAM < 7.5 GB), silently downgrading CUDA ONNX inference to CPU.
-      if (pkg.tier() == CapabilityTier.RUNTIME && !profile.usesCuda()) {
+      // CUDA-requiring packages (e.g. the cuda-runtime CUDA DLLs) are a hardware-support payload,
+      // not a capability: include them iff the profile uses CUDA — the same axis selectVariant uses
+      // to pick the FP16/CUDA model variants those DLLs make runnable — independent of the GGUF VRAM
+      // floor. Gating them on the chat threshold wrongly skipped them for GPU_LITE (CUDA functional,
+      // VRAM < 7.5 GB), silently downgrading CUDA ONNX inference to CPU. Tempdoc 772 Q3: this now
+      // gates on the package's own requiresCuda flag rather than tier identity, so a future
+      // RUNTIME-tier package that sets requiresCuda=false is never skipped here regardless of
+      // hardware — while cuda-runtime (requiresCuda=true) keeps the exact GPU_LITE fix above.
+      if (requiresUnavailableCuda(pkg, profile)) {
         skipped.add(
             new InstallPlan.SkippedPackage(
                 pkg.id(),
@@ -193,6 +196,39 @@ public final class InstallPlanner {
     }
 
     return new InstallPlan(profile, downloads, skipped, totalBytes, alreadyInstalled);
+  }
+
+  /**
+   * Whether {@code pkg} requires CUDA the current profile does not provide — the single source for
+   * the requiresCuda hardware gate, so the planner loop and any consumer that needs the same
+   * decision (e.g. the preflight severity signal) never re-implement {@code pkg.requiresCuda() &&
+   * !profile.usesCuda()} verbatim (tempdoc 772 Q3).
+   */
+  public static boolean requiresUnavailableCuda(ModelPackage pkg, DownloadProfile profile) {
+    return pkg.requiresCuda() && !profile.usesCuda();
+  }
+
+  /**
+   * Whether the package would be included in the plan for the given {@code intent} and
+   * {@code hardware} — i.e. it is NOT skipped by the intent gate, the requiresCuda hardware gate, or
+   * the GGUF VRAM floor. Mirrors the three skip conditions in {@link #plan}'s loop so consumers get
+   * the include/skip verdict from one place rather than re-deriving the tier/CUDA/VRAM checks
+   * (tempdoc 772 Q3). Note: a variant might still be absent, but that is a completeness concern, not
+   * an inclusion one.
+   */
+  public static boolean isIncludedByPlan(
+      ModelPackage pkg, InstallIntent intent, HardwareProfile hardware) {
+    DownloadProfile profile = hardware.downloadProfile();
+    if (!intent.wants(pkg.tier())) {
+      return false;
+    }
+    if (requiresUnavailableCuda(pkg, profile)) {
+      return false;
+    }
+    if (pkg.hasVramRequirement() && !profile.includesGguf()) {
+      return false;
+    }
+    return true;
   }
 
   /**

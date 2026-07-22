@@ -448,10 +448,18 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       touch();
     }
 
-    // Restore llama-server runtime
+    // Restore llama-server runtime. Tempdoc 772 §Design "Design 1": the bundled runtime is not the
+    // only possible runtime source — a RUNTIME-tier package the plan supplies can deliver one too.
+    // So fail RUNTIME_MISSING only when the bundled restore fails AND the plan supplies no runtime
+    // package. Today no pack-delivered runtime package exists (see planSuppliesRuntime), so for
+    // every real install this stays exactly today's "restore or fail" — the second clause is
+    // dormant-but-correct until such a package is introduced.
     updateState("running", "restore_runtime", "Restoring AI runtime...");
-    if (!RuntimeRestoreUtil.ensureRuntimePresent(homeDir)) {
-      fail("RUNTIME_MISSING", "Bundled AI runtime is missing and could not be restored.");
+    boolean bundledRuntimePresent = RuntimeRestoreUtil.ensureRuntimePresent(homeDir);
+    if (!runtimePreconditionMet(bundledRuntimePresent, plan, registry)) {
+      fail(
+          "RUNTIME_MISSING",
+          "Bundled AI runtime is missing and no runtime-supplying package is planned.");
       return;
     }
 
@@ -653,15 +661,66 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
    * {@code JUSTSEARCH_MODE}, defaulting to Full Desktop when unset. Read the same way by the plan and
    * the contract, so the recorded intent matches what was actually planned.
    */
-  InstallIntent installIntent() {
+  public InstallIntent installIntent() {
     return InstallIntent.fromConfig(io.justsearch.configuration.EnvRegistry.MODE.get().orElse(null));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Runtime precondition (tempdoc 772 §Design "Design 1")
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The runtime precondition: an install may proceed iff the bundled runtime restored successfully
+   * OR the computed plan already supplies a runtime via a pack-delivered runtime package. Only when
+   * both fail is {@code RUNTIME_MISSING} raised. Package-private + static so the three-way behavior
+   * can be unit-tested directly (bundled present; bundled absent + no runtime pack; bundled absent +
+   * runtime pack) without driving the full install flow.
+   */
+  static boolean runtimePreconditionMet(
+      boolean bundledRuntimePresent, InstallPlan plan, ModelRegistry registry) {
+    return bundledRuntimePresent || planSuppliesRuntime(plan, registry);
+  }
+
+  /**
+   * Whether the plan already supplies a working runtime via a pack-delivered RUNTIME-tier package —
+   * i.e. a RUNTIME-tier package that is <em>hardware-independent</em> ({@code requiresCuda=false})
+   * appears in {@code downloads()} or {@code alreadyInstalled()}. The hardware-independence filter is
+   * deliberate: {@code cuda-runtime} is a RUNTIME-tier package too, but it is a CUDA DLL supplement
+   * ({@code requiresCuda=true}), not a from-scratch runtime supplier — counting it would change
+   * today's behavior on GPU hardware (proceed instead of RUNTIME_MISSING when the bundled restore
+   * fails). No hardware-independent RUNTIME package exists in any production registry today, so this
+   * returns false for every real install and the bundled-runtime restore stays the sole runtime
+   * source — behavior is unchanged. It activates only for a future hardware-independent runtime
+   * package (tempdoc 772 Q3 / §Design "Design 1").
+   */
+  static boolean planSuppliesRuntime(InstallPlan plan, ModelRegistry registry) {
+    java.util.Set<String> runtimePackIds = new java.util.HashSet<>();
+    for (ModelPackage pkg : registry.packages()) {
+      if (pkg.tier() == CapabilityTier.RUNTIME && !pkg.requiresCuda()) {
+        runtimePackIds.add(pkg.id());
+      }
+    }
+    if (runtimePackIds.isEmpty()) {
+      return false;
+    }
+    for (InstallPlan.PlannedDownload dl : plan.downloads()) {
+      if (runtimePackIds.contains(dl.packageId())) {
+        return true;
+      }
+    }
+    for (String id : plan.alreadyInstalled()) {
+      if (runtimePackIds.contains(id)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------------------
   // Hardware profile
   // ---------------------------------------------------------------------------
 
-  HardwareProfile buildHardwareProfile() {
+  public HardwareProfile buildHardwareProfile() {
     // Tempdoc 587: read every GPU fact from the ONE composition seam (GpuCapabilityResolver),
     // which folds the CUDA driver-API probe into the NVML/nvidia-smi VRAM+device merge. This
     // replaces the prior split — a direct GpuDriverApiProbe call for cudaFunctional plus a
