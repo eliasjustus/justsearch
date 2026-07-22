@@ -1346,6 +1346,25 @@ CPU-only machines the DLL is never extracted (provider extraction is lazy, `addC
 fast-track candidate.** §G's original "inert until GPU+pack, but needed" characterization was
 correct; the second takeover's suspicion that it might be fully redundant is refuted by the trace.
 
+### §J — Two further measured findings (2026-07-22, prompted by "what can we optimise")
+
+1. **NSIS compression is explicitly `zlib`, not LZMA** (`tauri.conf.json:28`) — set at the v0.1.0
+   initial public import with no in-repo rationale (`git log -S`), i.e. the same
+   "inherited override, never re-measured" class as §H's WebView2 mode. Tauri exposes `lzma` in the
+   same field. Estimated win 30-60 MB on the ~200 MB of PE/native content (jars are pre-deflated
+   and won't improve); the honest unknowns are CI build-time cost (LZMA on a ~680 MB payload) and
+   whether zlib was deliberately chosen for makensis 32-bit memory headroom — the repo already
+   knows that ceiling from the models-in-sidecar case. One config line + one CI build measures it.
+2. **The §G fat-jar pattern repeats in three more staged jars** (verified by listing their contents
+   from the local worker installDist / Gradle cache): `sqlite-jdbc-3.51.2.0.jar` ships natives for
+   24 OS/arch targets (25.6 MB uncompressed; Windows x86_64 needs 1.0 MB); `tokenizers-0.36.0.jar`
+   ships linux/osx natives (39.6 of 53.9 MB uncompressed removable) — **and this jar ships twice**
+   (head `lib/` + `lib/worker/`); `lightgbm4j-4.6.0-2.jar` (head) ships linux/osx natives (31.0 of
+   34.7 MB removable). Estimated combined download win ~40-45 MB via the exact
+   `stageTrimmedOnnxRuntimeGpu` idiom already proven by commit `c1ee039f`, generalized to a per-jar
+   trim list at the staging site. Per-library loader verification (current-OS-path-only, the
+   §Derisk `OnnxRuntime.initOsArch` check's analogue) required for each before trimming.
+
 ### Where this leaves the intention
 
 The needs audit is now **complete**: every byte of the shipped installer is inventoried, classified
