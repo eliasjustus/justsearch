@@ -2099,3 +2099,36 @@ certification document that will validate (the claim policy re-decodes and re-ch
 snapshot, requiring `status == "fully-certified"` and every gate `passed` —
 `corpus_certify.py:791`). **No pointer was selected or published** — that, and any paid confirmatory
 spend, remain founder decisions outside this run's scope.
+
+## §S. §R.4-1 gap closed — automatic invocation recording (2026-07-22)
+
+The §R.4 deviation-1 gap (materialization invocations "were not recorded anywhere", forcing the
+certifying agent to reconstruct the `corpus-inject-real` commands from recipes) is now closed by
+always-on invocation recording for the materialization-relevant jseval corpus commands.
+
+- **What records:** `corpus-inject-real` and the whole `corpus-fetch-*` family
+  (`-miracl`/`-clerc`/`-enron-raw`). Every invocation appends one record to
+  **`<output-dir>/invocations.v1.jsonl`** where `<output-dir>` is the materialized dataset dir
+  (`datasets/mixed/<name>/`), so the record travels with the artifact it describes. `datasets/` is
+  gitignored (fetch-fresh-never-commit), so this is local runtime provenance that accumulates a
+  per-cell materialization history — exactly the "recorded somewhere next to the output" the runbook
+  Phase A1 expected, rather than reconstructed after the fact.
+- **Record shape (`schema: 707-corpus-invocation.v1`, one JSON object per line):** `command`,
+  `timestamp` (UTC ISO-8601), `git_sha` (full 40-char via `manifest._git_sha_full`, or null),
+  `git_dirty`, `cwd`, `jseval_package_path` (which worktree copy ran), `argv` (real process argv),
+  `params` (resolved click parameter values — Paths coerced to strings), `seeds`, `input_digests`,
+  `output_digests`, `output_dir`, and an optional `digests_note`.
+- **Digests are reused, never re-computed:** inject-real records the host-pool `real_source_sha256`
+  and `assembled_digest` (from `build_source`'s provenance) as inputs and `corpus_signature` (from
+  `build_golden`) as output. The `corpus-fetch-*` family samples fresh from the upstream source, so
+  it has no input-pool sha to reuse — `input_digests` is empty and `digests_note` names the seed+source
+  recipe (in `params`/`seeds`) as the reproducibility key. No multi-GB pool is re-hashed for the record.
+- **Additive only / fail-open:** recording never changes command behavior, outputs, or digests, and a
+  write failure is a WARN returning `None`, never an error that fails a materialization.
+- **Implementation:** `scripts/jseval/jseval/corpus_invocation.py` (`record_invocation` / `build_record`),
+  wired into `scripts/jseval/jseval/commands/corpus.py` (`cmd_corpus_inject_real` and the shared
+  `_fetch_and_build_mixed` helper). It conforms to the existing `manifest._git_sha_full` git-SHA
+  convention and the LF-only committed-artifact write convention used by the recipe/commitment writers
+  in this tree. Tests: `scripts/jseval/tests/test_corpus_invocation.py` (4 tests — record fields incl.
+  argv/seed/git_sha/timestamp, append semantics, fail-open, and end-to-end CLI sidecar on both the
+  inject-real and fetch paths).

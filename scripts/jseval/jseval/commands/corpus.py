@@ -211,6 +211,27 @@ def cmd_corpus_inject_real(ctx, real_corpus, gold_source, name, seed, n_distract
     corpus_inject.write_commitment(
         commitment, gold_source, source_meta["generation_provenance"]
     )
+    # tempdoc 767 §R.4-1: record the exact materialization invocation next to the output so it
+    # never has to be reconstructed. Reuse digests already computed (host-pool sha, assembled
+    # digest, output signature) — no multi-GB re-hashing.
+    from .. import corpus_invocation
+    inject_prov = source_meta.get("generation_provenance") or {}
+    corpus_invocation.record_invocation(
+        base / "mixed" / name,
+        command=ctx.command.name,
+        params=dict(ctx.params),
+        seeds=[seed],
+        input_digests={
+            k: inject_prov[k]
+            for k in ("real_source_sha256", "assembled_digest")
+            if inject_prov.get(k) is not None
+        },
+        output_digests={
+            k: metadata[k]
+            for k in ("corpus_signature",)
+            if metadata.get(k) is not None
+        },
+    )
     if ctx.obj.get("json"):
         click.echo(json.dumps(metadata, indent=2))
     else:
@@ -263,13 +284,14 @@ def _write_recipe(name: str, recipe: dict) -> Path:
     return recipe_path
 
 
-def _fetch_and_build_mixed(name: str, datasets_dir, fetch_fn) -> dict:
-    """Shared plumbing for the two `corpus-fetch-*` commands: fetch into an ephemeral temp source dir,
+def _fetch_and_build_mixed(ctx, name: str, datasets_dir, fetch_fn) -> dict:
+    """Shared plumbing for the `corpus-fetch-*` commands: fetch into an ephemeral temp source dir,
     then materialize via the existing `corpus_build.build_golden` into `datasets/mixed/<name>/`
     (gitignored — nothing this writes is ever committed; see `corpus_fetch.py`'s module docstring)."""
     import tempfile
 
     from .. import corpus_build as cb
+    from .. import corpus_invocation
     from .._paths import REPO_ROOT
 
     base = Path(datasets_dir) if datasets_dir else (REPO_ROOT / "datasets")
@@ -278,6 +300,23 @@ def _fetch_and_build_mixed(name: str, datasets_dir, fetch_fn) -> dict:
         provenance = fetch_fn(td)
         meta = cb.build_golden(td, dataset_dir)
     _write_recipe(name, provenance)
+    # tempdoc 767 §R.4-1: record the exact materialization invocation next to the output. These
+    # fetchers sample fresh from the upstream source (seed + source recipe is the reproducibility
+    # key, carried in `params`/`seeds`), so there is no input-pool sha to reuse — record the output
+    # signature and name what is absent.
+    corpus_invocation.record_invocation(
+        dataset_dir,
+        command=ctx.command.name,
+        params=dict(ctx.params),
+        seeds=[ctx.params["seed"]] if "seed" in ctx.params else [],
+        output_digests={
+            k: meta[k]
+            for k in ("corpus_signature",)
+            if meta.get(k) is not None
+        },
+        digests_note="no input-pool sha: corpus-fetch-* samples fresh from the upstream source; "
+                     "the seed+source recipe (see params/seeds) is the reproducibility key.",
+    )
     return meta
 
 
@@ -298,7 +337,7 @@ def cmd_corpus_fetch_miracl(ctx, name, lang, seed, n_docs, split, datasets_dir):
     from .. import corpus_fetch as cf
 
     meta = _fetch_and_build_mixed(
-        name, datasets_dir,
+        ctx, name, datasets_dir,
         lambda td: cf.fetch_miracl_sample(td, lang=lang, seed=seed, n_docs=n_docs, split=split))
     if ctx.obj.get("json"):
         click.echo(json.dumps(meta, indent=2))
@@ -325,7 +364,7 @@ def cmd_corpus_fetch_clerc(ctx, name, seed, n_queries, n_docs, datasets_dir):
     from .. import corpus_fetch as cf
 
     meta = _fetch_and_build_mixed(
-        name, datasets_dir,
+        ctx, name, datasets_dir,
         lambda td: cf.fetch_clerc_sample(td, seed=seed, n_queries=n_queries, n_docs=n_docs))
     if ctx.obj.get("json"):
         click.echo(json.dumps(meta, indent=2))
@@ -362,7 +401,7 @@ def cmd_corpus_fetch_enron_raw(ctx, name, seed, n_docs, min_words, datasets_dir)
     from .. import corpus_fetch as cf
 
     meta = _fetch_and_build_mixed(
-        name, datasets_dir,
+        ctx, name, datasets_dir,
         lambda td: cf.fetch_enron_raw_sample(td, seed=seed, n_docs=n_docs, min_words=min_words))
     if ctx.obj.get("json"):
         click.echo(json.dumps(meta, indent=2))
