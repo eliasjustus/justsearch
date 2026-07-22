@@ -446,7 +446,8 @@ public record ResolvedConfig(
    * @param titleBoost 306: title field boost in DisjunctionMaxQuery (0 to disable)
    * @param entityBoost 326: NER entity field boost in DisjunctionMaxQuery (0 to disable)
    * @param evidenceSpanEnabled 775: enable answer-bearing EvidenceSpan-backed excerpt selection
-   *     (default false — flag-off reproduces the IDF-only delivery excerpt byte-for-byte)
+   *     (default TRUE since the 775 §I flip, 2026-07-22; flag-off reproduces the IDF-only delivery
+   *     excerpt byte-for-byte)
    * @param evidenceSpanEntitySignal 775: the distinguishing-entity signal used by the EvidenceSpan
    *     selector — {@code df_rarity} or {@code ner_membership}
    */
@@ -459,8 +460,9 @@ public record ResolvedConfig(
       double entityBoost,
       boolean chunkAwareEnabled,
       // Tempdoc 774 Stage 2 — when true, chunk-sourced hits emit the winning chunk's text as
-      // content_preview (evidence-coherent CE input + delivery); default false is byte-equivalent
-      // to today (chunk text is never emitted). §F.1-5/§I.2 Stage-2.
+      // content_preview (evidence-coherent CE input + delivery). Default TRUE since the 775 §I flip
+      // (2026-07-22, founder decision / F-041); flag-off is byte-equivalent to pre-774 (chunk text
+      // is never emitted). §F.1-5.
       boolean evidencePreviewEnabled,
       boolean lambdamartEnabled,
       boolean evidenceSpanEnabled,
