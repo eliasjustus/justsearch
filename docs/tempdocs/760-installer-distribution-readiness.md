@@ -163,6 +163,58 @@ harness against the existing `tmp/offline-installer-sandbox` share infra; execut
 GUI session, so it ships as a ready-to-run harness + runbook step if it cannot be driven headless
 from this session.
 
+### Silent-install verification (sandbox harness) — prepared, not executed (2026-07-22)
+
+Item 1's harness is authored and statically validated (PowerShell AST parse, zero errors; `.wsb`
+generation dry-run confirmed against Microsoft's published Sandbox config schema) but **not run**
+— Windows Sandbox requires an interactive GUI session, unavailable to the authoring agent.
+
+Two files, `scripts/release/sandbox-silent-install-test.ps1` (host launcher) and
+`scripts/release/sandbox-guest-silent-test.ps1` (guest LogonCommand), together verify the two
+facts the Findings table flagged as never empirically tested: `/S` silent install lands the app
+at the real default per-user path (`$env:LOCALAPPDATA\JustSearch`, confirmed against
+tauri-bundler's `installer.nsi` currentUser branch, cross-checked at
+`scripts/ci/verify-installer-nsis-win.ps1:677`'s identical hardcoded registry key literal), and
+`/S` silent uninstall removes it cleanly (install dir, `HKCU:\...\Uninstall\JustSearch` key,
+Start Menu/Desktop shortcuts) with no leaked processes.
+
+**Usage** (two commands, from a GUI-capable Windows machine with Windows Sandbox enabled):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ci\package-installer-win.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release\sandbox-silent-install-test.ps1
+```
+
+The first stages the newest installer into `tmp/offline-installer-sandbox/share` as the stable
+`JustSearch-LATEST-setup.exe` alias (already-existing behavior,
+`package-installer-win.ps1:316-373`); the second stages the guest script alongside it, generates
+`tmp/offline-installer-sandbox/silent-install-test.wsb`, and launches Windows Sandbox. Results
+land at `tmp/offline-installer-sandbox/share/silent-test-result-<timestamp>.json` (schema
+`justsearch.sandbox-silent-install-test.v1`): a per-step pass/fail/detail log plus a residue list,
+ending in a literal `PASS`/`FAIL` line. Pass `-GenerateOnly` to prepare the `.wsb` without
+launching Sandbox (e.g. from an agent session); `-InstallerPath` overrides the staged alias.
+
+**Safety finding, load-bearing for anyone running this harness — do not skip:** the guest
+script's registry/filesystem lookups are host-global, not scoped to the installer it staged. An
+early validation pass of the guest script (run directly on a dev machine, outside Sandbox, with a
+non-functional placeholder installer file — intended only to check the PowerShell/JSON plumbing)
+located a real pre-existing `F:\JustSearch-test` NSIS test install via the machine's actual
+`HKCU:\...\Uninstall\JustSearch` registry key and **silently ran its real uninstaller with `/S`**,
+removing its registry entry, Start Menu/Desktop shortcuts, and `uninstall.exe` (a
+`resources\headless` remnant was left behind — the removal was not 100% clean either). No attempt
+was made to restore or otherwise act on this after the fact; it is reported here as-is. This
+script must only ever run inside a disposable Windows Sandbox instance — never directly on a host
+with a real JustSearch install. The guest script's own header now carries this warning verbatim.
+
+**Known limitations only a real GUI Sandbox run can close:**
+- Smart App Control may still block the unsigned installer despite the harness's best-effort
+  disable attempt (mirrors the existing, documented-unreliable mitigation in
+  `scripts/sandbox/sandbox-launch.py:889-903`) — an immediate install failure is plausibly SAC,
+  not an installer defect, until signing lands.
+- No interactive verification of the NSIS finish page, first-run UX, or tray icon.
+- The app is never launched by this test, so runtime residue (AI Home contents, worker/
+  llama-server child processes) is out of scope by design.
+
 ## §Outcome — Phase 2 implemented (2026-07-22, same day)
 
 All four delegable Phase-2 items landed on this branch, each independently verified before commit:
