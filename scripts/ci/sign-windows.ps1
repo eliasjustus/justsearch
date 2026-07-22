@@ -35,6 +35,54 @@ function Fail([string]$Message) {
   exit 1
 }
 
+# Runs a native command with stderr made NON-TERMINATING and all output captured. Under
+# $ErrorActionPreference=Stop with a piped stderr (exactly how Tauri's bundler runs this script),
+# a native process's first stderr line becomes a terminating NativeCommandError BEFORE our
+# exit-code check runs — the script dies mid-call and the real error is swallowed (tempdoc 760
+# rehearsal run 29911439832: tee log ends at "Signing (pfx):", no FAIL line ever written).
+# Deliberately does NOT log the arguments (pfx passwords travel in them) — only exe, exit, output.
+function Invoke-Native {
+  param(
+    [Parameter(Mandatory = $true)][string]$Exe,
+    [string[]]$Arguments = @()
+  )
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  $output = @()
+  $exit = -1
+  try {
+    $output = @(& $Exe @Arguments 2>&1 | ForEach-Object { "$_" })
+    $exit = $LASTEXITCODE
+  } catch {
+    $output = @("launch failed: " + $_.Exception.Message)
+    $exit = -1
+  } finally {
+    $ErrorActionPreference = $prevEap
+  }
+  Write-SignLog (([System.IO.Path]::GetFileName($Exe)) + " exit=" + $exit + " :: " + (($output | Select-Object -First 12) -join " || "))
+  return [pscustomobject]@{ ExitCode = $exit; Output = $output }
+}
+
+# Sign attempts hit the timestamp server once per file; 100+ sequential requests from one CI IP
+# is a realistic rate-limit shape, so allow a few attempts with a pause before failing.
+function Invoke-NativeWithRetry {
+  param(
+    [Parameter(Mandatory = $true)][string]$Exe,
+    [string[]]$Arguments = @(),
+    [int]$Attempts = 3,
+    [int]$DelaySec = 3
+  )
+  for ($i = 1; $i -le $Attempts; $i++) {
+    $res = Invoke-Native -Exe $Exe -Arguments $Arguments
+    if ($res.ExitCode -eq 0) { return $res }
+    if ($i -lt $Attempts) {
+      Write-SignLog ("attempt " + $i + "/" + $Attempts + " failed (exit=" + $res.ExitCode + "), retrying in " + $DelaySec + "s")
+      Start-Sleep -Seconds $DelaySec
+    }
+  }
+  return $res
+}
+
 function Info([string]$Message) {
   Write-SignLog $Message
   Write-Host $Message
@@ -145,9 +193,9 @@ function Assert-Signed([string]$Path, [string]$SigntoolPath) {
   if (-not $SigntoolPath) {
     Fail "signtool.exe not found; cannot verify signature for $Path"
   }
-  & $SigntoolPath verify /pa /v $Path | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    Fail "signtool verify failed (exit=$LASTEXITCODE) for $Path"
+  $verifyRes = Invoke-Native -Exe $SigntoolPath -Arguments @("verify", "/pa", "/v", $Path)
+  if ($verifyRes.ExitCode -ne 0) {
+    Fail ("signtool verify failed (exit=" + $verifyRes.ExitCode + ") for " + $Path + " :: " + (($verifyRes.Output | Select-Object -First 4) -join " | "))
   }
   Info "Signed OK: $Path"
 }
@@ -187,16 +235,11 @@ switch ($mode) {
       }
 
       Info "Signing (pfx): $resolvedBinary"
-      & $signtoolPath sign `
-        /fd SHA256 `
-        /td SHA256 `
-        /tr $timestampUrl `
-        /f $pfxToUse `
-        /p $pfxPassword `
-        $resolvedBinary | Out-Null
-
-      if ($LASTEXITCODE -ne 0) {
-        Fail "signtool sign failed (exit=$LASTEXITCODE) for $resolvedBinary"
+      $signRes = Invoke-NativeWithRetry -Exe $signtoolPath -Arguments @(
+        "sign", "/fd", "SHA256", "/td", "SHA256", "/tr", $timestampUrl,
+        "/f", $pfxToUse, "/p", $pfxPassword, $resolvedBinary)
+      if ($signRes.ExitCode -ne 0) {
+        Fail ("signtool sign failed (exit=" + $signRes.ExitCode + ") for " + $resolvedBinary + " :: " + (($signRes.Output | Select-Object -First 4) -join " | "))
       }
 
       Assert-Signed $resolvedBinary $signtoolPath
@@ -228,9 +271,9 @@ switch ($mode) {
     $signArgs += $resolvedBinary
 
     Info ("Signing (store '" + $certStore + "', thumbprint " + $thumb + "): " + $resolvedBinary)
-    & $signtoolPath @signArgs | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-      Fail "signtool sign failed (exit=$LASTEXITCODE) for $resolvedBinary"
+    $signRes = Invoke-NativeWithRetry -Exe $signtoolPath -Arguments $signArgs
+    if ($signRes.ExitCode -ne 0) {
+      Fail ("signtool sign failed (exit=" + $signRes.ExitCode + ") for " + $resolvedBinary + " :: " + (($signRes.Output | Select-Object -First 4) -join " | "))
     }
 
     Assert-Signed $resolvedBinary $signtoolPath
@@ -251,13 +294,13 @@ switch ($mode) {
     try {
       [System.IO.File]::WriteAllText($batch, ("@echo off`r`n" + $rendered + "`r`n"), [System.Text.Encoding]::ASCII)
       Info ("Signing (command): " + $rendered)
-      & $batch
-      $cmdExit = $LASTEXITCODE
+      $cmdRes = Invoke-Native -Exe $batch
+      $cmdExit = $cmdRes.ExitCode
     } finally {
       try { Remove-Item -LiteralPath $batch -Force -ErrorAction SilentlyContinue } catch { }
     }
     if ($cmdExit -ne 0) {
-      Fail "Signing command failed (exit=$cmdExit) for $resolvedBinary"
+      Fail ("Signing command failed (exit=" + $cmdExit + ") for " + $resolvedBinary + " :: " + (($cmdRes.Output | Select-Object -First 4) -join " | "))
     }
 
     # A vendor CLI may or may not ship signtool; locate it for the strict verify path (the
