@@ -3,7 +3,7 @@ title: "Installer payload composition: what belongs in the base installer versus
 type: tempdocs
 status: "open — ANALYSIS ONLY (2026-07-21). Evidence measured against a real 815 MB CI artifact (run 29514086160, 743 files, 177 PE binaries, every PE signature-checked). Takeover investigation (2026-07-21, multiple passes) independently re-verified all citations (clean), resolved Q7 (§F: native-bin combined is ~10.4% of installed payload), found a much bigger payload outside the original native-bin-only scope (§G: lib/worker/onnxruntime_gpu-1.24.3.jar is 34.3%, of which ~18.65% is dead Linux native binaries on this Windows-only product and ~15.12% is a Windows CUDA provider DLL inert until GPU+pack), and found a second major lever (§H: the embedded WebView2 offline installer is 203.65 MB / 18.83% — the second-largest single component, ~60% bigger than Tauri's own documented estimate). Resolved Q3 (pack mechanism is NOT ready for a CPU-mandatory package — 4 concrete gaps found), Q4 (only 2 of 9 scripts are real gates, both already characterized), the should_sign upstream claim (confirmed against Tauri source), and Q8's licensing question (ONNX Runtime is MIT; no Windows-only upstream artifact exists). No decision reached, no split recommended, nothing removed or implemented; §Open questions (1-10, several now resolved inline) are for the owner. A /derisk pass, /theorize pass (broader framings + a spun-off idea sketch, tempdoc 773), /research pass (competitive precedent: Ollama's Windows installer is 1.36 GB, ~1.75x this one; the onnxruntime_gpu fat-jar problem is a known unresolved upstream issue, not a local one-off; Tauri's WebviewInstallMode default is downloadBootstrapper, so JustSearch's offlineInstaller choice was a deliberate historical override), a /design pass (§Design: closes Q3 by extending 657's existing tier/intent/hardware model with a package-level `requiresCuda` field rather than building new structure; recommends Gradle Artifact Transforms over the derisk pass's hand-rolled jar task for §G; recommends reverting §H to Tauri's own default), and a round-2 /derisk pass (softens the Artifact Transform recommendation — no Transform/buildSrc precedent exists in this repo, so the hand-rolled task is the lower-risk near-term choice — and surfaces a must-not-miss InstallPlannerTest update for Q3a, an unresolved attachment point for Q3c's notice-baking, and confirms Q3d needs matching ui-web work) followed. See §Takeover verdict."
 created: 2026-07-21
-updated: 2026-07-21 (takeover, derisk×2, theorize, research, design passes)
+updated: 2026-07-22 (implementation addendum, confidence check, second takeover verdict — recommends closing Q1/Q2 with O0; see §Second takeover verdict)
 author: agent (subagent investigation), founder-directed distribution work (2026-07-21)
 category: distribution / installer
 related:
@@ -1208,3 +1208,81 @@ package instance if an option is ever chosen (Q3 built the *mechanism* only, no 
 yet); Q3(c)'s runbook step (a manual, easy-to-forget addition, not automated); Q3(d) (deliberately
 parked, owner-confirmed low priority until a real `requiresCuda:false` package exists). Nothing here
 has a PR open or has been merged to `main`.
+
+## §Second takeover verdict (2026-07-22, Fable) — verification of the landed work + a recommendation that closes Q1/Q2
+
+**Method.** Independent re-verification, not re-derivation: read the full tempdoc and all three
+implementation diffs; confirmed the combined CI installer build the §Confidence check cites
+(`gh run view 29874382035` → `completed` / `success`, branch `worktree-772-installer-payload`);
+read tempdoc 760's live Findings table directly (its two signing blockers verbatim); confirmed in
+`modules/ui/build.gradle.kts` that the trimmed-jar swap is wired exactly as described
+(`exclude("onnxruntime_gpu-*.jar")` + trimmed replacement into `lib/worker/`) and that
+`stageLlamaServerFromPrebuilt` sources the llama-server payload from a **pinned upstream prebuilt
+zip** (`llamaPrebuiltVersion`), i.e. byte-stable across releases until the pin is bumped — a fact
+that turns out to be load-bearing below. No discrepancies found between the tempdoc's claims and
+the code/CI reality.
+
+**Quality read on the prior sessions' work: sound, and unusually honest.** The three landed changes
+are correctly scoped (§H is a pure override-removal; §G touches only the Windows staging path,
+leaving the Linux CI lane's resolution untouched; Q3 is behavior-preserving by construction with
+tests pinning exactly that). The §Confidence check's walked-back claim was walked back correctly —
+760's two named blockers (CI never passes `-Release`; `sign-windows.ps1` is PFX-only with no
+cloud-HSM/token mode) are *mechanism* work whose cost is independent of how many files flow through
+it. Nothing in the landed work needs re-doing.
+
+**Two observations that further weaken the remaining case for O1/O2/O3 (moving tesseract/llama-server
+to the pack), beyond the walk-back already recorded:**
+
+1. **Moving unsigned PEs to the pack does not dodge the trust problem — Smart App Control gates
+   execution, not delivery.** A pack-delivered `llama-server.exe` arrives just as unsigned as a
+   bundled one and is blocked at *launch* on a SAC-enforcing machine regardless of route (this
+   repo's own `package-installer-win.ps1` SAC self-diagnosis is a live instance of SAC blocking
+   unsigned executables at run time). So if the goal of signing is "the product works on
+   locked-down machines," the 93 third-party PEs need signatures *wherever they live* — the move
+   changes who signs them and when, not whether. The 101→~8 framing quietly equates "fewer
+   bundler-signed files" with "less signing needed," which holds only if pack-delivered binaries
+   are allowed to stay unsigned forever.
+2. **The 101-signings-per-release arithmetic assumes re-signing identical bytes every release —
+   but the payload is pin-stable, and `should_sign` skips already-signed PEs.** The 93 unsigned
+   third-party binaries come from pinned, versioned upstream prebuilts that do not change between
+   releases (only when the pin is bumped). Since the bundler verifiably skips PEs that already
+   carry a valid signature (§Signing consequence, confirmed from Tauri source), **signing the
+   vendored binaries once per upstream bump — e.g. hosting signed mirrors on `justsearch-releases`,
+   where two of the four cuda-runtime archives are already self-hosted — collapses per-release
+   signings to ~8 with zero payload movement, zero UX change, and zero pack-mechanism work.**
+   ~93 signatures per upstream bump (a few times a year) vs. per release is a far better cost
+   curve than O1-O3's, and it also *solves* observation 1 (the binaries end up signed) instead of
+   relocating it. This belongs in 760's signing-pipeline design space, not here — recorded so 760's
+   designer sees it.
+
+**Verdict: the tempdoc's remaining open work should be closed, not extended.**
+
+- **Should it have been done at all? Yes — and it's done.** The two banked wins (§G −190 MB, §H
+  −204 MB, combined 815 → ~452 MB) were near-zero-downside fixes of the "accumulated, not chosen"
+  kind §Theorize named, and the evidence work here (three re-extractions of a now-expired CI
+  artifact) is not reproducible later. The Q3 infrastructure is behavior-preserving and honestly
+  carries its own retirement condition.
+- **Should O1/O2/O3 be done now? No — recommend closing Q1/Q2 with O0 (status quo).** After §G/§H,
+  the size argument is marginal (~109 MB on a ~452 MB installer already ~3x smaller than Ollama's,
+  per §Research); the UX argument is net-negative (new consent gates, new failure points); and the
+  signing argument — the only one that recently gained urgency — is better served by
+  sign-once-per-bump (observation 2), which costs less than O1-O3, keeps first-run UX intact, and
+  actually results in signed binaries on user machines. "This should not be done" is the honest
+  option-table outcome here.
+- **Cheapest validating/invalidating evidence for that recommendation, and does it exist?** It now
+  does: the pin-stability of the payload + the confirmed `should_sign` skip are both verified in
+  this tempdoc; together they falsify the per-release signing-cost premise that made O1-O3 look
+  necessary. The one check that would *re-open* O1-O3: if 760's design work concludes signed
+  mirrors are infeasible (e.g. no signing setup can be run against vendored archives at all), the
+  per-release framing returns — that check belongs to 760.
+- **What does it displace/duplicate? Nothing** — confirmed unchanged from the first takeover
+  verdict; 760/759/761/374 remain disjoint, and observation 2 above is an *input to* 760, not a
+  duplication of it.
+
+**LITE-CLASS: no** (unchanged — this was evidence-gathering plus three behavior-affecting changes,
+not pure teardown).
+
+**Residual verification gaps, inherited not new:** no end-to-end install of the new
+`downloadBootstrapper` installer on a real machine (this folds naturally into 760's Phase 2 item 1
+— the same clean-sandbox silent-install run verifies both); CUDA provider path untested against the
+trimmed jar (low risk — win-x64 bytes untouched — but unexercised).
