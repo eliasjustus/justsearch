@@ -72,3 +72,73 @@ untested); per-leg passage pools with D-005 recall-completeness.
   non-answer.
 - Register discipline: every measurement lands as F-numbers/baselines before
   the lane closes.
+
+## §E. Takeover verdict (2026-07-22, worktree `774-passage-first`)
+
+Investigation pass over the full lineage (771 §E/M5, F-030..F-039, 712/713/708,
+733, siblings 775–779) + pipeline architecture + a light external check.
+**Verdict: GO for the program's passes — with one sequencing amendment and four
+coordination duties. NOT lite-class. No implementation licensed (charter's own
+rule; unchanged).**
+
+1. **The premise is real but has one untested crux.** Every passage-granularity
+   win cited in §A.2 (F-033 chunk-SPLADE 0.545, F-034 chunk-MaxP 0.855/0.643)
+   was measured on `mixed/legal-clerc-200` — a *citation-retrieval* task with
+   real CLERC queries — NOT on the camouflaged paraphrase-injection strata
+   where the §A.1 floor lives. Worse for the premise: the M5 "true floor"
+   (82–90%) was computed over modes that already *include* the chunk branch
+   (vector/hybrid legs carry `chunk_merge`; 771 §E notes hybrid recall@10 >
+   3-leg union *because* of it) — so fused passage-granularity signal is
+   already inside the floor number and still floored at k=10. Two live
+   hypotheses: (i) fusion dilution (F-035's parent-noise mechanism, inverted)
+   + the depth-10 horizon hide chunk-level signal a passage-primary path would
+   surface → the program attacks the floor; (ii) the camouflaged paraphrase
+   barrier is encoder-domain (F-030) and binds at passage granularity too →
+   the floor is architecture-untouchable and this program's value collapses to
+   775's delivery lane + bounded fusion gains. Nothing measured to date
+   discriminates (i) from (ii).
+2. **Sequencing amendment (recommended): promote §C.3(b) to a go/no-go gate
+   run FIRST** (before or alongside theorize — the theorize-first mandate
+   binds implementation, not measurement). The probe is ~$0: offline
+   chunk-MaxP (712/708 harness pattern) + pure-chunk-branch ranking at depth
+   100 on the certified camouflaged legal-10k stratum (materialization
+   doc-ID-matched to cert qrels; re-verify chunk-vector liveness per F-032
+   probe discipline before trusting any arm). A negative result re-scopes the
+   entire program before the heavy passes spend anything; a positive result
+   gives theorize its load-bearing number. §C.3(a) (chunk-SPLADE re-litigation
+   on camouflaged strata) stays valid and second — F-036's default-off verdict
+   was measured where lexical carried legal (0.686); on the rebuild lexical is
+   0.00, so the fusion-overlap mechanism that neutralized it is gone.
+3. **Displacement/duplication check.** Displaces (candidate): doc-primary leg
+   plumbing + branch-fusion machinery (§C.4 already names orphans). Does NOT
+   duplicate 775 (delivery half vs retrieval unit) **but shares one concept**:
+   the passage/span representation. Fork risk is real — 775 builds "one span
+   authority" while 774 would make the passage the index-side unit; the design
+   pass must produce ONE canonical passage representation (projection
+   discipline, execution-surfaces register), not two. 733's option-(b)
+   entity-neighbor hop absorption overlaps §B's "entity linking as a join
+   substrate" — reconcile before design (charter already flags; 733 is open,
+   awaiting owner A/B authorization). 777's listwise LLM reranker is a natural
+   judge over per-leg passage pools (D-005: intelligence in the judge) — a
+   passage-first design should leave that seam open, not compete with it.
+4. **"Rewrite-scale" is itself an assumption to test.** The engine already
+   carries ~80% of the passage substrate: per-chunk BM25/CLS-vector/SPLADE
+   fields, chunk 3-way CC fusion, MaxP-style parent collapse (stage 13a–13c),
+   chunk-first RAG, F-038's union leg. Passage-first may be primacy
+   re-plumbing (chunk branch primary, doc branch as aggregation/context)
+   rather than a rewrite; the theorize pass should cost both shapes before
+   accepting the rewrite framing. Full late-interaction (ColBERT/PLAID
+   per-token multi-vector, learned-codebook residual compression, custom
+   scoring kernels) is a *large* new footprint/dependency on a desktop
+   product — treat as the expensive end of the design space, only reachable
+   if chunk-CLS-primary measurably saturates below the offline ceiling.
+5. **Honest tension, resolved:** 771 concluded the floor "NOT engine-fixable /
+   no new engine charter licensed" — that verdict was scoped to F-039's
+   *ranking-bug* residue at doc granularity under the current architecture
+   (708 closed model swap, not architecture). 774 is the founder's deliberate
+   bet on the one untested axis. Legitimate — but item 2's probe is what
+   decides whether the bet has a payout surface, which is why it goes first.
+6. **Timing.** 775 is chartered "buildable first" and must land pre-hero
+   (cohort identity). 774 implementation is rewrite-scale and invalidates
+   baselines/cohorts — it must NOT land before the hero campaign's cohort
+   pins (766/776 ordering); the passes + probe can and should run now.
