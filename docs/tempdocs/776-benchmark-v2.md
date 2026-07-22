@@ -1,7 +1,7 @@
 ---
 title: "benchmark v2: multi-schema questions, baseline-arm characterization on the camouflaged corpora, the golden-corpora leak audit, and the register provenance sweep — everything the eval-design owner owes before the hero numbers go public"
 type: tempdocs
-status: "items 1 (offline phase) + 3 + 4 DONE (2026-07-22, §D audit/sweep + §E schema implementation); item 2 baseline probe in flight; item 1 scientific gates deferred to the combined stack window (§E.4)."
+status: "items 1 (offline phase) + 2 + 3 + 4 DONE (2026-07-22; §D audit/sweep, §E schemas, §F baseline probe — uplift does NOT compress, baseline near-floor on all hero strata). Remaining: item 1 scientific gates in the combined stack window (§E.4), scheduled with the next stack occupancy."
 created: 2026-07-22
 author: agent (Fable orchestration), chartered from the 762→771 measurement program's inventory (founder-directed 2026-07-22)
 category: eval-design / agent-utility
@@ -32,6 +32,9 @@ related:
    hero pre-registration: a small haiku baseline-arm probe (~10-15 cells,
    order $5) per viable stratum, giving the pre-registration an honest
    expected-delta band instead of a guess.
+   **Status (2026-07-22): EXECUTED — baseline probe complete for all three
+   hero-viable strata; see §F. Verdict: df=1 camouflaged tokens do NOT grep
+   better and do NOT compress the hero uplift — baseline stays near-floor.**
 3. **Golden-corpora leak audit.** The `_FILLER` leak (767 §Q — a third of
    measured retrieval) proves the gold-only-feature class; the same
    generator family built `golden/needle-burial-v1` and
@@ -237,3 +240,113 @@ New scientific policy work the window MUST do first (pre-registration, before an
 - **Bridge in a mix keeps `question_type: "1_hop"`** (not a new `bridge` label) — the
   commitment-bound edge-count vocabulary is preserved; the schema is distinguished by
   `gold_kind` + the two new question_type labels only.
+
+## §F. Item 2 baseline probe (2026-07-22)
+
+**Arm:** condition A only (file tools — Grep/Read/Bash — over the materialized
+`corpus-dir`; **no MCP search backend, no dev stack**). `haiku`
+(`claude-haiku-4-5`), 1 seed, `private-synthetic` / confidence-tier C. Every
+record is internal / non-claim-bearing: single-arm, `comparable=False`, no
+policy evaluation, no promotion. Corpora: the certified n=50 hero cells,
+signature-verified byte-identical to the 707 structural commitments (A2 gate
+PASS) before any spend.
+
+### Per-stratum baseline (no-tool floor)
+
+| stratum | n | baseline acc | read BOTH evidence docs | mean $/cell |
+|---|---|---|---|---|
+| en-legal-clerc-1k-verbose  | 15 | 1/15 = **0.067** | 1/15 | 0.328 |
+| en-email-enron-raw-1k-verbose | 15 | 4/15 = **0.267** | 5/15 | 0.241 |
+| en-email-enron-raw-10k-verbose | 10 | 1/10 = **0.100** | 0/10 | 0.209* |
+
+\*enron-10k: 5/10 cells lost their cost receipt to the 768 D7 wall-clock/USD
+race (num_turns/cost null on exhausted cells), so the mean is over the 5
+reporting cells; true stratum spend is higher (see ledger).
+
+### Qualitative census — does grep find the df=1 bridge tokens?
+
+- **Strategy that dominates:** exhaustive filesystem search — Grep + Bash
+  (`ls`/`grep`/`cat`) + Read, 20-40+ turns/cell. The failing cells run the
+  per-cell budget to the cap (~$0.45-0.49) and *still* fail; the cheap cells
+  (~$0.03-0.10) are early give-ups.
+- **Correctness determinant = reading BOTH bridge docs.** Every correct
+  legal / enron-1k cell read both evidence docs; the single enron-10k "correct"
+  read neither (a fluke, not a solve). At 10k files grep dilution is worse —
+  **0/10 reached both docs**.
+- **Grep-ability verdict (the headline).** The df=1 answer token
+  (e.g. `RBF 840` / `XQN 853`) and the linking key (e.g. `Ofrles Prodres`)
+  ARE unique literals that grep would return instantly *if known* — but the
+  agent cannot reach them, because the **query→entity mapping is a synonym
+  paraphrase**: the query says "the power station in the upper wetlands" while
+  the bridge doc says "The reactor in the northern marshlands." Literal grep on
+  the query's surface tokens fails at **entity resolution**; the searchable
+  df=1 token is only reachable *after* the paraphrase is resolved (which needs
+  semantic retrieval, not grep). So the camouflaged tokens do **not** grep
+  better than the old alien tokens — the camouflage defeats grep one step
+  *earlier*, at entity resolution, and the answer token's df=1-ness never gets
+  a chance to help the baseline arm. (Same structure in both corpora — the
+  fabricated gold is shared; only the real-text host differs.)
+
+### Expected-delta band for the hero campaign
+
+With-tool retrieval ceilings (given): legal-1k **0.50**, enron-1k **0.86**,
+enron-10k **0.48**. The ceiling is retrieval recall; with-tool *answer*
+accuracy ≤ ceiling (retrieve AND extract the bridge AND answer). Even when the
+baseline reads both evidence docs it converts to a correct answer only ~0.8 of
+the time (enron-1k: 5 read-both → 4 correct), so applying a ~0.70-0.85
+retrieve→answer conversion to each ceiling:
+
+| stratum | baseline (measured) | ceiling | with-tool acc (est) | **expected Δ** |
+|---|---|---|---|---|
+| legal-1k  | 0.067 | 0.50 | 0.35-0.43 | **+0.28 to +0.43** |
+| enron-1k  | 0.267 | 0.86 | 0.60-0.73 | **+0.33 to +0.59** |
+| enron-10k | 0.100 | 0.48 | 0.34-0.41 | **+0.24 to +0.38** |
+
+**Implication.** The pre-registration's worry — that df=1 camouflaged bridge
+tokens grep well enough to compress the uplift — is **not borne out**. Baseline
+is near-floor across all three strata, so the expected uplift band is wide and
+firmly positive: largest on **enron-1k** (highest ceiling + moderate baseline),
+smallest on **enron-10k** (low ceiling AND low baseline). enron-1k is the
+strongest hero cell; enron-10k the weakest signal. The 766 pre-registration
+should carry these bands, not a guess.
+
+### Spend ledger
+
+| item | queries | reported $ |
+|---|---|---|
+| pilot (legal-1k) | 2 | 0.471 |
+| legal-1k | 15 | 4.920 |
+| enron-1k | 15 | 3.611 |
+| enron-10k | 10 | 1.046 (5/10 cost receipts lost, 768 D7) |
+| **total reported** | | **10.05** |
+
+Est. true total ~$11-11.6 (enron-10k's 5 null-cost cells were exhausted cells,
+so ~$0.3 each). **Under the $15 hard stop.**
+
+### Deviations & caveats (interrogate-results honesty)
+
+- **Corpora reused, not re-fetched.** To avoid real-corpus fetch
+  non-determinism, the 3 cells were copied byte-identical from the 767
+  worktree's certified materialization and signature-verified against the 707
+  structural commitments (sig + query_gold_sha256 + count all match) before
+  spending. Equivalent to a re-materialize; stronger guarantee (exact bytes).
+- **enron-10k n=10, not 15** — sized down to stay safely under $15 once the
+  measured per-cell cost ($0.24-0.33) came in well above the $0.19 historical
+  assumption the $9/45-cell estimate rested on.
+- **Mid-run environment failure (not self-inflicted).** The execution worktree
+  `agent-ace19997b9499c758` was removed by an external cleanup *while locked*,
+  mid-run, wiping its working tree and most of `tmp/`. enron-1k artifacts
+  survived and were secured to main `tmp/`; **legal-1k's raw record/log were
+  LOST** — its per-qid values above are reconstructed verbatim from the in-run
+  census (numbers authoritative; raw artifact `legal-1k-RECONSTRUCTED.json`,
+  not byte-reproducible without a re-run). enron-10k was re-run *after* the
+  failure using the 767 worktree's certified corpus, writing to stable main
+  `tmp/`. §F was authored and committed from a worktree re-created on the
+  surviving branch.
+
+### Artifacts
+
+`F:\justsearch-public\tmp\analysis-624\776\baseline-probe\` —
+`per-stratum-summary.json`, `per-qid-outcomes.json`,
+`records/{enron-1k, enron-10k, legal-1k-RECONSTRUCTED.json}`,
+`logs/{enron-1k, enron-10k}` (Inspect eval logs).
