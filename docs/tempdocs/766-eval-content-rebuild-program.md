@@ -40,6 +40,21 @@ instrument in which the engine explains ~13% of failure variance while the
 model explains ~77%. Evidence: 762 §X.1, lanes 763/764/765 §Results,
 register F-039.
 
+> **[CORRECTED 2026-07-21 — tempdoc 767 §H.0]** The clause "a corpus-difficulty
+> regime that turned out to be vocabulary overlap between the generator and the
+> distractor domain" is **withdrawn**. The 764 measurement behind it was a
+> substring match (`spa` caught `space`/`newspaper`/`disparate`; the token
+> occurs in 0 of 199 real CLERC opinions) compared across mismatched units
+> (legal per-file vs Enron per-line, per the source CSV's own header);
+> unit-normalized the asymmetry is **0.96×, not 247×**. The difficulty regime
+> itself is **real** (43/60 legal baseline cells opened neither gold doc vs
+> 6/60 email; accuracy 0.033 vs 0.533) but is now **unexplained** — tempdoc
+> 769's M1 measurement is the leading candidate. The other items in this
+> paragraph — one question schema, greppable `_FILLER` payload, the naming
+> leak, the wall-clock knob, the 13%/77% variance split — are unaffected, and
+> the payload-enumerability item is independently verified (one literal
+> `_FILLER` phrase selects 280/280 gold docs).
+
 ## §B. Governing design decisions
 
 - **D1 — Extend the 707 pipeline; do not replace it.** `corpus_inject.py`
@@ -47,18 +62,39 @@ register F-039.
   (structural + SCIENTIFIC_GATES incl. closed_book), the recipe/commitment
   scheme, and the 709 fetch cache are all reused. The rebuild is a *payload
   generator* change plus *new certification gates*.
-- **D2 — Camouflage is deterministic and host-derived.** Injected entities
-  are minted type- and length-matched against an entity bank harvested from
-  the host corpus itself (Faithfulness-QA recipe: NER type + length band
-  0.3–3.0×, collision-checked against real entities); fact sentences come
-  from per-domain register templates. No LLM in the build path — preserves
-  `corpus_certify`'s cross-interpreter determinism stance. The mechanism is
-  the lane's to refine; the *requirement* is D3's certified
-  indistinguishability, not any particular minting algorithm.
+- **D2 — Host-derivation is deterministic, and scoped to the entity and bulk
+  layers.** **[AMENDED 2026-07-21 — see tempdoc 767 §H.1 / §I.1]** Injected
+  entities are minted type- and length-matched against an entity bank
+  harvested from the host corpus itself (type + length band 0.3–3.0×,
+  collision-checked against real entities) — *this half stands and is
+  retained*; 767 §H.4 measured a stdlib harvester as sufficient (and strictly
+  wider in type coverage than the available NER), so no heavyweight NER
+  dependency is implied. Document **bulk** is likewise host-derived: real host
+  sentences, which 767 §H.3 measured closing the `_FILLER` enumerability leak
+  (100% → 10–12.5%, below the native base rate).
+  **What this decision no longer asserts:** host-derivation as a *blanket*
+  treatment. 767 §H.1 measured the **bridge layer** — the descriptor a query
+  aims at — being *destroyed* by host-derivation (query↔gold overlap
+  0.083 → 0.820, with 65% of queries leaking a df=1 grep anchor), because a
+  real descriptor's identifying content is its proper nouns: uniqueness and
+  lexical distance are in direct tension and cannot both be had from host
+  text. The bridge therefore stays **synthetic and low-overlap** by
+  construction, and the synthetic descriptor pools are load-bearing rather
+  than orphans. Per 767 §I.1, indistinguishability is **layer-specific**:
+  camouflage the bulk, isolate the bridge, make the needle unique.
+  No LLM in the build path — preserves `corpus_certify`'s cross-interpreter
+  determinism stance. The mechanism is the lane's to refine; the *requirement*
+  is D3's certified indistinguishability, not any particular minting algorithm.
 - **D3 — Camouflage is certified, not assumed.** New gates in
-  `corpus_certify` (same seams as existing checks): **distractor-flood
-  index** (grep-hit profile of question vocabulary against the distractor
-  pile — the 764 mechanism-probe measurement, made a standing gate),
+  `corpus_certify` (same seams as existing checks): **[AMENDED 2026-07-21 —
+  see tempdoc 767 §H.0 / §I.3]** a **bridge-distance gate** (G-bridge:
+  no query leaks a token whose document frequency in the host corpus is at
+  or below a floor, and query↔gold-head content-token overlap stays at or
+  below the committed baseline) — *replacing* the previously-listed
+  distractor-flood index, whose motivating measurement is retracted and
+  whose aggregate form cannot detect the case that actually bites (a df=1
+  token pins exactly one document and is a perfect grep anchor; 767 §H.1
+  measured 65% of queries leaking one while aggregate means looked healthy),
   **injected-entity indistinguishability** (grep-hit profile of minted
   entities statistically indistinguishable from native same-type entities),
   **naming/format-leak check** (no component of the gold derivable from any
@@ -144,3 +180,20 @@ constraint (762 §C.1 stands: no paid campaign runs until then).
   `corpus_certify` SCIENTIFIC_GATES; capture fields → `tool_result_digests`;
   corpora → 741 derived-artifacts + 709 fetch cache; engine findings →
   search-quality register (F-039); budget semantics → 757.
+
+## §F. Program status + hero-timing decision (2026-07-22)
+
+All four lanes complete: 767 certified leak-free (32/32 gates, #272/#273 —
+including the §Q finding that the prior thresholds were calibrated on the
+`_FILLER` leak), 768 shipped (#266), 769 closed-by-routing, 770 shipped
+(#268), 771 re-measured and closed (#274, charters PR). **Founder decision
+(2026-07-22): the hero campaign is DEFERRED to product freeze** — benchmark
+numbers are cohort-perishable, planned surface work (775) bumps cohort
+identity, and the audience for a promotable number arrives with
+distribution, not before. The pre-registration package is staged (viable
+strata enron-1k/10k + legal-1k; legal-10k excluded as a corpus-wide
+retrieval floor; n=60/stratum powered for the §T target; USD-binding; est.
+$135–250; closed-book-at-hero-tier pre-flight required). Pre-hero ordering:
+775 (surface, cohort bump once) and 776 (multi-schema + baseline
+characterization + leak audit + register sweep) land first. This umbrella
+stays open until the campaign's pre-registration, per §C.

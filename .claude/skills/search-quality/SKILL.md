@@ -793,7 +793,7 @@ above)*
 - **Conditions/caveats:** measured on the 707 fabricated-chain corpora (synthetic gold payload,
   uncamouflaged — see tempdoc 766's rebuild); the near-duplicate-decoy crowding is partly a
   corpus artifact (40 template-identical gold/decoy docs), so the fix lane (tempdoc 769) must
-  verify against both the existing reproductions AND the rebuilt camouflaged corpora. Related:
+  verify against both the existing reproductions AND the rebuilt corpora (tempdoc 767). Related:
   F-025's legal leg-miss profile (leg_miss 0.28) and F-037's pack-curation disagreement — same
   neighborhood, different stages.
 - **Owner / fix lane:** tempdoc 769 (engine lane, chartered 2026-07-21). Acceptance: the 17 B2
@@ -821,6 +821,31 @@ above)*
   **50.3% of post-search Reads (N=862) targeted documents search never returned**, i.e. the dominant
   agent-side failure is retrieval coverage, not surface ergonomics. Do not wait on 770 for (a); it
   needs an owner.
+- **OWNER ASSIGNED (2026-07-21, founder-approved routing):** tempdoc **771** (post-rebuild retrieval
+  residue) now owns (a) the join-key/evidence-content item, (b) the fusion-burial residue, and the
+  read-amplification item 770 routed out — all HARD-GATED on 767's rebuilt strata (every magnitude
+  above is a property of the uncamouflaged corpus; re-measure before design). Tempdoc 769's original
+  acceptance criteria are retired; its M5 floor-cell retest moves into 771 §C.1. F-039's resolution
+  note lands when 771's re-measurement pass rules each component fixed/shrunk/representation-bound.
+- **RESOLVED-DECOMPOSED (2026-07-22, tempdoc 771 §E — re-measured on the leak-free certified strata,
+  PR #273):** F-039's "engine owns 13–28% of with-tool failures, growing with scale" decomposes on
+  the rebuild into four components, none of which is a single fixable ranking bug: **(a) join-key
+  affordance — CONFIRMED, not a defect**: the bridge entity name is a globally-unique token (df=1)
+  and puts the answer doc at rank 1–2 (hybrid + lexical, 50/50) once queried, while structure-
+  phrased queries structurally cannot; this *defines* the required two-step, it is not a burial.
+  **(b) evidence-content — the surviving small engine/surface item**: the delivered excerpt carries
+  the join entity in 93% of successful enron retrievals but only 45% of legal ones (long CLERC docs
+  bury the bridge sentence past the ~4 KB preview), so on the F-039 domain even successful retrieval
+  often can't seed hop-2 → scoped excerpt/evidence-content design (couples to F-038 passage
+  machinery + read-amplification). **(c) fusion-burial — bounded, guarded**: 5.0% of queries / 9.8%
+  of hybrid-misses (leg-visible-hybrid-buried @10), same order as the 769 census, did not grow,
+  already ratcheted by the leak-gate → no new machinery. **(d) representation floor — DOMINANT at
+  scale, NOT engine-fixable**: legal-10k gold is unreachable by any leg for 82–90% of queries
+  (lexical dead post-camouflage, dense/splade can't bridge the legal paraphrase barrier —
+  F-030(678), 708 *no model swap*). **Net:** the durable engine-owned residue is (b) the long-doc
+  evidence-content excerpt gap (small, design-here) plus (d) the known encoder-domain floor (not
+  new); F-039 is marked **resolved-decomposed**. No F-030 successor is opened (708 closed the
+  encoder question); no new engine charter is licensed.
 
 ### F-038: RAG chunk retrieval was blind to chunkless (sub-2000-char) docs — a doc-level union leg into the PRIMARY RAG candidate set fixes it with no re-index; interactive hybrid on-baseline (tempdoc 749, 2026-07-18)
 
@@ -956,7 +981,7 @@ above)*
   --out tmp/712-splade-check --device cuda --batch-size 8`; artifact `tmp/712-splade-check/results.json`.
   Evidence: tempdoc 712 §Takeover experiment.
 
-### F-030: scanned-PDF OCR execution engine replaced (tempdoc 706, 2026-07-10) — extraction-content comparability boundary
+### F-030(706): scanned-PDF OCR execution engine replaced (tempdoc 706, 2026-07-10) — extraction-content comparability boundary
 
 - **Finding:** Tika-internal serial per-page tesseract OCR was replaced by an owned parallel engine
   (`PdfOcrEngine`: 300 DPI GRAY, bounded pool, one spawn/page, per-document budget, forceful child
@@ -972,7 +997,7 @@ above)*
   `extraction_method`/reason-code semantics are unchanged (671 classifiers green unmodified).
 - **Evidence:** tempdoc 706 §Execution log (before/after harness, word-overlap parity).
 
-### F-030: dense/SPLADE death on legal-shaped retrieval is an ENCODER-DOMAIN MISMATCH — not gating, not query length, not granularity, not query naturalness (tempdoc 678 §Pillar-5 campaign, 2026-07-10; answers Q-015)
+### F-030(678): dense/SPLADE death on legal-shaped retrieval is an ENCODER-DOMAIN MISMATCH — not gating, not query length, not granularity, not query naturalness (tempdoc 678 §Pillar-5 campaign, 2026-07-10; answers Q-015)
 
 - **REFINEMENT (2026-07-11, tempdoc 708 closure — original text below kept intact; annotate-don't-rewrite):**
   the "encoder-domain mismatch" verdict is **superseded in mechanism** by F-031 + F-032 + F-034: the
@@ -1633,10 +1658,10 @@ above)*
 - **Recommendation (636 §Adjacent-work-coordination, not yet a decision):** 639's design should **extend** `staged_recall_accounting` (a per-leg ANN-recall sub-measure + a dedup/redundancy measure over the same returned set), reusing the projection + reconciliation seam; 636's dropped `ann_proof FAIL` comparability flag is the natural input. **Status:** 639 is a no-implementation stub — flagged here so its design phase conforms rather than forks.
 - **Coupling with 643 found during the 643 investigation (2026-07-01):** the "symmetric siblings" framing (639 = candidate-set, 643 = judge) under-states a real coupling — a doc that out-ranks the gold in the `JUDGE_RANK_LOW` bucket is often a **near-duplicate distractor**, which is 639's dedup half, not a judge defect. 639's design should attribute how much of `judge_low` is near-dup-driven (→ fixed by 639's dedup, for free) vs genuine mis-rank (→ 643's territory) before either stub commits further design effort on an assumed split.
 
-### Q-015: Why do the dense and SPLADE legs collapse on the legal corpus (nDCG@10 ≈ 0.06), and what engine change recovers them? → ANSWERED → F-030
+### Q-015: Why do the dense and SPLADE legs collapse on the legal corpus (nDCG@10 ≈ 0.06), and what engine change recovers them? → ANSWERED → F-030(678)
 
 - **Answered (2026-07-10, tempdoc 678 §Pillar-5, campaign E5-A..E5-C-v2):** the collapse is an
-  **encoder-domain mismatch** — see F-030. Eliminated in order: gate/fusion capping (E5-A/B, with
+  **encoder-domain mismatch** — see F-030(678). Eliminated in order: gate/fusion capping (E5-A/B, with
   tempdoc 702's threshold recalibration eval-gated and shipped as correctness-only, PR #121), query
   length (E5-C keyword control), doc granularity (E5-D: dense adds only +3.0 pts at chunk level),
   query naturalness (E5-C-v2 LLM-reduced). No engine change recovers the legs short of the encoder/
@@ -1658,7 +1683,7 @@ above)*
   whether gold docs are even embedded/indexed at useful granularity (doc length vs encoder window);
   compare chunk-granularity retrieval; then route the fix to its owner (639 for ANN/dedup, a new doc
   for representation/granularity if that's the finding).
-- **Refinement (2026-07-11, tempdoc 712 → F-033):** the SPLADE half of F-030's "encoder-domain
+- **Refinement (2026-07-11, tempdoc 712 → F-033):** the SPLADE half of F-030(678)'s "encoder-domain
   mismatch at any granularity" is narrowed — 678 never measured chunk-level SPLADE, and per-chunk
   SPLADE revives the sparse leg 6–10× offline. The sparse deadness is substantially truncation, not
   domain. The dense half stands as F-031/F-032 scoped it.

@@ -11,11 +11,17 @@ TOOL_VERSION = "jseval.corpus_query_strata/1"
 
 def _short_natural(query: str, language: str) -> str:
     if language == "en":
+        # The relation noun is a capture group, not a literal: tempdoc 767 §I.3 spread the
+        # head phrasing across `corpus_generate._RELATIONS` (designer/founder/builder/leader/
+        # commissioner/operator/financier/restorer) so no single template anchors half the
+        # gold set. Word count is unchanged by which noun matched, so the 5-12 cap below is
+        # unaffected. Multi-hop queries nest ("the builder of the designer of the X") — the
+        # outermost relation is group 1 and the rest falls into group 2, as before.
         match = re.fullmatch(
-            r"What is the value associated with the designer of the (.+)\?", query)
+            r"What is the value associated with the ([a-z]+) of the (.+)\?", query)
         if not match:
             raise ValueError(f"unsupported English verbose query template: {query!r}")
-        candidate = f"What value identifies {match.group(1)}'s designer?"
+        candidate = f"What value identifies {match.group(2)}'s {match.group(1)}?"
     elif language == "de":
         match = re.fullmatch(
             r"Folgt man den Verknüpfungen ausgehend vom Standort (.+), "
