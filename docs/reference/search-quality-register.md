@@ -73,12 +73,12 @@ every committed cell signature. The behavioral count is already derivable withou
 | mixed/ohr-bench-mineru-moderate | multi-domain | en | 1000 | 962 | extractive | 2026-03-19 | 252 | OHR-Bench MinerU extraction (moderate noise). |
 | mixed/ohr-bench-tika-pdf | multi-domain | en | 999 | 962 | extractive | 2026-03-20 | 252 | OHR-Bench original PDFs through Tika StructuredContentExtractor. |
 | mixed/multihop-rag-2556 | news/multi-hop | en | 609 | 2556 | multi-hop inference/comparison/temporal/null | 2026-04-07 | 366 §9d | Retrieval eval, filter-bearing |
-| golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json`. **Content regenerated 2026-07-01 (tempdoc 664)** — see Corpus provenance note under Findings. |
-| golden/battlefield-en-v1 | synthetic/2-hop chains | en | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | Certified in-band 624 (hybrid 0.4143 "hard", pre-F-031). **Out of band at HEAD defaults post-F-031** (711 re-measure: hybrid 0.9517, vector 1.0000 — saturated in BOTH modes) — no longer a difficulty discriminator in any mode; still valid for throughput profiling (691). Difficulty successor: 704 Pillar 1. Source `scripts/jseval/624-corpora/battlefield-en-v1`; re-measure: `jseval corpus-fidelity --dataset battlefield-en-v1 --modes hybrid,vector --embedding --start-backend --clean`. |
-| golden/battlefield-de-v1 | synthetic/2-hop chains | de | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | In-band at HEAD defaults (711 re-measure: hybrid 0.5924 — exact match to the 624 certification — vector 0.58, "moderate") — remains a valid difficulty corpus in both modes. Source `scripts/jseval/624-corpora/battlefield-de-v1`; same re-measure command shape as en-v1. |
-| mixed/en-legal-clerc-{1k,10k}-{verbose,short-natural} | legal (real CLERC hosts + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates under the ACTIVE pre-run policy `scripts/jseval/707-corpus-certification-policy.v1.json`; closed-book 0.000 ×4). Hybrid 0.5051 / 0.4685 / 0.3238 / 0.2806 (1k-v / 1k-sn / 10k-v / 10k-sn). Commitments + recipes: `scripts/jseval/707-corpora/en-legal-clerc/`. |
-| mixed/en-email-enron-raw-{1k,10k}-{verbose,short-natural} | email (raw public-domain Enron distractors + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates, same ACTIVE policy; closed-book 0.000 ×4; license `LicenseRef-Enron-FERC-public-record`). Hybrid 0.8043 / 0.7699 / 0.7052 / 0.6627 — strongest member; graceful scale decay. Commitments + recipes: `scripts/jseval/707-corpora/en-email-enron-raw/`. |
-| mixed/de-miracl-{1k,10k}-{verbose,short-natural} | wikipedia-de distractors + fabricated injected gold (v2, hops=1) | de | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 secondary stratum — NOT claim-bearing** (deliberately absent from the ACTIVE policy). 1k out-of-band (hybrid 0.2053 / 0.2660), 10k semantically collapsed (0.0431 / 0.0428, union recall 0.10); lexical 0.0 everywhere (pre-registered German grep-collapse, confirmed). The 10k collapse is chartered as tempdoc 748 → Q-018. Commitments: `scripts/jseval/707-corpora/de-miracl/`. |
+| golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json`. **Content regenerated 2026-07-01 (tempdoc 664)** — see Corpus provenance note under Findings. **LEAKY — id-shape enumeration (776 item 3):** gold occupies `trailing_int(id)` 1..40, distractors 41..280; `trailing_int(id)<=40` selects gold at P/R 1.0 (native base 0.29) via materialized `<doc_id>.txt` filenames. `_FILLER` uniform (not gold-selective here). See the 767/776 Corpus provenance note. |
+| golden/battlefield-en-v1 | synthetic/2-hop chains | en | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | Certified in-band 624 (hybrid 0.4143 "hard", pre-F-031). **Out of band at HEAD defaults post-F-031** (711 re-measure: hybrid 0.9517, vector 1.0000 — saturated in BOTH modes) — no longer a difficulty discriminator in any mode; still valid for throughput profiling (691). Difficulty successor: 704 Pillar 1. Source `scripts/jseval/624-corpora/battlefield-en-v1`; re-measure: `jseval corpus-fidelity --dataset battlefield-en-v1 --modes hybrid,vector --embedding --start-backend --clean`. **LEAKY — id-shape enumeration (776 item 3):** gold occupies `trailing_int(id)` 1..78, distractors 79..390; `trailing_int(id)<=78` selects gold at P/R 1.0 (native base 0.20) via materialized filenames. `_FILLER` uniform (not gold-selective here). See the 767/776 Corpus provenance note. |
+| golden/battlefield-de-v1 | synthetic/2-hop chains | de | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | In-band at HEAD defaults (711 re-measure: hybrid 0.5924 — exact match to the 624 certification — vector 0.58, "moderate") — remains a valid difficulty corpus in both modes. Source `scripts/jseval/624-corpora/battlefield-de-v1`; same re-measure command shape as en-v1. **LEAKY — id-shape enumeration (776 item 3):** gold occupies `trailing_int(id)` 1..78, distractors 79..390; `trailing_int(id)<=78` selects gold at P/R 1.0 (native base 0.20) via materialized filenames. `_FILLER` uniform (not gold-selective here); minor query-overlap elevation (0/26 zero-overlap queries, median Jaccard 0.072). See the 767/776 Corpus provenance note. |
+| mixed/en-legal-clerc-{1k,10k}-{verbose,short-natural} | legal (real CLERC hosts + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates under the ACTIVE pre-run policy `scripts/jseval/707-corpus-certification-policy.v1.json`; closed-book 0.000 ×4). Hybrid 0.5051 / 0.4685 / 0.3238 / 0.2806 (1k-v / 1k-sn / 10k-v / 10k-sn) — **pre-rebuild / leak-inflated** (`_FILLER` gold-only feature, ~1/3 of measured retrieval; 767 §Q). **Certified leak-free (2026-07-22, PR #273): hybrid 0.33 / 0.25 / 0.06 / 0.08** (767 §R.1). See the 767/776 Corpus provenance note. Commitments + recipes: `scripts/jseval/707-corpora/en-legal-clerc/`. |
+| mixed/en-email-enron-raw-{1k,10k}-{verbose,short-natural} | email (raw public-domain Enron distractors + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates, same ACTIVE policy; closed-book 0.000 ×4; license `LicenseRef-Enron-FERC-public-record`). Hybrid 0.8043 / 0.7699 / 0.7052 / 0.6627 — strongest member; graceful scale decay — **pre-rebuild / leak-inflated** (`_FILLER` gold-only feature; 767 §Q). **Certified leak-free (2026-07-22, PR #273): hybrid 0.66 / 0.61 / 0.49 / 0.44** (767 §R.1). See the 767/776 Corpus provenance note. Commitments + recipes: `scripts/jseval/707-corpora/en-email-enron-raw/`. |
+| mixed/de-miracl-{1k,10k}-{verbose,short-natural} | wikipedia-de distractors + fabricated injected gold (v2, hops=1) | de | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 secondary stratum — NOT claim-bearing** (deliberately absent from the ACTIVE policy). 1k out-of-band (hybrid 0.2053 / 0.2660), 10k semantically collapsed (0.0431 / 0.0428, union recall 0.10); lexical 0.0 everywhere (pre-registered German grep-collapse, confirmed). The 10k collapse is chartered as tempdoc 748 → Q-018. **LEAKY / pre-rebuild — NOT rebuilt (776 item 3):** fabricated gold (gold source `635-corpora/synth-multiling-de-v1`) carries the identical *English* `_FILLER` block in 240/240 docs per cell among real German MIRACL hosts — the same gold-selective leak as legal, cross-language; the quoted hybrid numbers are leak-inflated and Q-018 needs re-verification on a defillered rebuild. See the 767/776 Corpus provenance note. Commitments: `scripts/jseval/707-corpora/de-miracl/`. |
 
 ---
 
@@ -560,6 +560,47 @@ Corpus signatures (`jseval.corpus_identity.corpus_signature()`, `sha256(corpus.j
 - `mixed/miracl-fr-2k`: `a145edfa38d5a783cea52710f256fcee1c0cb33dc100f094d10175eb49ed3297`
 - `mixed/legal-clerc-200`: `90d4300d1435c6af00950b6095100fc6b29260385b294dc76896d54308bcfaf1`
 
+### Corpus provenance note (2026-07-22, tempdoc 767 §Q + 776 items 3-4 — leak-inflated 707/golden substrate)
+
+The fabricated-chain corpora built by `scripts/jseval/jseval/corpus_generate.py` carried a gold-only
+feature that inflated measured retrieval: a `_FILLER` boilerplate paragraph ("The surrounding district
+is known for long winters and quiet markets ...") appeared in 100% of the fabricated gold documents. In
+the **707 injection family** (fabricated gold interleaved among real host distractors) that paragraph
+appeared in ~0% of the real hosts, making it a perfect gold-identifying signal. Tempdoc 767 §Q measured
+its effect directly on `en-legal-clerc-1k-verbose`: filler ON→OFF, all else held constant, dropped
+hybrid nDCG@10 by −0.164 (0.492→0.328) and union recall by −0.20 — **the filler was inflating measured
+retrieval by roughly a third**.
+
+- **`mixed/en-legal-clerc-*` and `mixed/en-email-enron-raw-*` were rebuilt leak-free** (real host
+  carrier sentences replacing `_FILLER`; document IDs and length signatures also neutralized — 767 §I)
+  and re-certified 2026-07-22 (PR #273), thresholds re-derived per cell from fresh n=50 measurements
+  (767 §R). The **certified leak-free** hybrid nDCG@10 (fidelity, `--embedding`, 1k-verbose /
+  1k-short-natural / 10k-verbose / 10k-short-natural) are: **legal 0.33 / 0.25 / 0.06 / 0.08** and
+  **enron 0.66 / 0.61 / 0.49 / 0.44** (767 §R.1). The pre-rebuild hybrid values quoted in the Dataset
+  Catalog rows for these members (legal 0.5051/0.4685/0.3238/0.2806; enron 0.8043/0.7699/0.7052/0.6627)
+  were measured on the leak-inflated substrate.
+- **`mixed/de-miracl-*` was NOT rebuilt** (776 item 3, verdict **LEAKY**). Its gold source
+  (`635-corpora/synth-multiling-de-v1`) and every fabricated cell still carry the identical *English*
+  `_FILLER` block (240/240 gold docs per cell), which cannot appear in the real German MIRACL hosts —
+  the same gold-selective leak as legal, made more glaring by being cross-language. Its numbers remain
+  leak-inflated and are not reproducible against a defillered rebuild.
+- **The pure-synthetic `golden/*` agent-utility corpora** (`needle-burial-v1`, `battlefield-en-v1`,
+  `battlefield-de-v1`; 776 item 3) carry a *different* gold-only feature: an **id-shape enumeration
+  leak**. Gold documents occupy trailing-integer 1..N and distractors N+1..M with zero overlap, so
+  `trailing_int(id) <= N` selects the entire gold set at precision/recall 1.0 (Youden J 1.0) versus a
+  native base rate of 0.20-0.29 — visible to any agent listing the materialized `<doc_id>.txt`
+  filenames without reading a document body (the 767 defect #3 class). Their `_FILLER` is uniform
+  across gold *and* distractors (both 100%) and is therefore **not** a gold-selective leak in these
+  corpora. Instrument outputs: `tmp/analysis-624/776/leak-audit/`.
+
+**Findings measured against the pre-rebuild 707 substrate or the id-leaked `golden/*` corpora are
+historical and not reproducible against the corpora as they will stand once rebuilt** — this is a fact
+about reproducibility, not a retraction; the measurements genuinely happened and record what was found
+*then*. **Already-shipped decisions are unaffected** (F-039 was re-measured leak-free before its
+resolution — #273; F-027's records are an A-vs-A noise-floor measurement whose Δ is symmetric to any
+corpus leak). Re-derivation of any leak-inflated number should use the rebuilt/defillered corpus and
+re-cite this note.
+
 ### F-024: buried-fact retrieval is a fusion/recall-gating problem, not a query-expansion one
 
 *(needle numbers below predate the 2026-07-01 corpus regeneration — see Corpus provenance note above)*
@@ -784,7 +825,11 @@ above)*
 - **Conditions/caveats:** measured on the 707 fabricated-chain corpora (synthetic gold payload,
   uncamouflaged — see tempdoc 766's rebuild); the near-duplicate-decoy crowding is partly a
   corpus artifact (40 template-identical gold/decoy docs), so the fix lane (tempdoc 769) must
-  verify against both the existing reproductions AND the rebuilt corpora (tempdoc 767). Related:
+  verify against both the existing reproductions AND the rebuilt corpora (tempdoc 767). **Provenance
+  (776 item 4):** the original replay-census magnitudes (13.4%; 6%→28% 1k→10k) were measured on the
+  pre-767 `_FILLER`-leaked substrate; the RESOLVED-DECOMPOSED re-measurement below was run leak-free
+  (#273), so the resolution stands on clean numbers while the headline census figures are historical.
+  See the 767/776 Corpus provenance note. Related:
   F-025's legal leg-miss profile (leg_miss 0.28) and F-037's pack-curation disagreement — same
   neighborhood, different stages.
 - **Owner / fix lane:** tempdoc 769 (engine lane, chartered 2026-07-21). Acceptance: the 17 B2
@@ -1117,7 +1162,14 @@ above)*
 - **Conditions/caveats:** haiku-only (binding cost policy); EN+DE text battlefield only — the
   degraded-scan member is still pending its post-672 fidelity re-verify AND a corpus-dir pollution
   cleanup (agent-authored solver artifacts, see tempdoc 624 twenty-first pass — the same pollution
-  class inflated DE's pre-cleanup baseline 0.82→0.56). §M.8 items outstanding: the cross-family
+  class inflated DE's pre-cleanup baseline 0.82→0.56). **Corpus-leak provenance (776 item 3):**
+  `golden/battlefield-{en,de}-v1` carry an id-shape enumeration leak (gold docs occupy
+  `trailing_int(id)` 1..78, distractors 79..390; `trailing_int(id)<=78` selects gold at P/R 1.0 via
+  materialized `<doc_id>.txt` filenames). This did not bias the A-vs-A Δ above (both arms held file
+  tools symmetrically, and B reached no MCP), but **any future real-with-tool arm on this battlefield
+  is confounded** — an agent can enumerate gold by filename numeric threshold; the honest projection
+  (EN parity-to-modest-gain, DE +0.2 to +0.4) must be measured on a de-leaked corpus. See the 767/776
+  Corpus provenance note. §M.8 items outstanding: the cross-family
   grader-panel calibration (item 3) and the claim text (item 6, must use the §M.7a-3 null framing).
   No number publishes until the full bar clears (624 boundary (a)).
 - **Update (2026-07-03, 624 twenty-second pass):** §M.8 item 3 is CLOSED — the judge is calibrated
@@ -1766,6 +1818,14 @@ above)*
   an EN gold stratum with the identical zero-lexical-overlap construction (decides (c) without
   touching the encoder question), staged-recall decomposition on the existing 10k run artifacts,
   candidate-depth sweep, DE chunk-granularity probe.
+- **PROVENANCE CAVEAT (2026-07-22, 776 item 3-4):** the de-miracl collapse figures above (10k hybrid
+  0.043, union recall 0.40→0.10; 1k 0.2053/0.2660) were measured on a **leak-inflated substrate** —
+  unlike the two English members, de-miracl was **not** rebuilt, and its fabricated gold still carries
+  the English `_FILLER` block in 240/240 docs per cell among real German hosts (a gold-selective leak,
+  verdict LEAKY). Since the analogous legal-1k filler inflated measured retrieval ~1/3 (767 §Q), the
+  *true* semantic-bridging numbers are likely even weaker than quoted — the collapse is real, its
+  magnitude is not reproducible. **748's charter should re-verify every experiment on a defillered
+  de-miracl rebuild** before drawing (a)/(b)/(c)/(d). See the 767/776 Corpus provenance note.
 
 ---
 
