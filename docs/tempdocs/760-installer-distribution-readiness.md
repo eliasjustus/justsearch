@@ -1,7 +1,7 @@
 ---
 title: "Installer distribution readiness: silent install, published checksums, winget manifest, SmartScreen documentation — everything cert-independent, so code signing becomes a drop-in when the cert decision lands"
 type: tempdocs
-status: "open — Phase 1 gap audit COMPLETE (2026-07-21). Checksums already wired; signing is NOT drop-in (CI never engages it — the one place reality is worse than chartered); winget manifest absent. Phase 2 list ready, partly owner-gated. See §Findings."
+status: "Phase 2 IMPLEMENTED (2026-07-22) — signing is now genuinely drop-in: -Sign decoupled from release semantics, three credential modes (pfx/store/command — vendor choice becomes zero-code-change), CI secret plumbing (secrets-absent builds byte-identical), cert-free rehearsal path proven 6/6 twice on this machine; sign-once mirror producer landed (build-side consumption deliberately design-only — supply-chain pin overrides need explicit opt-in design); verify-your-download.md + winget skeleton/runbook landed; sandbox silent-install harness prepared (GUI-gated execution). Remaining owner-gated: cert/vendor decision (now mode-config only), GA cut, winget publisher identity, running the sandbox harness. See §Takeover + Phase 2 design and §Outcome."
 created: 2026-07-21
 author: agent (Fable orchestration), founder-directed distribution-readiness work (2026-07-21)
 category: distribution / installer
@@ -162,3 +162,33 @@ Item 1 (sandbox silent-install verification) is prepared as an automated `.wsb` 
 harness against the existing `tmp/offline-installer-sandbox` share infra; execution requires a
 GUI session, so it ships as a ready-to-run harness + runbook step if it cannot be driven headless
 from this session.
+
+## §Outcome — Phase 2 implemented (2026-07-22, same day)
+
+All four delegable Phase-2 items landed on this branch, each independently verified before commit:
+
+1. **Signing pipeline (item 3)** — commit `23bfd7c5`. `-Sign` decoupled from `-RequireReleaseSemver`
+   (the actual blocker, per the gap-table correction above); credential modes `pfx`/`store`/`command`
+   in `sign-windows.ps1` (the cert-vendor decision is now a `JUSTSEARCH_CODESIGN_MODE` config choice,
+   zero code change — directly relevant to the eligibility constraints on vendor selection);
+   `JUSTSEARCH_CODESIGN_*` secret plumbing in `build-installer.yml` with the env-hoist gating pattern
+   (secrets-absent dispatches byte-identical to today; `check-workflow-triggers: OK`); and
+   `test-sign-windows.ps1`, a cert-free end-to-end rehearsal (self-signed cert, pristine
+   csc-compiled PE target after a catalog-signing false-green was caught, 6-case matrix incl.
+   fail-closed and a real DigiCert timestamp countersignature) — **run twice, worker and
+   orchestrator independently: 6/6 PASS both times.** What this buys: when a cert exists, engaging
+   real signing = set repo secrets, nothing else.
+2. **Sign-once mirror producer (§K import, item 5)** — commit `2a373cf6`; consumption wiring
+   design-only per the section above.
+3. **verify-your-download.md + README link (item 4)** and **winget skeleton + runbook (item 2)** —
+   commit `f2e7f20f`; `check-root-readme: OK`; `winget validate` schema-clean except intentional
+   `TODO-GA` placeholders.
+4. **Sandbox silent-install harness (item 1)** — prepared (launcher + guest script + generated
+   `.wsb`), execution GUI-gated; see the harness subsection.
+
+**Remaining, all owner-gated:** the cert/vendor decision (now pure configuration); GA v0.2.x cut
+(precondition for winget pinning); winget `Publisher` identity fields; double-clicking the sandbox
+harness once and attaching its result JSON; optionally seeding a self-signed
+`JUSTSEARCH_CODESIGN_PFX_B64` repo secret to rehearse the full CI signing path end-to-end in a
+dispatch before a real cert exists (the local rehearsal covers the signing script itself; a CI
+dispatch with test secrets would additionally prove the workflow plumbing under Actions).
