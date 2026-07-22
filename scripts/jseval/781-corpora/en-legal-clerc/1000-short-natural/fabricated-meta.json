@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "type_axis": "prose",
+  "suite": "636-needle-probe",
+  "contamination_class": "private-synthetic",
+  "generation_provenance": {
+    "method": "procedural-fabricated",
+    "axis": "prose",
+    "lang": "en",
+    "seed": 636,
+    "hops": 1,
+    "distractor_ratio": 0,
+    "semantic": true,
+    "templated": true,
+    "n_chains": 50,
+    "doc_words": null,
+    "payload_version": "payload.v2",
+    "entity_bank": "707-corpora/en-legal-clerc/entity-bank",
+    "entity_bank_sha256": "1ad55a835a7d0d9efd2028bede3d9513feb4e3684201fb905f64d55435c8ed89"
+  },
+  "query_variant_provenance": {
+    "variant": "short-natural",
+    "language": "en",
+    "method": "deterministic-natural-template",
+    "tool_version": "jseval.corpus_query_strata/1",
+    "source": "gold-legal-s636-verbose"
+  }
+}

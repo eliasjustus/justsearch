@@ -1,0 +1,333 @@
+{
+  "schema": "707-corpus-structural-certification.v1",
+  "member": "en-legal-clerc",
+  "status": "structurally-certified",
+  "datasets": {
+    "1000": {
+      "short-natural": {
+        "dataset": "mixed/en-legal-clerc-1k-short-natural",
+        "corpus_signature": "6df707031abcd296773a0bf8c6a7750bb0b8704ce4ab4035105cf88b8df01fae",
+        "query_gold_sha256": "bccae852eeb4a97e0585c7ca59005feeec063210dcc29e7b2bbcaecf69a2fb3a",
+        "query_count": 50,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true,
+          "indistinguishability": true,
+          "field_selectivity": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "50bec5d2dc63b662eda309d27f1db130ad72b9196e9560141ee3d8d5fb1508c7",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "35f7f78692a89476c171372570cd914802166ffd15ca66c2f01603bbb3133716",
+          "recipe_sha256": "8aeafa951456562daa052ef2dd1e6eac31768d5cbf25a116e262a55c2be0135b"
+        },
+        "descriptor_collision": {
+          "n_groups": 44,
+          "n_docs_involved": 149,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "indistinguishability": {
+          "id_shape_separability": 0.0811111111111111,
+          "id_shape_native_base_rate": 0.15125,
+          "id_shape_rule": "id.startswith('4')",
+          "id_shape_passed": true,
+          "ngram_max_gold_coverage": 0.07,
+          "ngram_native_base_rate": 0.19,
+          "ngram_passed": true,
+          "passed": true,
+          "method": "null-calibrated-id-shape-and-ngram-selectivity"
+        },
+        "field_selectivity": {
+          "worst_field": "text",
+          "max_field_separability": 0.0,
+          "native_base_rate": 0.0,
+          "n_fields_compared": 2,
+          "passed": true,
+          "method": "field-presence-null-calibrated-separability"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      },
+      "verbose": {
+        "dataset": "mixed/en-legal-clerc-1k-verbose",
+        "corpus_signature": "6df707031abcd296773a0bf8c6a7750bb0b8704ce4ab4035105cf88b8df01fae",
+        "query_gold_sha256": "2797469a5f80aa8881553323880cd910dd83b621dabd935e7d577337f0f3f565",
+        "query_count": 50,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true,
+          "indistinguishability": true,
+          "field_selectivity": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "a303e74a8305584cff8816675c4c16220737f4866e772cf61c7381cc06acd167",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "1da188f35a43634ee4b5d5911d5f5f741a850febbe858cd598a4d3b1da82a653",
+          "recipe_sha256": "026432e043c9bb35ddc89e42611aeb21819fe99199488956cc5b5b421a1c9506"
+        },
+        "descriptor_collision": {
+          "n_groups": 44,
+          "n_docs_involved": 149,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "indistinguishability": {
+          "id_shape_separability": 0.0811111111111111,
+          "id_shape_native_base_rate": 0.15125,
+          "id_shape_rule": "id.startswith('4')",
+          "id_shape_passed": true,
+          "ngram_max_gold_coverage": 0.07,
+          "ngram_native_base_rate": 0.19,
+          "ngram_passed": true,
+          "passed": true,
+          "method": "null-calibrated-id-shape-and-ngram-selectivity"
+        },
+        "field_selectivity": {
+          "worst_field": "text",
+          "max_field_separability": 0.0,
+          "native_base_rate": 0.0,
+          "n_fields_compared": 2,
+          "passed": true,
+          "method": "field-presence-null-calibrated-separability"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      }
+    },
+    "10000": {
+      "short-natural": {
+        "dataset": "mixed/en-legal-clerc-10k-short-natural",
+        "corpus_signature": "5c4682ea92437fb20509d3c88c57edb17afde6bc857b6918613291b8398e2d51",
+        "query_gold_sha256": "bccae852eeb4a97e0585c7ca59005feeec063210dcc29e7b2bbcaecf69a2fb3a",
+        "query_count": 50,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true,
+          "indistinguishability": true,
+          "field_selectivity": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "5658205ac9fe39cb4e646862fd7a4e5780b66f203b429705e1580026321f3754",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "85c3a65b7be302f91c1e665b71793a53bf5babf2ae38df3cac54bf6c751e4171",
+          "recipe_sha256": "20ea9c6f9d12931bc34f40ff436d1b034389f88031f7babeb9a6b5030137d25f"
+        },
+        "descriptor_collision": {
+          "n_groups": 1023,
+          "n_docs_involved": 3875,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "indistinguishability": {
+          "id_shape_separability": 0.08818181818181817,
+          "id_shape_native_base_rate": 0.18051020408163265,
+          "id_shape_rule": "id.startswith('4')",
+          "id_shape_passed": true,
+          "ngram_max_gold_coverage": 0.07,
+          "ngram_native_base_rate": 0.14,
+          "ngram_passed": true,
+          "passed": true,
+          "method": "null-calibrated-id-shape-and-ngram-selectivity"
+        },
+        "field_selectivity": {
+          "worst_field": "text",
+          "max_field_separability": 0.0,
+          "native_base_rate": 0.0,
+          "n_fields_compared": 2,
+          "passed": true,
+          "method": "field-presence-null-calibrated-separability"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      },
+      "verbose": {
+        "dataset": "mixed/en-legal-clerc-10k-verbose",
+        "corpus_signature": "5c4682ea92437fb20509d3c88c57edb17afde6bc857b6918613291b8398e2d51",
+        "query_gold_sha256": "2797469a5f80aa8881553323880cd910dd83b621dabd935e7d577337f0f3f565",
+        "query_count": 50,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true,
+          "indistinguishability": true,
+          "field_selectivity": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "8489bd70347c1445494caab002614897b8ef3f6ee81de09a3e501d25297c6cd1",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "3613bf33c38fb5a4eae1848948c388d1d756a935a61aebf50a38c0b502276239",
+          "recipe_sha256": "cc1678f8c749d16912ee611d9b62c50239ddb4661e7b589c9cdc10d69232f836"
+        },
+        "descriptor_collision": {
+          "n_groups": 1023,
+          "n_docs_involved": 3875,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "indistinguishability": {
+          "id_shape_separability": 0.08818181818181817,
+          "id_shape_native_base_rate": 0.18051020408163265,
+          "id_shape_rule": "id.startswith('4')",
+          "id_shape_passed": true,
+          "ngram_max_gold_coverage": 0.07,
+          "ngram_native_base_rate": 0.14,
+          "ngram_passed": true,
+          "passed": true,
+          "method": "null-calibrated-id-shape-and-ngram-selectivity"
+        },
+        "field_selectivity": {
+          "worst_field": "text",
+          "max_field_separability": 0.0,
+          "native_base_rate": 0.0,
+          "n_fields_compared": 2,
+          "passed": true,
+          "method": "field-presence-null-calibrated-separability"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      }
+    }
+  },
+  "family_checks": {
+    "verbose": {
+      "queries_identical_across_sizes": true,
+      "qrels_identical_across_sizes": true,
+      "one_k_docs_are_subset_of_ten_k": true
+    },
+    "short-natural": {
+      "queries_identical_across_sizes": true,
+      "qrels_identical_across_sizes": true,
+      "one_k_docs_are_subset_of_ten_k": true
+    },
+    "strata": {
+      "same_family_ids": true,
+      "same_answers_and_evidence": true,
+      "distinct_query_text": true,
+      "same_corpus_and_qrels_per_size": true
+    }
+  },
+  "structural_passed": true,
+  "scientific_gates": {
+    "closed_book": "pending-model-run",
+    "retrieval_calibration": "pending-backend-run",
+    "union_recall": "pending-backend-run",
+    "leak_floor": "pending-backend-run"
+  },
+  "fully_certified": false
+}
