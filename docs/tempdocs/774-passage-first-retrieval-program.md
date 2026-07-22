@@ -660,6 +660,86 @@ Earning-its-keep: the passage-granularity accounting catches a real
 regression the doc-level gates miss. Retirement: if Stage 3 never ships,
 the doc-level gates remain sufficient and no twin is built.
 
+## §J. Derisk pass (2026-07-22, same session — measurements + runtime verification; no feature code)
+
+Artifacts: `tmp/analysis-624/774/` (this worktree). Plan: five items (D1-D5);
+D2 (the §F.3 go/no-go probe) delegated to a measurement worker — results
+recorded below when complete.
+
+### J.1 (D1) Free cert-artifact reading — the chunk branch's internal weighting is NOT the k=10 binding constraint
+
+Script over the 771 cert per-query detail (all 8 cells, n=50 each;
+`d1_vector_vs_hybrid.json`). Results (recall@10 per mode):
+
+| cell | lex | vec | spl | hyb |
+|---|---|---|---|---|
+| legal-1k-v | 0.00 | 0.46 | 0.12 | 0.54 |
+| legal-1k-sn | 0.00 | 0.42 | 0.12 | 0.46 |
+| legal-10k-v | 0.00 | 0.12 | 0.02 | 0.16 |
+| legal-10k-sn | 0.00 | 0.08 | 0.02 | 0.10 |
+| enron-1k-v | 0.00 | 0.86 | 0.20 | 0.84 |
+| enron-1k-sn | 0.02 | 0.80 | 0.32 | 0.78 |
+| enron-10k-v | 0.00 | 0.44 | 0.06 | 0.54 |
+| enron-10k-sn | 0.00 | 0.44 | 0.10 | 0.48 |
+
+Readings: (a) **lexical is 0.00 on every cell including enron** — camouflage
+kills BM25 outright; production hybrid on these strata is effectively
+semantic-legs-plus-CE. (b) **vector ≈ hybrid everywhere** (hybrid usually
+slightly ahead). Since `vector` mode's chunk branch is pure chunk-dense
+(§F.3), the §F.1-2 BM25-dominant internal weighting is **not** what floors
+legal at k=10 — Stage 1's weight-decoupling is hygiene, not the rescue.
+The floor question is representation-or-depth, which D2 discriminates.
+(c) Hybrid recovering slightly more than vector despite dead lexical means
+the extra legs/CE are mildly additive, not harmful, at k=10 on these strata.
+
+### J.2 (D3) Runtime verification of §F.1 audit claims
+
+- **CE doc-length gate (`DOCS_TOO_LONG`) — defect-shaped, contradiction
+  found.** The gate input is a **worker-session-lifetime running average**
+  of extracted content length (`OperationalMetrics.recordContentLength`,
+  called from `JobBatchWriter.java:147`; cached via
+  `WorkerStatusCache.java:147-153`), NOT an index property: fresh worker
+  over an existing index → avg 0 → gate can never fire; one long-doc corpus
+  poisons the average for every later corpus in the session. Measured
+  ground truth: `legal-clerc-200` mean content = **35,508 chars > the
+  16,000 default** — the gate *should* have disabled the CE on every
+  same-session eval, yet register rows list `cross_encoder` in observed
+  legs there. Either the gate doesn't fire as coded, the leg tracking
+  mislabels CE execution, or the cached average is never populated under
+  eval — all three readings are defects. Logged to the observations inbox
+  (out of 774's scope to fix); needs ONE live probe at implementation time.
+  **Decision-relevant for 774:** the 767 strata hosts average **14,401
+  chars < 16,000**, so the cert numbers (D1 table, M5 floor) are NOT
+  CE-gate-confounded regardless of which reading is true.
+- **Chunk-only hits reaching the CE as title-only text**: static chain
+  re-verified (builder skips `CHUNK_CONTENT`; `resolveParentMetadata` adds
+  only title+filename; no `content_preview` on chunk-only hits). No unit
+  test covers CE docText assembly (`extractQueryFocusedSnippet` has no
+  direct test) — recorded as a test gap for Stage 2's implementation.
+  Gate-coverage test exists only for the disabled case
+  (`KnowledgeHttpApiAdapterHarmfulCombinationsTest.java:328`).
+
+### J.3 (D4) Stage-1 blast radius
+
+Structurally unaffected: `beir/scifact` (chunk merge `SKIPPED_SHORT_CORPUS`,
+F-014) and every short-doc corpus below the chunk threshold. Affected —
+sentinel set for every Stage-1 flag: `mixed/enron-qa` (chunk merge fires on
+all queries; +1.3% lexical contribution measured, F-014 — the regression
+canary), `mixed/legal-clerc-200`, the 767 strata, miracl (partial chunk
+rates). Convention: one default-off flag per Stage-1 mechanism (D-004
+template), rollback = flag off; enron + scifact A/B before any default flip;
+scorecard/baseline re-pins only at stage boundaries.
+
+### J.4 (D5) Currency note
+
+`origin/main` moved past this worktree's base: #279 finds **all four
+`golden/*` corpora LEAKY** (id-shape enumeration; DE member `_FILLER`) —
+774 must not use needle-burial/battlefield corpora as measurement grounds;
+certified 767 strata + register corpora only. #280 lands **certified
+multi-schema cells (single_fact + aggregation)** — the aggregation-function
+A/B (I.2 Stage 3, G.2-4) has its test bed ready earlier than assumed.
+Merge-up before implementation.
+
 Nothing structural — it confirms §E.2's probe-first amendment and adds:
 (a) the probe should be read against the G.1 framings (B vs A/E is the real
 fork, not "do vs don't"); (b) the free cert-artifact reading (G.5) belongs
