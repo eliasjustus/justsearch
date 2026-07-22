@@ -1458,13 +1458,26 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
 - [ ] Installer itemization (772 §I) shows lucene-core/lucene-analysis-common on the HEAD shipped classpath (lib/, not lib/worker/) — modules/ui/build.gradle.kts:46 depends on adapters-lucene, :124-125 runtimeOnly lucene — tier-register row 1's justification wording ('Lucene types are not on Head's classpath') doesn't match the shipped artifact; reconcile wording vs reality (the ArchUnit test presumably checks something narrower) (2026-07-22)
 
-### obs:unanchored-general-84 — justsearch-releases THIRD_PARTY_NOTICES.txt has no NVIDIA entry for the CUDA/cuDNN redistributables 
+### obs:unanchored-general-84 — justsearch-releases THIRD_PARTY_NOTICES.txt has no NVIDIA entry for the CUDA/cuDNN redistributables
 `kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
 - [ ] justsearch-releases THIRD_PARTY_NOTICES.txt has no NVIDIA entry for the CUDA/cuDNN redistributables in ort-cuda-runtime-12.4.zip / cudnn-9-runtime-12.4.zip (NVIDIA redistributable-list EULA terms) — pre-existing gap noticed while adding the ONNX Runtime MIT notice (772 §J) (2026-07-22)
 
-### obs:lifecyclecontracttest — LifecycleContractTest (modules/ui) flakes under parallel full-suite load on dev machine: 2/10 tests 
-`kind: environment?` `anchor: modules/ui/src/test/java/io/justsearch/ui/api/LifecycleContractTest.java` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+### obs:lifecyclecontracttest — LifecycleContractTest (modules/ui) flakes under parallel full-suite load on dev machine: 2/10 tests
+`kind: environment?` `anchor: modules/ui/src/test/java/io/justsearch/ui/api/LifecycleContractTest.java` `seen: 2` `first: 2026-07-22` `last: 2026-07-22`
 - [ ] LifecycleContractTest (modules/ui) flakes under parallel full-suite load on dev machine: 2/10 tests (statusReadinessDegradesIndexServingWhenThroughputStalls :495, statusReadinessPendingInferenceOfflineWhenRuntimeIdle :398) hit 3s HttpTimeoutException against in-process LocalApiServer, green in isolation — same class as the 'Flaky IPC tests' pitfall; consider awaitPort-style tolerance or longer client timeout — `modules/ui/src/test/java/io/justsearch/ui/api/LifecycleContractTest.java:398,495` (2026-07-22)
+- [ ] LifecycleContractTest ('idle PENDING inference maps to OFFLINE') flaked with HttpTimeoutException under full-suite parallel load on the 774 publish gate (1/558; passes in isolation; unchanged since v0.1.0) — timing-sensitive lifecycle test, candidate for awaitPort-style hardening. — `modules/ui/src/test/.../LifecycleContractTest.java:398` (2026-07-22)
+
+### obs:jobbatchwriter — CE doc-length gate (isRerankerEligible maxAvgDocLengthChars=16000) reads a worker-SESSION-lifetime r
+`kind: defect?` `anchor: JobBatchWriter.java` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] CE doc-length gate (isRerankerEligible maxAvgDocLengthChars=16000) reads a worker-SESSION-lifetime running average (OperationalMetrics.recordContentLength, JobBatchWriter.java:147) as a corpus proxy — path-dependent: 0 on fresh worker over existing index, poisoned across corpora in one session; and register rows show cross_encoder observed on legal-clerc-200 whose true mean content is 35.5k chars > 16k gate — either the gate, the tracking, or the cache is lying. Needs one live probe. — `KnowledgeSearchEngine.java` / `WorkerStatusCache.java:147-153` (2026-07-22)
+
+### obs:unanchored-gate-red-6 — 767-rebuilt strata carry a gold-only-feature LEAK in the corpus 'title' field: en-legal-clerc-10k-ve
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] 767-rebuilt strata carry a gold-only-feature LEAK in the corpus 'title' field: en-legal-clerc-10k-verbose has exactly 100/10000 titled docs, all 50 golds among them, and gold titles ARE the structure descriptors ('The greenhouse in the ferry landing') = the queries' subject vocabulary. Invisible to the engine (lexical 0.00 → titles not indexed from materialized files) but poisons any offline probe/baseline-arm that reads corpus.jsonl title. #279 leak-audit class; routes to 776/767. Evidence: tmp/analysis-624/774/probe (774 worktree), gold∩titled=50/50. (2026-07-22)
+
+### obs:unanchored-gate-red-7 — Register judge-stage conclusions predating F-041 (F-026 judge-blend/'obvious judge levers dead', 636
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] Register judge-stage conclusions predating F-041 (F-026 judge-blend/'obvious judge levers dead', 636 judge-rank-bound headroom profile, F-002) were all measured with a preview-blind CE (input = title + doc-head snippet). Tempdoc 777 builds on F-026 as its evidence base — it should re-baseline its listwise/judge experiments under evidence-coherent CE input (search.evidence_preview.enabled) before designing, or risk activating levers whose measured deadness was an artifact of the old CE input. — `774 §L / F-041` (2026-07-22)
 
 ## Parked
 
