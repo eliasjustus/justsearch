@@ -165,12 +165,50 @@ jobs:
         env:
           ORG_GRADLE_PROJECT_includeCuda: "false"
           ORG_GRADLE_PROJECT_skipOnnxModels: "true"
+          # Code-signing secrets (tempdoc 760 Phase 2 item 4). Absent secrets expand to empty
+          # strings, so the build takes the unsigned path EXACTLY as before. sign-windows.ps1
+          # reads these per JUSTSEARCH_CODESIGN_MODE; -Sign is added below only when a credential
+          # is present. (GitHub Actions forbids secrets.* in step `if:`, so the deciding secret is
+          # hoisted into env here and the boolean is computed in the run script.)
+          JUSTSEARCH_CODESIGN_MODE: ${{ secrets.JUSTSEARCH_CODESIGN_MODE }}
+          JUSTSEARCH_CODESIGN_PFX_B64: ${{ secrets.JUSTSEARCH_CODESIGN_PFX_B64 }}
+          JUSTSEARCH_CODESIGN_PFX_PASSWORD: ${{ secrets.JUSTSEARCH_CODESIGN_PFX_PASSWORD }}
+          JUSTSEARCH_CODESIGN_TIMESTAMP_URL: ${{ secrets.JUSTSEARCH_CODESIGN_TIMESTAMP_URL }}
+          JUSTSEARCH_CODESIGN_THUMBPRINT: ${{ secrets.JUSTSEARCH_CODESIGN_THUMBPRINT }}
+          JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
+          # Rehearsal-only relaxation (repo VARIABLE, not a secret — it must be visibly on/off):
+          # with a self-signed rehearsal cert, sign-windows.ps1 and verify-windows-signature.ps1
+          # accept a present-but-chain-untrusted signature instead of hard-failing after all the
+          # per-file signings already ran. Unset in production. (Tempdoc 760 rehearsal path.)
+          JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED: ${{ vars.JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED }}
         run: |
           # On a v* tag ref (a real release cut) also verify server.json version/URL match the
           # tag; skip on non-tag dry-runs where gradle.properties may not match yet. (Tempdoc 726.)
-          $extra = @()
-          if ($env:GITHUB_REF -like 'refs/tags/v*') { $extra += '-VerifyReleaseVersion' }
+          # NOTE: hashtable splatting, deliberately — array splatting binds flag STRINGS
+          # positionally, not as switches ('-Sign' ended up bound to -SetupExePath; caught by the
+          # tempdoc 760 self-signed rehearsal run 29909495558, which also revealed the original
+          # array-splatted -VerifyReleaseVersion had the same latent bug, never exercised because
+          # no tag dispatch has run since it was added).
+          $extra = @{}
+          if ($env:GITHUB_REF -like 'refs/tags/v*') { $extra['VerifyReleaseVersion'] = $true }
+          # Engage signing only when a credential for the configured mode is present (pfx b64 /
+          # store thumbprint / command template). Secrets absent => no -Sign => unsigned build,
+          # identical to today. (Tempdoc 760 Phase 2 item 4.)
+          $signConfigured = `
+            ($env:JUSTSEARCH_CODESIGN_PFX_B64 -and $env:JUSTSEARCH_CODESIGN_PFX_B64.Trim()) -or `
+            ($env:JUSTSEARCH_CODESIGN_THUMBPRINT -and $env:JUSTSEARCH_CODESIGN_THUMBPRINT.Trim()) -or `
+            ($env:JUSTSEARCH_CODESIGN_COMMAND -and $env:JUSTSEARCH_CODESIGN_COMMAND.Trim())
+          if ($signConfigured) { $extra['Sign'] = $true }
           ./scripts/ci/package-installer-win.ps1 -OutDir dist/installer -SkipVerify -AssembleReleaseAssets @extra
+
+      # The bundler swallows the signCommand child's output on failure, so sign-windows.ps1 tees
+      # its messages to a log; print it when the build fails (tempdoc 760 rehearsal lesson).
+      - name: Debug - sign-windows log (on failure)
+        if: failure()
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:TEMP "justsearch-sign-windows.log"
+          if (Test-Path $log) { Write-Host "=== sign-windows.ps1 log ==="; Get-Content $log } else { Write-Host "no sign-windows log at $log" }
 
       # Diagnostic: log modules/ui/build contents + sizes so we can see what the
       # Post Cache step will save. Tempdoc 374 speed investigation: the cache

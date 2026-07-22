@@ -362,6 +362,27 @@ val llamaPrebuiltUrl =
 val llamaPrebuiltSha256 = "40D8C4B97676E8BE4C69A4B5BCDC25F31213137CAEB35B1563E3867D133EA31C"
 val llamaPrebuiltZip = layout.buildDirectory.file("llama-server/prebuilt/$llamaPrebuiltAsset")
 
+// Signed-mirror override (tempdoc 760/772 §K sign-once). A release cut from a signed, re-hosted
+// mirror of the llama.cpp CPU prebuilt overrides BOTH the download URL and its pinned SHA-256
+// together, mirroring the `includeCuda` gradleProperty idiom below. The pair is deliberately
+// all-or-nothing: overriding the URL while keeping the default hash (or the hash while keeping the
+// default URL) would silently defeat the supply-chain pin this block exists to enforce, so
+// providing exactly one FAILS the build. With neither property set the effective values below are
+// byte-identical to the defaults above — the hardcoded pins remain the floor.
+val llamaPrebuiltUrlOverride = providers.gradleProperty("llamaPrebuiltUrlOverride").orNull
+val llamaPrebuiltSha256Override = providers.gradleProperty("llamaPrebuiltSha256Override").orNull
+if ((llamaPrebuiltUrlOverride == null) != (llamaPrebuiltSha256Override == null)) {
+  throw GradleException(
+    "llamaPrebuiltUrlOverride and llamaPrebuiltSha256Override must be provided together. " +
+      "Overriding only one silently defeats the supply-chain SHA-256 pin on the llama-server CPU " +
+      "prebuilt: a mirror URL paired with the default hash can never verify, and the default URL " +
+      "paired with a mirror hash would reject the genuine pinned artifact. Provide BOTH (signed-mirror " +
+      "release) or NEITHER (default pinned download)."
+  )
+}
+val effectiveLlamaPrebuiltUrl = llamaPrebuiltUrlOverride ?: llamaPrebuiltUrl
+val effectiveLlamaPrebuiltSha256 = llamaPrebuiltSha256Override ?: llamaPrebuiltSha256
+
 // CUDA variant for GPU acceleration (requires NVIDIA GPU + CUDA 12.4+ drivers)
 val llamaCudaAsset = "llama-$llamaPrebuiltVersion-bin-win-cuda-12.4-x64.zip"
 val llamaCudaUrl =
@@ -466,9 +487,14 @@ val downloadLlamaServerPrebuilt by tasks.registering {
   group = "distribution"
   description = "Download pinned upstream llama.cpp Windows CPU prebuilt (llama-server.exe + DLLs)"
   enabled = usePrebuiltLlamaRuntime
-  val url = llamaPrebuiltUrl
-  val expectedSha256 = llamaPrebuiltSha256
+  val url = effectiveLlamaPrebuiltUrl
+  val expectedSha256 = effectiveLlamaPrebuiltSha256
   val outFile = llamaPrebuiltZip.get().asFile
+  // Declare url + expected hash as inputs so a signed-mirror override busts the up-to-date check
+  // and forces a re-download/re-verify; without this an incremental build would keep the cached
+  // default zip and silently ignore the override.
+  inputs.property("url", url)
+  inputs.property("expectedSha256", expectedSha256)
   outputs.file(outFile)
   doLast {
     fun sha256Hex(file: File): String {
@@ -1186,6 +1212,27 @@ val tesseractRuntimeManifestFile =
     rootProject.layout.projectDirectory.file("packaging/runtime/tesseract-windows.v1.json")
 val tesseractRuntimeStageDir = layout.buildDirectory.dir("runtime/tesseract-windows")
 
+// Signed-mirror override for the Tesseract runtime archive (tempdoc 760/772 §K sign-once), same
+// all-or-nothing contract as the llama-server pair above: a re-hosted/signed mirror of the
+// self-extracting Tesseract installer overrides BOTH the manifest `sourceUrl` and `sourceSha256`.
+// Providing exactly one FAILS the build (defeating the archive pin). SCOPE LIMIT: this covers only
+// the archive-level pin. The manifest ALSO pins per-file SHAs (`files[]`, verified by
+// verifyTesseractRuntime) which signed inner PEs invalidate; regenerating those is a manual manifest
+// edit (there is no in-repo generator for packaging/runtime/tesseract-windows.v1.json — it is
+// hand-authored from the Scoop manifest), so verifyTesseractRuntime is made to fail with an explicit
+// regeneration instruction when the override is active and per-file hashes mismatch, rather than
+// silently skipping per-file verification.
+val tesseractSourceUrlOverride = providers.gradleProperty("tesseractSourceUrlOverride").orNull
+val tesseractSourceSha256Override = providers.gradleProperty("tesseractSourceSha256Override").orNull
+if ((tesseractSourceUrlOverride == null) != (tesseractSourceSha256Override == null)) {
+  throw GradleException(
+    "tesseractSourceUrlOverride and tesseractSourceSha256Override must be provided together. " +
+      "Overriding only one silently defeats the supply-chain SHA-256 pin on the Tesseract runtime " +
+      "archive. Provide BOTH (signed-mirror release) or NEITHER (default pinned download)."
+  )
+}
+val tesseractOverrideActive = tesseractSourceUrlOverride != null
+
 val downloadTesseractRuntimeArtifacts by tasks.registering {
   group = "distribution"
   description = "Download pinned Windows Tesseract OCR runtime artifacts"
@@ -1197,7 +1244,12 @@ val downloadTesseractRuntimeArtifacts by tasks.registering {
           .get()
           .asFile
   val engFile = layout.buildDirectory.file("downloads/tesseract/eng.traineddata").get().asFile
+  val sourceUrlOverride = tesseractSourceUrlOverride
+  val sourceSha256Override = tesseractSourceSha256Override
   inputs.file(manifestFile)
+  // Overrides participate in up-to-date so a signed-mirror swap forces a re-download/re-verify.
+  inputs.property("sourceUrlOverride", sourceUrlOverride ?: "")
+  inputs.property("sourceSha256Override", sourceSha256Override ?: "")
   outputs.file(sourceFile)
   outputs.file(engFile)
   doLast {
@@ -1253,8 +1305,8 @@ val downloadTesseractRuntimeArtifacts by tasks.registering {
 
     val manifest =
         ObjectMapper().readValue(manifestFile, Map::class.java) as Map<*, *>
-    val sourceUrl = (manifest["sourceUrl"] as String).substringBefore("#")
-    val sourceSha = manifest["sourceSha256"] as String
+    val sourceUrl = (sourceUrlOverride ?: (manifest["sourceUrl"] as String)).substringBefore("#")
+    val sourceSha = sourceSha256Override ?: (manifest["sourceSha256"] as String)
     @Suppress("UNCHECKED_CAST")
     val files = manifest["files"] as List<Map<String, Any>>
     val engEntry =
@@ -1337,7 +1389,9 @@ val verifyTesseractRuntime by tasks.registering {
       rootProject.layout.projectDirectory.file("packaging/runtime/tesseract-windows.v1.json").asFile
   val runtimeDir = layout.buildDirectory.dir("runtime/tesseract-windows").get().asFile
   val isWindowsForTask = isWindowsHost
+  val overrideActive = tesseractOverrideActive
   inputs.file(manifestFile)
+  inputs.property("overrideActive", overrideActive)
   inputs.dir(runtimeDir)
   onlyIf("Windows Tesseract runtime is supported") { isWindowsForTask }
   doLast {
@@ -1353,6 +1407,22 @@ val verifyTesseractRuntime by tasks.registering {
       }
       return HexFormat.of().formatHex(digest.digest())
     }
+    // When a signed mirror is active, a per-file hash/size mismatch is EXPECTED (signing rewrites the
+    // inner PEs) and the manifest's files[] pins must be regenerated before the release can be cut.
+    // Point the operator at that manual step instead of failing with a bare pin mismatch. There is no
+    // in-repo generator for this manifest; it is hand-authored (Scoop-derived).
+    fun mismatchHint(detail: String): String =
+        if (overrideActive) {
+          "$detail\n" +
+              "A tesseractSourceUrl/Sha256 signed-mirror override is ACTIVE, so this per-file mismatch " +
+              "is expected: signing rewrites the inner PE bytes and invalidates the files[] pins in " +
+              "packaging/runtime/tesseract-windows.v1.json. Regenerate those files[] sha256+sizeBytes " +
+              "from the signed, extracted runtime (hand-edit the manifest — there is no in-repo " +
+              "generator) before cutting the release, then re-run this task. Per-file verification is " +
+              "NOT skipped for signed mirrors."
+        } else {
+          detail
+        }
     val manifest =
         ObjectMapper().readValue(manifestFile, Map::class.java) as Map<*, *>
     @Suppress("UNCHECKED_CAST")
@@ -1367,11 +1437,13 @@ val verifyTesseractRuntime by tasks.registering {
       }
       if (file.length() != expectedSize) {
         throw GradleException(
-            "Tesseract runtime file size mismatch for $path: expected $expectedSize, got ${file.length()}")
+            mismatchHint(
+                "Tesseract runtime file size mismatch for $path: expected $expectedSize, got ${file.length()}"))
       }
       val actualSha = sha256Hex(file).lowercase(Locale.ROOT)
       if (actualSha != expectedSha) {
-        throw GradleException("Tesseract runtime SHA-256 mismatch for $path: expected $expectedSha, got $actualSha")
+        throw GradleException(
+            mismatchHint("Tesseract runtime SHA-256 mismatch for $path: expected $expectedSha, got $actualSha"))
       }
     }
 

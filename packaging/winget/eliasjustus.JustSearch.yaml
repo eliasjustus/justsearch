@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
+# Version manifest — see packaging/winget/README.md for the submission runbook.
+# This is a committed SKELETON, not a submission: the fields below are placeholders
+# until a GA release exists (tempdoc 760 Phase 2 item 2).
+PackageIdentifier: eliasjustus.JustSearch
+# TODO-GA: set to the exact GA release version (e.g. 0.2.0). Must match the git tag,
+# the installer filename, and PackageVersion in the installer + defaultLocale manifests.
+PackageVersion: TODO-GA-VERSION
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0
