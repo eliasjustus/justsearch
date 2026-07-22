@@ -434,6 +434,12 @@ public enum EnvRegistry {
      */
     SEARCH_EVIDENCE_PREVIEW_ENABLED(
         "search.evidence_preview.enabled", "JUSTSEARCH_SEARCH_EVIDENCE_PREVIEW_ENABLED"),
+    /** 775: enable answer-bearing EvidenceSpan-backed excerpt selection (default: false via builder). */
+    SEARCH_EVIDENCE_SPAN_ENABLED(
+        "search.evidence_span.enabled", "JUSTSEARCH_SEARCH_EVIDENCE_SPAN_ENABLED"),
+    /** 775: EvidenceSpan distinguishing-entity signal — df_rarity|ner_membership (default: ner_membership, the §F probe winner). */
+    SEARCH_EVIDENCE_SPAN_ENTITY_SIGNAL(
+        "search.evidence_span.entity_signal", "JUSTSEARCH_SEARCH_EVIDENCE_SPAN_ENTITY_SIGNAL"),
 
     /** UI automation mode enabled flag. */
     UI_AUTOMATION_ENABLED("justsearch.ui.automation.enabled", "JUSTSEARCH_UI_AUTOMATION"),

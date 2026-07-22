@@ -519,6 +519,12 @@ public final class ResolvedConfigBuilder {
     putDefault("search.chunk_aware.enabled", "true");
     putYamlFromNode("search.evidence_preview.enabled", searchRoot, "evidence_preview.enabled");
     putDefault("search.evidence_preview.enabled", "false");
+    putYamlFromNode("search.evidence_span.enabled", searchRoot, "evidence_span.enabled");
+    putDefault("search.evidence_span.enabled", "false");
+    putYamlFromNode("search.evidence_span.entity_signal", searchRoot, "evidence_span.entity_signal");
+    // 775 deferred item (b) settled by the §F live probe: ner_membership (100% carriage) beats
+    // df_rarity (28%) on the buried-entity stratum — ship the winner.
+    putDefault("search.evidence_span.entity_signal", "ner_membership");
     // Facet fields list
     JsonNode fieldsNode = searchRoot.path("facets").path("fields");
     if (fieldsNode.isArray()) {
@@ -1254,6 +1260,8 @@ public final class ResolvedConfigBuilder {
         resolveBoolean("search.chunk_aware.enabled", true),
         resolveBoolean("search.evidence_preview.enabled", false),
         resolveBoolean("justsearch.lambdamart.enabled", false),
+        resolveBoolean("search.evidence_span.enabled", false),
+        resolveString("search.evidence_span.entity_signal", "ner_membership"),
         buildSearchCorrections());
   }
 

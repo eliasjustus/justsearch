@@ -355,7 +355,8 @@ final class SearchPlannerApprovalCorpusTest {
     ResolvedConfig.Search search =
         new ResolvedConfig.Search(
             "default", "search.v1", "main", false, 0.0, 0.0, chunkAwareEnabled,
-            /* evidencePreviewEnabled= */ false, /* lambdamartEnabled= */ false, corrections);
+            /* evidencePreviewEnabled= */ false, /* lambdamartEnabled= */ false,
+            /* evidenceSpanEnabled= */ false, /* entitySignal= */ "df_rarity", corrections);
     ResolvedConfig config = mock(ResolvedConfig.class);
     when(config.search()).thenReturn(search);
     return new SearchPlanner(() -> config);

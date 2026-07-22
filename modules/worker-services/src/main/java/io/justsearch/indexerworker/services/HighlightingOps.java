@@ -40,10 +40,10 @@ public final class HighlightingOps {
   private HighlightingOps() {}
 
   /** Match offset tagged with the analyzed term that produced it. */
-  record TermMatch(int startOffset, int endOffset, String term) {}
+  public record TermMatch(int startOffset, int endOffset, String term) {}
 
   /** Cluster of nearby matches with per-term frequency tracking. */
-  record MatchCluster(int startOffset, int endOffset, Map<String, Integer> termFreqs) {}
+  public record MatchCluster(int startOffset, int endOffset, Map<String, Integer> termFreqs) {}
 
   /**
    * Computes match spans using Lucene query semantics (phrases/boolean), without requiring the
@@ -71,7 +71,7 @@ public final class HighlightingOps {
    * Scores a cluster for excerpt region selection using BM25-inspired weighting.
    * Higher is better. Combines term diversity, IDF, tf saturation, and position bias.
    */
-  private static double scoreCluster(
+  public static double scoreCluster(
       MatchCluster cluster, Map<String, Double> termIdfWeights, int contentLength) {
     double score = 0.0;
     for (var entry : cluster.termFreqs().entrySet()) {
@@ -106,26 +106,7 @@ public final class HighlightingOps {
       if (matchOffsets.isEmpty()) return List.of();
 
       // 2. Cluster nearby matches (within 400 chars), tracking per-term frequencies.
-      matchOffsets.sort(java.util.Comparator.comparingInt(TermMatch::startOffset));
-      ArrayList<MatchCluster> clusters = new ArrayList<>();
-      int cStart = matchOffsets.get(0).startOffset();
-      int cEnd = matchOffsets.get(0).endOffset();
-      HashMap<String, Integer> cTermFreqs = new HashMap<>();
-      cTermFreqs.merge(matchOffsets.get(0).term(), 1, Integer::sum);
-      for (int i = 1; i < matchOffsets.size(); i++) {
-        TermMatch m = matchOffsets.get(i);
-        if (m.startOffset() - cEnd <= 400) {
-          cEnd = Math.max(cEnd, m.endOffset());
-          cTermFreqs.merge(m.term(), 1, Integer::sum);
-        } else {
-          clusters.add(new MatchCluster(cStart, cEnd, Map.copyOf(cTermFreqs)));
-          cStart = m.startOffset();
-          cEnd = m.endOffset();
-          cTermFreqs = new HashMap<>();
-          cTermFreqs.merge(m.term(), 1, Integer::sum);
-        }
-      }
-      clusters.add(new MatchCluster(cStart, cEnd, Map.copyOf(cTermFreqs)));
+      List<MatchCluster> clusters = buildClusters(matchOffsets);
 
       // 3. Score and rank clusters. Extract ±200 char windows snapped to sentence boundaries.
       Map<String, Double> idf = termIdfWeights != null ? termIdfWeights : Map.of();
@@ -134,92 +115,27 @@ public final class HighlightingOps {
       for (MatchCluster c : clusters) {
         clusterScores.put(c, scoreCluster(c, idf, contentLen));
       }
-      clusters.sort((a, b) -> Double.compare(clusterScores.get(b), clusterScores.get(a)));
+      ArrayList<MatchCluster> ranked = new ArrayList<>(clusters);
+      ranked.sort((a, b) -> Double.compare(clusterScores.get(b), clusterScores.get(a)));
 
       BreakIterator sentenceBreaker = BreakIterator.getSentenceInstance(Locale.ROOT);
       sentenceBreaker.setText(content);
 
       ArrayList<ExcerptRegion> regions = new ArrayList<>();
-      for (MatchCluster cluster : clusters) {
+      for (MatchCluster cluster : ranked) {
         if (regions.size() >= maxRegions) break;
-        int center = (cluster.startOffset() + cluster.endOffset()) / 2;
-        int winStart = Math.max(0, center - 200);
-        int winEnd = Math.min(contentLen, center + 200);
+        WindowGeom w = projectWindow(content, cluster, sentenceBreaker);
+        if (overlapsSelected(w.winStart(), w.winEnd(), regions)) continue;
 
-        // Snap to sentence boundaries (limit growth to ±80 chars to avoid huge excerpts).
-        if (winStart > 0) {
-          int sentStart = sentenceBreaker.preceding(winStart);
-          if (sentStart != BreakIterator.DONE && winStart - sentStart <= 80) {
-            winStart = sentStart;
-          } else {
-            // Fallback: snap to word boundary.
-            int scan = winStart;
-            while (scan > winStart - 40 && scan > 0 && !Character.isWhitespace(content.charAt(scan))) {
-              scan--;
-            }
-            if (scan > 0 && Character.isWhitespace(content.charAt(scan))) winStart = scan + 1;
-          }
-        }
-        if (winEnd < contentLen) {
-          int sentEnd = sentenceBreaker.following(winEnd);
-          if (sentEnd != BreakIterator.DONE && sentEnd - winEnd <= 80) {
-            winEnd = sentEnd;
-          } else {
-            // Fallback: snap to word boundary.
-            int scan = winEnd;
-            while (scan < winEnd + 40 && scan < contentLen && !Character.isWhitespace(content.charAt(scan))) {
-              scan++;
-            }
-            if (scan < contentLen) winEnd = scan;
-          }
-        }
-
-        // Skip if this window overlaps >50% with an already-selected region.
-        // Note: with current params (400-char clustering, ±200 window, ±80 sentence expansion),
-        // separate clusters always have centers ≥407 chars apart, so max overlap is ~27% — this
-        // guard is a safety valve for future parameter changes, not currently reachable.
-        boolean overlaps = false;
-        for (ExcerptRegion existing : regions) {
-          int overlapStart = Math.max(winStart, existing.getStartChar());
-          int overlapEnd = Math.min(winEnd, existing.getEndChar());
-          if (overlapEnd > overlapStart) {
-            int overlapLen = overlapEnd - overlapStart;
-            int minLen = Math.min(winEnd - winStart, existing.getEndChar() - existing.getStartChar());
-            if (minLen > 0 && overlapLen > minLen / 2) {
-              overlaps = true;
-              break;
-            }
-          }
-        }
-        if (overlaps) continue;
-
-        // Compute approximate line number.
-        int approxLine = 1;
-        for (int i = 0; i < winStart && i < contentLen; i++) {
-          if (content.charAt(i) == '\n') approxLine++;
-        }
-
-        // Extract match spans relative to this window.
-        String excerptText = content.substring(winStart, winEnd);
+        String excerptText = content.substring(w.winStart(), w.winEnd());
         ExcerptRegion.Builder rb = ExcerptRegion.newBuilder()
             .setText(excerptText)
-            .setStartChar(winStart)
-            .setEndChar(winEnd)
-            .setApproxLine(approxLine);
-
-        for (TermMatch mo : matchOffsets) {
-          int relStart = mo.startOffset() - winStart;
-          int relEnd = mo.endOffset() - winStart;
-          if (relStart < 0 || relEnd > excerptText.length()) continue;
-          if (relEnd <= relStart) continue;
-          rb.addMatchSpans(MatchSpan.newBuilder()
-              .setField("content")
-              .setStartChar(relStart)
-              .setEndChar(relEnd)
-              .setTerm(excerptText.substring(relStart, Math.min(relEnd, excerptText.length())))
-              .build());
+            .setStartChar(w.winStart())
+            .setEndChar(w.winEnd())
+            .setApproxLine(w.approxLine());
+        for (MatchSpan span : windowMatchSpans(excerptText, w.winStart(), matchOffsets)) {
+          rb.addMatchSpans(span);
         }
-
         regions.add(rb.build());
       }
 
@@ -230,6 +146,127 @@ public final class HighlightingOps {
       log.debug("Excerpt region computation failed: {}", e.getMessage());
       return List.of();
     }
+  }
+
+  /** Sentence-snapped window geometry for one cluster (extracted for reuse; tempdoc 775). */
+  public record WindowGeom(int winStart, int winEnd, int approxLine) {}
+
+  /**
+   * Clusters match offsets within 400 chars, tracking per-term frequencies. Extracted verbatim from
+   * {@link #computeExcerptRegions} so {@code EvidenceSpanSelector} (tempdoc 775) reuses the same
+   * candidate windows without re-scanning content. Sorts {@code matchOffsets} in place by start.
+   */
+  public static List<MatchCluster> buildClusters(List<TermMatch> matchOffsets) {
+    ArrayList<MatchCluster> clusters = new ArrayList<>();
+    if (matchOffsets.isEmpty()) return clusters;
+    matchOffsets.sort(java.util.Comparator.comparingInt(TermMatch::startOffset));
+    int cStart = matchOffsets.get(0).startOffset();
+    int cEnd = matchOffsets.get(0).endOffset();
+    HashMap<String, Integer> cTermFreqs = new HashMap<>();
+    cTermFreqs.merge(matchOffsets.get(0).term(), 1, Integer::sum);
+    for (int i = 1; i < matchOffsets.size(); i++) {
+      TermMatch m = matchOffsets.get(i);
+      if (m.startOffset() - cEnd <= 400) {
+        cEnd = Math.max(cEnd, m.endOffset());
+        cTermFreqs.merge(m.term(), 1, Integer::sum);
+      } else {
+        clusters.add(new MatchCluster(cStart, cEnd, Map.copyOf(cTermFreqs)));
+        cStart = m.startOffset();
+        cEnd = m.endOffset();
+        cTermFreqs = new HashMap<>();
+        cTermFreqs.merge(m.term(), 1, Integer::sum);
+      }
+    }
+    clusters.add(new MatchCluster(cStart, cEnd, Map.copyOf(cTermFreqs)));
+    return clusters;
+  }
+
+  /**
+   * Projects a ±200-char window around a cluster center, snapped to sentence (then word) boundaries,
+   * and computes its approximate 1-based line. Extracted verbatim from {@link #computeExcerptRegions}
+   * (tempdoc 775) — the geometry both the IDF-only delivery path and the evidence-span selector share.
+   */
+  public static WindowGeom projectWindow(String content, MatchCluster cluster, BreakIterator sentenceBreaker) {
+    int contentLen = content.length();
+    int center = (cluster.startOffset() + cluster.endOffset()) / 2;
+    int winStart = Math.max(0, center - 200);
+    int winEnd = Math.min(contentLen, center + 200);
+
+    // Snap to sentence boundaries (limit growth to ±80 chars to avoid huge excerpts).
+    if (winStart > 0) {
+      int sentStart = sentenceBreaker.preceding(winStart);
+      if (sentStart != BreakIterator.DONE && winStart - sentStart <= 80) {
+        winStart = sentStart;
+      } else {
+        // Fallback: snap to word boundary.
+        int scan = winStart;
+        while (scan > winStart - 40 && scan > 0 && !Character.isWhitespace(content.charAt(scan))) {
+          scan--;
+        }
+        if (scan > 0 && Character.isWhitespace(content.charAt(scan))) winStart = scan + 1;
+      }
+    }
+    if (winEnd < contentLen) {
+      int sentEnd = sentenceBreaker.following(winEnd);
+      if (sentEnd != BreakIterator.DONE && sentEnd - winEnd <= 80) {
+        winEnd = sentEnd;
+      } else {
+        // Fallback: snap to word boundary.
+        int scan = winEnd;
+        while (scan < winEnd + 40 && scan < contentLen && !Character.isWhitespace(content.charAt(scan))) {
+          scan++;
+        }
+        if (scan < contentLen) winEnd = scan;
+      }
+    }
+
+    int approxLine = 1;
+    for (int i = 0; i < winStart && i < contentLen; i++) {
+      if (content.charAt(i) == '\n') approxLine++;
+    }
+    return new WindowGeom(winStart, winEnd, approxLine);
+  }
+
+  /**
+   * True if [winStart,winEnd) overlaps &gt;50% with an already-selected region. Extracted verbatim
+   * from {@link #computeExcerptRegions} (the safety-valve guard). With current params separate
+   * clusters are ≥407 chars apart so max overlap is ~27% — not currently reachable, retained for
+   * future parameter changes.
+   */
+  static boolean overlapsSelected(int winStart, int winEnd, List<ExcerptRegion> selected) {
+    for (ExcerptRegion existing : selected) {
+      int overlapStart = Math.max(winStart, existing.getStartChar());
+      int overlapEnd = Math.min(winEnd, existing.getEndChar());
+      if (overlapEnd > overlapStart) {
+        int overlapLen = overlapEnd - overlapStart;
+        int minLen = Math.min(winEnd - winStart, existing.getEndChar() - existing.getStartChar());
+        if (minLen > 0 && overlapLen > minLen / 2) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Builds the match spans (offsets relative to the window text) for a window. Extracted verbatim
+   * from {@link #computeExcerptRegions} (tempdoc 775) so delivery projection is shared.
+   */
+  public static List<MatchSpan> windowMatchSpans(String excerptText, int winStart, List<TermMatch> matchOffsets) {
+    ArrayList<MatchSpan> out = new ArrayList<>();
+    for (TermMatch mo : matchOffsets) {
+      int relStart = mo.startOffset() - winStart;
+      int relEnd = mo.endOffset() - winStart;
+      if (relStart < 0 || relEnd > excerptText.length()) continue;
+      if (relEnd <= relStart) continue;
+      out.add(MatchSpan.newBuilder()
+          .setField("content")
+          .setStartChar(relStart)
+          .setEndChar(relEnd)
+          .setTerm(excerptText.substring(relStart, Math.min(relEnd, excerptText.length())))
+          .build());
+    }
+    return out;
   }
 
   /**
@@ -253,7 +290,7 @@ public final class HighlightingOps {
   /**
    * Collects match character offsets with term identity from content using MemoryIndex + Matches API.
    */
-  private static void collectMatchOffsets(
+  public static void collectMatchOffsets(
       List<TermMatch> out, Analyzer analyzer, org.apache.lucene.search.Query query,
       String content, int maxOffsets) {
     try {
