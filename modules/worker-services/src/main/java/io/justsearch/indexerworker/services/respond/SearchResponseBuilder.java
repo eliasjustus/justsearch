@@ -6,6 +6,7 @@ import io.justsearch.adapters.lucene.runtime.FacetingEngine;
 import io.justsearch.adapters.lucene.runtime.IndexCountOps;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
 import io.justsearch.adapters.lucene.runtime.TextQueryOps;
+import io.justsearch.configuration.resolved.ResolvedConfig;
 import io.justsearch.indexerworker.disambiguation.EntityClusterSnapshot;
 import io.justsearch.indexerworker.metrics.OperationalMetrics;
 import io.justsearch.indexerworker.services.HighlightingOps;
@@ -61,23 +62,40 @@ public final class SearchResponseBuilder {
           SchemaFields.ENTITY_ORGANIZATIONS_RAW, "ORGANIZATION",
           SchemaFields.ENTITY_LOCATIONS_RAW, "LOCATION");
 
+  /**
+   * Tempdoc 774 Stage 2: when {@code search.evidence_preview.enabled} is on, the winning chunk's
+   * text delivered as {@code content_preview} for a chunk-sourced hit is capped at this many chars —
+   * the same slice the Head CE builds its query-focused snippet from and the delivery surface shows.
+   */
+  private static final int EVIDENCE_PREVIEW_CAP = 4096;
+
   private final IndexCountOps indexCountOps;
   private final DocumentFieldOps documentFieldOps;
   private final TextQueryOps textQueryOps;
   private final FacetingEngine facetingEngine;
   private final Supplier<Analyzer> indexAnalyzerSupplier;
+  private final Supplier<ResolvedConfig> resolvedConfigSupplier;
 
   public SearchResponseBuilder(
       IndexCountOps indexCountOps,
       DocumentFieldOps documentFieldOps,
       TextQueryOps textQueryOps,
       FacetingEngine facetingEngine,
-      Supplier<Analyzer> indexAnalyzerSupplier) {
+      Supplier<Analyzer> indexAnalyzerSupplier,
+      Supplier<ResolvedConfig> resolvedConfigSupplier) {
     this.indexCountOps = indexCountOps;
     this.documentFieldOps = documentFieldOps;
     this.textQueryOps = textQueryOps;
     this.facetingEngine = facetingEngine;
     this.indexAnalyzerSupplier = indexAnalyzerSupplier;
+    this.resolvedConfigSupplier = resolvedConfigSupplier;
+  }
+
+  /** Tempdoc 774 Stage 2 evidence-preview flag (default false). Null-safe for tests. */
+  private boolean evidencePreviewEnabled() {
+    if (resolvedConfigSupplier == null) return false;
+    ResolvedConfig rc = resolvedConfigSupplier.get();
+    return rc != null && rc.search() != null && rc.search().evidencePreviewEnabled();
   }
 
   public SearchResponse build(
@@ -456,8 +474,20 @@ public final class SearchResponseBuilder {
       if (isChunkHit) {
         String chunkText = hit.fields().get(SchemaFields.CHUNK_CONTENT);
         if (chunkText != null && !chunkText.isEmpty()) {
+          // Tempdoc 774 Stage 2: when the evidence-preview flag is ON, the winning chunk's text
+          // (capped at EVIDENCE_PREVIEW_CAP) both REPLACES any merged head-of-doc content_preview on
+          // the wire hit AND becomes the text spans/matched-fields are computed against — so the
+          // delivered preview, the CE's snippet source (KnowledgeSearchEngine docTexts), and the
+          // highlight offsets are all evidence-coherent. When OFF, previewText is the FULL chunk text
+          // fed only to span computation (today's behavior) and nothing is emitted to the wire —
+          // byte-identical to pre-774.
+          boolean evidencePreview = evidencePreviewEnabled();
+          String previewText = evidencePreview ? capEvidencePreview(chunkText) : chunkText;
           spanFields = new HashMap<>(hit.fields());
-          spanFields.put(SchemaFields.CONTENT_PREVIEW, chunkText);
+          spanFields.put(SchemaFields.CONTENT_PREVIEW, previewText);
+          if (evidencePreview) {
+            resultBuilder.putFields(SchemaFields.CONTENT_PREVIEW, previewText);
+          }
         }
       }
 
@@ -528,6 +558,11 @@ public final class SearchResponseBuilder {
     if (filename != null && !filename.isEmpty()) {
       resultBuilder.putFields(SchemaFields.FILENAME, filename);
     }
+  }
+
+  /** Tempdoc 774 Stage 2: cap the chunk-text evidence preview at {@link #EVIDENCE_PREVIEW_CAP}. */
+  private static String capEvidencePreview(String text) {
+    return text.length() > EVIDENCE_PREVIEW_CAP ? text.substring(0, EVIDENCE_PREVIEW_CAP) : text;
   }
 
   private static int parseIntOrZero(String value) {

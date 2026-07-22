@@ -58,6 +58,7 @@ public enum ConfigKey {
 
     // -- Search --
     SEARCH_CHUNK_AWARE_ENABLED("search.chunk_aware.enabled"),
+    SEARCH_EVIDENCE_PREVIEW_ENABLED("search.evidence_preview.enabled"),
     SEARCH_CORRECTIONS_ENABLED("search.corrections.enabled"),
     SEARCH_CORRECTIONS_DF_THRESHOLD("search.corrections.df_threshold"),
     SEARCH_CORRECTIONS_MAX_EDIT_DISTANCE("search.corrections.max_edit_distance"),

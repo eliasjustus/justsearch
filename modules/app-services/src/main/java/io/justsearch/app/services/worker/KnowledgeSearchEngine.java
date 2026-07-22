@@ -169,10 +169,34 @@ final class KnowledgeSearchEngine {
     if (queryType == QueryType.NAVIGATIONAL) return false;
     if (!config.enabled() || resultCount < config.minHitsThreshold()) return false;
     if (!pipeline.crossEncoderEnabled()) return false;
-    // 258-B1: auto-disable cross-encoder when documents are too long for the model
+    // 258-B1: auto-disable cross-encoder when documents are too long for the model.
+    // TOMBSTONE (tempdoc 774 §J.2/§K): the default of maxAvgDocLengthChars was flipped 16000 → 0
+    // (gate disabled) — its input (avgContentLengthChars) is a Head-side session-average cache
+    // populated only by GET /api/knowledge/status, so it diverged eval (gate-off) from production.
+    // The gate mechanism + cache plumbing are retained (operator override); their teardown belongs
+    // to the later default-flip sweep, not tempdoc 774 Stage 2.
     long maxLen = config.maxAvgDocLengthChars();
     if (maxLen > 0 && avgContentLengthChars > maxLen) return false;
     return true;
+  }
+
+  /**
+   * Builds the Head cross-encoder's per-candidate input text: the hit's title followed by a
+   * query-focused snippet cut from its {@code content_preview} field, centered on the first match
+   * span ({@link SearchResultMapper#extractQueryFocusedSnippet}). A hit with no {@code
+   * content_preview} (e.g. a chunk-only hit before tempdoc 774 Stage 2's evidence-preview flag)
+   * yields title-only text — the judge-blindness defect documented in §F.1-5. Package-private for
+   * unit coverage of the CE input assembly (tempdoc 774 §J.2 test gap).
+   */
+  static String buildCrossEncoderDocText(SearchResult sr) {
+    String title = sr.getFieldsMap().getOrDefault("title", "");
+    String preview = sr.getFieldsMap().getOrDefault("content_preview", "");
+    // Query-focused snippet extraction centers the snippet on the first query match instead of the
+    // document start, giving the reranker more relevant context.
+    var spans = SearchResultMapper.extractMatchSpans(sr);
+    String snippet =
+        SearchResultMapper.extractQueryFocusedSnippet(preview, spans, RERANK_SNIPPET_LENGTH);
+    return title + " " + snippet;
   }
 
   @SuppressWarnings("unused") // Called from KnowledgeHttpApiAdapterHarmfulCombinationsTest
@@ -894,16 +918,7 @@ final class KnowledgeSearchEngine {
       } else {
         List<String> docTexts = new ArrayList<>(topK);
         for (int i = 0; i < topK; i++) {
-          SearchResult sr = results.get(i);
-          String title = sr.getFieldsMap().getOrDefault("title", "");
-          String preview = sr.getFieldsMap().getOrDefault("content_preview", "");
-
-          // Use query-focused snippet extraction for better reranker context
-          // (centers snippet on first query match instead of document start)
-          var spans = SearchResultMapper.extractMatchSpans(sr);
-          String snippet = SearchResultMapper.extractQueryFocusedSnippet(
-              preview, spans, RERANK_SNIPPET_LENGTH);
-          docTexts.add(title + " " + snippet);
+          docTexts.add(buildCrossEncoderDocText(results.get(i)));
         }
 
         Span ceSpan =

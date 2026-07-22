@@ -12,6 +12,7 @@ import io.justsearch.indexerworker.embed.EmbeddingConfig;
 import io.justsearch.indexerworker.embed.EmbeddingService;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
+import io.justsearch.ipc.PipelineConfig;
 import io.justsearch.ipc.RetrieveContextRequest;
 import io.justsearch.ipc.RetrieveContextResponse;
 import io.justsearch.ipc.SearchMode;
@@ -320,6 +321,160 @@ final class GrpcSearchServiceReasonCodeContractTest {
     }
   }
 
+  // ============================================================
+  // Tempdoc 774 Stage 1 — chunk-branch base-results gate lever (lever 4) + flag-off equivalence.
+  // ============================================================
+
+  @Test
+  void chunkBranch_defaultConfig_baseNonEmpty_appliesChunkMerge() throws Exception {
+    // Flag-off equivalence: with the shipping defaults and a query that matches the parent doc,
+    // the chunk branch still fires (chunkMergeApplied) exactly as before Stage 1.
+    String prevConfig = System.getProperty("justsearch.config");
+    try (RunningRuntime lifecycle =
+        newLifecycleWithChunk("doc-1", "alpha reliability report", "alpha reliability chunk body")) {
+      refreshResolvedConfig(lifecycle);
+      var service = new GrpcSearchService(lifecycle);
+      SearchResponse response =
+          invokeSearch(
+              service,
+              SearchRequest.newBuilder()
+                  .setQuery("reliability")
+                  .setLimit(10)
+                  .setPipeline(PipelineConfig.newBuilder().setSparseEnabled(true).build())
+                  .build());
+      assertEquals(
+          "APPLIED",
+          TraceStageAccess.chunkMergeReason(response),
+          () -> "default config + non-empty base must still apply chunk merge");
+      assertTrue(TraceStageAccess.chunkMergeApplied(response));
+    } finally {
+      restoreProperty("justsearch.config", prevConfig);
+    }
+  }
+
+  @Test
+  void chunkBranch_defaultRequiresBaseResults_emptyBaseSkips() throws Exception {
+    // A query matching ONLY the chunk (not the parent's whole-doc content) leaves the doc legs
+    // empty. With the default flag (true), the chunk branch is gated → SKIPPED_EMPTY_BASE_RESULTS.
+    String prevConfig = System.getProperty("justsearch.config");
+    String prevFlag = System.getProperty("index.hybrid.chunk_branch_requires_base_results");
+    System.clearProperty("index.hybrid.chunk_branch_requires_base_results");
+    try (RunningRuntime lifecycle =
+        newLifecycleWithChunk("doc-1", "alpha alpha alpha", "betamarker gamma delta")) {
+      refreshResolvedConfig(lifecycle);
+      var service = new GrpcSearchService(lifecycle);
+      SearchResponse response =
+          invokeSearch(
+              service,
+              SearchRequest.newBuilder()
+                  .setQuery("betamarker")
+                  .setLimit(10)
+                  .setPipeline(PipelineConfig.newBuilder().setSparseEnabled(true).build())
+                  .build());
+      assertEquals(
+          "SKIPPED_EMPTY_BASE_RESULTS",
+          TraceStageAccess.chunkMergeReason(response),
+          () -> "default gate: empty base must skip the chunk branch");
+      assertFalse(TraceStageAccess.chunkMergeApplied(response));
+    } finally {
+      restoreProperty("justsearch.config", prevConfig);
+      restoreProperty("index.hybrid.chunk_branch_requires_base_results", prevFlag);
+    }
+  }
+
+  @Test
+  void chunkBranch_requiresBaseResultsFalse_emptyBaseAppliesChunkMerge() throws Exception {
+    // Lever 4 ON: with the gate disabled, the same chunk-only-matching query now runs the chunk
+    // branch even though the doc legs returned empty → APPLIED with chunk-branch results.
+    String prevConfig = System.getProperty("justsearch.config");
+    String prevFlag = System.getProperty("index.hybrid.chunk_branch_requires_base_results");
+    System.setProperty("index.hybrid.chunk_branch_requires_base_results", "false");
+    try (RunningRuntime lifecycle =
+        newLifecycleWithChunk("doc-1", "alpha alpha alpha", "betamarker gamma delta")) {
+      refreshResolvedConfig(lifecycle);
+      var service = new GrpcSearchService(lifecycle);
+      SearchResponse response =
+          invokeSearch(
+              service,
+              SearchRequest.newBuilder()
+                  .setQuery("betamarker")
+                  .setLimit(10)
+                  .setPipeline(PipelineConfig.newBuilder().setSparseEnabled(true).build())
+                  .build());
+      assertEquals(
+          "APPLIED",
+          TraceStageAccess.chunkMergeReason(response),
+          () -> "gate disabled: empty base must still apply the chunk branch");
+      assertTrue(TraceStageAccess.chunkMergeApplied(response));
+      // The chunk-only match surfaces its parent doc.
+      assertTrue(response.getTotalHits() > 0, "chunk branch contributes the parent as a result");
+    } finally {
+      restoreProperty("justsearch.config", prevConfig);
+      restoreProperty("index.hybrid.chunk_branch_requires_base_results", prevFlag);
+    }
+  }
+
+  @Test
+  void chunkSideRecallComplete_rescuesLegTopNParentDroppedByCollapse() throws Exception {
+    // Tempdoc 774 Stage 1 — the gap case. p-d's chunk is in the BM25 leg's top-N but its parent is
+    // dropped by the collapse cap (collapse keeps the top-3 by fused chunk score). The whole-doc base
+    // finds only p-a/p-b/p-c (p-d's parent content lacks the term), so p-d reaches the judge window
+    // ONLY if chunk-side recall-complete splices it in from the PRE-collapse leg-top-N set.
+    String prevConfig = System.getProperty("justsearch.config");
+    String prevMult = System.getProperty("index.hybrid.chunk_collapse_limit_multiplier");
+    String prevRecall = System.getProperty("index.hybrid.chunk_leg_recall_complete_enabled");
+    System.setProperty("index.hybrid.chunk_collapse_limit_multiplier", "1");
+    try (RunningRuntime lifecycle =
+        newLifecycleWithChunkedParents(
+            List.of(
+                new String[] {
+                  "p-a", "reliability overview alpha", "reliability reliability reliability reliability"
+                },
+                new String[] {
+                  "p-b", "reliability overview beta", "reliability reliability reliability zzq1"
+                },
+                new String[] {
+                  "p-c", "reliability overview gamma", "reliability reliability zzq1 zzq2"
+                },
+                new String[] {"p-d", "unrelated delta epsilon", "reliability zzq1 zzq2 zzq3"}))) {
+
+      // Flag OFF (default): p-d is dropped by collapse and missing from base → absent from results.
+      System.clearProperty("index.hybrid.chunk_leg_recall_complete_enabled");
+      refreshResolvedConfig(lifecycle);
+      Set<String> offIds = resultIds(new GrpcSearchService(lifecycle));
+      assertTrue(offIds.contains("p-a"), () -> "sanity: top chunk parent present, got " + offIds);
+      assertFalse(
+          offIds.contains("p-d"),
+          () -> "flag off: collapse-dropped leg-topN parent must be absent, got " + offIds);
+
+      // Flag ON: p-d (BM25 leg top-N, captured pre-collapse) is spliced back into the judge window.
+      System.setProperty("index.hybrid.chunk_leg_recall_complete_enabled", "true");
+      refreshResolvedConfig(lifecycle);
+      Set<String> onIds = resultIds(new GrpcSearchService(lifecycle));
+      assertTrue(
+          onIds.contains("p-d"),
+          () -> "flag on: collapse-dropped leg-topN parent must be rescued, got " + onIds);
+    } finally {
+      restoreProperty("justsearch.config", prevConfig);
+      restoreProperty("index.hybrid.chunk_collapse_limit_multiplier", prevMult);
+      restoreProperty("index.hybrid.chunk_leg_recall_complete_enabled", prevRecall);
+    }
+  }
+
+  private static Set<String> resultIds(GrpcSearchService service) {
+    SearchResponse response =
+        invokeSearch(
+            service,
+            SearchRequest.newBuilder()
+                .setQuery("reliability")
+                .setLimit(3)
+                .setPipeline(PipelineConfig.newBuilder().setSparseEnabled(true).build())
+                .build());
+    return response.getResultsList().stream()
+        .map(r -> r.getId())
+        .collect(java.util.stream.Collectors.toSet());
+  }
+
   private static Set<String> union(Set<String> a, Set<String> b) {
     java.util.HashSet<String> out = new java.util.HashSet<>();
     out.addAll(a);
@@ -433,6 +588,46 @@ final class GrpcSearchServiceReasonCodeContractTest {
 
     runtime.commitOps().commitAndTrack();
     runtime.commitOps().maybeRefreshBlocking();
+    return lifecycle;
+  }
+
+  /**
+   * Indexes N (parent, chunk) pairs into one corpus. Each entry is {@code {parentId, parentContent,
+   * chunkContent}}. Used by the 774 Stage 1 chunk-side recall-complete gap-case test.
+   */
+  private static RunningRuntime newLifecycleWithChunkedParents(List<String[]> docs) throws Exception {
+    RunningRuntime lifecycle = newLifecycleWithCatalog(FieldCatalogDef.forChunkTesting(4));
+    int idx = 0;
+    for (String[] d : docs) {
+      String parentId = d[0];
+      lifecycle
+          .indexingCoordinator()
+          .indexSingle(
+              new IndexDocument(
+                  Map.of(
+                      SchemaFields.DOC_ID, parentId,
+                      SchemaFields.DOC_UID, parentId + "#0",
+                      SchemaFields.PATH, parentId,
+                      SchemaFields.CONTENT, d[1])));
+
+      Map<String, Object> fields = new HashMap<>();
+      fields.put(SchemaFields.DOC_ID, "chunk-" + idx);
+      fields.put(SchemaFields.DOC_UID, "chunk-" + idx + "#0");
+      fields.put(SchemaFields.IS_CHUNK, "true");
+      fields.put(SchemaFields.PARENT_DOC_ID, parentId);
+      fields.put(SchemaFields.CHUNK_INDEX, "0");
+      fields.put(SchemaFields.CHUNK_TOTAL, "1");
+      fields.put(SchemaFields.CHUNK_CONTENT, d[2]);
+      fields.put(SchemaFields.CHUNK_START_CHAR, "0");
+      fields.put(SchemaFields.CHUNK_END_CHAR, String.valueOf(Math.max(0, d[2].length())));
+      fields.put(SchemaFields.PATH, parentId);
+      fields.put(SchemaFields.CHUNK_EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
+      fields.put(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT, "0");
+      lifecycle.indexingCoordinator().indexSingle(new IndexDocument(fields));
+      idx++;
+    }
+    lifecycle.commitOps().commitAndTrack();
+    lifecycle.commitOps().maybeRefreshBlocking();
     return lifecycle;
   }
 

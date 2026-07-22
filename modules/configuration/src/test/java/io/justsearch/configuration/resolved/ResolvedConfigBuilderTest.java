@@ -264,6 +264,19 @@ final class ResolvedConfigBuilderTest {
     }
 
     @Test
+    @DisplayName("maxAvgDocLengthChars default is 0 — DOCS_TOO_LONG gate off (tempdoc 774 §J.2/§K)")
+    void docsTooLongGateDefaultsDisabled() {
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeEnvRegistry();
+      ResolvedConfig config = builder.build();
+      // Tempdoc 774 §J.2/§K live probe: the DOCS_TOO_LONG gate diverged eval (gate-off) from
+      // production (gate-on when a client polls /api/knowledge/status). Default flipped 16000 → 0 so
+      // production matches every measured register baseline. Pins the intended value directly (the
+      // cross-check above only proves self-consistency, not the chosen number).
+      assertEquals(0, config.ai().reranker().maxAvgDocLengthChars());
+    }
+
+    @Test
     @DisplayName("embedGpuMemMb honors explicit override")
     void embedGpuMemMbExplicitOverride() {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
@@ -592,6 +605,119 @@ final class ResolvedConfigBuilderTest {
       assertEquals("rrf", config.hybridSearch().branchFusionStrategy());
       assertEquals(0.65, config.hybridSearch().branchCcWeightChunk(), 0.001);
       assertEquals(0.50, config.hybridSearch().branchChunkMinWeightMultiplier(), 0.001);
+    }
+
+    @Test
+    @DisplayName("774 Stage 1: chunk-branch levers default to today's behavior byte-for-byte")
+    void chunkBranchLeversDefault() {
+      ResolvedConfig config = new ResolvedConfigBuilder().build();
+      ResolvedConfig.HybridSearch h = config.hybridSearch();
+      // Chunk CC weights default to the resolved doc-level cc_weight_* values.
+      assertEquals(h.ccWeightSparse(), h.chunkCcWeightSparse(), 0.0001);
+      assertEquals(h.ccWeightDense(), h.chunkCcWeightDense(), 0.0001);
+      assertEquals(h.ccWeightSplade(), h.chunkCcWeightSplade(), 0.0001);
+      assertEquals(0.60, h.chunkCcWeightSparse(), 0.0001);
+      assertEquals(0.20, h.chunkCcWeightDense(), 0.0001);
+      assertEquals(0.20, h.chunkCcWeightSplade(), 0.0001);
+      assertFalse(h.chunkCcZeroExclude());
+      assertEquals(2, h.chunkCollapseLimitMultiplier());
+      assertFalse(h.chunkLegRecallCompleteEnabled());
+      assertEquals(10, h.chunkLegRecallCompleteTopN());
+      assertTrue(h.chunkBranchRequiresBaseResults());
+    }
+
+    @Test
+    @DisplayName("774 Stage 1: chunk CC weights + zero-exclude inherit explicit doc-level overrides")
+    void chunkBranchWeightsInheritDocLevelOverride() {
+      String yaml =
+          """
+          index:
+            hybrid:
+              cc_weight_sparse: 0.10
+              cc_weight_dense: 0.90
+              cc_weight_splade: 0.00
+              cc_zero_exclude: true
+          """;
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeYaml(parseYaml(yaml));
+      ResolvedConfig.HybridSearch h = builder.build().hybridSearch();
+      // Chunk key unset → the resolved doc-level override flows through.
+      assertEquals(0.10, h.chunkCcWeightSparse(), 0.0001);
+      assertEquals(0.90, h.chunkCcWeightDense(), 0.0001);
+      assertEquals(0.00, h.chunkCcWeightSplade(), 0.0001);
+      // Doc-level cc_zero_exclude=true must keep applying to the chunk branch until the chunk key is set.
+      assertTrue(h.chunkCcZeroExclude());
+    }
+
+    @Test
+    @DisplayName("774 Stage 1: chunk_cc_zero_exclude=false overrides an inherited doc-level true")
+    void chunkZeroExcludeOverridesInheritedDocLevel() {
+      String yaml =
+          """
+          index:
+            hybrid:
+              cc_zero_exclude: true
+              chunk_cc_zero_exclude: false
+          """;
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeYaml(parseYaml(yaml));
+      assertFalse(builder.build().hybridSearch().chunkCcZeroExclude());
+    }
+
+    @Test
+    @DisplayName("774 Stage 1: chunk-branch keys override doc-level and their own defaults")
+    void chunkBranchKeysOverride() {
+      String yaml =
+          """
+          index:
+            hybrid:
+              cc_weight_dense: 0.90
+              chunk_cc_weight_sparse: 0.11
+              chunk_cc_weight_dense: 0.33
+              chunk_cc_weight_splade: 0.22
+              chunk_cc_zero_exclude: true
+              chunk_collapse_limit_multiplier: 4
+              chunk_leg_recall_complete_enabled: true
+              chunk_leg_recall_complete_top_n: 5
+              chunk_branch_requires_base_results: false
+          """;
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeYaml(parseYaml(yaml));
+      ResolvedConfig.HybridSearch h = builder.build().hybridSearch();
+      // Chunk key set → wins over the doc-level value (0.90) it would otherwise inherit.
+      assertEquals(0.11, h.chunkCcWeightSparse(), 0.0001);
+      assertEquals(0.33, h.chunkCcWeightDense(), 0.0001);
+      assertEquals(0.22, h.chunkCcWeightSplade(), 0.0001);
+      assertTrue(h.chunkCcZeroExclude());
+      assertEquals(4, h.chunkCollapseLimitMultiplier());
+      assertTrue(h.chunkLegRecallCompleteEnabled());
+      assertEquals(5, h.chunkLegRecallCompleteTopN());
+      assertFalse(h.chunkBranchRequiresBaseResults());
+    }
+
+    @Test
+    @DisplayName("774 Stage 1: chunk_collapse_limit_multiplier clamps to >= 1")
+    void chunkCollapseMultiplierClamped() {
+      String yaml =
+          """
+          index:
+            hybrid:
+              chunk_collapse_limit_multiplier: 0
+          """;
+      ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
+      builder.contributeYaml(parseYaml(yaml));
+      assertEquals(1, builder.build().hybridSearch().chunkCollapseLimitMultiplier());
+    }
+
+    @Test
+    @DisplayName("774 Stage 1: chunk-branch env vars resolve via EnvRegistry")
+    void chunkBranchEnvRegistryKeys() {
+      assertEquals(
+          "index.hybrid.chunk_cc_weight_dense",
+          EnvRegistry.HYBRID_CHUNK_CC_WEIGHT_DENSE.configKey());
+      assertEquals(
+          "JUSTSEARCH_HYBRID_CHUNK_BRANCH_REQUIRES_BASE_RESULTS",
+          EnvRegistry.HYBRID_CHUNK_BRANCH_REQUIRES_BASE_RESULTS.envVar());
     }
 
     @Test

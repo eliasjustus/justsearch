@@ -1398,6 +1398,51 @@ class HybridFusionUtilsTest {
       assertTrue(chunkOnly.debugScores().containsKey("chunk_branch"));
       assertTrue(chunkOnly.debugScores().containsKey("branch_merge_cc"));
     }
+
+    @Test
+    @DisplayName(
+        "774 Stage 1: empty whole-doc branch (zeroExclude) — every chunk doc takes the single-branch"
+            + " path and its normalized chunk score")
+    void fuseWithCcNamed_emptyWholeBranch_allChunkDocsSingleBranch() {
+      // Lever 4 (chunk_branch_requires_base_results=false) can reach branch fusion with an EMPTY
+      // whole-doc side. With branchZeroExclude=true the whole leg is excluded per-doc, so each chunk
+      // doc's fused score is its own normalized chunk score (effective chunk weight renormalizes to 1).
+      SearchResult whole = new SearchResult(List.of(), 0, 0);
+      SearchResult chunk =
+          new SearchResult(
+              List.of(
+                  new SearchHit("doc-hi", 10.0f, Map.of("parent_token_count", "4096")),
+                  new SearchHit("doc-lo", 2.0f, Map.of("parent_token_count", "4096"))),
+              2,
+              0);
+
+      SearchResult fused =
+          HybridFusionUtils.fuseWithCCNamed(
+              whole,
+              chunk,
+              10,
+              new double[] {0.50, 0.50},
+              true,
+              true,
+              "whole_branch",
+              "chunk_branch",
+              "branch_merge_",
+              "whole",
+              "chunk",
+              true,
+              0.25);
+
+      assertEquals(2, fused.hits().size(), "both chunk-only docs survive an empty whole side");
+      SearchHit hi = fused.hits().get(0);
+      SearchHit lo = fused.hits().get(1);
+      assertEquals("doc-hi", hi.docId());
+      assertEquals("doc-lo", lo.docId());
+      // Single-branch (zero-exclude) → chunk effective weight renormalizes to 1.0; score == normChunk.
+      assertEquals(1.0f, hi.debugScores().get("branch_merge_cc_effective_weight_chunk"), 0.001f);
+      assertEquals(0.0f, hi.debugScores().get("branch_merge_cc_effective_weight_whole"), 0.001f);
+      assertEquals(1.0f, hi.score(), 0.001f, "top chunk doc = normalized 1.0");
+      assertEquals(0.0f, lo.score(), 0.001f, "min-normalized chunk doc = 0.0");
+    }
   }
 
   @Nested
