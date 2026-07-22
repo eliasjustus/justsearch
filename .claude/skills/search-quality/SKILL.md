@@ -827,6 +827,25 @@ above)*
   above is a property of the uncamouflaged corpus; re-measure before design). Tempdoc 769's original
   acceptance criteria are retired; its M5 floor-cell retest moves into 771 §C.1. F-039's resolution
   note lands when 771's re-measurement pass rules each component fixed/shrunk/representation-bound.
+- **RESOLVED-DECOMPOSED (2026-07-22, tempdoc 771 §E — re-measured on the leak-free certified strata,
+  PR #273):** F-039's "engine owns 13–28% of with-tool failures, growing with scale" decomposes on
+  the rebuild into four components, none of which is a single fixable ranking bug: **(a) join-key
+  affordance — CONFIRMED, not a defect**: the bridge entity name is a globally-unique token (df=1)
+  and puts the answer doc at rank 1–2 (hybrid + lexical, 50/50) once queried, while structure-
+  phrased queries structurally cannot; this *defines* the required two-step, it is not a burial.
+  **(b) evidence-content — the surviving small engine/surface item**: the delivered excerpt carries
+  the join entity in 93% of successful enron retrievals but only 45% of legal ones (long CLERC docs
+  bury the bridge sentence past the ~4 KB preview), so on the F-039 domain even successful retrieval
+  often can't seed hop-2 → scoped excerpt/evidence-content design (couples to F-038 passage
+  machinery + read-amplification). **(c) fusion-burial — bounded, guarded**: 5.0% of queries / 9.8%
+  of hybrid-misses (leg-visible-hybrid-buried @10), same order as the 769 census, did not grow,
+  already ratcheted by the leak-gate → no new machinery. **(d) representation floor — DOMINANT at
+  scale, NOT engine-fixable**: legal-10k gold is unreachable by any leg for 82–90% of queries
+  (lexical dead post-camouflage, dense/splade can't bridge the legal paraphrase barrier —
+  F-030(678), 708 *no model swap*). **Net:** the durable engine-owned residue is (b) the long-doc
+  evidence-content excerpt gap (small, design-here) plus (d) the known encoder-domain floor (not
+  new); F-039 is marked **resolved-decomposed**. No F-030 successor is opened (708 closed the
+  encoder question); no new engine charter is licensed.
 
 ### F-038: RAG chunk retrieval was blind to chunkless (sub-2000-char) docs — a doc-level union leg into the PRIMARY RAG candidate set fixes it with no re-index; interactive hybrid on-baseline (tempdoc 749, 2026-07-18)
 
