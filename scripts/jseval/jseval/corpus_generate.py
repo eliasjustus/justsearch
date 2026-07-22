@@ -38,6 +38,7 @@ from pathlib import Path
 # different output from a different corpus snapshot, which would put the harvester's
 # regexes and the host-corpus bytes inside this module's cross-interpreter determinism
 # proof (`regenerate_and_diff`). Harvest once, pin the sha, sample forever.
+from jseval import corpus_comparators as _comparators
 from jseval import entity_bank as _entity_bank
 
 # Padding boilerplate. REMAINING OWNER: the 635 goldens (`635-corpora/synth-*`), which are
@@ -488,6 +489,38 @@ def _chain(rng, hops, minter):
     return ents, minter.mint_value(rng)
 
 
+def _aggregation_members(rng, minter, k, gold_kind):
+    """Mint ``k`` gold members for one aggregation group + the precomputed gold answer.
+
+    ``set``/``count`` members carry a format-diverse minted value; ``extremum`` members carry
+    a numeric measure (``M-<int>``, distinct within the group) so the extremum is well defined.
+    Every name is globally unique (minter ledger) and every value is digit-independent of the
+    names (minter invariant / numeric measure), so no member's answer is inferable from a name.
+    Deterministic given ``rng`` state, mint order fixed: entity, then value, per member.
+    """
+    members = []
+    if gold_kind == "extremum":
+        seen = set()
+        for _ in range(k):
+            name = minter.mint_entity(rng)
+            while True:
+                n = rng.randrange(1000, 1_000_000)
+                if n not in seen:
+                    seen.add(n)
+                    break
+            members.append((name, f"M-{n}"))
+        answer = f"M-{max(seen)}"
+    else:
+        for _ in range(k):
+            name = minter.mint_entity(rng)
+            members.append((name, minter.mint_value(rng)))
+        if gold_kind == "count":
+            answer = str(k)
+        else:  # set
+            answer = _comparators.SET_DELIMITER.join(sorted(value for _, value in members))
+    return members, answer
+
+
 def _render_prose(ents, attr, rels, target_words, lang="en", sem=None, tails=_TAIL_PHRASINGS):
     """Render a chain as gold docs (one per hop link) + a multi-hop question.
 
@@ -556,6 +589,109 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None, tails=_TA
     # question_type counts edges (N-1 for an N-entity chain); behavioral retrieval hops =
     # edges + 1 = len(evidence_ids) — see the docstring above and tempdoc 731 §3.3.
     return docs, {"query": q, "answer": attr, "question_type": f"{len(ents)-1}_hop", "evidence_ids": evidence}
+
+
+# Aggregation membership sentences (tempdoc 776 §A.1). A member document links its own
+# distinctive name to the SHARED group descriptor (`{type}` in `{place}{dq}`) — the shared
+# signal that forces retrieval to aggregate across the k member docs, carried in the BODY so
+# each member keeps a distinct `title` (no gold-involved title collision). Rotated per group
+# by `generate()` exactly like `_RELATIONS`/`_TAIL_PHRASINGS`, so no single membership phrasing
+# anchors the whole aggregation gold set (the "extend the existing mechanism, no new authored
+# fingerprint" discipline). INVARIANT: no 5 consecutive LITERAL tokens (the descriptor slots
+# break every run); the longest literal run below is 4 ("is listed under the").
+_MEMBERSHIP_PHRASINGS = [
+    "The {name} entry belongs to the {type} in the {place}{dq}. ",
+    "Filed with the {type} in the {place}{dq}, {name} appears in the register. ",
+    "{name} is listed under the {type} in the {place}{dq}. ",
+    "Among the {type} in the {place}{dq}, the record for {name} is held. ",
+    "The register of the {type} in the {place}{dq} includes {name}. ",
+    "{name} forms part of the {type} in the {place}{dq}. ",
+]
+_MEMBERSHIP_PHRASINGS_DE = [
+    "Der Eintrag {name} gehört zu {type}, {place}{dq}. ",
+    "Bei {type}, {place}{dq}, ist {name} verzeichnet. ",
+    "{name} ist unter {type}, {place}{dq} aufgeführt. ",
+    "Zum Bestand von {type}, {place}{dq} zählt {name}. ",
+    "Das Register von {type}, {place}{dq} enthält {name}. ",
+    "{name} gehört zum Bestand von {type}, {place}{dq}. ",
+]
+
+#: Aggregation group sizes cycle deterministically over 3-5 member documents (tempdoc 776).
+_AGGREGATION_SIZES = (3, 4, 5)
+#: Aggregation gold_kinds cycle deterministically so a mix exercises every comparator.
+_AGGREGATION_KINDS = ("set", "count", "extremum")
+
+
+def _render_single_fact(ent, attr, sem, chain_idx, target_words, lang="en",
+                        tails=_TAIL_PHRASINGS):
+    """One gold doc carrying one camouflaged fact (tempdoc 776 §A.1).
+
+    The paraphrase barrier is the bridge hop-1 head mechanism reused verbatim: the document
+    describes ``ent`` via a surface descriptor (``sem[0]``/``sem[2]``) and the QUERY references
+    it via zero-overlap SYNONYMS (``sem[1]``/``sem[3]``) — grep/pure-BM25 fail at the entry and
+    dense must bridge. One evidence doc; ``gold_kind`` = ``single_value``; the answer never
+    appears in the query, so it is not guessable without retrieving this document.
+    """
+    dq = f", {sem[4]}" if sem and sem[4] is not None else ""
+    qq = f", {sem[5]}" if sem and sem[5] is not None else ""
+    tail = _rotate(tails, chain_idx)[0]
+    if lang == "de":
+        body = (f"Der Standort {sem[0]}, {sem[2]}{dq}, bezeichnet als {ent}. "
+                + tail.format(last=ent, attr=attr))
+        title = f"Standort {sem[0]}, {sem[2]}{dq}"
+        q = f"Welcher Wert ist mit dem Standort {sem[1]}, {sem[3]}{qq} verzeichnet?"
+    else:
+        body = (f"The {sem[0]} in the {sem[2]}{dq}, designated {ent}. "
+                + tail.format(last=ent, attr=attr))
+        title = f"The {sem[0]} in the {sem[2]}{dq}"
+        q = f"What is the value recorded for the {sem[1]} in the {sem[3]}{qq}?"
+    docs = [(ent.lower(), title, _pad(body, target_words))]
+    return docs, {"query": q, "answer": attr, "question_type": "single_fact",
+                  "gold_kind": "single_value", "evidence_ids": [ent.lower()]}
+
+
+def _render_aggregation(members, answer, sem, gold_kind, chain_idx, target_words, lang="en",
+                        memberships=_MEMBERSHIP_PHRASINGS, tails=_TAIL_PHRASINGS):
+    """k gold docs sharing ONE camouflaged group descriptor + a set/count/extremum question.
+
+    ``members`` is ``[(name, value_str), ...]`` (3-5 entries). Each member document carries a
+    DISTINCT title (its own name) and a body that (a) links the name to the shared group
+    descriptor via a rotated membership phrasing and (b) records the member's value via a
+    rotated tail phrasing. The query names the group only by SYNONYM descriptor, so the whole
+    gold set must be retrieved and aggregated. ``answer`` is precomputed by the caller per
+    ``gold_kind`` (the ``set`` join / the ``count`` / the ``extremum`` value); the comparator
+    registry (:mod:`jseval.corpus_comparators`) scores it deterministically, no judge.
+    """
+    if lang == "de":
+        memberships = _MEMBERSHIP_PHRASINGS_DE
+    dq = f", {sem[4]}" if sem and sem[4] is not None else ""
+    qq = f", {sem[5]}" if sem and sem[5] is not None else ""
+    memb = _rotate(memberships, chain_idx)
+    rot = _rotate(tails, chain_idx)
+    docs = []
+    for j, (name, value) in enumerate(members):
+        link = memb[j % len(memb)].format(name=name, type=sem[0], place=sem[2], dq=dq)
+        body = link + rot[j % len(rot)].format(last=name, attr=value)
+        title = f"Eintrag {name}" if lang == "de" else f"The {name} entry"
+        docs.append((name.lower(), title, _pad(body, target_words)))
+    if lang == "de":
+        group = f"den Standort {sem[1]}, {sem[3]}{qq}"  # für/… governs the accusative
+        if gold_kind == "count":
+            q = f"Wie viele Einträge sind für {group} verzeichnet?"
+        elif gold_kind == "extremum":
+            q = f"Was ist der höchste für {group} verzeichnete Messwert?"
+        else:
+            q = f"Welche Werte sind für {group} verzeichnet?"
+    else:
+        group = f"the {sem[1]} in the {sem[3]}{qq}"
+        if gold_kind == "count":
+            q = f"How many entries are recorded for {group}?"
+        elif gold_kind == "extremum":
+            q = f"What is the highest measurement recorded for {group}?"
+        else:
+            q = f"Which values are recorded for {group}?"
+    return docs, {"query": q, "answer": answer, "question_type": "aggregation",
+                  "gold_kind": gold_kind, "evidence_ids": [name.lower() for name, _ in members]}
 
 
 def _render_code(ents, attr, target_words, idx, sem=None):
@@ -829,9 +965,46 @@ def materialize_doc_entry(doc: dict, type_axis: str | None) -> dict:
 PAYLOAD_VERSION = "payload.v2"
 
 
+#: The schemas a `schema_mix` may request (tempdoc 776 §A.1). `bridge` is the existing
+#: 2-entity chain; `single_fact` and `aggregation` are the new schemas. Temporal/negation
+#: stay candidates (767 §A / 776 §A.1).
+_SCHEMA_KINDS = ("bridge", "single_fact", "aggregation")
+
+
+def _schema_plan(schema_mix, *, axis: str, sem_active: bool) -> list[str] | None:
+    """Validate ``schema_mix`` and expand it to a deterministic ordered list of schema kinds.
+
+    ``None`` returns ``None`` (the default single-schema bridge path is taken unchanged — the
+    opt-in boundary that keeps every existing recipe byte-stable). A dict maps schema kind ->
+    count; the plan is kinds emitted in the fixed :data:`_SCHEMA_KINDS` order (deterministic).
+    The new schemas render prose and need the synonym paraphrase barrier, so a mix requires
+    ``axis == "prose"`` and ``semantic=True``.
+    """
+    if schema_mix is None:
+        return None
+    if not isinstance(schema_mix, dict) or not schema_mix:
+        raise ValueError("schema_mix must be a non-empty {schema: count} mapping or None")
+    unknown = set(schema_mix) - set(_SCHEMA_KINDS)
+    if unknown:
+        raise ValueError(f"schema_mix has unknown schemas {sorted(unknown)}; known: {list(_SCHEMA_KINDS)}")
+    counts = {}
+    for kind, count in schema_mix.items():
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise ValueError(f"schema_mix[{kind!r}] must be a non-negative int, got {count!r}")
+        counts[kind] = count
+    plan = [kind for kind in _SCHEMA_KINDS for _ in range(counts.get(kind, 0))]
+    if not plan:
+        raise ValueError("schema_mix totals zero questions")
+    if axis != "prose":
+        raise ValueError("schema_mix is only supported on axis='prose'")
+    if not sem_active:
+        raise ValueError("schema_mix requires semantic=True (the single_fact/aggregation paraphrase barrier)")
+    return plan
+
+
 def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
              distractor_ratio=6, doc_words=520, suite="635-self-demo-v1", seed=635,
-             semantic=False, entity_bank=None):
+             semantic=False, entity_bank=None, schema_mix=None):
     """Generate a fabricated corpus source into ``out_dir`` (docs.jsonl/queries.json/meta.json).
 
     distractor_ratio = distractor docs per gold doc (de-risk: ~5–10:1 to reach the band).
@@ -870,6 +1043,9 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
         raise ValueError(f"unusable entity bank at {bank_root}: {verdict['reason']}")
     bank = _entity_bank.load_bank(bank_root)
     minter = _entity_bank.Minter(bank)
+    # tempdoc 776 §A.1: the opt-in multi-schema plan. `None` => the existing single-schema
+    # bridge path, byte-identical. Validated before any RNG draw so a bad mix fails fast.
+    schema_plan = _schema_plan(schema_mix, axis=axis, sem_active=bool(semantic))
     # `hash(axis)` (a builtin str hash) is randomized per-process (PEP 456) unless
     # PYTHONHASHSEED is pinned, which this repo never does — so the "seeded -> reproducible"
     # claim above was false: two separate process invocations with the identical nominal `seed`
@@ -891,6 +1067,12 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
         # the query disambiguates a gold head by the full synonym triple, so uniqueness holds up to
         # lcm(T, P, Q) chains (tempdoc 624 scale-corpus; see `_max_semantic_chains`).
         n_chains = min(n_chains, _max_semantic_chains(lang))
+    # The gold-item count that feeds the descriptor-width guard and reservations. In the
+    # default path this is `n_chains` (byte-identical); in a schema mix it is the plan length
+    # — each gold item (bridge head, single_fact entity, aggregation GROUP) consumes exactly
+    # one descriptor index, so `_sem_for(g, gold=True)` for g in range(n_gold_items) matches
+    # `_gold_descriptor_reservations(n_gold_items)` exactly, just as the bridge path relies on.
+    n_gold_items = len(schema_plan) if schema_plan is not None else n_chains
     # Axis-conditional descriptor width. The qualifier axis is not free: it lengthens every
     # query by a clause, which is what breaks the 5-12-word short-natural stratum
     # (`corpus_query_strata._short_natural`), and it changes retrieval difficulty against
@@ -924,14 +1106,14 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     # for distractors that `corpus_inject.assemble` discards outright.
     docs_per_chain = hops + 1
     n_distractor_chains = -(
-        -int(n_chains * docs_per_chain * distractor_ratio) // docs_per_chain
+        -int(n_gold_items * docs_per_chain * distractor_ratio) // docs_per_chain
     )
-    # The gold pair reservations number exactly min(n_chains, 924) by the CRT argument above.
+    # The gold pair reservations number exactly min(n_gold_items, 924) by the CRT argument above.
     pair_bound = _max_semantic_pair_chains(lang)
     use_qual = sem_active and (
-        n_chains > pair_bound
+        n_gold_items > pair_bound
         or _expected_distractor_pair_duplication(
-            n_distractor_chains, min(n_chains, pair_bound), lang)
+            n_distractor_chains, min(n_gold_items, pair_bound), lang)
         > _DISTRACTOR_PAIR_DUPLICATION_BUDGET
     )
     # tempdoc 624 T.1: the exact (type, place, qualifier) index-triples the gold chains below
@@ -941,7 +1123,7 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     # two-axis regime, triples in the scale regime) — collisions are structurally
     # impossible; the descriptor-collision certification gate is the belt-and-braces check.
     gold_reserved = (
-        _gold_descriptor_reservations(n_chains, lang, use_qual=use_qual) if sem_active else None
+        _gold_descriptor_reservations(n_gold_items, lang, use_qual=use_qual) if sem_active else None
     )
 
     def render(e, a, sem, chain_idx):
@@ -961,13 +1143,39 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
         return _render_tabular(e, a, doc_words, rng.randint(0, 999), sem=sem)
 
     all_docs, queries = [], []
-    for g in range(n_chains):
-        ents, attr = _chain(rng, hops, minter)
-        sem = _sem_for(g, rng, gold=True, lang=lang, use_qual=use_qual) if sem_active else None
-        docs, q = render(ents, attr, sem, g)
-        for did, title, text in docs:
-            all_docs.append({"_id": did, "title": title, "text": text})
-        queries.append(q)
+    if schema_plan is None:
+        for g in range(n_chains):
+            ents, attr = _chain(rng, hops, minter)
+            sem = _sem_for(g, rng, gold=True, lang=lang, use_qual=use_qual) if sem_active else None
+            docs, q = render(ents, attr, sem, g)
+            for did, title, text in docs:
+                all_docs.append({"_id": did, "title": title, "text": text})
+            queries.append(q)
+    else:
+        # tempdoc 776 §A.1: multi-schema gold. Each gold item consumes one descriptor index
+        # `g` (the paraphrase barrier), minted from the same seeded RNG. Aggregation gold_kinds
+        # cycle deterministically so a mix exercises every comparator; sizes cycle over 3-5.
+        agg_counter = 0
+        for g, kind in enumerate(schema_plan):
+            sem = _sem_for(g, rng, gold=True, lang=lang, use_qual=use_qual)
+            if kind == "bridge":
+                ents, attr = _chain(rng, hops, minter)
+                docs, q = _render_prose(ents, attr, _rotate(rels, g), doc_words, lang,
+                                        sem=sem, tails=_rotate(_TAIL_PHRASINGS, g))
+                q["gold_kind"] = "single_value"
+            elif kind == "single_fact":
+                ent = minter.mint_entity(rng)
+                attr = minter.mint_value(rng)
+                docs, q = _render_single_fact(ent, attr, sem, g, doc_words, lang)
+            else:  # aggregation
+                k = _AGGREGATION_SIZES[g % len(_AGGREGATION_SIZES)]
+                gold_kind = _AGGREGATION_KINDS[agg_counter % len(_AGGREGATION_KINDS)]
+                agg_counter += 1
+                members, answer = _aggregation_members(rng, minter, k, gold_kind)
+                docs, q = _render_aggregation(members, answer, sem, gold_kind, g, doc_words, lang)
+            for did, title, text in docs:
+                all_docs.append({"_id": did, "title": title, "text": text})
+            queries.append(q)
 
     # distractors: parallel fabricated chains (globally-unique entities), rendered the
     # same way, NOT referenced by any query → hard negatives. `exclude=gold_reserved` (tempdoc
@@ -1008,30 +1216,39 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
             f.write(json.dumps(d, ensure_ascii=False) + "\n")
     (out_dir / "queries.json").write_text(
         json.dumps(queries, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")
+    # tempdoc 664 (seventh pass): `n_chains`/`doc_words` were missing here, so a corpus's own
+    # recorded provenance could not reconstruct the exact `generate()` call that produced it —
+    # a regeneration-determinism check needs the FULL parameter set, not a partial one.
+    # tempdoc 767: `payload_version` + the two `entity_bank*` keys complete the
+    # parameter set — without the bank's identity and digest the recorded provenance
+    # can no longer reconstruct the exact `generate()` call, because the entity
+    # surfaces now come from a committed artifact rather than an in-module pool.
+    generation_provenance = {"method": "procedural-fabricated", "axis": axis, "lang": lang,
+                             "seed": seed, "hops": hops, "distractor_ratio": distractor_ratio,
+                             "semantic": sem_active, "templated": True,
+                             "n_chains": n_chains, "doc_words": doc_words,
+                             "payload_version": PAYLOAD_VERSION,
+                             "entity_bank": _entity_bank.bank_reference(bank_root),
+                             "entity_bank_sha256": verdict["bank_sha256"]}
+    # tempdoc 776 §A.1: `schema_mix` is APPENDED only when a mix was requested, so a default
+    # single-schema corpus's provenance bytes are unchanged (the opt-in byte-stability contract).
+    if schema_plan is not None:
+        # Canonical schema order so two callers with the same counts but different dict
+        # insertion order still produce byte-identical meta.json.
+        generation_provenance["schema_mix"] = {
+            kind: schema_mix[kind] for kind in _SCHEMA_KINDS if kind in schema_mix
+        }
     (out_dir / "meta.json").write_text(json.dumps({
         "version": "1.0", "type_axis": axis, "suite": suite,
         "contamination_class": "private-synthetic",
-        # tempdoc 664 (seventh pass): `n_chains`/`doc_words` were missing here, so a corpus's own
-        # recorded provenance could not reconstruct the exact `generate()` call that produced it —
-        # a regeneration-determinism check needs the FULL parameter set, not a partial one.
-        # tempdoc 767: `payload_version` + the two `entity_bank*` keys complete the
-        # parameter set — without the bank's identity and digest the recorded provenance
-        # can no longer reconstruct the exact `generate()` call, because the entity
-        # surfaces now come from a committed artifact rather than an in-module pool.
-        "generation_provenance": {"method": "procedural-fabricated", "axis": axis, "lang": lang,
-                                  "seed": seed, "hops": hops, "distractor_ratio": distractor_ratio,
-                                  "semantic": sem_active, "templated": True,
-                                  "n_chains": n_chains, "doc_words": doc_words,
-                                  "payload_version": PAYLOAD_VERSION,
-                                  "entity_bank": _entity_bank.bank_reference(bank_root),
-                                  "entity_bank_sha256": verdict["bank_sha256"]},
+        "generation_provenance": generation_provenance,
     }, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
-    return {"docs": len(all_docs), "gold_chains": n_chains, "queries": len(queries),
+    return {"docs": len(all_docs), "gold_chains": n_gold_items, "queries": len(queries),
             "distractor_docs": made}
 
 
 def regenerate_and_diff(out1, out2, *, axis, lang, seed, hops, distractor_ratio, semantic,
-                         n_chains, doc_words, entity_bank, timeout=60) -> dict:
+                         n_chains, doc_words, entity_bank, schema_mix=None, timeout=60) -> dict:
     """Spawn :func:`generate` twice, in two SEPARATE Python processes, into ``out1``/``out2`` with
     identical parameters, then diff ``docs.jsonl``/``queries.json`` (tempdoc 664, twelfth pass).
 
@@ -1086,6 +1303,10 @@ def regenerate_and_diff(out1, out2, *, axis, lang, seed, hops, distractor_ratio,
         "distractor_ratio": distractor_ratio, "semantic": bool(semantic),
         "n_chains": n_chains, "doc_words": doc_words, "entity_bank": str(entity_bank),
     }
+    # tempdoc 776 §A.1: `schema_mix` is added to the marshalled params only for a mix, so a
+    # default single-schema regeneration's subprocess argv stays byte-identical.
+    if schema_mix is not None:
+        params["schema_mix"] = schema_mix
     args = [json.dumps(params, sort_keys=True)]
     # The directory that directly contains `jseval/` (this file is
     # `<pkg_root>/jseval/corpus_generate.py`) -- passed as the subprocess's `cwd` so its

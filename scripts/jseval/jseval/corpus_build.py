@@ -87,8 +87,16 @@ def build_golden(source_dir: Path | str, dataset_dir: Path | str, *, now: str | 
             unknown = [e for e in evidence if e not in doc_ids]
             if unknown:
                 raise ValueError(f"{qid} references unknown evidence doc(s): {unknown}")
-            if evidence:  # first-hop only (the query-targeted entry point)
-                tf.write(f"{qid}\t{evidence[0]}\t1\n")
+            if evidence:
+                # Bridge/single-fact: first-hop only (the query-targeted entry point) — the
+                # full chain stays the agent's evidence in queries.json. Aggregation (tempdoc
+                # 776 §A.1) has no single entry point: every member doc is relevant, so all
+                # evidence ids are marked. Guarded on question_type == "aggregation", so every
+                # pre-776 single-schema cell writes exactly `evidence[0]` and its qrels bytes
+                # are unchanged.
+                relevant = evidence if q.get("question_type") == "aggregation" else evidence[:1]
+                for ev in relevant:
+                    tf.write(f"{qid}\t{ev}\t1\n")
 
     # --- agent view: queries.json (query+answer+question_type) ---
     (dataset_dir / "queries.json").write_text(
@@ -97,6 +105,10 @@ def build_golden(source_dir: Path | str, dataset_dir: Path | str, *, now: str | 
                 "query": q["query"], "answer": q["answer"],
                 "question_type": q.get("question_type", "two_hop"),
                 "evidence_ids": q.get("evidence_ids", []),
+                # tempdoc 776 §A.1: gold_kind selects the deterministic answer comparator
+                # (jseval.corpus_comparators). Absent for pre-776 single-schema cells, so their
+                # materialized queries.json bytes — and query_gold_sha256 — are unchanged.
+                **({"gold_kind": q["gold_kind"]} if "gold_kind" in q else {}),
                 **({"query_variant": q["query_variant"]} if "query_variant" in q else {}),
                 **({"query_family_id": q["query_family_id"]} if "query_family_id" in q else {}),
             } for q in queries],
