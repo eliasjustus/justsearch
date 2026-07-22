@@ -397,7 +397,110 @@ with 775, not unilaterally.
   separate candidate lane, not core 774 scope — bundling it risks the
   program carrying an unrelated join-substrate debate.
 
-### G.6 What theorize changes about the mandated sequence
+### G.6 What theorize changes about the mandated sequence (see end of §G)
+
+## §H. External research pass (2026-07-22, same session — §C.2's external half; internal archaeology was §F + the register)
+
+Web pass over 2024–26 literature and engine capabilities. No external code or
+text copied into the repo; sources cited inline (URLs in the session record;
+key identifiers below are citable as-is).
+
+### H.1 Passage-primary + aggregation is the field's standard answer to long-doc retrieval
+
+The PLM/LLM-era long-document retrieval survey (arXiv:2509.07759, Sept 2025)
+frames exactly our fork: passage-aggregation methods (FirstP/MaxP/PARADE
+lineage; Rep-max / Score-max / score-sum variants) vs hierarchical retrieval
+vs long-context single-vector. Consensus points relevant to us: **MaxP is the
+best simple aggregator but loses distributed/multi-passage relevance**;
+learned aggregation (PARADE-style) wins but costs a model; hierarchical
+retrieve "retrieves documents but fails to rank passages" — i.e., our G.1
+framing-D needs the passage ranking to stay primary. The DAPR benchmark
+(ACL 2024, "Document-Aware Passage Retrieval") names our exact task shape —
+passage retrieval where document context carries signal — and its headline is
+that pure context-free passage retrieval measurably loses to
+document-context-aware passage retrieval. This is the literature's version of
+F-035: **the parent representation survives as context/feature, not as a
+competing candidate list** (G.2-6 confirmed externally).
+
+### H.2 Late interaction is re-priced: the engine half is nearly free, the MODEL is the bottleneck
+
+- **Lucene 10.3+ ships native late-interaction support** —
+  `LateInteractionField` (multi-vector per doc, BytesRef-encoded) plus a
+  rescorer using maxSim against a query multi-vector. **This repo is on
+  Lucene 10.4.0** (`gradle/libs.versions.toml:9`) — the capability is already
+  on the classpath. Elasticsearch 9.x ships ColBERT/ColPali on the same
+  substrate. So §B's "late-interaction-style scoring" is NOT a
+  new-engine-dependency lift as assumed; as a **rescoring tier over a
+  passage-primary candidate stage** it is a moderate, Lucene-native addition.
+- **MUVERA** (NeurIPS 2024, arXiv:2405.19504; Google) reduces multi-vector
+  retrieval to single-vector MIPS via fixed-dimensional encodings — ~10%
+  higher recall at ~90% lower latency than PLAID, 32× PQ compression — i.e.
+  even *primary-stage* multi-vector could ride the existing HNSW machinery.
+  CRISP (arXiv:2505.11471) prunes/clusters multi-vectors further. The field
+  has a dedicated ECIR 2026 workshop (LIR) — active, not settled.
+- **The binding constraint is D-003-eligible models, not engine capability**:
+  there is no obvious Apache/MIT *multilingual* late-interaction encoder in
+  the incumbent stack's family; jina-colbert-v2 is CC-BY-NC (ineligible, same
+  screen that excluded jina-v3/v4 in F-034), answerai-colbert-small is
+  English-only. A late-interaction tier is therefore gated on a model search
+  with F-034's eligibility screen — the inverse of the usual build-vs-model
+  situation, and a fact the design pass must carry.
+
+### H.3 The CE-input defect (§F.1-5) is a named anti-pattern with a named fix
+
+Practitioner and survey literature converge: first-512/first-4KB truncation
+for cross-encoder input silently mis-scores long documents ("relevant passage
+past the truncation → the reranker never sees it"); the standard remedy is
+**passage-level CE scoring + score aggregation** — exactly the shape our RAG
+path already implements and our interactive path lacks. Efficient variants
+exist if CE-per-passage costs too much (block-level embedding rerankers with
+top-k interaction refinement, arXiv:2501.17039). This upgrades the
+mechanism-5 fix from "our audit's opinion" to "field-standard correction,"
+strengthening its candidacy as a pre-program lane (F.4).
+
+### H.4 New candidate ingredient the charter didn't name: passage contextualization at enrichment time
+
+Anthropic's "contextual retrieval" (LLM-generated ~50-100-token chunk-context
+headers prepended before embedding; vendor-reported 49–67% retrieval-failure
+reduction combined with hybrid+rerank) and late chunking (arXiv:2409.04701 —
+already evaluated here: span-mean variant measured incompatible with our
+CLS-pooled encoder, F-031) both attack the same mechanism our camouflaged
+strata stress: **a chunk in isolation lacks the document context needed to
+match a paraphrase query**. Two tiers for the design pass to weigh:
+- **Free/mechanical tier**: prepend title + heading-path (already stored per
+  chunk: `CHUNK_HEADING_TEXT`, ChunkDocumentWriter) to the chunk text at
+  embed/SPLADE time. Cheap, deterministic, D-003-clean; unmeasured here.
+- **Resident-LLM tier**: LLM-generated chunk context at enrichment — a
+  local-first advantage play that couples to 777's thesis (spend resident
+  inference on quality) but collides with enrichment-throughput ratchets
+  (640); would need its own cost/quality measurement.
+
+### H.5 Production practice sanity check
+
+Industry chunk-retrieval practice matches our substrate almost exactly
+(chunks carry source-doc id, offsets, heading, metadata; per-leg top-k 20-200
+fused via RRF/weighted-score) — with one delta: **our primary-stage passage
+depth (~100 chunks, ~20 parents post-collapse) sits at the low end** of the
+20-200 norm, consistent with §F.3's cap-burial hypothesis.
+
+### H.6 Consequences for the passes
+
+1. The probe (§F.3) stays first — nothing found changes its go/no-go role.
+2. If the probe lands in the "burial/recoverable" bands, the design pass has
+   a cheaper ladder than assumed: passage-primary chunk-CLS (existing
+   substrate) → passage-CE aggregation (H.3) → optional Lucene-native
+   late-interaction rescoring tier (H.2, model-gated) → MUVERA-style primary
+   multi-vector (research-tier). Each rung is measurable independently.
+3. Aggregation function (G.2-4): the survey confirms MaxP-vs-distributed
+   tension is real; the design should A/B MaxP against top-k-sum on the
+   multi-schema corpora (776's new aggregation questions are the natural
+   test bed — coordinate).
+4. H.4's free tier (title/heading prepend into chunk representations) is a
+   legitimate §C.3-class early cheap measurement: it directly targets the
+   camouflage mechanism and costs one enrichment A/B.
+5. License duties recorded: no external code adopted; any future
+   late-interaction model pick must re-run the F-034 eligibility screen
+   (named ineligible: jina-colbert-v2 CC-BY-NC).
 
 Nothing structural — it confirms §E.2's probe-first amendment and adds:
 (a) the probe should be read against the G.1 framings (B vs A/E is the real
