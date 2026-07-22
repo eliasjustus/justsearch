@@ -1373,6 +1373,28 @@ unknown of each resolved from primary sources first:
    is a runbook precondition. **Confidence: 8/10 that the mechanism works (from-source evidence),
    7/10 for the end-to-end move pending the probe; the archive-upload step is owner-executed.**
 
+   **PROBE RESULT (2026-07-22, opus subagent, RTX 4070, real CUDA sessions): GO, with one design
+   correction.** Full matrix run against ORT 1.24.3: (a) baseline fat jar → `addCUDA` SUCCESS;
+   (b) EP-trimmed jar, no fallback → `OrtException: ORT_EP_FAIL - Failed to find CUDA shared
+   provider` (the exact failure shape a pack-less GPU user sees — and `getAvailableProviders()`
+   still lists CUDA in that state, so **pack-presence detection must be file-existence-based, never
+   provider-list-based**; `OrtCudaHelper.checkMissingCudaDlls` already is); (c) trimmed jar +
+   `-Donnxruntime.native.path=<complete ORT dir>` → `addCUDA` SUCCESS **and a real CUDA
+   `createSession` succeeded** (tier 2, `citation-scorer/model.onnx`). The design correction, from
+   both source (`OnnxRuntime.java:301-331,368-388`) and the failed (c1) variant: the per-library
+   property is useless for providers (only consulted in `load()`, which providers bypass), and
+   setting the global `onnxruntime.native.path` reroutes the CORE libs too — so **the external dir
+   must be a complete ORT native set** (`onnxruntime.dll` 14.4 MB + `onnxruntime4j_jni.dll` +
+   `onnxruntime_providers_shared.dll` + `onnxruntime_providers_cuda.dll` + co-located CUDA deps),
+   not the 164 MB EP DLL alone. Externalizing only the EP DLL fails init outright. Consequences:
+   the pack ships ~178 MB of ORT DLLs (core trio is ~14.5 MB on top of the EP DLL we were moving
+   anyway); the toggle is clean (pack absent → property unset → jar natives → CPU works, CUDA
+   fails legibly; pack present → property set before first `OrtEnvironment.getEnvironment()` —
+   the property is captured once at ORT class-init); and the EP-trimmed jar is **5.4 MB vs the
+   172 MB currently shipped** — the installer saves ~163.6 MB. A ready-made reference layout for
+   the pack archive already exists at `F:\JustSearch\tmp\ort-variant-test\cuda-12.4-v1.24.3\`
+   (it was the successful (c2)/tier-2 external dir). End-to-end confidence after probe: **8.5/10**.
+
 Declined-with-reasons (per §I): O1-O3, AOT removal, deeper JRE trim, vc_redist online-ification,
 Tesseract ICU trimming. Jar dedup: deferred until the lzma measurement shows whether a material
 download cost remains.
