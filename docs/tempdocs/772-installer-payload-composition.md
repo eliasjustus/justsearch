@@ -1443,8 +1443,13 @@ download cost remains.
      only "users"; their fix is re-running Install AI (or copying the four DLLs into cuda12).
    - **Residual verification, honestly named:** the wiring is probe-verified at the JVM level and
      unit-tested, but a full dev-stack run against a pack-complete cuda12 dir (SET path) and a
-     pack-stale dir (INCOMPLETE path) has not been done; final combined installer size measured
-     by the CI run triggered after these commits.
+     pack-stale dir (INCOMPLETE path) has not been done.
+   - **FINAL COMBINED MEASUREMENT (CI run `29901314606`, green): 259,843,153 B ≈ 259.8 MB** —
+     the full 772 stack (WebView2 removal + Linux-natives trim + lzma + CUDA EP relocation).
+     Same-basis artifact series: 452.4 MB (post §G/§H, zlib) → 426.9 MB (lzma) → **259.8 MB**
+     (+ EP trim). Against the tempdoc's 815 MB starting point: **−68%**, with zero first-run UX
+     regression — CPU users lose nothing; GPU users receive the EP through the same consent-gated
+     pack that already carries its CUDA dependencies (asset published + hash-verified, see above).
 
 ### Where this leaves the intention
 
