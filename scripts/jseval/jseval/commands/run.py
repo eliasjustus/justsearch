@@ -105,6 +105,11 @@ def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade,
     if not dataset:
         click.echo("Error: --dataset is required (via CLI or --config)", err=True)
         sys.exit(1)
+    # Tempdoc 787 item 4a: accept the register's catalog-qualified slug (`beir/scifact`) as well
+    # as the bare registry key (`scifact`). Normalize once at the CLI boundary so the whole run
+    # pipeline (load, ingest/materialize, corpus dirs, labels) keys on one canonical name.
+    from .. import corpora
+    dataset = corpora.normalize_dataset_name(dataset)
     if not modes and max_queries != 0:
         click.echo("Error: --modes is required (via CLI or --config) when --max-queries != 0", err=True)
         sys.exit(1)

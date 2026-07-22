@@ -5,5 +5,7 @@ tmp/
 .venv/
 .pytest_cache/
 
-# Downloaded datasets (not committed — see ner_eval.py docstring for download URLs)
-data/
+# Downloaded datasets (not committed — see ner_eval.py docstring for download URLs).
+# Anchored to this dir (scripts/jseval/data/, ner_eval's <jseval>/data/conll2003) so it does
+# NOT over-match the committed package data dir scripts/jseval/jseval/data/ (tempdoc 787 item 3).
+/data/
