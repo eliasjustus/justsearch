@@ -176,6 +176,11 @@ jobs:
           JUSTSEARCH_CODESIGN_TIMESTAMP_URL: ${{ secrets.JUSTSEARCH_CODESIGN_TIMESTAMP_URL }}
           JUSTSEARCH_CODESIGN_THUMBPRINT: ${{ secrets.JUSTSEARCH_CODESIGN_THUMBPRINT }}
           JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
+          # Rehearsal-only relaxation (repo VARIABLE, not a secret — it must be visibly on/off):
+          # with a self-signed rehearsal cert, sign-windows.ps1 and verify-windows-signature.ps1
+          # accept a present-but-chain-untrusted signature instead of hard-failing after all the
+          # per-file signings already ran. Unset in production. (Tempdoc 760 rehearsal path.)
+          JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED: ${{ vars.JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED }}
         run: |
           # On a v* tag ref (a real release cut) also verify server.json version/URL match the
           # tag; skip on non-tag dry-runs where gradle.properties may not match yet. (Tempdoc 726.)

@@ -94,7 +94,34 @@ $meta = [ordered]@{
   result = $null
 }
 
+function To-Bool([string]$Value) {
+  if (-not $Value) { return $false }
+  switch ($Value.Trim().ToLowerInvariant()) {
+    "1" { return $true }
+    "true" { return $true }
+    "yes" { return $true }
+    default { return $false }
+  }
+}
+
+$allowUntrusted = To-Bool $env:JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED
+
 try {
+  if ($allowUntrusted) {
+    # Rehearsal mode (JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED=1, tempdoc 760): a self-signed cert
+    # signs but never chains to a trusted root, so strict `signtool verify /pa` would fail the
+    # build AFTER all per-file signings already ran — the exact quota-burning shape the rehearsal
+    # exists to prevent. Accept a present, hash-valid Authenticode signature whose chain is
+    # untrusted; only a genuinely missing signature fails. Mirrors sign-windows.ps1's relaxation.
+    Write-Host "Verifying signature (ALLOW_UNTRUSTED rehearsal mode): $resolved"
+    $sig = Get-AuthenticodeSignature -FilePath $resolved
+    $meta.method = "authenticode-untrusted-rehearsal"
+    $meta.result = [ordered]@{ status = [string]$sig.Status; statusMessage = [string]$sig.StatusMessage; signer = [string]$(if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { "" }) }
+    if (-not $sig.SignerCertificate -or $sig.Status -eq "NotSigned") {
+      Fail "No Authenticode signature present (rehearsal mode still requires a signature). Status=$($sig.Status). Path=$resolved"
+    }
+    Write-Host "Signature present (rehearsal mode; chain trust not enforced): $resolved"
+  } else {
   $signtoolPath = Find-SignTool
   if ($signtoolPath) {
     Write-Host "Verifying signature via signtool: $resolved"
@@ -116,6 +143,7 @@ try {
       Fail "Authenticode signature invalid/missing. Status=$($sig.Status). Path=$resolved"
     }
     Write-Host "Signature OK (Authenticode): $resolved"
+  }
   }
 } catch {
   $exitCode = 1
