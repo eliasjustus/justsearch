@@ -122,6 +122,10 @@ export class SourcesPane extends JfElement {
     // Tempdoc 565 §12.3.E — mark this source the cross-surface selection (highlights the matching inline
     // [n] mark + this card) BEFORE the existing deep-link dispatch (open the local passage in the inspector).
     setSelectedSource(sourceKey(s.parentDocId, s.startLine));
+    // Tempdoc 778 — capture the USER's click on this chat citation into the ONE ResultDisposition
+    // stream (contributor=chat-citation, distinct from the LLM's AGENT_CITATION harvest). Mirrors
+    // searchState.ts recordOpenDisposition; fire-and-forget so feedback never disrupts the UI.
+    this.recordCitationClick(s.parentDocId);
     const detail: CitationSelectDetail = {
       parentDocId: s.parentDocId,
       startLine: s.startLine,
@@ -137,6 +141,28 @@ export class SourcesPane extends JfElement {
         composed: true,
       }),
     );
+  }
+
+  /**
+   * Tempdoc 778 — record a USER citation click as a {@code USER_CITATION_CLICK} disposition (kind
+   * OPENED) into the ONE canonical stream via {@code POST /api/knowledge/disposition}. The join key
+   * is the active conversation id (the best identifier available at this surface); a click with no
+   * joinable feature-snapshot is still captured as a raw signal (the honest limit LabelProjection
+   * already surfaces). Fire-and-forget — never disrupts the UI.
+   */
+  private recordCitationClick(parentDocId: string): void {
+    const interactionId = getConversationListState().activeId;
+    if (!interactionId || !parentDocId) return;
+    void fetch(`${this.apiBase || ''}/api/knowledge/disposition`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        interactionId,
+        docId: parentDocId,
+        kind: 'opened',
+        contributor: 'chat-citation',
+      }),
+    }).catch(() => {});
   }
 
   private onKeydown = (ev: KeyboardEvent): void => {

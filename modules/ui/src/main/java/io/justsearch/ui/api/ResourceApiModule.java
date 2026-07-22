@@ -53,6 +53,8 @@ final class ResourceApiModule implements ApiModule {
   private final OperationPreviewController operationPreviewController;
   private final ActionLedgerController actionLedgerController;
   private final InteractionThreadController interactionThreadController;
+  // Tempdoc 778 — the default-on local feedback-capture flag surface.
+  private final FeedbackCaptureController feedbackCaptureController;
   private final MemoryController memoryController;
   private final HardStopController hardStopController;
   private final AdvisoryStreamController operationCompletedAdvisoryStreamController;
@@ -336,6 +338,10 @@ final class ResourceApiModule implements ApiModule {
             headAssembly.core().agent() != null
                 ? headAssembly.core().agent()
                 : io.justsearch.agent.api.AgentService.unavailable());
+    // Tempdoc 778 — the local feedback-capture flag surface, reading/writing the ONE settings
+    // authority (nullable on the test-only path where HeadAssembly built none).
+    this.feedbackCaptureController =
+        new FeedbackCaptureController(headAssembly.feedbackCaptureSettings());
     // Tempdoc 561 P-E: the ONE memory authority — the same instance the core_remember agent tool
     // writes to (constructed in HeadAssembly), so the surface shows exactly what the assistant
     // learned (no second FileMemoryStore instance that would diverge from the producer).
@@ -444,6 +450,10 @@ final class ResourceApiModule implements ApiModule {
     // Tempdoc S4b (Search Thread): POST /api/thread/{id}/events — the FE write path for a thread
     // event kind that does not originate from the agent loop (today: kind="SEARCH").
     app.post("/api/thread/{id}/events", interactionThreadController::handlePostEvent);
+
+    // Tempdoc 778 — the default-on local feedback-capture flag + privacy note.
+    app.get("/api/feedback/capture", feedbackCaptureController::handleGet);
+    app.post("/api/feedback/capture", feedbackCaptureController::handlePost);
 
     // Tempdoc 561 P-E: the learned-memory user surface — inspect / record / forget.
     app.get("/api/memory", memoryController::handleList);

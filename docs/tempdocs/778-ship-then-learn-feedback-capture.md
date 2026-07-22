@@ -1,7 +1,7 @@
 ---
 title: "ship-then-learn feedback capture: click/open signals + consolidating the already-persisted agent-citation tuples — the unlock for learned ranking and the eventual replacement for constructed benchmarks"
 type: tempdocs
-status: "HELD (2026-07-22) — implementation blocked on a stale premise. §A's 'user click/open/dwell capture is ABSENT' + the item-2 'build one queryable store unifying user events + agent-citation tuples' are BOTH already shipped and live-wired as tempdoc 580 §17's ResultDisposition consolidation stream (SEARCH_INTERACTION + AGENT_CITATION contributors → LabelProjection, the structural answer to F-021). Building a second store forks 580 §17.3's explicit 'not in two stores' doctrine. Needs an owner re-scope onto extend-580-§17, not new-store. See §D."
+status: "RE-SCOPED + IMPLEMENTED (2026-07-22, owner-approved). The stale 'build a new store' premise was corrected to 'harden + complete tempdoc 580 §17's live ResultDisposition consolidation' (§D records the premise conflict). Landed: jseval one-interface reader; feedback store enrolled in StoreCatalog (AUTHORED, sealed) with the F-021 LabelProjection join proven to survive sealing (regression test); a distinct USER_CITATION_CLICK contributor + FE emission; a default-on local capture flag + visible privacy note; egress guardrails on the capture path. All builds + suites green. Live from-my-dist dev-stack verify BLOCKED by shared-stack contention (sibling 777's 2h lease on main's code); runnable procedure recorded in §D.2. See §D / §D.2."
 created: 2026-07-22
 author: agent (Fable orchestration), chartered from the 762→771 measurement program's inventory (founder-directed 2026-07-22)
 category: product / learned-ranking / telemetry
@@ -138,3 +138,93 @@ verify the F-021 label join survives);
 (e) extend the loopback invariant test to the disposition path.
 Non-goals (§B.3) still hold. Live dev-stack verification (shared, sibling 777
 holds it) was NOT run — the work stopped before there was correct code to verify.
+
+## §D.2 Re-scope executed (2026-07-22, owner-approved)
+
+The orchestrator approved the §D recommendation verbatim. Implemented in the
+recommended order, **hardening 580 §17 rather than building anew** — no second
+disposition store. What landed:
+
+**1. jseval one-interface reader (non-forking).**
+- `scripts/jseval/jseval/feedback_reader.py` — reads the existing
+  `feedback/result-dispositions.ndjson` + `feature-snapshots.ndjson`;
+  `read_feedback_signals` (unified stream, user-event vs agent-citation +
+  polarity), `read_labeled_examples` (the §17.4 disposition⋈snapshot join,
+  read-only), `summarize`. Detects sealed (`JSEv1:`) lines and skips-with-warn
+  (Python holds no data key). Tests: `tests/test_feedback_reader.py` — 6 pass.
+
+**2. Store hardening — `feedback` enrolled as AUTHORED + sealed, join proven.**
+- `StoreCatalog.FEEDBACK("feedback", AUTHORED, APPEND_ONLY_LINES)`
+  (`StoreCatalog.java:22`); register row in `governance/store-recoverability.v1.json`;
+  `check-store-recoverability` green (6 stores).
+- `NdjsonAppendStore` gained an optional `StoreCipher` (default `disabled()` =
+  passthrough, so default/eval behaviour is byte-identical); seals each line on
+  append, opens on read, empty-until-unlock when locked
+  (`NdjsonAppendStore.java`).
+- The ONE feedback key threaded to every writer/reader:
+  `AgentDispositionWiring.register(..., cipher, settings)`,
+  `KnowledgeSearchController.setFeedbackCipher(...)` (both lazy stores),
+  `FeedbackLabels.rebuild(dataDir, cipher)`, `LambdaMartTraining.loadOrTrain(...,
+  cipher)` via `OrchestrationPhase.Input.feedbackCipher`, all sourced from
+  `HeadAssembly.storeCipher(StoreCatalog.FEEDBACK.recoverability())`
+  (`HeadAssembly.java` feedback block). Feedback enrolled in the encrypted
+  backup/restore path (`StoreDescriptor` + `readFeedbackFile`/
+  `restoreFeedbackEntries`, skip-existing).
+- **F-021 join survives sealing (the required regression, not just the gate):**
+  `FeedbackLabelsSealedJoinTest` seals dispositions+snapshots with an enabled
+  key, asserts the on-disk lines carry `JSEv1:`, then rebuilds and asserts the
+  explicit-positive + derived-SHOWN-negative contrast triples still project
+  (2 triples, 1 contrast group). Green.
+
+**3. Distinct chat-citation USER contributor + FE emission.**
+- `ResultDisposition.Contributor.USER_CITATION_CLICK` (distinct from the LLM's
+  `AGENT_CITATION` harvest). `KnowledgeSearchController.handleDisposition` takes
+  an optional wire `contributor`: `"chat-citation"` → `USER_CITATION_CLICK`,
+  else the unchanged `SEARCH_INTERACTION` (`contributorFor`).
+- FE: `SourcesPane.onSelect` → `recordCitationClick(parentDocId)` posts to
+  `/api/knowledge/disposition` with `contributor:"chat-citation"`, join key =
+  active conversation id (best available; an unjoinable click is still a captured
+  raw signal — LabelProjection's honest limit). Mirrors
+  `searchState.ts recordOpenDisposition`.
+
+**4. Default-on local flag + visible privacy note + egress test.**
+- `FeedbackCaptureSettings` (default-on, persisted `<dataDir>/feedback-capture.json`,
+  a sibling preference — not inside the sealed data dir) + `PRIVACY_NOTE`.
+  Gates the behavioural disposition writes (endpoint + the agent `done`
+  contributor); feature-snapshots (engine score-vectors, not user behaviour)
+  stay flowing so the join survives a re-enable.
+- `FeedbackCaptureController` — `GET/POST /api/feedback/capture` → `{enabled,
+  local, privacyNote}` (wired in `ResourceApiModule`; cohort in `RouteCohorts`).
+- FE: `SettingsSurface` renders the note + a keyboard-operable toggle in
+  Security & Privacy (`renderFeedbackCapture`), wired to the endpoint.
+- **Zero egress enforced:** app-services `FeedbackEgressGuardrailsTest` (the
+  capture/persistence package makes no `java.net.http`/`Socket`/`URLConnection`
+  access) + `UiApiGuardrailsTest.feedbackSurfaceMustNotMakeNetworkEgress`
+  (the `Feedback*` surface). Both green.
+
+**Verification.** `./gradlew.bat build -x test` green; full `:modules:app-services:test`
++ `:modules:ui:test` green (incl. the sealed-join regression, both egress
+guardrails, the reprojection/idempotence tests unchanged); jseval reader 6/6;
+ui-web `npm run typecheck` clean + `test:unit:run` 3783 pass; ui-web gate set
+run (presentation-purity, color-tokens, controls-a11y, a11y-closure,
+layout-purity, contrast, observed-state-collapse, + kernel ambient-purity/
+style-literal/atom-fork/modality/transient/modal — all pass). The one RED,
+`check-accent-as-text`, is **pre-existing** in `ActionLedgerView.ts` (matches
+the expected-state note; untouched by this work).
+
+**Live verify — BLOCKED by shared-stack contention (honest state).** The one
+shared dev stack was held by a **2h active lease running main's code**
+(`gitHead cd951e9b`, not this worktree's dist) — the sibling 777 GPU campaign.
+Per *never take over*, I did not restart it with `distFrom` my worktree, and a
+bounded 45-min wait cannot outlast a 2h lease. The `/api/knowledge/disposition`
+POST is also not MCP-allowlisted. So the real click→row→reader chain from **my**
+dist was not run live. It is covered statically by: the sealed-join regression,
+the reader unit tests over real on-disk ndjson layout, the egress guardrails,
+and the green full suites. **Runnable smoke for the owner when the stack frees**
+(dev-stack-driven item, per slice-execution.md): start the stack from this
+worktree's dist (`justsearch_dev_start distFrom=<worktree>`), issue a search +
+click a result (writes a `SEARCH_INTERACTION` disposition) and a chat citation
+(writes a `USER_CITATION_CLICK`), then
+`python -c "from jseval.feedback_reader import summarize; print(summarize(<dataDir>))"`
+— expect the disposition counts by contributor + joined `labeledExamples`; flip
+the Settings toggle off and confirm a subsequent click writes no new row.

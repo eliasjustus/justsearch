@@ -32,6 +32,10 @@ public record ResultDisposition(
   public enum Contributor {
     SEARCH_INTERACTION,
     AGENT_CITATION,
-    EXPLICIT_RATING
+    EXPLICIT_RATING,
+    // Tempdoc 778 — a USER clicking a citation in a chat answer (distinct from AGENT_CITATION, which
+    // is the LLM's own grounding/citation harvest). The strongest user-behaviour signal on the chat
+    // surface: the user judged that cited source worth opening.
+    USER_CITATION_CLICK
   }
 }

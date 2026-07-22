@@ -464,6 +464,13 @@ final class CoreApiAssembly {
     if (knowledgeSearchController != null && headAssemblyRef != null) {
       knowledgeSearchController.setWorkerCapability(headAssemblyRef.capabilities().worker());
       knowledgeSearchController.getAdapter().setWorkerCapability(headAssemblyRef.capabilities().worker());
+      // Tempdoc 778 — seal the search-interaction disposition + feature-snapshot streams with the
+      // AUTHORED feedback-store key (passthrough when at-rest encryption is off).
+      knowledgeSearchController.setFeedbackCipher(
+          headAssemblyRef.storeCipher(
+              io.justsearch.agent.api.encryption.StoreCatalog.FEEDBACK.recoverability()));
+      knowledgeSearchController.setFeedbackCaptureSettings(
+          headAssemblyRef.feedbackCaptureSettings());
     }
     return new Result(
         chunkInfoController,

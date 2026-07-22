@@ -72,7 +72,10 @@ public final class OrchestrationPhase {
       io.justsearch.app.api.PackImportService packImport,
       io.justsearch.app.api.BrainInstallService brainInstall,
       // Tempdoc 737 Phase 1 — closed alongside the inference manager on teardown (nullable).
-      io.justsearch.app.services.runtimestate.RuntimeReconciler runtimeReconciler) {}
+      io.justsearch.app.services.runtimestate.RuntimeReconciler runtimeReconciler,
+      // Tempdoc 778 — the AUTHORED feedback-store cipher, so LambdaMART real-label rebuild reads the
+      // sealed disposition/snapshot streams with the right key (passthrough when encryption is off).
+      io.justsearch.agent.api.encryption.StoreCipher feedbackCipher) {}
 
   /** Bundled outputs. */
   public record Output(
@@ -191,7 +194,8 @@ public final class OrchestrationPhase {
         LambdaMartTraining.loadOrTrain(
             in.dataDir(),
             in.lambdaMartReranker(),
-            ConfigStore.global().get().search().lambdamartEnabled());
+            ConfigStore.global().get().search().lambdamartEnabled(),
+            in.feedbackCipher());
 
     // OrchestrationHandles — LIFO teardown bundle.
     OrchestrationHandles orchestrationHandles =
