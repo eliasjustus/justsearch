@@ -58,13 +58,13 @@ every committed cell signature. The behavioral count is already derivable withou
 
 | Slug | Domain | Lang | Docs | Queries | Query Form | Last Validated | Validated By | Notes |
 |------|--------|------|------|---------|------------|---------------|-------------|-------|
-| beir/scifact | academic | en | 5183 | 300 | factoid | 2026-06-13 | 580 | BEIR standard; 580 revalidated hybrid on-baseline at HEAD |
-| mixed/enron-qa | email | en | 5485 | 300 | verbose QA | 2026-03-28 | 343 D | single-user inbox (dasovich-j) |
+| beir/scifact | academic | en | 5183 | 300 | factoid | 2026-07-22 | 775 §I | BEIR standard; 580 revalidated hybrid on-baseline at HEAD; 775 re-pinned at evidence-flips-ON defaults |
+| mixed/enron-qa | email | en | 5485 | 300 | verbose QA | 2026-07-22 | 775 §I | single-user inbox (dasovich-j); 775 re-pinned at evidence-flips-ON defaults |
 | mixed/enron-qa-nav | email | en | 5485 | ~100 | navigational | — | — | not yet created; see Q-002 |
 | mixed/courtlistener-200 | legal | en | 200 | 200 | known-item | 2026-03-18 | 309 §35 | **RETIRED 2026-07-01 (tempdoc 666)** — replaced by `mixed/legal-clerc-200`; see Corpus provenance note under Findings. |
-| mixed/legal-clerc-200 | legal (case-law citation) | en | 198 | 200 | citation-retrieval | 2026-07-01 | 666 | Real academic benchmark (CLERC, built on the Caselaw Access Project), not a bespoke curation — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/legal-clerc-200/recipe.json`; regenerable via `jseval corpus-fetch-clerc --name legal-clerc-200 --seed 666 --n-queries 200`. |
-| mixed/miracl-de-2k | wikipedia | de | 3103 | 305 | factoid | 2026-07-01 | 666 | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-de-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-de-2k --lang de --seed 666 --n-docs 3103`. |
-| mixed/miracl-fr-2k | wikipedia | fr | 5407 | 343 | factoid | 2026-07-01 | 666 | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-fr-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-fr-2k --lang fr --seed 666 --n-docs 5407`. Query count corrected from 316 to 343 (full dev-split qrelled query count — the prior 316 had no recorded sampling method). |
+| mixed/legal-clerc-200 | legal (case-law citation) | en | 198 | 200 | citation-retrieval | 2026-07-22 | 775 §I | Real academic benchmark (CLERC, built on the Caselaw Access Project), not a bespoke curation — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/legal-clerc-200/recipe.json`; regenerable via `jseval corpus-fetch-clerc --name legal-clerc-200 --seed 666 --n-queries 200`. |
+| mixed/miracl-de-2k | wikipedia | de | 3103 | 305 | factoid | 2026-07-22 | 775 §I | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-de-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-de-2k --lang de --seed 666 --n-docs 3103`. |
+| mixed/miracl-fr-2k | wikipedia | fr | 5407 | 343 | factoid | 2026-07-22 | 775 §I | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-fr-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-fr-2k --lang fr --seed 666 --n-docs 5407`. Query count corrected from 316 to 343 (full dev-split qrelled query count — the prior 316 had no recorded sampling method). |
 | mixed/miracl-zh-2k | wikipedia | zh | 5786 | 393 | factoid | 2026-03-18 | 309 §37 | |
 | mixed/cord19-qddf | biomedical | en | 1000 | 48 | factoid | 2026-03-18 | 309 §35 | 48 queries = low statistical power |
 | mixed/desktop-mixed-v1 | mixed | en+de+fr+zh | 2286 | 250 | mixed | 2026-03-18 | 309 §38 | 5 sources × 4 langs. 7% SciFact qrel coverage (data issue). |
@@ -172,6 +172,7 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 | splade-ml+gte | gte-ml-reranker | default-hybrid | hybrid | **0.754** | 0.633 | 0.884 | cross_encoder + dense | A | 3af6773cc | 391 |
 | (HEAD default) | (default) | default-hybrid | hybrid | 0.758 | 0.627 | 0.896 | cross_encoder + dense + splade + query_classification | A | f91e269bc | 580 |
 | (HEAD default) | CE-off | (default) | full | 0.708 | 0.577 | 0.833 | dense + splade + query_classification (CE off) | B | f91e269bc | 580 |
+| (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump) | (default) | (default) | hybrid | 0.7604 | 0.637 | 0.888 | cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
 
 **Best known:** splade-ml+gte / gte-ml-reranker / default-hybrid / **hybrid** = **0.754** (391, 6-run median across two 3-run sets on 2026-04-18 and 2026-04-19; range 0.7527–0.7571, CV 0.1–0.3%). Full mode best known remains splade-ml+gte / gte-ml-reranker / bm25-dom / full = **0.736** (343 Phase D).
 **Note:** GTE-ModernBERT CE produces identical result (0.722 — noise). Mode breakdown now complete.
@@ -204,6 +205,7 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 | (HEAD default re-verify, 774 same-session OFF arm) | (default) | (default) | hybrid | 0.7445 | 0.600 | 0.867 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
 | (774 Stage-1 chunk-lever A/B set, flags non-default) | (default) | (default) | hybrid | 0.7476 | 0.597 | 0.877 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
 | (**`search.evidence_preview.enabled=true`**, default-off flag) | (default) | (default) | hybrid | **0.7882** | 0.643 | 0.913 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 / F-041 |
+| (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump) | (default) | (default) | hybrid | 0.7845 | 0.640 | 0.910 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
 
 **Best known:** bge-m3 / minilm-512 / balanced / bm25_splade = **0.830**
 **Note:** CE hurts EnronQA by 3-5% across all modes (CE-on vs CE-off isolation). Model swaps are quality-neutral on English email (CE-off post-swap matches pre-swap exactly). Confirms FW-001: corpus-adaptive CE gating needed.
@@ -252,8 +254,11 @@ catalog — see Corpus provenance note above)*
 | (HEAD default re-verify, 774 same-session OFF arm) | (default) | (default) | hybrid | 0.5557 | 0.425 | 0.690 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
 | (774 Stage-1 chunk-lever A/B set, flags non-default) | (default) | (default) | hybrid | 0.5448 | 0.420 | 0.685 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
 | (**`search.evidence_preview.enabled=true`**, default-off flag) | (default) | (default) | hybrid | **0.6388** | 0.465 | 0.810 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 / F-041 |
+| (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump) | (default) | (default) | hybrid | **0.6362** | 0.460 | 0.810 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
 
-**Best known:** (HEAD default, RMW preservation) / hybrid = **0.5609**; vector = **0.6184** (711,
+**Best known (at shipped defaults):** the flips-ON row above — hybrid = **0.6362** (be7fef6b, 775 §I;
+reproduces the F-041 flag-on 0.6388 within noise, now as the default). Prior defaults best:
+(HEAD default, RMW preservation) / hybrid = **0.5609**; vector = **0.6184** (711,
 2026-07-11 — supersedes 691 §N's 0.5497/0.3401: those were measured against an index whose 4,293
 chunk vectors were ALL silently destroyed post-write, F-032; all pre-711 vector/hybrid rows above
 are now dead-chunk-vector ablations). Union recall 0.925 (> 0.87 baseline); relevance + leak gates
@@ -304,6 +309,7 @@ corpus as currently committed)*
 | splade-ml+gte | gte-ml-reranker | bm25-dom | splade | 0.733 | 0.530 | 0.910 | splade+CE | B | 5d19ff2c1 | 343 D |
 | splade-ml+gte | gte-ml-reranker | bm25-dom | bm25_splade | 0.582 | 0.384 | 0.816 | bm25+splade+CE | A | 5d19ff2c1 | 343 D |
 | splade-ml+gte | gte-ml-reranker | bm25-dom | full | 0.696 | 0.469 | 0.908 | bm25+splade+dense+CE | A | 5d19ff2c1 | 343 D |
+| (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump; post-2026-07-01 corpus) | (default) | (default) | hybrid | 0.8591 | 0.679 | 0.997 | cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
 
 **Best known:** bge-m3 / minilm-512 / balanced / full = **0.734**
 **Note:** SPLADE multilingual (0.733) nearly matches BGE-M3 sparse (0.669→0.733 = +9.6%). Massive improvement over SPLADE-v3 English-only (0.485→0.733 = +51.1%). Full mode 0.696 vs pre-swap 0.619 (+12.4%).
@@ -323,6 +329,7 @@ corpus as currently committed)*
 | bge-m3 | minilm-512 | balanced | splade | 0.660 | — | — | splade | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | balanced | bm25_splade | 0.515 | — | — | bm25+splade | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | balanced | full | **0.706** | — | — | bm25+sparse+dense | A | dc4f79a | 309 §37 |
+| (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump; post-2026-07-01 corpus) | (default) | (default) | hybrid | 0.8726 | 0.706 | 1.000 | cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
 
 **Best known:** bge-m3 / minilm-512 / balanced / full = **0.706**
 **Note:** Same pattern as German — balanced weights, `splade` (0.660) strongest single retriever for non-English.

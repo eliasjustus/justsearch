@@ -387,3 +387,50 @@ second bump). Register baseline re-pins (the F-041 rows' "default-off flag"
 annotations) are left to the orchestrator's eval pass — updating them here with
 unmeasured "flipped" claims would be premature.
 
+
+### §I.1 Baseline re-pins at flips-ON defaults (2026-07-22, orchestrator eval pass)
+
+**Coupling resolved:** ship the flip now. §E designed steps 2-3 + governor as
+independently-measured migration steps (each carries its own `Measure:` clause,
+and the governor budget is §E-unsettled (c) pending a live measurement), so
+holding the approved product flip hostage to those open questions inverts the
+decision's intent. The remaining §E steps land later as measure-then-land lanes;
+if one changes agent-surface-visible shape it sequences with the next
+TOOL_SURFACE_VERSION bump.
+
+**Re-pin campaign** — 5 corpora, hybrid at shipped defaults, git `be7fef6b`
+(this branch), GPU CE confirmed (see ORT-pack note below), full enrichment
+(`--pipeline`), fresh `--clean` builds; register ablation rows added under each
+corpus (`src: 775 §I`):
+
+| corpus | 715-era pin (hybrid) | flips-ON (be7fef6b) | delta |
+|---|---|---|---|
+| mixed/legal-clerc-200 | 0.5557–0.5609 (711/774 defaults band) | **0.6362** | **+~14% vs defaults band**; reproduces the F-041 flag-on 0.6388 within noise |
+| mixed/enron-qa | 0.7445 (774 §K.2 OFF arm) | **0.7845** | **+5.4%**; reproduces F-041 flag-on 0.7882 within noise |
+| beir/scifact | 0.758 (580) | 0.7604 | flat (control: short docs, preview flip is a no-op) |
+| mixed/miracl-de-2k | 0.852 (666, post-regen) | 0.8591 | flat/+0.8% (within cross-run band) |
+| mixed/miracl-fr-2k | 0.866 (666, post-regen) | 0.8726 | flat/+0.8% (within cross-run band) |
+
+The gain pattern matches the F-041 mechanism exactly: material gains only where
+long documents made the CE score doc-heads (legal, email); flat on short-doc
+and factoid corpora. **Attribution caveat:** deltas vs the *715 release
+scorecard* additionally include #286's CE `DOCS_TOO_LONG` gate fix (default
+16000→0), which landed after the 715 rebaseline; the flag-on/flag-off rows from
+774 §K.2 at `5f45022b` are the controlled comparison, and this campaign's
+numbers reproduce their ON arms at defaults.
+
+**Not updated here:** the public Release Scorecard (generated from
+`release.v1.json`, 623 pipeline — founder-gated; decision 3 defers public
+numbers pre-hero). This section + the register ablation rows are the internal
+re-pin.
+
+**ORT-pack incident (fixed machine-locally, observation logged):** the first
+runs silently realized the reranker on CPU — 772 §J's new pack-completeness
+check refuses the dev machine's pre-772 `tmp/ort-variant-test/cuda-12.4-v1.24.3`
+layout (providers-only). Completed the pack (core `onnxruntime.dll` +
+`onnxruntime4j_jni.dll` from the upstream 1.24.3 jar + `ort-native-version.txt`)
+before any counted run; all five re-pin runs show GPU-band CE p50 (143–190 ms).
+
+*Process note (P-C inline exception): the register/tempdoc edits of this pass
+were done in the main loop — the numbers and row formats were already in
+orchestrator context, putting the pass below the delegation break-even.*
