@@ -1393,21 +1393,41 @@ val verifyTesseractRuntime by tasks.registering {
   }
 }
 
-// Tempdoc 772 §G — Trim the Linux natives out of the worker's onnxruntime_gpu jar before it is
-// staged into the shipped Windows installer. The upstream Maven artifact
-// `com.microsoft.onnxruntime:onnxruntime_gpu` is published as a single fat jar that bundles native
-// libraries for EVERY platform (win-x64 AND linux-x64) — no per-OS classifier exists. ONNX
-// Runtime's Java loader (`OnnxRuntime.initOsArch()` / `extractFromResources()`) only ever reads
-// `/ai/onnxruntime/native/<current-JVM-OS_ARCH>/…`, so on this Windows-only product the
-// `ai/onnxruntime/native/linux-x64/**` entries (~201 MB, incl. a ~316 MB-uncompressed
-// `libonnxruntime_providers_cuda.so`) are provably dead weight — 18.65% of the whole installer.
-// Same shape as stageLlamaCudaVariant's `exclude("**/ggml-rpc.dll")`: repackage a zip/jar with an
-// `exclude` during staging. Windows-only packaging path — indexer-worker's own installDist jar
+// Tempdoc 772 §G + §J item 2 — Trim two classes of dead/relocatable native from the worker's
+// onnxruntime_gpu jar before it is staged into the shipped Windows installer. The upstream Maven
+// artifact `com.microsoft.onnxruntime:onnxruntime_gpu` is published as a single fat jar that bundles
+// native libraries for EVERY platform (win-x64 AND linux-x64) — no per-OS classifier exists.
+//
+// Two exclusions:
+//   1. §G — `ai/onnxruntime/native/linux-x64/**` (~201 MB, incl. a ~316 MB-uncompressed
+//      `libonnxruntime_providers_cuda.so`). ONNX Runtime's Java loader
+//      (`OnnxRuntime.initOsArch()` / `extractFromResources()`) only ever reads
+//      `/ai/onnxruntime/native/<current-JVM-OS_ARCH>/…`, so on this Windows-only product the
+//      Linux natives are provably dead weight.
+//   2. §J item 2 — `ai/onnxruntime/native/win-x64/onnxruntime_providers_cuda.dll` (the ~164 MB
+//      Windows CUDA execution-provider DLL). This DLL is strictly useless without the CUDA
+//      dependency DLLs, which only ever arrive via the consent-gated `cuda-runtime` Install-AI
+//      pack. Rather than ship it to every user (36% of the download) it is relocated INTO that
+//      pack: the `cuda-runtime` package's new `ort-native-cuda12-v1.24.3.zip` supporting file
+//      carries the complete ORT native set (this EP DLL + the core trio) into the pack's cuda12
+//      dir, and the worker points ORT at that dir via the `onnxruntime.native.path` system
+//      property when the set is present (see `OrtCudaHelper.applyOrtNativePackProperty` +
+//      `IndexerWorker.main`). Probe-validated (tempdoc 772 §J): with this DLL absent from the jar
+//      and no property set, `addCUDA` fails with the legible `ORT_EP_FAIL "Failed to find CUDA
+//      shared provider"` and CPU inference still works from the retained core natives; with the
+//      property pointed at a complete external set, real CUDA sessions succeed.
+//
+// The core trio (`onnxruntime.dll`, `onnxruntime_providers_shared.dll`) plus the JNI shim
+// (`onnxruntime4j_jni.dll`) are KEPT in the jar — they serve the property-unset / CPU path (ORT
+// extracts them from the jar to %TEMP% as before). Only the CUDA EP DLL is removed.
+//
+// Same shape as stageLlamaCudaVariant's `exclude("**/ggml-rpc.dll")`: repackage a jar with
+// `exclude`s during staging. Windows-only packaging path — indexer-worker's own installDist jar
 // (used by the ubuntu-latest search-worker CI test lane) is untouched.
 val trimmedOnnxRuntimeGpuDir = layout.buildDirectory.dir("onnxruntime-gpu-trimmed")
 val stageTrimmedOnnxRuntimeGpu by tasks.registering(Jar::class) {
   group = "distribution"
-  description = "Repackage the worker onnxruntime_gpu jar without its Linux natives (Windows-only installer). Tempdoc 772 §G."
+  description = "Repackage the worker onnxruntime_gpu jar without its Linux natives or win-x64 CUDA EP DLL (Windows-only installer). Tempdoc 772 §G + §J item 2."
   val workerInstallDist =
       project(":modules:indexer-worker").tasks.named("installDist", Sync::class)
   dependsOn(workerInstallDist)
@@ -1422,6 +1442,8 @@ val stageTrimmedOnnxRuntimeGpu by tasks.registering(Jar::class) {
       workerInstallDist.get().destinationDir.resolve("lib").resolve(onnxGpuJarName)
   from(zipTree(originalJar)) {
     exclude("ai/onnxruntime/native/linux-x64/**")
+    // §J item 2: the win-x64 CUDA EP DLL moves to the cuda-runtime pack (see comment above).
+    exclude("ai/onnxruntime/native/win-x64/onnxruntime_providers_cuda.dll")
   }
   destinationDirectory.set(trimmedOnnxRuntimeGpuDir)
   // Fixed output name (not the version-stamped original): the worker loads it via `-cp lib/*`, so

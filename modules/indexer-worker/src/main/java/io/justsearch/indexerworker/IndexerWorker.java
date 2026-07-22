@@ -93,6 +93,18 @@ public final class IndexerWorker {
       log.info("Standalone mode: config bootstrapped from base sources (env + YAML) + auto-detected (no Head snapshot)");
     }
 
+    // Tempdoc 772 §J item 2: the win-x64 ORT CUDA execution-provider DLL is trimmed from the
+    // shipped jar and relocated into the consent-gated cuda-runtime pack. If that pack delivered a
+    // complete, version-matched ORT native set, point ORT at it by setting onnxruntime.native.path
+    // BEFORE the first OrtEnvironment.getEnvironment() in this process — ORT captures the property
+    // once at class-init. This is the earliest deterministic pre-ORT point: GpuAutoDetection.probe
+    // (above) and config loading do not touch ORT, and every ORT session is created later, under
+    // the KnowledgeServer built below. The pack dir is justsearch.onnxruntime.native_path (the
+    // cuda12 dir the CUDA dependency DLLs already extract into); null on CPU-only installs, in
+    // which case the property stays unset and ORT serves the CPU path from the jar's core natives.
+    io.justsearch.ort.OrtCudaHelper.applyOrtNativePackProperty(
+        ConfigStore.global().get().paths().ortNativePath());
+
     WorkerConfig config = configSupplier.load();
     log.info("Configuration loaded: dataDir={}", config.dataDir());
 
