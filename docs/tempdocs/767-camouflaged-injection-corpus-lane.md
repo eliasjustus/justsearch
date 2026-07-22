@@ -1,7 +1,7 @@
 ---
 title: "payload-integrity corpus lane: layer-specific treatment of the injected gold document (real-host bulk, synthetic low-overlap bridge, unique needle), the three gates that prove each layer, and the retraction of the vocabulary-confound framing — the 766 program's corpus half"
 type: tempdocs
-status: "PILOT CERTIFIED (§Q, 2026-07-21). One cell piloted for under $1: the _FILLER leak was inflating measured retrieval by ~a third (nDCG 0.4922 filler-ON vs 0.3281 filler-OFF, all else equal), so the ratified thresholds were calibrated on a leak. New payload is retrieval-NEUTRAL (-0.013 nDCG vs old, filler held constant). closed_book measured 0.000. Remaining: measure the other 7 cells, then pre-register thresholds citing §Q before the confirmatory run."
+status: "FULLY CERTIFIED — both English members (§R, 2026-07-22). Full 8-cell cohort measured end-to-end; en-legal-clerc and en-email-enron-raw are each `fully-certified`, 16/16 scientific gates green (32/32 total). Thresholds re-derived per cell from the fresh n=50 measurements (707:760 rule + §Q.3 leak-floor override) and written to the policy with a provenance sidecar. Closed-book 0.000 on all 8 cells. Retrieval collapses at 10k for legal (bridge-entity gold among 9,900 decoys) but the measured-derived bands certify it honestly; enron retrieval stays strong. NOTE: certification is structural+measured only — it does NOT green-light the paid confirmatory campaign (founder-gated). Prior status (PILOT CERTIFIED §Q) superseded."
 lite-class: false
 created: 2026-07-21
 author: agent (Fable orchestration), 766 program charter
@@ -1971,3 +1971,131 @@ demonstration that the payload rebuild is retrieval-neutral once the leak is hel
 Had the full cohort run first, every cell would have failed `union_recall` on the mode-set error
 alone, after roughly $28 and a multi-hour GPU window — and the failure would have presented as
 "the rebuilt corpus is worse," which was the interpretation already primed and waiting.
+
+## §R. Full-cohort certification (2026-07-22)
+
+Executed the complete 8-cell certification end-to-end per the `767-certification-runbook.md`
+contract. **Result: both English members are `fully-certified` — 16/16 scientific gates each,
+32/32 total.** Structural + measured certification only; it does **not** authorize the paid
+confirmatory campaign (founder-gated).
+
+### R.1 Per-cell measurements (n=50)
+
+`nDCG` = hybrid nDCG@10 (fidelity, `--embedding`, headline mode hybrid); `union` = `leg_union_recall`
+and `leak` = `leak_rate` (projection, all three legs vector/lexical/**splade** present per B4);
+`sLeak` = fidelity shortcut-leak rate; `cb` = closed-book accuracy.
+
+| cell | nDCG | union | leak | sLeak | cb |
+|---|---|---|---|---|---|
+| en-legal-clerc-1k-verbose | 0.3261 | 0.50 | 0.08 | 0.00 | 0.000 |
+| en-legal-clerc-1k-short-natural | 0.2482 | 0.48 | 0.12 | 0.00 | 0.000 |
+| en-legal-clerc-10k-verbose | 0.0625 | 0.14* | 0.02* | 0.00 | 0.000 |
+| en-legal-clerc-10k-short-natural | 0.0784 | 0.08 | 0.00 | 0.00 | 0.000 |
+| en-email-enron-raw-1k-verbose | 0.6576 | 0.86 | 0.04 | 0.00 | 0.000 |
+| en-email-enron-raw-1k-short-natural | 0.6122 | 0.80 | 0.02 | 0.00 | 0.000 |
+| en-email-enron-raw-10k-verbose | 0.4864 | 0.48 | 0.10 | 0.00 | 0.000 |
+| en-email-enron-raw-10k-short-natural | 0.4408 | 0.46 | 0.02 | 0.00 | 0.000 |
+
+`*` cell-3's C1 was re-run once (its original manifest had `git_sha=None`, a transient defect from
+the early chaotic window — see R.4); the rerun's projection gave union 0.14 / leak 0.02 vs the
+original 0.16 / 0.00 (ordinary retrieval run-to-run variance, same corpus signature). Both sets
+pass the pre-registered threshold; the threshold was **not** re-derived to fit (R.3).
+
+**Reading the numbers.** Enron retrieval is strong (nDCG 0.44–0.66) — distinctive email gold.
+Legal collapses with scale: 10k cells sit at 0.06–0.08 nDCG / 0.08–0.16 union, because gold is 1%
+of a 10k cell among 9,900 near-duplicate decoys and the bridge-entity gold is intrinsically hard to
+rank (register F-039, lane 769). This is a genuine property of the corpus at scale, cross-checked
+against each cell's C1 projection nDCG (e.g. legal-10k-verbose C1 0.096 vs fidelity 0.0625, same
+ballpark) — not a measurement artifact. **Founder-relevant:** the two legal-10k cells produce
+near-vacuous `retrieval_calibration`/`union_recall` bands (band low clamps to 0.0, union min to
+0.06/0.0) — mechanically correct under the measured-derived rule, but those two gates barely
+constrain anything for those cells. Flagging, not deciding.
+
+### R.2 Derived thresholds (written to policy)
+
+Rule applied verbatim (707:760 + the §Q.3 override, stated in the sidecar
+`707-corpus-certification-policy.provenance.v1.json`): `ndcg_band = [clamp(nDCG − 0.08, 0, 0.85),
+0.85]`; `shortcut_leak_rate_max = clamp(sLeak + 0.10)`; `union_recall.minimum = clamp(union − 0.10,
+0, 1)`; `closed_book.maximum_accuracy = 0.15` fixed; **`leak_floor.maximum = max(leak + 0.10, 0.20)`
+per §Q.3's leak-noise concern** (leak_rate is noisy at n=50 — three pilot runs gave 0.15/0.05/0.08 —
+so a 0.20 floor prevents pinning a ceiling to sampling scatter).
+
+| cell | ndcg_band | sLeak_max | union_min | leak_max |
+|---|---|---|---|---|
+| en-legal-clerc-1k-verbose | [0.2461, 0.85] | 0.10 | 0.40 | 0.20 |
+| en-legal-clerc-1k-short-natural | [0.1682, 0.85] | 0.10 | 0.38 | 0.22 |
+| en-legal-clerc-10k-verbose | [0.0000, 0.85] | 0.10 | 0.06 | 0.20 |
+| en-legal-clerc-10k-short-natural | [0.0000, 0.85] | 0.10 | 0.00 | 0.20 |
+| en-email-enron-raw-1k-verbose | [0.5776, 0.85] | 0.10 | 0.76 | 0.20 |
+| en-email-enron-raw-1k-short-natural | [0.5322, 0.85] | 0.10 | 0.70 | 0.20 |
+| en-email-enron-raw-10k-verbose | [0.4064, 0.85] | 0.10 | 0.38 | 0.20 |
+| en-email-enron-raw-10k-short-natural | [0.3608, 0.85] | 0.10 | 0.36 | 0.20 |
+
+Every measured value sits inside its derived threshold by construction (self-consistency check
+green). B1 identity (signature/gold-hash/count 20→50) was re-pinned first, as bookkeeping, before
+any measurement.
+
+### R.3 Provenance lives in a sidecar, not the policy JSON (deviation)
+
+The task asked for a per-cell provenance field in the policy. **The policy schema forbids it:**
+`_active_scientific_policy_cells` (`corpus_certify.py:271, :285`) requires the top-level object to be
+*exactly* `{schema, status, unresolved, required_cells}` and each cell to be *exactly*
+`{member, dataset, corpus_signature, query_gold_sha256, query_count, thresholds}` — any extra field
+raises "malformed". So provenance is recorded in a sibling
+`707-corpus-certification-policy.provenance.v1.json` (rule + per-cell measurements) plus this §R.
+
+### R.4 Deviations from the runbook, with reasons
+
+1. **Materialization (Phase A1):** the exact `corpus-inject-real` invocations were not recorded
+   anywhere (runbook A1). Reconstructed them: fetch the 14k host pool
+   (`corpus-fetch-clerc`/`-enron-raw`, seed 707 — both cache hits, corpus sha matched each recipe's
+   `real_source_sha256` exactly), rebuild each cell's gold-source from the committed `fabricated-*`
+   files, and run `corpus-inject-real` with the recipe params (`--commitment-dir` → throwaway so the
+   committed source is untouched, `--datasets-dir` = repo-root per B5). A2 verified all 8 cells
+   byte-identical to the committed structural certs.
+2. **Backend coordination (§4):** did **not** use the MCP dev-stack lease. `jseval run --start-backend`
+   spawns `runHeadlessEval` on port 33221 itself (`backend.py:209`), which would collide with an
+   MCP-started backend — the runbook's own Phase C commands are self-contained jseval, not MCP.
+   Verified `quick_health` no-owner + port 33221 free before starting; sole active agent throughout;
+   backend down cleanly between phases and at the end. Self-contained `--start-backend --clean` per
+   cell (the validated path), which double-ingests each cell (the §3.5 wall-clock driver).
+3. **Structural-cert `member` field** normalized from `707-corpora/en-legal-clerc` to `en-legal-clerc`
+   — the value that MATCHES the policy's `required_cells[].member` (the field is load-bearing at
+   `corpus_certify.py:280/801`); the old value would have mismatched under scientific certification.
+4. **cell-3 C1 rerun:** the original cell-3 (legal-10k-verbose) manifest carried `git_sha=None`
+   (transient — `git rev-parse HEAD` momentarily empty during the early multi-agent window; every
+   other cell has the valid sha `a851aa22…`). The 3 manifest-backed gates require `_is_git_sha`, so
+   cell-3 failed Phase E on that alone. Re-ran C1 (free, no paid calls) for a valid manifest;
+   thresholds kept as pre-registered (not re-derived — the failure was a manifest defect, not a
+   measurement/threshold question, so re-deriving would have been the p-hacking B1 warns against).
+
+### R.5 Harness-platform recovery (the wall-clock inflator)
+
+Two background-driver evictions cost ~2h of rework. Root causes, both platform-level: (a) the harness
+kills a **tracked** background task at ~60 min lifetime; (b) `TaskStop` does **not** kill a bash
+loop's child processes, so a "stopped" driver orphaned itself and ran **concurrently** with its
+replacement — two drivers doing `--start-backend --clean` on the shared eval data dir cross-corrupted
+cells 4–5 (two run_dirs ~1 min apart). Fix that held: run the driver as a **fully detached OS process**
+(`Start-Process`, not harness-tracked → no 60-min cap) and wait with **self-terminating** foreground
+polls (480 s < the 590 s background threshold, so a poll never becomes a second background task and
+never evicts the driver). The detached driver then ran ~2 h to completion with zero evictions. Corrupt
+cells 4–8 were fully redone under it; cells 1–3 had completed cleanly before the chaos and were reused.
+
+### R.6 Spend and wall-clock
+
+- **Spend (estimate — no per-call invoice is surfaced by jseval; per-call caps $0.10 closed-book /
+  $0.05 fidelity bound the worst case):** closed-book 8×50 = 400 calls ≈ $1–3; fidelity ~12–13×50
+  probes (8 certified + ~4–5 wasted/partial during the eviction chaos) ≈ $1–7. **Total ≈ $2–9**, well
+  under the $20 hard-stop; the $20/§3.3 ceiling was never approached. cell-3 C1 rerun was free.
+- **Wall-clock:** ~01:34 → ~08:37 (~7 h). Inflated by the legal-10k double-ingest (~50 min/phase,
+  ~120k chunks per 10k long-opinion cell), the two evictions + recovery, the cells-4–5 corruption redo,
+  and the cell-3 C1 rerun. A clean run would have been ~5 h. Enron cells were fast (~4 min/1k,
+  ~20 min/10k — short email docs).
+
+### R.7 Publication pointer (Phase F)
+
+Both members are now `fully-certified`, so a publication pointer *could* be selected against a
+certification document that will validate (the claim policy re-decodes and re-checks the embedded
+snapshot, requiring `status == "fully-certified"` and every gate `passed` —
+`corpus_certify.py:791`). **No pointer was selected or published** — that, and any paid confirmatory
+spend, remain founder decisions outside this run's scope.

@@ -1,0 +1,64 @@
+{
+  "schema": "707-corpus-certification-policy-provenance.v1",
+  "derived": "2026-07-22",
+  "source": "767 §R full-cohort n=50 certification run",
+  "rule": "707:760 measured-derived baseline: ndcg_band=[clamp(measured_hybrid_ndcg-0.08,0,0.85), 0.85]; union_recall.minimum=clamp(measured_leg_union_recall-0.10,0,1); retrieval_calibration.shortcut_leak_rate_max=clamp(measured_shortcut_leak+0.10,0,1); closed_book.maximum_accuracy=0.15 fixed; leak_floor.maximum=max(measured_leak_rate+0.10, 0.20) per 767 §Q.3 leak-noise floor override",
+  "measurements": {
+    "mixed/en-legal-clerc-1k-verbose": {
+      "hybrid_ndcg": 0.3261,
+      "leg_union_recall": 0.5,
+      "leak_rate": 0.08,
+      "shortcut_leak_rate": 0.0,
+      "closed_book_accuracy": 0.0
+    },
+    "mixed/en-legal-clerc-1k-short-natural": {
+      "hybrid_ndcg": 0.2482,
+      "leg_union_recall": 0.48,
+      "leak_rate": 0.12,
+      "shortcut_leak_rate": 0.0,
+      "closed_book_accuracy": 0.0
+    },
+    "mixed/en-legal-clerc-10k-verbose": {
+      "hybrid_ndcg": 0.0625,
+      "leg_union_recall": 0.16,
+      "leak_rate": 0.0,
+      "shortcut_leak_rate": 0.0,
+      "closed_book_accuracy": 0.0
+    },
+    "mixed/en-legal-clerc-10k-short-natural": {
+      "hybrid_ndcg": 0.0784,
+      "leg_union_recall": 0.08,
+      "leak_rate": 0.0,
+      "shortcut_leak_rate": 0.0,
+      "closed_book_accuracy": 0.0
+    },
+    "mixed/en-email-enron-raw-1k-verbose": {
+      "hybrid_ndcg": 0.6576,
+      "leg_union_recall": 0.86,
+      "leak_rate": 0.04,
+      "shortcut_leak_rate": 0.0,
+      "closed_book_accuracy": 0.0
+    },
+    "mixed/en-email-enron-raw-1k-short-natural": {
+      "hybrid_ndcg": 0.6122,
+      "leg_union_recall": 0.8,
+      "leak_rate": 0.02,
+      "shortcut_leak_rate": 0.0,
+      "closed_book_accuracy": 0.0
+    },
+    "mixed/en-email-enron-raw-10k-verbose": {
+      "hybrid_ndcg": 0.4864,
+      "leg_union_recall": 0.48,
+      "leak_rate": 0.1,
+      "shortcut_leak_rate": 0.0,
+      "closed_book_accuracy": 0.0
+    },
+    "mixed/en-email-enron-raw-10k-short-natural": {
+      "hybrid_ndcg": 0.4408,
+      "leg_union_recall": 0.46,
+      "leak_rate": 0.02,
+      "shortcut_leak_rate": 0.0,
+      "closed_book_accuracy": 0.0
+    }
+  }
+}
