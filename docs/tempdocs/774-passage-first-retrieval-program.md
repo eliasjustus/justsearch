@@ -142,3 +142,137 @@ rule; unchanged).**
    (cohort identity). 774 implementation is rewrite-scale and invalidates
    baselines/cohorts — it must NOT land before the hero campaign's cohort
    pins (766/776 ordering); the passes + probe can and should run now.
+
+## §F. Code audit (2026-07-22, same session — full retrieval-path read; feeds theorize)
+
+Primary-source verification of the charter's premises against HEAD (`fc7d538a`).
+Files read end-to-end: `SearchExecutor.java`, `SearchPlanner.java`,
+`CorpusProfile.java`, `HybridFusionUtils.java`, `HybridSearchOps.java`,
+`ChunkSearchOps.java`, `ChunkDocumentWriter.java`, `SearchResponseBuilder.java`,
+`KnowledgeSearchEngine.java` (CE section), `RagContextOps.java` (retrieval),
+`ResolvedConfigBuilder.java` (defaults).
+
+### F.1 The "fused side-branch" claim is CORRECT — and understated. Six code-level mechanisms:
+
+1. **Chunk branch is conditional on the doc branch.** It never runs when the
+   doc-level legs return empty (`SearchExecutor.maybeApplyChunkMerge` —
+   `SKIPPED_EMPTY_BASE_RESULTS`, SearchExecutor.java:512-526), plus planner
+   gates: first page only, non-LUCENE syntax, relevance sort, corpus profile
+   (`SearchPlanner.planChunkMerge`:240-284). A recall-gate shape (D-005).
+2. **The chunk branch is internally BM25-dominant by default.** Its 3-way CC
+   reuses the DOC-level weights `cc_weight_{sparse,dense,splade}` =
+   0.60/0.20/0.20 (SearchExecutor.java:622-626; defaults
+   ResolvedConfigBuilder.java:1444-1446) with `cc_zero_exclude=false` (:1443)
+   — so on a default hybrid (no-splade) query, chunk-dense — the only leg
+   that can bridge camouflaged paraphrase — carries effective weight
+   **0.25 inside its own branch** (0.20/0.80), and a chunk found by dense
+   alone still gets only 0.25×norm. **There is no independent chunk-branch
+   weight config** — the branch cannot be tuned without retuning the doc legs.
+   (Exception: `vector` mode zeroes the sparse/splade slots, so ITS chunk
+   branch is pure chunk-dense order — load-bearing for reading M5, see F.3.)
+3. **Collapse cap.** The chunk branch delivers at most 2×limit parents to
+   branch fusion (`collapseLimit = max(limit*2, limit)`,
+   SearchExecutor.java:641; `collapseChunkHitsToParents` breaks at the cap,
+   :899-921), chosen in the mechanism-2 (BM25-dominant) fused order. At the
+   eval/agent depth of 10, twenty parents. Chunk KNN itself runs at
+   `candidateBudget = 10×limit` (k=100 chunks at limit 10; `resolveVectorQueryK`
+   honors ef_search override, ReadPathOps.java:296-303).
+4. **Branch fusion reaches parity, never primacy.** CC 0.50/0.50
+   (`branch_cc_weight_whole/chunk`, defaults :1449-1450), chunk weight
+   length-modulated from 0.25× (≤1024 tokens) to 1.0× (≥4096 tokens)
+   (`chunkBranchParentLengthMultiplier`, HybridFusionUtils.java:826-834). Even
+   at full modulation the whole-doc branch injects its candidates at equal
+   weight — on camouflaged long docs, that branch is noise: F-035's dilution
+   mechanism with the sign flipped.
+5. **The strongest judge is passage-blind.** The Head CE scores each candidate
+   as `title + ~1500-char query-focused snippet` extracted from
+   `content_preview` (**first 4KB of the doc**), centered on **lexical** match
+   spans (KnowledgeSearchEngine.java: `RERANK_SNIPPET_LENGTH=1500`, docTexts
+   loop). The winning chunk's text — which IS present on the wire hit as
+   `CHUNK_CONTENT` (ChunkSearchOps `buildChunkHits` allowlist; survives
+   collapse via `normalizeChunkHitToParent` + `mergeFields`) — is never given
+   to the CE. A doc discovered ONLY by the chunk branch carries no
+   `content_preview` at all → the CE scores it on its title. This violates
+   D-005's own judge-aligned-truncation principle at the pipeline's designated
+   strong judge. (The RAG path does NOT have this defect — its CE reranks
+   chunk text, RagContextOps.)
+6. **Evidence delivery is lexical-anchored.** `excerptRegions`/`matchSpans`
+   are computed only under `hasLexicalTerms` and anchor to term matches
+   (SearchResponseBuilder.java:464-514; chunk-branch hits do use
+   `CHUNK_CONTENT` as excerpt source :490-492 — but only when lexical terms
+   match). A dense-only match delivers no anchored evidence → 771 item 1b's
+   45% legal carriage is structural, not incidental. (775's lane; boundary
+   with mechanism 5 must be drawn in design — 5 is a RANKING defect, not
+   delivery.)
+
+Additional gap found: the F-024 recall-complete pool (default ON,
+`leg_recall_complete_enabled`, :1479) protects only the DOC-level dense/bm25
+top-N through branch fusion (SearchExecutor.java:766-788 reads the whole-doc
+result's provenance) — **the chunk branch's own top-N has no recall guarantee**
+into the CE window.
+
+### F.2 The RAG path is ALREADY passage-first — the program is a convergence, not a greenfield
+
+`RagContextOps.searchChunksWithMeta`: chunk-level hybrid (chunk BM25 + chunk
+KNN, RRF + low-signal gating, `searchChunksHybrid` Phase-6 path,
+ChunkSearchOps.java:578-651), doc-level union leg for chunkless (<2000-char)
+parents (F-038, default ON), chunk-level CE rerank, MMR/position diversify,
+token budgeting. The passage-first end-state for the product's RAG/agent-answer
+surface substantially exists. What is doc-primary is the interactive
+`/api/knowledge/search` path — which is also what the MCP `justsearch_search`
+tool serves (F-037 aligned it to the hybrid preset), i.e. the surface the
+agent-utility campaigns measure. "Rewrite-scale" should therefore be treated
+as a hypothesis for theorize, not a premise: the passage substrate (per-chunk
+BM25 always; per-chunk CLS vectors always, post-F-032; chunk SPLADE flag-gated
+at +108% enrichment, F-036; offsets/heading/line metadata on every chunk,
+ChunkDocumentWriter.java:114-176) and the passage query legs already run on
+every chunk-eligible interactive query — the marginal query-time cost of
+primacy inversion is small. The genuinely new work: aggregation semantics
+(doc-as-aggregation for display/facets/dedup), decision-planner + reason-code +
+searchTrace surface (execution-surfaces register), TEXT-only feature carve-out
+(facets/sort/cursor/fuzzy are Lucene Query-collector features on parent docs —
+`runSparseShortcut` path — and cannot move to passages), eval-mode wiring, and
+baseline re-pins.
+
+### F.3 What the M5 floor does and does not already tell us (sharpens the §E.2 probe)
+
+`vector` mode's chunk branch is PURE chunk-dense order (mechanism F.1-2
+exception) at depth ~100 chunks → top-20 parents → 50/50 branch-fused with
+parent-dense → top-10. M5 says gold missed top-10 in vector mode too for
+82-90% of legal-10k queries. Therefore the floor already implies: **gold is
+not in the engine chunk-dense top-~5-10 parents** at 10k. What remains open —
+and what the probe must measure — is the band below: per-query gold-chunk rank
+in (a) offline exact-NN chunk-dense (F-034 harness) and (b) engine chunk-KNN
+at depth ≥100, on the certified camouflaged strata. Decision bands:
+- gold parent within ~top-20 of PURE chunk-dense but outside fused top-10 →
+  burial (fusion/cap/weights) — architecture (or even config) recovers it;
+- ranks ~20-100 → passage-primary + passage-CE (mechanism-5 fix) plausibly
+  recovers;
+- outside exact-NN top-100 → representation floor at passage granularity —
+  the program's floor-attack premise dies; surviving value = F.1 mechanisms
+  5-6 (judge/evidence passage alignment, shared with 775) + bounded fusion
+  gains.
+Also compare exact-NN vs engine-ANN (HNSW at ~50k+ chunk vectors) to rule
+ANN loss in or out.
+
+### F.4 Judgment on the charter as written
+
+- §A.1 (floor real, scale-shaped): **stands** (771 §E, leak-free strata).
+- §A.2 ("architecture consumes passage capability only as a fused
+  side-branch"): **code-confirmed, and stronger than charted** — the branch is
+  gated, internally lexical-dominant, capped, parity-fused, judge-blind, and
+  evidence-blind (F.1). The charter under-claims: even the CE stage is
+  passage-blind, which no fusion-weight change fixes.
+- §A.3 (delivery layer wants passages): **confirmed** (RAG already
+  passage-first; chunk metadata rich; 775 owns delivery).
+- §B candidate ingredients: chunk-MaxP already exists as the collapse
+  primitive (best-chunk-per-parent); "late-interaction-style scoring" remains
+  the expensive outlier (new index format + kernels) — only reachable if
+  chunk-CLS-primary saturates below the offline ceiling.
+- §C sequence: **amendment from §E.2 stands and is strengthened** — the probe
+  is now precisely specified (F.3) and discriminates the program's premise at
+  ~$0. Theorize should additionally cost the "convergence, not rewrite"
+  shape (F.2) and the two cheap defect-fixes (CE passage input, chunk-side
+  recall-complete) as possible pre-program lanes with independent value.
+- §D constraints: perf concern is real only for late-interaction and
+  chunk-SPLADE; chunk-primacy itself is near-cost-neutral at query time (F.2).
