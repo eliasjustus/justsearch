@@ -941,3 +941,50 @@ query, head-preview delivered) during the §J.2 probe session (run 96da7851).
   eval-env property, noted for any latency claims.
 - Register duties executed in this session: F-040/F-041 + ablation rows +
   Q-001 refinement (see register diff in the same branch).
+
+## §L. Root-cause analysis of the session's findings (2026-07-22, post-implementation)
+
+The fixed defects decompose into two distinct root causes plus a corpus-side
+class — deliberately NOT unified into one grand cause.
+
+- **RC-A — no first-class "evidence for this hit"; stage-local proxies that
+  only agree on short documents.** The CE judged `title + head-preview`,
+  excerpts anchored on lexical term positions, delivery used its own preview
+  tier, and the chunk branch's knowledge of the winning passage died at the
+  wire — four proxies for one concept, coinciding exactly when doc ≈ head ≈
+  evidence, i.e. on the short-doc corpora the system grew up on. Length is
+  the axis that splits the identity; every family-A defect (§F.1-5/6, 771
+  item 1b, the CE gate's raison d'être) bites only on long docs, and the
+  aggregate damage was mis-attributed to the encoder (F-030) for two
+  investigation cycles because outcome gates can't see interface incoherence.
+  Supporting evidence the account is generative, not retrofitted: the
+  later-built RAG path (chunk-first, chunk-CE, span citations) has ZERO
+  family-A defects; F-041's email flip retro-explains F-002 as a family-A
+  symptom. **Actionable implication (logged to observations, routes to
+  777):** every pre-F-041 judge-stage conclusion (F-026 blend/'judge levers
+  dead', 636's judge-rank-bound profile) was measured under a preview-blind
+  CE and needs re-baselining under evidence-coherent input before 777
+  designs on it. The G.4/I.7 evidence-coherence invariant is family A's
+  standing guard.
+- **RC-B — ambient derived state without a population/freshness contract.**
+  The CE doc-length gate (worker-session-lifetime average, populated only by
+  `GET /api/knowledge/status`) is kin to F-032 (RMW trusted stored fields as
+  the whole doc) and 717 (`parent_token_count` race → corpus misclassified):
+  three incidents, one shape — a derived signal consumed as current truth
+  with no declared populator. F-032 got the structural fix pattern
+  (declared per-field `rmwPolicy`); the gate was defused (default 0);
+  the cheap follow-up is an audit of the remaining ambient caches (facet
+  snapshot, source vocabulary, corpus profile) for undeclared population
+  contracts — observation-tier, not a build.
+- **RC-C — fabrication generators give gold what distractors lack** (title
+  leak; third instance after `_FILLER` and id-shape, #279). Confirms the
+  class is systematic; the certification gates should assert generic
+  gold-vs-distractor feature-distribution parity rather than per-discovered
+  feature (776's lane).
+- **Intersection note:** A and B meet at exactly one point — the doc-length
+  gate existed *because* CE input was head-shaped (B compensating for A);
+  fixing A (evidence input) is what made defusing B (gate default 0) safe.
+- **Honest limit:** the Stage-1 chunk-branch handicaps (§F.1 1-4) fit family
+  A only loosely — they are also ordinary accretion (locally-reasonable
+  reuse of weights/caps with no owner for the composition). No single cause
+  claims them cleanly; resisting over-unification is part of this analysis.
