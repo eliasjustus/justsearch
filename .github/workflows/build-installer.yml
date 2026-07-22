@@ -184,8 +184,13 @@ jobs:
         run: |
           # On a v* tag ref (a real release cut) also verify server.json version/URL match the
           # tag; skip on non-tag dry-runs where gradle.properties may not match yet. (Tempdoc 726.)
-          $extra = @()
-          if ($env:GITHUB_REF -like 'refs/tags/v*') { $extra += '-VerifyReleaseVersion' }
+          # NOTE: hashtable splatting, deliberately — array splatting binds flag STRINGS
+          # positionally, not as switches ('-Sign' ended up bound to -SetupExePath; caught by the
+          # tempdoc 760 self-signed rehearsal run 29909495558, which also revealed the original
+          # array-splatted -VerifyReleaseVersion had the same latent bug, never exercised because
+          # no tag dispatch has run since it was added).
+          $extra = @{}
+          if ($env:GITHUB_REF -like 'refs/tags/v*') { $extra['VerifyReleaseVersion'] = $true }
           # Engage signing only when a credential for the configured mode is present (pfx b64 /
           # store thumbprint / command template). Secrets absent => no -Sign => unsigned build,
           # identical to today. (Tempdoc 760 Phase 2 item 4.)
@@ -193,7 +198,7 @@ jobs:
             ($env:JUSTSEARCH_CODESIGN_PFX_B64 -and $env:JUSTSEARCH_CODESIGN_PFX_B64.Trim()) -or `
             ($env:JUSTSEARCH_CODESIGN_THUMBPRINT -and $env:JUSTSEARCH_CODESIGN_THUMBPRINT.Trim()) -or `
             ($env:JUSTSEARCH_CODESIGN_COMMAND -and $env:JUSTSEARCH_CODESIGN_COMMAND.Trim())
-          if ($signConfigured) { $extra += '-Sign' }
+          if ($signConfigured) { $extra['Sign'] = $true }
           ./scripts/ci/package-installer-win.ps1 -OutDir dist/installer -SkipVerify -AssembleReleaseAssets @extra
 
       # Diagnostic: log modules/ui/build contents + sizes so we can see what the
