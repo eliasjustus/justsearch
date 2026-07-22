@@ -15,9 +15,15 @@ param(
   # Where to copy the produced installer for CI artifact upload.
   [string]$OutDir = "dist/installer",
 
+  # Engage code signing WITHOUT release-versioning semantics. -Sign builds with the signing
+  # overlay (tauri.signing.conf.json), sets JUSTSEARCH_REQUIRE_SIGNING=true, and runs the
+  # signature_verify phase -- but does NOT force a strict x.y.z version, so CI can rehearse or
+  # perform signing on non-tag dry-runs. -Release implies -Sign. (Tempdoc 760 Phase 2 item 3.)
+  [switch]$Sign,
+
   # Require release-safe versioning + signing (intended for real distribution).
   # - Enforces gradle.properties version to be strict x.y.z (no suffix)
-  # - Requires signing inputs (JUSTSEARCH_CODESIGN_*) and fails if missing
+  # - Implies -Sign (signing overlay + JUSTSEARCH_CODESIGN_* required, fails if missing)
   [switch]$Release,
 
   # Root output for EvidenceBundle v1 capture (default is repo-local tmp/agent-evidence).
@@ -221,6 +227,11 @@ try {
     }
   }
 
+  # -Release implies -Sign: both engage the signing overlay + JUSTSEARCH_REQUIRE_SIGNING + the
+  # signature_verify phase; only -Release additionally forces strict release-semver (below).
+  # (Tempdoc 760 Phase 2 item 3.)
+  $doSign = $Sign.IsPresent -or $Release.IsPresent
+
   # Keep versions in sync (Gradle -> Tauri/Cargo/npm). This is deterministic and cheap.
   Measure-Phase "version_sync" {
     $syncArgs = @()
@@ -229,8 +240,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "sync-version.ps1 failed (exit=$LASTEXITCODE)" }
   }
 
-  # Release: require signing during bundling (Tauri signCommand uses this env var).
-  if ($Release.IsPresent) {
+  # -Sign (implied by -Release): require signing during bundling (Tauri signCommand reads this).
+  if ($doSign) {
     $env:JUSTSEARCH_REQUIRE_SIGNING = "true"
   }
 
@@ -239,8 +250,8 @@ try {
 
     Measure-Phase "tauri_build" {
       # Build NSIS installer (tauri.conf.json enforces ui-web build + bundleSidecar via hooks).
-      if ($Release.IsPresent) {
-        # Release: enable signing config overlay; fail later if signing inputs are missing (JUSTSEARCH_REQUIRE_SIGNING=true).
+      if ($doSign) {
+        # Signing build (-Sign/-Release): enable signing config overlay; fail later if signing inputs are missing (JUSTSEARCH_REQUIRE_SIGNING=true).
         & npm --prefix .\modules\shell run tauri -- build --bundles nsis --config .\src-tauri\tauri.signing.conf.json
       } else {
         # Dev/CI smoke: avoid requiring Windows SDK SignTool.
@@ -280,13 +291,13 @@ try {
     Skip-Phase "installer_verify" "SkipVerify flag"
   }
 
-  if ($Release.IsPresent) {
+  if ($doSign) {
     Measure-Phase "signature_verify" {
       & powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\verify-windows-signature.ps1 $SetupExePath
       if ($LASTEXITCODE -ne 0) { throw "verify-windows-signature.ps1 failed (exit=$LASTEXITCODE)" }
     }
   } else {
-    Skip-Phase "signature_verify" "not release build"
+    Skip-Phase "signature_verify" "not a signing build"
   }
 
   $dest = Join-Path -Path $outDirPath -ChildPath ([System.IO.Path]::GetFileName($SetupExePath))

@@ -165,11 +165,30 @@ jobs:
         env:
           ORG_GRADLE_PROJECT_includeCuda: "false"
           ORG_GRADLE_PROJECT_skipOnnxModels: "true"
+          # Code-signing secrets (tempdoc 760 Phase 2 item 4). Absent secrets expand to empty
+          # strings, so the build takes the unsigned path EXACTLY as before. sign-windows.ps1
+          # reads these per JUSTSEARCH_CODESIGN_MODE; -Sign is added below only when a credential
+          # is present. (GitHub Actions forbids secrets.* in step `if:`, so the deciding secret is
+          # hoisted into env here and the boolean is computed in the run script.)
+          JUSTSEARCH_CODESIGN_MODE: ${{ secrets.JUSTSEARCH_CODESIGN_MODE }}
+          JUSTSEARCH_CODESIGN_PFX_B64: ${{ secrets.JUSTSEARCH_CODESIGN_PFX_B64 }}
+          JUSTSEARCH_CODESIGN_PFX_PASSWORD: ${{ secrets.JUSTSEARCH_CODESIGN_PFX_PASSWORD }}
+          JUSTSEARCH_CODESIGN_TIMESTAMP_URL: ${{ secrets.JUSTSEARCH_CODESIGN_TIMESTAMP_URL }}
+          JUSTSEARCH_CODESIGN_THUMBPRINT: ${{ secrets.JUSTSEARCH_CODESIGN_THUMBPRINT }}
+          JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
         run: |
           # On a v* tag ref (a real release cut) also verify server.json version/URL match the
           # tag; skip on non-tag dry-runs where gradle.properties may not match yet. (Tempdoc 726.)
           $extra = @()
           if ($env:GITHUB_REF -like 'refs/tags/v*') { $extra += '-VerifyReleaseVersion' }
+          # Engage signing only when a credential for the configured mode is present (pfx b64 /
+          # store thumbprint / command template). Secrets absent => no -Sign => unsigned build,
+          # identical to today. (Tempdoc 760 Phase 2 item 4.)
+          $signConfigured = `
+            ($env:JUSTSEARCH_CODESIGN_PFX_B64 -and $env:JUSTSEARCH_CODESIGN_PFX_B64.Trim()) -or `
+            ($env:JUSTSEARCH_CODESIGN_THUMBPRINT -and $env:JUSTSEARCH_CODESIGN_THUMBPRINT.Trim()) -or `
+            ($env:JUSTSEARCH_CODESIGN_COMMAND -and $env:JUSTSEARCH_CODESIGN_COMMAND.Trim())
+          if ($signConfigured) { $extra += '-Sign' }
           ./scripts/ci/package-installer-win.ps1 -OutDir dist/installer -SkipVerify -AssembleReleaseAssets @extra
 
       # Diagnostic: log modules/ui/build contents + sizes so we can see what the

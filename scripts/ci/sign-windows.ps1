@@ -28,11 +28,33 @@ function Info([string]$Message) {
   Write-Host $Message
 }
 
-$pfxPath = $env:JUSTSEARCH_CODESIGN_PFX_PATH
+# Credential mode selects how the key is presented (all additive; no env renames):
+#   pfx     - PFX file/base64 + password + timestamp (default; exactly today's behavior).
+#   store   - cert in the Windows cert store by thumbprint; how USB-token/HSM CSP-backed
+#             nonexportable keys present locally (signtool /sha1 <thumbprint> /s <store>).
+#   command - a full command-line template with a {file} placeholder, run per file. Lets any
+#             vendor CLI (Azure Trusted Signing, eSigner, ...) plug in with no further changes.
+$mode = $env:JUSTSEARCH_CODESIGN_MODE
+if (-not $mode -or -not $mode.Trim()) { $mode = "pfx" } else { $mode = $mode.Trim().ToLowerInvariant() }
+
 $requireSigning = To-Bool $env:JUSTSEARCH_REQUIRE_SIGNING
+# Rehearsal relaxation: accept a hash-valid but chain-untrusted (e.g. self-signed) signature so
+# the pipeline can be dry-run end-to-end without a production cert. Off => behavior unchanged.
+$allowUntrusted = To-Bool $env:JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED
+
+# pfx-mode inputs (also the back-compat default set).
+$pfxPath = $env:JUSTSEARCH_CODESIGN_PFX_PATH
 $pfxB64 = $env:JUSTSEARCH_CODESIGN_PFX_B64
 $pfxPassword = $env:JUSTSEARCH_CODESIGN_PFX_PASSWORD
 $timestampUrl = $env:JUSTSEARCH_CODESIGN_TIMESTAMP_URL
+
+# store-mode inputs.
+$thumbprint = $env:JUSTSEARCH_CODESIGN_THUMBPRINT
+$certStore = $env:JUSTSEARCH_CODESIGN_STORE
+if (-not $certStore -or -not $certStore.Trim()) { $certStore = "My" }
+
+# command-mode input.
+$commandTemplate = $env:JUSTSEARCH_CODESIGN_COMMAND
 
 if (-not $BinaryPath) {
   Fail "BinaryPath is required"
@@ -71,72 +93,156 @@ function Find-SignTool {
   return $null
 }
 
-$hasPfx = $false
-$resolvedPfxPath = $null
-if ($pfxPath -and $pfxPath.Trim()) {
-  $resolvedPfxPath = if ([System.IO.Path]::IsPathRooted($pfxPath)) { $pfxPath } else { (Resolve-Path -LiteralPath $pfxPath).Path }
-  if (-not (Test-Path -LiteralPath $resolvedPfxPath)) {
-    Fail "JUSTSEARCH_CODESIGN_PFX_PATH points to a missing file: $resolvedPfxPath"
-  }
-  $hasPfx = $true
-} elseif ($pfxB64 -and $pfxB64.Trim()) {
-  $hasPfx = $true
-}
-
-if (-not $hasPfx -or -not $pfxPassword -or -not $timestampUrl) {
-  $msg = "Signing skipped for '$resolvedBinary' (missing JUSTSEARCH_CODESIGN_PFX_PATH or JUSTSEARCH_CODESIGN_PFX_B64 / JUSTSEARCH_CODESIGN_PFX_PASSWORD / JUSTSEARCH_CODESIGN_TIMESTAMP_URL)."
+# Not-configured => skip (exit 0) unless JUSTSEARCH_REQUIRE_SIGNING, in which case fail-closed.
+function Skip-Or-Fail([string]$SkipMessage) {
   if ($requireSigning) {
-    Fail ("Signing is required but inputs are missing. " + $msg)
+    Fail ("Signing is required but inputs are missing. " + $SkipMessage)
   }
-  Info $msg
+  Info $SkipMessage
   exit 0
 }
 
-# Locate signtool (Windows SDK). Prefer PATH but also search Windows Kits default locations.
-$signtoolPath = Find-SignTool
-if (-not $signtoolPath) {
-  $msg = "signtool.exe not found on PATH. Install the Windows SDK (SignTool) or add it to PATH."
-  if ($requireSigning) {
-    Fail $msg
+# Post-sign verification. Default is today's strict `signtool verify /pa` hard-check. With
+# JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED a present-and-hash-valid but chain-untrusted signature
+# is accepted (SignerCertificate present AND status != NotSigned); NotSigned still fails.
+function Assert-Signed([string]$Path, [string]$SigntoolPath) {
+  if ($allowUntrusted) {
+    $sig = Get-AuthenticodeSignature -FilePath $Path
+    if ($sig.Status -eq "Valid") {
+      Info "Signed OK: $Path"
+      return
+    }
+    if ($sig.SignerCertificate -and ([string]$sig.Status -ne "NotSigned")) {
+      Info ("Signed (chain untrusted, status=" + $sig.Status + ") - accepted under JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED: " + $Path)
+      return
+    }
+    Fail ("Authenticode signature missing after signing (status=" + $sig.Status + ") for " + $Path)
   }
-  Info "Signing skipped for '$resolvedBinary' ($msg)"
-  exit 0
+
+  if (-not $SigntoolPath) {
+    Fail "signtool.exe not found; cannot verify signature for $Path"
+  }
+  & $SigntoolPath verify /pa /v $Path | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Fail "signtool verify failed (exit=$LASTEXITCODE) for $Path"
+  }
+  Info "Signed OK: $Path"
 }
 
-$tmpPfx = Join-Path -Path $env:TEMP -ChildPath ("justsearch-codesign-" + [guid]::NewGuid().ToString("N") + ".pfx")
-try {
-  $pfxToUse = $tmpPfx
-  if ($resolvedPfxPath) {
-    $pfxToUse = $resolvedPfxPath
-  } else {
-    [byte[]]$bytes = [Convert]::FromBase64String($pfxB64)
-    [System.IO.File]::WriteAllBytes($tmpPfx, $bytes)
+switch ($mode) {
+  "pfx" {
+    $hasPfx = $false
+    $resolvedPfxPath = $null
+    if ($pfxPath -and $pfxPath.Trim()) {
+      $resolvedPfxPath = if ([System.IO.Path]::IsPathRooted($pfxPath)) { $pfxPath } else { (Resolve-Path -LiteralPath $pfxPath).Path }
+      if (-not (Test-Path -LiteralPath $resolvedPfxPath)) {
+        Fail "JUSTSEARCH_CODESIGN_PFX_PATH points to a missing file: $resolvedPfxPath"
+      }
+      $hasPfx = $true
+    } elseif ($pfxB64 -and $pfxB64.Trim()) {
+      $hasPfx = $true
+    }
+
+    if (-not $hasPfx -or -not $pfxPassword -or -not $timestampUrl) {
+      Skip-Or-Fail "Signing skipped for '$resolvedBinary' (missing JUSTSEARCH_CODESIGN_PFX_PATH or JUSTSEARCH_CODESIGN_PFX_B64 / JUSTSEARCH_CODESIGN_PFX_PASSWORD / JUSTSEARCH_CODESIGN_TIMESTAMP_URL)."
+    }
+
+    # Locate signtool (Windows SDK). Prefer PATH but also search Windows Kits default locations.
+    $signtoolPath = Find-SignTool
+    if (-not $signtoolPath) {
+      Skip-Or-Fail "Signing skipped for '$resolvedBinary' (signtool.exe not found on PATH. Install the Windows SDK (SignTool) or add it to PATH.)"
+    }
+
+    $tmpPfx = Join-Path -Path $env:TEMP -ChildPath ("justsearch-codesign-" + [guid]::NewGuid().ToString("N") + ".pfx")
+    try {
+      $pfxToUse = $tmpPfx
+      if ($resolvedPfxPath) {
+        $pfxToUse = $resolvedPfxPath
+      } else {
+        [byte[]]$bytes = [Convert]::FromBase64String($pfxB64)
+        [System.IO.File]::WriteAllBytes($tmpPfx, $bytes)
+      }
+
+      Info "Signing (pfx): $resolvedBinary"
+      & $signtoolPath sign `
+        /fd SHA256 `
+        /td SHA256 `
+        /tr $timestampUrl `
+        /f $pfxToUse `
+        /p $pfxPassword `
+        $resolvedBinary | Out-Null
+
+      if ($LASTEXITCODE -ne 0) {
+        Fail "signtool sign failed (exit=$LASTEXITCODE) for $resolvedBinary"
+      }
+
+      Assert-Signed $resolvedBinary $signtoolPath
+    } finally {
+      # Only delete temp PFX when we created it from base64.
+      if (-not $resolvedPfxPath) {
+        try { Remove-Item -LiteralPath $tmpPfx -Force -ErrorAction SilentlyContinue } catch { }
+      }
+    }
   }
 
-  Info "Signing: $resolvedBinary"
-  & $signtoolPath sign `
-    /fd SHA256 `
-    /td SHA256 `
-    /tr $timestampUrl `
-    /f $pfxToUse `
-    /p $pfxPassword `
-    $resolvedBinary | Out-Null
+  "store" {
+    if (-not $thumbprint -or -not $thumbprint.Trim()) {
+      Skip-Or-Fail "Signing skipped for '$resolvedBinary' (missing JUSTSEARCH_CODESIGN_THUMBPRINT for store mode)."
+    }
+    $thumb = $thumbprint.Trim()
 
-  if ($LASTEXITCODE -ne 0) {
-    Fail "signtool sign failed (exit=$LASTEXITCODE) for $resolvedBinary"
+    $signtoolPath = Find-SignTool
+    if (-not $signtoolPath) {
+      Skip-Or-Fail "Signing skipped for '$resolvedBinary' (signtool.exe not found on PATH. Install the Windows SDK (SignTool) or add it to PATH.)"
+    }
+
+    # /sha1 <thumbprint> /s <store> selects the store cert (CSP/HSM keys stay nonexportable).
+    # Timestamp is optional here; include /tr only when a URL is configured.
+    $signArgs = @("sign", "/sha1", $thumb, "/s", $certStore, "/fd", "SHA256")
+    if ($timestampUrl -and $timestampUrl.Trim()) {
+      $signArgs += @("/td", "SHA256", "/tr", $timestampUrl.Trim())
+    }
+    $signArgs += $resolvedBinary
+
+    Info ("Signing (store '" + $certStore + "', thumbprint " + $thumb + "): " + $resolvedBinary)
+    & $signtoolPath @signArgs | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      Fail "signtool sign failed (exit=$LASTEXITCODE) for $resolvedBinary"
+    }
+
+    Assert-Signed $resolvedBinary $signtoolPath
   }
 
-  & $signtoolPath verify /pa /v $resolvedBinary | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    Fail "signtool verify failed (exit=$LASTEXITCODE) for $resolvedBinary"
+  "command" {
+    if (-not $commandTemplate -or -not $commandTemplate.Trim()) {
+      Skip-Or-Fail "Signing skipped for '$resolvedBinary' (missing JUSTSEARCH_CODESIGN_COMMAND for command mode)."
+    }
+    if ($commandTemplate -notmatch '\{file\}') {
+      Fail "JUSTSEARCH_CODESIGN_COMMAND must contain a {file} placeholder."
+    }
+
+    $rendered = $commandTemplate.Replace("{file}", $resolvedBinary)
+    # Run the rendered command line via a temp .cmd to avoid PowerShell/cmd quoting hazards with
+    # paths that contain spaces. `& $batch` propagates the vendor CLI's exit code to $LASTEXITCODE.
+    $batch = Join-Path -Path $env:TEMP -ChildPath ("justsearch-codesign-cmd-" + [guid]::NewGuid().ToString("N") + ".cmd")
+    try {
+      [System.IO.File]::WriteAllText($batch, ("@echo off`r`n" + $rendered + "`r`n"), [System.Text.Encoding]::ASCII)
+      Info ("Signing (command): " + $rendered)
+      & $batch
+      $cmdExit = $LASTEXITCODE
+    } finally {
+      try { Remove-Item -LiteralPath $batch -Force -ErrorAction SilentlyContinue } catch { }
+    }
+    if ($cmdExit -ne 0) {
+      Fail "Signing command failed (exit=$cmdExit) for $resolvedBinary"
+    }
+
+    # A vendor CLI may or may not ship signtool; locate it for the strict verify path (the
+    # ALLOW_UNTRUSTED path uses Get-AuthenticodeSignature and needs no signtool).
+    Assert-Signed $resolvedBinary (Find-SignTool)
   }
 
-  Info "Signed OK: $resolvedBinary"
-} finally {
-  # Only delete temp PFX when we created it from base64.
-  if (-not $resolvedPfxPath) {
-    try { Remove-Item -LiteralPath $tmpPfx -Force -ErrorAction SilentlyContinue } catch { }
+  default {
+    Fail "Unknown JUSTSEARCH_CODESIGN_MODE '$mode' (expected pfx | store | command)."
   }
 }
-
-
