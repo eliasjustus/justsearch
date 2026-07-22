@@ -1637,3 +1637,143 @@ def test_complete_certification_document_rejects_failed_indistinguishability():
         doc = certificate()
         mutate(doc["datasets"]["1000"]["verbose"]["indistinguishability"])
         assert corpus_certify._complete_certification_document(doc) is False
+
+
+# ---------------------------------------------------------------------------
+# field_selectivity — the per-FIELD gold-vs-native presence leak check (tempdoc
+# 776 §I). Catches the tempdoc 774 §J.7 title leak: a field populated only on
+# gold, invisible to every content-level check the other gates run.
+# ---------------------------------------------------------------------------
+
+def _title_leak_cell_docs(n_gold: int = 8, n_native: int = 48) -> tuple[list[dict], list[dict]]:
+    """The §J.7 shape reproduced by `corpus_inject.assemble`: gold docs carry a populated
+    `title`, native distractors carry `title: ""`. IDs are drawn from ONE integer population
+    (as `mint_native_shaped_ids` produces), so `title` PRESENCE is the only gold-vs-native
+    signal — the id and text channels are clean."""
+    all_ids = [str(1000731 + index * 7919) for index in range(n_gold + n_native)]
+    gold_ids = [all_ids[index] for index in range(3, len(all_ids), 7)][:n_gold]
+    gold_set = set(gold_ids)
+    gold = [
+        {"_id": i, "title": f"The distinct descriptor {i}", "text": f"body {i} unique words here " * 8}
+        for i in gold_ids
+    ]
+    native = [
+        {"_id": i, "title": "", "text": f"other body {i} distinct tokens here " * 8}
+        for i in all_ids if i not in gold_set
+    ]
+    return gold, native
+
+
+def test_field_selectivity_report_flags_field_present_only_on_gold():
+    gold, native = _title_leak_cell_docs()
+    queries = [{"query": "q", "evidence_ids": [d["_id"] for d in gold]}]
+
+    report = corpus_certify.field_selectivity_report(gold + native, queries)
+    assert report["passed"] is False
+    assert report["worst_field"] == "title"
+    assert report["method"] == "field-presence-null-calibrated-separability"
+    title = report["per_field"]["title"]
+    assert title["gold_population_rate"] == 1.0
+    assert title["native_population_rate"] == 0.0
+    assert title["separability"] == 1.0
+    assert title["native_base_rate"] == 0.0
+    assert title["passed"] is False
+    # `text` is present on every doc, so its presence says nothing — it must NOT be flagged.
+    assert report["per_field"]["text"]["passed"] is True
+    # `_id` is delegated to id_shape_report and never appears here.
+    assert "_id" not in report["per_field"]
+
+
+def test_field_selectivity_report_passes_when_every_field_present_on_both():
+    gold, native = _title_leak_cell_docs()
+    for doc in native:
+        doc["title"] = f"native title {doc['_id']}"  # now populated on natives too
+    queries = [{"query": "q", "evidence_ids": [d["_id"] for d in gold]}]
+
+    report = corpus_certify.field_selectivity_report(gold + native, queries)
+    assert report["passed"] is True
+    assert report["per_field"]["title"]["passed"] is True
+    assert report["per_field"]["text"]["passed"] is True
+
+
+def test_field_selectivity_report_absent_measurement_is_not_a_pass():
+    # No gold docs -> nothing to compare. A check that could not run must never certify clean.
+    docs = [{"_id": "1000731", "title": "t", "text": "body"}]
+    report = corpus_certify.field_selectivity_report(docs, [])
+    assert report["passed"] is None
+    assert report["per_field"] == {}
+
+
+def test_certify_computes_field_selectivity_end_to_end(tmp_path):
+    """Drive the real `certify_materialized_family` and assert the per-cell field-selectivity
+    verdict lands in the report — the wiring half the repo requires alongside the pure-function
+    tests, mirroring `test_certify_computes_indistinguishability_end_to_end`."""
+    datasets_dir = tmp_path / "datasets"
+    leak_gold, leak_native = _title_leak_cell_docs()
+    clean_gold, clean_native = _title_leak_cell_docs()
+    for doc in clean_native:
+        doc["title"] = f"native title {doc['_id']}"  # clean cells: title populated everywhere
+    names, commitments = {}, {}
+    for size in ("1000", "10000"):
+        names[size], commitments[size] = {}, {}
+        for variant in ("verbose", "short-natural"):
+            name = f"cell-{size}-{variant}"
+            # verbose cells carry the title-presence leak; short-natural cells are clean.
+            gold, native = (
+                (leak_gold, leak_native) if variant == "verbose"
+                else (clean_gold, clean_native)
+            )
+            _materialize_cell(datasets_dir / "mixed" / name, gold, native, variant)
+            names[size][variant] = name
+            commitments[size][variant] = str(tmp_path / "commit" / name)
+
+    report = corpus_certify.certify_materialized_family(
+        datasets_dir, member="fixture", dataset_names=names,
+        commitment_dirs=commitments)
+
+    for size in ("1000", "10000"):
+        for variant in ("verbose", "short-natural"):
+            cell = report["datasets"][size][variant]
+            assert "field_selectivity" in cell, (
+                "field_selectivity was never projected into the cell by the real certify path")
+            detail = cell["field_selectivity"]
+            assert set(detail) == set(corpus_certify._FIELD_SELECTIVITY_KEYS)
+            expected = variant == "short-natural"
+            assert detail["passed"] is expected
+            assert cell["checks"]["field_selectivity"] is expected, (
+                "the detail block and the boolean in `checks` disagree")
+            if not expected:
+                assert detail["worst_field"] == "title"
+
+    assert "field_selectivity" in corpus_certify._CELL_CHECKS
+    assert set(report["datasets"]["1000"]["verbose"]["checks"]) == corpus_certify._CELL_CHECKS
+
+
+def test_complete_certification_document_rejects_failed_field_selectivity():
+    """The boundary validator must refuse a certificate whose field-selectivity verdict is
+    false or whose observation sits above its own null — otherwise a hand-edited boolean would
+    carry a title-leaking corpus through certification."""
+    from tests.test_corpus_inject import _complete_certificate, _gate_evidence
+
+    def certificate() -> dict:
+        gates = {
+            gate: _gate_evidence(
+                gate, member="fixture", dataset="mixed/fixture",
+                signature="c" * 64, query_gold_sha256="b" * 64, query_count=20)
+            for gate in corpus_certify.SCIENTIFIC_GATES
+        }
+        return _complete_certificate("fixture", "mixed/fixture", "c" * 64, gates)
+
+    assert corpus_certify._complete_certification_document(certificate()) is True
+
+    for mutate in (
+        lambda d: d.update(passed=False),
+        lambda d: d.update(method="hand-waved"),
+        # observation above its own null, with `passed` still asserted True
+        lambda d: d.update(max_field_separability=0.9),
+        lambda d: d.update(n_fields_compared=0),
+        lambda d: d.pop("worst_field"),
+    ):
+        doc = certificate()
+        mutate(doc["datasets"]["1000"]["verbose"]["field_selectivity"])
+        assert corpus_certify._complete_certification_document(doc) is False
