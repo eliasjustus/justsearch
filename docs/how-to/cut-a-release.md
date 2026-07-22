@@ -219,6 +219,25 @@ configured). `scripts/ci/sign-windows.ps1` selects a credential mode via `JUSTSE
 **One-time setup:** set `JUSTSEARCH_CODESIGN_MODE` and the mode's credential secret(s) in the repo
 secrets. Nothing else — signing then engages automatically on the next dispatch.
 
+**eSigner (SSL.com) via `command` mode — validated template.** Sandbox-validated end-to-end
+(2026-07-22, CodeSignTool 1.3.3, demo credentials; tempdoc 760): signs in place, non-interactive,
+distinct nonzero exit codes on failure (fail-closed semantics hold through the `.cmd` wrapper).
+`build-installer.yml` auto-installs CodeSignTool into `%RUNNER_TEMP%\CodeSignTool` whenever the
+command template references `CodeSignTool` (the tool ships its own JRE and production endpoint
+config — no properties edit). Set `JUSTSEARCH_CODESIGN_COMMAND` to:
+
+```
+%RUNNER_TEMP%\CodeSignTool\CodeSignTool.bat sign -username=<eSigner login> -password="<password>" -totp_secret="<TOTP secret captured at 2FA enrollment>" -credential_id=<credential id> -input_file_path="{file}" -override="true"
+```
+
+Notes from the validation: each signature takes ~9-12 s end-to-end (an unmirrored ~99-file build
+adds ~15-20 min of signing; post-mirrors ~8 files ≈ 1.5 min); check the eSigner **malware-scan /
+Malware Blocker** setting on the credential before the first dispatch (if enabled it can block
+signing of flagged files); `get_credential_ids -username=... -password=...` prints the credential
+id if it wasn't captured from the dashboard; the eSigner **30-day unlimited-signing trial window**
+is the right time to run the per-pin-bump signed-mirror procedure below (the ~93 one-time mirror
+signatures are then free).
+
 > **`JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED` is REHEARSAL-ONLY and must NEVER be set for a production
 > release.** It relaxes the post-sign check from `signtool verify /pa` to a hash-valid-Authenticode
 > presence check, so a chain-untrusted (self-signed) signature is accepted — exactly what a real
