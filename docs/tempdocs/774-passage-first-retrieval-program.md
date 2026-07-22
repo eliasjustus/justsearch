@@ -730,6 +730,39 @@ rates). Convention: one default-off flag per Stage-1 mechanism (D-004
 template), rollback = flag off; enron + scifact A/B before any default flip;
 scorecard/baseline re-pins only at stage boundaries.
 
+### J.7 H.4 contextualization A/B result (2026-07-22, offline; artifacts `tmp/analysis-624/774/probe/*_{B,C}_*.json`, `h4_ab.py`)
+
+Two pre-registered variants over the same probe harness (chunk-embed input =
+prefix + chunk; chunking/offsets untouched; Gate-0 CLERC-200 as regression
+control):
+
+- **Variant B (title prepend) — INVALID, leak.** Post-hoc validity check
+  found the 767 strata's `title` field is a **gold-only feature**: 100/10,000
+  docs titled, ALL 50 golds among them, and gold titles are the structure
+  descriptors themselves ("The greenhouse in the ferry landing") — the
+  queries' subject vocabulary. B was prepending the answer key. Its
+  camouflaged gains (1k R@10 0.20→0.50) are discarded. The leak itself is
+  reported to the 776/767 lane (observation logged; #279 class — invisible
+  to the engine, whose lexical 0.00 proves titles never reached the index,
+  but poisonous to any offline probe or baseline-arm reading corpus.jsonl).
+- **Variant C (uniform 150-char doc-lead prepend) — the honest signal:
+  DIRECTIONAL on BOTH camouflaged cells, small real-task cost.**
+  legal-1k: R@100 0.50→0.78, median gold-parent rank 90.5→23 (rule arm
+  "median ≤ half" met). legal-10k: R@100 0.20→**0.42** (≥2× arm met),
+  median 887.5→**188.5**, R@10 0.04→0.14. Gate-0 control: R@10 0.845→0.805
+  (−0.04, just outside the ±0.03 tolerance), nDCG −0.018 → **per the
+  pre-registered rule C FAILS overall** on the control regression.
+- **Reading (mechanism confirmed, recipe not shippable as-is):** the J.5
+  "representation floor" is substantially **context starvation, not an
+  encoder ceiling** — a uniform, leak-free 150-char document-context prefix
+  recovers 2×+ of the unreachable band at 10k. This vindicates the §H.4/J.5
+  inversion mechanism (the F-031 whole-doc pass wins BECAUSE of context) and
+  licenses a follow-up engine-side lane to find a contextualization recipe
+  that keeps the camouflaged gains without the small real-task cost
+  (candidates: heading/title-for-real-files prepend, shorter/structured
+  context, late-chunking-style conditioning, 777's resident-LLM tier). Not
+  shipped in this PR; measurement-first per D-004.
+
 ### J.4 (D5) Currency note
 
 `origin/main` moved past this worktree's base: #279 finds **all four
