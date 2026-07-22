@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+# Default-locale manifest — see packaging/winget/README.md for the submission runbook.
+# This is a committed SKELETON, not a submission: the fields below are placeholders
+# until a GA release exists (tempdoc 760 Phase 2 item 2).
+PackageIdentifier: eliasjustus.JustSearch
+# TODO-GA: must match the version manifest's PackageVersion exactly.
+PackageVersion: TODO-GA-VERSION
+PackageLocale: en-US
+# TODO-OWNER: publisher legal name -- an owner decision (see packaging/winget/README.md),
+# not release-timing dependent, so it is not gated on the GA cut the other TODOs are.
+Publisher: TODO-OWNER-PUBLISHER-NAME
+# TODO-GA: publisher homepage URL. No public website exists yet (external dependency,
+# tempdoc 760 Phase 1 finding) -- the GitHub repo is the closest thing until one does.
+PublisherUrl: TODO-GA-PUBLISHER-URL
+PackageName: JustSearch
+PackageUrl: https://github.com/eliasjustus/justsearch
+License: Apache-2.0
+LicenseUrl: https://github.com/eliasjustus/justsearch/blob/main/LICENSE
+ShortDescription: A local-first hybrid search engine and cited on-device AI assistant for your files.
+Description: >-
+  JustSearch indexes local documents (PDF, email, Office, and most common document formats) and
+  answers questions over them with cited passages, without anything leaving your machine. It
+  combines BM25 keyword search, dense-vector embeddings, and SPLADE learned-sparse retrieval with
+  a cross-encoder reranker, and exposes that retrieval over the Model Context Protocol (MCP) so
+  any AI agent -- local or cloud -- can use it as a private retrieval backend.
+Moniker: justsearch
+Tags:
+  - search
+  - local-first
+  - rag
+  - mcp
+  - offline
+  - retrieval
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

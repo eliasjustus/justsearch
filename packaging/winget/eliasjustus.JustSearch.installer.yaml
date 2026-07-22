@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+# Installer manifest — see packaging/winget/README.md for the submission runbook.
+# This is a committed SKELETON, not a submission: the fields below are placeholders
+# until a GA release exists (tempdoc 760 Phase 2 item 2).
+PackageIdentifier: eliasjustus.JustSearch
+# TODO-GA: must match the version manifest's PackageVersion exactly.
+PackageVersion: TODO-GA-VERSION
+InstallerLocale: en-US
+Platform:
+  - Windows.Desktop
+InstallerType: nullsoft
+# tauri.conf.json installMode: currentUser (per-user, no admin) -> winget Scope: user.
+Scope: user
+InstallModes:
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+# TODO-GA: the ISO date the GA tag was published (from the GitHub Release, not the build date).
+ReleaseDate: TODO-GA-RELEASE-DATE
+Installers:
+  - Architecture: x64
+    # Pattern-form InstallerUrl (760 Findings, cut-a-release.md:119): a stable, versioned
+    # asset URL winget can pin against. <VERSION> is the same value as PackageVersion above.
+    InstallerUrl: "https://github.com/eliasjustus/justsearch/releases/download/v<VERSION>/JustSearch_<VERSION>_x64-setup.exe"
+    # TODO-GA: SHA-256 of the exact release asset, from that release's SHA256SUMS
+    # (scripts/ci/build-release-assets.ps1). SHA256SUMS is lowercase; winget-pkgs convention
+    # is uppercase -- reformat when filling this in.
+    InstallerSha256: TODO-GA-INSTALLER-SHA256
+ManifestType: installer
+ManifestVersion: 1.6.0

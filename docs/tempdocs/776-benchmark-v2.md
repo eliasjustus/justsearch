@@ -1,7 +1,7 @@
 ---
 title: "benchmark v2: multi-schema questions, baseline-arm characterization on the camouflaged corpora, the golden-corpora leak audit, and the register provenance sweep — everything the eval-design owner owes before the hero numbers go public"
 type: tempdocs
-status: "items 1 (offline phase) + 2 + 3 + 4 DONE (2026-07-22; §D audit/sweep, §E schemas, §F baseline probe — uplift does NOT compress, baseline near-floor on all hero strata). Remaining: item 1 scientific gates in the combined stack window (§E.4), scheduled with the next stack occupancy."
+status: "items 2 + 3 + 4 DONE; item 1 (multi-schema) offline DONE + stack-window PARTIAL (2026-07-22, §G): real-host legal demonstration cell built + closed_book gate PASSES per schema (0.0 bridge/single_fact/aggregation, paid <$1) — multi-schema cells CAN clear the founder-gated closed-book science. retrieval_calibration/union_recall measured but UNDER-POWERED (chunk-hybrid enrichment ~3% at measurement — lower bound only); single_fact schema_format_leak fails at n=15 (small-gold-count artifact); enron member deferred (mechanical repeat, enrichment-time bound). Evidence-envelope certification wrappers blocked on main (4-cell matrix + deferred publish-path validator) — product is measured evidence + per-schema thresholds, as scoped. Item B (774 §J.2 CE-gate) RESOLVED §G.1: reading 3 true (avg never populated as the gate reads it — head cache primed only by /api/knowledge/status, which eval never calls); readings 1+2 refuted by live evidence."
 created: 2026-07-22
 author: agent (Fable orchestration), chartered from the 762→771 measurement program's inventory (founder-directed 2026-07-22)
 category: eval-design / agent-utility
@@ -350,3 +350,128 @@ so ~$0.3 each). **Under the $15 hard stop.**
 `per-stratum-summary.json`, `per-qid-outcomes.json`,
 `records/{enron-1k, enron-10k, legal-1k-RECONSTRUCTED.json}`,
 `logs/{enron-1k, enron-10k}` (Inspect eval logs).
+
+## §G. Stack window results (2026-07-22)
+
+Combined paid/GPU window (port 33221, sole stack user). Two items: (A) the §E.4
+deferred multi-schema scientific gates on a **real-host demonstration cell**, and (B)
+the CE-gate live probe (774 §J.2). Artifacts:
+`F:\justsearch-public\tmp\analysis-624\776\stack-window\` — `ce-gate-probe/` (4 trace
+JSONs + probe script), `legal-{closed-book-per-schema,retrieval-per-schema,structural-cert,derived-thresholds}.json`,
+`{gen_gold,closed_book_per_schema,retrieval_per_schema,structural_cert,derive_thresholds}.py`,
+`recipe.json` + `commitment.v1.json` (cell provenance).
+
+### G.1 Item B — CE-gate verdict (SUPERSEDES 774 §J.2)
+
+**Verdict: reading 3 is TRUE — the average is never populated *as the gate reads it* under
+eval.** Readings 1 (gate never fires as coded) and 2 (leg tracking mislabels) are **REFUTED**
+by live evidence. The `DOCS_TOO_LONG` gate logic (`KnowledgeSearchEngine.isRerankerEligible`,
+`:173-174`) is correct and DOES fire when fed a populated over-threshold value; the defect is a
+**dual disconnect between the average and the gate's input**:
+
+1. **Head-cache-refresh coupling (primary, explains the register rows).** The gate reads
+   `statusCache.avgContentLengthChars()` (`KnowledgeSearchEngine.java:860,868`), i.e.
+   `WorkerStatusCache.cachedAvgContentLengthChars`, which is populated **only** inside
+   `WorkerStatusCache.status()` (`WorkerStatusCache.java:153`) — the head `/api/knowledge/status`
+   projection. Verified: **jseval polls ONLY `/api/status` (worker projection), never
+   `/api/knowledge/status`** (`readiness.py:511`, `run.py:55`; zero `/api/knowledge/status` calls
+   anywhere in jseval). So under eval the head cache stays at its initial **0**, the gate reads
+   0 ≤ 16000, and the cross-encoder runs on legal-clerc-200's 35 508-char docs → the register's
+   "cross_encoder in observed legs."
+2. **Worker session-lifetime average (secondary).** The worker's `OperationalMetrics` running
+   average (`recordContentLength` ← `JobBatchWriter.java:147`) is session-scoped — only populated
+   by in-session indexing. A worker booting over an existing index (no re-ingest) has avg = 0
+   regardless of the head cache.
+
+**Live proof** (legal-clerc-200, mean content **34 511 chars** measured in-session > 16 000
+default `max_avg_doc_length_chars`; reranker model present, `models\onnx\reranker`,
+`rerankerOrtCuda.available:true`):
+
+| phase | worker avg | head cache primed? | `cross-encoder` stage |
+|---|---|---|---|
+| 1 fresh ingest, no prior `/api/knowledge/status` | 34 511 | no (0) | **executed** (ms 420) |
+| 1 fresh ingest, after one `/api/knowledge/status` | 34 511 | yes (34 511) | **skipped: DOCS_TOO_LONG** |
+| 2 reboot over existing index (no re-ingest), `/api/knowledge/status` primed | **0** | yes (0) | **executed** (ms 294) |
+
+The single-variable flip (priming the head cache) toggles the gate; the reboot shows the worker
+average is 0 without re-ingest. **Fix routes to (not done here, per task):** source the average
+from the worker telemetry on the search/index path (or refresh on index-commit), not lazily via
+the `/api/knowledge/status` head projection; and/or persist it as an index property so a
+boot-over-existing-index retains it. Logged to the session observation shard (supersedes 774 J.2).
+
+### G.2 Item A — multi-schema scientific gates on a real-host demonstration cell
+
+**Scope (orchestrator-set):** one REAL-HOST multi-schema demonstration cell per member, NOT a
+production re-certification. **Cell built:** `datasets/mixed/legal-clerc-1k-mix` — 40 queries
+(10 bridge/`1_hop` + 15 `single_fact` + 15 `aggregation`; gold_kinds single_value 25 / set 5 /
+count 5 / extremum 5) injected via `corpus-inject-real` over **1000 real CLERC hosts** (14k
+`legal-clerc-hosts-14k` pool, legal entity-bank v2), 95 gold on real host ids + 905 real
+distractors. This advances §E.5's synthetic-host deviation to a genuine real-host cell.
+
+**Per-schema gate table (legal member):**
+
+| gate | 1_hop (n=10) | single_fact (n=15) | aggregation (n=15) | verdict |
+|---|---|---|---|---|
+| **closed_book** (paid, haiku slot-guess) | 0.000 | 0.000 | 0.000 | **PASS per schema** — un-guessable from memory for every gold_kind |
+| **structural: schema_dispersion** | 1.0 | 1.0 | 1.0 | PASS |
+| **structural: schema_format_leak** | PASS (0.15≤0.15) | **FAIL (0.333 > 0.20 native)** | PASS (0.10≤0.217) | single_fact caveat (small-n) |
+| **retrieval_calibration** nDCG@10 mean | 0.0 | 0.0 | 0.0 | UNDER-POWERED (see caveat) |
+| **retrieval** R@100 mean (reachability, lower bound) | 0.200 | 0.133 | 0.112 | lower bound only |
+| **union_recall** (aggregation R@100 mean) | — | — | 0.112 | UNDER-POWERED |
+| **leak_floor** (structural id-shape leak) | 0 | 0 | 0 | PASS (indistinguishability green on real CLERC ids) |
+
+Other structural gates (`descriptor_collision`, `indistinguishability`, `multi_schema`) PASS.
+
+**Derived per-schema thresholds** (measured values are the primary deliverable; exact 707:760 +
+Q.3 codification into `707-corpus-certification-policy.provenance.v1.json` is the founder-ratified
+future-policy step, per §E.4). Proposed shapes: `closed_book {maximum_accuracy: 0.15}` (measured
+0.0 clears with full margin); `retrieval_calibration {ndcg_band:[0.70·mean, 0.95], shortcut_leak_rate_max:0.15}`;
+`union_recall {minimum: mean_R@100 − 0.15}`; `leak_floor {maximum:0.15}`. Full values in
+`legal-derived-thresholds.json`.
+
+**Demonstration-cell verdict:** the **closed-book gate PASSES per schema (0.0 across bridge /
+single_fact / aggregation)** — the founder-gated paid science this window existed to produce: the
+new aggregation set/count/extremum answers and single_fact answers are as un-guessable as the
+bridge value. The evidence-envelope *certification wrappers* (`corpus-scientific-evidence-build`
+→ `corpus-certify-member`) were NOT run to a `fully_certified` document because both are blocked
+on current `main` (recorded, code wins per task): (a) `corpus-certify-member` hardwires the full
+4-cell production matrix (1k/10k × verbose/short-natural) + 16 evidence files — a single demo cell
+cannot satisfy it; (b) the publish-path validator (`_complete_certification_document`/`_CELL_CHECKS`)
+is explicitly deferred for multi-schema cells (§E.4). The product is therefore measured evidence +
+per-schema thresholds, exactly as scoped.
+
+**Honest partials / caveats (interrogate-results):**
+- **retrieval_calibration + union_recall are UNDER-POWERED, not failing.** Chunk-embedding
+  enrichment was only ~3% complete at measurement (11 195 chunks; ~90% doc-level embeddings) —
+  chunk-hybrid, the decisive leg for 35 k-char legal docs, was unavailable, and whole-doc dense is
+  diluted on giant docs, so gold ranked deep (R@10 = 0, gold at ranks 11–100). Full chunk
+  enrichment (~30–45 min at the observed GPU-shared rate) is required for the true reachability
+  ceiling (§F reports legal-1k single-schema ceiling 0.50). **CE-on ≡ CE-off** (identical R@100),
+  so the CE is not the cause — gold is simply outside the CE window; the low numbers are a
+  retrieval-enrichment artifact, not a corpus defect.
+- **single_fact `schema_format_leak` FAILS at n=15** (max_gold_coverage 0.333 > native 0.20): a
+  small-gold-count artifact — a shared carrier-phrasing n-gram lands in 5/15 gold vs the real
+  CLERC host's 0.20 base rate. The 707 shipping cells use 100 gold docs, which dilutes this; a
+  shippable single_fact cell needs a wider carrier-phrasing pool or a larger gold count. Not a
+  pipeline defect (the offline synthetic-host demo passed because its native base rate differs).
+- **enron member NOT built.** The legal member demonstrates the pipeline + the paid science end to
+  end; the enron raw-host fetch + build + full-enrichment retrieval is a mechanical repeat (warm
+  `enron-raw` cache) bounded only by ~30–45 min of enrichment wall-clock, deferred out of window time.
+
+### G.3 Spend
+
+closed_book gate (paid): 40 haiku slot-guesses (budget-capped $0.10/call, `claude -p`); actual
+spend well under **$1** (haiku answers are tiny). **Under the $10 item-A hard stop.** No other
+paid calls. Item B and all retrieval/structural gates are $0 (backend + offline).
+
+### G.4 Deviations
+
+- §E.4 command #3 (`corpus-certify-member`) conflicts with single-cell demonstration scope
+  (requires the 4-cell production matrix + 16 evidence files) — adapted to per-cell measurement +
+  `corpus-scientific-evidence-build`-shape evidence; recorded (code wins).
+- Real host used (not §E.5's synthetic) — the CLERC fetch cache was warm (`legal-clerc-hosts-14k`
+  materialized, 14k docs), so the real-host mix cell was buildable offline.
+- Retrieval gates measured directly against the running stack (per-query search → per-schema
+  nDCG/recall via `ir_measures` + qrels) rather than via a full `jseval run` staged_recall_accounting
+  envelope, for per-schema control; the exact `staged_recall_accounting` leak_rate envelope is the
+  certification-wrapper step (blocked as above).
