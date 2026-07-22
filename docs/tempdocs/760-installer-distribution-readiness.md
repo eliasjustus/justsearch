@@ -260,3 +260,37 @@ harness once and attaching its result JSON; optionally seeding a self-signed
 `JUSTSEARCH_CODESIGN_PFX_B64` repo secret to rehearse the full CI signing path end-to-end in a
 dispatch before a real cert exists (the local rehearsal covers the signing script itself; a CI
 dispatch with test secrets would additionally prove the workflow plumbing under Actions).
+
+## §CI signing rehearsal campaign (2026-07-22, later same day) — 6 dispatches, 5 root causes, 0 signings spent, GREEN
+
+Owner asked the load-bearing question directly: *"how confident are you that we wouldn't spend
+multiple turns and signing usage on actually getting signing to work correctly?"* Answer then:
+4/10 — so the full CI rehearsal was executed BEFORE any purchase, with a 30-day self-signed cert
+in the repo secrets and `JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED=1` as a repo variable. Six
+`build-installer.yml` dispatches later, the pipeline is green end-to-end (run `29914075529`).
+Every failure was root-caused by local reproduction (never guess-pushed), fixed, regression-run
+through the 6-case local rehearsal, and would otherwise have burned metered quota and opaque
+debugging hours on a paid plan:
+
+| # | Run | Root cause | Fix | Class |
+|---|---|---|---|---|
+| 1 | `29909495558` | **Array-splat flag binding**: `$extra += '-Sign'` binds positionally — `-Sign` landed in `-SetupExePath`; build ran `--no-sign` then crashed resolving a file named `-Sign`. Bonus: the pre-existing `-VerifyReleaseVersion` has the same latent bug, never exercised (no tag dispatch since it was added) — it would have broken the next real release cut. | Hashtable splatting for both flags; binding probe-verified locally against a matching param signature. | my code + latent pre-existing |
+| 2 | `29910543640` | **Trailing-newline secrets**: values piped into `gh secret set` from files carry CRLF; signtool fails "The specified PFX password is not correct" — with the child's output swallowed by the bundler. | `Strip-TrailingNewlines` on password/URL/thumbprint/command/pfx-path (never legitimate there); secrets re-set clean via `--body`; repro'd locally with the exact dirty values (fails before, signs after). | operator-error class, now structural |
+| 3 | `29911439832` | **Terminating stderr**: PS 5.1 + `$ErrorActionPreference=Stop` + the bundler's PIPED stderr ⇒ a native process's first stderr line is a terminating `NativeCommandError` BEFORE the exit-code check — script dies mid-call, real error lost. Actual trigger: transient timestamp-server failure on the first file. | `Invoke-Native` wrapper at all 4 native call sites (EAP Continue, output captured + tee-logged, args never logged — passwords travel in them) + `Invoke-NativeWithRetry` (3 attempts/3s) on the sign step. Repro: unreachable `/tr` under piped stderr — silent death before, 3 logged attempts + clean FAIL with verbatim signtool error after. | environment (PS 5.1 semantics) |
+| 4 | `29912444815` | **Silent post-sign death**: signtool exit=0, then nothing — died inside `Get-AuthenticodeSignature`. | Diagnosability layer: entry breadcrumbs, defensive 3-attempt signature read, and a script-level `trap` that tees ANY escaping terminating error with position info. (This run's fix is what made #5 diagnosable in one shot.) | diagnosability |
+| 5 | `29913294778` | **PowerShell edition poisoning** (trap caught it verbatim): CI steps run under pwsh 7, whose exported `PSModulePath` points at Core-edition modules; the spawned 5.1 signCommand child can't load its OWN `Microsoft.PowerShell.Security` ⇒ `Get-AuthenticodeSignature` unloadable. Signing worked; reading the signature back was impossible. Unreproducible locally (5.1 parents). | Both 5.1 scripts reset `PSModulePath` to Windows PowerShell defaults under Desktop edition; `verify-windows-signature.ps1` fixed preemptively (same spawn shape + cmdlet — it was the queued-up next failure). Repro: locally poisoned `PSModulePath` fails identically, clean after. | environment (pwsh→5.1 spawn) |
+| 6 | `29914075529` | — | **GREEN**: full build, all bundled PEs signed + timestamped via the real signCommand loop, rehearsal-mode verify passed. | — |
+
+**Layered diagnosability shipped as a by-product** (each layer added after the previous failure
+mode was invisible without it): tee log (`%TEMP%\justsearch-sign-windows.log`, printed by an
+`if: failure()` workflow step) → captured native output per invocation → terminating-error trap
+with position. A future REAL-cert signing failure inherits all three.
+
+**Confidence answer, post-campaign: ~9/10** that the first paid signing run works, with a
+predictable cost: ~93 signings once (vendored mirrors via `sign-vendored-payload.ps1` +
+consumption overrides, both landed) + ~8 per release. The five found bugs were all
+environment-shaped — exactly the class that survives local testing and burns metered quota.
+Residual risk is vendor-CLI-specific quirks (`command` mode with the actual eSigner/vendor tool —
+retire via the vendor's sandbox before purchase). Rehearsal secrets/variable are removed after the
+artifact-signature census; re-rehearsing later just means re-running `test-sign-windows.ps1`-style
+setup (self-signed certs are generated on demand).
