@@ -297,3 +297,11 @@ one-authority thesis: the preview lever becomes an EvidenceSpan consumer
 RAG/ContextCitation conforms, and the governor lands — sequenced AFTER the
 founder's F-041/775 default-flip decision so all evidence-surface changes
 share one cohort bump with the hero timing.
+
+## §H. Flip decision received (2026-07-22)
+
+766 §G.1 approves both evidence flags default-ON in one bump. The §G
+unification pass is therefore UNBLOCKED and becomes the carrier: one PR =
+unification (preview lever consumes EvidenceSpan; RAG conformance; governor)
++ both default flips + baseline re-pins + the pub-cme flake-fix ride-along.
+Sequenced next among engineering lanes.

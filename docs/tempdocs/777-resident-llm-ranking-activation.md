@@ -182,3 +182,10 @@ gold rank 887→188) but fails the pre-registered real-task control — so the
 tier is licensed as a RECIPE-SEARCH lane (find a contextualization that
 keeps the camouflaged gain without the real-task cost; F-040), weaker than
 §D's original framing. The 777 recommendation set is otherwise unchanged.
+
+## §F. Deferral decision (2026-07-22)
+
+Founder decision (766 §G.5): the contextualization recipe lane does not open
+until hero v1 has run. 777 is dormant until then except the shared labeling
+pass (sufficiency + Q-009 confidence), which remains a post-freeze candidate
+on its own product merits.

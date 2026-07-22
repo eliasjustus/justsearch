@@ -840,6 +840,10 @@ above)*
   A/B-valid, latency claims unmeasured on GPU); enron/legal numbers are same-session A/B
   arms, not multi-seed. Live UI verification: deep-document evidence passage rendered
   with aligned highlights (774 §K.3).
+- **FLIP DECISION (2026-07-22, founder, 766 §G.1):** default-ON approved for both `evidence_preview`
+  and 775's `evidence_span`, executed together with the 775 unification pass in one cohort bump +
+  baseline re-pins. Until that PR lands, shipped defaults remain OFF and this entry's numbers remain
+  the flag-on A/B arms.
 - **Evidence:** tempdoc 774 §K; run dirs 20260722T135408/T140105/T140425 (legal),
   T141501/T142555/T143646 (enron), T144058 (scifact) in the 774 worktree;
   branch `worktree-774-passage-first`.
