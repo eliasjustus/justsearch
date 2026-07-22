@@ -1,7 +1,7 @@
 ---
 title: "passage-first retrieval program: make the passage the retrieval unit end-to-end — the one architectural direction that attacks the measured long-document floor no model swap can fix"
 type: tempdocs
-status: "chartered (2026-07-22); takeover (§E), code audit (§F), theorize (§G), research (§H), design theorization (§I) complete same day. The §F.3 go/no-go probe and §C.3 measurements are NOT yet run — §I's Stage 3 is explicitly conditional on them. Implementation not licensed (founder review pending per §C.5)."
+status: "chartered (2026-07-22); takeover (§E), code audit (§F), theorize (§G), research (§H), design theorization (§I), derisk incl. the go/no-go probe (§J) complete same day. PROBE VERDICT (§J.5): the legal-10k floor is a representation floor — passage granularity does NOT bridge camouflaged paraphrase, and the engine already beats the offline passage ceiling there — so §I Stage 3 (primacy inversion) is SHELVED; Stages 1-2 (chunk-branch hygiene + evidence-coherent judging) remain licensed on evidence-delivery grounds; the H.4 contextual-enrichment A/B is the promoted next measurement. Implementation not licensed (founder review pending per §C.5)."
 created: 2026-07-22
 author: agent (Fable orchestration), chartered from the 762→771 measurement program's inventory (founder-directed 2026-07-22)
 category: search-engine / retrieval-architecture
@@ -739,6 +739,74 @@ certified 767 strata + register corpora only. #280 lands **certified
 multi-schema cells (single_fact + aggregation)** — the aggregation-function
 A/B (I.2 Stage 3, G.2-4) has its test bed ready earlier than assumed.
 Merge-up before implementation.
+
+### J.5 (D2) The go/no-go probe — VERDICT: representation floor; Stage 3's floor-attack premise is measurement-REJECTED
+
+Offline exact-NN passage probe (`tmp/analysis-624/774/probe/`: `probe_774.py`,
+per-cell `*_summary.json` + `*_perquery.json`; gte-multilingual-base ONNX
+fp16, CLS pool, 500/50 chunking parity; corpora materialized from the
+committed 707 recipes, signatures recorded in the summaries).
+
+- **Gate-0 anchor PASSED**: real `legal-clerc-200` chunk-MaxP R@10 **0.845 /
+  nDCG@10 0.632** vs the F-034 register expectation 0.855/0.643 (Δ≤0.011),
+  AND the doc-level window-mean arm reproduces F-030's 0.100/0.060 exactly.
+  The harness's deltas are engine-meaningful.
+- **Camouflaged legal-1k-verbose** (n=50): gold-parent MaxP rank buckets
+  [1-10] 20%, (10-20] 2%, (20-100] 28%, **>100/not-found 50%**; median
+  gold-parent rank 90.5, median gold-chunk rank 231 of 10,701.
+- **Camouflaged legal-10k-verbose** (n=50): buckets 4% / 4% / 12% /
+  **80% beyond 100**; median gold-parent rank 887, median gold-chunk rank
+  2,506 of 109,061; passage R@100 = 0.20.
+- **The inversion that kills the premise**: the ENGINE's shipped hybrid
+  (D1: 0.54 / 0.16 recall@10 on these cells) *beats* the offline
+  passage-granularity exact-NN ceiling (0.20 / 0.04). On camouflaged
+  content, isolated passage vectors are WORSE than what ships — the
+  engine's edge comes from the F-031 single-pass whole-doc vector (context)
+  + CE. F-034's 0.855 passage ceiling was a property of the CLERC citation
+  task, not of passage granularity per se; it does not transfer to
+  camouflaged paraphrase. §E.1 hypothesis (ii) is confirmed: the legal-10k
+  floor is representational — the encoder cannot bridge camouflaged
+  paraphrase at ANY granularity — and no primacy inversion, cap removal, or
+  fusion change can surface passages that rank ~900th in their own space.
+- **Corroborating detail**: on the real task the engine already captures
+  ~96-98% of its own offline passage ceiling (F-034's note; engine vector
+  0.618 vs offline MaxP nDCG 0.632-0.643) — so Stage 3 has no measured
+  headroom on the real ground either.
+- **The one lever the probe leaves alive for the floor**: representation
+  *content*, not architecture — context-enriched passage representations
+  (H.4: title/heading prepend free tier, contextual-retrieval LLM tier).
+  The engine-beats-offline-chunks inversion is direct evidence that
+  document context is the active ingredient on camouflaged content.
+- Register duty at lane close: file this as an F-number ("passage
+  granularity does not bridge camouflaged paraphrase; engine hybrid exceeds
+  offline passage exact-NN ceiling on 767 strata") with the artifact paths
+  + signatures above.
+
+### J.6 Derisk conclusion — program re-scoped
+
+- **Stage 3 (passage-primacy inversion): SHELVED** — both grounds
+  measurement-rejected (no headroom on real CLERC; representation-bound on
+  camouflaged strata). Do not implement absent new evidence (a
+  representation change that moves the passage ceiling, or a real-corpus
+  ground where the engine sits far below its passage ceiling).
+- **Stages 1-2 (chunk-branch hygiene + evidence-coherent judging): remain
+  licensed on their own non-nDCG evidence** (771 §E 1b evidence-carriage
+  45%, read-amplification, judge-blindness §F.1-5/6, D-005 guarantee
+  language) — their acceptance metrics are evidence-carriage / CE
+  regression-rate / delivered-span quality, NOT the legal-10k floor.
+- **Stage 4's contextual-enrichment tier is PROMOTED to the program's
+  next measurement** (the only floor-relevant lever left): the free
+  title/heading-prepend A/B, then the resident-LLM contextualization tier
+  (777-coupled) if the free tier shows direction.
+- **Confidence (0-10) for implementing the remaining re-scoped work
+  (Stages 1-2 + the H.4 free-tier A/B): 8** — mechanisms verified at
+  code level, sentinels named, flags per D-004, blast radius bounded
+  (scifact untouched; enron the canary); residual risks: the CE-gate
+  contradiction (J.2, needs one live probe), CE-input change on chunked
+  email (F-002's CE-hurts-enron interacts with Stage 2 — A/B mandatory),
+  775 type-boundary coordination. Confidence for Stage 3 as chartered: 1
+  (should not be built on current evidence).
+
 
 Nothing structural — it confirms §E.2's probe-first amendment and adds:
 (a) the probe should be read against the G.1 framings (B vs A/E is the real
