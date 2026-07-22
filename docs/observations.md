@@ -310,8 +310,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] RetrospectivePanel Inbox per-run cards show the raw underscored LifecycleState text (e.g. `READY_FOR_LLM`) as the card-badge label — the §33 Fix D humanization covers the group HEADER only. The atom-fork half is CLOSED by the 574-merge (the per-run badge now composes `jf-status-badge`, tone-projected); only the raw-enum *text* in the slot remains (consistent with the Sessions tab) — `modules/ui-web/src/shell-v0/components/RetrospectivePanel.ts` (2026-06-11)
 
 ### obs:knowledgesearchengine — Search result count is nondeterministic across runs of the same query: LLM query expansion success-v
-`kind: defect?` `anchor: modules/app-services/.../KnowledgeSearchEngine.java` `seen: 1` `first: 2026-06-12` `last: 2026-06-12`
+`kind: defect?` `anchor: modules/app-services/.../KnowledgeSearchEngine.java` `seen: 2` `first: 2026-06-12` `last: 2026-07-22`
 - [ ] Search result count is nondeterministic across runs of the same query: LLM query expansion success-vs-timeout changes totalHits (~12 vs 31 observed); backend determinism/timeout policy question for the search-quality domain — `modules/app-services/.../KnowledgeSearchEngine.java` (expansion eligibility ~line 337) (2026-06-12)
+- [ ] CE-gate probe verdict (776 stack-window, SUPERSEDES 774 J.2): DOCS_TOO_LONG never fires under eval — reading 3 (average never populated AS THE GATE READS IT) is TRUE; readings 1 (gate-never-fires) + 2 (leg-mislabel) REFUTED by live evidence. Dual mechanism: (1) gate reads WorkerStatusCache.cachedAvgContentLengthChars (KnowledgeSearchEngine.java:860), populated ONLY by WorkerStatusCache.status() (WorkerStatusCache.java:153) i.e. the head /api/knowledge/status projection; jseval polls ONLY /api/status (worker projection) never /api/knowledge/status, so cache stays 0 -> gate reads 0 -> CE runs on 35508-char legal-clerc-200 docs. (2) worker OperationalMetrics avg is session-lifetime (recordContentLength <- JobBatchWriter.java:147); a boot over an existing index has avg=0. Live proof: same query CE=executed with no prior knowledge-status call, CE=skipped:DOCS_TOO_LONG after one; reboot-over-index avg=0 CE=executed even with refresh. Fix routes to: source the avg from worker telemetry on the search/index path, not the lazy status projection; consider persisting it as an index property. Evidence: tmp/analysis-624/776/stack-window/ce-gate-probe/ — `modules/app-services/src/main/java/io/justsearch/app/services/worker/KnowledgeSearchEngine.java:860` (2026-07-22)
 
 ### obs:searchplanner — Live worker returns chunk-merge skipped(SKIPPED_QUERY_SYNTAX) even for simple/absent querySyntax, co
 `kind: defect?` `anchor: modules/worker-services/.../plan/SearchPlanner.java` `seen: 1` `first: 2026-06-12` `last: 2026-06-12`
@@ -1250,8 +1251,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] modules/ui-web/README.md still describes the frontend as React + TypeScript + Vite with Zustand stores / React hooks (lines 3, 91, 93) — stale vs Hard Invariant #5 (frontend is Lit, ADR-0032); out of scope for tempdoc 742 residue-removal (only touched the Playwright-script rows this pass) — `modules/ui-web/README.md:3` (2026-07-16)
 
 ### obs:fold-observations — fold-observations.mjs is NOT idempotent for MERGED entries — re-folding a shard inflates the `seen`
-`kind: follow-up?` `anchor: scripts/agent-analytics/fold-observations.mjs` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
+`kind: follow-up?` `anchor: scripts/agent-analytics/fold-observations.mjs` `seen: 2` `first: 2026-07-16` `last: 2026-07-17`
 - [ ] fold-observations.mjs is NOT idempotent for MERGED entries — re-folding a shard inflates the `seen` ranking signal. Mechanism: an entry that merges into an existing condition has its text rewritten in the store (occurrence appended), so on a later fold of the same shard it no longer matches verbatim, misses the exact-duplicate skip, and merges AGAIN (seen++). Entries that OPEN a condition round-trip fine. Observed live 2026-07-16: shard 70bf04ea was folded, then session 70bf04ea appended 2 entries and restored the file via PR #222; re-folding its 8 entries gave 5 exact-duplicate skips instead of 6, i.e. one already-folded entry double-counted. Impact is small (seen is a ranking signal, not a gate) but it is silent and compounds with every modify/delete shard race — which will recur, since a shard can be appended to after a fold reads it. Candidate fix: key the duplicate check on a stable entry hash rather than the post-merge text. — `scripts/agent-analytics/fold-observations.mjs:107` (2026-07-16)
+- [ ] fold-observations.mjs --apply resolves repoRoot from the script location, not cwd — invoked from a worktree it silently folds the MAIN checkout instead (observed 2026-07-17; required a manual transplant of the fold into the PR branch + restore of main's tree). It should honor cwd or take an explicit --root — `scripts/agent-analytics/fold-observations.mjs` (2026-07-17)
 
 ### obs:coreworkflowcatalog — justsearch_dev_start defaults to the MAIN CHECKOUT's installed dist even when called from a worktree
 `kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/conversation/CoreWorkflowCatalog.java` `seen: 1` `first: 2026-07-16` `last: 2026-07-16`
@@ -1478,6 +1480,46 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:unanchored-gate-red-7 — Register judge-stage conclusions predating F-041 (F-026 judge-blend/'obvious judge levers dead', 636
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
 - [ ] Register judge-stage conclusions predating F-041 (F-026 judge-blend/'obvious judge levers dead', 636 judge-rank-bound headroom profile, F-002) were all measured with a preview-blind CE (input = title + doc-head snippet). Tempdoc 777 builds on F-026 as its evidence base — it should re-baseline its listwise/judge experiments under evidence-coherent CE input (search.evidence_preview.enabled) before designing, or risk activating levers whose measured deadness was an artifact of the old CE input. — `774 §L / F-041` (2026-07-22)
+
+### obs:unanchored-general-85 — jseval debt from the 767-771 arc: known-RED correction-probe pair (restore data file or retire); per
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] jseval debt from the 767-771 arc: known-RED correction-probe pair (restore data file or retire); per-query eval artifacts capped at depth-10 (analyses wanted k>=20 — make depth configurable); no per-call cost invoicing (spend figures are cap-bounded estimates); index-cache entries not reusable across commits for certification-shaped flows (2026-07-22)
+
+### obs:unanchored-general-86 — platform lessons from the 767 certification arc for agent-lessons.md rider: tracked background tasks
+`kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] platform lessons from the 767 certification arc for agent-lessons.md rider: tracked background tasks killed at ~60min and TaskStop does not kill child bash loops (detached Start-Process driver + self-terminating <590s polls is the working pattern); subagents park mid-campaign to 'wait for monitors' unless briefed to wait in-turn — two stalls this arc (2026-07-22)
+
+### obs:unanchored-general-87 — A LOCKED agent worktree (agent-ace19997b9499c758) was removed mid-run by an external cleanup, wiping
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] A LOCKED agent worktree (agent-ace19997b9499c758) was removed mid-run by an external cleanup, wiping its working tree + most of tmp/ and severing .git — cost a live jseval probe its legal-1k artifacts and forced a worktree re-creation to commit; locked worktrees should be exempt from automated removal — `.claude/worktrees/` (2026-07-22)
+
+### obs:unanchored-flake-5 — Flaky CI lane SECOND STRIKE: 'Unit tests (platform-contracts)' failed on PR #259 whose diff is jseva
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
+- [ ] Flaky CI lane SECOND STRIKE: 'Unit tests (platform-contracts)' failed on PR #259 whose diff is jseval Python + markdown (cannot affect Java) — first strike was PR #245 (2026-07-17, same shape). Two occurrences in 4 days on doc/python-only diffs: this lane now needs its own investigation (timing-sensitive test? runner memory?) per the first note's trigger — CI run on branch pub-757h, head 3d7d8e5b (2026-07-21)
+
+### obs:unanchored-general-88 — local main is ahead of origin/main by 39 commits; content delta is only tempdocs 759-761 + shard 6cb
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
+- [ ] local main is ahead of origin/main by 39 commits; content delta is only tempdocs 759-761 + shard 6cbf0448 (another session's unpublished distribution-readiness lane) — merge-commit noise otherwise; verify that lane publishes via PR eventually (2026-07-21)
+
+### obs:unanchored-error-11 — 778 smoke bycatch: POST /api/knowledge/disposition swallows malformed JSON as silent 204 (never-fail
+`kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] 778 smoke bycatch: POST /api/knowledge/disposition swallows malformed JSON as silent 204 (never-fail-the-FE catch, debug-only log) — masks client bugs; consider a WARN-level log or a 400-on-parse-error while keeping 204 for store failures — KnowledgeSearchController.handleDisposition:197-200 (2026-07-22)
+
+### obs:unanchored-general-89 — 767 §B2 materialization gap bit a third time (775 step-1 probe had to reconstruct the stratum): the 
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] 767 §B2 materialization gap bit a third time (775 step-1 probe had to reconstruct the stratum): the corpus-inject-real invocations are still not recorded verbatim in any recipe — small fix: persist the exact invocation into the member recipe/commitment at build time so certified cells re-materialize without archaeology (2026-07-22)
+
+### obs:ortcudahelper — 772 §J ORT-pack completeness check strands pre-772 dev staging dirs: tmp/ort-variant-test/cuda-12.4-
+`kind: defect?` `anchor: OrtCudaHelper.java` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] 772 §J ORT-pack completeness check strands pre-772 dev staging dirs: tmp/ort-variant-test/cuda-12.4-v1.24.3 had only provider+cuda DLLs (old layout), so OrtCudaHelper now refuses it (INCOMPLETE) and ONNX silently drops to CPU (reranker_cpu_only). Fixed machine-locally by adding onnxruntime.dll + onnxruntime4j_jni.dll (from upstream onnxruntime_gpu-1.24.3.jar) + ort-native-version.txt; a re-stage/migration note for dev machines may belong in the 772 lane — `OrtCudaHelper.java:392` (2026-07-22)
+
+### obs:unanchored-general-90 — downloadLlamaCudaPrebuilt has NO sha256 pin (comment: 'hash check disabled for large file') while th
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] downloadLlamaCudaPrebuilt has NO sha256 pin (comment: 'hash check disabled for large file') while the CPU prebuilt fail-closes on llamaPrebuiltSha256 — the two ~GB GPU assets are the unpinned half of the supply chain; found during 760 mirror-producer investigation — `modules/ui/build.gradle.kts:566-570` (2026-07-22)
+
+### obs:unanchored-general-91 — Subagent incident (760 sandbox harness, 2026-07-22): a worker 'functionally validating' the destruct
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] Subagent incident (760 sandbox harness, 2026-07-22): a worker 'functionally validating' the destructive-by-design guest script ran it HOST-SIDE; its host-global HKCU uninstall-key lookup found the pre-existing F:\JustSearch-test install and silently ran its real uninstaller /S (registry key, shortcuts, uninstall.exe gone; resources\headless remnant left). Root-caused: destructive-by-design scripts need execution-environment guards, not header warnings — WDAGUtilityAccount guard added, host-side run now refuses (exit 99). Brief lesson: 'do not execute' must explicitly cover host-side dry-runs of guest payloads (2026-07-22)
 
 ## Parked
 
