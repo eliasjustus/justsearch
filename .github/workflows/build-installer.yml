@@ -199,6 +199,36 @@ jobs:
             ($env:JUSTSEARCH_CODESIGN_THUMBPRINT -and $env:JUSTSEARCH_CODESIGN_THUMBPRINT.Trim()) -or `
             ($env:JUSTSEARCH_CODESIGN_COMMAND -and $env:JUSTSEARCH_CODESIGN_COMMAND.Trim())
           if ($signConfigured) { $extra['Sign'] = $true }
+          # Signed-mirror pins (packaging/signed-mirrors.v1.json; tempdoc 760/772 §K sign-once). When a
+          # vendored payload has a committed, COMPLETE signed-mirror entry, point the matching gradle
+          # download-override property pair at the once-signed re-hosted copy so the build fetches it
+          # instead of the default upstream pin. Pins live in the committed file (not repo variables) so
+          # each bump is PR-reviewed supply-chain history. The file ships EMPTY: an absent/empty entry
+          # sets nothing => default pins => byte-identical build. A half-complete entry (url XOR sha256)
+          # fails loudly HERE, before the build, mirroring the all-or-nothing pin in build.gradle.kts.
+          $mirrorsPath = "packaging/signed-mirrors.v1.json"
+          if (Test-Path $mirrorsPath) {
+            $mirrors = (Get-Content -Raw $mirrorsPath | ConvertFrom-Json).mirrors
+            # payload key in the file -> the two ORG_GRADLE_PROJECT_* override properties it drives
+            $overrides = @{
+              'llama-cpu' = @('llamaPrebuiltUrlOverride', 'llamaPrebuiltSha256Override')
+              'tesseract' = @('tesseractSourceUrlOverride', 'tesseractSourceSha256Override')
+            }
+            foreach ($payload in $overrides.Keys) {
+              $entry = if ($mirrors) { $mirrors.$payload } else { $null }
+              if ($null -eq $entry) { continue }
+              $hasUrl = $entry.url -and $entry.url.Trim()
+              $hasSha = $entry.sha256 -and $entry.sha256.Trim()
+              if ($hasUrl -and $hasSha) {
+                $props = $overrides[$payload]
+                Set-Item "env:ORG_GRADLE_PROJECT_$($props[0])" $entry.url.Trim()
+                Set-Item "env:ORG_GRADLE_PROJECT_$($props[1])" $entry.sha256.Trim()
+                Write-Host "Signed mirror active for '$payload' -> $($entry.url.Trim())"
+              } elseif ($hasUrl -or $hasSha) {
+                throw "signed-mirrors.v1.json entry '$payload' is half-complete: both 'url' and 'sha256' are required. A mirror URL with the default hash can never verify; the default URL with a mirror hash rejects the genuine pinned artifact. Provide BOTH or remove the entry."
+              }
+            }
+          }
           ./scripts/ci/package-installer-win.ps1 -OutDir dist/installer -SkipVerify -AssembleReleaseAssets @extra
 
       # The bundler swallows the signCommand child's output on failure, so sign-windows.ps1 tees
@@ -237,7 +267,7 @@ jobs:
 
       - name: Upload installer artifact
         # Non-fatal: Actions artifact storage has a hard account quota (and a
-        # 6-12h usage-recalc lag). A 741 MB installer can exceed it, which would
+        # 6-12h usage-recalc lag). A multi-hundred-MB installer can exceed it, which would
         # otherwise fail the job BEFORE the release-attach step (a condition-only
         # `if` still carries the implicit success() gate). Releases use separate
         # storage, so let the job proceed to the release attach regardless.
@@ -247,7 +277,7 @@ jobs:
           name: windows-installer
           path: dist/installer/*
           # 7d, not 30: this artifact has no downstream consumer (the release attaches the
-          # .exe from disk), so a 741 MB build only needs a short manual-download window.
+          # .exe from disk), so a multi-hundred-MB build only needs a short manual-download window.
           # Curbs the artifact-storage entropy that blocked an earlier build. (tempdoc 562 item 4.)
           retention-days: 7
 
@@ -262,5 +292,13 @@ jobs:
         with:
           files: dist/installer/*
           prerelease: ${{ contains(github.ref, '-alpha.') || contains(github.ref, '-beta.') || contains(github.ref, '-rc.') }}
+          # Trust blurb prepended to the release body; generate_release_notes appends the
+          # auto-generated notes after it. Points users at the checksum-verification how-to.
+          body: |
+            ### Verify your download
+            Before running the installer, verify its integrity: download `SHA256SUMS` alongside the
+            `.exe` and check it (`certutil -hashfile <file> SHA256`, compare against `SHA256SUMS`).
+            Full instructions — and why Windows SmartScreen may warn on an unsigned build — are in
+            [verify-your-download](https://github.com/eliasjustus/justsearch/blob/main/docs/how-to/verify-your-download.md).
           generate_release_notes: true
           fail_on_unmatched_files: true
