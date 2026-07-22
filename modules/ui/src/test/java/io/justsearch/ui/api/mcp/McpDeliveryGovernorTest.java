@@ -3,6 +3,7 @@ package io.justsearch.ui.api.mcp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -32,120 +33,114 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Tempdoc 775 §E/§C — the delivery governor: deterministic degradation of the assembled
- * {@code justsearch_search} MCP payload at the 770 §E.3 client truncation cap. Extends the 770
+ * Tempdoc 775 §E/§C — the delivery governor: deterministic degradation of the WHOLE assembled
+ * {@code justsearch_search} tool result at the 770 §E.3 client truncation cap. Extends the 770
  * golden/totality guards (see {@link McpEvidenceProjectionTest},
- * {@link McpTierEquivalenceGoldenTest}) to the governor path: the assertions here pin the
- * degradation order (numeric provenance first, then whole tail results, never mid-payload / mid-span),
- * the budget-boundary behaviour, the 0-disables escape hatch, byte-stable determinism, and the
- * explicit machine-readable notice.
+ * {@link McpTierEquivalenceGoldenTest}) to the governor path: the assertions here pin the governed
+ * quantity (the full result — text block + structuredContent + envelope, NOT the structured tier
+ * alone), the degradation order (numeric provenance first, then whole tail results, never
+ * mid-payload / mid-span), the budget-boundary behaviour, the 0-disables escape hatch, byte-stable
+ * determinism, and the explicit machine-readable notice.
  */
-@DisplayName("McpDeliveryGovernor: deterministic degradation at the delivery cap (tempdoc 775 §E/§C)")
+@DisplayName("McpDeliveryGovernor: deterministic full-result degradation at the delivery cap (775 §E/§C)")
 final class McpDeliveryGovernorTest {
 
   private static final ObjectMapper MAPPER = JsonMapper.builder().build();
 
-  // ---- payload builders (mimic McpEvidenceProjection#searchEvidence output shape) ----
-
-  private static Map<String, Object> hitMap(int rank, int excerptLen, boolean provenance) {
-    Map<String, Object> h = new LinkedHashMap<>();
-    h.put("path", "docs/doc-" + rank + ".md");
-    h.put("score", 1.0d - rank * 0.001d);
-    List<Map<String, Object>> excerpts = new ArrayList<>();
-    Map<String, Object> e = new LinkedHashMap<>();
-    e.put("text", "x".repeat(excerptLen));
-    e.put("startChar", 0);
-    e.put("endChar", excerptLen);
-    excerpts.add(e);
-    h.put("excerpts", excerpts);
-    if (provenance) {
-      List<Map<String, Object>> trace = new ArrayList<>();
-      Map<String, Object> ts = new LinkedHashMap<>();
-      ts.put("id", "fusion");
-      ts.put("rank", rank);
-      ts.put("score", 0.9f);
-      ts.put("detail", Map.of("cc_weight_sparse", 0.6f, "cc_weight_dense", 0.4f));
-      trace.add(ts);
-      h.put("trace", trace);
-      Map<String, Object> legs = new LinkedHashMap<>();
-      legs.put("sparse", 0.5f);
-      legs.put("dense", 0.5f);
-      legs.put("splade", 0.5f);
-      legs.put("fused", 0.9f);
-      h.put("legScores", legs);
-    }
-    return h;
+  /**
+   * A synthetic {@link McpDeliveryGovernor.ResultView} whose full result carries, per surviving
+   * result, {@code textPerHit} bytes in the {@code content[0].text} block and {@code structPerHit}
+   * bytes in {@code structuredContent} (plus {@code provPerHit} bytes of per-hit provenance when
+   * requested) — so a test can independently size the text tier and the structured tier and
+   * reproduce the live composition where structuredContent is under budget but the full result is
+   * not.
+   */
+  private static McpDeliveryGovernor.ResultView view(int textPerHit, int structPerHit, int provPerHit) {
+    return (keep, includeProvenance) -> {
+      StringBuilder text = new StringBuilder();
+      List<Object> results = new ArrayList<>();
+      for (int i = 1; i <= keep; i++) {
+        text.append("t".repeat(textPerHit));
+        Map<String, Object> h = new LinkedHashMap<>();
+        h.put("path", "docs/doc-" + i + ".md");
+        h.put("excerpt", "x".repeat(structPerHit));
+        if (includeProvenance) {
+          h.put("prov", "p".repeat(provPerHit));
+        }
+        results.add(h);
+      }
+      Map<String, Object> structured = new LinkedHashMap<>();
+      structured.put("results", results);
+      return Map.of(
+          "content", List.of(Map.of("type", "text", "text", text.toString())),
+          "structuredContent", structured,
+          "isError", false);
+    };
   }
 
-  private static Map<String, Object> payload(int n, int excerptLen, boolean provenance) {
-    Map<String, Object> p = new LinkedHashMap<>();
-    List<Object> results = new ArrayList<>();
-    for (int i = 1; i <= n; i++) {
-      results.add(hitMap(i, excerptLen, provenance));
-    }
-    p.put("results", results);
-    p.put("truncated", false);
-    return p;
+  private static int fullBytes(Map<String, Object> result) {
+    return MAPPER.writeValueAsString(result).getBytes(StandardCharsets.UTF_8).length;
   }
 
-  private static int bytes(Map<String, Object> p) {
-    return MAPPER.writeValueAsString(p).getBytes(StandardCharsets.UTF_8).length;
+  private static int structuredBytes(Map<String, Object> result) {
+    return MAPPER.writeValueAsString(result.get("structuredContent")).getBytes(StandardCharsets.UTF_8)
+        .length;
   }
 
   @SuppressWarnings("unchecked")
-  private static List<Object> results(Map<String, Object> p) {
-    return (List<Object>) p.get("results");
+  private static Map<String, Object> structured(Map<String, Object> result) {
+    return (Map<String, Object>) result.get("structuredContent");
   }
 
   @SuppressWarnings("unchecked")
-  private static Map<String, Object> governor(Map<String, Object> p) {
-    return (Map<String, Object>) p.get("governor");
+  private static List<Object> results(Map<String, Object> result) {
+    return (List<Object>) structured(result).get("results");
   }
 
   @SuppressWarnings("unchecked")
+  private static Map<String, Object> governor(Map<String, Object> result) {
+    return (Map<String, Object>) structured(result).get("governor");
+  }
+
   private static String excerptText(Object hit) {
-    Map<String, Object> h = (Map<String, Object>) hit;
-    List<Map<String, Object>> excerpts = (List<Map<String, Object>>) h.get("excerpts");
-    return (String) excerpts.get(0).get("text");
+    return (String) ((Map<?, ?>) hit).get("excerpt");
   }
 
   // ---- boundary: just-under is untouched ----
 
   @Test
-  @DisplayName("just-under budget: payload untouched, no notice, provenance retained")
+  @DisplayName("just-under budget: full result untouched, no notice, provenance retained")
   void justUnderBudgetUntouched() {
-    Map<String, Object> p = payload(3, 200, true);
-    int budget = bytes(p) + 1_000; // comfortably above the serialized size
-    Map<String, Object> out = McpDeliveryGovernor.govern(p, budget, MAPPER);
+    McpDeliveryGovernor.ResultView v = view(50, 50, 20);
+    int budget = fullBytes(v.render(3, true)) + 1_000;
+    Map<String, Object> out = McpDeliveryGovernor.govern(3, true, budget, MAPPER, v);
     assertEquals(3, results(out).size(), "no results dropped under budget");
-    assertFalse(out.containsKey("governor"), "no notice when nothing was degraded");
-    assertTrue(((Map<?, ?>) results(out).get(0)).containsKey("trace"), "provenance retained");
+    assertFalse(structured(out).containsKey("governor"), "no notice when nothing was degraded");
+    assertTrue(((Map<?, ?>) results(out).get(0)).containsKey("prov"), "provenance retained");
   }
 
   // ---- boundary: just-over → stripping provenance alone suffices ----
 
   @Test
-  @DisplayName("just-over budget: stripping numeric provenance alone brings it under — no tail drop")
+  @DisplayName("just-over budget: stripping numeric provenance alone brings the full result under")
   void provenanceStripSuffices() {
-    Map<String, Object> withProv = payload(4, 300, true);
-    int sizeWith = bytes(withProv);
-    int sizeWithout = bytes(payload(4, 300, false));
-    // Budget strictly between the two so provenance-strip is exactly sufficient.
+    McpDeliveryGovernor.ResultView v = view(10, 100, 400);
+    int sizeWith = fullBytes(v.render(4, true));
+    int sizeWithout = fullBytes(v.render(4, false));
     int budget = sizeWithout + (sizeWith - sizeWithout) / 2;
-    assertTrue(sizeWithout <= budget && budget < sizeWith, "test fixture must straddle the strip");
+    assertTrue(sizeWithout <= budget && budget < sizeWith, "fixture must straddle the strip");
 
-    Map<String, Object> out = McpDeliveryGovernor.govern(withProv, budget, MAPPER);
+    Map<String, Object> out = McpDeliveryGovernor.govern(4, true, budget, MAPPER, v);
 
     assertEquals(4, results(out).size(), "no result dropped — provenance strip was enough");
     for (Object h : results(out)) {
-      assertFalse(((Map<?, ?>) h).containsKey("trace"), "trace stripped");
-      assertFalse(((Map<?, ?>) h).containsKey("legScores"), "legScores stripped");
+      assertFalse(((Map<?, ?>) h).containsKey("prov"), "provenance stripped");
     }
     Map<String, Object> g = governor(out);
     assertEquals(true, g.get("provenanceStripped"));
     assertEquals(0, g.get("resultsDropped"));
     assertEquals(4, g.get("originalResultCount"));
-    assertTrue(bytes(out) <= budget, "governed payload fits the budget");
+    assertTrue(fullBytes(out) <= budget, "governed full result fits the budget");
   }
 
   // ---- far-over → drop whole tail results, never mid-span ----
@@ -153,16 +148,15 @@ final class McpDeliveryGovernorTest {
   @Test
   @DisplayName("far-over budget: whole tail results dropped lowest-ranked-first; surviving spans intact")
   void farOverDropsTailNeverMidSpan() {
-    int excerptLen = 1_000;
-    Map<String, Object> p = payload(20, excerptLen, true);
-    int sizeWithout = bytes(payload(20, excerptLen, false));
-    int budget = sizeWithout / 2; // even after stripping, ~half the results must go
+    int structPerHit = 100;
+    McpDeliveryGovernor.ResultView v = view(100, structPerHit, 50);
+    int budget = fullBytes(v.render(20, false)) / 2; // even after stripping, ~half must go
 
-    Map<String, Object> out = McpDeliveryGovernor.govern(p, budget, MAPPER);
+    Map<String, Object> out = McpDeliveryGovernor.govern(20, true, budget, MAPPER, v);
 
     int delivered = results(out).size();
     assertTrue(delivered >= 1 && delivered < 20, "some but not all results survive: " + delivered);
-    assertTrue(bytes(out) <= budget, "governed payload fits the budget");
+    assertTrue(fullBytes(out) <= budget, "governed full result fits the budget");
 
     Map<String, Object> g = governor(out);
     assertEquals(true, g.get("provenanceStripped"));
@@ -172,9 +166,9 @@ final class McpDeliveryGovernorTest {
 
     // Never truncate mid-span: every surviving excerpt is delivered whole.
     for (Object h : results(out)) {
-      assertEquals(excerptLen, excerptText(h).length(), "surviving excerpt must not be truncated");
+      assertEquals(structPerHit, excerptText(h).length(), "surviving excerpt must not be truncated");
     }
-    // Tail dropped, not head: the survivors are the top ranks (doc-1..doc-N).
+    // Tail dropped, not head: survivors are the top ranks (doc-1..doc-delivered).
     assertEquals("docs/doc-1.md", ((Map<?, ?>) results(out).get(0)).get("path"));
     assertEquals(
         "docs/doc-" + delivered + ".md",
@@ -187,12 +181,12 @@ final class McpDeliveryGovernorTest {
   @Test
   @DisplayName("single oversized result: delivered whole (never split), provenance stripped, notice fires")
   void singleOversizedResultDeliveredWhole() {
-    int excerptLen = 60_000;
-    Map<String, Object> p = payload(1, excerptLen, true);
-    Map<String, Object> out = McpDeliveryGovernor.govern(p, 45_000, MAPPER);
+    int structPerHit = 60_000;
+    McpDeliveryGovernor.ResultView v = view(0, structPerHit, 100);
+    Map<String, Object> out = McpDeliveryGovernor.govern(1, true, 45_000, MAPPER, v);
 
     assertEquals(1, results(out).size(), "never drop below one result");
-    assertEquals(excerptLen, excerptText(results(out).get(0)).length(), "span never split");
+    assertEquals(structPerHit, excerptText(results(out).get(0)).length(), "span never split");
     Map<String, Object> g = governor(out);
     assertEquals(true, g.get("provenanceStripped"));
     assertEquals(0, g.get("resultsDropped"));
@@ -201,23 +195,23 @@ final class McpDeliveryGovernorTest {
   // ---- escape hatch: 0 disables ----
 
   @Test
-  @DisplayName("budget 0 disables the governor entirely — huge payload delivered untouched")
+  @DisplayName("budget 0 disables the governor entirely — huge full result delivered untouched")
   void zeroDisablesGovernor() {
-    Map<String, Object> p = payload(30, 2_000, true);
-    Map<String, Object> out = McpDeliveryGovernor.govern(p, 0, MAPPER);
+    McpDeliveryGovernor.ResultView v = view(2_000, 2_000, 500);
+    Map<String, Object> out = McpDeliveryGovernor.govern(30, true, 0, MAPPER, v);
     assertEquals(30, results(out).size(), "disabled: nothing dropped");
-    assertFalse(out.containsKey("governor"), "disabled: no notice");
-    assertTrue(((Map<?, ?>) results(out).get(0)).containsKey("trace"), "disabled: provenance retained");
+    assertFalse(structured(out).containsKey("governor"), "disabled: no notice");
+    assertTrue(((Map<?, ?>) results(out).get(0)).containsKey("prov"), "disabled: provenance retained");
   }
 
   // ---- determinism: same input → byte-stable governed output ----
 
   @Test
-  @DisplayName("determinism: identical payloads governed to byte-identical serialized output")
+  @DisplayName("determinism: identical inputs governed to byte-identical serialized full result")
   void deterministicByteStable() {
-    int budget = bytes(payload(15, 800, false)) / 2;
-    Map<String, Object> a = McpDeliveryGovernor.govern(payload(15, 800, true), budget, MAPPER);
-    Map<String, Object> b = McpDeliveryGovernor.govern(payload(15, 800, true), budget, MAPPER);
+    int budget = fullBytes(view(80, 80, 40).render(15, false)) / 2;
+    Map<String, Object> a = McpDeliveryGovernor.govern(15, true, budget, MAPPER, view(80, 80, 40));
+    Map<String, Object> b = McpDeliveryGovernor.govern(15, true, budget, MAPPER, view(80, 80, 40));
     assertEquals(MAPPER.writeValueAsString(a), MAPPER.writeValueAsString(b));
   }
 
@@ -226,9 +220,8 @@ final class McpDeliveryGovernorTest {
   @Test
   @DisplayName("notice names budget, pre-degradation count, resultsDropped, provenanceStripped")
   void noticeShapeIsMachineReadable() {
-    int excerptLen = 1_000;
-    int budget = bytes(payload(12, excerptLen, false)) / 2;
-    Map<String, Object> out = McpDeliveryGovernor.govern(payload(12, excerptLen, true), budget, MAPPER);
+    int budget = fullBytes(view(100, 100, 50).render(12, false)) / 2;
+    Map<String, Object> out = McpDeliveryGovernor.govern(12, true, budget, MAPPER, view(100, 100, 50));
     Map<String, Object> g = governor(out);
     assertEquals(budget, g.get("budgetBytes"));
     assertEquals(12, g.get("originalResultCount"));
@@ -237,15 +230,50 @@ final class McpDeliveryGovernorTest {
     assertTrue(g.get("notice") instanceof String s && s.contains(Integer.toString(budget)));
   }
 
+  // ---- the live-composition regression: structuredContent UNDER budget, full result OVER ----
+
+  @Test
+  @DisplayName(
+      "live composition (fat text block): structuredContent under budget but full result over →"
+          + " governor keeps dropping tails until the FULL result fits (a structured-only budget"
+          + " would have wrongly declared success)")
+  void structuredUnderButFullOverStillDegrades() {
+    int budget = 45_000;
+    // Small structured tier, large text tier — the exact shape that fooled the structured-only
+    // budget: at 30 results structuredContent stays well under 45 KB while the text block pushes the
+    // full wire payload past the cliff.
+    McpDeliveryGovernor.ResultView v = view(/*textPerHit=*/ 1_600, /*structPerHit=*/ 200, /*provPerHit=*/ 50);
+
+    // Precondition the regression depends on: structuredContent alone is under budget at full 30 —
+    // so a governor that budgeted only structuredContent would have delivered all 30 and shipped an
+    // over-cliff wire payload.
+    assertTrue(
+        structuredBytes(v.render(30, true)) < budget,
+        "structuredContent alone must be under budget at 30 (the condition that fooled the old code)");
+    assertTrue(
+        fullBytes(v.render(30, true)) > budget, "the full result at 30 must exceed the budget");
+
+    Map<String, Object> out = McpDeliveryGovernor.govern(30, true, budget, MAPPER, v);
+
+    int delivered = results(out).size();
+    assertTrue(delivered < 30, "the governor must degrade even though structuredContent was under budget");
+    assertTrue(fullBytes(out) <= budget, "the delivered FULL result must fit the budget");
+    Map<String, Object> g = governor(out);
+    assertNotNull(g, "notice present");
+    assertTrue(((Integer) g.get("resultsDropped")) > 0, "at least one tail result dropped");
+    assertEquals(30, g.get("originalResultCount"));
+  }
+
   // ---- integration through McpToolSurface#callSearch at limit 30, detail:true ----
 
   @Test
   @DisplayName(
-      "integration (770 §C): detail:true limit 30 oversized results → result-count reduction + notice,"
+      "integration (770 §C): detail:true limit 30 oversized results → the delivered FULL result"
+          + " (text + structuredContent + envelope) is under budget, with count reduction + notice,"
           + " never mid-payload truncation")
   void integrationCallSearchDetailLimit30() {
     List<Hit> hits = new ArrayList<>();
-    int excerptLen = 1_800; // 30 * ~1.8 KB excerpts >> the 45 KB default budget under detail
+    int excerptLen = 1_800;
     String body = "y".repeat(excerptLen);
     for (int i = 1; i <= 30; i++) {
       MatchSpan span = new MatchSpan("content", 0, 9, "diagnostic");
@@ -280,17 +308,25 @@ final class McpDeliveryGovernorTest {
         surface.callTool(
             "justsearch_search", Map.of("query", "diagnostic", "limit", 30, "detail", true), "s1");
 
-    @SuppressWarnings("unchecked")
-    Map<String, Object> structured = (Map<String, Object>) result.get("structuredContent");
-    int delivered = results(structured).size();
+    // The governed quantity is the WHOLE tool result — it must be under the 45 KB default budget.
+    assertTrue(
+        fullBytes(result) <= 45_000,
+        "delivered full result must fit the budget, was " + fullBytes(result));
+    int delivered = results(result).size();
     assertTrue(delivered < 30, "governor reduced the result count from 30 to " + delivered);
-    Map<String, Object> g = governor(structured);
-    assertTrue(g != null, "governor notice present");
+    Map<String, Object> g = governor(result);
+    assertNotNull(g, "governor notice present");
     assertTrue(((Integer) g.get("resultsDropped")) > 0, "at least one tail result dropped");
     assertEquals(30, g.get("originalResultCount"));
     // Never mid-payload / mid-span: every delivered excerpt is intact.
-    for (Object h : results(structured)) {
-      assertEquals(excerptLen, excerptText(h).length(), "delivered excerpt must not be truncated");
+    for (Object h : results(result)) {
+      @SuppressWarnings("unchecked")
+      Map<String, Object> hm = (Map<String, Object>) h;
+      @SuppressWarnings("unchecked")
+      List<Map<String, Object>> excerpts = (List<Map<String, Object>>) hm.get("excerpts");
+      assertEquals(
+          excerptLen, ((String) excerpts.get(0).get("text")).length(),
+          "delivered excerpt must not be truncated");
     }
   }
 }

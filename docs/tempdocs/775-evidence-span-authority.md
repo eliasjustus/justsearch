@@ -464,51 +464,74 @@ hatch). Wired through the same config machinery as the evidence flags: `ConfigKe
 `runtime-config-ownership-matrix.md` was regenerated (it had also accumulated the
 pre-existing evidence_span/evidence_preview/chunk_* drift — swept in the regen).
 
-**Degradation order (§E, verbatim).** The governor sits AFTER 770's gated
-`McpEvidenceProjection.searchEvidence` delivery, on the assembled
-`structuredContent` map (Head-side; it reads the already-returned response
-objects, never Lucene/Worker — Hard Invariant #1). While the serialized payload
-exceeds the budget it degrades in order: **(a) strip numeric provenance first** —
-the per-hit `trace` + `legScores` block, the `detail`-gated tier 770 measured at
-19.9% of the delivered search payload and carrying no document content; **(b) then
-drop WHOLE tail results**, lowest-ranked-first, one at a time, never below one
-result and never truncating a result or a span mid-way (a single oversized result
-is delivered whole with the notice, not split — the "never mid-payload/mid-span"
-guarantee is by construction); **(c) emit an explicit notice** — a machine-readable
-`governor` object (`budgetBytes`, `originalResultCount`, `deliveredResultCount`,
-`resultsDropped`, `provenanceStripped`, a human `notice` string) replacing the
-client-side 2,322-char neither-tier loss. Deterministic: same payload → byte-stable
+**Governed quantity = the WHOLE tool result (live-verify correction, 2026-07-22).**
+The first cut budgeted only `structuredContent`, but the 770 §E.3 client truncation
+cliff operates on the ENTIRE delivered tool result — `content[].text` (the
+human-readable block) + `structuredContent` + envelope keys. Live verification at
+the failing cell FAILED the bar: 4/12 responses still exceeded 45,000 bytes on the
+wire (max 52,260) even though every response carried the notice — the worst
+decomposed as `structuredContent`=35,376 B (under budget → the loop stopped) +
+`content[0].text`=16,339 B, total 52,260 B. Budgeting the structured tier alone
+under-counts by the text block. **Fix:** the governor now governs the full result
+via a `ResultView` that re-renders BOTH tiers (text + structuredContent) from the
+surviving results at each step and measures the whole result; the text block, being
+a rendering of the same results, shrinks with the structured tier so they never
+diverge. "Strip provenance" = re-render with `includeProvenance=false` (the
+searchEvidence `detail` gate); "drop a tail result" = re-render with one fewer hit.
+
+**Degradation order (§E, verbatim).** Head-side (it reads the already-returned
+response objects via the view, never Lucene/Worker — Hard Invariant #1). While the
+serialized FULL result exceeds the budget it degrades in order: **(a) strip numeric
+provenance first** — the per-hit `trace` + `legScores` block, the `detail`-gated
+tier 770 measured at 19.9% of the delivered search payload and carrying no document
+content; **(b) then drop WHOLE tail results**, lowest-ranked-first, one at a time,
+never below one result and never truncating a result or a span mid-way (a single
+oversized result is delivered whole with the notice, not split — the
+"never mid-payload/mid-span" guarantee is by construction); **(c) emit an explicit
+notice** — a machine-readable `governor` object in `structuredContent`
+(`budgetBytes`, `originalResultCount`, `deliveredResultCount`, `resultsDropped`,
+`provenanceStripped`, a human `notice` string) replacing the client-side 2,322-char
+neither-tier loss. Deterministic: same inputs → same size decisions → byte-stable
 governed output (rank-ordered tail drop + `LinkedHashMap` key order + one
 serializer).
 
 **Implementation (`file:line`).**
 - Governor — `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpDeliveryGovernor.java`
-  (`govern(payload, budgetBytes, mapper)`).
-- Wiring — `McpToolSurface.callSearch` governs the assembled `structuredContent`
-  before delivery; budget resolved via `McpToolSurface.resolveDeliveryBudgetBytes()`
-  (reads `ConfigStore.globalOrNull()`, defaults to the constant when the store is
-  not yet initialized — always safe to call).
+  (`govern(totalResults, detailRequested, budgetBytes, mapper, ResultView)`; the
+  `ResultView` re-renders the full result for a `(keepResults, includeProvenance)`
+  pair).
+- Wiring — `McpToolSurface.callSearch` builds the `ResultView` (each render:
+  `truncateResults` → `buildSearchContent` → `renderSearchText` +
+  `McpEvidenceProjection.searchEvidence`) and calls `govern(...)`;
+  `McpToolSurface.truncateResults` yields a top-`keep` copy of the response;
+  budget resolved via `McpToolSurface.resolveDeliveryBudgetBytes()` (reads
+  `ConfigStore.globalOrNull()`, defaults to the constant when the store is not yet
+  initialized — always safe to call).
 - Config — `ConfigKey.SEARCH_MCP_DELIVERY_BUDGET_BYTES`,
   `EnvRegistry.SEARCH_MCP_DELIVERY_BUDGET_BYTES`, `ResolvedConfigBuilder`
   (contributeYamlSearch + `buildSearch`), `ResolvedConfig.Search`.
-- Tests — `McpDeliveryGovernorTest` (8 tests): boundary (just-under untouched;
+- Tests — `McpDeliveryGovernorTest` (9 tests): boundary (just-under untouched;
   just-over → provenance-strip suffices; far-over → tail-drop with correct count;
   single-oversized floor never-split), 0-disables, byte-stable determinism, notice
-  shape, and the §C integration through `McpToolSurface.callSearch` at `detail:true
-  limit:30` on oversized synthetic results (result-count reduction + notice, every
-  delivered excerpt intact — never mid-payload truncation). Extends the 770
-  golden/totality guards (`McpEvidenceProjectionTest`, `McpTierEquivalenceGoldenTest`
-  are unaffected — the governor is a no-op under budget, so the text-tier goldens
-  and the projection-shape totality guards stay byte-identical).
+  shape, **the live-composition regression** (`structuredUnderButFullOverStillDegrades`
+  — structuredContent under budget but a fat text block puts the full result over →
+  the governor must keep dropping tails; a structured-only budget would have wrongly
+  declared success), and the §C integration through `McpToolSurface.callSearch` at
+  `detail:true limit:30` asserting the delivered FULL result (text + structuredContent
+  + envelope) ≤ 45,000, result-count reduction + notice, every delivered excerpt
+  intact. Extends the 770 golden/totality guards (`McpEvidenceProjectionTest`,
+  `McpTierEquivalenceGoldenTest` are unaffected — the governor is a no-op under
+  budget, so the text-tier goldens and the projection-shape totality guards stay
+  byte-identical).
 
 **Verification done.** `spotlessApply` clean; `./gradlew.bat build -x test` GREEN
 (PMD/spotbugs incl.); full `./gradlew.bat test` GREEN; `McpDeliveryGovernorTest`
-8/8; runtime-config-matrix verify GREEN post-regen.
+9/9; runtime-config-matrix verify GREEN post-regen.
 
-**Handoff — LIVE verification is the orchestrator's follow-up, NOT claimed here.**
-This pass is unit/integration-verified with synthetic oversized payloads. The
-end-to-end confirmation at the actual failing cell — `justsearch_search
-detail:true limit:30` on the legal corpus through the real MCP client, asserting
-the delivered payload now carries a `governor` notice + reduced result set instead
-of the 770 §E.3 neither-tier loss — requires a live dev stack + the CLERC corpus
-and is left to the orchestrator's live-verify step.
+**Handoff — LIVE re-verification is the orchestrator's step.** This pass is
+unit/integration-verified: the integration test now asserts the delivered FULL
+result ≤ budget (the exact quantity the live measurement showed over the cliff).
+The orchestrator re-verifies against this commit at the failing cell —
+`justsearch_search detail:true limit:30` on the legal CLERC corpus through the real
+MCP client, confirming all responses' full wire payload is now ≤ 45,000 with a
+`governor` notice + reduced result set instead of the 770 §E.3 neither-tier loss.

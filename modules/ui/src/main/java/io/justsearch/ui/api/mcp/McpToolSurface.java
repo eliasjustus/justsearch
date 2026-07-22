@@ -806,28 +806,35 @@ public final class McpToolSurface {
               querySyntax, Boolean.TRUE, detail, null);
       KnowledgeSearchResponse resp = adapter.search(req);
 
-      // Tempdoc 735 W6: every response fact — per-hit rationale, hints, facets, coverage —
-      // computed ONCE by the content-model builder, then consumed by both the text renderer and
-      // the structured renderer, so the two tiers cannot silently diverge (735 G3).
-      McpSearchResponseContent content = buildSearchContent(resp, args);
-      String text = renderSearchText(resp, content, concise);
-
-      // Tempdoc 658/735: the canonical search-execution evidence (SearchTrace + per-hit trace)
-      // PLUS the tier-equivalence fields (hints/facets/coverage/truncated) ride the agent-facing
-      // structuredContent channel, alongside the human-readable text block.
-      Map<String, Object> structured =
-          McpEvidenceProjection.searchEvidence(resp, content, Boolean.TRUE.equals(detail));
-      // Tempdoc 775 §E/§C: the delivery governor degrades this assembled payload deterministically
-      // at the 770 §E.3 client truncation cliff (numeric provenance first, then whole tail results,
-      // never mid-payload/mid-span), replacing the client-side neither-tier loss on the cliff path.
-      structured = McpDeliveryGovernor.govern(structured, resolveDeliveryBudgetBytes(), MAPPER);
-      return Map.of(
-          "content",
-          List.of(Map.of("type", "text", "text", text)),
-          "structuredContent",
-          structured,
-          "isError",
-          false);
+      // Tempdoc 775 §E/§C: the delivery governor degrades the WHOLE assembled tool result (the
+      // human-readable text block + the structuredContent channel + envelope) deterministically at
+      // the 770 §E.3 client truncation cliff — which operates on the whole result, not the
+      // structured tier alone (a fat text block can push the wire payload over the cliff while
+      // structuredContent stays under any structured-only budget). The view re-renders both tiers
+      // from the surviving results at each degradation step, so text and structured never diverge:
+      // provenance stripped first (per-hit trace/legScores, projected only under `detail`), then
+      // whole tail results dropped lowest-ranked-first, never truncating a result or span mid-way.
+      // Tempdoc 735 W6: within a single render every response fact is computed ONCE by the
+      // content-model builder and consumed by both renderers, so the two tiers cannot diverge.
+      boolean includeDetail = Boolean.TRUE.equals(detail);
+      McpDeliveryGovernor.ResultView view =
+          (keep, includeProvenance) -> {
+            KnowledgeSearchResponse sub =
+                keep >= resp.results().size() ? resp : truncateResults(resp, keep);
+            McpSearchResponseContent c = buildSearchContent(sub, args);
+            String t = renderSearchText(sub, c, concise);
+            Map<String, Object> structured =
+                McpEvidenceProjection.searchEvidence(sub, c, includeProvenance);
+            return Map.of(
+                "content",
+                List.of(Map.of("type", "text", "text", t)),
+                "structuredContent",
+                structured,
+                "isError",
+                false);
+          };
+      return McpDeliveryGovernor.govern(
+          resp.results().size(), includeDetail, resolveDeliveryBudgetBytes(), MAPPER, view);
     } catch (Exception e) {
       log.warn("MCP search failed", e);
       return errorContent(toolFailureMessage("Search", e));
@@ -849,6 +856,31 @@ public final class McpToolSurface {
       return io.justsearch.configuration.resolved.ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES;
     }
     return store.get().search().mcpDeliveryBudgetBytes();
+  }
+
+  /**
+   * Tempdoc 775 §E: a copy of {@code resp} carrying only its top {@code keep} results, used by the
+   * delivery governor to re-render both tiers when it drops whole tail results. All other fields
+   * (totalHits/matchCount/trace/facets/...) are preserved verbatim, so {@code coverage.shown} and
+   * the text truncation line honestly report the reduced delivered count against the unchanged
+   * total.
+   */
+  private static KnowledgeSearchResponse truncateResults(KnowledgeSearchResponse resp, int keep) {
+    List<KnowledgeSearchResponse.Hit> sub =
+        new ArrayList<>(resp.results().subList(0, Math.max(0, Math.min(keep, resp.results().size()))));
+    return new KnowledgeSearchResponse(
+        resp.totalHits(),
+        resp.matchCount(),
+        resp.tookMs(),
+        sub,
+        resp.nextCursor(),
+        resp.facets(),
+        resp.facetsTruncated(),
+        resp.entityFacetVariants(),
+        resp.indexCapabilities(),
+        resp.queryUnderstanding(),
+        resp.filterNormalization(),
+        resp.searchTrace());
   }
 
   /**
