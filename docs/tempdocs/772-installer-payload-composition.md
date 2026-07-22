@@ -1346,24 +1346,36 @@ CPU-only machines the DLL is never extracted (provider extraction is lazy, `addC
 fast-track candidate.** §G's original "inert until GPU+pack, but needed" characterization was
 correct; the second takeover's suspicion that it might be fully redundant is refuted by the trace.
 
-### §J — Two further measured findings (2026-07-22, prompted by "what can we optimise")
+### §J — Chartered follow-ups (owner go-ahead 2026-07-22: "no need to ask me for permissions")
 
-1. **NSIS compression is explicitly `zlib`, not LZMA** (`tauri.conf.json:28`) — set at the v0.1.0
-   initial public import with no in-repo rationale (`git log -S`), i.e. the same
-   "inherited override, never re-measured" class as §H's WebView2 mode. Tauri exposes `lzma` in the
-   same field. Estimated win 30-60 MB on the ~200 MB of PE/native content (jars are pre-deflated
-   and won't improve); the honest unknowns are CI build-time cost (LZMA on a ~680 MB payload) and
-   whether zlib was deliberately chosen for makensis 32-bit memory headroom — the repo already
-   knows that ceiling from the models-in-sidecar case. One config line + one CI build measures it.
-2. **The §G fat-jar pattern repeats in three more staged jars** (verified by listing their contents
-   from the local worker installDist / Gradle cache): `sqlite-jdbc-3.51.2.0.jar` ships natives for
-   24 OS/arch targets (25.6 MB uncompressed; Windows x86_64 needs 1.0 MB); `tokenizers-0.36.0.jar`
-   ships linux/osx natives (39.6 of 53.9 MB uncompressed removable) — **and this jar ships twice**
-   (head `lib/` + `lib/worker/`); `lightgbm4j-4.6.0-2.jar` (head) ships linux/osx natives (31.0 of
-   34.7 MB removable). Estimated combined download win ~40-45 MB via the exact
-   `stageTrimmedOnnxRuntimeGpu` idiom already proven by commit `c1ee039f`, generalized to a per-jar
-   trim list at the staging site. Per-library loader verification (current-OS-path-only, the
-   §Derisk `OnnxRuntime.initOsArch` check's analogue) required for each before trimming.
+Two optimisations from the §I assessment were green-lit under a general autonomy grant (merge/publish
+still gated per standing rules). Confidence rated before implementation, with the load-bearing
+unknown of each resolved from primary sources first:
+
+1. **NSIS compression: drop the `"zlib"` override, fall back to Tauri's `lzma` default.**
+   Tauri's config reference confirms `lzma` IS the NSIS default — so `"zlib"` (in since the v0.1.0
+   import, no recorded reason in this repo's history) is the third explicit-override-of-an-upstream-
+   default this tempdoc has found (after `offlineInstaller` and scoping). Implemented inline
+   (P-C pilot: one-line config delete + CI trigger, clearly below spawn break-even). Expected win
+   unquantified until measured — jars (~65% of payload) are internally deflated and won't move much;
+   DLLs/JRE/AOT should. Risk: makensis time/memory in CI (visible failure, trivial revert).
+   **Confidence: 9/10 implementation; outcome = whatever one CI run measures.**
+2. **Move the win-x64 CUDA EP DLL (163.6 MB, 36% of download) into the existing `cuda-runtime`
+   pack.** Rationale in §I/Q9: the DLL is strictly useless without the pack's dependency DLLs, so it
+   only serves users who already consented to an 11x-larger download; +9% on that pack vs −36% on
+   everyone's installer. ORT 1.24.3 source (fetched this pass) confirms `extractProviderLibrary()`
+   tries the jar first and falls back to an external property-specified location only when jar
+   extraction fails — i.e. trimming the jar activates the documented fallback. **Gated on a local
+   GPU probe** (EP DLL absent from jar + external copy present → does `addCUDA` succeed?), delegated
+   as a standalone JVM experiment (not dev-stack work). Sequencing constraint recorded: the trim
+   must never ship before the pack archive actually hosts the DLL (silent GPU→CPU degradation
+   otherwise) — registry entry, trim, and fallback wiring land together; the release-archive upload
+   is a runbook precondition. **Confidence: 8/10 that the mechanism works (from-source evidence),
+   7/10 for the end-to-end move pending the probe; the archive-upload step is owner-executed.**
+
+Declined-with-reasons (per §I): O1-O3, AOT removal, deeper JRE trim, vc_redist online-ification,
+Tesseract ICU trimming. Jar dedup: deferred until the lzma measurement shows whether a material
+download cost remains.
 
 ### Where this leaves the intention
 

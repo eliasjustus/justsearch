@@ -24,8 +24,7 @@
       "allowDowngrades": false,
       "nsis": {
         "installMode": "currentUser",
-        "installerHooks": "nsis/installer-hooks.nsh",
-        "compression": "zlib"
+        "installerHooks": "nsis/installer-hooks.nsh"
       }
     },
     "icon": [
