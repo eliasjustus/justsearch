@@ -1,0 +1,921 @@
+{
+  "method": "real-text-injection-v1",
+  "seed": 707,
+  "style": "interleave",
+  "n_gold_docs": 100,
+  "n_distractors": 900,
+  "host_min_words": 60,
+  "host_mapping": [
+    {
+      "gold_id": "1214090",
+      "host_id": "7847290",
+      "fabricated_id": "aary perforit materry"
+    },
+    {
+      "gold_id": "4312256",
+      "host_id": "1251404",
+      "fabricated_id": "altooneoria, pa"
+    },
+    {
+      "gold_id": "2972882",
+      "host_id": "1185936",
+      "fabricated_id": "andovenited', ma"
+    },
+    {
+      "gold_id": "4151670",
+      "host_id": "10810218",
+      "fabricated_id": "appeaydrolevel of nortvel carolp"
+    },
+    {
+      "gold_id": "7850123",
+      "host_id": "4156476",
+      "fabricated_id": "b', pa"
+    },
+    {
+      "gold_id": "3549369",
+      "host_id": "11574573",
+      "fabricated_id": "barls, pa"
+    },
+    {
+      "gold_id": "4164836",
+      "host_id": "3580178",
+      "fabricated_id": "branns, md"
+    },
+    {
+      "gold_id": "4337031",
+      "host_id": "3678755",
+      "fabricated_id": "brooy, ny"
+    },
+    {
+      "gold_id": "479700",
+      "host_id": "2261926",
+      "fabricated_id": "brownrtificate division"
+    },
+    {
+      "gold_id": "6727368",
+      "host_id": "683884",
+      "fabricated_id": "byobile, ms"
+    },
+    {
+      "gold_id": "9497584",
+      "host_id": "6073586",
+      "fabricated_id": "cadct company"
+    },
+    {
+      "gold_id": "1390585",
+      "host_id": "1102232",
+      "fabricated_id": "cer salolkin tax"
+    },
+    {
+      "gold_id": "7413326",
+      "host_id": "10528683",
+      "fabricated_id": "cheuri planary"
+    },
+    {
+      "gold_id": "472594",
+      "host_id": "9199960",
+      "fabricated_id": "coalbrook-dty comprd"
+    },
+    {
+      "gold_id": "4150401",
+      "host_id": "6721518",
+      "fabricated_id": "covented mees of s"
+    },
+    {
+      "gold_id": "1718866",
+      "host_id": "4086495",
+      "fabricated_id": "darborn us llp"
+    },
+    {
+      "gold_id": "2243546",
+      "host_id": "1832352",
+      "fabricated_id": "dinubrooklyn, ca"
+    },
+    {
+      "gold_id": "5879846",
+      "host_id": "3774161",
+      "fabricated_id": "eaer cors federd credits unnter"
+    },
+    {
+      "gold_id": "10515385",
+      "host_id": "360943",
+      "fabricated_id": "economic ms"
+    },
+    {
+      "gold_id": "11973077",
+      "host_id": "12005294",
+      "fabricated_id": "edgan saant"
+    },
+    {
+      "gold_id": "9474899",
+      "host_id": "3917956",
+      "fabricated_id": "edwary weisfelner"
+    },
+    {
+      "gold_id": "4003195",
+      "host_id": "4236579",
+      "fabricated_id": "edwealth mcconnell clark fvelty and pfiommonwealth inc"
+    },
+    {
+      "gold_id": "1143423",
+      "host_id": "10524978",
+      "fabricated_id": "eitecis anaal"
+    },
+    {
+      "gold_id": "408933",
+      "host_id": "59451",
+      "fabricated_id": "eitte saants"
+    },
+    {
+      "gold_id": "11587424",
+      "host_id": "261878",
+      "fabricated_id": "finncession, ca"
+    },
+    {
+      "gold_id": "1161974",
+      "host_id": "7657545",
+      "fabricated_id": "finnon, ca"
+    },
+    {
+      "gold_id": "117734",
+      "host_id": "3926748",
+      "fabricated_id": "fire ir beach propeollar"
+    },
+    {
+      "gold_id": "5622367",
+      "host_id": "9037433",
+      "fabricated_id": "fn servision"
+    },
+    {
+      "gold_id": "3498018",
+      "host_id": "10535613",
+      "fabricated_id": "framish ply, mi"
+    },
+    {
+      "gold_id": "3941775",
+      "host_id": "3913674",
+      "fabricated_id": "fraolicitation agreement, nj"
+    },
+    {
+      "gold_id": "1106829",
+      "host_id": "3571935",
+      "fabricated_id": "ft sal musiy co"
+    },
+    {
+      "gold_id": "4203246",
+      "host_id": "36389",
+      "fabricated_id": "globalsantas corp"
+    },
+    {
+      "gold_id": "6093480",
+      "host_id": "9472730",
+      "fabricated_id": "hattacine, ms"
+    },
+    {
+      "gold_id": "3040479",
+      "host_id": "5699373",
+      "fabricated_id": "hento furnishings, tn"
+    },
+    {
+      "gold_id": "5705571",
+      "host_id": "6643439",
+      "fabricated_id": "hiouthern oon depouthern"
+    },
+    {
+      "gold_id": "306575",
+      "host_id": "4057974",
+      "fabricated_id": "honorabon sidnefeld axel-roon"
+    },
+    {
+      "gold_id": "4094359",
+      "host_id": "3722571",
+      "fabricated_id": "hudsnteer terker"
+    },
+    {
+      "gold_id": "4180819",
+      "host_id": "10502115",
+      "fabricated_id": "inc. and port mee pablic treadge"
+    },
+    {
+      "gold_id": "9140267",
+      "host_id": "405262",
+      "fabricated_id": "inmate shultalters"
+    },
+    {
+      "gold_id": "624469",
+      "host_id": "6172403",
+      "fabricated_id": "internatioited saltates coordinaomic"
+    },
+    {
+      "gold_id": "3730943",
+      "host_id": "11677261",
+      "fabricated_id": "j. nengram belavid"
+    },
+    {
+      "gold_id": "364193",
+      "host_id": "4345908",
+      "fabricated_id": "jarker's ltes"
+    },
+    {
+      "gold_id": "5659992",
+      "host_id": "3756255",
+      "fabricated_id": "joiree kaili"
+    },
+    {
+      "gold_id": "550027",
+      "host_id": "6144016",
+      "fabricated_id": "jtal hol-ale"
+    },
+    {
+      "gold_id": "4120053",
+      "host_id": "12270837",
+      "fabricated_id": "l. bee furntitutes co"
+    },
+    {
+      "gold_id": "4204030",
+      "host_id": "3568552",
+      "fabricated_id": "laland dm pn jr"
+    },
+    {
+      "gold_id": "12520443",
+      "host_id": "4171008",
+      "fabricated_id": "mank, mt"
+    },
+    {
+      "gold_id": "4026311",
+      "host_id": "9097620",
+      "fabricated_id": "mans administration sossmans total"
+    },
+    {
+      "gold_id": "649836",
+      "host_id": "4080418",
+      "fabricated_id": "marquette credisburg ule"
+    },
+    {
+      "gold_id": "3757487",
+      "host_id": "642958",
+      "fabricated_id": "memoranduk opinichwanke mk"
+    },
+    {
+      "gold_id": "4354845",
+      "host_id": "10536233",
+      "fabricated_id": "merrifiover, va"
+    },
+    {
+      "gold_id": "12166031",
+      "host_id": "1953720",
+      "fabricated_id": "mim mirms, md"
+    },
+    {
+      "gold_id": "4256286",
+      "host_id": "148162",
+      "fabricated_id": "moneysworthadow president"
+    },
+    {
+      "gold_id": "12128127",
+      "host_id": "6576755",
+      "fabricated_id": "mtte wlas"
+    },
+    {
+      "gold_id": "7384825",
+      "host_id": "1218624",
+      "fabricated_id": "neode yorsland"
+    },
+    {
+      "gold_id": "1409222",
+      "host_id": "3781978",
+      "fabricated_id": "nesbithua diviacturing"
+    },
+    {
+      "gold_id": "6730541",
+      "host_id": "685183",
+      "fabricated_id": "netjecguire the court"
+    },
+    {
+      "gold_id": "879867",
+      "host_id": "10550673",
+      "fabricated_id": "newson, ny"
+    },
+    {
+      "gold_id": "3917929",
+      "host_id": "3757879",
+      "fabricated_id": "norted sea"
+    },
+    {
+      "gold_id": "3851942",
+      "host_id": "3750083",
+      "fabricated_id": "oaland, ca"
+    },
+    {
+      "gold_id": "1838246",
+      "host_id": "3893694",
+      "fabricated_id": "officeabury kevir teabury"
+    },
+    {
+      "gold_id": "8285084",
+      "host_id": "1947637",
+      "fabricated_id": "ofrles prodres"
+    },
+    {
+      "gold_id": "386433",
+      "host_id": "12412995",
+      "fabricated_id": "old williamsburg candlavel corpency"
+    },
+    {
+      "gold_id": "610992",
+      "host_id": "793582",
+      "fabricated_id": "oon rakenison"
+    },
+    {
+      "gold_id": "9297228",
+      "host_id": "728522",
+      "fabricated_id": "otegode, ny"
+    },
+    {
+      "gold_id": "5273757",
+      "host_id": "1773584",
+      "fabricated_id": "patelames ploltz"
+    },
+    {
+      "gold_id": "42185",
+      "host_id": "4231371",
+      "fabricated_id": "pennsylvaranchise infrastructure deveoard authority"
+    },
+    {
+      "gold_id": "226008",
+      "host_id": "4078167",
+      "fabricated_id": "poadway due proceroadway"
+    },
+    {
+      "gold_id": "11356176",
+      "host_id": "5625147",
+      "fabricated_id": "policational boarne"
+    },
+    {
+      "gold_id": "893267",
+      "host_id": "212331",
+      "fabricated_id": "pretl hospip"
+    },
+    {
+      "gold_id": "5658897",
+      "host_id": "10588877",
+      "fabricated_id": "primeta highway"
+    },
+    {
+      "gold_id": "7411482",
+      "host_id": "1143065",
+      "fabricated_id": "priton administrative proceedst mr"
+    },
+    {
+      "gold_id": "10596609",
+      "host_id": "11110906",
+      "fabricated_id": "qualibtors controcharge"
+    },
+    {
+      "gold_id": "7383368",
+      "host_id": "3810351",
+      "fabricated_id": "ran, de"
+    },
+    {
+      "gold_id": "7411775",
+      "host_id": "4124977",
+      "fabricated_id": "ride, ms"
+    },
+    {
+      "gold_id": "11668987",
+      "host_id": "3851744",
+      "fabricated_id": "roberay elzlands de-pway"
+    },
+    {
+      "gold_id": "4049567",
+      "host_id": "4175611",
+      "fabricated_id": "sacrah, ca"
+    },
+    {
+      "gold_id": "7847112",
+      "host_id": "437494",
+      "fabricated_id": "san josork"
+    },
+    {
+      "gold_id": "147766",
+      "host_id": "3853975",
+      "fabricated_id": "scpetitive ruired"
+    },
+    {
+      "gold_id": "443388",
+      "host_id": "7856413",
+      "fabricated_id": "secretars sufus"
+    },
+    {
+      "gold_id": "1698774",
+      "host_id": "4075311",
+      "fabricated_id": "sitors aluminium ag"
+    },
+    {
+      "gold_id": "4084210",
+      "host_id": "4228479",
+      "fabricated_id": "sl gilleistress"
+    },
+    {
+      "gold_id": "10526715",
+      "host_id": "6127434",
+      "fabricated_id": "soliciterial, ar"
+    },
+    {
+      "gold_id": "6596723",
+      "host_id": "6550747",
+      "fabricated_id": "state framn befoce the cofice"
+    },
+    {
+      "gold_id": "533851",
+      "host_id": "3637072",
+      "fabricated_id": "statore universicuit of new yircuit"
+    },
+    {
+      "gold_id": "2254236",
+      "host_id": "3705921",
+      "fabricated_id": "statr int’l coror"
+    },
+    {
+      "gold_id": "10531569",
+      "host_id": "3705841",
+      "fabricated_id": "stego america"
+    },
+    {
+      "gold_id": "3574622",
+      "host_id": "5700700",
+      "fabricated_id": "stto, ne"
+    },
+    {
+      "gold_id": "4228950",
+      "host_id": "3860505",
+      "fabricated_id": "supeld court of montana"
+    },
+    {
+      "gold_id": "1261131",
+      "host_id": "3958513",
+      "fabricated_id": "tax seang"
+    },
+    {
+      "gold_id": "5751663",
+      "host_id": "12399303",
+      "fabricated_id": "tenenbaum’s chaear"
+    },
+    {
+      "gold_id": "590002",
+      "host_id": "52817",
+      "fabricated_id": "tial customeme soan dnk"
+    },
+    {
+      "gold_id": "6604570",
+      "host_id": "416873",
+      "fabricated_id": "tilestonal millinrt co"
+    },
+    {
+      "gold_id": "3932495",
+      "host_id": "5630736",
+      "fabricated_id": "unitengton states"
+    },
+    {
+      "gold_id": "7651423",
+      "host_id": "2012284",
+      "fabricated_id": "uohomish kingounty"
+    },
+    {
+      "gold_id": "9048905",
+      "host_id": "398688",
+      "fabricated_id": "vinceeenwich pollino, md"
+    },
+    {
+      "gold_id": "4125391",
+      "host_id": "12397029",
+      "fabricated_id": "vrmacopoeial ace cental"
+    },
+    {
+      "gold_id": "2078144",
+      "host_id": "3641987",
+      "fabricated_id": "washingy county, pa"
+    },
+    {
+      "gold_id": "4223580",
+      "host_id": "9145052",
+      "fabricated_id": "waunsno, wi"
+    },
+    {
+      "gold_id": "190270",
+      "host_id": "3846943",
+      "fabricated_id": "winsnterstate & co"
+    }
+  ],
+  "gold_id_mapping": [
+    {
+      "fabricated_id": "aary perforit materry",
+      "assembled_id": "1214090"
+    },
+    {
+      "fabricated_id": "altooneoria, pa",
+      "assembled_id": "4312256"
+    },
+    {
+      "fabricated_id": "andovenited', ma",
+      "assembled_id": "2972882"
+    },
+    {
+      "fabricated_id": "appeaydrolevel of nortvel carolp",
+      "assembled_id": "4151670"
+    },
+    {
+      "fabricated_id": "b', pa",
+      "assembled_id": "7850123"
+    },
+    {
+      "fabricated_id": "barls, pa",
+      "assembled_id": "3549369"
+    },
+    {
+      "fabricated_id": "branns, md",
+      "assembled_id": "4164836"
+    },
+    {
+      "fabricated_id": "brooy, ny",
+      "assembled_id": "4337031"
+    },
+    {
+      "fabricated_id": "brownrtificate division",
+      "assembled_id": "479700"
+    },
+    {
+      "fabricated_id": "byobile, ms",
+      "assembled_id": "6727368"
+    },
+    {
+      "fabricated_id": "cadct company",
+      "assembled_id": "9497584"
+    },
+    {
+      "fabricated_id": "cer salolkin tax",
+      "assembled_id": "1390585"
+    },
+    {
+      "fabricated_id": "cheuri planary",
+      "assembled_id": "7413326"
+    },
+    {
+      "fabricated_id": "coalbrook-dty comprd",
+      "assembled_id": "472594"
+    },
+    {
+      "fabricated_id": "covented mees of s",
+      "assembled_id": "4150401"
+    },
+    {
+      "fabricated_id": "darborn us llp",
+      "assembled_id": "1718866"
+    },
+    {
+      "fabricated_id": "dinubrooklyn, ca",
+      "assembled_id": "2243546"
+    },
+    {
+      "fabricated_id": "eaer cors federd credits unnter",
+      "assembled_id": "5879846"
+    },
+    {
+      "fabricated_id": "economic ms",
+      "assembled_id": "10515385"
+    },
+    {
+      "fabricated_id": "edgan saant",
+      "assembled_id": "11973077"
+    },
+    {
+      "fabricated_id": "edwary weisfelner",
+      "assembled_id": "9474899"
+    },
+    {
+      "fabricated_id": "edwealth mcconnell clark fvelty and pfiommonwealth inc",
+      "assembled_id": "4003195"
+    },
+    {
+      "fabricated_id": "eitecis anaal",
+      "assembled_id": "1143423"
+    },
+    {
+      "fabricated_id": "eitte saants",
+      "assembled_id": "408933"
+    },
+    {
+      "fabricated_id": "finncession, ca",
+      "assembled_id": "11587424"
+    },
+    {
+      "fabricated_id": "finnon, ca",
+      "assembled_id": "1161974"
+    },
+    {
+      "fabricated_id": "fire ir beach propeollar",
+      "assembled_id": "117734"
+    },
+    {
+      "fabricated_id": "fn servision",
+      "assembled_id": "5622367"
+    },
+    {
+      "fabricated_id": "framish ply, mi",
+      "assembled_id": "3498018"
+    },
+    {
+      "fabricated_id": "fraolicitation agreement, nj",
+      "assembled_id": "3941775"
+    },
+    {
+      "fabricated_id": "ft sal musiy co",
+      "assembled_id": "1106829"
+    },
+    {
+      "fabricated_id": "globalsantas corp",
+      "assembled_id": "4203246"
+    },
+    {
+      "fabricated_id": "hattacine, ms",
+      "assembled_id": "6093480"
+    },
+    {
+      "fabricated_id": "hento furnishings, tn",
+      "assembled_id": "3040479"
+    },
+    {
+      "fabricated_id": "hiouthern oon depouthern",
+      "assembled_id": "5705571"
+    },
+    {
+      "fabricated_id": "honorabon sidnefeld axel-roon",
+      "assembled_id": "306575"
+    },
+    {
+      "fabricated_id": "hudsnteer terker",
+      "assembled_id": "4094359"
+    },
+    {
+      "fabricated_id": "inc. and port mee pablic treadge",
+      "assembled_id": "4180819"
+    },
+    {
+      "fabricated_id": "inmate shultalters",
+      "assembled_id": "9140267"
+    },
+    {
+      "fabricated_id": "internatioited saltates coordinaomic",
+      "assembled_id": "624469"
+    },
+    {
+      "fabricated_id": "j. nengram belavid",
+      "assembled_id": "3730943"
+    },
+    {
+      "fabricated_id": "jarker's ltes",
+      "assembled_id": "364193"
+    },
+    {
+      "fabricated_id": "joiree kaili",
+      "assembled_id": "5659992"
+    },
+    {
+      "fabricated_id": "jtal hol-ale",
+      "assembled_id": "550027"
+    },
+    {
+      "fabricated_id": "l. bee furntitutes co",
+      "assembled_id": "4120053"
+    },
+    {
+      "fabricated_id": "laland dm pn jr",
+      "assembled_id": "4204030"
+    },
+    {
+      "fabricated_id": "mank, mt",
+      "assembled_id": "12520443"
+    },
+    {
+      "fabricated_id": "mans administration sossmans total",
+      "assembled_id": "4026311"
+    },
+    {
+      "fabricated_id": "marquette credisburg ule",
+      "assembled_id": "649836"
+    },
+    {
+      "fabricated_id": "memoranduk opinichwanke mk",
+      "assembled_id": "3757487"
+    },
+    {
+      "fabricated_id": "merrifiover, va",
+      "assembled_id": "4354845"
+    },
+    {
+      "fabricated_id": "mim mirms, md",
+      "assembled_id": "12166031"
+    },
+    {
+      "fabricated_id": "moneysworthadow president",
+      "assembled_id": "4256286"
+    },
+    {
+      "fabricated_id": "mtte wlas",
+      "assembled_id": "12128127"
+    },
+    {
+      "fabricated_id": "neode yorsland",
+      "assembled_id": "7384825"
+    },
+    {
+      "fabricated_id": "nesbithua diviacturing",
+      "assembled_id": "1409222"
+    },
+    {
+      "fabricated_id": "netjecguire the court",
+      "assembled_id": "6730541"
+    },
+    {
+      "fabricated_id": "newson, ny",
+      "assembled_id": "879867"
+    },
+    {
+      "fabricated_id": "norted sea",
+      "assembled_id": "3917929"
+    },
+    {
+      "fabricated_id": "oaland, ca",
+      "assembled_id": "3851942"
+    },
+    {
+      "fabricated_id": "officeabury kevir teabury",
+      "assembled_id": "1838246"
+    },
+    {
+      "fabricated_id": "ofrles prodres",
+      "assembled_id": "8285084"
+    },
+    {
+      "fabricated_id": "old williamsburg candlavel corpency",
+      "assembled_id": "386433"
+    },
+    {
+      "fabricated_id": "oon rakenison",
+      "assembled_id": "610992"
+    },
+    {
+      "fabricated_id": "otegode, ny",
+      "assembled_id": "9297228"
+    },
+    {
+      "fabricated_id": "patelames ploltz",
+      "assembled_id": "5273757"
+    },
+    {
+      "fabricated_id": "pennsylvaranchise infrastructure deveoard authority",
+      "assembled_id": "42185"
+    },
+    {
+      "fabricated_id": "poadway due proceroadway",
+      "assembled_id": "226008"
+    },
+    {
+      "fabricated_id": "policational boarne",
+      "assembled_id": "11356176"
+    },
+    {
+      "fabricated_id": "pretl hospip",
+      "assembled_id": "893267"
+    },
+    {
+      "fabricated_id": "primeta highway",
+      "assembled_id": "5658897"
+    },
+    {
+      "fabricated_id": "priton administrative proceedst mr",
+      "assembled_id": "7411482"
+    },
+    {
+      "fabricated_id": "qualibtors controcharge",
+      "assembled_id": "10596609"
+    },
+    {
+      "fabricated_id": "ran, de",
+      "assembled_id": "7383368"
+    },
+    {
+      "fabricated_id": "ride, ms",
+      "assembled_id": "7411775"
+    },
+    {
+      "fabricated_id": "roberay elzlands de-pway",
+      "assembled_id": "11668987"
+    },
+    {
+      "fabricated_id": "sacrah, ca",
+      "assembled_id": "4049567"
+    },
+    {
+      "fabricated_id": "san josork",
+      "assembled_id": "7847112"
+    },
+    {
+      "fabricated_id": "scpetitive ruired",
+      "assembled_id": "147766"
+    },
+    {
+      "fabricated_id": "secretars sufus",
+      "assembled_id": "443388"
+    },
+    {
+      "fabricated_id": "sitors aluminium ag",
+      "assembled_id": "1698774"
+    },
+    {
+      "fabricated_id": "sl gilleistress",
+      "assembled_id": "4084210"
+    },
+    {
+      "fabricated_id": "soliciterial, ar",
+      "assembled_id": "10526715"
+    },
+    {
+      "fabricated_id": "state framn befoce the cofice",
+      "assembled_id": "6596723"
+    },
+    {
+      "fabricated_id": "statore universicuit of new yircuit",
+      "assembled_id": "533851"
+    },
+    {
+      "fabricated_id": "statr int’l coror",
+      "assembled_id": "2254236"
+    },
+    {
+      "fabricated_id": "stego america",
+      "assembled_id": "10531569"
+    },
+    {
+      "fabricated_id": "stto, ne",
+      "assembled_id": "3574622"
+    },
+    {
+      "fabricated_id": "supeld court of montana",
+      "assembled_id": "4228950"
+    },
+    {
+      "fabricated_id": "tax seang",
+      "assembled_id": "1261131"
+    },
+    {
+      "fabricated_id": "tenenbaum’s chaear",
+      "assembled_id": "5751663"
+    },
+    {
+      "fabricated_id": "tial customeme soan dnk",
+      "assembled_id": "590002"
+    },
+    {
+      "fabricated_id": "tilestonal millinrt co",
+      "assembled_id": "6604570"
+    },
+    {
+      "fabricated_id": "unitengton states",
+      "assembled_id": "3932495"
+    },
+    {
+      "fabricated_id": "uohomish kingounty",
+      "assembled_id": "7651423"
+    },
+    {
+      "fabricated_id": "vinceeenwich pollino, md",
+      "assembled_id": "9048905"
+    },
+    {
+      "fabricated_id": "vrmacopoeial ace cental",
+      "assembled_id": "4125391"
+    },
+    {
+      "fabricated_id": "washingy county, pa",
+      "assembled_id": "2078144"
+    },
+    {
+      "fabricated_id": "waunsno, wi",
+      "assembled_id": "4223580"
+    },
+    {
+      "fabricated_id": "winsnterstate & co",
+      "assembled_id": "190270"
+    }
+  ],
+  "assembled_digest": "50bec5d2dc63b662eda309d27f1db130ad72b9196e9560141ee3d8d5fb1508c7",
+  "real_source_id": "jhu-clsp/CLERC:test-single-removed-direct:seed707:hosts14k",
+  "real_source_sha256": "989977109653ce2b94b3c4baa7aed15d5d1d8b80c36469404aa36d9354999ba4",
+  "license": "CC0-1.0",
+  "assembly_determinism": {
+    "passed": true,
+    "method": "cross-process-regeneration-diff",
+    "digest": "50bec5d2dc63b662eda309d27f1db130ad72b9196e9560141ee3d8d5fb1508c7"
+  }
+}

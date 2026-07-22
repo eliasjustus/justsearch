@@ -1,0 +1,42 @@
+{
+  "schema": "707-corpus-member.v1",
+  "name": "en-legal-clerc",
+  "language": "en",
+  "domain": "legal",
+  "rebuild_lineage": {
+    "supersedes": "707-corpora/en-legal-clerc",
+    "tempdoc": "781",
+    "reason": "camouflaged host-title metadata (tempdoc 781 §B.1) — native distractors now carry deterministic, non-answer-bearing titles so `title` field-presence no longer separates gold from native (774 §J.7 leak closed). Gold sources are byte-identical to v1 (fabricated-* reused verbatim); only the assembly generator changed, so corpus signatures differ from v1 by construction.",
+    "generator": "corpus_inject._synthesize_host_title (PR #297)"
+  },
+  "real_source": {
+    "recipe": "../../666-corpora/legal-clerc-hosts-14k/recipe.json",
+    "real_source_id": "jhu-clsp/CLERC:test-single-removed-direct:seed707:hosts14k",
+    "real_source_sha256": "989977109653ce2b94b3c4baa7aed15d5d1d8b80c36469404aa36d9354999ba4",
+    "content_scope": "Caselaw Access Project document text only; CLERC queries and annotations are not redistributed or used as injected gold",
+    "license": "CC0-1.0",
+    "license_status": "verified",
+    "redistribute": false
+  },
+  "gold_source": {
+    "note": "Reused from v1 verbatim — each cell's committed fabricated-docs.jsonl / fabricated-queries.json / fabricated-meta.json ARE the gold-source snapshot. fabricated-meta.json's entity_bank pointer still references the shared 707-corpora/en-legal-clerc/entity-bank generation bank (unchanged).",
+    "origin": "../../635-corpora/needle-burial-v1"
+  },
+  "assembly": {
+    "command": "jseval corpus-inject-real",
+    "style": "interleave",
+    "seed": 707,
+    "host_min_words": 60
+  },
+  "sizes": [1000, 10000],
+  "query_variants": ["verbose", "short-natural"],
+  "materialized_datasets": [
+    "mixed/en-legal-clerc-1k-verbose",
+    "mixed/en-legal-clerc-1k-short-natural",
+    "mixed/en-legal-clerc-10k-verbose",
+    "mixed/en-legal-clerc-10k-short-natural"
+  ],
+  "structural_certification": "structural-certification.v1.json",
+  "claim_eligible": true,
+  "remaining_gates": ["member_retrieval_calibration", "closed_book", "union_recall", "leak_floor"]
+}
