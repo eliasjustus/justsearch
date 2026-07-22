@@ -24,11 +24,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tempdoc 774 Stage 2 (Item 1): the {@code search.evidence_preview.enabled} flag. When OFF (default)
- * the builder is byte-identical to today — chunk-sourced hits carry no {@code content_preview} and a
- * merged hit keeps its parent head-of-doc preview. When ON the winning chunk's text (capped at 4096)
- * REPLACES any head preview on chunk-sourced hits, so the CE snippet source and the delivered preview
- * are evidence-coherent (§F.1-5 / §I.2 Stage-2).
+ * Tempdoc 774 Stage 2 (Item 1): the {@code search.evidence_preview.enabled} flag. When OFF (default
+ * before the 775 §I flip, 2026-07-22) the builder is byte-identical to pre-774 — chunk-sourced hits
+ * carry no {@code content_preview} and a merged hit keeps its parent head-of-doc preview. When ON
+ * (the current default) the winning chunk's text (capped at 4096) REPLACES any head preview on
+ * chunk-sourced hits, so the CE snippet source and the delivered preview are evidence-coherent
+ * (§F.1-5). Each case here sets the flag explicitly, so the assertions are default-independent.
  */
 final class SearchResponseBuilderEvidencePreviewTest {
 

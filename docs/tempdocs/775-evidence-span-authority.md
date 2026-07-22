@@ -305,3 +305,85 @@ unification pass is therefore UNBLOCKED and becomes the carrier: one PR =
 unification (preview lever consumes EvidenceSpan; RAG conformance; governor)
 + both default flips + baseline re-pins + the pub-cme flake-fix ride-along.
 Sequenced next among engineering lanes.
+
+## §I. Default-flip carrier + unification-pass status (2026-07-22)
+
+**Shipped in this pass (the founder-authorized default flip — F-041 register
+FLIP DECISION / 766 §F pre-hero surface work):** both evidence flags flipped
+default-ON in one cohort bump.
+
+- `search.evidence_preview.enabled` false→**true** and
+  `search.evidence_span.enabled` false→**true**, at both declaration sites:
+  `ResolvedConfigBuilder.contributeYamlSearch` (`putDefault`) and
+  `ResolvedConfigBuilder.buildSearch` (the `resolveBoolean` fallback). No YAML
+  resource pins either key (grep clean), and production wires a real config
+  supplier (`SearchOrchestrator:92` → `lifecycle::resolvedConfig`), so the
+  `putDefault` is the effective production default — the flip takes effect
+  end-to-end (Head builds the snapshot; the Worker reads both keys from it).
+- Stale "default false / byte-equivalent-default" prose swept in
+  `ResolvedConfig.Search` javadoc/field comments,
+  `docs/reference/configuration/environment-variables.md`, the
+  `SearchResponseBuilder` null-supplier comment, and
+  `SearchResponseBuilderEvidencePreviewTest`'s class doc (its cases set the flag
+  explicitly, so the assertions are default-independent and needed no logic
+  change).
+- **Test pins:** the only value that read the old defaults through a *tested*
+  path is `SearchResponseBuilderEvidencePreviewTest` (parameterized on the flag
+  explicitly — robust). `SearchPlannerApprovalCorpusTest.newPlanner` hardcodes
+  `evidencePreviewEnabled=false, evidenceSpanEnabled=false` in a fixture, but
+  `SearchPlanner` never reads either field (they are `SearchResponseBuilder`
+  concerns) — inert fixture slots, left unchanged to keep the diff scoped.
+  `ExcerptRegionDefaultsByteEquivalenceTest` calls
+  `HighlightingOps.computeExcerptRegions` directly (flag-independent) — unaffected.
+
+**Rationale the flip is safe on measured evidence, not assertion:** each lever
+is individually measured — `evidence_preview` ON = +15% legal / +5.9% enron
+(F-041, register rows at legal-clerc/enron-qa), `evidence_span` ON = 0→100%
+buried-entity carriage with byte-identical ranking (§F). Neither measurement
+touched the CE-input / RAG / governor paths, so flipping both to default-ON
+ships two independently-measured-good levers without those unmeasured changes.
+
+**Deferred from this pass (unification steps 2-3), with primary-source blockers
+— these need the eval "baseline re-pins" the founder decision itself commits to,
+which cannot run in a code-only, in-turn worker pass:**
+
+1. **Preview→span CE-input unification (§E step 3 "CE scores EvidenceSpan.text").**
+   There is no byte-preserving form: `content_preview` (whole winning chunk,
+   `capEvidencePreview`, ≤4096) and the excerpt window (`EvidenceSpanSelector`,
+   answer-bearing) are *distinct-size envelopes* — §E's own AHA clause keeps
+   distinct consumer envelopes distinct. The Head CE already windows
+   `content_preview` to a query-focused snippet (`SearchResultMapper.extractQueryFocusedSnippet`,
+   `SearchResultMapper.java:183`, len `RERANK_SNIPPET_LENGTH`) before scoring, so
+   swapping its `docText` to the narrow span is a real quality change to the exact
+   configuration F-041 measured (+15%). Must be A/B-measured before landing
+   default-ON. `capEvidencePreview` is a size cap, not a competing *selection*, so
+   there is no large parallel-selection orphan to delete under the current
+   arrangement — for chunk hits the span already selects *within* the winning
+   chunk (§G's stated unification), and both levers already read the one winning
+   chunk.
+2. **RAG/ContextCitation conformance (§E step 2).** Separate worker surface
+   (`RagContextOps.excerptTextFor`/`clampExcerptToWordBoundary`,
+   `RagContextOps.java`, minting `DocumentService.ContextCitation`). Acceptance
+   ("citation excerpt carries the entity; no re-window") is a live-verification
+   claim, and it changes RAG answer citations — quality-affecting, eval-gated.
+3. **Delivery governor (§E "deterministic degradation at the cap"; §C acceptance).**
+   §E flags the governor budget constant (≈46 KB) as **unsettled item (c):
+   "pending a production-tool delivered-size measurement"** (771 §E item-4: dev
+   MCP previews didn't truncate at limit 30), and §C's acceptance requires a live
+   "limit 30 on legal → result-count reduction + notice, never mid-payload"
+   delivery test. The mechanism is implementable on the `McpEvidenceProjection` /
+   `McpToolSurface` delivery path (drop whole tail results, emit an explicit
+   notice replacing the neither-tier loss notice), but landing it to spec needs
+   the live delivered-size measurement + integration with 770's existing
+   truncation cap (not a fork) — neither available in a code-only in-turn pass.
+
+**Cohort-bump coupling (surfaced for the orchestrator/founder):** the founder
+decision wanted the flip executed *together with* the unification pass in one
+cohort bump. This pass ships the flip alone (the unification is eval-gated per
+above), so if the unification later lands eval-ready it is a *second* cohort
+bump. The orchestrator should decide whether to hold this flip branch until the
+unification is eval-ready (one bump) or ship the flip now (accepting a later
+second bump). Register baseline re-pins (the F-041 rows' "default-off flag"
+annotations) are left to the orchestrator's eval pass — updating them here with
+unmeasured "flipped" claims would be premature.
+
