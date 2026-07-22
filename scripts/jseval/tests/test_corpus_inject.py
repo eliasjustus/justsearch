@@ -1046,3 +1046,159 @@ def test_gold_ids_are_minted_from_the_host_min_words_ELIGIBLE_population_only():
     # And the wider real-id set still governs COLLISION exclusion, which is what keeps a
     # minted id off an ineligible host that a later, lower `host_min_words` would admit.
     assert not {m for m in minted} & {d["_id"] for d in eligible + ineligible}
+
+
+# ---------------------------------------------------------------------------
+# host (native) title synthesis — the tempdoc 781 §B.1 camouflaged-metadata fix.
+# `assemble` used to write `title: ""` onto every native distractor while injected gold
+# docs kept a populated title, so a field whose mere PRESENCE separated gold from native
+# (field_selectivity J=1.0) that the 3.0x TITLE_BOOST lexical leg rewarded.
+# ---------------------------------------------------------------------------
+
+# A realistic email host: a `Subject:` header the synthesizer reads off structurally, then
+# a body. No gold answer text appears here (gold is interleaved into the body at assembly).
+_EMAIL_HOST_BODIES = [
+    "Subject: Re: Q3 gas nominations and the pipeline schedule\n\n"
+    "Please review the attached nominations before the Friday call. " * 12,
+    "Subject: Fwd: revised counterparty credit memo\n\n"
+    "The credit team flagged two exposures we should discuss next week. " * 12,
+    "Subject: lunch\n\nAre we still on for the team lunch on Thursday at noon downtown. " * 12,
+    "Subject:   \n\nNo subject on this one, just a quick note about the meeting agenda items. " * 12,
+]
+# A realistic legal-opinion host: no header at all, so the synthesizer falls to the opening
+# sentence / caption fragment. Abbreviation-aware splitting keeps citations intact.
+_LEGAL_HOST_BODIES = [
+    "Anderson v. Liberty Lobby, Inc., 477 U.S. 242, 248 (1986), governs the summary "
+    "judgment standard applied here. " * 12,
+    "The plaintiff appeals the district court's dismissal of its antitrust claims under "
+    "Fed. R. Civ. P. 12(b)(6). " * 12,
+    "This matter comes before the court on the defendant's motion for reconsideration. " * 12,
+    "In re Grand Jury Subpoena, the confidentiality question turns on the crime-fraud "
+    "exception as articulated by this circuit. " * 12,
+]
+
+
+def _host_docs(bodies: list[str], id_base: int, count: int) -> list[dict]:
+    """Native hosts with EMPTY titles (as real enron/CLERC hosts carry), cycling `bodies`.
+
+    IDs are wide integers (like the real CLERC bare-integer host ids) so the gold-id mint
+    has a roomy digit space to perturb — the shape of the id is orthogonal to this test."""
+    return [
+        {"_id": str(id_base + index * 7919), "title": "", "text": bodies[index % len(bodies)]}
+        for index in range(count)
+    ]
+
+
+def test_synthesize_host_title_is_deterministic_for_same_seed_and_content():
+    for body in _EMAIL_HOST_BODIES + _LEGAL_HOST_BODIES:
+        a = corpus_inject._synthesize_host_title(body, seed=707)
+        b = corpus_inject._synthesize_host_title(body, seed=707)
+        assert a == b and a  # stable and non-empty
+
+
+def test_synthesize_host_title_reads_the_subject_line_and_strips_reply_markers():
+    title = corpus_inject._synthesize_host_title(_EMAIL_HOST_BODIES[0], seed=707)
+    # The "Re:" plumbing is stripped; the content survives, no header colon leaks in.
+    assert not title.lower().startswith("re")
+    assert "subject" not in title.lower()
+    assert "\n" not in title and title == title.strip()
+    assert "nominations" in title.lower()
+
+
+def test_synthesize_host_title_falls_to_opening_sentence_for_headerless_legal_text():
+    title = corpus_inject._synthesize_host_title(_LEGAL_HOST_BODIES[0], seed=707)
+    # The abbreviation-aware splitter must not shatter "477 U.S. 242" into the title.
+    assert title.startswith("Anderson v. Liberty Lobby")
+    assert "\n" not in title
+
+
+def test_synthesize_host_title_reacts_to_seed_not_corpus_identity():
+    # Same content, different cell seed -> the target length may differ, but the routine
+    # never reads anything but (content, seed): identical (content, seed) is identical.
+    body = _LEGAL_HOST_BODIES[1]
+    assert corpus_inject._synthesize_host_title(body, seed=1) == \
+        corpus_inject._synthesize_host_title(body, seed=1)
+    # And an empty host yields an empty title (fails safe rather than inventing text).
+    assert corpus_inject._synthesize_host_title("", seed=707) == ""
+
+
+def _title_cell(bodies: list[str], id_base: int, seed: int = 707, n_distractors: int = 120):
+    """Assemble a cell whose natives are `bodies`-shaped hosts with empty input titles."""
+    # Gold titles mirror `corpus_generate`'s observed 3-7-word shapes ("The <entity>" /
+    # "The <type> in the <place>") so the shape-parity assertion is meaningful.
+    _gold_titles = [
+        "The Qualibtors Controcharge",                      # 3
+        "The Hento Furnishings, TN",                        # 4
+        "The granary in the pine forest",                   # 6
+        "The Newson",                                       # 2
+        "The observatory in the derelict watchtower",       # 6
+        "The Jtal Hol-ale",                                 # 3
+        "The printing house in the market square",          # 7
+        "The foundry in the western district",              # 6
+    ]
+    gold_source = [
+        {"_id": f"breldac{index}", "title": _gold_titles[index],
+         "text": f"The fabricated attribute is ochre ferrolite {index:04d}."}
+        for index in range(8)
+    ]
+    queries = [
+        {"query": f"q{index}", "answer": "a", "evidence_ids": [f"breldac{index}"]}
+        for index in range(8)
+    ]
+    hosts = _host_docs(bodies, id_base, count=8 + n_distractors)
+    docs, remapped, _report = corpus_inject.assemble(
+        hosts, gold_source, queries, seed=seed, n_distractors=n_distractors, host_min_words=10,
+    )
+    return docs, remapped
+
+
+def test_assemble_populates_native_titles_at_full_presence_parity():
+    docs, remapped = _title_cell(_EMAIL_HOST_BODIES, 2000731)
+    gold, native = corpus_leak._split_gold_native(docs, remapped)
+    assert gold and native
+    # Every native now carries a populated title (the presence leak is closed).
+    assert all(corpus_leak._is_field_populated(d.get("title")) for d in native)
+    assert all(corpus_leak._is_field_populated(d.get("title")) for d in gold)
+
+
+def test_assemble_native_title_lengths_overlap_gold_title_lengths():
+    # Shape-class parity (loose): the synthesized native title word-count distribution
+    # must OVERLAP the gold titles', not merely be present. Ranges intersecting is the
+    # loose bar this asserts.
+    docs, remapped = _title_cell(_LEGAL_HOST_BODIES, 3000731)
+    gold, native = corpus_leak._split_gold_native(docs, remapped)
+    gold_lens = sorted(len(str(d["title"]).split()) for d in gold)
+    native_lens = sorted(len(str(d["title"]).split()) for d in native)
+    assert min(native_lens) <= max(gold_lens) and max(native_lens) >= min(gold_lens)
+
+
+def test_assemble_defeats_the_field_selectivity_title_leak_before_and_after():
+    # The acceptance demo (tempdoc 781 §B.1): pre-change the native title was `""`, so
+    # field_selectivity separated gold from native at J=1.0; post-change it passes.
+    docs, remapped = _title_cell(_EMAIL_HOST_BODIES, 2000731)
+
+    after = corpus_leak.field_selectivity_report(docs, remapped)
+    assert after["passed"] is True
+    assert after["per_field"]["title"]["passed"] is True
+    assert after["per_field"]["title"]["native_population_rate"] == 1.0
+    assert after["per_field"]["title"]["separability"] <= \
+        after["per_field"]["title"]["native_base_rate"]
+
+    # Reconstruct the pre-change output (native title blanked) to show it FAILED at 1.0.
+    gold_ids = {e for q in remapped for e in q.get("evidence_ids", [])}
+    before_docs = [
+        d if d["_id"] in gold_ids else {**d, "title": ""} for d in docs
+    ]
+    before = corpus_leak.field_selectivity_report(before_docs, remapped)
+    assert before["passed"] is False
+    assert before["worst_field"] == "title"
+    assert before["per_field"]["title"]["separability"] == 1.0
+    assert before["per_field"]["title"]["native_population_rate"] == 0.0
+
+
+def test_assemble_native_title_is_not_answer_bearing():
+    # The synthesized title derives from the host's OWN text, never the interleaved gold,
+    # so no gold answer surface ("ochre ferrolite ####") can appear in a native title.
+    docs, remapped = _title_cell(_EMAIL_HOST_BODIES, 2000731)
+    _gold, native = corpus_leak._split_gold_native(docs, remapped)
+    assert not any("ferrolite" in str(d["title"]).lower() for d in native)
