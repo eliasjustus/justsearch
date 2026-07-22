@@ -815,17 +815,40 @@ public final class McpToolSurface {
       // Tempdoc 658/735: the canonical search-execution evidence (SearchTrace + per-hit trace)
       // PLUS the tier-equivalence fields (hints/facets/coverage/truncated) ride the agent-facing
       // structuredContent channel, alongside the human-readable text block.
+      Map<String, Object> structured =
+          McpEvidenceProjection.searchEvidence(resp, content, Boolean.TRUE.equals(detail));
+      // Tempdoc 775 §E/§C: the delivery governor degrades this assembled payload deterministically
+      // at the 770 §E.3 client truncation cliff (numeric provenance first, then whole tail results,
+      // never mid-payload/mid-span), replacing the client-side neither-tier loss on the cliff path.
+      structured = McpDeliveryGovernor.govern(structured, resolveDeliveryBudgetBytes(), MAPPER);
       return Map.of(
           "content",
           List.of(Map.of("type", "text", "text", text)),
           "structuredContent",
-          McpEvidenceProjection.searchEvidence(resp, content, Boolean.TRUE.equals(detail)),
+          structured,
           "isError",
           false);
     } catch (Exception e) {
       log.warn("MCP search failed", e);
       return errorContent(toolFailureMessage("Search", e));
     }
+  }
+
+  /**
+   * Tempdoc 775 §E: the delivery governor's serialized-JSON budget in bytes, read from the same
+   * config machinery other search deliverables use ({@code search.mcp_delivery.budget_bytes},
+   * default 45,000 — a margin under the lowest characterized 770 §E.3 truncation cliff at 46,617;
+   * {@code 0} disables the governor). Resolved from the global {@link
+   * io.justsearch.configuration.resolved.ConfigStore} snapshot, falling back to the default when the
+   * store is not yet initialized (test/early-boot paths) so the governor is always safe to call.
+   */
+  private static int resolveDeliveryBudgetBytes() {
+    io.justsearch.configuration.resolved.ConfigStore store =
+        io.justsearch.configuration.resolved.ConfigStore.globalOrNull();
+    if (store == null) {
+      return io.justsearch.configuration.resolved.ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES;
+    }
+    return store.get().search().mcpDeliveryBudgetBytes();
   }
 
   /**

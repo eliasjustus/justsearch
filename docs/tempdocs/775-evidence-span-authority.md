@@ -434,3 +434,81 @@ before any counted run; all five re-pin runs show GPU-band CE p50 (143–190 ms)
 *Process note (P-C inline exception): the register/tempdoc edits of this pass
 were done in the main loop — the numbers and row formats were already in
 orchestrator context, putting the pass below the delegation break-even.*
+
+## §J. Delivery governor implemented (2026-07-22)
+
+The §E "Governor (deterministic degradation at the cap)" / §C acceptance item 2
+is now implemented — the last of §I's three deferred unification-pass items to
+land as a code-only pass, because §E-unsettled (c) (the budget constant) was
+settled by a live measurement (below).
+
+**Settled input (orchestrator live measurement 2026-07-22, artifacts
+`tmp/analysis-785/governor-sizes*.json`).** Production `justsearch_search` on a
+legal corpus (198 CLERC docs, fully enriched, defaults):
+- `limit:30`, default detail → serialized result JSON p50 29.1 KB, max 30.8 KB —
+  UNDER the cliff (770's economy pass works; no governor action).
+- `limit:30, detail:true` → **p50 56.9 KB, max 62.4 KB; 11/12 queries over
+  46,600 bytes, 10/12 over 52,800** — sails past the characterized client
+  truncation band (770 §E.3: 46.6–52.8 k, fixed 2,322-char notice, neither
+  content tier delivered) with NO notice. This is the cell the governor fixes,
+  and it settles §E-unsettled (c).
+
+**Budget constant + config key.** `search.mcp_delivery.budget_bytes`, default
+**45000** (`ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES`) — a margin
+under the lowest characterized cliff (46,617). `0` disables the governor (escape
+hatch). Wired through the same config machinery as the evidence flags: `ConfigKey`
++ `EnvRegistry` (`JUSTSEARCH_SEARCH_MCP_DELIVERY_BUDGET_BYTES`) +
+`ResolvedConfigBuilder` (`putYamlIntFromNode` + `putDefault` + `resolveInt` in
+`buildSearch`) + `ResolvedConfig.Search.mcpDeliveryBudgetBytes`. Documented in
+`docs/reference/configuration/environment-variables.md`; the generated
+`runtime-config-ownership-matrix.md` was regenerated (it had also accumulated the
+pre-existing evidence_span/evidence_preview/chunk_* drift — swept in the regen).
+
+**Degradation order (§E, verbatim).** The governor sits AFTER 770's gated
+`McpEvidenceProjection.searchEvidence` delivery, on the assembled
+`structuredContent` map (Head-side; it reads the already-returned response
+objects, never Lucene/Worker — Hard Invariant #1). While the serialized payload
+exceeds the budget it degrades in order: **(a) strip numeric provenance first** —
+the per-hit `trace` + `legScores` block, the `detail`-gated tier 770 measured at
+19.9% of the delivered search payload and carrying no document content; **(b) then
+drop WHOLE tail results**, lowest-ranked-first, one at a time, never below one
+result and never truncating a result or a span mid-way (a single oversized result
+is delivered whole with the notice, not split — the "never mid-payload/mid-span"
+guarantee is by construction); **(c) emit an explicit notice** — a machine-readable
+`governor` object (`budgetBytes`, `originalResultCount`, `deliveredResultCount`,
+`resultsDropped`, `provenanceStripped`, a human `notice` string) replacing the
+client-side 2,322-char neither-tier loss. Deterministic: same payload → byte-stable
+governed output (rank-ordered tail drop + `LinkedHashMap` key order + one
+serializer).
+
+**Implementation (`file:line`).**
+- Governor — `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpDeliveryGovernor.java`
+  (`govern(payload, budgetBytes, mapper)`).
+- Wiring — `McpToolSurface.callSearch` governs the assembled `structuredContent`
+  before delivery; budget resolved via `McpToolSurface.resolveDeliveryBudgetBytes()`
+  (reads `ConfigStore.globalOrNull()`, defaults to the constant when the store is
+  not yet initialized — always safe to call).
+- Config — `ConfigKey.SEARCH_MCP_DELIVERY_BUDGET_BYTES`,
+  `EnvRegistry.SEARCH_MCP_DELIVERY_BUDGET_BYTES`, `ResolvedConfigBuilder`
+  (contributeYamlSearch + `buildSearch`), `ResolvedConfig.Search`.
+- Tests — `McpDeliveryGovernorTest` (8 tests): boundary (just-under untouched;
+  just-over → provenance-strip suffices; far-over → tail-drop with correct count;
+  single-oversized floor never-split), 0-disables, byte-stable determinism, notice
+  shape, and the §C integration through `McpToolSurface.callSearch` at `detail:true
+  limit:30` on oversized synthetic results (result-count reduction + notice, every
+  delivered excerpt intact — never mid-payload truncation). Extends the 770
+  golden/totality guards (`McpEvidenceProjectionTest`, `McpTierEquivalenceGoldenTest`
+  are unaffected — the governor is a no-op under budget, so the text-tier goldens
+  and the projection-shape totality guards stay byte-identical).
+
+**Verification done.** `spotlessApply` clean; `./gradlew.bat build -x test` GREEN
+(PMD/spotbugs incl.); full `./gradlew.bat test` GREEN; `McpDeliveryGovernorTest`
+8/8; runtime-config-matrix verify GREEN post-regen.
+
+**Handoff — LIVE verification is the orchestrator's follow-up, NOT claimed here.**
+This pass is unit/integration-verified with synthetic oversized payloads. The
+end-to-end confirmation at the actual failing cell — `justsearch_search
+detail:true limit:30` on the legal corpus through the real MCP client, asserting
+the delivered payload now carries a `governor` notice + reduced result set instead
+of the 770 §E.3 neither-tier loss — requires a live dev stack + the CLERC corpus
+and is left to the orchestrator's live-verify step.
