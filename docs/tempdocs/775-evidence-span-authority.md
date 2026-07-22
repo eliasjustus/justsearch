@@ -282,3 +282,18 @@ scripts: `tmp/analysis-624/775/step1/` (`prep.py`, `probe.py`, `results_{off,on_
 
 **Suites.** `./gradlew.bat build -x test` GREEN (PMD/spotbugs incl.); worker-services + configuration
 module tests GREEN; full unit suite GREEN; `spotlessApply` clean; `execution-surface` gate GREEN.
+
+## §G. Steps 2-3 re-framed as the unification pass (2026-07-22, post #286/#288)
+
+Step 1 shipped (#288: EvidenceSpan + selector + interactive delivery;
+carriage 0→100% on the buried-entity probe, ranking untouched). 774 Stage 2
+landed in parallel (#286: `search.evidence_preview.enabled` — the winning
+chunk's text as content_preview = CE input + preview coherence; F-041's
++15% legal / CE-flip on email). Two complementary flag-gated levers now
+express the same evidence-coherence principle through different fields.
+Steps 2-3 therefore become the UNIFICATION pass per this design's
+one-authority thesis: the preview lever becomes an EvidenceSpan consumer
+(chunk-sourced case = the span selects within/around the winning chunk),
+RAG/ContextCitation conforms, and the governor lands — sequenced AFTER the
+founder's F-041/775 default-flip decision so all evidence-surface changes
+share one cohort bump with the hero timing.

@@ -168,3 +168,17 @@ is a retire candidate on current evidence.
 - **Item 3 — validate, don't retire, all three.** QU: run the ~20-min contention probe. Sufficiency +
   confidence: one shared ~115-example labeling pass unblocks both.
 
+## §E. Correction (2026-07-22, same day): the "title-prepend SIGNAL" citation in §D is leak-tainted
+
+§D's binding context cited a title-prepend A/B (camouflaged-legal top-10
+20%→50%) as licensing the contextualization tier. 774 §J.7 subsequently
+proved the 767 strata's `title` field is a GOLD-ONLY leak (only golds are
+titled, and their titles are the structure descriptors — the probe was
+prepending the answer key), so that arm is INVALID and its publication was
+killed. The contextualization license survives on the honest evidence:
+774 §J.7's leak-free Variant C (uniform 150-char doc-lead prepend) is
+directional on both camouflaged cells (legal-10k R@100 0.20→0.42, median
+gold rank 887→188) but fails the pre-registered real-task control — so the
+tier is licensed as a RECIPE-SEARCH lane (find a contextualization that
+keeps the camouflaged gain without the real-task cost; F-040), weaker than
+§D's original framing. The 777 recommendation set is otherwise unchanged.
