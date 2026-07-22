@@ -121,6 +121,9 @@ export class SettingsSurface extends JfElement {
     saving: { state: true },
     autostart: { state: true },
     autostartLoaded: { state: true },
+    // Tempdoc 778 — the default-on local feedback-capture flag + its privacy note.
+    feedbackCaptureEnabled: { state: true },
+    feedbackPrivacyNote: { state: true },
     error: { state: true },
     deleting: { state: true },
     // 569 §15 (Move 8) — the delete ceremony's declared statechart state + the typed-confirm input.
@@ -168,6 +171,9 @@ export class SettingsSurface extends JfElement {
   declare saving: boolean;
   declare autostart: boolean | null;
   declare autostartLoaded: boolean;
+  // Tempdoc 778 — null until loaded from GET /api/feedback/capture; default-on locally.
+  declare feedbackCaptureEnabled: boolean | null;
+  declare feedbackPrivacyNote: string;
   declare error: string | null;
   declare deleting: boolean;
   // 569 §15 (Move 8) — the BRANCHING delete-confirm ceremony, run as a declared statechart.
@@ -242,6 +248,8 @@ export class SettingsSurface extends JfElement {
     this.saving = false;
     this.autostart = null;
     this.autostartLoaded = false;
+    this.feedbackCaptureEnabled = null;
+    this.feedbackPrivacyNote = '';
     this.error = null;
     this.deleting = false;
     this.deleteState = 'idle';
@@ -616,6 +624,7 @@ export class SettingsSurface extends JfElement {
     // callback fires, all canonical strategies are already
     // registered.
     void this.loadSettings();
+    void this.loadFeedbackCapture();
     if (this.host_.platform.capabilities.has('native-notifications')) {
       void this.loadAutostart();
     } else {
@@ -818,6 +827,36 @@ export class SettingsSurface extends JfElement {
       // Plugin not available — leave null
     } finally {
       this.autostartLoaded = true;
+    }
+  }
+
+  /** Tempdoc 778 — load the default-on local feedback-capture flag + privacy note. */
+  private async loadFeedbackCapture(): Promise<void> {
+    try {
+      const res = await fetch(`${this.apiBase || ''}/api/feedback/capture`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { enabled?: boolean; privacyNote?: string };
+      this.feedbackCaptureEnabled = data.enabled !== false;
+      this.feedbackPrivacyNote = typeof data.privacyNote === 'string' ? data.privacyNote : '';
+    } catch {
+      // Backend not reachable — leave null; the section renders nothing rather than a wrong state.
+    }
+  }
+
+  /** Tempdoc 778 — toggle local feedback capture; optimistic, reverts on failure. */
+  private async toggleFeedbackCapture(): Promise<void> {
+    if (this.readOnly || this.feedbackCaptureEnabled === null) return;
+    const next = !this.feedbackCaptureEnabled;
+    this.feedbackCaptureEnabled = next;
+    try {
+      const res = await fetch(`${this.apiBase || ''}/api/feedback/capture`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) this.feedbackCaptureEnabled = !next;
+    } catch {
+      this.feedbackCaptureEnabled = !next;
     }
   }
 
@@ -1217,6 +1256,41 @@ export class SettingsSurface extends JfElement {
             }}
           ></jf-form>
         </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Tempdoc 778 — the default-on LOCAL feedback-capture control + its visible privacy note. Renders
+   * nothing until the flag loads (so it never shows a wrong state). The note is the product's
+   * loopback-only story made visible: capture improves ranking and never leaves the machine.
+   */
+  private renderFeedbackCapture(): TemplateResult | typeof nothing {
+    if (this.feedbackCaptureEnabled === null) return nothing;
+    return html`
+      <div class="toggle-row" style="margin-top: 0.75rem">
+        <div>
+          <div class="toggle-label">Improve ranking from your activity (local only)</div>
+          <div class="toggle-desc">
+            ${this.feedbackPrivacyNote ||
+            'Clicks, opens, and dwell time on results and chat citations are recorded on this ' +
+              'machine to improve ranking. Nothing is ever uploaded.'}
+          </div>
+        </div>
+        <div
+          class="switch ${this.feedbackCaptureEnabled ? 'on' : ''}"
+          role="switch"
+          aria-checked=${this.feedbackCaptureEnabled ? 'true' : 'false'}
+          aria-label="Improve ranking from your activity (local only)"
+          tabindex="0"
+          @click=${() => void this.toggleFeedbackCapture()}
+          @keydown=${(e: KeyboardEvent) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              void this.toggleFeedbackCapture();
+            }
+          }}
+        ></div>
       </div>
     `;
   }
@@ -2077,6 +2151,7 @@ export class SettingsSurface extends JfElement {
               >Open Security &amp; Privacy</jf-button
             >
           </div>
+          ${this.renderFeedbackCapture()}
         </div>
         ${this.renderData()}
         ${this.renderPluginPermissions()}

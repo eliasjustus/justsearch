@@ -45,7 +45,10 @@ public final class LambdaMartTraining {
    * @return the resolved model file path (so the bootstrap can hold it).
    */
   public static Path loadOrTrain(
-      Path dataDir, LambdaMartReranker reranker, boolean lambdamartEnabled) {
+      Path dataDir,
+      LambdaMartReranker reranker,
+      boolean lambdamartEnabled,
+      io.justsearch.agent.api.encryption.StoreCipher feedbackCipher) {
     Path modelFile = dataDir.resolve("lambdamart-model.txt");
     if (!lambdamartEnabled) {
       log.info("LambdaMART: disabled via config");
@@ -59,7 +62,7 @@ public final class LambdaMartTraining {
       // queries would train + adopt a degenerate model — each single-positive group scores a
       // trivially-perfect nDCG@10=1.0, so the trainer's nDCG>0 adoption guard would not catch it,
       // re-introducing the exact F-021 harm (a learned reranker that hurts).
-      LabelProjection.Result feedback = FeedbackLabels.rebuild(dataDir);
+      LabelProjection.Result feedback = FeedbackLabels.rebuild(dataDir, feedbackCipher);
       if (realLabelsReady(feedback)) {
         Path realPath = FeedbackLabels.realLabelPath(dataDir);
         log.info(

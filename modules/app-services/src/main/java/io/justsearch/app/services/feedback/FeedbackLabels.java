@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.feedback;
 
+import io.justsearch.agent.api.encryption.StoreCipher;
 import io.justsearch.app.services.gpl.GplTrainingTripleStore;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -45,11 +46,22 @@ public final class FeedbackLabels {
    *     prior once enough contrastful groups exist for a non-degenerate fit.
    */
   public static LabelProjection.Result rebuild(Path dataDir) {
+    return rebuild(dataDir, StoreCipher.disabled());
+  }
+
+  /**
+   * Tempdoc 778 — the cipher-aware rebuild: reads the sealed {@code AUTHORED} feedback stores with
+   * the SAME key they were written under (so the F-021 join survives at-rest encryption). The
+   * no-arg overload is the disabled/passthrough path (default/eval/legacy callers).
+   */
+  public static LabelProjection.Result rebuild(Path dataDir, StoreCipher cipher) {
     try {
       List<FeatureSnapshot> snapshots =
-          new NdjsonAppendStore<>(dataDir.resolve(SNAPSHOTS), FeatureSnapshot.class).readAll();
+          new NdjsonAppendStore<>(dataDir.resolve(SNAPSHOTS), FeatureSnapshot.class, cipher)
+              .readAll();
       List<ResultDisposition> dispositions =
-          new NdjsonAppendStore<>(dataDir.resolve(DISPOSITIONS), ResultDisposition.class).readAll();
+          new NdjsonAppendStore<>(dataDir.resolve(DISPOSITIONS), ResultDisposition.class, cipher)
+              .readAll();
       if (snapshots.isEmpty() || dispositions.isEmpty()) {
         return new LabelProjection.Result(0, 0);
       }

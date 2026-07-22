@@ -47,4 +47,30 @@ class UiApiGuardrailsTest {
           .as(
               "ui.api must not depend on ipc proto message types"
                   + " (use app-api contracts instead; ipc exception classes are permitted)");
+
+  // Tempdoc 778 — zero network egress for the feedback-capture surface. Loopback-only (Hard
+  // Invariant #2): the implicit-feedback flag surface never uploads anything. The {@code Feedback*}
+  // controller must hold NO outbound network client — no HttpClient (java.net.http), no raw Socket /
+  // URLConnection. (The disposition endpoint itself is KnowledgeSearchController, which legitimately
+  // reaches the Worker over loopback gRPC, so the rule is scoped to the Feedback* surface; the
+  // capture/persistence package's absolute no-egress guarantee is enforced in app-services'
+  // FeedbackEgressGuardrailsTest.)
+  @ArchTest
+  static final ArchRule feedbackSurfaceMustNotMakeNetworkEgress =
+      noClasses()
+          .that()
+          .haveSimpleNameStartingWith("Feedback")
+          .should()
+          .dependOnClassesThat(
+              Predicates.resideInAnyPackage("java.net.http..")
+                  .or(
+                      DescribedPredicate.describe(
+                          "an outbound socket/URL-connection type",
+                          jc ->
+                              jc.getFullName().equals("java.net.Socket")
+                                  || jc.getFullName().equals("java.net.URLConnection")
+                                  || jc.getFullName().equals("java.net.HttpURLConnection"))))
+          .as(
+              "the feedback-capture surface must make no network egress"
+                  + " (loopback-only) — tempdoc 778");
 }

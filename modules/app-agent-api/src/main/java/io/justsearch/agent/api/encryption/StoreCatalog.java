@@ -16,6 +16,12 @@ public enum StoreCatalog {
   CONVERSATIONS("conversations", StoreRecoverability.AUTHORED, Framing.MIXED),
   MEMORIES("memories", StoreRecoverability.AUTHORED, Framing.FULL_REWRITE),
   AGENT_RUNS("agent-runs", StoreRecoverability.AUTHORED, Framing.MIXED),
+  // Tempdoc 778 — the 580 §17 implicit-feedback capture stream (result-dispositions +
+  // feature-snapshots ndjson). AUTHORED (real user/agent relevance signal, recoverable from
+  // nowhere else — the F-021 label source); APPEND_ONLY_LINES (each ndjson line sealed
+  // line-by-line via NdjsonAppendStore's cipher). The derived real-feedback-triples.ndjson is a
+  // rebuildable projection of these two inputs, so it is not itself an authored input.
+  FEEDBACK("feedback", StoreRecoverability.AUTHORED, Framing.APPEND_ONLY_LINES),
   INDEX("index", StoreRecoverability.DERIVED, Framing.OPAQUE),
   JOBS_DB("jobs.db", StoreRecoverability.DERIVED, Framing.OPAQUE);
 

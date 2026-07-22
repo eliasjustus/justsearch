@@ -53,6 +53,7 @@ final class RouteCohorts {
           Map.entry("/api/runtime-context", "resource"),
           Map.entry("/api/intent", "resource"),
           Map.entry("/api/memory", "interaction"),
+          Map.entry("/api/feedback", "interaction"),
           Map.entry("/api/thread", "interaction"),
           Map.entry("/api/presence", "interaction"),
           Map.entry("/api/debug", "debug"),

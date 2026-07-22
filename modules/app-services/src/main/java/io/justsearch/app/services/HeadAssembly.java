@@ -111,6 +111,9 @@ public final class HeadAssembly implements AutoCloseable {
   // Tempdoc 629 (#E faithful import): held so the agent-run BackupSink can re-index a RESTORED run into
   // the searchable agent-history collection (import doesn't fire the live listener).
   private io.justsearch.app.services.agenthistory.AgentHistoryIndexer agentHistoryIndexer;
+  // Tempdoc 778 — the default-on local feedback-capture flag, shared by every capture site + the
+  // /api/feedback/capture surface.
+  private io.justsearch.app.services.feedback.FeedbackCaptureSettings feedbackCaptureSettings;
 
   /** Tempdoc 629 (LAYER): the data-at-rest key manager (owns the DEK lifecycle for AUTHORED stores). */
   private final io.justsearch.app.services.encryption.DataKeyManager dataKeyManager;
@@ -562,13 +565,54 @@ public final class HeadAssembly implements AutoCloseable {
       agentRunStore.addEventListener(agentRunLedgerProjector::onEvent);
     }
 
+    // Tempdoc 778 — the AUTHORED feedback-store cipher (a projection of the catalog class, not a
+    // hardcoded literal). ONE key shared by every feedback writer/reader (agent contributor, search
+    // controller, the LambdaMART label rebuild) so the F-021 join survives at-rest encryption.
+    io.justsearch.agent.api.encryption.StoreCipher feedbackCipher =
+        storeCipher(io.justsearch.agent.api.encryption.StoreCatalog.FEEDBACK.recoverability());
+    java.nio.file.Path feedbackDir =
+        io.justsearch.configuration.PlatformPaths.resolveDataDir().resolve("feedback");
+    // Tempdoc 778 — the default-on local capture flag (loopback-privacy: nothing captured leaves the
+    // machine, and the user can turn even local capture off).
+    this.feedbackCaptureSettings =
+        new io.justsearch.app.services.feedback.FeedbackCaptureSettings(
+            io.justsearch.configuration.PlatformPaths.resolveDataDir());
+
     // Tempdoc 580 §17 P4 — the agent-citation contributor: each agent answer's grounding sources +
     // citations project to the ONE canonical disposition stream (CITED/SHOWN). Best-effort.
     if (agentRunStore != null) {
       io.justsearch.app.services.feedback.AgentDispositionWiring.register(
           agentRunStore::addEventListener,
-          io.justsearch.configuration.PlatformPaths.resolveDataDir());
+          io.justsearch.configuration.PlatformPaths.resolveDataDir(),
+          feedbackCipher,
+          this.feedbackCaptureSettings);
     }
+
+    // Tempdoc 778 — enroll the AUTHORED feedback store in the encrypted backup/restore path. The
+    // BackupSource reads the two captured ndjson streams (sealed, decrypted while unlocked); the sink
+    // restores them verbatim. The derived real-feedback-triples.ndjson is NOT enrolled — it rebuilds
+    // from these two inputs (FeedbackLabels.rebuild), so it is recoverable without a backup copy.
+    registerAuthoredStore(
+        new io.justsearch.agent.api.encryption.StoreDescriptor(
+            io.justsearch.agent.api.encryption.StoreCatalog.FEEDBACK,
+            feedbackDir,
+            () -> {
+              var out = new java.util.ArrayList<java.util.Map<String, Object>>();
+              readFeedbackFile(
+                  feedbackDir.resolve("result-dispositions.ndjson"),
+                  io.justsearch.app.services.feedback.ResultDisposition.class,
+                  feedbackCipher,
+                  "result-dispositions.ndjson",
+                  out);
+              readFeedbackFile(
+                  feedbackDir.resolve("feature-snapshots.ndjson"),
+                  io.justsearch.app.services.feedback.FeatureSnapshot.class,
+                  feedbackCipher,
+                  "feature-snapshots.ndjson",
+                  out);
+              return out;
+            },
+            entries -> restoreFeedbackEntries(feedbackDir, feedbackCipher, entries)));
 
     // Tempdoc 585 §D Phase 4 (D4a) — index each finished run's transcript into the dedicated
     // agent-history collection (off the hot path + fail-soft), so the user can later search it.
@@ -620,7 +664,8 @@ public final class HeadAssembly implements AutoCloseable {
                         serviceOut.runtimeVariant(),
                         serviceOut.packImport(),
                         serviceOut.brainInstall(),
-                        serviceOut.inferenceRuntimeHandles().runtimeReconciler())))
+                        serviceOut.inferenceRuntimeHandles().runtimeReconciler(),
+                        feedbackCipher)))
             .orThrow();
     this.services = orchestrationOut.initialServices();
     this.orchestration = orchestrationOut.orchestrationHandles();
@@ -931,6 +976,15 @@ public final class HeadAssembly implements AutoCloseable {
     return agentRunStore;
   }
 
+  /**
+   * Tempdoc 778 — the default-on local feedback-capture flag. Exposed so the {@code
+   * /api/feedback/capture} surface reads/writes the ONE authority the capture sites consult, and the
+   * search controller gates its disposition writes on it. May be null on a test-only path.
+   */
+  public io.justsearch.app.services.feedback.FeedbackCaptureSettings feedbackCaptureSettings() {
+    return feedbackCaptureSettings;
+  }
+
   /** Tempdoc 629 (LAYER): the data-at-rest key manager (one per Head; consumed by stores + API + status). */
   public io.justsearch.app.services.encryption.DataKeyManager dataKeyManager() {
     return dataKeyManager;
@@ -972,6 +1026,100 @@ public final class HeadAssembly implements AutoCloseable {
   /** Null-safe {@code toString} for import-sink field coercion from JSON-able maps. */
   private static String nullableStr(Object o) {
     return o == null ? null : o.toString();
+  }
+
+  /**
+   * Tempdoc 778 — read one sealed feedback ndjson into {@code out} as {@code {"file", "record"}}
+   * envelopes for the encrypted-backup source. Best-effort: a read failure logs and skips.
+   */
+  private static <T> void readFeedbackFile(
+      java.nio.file.Path file,
+      Class<T> type,
+      io.justsearch.agent.api.encryption.StoreCipher cipher,
+      String label,
+      java.util.List<java.util.Map<String, Object>> out) {
+    try {
+      var store = new io.justsearch.app.services.feedback.NdjsonAppendStore<>(file, type, cipher);
+      var mapper = new tools.jackson.databind.ObjectMapper();
+      for (T rec : store.readAll()) {
+        var entry = new java.util.LinkedHashMap<String, Object>();
+        entry.put("file", label);
+        entry.put("record", mapper.convertValue(rec, java.util.Map.class));
+        out.add(entry);
+      }
+    } catch (Exception e) {
+      log.warn("feedback backup read failed for {}: {}", label, e.toString());
+    }
+  }
+
+  /**
+   * Tempdoc 778 — restore feedback {@code {"file","record"}} envelopes into the two AUTHORED streams
+   * (skip-existing by serialized-record identity, so a re-import never double-appends). Returns the
+   * count actually written.
+   */
+  private static int restoreFeedbackEntries(
+      java.nio.file.Path feedbackDir,
+      io.justsearch.agent.api.encryption.StoreCipher cipher,
+      java.util.List<java.util.Map<String, Object>> entries) {
+    if (entries == null || entries.isEmpty()) {
+      return 0;
+    }
+    var mapper = new tools.jackson.databind.ObjectMapper();
+    var dispositions =
+        new io.justsearch.app.services.feedback.NdjsonAppendStore<>(
+            feedbackDir.resolve("result-dispositions.ndjson"),
+            io.justsearch.app.services.feedback.ResultDisposition.class,
+            cipher);
+    var snapshots =
+        new io.justsearch.app.services.feedback.NdjsonAppendStore<>(
+            feedbackDir.resolve("feature-snapshots.ndjson"),
+            io.justsearch.app.services.feedback.FeatureSnapshot.class,
+            cipher);
+    int restored = 0;
+    try {
+      var existingDisp = toJsonSet(dispositions.readAll(), mapper);
+      var existingSnap = toJsonSet(snapshots.readAll(), mapper);
+      for (var entry : entries) {
+        Object file = entry.get("file");
+        if (!(entry.get("record") instanceof java.util.Map<?, ?> recordMap)) {
+          continue;
+        }
+        if ("result-dispositions.ndjson".equals(file)) {
+          var rec =
+              mapper.convertValue(
+                  recordMap, io.justsearch.app.services.feedback.ResultDisposition.class);
+          if (existingDisp.add(mapper.writeValueAsString(rec))) {
+            dispositions.append(rec);
+            restored++;
+          }
+        } else if ("feature-snapshots.ndjson".equals(file)) {
+          var rec =
+              mapper.convertValue(
+                  recordMap, io.justsearch.app.services.feedback.FeatureSnapshot.class);
+          if (existingSnap.add(mapper.writeValueAsString(rec))) {
+            snapshots.append(rec);
+            restored++;
+          }
+        }
+      }
+    } catch (Exception e) {
+      log.warn("feedback backup restore failed: {}", e.toString());
+    }
+    return restored;
+  }
+
+  /** Serialized-record identity set for the feedback restore's skip-existing check. */
+  private static <T> java.util.Set<String> toJsonSet(
+      java.util.List<T> records, tools.jackson.databind.ObjectMapper mapper) {
+    var set = new java.util.HashSet<String>();
+    for (T r : records) {
+      try {
+        set.add(mapper.writeValueAsString(r));
+      } catch (Exception ignored) {
+        // best-effort dedup key
+      }
+    }
+    return set;
   }
 
   /** Returns the always-available core services (settings, policy, diagnostics, agent). */
