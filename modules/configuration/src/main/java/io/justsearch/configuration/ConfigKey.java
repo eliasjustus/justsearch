@@ -63,6 +63,8 @@ public enum ConfigKey {
     SEARCH_CORRECTIONS_DF_THRESHOLD("search.corrections.df_threshold"),
     SEARCH_CORRECTIONS_MAX_EDIT_DISTANCE("search.corrections.max_edit_distance"),
     SEARCH_CORRECTIONS_ZERO_HIT_RETRY("search.corrections.zero_hit_retry_enabled"),
+    SEARCH_EVIDENCE_SPAN_ENABLED("search.evidence_span.enabled"),
+    SEARCH_EVIDENCE_SPAN_ENTITY_SIGNAL("search.evidence_span.entity_signal"),
 
     // -- Worker indexer --
     INDEXER_BACKPRESSURE_MODE("workers.indexer.backpressure_mode"),
