@@ -12,14 +12,6 @@
       "exitProbe": "slow: npm --prefix modules/ui-web run typecheck"
     },
     {
-      "id": "correction-eval-queries-missing",
-      "match": ["pytest\\b", "python -m pytest", "jseval\\b.*test"],
-      "claim": "jseval tests/test_correction_probe.py::TestLoadManifest (2 tests) are RED everywhere — the data file scripts/jseval/jseval/data/correction-eval-queries.v1.json exists nowhere in git history. Those two failures are not yours.",
-      "evidence": "observations condition obs:correction-eval-queries-missing (seen 12); file-absence probe re-confirmed 2026-07-05",
-      "added": "2026-07-06",
-      "exitProbe": "node -e \"process.exit(require('fs').existsSync('scripts/jseval/jseval/data/correction-eval-queries.v1.json')?0:1)\""
-    },
-    {
       "id": "theme-token-closure-red",
       "match": ["check-theme-token-closure"],
       "claim": "check-theme-token-closure is RED on main (8 ghost tokens in shell-v0/components/RecentsMenu.ts) — pre-existing; only NEW ghost tokens beyond RecentsMenu.ts are yours.",

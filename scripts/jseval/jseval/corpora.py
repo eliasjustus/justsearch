@@ -22,6 +22,24 @@ BEIR_DATASETS: dict[str, str] = {
 _STALENESS_DAYS = 90
 
 
+def normalize_dataset_name(name: str) -> str:
+    """Map the register's catalog-qualified BEIR slug to the bare registry key.
+
+    The search-quality register's Dataset Catalog (`docs/reference/search-quality-register.md`)
+    names BEIR corpora `beir/scifact`, but this module's registry (`BEIR_DATASETS`) and the CLI
+    key on the bare name (`scifact`). This bridges the two so a name copied from the catalog is
+    accepted (tempdoc 787 item 4a). Only the `beir/` prefix is stripped, and only when the bare
+    name is a known BEIR dataset — `golden/` and `mixed/` are canonical prefixes and returned
+    unchanged. Idempotent; an unknown name is returned unchanged so the caller's load/materialize
+    step raises with the full valid-name list.
+    """
+    if name and name.startswith("beir/"):
+        bare = name[len("beir/"):]
+        if bare in BEIR_DATASETS:
+            return bare
+    return name
+
+
 def load(
     name: str,
     base_dir: Path | None = None,
@@ -33,6 +51,7 @@ def load(
         qrels:   {query_id: {doc_id: relevance_int}}
         meta:    CorpusMeta
     """
+    name = normalize_dataset_name(name)
     if name in BEIR_DATASETS:
         return _load_beir(name)
     if name.startswith("golden/") or name.startswith("mixed/"):

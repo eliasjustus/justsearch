@@ -14,7 +14,47 @@ from jseval.corpora import (
     _read_qrels_tsv,
     _read_queries_jsonl,
     load,
+    normalize_dataset_name,
 )
+
+
+# ---------------------------------------------------------------------------
+# normalize_dataset_name — catalog slug <-> bare registry key (tempdoc 787 item 4a)
+# ---------------------------------------------------------------------------
+
+class TestNormalizeDatasetName:
+    def test_strips_beir_prefix_for_known_dataset(self):
+        assert normalize_dataset_name("beir/scifact") == "scifact"
+        assert normalize_dataset_name("beir/nfcorpus") == "nfcorpus"
+
+    def test_bare_known_name_unchanged(self):
+        assert normalize_dataset_name("scifact") == "scifact"
+
+    def test_idempotent(self):
+        once = normalize_dataset_name("beir/scifact")
+        assert normalize_dataset_name(once) == "scifact"
+
+    def test_golden_and_mixed_prefixes_unchanged(self):
+        assert normalize_dataset_name("golden/desktop-v1") == "golden/desktop-v1"
+        assert normalize_dataset_name("mixed/enron-qa") == "mixed/enron-qa"
+
+    def test_unknown_beir_slug_unchanged(self):
+        # bare name not in the registry -> returned as-is so the loader raises with the full list.
+        assert normalize_dataset_name("beir/does-not-exist") == "beir/does-not-exist"
+
+    def test_empty_unchanged(self):
+        assert normalize_dataset_name("") == ""
+
+
+@patch("jseval.corpora.ir_datasets")
+def test_load_accepts_beir_catalog_slug(mock_ir):
+    """`load('beir/scifact')` resolves to the same dataset as `load('scifact')` (tempdoc 787 4a)."""
+    mock_ir.load.return_value = _make_mock_dataset()
+    _, _, meta = load("beir/scifact")
+
+    mock_ir.load.assert_called_once_with("beir/scifact/test")
+    assert meta.name == "scifact"
+    assert meta.source == "beir"
 
 
 # ---------------------------------------------------------------------------
