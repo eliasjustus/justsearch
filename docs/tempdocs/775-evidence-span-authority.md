@@ -535,3 +535,24 @@ The orchestrator re-verifies against this commit at the failing cell —
 `justsearch_search detail:true limit:30` on the legal CLERC corpus through the real
 MCP client, confirming all responses' full wire payload is now ≤ 45,000 with a
 `governor` notice + reduced result set instead of the 770 §E.3 neither-tier loss.
+
+### §J.1 Live verification at the failing cell (2026-07-22, orchestrator)
+
+Two-round live verify on the lane build (`distFrom` dev stack, legal CLERC 199
+docs fully enriched, `justsearch_search detail:true limit:30`, 12 real queries):
+
+- **Round 1 (commit 7f2f5aeb) FAILED:** all 12 carried the notice with
+  provenance stripped, but 4/12 full wire results still exceeded 45 KB (max
+  52,260 B) — the budget counted `structuredContent` only while the
+  `content[0].text` rendering (16,339 B on the worst response) rode the wire
+  uncounted. Exactly the `static-green ≠ live-working` class: 8/8 unit tests
+  green around the wrong measured quantity.
+- **Fix (f8652114):** govern the FULL assembled result (both tiers re-rendered
+  together per degradation step, notice bytes included in the measurement).
+- **Round 2 PASSED:** wire-faithful (compact-serialization) max = 44,935 B,
+  0/12 over budget; tails dropped 0-3 per query (27-30 delivered); notices
+  machine-readable; no mid-result truncation. Artifacts:
+  `tmp/analysis-785/governor-live-{verify,reverify}.json` (session machine).
+
+§C acceptance item 2 is satisfied live. The 771 item-4 defect (neither-tier
+loss past the cliff) is closed at the delivery layer.
