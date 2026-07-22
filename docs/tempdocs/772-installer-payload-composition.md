@@ -3,7 +3,7 @@ title: "Installer payload composition: what belongs in the base installer versus
 type: tempdocs
 status: "open — ANALYSIS ONLY (2026-07-21). Evidence measured against a real 815 MB CI artifact (run 29514086160, 743 files, 177 PE binaries, every PE signature-checked). Takeover investigation (2026-07-21, multiple passes) independently re-verified all citations (clean), resolved Q7 (§F: native-bin combined is ~10.4% of installed payload), found a much bigger payload outside the original native-bin-only scope (§G: lib/worker/onnxruntime_gpu-1.24.3.jar is 34.3%, of which ~18.65% is dead Linux native binaries on this Windows-only product and ~15.12% is a Windows CUDA provider DLL inert until GPU+pack), and found a second major lever (§H: the embedded WebView2 offline installer is 203.65 MB / 18.83% — the second-largest single component, ~60% bigger than Tauri's own documented estimate). Resolved Q3 (pack mechanism is NOT ready for a CPU-mandatory package — 4 concrete gaps found), Q4 (only 2 of 9 scripts are real gates, both already characterized), the should_sign upstream claim (confirmed against Tauri source), and Q8's licensing question (ONNX Runtime is MIT; no Windows-only upstream artifact exists). No decision reached, no split recommended, nothing removed or implemented; §Open questions (1-10, several now resolved inline) are for the owner. A /derisk pass, /theorize pass (broader framings + a spun-off idea sketch, tempdoc 773), /research pass (competitive precedent: Ollama's Windows installer is 1.36 GB, ~1.75x this one; the onnxruntime_gpu fat-jar problem is a known unresolved upstream issue, not a local one-off; Tauri's WebviewInstallMode default is downloadBootstrapper, so JustSearch's offlineInstaller choice was a deliberate historical override), a /design pass (§Design: closes Q3 by extending 657's existing tier/intent/hardware model with a package-level `requiresCuda` field rather than building new structure; recommends Gradle Artifact Transforms over the derisk pass's hand-rolled jar task for §G; recommends reverting §H to Tauri's own default), and a round-2 /derisk pass (softens the Artifact Transform recommendation — no Transform/buildSrc precedent exists in this repo, so the hand-rolled task is the lower-risk near-term choice — and surfaces a must-not-miss InstallPlannerTest update for Q3a, an unresolved attachment point for Q3c's notice-baking, and confirms Q3d needs matching ui-web work) followed. See §Takeover verdict."
 created: 2026-07-21
-updated: 2026-07-22 (implementation addendum, confidence check, second takeover verdict — recommends closing Q1/Q2 with O0; see §Second takeover verdict)
+updated: 2026-07-22 (implementation addendum, confidence check, second takeover verdict — recommends closing Q1/Q2 with O0; §I completes the needs audit against the owner's stated main intention — full inventory of the post-fix 452.7 MB artifact, Q9 resolved as load-bearing/keep, 96.9 MB head/worker duplicate-jar finding)
 author: agent (subagent investigation), founder-directed distribution work (2026-07-21)
 category: distribution / installer
 related:
@@ -1286,3 +1286,72 @@ not pure teardown).
 `downloadBootstrapper` installer on a real machine (this folds naturally into 760's Phase 2 item 1
 — the same clean-sandbox silent-install run verifies both); CUDA provider path untested against the
 trimmed jar (low risk — win-x64 bytes untouched — but unexercised).
+
+## §I — The completed needs audit (2026-07-22, second takeover, owner-directed)
+
+The owner clarified this tempdoc's **main intention**: not "find big removable things," but *"what
+do we actually need in the installer, versus what's currently in it."* Measured against that
+intention, the prior passes were suspect-driven, not needs-driven: §H's top-level accounting was
+complete, but inside `resources/headless/` only ~530 of 844 MB had ever been itemized — **~314 MB
+was never listed, let alone justified** — and the largest flagged-but-unresolved item (Q9, the
+win-x64 CUDA EP DLL) was characterized but never traced. Both gaps are now closed, via two parallel
+subagent investigations against the **post-fix CI artifact** (run `29874382035` — which also
+independently re-verifies both landed fixes in the real shipped artifact: `onnxruntime_gpu-trimmed.jar`
+present at 172,119,741 bytes; `MicrosoftEdgeWebView2RuntimeInstaller.exe` absent).
+
+### Complete inventory (run `29874382035`: installer 452,720,845 B compressed / 679,110,948 B extracted; every sub-sum reconciled exactly)
+
+| Component | Bytes (extracted) | % | Needs verdict |
+|---|---:|---:|---|
+| `lib/worker/onnxruntime_gpu-trimmed.jar` | 172,119,741 | 25.3% | **Needed for GPU users** (see Q9 below); its ~163.6 MB CUDA EP DLL is inert on CPU-only machines — a genuine tradeoff item, not waste |
+| `lib/worker/` other jars (182) | 149,231,182 | 22.0% | Needed (worker classpath) — but see duplication row |
+| `lib/` head jars (134) | 118,849,445 | 17.5% | Needed (head classpath) — but see duplication row |
+| — of which **byte-identical duplicates across the two classpaths** | 96,908,586 (redundant side) | 14.3% | **The one significant remaining "nobody chose this" finding** — see below |
+| `native-bin/tesseract` | 79,659,851 | 11.7% | Chosen tradeoff (out-of-box OCR; Q6/O2 — recommendation: keep, per §Second takeover verdict) |
+| `runtime/` (jlink'd JRE) | 53,925,635 | 7.9% | Needed; already trimmed (27.1 MB `modules`, 15.4 MB `jvm.dll`); O4 checked → low further yield |
+| `worker.aot` + `head.aot` | 37,224,448 | 5.5% | Chosen tradeoff (JEP 514 startup speed vs bytes) — deliberate, keep |
+| `native-bin/llama-server` | 33,100,809 | 4.9% | Chosen tradeoff (chat runtime pre-staged; O1 — recommendation: keep, per §Second takeover verdict) |
+| `vc_redist.x64.exe` | 25,635,768 | 3.8% | Chosen tradeoff (offline CRT install; Q5's other half — small, keep) |
+| `JustSearch.exe` + `$PLUGINSDIR` | 8,555,390 | 1.3% | Needed (shell + NSIS) |
+| `ui-headless.jar`, `SSOT/`, launchers, config | 808,679 | 0.1% | Needed |
+
+Waste-vs-tradeoff classification (§Theorize's own lens), post-fix: **the only remaining
+accumulated-not-chosen bytes are the 96.9 MB of duplicated jars** (94 byte-identical jars shipped
+in both `lib/` and `lib/worker/`; largest: tokenizers 18.7 MB ×2, icu4j 14.7 MB ×2,
+grpc-netty-shaded 10.7 MB ×2, bcprov 9.0 MB ×2, lucene-core 4.6 MB ×2). Everything else in the
+installer is either needed or a documented, deliberate tradeoff. Caveats on the duplication lever:
+the *installed-footprint* win (~97 MB) is certain, but the *download-size* win is uncertain (NSIS
+compression may or may not deduplicate across the solid archive — unmeasured); and whether the two
+process classpaths *can* share a jar directory is a real design question (Head/Worker isolation,
+`lib/worker/` deliberately staged so Head's `-cp lib/*` doesn't pick it up, per the staging
+comment) — this is a lever to *charter deliberately*, not a fast-track fix. Four further jar pairs
+ship at *different* versions per process (jackson-core/databind 3.1.0 vs 2.20.0, kotlin-stdlib,
+commons-text) — a consistency observation (logged to the inbox), not a size lever (~4 MB).
+
+### Q9 — RESOLVED: the win-x64 CUDA EP DLL is load-bearing, not removable
+
+Full code trace (opus subagent, file:line evidence): ONNX Runtime's Java loader extracts
+`onnxruntime_providers_cuda.dll` **from the classpath jar itself** to `%TEMP%/onnxruntime-java*/`
+when `SessionOptions.addCUDA()` fires (`OrtCudaHelper.java:24-28,99-106`;
+`NativeSessionHandle.java:692-698`). The pack-delivered `cuda12` directory carries only the CUDA
+*dependency* DLLs (cudart/cublas/cudnn…, `OrtCudaHelper.java:46-70`) — never the EP DLL — and no
+code wires ORT's per-library native-path override that would let it load an EP DLL from outside the
+jar (repo-wide grep: zero hits). `stageOrtCudaVariant` (`build.gradle.kts:747-796`) is a dev-only,
+CI-disabled staging of EP DLLs that nothing points ORT at — a chartered-but-unimplemented route,
+not an existing one. If the DLL were trimmed like the Linux natives, GPU users would **silently**
+fall back to CPU inference (`NativeSessionHandle.java:629-634` degrades rather than fails). On
+CPU-only machines the DLL is never extracted (provider extraction is lazy, `addCUDA`-triggered).
+**Verdict: keep in the jar. Moving it to the pack is possible in principle but is O1-class work
+(new ORT path-override wiring or post-install jar replacement) with O1-class objections — not a
+fast-track candidate.** §G's original "inert until GPU+pack, but needed" characterization was
+correct; the second takeover's suspicion that it might be fully redundant is refuted by the trace.
+
+### Where this leaves the intention
+
+The needs audit is now **complete**: every byte of the shipped installer is inventoried, classified
+needed / chosen-tradeoff / waste, and the classification is evidence-backed. Post-fix state:
+452.7 MB download, of which the honest "floor" (if every tradeoff were traded the other way —
+dedupe the jars, move every optional capability to the pack) is roughly 240-280 MB extracted —
+but per §Second takeover verdict, most of those trades are not recommended. The one remaining
+lever with real upside and no UX cost is the classpath duplication (~97 MB installed, download
+effect unmeasured), which needs its own deliberate charter if pursued.
