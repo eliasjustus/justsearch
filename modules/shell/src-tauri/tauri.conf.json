@@ -22,14 +22,9 @@
     ],
     "windows": {
       "allowDowngrades": false,
-      "webviewInstallMode": {
-        "type": "offlineInstaller",
-        "silent": true
-      },
       "nsis": {
         "installMode": "currentUser",
-        "installerHooks": "nsis/installer-hooks.nsh",
-        "compression": "zlib"
+        "installerHooks": "nsis/installer-hooks.nsh"
       }
     },
     "icon": [

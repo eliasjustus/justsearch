@@ -224,6 +224,191 @@ public final class OrtCudaHelper {
   }
 
   /**
+   * ORT's own native-library directory override system property. Distinct from JustSearch's
+   * {@code justsearch.onnxruntime.native_path} config key: this is the property ONNX Runtime's Java
+   * loader ({@code ai.onnxruntime.OnnxRuntime}) reads at class-init to decide where to load its
+   * native libraries. When set, it reroutes the ENTIRE ORT native set (core + JNI + providers), not
+   * just one library — so the directory must be complete (tempdoc 772 §J probe).
+   */
+  public static final String ORT_NATIVE_PATH_PROPERTY = "onnxruntime.native.path";
+
+  /**
+   * Expected ONNX Runtime version of the relocated CUDA-EP native pack. Keep in lockstep with the
+   * {@code onnxruntime} entry in {@code gradle/libs.versions.toml} (the single build-time pin for
+   * the {@code onnxruntime}/{@code onnxruntime_gpu} artifacts). Mirrors the hardcoded-pin pattern of
+   * {@link #CUDA_TOOLKIT_MAJOR}. Used to guard against version skew after a future ORT bump: the
+   * pack archive ships {@value #ORT_NATIVE_VERSION_MARKER} carrying its ORT version, and
+   * {@link #applyOrtNativePackProperty(Path)} refuses to point ORT at a dir whose marker does not
+   * match this — a mismatched external native set would fail ORT init outright.
+   */
+  public static final String EXPECTED_ORT_NATIVE_VERSION = "1.24.3";
+
+  /** Version-marker filename inside the relocated CUDA-EP native pack (tempdoc 772 §J item 2). */
+  public static final String ORT_NATIVE_VERSION_MARKER = "ort-native-version.txt";
+
+  /**
+   * The complete ORT native library set the external {@code onnxruntime.native.path} directory must
+   * contain. Setting the property reroutes ALL ORT natives to that dir (tempdoc 772 §J probe:
+   * externalizing only the EP DLL fails init because the core libs are then sought there too).
+   */
+  static final List<String> ORT_NATIVE_DLL_SET =
+      List.of(
+          "onnxruntime.dll",
+          "onnxruntime4j_jni.dll",
+          "onnxruntime_providers_shared.dll",
+          "onnxruntime_providers_cuda.dll");
+
+  /** Outcome of {@link #evaluateOrtNativePack(Path, String)}. */
+  public enum OrtNativePackStatus {
+    /** All checks passed; the property should be (or was) set to the pack dir. */
+    SET,
+    /** {@code onnxruntime.native.path} was already set (user override); left untouched. */
+    ALREADY_SET_EXTERNALLY,
+    /** The pack dir is null or not a directory (pack not installed — CPU path). */
+    DIR_ABSENT,
+    /** The pack dir exists but is missing one or more of {@link #ORT_NATIVE_DLL_SET}. */
+    INCOMPLETE,
+    /** The pack dir is complete but its version marker does not match {@link #EXPECTED_ORT_NATIVE_VERSION}. */
+    VERSION_MISMATCH
+  }
+
+  /**
+   * Decision record from evaluating a candidate ORT native pack directory.
+   *
+   * @param status the classification
+   * @param detail human-readable specifics (the resolved path for {@code SET}, the missing DLL list
+   *     for {@code INCOMPLETE}, the version pair for {@code VERSION_MISMATCH}, the external value for
+   *     {@code ALREADY_SET_EXTERNALLY}, the offending path for {@code DIR_ABSENT})
+   */
+  public record OrtNativePackDecision(OrtNativePackStatus status, String detail) {}
+
+  /**
+   * Pure detection for the relocated CUDA-EP native pack (tempdoc 772 §J item 2). No side effects —
+   * separated from {@link #applyOrtNativePackProperty(Path)} so it is unit-testable without touching
+   * process-global system properties.
+   *
+   * <p>Detection is file-existence-based, never provider-list-based: with the EP DLL trimmed from
+   * the jar and no property set, {@code OrtEnvironment.getAvailableProviders()} STILL lists CUDA
+   * (tempdoc 772 §J probe), so a provider-list check would give a false positive.
+   *
+   * @param packDir candidate directory (the {@code cuda-runtime} pack's cuda12 dir), or {@code null}
+   * @param existingProperty the current value of {@code onnxruntime.native.path} ({@code null}/blank
+   *     if unset)
+   * @return the decision; only {@link OrtNativePackStatus#SET} means the property should be written
+   */
+  public static OrtNativePackDecision evaluateOrtNativePack(Path packDir, String existingProperty) {
+    if (existingProperty != null && !existingProperty.isBlank()) {
+      return new OrtNativePackDecision(OrtNativePackStatus.ALREADY_SET_EXTERNALLY, existingProperty);
+    }
+    if (packDir == null || !Files.isDirectory(packDir)) {
+      return new OrtNativePackDecision(OrtNativePackStatus.DIR_ABSENT, String.valueOf(packDir));
+    }
+    List<String> missing = new ArrayList<>();
+    for (String dll : ORT_NATIVE_DLL_SET) {
+      if (!Files.exists(packDir.resolve(dll))) {
+        missing.add(dll);
+      }
+    }
+    if (!missing.isEmpty()) {
+      return new OrtNativePackDecision(OrtNativePackStatus.INCOMPLETE, missing.toString());
+    }
+    String markerVersion = readOrtNativeVersionMarker(packDir);
+    if (!EXPECTED_ORT_NATIVE_VERSION.equals(markerVersion)) {
+      return new OrtNativePackDecision(
+          OrtNativePackStatus.VERSION_MISMATCH,
+          "expected " + EXPECTED_ORT_NATIVE_VERSION + " but marker is " + markerVersion);
+    }
+    return new OrtNativePackDecision(
+        OrtNativePackStatus.SET, packDir.toAbsolutePath().normalize().toString());
+  }
+
+  /**
+   * Reads and trims the first non-blank line of the pack's {@value #ORT_NATIVE_VERSION_MARKER}, or
+   * {@code null} if absent/unreadable/empty.
+   */
+  private static String readOrtNativeVersionMarker(Path packDir) {
+    Path marker = packDir.resolve(ORT_NATIVE_VERSION_MARKER);
+    if (!Files.isRegularFile(marker)) {
+      return null;
+    }
+    try {
+      for (String line : Files.readAllLines(marker)) {
+        String trimmed = line.trim();
+        if (!trimmed.isEmpty()) {
+          return trimmed;
+        }
+      }
+    } catch (IOException e) {
+      log.debug("Failed to read ORT native version marker {}: {}", marker, e.getMessage());
+    }
+    return null;
+  }
+
+  /**
+   * Detects the relocated CUDA-EP native pack (tempdoc 772 §J item 2) and, when present and
+   * version-matched, sets ORT's {@code onnxruntime.native.path} system property to it so ONNX
+   * Runtime loads the CUDA execution provider (trimmed from the shipped jar) from the pack instead.
+   *
+   * <p><b>Must be called before the first {@code OrtEnvironment.getEnvironment()} in the process</b>
+   * — ORT captures the property once at class-init. The single production caller is the earliest
+   * point of {@code IndexerWorker.main} (after config load, before the Knowledge Server that creates
+   * ORT sessions).
+   *
+   * <p>On any non-{@code SET} outcome the property is left unset and ORT serves the CPU path from
+   * the jar's retained core natives (CUDA fails with the legible {@code ORT_EP_FAIL "Failed to find
+   * CUDA shared provider"} shape). {@code DIR_ABSENT} — the normal pack-not-installed / CPU-only
+   * path — logs one INFO; the genuinely-wrong states {@code INCOMPLETE} and {@code VERSION_MISMATCH}
+   * log one WARN naming what was missing. An externally pre-set property (user override) is
+   * respected and never clobbered.
+   *
+   * @param packDir the {@code cuda-runtime} pack's cuda12 dir (from
+   *     {@code justsearch.onnxruntime.native_path}), or {@code null} if unconfigured
+   * @return the decision that was acted upon
+   */
+  public static OrtNativePackDecision applyOrtNativePackProperty(Path packDir) {
+    OrtNativePackDecision decision =
+        evaluateOrtNativePack(packDir, System.getProperty(ORT_NATIVE_PATH_PROPERTY));
+    switch (decision.status()) {
+      case SET -> {
+        System.setProperty(ORT_NATIVE_PATH_PROPERTY, decision.detail());
+        log.info(
+            "ORT CUDA native pack detected — set {}={} (ORT {}). CUDA execution provider will load"
+                + " from the pack.",
+            ORT_NATIVE_PATH_PROPERTY,
+            decision.detail(),
+            EXPECTED_ORT_NATIVE_VERSION);
+      }
+      case ALREADY_SET_EXTERNALLY ->
+          log.info(
+              "ORT native path {} already set externally to {} — respecting override, not"
+                  + " overwriting with detected CUDA pack.",
+              ORT_NATIVE_PATH_PROPERTY,
+              decision.detail());
+      case DIR_ABSENT ->
+          log.info(
+              "ORT CUDA native pack not installed (dir {}). ONNX inference will run on CPU; GPU"
+                  + " requires the consent-gated cuda-runtime pack. (Normal on CPU-only setups.)",
+              decision.detail());
+      case INCOMPLETE ->
+          log.warn(
+              "ORT CUDA native pack at {} is incomplete — missing {}. Not setting {}; ONNX inference"
+                  + " will run on CPU.",
+              packDir,
+              decision.detail(),
+              ORT_NATIVE_PATH_PROPERTY);
+      case VERSION_MISMATCH ->
+          log.warn(
+              "ORT CUDA native pack at {} has a version skew ({}). Not setting {}; ONNX inference"
+                  + " will run on CPU. Re-install the cuda-runtime pack to match the shipped ORT"
+                  + " version.",
+              packDir,
+              decision.detail(),
+              ORT_NATIVE_PATH_PROPERTY);
+    }
+    return decision;
+  }
+
+  /**
    * Returns the list of candidate CUDA dependency DLL paths found in the given directory.
    *
    * @param searchPath directory to scan

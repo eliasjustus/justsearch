@@ -147,6 +147,51 @@ class ModelRegistryLoaderTest {
   }
 
   /**
+   * Tempdoc 772 Q3 — production hardware-gating guard. The JSON loader must deserialize
+   * cuda-runtime's {@code "requiresCuda": true} so the planner keeps skipping it on non-CUDA
+   * hardware. A regression here (loader dropping the field, or JSON losing the key) would silently
+   * un-gate cuda-runtime in production. Every other package leaves the field unset → false.
+   */
+  @Test
+  void cudaRuntimeDeclaresRequiresCuda_othersDefaultFalse() {
+    ModelRegistry registry =
+        ModelRegistryLoader.loadFromClasspath("ai/model-registry.v2.json");
+
+    assertTrue(
+        registry.findPackage("cuda-runtime").requiresCuda(),
+        "cuda-runtime must load requiresCuda=true to stay hardware-gated in production");
+    assertFalse(registry.findPackage("embedding").requiresCuda());
+    assertFalse(registry.findPackage("chat").requiresCuda());
+  }
+
+  /**
+   * Tempdoc 772 §J item 2 — the win-x64 ORT CUDA execution-provider native set is trimmed from the
+   * shipped installer jar and relocated into the consent-gated cuda-runtime pack. The loader must
+   * carry the {@code ort-native-cuda12-v1.24.3.zip} supporting file with {@code extract: true} so
+   * the pack unpacks the ORT DLLs into the cuda12 dir the worker points ORT at. A regression here
+   * (entry dropped, or {@code extract} lost) would silently degrade GPU users to CPU with the
+   * jar's CUDA EP DLL now gone.
+   */
+  @Test
+  void cudaRuntimeShipsRelocatedOrtNativePack() {
+    ModelRegistry registry =
+        ModelRegistryLoader.loadFromClasspath("ai/model-registry.v2.json");
+
+    SupportingFile ortNative =
+        registry.findPackage("cuda-runtime").supportingFiles().stream()
+            .filter(sf -> sf.filename().equals("ort-native-cuda12-v1.24.3.zip"))
+            .findFirst()
+            .orElse(null);
+
+    assertNotNull(
+        ortNative,
+        "cuda-runtime must carry the relocated ORT CUDA-EP native pack (tempdoc 772 §J item 2)");
+    assertTrue(ortNative.extract(), "the ORT native pack must extract into the cuda12 dir");
+    assertTrue(ortNative.sizeBytes() > 0, "the ORT native pack must declare a real sizeBytes");
+    assertNotNull(ortNative.sha256(), "the ORT native pack must declare a sha256");
+  }
+
+  /**
    * Tempdoc 633 #6 — first-run robustness. Every model/file download must resolve over HTTPS from an
    * allowlisted *public* host, so a stranger can clone → build → first-run without hitting a private or
    * unreachable source. This makes the README's "downloads from public sources" line a checked invariant

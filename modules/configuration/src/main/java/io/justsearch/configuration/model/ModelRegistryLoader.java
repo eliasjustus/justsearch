@@ -88,6 +88,12 @@ public final class ModelRegistryLoader {
             new SupportingFile(rs.filename, rs.sha256, rs.sizeBytes, rs.downloadUrl, extract));
       }
     }
+    // requiresCuda: optional flag (default false) — tempdoc 772 Q3. Absent in a pre-772 registry
+    // JSON deserializes to null here; without this pass-through the loader would call the 11-arg
+    // compat constructor and default requiresCuda=false for EVERY package, silently un-gating the
+    // real cuda-runtime package from its CUDA requirement in production. The registry JSON carries
+    // "requiresCuda": true on cuda-runtime to preserve today's hardware gating.
+    boolean requiresCuda = rp.requiresCuda != null && rp.requiresCuda;
     return new ModelPackage(
         rp.id,
         rp.label,
@@ -99,7 +105,8 @@ public final class ModelRegistryLoader {
         rp.termsUrl,
         rp.installRoot,
         rp.license,
-        CapabilityTier.fromId(rp.tier));
+        CapabilityTier.fromId(rp.tier),
+        requiresCuda);
   }
 
   // Raw deserialization types — match the JSON structure exactly.
@@ -118,7 +125,8 @@ public final class ModelRegistryLoader {
       List<RawSupportingFile> supportingFiles,
       String installRoot,
       String license,
-      String tier) {}
+      String tier,
+      Boolean requiresCuda) {}
 
   private record RawVariant(
       String filename,
