@@ -176,6 +176,10 @@
     "group": "eval"
   },
   {
+    "name": "offset-recall",
+    "group": "analysis"
+  },
+  {
     "name": "perf-gate",
     "group": "gates"
   },

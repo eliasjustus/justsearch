@@ -343,6 +343,39 @@ def test_real_text_injection_is_deterministic_and_certifiable(tmp_path):
     assert corpus_certify.descriptor_collision_report(docs, queries)["passed"] is True
 
 
+def test_build_source_emits_evidence_offset_sidecar(tmp_path):
+    # tempdoc 783 §B.1: build_source writes an additive evidence_offsets.json sidecar
+    # recording where each injected gold sentence lands in its assembled host doc.
+    real, gold = _fixture(tmp_path)
+    output = tmp_path / "source"
+    corpus_inject.build_source(
+        real, gold, output, seed=707, n_distractors=3, style="interleave",
+        real_source_id="fixture-real-v1", license_id="test-only",
+    )
+    side_path = output / "evidence_offsets.json"
+    assert side_path.is_file()
+    side = json.loads(side_path.read_text(encoding="utf-8"))
+    assert side["schema"] == "evidence-offsets.v1"
+    assert side["method"] == "injection-assembly"
+    assert len(side["offsets"]) == 1  # one gold doc in the fixture
+
+    docs = [json.loads(line) for line in (output / "docs.jsonl").read_text().splitlines()]
+    docs_by_id = {d["_id"]: d["text"] for d in docs}
+    for assembled_id, rec in side["offsets"].items():
+        text = docs_by_id[assembled_id]
+        # the recorded offset actually points at the recorded evidence sentence
+        assert text[rec["char_offset"]:rec["char_offset"] + len(rec["evidence"])] == rec["evidence"]
+        assert rec["doc_len"] == len(text)
+        # committed corpus bytes are untouched: the sidecar is a NEW file, and the
+        # gold sentence is the fabricated one interleaved into a longer host doc.
+        assert len(text) > len(rec["evidence"])
+
+    # sidecar is NOT part of the committed set (write_commitment never includes it).
+    assert "evidence_offsets.json" not in {
+        "recipe.json", "fabricated-docs.jsonl", "fabricated-queries.json", "fabricated-meta.json",
+    }
+
+
 def test_commitment_contains_fabricated_inputs_and_ids_but_no_real_host_text(tmp_path):
     real, gold = _fixture(tmp_path)
     source = tmp_path / "source"
