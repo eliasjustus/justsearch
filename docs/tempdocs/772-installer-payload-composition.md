@@ -1420,18 +1420,27 @@ download cost remains.
      Maven Central artifact either way.
    - **Probe re-run against the exact ship bytes** (trimmed jar + archive contents + CUDA deps,
      RTX 4070): `addCUDA` SUCCESS + real `createSession(CUDA)` SUCCESS.
-   - **Archive (owner uploads to the `cuda-runtime-12.4` release tag BEFORE merge — hard
-     precondition, else GPU users silently lose ORT CUDA):** `tmp/ort-native-cuda12-v1.24.3.zip`,
-     sha256 `94DE9A29C8513A8CDE3AF4447966CB5A169BB85610A7BDA57C06D1649A2FC212`, 167,772,095 B.
-   - **Named migration gap (real, needs an owner-visible answer before release):** existing GPU
-     users already have the pre-772 `cuda-runtime` pack (no ORT DLLs in cuda12). On updating to a
-     trimmed-jar build they hit INCOMPLETE → ORT CUDA unavailable → embeddings/enrichment fall
-     back to CPU (functional, slower; llama-server's own CUDA variant is unaffected) until they
-     re-run Install AI, which fetches the missing archive. The `blockingIncomplete` preflight
-     field (commit `5f4d4dec`) is exactly the signal for this state, but **whether the UI
-     surfaces it prominently is unverified** (Q3(d)'s parked ui-web half). Mitigations to choose
-     from: verify/improve the preflight banner, release-note instruction, or an explicit
-     re-install prompt. Logged here, not silently shipped.
+   - **Archive — PUBLISHED (2026-07-22, owner-delegated: "can you takeover 1 yourself").**
+     `ort-native-cuda12-v1.24.3.zip` (sha256
+     `94DE9A29C8513A8CDE3AF4447966CB5A169BB85610A7BDA57C06D1649A2FC212`, 167,772,095 B) uploaded
+     to the `cuda-runtime-12.4` release on `justsearch-releases`; verified end-to-end by
+     re-downloading from the exact registry `downloadUrl` and matching the registry sha256.
+     The merge precondition is satisfied. Per the repo's runbook convention (Q3(c)), an **ONNX
+     Runtime MIT notice section was added to that repo's `THIRD_PARTY_NOTICES.txt`** (commit
+     `dda11148` there) naming the four DLLs and their unmodified Maven-artifact provenance.
+     Noticed in passing, logged to the inbox: that notices file has no NVIDIA entry for the
+     CUDA/cuDNN redistributables the two pre-existing archives ship — a pre-existing gap, not
+     introduced here.
+   - **Named migration gap — RESOLVED BY FACT (owner, 2026-07-22): there are currently no users.**
+     The gap described below therefore has an empty affected population — no install base holds
+     the pre-772 pack, so no one can hit the stale-pack INCOMPLETE state on update. (Original
+     concern, kept for the record: a pre-772 GPU user updating to a trimmed-jar build would hit
+     INCOMPLETE → ORT CUDA unavailable → CPU-speed embeddings until re-running Install AI.)
+     Honest residual: the INCOMPLETE/VERSION_MISMATCH states remain *reachable in the future*
+     (partial pack download, a future ORT bump where app and pack move at different speeds), so
+     Q3(d)'s ui-web surfacing half returns to exactly its prior status — **parked, low priority,
+     until a real population can hit the state** — no longer release-gating. Dev machines are the
+     only "users"; their fix is re-running Install AI (or copying the four DLLs into cuda12).
    - **Residual verification, honestly named:** the wiring is probe-verified at the JVM level and
      unit-tested, but a full dev-stack run against a pack-complete cuda12 dir (SET path) and a
      pack-stale dir (INCOMPLETE path) has not been done; final combined installer size measured
