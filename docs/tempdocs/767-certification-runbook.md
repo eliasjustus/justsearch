@@ -1,6 +1,6 @@
 ---
 title: 767 — Certification runbook (paid + GPU half)
-status: prepared, not executed
+status: EXECUTED 2026-07-22 — both members fully-certified (32/32 gates). See 767-camouflaged-injection-corpus-lane.md §R for results, threshold table, deviations, spend, and the harness-recovery notes.
 created: 2026-07-21
 companion-to: 767-camouflaged-injection-corpus-lane.md
 ---
