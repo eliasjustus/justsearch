@@ -798,6 +798,22 @@ committed 707 recipes, signatures recorded in the summaries).
   next measurement** (the only floor-relevant lever left): the free
   title/heading-prepend A/B, then the resident-LLM contextualization tier
   (777-coupled) if the free tier shows direction.
+- **CE-gate contradiction RESOLVED by live probe (2026-07-22, this worktree's
+  dev stack, run 96da7851)**: ingested 30 real CLERC docs (mean 46,805 chars);
+  worker telemetry `contentLengthAvgChars=40310` ≫ the 16,000 threshold, yet
+  a hybrid query's searchTrace showed `cross-encoder` EXECUTED — because the
+  Head-side gate cache (`WorkerStatusCache.cachedAvgContentLengthChars`) is
+  populated ONLY by `GET /api/knowledge/status`
+  (KnowledgeRoutes.java:31 → KnowledgeSearchEngine.status()), which neither
+  jseval nor `/api/status` ever hits. One manual `/api/knowledge/status` poll
+  later, the SAME query's trace had NO cross-encoder stage — the gate fired.
+  **Consequence: every eval/register baseline measured the CE-on (gate-off)
+  pipeline, while production sessions whose client polls
+  `/api/knowledge/status` silently lose the CE on long-doc corpora — an
+  eval-vs-production divergence.** Resolution (Stage 2 item): flip the
+  `justsearch.rerank.max_avg_doc_length_chars` default 16000 → 0 (gate off =
+  the measured configuration; operator override preserved); the gate/cache
+  plumbing teardown is tombstoned for the later default-flip sweep.
 - **Confidence (0-10) for implementing the remaining re-scoped work
   (Stages 1-2 + the H.4 free-tier A/B): 8** — mechanisms verified at
   code level, sentinels named, flags per D-004, blast radius bounded
