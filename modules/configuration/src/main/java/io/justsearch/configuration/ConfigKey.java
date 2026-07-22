@@ -65,6 +65,7 @@ public enum ConfigKey {
     SEARCH_CORRECTIONS_ZERO_HIT_RETRY("search.corrections.zero_hit_retry_enabled"),
     SEARCH_EVIDENCE_SPAN_ENABLED("search.evidence_span.enabled"),
     SEARCH_EVIDENCE_SPAN_ENTITY_SIGNAL("search.evidence_span.entity_signal"),
+    SEARCH_MCP_DELIVERY_BUDGET_BYTES("search.mcp_delivery.budget_bytes"),
 
     // -- Worker indexer --
     INDEXER_BACKPRESSURE_MODE("workers.indexer.backpressure_mode"),

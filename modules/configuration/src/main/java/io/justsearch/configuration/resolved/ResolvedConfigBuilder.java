@@ -531,6 +531,16 @@ public final class ResolvedConfigBuilder {
     // 775 deferred item (b) settled by the §F live probe: ner_membership (100% carriage) beats
     // df_rarity (28%) on the buried-entity stratum — ship the winner.
     putDefault("search.evidence_span.entity_signal", "ner_membership");
+    putYamlIntFromNode(
+        "search.mcp_delivery.budget_bytes", searchRoot, "mcp_delivery.budget_bytes");
+    // 775 §E/§C: the MCP delivery-governor budget, settled at 45000 bytes by the orchestrator's live
+    // measurement (2026-07-22) — a margin under the lowest characterized 770 §E.3 truncation cliff
+    // (46,617). 0 disables the governor (escape hatch).
+    putDefault(
+        "search.mcp_delivery.budget_bytes",
+        Integer.toString(
+            io.justsearch.configuration.resolved.ResolvedConfig.Search
+                .DEFAULT_MCP_DELIVERY_BUDGET_BYTES));
     // Facet fields list
     JsonNode fieldsNode = searchRoot.path("facets").path("fields");
     if (fieldsNode.isArray()) {
@@ -1271,6 +1281,10 @@ public final class ResolvedConfigBuilder {
         resolveBoolean("justsearch.lambdamart.enabled", false),
         resolveBoolean("search.evidence_span.enabled", true),
         resolveString("search.evidence_span.entity_signal", "ner_membership"),
+        // 775 §E/§C: the MCP delivery-governor budget (0 disables the governor).
+        resolveInt(
+            "search.mcp_delivery.budget_bytes",
+            ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES),
         buildSearchCorrections());
   }
 

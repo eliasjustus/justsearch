@@ -806,26 +806,81 @@ public final class McpToolSurface {
               querySyntax, Boolean.TRUE, detail, null);
       KnowledgeSearchResponse resp = adapter.search(req);
 
-      // Tempdoc 735 W6: every response fact — per-hit rationale, hints, facets, coverage —
-      // computed ONCE by the content-model builder, then consumed by both the text renderer and
-      // the structured renderer, so the two tiers cannot silently diverge (735 G3).
-      McpSearchResponseContent content = buildSearchContent(resp, args);
-      String text = renderSearchText(resp, content, concise);
-
-      // Tempdoc 658/735: the canonical search-execution evidence (SearchTrace + per-hit trace)
-      // PLUS the tier-equivalence fields (hints/facets/coverage/truncated) ride the agent-facing
-      // structuredContent channel, alongside the human-readable text block.
-      return Map.of(
-          "content",
-          List.of(Map.of("type", "text", "text", text)),
-          "structuredContent",
-          McpEvidenceProjection.searchEvidence(resp, content, Boolean.TRUE.equals(detail)),
-          "isError",
-          false);
+      // Tempdoc 775 §E/§C: the delivery governor degrades the WHOLE assembled tool result (the
+      // human-readable text block + the structuredContent channel + envelope) deterministically at
+      // the 770 §E.3 client truncation cliff — which operates on the whole result, not the
+      // structured tier alone (a fat text block can push the wire payload over the cliff while
+      // structuredContent stays under any structured-only budget). The view re-renders both tiers
+      // from the surviving results at each degradation step, so text and structured never diverge:
+      // provenance stripped first (per-hit trace/legScores, projected only under `detail`), then
+      // whole tail results dropped lowest-ranked-first, never truncating a result or span mid-way.
+      // Tempdoc 735 W6: within a single render every response fact is computed ONCE by the
+      // content-model builder and consumed by both renderers, so the two tiers cannot diverge.
+      boolean includeDetail = Boolean.TRUE.equals(detail);
+      McpDeliveryGovernor.ResultView view =
+          (keep, includeProvenance) -> {
+            KnowledgeSearchResponse sub =
+                keep >= resp.results().size() ? resp : truncateResults(resp, keep);
+            McpSearchResponseContent c = buildSearchContent(sub, args);
+            String t = renderSearchText(sub, c, concise);
+            Map<String, Object> structured =
+                McpEvidenceProjection.searchEvidence(sub, c, includeProvenance);
+            return Map.of(
+                "content",
+                List.of(Map.of("type", "text", "text", t)),
+                "structuredContent",
+                structured,
+                "isError",
+                false);
+          };
+      return McpDeliveryGovernor.govern(
+          resp.results().size(), includeDetail, resolveDeliveryBudgetBytes(), MAPPER, view);
     } catch (Exception e) {
       log.warn("MCP search failed", e);
       return errorContent(toolFailureMessage("Search", e));
     }
+  }
+
+  /**
+   * Tempdoc 775 §E: the delivery governor's serialized-JSON budget in bytes, read from the same
+   * config machinery other search deliverables use ({@code search.mcp_delivery.budget_bytes},
+   * default 45,000 — a margin under the lowest characterized 770 §E.3 truncation cliff at 46,617;
+   * {@code 0} disables the governor). Resolved from the global {@link
+   * io.justsearch.configuration.resolved.ConfigStore} snapshot, falling back to the default when the
+   * store is not yet initialized (test/early-boot paths) so the governor is always safe to call.
+   */
+  private static int resolveDeliveryBudgetBytes() {
+    io.justsearch.configuration.resolved.ConfigStore store =
+        io.justsearch.configuration.resolved.ConfigStore.globalOrNull();
+    if (store == null) {
+      return io.justsearch.configuration.resolved.ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES;
+    }
+    return store.get().search().mcpDeliveryBudgetBytes();
+  }
+
+  /**
+   * Tempdoc 775 §E: a copy of {@code resp} carrying only its top {@code keep} results, used by the
+   * delivery governor to re-render both tiers when it drops whole tail results. All other fields
+   * (totalHits/matchCount/trace/facets/...) are preserved verbatim, so {@code coverage.shown} and
+   * the text truncation line honestly report the reduced delivered count against the unchanged
+   * total.
+   */
+  private static KnowledgeSearchResponse truncateResults(KnowledgeSearchResponse resp, int keep) {
+    List<KnowledgeSearchResponse.Hit> sub =
+        new ArrayList<>(resp.results().subList(0, Math.max(0, Math.min(keep, resp.results().size()))));
+    return new KnowledgeSearchResponse(
+        resp.totalHits(),
+        resp.matchCount(),
+        resp.tookMs(),
+        sub,
+        resp.nextCursor(),
+        resp.facets(),
+        resp.facetsTruncated(),
+        resp.entityFacetVariants(),
+        resp.indexCapabilities(),
+        resp.queryUnderstanding(),
+        resp.filterNormalization(),
+        resp.searchTrace());
   }
 
   /**

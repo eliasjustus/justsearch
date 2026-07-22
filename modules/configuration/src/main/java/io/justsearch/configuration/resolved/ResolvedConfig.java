@@ -450,6 +450,8 @@ public record ResolvedConfig(
    *     excerpt byte-for-byte)
    * @param evidenceSpanEntitySignal 775: the distinguishing-entity signal used by the EvidenceSpan
    *     selector — {@code df_rarity} or {@code ner_membership}
+   * @param mcpDeliveryBudgetBytes 775: the MCP delivery governor's serialized-JSON budget in bytes
+   *     (default {@link Search#DEFAULT_MCP_DELIVERY_BUDGET_BYTES}; 0 disables the governor)
    */
   public record Search(
       String profile,
@@ -467,7 +469,19 @@ public record ResolvedConfig(
       boolean lambdamartEnabled,
       boolean evidenceSpanEnabled,
       String evidenceSpanEntitySignal,
+      // Tempdoc 775 §E/§C: the MCP delivery governor's serialized-JSON budget in bytes. The assembled
+      // justsearch_search payload is degraded deterministically (numeric provenance first, then whole
+      // tail results, never mid-payload) to fit this budget before delivery — a margin under the
+      // lowest characterized 770 §E.3 client truncation cliff (46,617). 0 disables the governor.
+      int mcpDeliveryBudgetBytes,
       Corrections corrections) {
+
+    /**
+     * Default MCP delivery-governor budget (tempdoc 775 §E, settled by the orchestrator's live
+     * measurement 2026-07-22): 45,000 bytes of serialized result JSON — a margin under the lowest
+     * characterized 770 §E.3 truncation cliff at 46,617 bytes.
+     */
+    public static final int DEFAULT_MCP_DELIVERY_BUDGET_BYTES = 45_000;
 
     /** Spelling/fuzzy correction settings. */
     public record Corrections(
