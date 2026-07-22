@@ -1438,6 +1438,34 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: scripts/jseval/experiments/delivery_tier_probe_735.py` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
 - [ ] delivery_tier_probe_735.py's `_LOCAL_PATH_RE` redaction only matches drive-letter paths (`X:\...`) — a UNC capture (`\server\share`) would survive into a committed fixture. Not hit by any current capture; found during the 770 pre-push scan — `scripts/jseval/experiments/delivery_tier_probe_735.py` (2026-07-21)
 
+### obs:unanchored-general-80 — bundleSidecarResources fails config-cache STORE due to pre-existing config-cache-incompatible deps (
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-21` `last: 2026-07-21`
+- [ ] bundleSidecarResources fails config-cache STORE due to pre-existing config-cache-incompatible deps (headlessDist uses configurations.runtimeClasspath script-object refs; stageOrtCudaVariant Sync; generateWorkerAotCache captures a Sync task) — installer packaging path is not config-cacheable; run with --no-configuration-cache — `modules/ui/build.gradle.kts:308,753,~1000` (2026-07-21)
+
+### obs:unanchored-general-81 — jseval debt from the 767-771 arc: known-RED correction-probe pair (restore data file or retire); per
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] jseval debt from the 767-771 arc: known-RED correction-probe pair (restore data file or retire); per-query eval artifacts capped at depth-10 (analyses wanted k>=20 — make depth configurable); no per-call cost invoicing (spend figures are cap-bounded estimates); index-cache entries not reusable across commits for certification-shaped flows (2026-07-22)
+
+### obs:unanchored-general-82 — platform lessons from the 767 certification arc for agent-lessons.md rider: tracked background tasks
+`kind: lesson?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] platform lessons from the 767 certification arc for agent-lessons.md rider: tracked background tasks killed at ~60min and TaskStop does not kill child bash loops (detached Start-Process driver + self-terminating <590s polls is the working pattern); subagents park mid-campaign to 'wait for monitors' unless briefed to wait in-turn — two stalls this arc (2026-07-22)
+
+### obs:unanchored-drift-18 — Head and Worker classpaths ship 4 same-library-different-version jar pairs (jackson-core/databind 3.
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] Head and Worker classpaths ship 4 same-library-different-version jar pairs (jackson-core/databind 3.1.0 vs 2.20.0, kotlin-stdlib 2.4.0 vs 2.2.21, commons-text 1.14.0 vs 1.15.0) — cross-process version drift, found during 772 installer itemization of `lib/` vs `lib/worker/` (CI artifact run 29874382035) (2026-07-22)
+
+### obs:unanchored-general-83 — Installer itemization (772 §I) shows lucene-core/lucene-analysis-common on the HEAD shipped classpat
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] Installer itemization (772 §I) shows lucene-core/lucene-analysis-common on the HEAD shipped classpath (lib/, not lib/worker/) — modules/ui/build.gradle.kts:46 depends on adapters-lucene, :124-125 runtimeOnly lucene — tier-register row 1's justification wording ('Lucene types are not on Head's classpath') doesn't match the shipped artifact; reconcile wording vs reality (the ArchUnit test presumably checks something narrower) (2026-07-22)
+
+### obs:unanchored-general-84 — justsearch-releases THIRD_PARTY_NOTICES.txt has no NVIDIA entry for the CUDA/cuDNN redistributables 
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] justsearch-releases THIRD_PARTY_NOTICES.txt has no NVIDIA entry for the CUDA/cuDNN redistributables in ort-cuda-runtime-12.4.zip / cudnn-9-runtime-12.4.zip (NVIDIA redistributable-list EULA terms) — pre-existing gap noticed while adding the ONNX Runtime MIT notice (772 §J) (2026-07-22)
+
+### obs:lifecyclecontracttest — LifecycleContractTest (modules/ui) flakes under parallel full-suite load on dev machine: 2/10 tests 
+`kind: environment?` `anchor: modules/ui/src/test/java/io/justsearch/ui/api/LifecycleContractTest.java` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
+- [ ] LifecycleContractTest (modules/ui) flakes under parallel full-suite load on dev machine: 2/10 tests (statusReadinessDegradesIndexServingWhenThroughputStalls :495, statusReadinessPendingInferenceOfflineWhenRuntimeIdle :398) hit 3s HttpTimeoutException against in-process LocalApiServer, green in isolation — same class as the 'Flaky IPC tests' pitfall; consider awaitPort-style tolerance or longer client timeout — `modules/ui/src/test/java/io/justsearch/ui/api/LifecycleContractTest.java:398,495` (2026-07-22)
+
 ## Parked
 
 ### obs:actionledgerprojection — ActionLedgerProjection.deterministicId `:`-join is injection-safe only because all-but-last discrimi

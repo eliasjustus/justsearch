@@ -137,6 +137,17 @@ def certify_materialized_family(
                 "descriptor_collision": collisions.get("passed") is True,
                 "indistinguishability": indistinguishability.get("passed") is True,
             }
+            # tempdoc 776 §A.1: per-schema structural checks are ADDED only for a multi-schema
+            # cell (any query carries a `gold_kind`). A pre-776 single-schema bridge cell has no
+            # `gold_kind`, so `checks` stays exactly `_CELL_CHECKS` and the cell shape/report is
+            # byte-identical to today — the opt-in boundary that keeps certified cells stable.
+            multi_schema = is_multi_schema(queries)
+            schema_dispersion = schema_format_leak = None
+            if multi_schema:
+                schema_dispersion = schema_dispersion_report(docs, queries)
+                schema_format_leak = schema_format_leak_report(docs, queries)
+                checks["schema_dispersion"] = schema_dispersion.get("passed") is True
+                checks["schema_format_leak"] = schema_format_leak.get("passed") is True
             gate_evidence = {
                 gate: _validate_scientific_evidence(
                     Path(scientific_evidence[size][variant][gate]),
@@ -187,6 +198,13 @@ def certify_materialized_family(
                     and all(item.get("passed") is True for item in gate_evidence.values())
                 ),
             }
+            if multi_schema:
+                results[size][variant]["schema_dispersion"] = {
+                    key: schema_dispersion[key] for key in _SCHEMA_DISPERSION_KEYS
+                }
+                results[size][variant]["schema_format_leak"] = {
+                    key: schema_format_leak[key] for key in _SCHEMA_FORMAT_LEAK_KEYS
+                }
             datasets[(size, variant)] = {
                 "docs": {doc["_id"]: doc for doc in docs},
                 "queries": queries,
@@ -1162,6 +1180,93 @@ def indistinguishability_report(docs: list[dict], queries: list[dict] | None = N
     }
 
 
+#: Keys the multi-schema structural reports contribute, mirroring `_INDISTINGUISHABILITY_KEYS`.
+_SCHEMA_DISPERSION_KEYS = ("per_kind", "passed", "method")
+_SCHEMA_FORMAT_LEAK_KEYS = ("per_schema", "passed", "method")
+
+
+def _gold_ids_of(queries: list[dict] | None) -> set[str]:
+    return {e for q in (queries or []) for e in (q.get("evidence_ids") or [])}
+
+
+def is_multi_schema(queries: list[dict] | None) -> bool:
+    """A cell is multi-schema iff any query declares a ``gold_kind`` (tempdoc 776 §A.1).
+
+    Pre-776 bridge cells carry no ``gold_kind``, so this is ``False`` for them and the
+    per-schema checks are omitted — the existing single-schema cell shape is unchanged.
+    """
+    return any("gold_kind" in q for q in (queries or []))
+
+
+def schema_dispersion_report(docs: list[dict], queries: list[dict] | None) -> dict:
+    """Per ``gold_kind``, are that schema's gold docs title-dispersed (tempdoc 776 §A.1)?
+
+    A schema whose gold documents collapse onto a handful of shared titles is enumerable by
+    that title — the gold-side sibling of ``descriptor_collision``, sliced per ``gold_kind`` so
+    a leak confined to one schema is not masked by the others. ``dispersion`` is
+    ``distinct_titles / n_gold_docs``; ``passed`` requires full distinctness (1.0) for every
+    kind present. (The retrieval-*spread* dispersion of §F5 — gold rank spread vs the native
+    null — is a model/engine quantity and belongs to the deferred scientific band, not this
+    structural check.)
+    """
+    by_id = {d.get("_id"): d for d in docs}
+    per_kind: dict[str, dict] = {}
+    for kind in sorted({q.get("gold_kind") for q in (queries or []) if q.get("gold_kind")}):
+        kind_ids = _gold_ids_of([q for q in queries if q.get("gold_kind") == kind])
+        titles = [by_id[i].get("title") for i in kind_ids if i in by_id]
+        n = len(titles)
+        distinct = len(set(titles))
+        per_kind[kind] = {
+            "n_gold_docs": n,
+            "n_distinct_titles": distinct,
+            "dispersion": (distinct / n) if n else None,
+            "passed": bool(n) and distinct == n,
+        }
+    return {
+        "per_kind": per_kind,
+        "passed": bool(per_kind) and all(v["passed"] for v in per_kind.values()),
+        "method": "per-gold_kind-title-distinctness",
+    }
+
+
+def schema_format_leak_report(docs: list[dict], queries: list[dict] | None) -> dict:
+    """Per schema (``question_type``), is that schema's gold set free of a format leak?
+
+    Reuses the null-calibrated n-gram selectivity check (:func:`~.corpus_leak.ngram_selectivity_report`)
+    scoped to one schema's gold docs against the TRUE natives (docs in no schema's gold), so a
+    boilerplate template shared across just one schema's gold — a format signature every
+    ``aggregation`` or ``single_fact`` doc carries — is caught even when the corpus-wide gold
+    n-gram check passes. ``passed`` requires ``max_gold_coverage <= native_base_rate`` for every
+    schema that has both gold and native docs to compare.
+    """
+    from .corpus_leak import ngram_selectivity_report
+
+    gold_all = _gold_ids_of(queries)
+    per_schema: dict[str, dict] = {}
+    ok = True
+    for schema in sorted({q.get("question_type") for q in (queries or []) if q.get("question_type")}):
+        schema_queries = [q for q in queries if q.get("question_type") == schema]
+        gold_s = _gold_ids_of(schema_queries)
+        # This schema's gold docs + the TRUE natives only (exclude other schemas' gold).
+        scoped = [d for d in docs if d.get("_id") in gold_s or d.get("_id") not in gold_all]
+        report = ngram_selectivity_report(scoped, schema_queries)
+        passed = report["passed"]
+        per_schema[schema] = {
+            "max_gold_coverage": report["max_gold_coverage"],
+            "native_base_rate": report["native_base_rate"],
+            "n_gold": report["n_gold"],
+            "n_native": report["n_native"],
+            "passed": passed,
+        }
+        # A None (nothing to compare) is not a pass, mirroring indistinguishability_report.
+        ok = ok and passed is True
+    return {
+        "per_schema": per_schema,
+        "passed": bool(per_schema) and ok,
+        "method": "per-schema-null-calibrated-ngram-selectivity",
+    }
+
+
 def regeneration_determinism_report(generation_provenance: dict | None) -> dict:
     """Verify a corpus's "seeded -> reproducible" claim by actually regenerating it (tempdoc 664).
 
@@ -1267,6 +1372,9 @@ def regeneration_determinism_report(generation_provenance: dict | None) -> dict:
             distractor_ratio=gp["distractor_ratio"], semantic=gp["semantic"],
             n_chains=gp["n_chains"], doc_words=gp["doc_words"],
             entity_bank=bank_root,
+            # tempdoc 776 §A.1: absent for a single-schema (pre-776) corpus, so the default
+            # regeneration is unchanged; a mix corpus records it and it must be threaded back.
+            schema_mix=gp.get("schema_mix"),
         )
 
     if not result["ok"]:
