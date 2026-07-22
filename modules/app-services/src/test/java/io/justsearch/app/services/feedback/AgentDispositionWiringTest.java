@@ -20,7 +20,11 @@ class AgentDispositionWiringTest {
   @Test
   void register_persistsDispositionsOnlyOnDoneEvent(@TempDir Path dataDir) throws IOException {
     AtomicReference<BiConsumer<String, Map<String, Object>>> ref = new AtomicReference<>();
-    AgentDispositionWiring.register(ref::set, dataDir);
+    AgentDispositionWiring.register(
+        ref::set,
+        dataDir,
+        io.justsearch.agent.api.encryption.StoreCipher.disabled(),
+        new FeedbackCaptureSettings(dataDir));
     assertNotNull(ref.get(), "a listener must be registered");
 
     Map<String, Object> payload =
@@ -51,7 +55,11 @@ class AgentDispositionWiringTest {
     // the done-event dispositions keyed by the SAME sessionId, so they JOIN into real labels. Before
     // the fix, agent dispositions used a fresh agent-<UUID> with no snapshot and were ALL dropped.
     AtomicReference<BiConsumer<String, Map<String, Object>>> ref = new AtomicReference<>();
-    AgentDispositionWiring.register(ref::set, dataDir);
+    AgentDispositionWiring.register(
+        ref::set,
+        dataDir,
+        io.justsearch.agent.api.encryption.StoreCipher.disabled(),
+        new FeedbackCaptureSettings(dataDir));
 
     // (1) a search tool completed — carries the per-leg feedbackFeatures + the run's sessionId.
     Map<String, Object> toolDone =

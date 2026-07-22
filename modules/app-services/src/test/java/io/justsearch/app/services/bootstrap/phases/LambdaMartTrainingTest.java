@@ -82,7 +82,8 @@ class LambdaMartTrainingTest {
         dataDir.resolve("gpl-training-triples.ndjson"), syntheticTriples(5), StandardCharsets.UTF_8);
 
     LambdaMartReranker reranker = new LambdaMartReranker();
-    LambdaMartTraining.loadOrTrain(dataDir, reranker, true);
+    LambdaMartTraining.loadOrTrain(
+        dataDir, reranker, true, io.justsearch.agent.api.encryption.StoreCipher.disabled());
 
     LambdaMartTrainingStatus.Phase phase = awaitTerminalPhase(reranker, Duration.ofSeconds(60));
     assertEquals(

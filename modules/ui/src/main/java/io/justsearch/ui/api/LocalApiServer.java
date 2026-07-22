@@ -793,6 +793,13 @@ public class LocalApiServer {
           this.lambdaMartReranker,
           this.apiCatalog);
       this.knowledgeSearchController = ctrl;
+      // Tempdoc 778 — seal the disposition + feature-snapshot streams with the AUTHORED feedback key.
+      if (this.HeadAssemblyRef != null) {
+        ctrl.setFeedbackCipher(
+            this.HeadAssemblyRef.storeCipher(
+                io.justsearch.agent.api.encryption.StoreCatalog.FEEDBACK.recoverability()));
+        ctrl.setFeedbackCaptureSettings(this.HeadAssemblyRef.feedbackCaptureSettings());
+      }
       // Tempdoc 419 / T4: bind the shared scan-progress registry to the adapter that drives
       // /api/knowledge/ingest. The adapter records events into the registry as the worker
       // emits them; the SSE controller (registered below) subscribes by scanId.

@@ -137,6 +137,12 @@ In-repo steps (an agent can prepare these; the branch must be pushed and green):
 1. Bump `gradle.properties` `version` to the release version (e.g. `0.2.0`).
    `sync-version.ps1` propagates it to Tauri/Cargo/npm; `-RequireReleaseSemver` accepts
    `x.y.z[-alpha.N]` and rejects `SNAPSHOT`.
+   > **Strict release semver is now load-bearing at tag time.** The next `v*` tag dispatch is
+   > the **first** that actually runs `-VerifyReleaseVersion` (a latent flag-binding bug hid it
+   > until tempdoc 760's hashtable-splat fix — rehearsal run `29909495558`; it had never been
+   > exercised because no tag dispatch had run since the flag was added). So `gradle.properties`
+   > must already be a clean `x.y.z[-pre.N]` before you tag — a `SNAPSHOT`/malformed version now
+   > fails the build at dispatch instead of slipping through.
 2. `sync-version.ps1` also stamps `server.json`'s `version` + release-asset URL from the
    gradle version. If the MCPB source changed since the last release, also run
    `node scripts/ci/pack-mcpb.mjs --sync` and commit `server.json` (its `fileSha256`).
@@ -150,10 +156,124 @@ Owner-only steps (require repo permissions):
    `build-release-assets.ps1`, and attaches the whole asset set to the GitHub Release.
 5. Set the repo homepage, enable Discussions if desired, and take/replace hero screenshots
    (see `docs/m1-operator-checklist.md`).
+6. **Post-cut — update the README to the published asset.** `README.md`'s installer size + SHA-256
+   line and the `v<version>` download link describe the *published* release asset, which is why
+   they deliberately still read the previous release's figures (853 MB, the v0.1.0 SHA) until a cut
+   lands. After the Release exists, bump the size, the `SHA256SUMS` value, and the
+   `releases/download/v<version>/…` link together to the new asset.
 
 > Do **not** advertise MCP against a release whose installer predates the `/mcp` endpoint. The
 > shipped **v0.1.0** app has no MCP endpoint (its backend is 2026-04-28 jars); the MCPB bundle
 > and the README's MCP sections are meaningful only from the next release onward.
+
+## Pre-release verification (sandbox silent-install)
+
+Beyond the whole-product Sandbox round in the release loop, a narrow automated check confirms the
+two facts the distribution-readiness audit flagged as never empirically tested: `/S` **silent**
+install lands the app at the real per-user default path, and `/S` **silent** uninstall removes it
+cleanly (install dir, `HKCU:\…\Uninstall\JustSearch`, shortcuts, no leaked processes).
+
+Run from a GUI-capable Windows machine with Windows Sandbox enabled (the harness needs an
+interactive GUI session — it cannot be driven headless):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ci\package-installer-win.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release\sandbox-silent-install-test.ps1
+```
+
+The first stages the newest installer into the Sandbox share; the second stages the guest script,
+generates the `.wsb`, and launches Windows Sandbox by double-click. Results land as
+`silent-test-result-<timestamp>.json` (schema `justsearch.sandbox-silent-install-test.v1`) in the
+share, ending in a literal `PASS`/`FAIL`. `-GenerateOnly` prepares the `.wsb` without launching.
+
+> **Only ever run this inside a disposable Windows Sandbox — never directly on a host with a real
+> JustSearch install.** The guest script's registry/filesystem lookups are host-global; run outside
+> Sandbox they will find and silently `/S`-uninstall a real install (this happened once during
+> authoring — tempdoc 760). The guest header carries the same warning.
+
+## Release notes for the next cut
+
+Items to fold into the GitHub Release notes (the workflow already prepends a verify-your-download
+trust blurb and appends `generate_release_notes` output):
+
+- **Installer is now ~260 MB** (tempdoc 772, CI run `29901314606`), down from 853 MB at v0.1.0
+  (−68%), with zero first-run UX regression.
+- **WebView2 uses the online bootstrapper.** Machines without WebView2 preinstalled need network
+  access at install time; Windows 11 and most Windows 10 machines already have the runtime, so this
+  affects only offline/stripped installs.
+- Link `docs/how-to/verify-your-download.md` (checksum verification, SmartScreen guidance).
+
+## Code signing
+
+Signing is wired but **dormant until a mode credential secret is present** — a secrets-absent
+dispatch builds exactly as today (`build-installer.yml` computes `-Sign` only when a credential is
+configured). `scripts/ci/sign-windows.ps1` selects a credential mode via `JUSTSEARCH_CODESIGN_MODE`
+(default `pfx`), all fail-closed under `JUSTSEARCH_REQUIRE_SIGNING`:
+
+| Mode | Secrets it reads | Use |
+|---|---|---|
+| `pfx` | `JUSTSEARCH_CODESIGN_PFX_B64` + `JUSTSEARCH_CODESIGN_PFX_PASSWORD` + `JUSTSEARCH_CODESIGN_TIMESTAMP_URL` | A PFX cert file (base64). |
+| `store` | `JUSTSEARCH_CODESIGN_THUMBPRINT` | Cert from the Windows cert store — how USB-token / HSM CSP-backed non-exportable keys present locally (`signtool /sha1`). |
+| `command` | `JUSTSEARCH_CODESIGN_COMMAND` (a template with a `{file}` placeholder) | Any vendor CLI (Azure Trusted Signing, eSigner, …) — pluggable with zero further repo changes. |
+
+**One-time setup:** set `JUSTSEARCH_CODESIGN_MODE` and the mode's credential secret(s) in the repo
+secrets. Nothing else — signing then engages automatically on the next dispatch.
+
+> **`JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED` is REHEARSAL-ONLY and must NEVER be set for a production
+> release.** It relaxes the post-sign check from `signtool verify /pa` to a hash-valid-Authenticode
+> presence check, so a chain-untrusted (self-signed) signature is accepted — exactly what a real
+> release must reject. Leave it unset in production.
+
+**Rehearsal (no cert needed).** The full CI signing path can be exercised with a self-signed cert
+before any purchase: generate a self-signed cert, set it as the mode credential in repo secrets,
+set the repo variable `JUSTSEARCH_CODESIGN_ALLOW_UNTRUSTED=1`, and dispatch. This is how tempdoc
+760's signing-rehearsal campaign reached green (run `29914075529`) with zero paid signings spent;
+remove the rehearsal secrets/variable afterward. The signing script itself is separately rehearsable
+via `scripts/ci/test-sign-windows.ps1`.
+
+### Per-pin-bump signed-mirror procedure
+
+The bundler signs **every** unsigned bundled PE — ~93 third-party (Tesseract + llama.cpp) + ~8 own
+≈ ~100 signatures per release. Because the third-party PEs are pin-stable, sign them **once per
+upstream pin bump** and re-host the signed archives, dropping per-release signings from ~100 to
+**~8**. Per pin bump:
+
+1. Run `scripts/release/sign-vendored-payload.ps1` (works across all credential modes — it invokes
+   `sign-windows.ps1` as a child): archive in → extract → sign every unsigned inner PE → deterministic
+   re-zip → sha256 out.
+2. Upload the resulting `-signed.zip` to the `justsearch-releases` repo and note its sha256.
+3. Commit the URL + sha256 pair into `packaging/signed-mirrors.v1.json` (`llama-cpu` and/or
+   `tesseract` entry). The build reads that file and applies the matching gradle override pair; the
+   pins are committed there — not in repo variables — so each bump is PR-reviewed supply-chain history.
+   The file ships EMPTY, so until a pair is committed the build is byte-identical to the default
+   pinned upstream download; a half-complete entry fails the build loudly.
+
+**Tesseract has two extra obligations:**
+- Its manifest (`packaging/runtime/tesseract-windows.v1.json`) also pins **per-file** SHAs in
+  `files[]`, which signed inner PEs invalidate. There is **no generator** — regenerate those
+  hashes by hand-editing the manifest; the build fails with an explicit regeneration instruction if
+  an override is active and per-file hashes mismatch.
+- Hosting a signed Tesseract mirror on `justsearch-releases` **redistributes GPL-2.0-obligated
+  binaries** from that repo — that repo's `THIRD_PARTY_NOTICES.txt` needs the corresponding GPL
+  notice / source-offer treatment. **Flagged as a required step; do it before hosting** (not covered
+  by this doc).
+
+## ORT native version bump — coupling checklist
+
+The onnxruntime jar version and the GPU ORT-CUDA pack are **coupled** (tempdoc 772 §J): a bump to
+one that misses the others makes GPU users **silently lose ORT CUDA** (embeddings fall back to CPU
+speed). When bumping the ORT version, all of the following must move together:
+
+- [ ] The **onnxruntime jar** version (Gradle dependency).
+- [ ] The re-built **`ort-native-cuda12-v<ver>.zip`** pack asset (uploaded to `justsearch-releases`).
+- [ ] The **registry entry** — `filename` / `sha256` / `sizeBytes` for that asset — in **BOTH**
+      copies of `model-registry.v2.json` (`modules/ui/src/main/resources/ai/` and
+      `modules/configuration/src/test/resources/ai/`).
+- [ ] The in-zip **`ort-native-version.txt`** marker inside the pack archive.
+- [ ] **`OrtCudaHelper.EXPECTED_ORT_NATIVE_VERSION`** (`modules/ort-common/…/OrtCudaHelper.java`).
+
+If the marker or `EXPECTED_ORT_NATIVE_VERSION` disagree, the pack is treated as
+`VERSION_MISMATCH` and CUDA is not activated.
 
 ## Release index
 

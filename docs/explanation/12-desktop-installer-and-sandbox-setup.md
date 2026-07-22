@@ -78,7 +78,7 @@ Gradle stages a “headless bundle” into the Tauri resources directory via `:m
   - **ORT CUDA DLLs** (optional): `stageOrtCudaVariant` task bundles ORT CUDA DLLs into a sidecar directory. Not included in alpha builds.
 
 - ONNX model staging: The `stageOnnxModels` Gradle task stages all 5 model types (embedding, reranker, citation, NER, SPLADE) from local `models/` via Git LFS. Skippable with `-PskipOnnxModels`.
-- **Models are NOT bundled in the alpha installer** — the full model set (ONNX + GGUF) exceeds the NSIS 32-bit PE limit (~7 GB). Models are downloaded post-install via "Install AI" (see §6.1.1). The lean installer is ~748 MB.
+- **Models are NOT bundled in the alpha installer** — the full model set (ONNX + GGUF) exceeds the NSIS 32-bit PE limit (~7 GB). Models are downloaded post-install via "Install AI" (see §6.1.1). The lean installer is ~260 MB (tempdoc 772, CI run 29901314606).
 - **Version sync**: `scripts/ci/sync-version.ps1` propagates the version from `gradle.properties` to `tauri.conf.json`, `package.json`, and `Cargo.toml`.
 
 See: `modules/ui/build.gradle.kts` (`bundleSidecarResources` task)

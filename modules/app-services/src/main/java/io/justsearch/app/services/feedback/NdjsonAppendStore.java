@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.feedback;
 
+import io.justsearch.agent.api.encryption.StoreCipher;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -8,6 +9,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.ObjectMapper;
@@ -23,6 +25,12 @@ import tools.jackson.databind.ObjectMapper;
  * is an <strong>observer</strong>, never a dependency of the query path: {@link #append} swallows
  * and logs all failures so feedback can never break search.
  *
+ * <p>Tempdoc 778 — the {@code feedback} store is classified {@code AUTHORED} in
+ * {@link io.justsearch.agent.api.encryption.StoreCatalog}, so each line is sealed line-by-line with
+ * the shared {@link StoreCipher} when at-rest encryption is enabled (passthrough when disabled, so
+ * default/eval behaviour is byte-identical). All writers and readers of a given file MUST share the
+ * same cipher (data key) or the round-trip breaks — the {@code LabelProjection} join relies on it.
+ *
  * @param <T> the record type persisted, one per line
  */
 public final class NdjsonAppendStore<T> {
@@ -32,14 +40,24 @@ public final class NdjsonAppendStore<T> {
 
   private final Path storeFile;
   private final Class<T> type;
+  private final StoreCipher cipher;
 
   /**
    * @param storeFile the NDJSON file (its parent directory is created if absent)
    * @param type the record type, used to deserialize on {@link #readAll}
    */
   public NdjsonAppendStore(Path storeFile, Class<T> type) {
+    this(storeFile, type, StoreCipher.disabled());
+  }
+
+  /**
+   * Tempdoc 778 — {@code cipher} seals/opens each line for the {@code AUTHORED} feedback store.
+   * {@link StoreCipher#disabled()} is passthrough (the DERIVED/legacy/test path).
+   */
+  public NdjsonAppendStore(Path storeFile, Class<T> type, StoreCipher cipher) {
     this.storeFile = storeFile;
     this.type = type;
+    this.cipher = Objects.requireNonNull(cipher, "cipher");
     try {
       Files.createDirectories(storeFile.getParent());
     } catch (IOException e) {
@@ -51,7 +69,7 @@ public final class NdjsonAppendStore<T> {
   /** Appends one record as an NDJSON line. Best-effort — never throws. */
   public synchronized void append(T record) {
     try {
-      String line = MAPPER.writeValueAsString(record) + "\n";
+      String line = cipher.seal(MAPPER.writeValueAsString(record)) + "\n";
       Files.writeString(
           storeFile, line, StandardCharsets.UTF_8, StandardOpenOption.CREATE,
           StandardOpenOption.APPEND);
@@ -67,11 +85,14 @@ public final class NdjsonAppendStore<T> {
     if (!Files.exists(storeFile)) {
       return out;
     }
+    if (cipher.enabled() && cipher.locked()) {
+      return out; // sealed + locked: empty until unlock (mirrors RunEventStore)
+    }
     for (String line : Files.readAllLines(storeFile, StandardCharsets.UTF_8)) {
       if (line.isBlank()) {
         continue;
       }
-      out.add(MAPPER.readValue(line, type));
+      out.add(MAPPER.readValue(cipher.open(line), type));
     }
     return out;
   }

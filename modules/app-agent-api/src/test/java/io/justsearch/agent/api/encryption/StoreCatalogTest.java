@@ -15,13 +15,13 @@ import org.junit.jupiter.api.Test;
 class StoreCatalogTest {
 
   @Test
-  void authoredStoresAreTheThreeAuthorityOfRecordStores() {
+  void authoredStoresAreTheFourAuthorityOfRecordStores() {
     var authored =
         Arrays.stream(StoreCatalog.values())
             .filter(StoreCatalog::isAuthored)
             .map(StoreCatalog::dirName)
             .collect(Collectors.toSet());
-    assertEquals(java.util.Set.of("conversations", "memories", "agent-runs"), authored);
+    assertEquals(java.util.Set.of("conversations", "memories", "agent-runs", "feedback"), authored);
   }
 
   @Test
