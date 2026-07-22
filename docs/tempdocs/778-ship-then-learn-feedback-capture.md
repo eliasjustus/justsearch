@@ -1,7 +1,7 @@
 ---
 title: "ship-then-learn feedback capture: click/open signals + consolidating the already-persisted agent-citation tuples — the unlock for learned ranking and the eventual replacement for constructed benchmarks"
 type: tempdocs
-status: "RE-SCOPED + IMPLEMENTED (2026-07-22, owner-approved). The stale 'build a new store' premise was corrected to 'harden + complete tempdoc 580 §17's live ResultDisposition consolidation' (§D records the premise conflict). Landed: jseval one-interface reader; feedback store enrolled in StoreCatalog (AUTHORED, sealed) with the F-021 LabelProjection join proven to survive sealing (regression test); a distinct USER_CITATION_CLICK contributor + FE emission; a default-on local capture flag + visible privacy note; egress guardrails on the capture path. All builds + suites green. Live from-my-dist dev-stack verify BLOCKED by shared-stack contention (sibling 777's 2h lease on main's code); runnable procedure recorded in §D.2. See §D / §D.2."
+status: "COMPLETE (capture half; 2026-07-22): re-scoped to harden 580 §17 (owner-approved), implemented (#284), live smoke PASS (§E). Consumption half gated on real usage (§B.3)."
 created: 2026-07-22
 author: agent (Fable orchestration), chartered from the 762→771 measurement program's inventory (founder-directed 2026-07-22)
 category: product / learned-ranking / telemetry
@@ -228,3 +228,19 @@ click a result (writes a `SEARCH_INTERACTION` disposition) and a chat citation
 `python -c "from jseval.feedback_reader import summarize; print(summarize(<dataDir>))"`
 — expect the disposition counts by contributor + joined `labeledExamples`; flip
 the Settings toggle off and confirm a subsequent click writes no new row.
+
+## §E. Live smoke — executed (2026-07-22, orchestrator, post-merge of #284's CI)
+
+Stack booted from the lane's dist (run ed3fe960). All legs PASS: the three
+disposition types persisted (SEARCH_INTERACTION opened + dwelled,
+USER_CITATION_CLICK via the chat-citation contributor); the jseval reader
+read them end-to-end (4 dispositions, correct contributor split, 2
+labeledExamples via the snapshot join, 0 sealed-skipped); the capture toggle
+verified gating live (POST while off → 204 accepted, row count unchanged;
+re-enable rejoins); the privacy note served on GET /api/feedback/capture;
+clean shutdown. Bycatch (inbox-logged): malformed client JSON also yields a
+silent 204 through the never-fail-the-FE catch (debug-only log) — masks
+client bugs; candidate small follow-up is WARN-level logging or
+400-on-parse-error while keeping 204 for store failures. With this, all
+three verification tiers are green and 778 is COMPLETE (capture half);
+the consumption half stays gated on real usage per §B.3.
