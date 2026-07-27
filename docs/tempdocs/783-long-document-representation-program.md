@@ -129,6 +129,65 @@ answer-span-less corpora; they do not replace, and must never be pooled with, me
 offsets. (Note: no `evidence_offsets.json` sidecar is materialized under `datasets/` in this
 checkout, so the metadata path is currently exercised by fixture tests only — re-materializing
 a 781 v2 cell is what turns the primary evidence back on.)
+### §B.1b Evidence-offset sidecar carried through materialization (2026-07-27)
+
+**The gap.** `corpus_inject.build_source` writes an `evidence_offsets.json` sidecar recording
+where each injected gold sentence lands in its assembled host doc
+(`scripts/jseval/jseval/corpus_inject.py:469` writer, `:660` write site) — but it wrote it into
+the *injection source* dir, which `corpus-inject-real` creates as a `tempfile.TemporaryDirectory`
+and destroys when the command returns (`scripts/jseval/jseval/commands/corpus.py:202-211`).
+`corpus_build.build_golden` never carried it forward, so **no materialized dataset dir ever had
+one** — verified on the campaign's live cells (`tmp/781-v2-datasets/mixed/*` held only
+`corpus-dir/ corpus.jsonl invocations.v1.jsonl metadata.json qrels/ queries.json`). Consequence:
+the PRIMARY (generator-metadata) resolution tier of `jseval offset-recall` was exercised by
+fixtures only, and the F-040 curve was not obtainable from a real run.
+
+Measured, not assumed: on a freshly materialized `en-legal-clerc-1k-verbose` with the sidecar
+removed, `offset-recall` reports `resolved=0/50 unresolved=50 (metadata=0 string=0)` — the
+string-location fallback resolves *nothing* on these cells (the gold answers are not verbatim in
+the first-hop doc), so pre-fix there was no curve at all on a 781 v2 cell, not merely a degraded
+one.
+
+**The fix.** `corpus_build.build_golden` copies the source's `evidence_offsets.json` into the
+materialized dataset dir verbatim (`scripts/jseval/jseval/corpus_build.py:135-146`). The
+**writer** side was adjusted, not the loader: `offset_recall.load_corpus` already looks for
+`<corpus_dir>/evidence_offsets.json` (`offset_recall.py:277-283`) and reads doc text from the
+same `text` field `corpus.jsonl` reproduces byte-for-byte, so the two agreed on name and location
+already — the only missing link was the file. Additive and inert for non-injected corpora (a real
+benchmark source has no sidecar; the copy is skipped).
+
+**Signature invariance — empirical, not just by reading.** `corpus_signature` is
+`sha256(corpus.jsonl bytes + qrels/test.tsv bytes)` (`corpus_identity.py:20-27` — exactly those
+two files, never a directory listing). Re-materialized `781-corpora/en-legal-clerc/1000-verbose/`
+from its committed recipe + fabricated gold into a scratch dir (host pool read-only; no committed
+bytes, `datasets/`, or `tmp/781-v2-datasets/` touched):
+
+```
+fresh corpus_signature (sidecar PRESENT) : 6df707031abcd296773a0bf8c6a7750bb0b8704ce4ab4035105cf88b8df01fae
+committed corpus_signature (781 cert)    : 6df707031abcd296773a0bf8c6a7750bb0b8704ce4ab4035105cf88b8df01fae
+signature WITHOUT sidecar on disk        : 6df707031abcd296773a0bf8c6a7750bb0b8704ce4ab4035105cf88b8df01fae
+query_gold_sha256 / assembled_digest     : MATCH committed (2797469a…f565 / a303e74a…d167)
+```
+
+So tempdoc 781's committed certification is untouched by the sidecar's presence: same signature
+with it, without it, and equal to the certified value.
+
+**Metadata tier resolving on a REAL materialized cell** (synthetic run dir over the fresh cell —
+the recall numbers are not a result, the tier resolution is):
+
+```
+Offset-recall (schema=offset-recall.v1, k=10)
+  resolved=50/50 unresolved=0 (metadata=50 string=0) no_gold=0
+```
+
+**Consequence.** Metadata-resolved offset-recall curves on the 781 v2 cells are now obtainable
+from a GPU eval run: materialize (or re-materialize) a cell, run the eval, then point
+`jseval offset-recall <run_dir> --corpus-dir <cell>` at it. Cells materialized *before* this
+change lack the sidecar and must be re-materialized (signature-stable, as proven above) to get
+the primary tier. Regression coverage:
+`tests/test_corpus_inject.py::test_evidence_offset_sidecar_survives_materialization_and_drives_metadata_tier`
+(carry-forward + signature invariance + loader + metadata-beats-string) and
+`::test_build_golden_without_sidecar_writes_none`.
 
 ## §C. Acceptance (program-level; each slice pins its own)
 

@@ -376,6 +376,81 @@ def test_build_source_emits_evidence_offset_sidecar(tmp_path):
     }
 
 
+def test_evidence_offset_sidecar_survives_materialization_and_drives_metadata_tier(tmp_path):
+    # tempdoc 783 §B.1b: the sidecar must be CARRIED into the materialized dataset dir --
+    # the injection source dir is a TemporaryDirectory inside `corpus-inject-real`, so
+    # without the carry-forward `offset-recall`'s metadata tier can only ever resolve on
+    # fixtures, never on a real cell.
+    real, gold = _fixture(tmp_path)
+    source = tmp_path / "source"
+    corpus_inject.build_source(
+        real, gold, source, seed=707, n_distractors=3, style="interleave",
+        real_source_id="fixture-real-v1", license_id="test-only",
+    )
+    dataset = tmp_path / "datasets" / "mixed" / "fixture"
+    metadata = corpus_build.build_golden(source, dataset, now="2026-07-27")
+
+    # (a) carried forward, byte-identical to the source sidecar.
+    carried = dataset / "evidence_offsets.json"
+    assert carried.is_file()
+    assert carried.read_bytes() == (source / "evidence_offsets.json").read_bytes()
+
+    # (b) signature invariance: corpus_signature hashes corpus.jsonl + qrels/test.tsv only, so
+    # a materialized dir WITH the sidecar signs identically to the same dir without it.
+    from jseval.corpus_identity import corpus_signature
+    signed_with_sidecar = corpus_signature(dataset)
+    carried.unlink()
+    assert corpus_signature(dataset) == signed_with_sidecar == metadata["corpus_signature"]
+    corpus_build.build_golden(source, dataset, now="2026-07-27")  # restore
+    assert carried.is_file()
+
+    # (c) the loader finds it in the MATERIALIZED dir (not just the source shape).
+    from jseval import offset_recall
+    doc_texts, query_meta, offsets_meta = offset_recall.load_corpus(dataset)
+    assert offsets_meta is not None and offsets_meta
+    gold_doc, record = next(iter(offsets_meta.items()))
+    # The offset indexes into the materialized `text`, which is what load_corpus reads.
+    text = doc_texts[gold_doc]
+    assert text[record["char_offset"]:record["char_offset"] + len(record["evidence"])] \
+        == record["evidence"]
+
+    # (d) metadata tier WINS over the string-location fallback on that materialized cell.
+    # The fixture answer ("ochre ferrolite 0047") sits inside the gold sentence, so the
+    # string tier would also resolve -- at a DIFFERENT offset. Assert the reported source and
+    # offset are the metadata ones, so a pass cannot come from the fallback.
+    from jseval.evidence_offset import locate_offset
+    string_offset = locate_offset(text, "ochre ferrolite 0047")
+    assert string_offset is not None and string_offset != record["char_offset"]
+
+    run_dir = tmp_path / "run"  # mirrors artifacts.write_run's shape (qrels + per-mode files)
+    run_dir.mkdir()
+    (run_dir / "qrels.json").write_text(json.dumps({"q0001": {gold_doc: 1}}), encoding="utf-8")
+    (run_dir / "hybrid_per_query.json").write_text(
+        json.dumps([{"qid": "q0001", "mode": "hybrid", "predictedDocIds": [gold_doc]}]),
+        encoding="utf-8")
+
+    report = offset_recall.analyze(run_dir, dataset, k=10)
+    assert report["resolution"]["by_source"]["metadata"] == 1
+    assert report["resolution"]["by_source"].get("string_match", 0) == 0
+    assert report["per_query"][0]["source"] == "metadata"
+    assert report["per_query"][0]["offset"] == record["char_offset"]
+    assert query_meta["q0001"]["answer"] == "ochre ferrolite 0047"
+
+
+def test_build_golden_without_sidecar_writes_none(tmp_path):
+    # Side-effect-free for a non-injected corpus: a real benchmark source has no sidecar,
+    # and materialization must not invent one.
+    from jseval import offset_recall
+
+    _, gold = _fixture(tmp_path)
+    dataset = tmp_path / "datasets" / "golden" / "plain"
+    corpus_build.build_golden(gold, dataset, now="2026-07-27")
+    assert not (dataset / "evidence_offsets.json").exists()
+
+    doc_texts, _, offsets_meta = offset_recall.load_corpus(dataset)
+    assert doc_texts and offsets_meta is None
+
+
 def test_commitment_contains_fabricated_inputs_and_ids_but_no_real_host_text(tmp_path):
     real, gold = _fixture(tmp_path)
     source = tmp_path / "source"
