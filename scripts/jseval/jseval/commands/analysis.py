@@ -838,9 +838,13 @@ def cmd_offset_recall(ctx, run_dir, corpus_dir, top_k, bins, out_path):
     Recall-vs-evidence-offset curves for an eval-results run: bins each query by the
     character offset of its gold evidence within the gold document, and reports per-bin
     recall@k + rank-of-gold PER MODE/LEG the run captured. Offset resolution prefers a
-    generator-metadata sidecar (evidence_offsets.json) and falls back to string-locating
-    the answer/evidence in the gold doc — the fallback is what makes it work on real
-    corpora. Offline: no backend needed. Deterministic given the same inputs.
+    generator-metadata sidecar (evidence_offsets.json), falls back to string-locating the
+    answer/evidence in the gold doc, and finally — only for queries neither measured source
+    resolved — to the query-locus PROXY (where the query's distinguishing terms sit in the
+    gold doc; the only source that resolves on real answer-span-less corpora like CLERC and
+    MIRACL). Proxy-resolved queries are counted and curved SEPARATELY (proxy_curves) and
+    labeled as proxy in both the JSON and the table — never merged with measured offsets.
+    Offline: no backend needed. Deterministic given the same inputs.
     """
     from .. import offset_recall
 
