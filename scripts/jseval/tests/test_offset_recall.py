@@ -1,8 +1,10 @@
-"""Tests for the per-offset recall instrument (tempdoc 783 §B.1).
+"""Tests for the per-offset recall instrument (tempdoc 783 §B.1 / §B.1a).
 
-Covers: offset binning, both resolution sources (metadata + string fallback), unresolved
-accounting, determinism, and a fixture-based end-to-end run whose answer we KNOW —
-gold at offset 6k retrieved only by the lexical leg, so the curve must show exactly that.
+Covers: offset binning, all three resolution sources (metadata, answer-string fallback,
+query-locus PROXY) and their strict priority order, unresolved accounting, the proxy's
+determinism and separate (never-merged) accounting, and a fixture-based end-to-end run
+whose answer we KNOW — gold at offset 6k retrieved only by the lexical leg, so the curve
+must show exactly that.
 
 The fixture writes a synthetic run in the EXACT shape ``artifacts.write_run`` produces
 (``qrels.json`` + ``<mode>_per_query.json`` with ``qid``/``predictedDocIds``) and a corpus
@@ -14,8 +16,32 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from jseval import offset_recall
+from jseval import offset_recall, query_locus
 from jseval.evidence_offset import locate_offset
+
+# Filler whose vocabulary appears in EVERY fixture doc — corpus-local rarity therefore
+# weighs it ~0, which is how the proxy drops ubiquitous words without a stopword list.
+_FILLER = "lorem ipsum dolor sit amet consectetur. "
+_DISTINCTIVE = "zephyr quixotic tessellation manifold"
+
+
+def _locus_fixture() -> tuple[str, dict[str, str], str, int]:
+    """Gold doc with a distinctive passage buried at ~6k chars + two filler-only docs."""
+    prefix = _FILLER * 154                       # ~6160 chars
+    gold_text = prefix + _DISTINCTIVE + ". " + _FILLER * 40
+    doc_texts = {
+        "gold1": gold_text,
+        "d2": _FILLER * 30,
+        "d3": _FILLER * 30 + "unrelated padding words.",
+    }
+    query = "what does " + _DISTINCTIVE + " mean"
+    return gold_text, doc_texts, query, gold_text.index(_DISTINCTIVE)
+
+
+def _weights_for(doc_texts: dict[str, str], query: str) -> dict[str, int]:
+    df, n_docs = query_locus.document_frequency(doc_texts.values())
+    terms = [tok for _, tok in query_locus.tokens_with_offsets(query)]
+    return query_locus.rarity_weights(terms, df, n_docs)
 
 
 # --- unit: offset binning ----------------------------------------------------------------
@@ -243,3 +269,130 @@ def test_load_run_and_corpus_roundtrip(tmp_path):
     assert doc_texts == {"d1": "hello"}
     assert query_meta["q0001"]["answer"] == "a"
     assert meta is None  # no sidecar
+
+
+# --- query-locus PROXY (§B.1a) -----------------------------------------------------------
+
+
+def test_query_locus_locates_known_window():
+    gold_text, doc_texts, query, expected = _locus_fixture()
+    weights = _weights_for(doc_texts, query)
+    hit = query_locus.locate_query_locus(gold_text, query, weights)
+    assert hit is not None
+    offset, score = hit
+    assert offset == expected          # the distinctive passage, not the filler head
+    assert score > 0
+    # a doc without any distinguishing query term resolves to nothing, never to offset 0
+    assert query_locus.locate_query_locus(doc_texts["d2"], query, weights) is None
+
+
+def test_query_locus_weighs_ubiquitous_terms_far_below_rare_ones():
+    # No stopword list: rarity alone demotes a term that is in every doc.
+    _, doc_texts, query, _ = _locus_fixture()
+    weights = _weights_for(doc_texts, query + " lorem ipsum")
+    assert 0 < weights["lorem"] < weights["zephyr"] / 5
+    assert weights["lorem"] == weights["ipsum"]
+    # and the demotion deepens with corpus size: at N=200 it is ~1/1000th of a df=1 term
+    big = query_locus.rarity_weights(
+        ["everywhere", "once"], {"everywhere": 200, "once": 1}, 200)
+    assert big["everywhere"] * 1000 < big["once"]
+
+
+def test_query_locus_deterministic_and_ties_go_to_earliest():
+    gold_text, doc_texts, query, expected = _locus_fixture()
+    weights = _weights_for(doc_texts, query)
+    assert query_locus.locate_query_locus(gold_text, query, weights) == \
+        query_locus.locate_query_locus(gold_text, query, weights)
+    # Two identical passages -> identical scores; the EARLIER window must win.
+    doubled = gold_text + _DISTINCTIVE + ". " + _FILLER * 10
+    second = doubled.rindex(_DISTINCTIVE)
+    assert second != expected
+    off, _ = query_locus.locate_query_locus(doubled, query, weights)
+    assert off == expected
+
+
+def test_resolve_priority_metadata_beats_string_beats_proxy():
+    gold_text, doc_texts, query, locus_offset = _locus_fixture()
+    answer = "the filed opinion states plainly"
+    doc_texts = dict(doc_texts, gold1=gold_text + " " + answer + " here.")
+    string_offset = doc_texts["gold1"].index(answer)
+    weights = _weights_for(doc_texts, query)
+    meta = {"gold1": {"char_offset": 123, "doc_len": len(doc_texts["gold1"])}}
+
+    full = {"q0001": {"answer": answer, "query": query}}
+    assert offset_recall.resolve_offset("q0001", ["gold1"], doc_texts, full, meta,
+                                        locus_weights=weights)[:2] == (123, "metadata")
+    # no metadata -> the answer string, NOT the proxy (which points elsewhere)
+    assert offset_recall.resolve_offset("q0001", ["gold1"], doc_texts, full, None,
+                                        locus_weights=weights)[:2] == \
+        (string_offset, "string_match")
+    # no metadata and no answer string -> the proxy, at the distinctive passage
+    no_answer = {"q0001": {"answer": "", "query": query}}
+    assert offset_recall.resolve_offset("q0001", ["gold1"], doc_texts, no_answer, None,
+                                        locus_weights=weights)[:2] == \
+        (locus_offset, "query_locus")
+    # …and without weights the proxy cannot run at all: unresolved, reason names the tier
+    off, source, _, reason = offset_recall.resolve_offset(
+        "q0001", ["gold1"], doc_texts, no_answer, None)
+    assert (off, source, reason) == (None, "unresolved", "no_evidence_string")
+
+
+def test_build_report_accounts_proxy_separately_and_never_merges_curves():
+    gold_text, doc_texts, query, locus_offset = _locus_fixture()
+    doc_texts = dict(doc_texts, d1="the cat sat on the mat")
+    modes = {"hybrid": {"q0001": ["d1"], "q0002": ["gold1"]}}
+    qrels = {"q0001": {"d1": 1}, "q0002": {"gold1": 1}}
+    query_meta = {
+        # answer resolvable by string at offset 0 AND a query the proxy could locate:
+        # the measured source must win, so this query stays out of the proxy curve.
+        "q0001": {"answer": "the cat sat", "query": query},
+        "q0002": {"answer": "", "query": query},
+    }
+    report = offset_recall.build_report(modes, qrels, doc_texts, query_meta)
+
+    assert report["schema"] == "offset-recall.v2"
+    res = report["resolution"]
+    assert res["by_source"] == {"metadata": 0, "string_match": 1, "query_locus": 1}
+    assert (res["resolved"], res["resolved_measured"], res["resolved_proxy"]) == (2, 1, 1)
+
+    by_qid = {q["qid"]: q for q in report["per_query"]}
+    assert by_qid["q0001"]["source"] == "string_match"
+    assert by_qid["q0001"]["resolution_class"] == "measured"
+    assert by_qid["q0002"]["source"] == "query_locus"
+    assert by_qid["q0002"]["resolution_class"] == "proxy"
+    assert by_qid["q0002"]["offset"] == locus_offset
+    assert 4000 <= locus_offset < 8000
+
+    # Disjoint curve blocks: the measured query is in `curves` only, the proxy query in
+    # `proxy_curves` only. A merged report would show n=1 in both bins of one block.
+    assert report["curves"]["hybrid"]["0-1k"]["n"] == 1
+    assert report["curves"]["hybrid"]["4k-8k"]["n"] == 0
+    assert report["proxy_curves"]["hybrid"]["4k-8k"]["n"] == 1
+    assert report["proxy_curves"]["hybrid"]["0-1k"]["n"] == 0
+    assert report["curves_are_proxy"] is False
+    assert report["curves_resolution_sources"] == ["metadata", "string_match"]
+    assert report["proxy"]["is_proxy"] is True
+    assert report["proxy"]["n_resolved"] == 1
+    assert report["proxy"]["window_chars"] == query_locus.DEFAULT_WINDOW_CHARS
+
+    # Determinism over the whole (proxy-inclusive) report.
+    again = offset_recall.build_report(modes, qrels, doc_texts, query_meta)
+    assert json.dumps(report, sort_keys=True) == json.dumps(again, sort_keys=True)
+
+
+def test_format_table_labels_proxy_rows_distinctly():
+    _, doc_texts, query, _ = _locus_fixture()
+    modes = {"hybrid": {"q0001": ["gold1"]}}
+    report = offset_recall.build_report(
+        modes, {"q0001": {"gold1": 1}}, doc_texts,
+        {"q0001": {"answer": "", "query": query}})
+    table = offset_recall.format_table(report)
+
+    assert "query_locus=1" in table
+    assert "PROXY (query_locus)" in table
+    assert "NOT where the answer sits" in table
+    assert "hybrid~proxy" in table          # proxy rows are tagged in the mode column
+    # the measured section must not print rows it has no queries for
+    measured, proxy = table.split("[PROXY", 1)
+    assert "(no queries resolved from this source)" in measured
+    assert "hybrid~proxy        4k-8k" in " ".join(proxy.split("\n"))
