@@ -44,6 +44,9 @@ def build_golden(source_dir: Path | str, dataset_dir: Path | str, *, now: str | 
     ``queries.json`` (agent answers view), a raw ``corpus-dir/`` (agent file-tools view,
     via ``materialize.materialize``), and a ``metadata.json`` carrying the tempdoc-635
     identity/provenance fields + the computed ``corpus_signature``. Returns the metadata.
+
+    Carries the source's ``evidence_offsets.json`` sidecar forward when present (tempdoc 783
+    §B.1b) so the metadata tier of ``jseval offset-recall`` resolves on a materialized cell.
     """
     source_dir = Path(source_dir)
     dataset_dir = Path(dataset_dir)
@@ -128,6 +131,19 @@ def build_golden(source_dir: Path | str, dataset_dir: Path | str, *, now: str | 
     materialize.materialize(
         (corpus_generate.materialize_doc_entry(d, type_axis) for d in docs),
         corpus_dir, skip_existing=False)
+
+    # --- evidence-offset sidecar carry-forward (tempdoc 783 §B.1b) ---
+    # An injected source carries `evidence_offsets.json` (corpus_inject.build_source), but that
+    # source dir is a TemporaryDirectory that dies with `corpus-inject-real` — so unless the
+    # sidecar is carried HERE, no materialized cell ever has one and `jseval offset-recall`'s
+    # metadata tier can only ever resolve on fixtures. Copied verbatim: `corpus.jsonl` above
+    # reproduces each doc's `text` byte for byte, which is the string the recorded offsets index
+    # into, and `offset_recall.load_corpus` reads that same `text` field. Purely additive — the
+    # corpus signature hashes only `corpus.jsonl` + `qrels/test.tsv` (corpus_identity), and a
+    # non-injected source has no sidecar, so this is a no-op there.
+    sidecar_src = source_dir / "evidence_offsets.json"
+    if sidecar_src.is_file():
+        (dataset_dir / "evidence_offsets.json").write_bytes(sidecar_src.read_bytes())
 
     # --- identity + provenance metadata ---
     qtypes = Counter(q.get("question_type", "two_hop") for q in queries)
