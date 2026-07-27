@@ -156,3 +156,34 @@ edited until the measured runs exist):
   per-member `member.v1.json` + `structural-certification.v1.json`. Multi-GB materialized datasets and
   the invocation-record sidecars live under gitignored `datasets/` — the exact committed-vs-ignored
   split v1 used.
+
+### §E.5 Re-materialization + reproducibility proof (2026-07-22, post-#301)
+
+**Why this happened.** #301's materialized payloads (multi-GB, gitignored) lived inside the
+implementing worker's temporary worktree and were lost when that worktree was torn down; only
+the committed artifacts (recipes, commitments, structural certifications) survived. Operational
+lesson for campaign work: **gitignored campaign artifacts do not survive worker-worktree
+teardown** — materialize into the main checkout's `tmp/` (or a lane worktree kept alive for the
+campaign's duration), never into a disposable agent worktree.
+
+**The rebuild doubled as the first end-to-end reproducibility test of the recipe +
+invocation-record system (#294/#297), and it passed cleanly:**
+
+- All 8 cells rebuilt from committed artifacts alone. **8/8 `corpus_signature` MATCH**,
+  8/8 `assembled_digest` MATCH, 8/8 `query_gold_sha256` MATCH vs the values committed in #301.
+- The throwaway commitment dirs (`recipe.json`, `commitment.v1.json`, all `fabricated-*`) came
+  out **byte-identical** to the committed `781-corpora/<member>/<cell>/` files.
+- `immutable_commitment` passed with freshly-built datasets checked against the **committed**
+  commitment dirs — i.e. cross-validating, not self-consistent.
+- Offline gate set 72/72 green (9 gates × 8 cells); `field_selectivity` title separability
+  **0.0** with gold and native population rates both 1.0 on every cell.
+- Host pools were warm-cache hits with recipe-matching `real_source_sha256`; total wall-clock
+  12m35s.
+
+**Persistent location** (survives worktree churn): `tmp/781-v2-datasets/mixed/` (8 cells + 2 host
+pools, `invocations.v1.jsonl` in all 10), with `tmp/781-v2-datasets/_rebuild-evidence/` carrying
+the fresh certifications, the repro result, and the exact scripts used. `datasets/mixed/` was
+never written (v1-era cells other worktrees depend on are untouched).
+
+The measured half named in §E.4 (threshold re-derivation, closed-book, Phase C backend gates,
+evidence artifacts, Phase E/F) remains outstanding and is the hero path's remaining prerequisite.

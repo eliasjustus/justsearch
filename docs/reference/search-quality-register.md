@@ -1073,6 +1073,23 @@ above)*
 - **Evidence:** tempdoc 712 §Step-4 live A/B (two runs — one confounded by the tempdoc-717
   anomaly, one clean); reproduction commands + per-arm summaries/worker-logs archived. First-tier
   offline result is F-033; this is its live-tier resolution.
+- **REOPENED pending a free A/B (2026-07-22, tempdoc 784 §B.2-proposal; mechanism
+  orchestrator-verified at source, causation NOT yet verified).** The stated "signal overlap"
+  mechanism has a cheaper competing explanation: fusion multiplies the SPLADE leg by
+  `spladeParentLengthMultiplier`, which interpolates 1.0 → **0.0** between
+  `justsearch.splade.full_weight_max_tokens` (1024) and `justsearch.splade.zero_weight_min_tokens`
+  (4096) — so the leg is weighted **exactly zero for any parent ≥4096 tokens**
+  (`HybridFusionUtils.java:24-27,803-805`, applied at `:693`). The **chunk** branch fuses with
+  `applyParentLengthModulation = true` (`SearchExecutor.java` chunk-branch call →
+  `HybridFusionUtils.fuseWithCC3(…, "chunk_", true)`; the 9-arg signature's trailing boolean is
+  that flag, `HybridFusionUtils.java:610-619`). On legal-clerc-200 that reportedly zeroes ~77.8%
+  of docs (784's measurement, not independently re-measured). So the `hybrid` arm may have
+  measured a revived leg that fusion had already multiplied out — a mitigation designed for
+  *truncation-degraded whole-doc* SPLADE suppressing the *chunk* SPLADE that fixes the truncation.
+  **Step 0 (free, zero code, one A/B):** re-run the flag-on/flag-off `hybrid` comparison with
+  `-Djustsearch.splade.zero_weight_min_tokens` raised past the corpus's parent-token range. Until
+  that runs, F-036's verdict and Q-017's ANSWERED status stand as recorded — this is a flagged
+  confound, not a refutation.
 
 ### F-033: the SPLADE (sparse) leg's ~0.059 on legal-clerc-200 is substantially a 512-token TRUNCATION artifact — per-chunk SPLADE revives it 6–10× offline; the sparse sibling of F-031/F-032 (tempdoc 712, 2026-07-11; refines F-030(678) for the sparse leg)
 
