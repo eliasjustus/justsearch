@@ -419,3 +419,20 @@ F0 smoke asserting its ABSENCE; zero leak-suspect cells; behavioral block presen
 record. Known limits recorded up front: single synthetic stratum, B-only, 2 seeds, and the
 generalized name_pivot definition (validated against this corpus's ground truth in the P1
 replay, exact agreement on 360/360 cells).
+
+**AMENDMENT 1 (2026-07-28, before any F1 cell; F0 complete).** Pre-launch smoke on gold-bearing
+queries showed F1's entity condition fires only on NER-taggable entities: real carrier-text
+names ("David", "California") trigger the continuation line; the fabricated bridge persons
+(e.g. "Langna Solational Tna") are never NER-tagged and never marked. Consequence, recorded
+before F1 spend: on this corpus the F1 arm tests the continuation INSTRUCTION ("if this is an
+intermediate fact, a follow-up search may locate the final answer") attached to
+non-bridge entities — the generic-move half of the treatment, not the entity-targeting half.
+F1 is RETAINED under this reinterpretation (the census mechanism is about making the second
+move at all); a null on F1 does not falsify entity-targeted continuation, and a positive
+cannot be attributed to entity targeting. Additional dose limit: F1 renders only when a
+delivered excerpt names a taggable entity absent from the query, so per-cell dose varies and
+is NOT verifiable post-hoc (transcripts persist digests, not text) — dose evidence is the
+per-arm smoke only. Also recorded: the eval-mode env whitelist initially dropped the framing
+flags entirely (fixed on this branch, modules/ui/build.gradle.kts HEADLESS_AI_ENV_VARS); the
+F0 arm ran before that fix, which is immaterial because F0 is all-flags-off by design and its
+smoke asserted absence.
