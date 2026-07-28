@@ -477,6 +477,14 @@ public enum EnvRegistry {
     SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES(
         "search.mcp_framing.thin_result_floor_bytes",
         "JUSTSEARCH_SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES"),
+    /**
+     * 789 (post-Amendment-3): normalized top-relevance floor below which a non-empty result set is
+     * framed as a weak-relevance delivery (default: 0.40 via builder). Only consulted where the
+     * fused score is bounded [0,1] — the {@code cc}/{@code hybrid} fusion methods; RRF and
+     * single-leg deliveries are out of scope for the arm. {@code 0} disables it.
+     */
+    SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR(
+        "search.mcp_framing.weak_score_floor", "JUSTSEARCH_SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR"),
 
     /** UI automation mode enabled flag. */
     UI_AUTOMATION_ENABLED("justsearch.ui.automation.enabled", "JUSTSEARCH_UI_AUTOMATION"),

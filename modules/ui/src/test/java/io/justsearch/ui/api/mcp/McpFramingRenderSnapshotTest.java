@@ -48,13 +48,13 @@ final class McpFramingRenderSnapshotTest {
 
   private static final McpDeliveryFraming.Settings OFF = McpDeliveryFraming.Settings.OFF;
   private static final McpDeliveryFraming.Settings F1 =
-      new McpDeliveryFraming.Settings(true, false, false, 400);
+      new McpDeliveryFraming.Settings(true, false, false, 400, 0.40);
   private static final McpDeliveryFraming.Settings F2 =
-      new McpDeliveryFraming.Settings(false, true, false, 400);
+      new McpDeliveryFraming.Settings(false, true, false, 400, 0.40);
   private static final McpDeliveryFraming.Settings F3 =
-      new McpDeliveryFraming.Settings(false, false, true, 400);
+      new McpDeliveryFraming.Settings(false, false, true, 400, 0.40);
   private static final McpDeliveryFraming.Settings F1_AND_F3 =
-      new McpDeliveryFraming.Settings(true, false, true, 400);
+      new McpDeliveryFraming.Settings(true, false, true, 400, 0.40);
 
   /** A surface with no knowledge lookup — the enrichment hint self-suppresses, keeping renders stable. */
   private static McpToolSurface surface() {
