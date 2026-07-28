@@ -226,7 +226,7 @@ distinct nonzero exit codes on failure (fail-closed semantics hold through the `
 command template references `CodeSignTool` (the tool ships its own JRE and production endpoint
 config — no properties edit). Set `JUSTSEARCH_CODESIGN_COMMAND` to:
 
-```
+```text
 %RUNNER_TEMP%\CodeSignTool\CodeSignTool.bat sign -username=<eSigner login> -password="<password>" -totp_secret="<TOTP secret captured at 2FA enrollment>" -credential_id=<credential id> -input_file_path="{file}" -override="true"
 ```
 
