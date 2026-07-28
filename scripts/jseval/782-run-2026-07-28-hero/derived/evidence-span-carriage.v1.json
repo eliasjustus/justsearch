@@ -1,0 +1,236 @@
+{
+  "schema": "evidence-span-carriage.v1",
+  "derived_at_commit": "bea1ac37",
+  "derived_at": "2026-07-28T13:32:33.158672+00:00",
+  "derived_by": "tmp/782-run-2026-07-28b-hero/derive-e4.py",
+  "protocol": "docs/tempdocs/782-hero-preregistration-protocol.md §E.4",
+  "sources": [
+    "F:/justsearch-public/.claude/worktrees/pub-hero/tmp/782-run-2026-07-28b-hero/en-email-enron-raw-10k-verbose/logs/2026-07-28T11-56-53-00-00_agent-utility-task_YihZuC3fYsvwv5jdRcPwhF.json",
+    "F:/justsearch-public/.claude/worktrees/pub-hero/tmp/782-run-2026-07-28b-hero/en-email-enron-raw-1k-verbose/logs/2026-07-28T11-12-17-00-00_agent-utility-task_m8QpmtfS8wN6AnWMJcE6MA.json",
+    "F:/justsearch-public/.claude/worktrees/pub-hero/tmp/782-run-2026-07-28b-hero/en-legal-clerc-1k-verbose/logs/2026-07-28T12-35-12-00-00_agent-utility-task_kZXZpBq7ALnro9JnJMPQyH.json"
+  ],
+  "source_selection": "exactly one candidate EvalLog per stratum under `<stratum>/logs/` (Inspect sidecars eval-set.json / logs.json / source-identity.v1.json / judge-overlay.json excluded, mirroring agent_utility_inspect.read_digest_entries:1044); every selected log has status == 'success' with 120 samples. Archived VOID logs are NOT read: `en-email-enron-raw-1k-verbose/logs-void-backend-death/` (incident ledger w2-s1, backend killed mid-run).",
+  "estimand": "share of B cells whose delivered payload carried the answer-bearing span (post-775 flip), plus the delivered_tier census (782 §E.4 item 2)",
+  "field_paths": {
+    "delivered_tier": "samples[].metadata.tool_result_digests[i].delivered_tier",
+    "span_presence_flag": "samples[].metadata.tool_result_digests[i].delivered_fields.excerpts",
+    "span_bytes": "samples[].metadata.tool_result_digests[i].component_bytes.hit_component_bytes.excerpts"
+  },
+  "operationalization": "`excerpts` IS the answer-bearing span surface post-775: `delivered_fields.excerpts` is True when a `results[]` hit carried an `excerpts` key (agent_utility_inspect.py:775-784), and the byte column is the same span's serialized cost (`_HIT_COMPONENT_KEYS`, :793). Carriage is therefore measured as SPAN-PRESENT-IN-DELIVERY, at both the per-call and the per-cell (any-call) level.",
+  "not_derivable": [
+    {
+      "field": "gold-conditioned span carriage (did the span belong to the ANSWER-BEARING document, not merely to some delivered hit)",
+      "reason": "requires joining `delivered_fields.excerpts` to the gold document's rank, but `ordered_doc_ids` carried no non-null id on 556 of 635 B-arm search calls (see rank-of-gold-distribution.v1 `capture_gap`) -- the delivered payload carried no per-hit `id`. Raw tool content is never committed (782 §E.4: digests only), so the excerpt text cannot be re-checked offline against the gold answer either. Reported as absent, not estimated."
+    }
+  ],
+  "strata": {
+    "en-email-enron-raw-1k-verbose": {
+      "b_cells": {
+        "n_attempted": 60,
+        "n_with_structured_search_delivery": 55,
+        "n_carrying_span": 52,
+        "share_carrying_span_of_attempted": 0.8667,
+        "share_carrying_span_of_cells_with_structured_delivery": 0.9455,
+        "n_carrying_span_bytes_gt_zero": 52
+      },
+      "search_calls": {
+        "n_structured_deliveries": 231,
+        "n_with_excerpts_flag": 181,
+        "share_with_excerpts_flag": 0.7835,
+        "n_with_excerpt_bytes_gt_zero": 181,
+        "share_with_excerpt_bytes_gt_zero": 0.7835
+      },
+      "delivered_tier_census": {
+        "None": 1,
+        "blocks": 93,
+        "prose": 1091,
+        "structured-json": 303
+      },
+      "delivered_tier_census_scope": "every attempt in every cell of BOTH arms (one digest per attempt); 'None' is a call with nothing to classify, e.g. a blocked attempt that returned no content",
+      "delivered_tier_census_by_arm": {
+        "A": {
+          "None": 1,
+          "blocks": 1,
+          "prose": 807
+        },
+        "B": {
+          "blocks": 92,
+          "prose": 284,
+          "structured-json": 303
+        }
+      },
+      "delivered_tier_census_by_tool": {
+        "Bash": {
+          "None": 1,
+          "prose": 398
+        },
+        "Glob": {
+          "prose": 2
+        },
+        "Grep": {
+          "prose": 525
+        },
+        "PowerShell": {
+          "prose": 1
+        },
+        "Read": {
+          "prose": 163
+        },
+        "ToolSearch": {
+          "blocks": 71,
+          "prose": 1
+        },
+        "mcp__justsearch__justsearch_answer": {
+          "structured-json": 72
+        },
+        "mcp__justsearch__justsearch_ingest": {
+          "prose": 1
+        },
+        "mcp__justsearch__justsearch_search": {
+          "structured-json": 231
+        },
+        "mcp__justsearch__justsearch_status": {
+          "blocks": 22
+        }
+      }
+    },
+    "en-email-enron-raw-10k-verbose": {
+      "b_cells": {
+        "n_attempted": 60,
+        "n_with_structured_search_delivery": 53,
+        "n_carrying_span": 48,
+        "share_carrying_span_of_attempted": 0.8,
+        "share_carrying_span_of_cells_with_structured_delivery": 0.9057,
+        "n_carrying_span_bytes_gt_zero": 48
+      },
+      "search_calls": {
+        "n_structured_deliveries": 205,
+        "n_with_excerpts_flag": 175,
+        "share_with_excerpts_flag": 0.8537,
+        "n_with_excerpt_bytes_gt_zero": 175,
+        "share_with_excerpt_bytes_gt_zero": 0.8537
+      },
+      "delivered_tier_census": {
+        "None": 3,
+        "blocks": 87,
+        "prose": 1285,
+        "structured-json": 273
+      },
+      "delivered_tier_census_scope": "every attempt in every cell of BOTH arms (one digest per attempt); 'None' is a call with nothing to classify, e.g. a blocked attempt that returned no content",
+      "delivered_tier_census_by_arm": {
+        "A": {
+          "None": 1,
+          "prose": 925
+        },
+        "B": {
+          "None": 2,
+          "blocks": 87,
+          "prose": 360,
+          "structured-json": 273
+        }
+      },
+      "delivered_tier_census_by_tool": {
+        "Bash": {
+          "None": 1,
+          "prose": 417
+        },
+        "Glob": {
+          "prose": 3
+        },
+        "Grep": {
+          "None": 2,
+          "prose": 698
+        },
+        "Read": {
+          "prose": 166
+        },
+        "ToolSearch": {
+          "blocks": 70
+        },
+        "mcp__justsearch__justsearch_answer": {
+          "structured-json": 68
+        },
+        "mcp__justsearch__justsearch_ingest": {
+          "prose": 1
+        },
+        "mcp__justsearch__justsearch_search": {
+          "structured-json": 205
+        },
+        "mcp__justsearch__justsearch_status": {
+          "blocks": 17
+        }
+      }
+    },
+    "en-legal-clerc-1k-verbose": {
+      "b_cells": {
+        "n_attempted": 60,
+        "n_with_structured_search_delivery": 56,
+        "n_carrying_span": 53,
+        "share_carrying_span_of_attempted": 0.8833,
+        "share_carrying_span_of_cells_with_structured_delivery": 0.9464,
+        "n_carrying_span_bytes_gt_zero": 53
+      },
+      "search_calls": {
+        "n_structured_deliveries": 199,
+        "n_with_excerpts_flag": 163,
+        "share_with_excerpts_flag": 0.8191,
+        "n_with_excerpt_bytes_gt_zero": 163,
+        "share_with_excerpt_bytes_gt_zero": 0.8191
+      },
+      "delivered_tier_census": {
+        "None": 4,
+        "blocks": 98,
+        "prose": 1695,
+        "structured-json": 266
+      },
+      "delivered_tier_census_scope": "every attempt in every cell of BOTH arms (one digest per attempt); 'None' is a call with nothing to classify, e.g. a blocked attempt that returned no content",
+      "delivered_tier_census_by_arm": {
+        "A": {
+          "blocks": 2,
+          "prose": 1141
+        },
+        "B": {
+          "None": 4,
+          "blocks": 96,
+          "prose": 554,
+          "structured-json": 266
+        }
+      },
+      "delivered_tier_census_by_tool": {
+        "Bash": {
+          "None": 1,
+          "prose": 637
+        },
+        "Glob": {
+          "prose": 6
+        },
+        "Grep": {
+          "None": 3,
+          "prose": 833
+        },
+        "PowerShell": {
+          "prose": 3
+        },
+        "Read": {
+          "prose": 211
+        },
+        "ToolSearch": {
+          "blocks": 72,
+          "prose": 5
+        },
+        "mcp__justsearch__justsearch_answer": {
+          "structured-json": 67
+        },
+        "mcp__justsearch__justsearch_browse": {
+          "blocks": 4
+        },
+        "mcp__justsearch__justsearch_search": {
+          "structured-json": 199
+        },
+        "mcp__justsearch__justsearch_status": {
+          "blocks": 22
+        }
+      }
+    }
+  }
+}
