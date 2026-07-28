@@ -372,3 +372,50 @@ unavailable it returns `-1` and the coverage clause is omitted rather than guess
 * Not done here (correctly out of scope): engine-side hop-2, retrieval changes, the F4
   compact-first candidate, and the naturalistic-replication (enron-qa) check the 788 §4 Goodhart
   guard requires before any framing ships as a DEFAULT.
+
+## Phase 2 probe pre-registration — 789-P2-probe-2026-07-28 (frozen at first measured cell; amendments dated)
+
+Written BEFORE any measured cell. Substrate: the F1/F2/F3 framings merged in #321 (all
+default-off, byte-golden-verified inert when off); the behavioral telemetry merged in #319.
+Founder spend authorization 2026-07-28: "you can proceed with the remaining items 2 and 3"
+(item 2 = this probe, presented as a few tens of dollars).
+
+**Question.** Does response framing move the tool arm's behavioral metrics and accuracy,
+retrieval held fixed?
+
+**Arms (backend -D sysprops at serve boot; one framing per arm, no compositions):**
+F0 control (all off) | F1 search.mcp_framing.continuation_enabled=true |
+F2 search.mcp_framing.evidence_not_answer_enabled=true |
+F3 search.mcp_framing.calibrated_absence_enabled=true.
+
+**Design.** Stratum mixed/en-email-enron-raw-1k-verbose only (the question-systematic
+mechanism stratum; pivot deficit 11). Condition B ONLY (framings cannot affect arm A; the
+campaign's A baseline is context, not a test arm). The frozen 20 qids, seeds {0,1}.
+4 x 20 x 2 = 160 cells, sonnet, max_budget $0.80/cell (hero-comparable), est ~$56
+(campaign B mean $0.358/cell), ABORT if projected total exceeds $90. Env pins per the 782
+Amendment-2 lesson (ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-sonnet-5,
+CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-5); gitignored run dir; detached serve + driver;
+porcelain-0 asserted per arm.
+
+**Primary outcomes (behavioral, from the #319 block):** name_pivot rate, hop1_stop rate,
+abstained rate; secondary: fallback_after_mcp, post_search_reads, EM accuracy vs F0, cost,
+duration, exhaustions. **Primary test:** question-level paired sign-flip permutation
+(Fx vs F0 per qid, seeds as replicates), alpha=0.05. n=20 questions powers only large
+effects — this probe is pre-registered as a DIRECTION-FINDER, not a shipping gate.
+
+**Decision rule (pre-registered).** A framing GRADUATES to the naturalistic replication
+step (enron-qa) if (a) pivot or hop1_stop improves at question-level p<0.05, OR (b) it
+point-improves >=2 behavioral primaries AND accuracy point-delta >= 0. A framing is
+DROPPED if its accuracy point-delta < -0.05 regardless of behavioral movement. Anything
+else: inconclusive — report, no ship, founder decides any larger probe. NO framing ships
+as default from this probe alone; naturalistic replication is a hard prerequisite
+(the 788 S4 Goodhart guard).
+
+**Validity checks (pre-registered, per arm before analysis):** single resolved model per
+cell (mixed-model guard clean); one MCP tool-surface hash across ALL arms (framing is
+response content, not tool schema — a surface split voids the probe); a 1-query smoke per
+arm asserting the framing text APPEARS in the delivered payload (positive control) and a
+F0 smoke asserting its ABSENCE; zero leak-suspect cells; behavioral block present on every
+record. Known limits recorded up front: single synthetic stratum, B-only, 2 seeds, and the
+generalized name_pivot definition (validated against this corpus's ground truth in the P1
+replay, exact agreement on 360/360 cells).
