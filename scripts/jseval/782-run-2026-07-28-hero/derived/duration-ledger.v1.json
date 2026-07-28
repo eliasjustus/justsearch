@@ -1,0 +1,398 @@
+{
+  "schema": "duration-ledger.v1",
+  "derived_at_commit": "bea1ac37",
+  "derived_at": "2026-07-28T13:32:33.217152+00:00",
+  "derived_by": "tmp/782-run-2026-07-28b-hero/derive-e4.py",
+  "protocol": "docs/tempdocs/782-hero-preregistration-protocol.md §E.4",
+  "sources": [
+    "F:/justsearch-public/.claude/worktrees/pub-hero/tmp/782-run-2026-07-28b-hero/en-email-enron-raw-10k-verbose/logs/2026-07-28T11-56-53-00-00_agent-utility-task_YihZuC3fYsvwv5jdRcPwhF.json",
+    "F:/justsearch-public/.claude/worktrees/pub-hero/tmp/782-run-2026-07-28b-hero/en-email-enron-raw-10k-verbose/out/utility-comparison.v1.json",
+    "F:/justsearch-public/.claude/worktrees/pub-hero/tmp/782-run-2026-07-28b-hero/en-email-enron-raw-1k-verbose/logs/2026-07-28T11-12-17-00-00_agent-utility-task_m8QpmtfS8wN6AnWMJcE6MA.json",
+    "F:/justsearch-public/.claude/worktrees/pub-hero/tmp/782-run-2026-07-28b-hero/en-email-enron-raw-1k-verbose/out/utility-comparison.v1.json",
+    "F:/justsearch-public/.claude/worktrees/pub-hero/tmp/782-run-2026-07-28b-hero/en-legal-clerc-1k-verbose/logs/2026-07-28T12-35-12-00-00_agent-utility-task_kZXZpBq7ALnro9JnJMPQyH.json",
+    "F:/justsearch-public/.claude/worktrees/pub-hero/tmp/782-run-2026-07-28b-hero/en-legal-clerc-1k-verbose/out/utility-comparison.v1.json"
+  ],
+  "source_selection": "exactly one candidate EvalLog per stratum under `<stratum>/logs/` (Inspect sidecars eval-set.json / logs.json / source-identity.v1.json / judge-overlay.json excluded, mirroring agent_utility_inspect.read_digest_entries:1044); every selected log has status == 'success' with 120 samples. Archived VOID logs are NOT read: `en-email-enron-raw-1k-verbose/logs-void-backend-death/` (incident ledger w2-s1, backend killed mid-run).",
+  "estimand": "per stratum x arm: wall-clock duration stats with an explicit censoring flag; cells stopped by limits are censored observations (782 §E.4 item 5)",
+  "field_paths": {
+    "total_time": "samples[].total_time (full wall clock, seconds)",
+    "working_time": "samples[].working_time (excludes retry/rate-limit waits, seconds)",
+    "censoring_label": "samples[].metadata.error classified as in exhaustion-ledger.v1"
+  },
+  "fail_closed_note": "782 §E.4 item 5: efficiency intervals fail closed wherever with-tool truncation exists -- a pre-registered accepted outcome, not a defect. This ledger reports durations and censoring only; it computes no efficiency interval and no arm delta.",
+  "percentile_method": "jseval.utility_comparison._percentile (linear interpolation, same helper the composed record uses)",
+  "strata": {
+    "en-email-enron-raw-1k-verbose": {
+      "arms": {
+        "A": {
+          "n_cells": 60,
+          "all_attempted": {
+            "total_time_s": {
+              "n": 60,
+              "median": 70.7375,
+              "p50": 70.7375,
+              "p90": 134.1964,
+              "p95": 147.145,
+              "min": 17.275,
+              "max": 169.94,
+              "mean": 76.8812
+            },
+            "working_time_s": {
+              "n": 60,
+              "median": 70.7375,
+              "p50": 70.7375,
+              "p90": 134.1964,
+              "p95": 147.145,
+              "min": 17.275,
+              "max": 169.94,
+              "mean": 76.8812
+            }
+          },
+          "uncensored_only": {
+            "n": 58,
+            "total_time_s": {
+              "n": 58,
+              "median": 65.5125,
+              "p50": 65.5125,
+              "p90": 133.629,
+              "p95": 142.1319,
+              "min": 17.275,
+              "max": 169.94,
+              "mean": 74.4337
+            },
+            "working_time_s": {
+              "n": 58,
+              "median": 65.5125,
+              "p50": 65.5125,
+              "p90": 133.629,
+              "p95": 142.1319,
+              "min": 17.275,
+              "max": 169.94,
+              "mean": 74.4337
+            }
+          },
+          "censoring": {
+            "censored": true,
+            "n_censored_cells": 2,
+            "share_censored": 0.0333,
+            "mechanism": "right-censored at the per-cell budget cap: a cell stopped by a limit contributes the time it had spent when killed, not its would-be completion time (agent_utility_observations.py:94)",
+            "censored_kinds": {
+              "usd_budget_exhausted": 2
+            },
+            "interpretation": "medians/p95 over `all_attempted` are lower bounds on the uncensored distribution; the `uncensored_only` block is conditional on completion and is NOT an efficiency claim"
+          }
+        },
+        "B": {
+          "n_cells": 60,
+          "all_attempted": {
+            "total_time_s": {
+              "n": 60,
+              "median": 53.229,
+              "p50": 53.229,
+              "p90": 104.5762,
+              "p95": 119.6304,
+              "min": 11.166,
+              "max": 187.677,
+              "mean": 59.4412
+            },
+            "working_time_s": {
+              "n": 60,
+              "median": 53.229,
+              "p50": 53.229,
+              "p90": 104.5762,
+              "p95": 119.6304,
+              "min": 11.166,
+              "max": 187.677,
+              "mean": 59.4412
+            }
+          },
+          "uncensored_only": {
+            "n": 57,
+            "total_time_s": {
+              "n": 57,
+              "median": 49.636,
+              "p50": 49.636,
+              "p90": 99.931,
+              "p95": 109.2094,
+              "min": 11.166,
+              "max": 187.677,
+              "mean": 56.2836
+            },
+            "working_time_s": {
+              "n": 57,
+              "median": 49.636,
+              "p50": 49.636,
+              "p90": 99.931,
+              "p95": 109.2094,
+              "min": 11.166,
+              "max": 187.677,
+              "mean": 56.2836
+            }
+          },
+          "censoring": {
+            "censored": true,
+            "n_censored_cells": 3,
+            "share_censored": 0.05,
+            "mechanism": "right-censored at the per-cell budget cap: a cell stopped by a limit contributes the time it had spent when killed, not its would-be completion time (agent_utility_observations.py:94)",
+            "censored_kinds": {
+              "usd_budget_exhausted": 3
+            },
+            "interpretation": "medians/p95 over `all_attempted` are lower bounds on the uncensored distribution; the `uncensored_only` block is conditional on completion and is NOT an efficiency claim"
+          }
+        }
+      },
+      "per_cell_cap": {
+        "cohort_eval_limits": {},
+        "note": "`cohort.eval_limits` is empty in the composed record, so the numeric per-cell cap is not machine-readable from these sources; it is NOT imputed here"
+      }
+    },
+    "en-email-enron-raw-10k-verbose": {
+      "arms": {
+        "A": {
+          "n_cells": 60,
+          "all_attempted": {
+            "total_time_s": {
+              "n": 60,
+              "median": 88.175,
+              "p50": 88.175,
+              "p90": 165.2066,
+              "p95": 282.6433,
+              "min": 21.56,
+              "max": 323.085,
+              "mean": 104.1492
+            },
+            "working_time_s": {
+              "n": 60,
+              "median": 88.175,
+              "p50": 88.175,
+              "p90": 165.2066,
+              "p95": 282.6433,
+              "min": 21.56,
+              "max": 323.085,
+              "mean": 104.1492
+            }
+          },
+          "uncensored_only": {
+            "n": 56,
+            "total_time_s": {
+              "n": 56,
+              "median": 83.184,
+              "p50": 83.184,
+              "p90": 159.666,
+              "p95": 165.6935,
+              "min": 21.56,
+              "max": 323.085,
+              "mean": 95.5794
+            },
+            "working_time_s": {
+              "n": 56,
+              "median": 83.184,
+              "p50": 83.184,
+              "p90": 159.666,
+              "p95": 165.6935,
+              "min": 21.56,
+              "max": 323.085,
+              "mean": 95.5794
+            }
+          },
+          "censoring": {
+            "censored": true,
+            "n_censored_cells": 4,
+            "share_censored": 0.0667,
+            "mechanism": "right-censored at the per-cell budget cap: a cell stopped by a limit contributes the time it had spent when killed, not its would-be completion time (agent_utility_observations.py:94)",
+            "censored_kinds": {
+              "usd_budget_exhausted": 4
+            },
+            "interpretation": "medians/p95 over `all_attempted` are lower bounds on the uncensored distribution; the `uncensored_only` block is conditional on completion and is NOT an efficiency claim"
+          }
+        },
+        "B": {
+          "n_cells": 60,
+          "all_attempted": {
+            "total_time_s": {
+              "n": 60,
+              "median": 50.3435,
+              "p50": 50.3435,
+              "p90": 143.9833,
+              "p95": 156.0231,
+              "min": 18.726,
+              "max": 184.268,
+              "mean": 65.7137
+            },
+            "working_time_s": {
+              "n": 60,
+              "median": 50.3435,
+              "p50": 50.3435,
+              "p90": 143.9833,
+              "p95": 156.0231,
+              "min": 18.726,
+              "max": 184.268,
+              "mean": 65.7137
+            }
+          },
+          "uncensored_only": {
+            "n": 48,
+            "total_time_s": {
+              "n": 48,
+              "median": 43.0365,
+              "p50": 43.0365,
+              "p90": 130.4081,
+              "p95": 144.3314,
+              "min": 18.726,
+              "max": 184.268,
+              "mean": 54.8157
+            },
+            "working_time_s": {
+              "n": 48,
+              "median": 43.0365,
+              "p50": 43.0365,
+              "p90": 130.4081,
+              "p95": 144.3314,
+              "min": 18.726,
+              "max": 184.268,
+              "mean": 54.8157
+            }
+          },
+          "censoring": {
+            "censored": true,
+            "n_censored_cells": 12,
+            "share_censored": 0.2,
+            "mechanism": "right-censored at the per-cell budget cap: a cell stopped by a limit contributes the time it had spent when killed, not its would-be completion time (agent_utility_observations.py:94)",
+            "censored_kinds": {
+              "usd_budget_exhausted": 12
+            },
+            "interpretation": "medians/p95 over `all_attempted` are lower bounds on the uncensored distribution; the `uncensored_only` block is conditional on completion and is NOT an efficiency claim"
+          }
+        }
+      },
+      "per_cell_cap": {
+        "cohort_eval_limits": {},
+        "note": "`cohort.eval_limits` is empty in the composed record, so the numeric per-cell cap is not machine-readable from these sources; it is NOT imputed here"
+      }
+    },
+    "en-legal-clerc-1k-verbose": {
+      "arms": {
+        "A": {
+          "n_cells": 60,
+          "all_attempted": {
+            "total_time_s": {
+              "n": 60,
+              "median": 94.432,
+              "p50": 94.432,
+              "p90": 183.9891,
+              "p95": 211.5363,
+              "min": 18.362,
+              "max": 331.293,
+              "mean": 103.358
+            },
+            "working_time_s": {
+              "n": 60,
+              "median": 94.432,
+              "p50": 94.432,
+              "p90": 183.9891,
+              "p95": 211.5363,
+              "min": 18.362,
+              "max": 331.293,
+              "mean": 103.358
+            }
+          },
+          "uncensored_only": {
+            "n": 51,
+            "total_time_s": {
+              "n": 51,
+              "median": 80.133,
+              "p50": 80.133,
+              "p90": 162.8,
+              "p95": 203.009,
+              "min": 18.362,
+              "max": 331.293,
+              "mean": 96.3734
+            },
+            "working_time_s": {
+              "n": 51,
+              "median": 80.133,
+              "p50": 80.133,
+              "p90": 162.8,
+              "p95": 203.009,
+              "min": 18.362,
+              "max": 331.293,
+              "mean": 96.3734
+            }
+          },
+          "censoring": {
+            "censored": true,
+            "n_censored_cells": 9,
+            "share_censored": 0.15,
+            "mechanism": "right-censored at the per-cell budget cap: a cell stopped by a limit contributes the time it had spent when killed, not its would-be completion time (agent_utility_observations.py:94)",
+            "censored_kinds": {
+              "usd_budget_exhausted": 9
+            },
+            "interpretation": "medians/p95 over `all_attempted` are lower bounds on the uncensored distribution; the `uncensored_only` block is conditional on completion and is NOT an efficiency claim"
+          }
+        },
+        "B": {
+          "n_cells": 60,
+          "all_attempted": {
+            "total_time_s": {
+              "n": 60,
+              "median": 73.858,
+              "p50": 73.858,
+              "p90": 161.257,
+              "p95": 175.535,
+              "min": 17.431,
+              "max": 180.897,
+              "mean": 83.0988
+            },
+            "working_time_s": {
+              "n": 60,
+              "median": 73.858,
+              "p50": 73.858,
+              "p90": 161.257,
+              "p95": 175.535,
+              "min": 17.431,
+              "max": 180.897,
+              "mean": 83.0988
+            }
+          },
+          "uncensored_only": {
+            "n": 52,
+            "total_time_s": {
+              "n": 52,
+              "median": 67.4575,
+              "p50": 67.4575,
+              "p90": 165.313,
+              "p95": 175.919,
+              "min": 17.431,
+              "max": 180.897,
+              "mean": 79.5352
+            },
+            "working_time_s": {
+              "n": 52,
+              "median": 67.4575,
+              "p50": 67.4575,
+              "p90": 165.313,
+              "p95": 175.919,
+              "min": 17.431,
+              "max": 180.897,
+              "mean": 79.5352
+            }
+          },
+          "censoring": {
+            "censored": true,
+            "n_censored_cells": 8,
+            "share_censored": 0.1333,
+            "mechanism": "right-censored at the per-cell budget cap: a cell stopped by a limit contributes the time it had spent when killed, not its would-be completion time (agent_utility_observations.py:94)",
+            "censored_kinds": {
+              "usd_budget_exhausted": 8
+            },
+            "interpretation": "medians/p95 over `all_attempted` are lower bounds on the uncensored distribution; the `uncensored_only` block is conditional on completion and is NOT an efficiency claim"
+          }
+        }
+      },
+      "per_cell_cap": {
+        "cohort_eval_limits": {},
+        "note": "`cohort.eval_limits` is empty in the composed record, so the numeric per-cell cap is not machine-readable from these sources; it is NOT imputed here"
+      }
+    }
+  }
+}

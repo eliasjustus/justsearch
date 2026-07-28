@@ -374,8 +374,9 @@ corpus as currently committed)*
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
 | — | — | — | lexical | **0.9487** | 0.9044 | 0.9865 | bm25 | A | 0d4b3b1 | 252 |
+| (HEAD default) | (default) | (default) | hybrid | **0.9512** | 0.9127 | 0.9875 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | adaf7b44 | 786 §E |
 
-**Best known:** AI-disabled / lexical = **0.9487**
+**Best known:** (HEAD default) / hybrid = **0.9512** (786 §E, 2026-07-28; 95% CI 0.9406–0.9620).
 **Note:** Ground-truth text. Serves as ceiling for ingestion tax measurement.
 
 ### mixed/ohr-bench-got-moderate
@@ -383,27 +384,30 @@ corpus as currently committed)*
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
 | — | — | — | lexical | **0.8090** | 0.7505 | 0.8617 | bm25 | A | 0d4b3b1 | 252 |
+| (HEAD default) | (default) | (default) | hybrid | **0.8377** | 0.7817 | 0.8888 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | adaf7b44 | 786 §E |
 
-**Best known:** AI-disabled / lexical = **0.8090**
-**Ingestion tax vs clean:** -0.1397 nDCG (-14.7%). Exceeds >5% decision gate.
+**Best known:** (HEAD default) / hybrid = **0.8377** (786 §E, 2026-07-28; 95% CI 0.8171–0.8595).
+**Ingestion tax vs clean:** -0.1397 nDCG (-14.7%) lexical-only (252); **-0.1135 (-11.93%) at HEAD hybrid defaults** (786 §E). Exceeds >5% decision gate.
 
 ### mixed/ohr-bench-mineru-moderate
 
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
 | — | — | — | lexical | **0.6382** | 0.5644 | 0.7131 | bm25 | A | 0d4b3b1 | 252 |
+| (HEAD default) | (default) | (default) | hybrid | **0.7249** | 0.6466 | 0.8046 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | adaf7b44 | 786 §E |
 
-**Best known:** AI-disabled / lexical = **0.6382**
-**Ingestion tax vs clean:** -0.3105 nDCG (-32.7%). 9.8% of docs have empty/trivial extracted text.
+**Best known:** (HEAD default) / hybrid = **0.7249** (786 §E, 2026-07-28; 95% CI 0.7008–0.7500).
+**Ingestion tax vs clean:** -0.3105 nDCG (-32.7%) lexical-only (252); **-0.2262 (-23.78%) at HEAD hybrid defaults** (786 §E). 9.8% of docs have empty/trivial extracted text. Worst variant in both measurements; its CI is disjoint from tika-pdf's, so MinerU is measurably worse than the shipped path.
 
 ### mixed/ohr-bench-tika-pdf
 
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
 | — | — | — | lexical | **0.7947** | 0.7484 | 0.8326 | bm25 | A | b13afdc | 252 |
+| (HEAD default) | (default) | (default) | hybrid | **0.8205** | 0.7661 | 0.8649 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | adaf7b44 | 786 §E |
 
-**Best known:** AI-disabled / lexical = **0.7947**
-**Ingestion tax vs clean:** -0.1540 nDCG (-16.2%). Original OHR-Bench PDFs through Tika StructuredContentExtractor with extractMarkedContent=true. Most PDFs untagged — structured extraction captures page boundaries but not tables/headings. Comparable to GOT pre-extracted text (-14.7%).
+**Best known:** (HEAD default) / hybrid = **0.8205** (786 §E, 2026-07-28; 95% CI 0.7984–0.8422).
+**Ingestion tax vs clean:** -0.1540 nDCG (-16.2%) lexical-only (252); **-0.1307 (-13.74%) at HEAD hybrid defaults** (786 §E) — this is the shipped path's measured extraction cost. Original OHR-Bench PDFs through Tika StructuredContentExtractor with extractMarkedContent=true. Most PDFs untagged — structured extraction captures page boundaries but not tables/headings. Comparable to GOT pre-extracted text (-14.7% lexical; at HEAD hybrid the two CIs **overlap**, so GOT-vs-Tika is not separable at n=962 — see F-042).
 
 ---
 
@@ -475,6 +479,8 @@ A/B experiments on the same dataset, same queries.
 
 ### Ingestion quality tax: OHR-Bench clean vs extracted text
 
+**Lexical/BM25-only, `JUSTSEARCH_AI_DISABLED=true` (252, 2026-03):**
+
 | Variant | nDCG@10 | P@1 | R@10 | Delta vs clean |
 |---------|---------|-----|------|---------------|
 | Clean (gt_text) | **0.9487** | 0.9044 | 0.9865 | — |
@@ -482,7 +488,16 @@ A/B experiments on the same dataset, same queries.
 | GOT moderate | 0.8090 | 0.7505 | 0.8617 | **-14.7%** |
 | MinerU moderate | 0.6382 | 0.5644 | 0.7131 | **-32.7%** |
 
-**Conclusion:** Extraction quality is the single largest quality bottleneck (F-009). Tika on real PDFs loses 16% nDCG — comparable to GOT because most PDFs are untagged (no structural SAX events). Exceeds the >5% decision gate. **VLM extraction via existing chat model (Qwen 3.5) is the chosen path (252). Docling integration cancelled.**
+**HEAD hybrid defaults, full pipeline, CE on (786 §E, 2026-07-28, `adaf7b44`, n=962/arm):**
+
+| Variant | nDCG@10 | 95% CI | P@1 | R@10 | Delta vs clean |
+|---------|---------|--------|-----|------|---------------|
+| Clean (gt_text) | **0.9512** | 0.9406–0.9620 | 0.9127 | 0.9875 | — |
+| **Tika Structured PDF** | **0.8205** | 0.7984–0.8422 | 0.7661 | 0.8649 | **-13.74%** |
+| GOT moderate | 0.8377 | 0.8171–0.8595 | 0.7817 | 0.8888 | **-11.93%** |
+| MinerU moderate | 0.7249 | 0.7008–0.7500 | 0.6466 | 0.8046 | **-23.78%** |
+
+**Conclusion:** Extraction quality is the single largest quality bottleneck (F-009). Exceeds the >5% decision gate in both configurations. At HEAD hybrid defaults the shipped Tika path loses **13.74%** and **GOT's CI overlaps Tika's** — a better conventional OCR engine is *not* a measured win (F-042); the recoverable headroom is the clean-minus-Tika 0.1307. **VLM extraction via existing chat model (Qwen 3.5) is the chosen path (252). Docling integration cancelled.** The two tables are different configurations, not a before/after — see F-042 for why the taxes shrank and the GOT/Tika ordering changed.
 
 ---
 
@@ -847,6 +862,83 @@ above)*
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
 
+### F-043: the 782 hero agent-utility campaign composed one clean three-stratum cohort at sonnet — verdict as-recorded REJECTED/inconclusive on a freeze-level gate defect; code-certain counterfactual ACCEPTED/adoption-only (adoption 1.0, no accuracy benefit, point-negative on enron); founder-gated v4 re-compose escalated (tempdoc 782 window 2, 2026-07-28)
+
+- **Answer:** the preregistered hero campaign (782 §E frozen; policy `agent-utility-public-v3`;
+  3 strata × 20 qids × 3 seeds × 2 arms at sonnet, $0.80/cell, private-synthetic tier C, 781 v2
+  certified corpora) composed all three strata into ONE harness cohort
+  (`agent_cohort_key ebdf4a74…` identical; window 1's identity split closed by running from a
+  gitignored run dir) — the compose that failed closed in window 1 succeeded. Composed
+  `claim_verdict`: **status rejected, outcome inconclusive, arm addition_b**; per-stratum outcomes
+  **adoption-only on all three**. 29 of 30 policy gates pass — `verified_tool_surface` rate 1.0
+  (180/180 B cells, single observed hash), `no_leak_suspect_cells` 0, `minimum_adoption_rate`
+  observed **1.0**, `closed_book_at_hero_tier` pass, `completion_triple_reported` pass.
+- **The single failing gate is a freeze defect, not a measurement defect:**
+  `corpus_certification_complete` requires `cert.query_count == cell.query_count` exactly
+  (`utility_claim_policy.py:414-423`); the 781 certifications certify the 50-query committed gold
+  set while the frozen §E.1 design runs the pre-registered 20-qid subset — 50 ≠ 20 on every
+  stratum, so **no run under this frozen design could ever pass** (same class as BLOCKER-1, but
+  only reachable at compose). `query_gold_sha256` matches (identity chains the full committed
+  set); only the count equality fails. Code-certain counterfactual
+  (`utility_claim_policy.py:852-867`, read not re-run): with that validity gate passing, the
+  verdict is **accepted / adoption-only**. Per §E.6 stop rule 5 the amendment window is closed —
+  a subset-aware policy v4 (keyed on the design's own `selected_query_sha256`) plus an OFFLINE
+  re-compose ($0, no re-measurement) is **escalated to the founder**, not applied.
+- **Measured deltas (accuracy, with-tool minus baseline; 95% CI beside exact-McNemar p;
+  power-honesty: no effect detected at n=60/stratum):** enron-1k **−0.1964** [−0.375, −0.018]
+  p=0.063 (9 fixes / 20 breaks); enron-10k **−0.1304** p=0.146 (3/9); legal-1k **+0.0222** p=1.0
+  (7/6). Window-1 signs identical on all three strata (−0.154 / −0.093 / +0.022) — two
+  independent windows agree. Substrate exonerated: zero connection errors, tool surface verified
+  on every B cell. Honest headline: **the sonnet agent adopts the JustSearch MCP tool at rate 1.0
+  when offered, with no measurable accuracy benefit in the ADDITION arm — and point-negative on
+  enron email.**
+- **Conditions/caveats:** addition arm only (B = generic file tools + MCP; the substitution arm
+  was not run); sonnet only; fabricated-gold private-synthetic corpora (781 v2, title-leak
+  closed); outcome rule `resource-exhaustion-as-failure` with a designed-in conservative
+  asymmetry — B exhausts the $0.80/cell budget more often than A (10k: 12/60 vs 4/60) because
+  tool calls consume budget, which biases against B. Judge overlay: local Qwen3.5-9B
+  (different family), flips 1/0/4, agreement 0.887–0.984, call_failures 0, degraded_to_em false.
+- **Evidence:** `scripts/jseval/782-run-2026-07-28-hero/` (per-stratum + combined records,
+  calibrations, judge overlays, closed-book, leak-checks, both ledgers, §E.4 derived JSONs,
+  window-1 records under `window1/`); composed `semantic_digest e2bb70c3…`; spend ~$278 of the
+  $300 cap. Full incident history (void run, mixed-model guard, backend kill, stray-root guard)
+  in the committed `incident-ledger.md`; campaign narrative in tempdoc 782 §I.
+
+### F-042: the shipped Tika extraction path costs −13.74% nDCG@10 at HEAD hybrid defaults — but the obvious fix (swap to a better OCR engine) is measurement-rejected: GOT is statistically tied with Tika (tempdoc 786 §E, 2026-07-28; the full-pipeline sibling of F-009's lexical-only measurement)
+
+- **Answer:** the four OHR-Bench extraction variants re-measured at HEAD defaults (hybrid, CE on,
+  chunk branch active, `git_sha adaf7b44`, 962 queries and 1000 docs per arm, all arms
+  `ann_proof PASS` / `error_count 0` / `comparable: true` / identical observed leg set):
+  **clean 0.9512** (CI 0.9406–0.9620), **GOT-moderate 0.8377** (0.8171–0.8595), **Tika-PDF
+  0.8205** (0.7984–0.8422), **MinerU-moderate 0.7249** (0.7008–0.7500). The shipped Tika path's
+  extraction cost is **−0.1307 nDCG@10 (−13.74%)** against clean text, CI-separable from clean.
+- **The decision-relevant part is the bracket, not the headline.** GOT — the best alternative
+  extraction in this corpus family — buys back only **~0.017 nDCG** over Tika, and **the two CIs
+  overlap**, so *GOT-vs-Tika is not separable at n=962*. MinerU is decisively **worse** than Tika
+  (disjoint CIs). So the recoverable headroom an improvement lane should target is the residual
+  **clean-minus-Tika 0.1307**, not a swap to a conventional OCR engine — i.e. the
+  VLM/structure-recovery direction F-009 already names. A "better OCR" lane is measurement-rejected
+  on this evidence.
+- **Relation to F-009 (different configuration, not a contradiction):** F-009's taxes (−14.7% GOT /
+  −16.2% Tika / −32.7% MinerU) were measured lexical/BM25-only with `JUSTSEARCH_AI_DISABLED=true`
+  (252). This sweep is the full pipeline. Every tax **shrank** (Tika −16.2% → −13.74%, MinerU
+  −32.7% → −23.78%) and **Tika moved from behind GOT to tied with it**. The consistent reading is
+  that the dense + chunk legs partially absorb extraction noise, most where the noise is worst —
+  but **no arm isolated the compensating leg**, so that is an observation about the two
+  configurations, not a causal attribution. F-009's lexical-only rows stand as their own
+  measurement; they are not superseded, they are a different cell.
+- **Conditions/caveats:** one corpus family (OHR-Bench, 7 domains, extractive queries); single run
+  per arm, no multi-seed. **Per-domain breakdown is NOT available** — `stratified_metrics.json`
+  buckets by `decision_kind`/`first_relevant_rank`/`query_length`, not by OHR domain, so "where the
+  shipped path loses (tables? scanned? multi-column?)" is unmeasured and needs a domain-labelled
+  stratification the projection does not emit. VDU-routing correlation (786 §B.3) not run. Arms
+  verified to be four genuinely different corpora via pairwise-distinct `corpus_identity.signature`
+  (`641ec0b7ae96` / `ea1dd54da222` / `f306dc80d5e6` / `f90ba56d8e73`), not one corpus re-measured.
+- **Evidence:** tempdoc 786 §E (table, CIs, routed conclusion, scope-honesty list); artifacts
+  `tmp/786-sweep/ohr-bench-{clean,got-moderate,mineru-moderate,tika-pdf}/` — per-arm
+  `summary.json` + `projections/bootstrap_ci.json` (95%, 1000 resamples) + `hybrid_per_query.json`
+  + `hybrid_run.trec`.
+
 ### F-041: the Head cross-encoder was judging doc-head previews, not evidence — feeding it the winning passage lifts legal hybrid +15% and FLIPS the CE from harmful to helpful on email; shipped default-off (tempdoc 774 Stages 1-2, 2026-07-22; answers Q-001's mechanism)
 
 - **Answer:** the Head CE's per-candidate input was `title + a ~1500-char query-focused
@@ -917,6 +1009,37 @@ above)*
 - **Evidence:** tempdoc 774 §J.5/§J.7/§F.3; artifacts
   `tmp/analysis-624/774/probe/` (774 worktree: per-cell summaries + per-query ranks +
   `probe_774.py`/`h4_ab.py`, hashes + reproduction commands inside).
+- **STANDING OFFSET CURVES (2026-07-28, tempdoc 783 §B.1c — the first PRIMARY,
+  metadata-resolved instrument output; begins replacing this finding's single-number
+  citation per 783 §C):** `jseval offset-recall` on three re-materialized 781 v2 cells,
+  `schema offset-recall.v2`, `k=10`, **50/50 queries resolved via the metadata tier on
+  every cell** (`by_source {metadata:50, string_match:0, query_locus:0}`,
+  `curves_are_proxy: false`). **Bins are the gold sentence's character offset *within its
+  host document*, not result-list rank.** Hybrid recall@10 (bin `n` in parentheses):
+
+  | cell | 0-1k | 1k-2k | 2k-4k | 4k-8k | 8k+ |
+  |---|---|---|---|---|---|
+  | legal-1k-verbose | 0.571 (7) | 0.500 (2) | 0.727 (11) | 0.500 (14) | 0.438 (16) |
+  | legal-10k-verbose | 0.286 (7) | 0.500 (2) | 0.182 (11) | 0.286 (14) | 0.125 (16) |
+  | enron-10k-verbose | 0.636 (33) | 0.625 (8) | 0.400 (5) | 0.250 (4) | — (0) |
+
+  Readings, in decreasing confidence: (a) **enron-10k is a clean monotonic offset decay**
+  (0.636→0.625→0.400→0.250), the program's cleanest evidence that offset-within-document is
+  a real axis — but its deepest populated bin is `4k-8k` and its tail bins are thin (n=5,
+  n=4). (b) **The legal cells are NOT monotonic** — legal-1k *peaks* at `2k-4k` (0.727), so
+  its "0.571→0.438" is a first-vs-last comparison and **must not be cited as a monotonic
+  offset effect**. (c) **The strongest legal signal is cross-cell, not within-cell**: at 10×
+  corpus size recall roughly halves at *every* offset bin (0.571→0.286, 0.727→0.182,
+  0.438→0.125), i.e. on legal the scale floor dominates the offset axis — consistent with
+  this finding's "representational at every granularity" verdict. (d) **`lexical` is 0.000 in
+  all 15 populated bins** (post-camouflage, as pre-registered) and **`splade` is non-zero only
+  in the shallowest bin** (0.857 / 0.143 / 0.091, 0.000 everywhere deeper) — F-033's
+  512-token truncation, now visible as an offset curve; hybrid on these cells is effectively
+  vector+CE and tracks vector's shape.
+  **Scope limit:** 50 queries per cell across 5 bins gives n=2–16, which supports reading (c)
+  far better than (a)/(b); a larger per-cell query budget is the prerequisite for treating
+  within-cell offset curves as decision-grade. Artifacts:
+  `tmp/781-certification/c1-{en-legal-clerc-1k-verbose,en-legal-clerc-10k-verbose,en-email-enron-raw-10k-verbose}/offset_recall.json`.
 
 ### F-039: bridge-entity retrieval miss on legal agent-utility strata — structure-descriptive queries never reach designer-keyed gold; near-duplicate synthetic decoys outrank it, worsening 6%→28% of with-tool failures from 1k→10k (tempdoc 763 replay census, 2026-07-21)
 
