@@ -83,7 +83,14 @@ final class McpTierEquivalenceTest {
     TRUNCATED("truncated"),
     HITS("hits"),
     FACETS("facets"),
-    HINTS("hints");
+    HINTS("hints"),
+    // Tempdoc 789 Phase 2 — flag-gated framings, off by default, so (like ENRICHMENT_HINT and
+    // ZERO_RESULT_HINT) they have their own triggering condition and their own dual-tier coverage:
+    // McpFramingRenderSnapshotTest asserts each one in BOTH the text tier and structuredContent,
+    // with the framing flag on. They cannot be exercised from this class's fixtures, which run the
+    // real callTool path and therefore resolve the shipped default (all framings OFF).
+    EVIDENCE_HEADER("evidenceHeader"),
+    ABSENCE_NOTE("absenceNote");
 
     final String contentComponent;
 
@@ -100,7 +107,10 @@ final class McpTierEquivalenceTest {
     COMPARATIVE_HINT("comparativeHint"),
     ENRICHMENT_HINT("enrichmentHint"),
     ZERO_RESULT_HINT("zeroResultHint"),
-    HINTS("hints");
+    HINTS("hints"),
+    // Tempdoc 789 Phase 2 (F2) — flag-gated, off by default; dual-tier coverage lives in
+    // McpFramingRenderSnapshotTest#f2AnswerBeforeAfter, which asserts the header in BOTH tiers.
+    EVIDENCE_HEADER("evidenceHeader");
 
     final String contentComponent;
 
