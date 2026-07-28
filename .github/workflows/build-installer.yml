@@ -143,6 +143,37 @@ jobs:
           npm ci --prefix modules/shell
           npm ci --prefix modules/ui-web
 
+      # eSigner CodeSignTool bootstrap (tempdoc 760 command-mode signing). Only when the
+      # command-mode secret is set AND its template references CodeSignTool: download SSL.com's
+      # CodeSignTool (ships its own JRE and PRODUCTION endpoint config — no properties edit
+      # needed; sandbox-validated 2026-07-22, tool v1.3.3) into $RUNNER_TEMP\CodeSignTool so the
+      # JUSTSEARCH_CODESIGN_COMMAND template can invoke it as
+      #   %RUNNER_TEMP%\CodeSignTool\CodeSignTool.bat sign ... -input_file_path="{file}" -override="true"
+      # (the template runs through a .cmd, so %RUNNER_TEMP% expands at execution). The zip's
+      # sha256 is logged for supply-chain traceability (no stable versioned URL exists to pin).
+      # Secrets-absent or non-CodeSignTool templates skip this entirely.
+      - name: Install eSigner CodeSignTool (command mode only)
+        shell: pwsh
+        env:
+          JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
+        run: |
+          if (-not ($env:JUSTSEARCH_CODESIGN_COMMAND -and $env:JUSTSEARCH_CODESIGN_COMMAND -match 'CodeSignTool')) {
+            Write-Host "CodeSignTool not referenced by the signing command template - skipping."
+            exit 0
+          }
+          $dest = Join-Path $env:RUNNER_TEMP "CodeSignTool"
+          $zip = Join-Path $env:RUNNER_TEMP "CodeSignTool.zip"
+          Invoke-WebRequest -Uri "https://www.ssl.com/download/codesigntool-for-windows/" -OutFile $zip
+          Write-Host ("CodeSignTool.zip sha256: " + (Get-FileHash -Algorithm SHA256 $zip).Hash)
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          # The zip may nest a single top-level folder; normalize so CodeSignTool.bat sits at $dest.
+          $bat = Get-ChildItem -Path $dest -Recurse -Filter "CodeSignTool.bat" | Select-Object -First 1
+          if (-not $bat) { throw "CodeSignTool.bat not found after extraction" }
+          if ($bat.DirectoryName -ne $dest) {
+            Get-ChildItem -Path $bat.DirectoryName | Move-Item -Destination $dest -Force
+          }
+          Write-Host ("CodeSignTool ready at " + (Join-Path $dest "CodeSignTool.bat"))
+
       - name: Build installer
         shell: pwsh
         # CPU-only alpha per tempdoc 374 §"2026-04-24 rebuild". Without these
