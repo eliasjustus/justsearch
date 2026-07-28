@@ -466,7 +466,10 @@ def export_log_dir(
     body = "".join(
         _canonical_json(item) + "\n" for item in dedupe_source_blocks(observations)
     )
-    path.write_text(body, encoding="utf-8")
+    # newline="" so \n stays \n on Windows: the publication manifest content-addresses
+    # these bytes, and platform newline translation would break the hash chain after
+    # git's LF normalization (caught by the Public-claims gate on the first real bundle).
+    path.write_text(body, encoding="utf-8", newline="")
     return path
 
 
