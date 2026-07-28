@@ -301,6 +301,110 @@ def test_v3_ratification_tuned_no_threshold_and_dropped_legal_10k():
     assert policy["policy_changelog"][0]["policy_id"] == policy["policy_id"]
 
 
+# --- v3 additive gates: the REFUSAL branch ----------------------------------
+#
+# The happy path is covered by every `_active_policy()` test above (the fixture
+# now carries the producer's completion + schema blocks). These three prove each
+# gate can still REJECT -- without them a gate inverted to always-True ships
+# green, since a passing gate and an absent gate are indistinguishable from
+# `accepted is True` alone. Each asserts the SPECIFIC gate name surfaces.
+
+def _failed_gate_names(verdict: dict) -> set[str]:
+    return {item["name"] for item in verdict["gates"] if not item["passed"]}
+
+
+def test_completion_triple_reported_rejects_when_completion_estimand_is_missing():
+    """762 §T4: the ITT headline may not be published without its completion
+    sibling. Stripping `estimands.completion` must fail THIS gate by name."""
+    record = _record()
+    del record["estimands"]["completion"]
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    assert "completion_triple_reported" in verdict["reasons"]
+    assert "completion_triple_reported" in _failed_gate_names(verdict)
+    assert verdict["accepted"] is False
+
+
+def test_schema_strata_reported_rejects_when_the_breakdown_is_missing():
+    """768 D4 / v3 `required_schema_strata`: a measured cell with no
+    `schema_stratified` block cannot satisfy `require_all_present`."""
+    record = _record()
+    for by_model in record["measured"].values():
+        for cell in by_model.values():
+            del cell["schema_stratified"]
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    assert "schema_strata_reported" in verdict["reasons"]
+    gate = next(item for item in verdict["gates"]
+                if item["name"] == "schema_strata_reported")
+    assert gate["passed"] is False
+    assert gate["observed"][0]["missing"] == ["1_hop", "2_hop"]
+    assert verdict["accepted"] is False
+
+
+def _closed_book_gate(verdict: dict) -> dict:
+    return next(item for item in verdict["gates"]
+                if item["name"] == "closed_book_at_hero_tier")
+
+
+def test_closed_book_at_hero_tier_rejects_without_a_measured_closed_book_number():
+    """768 item 6 / v3 `hero_tier`: with no measured closed-book accuracy there is
+    nothing licensing the retrieval attribution, so the gate refuses.
+
+    Isolation note (honest, not assumed): the closed-book measurement rides the
+    707 certification snapshot, which is cross-validated against its own embedded
+    certificate — so ANY mutation of it also trips `corpus_certification_complete`.
+    That co-failure is asserted rather than glossed. What proves this gate is
+    doing independent work is the before/after on the SAME gate: it passes on the
+    untouched fixture and fails on the mutated one, which a gate inverted to
+    always-True could not satisfy."""
+    baseline = evaluate_claim(_record(), _active_policy())
+    assert _closed_book_gate(baseline)["passed"] is True
+
+    record = _record()
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        cell["corpus_certification"]["scientific_gates"]["closed_book"] = {
+            "passed": True, "status": "passed",
+        }
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    assert _closed_book_gate(verdict)["passed"] is False
+    assert "closed_book_at_hero_tier" in verdict["reasons"]
+    assert _failed_gate_names(verdict) == {
+        "closed_book_at_hero_tier", "corpus_certification_complete",
+    }
+    assert verdict["accepted"] is False
+
+
+def test_closed_book_at_hero_tier_rejects_accuracy_above_the_ceiling():
+    """The ceiling is load-bearing, not decorative: a materially non-zero
+    closed-book accuracy means the answers are derivable without the corpus, so
+    the with-tool uplift cannot be attributed to retrieval.
+
+    Same snapshot-cross-validation caveat as the test above — the co-failure is
+    asserted, and the gate's own observed payload is checked to prove it read the
+    mutated number rather than failing incidentally."""
+    record = _record()
+    policy = _active_policy(record)
+    ceiling = policy["thresholds"]["maximum_closed_book_accuracy"]
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        observed = (cell["corpus_certification"]["scientific_gates"]
+                    ["closed_book"]["observed"])
+        observed["closed_book_accuracy"] = ceiling + 0.5
+
+    verdict = evaluate_claim(record, policy)
+
+    gate = _closed_book_gate(verdict)
+    assert gate["passed"] is False
+    assert gate["threshold"] == ceiling
+    assert gate["observed"][0]["closed_book_accuracy"] == ceiling + 0.5
+    assert "closed_book_at_hero_tier" in verdict["reasons"]
+    assert verdict["accepted"] is False
+
+
 def test_favorable_outcomes_cannot_override_unresolved_policy():
     """The unresolved-blocks-promotion behavior, now tested via a draft fixture
     (the checked-in policy activated 2026-07-17 — tempdoc 624)."""

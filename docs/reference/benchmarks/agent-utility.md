@@ -37,6 +37,17 @@ promotion, and effect classification. Seed, paired-observation, uncertainty, ado
 gates are reported for each required stratum; aggregate counts are descriptive. A valid outcome may
 be benefit, harm, null, or adoption-only. Any required inconclusive stratum prevents publication.
 
+Three reporting requirements also block promotion, so a favorable number cannot be published
+stripped of the context that qualifies it. Closed-book-at-hero-tier: every required stratum must
+carry a measured closed-book accuracy — the same question answered with no tools and no documents —
+at or below the policy ceiling, because only a near-zero closed-book floor licenses attributing the
+with-tool result to retrieval rather than to memorized corpus content. Completion-triple reporting:
+the intention-to-treat headline must be published beside its per-protocol pair count and its per-arm
+completion rate, so a result driven by budget exhaustion cannot read as an accuracy result. Schema-
+strata reporting: every measured cell must publish its per-question-type breakdown covering every
+known schema, and a schema whose observations collapse is reported as an explicit null rather than
+dropped — an absent schema is a reporting failure, not a silent absence of data.
+
 ## Current result
 
 <!-- agent-utility:generated:start - run: node scripts/docs/gen-public-agent-utility.mjs -->

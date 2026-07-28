@@ -29,6 +29,37 @@ function sha256(file) {
   return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
+/**
+ * The one ACTIVE claim policy, selected by its own `status` rather than by
+ * filename. Hardcoding a version-numbered filename is the defect this file
+ * already fixed once for the policy ID: the name silently goes stale at the next
+ * ratification and the page then quotes a superseded policy. The rendered
+ * sentence asserts "is active and fully resolved", so both facts are verified
+ * here and generation FAILS rather than printing a false claim.
+ */
+function activeClaimPolicy(root) {
+  const dir = path.join(root, "scripts", "jseval");
+  const candidates = fs
+    .readdirSync(dir)
+    .filter((name) => /^utility-claim-policy\..*\.json$/.test(name) && !name.endsWith(".schema.json"))
+    .map((name) => ({ name, policy: readJson(path.join(dir, name)) }))
+    .filter(({ policy }) => policy.status === "active");
+  if (candidates.length !== 1) {
+    throw new Error(
+      `expected exactly one active claim policy, found ${candidates.length}` +
+        `${candidates.length ? `: ${candidates.map((c) => c.name).join(", ")}` : ""}`,
+    );
+  }
+  const { name, policy } = candidates[0];
+  if ((policy.unresolved || []).length !== 0) {
+    throw new Error(
+      `active claim policy ${name} has unresolved items, cannot render it as fully resolved: ` +
+        `${policy.unresolved.join("; ")}`,
+    );
+  }
+  return policy;
+}
+
 function loadSelection(root) {
   const pointerPath = path.join(root, "scripts", "jseval", "public-agent-utility", "current.v1.json");
   const pointer = readJson(pointerPath);
@@ -230,8 +261,7 @@ function referenceStratum(cell, outcome) {
 function noResult(selection, target, root) {
   const reason = selection.pointer.reason;
   const state = selection.pointer.previous ? "The previously selected result was withdrawn. " : "";
-  const policyPath = path.join(root, "scripts", "jseval", "utility-claim-policy.v3.json");
-  const policy = readJson(policyPath);
+  const policy = activeClaimPolicy(root);
   const policyId = policy.policy_id;
   const strataCount = (policy.required_strata || []).length;
   const common =
