@@ -128,6 +128,46 @@ def cmd_utility_recompose(ctx, log_dirs, evidence_paths, judge_overlays, contami
         click.echo(f"semantic_digest={record['semantic_digest']}")
 
 
+@click.command("utility-policy-dryrun")
+@click.option("--design", required=True, type=click.Path(exists=True, dir_okay=False),
+              help="A frozen campaign design (782-hero-campaign-cells.v1 shape), "
+                   "e.g. scripts/jseval/782-hero/cells.v1.json.")
+@click.option("--policy", "policy_path", default=None,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Claim policy to dry-run against; defaults to the ACTIVE policy.")
+@click.option("--out", default=None, type=click.Path(dir_okay=False),
+              help="Optional path for the full JSON report.")
+@click.pass_context
+def cmd_utility_policy_dryrun(ctx, design, policy_path, out):
+    """Dry-run a claim policy against a campaign design BEFORE freezing it.
+
+    Synthesizes a minimal structurally-valid composed record with the design's
+    declared shape, evaluates every policy gate against it, and reports which
+    gates can never pass. Exits non-zero on any structurally-impossible or
+    undetermined gate. Both tempdoc 782 freeze defects were policy-vs-design
+    incompatibilities reachable only at run/compose time; this makes them $0.
+    """
+    from .._paths import REPO_ROOT
+    from ..utility_claim_policy import load_policy
+    from ..utility_policy_dryrun import DryRunError, dryrun, format_report, load_design
+
+    try:
+        report = dryrun(
+            load_design(design), load_policy(policy_path), repo_root=REPO_ROOT,
+        )
+    except DryRunError as error:
+        raise click.ClickException(str(error)) from error
+    if out:
+        Path(out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(report, indent=2))
+    else:
+        click.echo(format_report(report))
+        if out:
+            click.echo(f"Wrote {out}")
+    ctx.exit(report["exit_code"])
+
+
 @click.command("utility-compose")
 @click.option("--run", "runs", multiple=True, metavar="COND=PATH",
               help="Repeatable. An agent-eval result JSON tagged by condition, "
@@ -1015,6 +1055,7 @@ def cmd_utility_payload_decompose(ctx, log_dirs, payload_dir, out):
 
 
 COMMANDS = [cmd_utility_publication_build, cmd_utility_publication_select, cmd_utility_replay,
-           cmd_utility_evidence_export, cmd_utility_recompose, cmd_utility_compose, cmd_utility_run, cmd_utility_calibrate, cmd_utility_status,
+           cmd_utility_evidence_export, cmd_utility_recompose, cmd_utility_policy_dryrun,
+           cmd_utility_compose, cmd_utility_run, cmd_utility_calibrate, cmd_utility_status,
            cmd_utility_judge, cmd_utility_judge_cross_family, cmd_utility_judge_local_swap_smoketest,
            cmd_utility_compose_cross_corpus, cmd_utility_payload_decompose]
