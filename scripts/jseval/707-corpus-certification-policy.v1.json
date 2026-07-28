@@ -6,7 +6,7 @@
     {
       "member": "en-legal-clerc",
       "dataset": "mixed/en-legal-clerc-1k-verbose",
-      "corpus_signature": "da8c6f1a72be729428677d5e02bfbdfd913ff2e10ffc4f9065f8148ea8d75937",
+      "corpus_signature": "6df707031abcd296773a0bf8c6a7750bb0b8704ce4ab4035105cf88b8df01fae",
       "query_gold_sha256": "2797469a5f80aa8881553323880cd910dd83b621dabd935e7d577337f0f3f565",
       "query_count": 50,
       "thresholds": {
@@ -15,7 +15,7 @@
         },
         "retrieval_calibration": {
           "ndcg_band": [
-            0.2461,
+            0.2303,
             0.85
           ],
           "shortcut_leak_rate_max": 0.1
@@ -31,7 +31,7 @@
     {
       "member": "en-legal-clerc",
       "dataset": "mixed/en-legal-clerc-1k-short-natural",
-      "corpus_signature": "da8c6f1a72be729428677d5e02bfbdfd913ff2e10ffc4f9065f8148ea8d75937",
+      "corpus_signature": "6df707031abcd296773a0bf8c6a7750bb0b8704ce4ab4035105cf88b8df01fae",
       "query_gold_sha256": "bccae852eeb4a97e0585c7ca59005feeec063210dcc29e7b2bbcaecf69a2fb3a",
       "query_count": 50,
       "thresholds": {
@@ -40,23 +40,23 @@
         },
         "retrieval_calibration": {
           "ndcg_band": [
-            0.1682,
+            0.1619,
             0.85
           ],
           "shortcut_leak_rate_max": 0.1
         },
         "union_recall": {
-          "minimum": 0.38
+          "minimum": 0.44
         },
         "leak_floor": {
-          "maximum": 0.22
+          "maximum": 0.26
         }
       }
     },
     {
       "member": "en-legal-clerc",
       "dataset": "mixed/en-legal-clerc-10k-verbose",
-      "corpus_signature": "29f08bda18946b86c9f41b6993e0b112377aa1221237ce4e3ce2ea2d8566bde7",
+      "corpus_signature": "5c4682ea92437fb20509d3c88c57edb17afde6bc857b6918613291b8398e2d51",
       "query_gold_sha256": "2797469a5f80aa8881553323880cd910dd83b621dabd935e7d577337f0f3f565",
       "query_count": 50,
       "thresholds": {
@@ -65,7 +65,7 @@
         },
         "retrieval_calibration": {
           "ndcg_band": [
-            0.0,
+            0.0196,
             0.85
           ],
           "shortcut_leak_rate_max": 0.1
@@ -81,7 +81,7 @@
     {
       "member": "en-legal-clerc",
       "dataset": "mixed/en-legal-clerc-10k-short-natural",
-      "corpus_signature": "29f08bda18946b86c9f41b6993e0b112377aa1221237ce4e3ce2ea2d8566bde7",
+      "corpus_signature": "5c4682ea92437fb20509d3c88c57edb17afde6bc857b6918613291b8398e2d51",
       "query_gold_sha256": "bccae852eeb4a97e0585c7ca59005feeec063210dcc29e7b2bbcaecf69a2fb3a",
       "query_count": 50,
       "thresholds": {
@@ -90,13 +90,13 @@
         },
         "retrieval_calibration": {
           "ndcg_band": [
-            0.0,
+            0.0305,
             0.85
           ],
           "shortcut_leak_rate_max": 0.1
         },
         "union_recall": {
-          "minimum": 0.0
+          "minimum": 0.08
         },
         "leak_floor": {
           "maximum": 0.2
@@ -115,7 +115,7 @@
         },
         "retrieval_calibration": {
           "ndcg_band": [
-            0.5776,
+            0.5785,
             0.85
           ],
           "shortcut_leak_rate_max": 0.1
@@ -165,13 +165,13 @@
         },
         "retrieval_calibration": {
           "ndcg_band": [
-            0.4064,
+            0.3956,
             0.85
           ],
           "shortcut_leak_rate_max": 0.1
         },
         "union_recall": {
-          "minimum": 0.38
+          "minimum": 0.42
         },
         "leak_floor": {
           "maximum": 0.2
@@ -190,13 +190,13 @@
         },
         "retrieval_calibration": {
           "ndcg_band": [
-            0.3608,
+            0.3901,
             0.85
           ],
           "shortcut_leak_rate_max": 0.1
         },
         "union_recall": {
-          "minimum": 0.36
+          "minimum": 0.4
         },
         "leak_floor": {
           "maximum": 0.2

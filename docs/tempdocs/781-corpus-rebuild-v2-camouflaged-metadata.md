@@ -1,7 +1,7 @@
 ---
 title: "corpus rebuild v2: camouflaged host metadata + re-certification — close the title-class leak in the 707 strata and re-validate the levers it contaminated"
 type: tempdocs
-status: "OFFLINE HALF DONE (2026-07-22, §E) — v2 8-cell English cohort re-materialized under the host-title generator (#297) and fully structurally-certified; field_selectivity PASSES on every field of every cell (title separability 0.0). Measured/scientific gates (closed-book + backend) + threshold re-derivation remain for the orchestrator's supervised window (§E.4). HERO-BLOCKING per §A; executes founder decision 4 (766 §G — rebuild-not-retire, instrument-first; the instrument landed as the gold-selectivity gate, 776 §I / #291)."
+status: "§B.2 DONE — v2 cohort FULLY CERTIFIED (2026-07-27, §F). Both English members `fully-certified`, 16/16 scientific gates each (32/32); closed-book 0.000 on all 8 cells; policy re-pinned to the v2 identities with thresholds re-derived per cell from fresh n=50 measurements (707:760 rule + 767 §Q.3 override) and a provenance sidecar. field_selectivity title separability 0.0 on every cell (§E). KEY FINDING (§F.5): closing the title leak moved retrieval by less than the enron control band (enron corpus is byte-identical v1→v2, spread ±0.03) — the rebuild's value is validity, not a number. REMAINING: Phase F publication pointer (founder), §B.3 de-miracl rebuild, §B.4 title-boost re-validation. Executes founder decision 4 (766 §G); the instrument landed as the gold-selectivity gate (776 §I / #291)."
 created: 2026-07-22
 author: agent (Fable orchestration), chartered from the 2026-07-22 remaining-work map (founder-directed)
 category: eval-content / corpus-certification
@@ -187,3 +187,158 @@ never written (v1-era cells other worktrees depend on are untouched).
 
 The measured half named in §E.4 (threshold re-derivation, closed-book, Phase C backend gates,
 evidence artifacts, Phase E/F) remains outstanding and is the hero path's remaining prerequisite.
+
+## §F. Measured-half campaign log (2026-07-27) — both members `fully-certified` on the v2 cohort
+
+The §E.4 measured half is complete. **Result: `en-legal-clerc` and `en-email-enron-raw` are each
+`fully-certified` — 16/16 scientific gates per member, 32/32 total**, against thresholds derived from
+the v2 measurements under the 707:760 rule. Structural + measured certification only; per 767 §R.7 it
+does **not** authorize the paid confirmatory campaign or a publication pointer (Phase F, founder-gated).
+
+### F.1 Phases and where each ran
+
+| Phase | What | Where |
+|---|---|---|
+| A | v2 materialization + structural certification | §E / §E.5, `tmp/781-v2-datasets/mixed/` (persistent, survives worktree teardown) |
+| B | `closed_book` (PAID) | banked into each cell's `metadata.json` as `closed_book_certification` |
+| C1 | `jseval run --modes lexical,vector,splade,hybrid --embedding --splade` (GPU) | banked run dirs `tmp/781-certification/c1-<cell>/` (manifest + `projections/staged_recall_accounting.json`, all `status: ok`) |
+| C2 | `corpus-fidelity` shortcut probe (PAID, GPU) | banked `tmp/781-certification/fidelity/<cell>.json` (top-level `retrieval_ndcg`, `comparable: true` on all 8) |
+| **A4 / B1 re-pin** | policy identity re-pin + threshold re-derivation | **this session** — `707-corpus-certification-policy.v1.json` + provenance sidecar |
+| **D** | 16 evidence artifacts per member (32 total) | **this session**, free/offline |
+| **E** | final scientific certification | **this session**, free/offline → `fully-certified` x2 |
+| F | publication pointer | NOT run (founder decision) |
+
+**Spend.** Phase B ~$3-8 (8 x 50 haiku closed-book calls, `--max-budget-usd 0.10` per call); Phase C2
+inside its $20 ceiling (8 x 50 haiku shortcut probes, `--max-budget-usd 0.05` per call). Phases A4, D
+and E cost **$0** — no backend, no GPU, no paid call. Consistent with the 767 §R.6 measured envelope
+(~$2-9 for the same 800-call shape).
+
+### F.2 Bookkeeping order (767 §R): identity re-pinned FIRST
+
+`required_cells[].corpus_signature` / `query_gold_sha256` / `query_count` were re-pinned from the
+committed `scripts/jseval/781-corpora/<member>/structural-certification.v1.json` **before** any
+threshold was touched, and the strict cell shape was preserved exactly
+(`{member, dataset, corpus_signature, query_gold_sha256, query_count, thresholds}` — anything else
+raises "malformed" at `corpus_certify.py:308-312`). `member` carries the SHORT id (`en-legal-clerc`,
+`en-email-enron-raw`) per 767 §R.4-3; verified live — `_active_scientific_policy_cells` matches on it at
+`corpus_certify.py:303` and `_complete_certification_document` re-derives it from the snapshot at
+`corpus_certify.py:823-825`. Provenance stays in the **sidecar**
+`707-corpus-certification-policy.provenance.v1.json` per 767 §R.3 (the policy schema forbids extra
+fields), now carrying a `supersedes` block naming the v1 pins it replaces and a `measurement_sources`
+block naming the exact key path each measured value was read from.
+
+Only four of the eight identity pins actually moved: the **legal** cells changed
+`corpus_signature` (`da8c6f1a…`/`29f08bda…` → `6df70703…`/`5c4682ea…`), while the **enron** cells kept
+their v1 signatures because that stratum was already title-clean (§E.3). Their **thresholds were still
+re-derived from fresh v2 measurements** — no reuse across the certification boundary (§D / 767 §R.4-4).
+
+### F.3 Per-cell measured values (n=50), with the exact source key for each
+
+`nDCG` = fidelity `retrieval_ndcg` (top-level, headline mode `hybrid`, `--embedding`) — the same choice
+767 §R.1 made, confirmed against that section rather than assumed. `sLeak` = fidelity
+`shortcut_leak_rate`. `union` = C1 `projections/staged_recall_accounting.json` →
+`aggregate.leg_union_recall`; `leak` = same file → `aggregate.leak_rate` (the two keys
+`_derive_scientific_verdict` reads at `corpus_certify.py:515-516`). `cb` = `metadata.json` →
+`closed_book_certification.closed_book_accuracy` (read at `corpus_certify.py:478-485`). C1 `nDCG` is the
+projection's `aggregate.final_ndcg`, shown only as the independent cross-check 767 §R.1 used.
+
+| cell | nDCG (fidelity) | C1 nDCG | union | leak | sLeak | cb |
+|---|---|---|---|---|---|---|
+| en-legal-clerc-1k-verbose | 0.3103 | 0.3143 | 0.50 | 0.08 | 0.00 | 0.000 |
+| en-legal-clerc-1k-short-natural | 0.2419 | 0.2305 | 0.54 | 0.16 | 0.00 | 0.000 |
+| en-legal-clerc-10k-verbose | 0.0996 | 0.1262 | 0.16 | 0.02 | 0.00 | 0.000 |
+| en-legal-clerc-10k-short-natural | 0.1105 | 0.1015 | 0.18 | 0.02 | 0.00 | 0.000 |
+| en-email-enron-raw-1k-verbose | 0.6585 | 0.6576 | 0.86 | 0.04 | 0.00 | 0.000 |
+| en-email-enron-raw-1k-short-natural | 0.6122 | 0.6122 | 0.80 | 0.02 | 0.00 | 0.000 |
+| en-email-enron-raw-10k-verbose | 0.4756 | 0.4613 | 0.52 | 0.04 | 0.00 | 0.000 |
+| en-email-enron-raw-10k-short-natural | 0.4701 | 0.5216 | 0.50 | 0.00 | 0.00 | 0.000 |
+
+Closed-book is **0.000 on all eight cells** (§C acceptance met): not one of the 400 questions is
+answerable without retrieval.
+
+### F.4 Derived thresholds (written to policy)
+
+Rule applied verbatim from the committed sidecar (707:760 + the 767 §Q.3 leak-noise override):
+`ndcg_band = [clamp(nDCG − 0.08, 0, 0.85), 0.85]`; `shortcut_leak_rate_max = clamp(sLeak + 0.10, 0, 1)`;
+`union_recall.minimum = clamp(union − 0.10, 0, 1)`; `closed_book.maximum_accuracy = 0.15` fixed;
+`leak_floor.maximum = max(leak + 0.10, 0.20)`. Values rounded to 4 decimals.
+
+| cell | ndcg_band | sLeak_max | union_min | leak_max |
+|---|---|---|---|---|
+| en-legal-clerc-1k-verbose | [0.2303, 0.85] | 0.10 | 0.40 | 0.20 |
+| en-legal-clerc-1k-short-natural | [0.1619, 0.85] | 0.10 | 0.44 | **0.26** |
+| en-legal-clerc-10k-verbose | [0.0196, 0.85] | 0.10 | 0.06 | 0.20 |
+| en-legal-clerc-10k-short-natural | [0.0305, 0.85] | 0.10 | 0.08 | 0.20 |
+| en-email-enron-raw-1k-verbose | [0.5785, 0.85] | 0.10 | 0.76 | 0.20 |
+| en-email-enron-raw-1k-short-natural | [0.5322, 0.85] | 0.10 | 0.70 | 0.20 |
+| en-email-enron-raw-10k-verbose | [0.3956, 0.85] | 0.10 | 0.42 | 0.20 |
+| en-email-enron-raw-10k-short-natural | [0.3901, 0.85] | 0.10 | 0.40 | 0.20 |
+
+`en-legal-clerc-1k-short-natural` is the only cell whose measured `leak_rate` (0.16) exceeds the 0.20
+noise floor, so it is the only cell where `leak_floor.maximum` is measurement-driven (0.26) rather than
+floor-driven. Every measured value sits inside its own derived threshold by construction; this was
+re-checked mechanically against the sidecar (derivation reproduces the policy exactly; measured-inside-
+band asserted per cell) **before** Phase E, so Phase E's green is a confirmation, not the derivation.
+
+**Founder-relevant, carried forward from 767 §R.1:** the two legal-10k cells still produce near-vacuous
+`retrieval_calibration`/`union_recall` bands (band low 0.0196 / 0.0305; union min 0.06 / 0.08).
+Mechanically correct under the measured-derived rule, but those two gates barely constrain anything for
+those cells. Flagging, not deciding — unchanged by the rebuild.
+
+### F.5 v1 → v2 retrieval deltas, and why the leak story does not explain them (§C)
+
+§C requires the deltas to be reported with the leak direction named. The expected direction was a
+**decrease** for legal (removing a gold-only boosted-field feature). What was measured:
+
+| cell | v1 nDCG (767 §R.1) | v2 nDCG | Δ |
+|---|---|---|---|
+| en-legal-clerc-1k-verbose | 0.3261 | 0.3103 | −0.0158 |
+| en-legal-clerc-1k-short-natural | 0.2482 | 0.2419 | −0.0063 |
+| en-legal-clerc-10k-verbose | 0.0625 | 0.0996 | **+0.0371** |
+| en-legal-clerc-10k-short-natural | 0.0784 | 0.1105 | **+0.0321** |
+| en-email-enron-raw-1k-verbose | 0.6576 | 0.6585 | +0.0009 |
+| en-email-enron-raw-1k-short-natural | 0.6122 | 0.6122 | 0.0000 |
+| en-email-enron-raw-10k-verbose | 0.4864 | 0.4756 | −0.0108 |
+| en-email-enron-raw-10k-short-natural | 0.4408 | 0.4701 | +0.0293 |
+
+**The enron rows are a natural control, not a result.** Those four cells are byte-identical between v1
+and v2 (identical `corpus_signature` AND `query_gold_sha256`; §E.3's `assembled_digest` match), so their
+spread — 0.0000 to +0.0293 — is pure run-to-run variance plus whatever engine drift occurred between
+2026-07-22 (`a851aa22`) and 2026-07-27 (`db838ab6`/`adaf7b44`). Every legal delta lies inside that
+±0.03 band.
+
+**Conclusion, stated as the evidence supports it:** closing the title-presence leak produced **no
+retrieval change distinguishable from measurement noise at n=50** — an order of magnitude smaller than
+`_FILLER`'s −0.164 (767 §Q.1). The two legal-10k *increases* are the reason this is not reported as "an
+honest decrease": a leak-removal story predicts decreases, so a rise needs an explanation, and the
+control band supplies one where the leak story cannot. This does **not** weaken the rebuild's rationale
+— the title field was a structurally gold-only feature on a 3.0× boosted lexical field and had to go
+regardless of its measured magnitude; it does mean the rebuild's value is *validity*, not a number.
+Caveat held: the control band conflates run-to-run variance with engine drift across the two dates, so
+it is an upper bound on noise, which is the conservative direction for this argument.
+
+### F.6 Deviations from the runbook, with reasons
+
+1. **Datasets read from `tmp/781-v2-datasets/`, not the repo-root `datasets/`** (runbook B5). Only
+   `corpus-scientific-evidence-build` and `corpus-certify-member` were run here, and both take explicit
+   paths (`--dataset-dir`, `--datasets-dir`); no `jseval run` was involved, so B5's cwd-vs-REPO_ROOT
+   split does not bite. Absolute paths were used throughout, which also leaves the v1-era
+   `datasets/mixed/` that other worktrees depend on untouched (§E.5's persistence lesson).
+2. **Evidence artifacts are not committed.** The 32 Phase-D envelopes live in the worktree's gitignored
+   `tmp/781-evidence/`; their bytes are base64-embedded into the certification documents
+   (`_validate_scientific_evidence`), so the committed certification is self-contained — the same
+   committed-vs-ignored split v1 used.
+3. **Scientific results overwrite `781-corpora/<member>/structural-certification.v1.json`** (rather than
+   landing in a new file) — mirroring what 767 §R committed for v1: the same filename now carries
+   `status: fully-certified`, `fully_certified: true`, the four `scientific_gates: passed`, per-cell
+   embedded gate evidence, and the embedded `scientific_policy` snapshot.
+4. **The runbook's `tests/test_corpus_certify*.py` does not exist.** Certification coverage lives in
+   `tests/test_corpus_governance.py` (+ `test_corpus_inject/schema/leak/invocation/axis/query_variant`).
+   Ran those (235 passed) and then the full `scripts/jseval/tests` suite: **2527 passed, 2 skipped**.
+   **No test pinned the v1 policy cell identities**, so no deliberate pin update was required.
+
+### F.7 What is NOT done
+
+- **Phase F (publication pointer)** — founder decision, and the paid confirmatory campaign with it.
+- **§B.3 de-miracl rebuild** and **§B.4 title-boost re-validation** — separate §B items, untouched here.
+  The `mixed/de-miracl-*` rows stay **LEAKY / not rebuilt** in the search-quality register.
