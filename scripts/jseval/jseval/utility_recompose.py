@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Iterable
 
+from jseval.agent_behavioral import aggregate_behavioral
 from jseval.agent_utility_observations import (
     WITH_TOOL_CONDITIONS,
     all_attempt_tool_call_assertions,
@@ -69,6 +70,15 @@ _NON_SEMANTIC_TOP_LEVEL_FIELDS = frozenset({
     # the same rationale as `denominators` (the numbers the rule produces ARE
     # digested; two records under different rules necessarily differ in those).
     "outcome_rule",
+    # tempdoc 789 Phase 1 item 4: the `behavioral` block is a DESCRIPTIVE projection
+    # of the observations (continuation-survival telemetry). No gate, verdict,
+    # comparability rule or estimand reads it -- it is attached AFTER `claim_verdict`
+    # is computed, so it cannot reach one by construction. Excluded from the digest so
+    # every historical record recomposes byte-stably (the publication builder verifies
+    # `semantic_digest(recomposed) == semantic_digest(stored)`), exactly as the 755
+    # optional-field precedent required. When Phase 2 gives it a DECIDING consumer, it
+    # moves into the digest as a declared schema change -- not silently.
+    "behavioral",
 })
 
 
@@ -757,6 +767,12 @@ def finalize_observation_groups(
     # rule -- excluded from the digest (a constant), present for the reviewer.
     record["outcome_rule"] = dict(OUTCOME_RULE)
     record["claim_verdict"] = evaluate_claim(record, selected_policy)
+    # tempdoc 789 Phase 1 item 4: descriptive behavioral aggregates, attached AFTER the
+    # verdict so no gate can read them, and omitted entirely when no observation carries
+    # a behavioral record (pre-789 evidence composes byte-identically).
+    behavioral = aggregate_behavioral(all_observations)
+    if behavioral:
+        record["behavioral"] = behavioral
     record["semantic_digest"] = semantic_digest(record)
     return record
 

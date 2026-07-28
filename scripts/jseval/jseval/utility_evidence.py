@@ -22,6 +22,11 @@ _OBSERVATION_KEYS = {
     "mcp_tool_names_offered", "observed_mcp_tool_surface_hash",
     "surface_evidence", "mcp_surface_fallback",
     "toolsearch_targets", "tool_call_sequence", "tool_result_digests",
+    # tempdoc 789 Phase 1: derived behavioral telemetry (booleans/counts/class
+    # labels only -- no verbatim answer or result text crosses this boundary) and
+    # the per-turn usage receipt series. Both omitted-when-absent, so pre-789
+    # evidence stays byte-identical (the 757/755 precedent).
+    "behavioral", "turn_receipts",
 }
 _SURFACE_EVIDENCE_KINDS = {"status", "status-retry", "fallback-listing"}
 _SOURCE_KEYS = {
@@ -173,6 +178,78 @@ def _tool_result_digests(value: Any) -> list[dict] | None:
     return digests
 
 
+_BEHAVIORAL_BOOL_KEYS = (
+    "abstained", "fabricated_specific", "format_near_miss", "gold_in_answer",
+    "searched_before_grep", "fallback_after_mcp", "grep_fallback_after_mcp",
+)
+_BEHAVIORAL_TRISTATE_KEYS = ("name_pivot", "hop1_stop")
+_BEHAVIORAL_COUNT_KEYS = ("distinct_queries", "post_search_reads", "delivered_entity_count")
+
+
+def _behavioral(value: Any) -> dict | None:
+    """tempdoc 789 Phase 1: pass through only the declared behavioral fields.
+
+    Like `_tool_result_digests`, this projection is itself part of the leak boundary
+    -- an unexpected key (raw text, an entity name) is dropped, never forwarded. The
+    two delivered-span fields keep their TRI-STATE: `None` means "not derivable for
+    this cell" (a pre-789 log) and must never be coerced to `False`.
+    """
+    if not isinstance(value, dict):
+        return None
+    from jseval.agent_behavioral import SCHEMA as BEHAVIORAL_SCHEMA, WRONG_CLASSES
+
+    wrong_class = value.get("wrong_class")
+    projected: dict = {
+        "schema": BEHAVIORAL_SCHEMA,
+        "wrong_class": wrong_class if wrong_class in WRONG_CLASSES else None,
+    }
+    for key in _BEHAVIORAL_BOOL_KEYS:
+        projected[key] = bool(value.get(key))
+    for key in _BEHAVIORAL_TRISTATE_KEYS:
+        item = value.get(key)
+        projected[key] = None if item is None else bool(item)
+    for key in _BEHAVIORAL_COUNT_KEYS:
+        item = value.get(key)
+        projected[key] = (
+            item if isinstance(item, int) and not isinstance(item, bool) else None)
+    source = value.get("entity_source")
+    projected["entity_source"] = source if source == "delivered-span" else None
+    mix = value.get("tool_mix")
+    projected["tool_mix"] = {
+        str(tool): count
+        for tool, count in sorted((mix or {}).items())
+        if isinstance(count, int) and not isinstance(count, bool)
+    } if isinstance(mix, dict) else {}
+    return projected
+
+
+def _turn_receipts(value: Any) -> list[dict] | None:
+    """tempdoc 789 Phase 1 item 2: the per-turn usage receipt series, numeric-only.
+
+    `usage` is passed through `_numeric_tree` so only numbers survive; `model` and
+    `stop_reason` are short provider labels (already carried elsewhere in the
+    record), never message content.
+    """
+    if not isinstance(value, list):
+        return None
+    receipts: list[dict] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            continue
+        issued = item.get("tool_calls_issued")
+        model = item.get("model")
+        stop_reason = item.get("stop_reason")
+        receipts.append({
+            "i": item.get("i") if isinstance(item.get("i"), int) else index,
+            "model": str(model) if model else None,
+            "stop_reason": str(stop_reason) if stop_reason else None,
+            "usage": _numeric_tree(item.get("usage")) or {},
+            "tool_calls_issued": (
+                issued if isinstance(issued, int) and not isinstance(issued, bool) else None),
+        })
+    return receipts
+
+
 def _surface_evidence(value: Any) -> str | None:
     """tempdoc 755 Track 1: pass through only a declared surface-evidence kind, else null
     (an unknown/garbled kind is dropped to null, the unverified case, never invented)."""
@@ -288,6 +365,14 @@ def sanitize_observation(observation: dict) -> dict:
     # above -- this flag marks them as a partial LOWER BOUND, not exact.
     if observation.get("usage_truncated"):
         sanitized["usage_truncated"] = True
+    # tempdoc 789 Phase 1: emitted ONLY when present, so evidence exported from a
+    # pre-789 log is byte-identical to before this field existed.
+    behavioral = _behavioral(observation.get("behavioral"))
+    if behavioral is not None:
+        sanitized["behavioral"] = behavioral
+    receipts = _turn_receipts(observation.get("turn_receipts"))
+    if receipts:
+        sanitized["turn_receipts"] = receipts
     return sanitized
 
 
@@ -392,5 +477,11 @@ def read_evidence(path: str | Path) -> list[dict]:
             "toolsearch_targets": item.get("toolsearch_targets"),
             "tool_call_sequence": item.get("tool_call_sequence"),
             "tool_result_digests": item.get("tool_result_digests"),
+            # tempdoc 789 Phase 1 round-trip: restore the behavioral record and the
+            # per-turn receipts so an offline recompose from sanitized evidence emits
+            # the same descriptive `behavioral` block a raw-log compose does (the
+            # tempdoc 768 D4 lesson: a write side without a read side is a silent drop).
+            "behavioral": item.get("behavioral"),
+            "turn_receipts": item.get("turn_receipts"),
         })
     return observations

@@ -64,6 +64,7 @@ from claude_agent_sdk import (
     UserMessage,
 )
 
+from jseval.agent_behavioral import delivered_span_record
 from jseval.agent_retrieval_eval import (
     _score_answer,
     build_disallowed_tools,
@@ -444,7 +445,7 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
         return {"attempts": {}, "results": {}, "texts": [], "rmsg": None,
                 "mcp_servers": None, "justsearch_tools": [],
                 "justsearch_tool_surface": [], "surface_evidence": None,
-                "resolved_models": set(), "usage_accum": {}}
+                "resolved_models": set(), "usage_accum": {}, "turn_receipts": []}
 
     async def _one_attempt(condition: str, prompt: str, disallowed: list[str], capture: dict) -> None:
         """Run one SDK session, writing captured objects INCREMENTALLY into the shared
@@ -486,6 +487,24 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                             for _k, _v in _u.items():
                                 if isinstance(_v, (int, float)) and not isinstance(_v, bool):
                                     _acc[_k] = max(_acc.get(_k, 0), _v)
+                        # tempdoc 789 Phase 1 item 2 (per-turn receipts): the burn
+                        # analysis (`tmp/hero-arc-analysis/stats/burn.v1.json`) found NO
+                        # per-turn series is persisted anywhere -- only the terminal
+                        # ResultMessage aggregate -- so no burn curve or budget-matched
+                        # design was derivable. `AssistantMessage.usage` IS a per-message
+                        # receipt (SDK dataclass field), so record one entry per assistant
+                        # turn, stamped with how many tool calls had been issued by then.
+                        # HONEST LIMIT: the SDK exposes NO per-turn USD; `total_cost_usd`
+                        # exists only on the terminal ResultMessage. So this is a per-turn
+                        # TOKEN series plus a terminal cost scalar -- a fabricated per-turn
+                        # cost is not emitted (fail-closed: absent, not invented).
+                        capture["turn_receipts"].append({
+                            "i": len(capture["turn_receipts"]),
+                            "model": getattr(msg, "model", None),
+                            "stop_reason": getattr(msg, "stop_reason", None),
+                            "usage": _u if isinstance(_u, dict) else None,
+                            "tool_calls_issued": len(capture["attempts"]),
+                        })
                         for b in (msg.content or []):
                             if isinstance(b, ToolUseBlock):
                                 capture["attempts"][b.id] = {"tool": b.name, "input": b.input}
@@ -1300,6 +1319,27 @@ def _call_status(tid: str, entry: dict, results: dict, denied: set, disallowed: 
     return "ok"
 
 
+def _target_text(state: TaskState) -> str | None:
+    """The cell's gold answer off the Inspect `Target` (tempdoc 789).
+
+    `Target` is a `Sequence[str]` with a `.text` property; a bare string and an empty
+    target both occur in unit fixtures, so resolve defensively and return `None`
+    rather than a fabricated empty gold."""
+    target = getattr(state, "target", None)
+    if target is None:
+        return None
+    if isinstance(target, str):
+        return target or None
+    text = getattr(target, "text", None)
+    if isinstance(text, str):
+        return text or None
+    try:
+        items = [item for item in target if isinstance(item, str)]
+    except TypeError:
+        return None
+    return items[0] if items else None
+
+
 def _record_cell(state: TaskState, got: dict, condition: str,
                  disallowed: list[str], mcp_config: str | None,
                  declared_mcp_tool_surface_hash: str | None = None,
@@ -1359,6 +1399,29 @@ def _record_cell(state: TaskState, got: dict, condition: str,
         _tool_result_digest_entry(results.get(tid), state.metadata.get("evidence_ids"))
         for tid in attempts
     ]
+
+    # tempdoc 789 Phase 1 item 1 (delivered-span half of the behavioral record).
+    # Computed HERE, before any early return below, because it is the ONE part of the
+    # record that needs raw tool-RESULT text -- which exists only in-process (an Inspect
+    # log persists digests, never content). The rest of the record is derived in the
+    # observation projection, where it is available for historical logs too.
+    # Returns booleans/counts only; no verbatim text crosses this boundary.
+    # A defect here must not VOID a (paid) cell -- the caller's except-handler would
+    # stamp `error` and drop the cell from the estimand -- so a failure is recorded as
+    # a visible reason on a descriptive field instead of destroying the measurement.
+    try:
+        state.metadata["behavioral_delivered"] = delivered_span_record(
+            [(entry.get("input"), (results.get(tid) or {}).get("content"))
+             for tid, entry in attempts.items()],
+            question=state.input_text,
+            answer=getattr(rmsg, "result", None) or "",
+            gold=_target_text(state),
+        )
+    except Exception as e:  # noqa: BLE001 — descriptive telemetry never voids a cell
+        state.metadata["behavioral_delivered"] = {
+            "error": f"{type(e).__name__}: {str(e)[:120]}"}
+    # tempdoc 789 Phase 1 item 2: the per-turn receipt series captured in `_one_attempt`.
+    state.metadata["turn_receipts"] = list(got.get("turn_receipts") or [])
 
     # Offered MCP surface from the SDK's own status (tempdoc 675 finding 2).
     servers = got["mcp_servers"]
