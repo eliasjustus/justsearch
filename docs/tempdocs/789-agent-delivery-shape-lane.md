@@ -476,3 +476,44 @@ signals with real variance (totalHits, top-score, or leg-agreement), which is en
 design work, not a floor constant. The probe completes as F0/F1/F2 (120 measured cells).
 Zero F3 cells were run; F3 spend $0 (three calibration pilots ~$4.5 total across the probe
 are setup, not cells).
+
+## Phase 2 probe RESULTS (2026-07-28, pre-registered analysis; arms F0/F1/F2, 40 B-cells each)
+
+Validity (pre-registered): ONE identical mcp_tool_surface_hash across all three arms
+(202c5221...) - framing confirmed content-only; comparable:true and zero leak-suspect cells
+on every arm; per-arm framing dose verified by MCP smoke before each launch (F0 absence,
+F1/F2 presence); mixed-model guard clean; zero exhaustions in any arm. F3 was dropped by
+Amendment 3 (unestablishable positive control), zero F3 cells run. Probe cell spend ~ $40
+plus ~$5 of calibration pilots - under the pre-registered $90 abort line.
+
+Arm aggregates (n=40 cells: 20 qids x 2 seeds, condition B only):
+
+| arm | accuracy | hop1_stop | abstained | name_pivot(gen.) | fallback_after_mcp |
+|---|---|---|---|---|---|
+| F0 control | 0.275 | 0.350 | 0.375 | 0.850 | 0.850 |
+| F1 continuation | 0.425 | 0.225 | 0.300 | 0.900 | 0.900 |
+| F2 evidence-not-answer | 0.325 | 0.250 | 0.300 | 0.800 | 0.900 |
+
+Question-level paired tests vs F0 (sign-flip permutation, 20k draws, seeded):
+F1: accuracy +0.150 (p=0.24), hop1_stop -0.125 (p=0.27), abstained -0.075 (p=0.56).
+F2: accuracy +0.050 (p=0.69), hop1_stop -0.100 (p=0.35), abstained -0.075 (p=0.56).
+Nothing reaches alpha=0.05 at n=20 questions - as pre-registered, this probe is a
+DIRECTION-FINDER, and every F1/F2 primary moved in the mechanism-predicted direction.
+
+**Decision per the pre-registered rule: F1 and F2 both GRADUATE via clause (b)** (>=2
+behavioral primaries point-improved AND accuracy delta >= 0); nothing is dropped; NO framing
+ships as a default from this probe (naturalistic replication on a natural-question set is
+the hard prerequisite - the 788 S4 Goodhart guard). Context worth recording: F0's 0.275
+replicates the hero campaign's B-arm on this stratum (0.267-0.286), and F1's 0.425 closes
+most of the gap toward the campaign's file-tools baseline (~0.47) - directionally, one
+sentence of continuation framing recovered the bulk of the tool arm's measured deficit.
+
+Caveats (pre-registered + amendments): single synthetic stratum; B-only; 2 seeds;
+F1 tests the generic continuation move, not entity-targeted continuation (Amendment 1 -
+fabricated bridge names are NER-invisible); the generalized name_pivot field is near-ceiling
+(0.80-0.90) and does NOT reproduce the census's hop-1-person pivot semantics on this data -
+hop1_stop carried the discriminating signal instead. Raw run dirs (logs, records, per-arm
+smokes) retained at probe-789/tmp/789-probe-2026-07-28/.
+
+Next steps this licenses: naturalistic replication design (enron-qa) for F1/F2; F3 trigger
+redesign is engine-side design work (Amendment 3), parked.
