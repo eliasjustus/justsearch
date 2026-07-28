@@ -14,6 +14,7 @@ import pytest
 
 from jseval._paths import REPO_ROOT
 from jseval.backend import (
+    EvalModeLlmUnsupportedError,
     _cmdline_matches_data_dir,
     _find_orphan_worker_pid,
     _parse_java_instant,
@@ -327,6 +328,51 @@ class TestStartBackendCleanWipesEverything:
         # Everything wiped; the dir itself remains for the new run.
         assert data_dir.is_dir()
         assert list(data_dir.iterdir()) == []
+
+
+class TestStartBackendEvalModeLlmFailsFast:
+    """Tempdoc 782 §I: `start_backend(llm=True)` is structurally impossible through
+    this entry point -- it boots `:modules:ui:runHeadlessEval`, whose eval contract
+    hard-codes `justsearch.ui.settings.mode=IN_MEMORY`, so the `-Pllm=true` chatEnabled
+    seed is silently discarded and the reconciler never starts llama-server. Before
+    this guard the request burned the whole ~240s inference deadline and died with the
+    generic "inference stayed offline" (twice, mid-campaign)."""
+
+    @patch("jseval.backend.subprocess.Popen")
+    @patch("jseval.backend._wait_for_health", return_value=True)
+    def test_llm_true_raises_before_spawning_anything(self, _health, mock_popen, tmp_path):
+        with pytest.raises(EvalModeLlmUnsupportedError) as excinfo:
+            start_backend(llm=True, data_dir=tmp_path / "data")
+        message = str(excinfo.value)
+        # Names the cause...
+        assert "IN_MEMORY" in message
+        assert "runHeadlessEval" in message
+        # ...and the out-of-band recipe (llama-server on 8081 behind the Head /v1 proxy).
+        assert "8081" in message
+        assert "/v1/models" in message
+        assert "782" in message
+        # Fail FAST: no Gradle process was spawned and no readiness wait happened.
+        mock_popen.assert_not_called()
+
+    @patch("jseval.backend.subprocess.Popen")
+    @patch("jseval.backend._wait_for_health", return_value=True)
+    def test_llm_true_does_not_clean_the_data_dir(self, _health, _popen, tmp_path):
+        # The guard runs BEFORE --clean, so a rejected call cannot destroy an index.
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "keep.txt").write_text("x", encoding="utf-8")
+        with pytest.raises(EvalModeLlmUnsupportedError):
+            start_backend(llm=True, clean=True, data_dir=data_dir)
+        assert (data_dir / "keep.txt").is_file()
+
+    @patch("jseval.backend.subprocess.Popen")
+    @patch("jseval.backend._wait_for_health", return_value=True)
+    def test_llm_false_path_is_untouched(self, _health, mock_popen, tmp_path):
+        # Adverse control: the default path still boots normally, with no -Pllm=true.
+        mock_popen.return_value = MagicMock()
+        info = start_backend(llm=False, data_dir=tmp_path / "data")
+        assert info.proc is mock_popen.return_value
+        assert "-Pllm=true" not in mock_popen.call_args[0][0]
 
 
 class TestStartBackendModelsDirResolution:
