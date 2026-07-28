@@ -39,6 +39,7 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
   private final Tika tika;
   private final StructuredContentExtractor structuredExtractor;
   private final PdfOcrEngine ocrEngine;
+  private final ExtractionFallbackBudget fallbackBudget;
 
   public PolicyDrivenTikaExtractor() {
     this(TikaExtractionPolicy.defaults(), OcrRoutingConfig.disabled());
@@ -54,6 +55,15 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
 
   public PolicyDrivenTikaExtractor(
       TikaExtractionPolicy policy, OcrRoutingConfig ocrConfig, OcrMetricCatalog ocrMetricCatalog) {
+    this(policy, ocrConfig, ocrMetricCatalog, ExtractionFallbackBudget.defaults());
+  }
+
+  public PolicyDrivenTikaExtractor(
+      TikaExtractionPolicy policy,
+      OcrRoutingConfig ocrConfig,
+      OcrMetricCatalog ocrMetricCatalog,
+      ExtractionFallbackBudget fallbackBudget) {
+    this.fallbackBudget = fallbackBudget == null ? ExtractionFallbackBudget.defaults() : fallbackBudget;
     this.policy = policy == null ? TikaExtractionPolicy.defaults() : policy;
     this.ocrConfig = ocrConfig == null ? OcrRoutingConfig.disabled() : ocrConfig;
     this.ocrMetricCatalog = ocrMetricCatalog == null ? OcrMetricCatalog.noop() : ocrMetricCatalog;
@@ -75,6 +85,7 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
 
   public ExtractionArtifact extractArtifact(Path file) throws IOException, ExtractionException {
     Objects.requireNonNull(file, "file");
+    long documentStartedAtNanos = System.nanoTime();
     if (!Files.exists(file)) {
       throw new IOException("File does not exist: " + file);
     }
@@ -120,7 +131,13 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
     }
 
     OcrEvidenceBuilder ocrEvidence = new OcrEvidenceBuilder();
-    OcrAttemptDecision ocrAttempt = evaluateOcrAttempt(file, detectedMime, result.content(), summary);
+    OcrAttemptDecision ocrAttempt =
+        evaluateOcrAttempt(
+            file,
+            detectedMime,
+            result.content(),
+            summary,
+            TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - documentStartedAtNanos));
     if (ocrAttempt.skipReason() != null) {
       ocrEvidence.skip(ocrAttempt.skipReason());
     }
@@ -147,10 +164,27 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
   }
 
   private OcrAttemptDecision evaluateOcrAttempt(
-      Path file, String detectedMime, String content, StructuredDocumentSummary summary) {
+      Path file,
+      String detectedMime,
+      String content,
+      StructuredDocumentSummary summary,
+      long elapsedMs) {
     if (!isOcrEligibleFile(file, detectedMime)) {
       log.debug("Skipping OCR for {}: file is not OCR-eligible (mime={})", file.getFileName(), detectedMime);
       return OcrAttemptDecision.skip(null);
+    }
+    // Tempdoc 790: OCR is fallback tier 1 of the dropout chain, so the per-document budget gates
+    // it before any other consideration — a document that already burned its wall-clock in
+    // structured extraction does not also get to start an OCR pass.
+    boolean dropout = ExtractionDropoutPolicy.isDropout(content);
+    if (!fallbackBudget.permitsTierNow(1, elapsedMs)) {
+      ocrMetricCatalog.skippedTotal.increment(OcrTags.OcrSkipTags.of(OcrSkipReason.BUDGET));
+      log.debug(
+          "Skipping OCR for {}: per-document fallback budget spent (elapsedMs={}, budget={})",
+          file.getFileName(),
+          elapsedMs,
+          fallbackBudget);
+      return OcrAttemptDecision.skip(OcrSkipReason.BUDGET);
     }
     int pageCount = summary == null ? 0 : summary.pageCount();
     if (ocrConfig.maxPages() != null && ocrConfig.maxPages() > 0 && pageCount > ocrConfig.maxPages()) {
@@ -164,7 +198,13 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
       return OcrAttemptDecision.skip(OcrSkipReason.SIZE);
     }
     boolean hasMissingReadablePages = summary != null && summary.pagesMissingReadableText() > 0;
-    if (!hasMissingReadablePages && TextQualityAnalyzer.computeQualityScore(content, pageCount) >= 0.3d) {
+    // A dropout is never "textually sufficient", whatever the quality score says. The score
+    // happens to be 0.0 for empty text today, so this is belt-and-braces — but it makes the
+    // dropout→fallback invariant explicit at the gate that decides it, instead of leaving it
+    // implied by a threshold in a different class (wrong-gate discipline).
+    if (!dropout
+        && !hasMissingReadablePages
+        && TextQualityAnalyzer.computeQualityScore(content, pageCount) >= 0.3d) {
       log.debug("Skipping OCR for {}: structured text quality is already sufficient", file.getFileName());
       return OcrAttemptDecision.skip(OcrSkipReason.TEXTUAL);
     }
@@ -192,7 +232,16 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
 
   boolean shouldAttemptOcrForTesting(
       Path file, String detectedMime, String content, StructuredDocumentSummary summary) {
-    return evaluateOcrAttempt(file, detectedMime, content, summary).shouldAttempt();
+    return evaluateOcrAttempt(file, detectedMime, content, summary, 0L).shouldAttempt();
+  }
+
+  OcrAttemptDecision evaluateOcrAttemptForTesting(
+      Path file,
+      String detectedMime,
+      String content,
+      StructuredDocumentSummary summary,
+      long elapsedMs) {
+    return evaluateOcrAttempt(file, detectedMime, content, summary, elapsedMs);
   }
 
   private boolean imageWithinConfiguredGuards(Path file, String detectedMime) {
@@ -493,7 +542,7 @@ public final class PolicyDrivenTikaExtractor implements ContentExtractorProvider
 
   private record ImageSize(int width, int height) {}
 
-  private record OcrAttemptDecision(boolean shouldAttempt, OcrSkipReason skipReason) {
+  record OcrAttemptDecision(boolean shouldAttempt, OcrSkipReason skipReason) {
     static OcrAttemptDecision yes() {
       return new OcrAttemptDecision(true, null);
     }

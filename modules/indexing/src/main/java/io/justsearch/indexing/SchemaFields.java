@@ -190,6 +190,14 @@ public final class SchemaFields {
   public static final String EXTRACTION_METHOD_TIKA_STRUCTURED = "TIKA_STRUCTURED";
   public static final String EXTRACTION_METHOD_OCR_TIKA = "OCR_TIKA";
   public static final String EXTRACTION_METHOD_VDU = "VDU";
+
+  /**
+   * No extraction tier produced usable text for this document (tempdoc 790). The document is still
+   * indexed — with its metadata, its path, and whatever the last tier returned — but the content is
+   * an acknowledged hole rather than a silently empty "successful" extraction. Paired with {@code
+   * IngestionReasonCodes.EXTRACTION_DROPOUT_UNRECOVERED} in {@link #EXTRACTION_REASON_CODE}.
+   */
+  public static final String EXTRACTION_METHOD_NONE = "NONE";
   /** Numeric quality score (0.0-1.0) of the extracted text. */
   public static final String EXTRACTION_QUALITY_SCORE = "extraction_quality_score";
   /** Compact JSON explaining the OCR/VDU routing decision for this document. */
