@@ -292,13 +292,17 @@ def test_pointer_accept_current_supersede_and_clear_transitions(tmp_path, monkey
     assert cleared["previous"]["publication_id"] == "accepted-two"
 
 
-def test_checked_in_no_result_pointer_matches_schema():
+def test_checked_in_pointer_matches_schema_and_selects_accepted_result():
+    # Reality flipped 2026-07-28: the first accepted publication (hero campaign,
+    # founder-authorized) is selected. The pointer must still schema-validate,
+    # and must select that publication rather than the historical null state.
     jsonschema = pytest.importorskip("jsonschema")
     root = Path(__file__).parents[1]
     pointer = json.loads((root / "public-agent-utility" / "current.v1.json").read_text())
     schema = json.loads((root / "agent-utility-publication-pointer.v1.schema.json").read_text())
     jsonschema.validate(pointer, schema)
-    assert pointer["current"] is None
+    assert pointer["current"] is not None
+    assert pointer["current"]["publication_id"] == "agent-utility-hero-2026-07-28"
 
 
 def test_initial_null_pointer_cannot_be_misrendered_as_withdrawn(tmp_path):
