@@ -42,6 +42,50 @@ _WORKER_LOG_REL = Path("logs") / "worker.log"
 _LOCK_PID_SKEW_SEC = 120.0
 _WORKER_LOG_TAIL_LINES = 50
 
+# Tempdoc 782 §I: `llm=True` cannot work through this entry point, and used to
+# discover that only after burning the full inference deadline (~240s) and failing
+# with the generic "inference stayed offline". The chain, verified at the source:
+#
+#   `_boot_and_wait` always launches `:modules:ui:runHeadlessEval`, whose
+#   `applyHeadlessEvalContract()` HARD-CODES `justsearch.ui.settings.mode=IN_MEMORY`
+#   (`modules/ui/build.gradle.kts:2151`, not overridable by caller env) ->
+#   `UiSettingsStore.save()` is a silent no-op and `load()` always returns fresh
+#   defaults in that mode (`UiSettingsStore.java:43-68`) -> `-Pllm=true` only sets
+#   `JUSTSEARCH_AI_AUTOSTART_ENABLED` (`build.gradle.kts:2200-2205`), which seeds
+#   desired state via `InferenceWiring.seedAutostartSpec` ->
+#   `RuntimeSpecStore.seedAutostartIfUnset()` -> `setChatEnabled(true)` -> the
+#   no-op save. `RuntimeReconciler` then reads `chatEnabled` back as unset and
+#   never converges the engine UP; the REST equivalent returns
+#   `409 SETTINGS_READ_ONLY` (`SettingsController.java:108`).
+#
+# So this is a deterministic dead end, not a flake: fail CLOSED at the call, with
+# the recipe the 782 campaign actually shipped on.
+_EVAL_MODE_LLM_ERROR = (
+    "start_backend(llm=True) cannot bring inference up: this entry point boots "
+    "`:modules:ui:runHeadlessEval`, whose eval contract pins "
+    "justsearch.ui.settings.mode=IN_MEMORY (read-only settings). -Pllm=true only "
+    "seeds chatEnabled through RuntimeSpecStore, that write is silently discarded "
+    "in IN_MEMORY mode, and RuntimeReconciler therefore never starts llama-server "
+    "(the REST equivalent is 409 SETTINGS_READ_ONLY). Waiting for readiness would "
+    "always end in 'inference stayed offline'.\n"
+    "Use the out-of-band recipe instead (tempdoc 782 §I; "
+    "scripts/jseval/782-run-2026-07-28-hero/incident-ledger.md):\n"
+    "  1. start_backend(..., llm=False) as usual;\n"
+    "  2. run llama-server yourself on the configured port 8081, mirroring "
+    "LlamaServerOps.startLlamaServer: "
+    "`llama-server --jinja --host 127.0.0.1 --metrics --port 8081 -c 4096 -ngl 99 "
+    "-m <model.gguf>`;\n"
+    "  3. reach it through the Head's unconditional /v1 proxy "
+    "(OpenAiCompatController.proxy has no engine-mode gate), i.e. "
+    "http://127.0.0.1:<api-port>/v1/chat/completions, and assert readiness on "
+    "/v1/models before use (the serve-judge pattern)."
+)
+
+
+class EvalModeLlmUnsupportedError(RuntimeError):
+    """Raised by :func:`start_backend` for the structurally impossible ``llm=True``
+    request under the eval-mode contract (tempdoc 782 §I)."""
+
 
 @dataclasses.dataclass
 class BackendInfo:
@@ -95,7 +139,14 @@ def start_backend(
     ``dataset_name`` (when known) are the corpus AXIS: they resolve through the one
     shared ``index_identity.resolve_corpus_axis`` so this adopter and the warm
     publisher bind identical corpus components (751 P.5 finding 2).
+
+    ``llm=True`` raises :class:`EvalModeLlmUnsupportedError` immediately -- the eval
+    contract this function boots under makes engine autostart structurally
+    impossible (see :data:`_EVAL_MODE_LLM_ERROR` for the verified chain and the
+    out-of-band recipe). ``llm=False`` (the default) is untouched.
     """
+    if llm:
+        raise EvalModeLlmUnsupportedError(_EVAL_MODE_LLM_ERROR)
     if health_timeout_sec is None:
         raw_timeout = os.environ.get("JSEVAL_HEALTH_TIMEOUT_SEC", "")
         try:
@@ -212,6 +263,10 @@ def _boot_and_wait(
         "--quiet",
     ]
     # 369: Pass -Pllm=true so Gradle enables autostart + longer health timeout.
+    # Unreachable from `start_backend` since tempdoc 782 §I -- it fails closed on
+    # `llm=True` (see `_EVAL_MODE_LLM_ERROR`) because the eval contract's read-only
+    # settings store makes autostart structurally impossible. Kept intact so the
+    # boot block stays correct for a caller that does not carry that contract.
     if llm:
         cmd.append("-Pllm=true")
 
