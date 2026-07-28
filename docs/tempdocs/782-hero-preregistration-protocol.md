@@ -134,7 +134,7 @@ frozen qid selection this freeze commit materializes.
   stratum, run on the campaign day against the live backend. **The frozen part is the derivation
   rule, not the value:**
   - `concurrency` — taken from the calibration file's `concurrency` key, which `utility-run` reads
-    and overrides the CLI flag with (`commands/utility.py:355`). Calibration is invoked at the
+    and overrides the CLI flag with (`commands/utility.py:358`). Calibration is invoked at the
     campaign's target concurrency (`--concurrency 6`, 624's value; the calibration pilot runs *at*
     it so the estimate is not a single-threaded extrapolation).
   - `max_budget` — `ceil2(1.6 × p95_per_cell_cost_usd_at_sonnet)` from the same calibration, floored
