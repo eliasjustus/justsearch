@@ -85,6 +85,55 @@
       "type": ["array", "null"],
       "items": {"type": "string", "pattern": "^mcp__justsearch__[A-Za-z0-9_]+$"}
     },
+    "behavioral": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["schema", "wrong_class"],
+      "properties": {
+        "schema": {"const": "agent-behavioral.v1"},
+        "wrong_class": {
+          "enum": [
+            "harness_error", "abstained", "format_near_miss", "wrong_value",
+            "fabricated_specific", null
+          ],
+          "$comment": "null for a CORRECT cell -- the taxonomy classifies wrongness only."
+        },
+        "abstained": {"type": "boolean"},
+        "fabricated_specific": {"type": "boolean"},
+        "format_near_miss": {"type": "boolean"},
+        "gold_in_answer": {"type": "boolean"},
+        "searched_before_grep": {"type": "boolean"},
+        "fallback_after_mcp": {"type": "boolean"},
+        "grep_fallback_after_mcp": {"type": "boolean"},
+        "distinct_queries": {"type": ["integer", "null"], "minimum": 0},
+        "post_search_reads": {"type": ["integer", "null"], "minimum": 0},
+        "delivered_entity_count": {"type": ["integer", "null"], "minimum": 0},
+        "name_pivot": {
+          "type": ["boolean", "null"],
+          "$comment": "TRI-STATE. null = not derivable for this cell, NOT 'did not pivot'. The delivered-span entity source needs raw tool-result text, which exists only in-process; every log recorded before tempdoc 789 therefore carries null here and an aggregate must exclude it from its denominator rather than count it as a negative."
+        },
+        "hop1_stop": {"type": ["boolean", "null"], "$comment": "Tri-state, same rationale as name_pivot."},
+        "entity_source": {"enum": ["delivered-span", null]},
+        "tool_mix": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}
+      },
+      "$comment": "tempdoc 789 Phase 1: per-cell behavioral (continuation-survival) telemetry -- the 782 hero census promoted into the standing harness. Derived booleans/counts/class labels ONLY; no verbatim answer or tool-result text crosses this boundary. Optional and emitted only when present, so pre-789 evidence projects byte-identically. DESCRIPTIVE: the composed record's `behavioral` block is excluded from semantic_digest and no gate reads it."
+    },
+    "turn_receipts": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["i", "usage"],
+        "properties": {
+          "i": {"type": "integer", "minimum": 0},
+          "model": {"type": ["string", "null"]},
+          "stop_reason": {"type": ["string", "null"]},
+          "usage": {"type": "object"},
+          "tool_calls_issued": {"type": ["integer", "null"], "minimum": 0}
+        }
+      },
+      "$comment": "tempdoc 789 Phase 1 item 2: one entry per streamed AssistantMessage -- the per-TURN usage receipt series the burn analysis (tmp/hero-arc-analysis/stats/burn.v1.json) found was persisted nowhere. HONEST LIMIT: the SDK exposes no per-turn USD (total_cost_usd exists only on the terminal ResultMessage), so this is a token series plus a terminal cost scalar; a per-turn cost is NOT fabricated. Optional, emitted only when non-empty."
+    },
     "tool_call_sequence": {
       "type": ["array", "null"],
       "items": {
