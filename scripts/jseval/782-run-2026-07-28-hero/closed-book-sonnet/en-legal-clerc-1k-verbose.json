@@ -1,0 +1,10 @@
+{
+ "closed_book_accuracy": 0.0,
+ "n_queries": 50,
+ "n_memorizable": 0,
+ "model": "sonnet",
+ "date": "2026-07-28",
+ "threshold": 0.0,
+ "passed": true,
+ "method": "closed-book-slot-guess"
+}

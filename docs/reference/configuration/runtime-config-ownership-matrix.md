@@ -7,7 +7,7 @@ description: "Canonical YAML/env/sysprop ownership and precedence map."
 
 # Runtime Config Ownership Matrix
 
-Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-07-12.
+Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-07-22.
 
 Precedence note:
 1. `YAML > sysprop > env > default` where a YAML key and env/sysprop fallback both exist.
@@ -38,6 +38,14 @@ Precedence note:
 | index.hybrid.cc_weight_sparse | JUSTSEARCH_HYBRID_CC_WEIGHT_SPARSE | index.hybrid.cc_weight_sparse | HYBRID_CC_WEIGHT_SPARSE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.cc_weight_splade | JUSTSEARCH_HYBRID_CC_WEIGHT_SPLADE | index.hybrid.cc_weight_splade | HYBRID_CC_WEIGHT_SPLADE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.cc_zero_exclude | JUSTSEARCH_HYBRID_CC_ZERO_EXCLUDE | index.hybrid.cc_zero_exclude | HYBRID_CC_ZERO_EXCLUDE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.hybrid.chunk_branch_requires_base_results | JUSTSEARCH_HYBRID_CHUNK_BRANCH_REQUIRES_BASE_RESULTS | index.hybrid.chunk_branch_requires_base_results | HYBRID_CHUNK_BRANCH_REQUIRES_BASE_RESULTS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.hybrid.chunk_cc_weight_dense | JUSTSEARCH_HYBRID_CHUNK_CC_WEIGHT_DENSE | index.hybrid.chunk_cc_weight_dense | HYBRID_CHUNK_CC_WEIGHT_DENSE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.hybrid.chunk_cc_weight_sparse | JUSTSEARCH_HYBRID_CHUNK_CC_WEIGHT_SPARSE | index.hybrid.chunk_cc_weight_sparse | HYBRID_CHUNK_CC_WEIGHT_SPARSE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.hybrid.chunk_cc_weight_splade | JUSTSEARCH_HYBRID_CHUNK_CC_WEIGHT_SPLADE | index.hybrid.chunk_cc_weight_splade | HYBRID_CHUNK_CC_WEIGHT_SPLADE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.hybrid.chunk_cc_zero_exclude | JUSTSEARCH_HYBRID_CHUNK_CC_ZERO_EXCLUDE | index.hybrid.chunk_cc_zero_exclude | HYBRID_CHUNK_CC_ZERO_EXCLUDE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.hybrid.chunk_collapse_limit_multiplier | JUSTSEARCH_HYBRID_CHUNK_COLLAPSE_LIMIT_MULTIPLIER | index.hybrid.chunk_collapse_limit_multiplier | HYBRID_CHUNK_COLLAPSE_LIMIT_MULTIPLIER | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.hybrid.chunk_leg_recall_complete_enabled | JUSTSEARCH_HYBRID_CHUNK_LEG_RECALL_COMPLETE_ENABLED | index.hybrid.chunk_leg_recall_complete_enabled | HYBRID_CHUNK_LEG_RECALL_COMPLETE_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| index.hybrid.chunk_leg_recall_complete_top_n | JUSTSEARCH_HYBRID_CHUNK_LEG_RECALL_COMPLETE_TOP_N | index.hybrid.chunk_leg_recall_complete_top_n | HYBRID_CHUNK_LEG_RECALL_COMPLETE_TOP_N | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | index.hybrid.fusion_strategy | JUSTSEARCH_HYBRID_FUSION_STRATEGY | index.hybrid.fusion_strategy | HYBRID_FUSION_STRATEGY | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | - | JUSTSEARCH_HYBRID_LEG_ARBITRATION_ALPHA_DIVERGE | index.hybrid.leg_arbitration_alpha_diverge | HYBRID_LEG_ARBITRATION_ALPHA_DIVERGE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_HYBRID_LEG_ARBITRATION_BM25_INCOHERENCE_MIN | index.hybrid.leg_arbitration_bm25_incoherence_min | HYBRID_LEG_ARBITRATION_BM25_INCOHERENCE_MIN | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -159,7 +167,7 @@ Precedence note:
 | - | JUSTSEARCH_INDEX_BASE_PATH | justsearch.index.base_path | INDEX_BASE_PATH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_INDEX_COLLECTION | justsearch.index.collection | INDEX_COLLECTION | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_INDEX_PARITY_ALLOW_MISMATCH | justsearch.index.parity.allow_mismatch | INDEX_PARITY_ALLOW_MISMATCH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_INDEX_TRACING_LEVEL | justsearch.index.tracing_level | INDEX_TRACING_LEVEL | modules/indexer-worker + ort-common + worker-core (KnowledgeServer, NativeSessionHandle, EncoderOrtRunSpans — direct EnvRegistry reads) | sysprop > env > default |
+| - | JUSTSEARCH_INDEX_TRACING_LEVEL | justsearch.index.tracing_level | INDEX_TRACING_LEVEL | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | justsearch.indexer.deadlineMs | JUSTSEARCH_INDEXER_DEADLINE_MS | justsearch.indexer.deadlineMs | INDEXER_DEADLINE_MS | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | justsearch.indexer.host | JUSTSEARCH_INDEXER_HOST | justsearch.indexer.host | INDEXER_HOST | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | justsearch.indexer.maxInFlightBytes | JUSTSEARCH_INDEXER_MAX_INFLIGHT_BYTES | justsearch.indexer.maxInFlightBytes | INDEXER_MAX_INFLIGHT_BYTES | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
@@ -278,7 +286,7 @@ Precedence note:
 | - | JUSTSEARCH_UI_AUTOMATION | justsearch.ui.automation.enabled | UI_AUTOMATION_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_UI_AUTOMATION_FORCE_DIAGNOSTICS | justsearch.ui.automation.forceDiagnostics | UI_AUTOMATION_FORCE_DIAGNOSTICS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_UI_EXCLUDE_PATTERNS | justsearch.ui.exclude_patterns | UI_EXCLUDE_PATTERNS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_UI_SETTINGS_MODE | justsearch.ui.settings.mode | UI_SETTINGS_MODE | modules/app-services (UiSettingsStore, direct EnvRegistry read) | sysprop > env > default |
+| - | JUSTSEARCH_UI_SETTINGS_MODE | justsearch.ui.settings.mode | UI_SETTINGS_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_UI_SETTINGS_READONLY | justsearch.ui.settings.readOnly | UI_SETTINGS_READONLY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_VDU_QUALITY_THRESHOLD | justsearch.vdu.quality_threshold | VDU_QUALITY_THRESHOLD | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_VLM_MODEL | justsearch.vlm.model | VLM_MODEL | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -304,6 +312,14 @@ Precedence note:
 | search.corrections.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.corrections.max_edit_distance | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.corrections.zero_hit_retry_enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
+| search.evidence_preview.enabled | JUSTSEARCH_SEARCH_EVIDENCE_PREVIEW_ENABLED | search.evidence_preview.enabled | SEARCH_EVIDENCE_PREVIEW_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| search.evidence_preview.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
+| search.evidence_span.enabled | JUSTSEARCH_SEARCH_EVIDENCE_SPAN_ENABLED | search.evidence_span.enabled | SEARCH_EVIDENCE_SPAN_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| search.evidence_span.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
+| search.evidence_span.entity_signal | JUSTSEARCH_SEARCH_EVIDENCE_SPAN_ENTITY_SIGNAL | search.evidence_span.entity_signal | SEARCH_EVIDENCE_SPAN_ENTITY_SIGNAL | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| search.evidence_span.entity_signal | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
+| - | JUSTSEARCH_SEARCH_MCP_DELIVERY_BUDGET_BYTES | search.mcp_delivery.budget_bytes | SEARCH_MCP_DELIVERY_BUDGET_BYTES | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| search.mcp_delivery.budget_bytes | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | worker.limits.max_batch_size | JUSTSEARCH_WORKER_MAX_BATCH_SIZE | worker.limits.max_batch_size | WORKER_MAX_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_content_length | JUSTSEARCH_WORKER_MAX_CONTENT_LENGTH | worker.limits.max_content_length | WORKER_MAX_CONTENT_LENGTH | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_file_size | JUSTSEARCH_WORKER_MAX_FILE_SIZE | worker.limits.max_file_size | WORKER_MAX_FILE_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |

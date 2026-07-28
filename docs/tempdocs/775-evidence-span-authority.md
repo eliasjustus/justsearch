@@ -305,3 +305,254 @@ unification pass is therefore UNBLOCKED and becomes the carrier: one PR =
 unification (preview lever consumes EvidenceSpan; RAG conformance; governor)
 + both default flips + baseline re-pins + the pub-cme flake-fix ride-along.
 Sequenced next among engineering lanes.
+
+## §I. Default-flip carrier + unification-pass status (2026-07-22)
+
+**Shipped in this pass (the founder-authorized default flip — F-041 register
+FLIP DECISION / 766 §F pre-hero surface work):** both evidence flags flipped
+default-ON in one cohort bump.
+
+- `search.evidence_preview.enabled` false→**true** and
+  `search.evidence_span.enabled` false→**true**, at both declaration sites:
+  `ResolvedConfigBuilder.contributeYamlSearch` (`putDefault`) and
+  `ResolvedConfigBuilder.buildSearch` (the `resolveBoolean` fallback). No YAML
+  resource pins either key (grep clean), and production wires a real config
+  supplier (`SearchOrchestrator:92` → `lifecycle::resolvedConfig`), so the
+  `putDefault` is the effective production default — the flip takes effect
+  end-to-end (Head builds the snapshot; the Worker reads both keys from it).
+- Stale "default false / byte-equivalent-default" prose swept in
+  `ResolvedConfig.Search` javadoc/field comments,
+  `docs/reference/configuration/environment-variables.md`, the
+  `SearchResponseBuilder` null-supplier comment, and
+  `SearchResponseBuilderEvidencePreviewTest`'s class doc (its cases set the flag
+  explicitly, so the assertions are default-independent and needed no logic
+  change).
+- **Test pins:** the only value that read the old defaults through a *tested*
+  path is `SearchResponseBuilderEvidencePreviewTest` (parameterized on the flag
+  explicitly — robust). `SearchPlannerApprovalCorpusTest.newPlanner` hardcodes
+  `evidencePreviewEnabled=false, evidenceSpanEnabled=false` in a fixture, but
+  `SearchPlanner` never reads either field (they are `SearchResponseBuilder`
+  concerns) — inert fixture slots, left unchanged to keep the diff scoped.
+  `ExcerptRegionDefaultsByteEquivalenceTest` calls
+  `HighlightingOps.computeExcerptRegions` directly (flag-independent) — unaffected.
+
+**Rationale the flip is safe on measured evidence, not assertion:** each lever
+is individually measured — `evidence_preview` ON = +15% legal / +5.9% enron
+(F-041, register rows at legal-clerc/enron-qa), `evidence_span` ON = 0→100%
+buried-entity carriage with byte-identical ranking (§F). Neither measurement
+touched the CE-input / RAG / governor paths, so flipping both to default-ON
+ships two independently-measured-good levers without those unmeasured changes.
+
+**Deferred from this pass (unification steps 2-3), with primary-source blockers
+— these need the eval "baseline re-pins" the founder decision itself commits to,
+which cannot run in a code-only, in-turn worker pass:**
+
+1. **Preview→span CE-input unification (§E step 3 "CE scores EvidenceSpan.text").**
+   There is no byte-preserving form: `content_preview` (whole winning chunk,
+   `capEvidencePreview`, ≤4096) and the excerpt window (`EvidenceSpanSelector`,
+   answer-bearing) are *distinct-size envelopes* — §E's own AHA clause keeps
+   distinct consumer envelopes distinct. The Head CE already windows
+   `content_preview` to a query-focused snippet (`SearchResultMapper.extractQueryFocusedSnippet`,
+   `SearchResultMapper.java:183`, len `RERANK_SNIPPET_LENGTH`) before scoring, so
+   swapping its `docText` to the narrow span is a real quality change to the exact
+   configuration F-041 measured (+15%). Must be A/B-measured before landing
+   default-ON. `capEvidencePreview` is a size cap, not a competing *selection*, so
+   there is no large parallel-selection orphan to delete under the current
+   arrangement — for chunk hits the span already selects *within* the winning
+   chunk (§G's stated unification), and both levers already read the one winning
+   chunk.
+2. **RAG/ContextCitation conformance (§E step 2).** Separate worker surface
+   (`RagContextOps.excerptTextFor`/`clampExcerptToWordBoundary`,
+   `RagContextOps.java`, minting `DocumentService.ContextCitation`). Acceptance
+   ("citation excerpt carries the entity; no re-window") is a live-verification
+   claim, and it changes RAG answer citations — quality-affecting, eval-gated.
+3. **Delivery governor (§E "deterministic degradation at the cap"; §C acceptance).**
+   §E flags the governor budget constant (≈46 KB) as **unsettled item (c):
+   "pending a production-tool delivered-size measurement"** (771 §E item-4: dev
+   MCP previews didn't truncate at limit 30), and §C's acceptance requires a live
+   "limit 30 on legal → result-count reduction + notice, never mid-payload"
+   delivery test. The mechanism is implementable on the `McpEvidenceProjection` /
+   `McpToolSurface` delivery path (drop whole tail results, emit an explicit
+   notice replacing the neither-tier loss notice), but landing it to spec needs
+   the live delivered-size measurement + integration with 770's existing
+   truncation cap (not a fork) — neither available in a code-only in-turn pass.
+
+**Cohort-bump coupling (surfaced for the orchestrator/founder):** the founder
+decision wanted the flip executed *together with* the unification pass in one
+cohort bump. This pass ships the flip alone (the unification is eval-gated per
+above), so if the unification later lands eval-ready it is a *second* cohort
+bump. The orchestrator should decide whether to hold this flip branch until the
+unification is eval-ready (one bump) or ship the flip now (accepting a later
+second bump). Register baseline re-pins (the F-041 rows' "default-off flag"
+annotations) are left to the orchestrator's eval pass — updating them here with
+unmeasured "flipped" claims would be premature.
+
+
+### §I.1 Baseline re-pins at flips-ON defaults (2026-07-22, orchestrator eval pass)
+
+**Coupling resolved:** ship the flip now. §E designed steps 2-3 + governor as
+independently-measured migration steps (each carries its own `Measure:` clause,
+and the governor budget is §E-unsettled (c) pending a live measurement), so
+holding the approved product flip hostage to those open questions inverts the
+decision's intent. The remaining §E steps land later as measure-then-land lanes;
+if one changes agent-surface-visible shape it sequences with the next
+TOOL_SURFACE_VERSION bump.
+
+**Re-pin campaign** — 5 corpora, hybrid at shipped defaults, git `be7fef6b`
+(this branch), GPU CE confirmed (see ORT-pack note below), full enrichment
+(`--pipeline`), fresh `--clean` builds; register ablation rows added under each
+corpus (`src: 775 §I`):
+
+| corpus | 715-era pin (hybrid) | flips-ON (be7fef6b) | delta |
+|---|---|---|---|
+| mixed/legal-clerc-200 | 0.5557–0.5609 (711/774 defaults band) | **0.6362** | **+~14% vs defaults band**; reproduces the F-041 flag-on 0.6388 within noise |
+| mixed/enron-qa | 0.7445 (774 §K.2 OFF arm) | **0.7845** | **+5.4%**; reproduces F-041 flag-on 0.7882 within noise |
+| beir/scifact | 0.758 (580) | 0.7604 | flat (control: short docs, preview flip is a no-op) |
+| mixed/miracl-de-2k | 0.852 (666, post-regen) | 0.8591 | flat/+0.8% (within cross-run band) |
+| mixed/miracl-fr-2k | 0.866 (666, post-regen) | 0.8726 | flat/+0.8% (within cross-run band) |
+
+The gain pattern matches the F-041 mechanism exactly: material gains only where
+long documents made the CE score doc-heads (legal, email); flat on short-doc
+and factoid corpora. **Attribution caveat:** deltas vs the *715 release
+scorecard* additionally include #286's CE `DOCS_TOO_LONG` gate fix (default
+16000→0), which landed after the 715 rebaseline; the flag-on/flag-off rows from
+774 §K.2 at `5f45022b` are the controlled comparison, and this campaign's
+numbers reproduce their ON arms at defaults.
+
+**Not updated here:** the public Release Scorecard (generated from
+`release.v1.json`, 623 pipeline — founder-gated; decision 3 defers public
+numbers pre-hero). This section + the register ablation rows are the internal
+re-pin.
+
+**ORT-pack incident (fixed machine-locally, observation logged):** the first
+runs silently realized the reranker on CPU — 772 §J's new pack-completeness
+check refuses the dev machine's pre-772 `tmp/ort-variant-test/cuda-12.4-v1.24.3`
+layout (providers-only). Completed the pack (core `onnxruntime.dll` +
+`onnxruntime4j_jni.dll` from the upstream 1.24.3 jar + `ort-native-version.txt`)
+before any counted run; all five re-pin runs show GPU-band CE p50 (143–190 ms).
+
+*Process note (P-C inline exception): the register/tempdoc edits of this pass
+were done in the main loop — the numbers and row formats were already in
+orchestrator context, putting the pass below the delegation break-even.*
+
+## §J. Delivery governor implemented (2026-07-22)
+
+The §E "Governor (deterministic degradation at the cap)" / §C acceptance item 2
+is now implemented — the last of §I's three deferred unification-pass items to
+land as a code-only pass, because §E-unsettled (c) (the budget constant) was
+settled by a live measurement (below).
+
+**Settled input (orchestrator live measurement 2026-07-22, artifacts
+`tmp/analysis-785/governor-sizes*.json`).** Production `justsearch_search` on a
+legal corpus (198 CLERC docs, fully enriched, defaults):
+- `limit:30`, default detail → serialized result JSON p50 29.1 KB, max 30.8 KB —
+  UNDER the cliff (770's economy pass works; no governor action).
+- `limit:30, detail:true` → **p50 56.9 KB, max 62.4 KB; 11/12 queries over
+  46,600 bytes, 10/12 over 52,800** — sails past the characterized client
+  truncation band (770 §E.3: 46.6–52.8 k, fixed 2,322-char notice, neither
+  content tier delivered) with NO notice. This is the cell the governor fixes,
+  and it settles §E-unsettled (c).
+
+**Budget constant + config key.** `search.mcp_delivery.budget_bytes`, default
+**45000** (`ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES`) — a margin
+under the lowest characterized cliff (46,617). `0` disables the governor (escape
+hatch). Wired through the same config machinery as the evidence flags: `ConfigKey`
++ `EnvRegistry` (`JUSTSEARCH_SEARCH_MCP_DELIVERY_BUDGET_BYTES`) +
+`ResolvedConfigBuilder` (`putYamlIntFromNode` + `putDefault` + `resolveInt` in
+`buildSearch`) + `ResolvedConfig.Search.mcpDeliveryBudgetBytes`. Documented in
+`docs/reference/configuration/environment-variables.md`; the generated
+`runtime-config-ownership-matrix.md` was regenerated (it had also accumulated the
+pre-existing evidence_span/evidence_preview/chunk_* drift — swept in the regen).
+
+**Governed quantity = the WHOLE tool result (live-verify correction, 2026-07-22).**
+The first cut budgeted only `structuredContent`, but the 770 §E.3 client truncation
+cliff operates on the ENTIRE delivered tool result — `content[].text` (the
+human-readable block) + `structuredContent` + envelope keys. Live verification at
+the failing cell FAILED the bar: 4/12 responses still exceeded 45,000 bytes on the
+wire (max 52,260) even though every response carried the notice — the worst
+decomposed as `structuredContent`=35,376 B (under budget → the loop stopped) +
+`content[0].text`=16,339 B, total 52,260 B. Budgeting the structured tier alone
+under-counts by the text block. **Fix:** the governor now governs the full result
+via a `ResultView` that re-renders BOTH tiers (text + structuredContent) from the
+surviving results at each step and measures the whole result; the text block, being
+a rendering of the same results, shrinks with the structured tier so they never
+diverge. "Strip provenance" = re-render with `includeProvenance=false` (the
+searchEvidence `detail` gate); "drop a tail result" = re-render with one fewer hit.
+
+**Degradation order (§E, verbatim).** Head-side (it reads the already-returned
+response objects via the view, never Lucene/Worker — Hard Invariant #1). While the
+serialized FULL result exceeds the budget it degrades in order: **(a) strip numeric
+provenance first** — the per-hit `trace` + `legScores` block, the `detail`-gated
+tier 770 measured at 19.9% of the delivered search payload and carrying no document
+content; **(b) then drop WHOLE tail results**, lowest-ranked-first, one at a time,
+never below one result and never truncating a result or a span mid-way (a single
+oversized result is delivered whole with the notice, not split — the
+"never mid-payload/mid-span" guarantee is by construction); **(c) emit an explicit
+notice** — a machine-readable `governor` object in `structuredContent`
+(`budgetBytes`, `originalResultCount`, `deliveredResultCount`, `resultsDropped`,
+`provenanceStripped`, a human `notice` string) replacing the client-side 2,322-char
+neither-tier loss. Deterministic: same inputs → same size decisions → byte-stable
+governed output (rank-ordered tail drop + `LinkedHashMap` key order + one
+serializer).
+
+**Implementation (`file:line`).**
+- Governor — `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpDeliveryGovernor.java`
+  (`govern(totalResults, detailRequested, budgetBytes, mapper, ResultView)`; the
+  `ResultView` re-renders the full result for a `(keepResults, includeProvenance)`
+  pair).
+- Wiring — `McpToolSurface.callSearch` builds the `ResultView` (each render:
+  `truncateResults` → `buildSearchContent` → `renderSearchText` +
+  `McpEvidenceProjection.searchEvidence`) and calls `govern(...)`;
+  `McpToolSurface.truncateResults` yields a top-`keep` copy of the response;
+  budget resolved via `McpToolSurface.resolveDeliveryBudgetBytes()` (reads
+  `ConfigStore.globalOrNull()`, defaults to the constant when the store is not yet
+  initialized — always safe to call).
+- Config — `ConfigKey.SEARCH_MCP_DELIVERY_BUDGET_BYTES`,
+  `EnvRegistry.SEARCH_MCP_DELIVERY_BUDGET_BYTES`, `ResolvedConfigBuilder`
+  (contributeYamlSearch + `buildSearch`), `ResolvedConfig.Search`.
+- Tests — `McpDeliveryGovernorTest` (9 tests): boundary (just-under untouched;
+  just-over → provenance-strip suffices; far-over → tail-drop with correct count;
+  single-oversized floor never-split), 0-disables, byte-stable determinism, notice
+  shape, **the live-composition regression** (`structuredUnderButFullOverStillDegrades`
+  — structuredContent under budget but a fat text block puts the full result over →
+  the governor must keep dropping tails; a structured-only budget would have wrongly
+  declared success), and the §C integration through `McpToolSurface.callSearch` at
+  `detail:true limit:30` asserting the delivered FULL result (text + structuredContent
+  + envelope) ≤ 45,000, result-count reduction + notice, every delivered excerpt
+  intact. Extends the 770 golden/totality guards (`McpEvidenceProjectionTest`,
+  `McpTierEquivalenceGoldenTest` are unaffected — the governor is a no-op under
+  budget, so the text-tier goldens and the projection-shape totality guards stay
+  byte-identical).
+
+**Verification done.** `spotlessApply` clean; `./gradlew.bat build -x test` GREEN
+(PMD/spotbugs incl.); full `./gradlew.bat test` GREEN; `McpDeliveryGovernorTest`
+9/9; runtime-config-matrix verify GREEN post-regen.
+
+**Handoff — LIVE re-verification is the orchestrator's step.** This pass is
+unit/integration-verified: the integration test now asserts the delivered FULL
+result ≤ budget (the exact quantity the live measurement showed over the cliff).
+The orchestrator re-verifies against this commit at the failing cell —
+`justsearch_search detail:true limit:30` on the legal CLERC corpus through the real
+MCP client, confirming all responses' full wire payload is now ≤ 45,000 with a
+`governor` notice + reduced result set instead of the 770 §E.3 neither-tier loss.
+
+### §J.1 Live verification at the failing cell (2026-07-22, orchestrator)
+
+Two-round live verify on the lane build (`distFrom` dev stack, legal CLERC 199
+docs fully enriched, `justsearch_search detail:true limit:30`, 12 real queries):
+
+- **Round 1 (commit 7f2f5aeb) FAILED:** all 12 carried the notice with
+  provenance stripped, but 4/12 full wire results still exceeded 45 KB (max
+  52,260 B) — the budget counted `structuredContent` only while the
+  `content[0].text` rendering (16,339 B on the worst response) rode the wire
+  uncounted. Exactly the `static-green ≠ live-working` class: 8/8 unit tests
+  green around the wrong measured quantity.
+- **Fix (f8652114):** govern the FULL assembled result (both tiers re-rendered
+  together per degradation step, notice bytes included in the measurement).
+- **Round 2 PASSED:** wire-faithful (compact-serialization) max = 44,935 B,
+  0/12 over budget; tails dropped 0-3 per query (27-30 delivered); notices
+  machine-readable; no mid-result truncation. Artifacts:
+  `tmp/analysis-785/governor-live-{verify,reverify}.json` (session machine).
+
+§C acceptance item 2 is satisfied live. The 771 item-4 defect (neither-tier
+loss past the cliff) is closed at the delivery layer.

@@ -1,0 +1,109 @@
+{
+  "schema": "782-hero-campaign-cells.v1",
+  "_note": "Per-stratum cohort-identity args for the 782 hero campaign, mirroring 624's chain-confirm-v5.bat task-args shape. Every value here is READ FROM a frozen source (tempdoc 782 §E.1/§E.2/§E.8, utility-claim-policy.v3.json, 781 structural certifications) -- nothing is chosen here. The orchestrator fills only `run_dir` and the launch date. Frozen at the 782 freeze commit; a change to any field after the first measured cell voids claim eligibility (782 §E.2 R5).",
+  "protocol": {
+    "tempdoc": "782",
+    "frozen_sections": ["E.1", "E.2", "E.3", "E.4", "E.5", "E.6", "E.8"],
+    "freeze_commit": "see 782 §H",
+    "policy_id": "agent-utility-public-v3",
+    "policy_path": "scripts/jseval/utility-claim-policy.v3.json"
+  },
+  "campaign": {
+    "run_dir_pattern": "scripts/jseval/782-run-<YYYY-MM-DD>-hero",
+    "model": "sonnet",
+    "conditions": "A,B",
+    "seeds": 3,
+    "seed_ids": [0, 1, 2],
+    "max_queries": 20,
+    "concurrency_target": 6,
+    "contamination_class": "private-synthetic",
+    "confidence_tier": "C",
+    "cap_usd": 300,
+    "n_strata": 3,
+    "cells_per_stratum": 120,
+    "cells_total": 360,
+    "paired_observations_per_stratum": 60,
+    "port": 33221,
+    "budget_guard": "scripts/jseval/step2-budget-guard.py",
+    "max_budget_rule": "ceil2(1.6 * p95_per_cell_cost_usd_at_sonnet) from the fresh sonnet calibration; floor $0.50, cap $2.00; over cap = STOP, not raise (782 §E.1)",
+    "env": {
+      "DISABLE_AUTOUPDATER": "1",
+      "PYTHONUTF8": "1",
+      "INSPECT_DISPLAY": "none",
+      "PYTHONPATH": "<worktree>/scripts/jseval",
+      "JSEVAL_HEALTH_TIMEOUT_SEC": "600"
+    }
+  },
+  "strata": [
+    {
+      "order": 1,
+      "name": "enron-1k",
+      "stratum_id": "en-email-enron-raw|mixed/en-email-enron-raw-1k-verbose|1000|verbose|sonnet",
+      "corpus_member": "en-email-enron-raw",
+      "dataset": "mixed/en-email-enron-raw-1k-verbose",
+      "size": 1000,
+      "query_variant": "verbose",
+      "corpus_signature": "3391fc9781c6dafc4881322337558810b739b1a1d55a4eac5e1f035bec18cff7",
+      "query_gold_sha256": "1138c58c809859a5fb8e4dcd6fe54845d67834e474d7d49be7a2144db3584352",
+      "query_count_committed": 50,
+      "qids": ["q0001", "q0002", "q0003", "q0004", "q0005", "q0006", "q0007", "q0008", "q0009", "q0010", "q0011", "q0012", "q0013", "q0014", "q0015", "q0016", "q0017", "q0018", "q0019", "q0020"],
+      "qid_list_sha256": "7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b",
+      "selected_query_sha256": "27aba99517718d0fe1cecab16232d563a6ed8ee11d7ba0bed547c5183a75d065",
+      "corpus_certification": "scripts/jseval/781-corpora/en-email-enron-raw/structural-certification.v1.json",
+      "gold_source_cell": "scripts/jseval/781-corpora/en-email-enron-raw/1000-verbose/fabricated-queries.json"
+    },
+    {
+      "order": 2,
+      "name": "enron-10k",
+      "stratum_id": "en-email-enron-raw|mixed/en-email-enron-raw-10k-verbose|10000|verbose|sonnet",
+      "corpus_member": "en-email-enron-raw",
+      "dataset": "mixed/en-email-enron-raw-10k-verbose",
+      "size": 10000,
+      "query_variant": "verbose",
+      "corpus_signature": "6a80af3b5bdbb59d578eedfd00a4c35815ffcf07450afce2de73d4dd818399cb",
+      "query_gold_sha256": "1138c58c809859a5fb8e4dcd6fe54845d67834e474d7d49be7a2144db3584352",
+      "query_count_committed": 50,
+      "qids": ["q0001", "q0002", "q0003", "q0004", "q0005", "q0006", "q0007", "q0008", "q0009", "q0010", "q0011", "q0012", "q0013", "q0014", "q0015", "q0016", "q0017", "q0018", "q0019", "q0020"],
+      "qid_list_sha256": "7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b",
+      "selected_query_sha256": "27aba99517718d0fe1cecab16232d563a6ed8ee11d7ba0bed547c5183a75d065",
+      "corpus_certification": "scripts/jseval/781-corpora/en-email-enron-raw/structural-certification.v1.json",
+      "gold_source_cell": "scripts/jseval/781-corpora/en-email-enron-raw/10000-verbose/fabricated-queries.json"
+    },
+    {
+      "order": 3,
+      "name": "legal-1k",
+      "stratum_id": "en-legal-clerc|mixed/en-legal-clerc-1k-verbose|1000|verbose|sonnet",
+      "corpus_member": "en-legal-clerc",
+      "dataset": "mixed/en-legal-clerc-1k-verbose",
+      "size": 1000,
+      "query_variant": "verbose",
+      "corpus_signature": "6df707031abcd296773a0bf8c6a7750bb0b8704ce4ab4035105cf88b8df01fae",
+      "query_gold_sha256": "2797469a5f80aa8881553323880cd910dd83b621dabd935e7d577337f0f3f565",
+      "query_count_committed": 50,
+      "qids": ["q0001", "q0002", "q0003", "q0004", "q0005", "q0006", "q0007", "q0008", "q0009", "q0010", "q0011", "q0012", "q0013", "q0014", "q0015", "q0016", "q0017", "q0018", "q0019", "q0020"],
+      "qid_list_sha256": "7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b",
+      "selected_query_sha256": "316f80bb6e0144aad11c8ebddfe660ee1881afde4b6b862d889f0a44fea96cb2",
+      "corpus_certification": "scripts/jseval/781-corpora/en-legal-clerc/structural-certification.v1.json",
+      "gold_source_cell": "scripts/jseval/781-corpora/en-legal-clerc/1000-verbose/fabricated-queries.json"
+    }
+  ],
+  "dataset_roots_searched": [
+    "F:/justsearch-public/tmp/781-v2-datasets/mixed",
+    "F:/justsearch-public/datasets/mixed"
+  ],
+  "known_blockers": [
+    {
+      "id": "BLOCKER-1",
+      "gate": "schema_strata_reported",
+      "status": "CLEARED 2026-07-28 by 782 §E.0 Amendment 1",
+      "detail": "AT FREEZE: v3 known_schemas ['1_hop','2_hop'] with require_all_present:true, but all three hero strata are 100% 1_hop across the full committed 50-query gold set, so no hero record could promote. RESOLVED by narrowing known_schemas to ['1_hop'] — a corpus-description correction; require_all_present stays true and the 1_hop breakdown must still be reported. Thresholds and strata untouched.",
+      "founder_gated": true
+    },
+    {
+      "id": "FINDING-2",
+      "gate": "782 §E.2 P3",
+      "detail": "The committed closed-book measurement is at haiku; P3's pre-launch bar is 0.000 at sonnet. A fresh sonnet closed-book measurement is Step 0b of the campaign plan.",
+      "founder_gated": false
+    }
+  ]
+}

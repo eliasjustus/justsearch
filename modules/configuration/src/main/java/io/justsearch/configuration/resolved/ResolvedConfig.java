@@ -446,9 +446,12 @@ public record ResolvedConfig(
    * @param titleBoost 306: title field boost in DisjunctionMaxQuery (0 to disable)
    * @param entityBoost 326: NER entity field boost in DisjunctionMaxQuery (0 to disable)
    * @param evidenceSpanEnabled 775: enable answer-bearing EvidenceSpan-backed excerpt selection
-   *     (default false — flag-off reproduces the IDF-only delivery excerpt byte-for-byte)
+   *     (default TRUE since the 775 §I flip, 2026-07-22; flag-off reproduces the IDF-only delivery
+   *     excerpt byte-for-byte)
    * @param evidenceSpanEntitySignal 775: the distinguishing-entity signal used by the EvidenceSpan
    *     selector — {@code df_rarity} or {@code ner_membership}
+   * @param mcpDeliveryBudgetBytes 775: the MCP delivery governor's serialized-JSON budget in bytes
+   *     (default {@link Search#DEFAULT_MCP_DELIVERY_BUDGET_BYTES}; 0 disables the governor)
    */
   public record Search(
       String profile,
@@ -459,13 +462,26 @@ public record ResolvedConfig(
       double entityBoost,
       boolean chunkAwareEnabled,
       // Tempdoc 774 Stage 2 — when true, chunk-sourced hits emit the winning chunk's text as
-      // content_preview (evidence-coherent CE input + delivery); default false is byte-equivalent
-      // to today (chunk text is never emitted). §F.1-5/§I.2 Stage-2.
+      // content_preview (evidence-coherent CE input + delivery). Default TRUE since the 775 §I flip
+      // (2026-07-22, founder decision / F-041); flag-off is byte-equivalent to pre-774 (chunk text
+      // is never emitted). §F.1-5.
       boolean evidencePreviewEnabled,
       boolean lambdamartEnabled,
       boolean evidenceSpanEnabled,
       String evidenceSpanEntitySignal,
+      // Tempdoc 775 §E/§C: the MCP delivery governor's serialized-JSON budget in bytes. The assembled
+      // justsearch_search payload is degraded deterministically (numeric provenance first, then whole
+      // tail results, never mid-payload) to fit this budget before delivery — a margin under the
+      // lowest characterized 770 §E.3 client truncation cliff (46,617). 0 disables the governor.
+      int mcpDeliveryBudgetBytes,
       Corrections corrections) {
+
+    /**
+     * Default MCP delivery-governor budget (tempdoc 775 §E, settled by the orchestrator's live
+     * measurement 2026-07-22): 45,000 bytes of serialized result JSON — a margin under the lowest
+     * characterized 770 §E.3 truncation cliff at 46,617 bytes.
+     */
+    public static final int DEFAULT_MCP_DELIVERY_BUDGET_BYTES = 45_000;
 
     /** Spelling/fuzzy correction settings. */
     public record Corrections(

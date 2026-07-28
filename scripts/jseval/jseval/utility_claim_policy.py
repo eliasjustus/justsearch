@@ -1,18 +1,32 @@
 """Versioned, outcome-neutral claim policy evaluation for tempdoc 719.
 
-The ACTIVE policy is ``utility-claim-policy.v1.json`` (``policy_id
-agent-utility-public-v2``); ``evaluate_claim`` reads it via :func:`policy_path` /
+The ACTIVE policy is ``utility-claim-policy.v4.json`` (``policy_id
+agent-utility-public-v4``); ``evaluate_claim`` reads it via :func:`policy_path` /
 :func:`load_policy` and every gate below is defined against it.
 
-tempdoc 768 item 6 adds a v3 DRAFT (``utility-claim-policy.v3-DRAFT.json``),
-accessible via :func:`v3_draft_policy_path` / :func:`load_v3_draft_policy`. The
-draft is **inert**: it is NOT wired to any gate, NOT selected by the evaluator
-(``status: "draft"``), and does NOT change v2's active gate logic. It records the
-schema/strata matrix, the carried-over rate-based surface gate, the
-closed_book-at-hero-tier requirement, and the ITT/per-protocol/completion
-triple-reporting wording constraints that the 766 program is converging on.
-Ratifying it (flipping ``status`` to ``active`` and orphaning v2, 766 §D.3) is a
-FOUNDER action, not an agent one.
+v4 was ratified 2026-07-28 under founder authorization ("firstly i would be up
+for upgrading the rule, but i think we shouldnt rerun today"). It is v3 VERBATIM
+plus ONE additive requirement, ``certified_query_subset``, which makes
+``corpus_certification_complete`` subset-aware: a certification of the full
+committed gold set no longer refuses a run over a pre-registered leading-prefix
+subset of it (782 FREEZE DEFECT #2). ``utility-claim-policy.v3.json`` is retained
+as ``status: "superseded"`` history. Like the v3 gates, the new branch is
+CONDITIONAL -- it fires only when the selected policy declares the requirement,
+so a v1/v2/v3-evaluated record projects a byte-identical verdict.
+
+v3 was ratified 2026-07-28 under founder decision 2 (tempdoc 766 §G), with the
+stratum/dataset ids pinned verbatim from tempdoc 782 §E.1: three sonnet strata
+(enron-1k, enron-10k, legal-1k; legal-10k EXCLUDED), v2's numeric thresholds
+carried over unchanged, plus the closed-book / completion-triple / schema-strata
+machinery that the 768 draft had staged. The previous policy
+``utility-claim-policy.v1.json`` (``agent-utility-public-v2``) is retained as
+``status: "superseded"`` history — it is the byte-source the no-threshold-tuning
+test compares against — and the ``utility-claim-policy.v3-DRAFT.json`` staging
+file is deleted (folded into the ratified file).
+
+The three v3-only requirements are additive and CONDITIONAL: each gate fires only
+when the selected policy declares it, so a record evaluated under a policy without
+them projects byte-identically to before they existed.
 """
 
 from __future__ import annotations
@@ -26,6 +40,21 @@ from jseval.utility_comparison import SEED_FLOOR
 _HEX = frozenset("0123456789abcdef")
 
 SUPPORTED_REQUIREMENTS = frozenset({
+    "source_identity_complete", "clean_source_checkout",
+    "computed_corpus_signature", "corpus_certification", "resolved_provider_model",
+    "captured_search_config", "verified_tool_surface", "verified_exposure_mode",
+    "no_leak_suspect_cells", "contamination_classes",
+    "judge_calibration", "accuracy_delta_interval",
+    "intention_to_treat", "per_protocol_is_secondary",
+    "completion_triple_reported", "closed_book_at_hero_tier",
+    "schema_strata_reported", "certified_query_subset",
+    "per_stratum_promotion",
+})
+
+# The subset every policy document MUST declare (schema `requirements.required`).
+# The three v3-only requirements above are additive and optional, so the
+# superseded v2 document stays schema-valid history.
+MANDATORY_REQUIREMENTS = frozenset({
     "source_identity_complete", "clean_source_checkout",
     "computed_corpus_signature", "corpus_certification", "resolved_provider_model",
     "captured_search_config", "verified_tool_surface", "verified_exposure_mode",
@@ -52,26 +81,45 @@ def _certification_snapshot_valid(value: object) -> bool:
 
 
 def policy_path() -> Path:
-    return Path(__file__).parents[1] / "utility-claim-policy.v1.json"
+    """Path to the ACTIVE claim policy (ratified v4, 2026-07-28)."""
+    return Path(__file__).parents[1] / "utility-claim-policy.v4.json"
 
 
 def load_policy(path: str | Path | None = None) -> dict:
     return json.loads(Path(path or policy_path()).read_text(encoding="utf-8"))
 
 
-def v3_draft_policy_path() -> Path:
-    """Path to the INERT v3 DRAFT policy (tempdoc 768 item 6).
+def superseded_policy_path() -> Path:
+    """Path to the SUPERSEDED v2 policy (``agent-utility-public-v2``).
 
-    The draft is not wired to any gate and not selected by :func:`evaluate_claim`
-    (its ``status`` is ``"draft"``, not ``"active"``). Ratification is a founder
-    action (766 §D.3); see the module docstring.
+    Retained as dated history and as the byte-source the v3 ratification test
+    compares the shared thresholds against, so "thresholds carried over
+    verbatim" stays mechanically enforced rather than asserted in prose. v4
+    carries the same numbers forward, so the chain still terminates here.
     """
-    return Path(__file__).parents[1] / "utility-claim-policy.v3-DRAFT.json"
+    return Path(__file__).parents[1] / "utility-claim-policy.v1.json"
 
 
-def load_v3_draft_policy() -> dict:
-    """Load the inert v3 DRAFT policy document. Read-only; changes no active gate."""
-    return json.loads(v3_draft_policy_path().read_text(encoding="utf-8"))
+def load_superseded_policy() -> dict:
+    """Load the superseded v2 policy document. Read-only; selects no gate."""
+    return json.loads(superseded_policy_path().read_text(encoding="utf-8"))
+
+
+def previous_policy_path() -> Path:
+    """Path to the policy the ACTIVE one directly supersedes (v3).
+
+    Distinct from :func:`superseded_policy_path`, which stays pinned to the v2
+    document because that is the no-threshold-tuning byte source the v3
+    ratification test reads. This one is the immediate predecessor: v4's
+    ratification test compares against it, and the digest re-pin test
+    reconstructs its pre-supersede shape from it.
+    """
+    return Path(__file__).parents[1] / "utility-claim-policy.v3.json"
+
+
+def load_previous_policy() -> dict:
+    """Load the directly-superseded v3 policy document. Selects no gate."""
+    return json.loads(previous_policy_path().read_text(encoding="utf-8"))
 
 
 def canonical_bytes(value: object) -> bytes:
@@ -86,6 +134,25 @@ def canonical_digest(value: object) -> str:
 
 def policy_digest(policy: dict) -> str:
     return canonical_digest(policy)
+
+
+def _measured_cells(measured: object, prefix: str = "") -> list[tuple[str, dict]]:
+    """Every composed comparison cell under ``record["measured"]``, labelled.
+
+    ``compose_utility`` nests ``{dataset: {model: cell}}`` while
+    ``compose_utility_cross_corpus`` nests ``{model: cell}``, and the dataset key
+    is the CANONICAL slug (``beir/fixture``) which is not the ITT stratum's
+    ``corpus`` (``fixture``) -- so a cell is found by its own marker
+    (``primary_arm``, set by ``_compose_cell``), never by joining on a key whose
+    two spellings can silently diverge."""
+    if not isinstance(measured, dict):
+        return []
+    if "primary_arm" in measured:
+        return [(prefix, measured)]
+    found: list[tuple[str, dict]] = []
+    for key, value in measured.items():
+        found.extend(_measured_cells(value, f"{prefix}/{key}" if prefix else str(key)))
+    return found
 
 
 def _cells(record: dict) -> list[dict]:
@@ -117,6 +184,80 @@ def _observed_projection(cell: dict) -> dict:
         "query_count": cell.get("query_count"),
         "seed_ids": sorted(cell.get("seed_ids") or []),
     }
+
+
+def _derived_query_subset_identity(cell: dict) -> str | None:
+    """Canonical qid-list digest of the queries this stratum actually measured.
+
+    Read off ``campaign_identity.expected_cells`` -- already load-bearing for
+    ``itt_strata_derived`` and ``source_identity_complete``, so this is a
+    projection of the record's one selection authority, never a second one.
+    Each entry is ``"<condition>|<seed>|<qid>"`` and the harness mints
+    ``qid = f"q{i}"`` with ``i`` a 0-BASED ordinal into the committed query file
+    truncated in committed order (``agent_utility_inspect.agent_utility_task``:
+    ``Sample(id=f"{c}|q{i}")`` over ``rows[:max_queries]``).
+
+    Returns ``None`` -- never a permissive default -- whenever no identity is
+    derivable: absent/malformed cells, a qid outside ``q<digits>``, or an
+    ordinal set that is not the leading prefix ``{0 .. n-1}`` (the only
+    certification-preserving selection: any other subset would need its own
+    gold file, which would break ``query_gold_sha256``).
+
+    The digest is taken over the canonical 1-based labels ``q0001..q{n:04d}``,
+    byte-identical to the recipe that froze ``qid_list_sha256`` from the gold
+    source pre-launch (``scripts/jseval/782-hero/preflight.py`` lines 44-58),
+    so the gate binds to the PRE-REGISTERED value rather than to a number
+    derived today from the record under judgement.
+    """
+    raw = list((cell.get("campaign_identity") or {}).get("expected_cells") or [])
+    if not raw:
+        return None
+    ordinals: set[int] = set()
+    for value in raw:
+        parts = str(value).split("|", 2)
+        if len(parts) != 3:
+            return None
+        qid = parts[2]
+        digits = qid[1:]
+        if not qid.startswith("q") or not digits or set(digits) - set("0123456789"):
+            return None
+        ordinals.add(int(digits))
+    if sorted(ordinals) != list(range(len(ordinals))):
+        return None
+    labels = [f"q{index + 1:04d}" for index in sorted(ordinals)]
+    return hashlib.sha256(("\n".join(labels) + "\n").encode("utf-8")).hexdigest()
+
+
+def _certified_query_subset_ok(
+    cell: dict, certification: dict, declared: dict[str, str]
+) -> bool:
+    """v4 ``certified_query_subset``: the count comparison, subset-aware.
+
+    A full-count run (``cert.query_count == cell.query_count``) takes the v1/v2/v3
+    branch verbatim, so its verdict is byte-identical. A SUBSET run additionally
+    needs a pre-registered cryptographic subset identity; without one it fails.
+    """
+    certified_count = certification.get("query_count")
+    measured_count = cell.get("query_count")
+    if certified_count == measured_count:
+        return True
+    if not (
+        isinstance(certified_count, int) and not isinstance(certified_count, bool)
+        and isinstance(measured_count, int) and not isinstance(measured_count, bool)
+        and 0 < measured_count < certified_count
+    ):
+        return False
+    expected = declared.get(str(cell.get("stratum_id")))
+    if not _is_sha256(expected):
+        return False
+    derived = _derived_query_subset_identity(cell)
+    if derived is None:
+        return False
+    subset_size = len(
+        {str(value).split("|", 2)[-1] for value in
+         ((cell.get("campaign_identity") or {}).get("expected_cells") or [])}
+    )
+    return derived == expected and subset_size == measured_count
 
 
 def _stratum_matrix_consistent(cell: dict) -> bool:
@@ -370,13 +511,39 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
     )
     gate("source_identity_complete", identity_complete, True, identity_complete)
     certifications = [cell.get("corpus_certification") or {} for cell in cells]
+    # --- v4 (agent-utility-public-v4, 2026-07-28) subset-aware count check ----
+    #
+    # CONDITIONAL, like every v3 additive gate above it: absent
+    # `requirements.certified_query_subset` the comparison below is literally
+    # `cert.query_count == cell.query_count`, so a record evaluated under
+    # v1/v2/v3 projects a byte-identical verdict.
+    #
+    # 782 FREEZE DEFECT #2: the exact-equality rule refused every legitimate
+    # pre-registered SUBSET run -- a 707/781 certification certifies the whole
+    # committed gold set (50 queries) while a design may pre-register a
+    # leading-prefix subset (20). `query_gold_sha256` -- the identity that
+    # actually chains the certified queries -- matched all along; only the
+    # count did not. v4 replaces the count comparison with the three-legged
+    # check in `_certified_query_subset_ok`, which is strictly STRONGER for a
+    # subset (it additionally demands a pre-registered qid-list digest) and
+    # unchanged for a full-count run.
+    subset_aware = bool(requirements.get("certified_query_subset"))
+    declared_subsets = {
+        str(item.get("stratum_id")): item.get("qid_list_sha256")
+        for item in required_strata
+        if isinstance(item.get("qid_list_sha256"), str)
+    }
     certification_complete = bool(certifications) and all(
         _certification_snapshot_valid(item)
         and item.get("dataset") == cell.get("corpus")
         and item.get("member") == cell.get("corpus_member")
         and item.get("size") == cell.get("corpus_size")
         and item.get("query_variant") == cell.get("query_variant")
-        and item.get("query_count") == cell.get("query_count")
+        and (
+            _certified_query_subset_ok(cell, item, declared_subsets)
+            if subset_aware
+            else item.get("query_count") == cell.get("query_count")
+        )
         and item.get("query_gold_sha256")
         == (cell.get("query_identity") or {}).get("sha256")
         and item.get("corpus_signature") == cell.get("corpus_signature")
@@ -394,6 +561,113 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
     gate("intention_to_treat_primary", has_itt, True, has_itt)
     per_protocol_secondary = (estimands.get("per_protocol") or {}).get("role") == "secondary"
     gate("per_protocol_secondary", per_protocol_secondary, True, per_protocol_secondary)
+
+    # --- v3 (agent-utility-public-v3, ratified 2026-07-28) additive gates -----
+    #
+    # Each fires ONLY when the selected policy declares the matching requirement,
+    # so a record evaluated under v1/v2 (or any policy that omits them) projects a
+    # byte-identical verdict -- the same conditional-gate discipline already used
+    # for `verified_exposure_mode`.
+
+    if requirements.get("completion_triple_reported"):
+        # 762 §T4 / v3 triple_reporting_semantics: the ITT headline may not be
+        # published without its per-protocol and completion siblings. Completion
+        # is per ARM (utility_recompose emits
+        # estimands.completion.strata[*].by_arm[*].completion_rate).
+        completion_by_id = {
+            item.get("stratum_id"): item
+            for item in ((estimands.get("completion") or {}).get("strata") or [])
+        }
+        missing_triple = sorted(
+            str(cell.get("stratum_id"))
+            for cell in cells
+            if not (
+                isinstance(cell.get("n_per_protocol_pairs"), int)
+                and cell.get("stratum_id") in completion_by_id
+                and all(
+                    isinstance(
+                        ((completion_by_id[cell["stratum_id"]].get("by_arm") or {})
+                         .get(arm) or {}).get("completion_rate"),
+                        (int, float),
+                    )
+                    for arm in ("A", "B")
+                )
+            )
+        )
+        gate(
+            "completion_triple_reported",
+            missing_triple,
+            [],
+            bool(cells) and not missing_triple,
+            "every ITT stratum must publish its per-protocol pair count and a "
+            "per-arm completion_rate alongside the headline",
+        )
+
+    if requirements.get("closed_book_at_hero_tier"):
+        # 768 item 6 / v3 hero_tier: a materially non-zero closed-book accuracy
+        # means the answers are derivable without the corpus, so the with-tool
+        # uplift cannot be attributed to retrieval. The measurement rides each
+        # stratum's 707 certification snapshot (already mandatory above).
+        closed_book_ceiling = thresholds.get("maximum_closed_book_accuracy")
+        observed_closed_book = []
+        for cell in cells:
+            gate_evidence = (
+                ((cell.get("corpus_certification") or {}).get("scientific_gates") or {})
+                .get("closed_book") or {}
+            )
+            observed_closed_book.append({
+                "stratum_id": cell.get("stratum_id"),
+                "closed_book_accuracy": (
+                    (gate_evidence.get("observed") or {}).get("closed_book_accuracy")
+                ),
+                "model": (gate_evidence.get("observed") or {}).get("model"),
+            })
+        closed_book_passed = (
+            bool(cells)
+            and closed_book_ceiling is not None
+            and all(
+                isinstance(item["closed_book_accuracy"], (int, float))
+                and not isinstance(item["closed_book_accuracy"], bool)
+                and float(item["closed_book_accuracy"]) <= float(closed_book_ceiling)
+                and bool(item["model"])
+                for item in observed_closed_book
+            )
+        )
+        gate(
+            "closed_book_at_hero_tier",
+            observed_closed_book,
+            closed_book_ceiling,
+            closed_book_passed,
+            "every required stratum must carry a measured closed-book accuracy "
+            "at or below the policy ceiling",
+        )
+
+    if requirements.get("schema_strata_reported"):
+        # 768 D4 / v3 required_schema_strata: the question_type breakdown must
+        # cover EVERY known schema. A schema whose paired observations collapse
+        # is reported as an honest null -- never dropped -- so an absent key is
+        # a reporting failure, not a silent "no data".
+        schema_spec = selected.get("required_schema_strata") or {}
+        known_schemas = list(schema_spec.get("known_schemas") or [])
+        measured_cells = _measured_cells(record.get("measured"))
+        missing_schemas = []
+        for label, cell in measured_cells:
+            by_stratum = (cell.get("schema_stratified") or {}).get("by_stratum")
+            absent = (
+                known_schemas if not isinstance(by_stratum, dict)
+                else [name for name in known_schemas if name not in by_stratum]
+            )
+            if absent:
+                missing_schemas.append({"cell": label, "missing": absent})
+        gate(
+            "schema_strata_reported",
+            missing_schemas,
+            known_schemas,
+            bool(measured_cells) and bool(known_schemas)
+            and (not schema_spec.get("require_all_present") or not missing_schemas),
+            "every known question_type schema must appear in the composed "
+            "schema_stratified breakdown, null included",
+        )
     interval_present = bool(cells) and all(
         len((cell.get("accuracy") or {}).get("delta_ci")
             or (cell.get("accuracy") or {}).get("delta_ci95") or []) == 2

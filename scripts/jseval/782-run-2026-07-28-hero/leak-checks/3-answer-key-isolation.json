@@ -1,0 +1,19 @@
+{
+ "answer_key_isolation": [
+  {
+   "ds": "en-email-enron-raw-1k-verbose",
+   "answer_key_files_inside_corpus_dir": [],
+   "ok": true
+  },
+  {
+   "ds": "en-email-enron-raw-10k-verbose",
+   "answer_key_files_inside_corpus_dir": [],
+   "ok": true
+  },
+  {
+   "ds": "en-legal-clerc-1k-verbose",
+   "answer_key_files_inside_corpus_dir": [],
+   "ok": true
+  }
+ ]
+}

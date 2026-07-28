@@ -518,13 +518,29 @@ public final class ResolvedConfigBuilder {
     putYamlFromNode("search.chunk_aware.enabled", searchRoot, "chunk_aware.enabled");
     putDefault("search.chunk_aware.enabled", "true");
     putYamlFromNode("search.evidence_preview.enabled", searchRoot, "evidence_preview.enabled");
-    putDefault("search.evidence_preview.enabled", "false");
+    // 775 §I / founder flip decision (2026-07-22, F-041 register FLIP DECISION): default-ON. The
+    // winning chunk's text as content_preview is measured +15% legal / +5.9% enron (F-041). One
+    // cohort bump with evidence_span below.
+    putDefault("search.evidence_preview.enabled", "true");
     putYamlFromNode("search.evidence_span.enabled", searchRoot, "evidence_span.enabled");
-    putDefault("search.evidence_span.enabled", "false");
+    // 775 §I / founder flip decision (2026-07-22): default-ON. Answer-bearing excerpt selection is
+    // measured 0→100% carriage with byte-identical ranking (§F); the flag-off IDF-only path is kept
+    // selectable for the byte-golden regression guard.
+    putDefault("search.evidence_span.enabled", "true");
     putYamlFromNode("search.evidence_span.entity_signal", searchRoot, "evidence_span.entity_signal");
     // 775 deferred item (b) settled by the §F live probe: ner_membership (100% carriage) beats
     // df_rarity (28%) on the buried-entity stratum — ship the winner.
     putDefault("search.evidence_span.entity_signal", "ner_membership");
+    putYamlIntFromNode(
+        "search.mcp_delivery.budget_bytes", searchRoot, "mcp_delivery.budget_bytes");
+    // 775 §E/§C: the MCP delivery-governor budget, settled at 45000 bytes by the orchestrator's live
+    // measurement (2026-07-22) — a margin under the lowest characterized 770 §E.3 truncation cliff
+    // (46,617). 0 disables the governor (escape hatch).
+    putDefault(
+        "search.mcp_delivery.budget_bytes",
+        Integer.toString(
+            io.justsearch.configuration.resolved.ResolvedConfig.Search
+                .DEFAULT_MCP_DELIVERY_BUDGET_BYTES));
     // Facet fields list
     JsonNode fieldsNode = searchRoot.path("facets").path("fields");
     if (fieldsNode.isArray()) {
@@ -1258,10 +1274,17 @@ public final class ResolvedConfigBuilder {
         resolveDouble("justsearch.search.title_boost", 3.0),
         resolveDouble("justsearch.search.entity_boost", 0.0),
         resolveBoolean("search.chunk_aware.enabled", true),
-        resolveBoolean("search.evidence_preview.enabled", false),
+        // 775 §I / founder flip decision (2026-07-22): both evidence flags default-ON. The
+        // putDefault above is the effective source; this fallback matches it for the no-putDefault
+        // path (e.g. a bare builder that skipped contributeYamlSearch).
+        resolveBoolean("search.evidence_preview.enabled", true),
         resolveBoolean("justsearch.lambdamart.enabled", false),
-        resolveBoolean("search.evidence_span.enabled", false),
+        resolveBoolean("search.evidence_span.enabled", true),
         resolveString("search.evidence_span.entity_signal", "ner_membership"),
+        // 775 §E/§C: the MCP delivery-governor budget (0 disables the governor).
+        resolveInt(
+            "search.mcp_delivery.budget_bytes",
+            ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES),
         buildSearchCorrections());
   }
 

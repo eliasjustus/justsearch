@@ -44,6 +44,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.parse
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -564,8 +565,9 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
                     declared_mcp_tool_surface,
                 )
             except Exception as e:  # noqa: BLE001 — a projection bug must never fabricate a cell
-                state.metadata.setdefault(
-                    "error", f"record_cell failed: {type(e).__name__}: {str(e)[:200]}")
+                _note_error(
+                    state.metadata,
+                    f"record_cell failed: {type(e).__name__}: {str(e)[:200]}")
         state.metadata["attempts"] = attempt
         if first_error is not None:
             state.metadata["first_error"] = first_error
@@ -576,10 +578,12 @@ def claude_agent_solver(corpus_dir: str, mcp_config: str | None = None,
         # covered from one site. The composer treats a lower bound as exact only in the
         # conservative baseline-arm direction; a `None`-usage residual `other` error stays
         # unflagged. `working_time`/`total_time` are read off the sample, not here.
-        _final_error = state.metadata.get("error")
+        # 782 follow-up: read EVERY recorded error text, not just the primary slot --
+        # a guard-voided cell carries its exhaustion marker under `secondary_errors`,
+        # and its cost/token receipts are just as truncated as an unguarded one's.
         if (
-            _final_error is not None
-            and classify_error_kind(_final_error) == RESOURCE_EXHAUSTION
+            any(classify_error_kind(t) == RESOURCE_EXHAUSTION
+                for t in _cell_error_texts(state.metadata))
             and (state.metadata.get("cost_usd") is not None
                  or state.metadata.get("unique_tokens") is not None)
         ):
@@ -875,21 +879,49 @@ def _delivered_component_bytes(content) -> dict | None:
 
 def _normalize_doc_id(doc_id) -> str | None:
     """Normalize a search-hit id / gold `evidence_id` to a comparable doc key:
-    basename, drop a single trailing file extension, lowercase.
+    basename, drop a single trailing file extension, URL-decode, lowercase.
 
-    The live `McpEvidenceProjection` `results[*].id` is `hit.id()` -- an absolute
+    The live `McpEvidenceProjection` hit identity is `hit.id()` -- an absolute
     corpus path (e.g. `...\\corpus-dir\\limker1.txt`), while the queries file's
     `evidence_ids` are extensionless basenames (`limker1`). A raw exact-match
     would therefore NEVER find a gold hit (empirically confirmed on the 763
     replay ids, tempdoc 768 §E). Normalizing BOTH sides the same way is what
-    connects them, and mirrors the 763 oracle's own normalization
-    (`replay_stratum.py`: basename -> strip `.txt` -> lower) so the captured
-    `gold_rank` and the oracle's replay agree by construction."""
+    connects them.
+
+    The URL-decode step mirrors the canonical filesystem->doc-id reverser
+    `retriever._filename_to_doc_id` (`jseval/retriever.py:251-268`), because the
+    corpus materializer percent-encodes the doc id when it names the file
+    (`materialize.doc_id_to_filename`: `urllib.parse.quote(doc_id, safe="")`).
+    Without it, any corpus whose doc ids carry an encodable character -- MIRACL's
+    `1234567#0` materializes as `1234567%230.txt` -- could never match its gold,
+    while a plain-ASCII id (`limker1`) decodes to itself, so this only ever adds
+    correct matches. That also keeps the by-construction agreement with the 763
+    oracle (`tmp/analysis-624/763/replay/replay_stratum.py`, campaign-local:
+    basename -> strip `.txt` -> lower) intact on the corpora it replayed, whose
+    ids are plain-ASCII and therefore decode to themselves."""
     if not isinstance(doc_id, str):
         return None
     base = os.path.basename(doc_id.replace("\\", "/"))
     base, _ext = os.path.splitext(base)
-    return base.lower()
+    return urllib.parse.unquote(base).lower()
+
+
+def _hit_doc_id(hit: dict) -> str | None:
+    """The delivered ranking identity of one `results[]` hit -- `id`, else `path`.
+
+    `McpEvidenceProjection.putIdentity` (`modules/ui/src/main/java/io/justsearch/ui/
+    api/mcp/McpEvidenceProjection.java:168-175`) emits `path` whenever it is
+    non-blank and OMITS `id` when the two are byte-identical (the tempdoc 770
+    payload dedup -- `id` IS the filesystem path for a file-backed hit). Reading
+    `id` alone therefore saw `None` on every delivered hit: the 782 hero campaign
+    captured a null `gold_rank` on 633 of 635 B-arm search calls. `id` stays the
+    preferred key (it is the raw ranking identifier when both are present); `path`
+    is the fallback that makes the capture live again."""
+    for key in ("id", "path"):
+        value = hit.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def _gold_rank_capture(content, tier, evidence_ids: list[str] | None):
@@ -899,10 +931,12 @@ def _gold_rank_capture(content, tier, evidence_ids: list[str] | None):
     payload text; the redaction rationale is unchanged) and the 0-based rank of
     the first `evidence_ids` (gold) doc found in that ranking.
 
-    `ordered_doc_ids` are the RAW delivered ids (the real ranking identifiers);
-    the gold match normalizes both the delivered ids and `evidence_ids` via
-    :func:`_normalize_doc_id` (basename/ext/case), because the delivered ids are
-    absolute paths and the gold ids are basenames.
+    `ordered_doc_ids` are the RAW delivered ids (the real ranking identifiers),
+    resolved per hit by :func:`_hit_doc_id` -- `id`, falling back to `path` for
+    the dedup shape the live projection actually emits; the gold match normalizes
+    both those ids and `evidence_ids` via :func:`_normalize_doc_id` (basename /
+    ext / percent-decode / case), because the delivered ids are absolute
+    materialized paths and the gold ids are bare doc ids.
 
     `(None, None, None)` for non-structured deliveries and for structured
     deliveries without a `results[]` array -- the latter is exactly the
@@ -918,7 +952,7 @@ def _gold_rank_capture(content, tier, evidence_ids: list[str] | None):
     if not isinstance(results, list):
         return None, None, None
     hits = [r for r in results if isinstance(r, dict)]
-    ordered_doc_ids = [h.get("id") for h in hits]
+    ordered_doc_ids = [_hit_doc_id(h) for h in hits]
     scores = [h.get("score") for h in hits]
     gold_rank = None
     if evidence_ids:
@@ -1202,6 +1236,51 @@ def decompose_payload_shares(log_dir, payload_dir=None) -> dict:
     }
 
 
+#: Metadata key holding every cell error the primary `error` slot could not carry.
+#: `error` stays FIRST-WINS (the fail-closed exclusion label a run governs on); this
+#: list is the lossless remainder.
+_SECONDARY_ERRORS_KEY = "secondary_errors"
+
+
+def _note_error(metadata: dict, text: str) -> None:
+    """Record a cell error without destroying one already recorded (782 follow-up).
+
+    Every error site in this module historically used
+    ``metadata.setdefault("error", ...)``, so the FIRST error won and every later
+    one was silently dropped. That masked a real signal in the 782 hero campaign:
+    the mixed-model guard (a cell whose resolved provider model changed mid-cell)
+    fires BEFORE the ``ResultMessage.is_error`` projection, so a run that was both
+    guard-voided AND budget-exhausted lost its exhaustion label entirely -- the
+    `error_max_budget_usd` marker `utility_governance.classify_error_kind` /
+    `utility_evidence._error_class` match on never reached the record.
+
+    `error` deliberately keeps first-wins semantics: the guard error is the honest
+    label for a poisoned cell, and promoting it to the exhaustion bucket would move
+    an invalid measurement into the SCORED (comparability-neutral) bucket -- the
+    opposite of the fail-closed rule in `utility_governance`. The suppressed errors
+    are preserved verbatim under `secondary_errors` instead, so the exhaustion fact
+    survives in the written record alongside the guard error.
+    """
+    existing = metadata.get("error")
+    if existing is None:
+        metadata["error"] = text
+        return
+    if text == existing:
+        return
+    secondary = metadata.setdefault(_SECONDARY_ERRORS_KEY, [])
+    if text not in secondary:
+        secondary.append(text)
+
+
+def _cell_error_texts(metadata: dict) -> list[str]:
+    """Every error text recorded for this cell -- the primary `error` plus any
+    `secondary_errors` a later site could not overwrite. Consumers that ask "did
+    this cell exhaust a budget" must read ALL of them, not just `error`."""
+    texts = [t for t in (metadata.get("error"),) if t is not None]
+    texts.extend(metadata.get(_SECONDARY_ERRORS_KEY) or [])
+    return texts
+
+
 def _call_status(tid: str, entry: dict, results: dict, denied: set, disallowed: list[str]) -> str:
     """tempdoc 736 D10 (issue 10): the four-state per-call status authority for
     `tool_call_sequence` -- DISTINCT from `_blocked()` below, whose executed/blocked
@@ -1364,14 +1443,14 @@ def _record_cell(state: TaskState, got: dict, condition: str,
             }
     if (with_tool_cell and declared_mcp_tool_surface_hash and observed_surface_hash
             and declared_mcp_tool_surface_hash != observed_surface_hash):
-        state.metadata.setdefault(
-            "error",
+        _note_error(
+            state.metadata,
             "declared MCP tool-surface hash disagrees with observed tools/list",
         )
     if (with_tool_cell and declared_names and servers is not None
             and observed_names != declared_names):
-        state.metadata.setdefault(
-            "error",
+        _note_error(
+            state.metadata,
             "offered MCP tool names disagree with captured canonical tools/list",
         )
     justsearch_connected = bool(servers) and any(
@@ -1387,8 +1466,9 @@ def _record_cell(state: TaskState, got: dict, condition: str,
         if servers is None:
             state.metadata["mcp_surface_unverified"] = True
         elif not justsearch_tools:
-            state.metadata.setdefault(
-                "error", f"expected MCP tool surface not offered: mcp_servers={servers}")
+            _note_error(
+                state.metadata,
+                f"expected MCP tool surface not offered: mcp_servers={servers}")
             return
 
     if rmsg is not None:
@@ -1401,8 +1481,13 @@ def _record_cell(state: TaskState, got: dict, condition: str,
             "resolved_model": next(iter(resolved_models), None),
         })
         if len(resolved_models) > 1:
-            state.metadata.setdefault(
-                "error",
+            # Fires BEFORE the is_error projection below, so it used to WIN the
+            # single `error` slot and delete the cell's exhaustion label with it
+            # (782 incident ledger: "guard destroys exhaustion labels"). `_note_error`
+            # keeps the guard error primary (fail-closed) and lets the exhaustion
+            # marker land in `secondary_errors` instead of being dropped.
+            _note_error(
+                state.metadata,
                 "resolved provider model changed within one cell: "
                 f"{sorted(resolved_models)!r}",
             )
@@ -1432,13 +1517,14 @@ def _record_cell(state: TaskState, got: dict, condition: str,
                 "api_error_status": getattr(rmsg, "api_error_status", None),
                 "errors": getattr(rmsg, "errors", None),
             }
-            state.metadata.setdefault(
-                "error", (f"result error: {str(getattr(rmsg, 'result', ''))[:200]} | {err_bits}")[:600])
+            _note_error(
+                state.metadata,
+                (f"result error: {str(getattr(rmsg, 'result', ''))[:200]} | {err_bits}")[:600])
             return
         state.output.completion = getattr(rmsg, "result", "") or ""
     else:
-        state.metadata.setdefault(
-            "error", "no ResultMessage (stream ended without a terminal result)")
+        _note_error(
+            state.metadata, "no ResultMessage (stream ended without a terminal result)")
         # tempdoc 757: no terminal ResultMessage (wall-clock cancel) -> fall back to the
         # partial token LOWER BOUND accumulated from the streamed AssistantMessages. Cost
         # is genuinely unrecoverable here (it lives only on the ResultMessage), so it stays

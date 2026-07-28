@@ -1,0 +1,21 @@
+{
+  "version": "1.0",
+  "type_axis": "prose",
+  "suite": "635-self-demo-v1",
+  "contamination_class": "private-synthetic",
+  "generation_provenance": {
+    "method": "procedural-fabricated",
+    "axis": "prose",
+    "lang": "en",
+    "seed": 638,
+    "hops": 1,
+    "distractor_ratio": 0,
+    "semantic": true,
+    "templated": true,
+    "n_chains": 50,
+    "doc_words": null,
+    "payload_version": "payload.v2",
+    "entity_bank": "707-corpora/en-email-enron-raw/entity-bank",
+    "entity_bank_sha256": "28864e9b116d32f5b5be6dfd4c79a824911c6994a112704ed38f37824efcc73f"
+  }
+}

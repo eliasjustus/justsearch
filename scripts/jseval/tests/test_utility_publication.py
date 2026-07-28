@@ -49,6 +49,12 @@ def _setup_accepted(tmp_path):
             for condition in ("A", "B"):
                 item = copy.deepcopy(_observation(condition, qid=qid))
                 item["seed"] = seed
+                # tempdoc 768 D4 / v3 `schema_strata_reported`: a real campaign's
+                # queries span both schemas, so the composer emits
+                # `schema_stratified.by_stratum`. Tagging the fixture the same way
+                # keeps this record shaped like the producer's output rather than
+                # exempting it from the requirement.
+                item["question_type"] = "1_hop" if index % 2 == 0 else "2_hop"
                 campaign = item["source"]["cohort"]["campaign_identity"]
                 item["source"]["cohort"]["corpus_certification"] = certification
                 item["source"]["cohort"]["query_identity"]["row_count"] = 20

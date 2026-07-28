@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from jseval.corpus_build import read_jsonl
+from jseval.evidence_offset import locate_offset
 
 METHOD = "real-text-injection-v1"
 
@@ -120,6 +121,97 @@ def _interleave(host: str, injection: str) -> str:
             gold_index += 1
     result.extend(gold_sentences[gold_index:])
     return " ".join(result)
+
+
+# --- host (native) title synthesis (tempdoc 781 §B.1) -----------------------
+#
+# The defect (tempdoc 774 §J.7): `assemble` writes `title: ""` onto every native
+# distractor while injected gold docs keep a populated `title`, so a field whose mere
+# PRESENCE separates gold from native (`corpus_leak.field_selectivity_report`, J=1.0).
+# The production lexical leg boosts title matches 3.0x (`TextQueryOps.TITLE_BOOST`,
+# DisMax multi-field), so a gold-only title is an artifactual ranking edge by construction.
+#
+# Fix: give each native a plausible, non-answer-bearing title derived DETERMINISTICALLY
+# from its OWN content plus the cell `seed`. Design constraints (all satisfied below):
+#
+#   * reacts ONLY to the host's own text + seed, never to corpus identity or the gold
+#     text (D-005) — so it cannot become a covert answer-key channel. The gold text is
+#     interleaved into the host body at assembly, but the title is synthesized from the
+#     distractor's own `text`, which never contains gold, and gold docs are titled
+#     separately (they keep the generated title).
+#   * content-reactive detection, not host-type branching: an email exposes a `Subject:`
+#     header line, a legal opinion exposes an opening sentence / caption. Reading the
+#     structure off the text (rather than off "which corpus is this") keeps the routine
+#     domain-agnostic and honours D-005.
+#   * LF/UTF-8 safe: operates on the decoded `str`; `" ".join(base.split())` collapses any
+#     embedded newline/tab so no control character reaches the one-line JSONL title.
+#   * length overlaps the gold titles' word-count band (shape-class parity, not merely
+#     presence parity): the generated gold titles run ~3-7 words ("The <descriptor>"),
+#     so a per-host target in [MIN, MAX] words — seeded + content-hashed, so it varies
+#     host-to-host the way real subjects/captions do — keeps the synthesized distribution
+#     overlapping gold's rather than pinning every host to one length.
+_SUBJECT_LINE_RE = re.compile(r"^[ \t]*subject[ \t]*:[ \t]*(.*)$", re.IGNORECASE | re.MULTILINE)
+# A leading run of reply/forward markers ("Re: ", "Fwd: Re: ") is email plumbing, not
+# title content — strip it so the synthesized title reads like a caption, not a header.
+_REPLY_PREFIX_RE = re.compile(r"^(?:\s*(?:re|fw|fwd)\s*:\s*)+", re.IGNORECASE)
+# A single leading "Label: " prefix (e.g. a header line that survives into the sentence
+# fallback when a message's Subject is empty). Stripped so the fallback reads as content,
+# not as a header token; a legal caption ("Anderson v. Liberty Lobby, Inc., ...") has no
+# leading `word:` and is unaffected.
+_LEADING_LABEL_RE = re.compile(r"^[A-Za-z][\w-]{0,30}:\s+")
+
+#: Word-count band the synthesized title is truncated into. Calibrated to the generated
+#: gold titles' observed 3-7-word span (`corpus_generate` "The <type> in the <place>" /
+#: "The <entity>") so the two distributions overlap; a host base shorter than MIN is kept
+#: whole (a real one-word subject is legitimately short — presence parity is unaffected).
+_HOST_TITLE_MIN_WORDS = 3
+_HOST_TITLE_MAX_WORDS = 8
+
+
+def _synthesize_host_title(host_text: str, seed: int) -> str:
+    """A deterministic, non-answer-bearing title for a native host doc (tempdoc 781 §B.1).
+
+    Derived from ``host_text`` (the host's OWN content) and the cell ``seed`` only —
+    never the corpus identity or the interleaved gold text (D-005). Returns ``""`` only
+    when the host carries no extractable text at all (never, for a host that passed the
+    ``host_min_words`` floor). See the block comment above for the design constraints.
+    """
+    text = host_text or ""
+    base = ""
+    subject = _SUBJECT_LINE_RE.search(text)
+    if subject:
+        base = _REPLY_PREFIX_RE.sub("", subject.group(1).strip()).strip()
+    if not base:
+        for sentence in _split_sentences(text.strip()):
+            candidate = _LEADING_LABEL_RE.sub("", sentence.strip()).strip()
+            if candidate:
+                base = candidate
+                break
+    if not base:
+        for line in text.splitlines():
+            candidate = _LEADING_LABEL_RE.sub("", line.strip()).strip()
+            if candidate:
+                base = candidate
+                break
+    words = base.split()
+    if not words:
+        return ""
+    # sha256 (not the per-process-randomized builtin `hash()`) keeps the per-host target
+    # stable across interpreters, matching the ID-mint stream's domain-separation pattern.
+    digest = hashlib.sha256(f"707-host-title:{seed}:{base}".encode("utf-8")).hexdigest()
+    span = _HOST_TITLE_MAX_WORDS - _HOST_TITLE_MIN_WORDS + 1
+    target = _HOST_TITLE_MIN_WORDS + (int(digest[:8], 16) % span)
+    return " ".join(words[:target])
+
+
+def _native_title(doc: dict, seed: int) -> str:
+    """A distractor's title: keep a real host title verbatim when present, else synthesize
+    one from the host's own content (the tempdoc 774 §J.7 leak fix). Real enron/CLERC hosts
+    carry no title, so the synthesis path is what closes the presence asymmetry."""
+    existing = doc.get("title")
+    if isinstance(existing, str) and existing.strip():
+        return existing
+    return _synthesize_host_title(str(doc.get("text", "")), seed)
 
 
 # --- native-shaped gold ID minting (tempdoc 767 §I.3) -----------------------
@@ -345,8 +437,11 @@ def assemble(
             "gold_id": minted, "host_id": host["_id"], "fabricated_id": gold["_id"],
         })
 
+    # Native distractors get a synthesized, non-answer-bearing title from their OWN content
+    # (tempdoc 781 §B.1): real hosts carry `title: ""`, which made `title` PRESENCE a
+    # gold-vs-native separator (J=1.0) that the 3.0x TITLE_BOOST lexical leg would reward.
     docs = injected + [
-        {"_id": doc["_id"], "title": doc.get("title", ""), "text": doc.get("text", "")}
+        {"_id": doc["_id"], "title": _native_title(doc, seed), "text": doc.get("text", "")}
         for doc in distractors
     ]
     remapped_queries = [
@@ -369,6 +464,47 @@ def assemble(
         "assembled_digest": _canonical_digest({"docs": docs, "queries": remapped_queries}),
     }
     return docs, remapped_queries, report
+
+
+def evidence_offsets_for_injection(
+    docs: list[dict], report: dict, fabricated_docs: list[dict],
+) -> dict:
+    """Record where each injected gold sentence lands in its host document (tempdoc 783 §B.1).
+
+    The generator-metadata source (a) for the per-offset recall instrument. For every
+    gold doc in ``report["host_mapping"]``, locate the FIRST fabricated gold sentence
+    within the assembled (host+injection) text and record its character offset. This is
+    the F-040-relevant deep offset — a bridge/answer sentence interleaved into a long real
+    host document. Additive: a NEW sidecar artifact, never a change to committed corpus
+    bytes (``docs.jsonl`` / ``queries.json`` are untouched).
+
+    A gold sentence that cannot be relocated (should not happen — interleave places it
+    verbatim) is omitted rather than recorded at a fabricated offset; the analysis fallback
+    then resolves that doc by string-location, so nothing is silently faked.
+    """
+    fab_text = {str(d.get("_id")): str(d.get("text", "")) for d in fabricated_docs}
+    doc_text = {str(d.get("_id")): str(d.get("text", "")) for d in docs}
+    offsets: dict[str, dict] = {}
+    for entry in report.get("host_mapping", []):
+        assembled_id = str(entry.get("gold_id"))
+        fabricated_id = str(entry.get("fabricated_id"))
+        gold_sentences = [
+            part.strip() for part in _split_sentences(fab_text.get(fabricated_id, "").strip())
+            if part.strip()
+        ]
+        if not gold_sentences:
+            continue
+        first = gold_sentences[0]
+        assembled = doc_text.get(assembled_id, "")
+        off = locate_offset(assembled, first)
+        if off is None:
+            continue
+        offsets[assembled_id] = {
+            "char_offset": off,
+            "doc_len": len(assembled),
+            "evidence": first,
+        }
+    return {"schema": "evidence-offsets.v1", "method": "injection-assembly", "offsets": offsets}
 
 
 def _cross_process_assembly(
@@ -518,6 +654,13 @@ def build_source(
         "generation_provenance": provenance,
     }
     (output / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    # tempdoc 783 §B.1: additive evidence-offset sidecar (generator-metadata source for the
+    # per-offset recall instrument). Records where each injected gold sentence lands in its
+    # host doc; NOT committed by write_commitment and never touches docs.jsonl/queries.json.
+    side = evidence_offsets_for_injection(docs, report, fabricated_docs)
+    (output / "evidence_offsets.json").write_text(
+        json.dumps(side, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return meta
 
 

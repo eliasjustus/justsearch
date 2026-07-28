@@ -37,11 +37,22 @@ promotion, and effect classification. Seed, paired-observation, uncertainty, ado
 gates are reported for each required stratum; aggregate counts are descriptive. A valid outcome may
 be benefit, harm, null, or adoption-only. Any required inconclusive stratum prevents publication.
 
+Three reporting requirements also block promotion, so a favorable number cannot be published
+stripped of the context that qualifies it. Closed-book-at-hero-tier: every required stratum must
+carry a measured closed-book accuracy — the same question answered with no tools and no documents —
+at or below the policy ceiling, because only a near-zero closed-book floor licenses attributing the
+with-tool result to retrieval rather than to memorized corpus content. Completion-triple reporting:
+the intention-to-treat headline must be published beside its per-protocol pair count and its per-arm
+completion rate, so a result driven by budget exhaustion cannot read as an accuracy result. Schema-
+strata reporting: every measured cell must publish its per-question-type breakdown covering every
+known schema, and a schema whose observations collapse is reported as an explicit null rather than
+dropped — an absent schema is a reporting failure, not a silent absence of data.
+
 ## Current result
 
 <!-- agent-utility:generated:start - run: node scripts/docs/gen-public-agent-utility.mjs -->
 
-No agent-utility result is currently accepted for publication. No agent-utility result has passed the active scientific claim policy; the 2026-07-18 confirmatory campaign was rejected on identity-verification gates. The checked-in claim policy (`agent-utility-public-v2`) is active and fully resolved: it pins a required four-stratum campaign matrix (CLERC legal + Enron email, each at 1k and 10k documents), a model cohort, and its scientific margins. One pre-registered confirmatory campaign has run against it (2026-07-18); the policy rejected promotion on identity-verification gates, and the complete evidence — including both voided runs — is committed under `scripts/jseval/624-run-2026-07-18-confirmatory/`. Owner decisions, certifications, and any paid rerun require separate authorization; the harness does not invent them.
+No agent-utility result is currently accepted for publication. No agent-utility result has passed the active scientific claim policy; the 2026-07-18 confirmatory campaign was rejected on identity-verification gates. The checked-in claim policy (`agent-utility-public-v4`) is active and fully resolved: it pins a required 3-stratum campaign matrix, a model cohort, and its scientific margins. One pre-registered confirmatory campaign has run against an earlier policy revision (2026-07-18); it rejected promotion on identity-verification gates, and the complete evidence — including both voided runs — is committed under `scripts/jseval/624-run-2026-07-18-confirmatory/`. Owner decisions, certifications, and any paid rerun require separate authorization; the harness does not invent them.
 
 The publication chain is: all attempted Inspect cells -> strict sanitized observation evidence -> pure offline recomposition -> versioned claim-policy verdict -> immutable accepted publication manifest -> explicit accepted-result pointer. Rejected evidence remains a test/history fixture rather than a publication bundle. The pointer is `scripts/jseval/public-agent-utility/current.v1.json`.
 

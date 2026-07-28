@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 @click.option("--pipeline", is_flag=True, help="Wait for ALL enrichments (embed, SPLADE, chunks, NER).")
 @click.option("--timeline", "timeline_path", type=click.Path(), default=None, help="Record status snapshots to TSV.")
 @click.option("--start-backend", is_flag=True, help="Start runHeadlessEval, run eval, stop when done.")
-@click.option("--llm", is_flag=True, help="Enable LLM (Brain/llama-server) in the backend (requires --start-backend).")
+@click.option("--llm", is_flag=True, help="Enable LLM (Brain/llama-server) in the backend (requires --start-backend). Fails fast: eval-mode read-only settings make engine autostart impossible (tempdoc 782 §I) — run llama-server out of band and use the Head /v1 proxy.")
 @click.option("--qu", is_flag=True, help="Enable Query Understanding (requires --llm).")
 @click.option("--filter-norm", is_flag=True, help="Enable filter value normalization (requires --llm).")
 @click.option("--clean", is_flag=True, help="Clean data dir before starting backend (requires --start-backend).")
@@ -105,6 +105,11 @@ def cmd_run(ctx, dataset, modes, base_url, output_dir, top_k, embedding, splade,
     if not dataset:
         click.echo("Error: --dataset is required (via CLI or --config)", err=True)
         sys.exit(1)
+    # Tempdoc 787 item 4a: accept the register's catalog-qualified slug (`beir/scifact`) as well
+    # as the bare registry key (`scifact`). Normalize once at the CLI boundary so the whole run
+    # pipeline (load, ingest/materialize, corpus dirs, labels) keys on one canonical name.
+    from .. import corpora
+    dataset = corpora.normalize_dataset_name(dataset)
     if not modes and max_queries != 0:
         click.echo("Error: --modes is required (via CLI or --config) when --max-queries != 0", err=True)
         sys.exit(1)

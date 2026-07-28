@@ -1,18 +1,31 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
 from jseval.utility_claim_policy import (
+    MANDATORY_REQUIREMENTS,
     SUPPORTED_REQUIREMENTS,
+    canonical_bytes,
     evaluate_claim,
     load_policy,
+    load_previous_policy,
+    load_superseded_policy,
     policy_digest,
 )
 from tests.test_corpus_inject import _certification_snapshot_fixture
+
+# Derived from the checked-in ACTIVE policy, not hand-pinned: the fixture below
+# mirrors what the real producer composes for the certified cohort, and the
+# refusal test asserts the same vocabulary the gate reads. Amendment 1
+# (2026-07-28) narrowed this to ["1_hop"] because the certified hero corpora are
+# 100% 1_hop by construction; deriving it here means a later corpus that DOES
+# carry a second schema updates both sites at once.
+_KNOWN_SCHEMAS = tuple(load_policy()["required_schema_strata"]["known_schemas"])
 
 
 def _record(seed_ids: list[int] | None = None) -> dict:
@@ -25,7 +38,7 @@ def _record(seed_ids: list[int] | None = None) -> dict:
     ]
     n_attempted = len(seed_ids) * 20
     certification = _certification_snapshot_fixture()
-    return {
+    record = {
         "schema": "utility-comparison.v1",
         "schema_version": 2,
         "seed_count": len(seed_ids),
@@ -134,6 +147,55 @@ def _record(seed_ids: list[int] | None = None) -> dict:
             }
         },
     }
+    _sync_v3_reporting(record)
+    return record
+
+
+def _sync_v3_reporting(record: dict) -> None:
+    """Mirror the two producer-emitted reporting blocks the v3 policy requires.
+
+    `utility_recompose._project_estimands` always emits the per-arm completion
+    estimand alongside ITT, and `utility_comparison._compose_cell` attaches
+    `schema_stratified.by_stratum` to every measured cell whose queries carry a
+    `question_type` — including a single-schema cell, which reports its one
+    schema (`_default_schema_stratify` returns `None` only when NO query is
+    tagged). The fixture reproduces BOTH from its own ITT strata rather
+    than hand-pinning them, so a test that appends a stratum stays consistent
+    with what the real producer would have composed for it (the
+    `unreachable-seed-green` discipline)."""
+    cells = record["estimands"]["intention_to_treat"]["strata"]
+    record["estimands"]["completion"] = {
+        "role": "secondary",
+        "source": "measured",
+        "strata": [
+            {
+                "stratum_id": cell["stratum_id"],
+                "corpus": cell["corpus"],
+                "model": cell["model"],
+                "by_arm": {
+                    arm: {
+                        "n_expected": cell["per_arm_loss"][arm]["n_expected"],
+                        "n_attempted": cell["per_arm_loss"][arm]["n_attempted"],
+                        "n_completed": cell["per_arm_loss"][arm]["n_completed"],
+                        "n_exhausted": 0,
+                        "completion_rate": 1.0,
+                    }
+                    for arm in ("A", "B")
+                },
+            }
+            for cell in cells
+        ],
+    }
+    measured = record.setdefault("measured", {})
+    for cell in cells:
+        by_model = measured.setdefault(cell["corpus"], {})
+        block = by_model.setdefault(cell["model"], {})
+        block.setdefault("primary_arm", "addition_b")
+        block["schema_stratified"] = {"by_stratum": {
+            schema: {"n_paired_observations": cell["n_paired_observations"] // 2,
+                     "accuracy": {"delta_ci95": [-0.01, 0.05]}}
+            for schema in _KNOWN_SCHEMAS
+        }}
 
 
 def _active_policy(record: dict | None = None) -> dict:
@@ -172,37 +234,38 @@ def _sync_tool_assertion_counts(record: dict) -> None:
     assertions["cells_total"] = total
     assertions["cells_with_mcp_surface_verified"] = total
     assertions["cells_with_exposure_mode_verified"] = total
+    # A test that appends a stratum must also carry that stratum's producer-emitted
+    # completion + schema-stratification blocks (v3 requirements) -- same resync
+    # point, so there is one place to keep a mutated fixture self-consistent.
+    _sync_v3_reporting(record)
 
 
-def test_checked_in_policy_is_active_confirmatory_four_stratum():
-    """Founder-delegated activation (tempdoc 624 §Confirmatory pre-registration,
-    2026-07-17): the checked-in policy is ACTIVE with the exact haiku confirmatory
-    matrix (legal 1k/10k + email 1k/10k, verbose, seeds {0,1,2}, 20q) and fully
-    resolved thresholds (seeds floor 3 = harness SEED_FLOOR; paired >= 54 = 90%%
-    of the 60-pair complete matrix; adoption >= 0.9; noninferiority margin 0.10).
-    Thresholds were set BEFORE the confirmatory campaign ran — pre-registration,
-    not post-hoc selection.
+def test_checked_in_policy_is_ratified_v4_three_stratum_sonnet_hero():
+    """Founder-authorized ratification (2026-07-28, tempdoc 782 §J): the
+    checked-in ACTIVE policy is `agent-utility-public-v4`, carrying forward the
+    tempdoc 782 §E.1 three-stratum sonnet hero matrix VERBATIM — enron-1k,
+    enron-10k, legal-1k, verbose, seeds {0,1,2}, 20q. legal-10k is EXCLUDED
+    (771 §E M5), and haiku is not run in this campaign.
 
-    RATIFIED 2026-07-21 (founder-authorized, tempdoc 755 §J): the rate-based
-    verified_tool_surface amendment became part of the ACTIVE policy — policy_id
-    advanced to `agent-utility-public-v2` and thresholds now carry
-    minimum_surface_verification_rate = 0.9. The matrix, other thresholds, and
-    requirements are byte-unchanged from the v1 activation."""
+    Supersedes the 2026-07-17 four-stratum haiku confirmatory activation, its
+    2026-07-21 v2 amendment (tempdoc 755 §J, whose rate-based
+    verified_tool_surface semantics carry over unchanged — 782 §E.2 R2), and the
+    2026-07-28 v3 ratification (766 §G decision 2), which v4 changes in exactly
+    one respect: the additive `certified_query_subset` requirement."""
     policy = load_policy()
     jsonschema = pytest.importorskip("jsonschema")
-    schema_path = __import__("pathlib").Path(__file__).parents[1] / "utility-claim-policy.v1.schema.json"
+    schema_path = Path(__file__).parents[1] / "utility-claim-policy.v1.schema.json"
     jsonschema.validate(policy, json.loads(schema_path.read_text(encoding="utf-8")))
 
     assert policy["status"] == "active"
     assert policy["unresolved"] == []
-    assert policy["policy_id"] == "agent-utility-public-v2"
+    assert policy["policy_id"] == "agent-utility-public-v4"
     assert policy["thresholds"]["minimum_surface_verification_rate"] == 0.9
-    assert {item["stratum_id"] for item in policy["required_strata"]} == {
-        "en-legal-clerc|mixed/en-legal-clerc-1k-verbose|1000|verbose|haiku",
-        "en-legal-clerc|mixed/en-legal-clerc-10k-verbose|10000|verbose|haiku",
-        "en-email-enron-raw|mixed/en-email-enron-raw-1k-verbose|1000|verbose|haiku",
-        "en-email-enron-raw|mixed/en-email-enron-raw-10k-verbose|10000|verbose|haiku",
-    }
+    assert [item["stratum_id"] for item in policy["required_strata"]] == [
+        "en-email-enron-raw|mixed/en-email-enron-raw-1k-verbose|1000|verbose|sonnet",
+        "en-email-enron-raw|mixed/en-email-enron-raw-10k-verbose|10000|verbose|sonnet",
+        "en-legal-clerc|mixed/en-legal-clerc-1k-verbose|1000|verbose|sonnet",
+    ]
     assert all(item["seed_ids"] == [0, 1, 2] and item["query_count"] == 20
                for item in policy["required_strata"])
     thresholds = policy["thresholds"]
@@ -215,6 +278,332 @@ def test_checked_in_policy_is_active_confirmatory_four_stratum():
     verdict = evaluate_claim(_record(), policy)
     assert verdict["accepted"] is False
     assert verdict["policy_hash"] == policy_digest(policy)
+
+
+def test_v3_ratification_tuned_no_threshold_and_dropped_legal_10k():
+    """The ratification's composition rule, enforced literally rather than in
+    prose: v3 = v3-DRAFT machinery + v2's thresholds VERBATIM + decision-2 strata.
+
+    Comparing v3's thresholds against the SUPERSEDED v2 document byte-for-byte on
+    every shared key is what makes "no threshold was tuned during ratification" a
+    mechanical property. The only permitted difference is the additive
+    closed-book ceiling, which has no v2 counterpart."""
+    policy = load_policy()
+    superseded = load_superseded_policy()
+    previous = load_previous_policy()
+
+    # The supersede chain, asserted link by link: v2 -> v3 -> v4 (the ACTIVE one).
+    assert superseded["status"] == "superseded"
+    assert superseded["superseded_by"] == previous["policy_id"] == "agent-utility-public-v3"
+    assert previous["status"] == "superseded"
+    assert previous["superseded_by"] == policy["policy_id"]
+    # v4 carries v3's numbers forward untouched, so comparing the ACTIVE policy
+    # against the v2 byte-source still enforces "no threshold was ever tuned".
+    assert policy["thresholds"] == previous["thresholds"]
+
+    shared = set(policy["thresholds"]) & set(superseded["thresholds"])
+    assert {name: policy["thresholds"][name] for name in sorted(shared)} == {
+        name: superseded["thresholds"][name] for name in sorted(shared)
+    }
+    # The additive keys are the ONLY divergence, in the v3 direction only.
+    assert set(policy["thresholds"]) - set(superseded["thresholds"]) == {
+        "maximum_closed_book_accuracy",
+    }
+    assert set(superseded["thresholds"]) - set(policy["thresholds"]) == set()
+
+    strata = policy["required_strata"]
+    assert len(strata) == 3
+    assert all(item["requested_model"] == "sonnet" for item in strata)
+    assert not any(
+        item["corpus_member"] == "en-legal-clerc" and item["size"] == 10000
+        for item in strata
+    ), "legal-10k is excluded by founder decision 2 (766 §G / 782 §E.1)"
+    assert policy["requirements"]["closed_book_at_hero_tier"] is True
+    assert policy["hero_tier"]["requested_model_class"] == "sonnet-or-stronger"
+    assert policy["policy_changelog"][0]["policy_id"] == policy["policy_id"]
+    # v4's own composition rule: v3 verbatim + exactly ONE additive requirement.
+    assert (set(policy["requirements"]) - set(previous["requirements"])
+            == {"certified_query_subset"})
+    assert set(previous["requirements"]) - set(policy["requirements"]) == set()
+    assert policy["required_schema_strata"] == previous["required_schema_strata"]
+    assert policy["hero_tier"] == previous["hero_tier"]
+    assert policy["triple_reporting_semantics"] == previous["triple_reporting_semantics"]
+
+
+# --- v3 additive gates: the REFUSAL branch ----------------------------------
+#
+# The happy path is covered by every `_active_policy()` test above (the fixture
+# now carries the producer's completion + schema blocks). These three prove each
+# gate can still REJECT -- without them a gate inverted to always-True ships
+# green, since a passing gate and an absent gate are indistinguishable from
+# `accepted is True` alone. Each asserts the SPECIFIC gate name surfaces.
+
+def _failed_gate_names(verdict: dict) -> set[str]:
+    return {item["name"] for item in verdict["gates"] if not item["passed"]}
+
+
+def test_completion_triple_reported_rejects_when_completion_estimand_is_missing():
+    """762 §T4: the ITT headline may not be published without its completion
+    sibling. Stripping `estimands.completion` must fail THIS gate by name."""
+    record = _record()
+    del record["estimands"]["completion"]
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    assert "completion_triple_reported" in verdict["reasons"]
+    assert "completion_triple_reported" in _failed_gate_names(verdict)
+    assert verdict["accepted"] is False
+
+
+def test_schema_strata_reported_rejects_when_the_breakdown_is_missing():
+    """768 D4 / v3 `required_schema_strata`: a measured cell with no
+    `schema_stratified` block cannot satisfy `require_all_present`."""
+    record = _record()
+    for by_model in record["measured"].values():
+        for cell in by_model.values():
+            del cell["schema_stratified"]
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    assert "schema_strata_reported" in verdict["reasons"]
+    gate = next(item for item in verdict["gates"]
+                if item["name"] == "schema_strata_reported")
+    assert gate["passed"] is False
+    assert gate["observed"][0]["missing"] == list(_KNOWN_SCHEMAS)
+    assert verdict["accepted"] is False
+
+
+def _closed_book_gate(verdict: dict) -> dict:
+    return next(item for item in verdict["gates"]
+                if item["name"] == "closed_book_at_hero_tier")
+
+
+def test_closed_book_at_hero_tier_rejects_without_a_measured_closed_book_number():
+    """768 item 6 / v3 `hero_tier`: with no measured closed-book accuracy there is
+    nothing licensing the retrieval attribution, so the gate refuses.
+
+    Isolation note (honest, not assumed): the closed-book measurement rides the
+    707 certification snapshot, which is cross-validated against its own embedded
+    certificate — so ANY mutation of it also trips `corpus_certification_complete`.
+    That co-failure is asserted rather than glossed. What proves this gate is
+    doing independent work is the before/after on the SAME gate: it passes on the
+    untouched fixture and fails on the mutated one, which a gate inverted to
+    always-True could not satisfy."""
+    baseline = evaluate_claim(_record(), _active_policy())
+    assert _closed_book_gate(baseline)["passed"] is True
+
+    record = _record()
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        cell["corpus_certification"]["scientific_gates"]["closed_book"] = {
+            "passed": True, "status": "passed",
+        }
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    assert _closed_book_gate(verdict)["passed"] is False
+    assert "closed_book_at_hero_tier" in verdict["reasons"]
+    assert _failed_gate_names(verdict) == {
+        "closed_book_at_hero_tier", "corpus_certification_complete",
+    }
+    assert verdict["accepted"] is False
+
+
+def test_closed_book_at_hero_tier_rejects_accuracy_above_the_ceiling():
+    """The ceiling is load-bearing, not decorative: a materially non-zero
+    closed-book accuracy means the answers are derivable without the corpus, so
+    the with-tool uplift cannot be attributed to retrieval.
+
+    Same snapshot-cross-validation caveat as the test above — the co-failure is
+    asserted, and the gate's own observed payload is checked to prove it read the
+    mutated number rather than failing incidentally."""
+    record = _record()
+    policy = _active_policy(record)
+    ceiling = policy["thresholds"]["maximum_closed_book_accuracy"]
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        observed = (cell["corpus_certification"]["scientific_gates"]
+                    ["closed_book"]["observed"])
+        observed["closed_book_accuracy"] = ceiling + 0.5
+
+    verdict = evaluate_claim(record, policy)
+
+    gate = _closed_book_gate(verdict)
+    assert gate["passed"] is False
+    assert gate["threshold"] == ceiling
+    assert gate["observed"][0]["closed_book_accuracy"] == ceiling + 0.5
+    assert "closed_book_at_hero_tier" in verdict["reasons"]
+    assert verdict["accepted"] is False
+
+
+# --- v4 `certified_query_subset` (tempdoc 782 §J / FREEZE DEFECT #2) ---------
+#
+# v3's `corpus_certification_complete` required `cert.query_count ==
+# cell.query_count` EXACTLY, which refused every legitimate pre-registered
+# SUBSET run: the 781 certifications certify the 50-query committed gold set
+# while the frozen 782 §E.1 design measures the pre-registered 20-qid leading
+# prefix. `query_gold_sha256` -- the identity that actually chains the certified
+# queries -- matched all along. v4 replaces the count comparison with a
+# three-legged check that is STRICTER for a subset and unchanged for a full run.
+
+_SUBSET_QID_SHA256 = hashlib.sha256(
+    ("\n".join(f"q{index + 1:04d}" for index in range(20)) + "\n").encode("utf-8")
+).hexdigest()
+
+
+def _subset_record() -> dict:
+    """The hero-cohort shape: a certification over the FULL 50-query committed
+    gold set, a run over the pre-registered 20-qid leading prefix.
+
+    Only the certification's `query_count` moves -- `query_gold_sha256` still
+    chains the whole committed file, exactly as the real harness emits it (it
+    hashes the queries file's bytes and truncates only the sample rows)."""
+    record = _record()
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        cell["corpus_certification"] = _certification_snapshot_fixture(query_count=50)
+    return record
+
+
+def _subset_policy(record: dict, qid_sha: str | None = _SUBSET_QID_SHA256) -> dict:
+    policy = _active_policy(record)
+    assert policy["requirements"]["certified_query_subset"] is True
+    for item in policy["required_strata"]:
+        if qid_sha is None:
+            item.pop("qid_list_sha256", None)
+        else:
+            item["qid_list_sha256"] = qid_sha
+    return policy
+
+
+def _certification_gate(verdict: dict) -> dict:
+    return next(item for item in verdict["gates"]
+                if item["name"] == "corpus_certification_complete")
+
+
+def test_certified_query_subset_accepts_the_pre_registered_subset():
+    """The defect's direct regression: a 20-of-50 subset run passes ONLY when the
+    record's derived qid-list digest equals the policy's pre-registered one.
+
+    The before/after on the SAME gate is what proves the new branch does real
+    work (a branch inverted to always-True could not produce the `False` half):
+    the identical record is REFUSED by a policy that does not declare the
+    requirement, because that is v3's literal count comparison."""
+    record = _subset_record()
+
+    accepted = evaluate_claim(record, _subset_policy(record))
+    assert _certification_gate(accepted)["passed"] is True
+    assert "corpus_certification_complete" not in accepted["reasons"]
+    assert accepted["accepted"] is True
+
+    v3_shaped = _subset_policy(record)
+    v3_shaped["requirements"].pop("certified_query_subset")
+    refused = evaluate_claim(record, v3_shaped)
+    assert _certification_gate(refused)["passed"] is False
+    assert "corpus_certification_complete" in refused["reasons"]
+    assert refused["accepted"] is False
+
+
+def test_certified_query_subset_fails_closed_without_a_pre_registered_identity():
+    """Fail-closed, not permissive: a count mismatch with NO pre-registered
+    subset digest in the policy is refused. Otherwise v4 would be a blanket
+    relaxation of the count rule rather than a subset-identity check."""
+    record = _subset_record()
+
+    verdict = evaluate_claim(record, _subset_policy(record, None))
+
+    assert _certification_gate(verdict)["passed"] is False
+    assert "corpus_certification_complete" in verdict["reasons"]
+    assert verdict["accepted"] is False
+
+
+def test_certified_query_subset_fails_on_a_mismatched_subset_digest():
+    """A subset that is not the pre-registered one is refused — this is the leg
+    that makes the gate a cryptographic check rather than a `<=` on counts."""
+    record = _subset_record()
+
+    verdict = evaluate_claim(record, _subset_policy(record, "a" * 64))
+
+    assert _certification_gate(verdict)["passed"] is False
+    assert "corpus_certification_complete" in verdict["reasons"]
+    assert verdict["accepted"] is False
+
+
+def test_certified_query_subset_fails_when_the_qid_set_is_not_a_leading_prefix():
+    """Truncation in committed order is the ONLY certification-preserving
+    selection (any other subset needs its own gold file, which breaks
+    `query_gold_sha256`). A hole in the ordinal set yields NO derivable subset
+    identity, so the gate refuses even though the digest would be re-derivable
+    from some other vocabulary."""
+    record = _subset_record()
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        cell["campaign_identity"]["expected_cells"] = [
+            value.replace("|q19", "|q25")
+            for value in cell["campaign_identity"]["expected_cells"]
+        ]
+
+    verdict = evaluate_claim(record, _subset_policy(record))
+
+    assert _certification_gate(verdict)["passed"] is False
+    assert verdict["accepted"] is False
+
+
+def test_certified_query_subset_refuses_a_superset_of_the_certified_set():
+    """`cell.query_count <= cert.query_count` is a real leg: a run claiming MORE
+    queries than the certification covers is not a subset and is refused
+    regardless of any declared digest."""
+    record = _subset_record()
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        cell["corpus_certification"] = _certification_snapshot_fixture(query_count=5)
+
+    verdict = evaluate_claim(record, _subset_policy(record))
+
+    assert _certification_gate(verdict)["passed"] is False
+    assert verdict["accepted"] is False
+
+
+def test_certified_query_subset_leaves_full_count_runs_byte_identical():
+    """The conditional-gate discipline, asserted directly: a policy that does
+    NOT declare `certified_query_subset` evaluates any record exactly as the
+    committed v3 document does, so no historical verdict moves.
+
+    Compared as canonical bytes with the policy identity removed (`policy_id` /
+    `policy_hash` necessarily differ between two different documents — that is
+    the re-pin the digest test in `test_utility_evidence.py` covers)."""
+    pre_supersede_v3 = load_previous_policy()
+    assert pre_supersede_v3.pop("superseded_by") == "agent-utility-public-v4"
+    pre_supersede_v3["status"] = "active"
+    v4_without_the_requirement = copy.deepcopy(load_policy())
+    v4_without_the_requirement["requirements"].pop("certified_query_subset")
+
+    for record in (_record(), _subset_record()):
+        left = evaluate_claim(record, pre_supersede_v3)
+        right = evaluate_claim(record, v4_without_the_requirement)
+        for verdict in (left, right):
+            del verdict["policy_id"]
+            del verdict["policy_hash"]
+        assert canonical_bytes(left) == canonical_bytes(right)
+
+    # …and that shared behaviour is v3's literal rule: equal counts pass,
+    # unequal counts fail. (Passes for the RIGHT reason, not incidentally.)
+    assert _certification_gate(
+        evaluate_claim(_record(), v4_without_the_requirement))["passed"] is True
+    assert _certification_gate(
+        evaluate_claim(_subset_record(), v4_without_the_requirement))["passed"] is False
+
+
+def test_checked_in_v4_policy_pins_the_frozen_782_subset_digests():
+    """The pre-registered digests are copied from the frozen `cells.v1.json`
+    (§E.8, frozen before any measured cell) — not minted during this fix. Read
+    both sides and compare, so a drift in either file fails here."""
+    cells = json.loads(
+        (Path(__file__).parents[1] / "782-hero" / "cells.v1.json")
+        .read_text(encoding="utf-8")
+    )
+    frozen = {item["stratum_id"]: item["qid_list_sha256"] for item in cells["strata"]}
+    declared = {
+        item["stratum_id"]: item["qid_list_sha256"]
+        for item in load_policy()["required_strata"]
+    }
+    assert declared == frozen
+    assert set(declared.values()) == {_SUBSET_QID_SHA256}
 
 
 def test_favorable_outcomes_cannot_override_unresolved_policy():
@@ -637,8 +1026,15 @@ def test_supported_requirements_match_schema_properties_exactly():
     schema_path = Path(__file__).parents[1] / "utility-claim-policy.v1.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     requirements_schema = schema["properties"]["requirements"]
+    # Every requirement the evaluator supports is a schema property, and every
+    # MANDATORY one is schema-`required`. The v3 ratification (2026-07-28) split
+    # these two sets: `completion_triple_reported` / `closed_book_at_hero_tier` /
+    # `schema_strata_reported` are additive requirements a policy MAY declare
+    # (their gates fire only when declared), so the superseded v2 document stays
+    # schema-valid history without back-dating them into it.
     assert SUPPORTED_REQUIREMENTS == set(requirements_schema["properties"])
-    assert SUPPORTED_REQUIREMENTS == set(requirements_schema["required"])
+    assert MANDATORY_REQUIREMENTS == set(requirements_schema["required"])
+    assert MANDATORY_REQUIREMENTS < SUPPORTED_REQUIREMENTS
 
 
 # --- verified_exposure_mode (tempdoc 725 increment 2) -----------------------
@@ -839,7 +1235,7 @@ def test_checked_in_active_policy_evaluates_surface_via_rate_branch():
     capture-miss rate (0.92 >= 0.9) passes. This is the runnable proof that the
     rate semantics hold against the policy the harness actually loads."""
     policy = load_policy()
-    assert policy["policy_id"] == "agent-utility-public-v2"
+    assert policy["policy_id"] == "agent-utility-public-v4"
     assert policy["thresholds"]["minimum_surface_verification_rate"] == 0.9
 
     record = _record()

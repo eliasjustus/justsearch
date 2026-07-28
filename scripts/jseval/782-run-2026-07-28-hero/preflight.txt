@@ -1,0 +1,108 @@
+==============================================================================
+782 HERO CAMPAIGN PREFLIGHT  --  committed artifacts only, no backend, no paid call
+repo: F:\justsearch-public
+==============================================================================
+
+[1] active claim policy
+  [PASS   ] policy: ratified v3 is active
+            utility-claim-policy.v3.json policy_id='agent-utility-public-v3' (want 'agent-utility-public-v3') unresolved=[]
+  [PASS   ] policy: required_strata == frozen §E.1 order
+            3 strata, cheapest-first match=True
+  [PASS   ] policy: 20q x seeds{0,1,2} x sonnet on every stratum
+            all three match
+
+[2] corpus certifications (§E.2 P1/P2)
+  [PASS   ] cert[enron-1k]: member fully-certified
+            status='fully-certified' fully_certified=True (authority: corpus_certify.py:815-817 -- NOT member.v1.json, whose remaining_gates is pre-#311 residue)
+  [PASS   ] cert[enron-1k]: §E.2 P1 signature pins
+            corpus_signature=3391fc9781c6dafc... query_gold_sha256=1138c58c809859a5... match=True
+  [PASS   ] cert[enron-1k]: committed query_count
+            50 (expect 50; the campaign measures the first 20 -- §E.8)
+  [PASS   ] cert[enron-1k]: §E.2 P2 field_selectivity
+            worst_field='text' max_field_separability=0.0 <= native_base_rate=0.0 n_fields=2
+  [PASS   ] cert[enron-1k]: all structural checks
+            9/9 true
+  [PASS   ] cert[enron-1k]: scientific gates
+            closed_book=True, retrieval_calibration=True, union_recall=True, leak_floor=True
+  [PASS   ] cert[enron-10k]: member fully-certified
+            status='fully-certified' fully_certified=True (authority: corpus_certify.py:815-817 -- NOT member.v1.json, whose remaining_gates is pre-#311 residue)
+  [PASS   ] cert[enron-10k]: §E.2 P1 signature pins
+            corpus_signature=6a80af3b5bdbb59d... query_gold_sha256=1138c58c809859a5... match=True
+  [PASS   ] cert[enron-10k]: committed query_count
+            50 (expect 50; the campaign measures the first 20 -- §E.8)
+  [PASS   ] cert[enron-10k]: §E.2 P2 field_selectivity
+            worst_field='text' max_field_separability=0.0 <= native_base_rate=0.0 n_fields=2
+  [PASS   ] cert[enron-10k]: all structural checks
+            9/9 true
+  [PASS   ] cert[enron-10k]: scientific gates
+            closed_book=True, retrieval_calibration=True, union_recall=True, leak_floor=True
+  [PASS   ] cert[legal-1k]: member fully-certified
+            status='fully-certified' fully_certified=True (authority: corpus_certify.py:815-817 -- NOT member.v1.json, whose remaining_gates is pre-#311 residue)
+  [PASS   ] cert[legal-1k]: §E.2 P1 signature pins
+            corpus_signature=6df707031abcd296... query_gold_sha256=2797469a5f80aa88... match=True
+  [PASS   ] cert[legal-1k]: committed query_count
+            50 (expect 50; the campaign measures the first 20 -- §E.8)
+  [PASS   ] cert[legal-1k]: §E.2 P2 field_selectivity
+            worst_field='text' max_field_separability=0.0 <= native_base_rate=0.0 n_fields=2
+  [PASS   ] cert[legal-1k]: all structural checks
+            9/9 true
+  [PASS   ] cert[legal-1k]: scientific gates
+            closed_book=True, retrieval_calibration=True, union_recall=True, leak_floor=True
+
+[3] frozen 20-qid selection (§E.8)
+  [PASS   ] qids[enron-1k]: frozen §E.8 digests reproduce
+            qid_list_sha256=7b7856e8d8d0f3ce... selected_query_sha256=27aba99517718d0f... match=True
+  [PASS   ] qids[enron-10k]: frozen §E.8 digests reproduce
+            qid_list_sha256=7b7856e8d8d0f3ce... selected_query_sha256=27aba99517718d0f... match=True
+  [PASS   ] qids[legal-1k]: frozen §E.8 digests reproduce
+            qid_list_sha256=7b7856e8d8d0f3ce... selected_query_sha256=316f80bb6e0144aa... match=True
+
+[4] dataset resolvability
+  [PASS   ] dataset[enron-1k]: materialization aligns
+            F:\justsearch-public\tmp\781-v2-datasets\mixed\en-email-enron-raw-1k-verbose n=50 first-20 aligned with committed gold=True
+  [PASS   ] dataset[enron-10k]: materialization aligns
+            F:\justsearch-public\tmp\781-v2-datasets\mixed\en-email-enron-raw-10k-verbose n=50 first-20 aligned with committed gold=True
+  [PASS   ] dataset[legal-1k]: materialization aligns
+            F:\justsearch-public\tmp\781-v2-datasets\mixed\en-legal-clerc-1k-verbose n=50 first-20 aligned with committed gold=True
+
+[5] schema coverage vs policy known_schemas
+  [PASS   ] schema[enron-1k]: schema_strata_reported can pass
+            selection covers ['1_hop'] ; policy known_schemas=['1_hop'] ; missing=[] ; require_all_present=True
+  [PASS   ] schema[enron-10k]: schema_strata_reported can pass
+            selection covers ['1_hop'] ; policy known_schemas=['1_hop'] ; missing=[] ; require_all_present=True
+  [PASS   ] schema[legal-1k]: schema_strata_reported can pass
+            selection covers ['1_hop'] ; policy known_schemas=['1_hop'] ; missing=[] ; require_all_present=True
+
+[6] closed-book (§E.2 P3 vs the policy gate)
+  [PASS   ] closed-book[enron-1k]: policy gate closed_book_at_hero_tier
+            accuracy=0.0 <= ceiling=0.1, model='haiku' (the GATE does not check the measurement tier -- utility_claim_policy.py:497-506)
+  [PENDING] closed-book[enron-1k]: 782 §E.2 P3 bar (0.000 AT SONNET)
+            committed measurement is at model='haiku' -- P3 is the stricter bar and is NOT satisfied by committed artifacts. Produce it in campaign Step 0b (see campaign-plan.md); 782 §H FINDING-2.
+  [PASS   ] closed-book[enron-10k]: policy gate closed_book_at_hero_tier
+            accuracy=0.0 <= ceiling=0.1, model='haiku' (the GATE does not check the measurement tier -- utility_claim_policy.py:497-506)
+  [PENDING] closed-book[enron-10k]: 782 §E.2 P3 bar (0.000 AT SONNET)
+            committed measurement is at model='haiku' -- P3 is the stricter bar and is NOT satisfied by committed artifacts. Produce it in campaign Step 0b (see campaign-plan.md); 782 §H FINDING-2.
+  [PASS   ] closed-book[legal-1k]: policy gate closed_book_at_hero_tier
+            accuracy=0.0 <= ceiling=0.1, model='haiku' (the GATE does not check the measurement tier -- utility_claim_policy.py:497-506)
+  [PENDING] closed-book[legal-1k]: 782 §E.2 P3 bar (0.000 AT SONNET)
+            committed measurement is at model='haiku' -- P3 is the stricter bar and is NOT satisfied by committed artifacts. Produce it in campaign Step 0b (see campaign-plan.md); 782 §H FINDING-2.
+
+[7] tooling
+  [PASS   ] tooling: budget guard present
+            F:\justsearch-public\scripts\jseval\step2-budget-guard.py (cap $300, --total 3)
+  [PASS   ] tooling: claude CLI resolvable
+            C:\Users\Elias\.local\bin\claude.EXE
+  [PASS   ] tooling: frozen scorer identity (§E.3 / §E.7 row 9)
+            scorer=substring_scorer() present in agent_utility_inspect.py (any change here voids the frozen §E.3 branch selection)
+
+[8] campaign-produced artifacts
+  [PENDING] campaign: per-stratum sonnet calibrations
+            produced by `jseval utility-calibrate` on the campaign day; feeds the $300 budget guard and the frozen max_budget derivation rule (§E.1)
+  [PENDING] campaign: run directory
+            scripts/jseval/782-run-<YYYY-MM-DD>-hero -- created on launch day (§E.7 row 11)
+  [PENDING] campaign: founder launch authorization
+            founder-gated, recorded in the §E.6 ledger; NOT granted at freeze
+
+==============================================================================
+PREFLIGHT PASS  --  36 PASS, 0 FAIL, 6 PENDING
+==============================================================================

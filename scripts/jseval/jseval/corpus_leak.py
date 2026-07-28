@@ -455,6 +455,192 @@ def id_shape_report(
     }
 
 
+#: Null draws for :func:`field_selectivity_report`, mirroring :data:`_ID_NULL_SAMPLES`:
+#: the null is a MAX over gold-sized native relabellings, so it is monotone in this count.
+#: 25 matches the id-shape null so the two presence-style controls are equally powered.
+_FIELD_NULL_SAMPLES = 25
+
+#: Fields whose gold-vs-native separability is measured elsewhere and so are NOT re-gated
+#: here. ``_id``'s value shape is owned by :func:`id_shape_report`; this report only ever
+#: looks at a field's PRESENCE, and every document has an ``_id``, so including it would
+#: contribute a constant zero-separability row while duplicating id_shape's concern.
+_FIELD_SELECTIVITY_EXCLUDED_FIELDS = frozenset({"_id"})
+
+
+def _is_field_populated(value: object) -> bool:
+    """Is a field VALUE non-trivial (present and carrying content)?
+
+    The one place this module decides "does this document have this field". A field is
+    populated when its value is not ``None`` and not empty: an empty (or whitespace-only)
+    string and an empty list/dict/tuple/set are NOT populated — this is exactly what makes
+    the tempdoc 774 §J.7 title leak visible, because :func:`corpus_inject.assemble` writes
+    ``title: ""`` onto every native distractor while gold docs carry a real title. A number
+    or boolean is populated (``0`` and ``False`` are real values, not absence).
+    """
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, dict, tuple, set)):
+        return len(value) > 0
+    return True
+
+
+def _presence_separability(gold_flags: list[bool], native_flags: list[bool]) -> float:
+    """Youden's J of the rule "this field is populated", made sign-invariant.
+
+    ``J = TPR - FPR = gold_population_rate - native_population_rate``. A field populated
+    only on gold has ``J = 1``; one populated only on natives has ``J = -1`` and an agent
+    would simply invert the rule — the magnitude is what matters, so return ``abs(J)``.
+    """
+    n_gold, n_native = len(gold_flags), len(native_flags)
+    if not n_gold or not n_native:
+        return 0.0
+    return abs(sum(gold_flags) / n_gold - sum(native_flags) / n_native)
+
+
+def field_selectivity_report(
+    docs: list[dict], queries: list[dict] | None = None, *,
+    n_null_samples: int = _FIELD_NULL_SAMPLES,
+) -> dict:
+    """Does any FIELD's mere presence/population separate gold from native (tempdoc 776 §I)?
+
+    The instrument gap tempdoc 776 §H recorded, which tempdoc 774 §J.7's title leak
+    exemplifies. The five reports above all read a field's CONTENT (id shape, n-grams of
+    title+text, word count of text, query/token overlap); none notices a field whose mere
+    *presence* is the leak. In the 767-family injected corpora ONLY gold docs carried a
+    populated ``title`` (natives get ``title: ""`` from :func:`corpus_inject.assemble`), so
+    a title-consuming lever read the answer key while every content-level check passed — the
+    per-gold titles are distinct, so no shared n-gram, and an empty native title says nothing
+    about length. That was the fifth leak instance in the passage-first program's history and
+    the one class the existing gates structurally cannot see.
+
+    For every field present on any document (except ``_id``, whose value shape is
+    :func:`id_shape_report`'s concern) it measures, in ``per_field``:
+
+    * ``gold_population_rate`` / ``native_population_rate`` — the fraction of gold vs native
+      docs where the field is populated (:func:`_is_field_populated`). This is requirement
+      (a): the population rate.
+    * ``separability`` — ``abs(gold_population_rate - native_population_rate)``, i.e. Youden's
+      J of the trivial "field populated" classifier (sign-invariant; an agent inverts a
+      negatively-separating rule for free). This is requirement (b): a separability measure on
+      field presence.
+    * ``native_base_rate`` — the null, drawn as everywhere in this module: the MAX over
+      ``n_null_samples`` seeded gold-sized draws of NATIVE docs relabelled as pseudo-gold, of
+      the presence separability that draw achieves against the remaining natives. It captures
+      how far a field's population rate can diverge on a gold-sized subset from sampling noise
+      alone, so a field uniformly present (or absent) across the population nulls out near
+      zero while a gold-selective field does not.
+    * ``passed`` — ``separability <= native_base_rate`` for that field.
+
+    ``worst_field`` / ``max_field_separability`` / ``native_base_rate`` summarise the single
+    most gold-selective field (the max ``separability - native_base_rate`` excess), so a
+    caller can gate on a flat scalar pair the way the per-cell ``indistinguishability`` check
+    does — and because that field carries the max excess, ``max_field_separability <=
+    native_base_rate`` is exactly equivalent to every field passing. The corpus-level
+    ``passed`` requires at least one comparable field and every one to pass; ``None`` (no gold
+    or no native docs, or no field beyond ``_id`` — nothing to compare) is NOT a pass,
+    matching :func:`id_shape_report` and :func:`ngram_selectivity_report`.
+
+    **Why null-calibrated rather than a pinned threshold.** Same reasoning as
+    ``indistinguishability_report``: the null is drawn from the SAME cell's natives, so the
+    comparison is per-corpus and per-host by construction; a pinned constant would go stale
+    the moment a cell's native population changed. ``matching_mode`` is ``"field-presence"``
+    (a field's whole value decides populated/not, never a substring); ``unit`` is
+    ``"per-document"`` (one document, one vote per field).
+    """
+    gold, native = _split_gold_native(docs, queries)
+    n_gold, n_native = len(gold), len(native)
+    fields = sorted({key for doc in docs for key in doc} - _FIELD_SELECTIVITY_EXCLUDED_FIELDS)
+
+    empty = {
+        "n_gold": n_gold,
+        "n_native": n_native,
+        "per_field": {},
+        "worst_field": None,
+        "max_field_separability": 0.0,
+        "native_base_rate": 0.0,
+        "n_fields_compared": 0,
+        "native_base_rate_seed": _DEFAULT_SEED,
+        "native_base_rate_samples": n_null_samples,
+        "matching_mode": "field-presence",
+        "unit": "per-document",
+        "method": "field-presence-null-calibrated-separability",
+        "passed": None,
+    }
+    if not n_gold or not n_native or not fields:
+        return empty
+
+    native_flags_by_field = {
+        field: [_is_field_populated(d.get(field)) for d in native] for field in fields
+    }
+    gold_flags_by_field = {
+        field: [_is_field_populated(d.get(field)) for d in gold] for field in fields
+    }
+
+    # The null draws a gold-sized subset of natives, so it needs at least one native left
+    # over to score against — cap the draw at n_native - 1.
+    sample_size = min(n_gold, n_native - 1) if n_native > 1 else 0
+    native_indices = list(range(n_native))
+
+    per_field: dict[str, dict] = {}
+    for field in fields:
+        gold_flags = gold_flags_by_field[field]
+        native_flags = native_flags_by_field[field]
+        separability = _presence_separability(gold_flags, native_flags)
+
+        null = 0.0
+        for offset in range(n_null_samples):
+            if sample_size <= 0:
+                break
+            rng = Random(_DEFAULT_SEED + offset)
+            pseudo_idx = set(rng.sample(native_indices, sample_size))
+            pseudo_gold = [native_flags[i] for i in pseudo_idx]
+            rest = [native_flags[i] for i in native_indices if i not in pseudo_idx]
+            null = max(null, _presence_separability(pseudo_gold, rest))
+
+        n_gold_pop = sum(gold_flags)
+        n_native_pop = sum(native_flags)
+        per_field[field] = {
+            "n_gold_populated": n_gold_pop,
+            "n_native_populated": n_native_pop,
+            "gold_population_rate": n_gold_pop / n_gold,
+            "native_population_rate": n_native_pop / n_native,
+            "separability": separability,
+            "native_base_rate": null,
+            "passed": separability <= null,
+        }
+
+    # Worst = the field with the largest separability-over-null excess (ties -> higher
+    # separability, then field name), i.e. the most gold-selective field. Because it carries
+    # the max excess, `max_field_separability <= native_base_rate` on this field alone is
+    # equivalent to every field passing.
+    worst = max(
+        sorted(per_field),
+        key=lambda f: (
+            per_field[f]["separability"] - per_field[f]["native_base_rate"],
+            per_field[f]["separability"],
+        ),
+    )
+    max_field_separability = per_field[worst]["separability"]
+    native_base_rate = per_field[worst]["native_base_rate"]
+    return {
+        "n_gold": n_gold,
+        "n_native": n_native,
+        "per_field": per_field,
+        "worst_field": worst,
+        "max_field_separability": max_field_separability,
+        "native_base_rate": native_base_rate,
+        "n_fields_compared": len(per_field),
+        "native_base_rate_seed": _DEFAULT_SEED,
+        "native_base_rate_samples": n_null_samples,
+        "matching_mode": "field-presence",
+        "unit": "per-document",
+        "method": "field-presence-null-calibrated-separability",
+        "passed": max_field_separability <= native_base_rate,
+    }
+
+
 def token_document_frequency(docs: list[dict], terms: list[str]) -> dict:
     """Token-boundary, per-document document frequency for ``terms``.
 

@@ -75,7 +75,8 @@ public final class SearchResponseBuilder {
   private final TextQueryOps textQueryOps;
   private final FacetingEngine facetingEngine;
   private final Supplier<Analyzer> indexAnalyzerSupplier;
-  // Tempdocs 774/775: null → both evidence flags read false (tests; byte-for-byte defaults).
+  // Tempdocs 774/775: null → both evidence flags read false (tests only; production always supplies a
+  // real config, whose defaults are ON since the 775 §I flip).
   private final Supplier<ResolvedConfig> resolvedConfigSupplier;
 
   public SearchResponseBuilder(

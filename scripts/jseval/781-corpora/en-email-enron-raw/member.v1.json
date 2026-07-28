@@ -1,0 +1,42 @@
+{
+  "schema": "707-corpus-member.v1",
+  "name": "en-email-enron-raw",
+  "language": "en",
+  "domain": "email",
+  "rebuild_lineage": {
+    "supersedes": "707-corpora/en-email-enron-raw",
+    "tempdoc": "781",
+    "reason": "camouflaged host-title metadata (tempdoc 781 §B.1) — native distractors carry deterministic, non-answer-bearing titles so `title` field-presence no longer separates gold from native. NOTE: this member's v1 committed assembled_digests are byte-identical to v2 for all 4 cells, i.e. the v1 enron artifacts were already title-clean under the shipped generator; the rebuild re-materializes it into the v2 cohort for a single certified basis. Gold sources reused verbatim from v1.",
+    "generator": "corpus_inject._synthesize_host_title (PR #297)"
+  },
+  "real_source": {
+    "recipe": "../../666-corpora/enron-raw-hosts-14k/recipe.json",
+    "real_source_id": "cmu-enron-raw:enron_mail_20150507:seed707:hosts14k",
+    "real_source_sha256": "ac96743aafa3e46d8340f114df6fae06aea1190f237bb88f4292bf20d4331c6b",
+    "content_scope": "CMU enron_mail_20150507 raw email bodies (FERC public record)",
+    "license": "LicenseRef-Enron-FERC-public-record",
+    "license_status": "verified",
+    "redistribute": false
+  },
+  "gold_source": {
+    "note": "Reused from v1 verbatim — each cell's committed fabricated-docs.jsonl / fabricated-queries.json / fabricated-meta.json ARE the gold-source snapshot. fabricated-meta.json's entity_bank pointer still references the shared 707-corpora/en-email-enron-raw/entity-bank generation bank (unchanged).",
+    "origin": "../../635-corpora/needle-burial-v1"
+  },
+  "assembly": {
+    "command": "jseval corpus-inject-real",
+    "style": "interleave",
+    "seed": 707,
+    "host_min_words": 60
+  },
+  "sizes": [1000, 10000],
+  "query_variants": ["verbose", "short-natural"],
+  "materialized_datasets": [
+    "mixed/en-email-enron-raw-1k-verbose",
+    "mixed/en-email-enron-raw-1k-short-natural",
+    "mixed/en-email-enron-raw-10k-verbose",
+    "mixed/en-email-enron-raw-10k-short-natural"
+  ],
+  "structural_certification": "structural-certification.v1.json",
+  "claim_eligible": true,
+  "remaining_gates": ["member_retrieval_calibration", "closed_book", "union_recall", "leak_floor"]
+}

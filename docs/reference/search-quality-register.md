@@ -58,13 +58,13 @@ every committed cell signature. The behavioral count is already derivable withou
 
 | Slug | Domain | Lang | Docs | Queries | Query Form | Last Validated | Validated By | Notes |
 |------|--------|------|------|---------|------------|---------------|-------------|-------|
-| beir/scifact | academic | en | 5183 | 300 | factoid | 2026-06-13 | 580 | BEIR standard; 580 revalidated hybrid on-baseline at HEAD |
-| mixed/enron-qa | email | en | 5485 | 300 | verbose QA | 2026-03-28 | 343 D | single-user inbox (dasovich-j) |
+| beir/scifact | academic | en | 5183 | 300 | factoid | 2026-07-22 | 775 §I | BEIR standard; 580 revalidated hybrid on-baseline at HEAD; 775 re-pinned at evidence-flips-ON defaults |
+| mixed/enron-qa | email | en | 5485 | 300 | verbose QA | 2026-07-22 | 775 §I | single-user inbox (dasovich-j); 775 re-pinned at evidence-flips-ON defaults |
 | mixed/enron-qa-nav | email | en | 5485 | ~100 | navigational | — | — | not yet created; see Q-002 |
 | mixed/courtlistener-200 | legal | en | 200 | 200 | known-item | 2026-03-18 | 309 §35 | **RETIRED 2026-07-01 (tempdoc 666)** — replaced by `mixed/legal-clerc-200`; see Corpus provenance note under Findings. |
-| mixed/legal-clerc-200 | legal (case-law citation) | en | 198 | 200 | citation-retrieval | 2026-07-01 | 666 | Real academic benchmark (CLERC, built on the Caselaw Access Project), not a bespoke curation — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/legal-clerc-200/recipe.json`; regenerable via `jseval corpus-fetch-clerc --name legal-clerc-200 --seed 666 --n-queries 200`. |
-| mixed/miracl-de-2k | wikipedia | de | 3103 | 305 | factoid | 2026-07-01 | 666 | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-de-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-de-2k --lang de --seed 666 --n-docs 3103`. |
-| mixed/miracl-fr-2k | wikipedia | fr | 5407 | 343 | factoid | 2026-07-01 | 666 | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-fr-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-fr-2k --lang fr --seed 666 --n-docs 5407`. Query count corrected from 316 to 343 (full dev-split qrelled query count — the prior 316 had no recorded sampling method). |
+| mixed/legal-clerc-200 | legal (case-law citation) | en | 198 | 200 | citation-retrieval | 2026-07-22 | 775 §I | Real academic benchmark (CLERC, built on the Caselaw Access Project), not a bespoke curation — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/legal-clerc-200/recipe.json`; regenerable via `jseval corpus-fetch-clerc --name legal-clerc-200 --seed 666 --n-queries 200`. |
+| mixed/miracl-de-2k | wikipedia | de | 3103 | 305 | factoid | 2026-07-22 | 775 §I | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-de-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-de-2k --lang de --seed 666 --n-docs 3103`. |
+| mixed/miracl-fr-2k | wikipedia | fr | 5407 | 343 | factoid | 2026-07-22 | 775 §I | **Content regenerated 2026-07-01 (tempdoc 666)** — see Corpus provenance note. Source recipe `scripts/jseval/666-corpora/miracl-fr-2k/recipe.json`; regenerable via `jseval corpus-fetch-miracl --name miracl-fr-2k --lang fr --seed 666 --n-docs 5407`. Query count corrected from 316 to 343 (full dev-split qrelled query count — the prior 316 had no recorded sampling method). |
 | mixed/miracl-zh-2k | wikipedia | zh | 5786 | 393 | factoid | 2026-03-18 | 309 §37 | |
 | mixed/cord19-qddf | biomedical | en | 1000 | 48 | factoid | 2026-03-18 | 309 §35 | 48 queries = low statistical power |
 | mixed/desktop-mixed-v1 | mixed | en+de+fr+zh | 2286 | 250 | mixed | 2026-03-18 | 309 §38 | 5 sources × 4 langs. 7% SciFact qrel coverage (data issue). |
@@ -76,8 +76,8 @@ every committed cell signature. The behavioral count is already derivable withou
 | golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json`. **Content regenerated 2026-07-01 (tempdoc 664)** — see Corpus provenance note under Findings. **LEAKY — id-shape enumeration (776 item 3):** gold occupies `trailing_int(id)` 1..40, distractors 41..280; `trailing_int(id)<=40` selects gold at P/R 1.0 (native base 0.29) via materialized `<doc_id>.txt` filenames. `_FILLER` uniform (not gold-selective here). See the 767/776 Corpus provenance note. |
 | golden/battlefield-en-v1 | synthetic/2-hop chains | en | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | Certified in-band 624 (hybrid 0.4143 "hard", pre-F-031). **Out of band at HEAD defaults post-F-031** (711 re-measure: hybrid 0.9517, vector 1.0000 — saturated in BOTH modes) — no longer a difficulty discriminator in any mode; still valid for throughput profiling (691). Difficulty successor: 704 Pillar 1. Source `scripts/jseval/624-corpora/battlefield-en-v1`; re-measure: `jseval corpus-fidelity --dataset battlefield-en-v1 --modes hybrid,vector --embedding --start-backend --clean`. **LEAKY — id-shape enumeration (776 item 3):** gold occupies `trailing_int(id)` 1..78, distractors 79..390; `trailing_int(id)<=78` selects gold at P/R 1.0 (native base 0.20) via materialized filenames. `_FILLER` uniform (not gold-selective here). See the 767/776 Corpus provenance note. |
 | golden/battlefield-de-v1 | synthetic/2-hop chains | de | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | In-band at HEAD defaults (711 re-measure: hybrid 0.5924 — exact match to the 624 certification — vector 0.58, "moderate") — remains a valid difficulty corpus in both modes. Source `scripts/jseval/624-corpora/battlefield-de-v1`; same re-measure command shape as en-v1. **LEAKY — id-shape enumeration (776 item 3):** gold occupies `trailing_int(id)` 1..78, distractors 79..390; `trailing_int(id)<=78` selects gold at P/R 1.0 (native base 0.20) via materialized filenames. `_FILLER` uniform (not gold-selective here); minor query-overlap elevation (0/26 zero-overlap queries, median Jaccard 0.072). See the 767/776 Corpus provenance note. |
-| mixed/en-legal-clerc-{1k,10k}-{verbose,short-natural} | legal (real CLERC hosts + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates under the ACTIVE pre-run policy `scripts/jseval/707-corpus-certification-policy.v1.json`; closed-book 0.000 ×4). Hybrid 0.5051 / 0.4685 / 0.3238 / 0.2806 (1k-v / 1k-sn / 10k-v / 10k-sn) — **pre-rebuild / leak-inflated** (`_FILLER` gold-only feature, ~1/3 of measured retrieval; 767 §Q). **Certified leak-free (2026-07-22, PR #273): hybrid 0.33 / 0.25 / 0.06 / 0.08** (767 §R.1). See the 767/776 Corpus provenance note. Commitments + recipes: `scripts/jseval/707-corpora/en-legal-clerc/`. |
-| mixed/en-email-enron-raw-{1k,10k}-{verbose,short-natural} | email (raw public-domain Enron distractors + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates, same ACTIVE policy; closed-book 0.000 ×4; license `LicenseRef-Enron-FERC-public-record`). Hybrid 0.8043 / 0.7699 / 0.7052 / 0.6627 — strongest member; graceful scale decay — **pre-rebuild / leak-inflated** (`_FILLER` gold-only feature; 767 §Q). **Certified leak-free (2026-07-22, PR #273): hybrid 0.66 / 0.61 / 0.49 / 0.44** (767 §R.1). See the 767/776 Corpus provenance note. Commitments + recipes: `scripts/jseval/707-corpora/en-email-enron-raw/`. |
+| mixed/en-legal-clerc-{1k,10k}-{verbose,short-natural} | legal (real CLERC hosts + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates under the ACTIVE pre-run policy `scripts/jseval/707-corpus-certification-policy.v1.json`; closed-book 0.000 ×4). Hybrid 0.5051 / 0.4685 / 0.3238 / 0.2806 (1k-v / 1k-sn / 10k-v / 10k-sn) — **pre-rebuild / leak-inflated** (`_FILLER` gold-only feature, ~1/3 of measured retrieval; 767 §Q). **Certified leak-free (2026-07-22, PR #273): hybrid 0.33 / 0.25 / 0.06 / 0.08** (767 §R.1). **SUPERSEDED by the v2 cohort (2026-07-27, tempdoc 781 §F): hybrid 0.3103 / 0.2419 / 0.0996 / 0.1105**, title-class leak closed, new commitments + recipes at `scripts/jseval/781-corpora/en-legal-clerc/` and new policy pins — the v1 signatures are dated history. See the 781 Corpus provenance note. Commitments + recipes (v1): `scripts/jseval/707-corpora/en-legal-clerc/`. |
+| mixed/en-email-enron-raw-{1k,10k}-{verbose,short-natural} | email (raw public-domain Enron distractors + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates, same ACTIVE policy; closed-book 0.000 ×4; license `LicenseRef-Enron-FERC-public-record`). Hybrid 0.8043 / 0.7699 / 0.7052 / 0.6627 — strongest member; graceful scale decay — **pre-rebuild / leak-inflated** (`_FILLER` gold-only feature; 767 §Q). **Certified leak-free (2026-07-22, PR #273): hybrid 0.66 / 0.61 / 0.49 / 0.44** (767 §R.1). **Re-certified in the v2 cohort (2026-07-27, tempdoc 781 §F): hybrid 0.6585 / 0.6122 / 0.4756 / 0.4701** — the enron corpus bytes are UNCHANGED from v1 (it was already title-clean, 781 §E.3), so these four cells double as the run-to-run/engine-drift control band for the legal deltas; new commitments + policy pins at `scripts/jseval/781-corpora/en-email-enron-raw/`. See the 781 Corpus provenance note. Commitments + recipes (v1): `scripts/jseval/707-corpora/en-email-enron-raw/`. |
 | mixed/de-miracl-{1k,10k}-{verbose,short-natural} | wikipedia-de distractors + fabricated injected gold (v2, hops=1) | de | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 secondary stratum — NOT claim-bearing** (deliberately absent from the ACTIVE policy). 1k out-of-band (hybrid 0.2053 / 0.2660), 10k semantically collapsed (0.0431 / 0.0428, union recall 0.10); lexical 0.0 everywhere (pre-registered German grep-collapse, confirmed). The 10k collapse is chartered as tempdoc 748 → Q-018. **LEAKY / pre-rebuild — NOT rebuilt (776 item 3):** fabricated gold (gold source `635-corpora/synth-multiling-de-v1`) carries the identical *English* `_FILLER` block in 240/240 docs per cell among real German MIRACL hosts — the same gold-selective leak as legal, cross-language; the quoted hybrid numbers are leak-inflated and Q-018 needs re-verification on a defillered rebuild. See the 767/776 Corpus provenance note. Commitments: `scripts/jseval/707-corpora/de-miracl/`. |
 
 ---
@@ -172,6 +172,7 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 | splade-ml+gte | gte-ml-reranker | default-hybrid | hybrid | **0.754** | 0.633 | 0.884 | cross_encoder + dense | A | 3af6773cc | 391 |
 | (HEAD default) | (default) | default-hybrid | hybrid | 0.758 | 0.627 | 0.896 | cross_encoder + dense + splade + query_classification | A | f91e269bc | 580 |
 | (HEAD default) | CE-off | (default) | full | 0.708 | 0.577 | 0.833 | dense + splade + query_classification (CE off) | B | f91e269bc | 580 |
+| (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump) | (default) | (default) | hybrid | 0.7604 | 0.637 | 0.888 | cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
 
 **Best known:** splade-ml+gte / gte-ml-reranker / default-hybrid / **hybrid** = **0.754** (391, 6-run median across two 3-run sets on 2026-04-18 and 2026-04-19; range 0.7527–0.7571, CV 0.1–0.3%). Full mode best known remains splade-ml+gte / gte-ml-reranker / bm25-dom / full = **0.736** (343 Phase D).
 **Note:** GTE-ModernBERT CE produces identical result (0.722 — noise). Mode breakdown now complete.
@@ -204,6 +205,7 @@ Manifest and `docs/how-to/triage-psi-drift.md`.
 | (HEAD default re-verify, 774 same-session OFF arm) | (default) | (default) | hybrid | 0.7445 | 0.600 | 0.867 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
 | (774 Stage-1 chunk-lever A/B set, flags non-default) | (default) | (default) | hybrid | 0.7476 | 0.597 | 0.877 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
 | (**`search.evidence_preview.enabled=true`**, default-off flag) | (default) | (default) | hybrid | **0.7882** | 0.643 | 0.913 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 / F-041 |
+| (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump) | (default) | (default) | hybrid | 0.7845 | 0.640 | 0.910 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
 
 **Best known:** bge-m3 / minilm-512 / balanced / bm25_splade = **0.830**
 **Note:** CE hurts EnronQA by 3-5% across all modes (CE-on vs CE-off isolation). Model swaps are quality-neutral on English email (CE-off post-swap matches pre-swap exactly). Confirms FW-001: corpus-adaptive CE gating needed.
@@ -252,8 +254,11 @@ catalog — see Corpus provenance note above)*
 | (HEAD default re-verify, 774 same-session OFF arm) | (default) | (default) | hybrid | 0.5557 | 0.425 | 0.690 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
 | (774 Stage-1 chunk-lever A/B set, flags non-default) | (default) | (default) | hybrid | 0.5448 | 0.420 | 0.685 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 |
 | (**`search.evidence_preview.enabled=true`**, default-off flag) | (default) | (default) | hybrid | **0.6388** | 0.465 | 0.810 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | 5f45022b | 774 §K.2 / F-041 |
+| (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump) | (default) | (default) | hybrid | **0.6362** | 0.460 | 0.810 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
 
-**Best known:** (HEAD default, RMW preservation) / hybrid = **0.5609**; vector = **0.6184** (711,
+**Best known (at shipped defaults):** the flips-ON row above — hybrid = **0.6362** (be7fef6b, 775 §I;
+reproduces the F-041 flag-on 0.6388 within noise, now as the default). Prior defaults best:
+(HEAD default, RMW preservation) / hybrid = **0.5609**; vector = **0.6184** (711,
 2026-07-11 — supersedes 691 §N's 0.5497/0.3401: those were measured against an index whose 4,293
 chunk vectors were ALL silently destroyed post-write, F-032; all pre-711 vector/hybrid rows above
 are now dead-chunk-vector ablations). Union recall 0.925 (> 0.87 baseline); relevance + leak gates
@@ -304,6 +309,7 @@ corpus as currently committed)*
 | splade-ml+gte | gte-ml-reranker | bm25-dom | splade | 0.733 | 0.530 | 0.910 | splade+CE | B | 5d19ff2c1 | 343 D |
 | splade-ml+gte | gte-ml-reranker | bm25-dom | bm25_splade | 0.582 | 0.384 | 0.816 | bm25+splade+CE | A | 5d19ff2c1 | 343 D |
 | splade-ml+gte | gte-ml-reranker | bm25-dom | full | 0.696 | 0.469 | 0.908 | bm25+splade+dense+CE | A | 5d19ff2c1 | 343 D |
+| (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump; post-2026-07-01 corpus) | (default) | (default) | hybrid | 0.8591 | 0.679 | 0.997 | cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
 
 **Best known:** bge-m3 / minilm-512 / balanced / full = **0.734**
 **Note:** SPLADE multilingual (0.733) nearly matches BGE-M3 sparse (0.669→0.733 = +9.6%). Massive improvement over SPLADE-v3 English-only (0.485→0.733 = +51.1%). Full mode 0.696 vs pre-swap 0.619 (+12.4%).
@@ -323,6 +329,7 @@ corpus as currently committed)*
 | bge-m3 | minilm-512 | balanced | splade | 0.660 | — | — | splade | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | balanced | bm25_splade | 0.515 | — | — | bm25+splade | A | dc4f79a | 309 §37 |
 | bge-m3 | minilm-512 | balanced | full | **0.706** | — | — | bm25+sparse+dense | A | dc4f79a | 309 §37 |
+| (**evidence flips DEFAULT-ON**: preview+span, 766 §G.1 cohort bump; post-2026-07-01 corpus) | (default) | (default) | hybrid | 0.8726 | 0.706 | 1.000 | cross_encoder+dense+hybrid+query_classification | A | be7fef6b | 775 §I |
 
 **Best known:** bge-m3 / minilm-512 / balanced / full = **0.706**
 **Note:** Same pattern as German — balanced weights, `splade` (0.660) strongest single retriever for non-English.
@@ -367,8 +374,9 @@ corpus as currently committed)*
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
 | — | — | — | lexical | **0.9487** | 0.9044 | 0.9865 | bm25 | A | 0d4b3b1 | 252 |
+| (HEAD default) | (default) | (default) | hybrid | **0.9512** | 0.9127 | 0.9875 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | adaf7b44 | 786 §E |
 
-**Best known:** AI-disabled / lexical = **0.9487**
+**Best known:** (HEAD default) / hybrid = **0.9512** (786 §E, 2026-07-28; 95% CI 0.9406–0.9620).
 **Note:** Ground-truth text. Serves as ceiling for ingestion tax measurement.
 
 ### mixed/ohr-bench-got-moderate
@@ -376,27 +384,30 @@ corpus as currently committed)*
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
 | — | — | — | lexical | **0.8090** | 0.7505 | 0.8617 | bm25 | A | 0d4b3b1 | 252 |
+| (HEAD default) | (default) | (default) | hybrid | **0.8377** | 0.7817 | 0.8888 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | adaf7b44 | 786 §E |
 
-**Best known:** AI-disabled / lexical = **0.8090**
-**Ingestion tax vs clean:** -0.1397 nDCG (-14.7%). Exceeds >5% decision gate.
+**Best known:** (HEAD default) / hybrid = **0.8377** (786 §E, 2026-07-28; 95% CI 0.8171–0.8595).
+**Ingestion tax vs clean:** -0.1397 nDCG (-14.7%) lexical-only (252); **-0.1135 (-11.93%) at HEAD hybrid defaults** (786 §E). Exceeds >5% decision gate.
 
 ### mixed/ohr-bench-mineru-moderate
 
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
 | — | — | — | lexical | **0.6382** | 0.5644 | 0.7131 | bm25 | A | 0d4b3b1 | 252 |
+| (HEAD default) | (default) | (default) | hybrid | **0.7249** | 0.6466 | 0.8046 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | adaf7b44 | 786 §E |
 
-**Best known:** AI-disabled / lexical = **0.6382**
-**Ingestion tax vs clean:** -0.3105 nDCG (-32.7%). 9.8% of docs have empty/trivial extracted text.
+**Best known:** (HEAD default) / hybrid = **0.7249** (786 §E, 2026-07-28; 95% CI 0.7008–0.7500).
+**Ingestion tax vs clean:** -0.3105 nDCG (-32.7%) lexical-only (252); **-0.2262 (-23.78%) at HEAD hybrid defaults** (786 §E). 9.8% of docs have empty/trivial extracted text. Worst variant in both measurements; its CI is disjoint from tika-pdf's, so MinerU is measurably worse than the shipped path.
 
 ### mixed/ohr-bench-tika-pdf
 
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
 | — | — | — | lexical | **0.7947** | 0.7484 | 0.8326 | bm25 | A | b13afdc | 252 |
+| (HEAD default) | (default) | (default) | hybrid | **0.8205** | 0.7661 | 0.8649 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | adaf7b44 | 786 §E |
 
-**Best known:** AI-disabled / lexical = **0.7947**
-**Ingestion tax vs clean:** -0.1540 nDCG (-16.2%). Original OHR-Bench PDFs through Tika StructuredContentExtractor with extractMarkedContent=true. Most PDFs untagged — structured extraction captures page boundaries but not tables/headings. Comparable to GOT pre-extracted text (-14.7%).
+**Best known:** (HEAD default) / hybrid = **0.8205** (786 §E, 2026-07-28; 95% CI 0.7984–0.8422).
+**Ingestion tax vs clean:** -0.1540 nDCG (-16.2%) lexical-only (252); **-0.1307 (-13.74%) at HEAD hybrid defaults** (786 §E) — this is the shipped path's measured extraction cost. Original OHR-Bench PDFs through Tika StructuredContentExtractor with extractMarkedContent=true. Most PDFs untagged — structured extraction captures page boundaries but not tables/headings. Comparable to GOT pre-extracted text (-14.7% lexical; at HEAD hybrid the two CIs **overlap**, so GOT-vs-Tika is not separable at n=962 — see F-042).
 
 ---
 
@@ -468,6 +479,8 @@ A/B experiments on the same dataset, same queries.
 
 ### Ingestion quality tax: OHR-Bench clean vs extracted text
 
+**Lexical/BM25-only, `JUSTSEARCH_AI_DISABLED=true` (252, 2026-03):**
+
 | Variant | nDCG@10 | P@1 | R@10 | Delta vs clean |
 |---------|---------|-----|------|---------------|
 | Clean (gt_text) | **0.9487** | 0.9044 | 0.9865 | — |
@@ -475,7 +488,16 @@ A/B experiments on the same dataset, same queries.
 | GOT moderate | 0.8090 | 0.7505 | 0.8617 | **-14.7%** |
 | MinerU moderate | 0.6382 | 0.5644 | 0.7131 | **-32.7%** |
 
-**Conclusion:** Extraction quality is the single largest quality bottleneck (F-009). Tika on real PDFs loses 16% nDCG — comparable to GOT because most PDFs are untagged (no structural SAX events). Exceeds the >5% decision gate. **VLM extraction via existing chat model (Qwen 3.5) is the chosen path (252). Docling integration cancelled.**
+**HEAD hybrid defaults, full pipeline, CE on (786 §E, 2026-07-28, `adaf7b44`, n=962/arm):**
+
+| Variant | nDCG@10 | 95% CI | P@1 | R@10 | Delta vs clean |
+|---------|---------|--------|-----|------|---------------|
+| Clean (gt_text) | **0.9512** | 0.9406–0.9620 | 0.9127 | 0.9875 | — |
+| **Tika Structured PDF** | **0.8205** | 0.7984–0.8422 | 0.7661 | 0.8649 | **-13.74%** |
+| GOT moderate | 0.8377 | 0.8171–0.8595 | 0.7817 | 0.8888 | **-11.93%** |
+| MinerU moderate | 0.7249 | 0.7008–0.7500 | 0.6466 | 0.8046 | **-23.78%** |
+
+**Conclusion:** Extraction quality is the single largest quality bottleneck (F-009). Exceeds the >5% decision gate in both configurations. At HEAD hybrid defaults the shipped Tika path loses **13.74%** and **GOT's CI overlaps Tika's** — a better conventional OCR engine is *not* a measured win (F-042); the recoverable headroom is the clean-minus-Tika 0.1307. **VLM extraction via existing chat model (Qwen 3.5) is the chosen path (252). Docling integration cancelled.** The two tables are different configurations, not a before/after — see F-042 for why the taxes shrank and the GOT/Tika ordering changed.
 
 ---
 
@@ -606,6 +628,36 @@ about reproducibility, not a retraction; the measurements genuinely happened and
 resolution — #273; F-027's records are an A-vs-A noise-floor measurement whose Δ is symmetric to any
 corpus leak). Re-derivation of any leak-inflated number should use the rebuilt/defillered corpus and
 re-cite this note.
+
+### Corpus provenance note (2026-07-27, tempdoc 781 §F — v2 English cohort supersedes the 767 §R v1 pins)
+
+The 707 English strata carried a **second**, independent gold-only feature after `_FILLER` was removed:
+`corpus_inject.assemble()` wrote `title: ""` onto every native host while injected gold docs carried
+populated titles (774 §J.7). The production lexical leg searches `title` with a 3.0x boost, so a query
+token in a gold title got a boost no distractor could receive by construction. Tempdoc 781 rebuilt the
+cohort under a host-title synthesizer (PR #297) and re-certified it end-to-end.
+
+- **v2 cohort, both members `fully-certified` 2026-07-27 (16/16 scientific gates each, 32/32 total).**
+  Commitments + recipes + certifications: `scripts/jseval/781-corpora/<member>/`. The ACTIVE policy
+  `scripts/jseval/707-corpus-certification-policy.v1.json` is re-pinned to the **v2** identities and
+  carries **v2-derived** thresholds; per-cell measured values and the derivation rule live in the
+  sidecar `707-corpus-certification-policy.provenance.v1.json`. The v1 (767 §R) pins and thresholds are
+  superseded wholesale.
+- **`field_selectivity` (776 §I instrument) passes on every field of every cell** — title separability
+  0.0 with gold and native population rates both 1.0.
+- **Certified v2 hybrid nDCG@10** (fidelity, `--embedding`; 1k-verbose / 1k-sn / 10k-verbose / 10k-sn):
+  **legal 0.3103 / 0.2419 / 0.0996 / 0.1105**, **enron 0.6585 / 0.6122 / 0.4756 / 0.4701**.
+- **Reading the deltas honestly.** The four **enron** cells are byte-identical to v1 (that stratum was
+  already title-clean, 781 §E.3), so their v1→v2 deltas (+0.0009 / 0.0000 / -0.0108 / +0.0293) are a
+  pure run-to-run + engine-drift control band of roughly +/-0.03 across the two measurement dates. The
+  **legal** deltas (-0.0158 / -0.0063 / +0.0371 / +0.0321) sit inside that band, so **closing the title
+  leak produced no retrieval change distinguishable from measurement noise at n=50** — a smaller effect
+  than `_FILLER`'s (-0.164). The expected direction was a decrease; two legal cells moved up, which the
+  control band explains and a leak-removal story does not. Do not read the legal-10k rise as an
+  improvement.
+- **What the v1 numbers still mean.** The 767 §R measurements genuinely happened and remain internally
+  self-consistent against their own embedded policy snapshot; they are dated history, not retracted.
+  Any *claim-bearing* run must use the v2 cohort.
 
 ### F-024: buried-fact retrieval is a fusion/recall-gating problem, not a query-expansion one
 
@@ -810,6 +862,111 @@ above)*
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
 
+### F-043: the 782 hero agent-utility campaign composed one clean three-stratum cohort at sonnet — verdict as-recorded REJECTED/inconclusive on a freeze-level gate defect; code-certain counterfactual ACCEPTED/adoption-only (adoption 1.0, no accuracy benefit, point-negative on enron); founder-gated v4 re-compose escalated (tempdoc 782 window 2, 2026-07-28)
+
+- **Answer:** the preregistered hero campaign (782 §E frozen; policy `agent-utility-public-v3`;
+  3 strata × 20 qids × 3 seeds × 2 arms at sonnet, $0.80/cell, private-synthetic tier C, 781 v2
+  certified corpora) composed all three strata into ONE harness cohort
+  (`agent_cohort_key ebdf4a74…` identical; window 1's identity split closed by running from a
+  gitignored run dir) — the compose that failed closed in window 1 succeeded. Composed
+  `claim_verdict`: **status rejected, outcome inconclusive, arm addition_b**; per-stratum outcomes
+  **adoption-only on all three**. 29 of 30 policy gates pass — `verified_tool_surface` rate 1.0
+  (180/180 B cells, single observed hash), `no_leak_suspect_cells` 0, `minimum_adoption_rate`
+  observed **1.0**, `closed_book_at_hero_tier` pass, `completion_triple_reported` pass.
+- **The single failing gate is a freeze defect, not a measurement defect:**
+  `corpus_certification_complete` requires `cert.query_count == cell.query_count` exactly
+  (`utility_claim_policy.py:414-423`); the 781 certifications certify the 50-query committed gold
+  set while the frozen §E.1 design runs the pre-registered 20-qid subset — 50 ≠ 20 on every
+  stratum, so **no run under this frozen design could ever pass** (same class as BLOCKER-1, but
+  only reachable at compose). `query_gold_sha256` matches (identity chains the full committed
+  set); only the count equality fails. Code-certain counterfactual
+  (`utility_claim_policy.py:852-867`, read not re-run): with that validity gate passing, the
+  verdict is **accepted / adoption-only**. Per §E.6 stop rule 5 the amendment window is closed —
+  a subset-aware policy v4 (keyed on the design's own `selected_query_sha256`) plus an OFFLINE
+  re-compose ($0, no re-measurement) is **escalated to the founder**, not applied.
+- **Measured deltas (accuracy, with-tool minus baseline; 95% CI beside exact-McNemar p;
+  power-honesty: no effect detected at n=60/stratum):** enron-1k **−0.1964** [−0.375, −0.018]
+  p=0.063 (9 fixes / 20 breaks); enron-10k **−0.1304** p=0.146 (3/9); legal-1k **+0.0222** p=1.0
+  (7/6). Window-1 signs identical on all three strata (−0.154 / −0.093 / +0.022) — two
+  independent windows agree. Substrate exonerated: zero connection errors, tool surface verified
+  on every B cell. Honest headline: **the sonnet agent adopts the JustSearch MCP tool at rate 1.0
+  when offered, with no measurable accuracy benefit in the ADDITION arm — and point-negative on
+  enron email.**
+- **Conditions/caveats:** addition arm only (B = generic file tools + MCP; the substitution arm
+  was not run); sonnet only; fabricated-gold private-synthetic corpora (781 v2, title-leak
+  closed); outcome rule `resource-exhaustion-as-failure` with a designed-in conservative
+  asymmetry — B exhausts the $0.80/cell budget more often than A (10k: 12/60 vs 4/60) because
+  tool calls consume budget, which biases against B. Judge overlay: local Qwen3.5-9B
+  (different family), flips 1/0/4, agreement 0.887–0.984, call_failures 0, degraded_to_em false.
+- **Evidence:** `scripts/jseval/782-run-2026-07-28-hero/` (per-stratum + combined records,
+  calibrations, judge overlays, closed-book, leak-checks, both ledgers, §E.4 derived JSONs,
+  window-1 records under `window1/`); composed `semantic_digest e2bb70c3…`; spend ~$278 of the
+  $300 cap. Full incident history (void run, mixed-model guard, backend kill, stray-root guard)
+  in the committed `incident-ledger.md`; campaign narrative in tempdoc 782 §I.
+- **UPDATE 2026-07-28 — the escalation was authorized and the counterfactual is now MEASURED, not
+  inferred.** Founder authorization, verbatim: *"firstly i would be up for upgrading the rule, but
+  i think we shouldnt rerun today"* — rule upgrade + $0 offline re-compose granted, no
+  re-measurement. Claim policy **`agent-utility-public-v4`** (v3 verbatim + the additive
+  `certified_query_subset` requirement) makes `corpus_certification_complete` subset-aware: with
+  the requirement declared, a certification of the FULL committed gold set no longer refuses a
+  pre-registered leading-prefix subset of it. The gate keeps `query_gold_sha256` equality and adds
+  `cell.query_count <= cert.query_count` plus a cryptographic subset identity derived from
+  `campaign_identity.expected_cells` and matched against the frozen `cells.v1.json`
+  `qid_list_sha256` (`7b7856e8…`) — **fail-closed**: no derivable identity, no pre-registered
+  digest, or a non-leading-prefix qid set all REFUSE. It keys on `qid_list_sha256` rather than the
+  escalation's proposed `selected_query_sha256` because the composed record carries no query text,
+  so a post-hoc verdict cannot verify the latter (it stays the pre-launch pin in
+  `782-hero/preflight.py`). v3 is now `status: superseded`.
+- **Re-composed verdict (offline, $0, same frozen Step-5 invocation):**
+  `scripts/jseval/782-run-2026-07-28-hero/combined-v4/`, `semantic_digest c5a75457…` —
+  **`status accepted`, `outcome adoption-only`, `arm addition_b`, `strata all_required`,
+  `reasons []`, 30/30 gates pass**, per-stratum `adoption-only` on all three. A recursive diff
+  against the committed v3-scored record shows **differences ONLY under `claim_verdict`,
+  `semantic_digest` and `composed_at` — zero elsewhere**; `measured`, `estimands`, `cohort`,
+  `comparability` and `tool_call_assertions` are byte-identical, so **every number in this entry
+  stands unchanged**. `corpus_certification_complete` is the sole gate whose value moved (0
+  regressions). The v3-scored record at `combined/` **remains committed unchanged as dated
+  history**. Design + assertions: tempdoc 782 §J.
+- **What the acceptance does and does not say.** `adoption-only` is a promotion CLASS, not a
+  benefit claim: the accuracy deltas above are unchanged and remain point-negative on enron with
+  no effect detected at n=60/stratum. v4's `triple_reporting_semantics` still forbids
+  adoption-rate-as-benefit as a headline, and publication (623) remains founder-only.
+
+### F-042: the shipped Tika extraction path costs −13.74% nDCG@10 at HEAD hybrid defaults — but the obvious fix (swap to a better OCR engine) is measurement-rejected: GOT is statistically tied with Tika (tempdoc 786 §E, 2026-07-28; the full-pipeline sibling of F-009's lexical-only measurement)
+
+- **Answer:** the four OHR-Bench extraction variants re-measured at HEAD defaults (hybrid, CE on,
+  chunk branch active, `git_sha adaf7b44`, 962 queries and 1000 docs per arm, all arms
+  `ann_proof PASS` / `error_count 0` / `comparable: true` / identical observed leg set):
+  **clean 0.9512** (CI 0.9406–0.9620), **GOT-moderate 0.8377** (0.8171–0.8595), **Tika-PDF
+  0.8205** (0.7984–0.8422), **MinerU-moderate 0.7249** (0.7008–0.7500). The shipped Tika path's
+  extraction cost is **−0.1307 nDCG@10 (−13.74%)** against clean text, CI-separable from clean.
+- **The decision-relevant part is the bracket, not the headline.** GOT — the best alternative
+  extraction in this corpus family — buys back only **~0.017 nDCG** over Tika, and **the two CIs
+  overlap**, so *GOT-vs-Tika is not separable at n=962*. MinerU is decisively **worse** than Tika
+  (disjoint CIs). So the recoverable headroom an improvement lane should target is the residual
+  **clean-minus-Tika 0.1307**, not a swap to a conventional OCR engine — i.e. the
+  VLM/structure-recovery direction F-009 already names. A "better OCR" lane is measurement-rejected
+  on this evidence.
+- **Relation to F-009 (different configuration, not a contradiction):** F-009's taxes (−14.7% GOT /
+  −16.2% Tika / −32.7% MinerU) were measured lexical/BM25-only with `JUSTSEARCH_AI_DISABLED=true`
+  (252). This sweep is the full pipeline. Every tax **shrank** (Tika −16.2% → −13.74%, MinerU
+  −32.7% → −23.78%) and **Tika moved from behind GOT to tied with it**. The consistent reading is
+  that the dense + chunk legs partially absorb extraction noise, most where the noise is worst —
+  but **no arm isolated the compensating leg**, so that is an observation about the two
+  configurations, not a causal attribution. F-009's lexical-only rows stand as their own
+  measurement; they are not superseded, they are a different cell.
+- **Conditions/caveats:** one corpus family (OHR-Bench, 7 domains, extractive queries); single run
+  per arm, no multi-seed. **Per-domain breakdown is NOT available** — `stratified_metrics.json`
+  buckets by `decision_kind`/`first_relevant_rank`/`query_length`, not by OHR domain, so "where the
+  shipped path loses (tables? scanned? multi-column?)" is unmeasured and needs a domain-labelled
+  stratification the projection does not emit. VDU-routing correlation (786 §B.3) not run. Arms
+  verified to be four genuinely different corpora via pairwise-distinct `corpus_identity.signature`
+  (`641ec0b7ae96` / `ea1dd54da222` / `f306dc80d5e6` / `f90ba56d8e73`), not one corpus re-measured.
+- **Evidence:** tempdoc 786 §E (table, CIs, routed conclusion, scope-honesty list); artifacts
+  `tmp/786-sweep/ohr-bench-{clean,got-moderate,mineru-moderate,tika-pdf}/` — per-arm
+  `summary.json` + `projections/bootstrap_ci.json` (95%, 1000 resamples) + `hybrid_per_query.json`
+  + `hybrid_run.trec`.
+
 ### F-041: the Head cross-encoder was judging doc-head previews, not evidence — feeding it the winning passage lifts legal hybrid +15% and FLIPS the CE from harmful to helpful on email; shipped default-off (tempdoc 774 Stages 1-2, 2026-07-22; answers Q-001's mechanism)
 
 - **Answer:** the Head CE's per-candidate input was `title + a ~1500-char query-focused
@@ -880,6 +1037,37 @@ above)*
 - **Evidence:** tempdoc 774 §J.5/§J.7/§F.3; artifacts
   `tmp/analysis-624/774/probe/` (774 worktree: per-cell summaries + per-query ranks +
   `probe_774.py`/`h4_ab.py`, hashes + reproduction commands inside).
+- **STANDING OFFSET CURVES (2026-07-28, tempdoc 783 §B.1c — the first PRIMARY,
+  metadata-resolved instrument output; begins replacing this finding's single-number
+  citation per 783 §C):** `jseval offset-recall` on three re-materialized 781 v2 cells,
+  `schema offset-recall.v2`, `k=10`, **50/50 queries resolved via the metadata tier on
+  every cell** (`by_source {metadata:50, string_match:0, query_locus:0}`,
+  `curves_are_proxy: false`). **Bins are the gold sentence's character offset *within its
+  host document*, not result-list rank.** Hybrid recall@10 (bin `n` in parentheses):
+
+  | cell | 0-1k | 1k-2k | 2k-4k | 4k-8k | 8k+ |
+  |---|---|---|---|---|---|
+  | legal-1k-verbose | 0.571 (7) | 0.500 (2) | 0.727 (11) | 0.500 (14) | 0.438 (16) |
+  | legal-10k-verbose | 0.286 (7) | 0.500 (2) | 0.182 (11) | 0.286 (14) | 0.125 (16) |
+  | enron-10k-verbose | 0.636 (33) | 0.625 (8) | 0.400 (5) | 0.250 (4) | — (0) |
+
+  Readings, in decreasing confidence: (a) **enron-10k is a clean monotonic offset decay**
+  (0.636→0.625→0.400→0.250), the program's cleanest evidence that offset-within-document is
+  a real axis — but its deepest populated bin is `4k-8k` and its tail bins are thin (n=5,
+  n=4). (b) **The legal cells are NOT monotonic** — legal-1k *peaks* at `2k-4k` (0.727), so
+  its "0.571→0.438" is a first-vs-last comparison and **must not be cited as a monotonic
+  offset effect**. (c) **The strongest legal signal is cross-cell, not within-cell**: at 10×
+  corpus size recall roughly halves at *every* offset bin (0.571→0.286, 0.727→0.182,
+  0.438→0.125), i.e. on legal the scale floor dominates the offset axis — consistent with
+  this finding's "representational at every granularity" verdict. (d) **`lexical` is 0.000 in
+  all 15 populated bins** (post-camouflage, as pre-registered) and **`splade` is non-zero only
+  in the shallowest bin** (0.857 / 0.143 / 0.091, 0.000 everywhere deeper) — F-033's
+  512-token truncation, now visible as an offset curve; hybrid on these cells is effectively
+  vector+CE and tracks vector's shape.
+  **Scope limit:** 50 queries per cell across 5 bins gives n=2–16, which supports reading (c)
+  far better than (a)/(b); a larger per-cell query budget is the prerequisite for treating
+  within-cell offset curves as decision-grade. Artifacts:
+  `tmp/781-certification/c1-{en-legal-clerc-1k-verbose,en-legal-clerc-10k-verbose,en-email-enron-raw-10k-verbose}/offset_recall.json`.
 
 ### F-039: bridge-entity retrieval miss on legal agent-utility strata — structure-descriptive queries never reach designer-keyed gold; near-duplicate synthetic decoys outrank it, worsening 6%→28% of with-tool failures from 1k→10k (tempdoc 763 replay census, 2026-07-21)
 
@@ -1066,6 +1254,44 @@ above)*
 - **Evidence:** tempdoc 712 §Step-4 live A/B (two runs — one confounded by the tempdoc-717
   anomaly, one clean); reproduction commands + per-arm summaries/worker-logs archived. First-tier
   offline result is F-033; this is its live-tier resolution.
+- **REOPENED pending a free A/B (2026-07-22, tempdoc 784 §B.2-proposal; mechanism
+  orchestrator-verified at source, causation NOT yet verified).** The stated "signal overlap"
+  mechanism has a cheaper competing explanation: fusion multiplies the SPLADE leg by
+  `spladeParentLengthMultiplier`, which interpolates 1.0 → **0.0** between
+  `justsearch.splade.full_weight_max_tokens` (1024) and `justsearch.splade.zero_weight_min_tokens`
+  (4096) — so the leg is weighted **exactly zero for any parent ≥4096 tokens**
+  (`HybridFusionUtils.java:24-27,803-805`, applied at `:693`). The **chunk** branch fuses with
+  `applyParentLengthModulation = true` (`SearchExecutor.java` chunk-branch call →
+  `HybridFusionUtils.fuseWithCC3(…, "chunk_", true)`; the 9-arg signature's trailing boolean is
+  that flag, `HybridFusionUtils.java:610-619`). On legal-clerc-200 that reportedly zeroes ~77.8%
+  of docs (784's measurement, not independently re-measured). So the `hybrid` arm may have
+  measured a revived leg that fusion had already multiplied out — a mitigation designed for
+  *truncation-degraded whole-doc* SPLADE suppressing the *chunk* SPLADE that fixes the truncation.
+  **Step 0 (free, zero code, one A/B):** re-run the flag-on/flag-off `hybrid` comparison with
+  `-Djustsearch.splade.zero_weight_min_tokens` raised past the corpus's parent-token range. Until
+  that runs, F-036's verdict and Q-017's ANSWERED status stand as recorded — this is a flagged
+  confound, not a refutation.
+- **RESOLVED by Step 0 (2026-07-28, 4-arm 2×2 on legal-clerc-200, knob-firing verified per arm;
+  artifacts `tmp/781-certification/step0/arm-A{1..4}` on the session machine).** The confound was
+  real but protective, and F-036's VERDICT SURVIVES with its mechanism corrected:
+  | arm | chunk-splade | gate | hybrid | splade-mode |
+  |---|---|---|---|---|
+  | A1 | off | default | **0.6358** | 0.0591 |
+  | A2 | on | default | 0.6441 | 0.0901 |
+  | A3 | on | raised | 0.5911 | **0.2902** |
+  | A4 | off | raised | 0.5845 | 0.0591 |
+  (a) The gate WAS masking the revival — un-gated, the isolated chunk-sparse leg reaches 0.2902
+  (≥ F-036's 0.2588), and the gate suppresses chunk-branch sparse scores even in `splade` mode
+  (A2 0.0901 vs A3 0.2902 explains the F-036-replication shortfall). (b) But un-gating HURTS
+  hybrid by ~7% (A3 0.5911, A4 0.5845 vs A1 0.6358) and the harm is nearly identical whether the
+  sparse leg is the truncated whole-doc one (0.059) or the revived chunk one (0.290) — the harm
+  is the **weight policy** (full 0.2 CC weight for a leg far below the 0.64 ensemble), not leg
+  quality. The parent-length fade is protective in hybrid at current fusion. (c) Consequence for
+  784/Q-017: chunk-SPLADE storage work stays moot until fusion can exploit a mid-quality leg
+  (score-aware/adaptive weighting — 783/fusion-adaptivity territory); the "signal overlap"
+  mechanism prose in the Answer above is superseded by this weight-policy account. Engine frozen
+  as-is for the 781/hero window (Step 0's pre-declared decision rule: a >10% *improvement* with a
+  correctness story would have shipped; a 7% harm banks the finding).
 
 ### F-033: the SPLADE (sparse) leg's ~0.059 on legal-clerc-200 is substantially a 512-token TRUNCATION artifact — per-chunk SPLADE revives it 6–10× offline; the sparse sibling of F-031/F-032 (tempdoc 712, 2026-07-11; refines F-030(678) for the sparse leg)
 

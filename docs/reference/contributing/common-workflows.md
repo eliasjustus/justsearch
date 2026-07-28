@@ -166,3 +166,19 @@ degrading onto CPU. See `resolveCuda12ServerExe` / `stageSharedCuda12` in
 JUSTSEARCH_MODELS_DIR=F:\JustSearch\models
 JUSTSEARCH_SERVER_EXE=F:\JustSearch\modules\ui\native-bin\llama-server\variants\cuda12\llama-server.exe
 ```
+
+**Completing an incomplete ORT CUDA native pack (GPU ONNX inference).**
+`OrtCudaHelper.applyOrtNativePackProperty` (tempdoc 772 §J) points ORT at
+`tmp/ort-variant-test/<variant>` only when that dir is COMPLETE — all four DLLs in
+`OrtCudaHelper.ORT_NATIVE_DLL_SET` (`onnxruntime.dll`, `onnxruntime4j_jni.dll`,
+`onnxruntime_providers_shared.dll`, `onnxruntime_providers_cuda.dll`) plus the
+`ort-native-version.txt` marker. A pre-772 layout carrying only the provider/cuDNN DLLs fails that
+check and ORT silently falls back to CPU, killing GPU inference for every ONNX eval run. To
+complete such a pack, run `node scripts/dev/restage-ort-pack.mjs [<packDir>]` (default packDir
+`tmp/ort-variant-test/cuda-12.4-v1.24.3`): it validates the dir, extracts any missing DLL from the
+gradle-cache `onnxruntime_gpu-<version>.jar` (found under
+`<GRADLE_USER_HOME>/caches/modules-2/files-2.1/com.microsoft.onnxruntime/onnxruntime_gpu/<version>/`,
+version read from `OrtCudaHelper.EXPECTED_ORT_NATIVE_VERSION`), writes the marker, and exits nonzero
+if it cannot complete the pack. It never deletes anything. If the jar is absent, run any build that
+resolves `onnxruntime_gpu` first (e.g. `./gradlew.bat :modules:ort-common:dependencies`) to populate
+the cache.

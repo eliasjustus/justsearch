@@ -47,7 +47,7 @@ SCIENTIFIC_GATES = (
 _CELL_CHECKS = {
     "size", "signature", "query_variant", "query_family_ids",
     "cross_process_regeneration", "immutable_commitment", "descriptor_collision",
-    "indistinguishability",
+    "indistinguishability", "field_selectivity",
 }
 _FAMILY_CHECKS = {
     "queries_identical_across_sizes", "qrels_identical_across_sizes",
@@ -121,6 +121,7 @@ def certify_materialized_family(
             )
             collisions = descriptor_collision_report(docs, queries)
             indistinguishability = indistinguishability_report(docs, queries)
+            field_selectivity = field_selectivity_report(docs, queries)
             variant_values = {query.get("query_variant") for query in queries}
             family_ids = [query.get("query_family_id") for query in queries]
             checks = {
@@ -136,6 +137,7 @@ def certify_materialized_family(
                 "immutable_commitment": commitment.get("passed") is True,
                 "descriptor_collision": collisions.get("passed") is True,
                 "indistinguishability": indistinguishability.get("passed") is True,
+                "field_selectivity": field_selectivity.get("passed") is True,
             }
             # tempdoc 776 §A.1: per-schema structural checks are ADDED only for a multi-schema
             # cell (any query carries a `gold_kind`). A pre-776 single-schema bridge cell has no
@@ -190,6 +192,9 @@ def certify_materialized_family(
                 },
                 "indistinguishability": {
                     key: indistinguishability[key] for key in _INDISTINGUISHABILITY_KEYS
+                },
+                "field_selectivity": {
+                    key: field_selectivity[key] for key in _FIELD_SELECTIVITY_KEYS
                 },
                 "scientific_gates": gate_evidence,
                 "passed": structural_cell_passed,
@@ -831,7 +836,8 @@ def _complete_certification_document(certification: dict) -> bool:
             if set(cell or {}) != {
                 "dataset", "corpus_signature", "query_gold_sha256", "query_count", "checks",
                 "regeneration", "commitment", "descriptor_collision",
-                "indistinguishability", "scientific_gates", "passed", "fully_certified",
+                "indistinguishability", "field_selectivity", "scientific_gates",
+                "passed", "fully_certified",
             }:
                 return False
             signature = cell.get("corpus_signature")
@@ -868,6 +874,22 @@ def _complete_certification_document(certification: dict) -> bool:
                 or not isinstance(indistinguishability.get("ngram_native_base_rate"), (int, float))
                 or indistinguishability["ngram_max_gold_coverage"]
                 > indistinguishability["ngram_native_base_rate"]
+            ):
+                return False
+            field_selectivity = cell.get("field_selectivity") or {}
+            if (
+                set(field_selectivity) != set(_FIELD_SELECTIVITY_KEYS)
+                or field_selectivity.get("passed") is not True
+                or field_selectivity.get("method")
+                != "field-presence-null-calibrated-separability"
+                # As with indistinguishability, re-assert the observation actually sits under
+                # its own null rather than trusting a boolean a producer could hand-write.
+                or not isinstance(field_selectivity.get("max_field_separability"), (int, float))
+                or not isinstance(field_selectivity.get("native_base_rate"), (int, float))
+                or field_selectivity["max_field_separability"]
+                > field_selectivity["native_base_rate"]
+                or not isinstance(field_selectivity.get("n_fields_compared"), int)
+                or field_selectivity["n_fields_compared"] < 1
             ):
                 return False
             if (
@@ -1178,6 +1200,30 @@ def indistinguishability_report(docs: list[dict], queries: list[dict] | None = N
         "passed": id_shape["passed"] is True and ngram["passed"] is True,
         "method": "null-calibrated-id-shape-and-ngram-selectivity",
     }
+
+
+#: The flat summary `field_selectivity_report` contributes to a cell — the full per-field
+#: detail (`per_field`) is dropped from the cell the way `descriptor_collision` drops its
+#: `groups` list, so the certified cell stays a fixed-size scalar record the boundary
+#: validator can re-assert. The gating pair is `max_field_separability <= native_base_rate`.
+_FIELD_SELECTIVITY_KEYS = (
+    "worst_field", "max_field_separability", "native_base_rate",
+    "n_fields_compared", "passed", "method",
+)
+
+
+def field_selectivity_report(docs: list[dict], queries: list[dict] | None = None) -> dict:
+    """Per-cell field-presence leak gate (tempdoc 776 §I) — a thin re-export of
+    :func:`corpus_leak.field_selectivity_report`, wired here so its verdict actually gates
+    certification the way ``indistinguishability_report`` is (rather than living in a report
+    nobody runs). Catches the tempdoc 774 §J.7 title leak: a field populated only on gold,
+    invisible to every content-level check. Null-calibrated, so no threshold file — see the
+    docstring of ``indistinguishability_report`` for why an in-corpus null beats a pinned
+    constant here.
+    """
+    from .corpus_leak import field_selectivity_report as _impl
+
+    return _impl(docs, queries)
 
 
 #: Keys the multi-schema structural reports contribute, mirroring `_INDISTINGUISHABILITY_KEYS`.
