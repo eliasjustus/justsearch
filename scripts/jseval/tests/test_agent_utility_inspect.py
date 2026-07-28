@@ -49,6 +49,7 @@ from jseval.agent_retrieval_eval import (  # noqa: E402
     find_leak_suspect_tool_calls,
 )
 from jseval.utility_evidence import _error_class  # noqa: E402
+from jseval.utility_governance import RESOURCE_EXHAUSTION, classify_error_kind  # noqa: E402
 
 
 def _state(input_text="what is x?", sample_id="q0"):
@@ -2849,3 +2850,193 @@ def test_decompose_payload_shares_counts_a_both_routes_delivery_once(monkeypatch
     assert report["components"]["hit.id"]["n"] == 1
     assert report["components"]["hit.id"]["aggregate_bytes"] == 8
     assert report["hits"]["n"] == 1
+
+
+# --- tempdoc 782 follow-up, defect 1: the mixed-model guard must not destroy the
+# cell's budget-exhaustion label (the guard site fires before the
+# `ResultMessage.is_error` site, and both used to write the same first-wins slot).
+# The 782 hero campaign voided a whole stratum on the guard and lost every
+# exhaustion receipt with it. ---
+
+
+def _poisoned_and_exhausted_got():
+    """The exact producer input for a cell that is BOTH mixed-model-poisoned AND
+    USD-budget-exhausted: two resolved provider models in one cell's `model_usage`
+    PLUS a terminal `is_error` ResultMessage carrying the `error_max_budget_usd`
+    subtype (the shape a USD-cap kill actually delivers -- see
+    test_usd_cap_kill_retains_cost_receipt)."""
+    rmsg = _rmsg(
+        is_error=True, subtype="error_max_budget_usd", stop_reason="budget",
+        total_cost_usd=0.79, usage={"cache_creation_input_tokens": 4321},
+        model_usage={"haiku-4-5": {"input_tokens": 1}, "sonnet-5": {"input_tokens": 2}},
+        result=None,
+    )
+    return {
+        "attempts": {}, "results": {}, "texts": [], "rmsg": rmsg,
+        "mcp_servers": None, "justsearch_tools": [],
+    }
+
+
+def test_mixed_model_guard_preserves_the_exhaustion_label():
+    state = _state()
+    aui._record_cell(state, _poisoned_and_exhausted_got(), "A", [], None)
+
+    # Fact 1 -- the guard error stays PRIMARY. That is deliberate: `error` is the
+    # fail-closed exclusion label, and a poisoned cell must not be promoted into the
+    # scored (comparability-neutral) resource-exhaustion bucket.
+    assert "resolved provider model changed within one cell" in state.metadata["error"]
+    assert _error_class(state.metadata["error"]) != "usd_budget_exhausted"
+
+    # Fact 2 -- the exhaustion label survives ALONGSIDE it (pre-fix: destroyed by
+    # the guard, so the cell looked like a plain executor error).
+    secondary = state.metadata["secondary_errors"]
+    assert any("error_max_budget_usd" in text for text in secondary)
+    assert any(_error_class(text) == "usd_budget_exhausted" for text in secondary)
+
+    # Both facts are readable together, which is what the exhaustion accounting needs.
+    assert any(
+        classify_error_kind(text) == RESOURCE_EXHAUSTION
+        for text in aui._cell_error_texts(state.metadata)
+    )
+    # The receipts a USD-cap kill delivers are still retained (unchanged by this fix).
+    assert state.metadata["cost_usd"] == 0.79
+    assert state.metadata["unique_tokens"] == 4321
+
+
+def test_unpoisoned_exhausted_cell_keeps_the_exhaustion_label_primary():
+    # Precision control: with ONE resolved model the guard never fires, so the
+    # exhaustion label is the primary `error` and nothing is pushed to secondary.
+    # (Distinguishes "passes because both errors are recorded" from "passes because
+    # the fix reshuffled every cell's error".)
+    state = _state()
+    got = _poisoned_and_exhausted_got()
+    got["rmsg"].model_usage = {"sonnet-5": {"input_tokens": 2}}
+    aui._record_cell(state, got, "A", [], None)
+    assert _error_class(state.metadata["error"]) == "usd_budget_exhausted"
+    assert "secondary_errors" not in state.metadata
+
+
+def test_note_error_is_first_wins_and_deduplicates():
+    metadata: dict = {}
+    aui._note_error(metadata, "first")
+    aui._note_error(metadata, "first")          # exact repeat -> not recorded twice
+    aui._note_error(metadata, "second")
+    aui._note_error(metadata, "second")
+    assert metadata["error"] == "first"
+    assert metadata["secondary_errors"] == ["second"]
+    assert aui._cell_error_texts(metadata) == ["first", "second"]
+    assert aui._cell_error_texts({}) == []
+
+
+def _drive_solver_with_recorded_cell(monkeypatch, tmp_path, got):
+    """Run the solver's `solve` closure to completion over a pre-built `got`,
+    without touching the real SDK: `wait_for` closes the (never-awaited) attempt
+    coroutine and returns success, and `_record_cell` is redirected onto the REAL
+    projection applied to `got` -- so the post-record stamping glue under test sees
+    exactly the metadata the production projection would have written."""
+    real_record_cell = aui._record_cell
+
+    async def fake_wait_for(coro, timeout):
+        coro.close()
+        return None
+
+    def fake_record_cell(state, _capture, condition, disallowed, mcp_config, *args, **kwargs):
+        real_record_cell(state, got, condition, disallowed, mcp_config, *args, **kwargs)
+
+    monkeypatch.setattr(aui.asyncio, "wait_for", fake_wait_for)
+    monkeypatch.setattr(aui, "_record_cell", fake_record_cell)
+    solve = aui.claude_agent_solver(
+        corpus_dir=str(tmp_path), mcp_config=None, model="haiku",
+        timeout_s=180, timeout_s_by_condition_json="{}")
+    state = _state()
+    state.metadata["condition"] = "A"
+    asyncio.run(solve(state, None))
+    return state
+
+
+def test_guard_voided_exhausted_cell_is_still_flagged_usage_truncated(tmp_path, monkeypatch):
+    # The consumer of the preserved label: `usage_truncated` marks cost/tokens as a
+    # LOWER BOUND for a resource-exhausted cell. Pre-fix the guard error was the only
+    # text this predicate could see, so a guard-voided exhausted cell's truncated
+    # receipts were silently presented as exact.
+    state = _drive_solver_with_recorded_cell(
+        monkeypatch, tmp_path, _poisoned_and_exhausted_got())
+    assert state.metadata["usage_truncated"] is True
+
+
+def test_guard_voided_non_exhausted_cell_is_not_flagged_usage_truncated(tmp_path, monkeypatch):
+    # Adverse control: a guard-voided cell whose terminal error is NOT an exhaustion
+    # shape must stay unflagged -- the predicate widened to read every recorded error,
+    # it did not become "any error truncates usage".
+    got = _poisoned_and_exhausted_got()
+    got["rmsg"].subtype = "error_during_execution"
+    state = _drive_solver_with_recorded_cell(monkeypatch, tmp_path, got)
+    assert "error_max_budget_usd" not in json.dumps(aui._cell_error_texts(state.metadata))
+    assert state.metadata.get("usage_truncated") is None
+
+
+# --- tempdoc 782 follow-up, defect 2: rank-of-gold capture on the delivered hit
+# shape. `McpEvidenceProjection.putIdentity` (McpEvidenceProjection.java:168-175)
+# OMITS `id` when it is byte-identical to `path`, so reading `id` alone captured a
+# null gold_rank on 633 of 635 B-arm search calls in the 782 hero run. ---
+
+
+def _search_content_path_only(ordered_paths, scores=None):
+    """A structured-json `justsearch_search` delivery in the LIVE dedup shape: each
+    hit carries `path` and NO `id` (what putIdentity emits when hit.id() == path)."""
+    scores = scores if scores is not None else [1.0 - 0.1 * i for i in range(len(ordered_paths))]
+    return json.dumps({
+        "results": [{"path": p, "score": sc} for p, sc in zip(ordered_paths, scores)],
+        "coverage": {"totalHits": len(ordered_paths)},
+    })
+
+
+def test_gold_rank_captured_when_hits_carry_path_but_no_id():
+    paths = [
+        r"f:\corpus-dir\cavby8.txt",
+        r"f:\corpus-dir\limker1.txt",   # gold
+        r"f:\corpus-dir\other9.txt",
+    ]
+    entry = aui._tool_result_digest_entry(
+        {"is_error": False, "content": _search_content_path_only(paths, [0.9, 0.8, 0.7])},
+        evidence_ids=["limker1"])
+    assert entry["ordered_doc_ids"] == paths     # raw delivered identity, not None
+    assert entry["scores"] == [0.9, 0.8, 0.7]
+    assert entry["gold_rank"] == 1               # was None pre-fix
+
+
+def test_gold_rank_prefers_id_when_both_keys_are_delivered():
+    # When the projection emits BOTH (id != path), `id` stays the ranking identifier:
+    # the gold match follows `id`, and a `path` naming a different doc does not
+    # divert it.
+    content = json.dumps({"results": [
+        {"id": r"f:\corpus-dir\gold7.txt", "path": r"f:\other\decoy.txt", "score": 0.9},
+    ]})
+    entry = aui._tool_result_digest_entry(
+        {"is_error": False, "content": content}, evidence_ids=["gold7"])
+    assert entry["ordered_doc_ids"] == [r"f:\corpus-dir\gold7.txt"]
+    assert entry["gold_rank"] == 0
+    decoy_gold = aui._tool_result_digest_entry(
+        {"is_error": False, "content": content}, evidence_ids=["decoy"])
+    assert decoy_gold["gold_rank"] is None
+
+
+def test_hit_doc_id_falls_back_and_stays_null_when_neither_key_is_usable():
+    assert aui._hit_doc_id({"id": "A", "path": "B"}) == "A"
+    assert aui._hit_doc_id({"path": "B"}) == "B"
+    assert aui._hit_doc_id({"id": "", "path": "B"}) == "B"   # blank id is not an identity
+    assert aui._hit_doc_id({"score": 1.0}) is None
+    assert aui._hit_doc_id({"id": 7}) is None                # non-str -> honest null
+
+
+def test_normalize_doc_id_percent_decodes_materialized_filenames():
+    # materialize.doc_id_to_filename percent-encodes the doc id when it names the
+    # file (urllib.parse.quote(doc_id, safe="")), so a MIRACL-shaped id `1234567#0`
+    # lands on disk as `1234567%230.txt`; without decoding it could never match its
+    # gold id. Mirrors retriever._filename_to_doc_id (jseval/retriever.py:251-268).
+    assert aui._normalize_doc_id(r"f:\corpus-dir\1234567%230.txt") == "1234567#0"
+    assert aui._normalize_doc_id("limker1") == "limker1"     # plain ids unaffected
+    content = _search_content_path_only([r"f:\corpus-dir\1234567%230.txt"])
+    entry = aui._tool_result_digest_entry(
+        {"is_error": False, "content": content}, evidence_ids=["1234567#0"])
+    assert entry["gold_rank"] == 0

@@ -70,7 +70,7 @@ def cmd_log_path(base_url):
 
 @click.command("dev")
 @click.option("--clean", is_flag=True, help="Clean data directory before starting.")
-@click.option("--llm", is_flag=True, help="Enable LLM (Brain/llama-server) autostart in the backend.")
+@click.option("--llm", is_flag=True, help="Enable LLM (Brain/llama-server) autostart in the backend. Fails fast: eval-mode read-only settings make engine autostart impossible (tempdoc 782 §I) — run llama-server out of band and use the Head /v1 proxy.")
 @click.option("--port", default=33221, show_default=True)
 @click.pass_context
 def cmd_dev(ctx, clean, llm, port):
@@ -79,8 +79,10 @@ def cmd_dev(ctx, clean, llm, port):
     If a backend is already healthy on the target port, attaches to it
     (skips start, skips stop on exit). Otherwise starts a fresh backend.
 
-    With --llm, passes -Pllm=true to Gradle and waits for inference
-    readiness in addition to index health.
+    --llm fails fast (tempdoc 782 §I): the eval contract this backend boots under
+    pins read-only IN_MEMORY settings, so the -Pllm=true chatEnabled seed is
+    discarded and the engine never comes up. Start this backend without --llm, run
+    llama-server out of band, and reach it through the Head's /v1 proxy.
     """
     from .. import backend as backend_mod
     from .. import preflight
