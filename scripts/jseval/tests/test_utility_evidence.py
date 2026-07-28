@@ -11,7 +11,7 @@ from jseval.agent_utility_observations import successful_summaries
 from jseval.commands.utility import cmd_utility_recompose
 from jseval.agent_manifest import mcp_tool_surface_hash
 from jseval.utility_evidence import _OBSERVATION_KEYS, _SOURCE_KEYS, read_evidence, sanitize_observation
-from jseval.utility_claim_policy import superseded_policy_path
+from jseval.utility_claim_policy import policy_path, superseded_policy_path
 from jseval.utility_recompose import finalize_observation_groups, finalize_evidence
 
 _SURFACE = [{
@@ -434,7 +434,18 @@ def test_historical_fixture_semantic_digest_repinned_after_624_itt_change():
     digest again — it is still REJECTED, for the same structural reason as before
     (its strata cannot match the required matrix). That the policy identity is
     the SOLE mover is not asserted in prose here — it is a runnable test, see
-    `test_v3_repin_is_policy_identity_only_prior_pin_reproduces` below."""
+    `test_v3_repin_is_policy_identity_only_prior_pin_reproduces` below.
+
+    Re-pinned AGAIN 2026-07-28 (v3 AMENDMENT 1, tempdoc 782 §E.0 / §H — the
+    SAME re-pin class, 5th occurrence): the active policy's
+    `required_schema_strata.known_schemas` narrowed from `["1_hop", "2_hop"]`
+    to `["1_hop"]`, a corpus-description correction (the certified hero corpora
+    are 100% `1_hop` by construction, so requiring a `2_hop` breakdown made
+    every hero stratum unpromotable). No threshold and no stratum changed.
+    `claim_verdict` carries `policy_hash`, so the amended policy bytes moved
+    this fixture's digest again — still REJECTED, same structural reason. Sole-
+    mover proof is runnable, not prose:
+    `test_amendment_1_repin_is_policy_identity_only_prior_pin_reproduces`."""
     path = (
         Path(__file__).parent
         / "fixtures"
@@ -443,7 +454,7 @@ def test_historical_fixture_semantic_digest_repinned_after_624_itt_change():
     )
     record = finalize_evidence([path], composed_at="fixture")
     assert record["semantic_digest"] == (
-        "c3f98ebd0c32cb95b84755ac43322cc48e782eb79c1ce3a120409ac3e7260bfe"
+        "88e98a938a4d823513fefd0a5ad565f9c5162e45eaa12086200474a3b9913597"
     )
 
 
@@ -478,6 +489,41 @@ def test_v3_repin_is_policy_identity_only_prior_pin_reproduces():
         [path], composed_at="fixture", policy=pre_ratification_v2)
     assert record["semantic_digest"] == (
         "ed81f79b34a3537da84c20bc3b978b804dc0419dedaae88597bfc95c5827876b"
+    )
+
+
+def test_amendment_1_repin_is_policy_identity_only_prior_pin_reproduces():
+    """Amendment 1's re-pin (2026-07-28, tempdoc 782 §H BLOCKER-1) is legitimate
+    only if the AMENDED POLICY BYTES moved the digest and nothing else did.
+
+    Same discipline as the v3 test above, and the same trap avoided: a prose
+    claim nobody re-runs is where a phantom hides. Reconstruct the PRE-amendment
+    policy from the committed file — restore the two-schema vocabulary, drop the
+    amendment's changelog entry and its `_note` suffix — and assert the prior pin
+    `c3f98ebd…` reproduces byte-for-byte.
+
+    That this fixture is `question_type`-untagged on every row is what makes the
+    proof clean: the amendment changed only the schema VOCABULARY the gate reads,
+    never any measurement content, so the digest may move through `policy_hash`
+    and through nothing else."""
+    path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "agent-utility-rejected-2026-07-12"
+        / "observations.v1.jsonl"
+    )
+    pre_amendment = json.loads(policy_path().read_text(encoding="utf-8"))
+    schema_spec = pre_amendment["required_schema_strata"]
+    assert schema_spec["known_schemas"] == ["1_hop"]
+    schema_spec["known_schemas"] = ["1_hop", "2_hop"]
+    schema_spec["_note"] = schema_spec["_note"].split(" AMENDMENT 1")[0]
+    assert pre_amendment["policy_changelog"][1]["amendment"] == 1
+    pre_amendment["policy_changelog"] = pre_amendment["policy_changelog"][:1]
+
+    record = finalize_evidence(
+        [path], composed_at="fixture", policy=pre_amendment)
+    assert record["semantic_digest"] == (
+        "c3f98ebd0c32cb95b84755ac43322cc48e782eb79c1ce3a120409ac3e7260bfe"
     )
 
 
