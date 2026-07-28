@@ -1,7 +1,7 @@
 ---
 title: "hero campaign pre-registration protocol — the binding measurement contract the 766 program closes with"
 type: tempdocs
-status: "FROZEN 2026-07-28 (§E.0, §H) — §E.1–§E.6 + §E.8 are frozen; any later edit to them voids claim eligibility. Both triggers verified: 760 installer artifact (run 29914075529) + 781 cohort fully-certified (#311). Active policy agent-utility-public-v3 (#310). §E.7 disposed 9 FILLED / 2 CALIBRATION-TIME. LAUNCH NOT ELIGIBLE: §H BLOCKER-1 — all three hero strata are 100% 1_hop, so v3's require_all_present schema_strata_reported gate cannot pass; founder decision needed (amend known_schemas vs regenerate gold sets). Campaign driver prepared dry at scripts/jseval/782-hero/."
+status: "FROZEN 2026-07-28 (§E.0, §H) + AMENDMENT 1 (2026-07-28, zero measured cells) — §E.1–§E.6 + §E.8 are frozen; any later edit to them voids claim eligibility. Both triggers verified: 760 installer artifact (run 29914075529) + 781 cohort fully-certified (#311). Active policy agent-utility-public-v3 (#310). §E.7 disposed 9 FILLED / 2 CALIBRATION-TIME / row 12 AMENDED. Amendment 1 narrowed known_schemas to [1_hop] (corpus-description correction; thresholds and strata untouched), clearing BLOCKER-1 — preflight now 36 PASS / 0 FAIL / 6 PENDING. Remaining pre-launch: the sonnet closed-book measurement (§H FINDING-2), the derivability + leak checks, and founder launch authorization. Campaign driver prepared dry at scripts/jseval/782-hero/."
 created: 2026-07-22
 updated: 2026-07-28
 author: agent (Fable orchestration), chartered from the 2026-07-22 remaining-work map (founder-directed)
@@ -89,8 +89,36 @@ frozen qid selection this freeze commit materializes.
 | trigger 1 — 760 installer artifact | **SATISFIED** — `build-installer.yml` dispatch run `29914075529` (2026-07-22) is GREEN end-to-end; artifact `windows-installer` (`.github/workflows/build-installer.yml:268-278`), 259.9 MB, downloaded and PE-census-verified (177 PEs: 99 rehearsal-signed + timestamped, 78 vendor-signed untouched, zero NotSigned) — 760 §CI signing rehearsal campaign. **Honest scope:** this is a *rehearsal-signed CI artifact*, not a GA-released real-cert-signed installer; the GA cut and the cert/vendor decision remain owner-gated and are **not** 782 launch preconditions (§C requires only that the artifact exists). Actions retention is 7d, so the blob itself has expired — the durable evidence is 760's recorded census, and a fresh artifact is one `gh workflow run build-installer.yml --ref main` dispatch away with no release cut. |
 | trigger 2 — 781 cohort `fully-certified` | **SATISFIED** — both members `status: "fully-certified"`, `structural_passed: true`, `fully_certified: true` in `scripts/jseval/781-corpora/<member>/structural-certification.v1.json`, committed by `6e3db1a6` (#311). Blobs: `en-email-enron-raw` `21c05563`, `en-legal-clerc` `73b08679`. All three hero cells carry `checks` 9/9 true and `scientific_gates` `closed_book`/`retrieval_calibration`/`union_recall`/`leak_floor` all `passed: true`. **Pointer correction (this freeze):** P2's original pointer to `member.v1.json` is wrong — that file carries no `status` key and its `remaining_gates` is pre-#311 residue still listing the four scientific gates. The machine authority is the certification file (`corpus_certify.py:815-817` reads `status == "fully-certified"` there); P2's check is hereby pinned to `structural-certification.v1.json`. |
 | active claim policy at freeze | **`agent-utility-public-v3`** — `scripts/jseval/utility-claim-policy.v3.json` (blob `1d6d4b41`), `status: "active"`, `unresolved: []`, ratified by squash `76185d82` (#310, 2026-07-28). It is the only `utility-claim-policy.*.json` with `status: "active"`; `utility-claim-policy.v1.json` is `superseded`. `required_strata` = §E.1 verbatim, cheapest-first, each `query_count: 20`, `seed_ids: [0,1,2]`, `requested_model: "sonnet"`. |
-| launch authorization | founder-gated; recorded in §E.6 ledger, never here. **NOT GRANTED at freeze.** |
-| launch eligibility at freeze | **BLOCKED — one founder decision outstanding.** See §H BLOCKER-1 (`schema_strata_reported` cannot pass on any hero stratum as the corpora stand). Freezing the protocol is not launching it; the blocker is recorded here so it cannot be discovered after spend. |
+| launch authorization | founder-gated; recorded in §E.6 ledger, never here. **NOT GRANTED.** |
+| launch eligibility | **BLOCKER-1 CLEARED by Amendment 1 (below).** Remaining pre-launch work is procedural, not a decision: the §E.2 P3 sonnet closed-book measurement (§H FINDING-2 → campaign-plan Step 0b), the §E.3 derivability audit, the §E.2 P4 leak checks, and founder launch authorization. |
+
+### Amendment 1 — 2026-07-28 (pre-launch, **zero measured cells**)
+
+624's dated-amendment convention: a frozen section may take **appended, dated** amendments until
+the first measured cell; after that, any change voids claim eligibility (§E.2 R5). Zero cells are
+measured, so this amendment is in-window. It is appended here, never inlined into §E.1–§E.6.
+
+| field | value |
+|---|---|
+| amendment | **1** |
+| date | 2026-07-28 |
+| decided by | orchestrator, under the founder's 2026-07-28 blanket delegation |
+| measured cells at amendment | **0** |
+| change | `scripts/jseval/utility-claim-policy.v3.json` → `required_schema_strata.known_schemas`: `["1_hop","2_hop"]` → `["1_hop"]` |
+| unchanged | every `thresholds` value; `required_strata`; every `requirements` key (incl. `schema_strata_reported: true`); **`require_all_present` stays `true`** — now satisfiable and still load-bearing, since the `1_hop` breakdown must still be reported and an absent one still refuses the record |
+| amendment commit | `4c0fd7bf` |
+| resolves | §E.7 row 12 / §H BLOCKER-1 |
+
+**Rationale, recorded verbatim in the policy's `policy_changelog`:** *"Amendment 1 (pre-launch,
+zero cells measured): known_schemas [1_hop,2_hop]→[1_hop] — corpus-description correction per 782
+§E.7 row 12 / BLOCKER-1; thresholds untouched; decided under founder delegation of 2026-07-28"*.
+
+This is a **corpus-description correction, not a threshold or bar change.** The certified 781 v2
+gold sets — and all 707 English cells — are 100 % `1_hop` by construction; the v3-DRAFT's `2_hop`
+entry described a multi-schema cohort that was never built. Requiring the presence of a schema
+absent from the corpus is a spec error, and the refusal gate surfaced it **pre-spend**, exactly as
+intended (§G.1's stated residual limit). No `§E.1–§E.6` text changed; the amendment moves a policy
+value that §E.2 R3 deliberately reads *from the policy* rather than restating.
 
 ## §E.1 Design (frozen section 1)
 
@@ -435,7 +463,7 @@ that would be editing a frozen section.
 | 9 | active scorer identity at the freeze commit (`substring_scorer` vs LLM judge), recorded `file:line` | §E.3 | **FILLED** — `substring_scorer`, `agent_utility_inspect.py:1512` (def `:1454-1460`), `judge_kind` default `"substring-em"` `:1483` |
 | 10 | which §E.3 branch runs (derivability audit vs agreement spot-check) — follows item 9 | §E.3 | **FILLED** — the **derivability audit** branch (row 9 resolved to `substring_scorer`) |
 | 11 | run-directory date suffix | §E.6 | **CALIBRATION-TIME** (launch-day) — `scripts/jseval/782-run-<YYYY-MM-DD>-hero/`; the *pattern* is frozen, only the launch date is unknown until the founder authorizes |
-| 12 | **NEW at freeze — `known_schemas` coverage vs the hero query sets** | P-rule (new) / §E.5 | **BLOCKER, founder-gated** — see §H BLOCKER-1. Not resolvable by an agent; recorded rather than worked around. |
+| 12 | **NEW at freeze — `known_schemas` coverage vs the hero query sets** | P-rule (new) / §E.5 | ✅ **AMENDED 2026-07-28** — §E.0 Amendment 1 (commit `4c0fd7bf`) narrows `known_schemas` to `["1_hop"]`; `require_all_present` stays `true`. Was a founder decision; taken under the 2026-07-28 blanket delegation. See §H BLOCKER-1. |
 
 **11 of 11 original rows disposed: 9 FILLED, 2 CALIBRATION-TIME** (rows 8 and 11 — each is a value
 624's precedent also set at run time; the freeze pins the *procedure and guard*, not the number).
@@ -485,11 +513,11 @@ binding pin.
 
 **Schema-coverage picture at freeze (§G.1's residual limit, evaluated).**
 
-| stratum | selected 20 | full committed 50 | policy `known_schemas` | `schema_strata_reported` projection |
-|---|---|---|---|---|
-| enron-1k | `1_hop`: 20 | `1_hop`: 50 | `["1_hop","2_hop"]` | **WILL FAIL** — `2_hop` missing |
-| enron-10k | `1_hop`: 20 | `1_hop`: 50 | `["1_hop","2_hop"]` | **WILL FAIL** — `2_hop` missing |
-| legal-1k | `1_hop`: 20 | `1_hop`: 50 | `["1_hop","2_hop"]` | **WILL FAIL** — `2_hop` missing |
+| stratum | selected 20 | full committed 50 | policy `known_schemas` at freeze | projection at freeze | after Amendment 1 (`["1_hop"]`) |
+|---|---|---|---|---|---|
+| enron-1k | `1_hop`: 20 | `1_hop`: 50 | `["1_hop","2_hop"]` | **WILL FAIL** — `2_hop` missing | **PASSES** |
+| enron-10k | `1_hop`: 20 | `1_hop`: 50 | `["1_hop","2_hop"]` | **WILL FAIL** — `2_hop` missing | **PASSES** |
+| legal-1k | `1_hop`: 20 | `1_hop`: 50 | `["1_hop","2_hop"]` | **WILL FAIL** — `2_hop` missing | **PASSES** |
 
 Every stratum is single-schema. This is **not** an artifact of the 20-of-50 truncation — the full
 committed 50-query gold set of every one of the eight 781 v2 cells is 100 % `1_hop`, and so is
@@ -658,7 +686,16 @@ started, no dataset or certification was touched.**
 Two findings the freeze's own mechanical checks produced. Both are recorded rather than worked
 around; neither is an agent's to decide.
 
-### BLOCKER-1 — `schema_strata_reported` cannot pass on any hero stratum (founder decision)
+### BLOCKER-1 — `schema_strata_reported` cannot pass on any hero stratum — **CLEARED 2026-07-28 by Amendment 1**
+
+> **Resolution (appended, the finding below is left intact as the record of what was found).**
+> Resolution 1 was taken: `known_schemas` → `["1_hop"]`, commit `4c0fd7bf`, under the founder's
+> 2026-07-28 blanket delegation. `require_all_present` stays `true`. See §E.0 Amendment 1 for the
+> verbatim rationale. `preflight.py` now reports **36 PASS / 0 FAIL / 6 PENDING**. Digest
+> consequence: the 5th occurrence of the documented policy-identity re-pin class
+> (`c3f98ebd…` → `88e98a93…`), with the sole-mover property proved by the runnable
+> `test_amendment_1_repin_is_policy_identity_only_prior_pin_reproduces` rather than by prose —
+> §G.1 item 1's lesson applied.
 
 **What.** v3 declares `required_schema_strata.known_schemas: ["1_hop","2_hop"]` with
 `require_all_present: true` (`scripts/jseval/utility-claim-policy.v3.json`). The gate
@@ -675,7 +712,8 @@ list (§E.7 row 7)". Row 7 is this freeze. The prediction held and the detector 
 which is the property that mattered.
 
 **Resolutions, both founder-gated (§E.6: policy ratification and §E.1 design changes are
-founder-only).** Recorded without a recommendation:
+founder-only).** Recorded without a recommendation *(resolution 1 was subsequently taken — see the
+resolution note above)*:
 
 1. **Amend `known_schemas` to `["1_hop"]`** in the v3 policy. Cheapest; honest (the hero corpora
    genuinely measure one schema); costs the 2-hop reporting axis 768 D4 introduced, and re-opens the
@@ -687,7 +725,7 @@ founder-only).** Recorded without a recommendation:
    which means re-freezing §E.2. Expensive and slow.
 
 Until one lands, §E.0's `launch eligibility` stays **BLOCKED**. `preflight.py` fails closed on this
-item by design.
+item by design. *(Resolution 1 landed 2026-07-28; the item now passes.)*
 
 ### FINDING-2 — the committed closed-book measurement is at haiku; P3's bar is sonnet
 

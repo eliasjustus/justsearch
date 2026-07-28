@@ -5,10 +5,12 @@
 `scripts/jseval/utility-claim-policy.v3.json`. **Nothing here is a choice made at supervision
 time.** A parameter change after the first measured cell voids claim eligibility (§E.2 R5).
 
-**Status: NOT LAUNCHABLE.** `preflight.py` FAILs on §H BLOCKER-1 (all three hero strata are
-100 % `1_hop`; v3's `schema_strata_reported` requires `2_hop` too under `require_all_present`).
-That is a **founder decision**, not a supervision-shift one. Do not run any step below until it is
-resolved *and* the founder gives explicit launch authorization (§E.6). This file is a dry driver.
+**Status: preflight green, launch NOT authorized.** §H BLOCKER-1 was cleared 2026-07-28 by 782
+§E.0 **Amendment 1** (`known_schemas` → `["1_hop"]`, a corpus-description correction; thresholds
+and strata untouched, `require_all_present` still `true`). `preflight.py` now reports
+**36 PASS / 0 FAIL / 6 PENDING**, the 6 PENDING being artifacts this campaign produces. Do not run
+any step below until the founder gives explicit launch authorization (§E.6, Step 0f). This file is
+a dry driver.
 
 Precedent this mirrors: 624's `scripts/jseval/chain-confirm-v5.bat` and its
 `Relaunch pre-registration` section (`docs/tempdocs/624-agentic-retrieval-eval-rebuild.md:4920`).

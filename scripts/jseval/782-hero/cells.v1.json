@@ -95,7 +95,8 @@
     {
       "id": "BLOCKER-1",
       "gate": "schema_strata_reported",
-      "detail": "v3 known_schemas ['1_hop','2_hop'] with require_all_present:true, but all three hero strata are 100% 1_hop across the full committed 50-query gold set. Founder decision required before launch (782 §H BLOCKER-1).",
+      "status": "CLEARED 2026-07-28 by 782 §E.0 Amendment 1",
+      "detail": "AT FREEZE: v3 known_schemas ['1_hop','2_hop'] with require_all_present:true, but all three hero strata are 100% 1_hop across the full committed 50-query gold set, so no hero record could promote. RESOLVED by narrowing known_schemas to ['1_hop'] — a corpus-description correction; require_all_present stays true and the 1_hop breakdown must still be reported. Thresholds and strata untouched.",
       "founder_gated": true
     },
     {
