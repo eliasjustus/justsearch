@@ -50,6 +50,14 @@
     "vdu-abstention-gate": {
       "minStrength": 100,
       "maxNoCoverage": 0
+    },
+    "extraction-dropout-policy": {
+      "minStrength": 93,
+      "maxNoCoverage": 0
+    },
+    "extraction-fallback-budget": {
+      "minStrength": 100,
+      "maxNoCoverage": 0
     }
   }
 }

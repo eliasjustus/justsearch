@@ -80,7 +80,7 @@ every committed cell signature. The behavioral count is already derivable withou
 | mixed/ohr-bench-clean | multi-domain | en | 1000 | 962 | extractive | 2026-03-19 | 252 | OHR-Bench ground-truth text (7 domains). |
 | mixed/ohr-bench-got-moderate | multi-domain | en | 1000 | 962 | extractive | 2026-03-19 | 252 | OHR-Bench GOT OCR extraction (moderate noise). |
 | mixed/ohr-bench-mineru-moderate | multi-domain | en | 1000 | 962 | extractive | 2026-03-19 | 252 | OHR-Bench MinerU extraction (moderate noise). |
-| mixed/ohr-bench-tika-pdf | multi-domain | en | 999 | 962 | extractive | 2026-03-20 | 252 | OHR-Bench original PDFs through Tika StructuredContentExtractor. |
+| mixed/ohr-bench-tika-pdf | multi-domain | en | 1000 | 962 | extractive | 2026-03-20 | 252 | OHR-Bench original PDFs through Tika StructuredContentExtractor. **126 of the 1000 documents extracted to zero characters** (110 of them have real ground-truth text in the clean arm; 16 are blank pages there too) — the empty-extraction share F-042's tax is concentrated in (790 §B). Corpus is pre-extracted TEXT, not PDF bytes. |
 | mixed/multihop-rag-2556 | news/multi-hop | en | 609 | 2556 | multi-hop inference/comparison/temporal/null | 2026-04-07 | 366 §9d | Retrieval eval, filter-bearing |
 | golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json`. **Content regenerated 2026-07-01 (tempdoc 664)** — see Corpus provenance note under Findings. **LEAKY — id-shape enumeration (776 item 3):** gold occupies `trailing_int(id)` 1..40, distractors 41..280; `trailing_int(id)<=40` selects gold at P/R 1.0 (native base 0.29) via materialized `<doc_id>.txt` filenames. `_FILLER` uniform (not gold-selective here). See the 767/776 Corpus provenance note. |
 | golden/battlefield-en-v1 | synthetic/2-hop chains | en | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | Certified in-band 624 (hybrid 0.4143 "hard", pre-F-031). **Out of band at HEAD defaults post-F-031** (711 re-measure: hybrid 0.9517, vector 1.0000 — saturated in BOTH modes) — no longer a difficulty discriminator in any mode; still valid for throughput profiling (691). Difficulty successor: 704 Pillar 1. Source `scripts/jseval/624-corpora/battlefield-en-v1`; re-measure: `jseval corpus-fidelity --dataset battlefield-en-v1 --modes hybrid,vector --embedding --start-backend --clean`. **LEAKY — id-shape enumeration (776 item 3):** gold occupies `trailing_int(id)` 1..78, distractors 79..390; `trailing_int(id)<=78` selects gold at P/R 1.0 (native base 0.20) via materialized filenames. `_FILLER` uniform (not gold-selective here). See the 767/776 Corpus provenance note. |
@@ -975,6 +975,20 @@ above)*
   `tmp/786-sweep/ohr-bench-{clean,got-moderate,mineru-moderate,tika-pdf}/` — per-arm
   `summary.json` + `projections/bootstrap_ci.json` (95%, 1000 resamples) + `hybrid_per_query.json`
   + `hybrid_run.trec`.
+- **Follow-up (tempdoc 790, 2026-07-28) — where the tax lives, and what shipped against it:** the
+  per-query decomposition puts 83% of the −0.1307 on the 12.4% of queries that drop to zero, and 13
+  of the 15 worst-hit queries' gold documents extracted to **literally empty** text. Measured on the
+  shipped arms: **126/1000 Tika documents extract to 0 characters**, 110 of which have real
+  ground-truth text (median 1156 chars) — so the recoverability ceiling of any fallback chain on
+  this corpus is 110/126 = 87%. The same measurement rejects a character-count dropout threshold:
+  19/1000 *legitimate* clean documents are under 100 chars (down to 5), while the largest
+  alphanumeric-count threshold with **zero** false positives is "fewer than 2 letters-or-digits"
+  (`ExtractionDropoutPolicy.MIN_USABLE_ALPHANUMERIC_CHARS`). 790 ships detection + the
+  structured→OCR→VDU fallback chain with a per-document budget and an explicit `extraction_method=
+  NONE` / `EXTRACTION_DROPOUT_UNRECOVERED` marker. **No recovery is claimed against this number
+  yet:** the OHR arms are pre-extracted *text*, so re-extraction has no bytes to read — measuring
+  recovery needs a corpus of real PDF bytes (`mixed/realdocs-v1`, or re-materialized OHR source
+  PDFs). Open acceptance item, 790 §G.
 
 ### F-041: the Head cross-encoder was judging doc-head previews, not evidence — feeding it the winning passage lifts legal hybrid +15% and FLIPS the CE from harmful to helpful on email; shipped default-off (tempdoc 774 Stages 1-2, 2026-07-22; answers Q-001's mechanism)
 

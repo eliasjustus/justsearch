@@ -689,6 +689,14 @@ public final class GrpcSearchService extends SearchServiceGrpc.SearchServiceImpl
       if (extractionMethod != null && !extractionMethod.isBlank()) {
         response.putMetadata("extraction_method", extractionMethod);
       }
+      // Tempdoc 790: an extraction dropout is an honest hole only if it is visible. The reason code
+      // is what distinguishes "this document has no text because there is none" from "no tier could
+      // read this document" — surface it next to the method that produced (or failed to produce) it.
+      String extractionReasonCode =
+          documentFieldOps.getDocumentField(normalizedDocId, SchemaFields.EXTRACTION_REASON_CODE);
+      if (extractionReasonCode != null && !extractionReasonCode.isBlank()) {
+        response.putMetadata("extraction_reason_code", extractionReasonCode);
+      }
 
       // Add VDU-related metadata for provenance tracking
       String vduStatus = documentFieldOps.getDocumentField(normalizedDocId, SchemaFields.VDU_STATUS);

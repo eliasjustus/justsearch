@@ -2,6 +2,8 @@
 package io.justsearch.indexerworker.loop.ops;
 
 import io.justsearch.indexerworker.extract.ContentExtractor.ExtractionResult;
+import io.justsearch.indexerworker.extract.ExtractionDropoutPolicy;
+import io.justsearch.indexerworker.extract.ExtractionFallbackBudget;
 import io.justsearch.indexerworker.text.TextQualityAnalyzer;
 import io.justsearch.indexing.SchemaFields;
 import java.nio.file.Path;
@@ -24,13 +26,52 @@ record VisualRoutingDecision(String status, String demandKind, String reason) {
       String extractionMethod,
       String visualExtractionEvidenceJson,
       double vduQualityThreshold) {
+    return decide(
+        filePath,
+        extraction,
+        extractionMethod,
+        visualExtractionEvidenceJson,
+        vduQualityThreshold,
+        ExtractionFallbackBudget.defaults());
+  }
+
+  static VisualRoutingDecision decide(
+      Path filePath,
+      ExtractionResult extraction,
+      String extractionMethod,
+      String visualExtractionEvidenceJson,
+      double vduQualityThreshold,
+      ExtractionFallbackBudget fallbackBudget) {
     if (!isVduEligible(filePath)) {
       return notNeeded("ineligible");
+    }
+
+    ExtractionFallbackBudget budget =
+        fallbackBudget == null ? ExtractionFallbackBudget.defaults() : fallbackBudget;
+    // Tempdoc 790 item 2: VDU/VLM is fallback tier 2. A budget that stops at tier 1 must not
+    // queue it, whatever the text looks like.
+    boolean dropout =
+        ExtractionDropoutPolicy.isDropout(extraction == null ? null : extraction.content());
+    if (dropout) {
+      if (!budget.permitsTier(2)) {
+        return notNeeded("fallback_budget_spent");
+      }
+      // Tempdoc 790: an extraction dropout is the strongest possible demand for the next tier —
+      // including after OCR, whose branch below used to declare "ocr_baseline_sufficient" for a
+      // result that was, in fact, empty. Sufficiency is a property of the text, not of which tier
+      // produced it.
+      return new VisualRoutingDecision(
+          SchemaFields.VDU_STATUS_PENDING,
+          SchemaFields.VDU_DEMAND_KIND_BASELINE_TEXT,
+          "extraction_dropout");
     }
 
     Map<String, Object> evidence = parseEvidence(visualExtractionEvidenceJson);
     if (SchemaFields.EXTRACTION_METHOD_OCR_TIKA.equals(extractionMethod)) {
       if (hasVisualEnrichmentDemand(evidence)) {
+        if (!budget.permitsTier(2)) {
+          return notNeeded("fallback_budget_spent");
+        }
         return new VisualRoutingDecision(
             SchemaFields.VDU_STATUS_PENDING,
             SchemaFields.VDU_DEMAND_KIND_VISUAL_ENRICHMENT,
@@ -41,6 +82,9 @@ record VisualRoutingDecision(String status, String demandKind, String reason) {
 
     double qualityScore = TextQualityAnalyzer.computeQualityScore(extraction.content());
     if (qualityScore < vduQualityThreshold || pagesMissingReadableText(evidence) > 0) {
+      if (!budget.permitsTier(2)) {
+        return notNeeded("fallback_budget_spent");
+      }
       return new VisualRoutingDecision(
           SchemaFields.VDU_STATUS_PENDING,
           SchemaFields.VDU_DEMAND_KIND_BASELINE_TEXT,

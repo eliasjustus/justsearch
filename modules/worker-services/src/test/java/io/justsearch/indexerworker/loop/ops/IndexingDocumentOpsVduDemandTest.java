@@ -133,9 +133,16 @@ final class IndexingDocumentOpsVduDemandTest {
   void ocrImageClearsBaselineDemandWithoutVisualEnrichment() {
     Map<String, Object> fields = new HashMap<>();
 
+    // Tempdoc 790: this fixture used to pass EMPTY content while its own evidence claimed
+    // textQualityScore 0.7 — an internally inconsistent stand-in for "OCR produced adequate text"
+    // (its sibling cases all pass real text). Empty OCR output is now the strongest possible demand
+    // for the next tier (see VisualRoutingDecisionTest#emptyOcrOutput...), so the fixture now
+    // carries the readable text its evidence describes. The assertion — an image OCR'd to adequate
+    // text does not re-queue baseline demand — is unchanged.
     IndexingDocumentOps.markVduIfNeeded(
         Path.of("scan.png"),
-        new ExtractionResult("", null, "image/png"),
+        new ExtractionResult(
+            "Readable OCR text from the scanned image. ".repeat(4), null, "image/png"),
         SchemaFields.EXTRACTION_METHOD_OCR_TIKA,
         "{\"schemaVersion\":1,\"textQualityScore\":0.7,\"layoutComplexity\":\"none\",\"route\":\"ocr_full\"}",
         fields,
