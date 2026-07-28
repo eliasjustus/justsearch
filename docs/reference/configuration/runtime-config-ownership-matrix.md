@@ -320,6 +320,10 @@ Precedence note:
 | search.evidence_span.entity_signal | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | - | JUSTSEARCH_SEARCH_MCP_DELIVERY_BUDGET_BYTES | search.mcp_delivery.budget_bytes | SEARCH_MCP_DELIVERY_BUDGET_BYTES | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | search.mcp_delivery.budget_bytes | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
+| search.mcp_delivery.entity_carriage_enabled | JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED | search.mcp_delivery.entity_carriage_enabled | SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
+| search.mcp_delivery.entity_carriage_enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
+| - | JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS | search.mcp_delivery.entity_carriage_max_chars | SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
+| search.mcp_delivery.entity_carriage_max_chars | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.mcp_framing.calibrated_absence_enabled | JUSTSEARCH_SEARCH_MCP_FRAMING_CALIBRATED_ABSENCE_ENABLED | search.mcp_framing.calibrated_absence_enabled | SEARCH_MCP_FRAMING_CALIBRATED_ABSENCE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | search.mcp_framing.calibrated_absence_enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.mcp_framing.continuation_enabled | JUSTSEARCH_SEARCH_MCP_FRAMING_CONTINUATION_ENABLED | search.mcp_framing.continuation_enabled | SEARCH_MCP_FRAMING_CONTINUATION | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |

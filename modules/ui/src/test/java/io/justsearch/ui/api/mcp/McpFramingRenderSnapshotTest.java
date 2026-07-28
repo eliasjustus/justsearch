@@ -46,6 +46,9 @@ final class McpFramingRenderSnapshotTest {
   private static final Clock FIXED_CLOCK =
       Clock.fixed(Instant.parse("2026-07-28T12:00:00Z"), ZoneId.of("UTC"));
 
+  /** 771 item (b): these snapshots pin the 789 framings, so carriage stays off in all of them. */
+  private static final McpEntityCarriage.Settings CARRIAGE_OFF = McpEntityCarriage.Settings.OFF;
+
   private static final McpDeliveryFraming.Settings OFF = McpDeliveryFraming.Settings.OFF;
   private static final McpDeliveryFraming.Settings F1 =
       new McpDeliveryFraming.Settings(true, false, false, 400);
@@ -72,7 +75,8 @@ final class McpFramingRenderSnapshotTest {
       McpDeliveryFraming.Settings framing,
       long indexedDocs) {
     McpSearchResponseContent content =
-        surface().buildSearchContent(resp, Map.of("query", query), framing, indexedDocs);
+        surface().buildSearchContent(
+            resp, Map.of("query", query), framing, indexedDocs, CARRIAGE_OFF);
     return McpToolSurface.renderSearchText(resp, content, false);
   }
 
@@ -176,7 +180,11 @@ final class McpFramingRenderSnapshotTest {
     McpSearchResponseContent content =
         surface()
             .buildSearchContent(
-                resp, Map.of("query", "what happened to the Q3 hedging memo"), F1, -1L);
+                resp,
+                Map.of("query", "what happened to the Q3 hedging memo"),
+                F1,
+                -1L,
+                CARRIAGE_OFF);
     // The fact is computed either way — the density decision is the renderer's.
     assertTrue(content.hits().get(0).continuation().contains("Vince Kaminski"));
 
@@ -200,14 +208,14 @@ final class McpFramingRenderSnapshotTest {
     KnowledgeSearchResponse resp = hopOneResponse();
     McpSearchResponseContent content =
         surface()
-            .buildSearchContent(resp, Map.of("query", "hedging memo"), F1, -1L);
+            .buildSearchContent(resp, Map.of("query", "hedging memo"), F1, -1L, CARRIAGE_OFF);
     Map<String, Object> structured = McpEvidenceProjection.searchEvidence(resp, content, false);
     @SuppressWarnings("unchecked")
     List<Map<String, Object>> results = (List<Map<String, Object>>) structured.get("results");
     assertTrue(((String) results.get(0).get("continuation")).contains("Vince Kaminski"));
 
     McpSearchResponseContent offContent =
-        surface().buildSearchContent(resp, Map.of("query", "hedging memo"), OFF, -1L);
+        surface().buildSearchContent(resp, Map.of("query", "hedging memo"), OFF, -1L, CARRIAGE_OFF);
     Map<String, Object> offStructured =
         McpEvidenceProjection.searchEvidence(resp, offContent, false);
     @SuppressWarnings("unchecked")
@@ -239,12 +247,12 @@ final class McpFramingRenderSnapshotTest {
     // Tier equivalence (735 G3): the header must reach structuredContent too, or a client that
     // delivers the structured tier would silently sit outside the probe arm.
     McpSearchResponseContent onContent =
-        surface().buildSearchContent(resp, Map.of("query", "hedging memo"), F2, -1L);
+        surface().buildSearchContent(resp, Map.of("query", "hedging memo"), F2, -1L, CARRIAGE_OFF);
     assertTrue(
         ((String) McpEvidenceProjection.searchEvidence(resp, onContent, false).get("evidenceHeader"))
             .startsWith("Retrieval evidence"));
     McpSearchResponseContent offContent =
-        surface().buildSearchContent(resp, Map.of("query", "hedging memo"), OFF, -1L);
+        surface().buildSearchContent(resp, Map.of("query", "hedging memo"), OFF, -1L, CARRIAGE_OFF);
     assertFalse(
         McpEvidenceProjection.searchEvidence(resp, offContent, false)
             .containsKey("evidenceHeader"));
@@ -301,13 +309,15 @@ final class McpFramingRenderSnapshotTest {
 
     // Tier equivalence (735 G3): the absence note reaches structuredContent too.
     McpSearchResponseContent onContent =
-        surface().buildSearchContent(resp, Map.of("query", "quarterly hedging policy"), F3, 10_432L);
+        surface().buildSearchContent(
+            resp, Map.of("query", "quarterly hedging policy"), F3, 10_432L, CARRIAGE_OFF);
     assertTrue(
         ((String) McpEvidenceProjection.searchEvidence(resp, onContent, false).get("absenceNote"))
             .contains("Absence of results is not evidence of absence"));
     McpSearchResponseContent offContent =
         surface()
-            .buildSearchContent(resp, Map.of("query", "quarterly hedging policy"), OFF, 10_432L);
+            .buildSearchContent(
+                resp, Map.of("query", "quarterly hedging policy"), OFF, 10_432L, CARRIAGE_OFF);
     assertFalse(
         McpEvidenceProjection.searchEvidence(resp, offContent, false).containsKey("absenceNote"));
   }

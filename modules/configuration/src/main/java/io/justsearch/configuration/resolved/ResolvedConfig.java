@@ -453,6 +453,7 @@ public record ResolvedConfig(
    * @param mcpDeliveryBudgetBytes 775: the MCP delivery governor's serialized-JSON budget in bytes
    *     (default {@link Search#DEFAULT_MCP_DELIVERY_BUDGET_BYTES}; 0 disables the governor)
    * @param mcpFraming 789 Phase 2: the agent-delivery framing flags (all default OFF)
+   * @param mcpEntityCarriage 771 item (b): the MCP entity-carriage settings (default OFF)
    */
   public record Search(
       String profile,
@@ -480,6 +481,11 @@ public record ResolvedConfig(
       // agent reasoning at intermediate facts. Each framing is independently selectable and ALL
       // default OFF; the probe runs one framing per arm.
       McpFraming mcpFraming,
+      // Tempdoc 771 item (b) / F-039 component (b): entity carriage. On the legal strata the
+      // delivered excerpt carried the bridge entity in only ~45% of successful retrievals (vs ~93%
+      // on email) because long documents bury the bridge sentence past the 4 KB content_preview
+      // window — so even a successful hop-1 retrieval could not seed hop-2. Default OFF.
+      EntityCarriage mcpEntityCarriage,
       Corrections corrections) {
 
     /**
@@ -520,6 +526,32 @@ public record ResolvedConfig(
      * treating it as coverage evidence is the 2x-abstention failure the framing targets.
      */
     public static final int DEFAULT_THIN_RESULT_FLOOR_BYTES = 400;
+
+    /**
+     * Tempdoc 771 item (b) — MCP entity carriage. Content-only at the delivery layer: no MCP tool
+     * schema or parameter change (F-016), no retrieval or ranking change. When enabled, a delivered
+     * {@code justsearch_search} hit whose excerpt does not already name the document's indexed NER
+     * entities carries one bounded line listing the missing names, so an agent that needs a bridge
+     * entity for a follow-up (hop-2) search is actually handed it.
+     *
+     * @param enabled 771 item (b): emit the per-hit entity-carriage line (default false)
+     * @param maxChars ceiling on the whole rendered carriage line per hit, in characters (default
+     *     {@link #DEFAULT_ENTITY_CARRIAGE_MAX_CHARS}); values &lt;= 0 suppress the line
+     */
+    public record EntityCarriage(boolean enabled, int maxChars) {
+
+      /** Carriage off — the shipped default, byte-identical to pre-771 delivery. */
+      public static final EntityCarriage OFF =
+          new EntityCarriage(false, DEFAULT_ENTITY_CARRIAGE_MAX_CHARS);
+    }
+
+    /**
+     * Default per-hit ceiling for the rendered entity-carriage line (tempdoc 771 item (b)): 200
+     * characters. Sized against the 775 §E delivery budget — at the 50-hit tool ceiling a fully
+     * saturated carriage costs ~10 KB, which the delivery governor degrades deterministically like
+     * any other body text rather than cliffing.
+     */
+    public static final int DEFAULT_ENTITY_CARRIAGE_MAX_CHARS = 200;
 
     /** Spelling/fuzzy correction settings. */
     public record Corrections(

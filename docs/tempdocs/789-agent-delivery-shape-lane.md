@@ -206,6 +206,22 @@ Shipped; $0 (no model call anywhere in the work or its verification). This incre
 three framings as **flag-gated substrate, ALL DEFAULT OFF** — it does NOT run the probe and does
 NOT change any shipped delivery. Measured cells remain founder-gated.
 
+> **Cross-reference — the engine-side complement (tempdoc 771 §G, 2026-07-29).** F1 can only mark an
+> entity that ALREADY appears in delivered text. On the legal strata that is the binding constraint,
+> not the framing: 771 §E measured the bridge entity present in only 45% of *successful* retrievals
+> because long documents bury the bridge sentence past the 4,096-char `content_preview`, so F1 is
+> structurally silent on exactly the hits that need hop 2. **Entity carriage** (771 §G, also
+> default-off, `search.mcp_delivery.entity_carriage_enabled`) is the half that makes delivered text
+> entity-bearing in the first place — measured 40%→100% carriage on legal-clerc-1k at +39.4 bytes
+> per hit, 92%→100% on enron at +5.2 bytes. The two compose by construction: carriage is computed
+> first and F1's delivered-text input includes the carriage line
+> (`McpToolSurface#buildSearchContent`), so a combined arm is F1 with something to mark.
+>
+> One wording note before anyone runs that arm: F1's sentence says "this *excerpt* names X", which is
+> imprecise when X arrived via carriage. F1's wording was deliberately NOT changed by 771 — it is
+> this lane's probe substrate and the measured P2 arms used it verbatim. A combined arm needs a
+> wording decision owned **here**, not a silent edit from the engine lane.
+
 ### Seam map
 
 The framings live entirely in MCP response CONTENT. No MCP schema or tool parameter changed

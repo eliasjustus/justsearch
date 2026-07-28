@@ -449,6 +449,23 @@ public enum EnvRegistry {
         "search.mcp_delivery.budget_bytes", "JUSTSEARCH_SEARCH_MCP_DELIVERY_BUDGET_BYTES"),
 
     /**
+     * 771 item (b): append the document's indexed NER entity names to a delivered {@code
+     * justsearch_search} hit whose excerpt does not already carry them (default: false via builder).
+     * The engine-side half of the hop-2 fix — an agent cannot re-query a bridge entity whose name
+     * was never delivered. OFF ships byte-identical delivery.
+     */
+    SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED(
+        "search.mcp_delivery.entity_carriage_enabled",
+        "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED"),
+    /**
+     * 771 item (b): byte ceiling for the whole rendered entity-carriage line, per hit (default: 200
+     * via builder). Only consulted when {@code entity_carriage_enabled} is on.
+     */
+    SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS(
+        "search.mcp_delivery.entity_carriage_max_chars",
+        "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS"),
+
+    /**
      * 789 Phase 2 (F1): append a continuation line to a delivered excerpt that names an indexed
      * entity the query did not (default: false via builder). Probe substrate for the hop-1
      * satisficing effect measured by the 782 hero campaign; OFF ships byte-identical delivery.

@@ -91,6 +91,13 @@ public final class McpEvidenceProjection {
       if (hc.continuation() != null) {
         h.put("continuation", hc.continuation());
       }
+      // Tempdoc 771 item (b): the per-hit entity-carriage line on the structured tier, from the same
+      // content instance the text renderer consumed — a client that delivers structuredContent
+      // instead of text must receive the same entity names (735 G3), otherwise carriage would fix
+      // hop-2 on one tier only.
+      if (hc.entityCarriage() != null) {
+        h.put("entityCarriage", hc.entityCarriage());
+      }
       results.add(h);
     }
     out.put("results", results);
