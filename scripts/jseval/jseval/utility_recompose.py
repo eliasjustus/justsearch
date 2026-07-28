@@ -17,6 +17,7 @@ from jseval.agent_utility_observations import (
     WITH_TOOL_CONDITIONS,
     all_attempt_tool_call_assertions,
     read_inspect_observations,
+    resolve_judge_overlay,
     successful_summaries,
 )
 from jseval.utility_claim_policy import canonical_bytes, canonical_digest
@@ -116,13 +117,6 @@ def semantic_projection(record: dict) -> dict:
 
 def semantic_digest(record: dict) -> str:
     return canonical_digest(semantic_projection(record))
-
-
-def _load_overlay(log_dir: Path, explicit: str | Path | None) -> dict | None:
-    path = Path(explicit) if explicit else log_dir / "judge-overlay.json"
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _namespace_for_loss(observations: Iterable[dict], namespace: str) -> list[dict]:
@@ -535,7 +529,7 @@ def finalize_logs(
 
     observation_groups: list[list[dict]] = []
     for index, root in enumerate(roots):
-        overlay = _load_overlay(root, overlays[index] if overlays else None)
+        overlay = resolve_judge_overlay(root, overlays[index] if overlays else None)
         observations = read_inspect_observations(root, judge_overlay=overlay)
         if not observations:
             raise ValueError(f"no Inspect observations found in {root}")
@@ -566,13 +560,17 @@ def partial_status_projection(log_dir: str | Path, *, policy: dict | None = None
 
     This deliberately does not emit a claim verdict: partial evidence is not a
     scientific record. It does use the selected policy's loss thresholds so the
-    live comparability signal cannot drift from finalization.
+    live comparability signal cannot drift from finalization -- and, for the same
+    reason, it resolves the log directory's judge overlay exactly as
+    `finalize_logs` does (usually absent mid-run; present when the status view is
+    taken after a judge pass, and then the live accuracy must be the judged one).
     """
     from jseval.utility_claim_policy import load_policy
 
     selected_policy = policy or load_policy()
     thresholds = selected_policy.get("thresholds") or {}
-    observations = read_inspect_observations(log_dir, require_complete=False)
+    observations = read_inspect_observations(
+        log_dir, judge_overlay=resolve_judge_overlay(log_dir), require_complete=False)
     arms = loss_accounting_from_observations(observations)
     verdict, metrics = paired_comparability(
         arms,

@@ -541,6 +541,30 @@ public final class ResolvedConfigBuilder {
         Integer.toString(
             io.justsearch.configuration.resolved.ResolvedConfig.Search
                 .DEFAULT_MCP_DELIVERY_BUDGET_BYTES));
+    // 789 Phase 2: the three agent-delivery framings — probe substrate, ALL default OFF. Nothing
+    // in the delivered response changes until an arm turns one on.
+    putYamlFromNode(
+        "search.mcp_framing.continuation_enabled", searchRoot, "mcp_framing.continuation_enabled");
+    putDefault("search.mcp_framing.continuation_enabled", "false");
+    putYamlFromNode(
+        "search.mcp_framing.evidence_not_answer_enabled",
+        searchRoot,
+        "mcp_framing.evidence_not_answer_enabled");
+    putDefault("search.mcp_framing.evidence_not_answer_enabled", "false");
+    putYamlFromNode(
+        "search.mcp_framing.calibrated_absence_enabled",
+        searchRoot,
+        "mcp_framing.calibrated_absence_enabled");
+    putDefault("search.mcp_framing.calibrated_absence_enabled", "false");
+    putYamlIntFromNode(
+        "search.mcp_framing.thin_result_floor_bytes",
+        searchRoot,
+        "mcp_framing.thin_result_floor_bytes");
+    putDefault(
+        "search.mcp_framing.thin_result_floor_bytes",
+        Integer.toString(
+            io.justsearch.configuration.resolved.ResolvedConfig.Search
+                .DEFAULT_THIN_RESULT_FLOOR_BYTES));
     // Facet fields list
     JsonNode fieldsNode = searchRoot.path("facets").path("fields");
     if (fieldsNode.isArray()) {
@@ -1285,7 +1309,22 @@ public final class ResolvedConfigBuilder {
         resolveInt(
             "search.mcp_delivery.budget_bytes",
             ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES),
+        buildSearchMcpFraming(),
         buildSearchCorrections());
+  }
+
+  /**
+   * 789 Phase 2: the agent-delivery framing flags. Every boolean fallback is {@code false} — the
+   * framings are probe substrate and must never turn on by omission.
+   */
+  private ResolvedConfig.Search.McpFraming buildSearchMcpFraming() {
+    return new ResolvedConfig.Search.McpFraming(
+        resolveBoolean("search.mcp_framing.continuation_enabled", false),
+        resolveBoolean("search.mcp_framing.evidence_not_answer_enabled", false),
+        resolveBoolean("search.mcp_framing.calibrated_absence_enabled", false),
+        resolveInt(
+            "search.mcp_framing.thin_result_floor_bytes",
+            ResolvedConfig.Search.DEFAULT_THIN_RESULT_FLOOR_BYTES));
   }
 
   private ResolvedConfig.Search.Corrections buildSearchCorrections() {

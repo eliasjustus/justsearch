@@ -1,0 +1,25 @@
+{
+  "schema": "agent-utility-publication.v1",
+  "schema_version": 1,
+  "publication_id": "agent-utility-hero-2026-07-28",
+  "created_at": "2026-07-28T21:19:31.811718+00:00",
+  "lifecycle_state": "accepted",
+  "record": {
+    "path": "../../../agent-utility-records/c5a75457b264e0cfdecf5ab1ac552d3430a93300f3241766b9c72a49be1560bb/utility-comparison-cross-corpus.v1.json",
+    "sha256": "17d19d606e44c7083b5d355de6ac1b5d38f236726b2a6fd4a054de9a7e05b94c",
+    "semantic_digest": "c5a75457b264e0cfdecf5ab1ac552d3430a93300f3241766b9c72a49be1560bb"
+  },
+  "observations": {
+    "path": "observations.v1.jsonl",
+    "sha256": "5f700796eb4e4735eb61172ad8d6703bd281c009eabd8a455ba6ceea8cb72032"
+  },
+  "policy": {
+    "path": "policy.v1.json",
+    "id": "agent-utility-public-v4",
+    "sha256": "407c76b94195d36355f6b51380002b0f8d0c45e70fb33d08f948b067ba21280c",
+    "status": "active"
+  },
+  "sanitizer_version": "agent-utility-observation.v2",
+  "replay_command": "python -m jseval utility-replay --publication agent-utility-hero-2026-07-28",
+  "supersedes": "agent-utility-hero-2026-07-28"
+}

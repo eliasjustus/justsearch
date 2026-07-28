@@ -1,8 +1,16 @@
 {
   "schema": "agent-utility-publication-pointer.v1",
   "schema_version": 1,
-  "current": null,
-  "previous": null,
-  "reason": "No agent-utility result has passed the active scientific claim policy; the 2026-07-18 confirmatory campaign was rejected on identity-verification gates.",
-  "selected_at": null
+  "current": {
+    "publication_id": "agent-utility-hero-2026-07-28",
+    "path": "publications/agent-utility-hero-2026-07-28/publication.v1.json",
+    "manifest_sha256": "fdd96e683964c3dfec2fe68d6bf4264a3c6123f9d0fa9da52a819507fc96f025"
+  },
+  "previous": {
+    "publication_id": "agent-utility-hero-2026-07-28",
+    "path": "publications/agent-utility-hero-2026-07-28/publication.v1.json",
+    "manifest_sha256": "23daca43e6c7609039e5f1648524bd3a682943956043621f855ff9b1106887b0"
+  },
+  "reason": "First accepted agent-utility record: 782 hero campaign 2026-07-28, accepted/adoption-only under policy v4 (founder-authorized re-compose; publication assigned to this session by founder 2026-07-28: 'you can proceed with the remaining items 2 and 3')",
+  "selected_at": "2026-07-28T21:20:03.570753+00:00"
 }
