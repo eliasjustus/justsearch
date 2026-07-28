@@ -16,6 +16,14 @@ from jseval.utility_claim_policy import (
 )
 from tests.test_corpus_inject import _certification_snapshot_fixture
 
+# Derived from the checked-in ACTIVE policy, not hand-pinned: the fixture below
+# mirrors what the real producer composes for the certified cohort, and the
+# refusal test asserts the same vocabulary the gate reads. Amendment 1
+# (2026-07-28) narrowed this to ["1_hop"] because the certified hero corpora are
+# 100% 1_hop by construction; deriving it here means a later corpus that DOES
+# carry a second schema updates both sites at once.
+_KNOWN_SCHEMAS = tuple(load_policy()["required_schema_strata"]["known_schemas"])
+
 
 def _record(seed_ids: list[int] | None = None) -> dict:
     seed_ids = [0, 1, 2, 3, 4] if seed_ids is None else seed_ids
@@ -145,8 +153,10 @@ def _sync_v3_reporting(record: dict) -> None:
 
     `utility_recompose._project_estimands` always emits the per-arm completion
     estimand alongside ITT, and `utility_comparison._compose_cell` attaches
-    `schema_stratified.by_stratum` to each measured cell that spans more than one
-    `question_type`. The fixture reproduces BOTH from its own ITT strata rather
+    `schema_stratified.by_stratum` to every measured cell whose queries carry a
+    `question_type` — including a single-schema cell, which reports its one
+    schema (`_default_schema_stratify` returns `None` only when NO query is
+    tagged). The fixture reproduces BOTH from its own ITT strata rather
     than hand-pinning them, so a test that appends a stratum stays consistent
     with what the real producer would have composed for it (the
     `unreachable-seed-green` discipline)."""
@@ -181,7 +191,7 @@ def _sync_v3_reporting(record: dict) -> None:
         block["schema_stratified"] = {"by_stratum": {
             schema: {"n_paired_observations": cell["n_paired_observations"] // 2,
                      "accuracy": {"delta_ci95": [-0.01, 0.05]}}
-            for schema in ("1_hop", "2_hop")
+            for schema in _KNOWN_SCHEMAS
         }}
 
 
@@ -340,7 +350,7 @@ def test_schema_strata_reported_rejects_when_the_breakdown_is_missing():
     gate = next(item for item in verdict["gates"]
                 if item["name"] == "schema_strata_reported")
     assert gate["passed"] is False
-    assert gate["observed"][0]["missing"] == ["1_hop", "2_hop"]
+    assert gate["observed"][0]["missing"] == list(_KNOWN_SCHEMAS)
     assert verdict["accepted"] is False
 
 
