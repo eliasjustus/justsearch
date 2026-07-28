@@ -223,3 +223,19 @@ stays open until the campaign's pre-registration, per §C.
    (campaign-v2 lever; competes with distribution otherwise).
 6. **pub-cme flake fix**: fold into the next CI-touching PR (the flip PR is
    the natural carrier); 749 closes via its own session or explicit handover.
+
+## 2026-07-28 — Hero v1 HAS RUN (program milestone; fold from 782 §I / register F-043)
+
+The campaign this program built toward completed end-to-end on 2026-07-28: 781 v2 certified
+cohort → 782 frozen protocol → two campaign windows → ONE composed three-stratum record
+(`scripts/jseval/782-run-2026-07-28-hero/combined/`). Verdict as recorded:
+rejected/inconclusive on a freeze-level policy-gate defect (cert 50-query count vs the frozen
+20-qid subset design — escalated for a founder-gated v4 offline re-compose); code-certain
+counterfactual **accepted / adoption-only** — adoption 1.0, no measurable accuracy benefit in
+the addition arm at sonnet, point-negative on enron (reproduced across both windows). Full
+narrative 782 §I; finding F-043. Program consequences: (a) the "hero claim" this program
+envisioned is NOT a benefit claim on this evidence — any public sentence would be an
+adoption/no-benefit result and stays founder-gated; (b) item 5 above (contextualization recipe
+lane) is now unblocked by its own trigger — hero v1 has run; (c) the campaign-v2 lever should
+weigh the B-arm budget-exhaustion asymmetry (12/60 vs 4/60 at $0.80 on 10k) and the addition-vs-
+substitution arm question before any re-run.
