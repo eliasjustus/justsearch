@@ -32,11 +32,18 @@ function fixture() {
     schema: "agent-utility-publication-pointer.v1", schema_version: 1,
     current: null, previous: null, reason: "No accepted result.", selected_at: null,
   });
-  // The no-result block renders the ACTIVE claim-policy id, read dynamically from this
-  // file (it used to be hardcoded, which silently named a superseded policy). The
-  // fixture must provide it so the generator has its real input.
+  // The no-result block renders the ACTIVE claim-policy id + stratum count, both
+  // read from whichever utility-claim-policy.*.json declares status "active" --
+  // never from a hardcoded id or filename, either of which goes stale at the next
+  // ratification and silently names a superseded policy. A superseded sibling is
+  // written alongside so the fixture exercises the selection, not just the read.
+  writeJson(path.join(root, "scripts/jseval/utility-claim-policy.v3.json"), {
+    policy_id: FIXTURE_POLICY_ID, status: "active", unresolved: [],
+    required_strata: [{ stratum_id: "a" }, { stratum_id: "b" }, { stratum_id: "c" }],
+  });
   writeJson(path.join(root, "scripts/jseval/utility-claim-policy.v1.json"), {
-    policy_id: FIXTURE_POLICY_ID, status: "active",
+    policy_id: "fixture-superseded-policy", status: "superseded", unresolved: [],
+    required_strata: [{ stratum_id: "old" }],
   });
   return root;
 }
@@ -161,8 +168,11 @@ scenario("initial null and drift", (root, ok) => {
     ok(`${relative} states no accepted result`, /No agent-utility result is currently accepted/.test(projected));
     const body = projected.slice(projected.indexOf(START), projected.indexOf(END));
     ok(`${relative} carries no benchmark table or percentages`, !/\| Corpus|\d+\.\d+%/.test(body));
-    // The active policy id is read dynamically from utility-claim-policy.v1.json, not hardcoded.
+    // The active policy is selected by status across utility-claim-policy.*.json,
+    // so the superseded sibling in the fixture must NOT be the one rendered.
     ok(`${relative} renders the active policy id dynamically`, body.includes(FIXTURE_POLICY_ID));
+    ok(`${relative} never names the superseded policy`, !body.includes("fixture-superseded-policy"));
+    ok(`${relative} renders the active stratum count`, /required 3-stratum/.test(body));
   }
   ok("--check exits 0 once in sync", run(root, "--check").status === 0);
   const readme = path.join(root, "README.md");
@@ -171,6 +181,35 @@ scenario("initial null and drift", (root, ok) => {
     fs.readFileSync(readme, "utf8").replace("No agent-utility result", "A stale agent-utility result"),
   );
   ok("--check exits non-zero on drift", run(root, "--check").status !== 0);
+});
+
+// The rendered sentence asserts the policy "is active and fully resolved". Both
+// halves must be verified, not assumed -- a generator that prints that sentence
+// over an unresolved or ambiguous policy is publishing a false claim, so
+// generation fails closed instead.
+scenario("active-policy selection fails closed", (root, ok) => {
+  const policyPath = path.join(root, "scripts/jseval/utility-claim-policy.v3.json");
+  const active = JSON.parse(fs.readFileSync(policyPath, "utf8"));
+
+  writeJson(policyPath, { ...active, unresolved: ["owner must settle the matrix"] });
+  const unresolvedRun = run(root);
+  ok("refuses to render an unresolved policy as fully resolved", unresolvedRun.status !== 0);
+  ok("names the unresolved item", /unresolved/.test(unresolvedRun.stderr + unresolvedRun.stdout));
+
+  writeJson(policyPath, { ...active, status: "superseded" });
+  const noneRun = run(root);
+  ok("refuses when no policy is active", noneRun.status !== 0);
+  ok("reports the active-policy count", /exactly one active claim policy, found 0/
+    .test(noneRun.stderr + noneRun.stdout));
+
+  writeJson(path.join(root, "scripts/jseval/utility-claim-policy.v1.json"), {
+    ...active, policy_id: "fixture-second-active",
+  });
+  writeJson(policyPath, active);
+  const ambiguousRun = run(root);
+  ok("refuses when two policies claim active", ambiguousRun.status !== 0);
+  ok("reports the ambiguity", /exactly one active claim policy, found 2/
+    .test(ambiguousRun.stderr + ambiguousRun.stdout));
 });
 
 const OUTCOME_PHRASES = {

@@ -124,13 +124,14 @@ Every rule below is evaluable mechanically, before any result is interpreted. **
 pre-launch (fail → do not launch); R-rules are per-run/at-compose (fail → the affected stratum
 is void, see §E.6).**
 
-**P0 — policy identity.** The active policy (`scripts/jseval/utility-claim-policy.v1.json`,
-`status: "active"`) must declare exactly the §E.1 three strata with `requested_model: "sonnet"`,
-`query_count: 20`, `seed_ids: [0,1,2]`. The checked-in v3 draft
-(`utility-claim-policy.v3-DRAFT.json`) currently declares a **different** matrix
-(legal-10k×sonnet + legal-1k×sonnet + legal-10k×haiku) that contradicts decision 2 — it must be
-re-pinned to §E.1 before ratification. Ratification is founder-gated.
-`PENDING-AT-FREEZE: ratified policy_id + its required_strata block.`
+**P0 — policy identity.** ✅ **RESOLVED 2026-07-28 by the §G ratification.** The active policy is
+`scripts/jseval/utility-claim-policy.v3.json` (`policy_id: agent-utility-public-v3`,
+`status: "active"`), and it declares exactly the §E.1 three strata with `requested_model: "sonnet"`,
+`query_count: 20`, `seed_ids: [0,1,2]` — see §G for the verbatim block. The pre-launch check is:
+that file is the one `utility-claim-policy.*.json` with `status: "active"`, its `unresolved` is `[]`,
+and its `required_strata` match §E.1. `utility-claim-policy.v1.json` is now
+`status: "superseded"` (it is history, not the operative policy) and the v3 DRAFT file — whose
+matrix contradicted decision 2 — is deleted.
 
 **P1 — corpus_signature pins (v2 cohort, 781 §E.2).** Each stratum's computed
 `corpus_signature` must equal, byte for byte:
@@ -155,9 +156,11 @@ point of the trigger. This is the direct guard against the title-presence leak c
 
 **P3 — closed-book at hero tier.** Closed-book accuracy measured **at sonnet** on each stratum
 must be `0.000` (781 §C). Any non-zero value means the answers are derivable without the corpus
-→ do not launch. `PENDING-AT-FREEZE: the ratified maximum_closed_book_accuracy (v3 draft carries
-a 0.1 placeholder; §C requires 0.000 — the founder resolves the conflict, and the resolution is
-recorded here, not chosen at launch time).`
+→ do not launch. ✅ **The two-number conflict is RESOLVED (§G, 2026-07-28):** the ratified
+`maximum_closed_book_accuracy` is `0.1`, and it is a post-hoc failure **CEILING** enforced by the
+`closed_book_at_hero_tier` gate — it does **not** relax this P-rule. The pre-launch bar stays
+`0.000` at sonnet. Read it as: below 0.000 to launch; above 0.1 voids the benefit headline for
+that stratum even if it somehow launched.
 
 **P4 — probe-self-leak checks (the 2026-07-22 lesson: a probe without pre-registered validity
 rules reported its own leak as a win).** All four run pre-launch over committed artifacts, output
@@ -369,9 +372,9 @@ that would be editing a frozen section.
 | 1 | freeze commit SHA + timestamp | §E.0 | the freeze commit itself |
 | 2 | 760 installer artifact identity | §E.0 | 760 lane |
 | 3 | 781 members `fully-certified` (not `structurally-certified`) | §E.0 / P2 | 781 §E.4 phases B–E |
-| 4 | ratified `policy_id` + `required_strata` re-pinned to §E.1 (v3 draft currently contradicts decision 2) | P0 | founder ratification |
+| 4 | ~~ratified `policy_id` + `required_strata` re-pinned to §E.1~~ ✅ **CLOSED 2026-07-28 (§G)** — `agent-utility-public-v3`, `scripts/jseval/utility-claim-policy.v3.json`, strata = §E.1 verbatim | P0 | founder ratification (delegated) |
 | 5 | re-confirm the three `corpus_signature` pins are unmoved by 781 §E.4 | P1 | verify against `structural-certification.v1.json` |
-| 6 | ratified `maximum_closed_book_accuracy` (v3 draft 0.1 placeholder vs 781 §C's 0.000) | P3 | founder |
+| 6 | ~~ratified `maximum_closed_book_accuracy`~~ ✅ **CLOSED 2026-07-28 (§G)** — `0.1` as a post-hoc failure CEILING; P3's pre-launch bar stays `0.000` at sonnet | P3 | founder |
 | 7 | the 20-qid list per stratum + sha256 + the deterministic selection rule | §E.1 | committed before launch |
 | 8 | per-cell `max_budget` USD from fresh **sonnet** calibrations; concurrency | §E.1 | calibration run |
 | 9 | active scorer identity at the freeze commit (`substring_scorer` vs LLM judge), recorded `file:line` | §E.3 | read the wired task |
@@ -379,4 +382,149 @@ that would be editing a frozen section.
 | 11 | run-directory date suffix | §E.6 | launch day |
 
 Nothing in this table is a judgment call at supervision time: each row is read from a named file
-or is a founder decision recorded before launch.
+or is a founder decision recorded before launch. **9 of 11 remain open** (rows 4 and 6 closed by
+the §G ratification, 2026-07-28).
+
+## §G Claim policy v3 — RATIFIED 2026-07-28 (closes §E.7 items 4 and 6)
+
+**Authority.** Founder decision 2 (766 §G); the ratification act itself was delegated to the
+orchestrator on 2026-07-28 with a fixed composition rule — **v3-DRAFT's structural machinery +
+v1's (`agent-utility-public-v2`'s) numeric thresholds VERBATIM + founder-decision-2 strata**.
+No threshold was tuned and no stratum was chosen by an agent.
+
+**File.** `scripts/jseval/utility-claim-policy.v3.json` — `policy_id: agent-utility-public-v3`,
+`status: active`. `required_strata` are exactly §E.1, in §E.1's cheapest-first order:
+
+| # | `stratum_id` |
+|---|---|
+| 1 | `en-email-enron-raw\|mixed/en-email-enron-raw-1k-verbose\|1000\|verbose\|sonnet` |
+| 2 | `en-email-enron-raw\|mixed/en-email-enron-raw-10k-verbose\|10000\|verbose\|sonnet` |
+| 3 | `en-legal-clerc\|mixed/en-legal-clerc-1k-verbose\|1000\|verbose\|sonnet` |
+
+each `query_count: 20`, `seed_ids: [0,1,2]`. **legal-10k is absent** — item 4's contradiction
+(the draft declared legal-10k×sonnet + legal-1k×sonnet + legal-10k×haiku) is resolved in favour
+of decision 2. Item 6 is resolved by keeping the draft's `maximum_closed_book_accuracy: 0.1` as a
+post-hoc failure **CEILING**; it does not relax P3, whose pre-launch bar stays 0.000 at sonnet.
+
+**Selector change.** `utility_claim_policy.policy_path()` now returns the v3 file. The v2
+document (`utility-claim-policy.v1.json`) is `status: "superseded"` +
+`superseded_by: "agent-utility-public-v3"`, retained as history and as the byte-source the
+no-tuning test compares against. `utility-claim-policy.v3-DRAFT.json` is DELETED, and its
+`v3_draft_policy_path`/`load_v3_draft_policy` accessors are gone; the only live references that
+moved were `scripts/docs/gen-public-agent-utility.mjs` (+ its test), which also stopped hardcoding
+"four-stratum … 1k and 10k" and now renders the stratum count from the policy.
+
+**Three additive requirements are now wired, not decorative.** `completion_triple_reported`,
+`closed_book_at_hero_tier` and `schema_strata_reported` were declared by the draft but would have
+failed the `supported_policy_requirements` gate closed, making every record unpromotable. Each is
+now a real conditional gate (fires only when a policy declares it, so records under v1/v2 project
+byte-identically):
+
+- `completion_triple_reported` — every ITT stratum must carry `n_per_protocol_pairs` and a per-arm
+  `completion_rate` (`estimands.completion.strata[*].by_arm[*]`).
+- `closed_book_at_hero_tier` — every stratum's 707 certification snapshot must carry a measured
+  `scientific_gates.closed_book.observed.closed_book_accuracy` at or below the ceiling, with a
+  named measurement model.
+- `schema_strata_reported` — every composed measured cell must publish a `schema_stratified.by_stratum`
+  covering both known schemas. Cells are located by their own `primary_arm` marker, not by joining
+  on a dataset key (the measured key is the canonical slug `beir/fixture` while the ITT stratum's
+  `corpus` is `fixture` — a join there would silently miss).
+
+**Defect found and fixed by that third gate (768 D4 round-trip).** `sanitize_observation` wrote
+`question_type` and `_OBSERVATION_KEYS` accepted it, but `read_evidence` never restored it — so
+every *offline replay* recomposed with no schema tag and silently dropped `schema_stratified`,
+contradicting the write-side comment's own promise. Repaired at
+`scripts/jseval/jseval/utility_evidence.py` (`read_evidence`). This mattered directly: the
+publication/replay path is how a hero record gets published.
+
+**Test evidence.** Full jseval suite: **2520 passed, 2 skipped** (`python -m pytest tests/`).
+`node scripts/docs/gen-public-agent-utility.test.mjs` → OK (98 assertions); `--check` in sync after
+regenerating README/RESEARCH/`docs/reference/benchmarks/agent-utility.md`. Deliberate pin changes:
+
+| pin | change | why it is the new truth |
+|---|---|---|
+| `test_checked_in_policy_is_active_confirmatory_four_stratum` | renamed `…_is_ratified_v3_three_stratum_sonnet_hero`; asserts v3 id + the §E.1 ordered stratum list | the four-stratum haiku matrix is superseded by decision 2 |
+| `test_checked_in_active_policy_evaluates_surface_via_rate_branch` | `agent-utility-public-v2` → `…-v3` | same rate semantics, new carrier (§E.2 R2) |
+| `test_supported_requirements_match_schema_properties_exactly` | `required` now compared against a new explicit `MANDATORY_REQUIREMENTS` constant, still an exact set equality | supported ≠ mandatory once requirements became additive; keeps the superseded v2 document schema-valid without back-dating keys into it |
+| `test_historical_fixture_semantic_digest_repinned_after_624_itt_change` | `ed81f79b…` → `c3f98ebd…` | 4th occurrence of the documented policy-identity re-pin class; the sole-mover proof is now the runnable `test_v3_repin_is_policy_identity_only_prior_pin_reproduces` (see §G.1), not prose |
+
+New test: `test_v3_ratification_tuned_no_threshold_and_dropped_legal_10k` — literally compares v3's
+thresholds against the superseded v2 file on every shared key, asserts the only divergence is the
+additive `maximum_closed_book_accuracy`, and asserts 3 strata / all sonnet / no legal-10k. That
+makes "no threshold was tuned during ratification" a mechanical property rather than a claim.
+
+## §G.1 Independent-review response (2026-07-28)
+
+An independent refute-first review of the ratification commit returned SHIP-WITH-FIXES. The
+ratification content was confirmed sound (thresholds re-diffed verbatim vs v1; strata verbatim vs
+§E.1; conditional gates confirmed key-present-and-truthy; old-policy records reproduced
+byte-identically). Six items landed as a follow-up commit.
+
+**1. A false verification recipe I wrote — corrected.** §G originally claimed the prior digest pin
+`ed81f79b…` reproduces "when the SUPERSEDED v2 document is passed as the policy". It does not: the
+committed superseded document yields `d32dffba…`, because *this commit's own* `status` flip to
+`superseded` plus the added `superseded_by` change the policy hash the verdict carries. The
+conclusion (policy identity is the sole mover) was true, but the recipe would have sent the next
+auditor chasing a phantom regression. The claim is now a runnable test rather than prose —
+`test_v3_repin_is_policy_identity_only_prior_pin_reproduces` reconstructs the *pre-ratification*
+v2 shape from the committed file (pop `superseded_by`, restore `status: "active"`) and asserts
+`ed81f79b…`. Lesson worth keeping: a prose verification recipe that nobody re-runs is exactly where
+a phantom hides — pin it or drop it.
+
+**2. Negative tests for the three new gates.** Only the pass branch was covered, so a gate inverted
+to always-True would have shipped green (a passing gate and an absent gate are indistinguishable
+from `accepted is True`). Added four refusal tests, each asserting the SPECIFIC gate name surfaces:
+`completion_triple_reported` (strip `estimands.completion`), `schema_strata_reported` (strip the
+breakdown, asserting the missing-schema payload), and two for `closed_book_at_hero_tier` (evidence
+removed; accuracy above the ceiling). **Honest isolation note:** the closed-book measurement rides
+the 707 snapshot, which is cross-validated against its own embedded certificate, so any mutation of
+it *also* trips `corpus_certification_complete`. That co-failure is asserted rather than glossed,
+and the gate's independent work is proved by a before/after on the same gate plus its observed
+payload — the first draft of these tests claimed an isolation they did not have, which would have
+been a second false recipe.
+
+**3. Sweep residue in the operator-facing sections.** §E.2 P0 still told the operator to verify
+`utility-claim-policy.v1.json` had `status: "active"` (now false) — repointed at the v3 file with a
+status-based check. §E.2 P3 now records the ceiling-vs-0.000 resolution inline. §E.7 rows 4 and 6
+are struck through and marked CLOSED, with the running count (9 of 11 open) stated. Stale comment at
+`gen-public-agent-utility.test.mjs` corrected.
+
+**4. Canonical doc.** `docs/reference/benchmarks/agent-utility.md` now states the three
+promotion-blocking reporting requirements in its verdict contract. Docs regen pair run
+(`llmstxt-generate` + `skills-sync`); neither produced a diff.
+
+**5. Generator robustness.** `gen-public-agent-utility.mjs` no longer hardcodes a version-numbered
+policy filename — the same defect class its own test comment says was fixed for the policy ID. It
+now selects the single `utility-claim-policy.*.json` with `status: "active"` and FAILS generation
+when zero or two are active, or when `unresolved` is non-empty, rather than rendering the sentence
+"is active and fully resolved" over a policy that is neither. Covered by a new fail-closed scenario
+(generator test: 98 → 110 assertions).
+
+**6. Pre-campaign landmine — CLOSED (this was the one that could have cost money).** The §G
+follow-up below was fixed rather than deferred, because a collapsed schema could have made a PAID
+hero record unpromotable for a reporting artefact. Two composer defects, in
+`scripts/jseval/jseval/utility_comparison.py`:
+
+- `_stratified_breakdown` dropped a label whose paired observations collapsed. It now emits an
+  explicit null entry (`available: false`, `n_paired_observations: 0`, collapse reason) — opt-in via
+  `emit_null_strata`, passed only by the schema axis, so the corpus axis (§T.4) composes
+  byte-identically to before.
+- The deeper cause, found only by writing the test: the label vocabulary was derived from the
+  *surviving pairs*, so a fully collapsed label had no label left to report and vanished anyway. The
+  null-emitting path now takes its vocabulary from the whole `qid → label` map. **This is why the
+  first fix looked correct and was not** — the drop happened one level above where it appeared to.
+- `_default_schema_stratify` returned `None` for a single-schema cell, conflating "one schema
+  measured" with "schema coverage never computed". It now returns `None` only when NO query carries
+  a `question_type` — the genuine pre-768 byte-identity contract, still asserted.
+
+The pre-existing contract test asserting a single-schema cell adds no key was flipped deliberately
+(`test_single_schema_cell_still_reports_its_one_schema_but_untagged_adds_no_key`): v3's
+`require_all_present` needs those two cases distinguishable. New tests:
+`test_collapsed_schema_reports_an_honest_null_never_a_dropped_key` (the exact collapsed case) and
+`test_null_strata_emission_is_opt_in_so_the_corpus_axis_is_unchanged`.
+
+**Residual limit, stated rather than hidden.** A schema absent from a cell's *query set* entirely
+still fails `schema_strata_reported`, because the composer has no access to the policy's
+`known_schemas` vocabulary and cannot invent a null for a schema it never saw. That failure is
+correct under `require_all_present`, and it is detectable pre-launch from the committed 20-qid list
+(§E.7 row 7) rather than at compose time on a paid record — which is the property that mattered.

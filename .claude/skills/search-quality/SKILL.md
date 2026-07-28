@@ -1099,6 +1099,27 @@ above)*
   `-Djustsearch.splade.zero_weight_min_tokens` raised past the corpus's parent-token range. Until
   that runs, F-036's verdict and Q-017's ANSWERED status stand as recorded — this is a flagged
   confound, not a refutation.
+- **RESOLVED by Step 0 (2026-07-28, 4-arm 2×2 on legal-clerc-200, knob-firing verified per arm;
+  artifacts `tmp/781-certification/step0/arm-A{1..4}` on the session machine).** The confound was
+  real but protective, and F-036's VERDICT SURVIVES with its mechanism corrected:
+  | arm | chunk-splade | gate | hybrid | splade-mode |
+  |---|---|---|---|---|
+  | A1 | off | default | **0.6358** | 0.0591 |
+  | A2 | on | default | 0.6441 | 0.0901 |
+  | A3 | on | raised | 0.5911 | **0.2902** |
+  | A4 | off | raised | 0.5845 | 0.0591 |
+  (a) The gate WAS masking the revival — un-gated, the isolated chunk-sparse leg reaches 0.2902
+  (≥ F-036's 0.2588), and the gate suppresses chunk-branch sparse scores even in `splade` mode
+  (A2 0.0901 vs A3 0.2902 explains the F-036-replication shortfall). (b) But un-gating HURTS
+  hybrid by ~7% (A3 0.5911, A4 0.5845 vs A1 0.6358) and the harm is nearly identical whether the
+  sparse leg is the truncated whole-doc one (0.059) or the revived chunk one (0.290) — the harm
+  is the **weight policy** (full 0.2 CC weight for a leg far below the 0.64 ensemble), not leg
+  quality. The parent-length fade is protective in hybrid at current fusion. (c) Consequence for
+  784/Q-017: chunk-SPLADE storage work stays moot until fusion can exploit a mid-quality leg
+  (score-aware/adaptive weighting — 783/fusion-adaptivity territory); the "signal overlap"
+  mechanism prose in the Answer above is superseded by this weight-policy account. Engine frozen
+  as-is for the 781/hero window (Step 0's pre-declared decision rule: a >10% *improvement* with a
+  correctness story would have shipped; a 7% harm banks the finding).
 
 ### F-033: the SPLADE (sparse) leg's ~0.059 on legal-clerc-200 is substantially a 512-token TRUNCATION artifact — per-chunk SPLADE revives it 6–10× offline; the sparse sibling of F-031/F-032 (tempdoc 712, 2026-07-11; refines F-030(678) for the sparse leg)
 
