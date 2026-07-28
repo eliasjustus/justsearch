@@ -967,6 +967,37 @@ above)*
 - **Evidence:** tempdoc 774 §J.5/§J.7/§F.3; artifacts
   `tmp/analysis-624/774/probe/` (774 worktree: per-cell summaries + per-query ranks +
   `probe_774.py`/`h4_ab.py`, hashes + reproduction commands inside).
+- **STANDING OFFSET CURVES (2026-07-28, tempdoc 783 §B.1c — the first PRIMARY,
+  metadata-resolved instrument output; begins replacing this finding's single-number
+  citation per 783 §C):** `jseval offset-recall` on three re-materialized 781 v2 cells,
+  `schema offset-recall.v2`, `k=10`, **50/50 queries resolved via the metadata tier on
+  every cell** (`by_source {metadata:50, string_match:0, query_locus:0}`,
+  `curves_are_proxy: false`). **Bins are the gold sentence's character offset *within its
+  host document*, not result-list rank.** Hybrid recall@10 (bin `n` in parentheses):
+
+  | cell | 0-1k | 1k-2k | 2k-4k | 4k-8k | 8k+ |
+  |---|---|---|---|---|---|
+  | legal-1k-verbose | 0.571 (7) | 0.500 (2) | 0.727 (11) | 0.500 (14) | 0.438 (16) |
+  | legal-10k-verbose | 0.286 (7) | 0.500 (2) | 0.182 (11) | 0.286 (14) | 0.125 (16) |
+  | enron-10k-verbose | 0.636 (33) | 0.625 (8) | 0.400 (5) | 0.250 (4) | — (0) |
+
+  Readings, in decreasing confidence: (a) **enron-10k is a clean monotonic offset decay**
+  (0.636→0.625→0.400→0.250), the program's cleanest evidence that offset-within-document is
+  a real axis — but its deepest populated bin is `4k-8k` and its tail bins are thin (n=5,
+  n=4). (b) **The legal cells are NOT monotonic** — legal-1k *peaks* at `2k-4k` (0.727), so
+  its "0.571→0.438" is a first-vs-last comparison and **must not be cited as a monotonic
+  offset effect**. (c) **The strongest legal signal is cross-cell, not within-cell**: at 10×
+  corpus size recall roughly halves at *every* offset bin (0.571→0.286, 0.727→0.182,
+  0.438→0.125), i.e. on legal the scale floor dominates the offset axis — consistent with
+  this finding's "representational at every granularity" verdict. (d) **`lexical` is 0.000 in
+  all 15 populated bins** (post-camouflage, as pre-registered) and **`splade` is non-zero only
+  in the shallowest bin** (0.857 / 0.143 / 0.091, 0.000 everywhere deeper) — F-033's
+  512-token truncation, now visible as an offset curve; hybrid on these cells is effectively
+  vector+CE and tracks vector's shape.
+  **Scope limit:** 50 queries per cell across 5 bins gives n=2–16, which supports reading (c)
+  far better than (a)/(b); a larger per-cell query budget is the prerequisite for treating
+  within-cell offset curves as decision-grade. Artifacts:
+  `tmp/781-certification/c1-{en-legal-clerc-1k-verbose,en-legal-clerc-10k-verbose,en-email-enron-raw-10k-verbose}/offset_recall.json`.
 
 ### F-039: bridge-entity retrieval miss on legal agent-utility strata — structure-descriptive queries never reach designer-keyed gold; near-duplicate synthetic decoys outrank it, worsening 6%→28% of with-tool failures from 1k→10k (tempdoc 763 replay census, 2026-07-21)
 

@@ -189,6 +189,81 @@ the primary tier. Regression coverage:
 (carry-forward + signature invariance + loader + metadata-beats-string) and
 `::test_build_golden_without_sidecar_writes_none`.
 
+### §B.1c First PRIMARY (metadata-resolved) offset-recall curves on real 781 v2 cells (2026-07-28)
+
+§B.1b's fix paid off: three 781 v2 cells were re-materialized and evaluated, and
+`jseval offset-recall` resolved **50/50 via the metadata tier on every cell**
+(`by_source: {metadata: 50, string_match: 0, query_locus: 0}`, `curves_are_proxy: false`,
+`schema offset-recall.v2`, `k=10`). These are the **first non-proxy F-040 curves** — the
+primary evidence §B.1a said was missing.
+
+Artifacts (`offset_recall.json`, all mtime 2026-07-28 07:42):
+`tmp/781-certification/c1-en-legal-clerc-1k-verbose/`,
+`tmp/781-certification/c1-en-legal-clerc-10k-verbose/`,
+`tmp/781-certification/c1-en-email-enron-raw-10k-verbose/`.
+
+**The axis is offset-into-document, not retrieval depth.** Bins are the character offset
+of the injected gold sentence within its assembled host doc
+(`0-1k / 1k-2k / 2k-4k / 4k-8k / 8k+`). Anything calling these "depth curves" means offset
+depth; they say nothing about result-list rank cutoffs.
+
+#### Recall@10 by offset bin (bin `n` in parentheses; `--` = empty bin)
+
+| cell | leg | 0-1k | 1k-2k | 2k-4k | 4k-8k | 8k+ |
+|---|---|---|---|---|---|---|
+| legal-1k-verbose | **hybrid** | **0.571** (7) | 0.500 (2) | 0.727 (11) | 0.500 (14) | **0.438** (16) |
+| legal-1k-verbose | vector | 0.571 (7) | 0.500 (2) | 0.455 (11) | 0.571 (14) | 0.313 (16) |
+| legal-1k-verbose | splade | 0.857 (7) | 0.000 (2) | 0.000 (11) | 0.000 (14) | 0.000 (16) |
+| legal-1k-verbose | lexical | 0.000 (7) | 0.000 (2) | 0.000 (11) | 0.000 (14) | 0.000 (16) |
+| legal-10k-verbose | **hybrid** | 0.286 (7) | 0.500 (2) | 0.182 (11) | 0.286 (14) | 0.125 (16) |
+| legal-10k-verbose | vector | 0.143 (7) | 0.000 (2) | 0.091 (11) | 0.286 (14) | 0.063 (16) |
+| legal-10k-verbose | splade | 0.143 (7) | 0.000 (2) | 0.000 (11) | 0.000 (14) | 0.000 (16) |
+| legal-10k-verbose | lexical | 0.000 (7) | 0.000 (2) | 0.000 (11) | 0.000 (14) | 0.000 (16) |
+| enron-10k-verbose | **hybrid** | **0.636** (33) | 0.625 (8) | 0.400 (5) | **0.250** (4) | -- (0) |
+| enron-10k-verbose | vector | 0.576 (33) | 0.500 (8) | 0.200 (5) | 0.250 (4) | -- (0) |
+| enron-10k-verbose | splade | 0.091 (33) | 0.000 (8) | 0.000 (5) | 0.000 (4) | -- (0) |
+| enron-10k-verbose | lexical | 0.000 (33) | 0.000 (8) | 0.000 (5) | 0.000 (4) | -- (0) |
+
+#### What the curves actually say (read carefully — one of them is not a decay)
+
+1. **enron-10k is a clean, monotonic offset decay: 0.636 → 0.625 → 0.400 → 0.250.** Every
+   step is downward. This is the cleanest support the program has that *offset within the
+   document* is a real retrieval axis. Caveat: its deepest populated bin is `4k-8k` (the
+   `8k+` bin is empty — emails are short), so this decay is measured over a *shallower*
+   offset range than legal's, and its tail bins are thin (n=5, n=4).
+
+2. **legal-1k is NOT monotonic: 0.571 → 0.500 → 0.727 → 0.500 → 0.438.** The `2k-4k` bin
+   is the *highest* point on the curve, not a way-station on a decline. The headline
+   "0.571 → 0.438" is a first-bin-vs-last-bin comparison, and quoting it as a decay curve
+   overstates what the data shows. With bin `n` of 7/2/11/14/16, single-query moves swing
+   a bin by 0.06-0.50 (`1k-2k` is two queries). **Do not cite legal-1k as evidence of a
+   monotonic offset effect.**
+
+3. **legal-10k is also non-monotonic (0.286 → 0.500 → 0.182 → 0.286 → 0.125) and, more
+   importantly, uniformly depressed.** Comparing it against legal-1k bin-for-bin, recall
+   falls at *every* offset bin (0.571→0.286, 0.727→0.182, 0.500→0.286, 0.438→0.125) —
+   roughly halving throughout. **On legal, the 10× corpus-size floor dominates the offset
+   axis rather than interacting with it.** That is consistent with F-040's "representational
+   at every granularity" verdict and is the more decision-relevant signal in this table than
+   any within-cell offset trend.
+
+4. **The lexical leg is 0.000 in every bin of every cell** — 15 of 15 populated bins. The
+   camouflage rebuild (767/781) removed the lexical leg entirely on these strata, exactly
+   as pre-registered. **SPLADE is near-dead too**, non-zero only in the shallowest bin
+   (legal-1k 0.857, legal-10k 0.143, enron 0.091) and 0.000 everywhere deeper — the
+   512-token truncation signature of F-033, now visible as an offset curve. Hybrid on these
+   cells is effectively *vector + CE*, and hybrid tracks vector's shape throughout.
+
+#### Status against §C
+
+This delivers the first half of §C acceptance item 1 (the instrument's curves exist, are
+cheap to re-run, and are now register-recorded — see the F-040 annotation). It does **not**
+deliver item 2: no intervention has been attempted, and legal-10k remains in its floor band.
+The honest scope limit is bin sample size — 50 queries per cell spread across 5 bins gives
+n=2 to n=16, which supports the cross-cell comparison in reading 3 far better than any
+within-cell offset gradient in readings 1-2. **A larger per-cell query budget is the
+prerequisite for treating within-cell offset curves as decision-grade.**
+
 ## §C. Acceptance (program-level; each slice pins its own)
 
 - The instrument exists, is cheap to run, and its curves are in the register as the standing
