@@ -1,11 +1,27 @@
 {
   "schema": "utility-claim-policy.v1",
   "schema_version": 1,
-  "policy_id": "agent-utility-public-v3",
-  "status": "superseded",
-  "superseded_by": "agent-utility-public-v4",
+  "policy_id": "agent-utility-public-v4",
+  "status": "active",
   "primary_estimand": "addition_b",
   "policy_changelog": [
+    {
+      "policy_id": "agent-utility-public-v4",
+      "ratified": "2026-07-28",
+      "authority": "founder authorization 2026-07-28, verbatim: \"firstly i would be up for upgrading the rule, but i think we shouldnt rerun today\" — rule upgrade + $0 offline re-compose approved; no new paid cells.",
+      "composition_rule": "v3 VERBATIM (every threshold, every required stratum, every requirement, every semantics block) + ONE additive requirement: certified_query_subset. No threshold was tuned; no stratum was changed; no bar was relaxed.",
+      "supersedes": "agent-utility-public-v3 (scripts/jseval/utility-claim-policy.v3.json, now status: superseded)",
+      "differs_from_v3": [
+        "ADDED requirements.certified_query_subset (additive + CONDITIONAL — the subset branch of corpus_certification_complete fires only when a policy declares it, so a record evaluated under v1/v2/v3 projects a byte-identical verdict).",
+        "ADDED certified_query_subset_semantics (the gate contract, verbatim below).",
+        "ADDED required_strata[*].qid_list_sha256 + required_strata[*].query_count_committed — the PRE-REGISTERED subset identity, copied verbatim from the frozen scripts/jseval/782-hero/cells.v1.json (§E.8 freeze). Neither key is read by required_strata_exact (utility_claim_policy._required_projection projects a fixed key set), so the required-matrix comparison is unchanged."
+      ],
+      "defect_fixed": "FREEZE DEFECT #2 (782 run 2026-07-28, incident-ledger.md): corpus_certification_complete required cert.query_count == cell.query_count EXACTLY (utility_claim_policy.py, v3 line 418). The 781 structural certifications certify the 50-query committed gold set; the frozen 782 §E.1 design measures the pre-registered 20-qid leading-prefix subset (--max-queries 20). 50 != 20 on every stratum, so NO run under the frozen design could ever pass that gate — while query_gold_sha256 (the identity that actually chains the certified queries) matched on all three strata. The defect was a count comparison standing in for a subset-identity check.",
+      "notes": [
+        "The gate keys on qid_list_sha256 rather than the sibling selected_query_sha256 because the COMPOSED RECORD can derive the former and cannot derive the latter: campaign_identity.expected_cells carries the measured qid set, but no query TEXT survives into the record. selected_query_sha256 remains the pre-launch content pin, checked by scripts/jseval/782-hero/preflight.py:172-186 against the committed gold cell before any cell is paid for. Both digests are frozen in cells.v1.json §E.8; this policy pins the one a post-hoc verdict can verify.",
+        "A subset is never self-certifying: the subset branch additionally keeps (a) query_gold_sha256 == the cell's query_identity.sha256 — the FULL committed gold file's identity, which the harness hashes whole and truncates only the sample rows — and (b) cell.query_count <= cert.query_count. The subset digest is the third leg, not a replacement for either."
+      ]
+    },
     {
       "policy_id": "agent-utility-public-v3",
       "ratified": "2026-07-28",
@@ -56,7 +72,9 @@
       "query_variant": "verbose",
       "requested_model": "sonnet",
       "query_count": 20,
-      "seed_ids": [0, 1, 2]
+      "seed_ids": [0, 1, 2],
+      "query_count_committed": 50,
+      "qid_list_sha256": "7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b"
     },
     {
       "stratum_id": "en-email-enron-raw|mixed/en-email-enron-raw-10k-verbose|10000|verbose|sonnet",
@@ -66,7 +84,9 @@
       "query_variant": "verbose",
       "requested_model": "sonnet",
       "query_count": 20,
-      "seed_ids": [0, 1, 2]
+      "seed_ids": [0, 1, 2],
+      "query_count_committed": 50,
+      "qid_list_sha256": "7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b"
     },
     {
       "stratum_id": "en-legal-clerc|mixed/en-legal-clerc-1k-verbose|1000|verbose|sonnet",
@@ -76,9 +96,22 @@
       "query_variant": "verbose",
       "requested_model": "sonnet",
       "query_count": 20,
-      "seed_ids": [0, 1, 2]
+      "seed_ids": [0, 1, 2],
+      "query_count_committed": 50,
+      "qid_list_sha256": "7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b"
     }
   ],
+  "certified_query_subset_semantics": {
+    "_note": "tempdoc 782 §J / FREEZE DEFECT #2. Fixes a certification gate that refused every legitimate pre-registered SUBSET run. Additive and conditional: the branch fires only when requirements.certified_query_subset is declared.",
+    "requirement": "certified_query_subset",
+    "gate": "corpus_certification_complete",
+    "unchanged_when_counts_match": "If cert.query_count == cell.query_count the gate evaluates EXACTLY as it did under v1/v2/v3 — a full-count run needs no subset identity, because query_identity.sha256 == cert.query_gold_sha256 together with query_identity.row_count == query_count already pins the whole certified set.",
+    "subset_rule": "If cell.query_count < cert.query_count the gate passes only when ALL of: (a) cert.query_gold_sha256 == cell.query_identity.sha256 (the FULL committed gold file still chains — the harness hashes the whole file and truncates only the sample rows, so a rewritten subset file fails here); (b) cell.query_count <= cert.query_count; (c) the cell's DERIVED subset identity equals this policy's pre-registered required_strata[*].qid_list_sha256 for that stratum_id.",
+    "derived_subset_identity": "Read from campaign_identity.expected_cells (already load-bearing for itt_strata_derived and source_identity_complete): each entry is '<condition>|<seed>|<qid>' and every qid is 'q<ordinal>' with a 0-based ordinal into the committed query file in committed order (agent_utility_inspect.agent_utility_task: Sample(id=f'{c}|q{i}') over rows[:max_queries]). The ordinals must form the leading prefix {0 .. n-1} — the only certification-preserving selection — and n must equal the cell's query_count. The digest is then sha256(utf8(joined + '\\n')) over the canonical labels ['q0001', ..., 'q{n:04d}'], byte-identical to the recipe scripts/jseval/782-hero/preflight.py:44-58 uses to freeze qid_list_sha256 from the gold source.",
+    "fail_closed": "A record whose expected_cells are absent, malformed, non-'q<digits>', not a leading prefix, or of a length other than query_count has NO derivable subset identity and FAILS the gate. So does a stratum with no pre-registered qid_list_sha256 in this policy. There is no permissive default.",
+    "not_gated_here": "selected_query_sha256 (the sibling §E.8 digest over the selected rows' {qid, query, answer, question_type} content) is NOT checked by this gate: no query text survives into the composed record, so a post-hoc verdict cannot verify it. It stays the PRE-LAUNCH pin, asserted by scripts/jseval/782-hero/preflight.py:172-186 against the committed gold cell before any cell is paid for.",
+    "provenance": "qid_list_sha256 values above are copied verbatim from the frozen scripts/jseval/782-hero/cells.v1.json (§E.8, frozen at the 782 freeze commit, before any measured cell)."
+  },
   "required_schema_strata": {
     "_note": "tempdoc 768 D4: within each required stratum the composed record carries a schema_stratified.by_stratum breakdown keyed on question_type (utility_comparison._default_schema_stratify). v3 requires every schema present in the queries file to be represented and reported; a schema that collapses (e.g. email/1_hop null) is reported as an honest null, never dropped. AMENDMENT 1 (2026-07-28, pre-launch): known_schemas is [1_hop] because the certified hero corpora are 100% 1_hop by construction — see policy_changelog.",
     "keyed_on": "question_type",
@@ -129,6 +162,7 @@
     "completion_triple_reported": true,
     "closed_book_at_hero_tier": true,
     "schema_strata_reported": true,
+    "certified_query_subset": true,
     "per_stratum_promotion": "all_required_strata_pass"
   },
   "triple_reporting_semantics": {

@@ -809,3 +809,176 @@ enron at this budget. Note the designed-in conservative asymmetry: B-arm cells e
 $0.80 budget more often than A (10k: 12/60 vs 4/60) under `resource-exhaustion-as-failure`.
 
 **Publication:** nothing here publishes; 623 pipeline remains founder-only per §E.5.
+
+---
+
+## §J Policy v4 re-compose (2026-07-28, founder-authorized)
+
+**Founder authorization (verbatim, 2026-07-28):**
+
+> firstly i would be up for upgrading the rule, but i think we shouldnt rerun today
+
+Scope granted: the rule upgrade **and** a $0 OFFLINE re-compose of the existing window-2
+evidence. Scope withheld: any re-measurement. **No new paid cell was run; total campaign spend
+is unchanged at ~$278.** Publication (623) remains founder-only per §E.5 and is not touched here.
+
+### J.1 The defect
+
+`corpus_certification_complete` compared `cert.query_count == cell.query_count` **exactly**
+(`scripts/jseval/jseval/utility_claim_policy.py:418` under v3). The 781 structural
+certifications certify the **50-query committed gold set**; the frozen §E.1 design measures the
+pre-registered **20-qid leading prefix** (`--max-queries 20`, §E.8). 50 ≠ 20 on every stratum,
+so **no run under the frozen design could ever pass this gate** — while `query_gold_sha256`,
+the identity that actually chains the certified queries, matched on all three strata all along.
+A count comparison was standing in for a subset-identity check. Same defect class as BLOCKER-1
+(caught at freeze); this one was reachable only at compose, on paid evidence.
+
+### J.2 The gate design (policy v4, `agent-utility-public-v4`)
+
+v4 is **v3 verbatim** — every threshold, every required stratum, every requirement, every
+semantics block — plus ONE additive requirement, `certified_query_subset`. No threshold was
+tuned; no stratum changed; no bar was relaxed. `utility-claim-policy.v3.json` flips to
+`status: "superseded"` with `superseded_by: "agent-utility-public-v4"`, mirroring exactly how
+v3 superseded v2 (`utility-claim-policy.v1.json`).
+
+Like every v3 additive gate, the branch is **conditional**: it fires only when the selected
+policy declares the requirement, so a record evaluated under v1/v2/v3 projects a byte-identical
+verdict.
+
+| Element | `file:line` |
+|---|---|
+| Requirement registered (`certified_query_subset`) | `scripts/jseval/jseval/utility_claim_policy.py:50` |
+| Active-policy pointer → v4 | `scripts/jseval/jseval/utility_claim_policy.py:83-85` |
+| Directly-superseded (v3) accessors | `scripts/jseval/jseval/utility_claim_policy.py:108-122` |
+| `_derived_query_subset_identity` (record-side digest) | `scripts/jseval/jseval/utility_claim_policy.py:189-228` |
+| `_certified_query_subset_ok` (the three-legged check) | `scripts/jseval/jseval/utility_claim_policy.py:231-260` |
+| Conditional wiring inside the gate | `scripts/jseval/jseval/utility_claim_policy.py:514-557` |
+| The gate emission itself (shape unchanged) | `scripts/jseval/jseval/utility_claim_policy.py:552-557` |
+| Policy document (semantics + per-stratum `qid_list_sha256`) | `scripts/jseval/utility-claim-policy.v4.json` |
+| Schema (`qid_list_sha256`, requirement, semantics block) | `scripts/jseval/utility-claim-policy.v1.schema.json:34-35,80,85` |
+| v3 supersede stamp | `scripts/jseval/utility-claim-policy.v3.json:5-6` |
+| Preflight accepts the frozen policy **or its declared successor** | `scripts/jseval/782-hero/preflight.py:78-117` |
+
+**The rule.** With `certified_query_subset` declared, `corpus_certification_complete` passes iff
+all of:
+
+- **(a)** `cert.query_gold_sha256 == cell.query_identity.sha256` — unchanged. The FULL committed
+  gold file still chains: the harness hashes the whole queries file's bytes and truncates only
+  the sample rows, so a rewritten subset file fails here.
+- **(b)** `cell.query_count <= cert.query_count`. A run claiming MORE queries than the
+  certification covers is not a subset and is refused regardless of any declared digest.
+- **(c)** the cell's **derived** subset identity equals this policy's **pre-registered**
+  `required_strata[*].qid_list_sha256` for that `stratum_id`.
+
+All other equality checks (dataset / member / size / query_variant / corpus_signature / snapshot
+cross-validation) are untouched. **A full-count run (`cert.query_count == cell.query_count`)
+short-circuits to the v1/v2/v3 branch verbatim**, so no historical verdict moves and a full run
+needs no subset identity.
+
+**What the derived identity is, and why this one.** The composed record carries **no** subset
+hash — verified, not assumed: `selected_query_sha256` / `qid_list_sha256` appear nowhere in
+`combined/utility-comparison-cross-corpus.v1.json`, and `utility_recompose` /
+`agent_utility_inspect` emit neither. What the record *does* carry is
+`campaign_identity.expected_cells` — already load-bearing for `itt_strata_derived` and
+`source_identity_complete`, so keying on it is a **projection of the record's one selection
+authority, not a second one**. Each entry is `"<condition>|<seed>|<qid>"`, and the harness mints
+`qid = f"q{i}"` with `i` a **0-based ordinal** into the committed file truncated in committed
+order (`agent_utility_inspect.py:1497-1505`: `Sample(id=f"{c}|q{i}")` over `rows[:max_queries]`).
+The gate requires those ordinals to be the leading prefix `{0 … n−1}` with `n == query_count`
+— the only certification-preserving selection, since any other subset would need its own gold
+file and would break (a) — then digests the canonical 1-based labels `q0001…q{n:04d}` with the
+**same recipe** that froze `qid_list_sha256` pre-launch (`782-hero/preflight.py:44-58`:
+`sha256(utf8("\n".join(labels) + "\n"))`).
+
+That recipe binds the gate to the **pre-registered** value rather than to a number derived today
+from the record under judgement: the three strata's derived digests all reproduce
+`7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b`, copied verbatim from the
+frozen `scripts/jseval/782-hero/cells.v1.json` §E.8 block. A test reads both files and compares
+them, so a drift in either fails
+(`test_checked_in_v4_policy_pins_the_frozen_782_subset_digests`).
+
+The sibling `selected_query_sha256` is deliberately **not** gated here: no query text survives
+into the composed record, so a post-hoc verdict cannot verify it. It remains the PRE-LAUNCH
+content pin, asserted by `782-hero/preflight.py:172-186` against the committed gold cell before
+any cell is paid for. Pinning a digest the gate cannot check would be decoration.
+
+**Fail-closed, with no permissive default.** A record whose `expected_cells` are absent,
+malformed, non-`q<digits>`, not a leading prefix, or of a length other than `query_count` has
+**no derivable subset identity and FAILS** — as does a stratum with no pre-registered
+`qid_list_sha256`. Four refusal branches are exercised by name
+(`scripts/jseval/tests/test_utility_claim_policy.py:504`, `:517`, `:529`, `:548`), beside the
+acceptance case (`:481`), the inertness proof (`:562`) and the frozen-digest cross-read
+(`:592`).
+
+**Frozen artifacts untouched.** `scripts/jseval/782-hero/cells.v1.json` and `campaign-plan.md`
+still name `agent-utility-public-v3` and are **left unchanged** — they are the freeze record, and
+§E.2 R5 makes any post-first-cell edit to them void claim eligibility. The chain is expressed
+where it belongs instead: in `superseded_by`, which `preflight.py` now walks.
+
+### J.3 Re-compose and assertion results
+
+Same frozen Step-5 invocation as the campaign (identical log dirs + judge overlays,
+`--contamination-class private-synthetic --confidence-tier C`), with v4 active, into
+`scripts/jseval/782-run-2026-07-28-hero/combined-v4/`.
+
+Control run first (**interrogate-results**): re-composing the same inputs with v3 still active
+reproduced the committed record's `semantic_digest e2bb70c3…` and differed from the committed
+file in `composed_at` alone — so the re-compose path is deterministic and any v4 difference is
+attributable to the policy, not to drift in the harness.
+
+**Re-composed verdict** (`combined-v4/utility-comparison-cross-corpus.v1.json`,
+`semantic_digest c5a75457b264e0cfdecf5ab1ac552d3430a93300f3241766b9c72a49be1560bb`):
+
+```json
+{
+  "status": "accepted",
+  "accepted": true,
+  "outcome": "adoption-only",
+  "arm": "addition_b",
+  "strata": "all_required",
+  "policy_id": "agent-utility-public-v4",
+  "policy_hash": "d0c0d1ab9e621b545635bbadf70d9a1f53494ffa312e0aa8829112c2f8e48d39",
+  "policy_status": "active",
+  "unresolved": [],
+  "reasons": []
+}
+```
+
+Assertions, all machine-checked against the committed v3-scored record:
+
+- **`corpus_certification_complete` passed.** It is the **only** gate whose value changed:
+  `30/30` gates pass, `reasons: []`, and the gate-name set is identical between the two records
+  (0 regressions, exactly 1 newly-passing gate).
+- **The counterfactual held exactly.** `accepted / adoption-only`, per-stratum outcomes
+  `adoption-only` on all three strata — precisely what the incident ledger predicted from
+  `utility_claim_policy.py:852-867` without re-running.
+- **Measured numbers are byte-identical.** A recursive diff of the two records reports **10
+  differing nodes, ALL under `/claim_verdict`, `/semantic_digest`, `/composed_at` — zero
+  elsewhere**. `measured`, `estimands`, `cohort`, `comparability`, `tool_call_assertions`,
+  `coverage`, `corpora`, `conditions`, `outcome_rule`, `external_baselines`, `seed_count`,
+  `confidence_tier` and `statistical_alpha` each compare equal as canonical JSON. Every headline
+  delta in §I stands unchanged: enron-1k −0.1964, enron-10k −0.1304, legal-1k +0.0222, adoption
+  1.0, surface verified 180/180.
+
+**The v3-scored record at `scripts/jseval/782-run-2026-07-28-hero/combined/` remains committed
+unchanged as dated history** — it is what the campaign produced under the policy in force at the
+time, and it is not re-scored, edited, or replaced. `combined-v4/` sits beside it as the
+founder-authorized offline re-compose, and the honest headline is unchanged by either: the sonnet
+agent adopts the JustSearch MCP tool at rate 1.0 when offered, with **no measurable accuracy
+benefit** and point-negative deltas on enron at n=60/stratum. `adoption-only` is a promotion
+class, not a benefit claim — v4's `triple_reporting_semantics` still forbids
+adoption-rate-as-benefit.
+
+### J.4 Verification
+
+- `test_utility_claim_policy.py` + `test_utility_evidence.py`: 124 passed.
+- Full jseval suite: **2535 passed, 2 skipped, 1 failed** — the sole failure is the known
+  `test_percentile_within_bounds` flake under full-suite load; it passes in isolation (7 passed).
+- `gen-public-agent-utility.test.mjs`: OK (110 assertions); generator re-run and `--check` in sync
+  (README / RESEARCH / benchmarks doc now name `agent-utility-public-v4`).
+- `782-hero/preflight.py`: **36 PASS / 0 FAIL / 6 PENDING** — identical to the freeze result.
+- Historical-projection byte-identity: `test_v4_repin_is_policy_identity_only_prior_pin_reproduces`
+  reconstructs the v3 document in its pre-supersede shape and reproduces the v3-era pin
+  `88e98a93…` exactly; the pre-amendment pin `c3f98ebd…` and the v2 pin `ed81f79b…` still
+  reproduce from their own reconstructions. The active-policy fixture digest re-pins to
+  `e3c3c9fd…` (6th occurrence of the same policy-identity re-pin class).
