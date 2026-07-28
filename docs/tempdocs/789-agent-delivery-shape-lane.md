@@ -454,3 +454,11 @@ low-signal-gated minimum delivery (~3 dense hits) measures ~5 KB, and a rare-phr
 delivered 14 KB. Floor set to 6000 B: fires on gated/weak deliveries (measured 5.1 KB
 gibberish probe), silent on healthy ones (measured 17.2 KB). Dose verified by smoke both
 polarities before any F3 cell; no F3 cell had run under 2000 B either.
+
+**Amendment 2c (2026-07-28, same window; supersedes 2b's floor value):** 2b misread the floor
+metric - deliveredBodyBytes counts hit CONTENT (title+path+preview+matched terms,
+McpDeliveryFraming.deliveredBodyBytes), not the rendered response size. At floor 6000 the
+framing fired on healthy deliveries (content ~5 KB); at the rendered-size numbers 2b cited,
+nothing was comparable. Final: floor = 2000 CONTENT bytes - smoke-verified three ways below
+(weak/gated 3-hit delivery fires; rare-phrase multi-hit delivery silent; healthy delivery
+silent). 2b's floor never governed any measured cell.
