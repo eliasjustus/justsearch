@@ -145,15 +145,6 @@ Seeds: 3 (0, 1, 2); queries: 20; expected/observed cells: 120/120; ITT/per-proto
 record, and policy hashes, recomposes the record from the observation evidence, re-evaluates the
 captured policy, and compares the semantic digest.
 
-Evidence files come in two interchangeable layouts. `agent-utility-observation.v1` lines carry their
-`source` identity block inline. `agent-utility-observation.v2` lines carry `source_ref` instead, and
-each distinct source block is declared once, ahead of the observations, on an
-`agent-utility-evidence-source.v1` header line addressed by the sha256 of its canonical JSON. The
-run-constant source block is ~2.5 MB (over 90% of it the base64 corpus-certification bundle), so
-repeating it per cell made a 360-cell campaign's evidence 788 MB — past GitHub's 100 MB blob limit,
-and therefore unpublishable. The reader resolves `source_ref` transparently: both layouts replay to
-the same observations and the same semantic digest, and v1 files stay readable indefinitely.
-
 A live rerun is separate. It requires the licensed corpus sources, a running JustSearch backend,
 model credentials, a pre-registered active policy, and explicit budget authorization. Replaying an
 accepted publication never contacts those systems.
