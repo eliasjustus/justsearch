@@ -107,6 +107,13 @@ def read_inspect_observations(
                 "attempted": True,
                 "excluded": error is not None,
                 "error": error,
+                # 782 follow-up: the errors a first-wins `error` slot could not
+                # carry (agent_utility_inspect._note_error). A guard-voided cell
+                # keeps its budget-exhaustion marker here instead of losing it;
+                # log-tier analysis reads both. NOT part of the sanitized public
+                # evidence schema (utility_evidence._OBSERVATION_KEYS) -- the
+                # committed record's `error_class` is unchanged by construction.
+                "secondary_errors": metadata.get("secondary_errors"),
                 "working_time": getattr(sample, "working_time", None),
                 "total_time": getattr(sample, "total_time", None),
                 "attempts": metadata.get("attempts"),
