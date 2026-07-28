@@ -963,6 +963,13 @@ above)*
   enron-10k **0.152 vs 0.118**, legal-1k **1.0 vs 1.0** — the same systematic understatement,
   with no stratum significant under either test on this cohort. The committed `combined/` and
   `combined-v4/` records **remain unchanged as dated history**; nothing here is re-scored.
+- **The accepted publication is NOT re-scored by v5 and does not become stale.**
+  `agent-utility-hero-2026-07-28` carries its own immutable, hash-pinned copy of the policy it
+  was accepted under (`publications/agent-utility-hero-2026-07-28/policy.v1.json` =
+  `agent-utility-public-v4`), so `utility-replay` still verifies against v4 and the public pages
+  correctly quote v4 as THAT publication's policy while `agent-utility-public-v5` is the active
+  one for future campaigns. A published bundle's policy is historical fact, not a pointer to
+  whatever is current.
 - **A pre-freeze dry-run now exists so this class cannot recur silently.**
   `jseval utility-policy-dryrun --design <cells.v1.json> --policy <policy>` synthesizes a
   minimal structurally-valid record with a design's declared shape, evaluates every gate, and
