@@ -374,8 +374,9 @@ corpus as currently committed)*
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
 | — | — | — | lexical | **0.9487** | 0.9044 | 0.9865 | bm25 | A | 0d4b3b1 | 252 |
+| (HEAD default) | (default) | (default) | hybrid | **0.9512** | 0.9127 | 0.9875 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | adaf7b44 | 786 §E |
 
-**Best known:** AI-disabled / lexical = **0.9487**
+**Best known:** (HEAD default) / hybrid = **0.9512** (786 §E, 2026-07-28; 95% CI 0.9406–0.9620).
 **Note:** Ground-truth text. Serves as ceiling for ingestion tax measurement.
 
 ### mixed/ohr-bench-got-moderate
@@ -383,27 +384,30 @@ corpus as currently committed)*
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
 | — | — | — | lexical | **0.8090** | 0.7505 | 0.8617 | bm25 | A | 0d4b3b1 | 252 |
+| (HEAD default) | (default) | (default) | hybrid | **0.8377** | 0.7817 | 0.8888 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | adaf7b44 | 786 §E |
 
-**Best known:** AI-disabled / lexical = **0.8090**
-**Ingestion tax vs clean:** -0.1397 nDCG (-14.7%). Exceeds >5% decision gate.
+**Best known:** (HEAD default) / hybrid = **0.8377** (786 §E, 2026-07-28; 95% CI 0.8171–0.8595).
+**Ingestion tax vs clean:** -0.1397 nDCG (-14.7%) lexical-only (252); **-0.1135 (-11.93%) at HEAD hybrid defaults** (786 §E). Exceeds >5% decision gate.
 
 ### mixed/ohr-bench-mineru-moderate
 
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
 | — | — | — | lexical | **0.6382** | 0.5644 | 0.7131 | bm25 | A | 0d4b3b1 | 252 |
+| (HEAD default) | (default) | (default) | hybrid | **0.7249** | 0.6466 | 0.8046 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | adaf7b44 | 786 §E |
 
-**Best known:** AI-disabled / lexical = **0.6382**
-**Ingestion tax vs clean:** -0.3105 nDCG (-32.7%). 9.8% of docs have empty/trivial extracted text.
+**Best known:** (HEAD default) / hybrid = **0.7249** (786 §E, 2026-07-28; 95% CI 0.7008–0.7500).
+**Ingestion tax vs clean:** -0.3105 nDCG (-32.7%) lexical-only (252); **-0.2262 (-23.78%) at HEAD hybrid defaults** (786 §E). 9.8% of docs have empty/trivial extracted text. Worst variant in both measurements; its CI is disjoint from tika-pdf's, so MinerU is measurably worse than the shipped path.
 
 ### mixed/ohr-bench-tika-pdf
 
 | encoder | ce | cc | mode | nDCG@10 | P@1 | R@10 | legs | conf | git | src |
 |---------|----|----|------|---------|-----|------|------|------|-----|-----|
 | — | — | — | lexical | **0.7947** | 0.7484 | 0.8326 | bm25 | A | b13afdc | 252 |
+| (HEAD default) | (default) | (default) | hybrid | **0.8205** | 0.7661 | 0.8649 | branch_fusion+chunk_merge+cross_encoder+dense+hybrid+query_classification | A | adaf7b44 | 786 §E |
 
-**Best known:** AI-disabled / lexical = **0.7947**
-**Ingestion tax vs clean:** -0.1540 nDCG (-16.2%). Original OHR-Bench PDFs through Tika StructuredContentExtractor with extractMarkedContent=true. Most PDFs untagged — structured extraction captures page boundaries but not tables/headings. Comparable to GOT pre-extracted text (-14.7%).
+**Best known:** (HEAD default) / hybrid = **0.8205** (786 §E, 2026-07-28; 95% CI 0.7984–0.8422).
+**Ingestion tax vs clean:** -0.1540 nDCG (-16.2%) lexical-only (252); **-0.1307 (-13.74%) at HEAD hybrid defaults** (786 §E) — this is the shipped path's measured extraction cost. Original OHR-Bench PDFs through Tika StructuredContentExtractor with extractMarkedContent=true. Most PDFs untagged — structured extraction captures page boundaries but not tables/headings. Comparable to GOT pre-extracted text (-14.7% lexical; at HEAD hybrid the two CIs **overlap**, so GOT-vs-Tika is not separable at n=962 — see F-042).
 
 ---
 
@@ -475,6 +479,8 @@ A/B experiments on the same dataset, same queries.
 
 ### Ingestion quality tax: OHR-Bench clean vs extracted text
 
+**Lexical/BM25-only, `JUSTSEARCH_AI_DISABLED=true` (252, 2026-03):**
+
 | Variant | nDCG@10 | P@1 | R@10 | Delta vs clean |
 |---------|---------|-----|------|---------------|
 | Clean (gt_text) | **0.9487** | 0.9044 | 0.9865 | — |
@@ -482,7 +488,16 @@ A/B experiments on the same dataset, same queries.
 | GOT moderate | 0.8090 | 0.7505 | 0.8617 | **-14.7%** |
 | MinerU moderate | 0.6382 | 0.5644 | 0.7131 | **-32.7%** |
 
-**Conclusion:** Extraction quality is the single largest quality bottleneck (F-009). Tika on real PDFs loses 16% nDCG — comparable to GOT because most PDFs are untagged (no structural SAX events). Exceeds the >5% decision gate. **VLM extraction via existing chat model (Qwen 3.5) is the chosen path (252). Docling integration cancelled.**
+**HEAD hybrid defaults, full pipeline, CE on (786 §E, 2026-07-28, `adaf7b44`, n=962/arm):**
+
+| Variant | nDCG@10 | 95% CI | P@1 | R@10 | Delta vs clean |
+|---------|---------|--------|-----|------|---------------|
+| Clean (gt_text) | **0.9512** | 0.9406–0.9620 | 0.9127 | 0.9875 | — |
+| **Tika Structured PDF** | **0.8205** | 0.7984–0.8422 | 0.7661 | 0.8649 | **-13.74%** |
+| GOT moderate | 0.8377 | 0.8171–0.8595 | 0.7817 | 0.8888 | **-11.93%** |
+| MinerU moderate | 0.7249 | 0.7008–0.7500 | 0.6466 | 0.8046 | **-23.78%** |
+
+**Conclusion:** Extraction quality is the single largest quality bottleneck (F-009). Exceeds the >5% decision gate in both configurations. At HEAD hybrid defaults the shipped Tika path loses **13.74%** and **GOT's CI overlaps Tika's** — a better conventional OCR engine is *not* a measured win (F-042); the recoverable headroom is the clean-minus-Tika 0.1307. **VLM extraction via existing chat model (Qwen 3.5) is the chosen path (252). Docling integration cancelled.** The two tables are different configurations, not a before/after — see F-042 for why the taxes shrank and the GOT/Tika ordering changed.
 
 ---
 
@@ -846,6 +861,41 @@ above)*
 - **Evidence:** tempdoc 708 (final table, protocol application, sign tests, run pointers); F-030(678)
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
+
+### F-042: the shipped Tika extraction path costs −13.74% nDCG@10 at HEAD hybrid defaults — but the obvious fix (swap to a better OCR engine) is measurement-rejected: GOT is statistically tied with Tika (tempdoc 786 §E, 2026-07-28; the full-pipeline sibling of F-009's lexical-only measurement)
+
+- **Answer:** the four OHR-Bench extraction variants re-measured at HEAD defaults (hybrid, CE on,
+  chunk branch active, `git_sha adaf7b44`, 962 queries and 1000 docs per arm, all arms
+  `ann_proof PASS` / `error_count 0` / `comparable: true` / identical observed leg set):
+  **clean 0.9512** (CI 0.9406–0.9620), **GOT-moderate 0.8377** (0.8171–0.8595), **Tika-PDF
+  0.8205** (0.7984–0.8422), **MinerU-moderate 0.7249** (0.7008–0.7500). The shipped Tika path's
+  extraction cost is **−0.1307 nDCG@10 (−13.74%)** against clean text, CI-separable from clean.
+- **The decision-relevant part is the bracket, not the headline.** GOT — the best alternative
+  extraction in this corpus family — buys back only **~0.017 nDCG** over Tika, and **the two CIs
+  overlap**, so *GOT-vs-Tika is not separable at n=962*. MinerU is decisively **worse** than Tika
+  (disjoint CIs). So the recoverable headroom an improvement lane should target is the residual
+  **clean-minus-Tika 0.1307**, not a swap to a conventional OCR engine — i.e. the
+  VLM/structure-recovery direction F-009 already names. A "better OCR" lane is measurement-rejected
+  on this evidence.
+- **Relation to F-009 (different configuration, not a contradiction):** F-009's taxes (−14.7% GOT /
+  −16.2% Tika / −32.7% MinerU) were measured lexical/BM25-only with `JUSTSEARCH_AI_DISABLED=true`
+  (252). This sweep is the full pipeline. Every tax **shrank** (Tika −16.2% → −13.74%, MinerU
+  −32.7% → −23.78%) and **Tika moved from behind GOT to tied with it**. The consistent reading is
+  that the dense + chunk legs partially absorb extraction noise, most where the noise is worst —
+  but **no arm isolated the compensating leg**, so that is an observation about the two
+  configurations, not a causal attribution. F-009's lexical-only rows stand as their own
+  measurement; they are not superseded, they are a different cell.
+- **Conditions/caveats:** one corpus family (OHR-Bench, 7 domains, extractive queries); single run
+  per arm, no multi-seed. **Per-domain breakdown is NOT available** — `stratified_metrics.json`
+  buckets by `decision_kind`/`first_relevant_rank`/`query_length`, not by OHR domain, so "where the
+  shipped path loses (tables? scanned? multi-column?)" is unmeasured and needs a domain-labelled
+  stratification the projection does not emit. VDU-routing correlation (786 §B.3) not run. Arms
+  verified to be four genuinely different corpora via pairwise-distinct `corpus_identity.signature`
+  (`641ec0b7ae96` / `ea1dd54da222` / `f306dc80d5e6` / `f90ba56d8e73`), not one corpus re-measured.
+- **Evidence:** tempdoc 786 §E (table, CIs, routed conclusion, scope-honesty list); artifacts
+  `tmp/786-sweep/ohr-bench-{clean,got-moderate,mineru-moderate,tika-pdf}/` — per-arm
+  `summary.json` + `projections/bootstrap_ci.json` (95%, 1000 resamples) + `hybrid_per_query.json`
+  + `hybrid_run.trec`.
 
 ### F-041: the Head cross-encoder was judging doc-head previews, not evidence — feeding it the winning passage lifts legal hybrid +15% and FLIPS the CE from harmful to helpful on email; shipped default-off (tempdoc 774 Stages 1-2, 2026-07-22; answers Q-001's mechanism)
 

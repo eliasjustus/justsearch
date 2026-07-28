@@ -473,6 +473,101 @@ reach a 10× "3 hours → 20 minutes" outcome. **§D's progressive-availability 
 therefore be treated as a co-equal branch, not a fallback** — and the §C acceptance target
 should be set only after the stratified runs land.
 
+### §B.1.7 Instrumented run executed — PARTIAL: step 1 only; the four validity checks pass, Levers 3 and 4 did not run (2026-07-28)
+
+A tracing-on whole-corpus re-run of `mixed/legal-clerc-200` landed 2026-07-28. It is
+**§B.1.4's step 1 only.** Artifacts in `tmp/analysis-785/`:
+`instrumented-legal-timeline.tsv` + `instrumented-worker.log` (2026-07-28) against the
+banked `baseline-legal-timeline.tsv` + `baseline-worker.log` (2026-07-22).
+
+*(The `governor-*.json` files sitting in the same directory are the MCP delivery-governor
+verification from the 775 lane, not 785 data. Named here so a later reader does not
+mis-attribute them.)*
+
+#### The four pre-registered validity checks (§B.1.4) — all PASS
+
+| # | Check | Observed | Verdict |
+|---|---|---|---|
+| (i) | `indexedDocuments` = corpus doc count | `indexed=199` in both runs' final rows | PASS |
+| (ii) | `arenaOomWindowed` = 0 in every `Combined backfill` line | 0 lines with a non-zero value across all 90 batches | PASS |
+| (iii) | `splade_churn_drops` absent | no `churn` token anywhere in the instrumented log | PASS |
+| (iv) | tracing-on `total_ms` within 15% of the banked 138,590 ms | **134,328 ms = −3.08%** | PASS |
+
+Check (iv) is the load-bearing one: **`detailed` tracing did not materially perturb the
+thing being measured**, so spans collected under it are usable.
+
+#### Baseline vs instrumented (final timeline row, both runs)
+
+| Metric | baseline (2026-07-22) | instrumented (2026-07-28) | Δ |
+|---|---|---|---|
+| wall to enrichment-complete | 159.9 s | 143.3 s | −10.38% |
+| `total_ms` (combined pass) | 138,590 | 134,328 | −3.08% |
+| `embed_ms` / batches | 99,061 / 85 | 97,116 / 85 | −1.96% / 0 |
+| `splade_ms` / batches | 26,996 / 5 | 11,872 / 6 | **−56.02%** / +1 |
+| `ner_ms` / batches | 22,161 / 3 | 21,450 / 3 | −3.21% / 0 |
+| `fetch_ms` / `write_ms` | 778 / 5,694 | 780 / 4,871 | +0.26% / −14.45% |
+| `enrich_embed` / `enrich_splade` / `enrich_ner` ops | 4,423 / 309 / 299 | 4,424 / 318 / 298 | +1 / +9 / −1 |
+| `ner_done` | 4,321 | 4,321 | 0 |
+
+**Reproducibility verdict: the run reproduces.** Every stage except SPLADE is within
+±3.3%, batch counts and operation counts are near-identical, and `ner_done` is exact.
+
+**The SPLADE −56% is NOT attributed and must not be read as a finding.** Interrogating it
+against the logs: the three encoder-bearing batches are nearly identical between runs
+(baseline SPLADE 3,037 + 2,891 + 2,978 = 8,906 ms; instrumented 2,792 + 2,821 + 2,797 =
+8,410 ms — a −5.6% difference, ordinary run-to-run). The entire −15,124 ms gap is in the
+*other* batches (18,090 ms baseline vs 3,462 ms instrumented). No artifact in hand
+explains what that residual SPLADE work was or why it shrank. Candidate explanations
+(none tested): a transient re-encode in the baseline run, GPU/model warm-state
+differences, or the H4 re-work pattern firing differently. **Open item — do not build on
+this number.**
+
+#### What the artifacts DO newly establish: H4's re-work is real (partially)
+
+Both runs show **3 of 90 `Combined backfill` batches carry all the encoder work**; the
+other 87 are parent-lane slots doing writes only. Within those 3 batches, operation counts
+against 199 parent documents:
+
+| Lane | baseline ops | instrumented ops | × per parent |
+|---|---|---|---|
+| embed | 89 + 89 + 101 = 279 | 91 + 91 + 98 = 280 | ~1.40× / ~1.41× |
+| splade | 100 + 100 + 98 = 298 | 99 + 100 + 98 = 297 | ~1.50× / ~1.49× |
+| ner | 100 + 100 + 99 = 299 | 100 + 100 + 98 = 298 | ~1.50× / ~1.50× |
+
+This **reproduces H4's ~1.5× re-enrichment across two independent runs**, so the pattern
+is structural, not a transient — which is exactly the disjunct H4's falsifier
+("...or if the P1 double-pass disappears in the instrumented re-run") would have needed to
+see fail. H4 is **not falsified**. It is also **not fully confirmed**: the exact
+`distinctDocs` proof still requires L4c, which did not run (below).
+
+Incidental exact fact worth banking: **NER's cost is 100% inside those 3 batches** —
+7,521 + 6,810 + 7,830 = 22,161 ms = the baseline's entire `ner_ms`, and
+7,362 + 6,905 + 7,183 = 21,450 ms = the instrumented run's. NER does zero work in the
+other 87 batches.
+
+H2 context, from the same lines: single-pass vs windowed split is stable across runs
+(baseline `singlePass=61/61/48`, `longDocWindowed=36/36/49`; instrumented `59/59/50` and
+`40/40/44`).
+
+#### What did NOT run — the profile is still open
+
+- **Lever 4 (L4a/L4b/L4c) was never built.** The instrumented log contains no `lcEmbed`,
+  `nerDoc`, `distinctDocs`, `dupEmbedEntries` or `parentSlots` tokens (0 occurrences
+  each). "Instrumented" here means `JUSTSEARCH_INDEX_TRACING_LEVEL=detailed`, not the
+  three log lines §B.1.4 specified. Consequence: **per-document embed cost vs length (H1's
+  falsifier) and per-document NER cost vs length (H3's falsifier) are still unmeasured.**
+- **Lever 3 (the four stratified sub-corpora) did not run** — no `instr-{5k,20k,50k,120k}-*`
+  artifacts exist. §B.1.4 called this "the single highest-value item"; it remains
+  outstanding. Consequence: **H1, H5 have no falsifying observation yet.**
+- **Lever 2's `traces.ndjson` was not banked** in `tmp/analysis-785/`, so the
+  duration ↔ `seq_len` ↔ `batch_size` joint distribution — H2's falsifier — is unavailable.
+
+**Net status of §B.1.5's hypotheses after this run:** H4 survives a genuine reproduction
+test and is the only one this run touched. H1, H2, H3, H5, H6 stand exactly where
+§B.1.5 left them — ranked, unfalsified, and untested. **§B.1.6's sequencing consequence is
+unchanged: the §C acceptance target still cannot be set**, because it was gated on the
+stratified runs, which have not happened.
+
 ## §D. Notes
 
 - This is a product-experience lane as much as an engineering one: if the honest ceiling is
