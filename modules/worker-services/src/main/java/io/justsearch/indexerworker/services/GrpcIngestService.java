@@ -55,6 +55,7 @@ import io.justsearch.ipc.PruneResponse;
 import io.justsearch.ipc.SyncDirectoryRequest;
 import io.justsearch.ipc.SyncDirectoryResponse;
 import io.justsearch.ipc.VduUpdateOutcome;
+import io.justsearch.indexerworker.ingest.IngestionReasonCodes;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexerworker.metrics.OperationalMetrics;
 import io.justsearch.indexerworker.queue.IndexingJobChangeFeed;
@@ -694,6 +695,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
           // Do NOT overwrite content/language, do NOT trigger re-embedding, do NOT regenerate chunks
           updates.put(SchemaFields.VDU_PROCESSED, "true");
           updates.put(SchemaFields.VDU_STATUS, SchemaFields.VDU_STATUS_COMPLETED_EMPTY);
+          markExtractionDropoutUnrecovered(docId, updates);
           log.info("updateVduResult: VDU succeeded with no extractable text for doc: {}", docId);
         }
         case VDU_UPDATE_OUTCOME_FAILED -> {
@@ -701,6 +703,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
           // Do NOT overwrite content/language, do NOT regenerate chunks
           updates.put(SchemaFields.VDU_PROCESSED, "true");
           updates.put(SchemaFields.VDU_STATUS, SchemaFields.VDU_STATUS_FAILED);
+          markExtractionDropoutUnrecovered(docId, updates);
           log.info("updateVduResult: VDU failed for doc: {}", docId);
         }
         case VDU_UPDATE_OUTCOME_REJECTED_SUSPECT_TEXT -> {
@@ -712,6 +715,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
           // state (no re-queue) either way.
           updates.put(SchemaFields.VDU_PROCESSED, "true");
           updates.put(SchemaFields.VDU_STATUS, SchemaFields.VDU_STATUS_REJECTED);
+          markExtractionDropoutUnrecovered(docId, updates);
           log.info(
               "updateVduResult: VDU output rejected by abstention gate, baseline retained for doc: {}",
               docId);
@@ -1191,6 +1195,24 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
 
   private static int resolveMaxRetries(int requestedMaxRetries) {
     return requestedMaxRetries <= 0 ? SchemaFields.VDU_MAX_RETRIES : requestedMaxRetries;
+  }
+
+  /**
+   * Tempdoc 790 item 3 — close the dropout fallback chain at its last tier. A document indexed with
+   * {@code EXTRACTION_DROPOUT_PENDING_FALLBACK} was queued for VDU precisely because no earlier
+   * tier produced usable text; when VDU terminates without text (empty, failed, or rejected by the
+   * abstention gate — none of which are re-queued: only PROCESSING is recovered to PENDING) the
+   * document's honest terminal state is "no tier could read this," not a silently empty success.
+   */
+  private void markExtractionDropoutUnrecovered(String docId, Map<String, Object> updates) {
+    String reasonCode =
+        ingestLifecycle.documentFieldOps().getDocumentField(docId, SchemaFields.EXTRACTION_REASON_CODE);
+    if (!IngestionReasonCodes.EXTRACTION_DROPOUT_PENDING_FALLBACK.equals(reasonCode)) {
+      return;
+    }
+    updates.put(SchemaFields.EXTRACTION_METHOD, SchemaFields.EXTRACTION_METHOD_NONE);
+    updates.put(
+        SchemaFields.EXTRACTION_REASON_CODE, IngestionReasonCodes.EXTRACTION_DROPOUT_UNRECOVERED);
   }
 
   private int readVduRetryCountBestEffort(String docId) {

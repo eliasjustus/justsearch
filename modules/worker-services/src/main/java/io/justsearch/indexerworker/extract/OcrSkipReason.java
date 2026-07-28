@@ -11,6 +11,11 @@ public enum OcrSkipReason {
   // the bug this value fixes (see OcrOutcomeClassifier).
   NO_TEXT_FOUND("no_text_found"),
   SIZE("size"),
+  // Tempdoc 790: the per-document fallback budget (tier count or wall-clock) was already spent
+  // before this tier could start. Distinct from TIMEOUT (the tier ran and overran) and from
+  // DISABLED (the tier is switched off) — the tier was permitted and affordable in principle, it
+  // just did not fit this document's remaining budget.
+  BUDGET("budget"),
   TIMEOUT("timeout"),
   ENGINE_MISSING("engine_missing"),
   LANGUAGE_MISSING("language_missing"),

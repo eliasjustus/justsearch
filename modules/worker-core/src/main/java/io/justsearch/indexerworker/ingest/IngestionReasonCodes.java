@@ -20,6 +20,22 @@ public final class IngestionReasonCodes {
    * content because there genuinely was none" from a silent, misleading "full success."
    */
   public static final String SUCCESS_EMPTY = "SUCCESS_EMPTY";
+  /**
+   * Extraction dropout (tempdoc 790): the tier that ran produced no usable text, and a further
+   * fallback tier (VDU/VLM per ADR-0018) is queued for this document. Distinct from
+   * {@link #SUCCESS_EMPTY}, which says "nothing was extracted" without saying whether anything
+   * else will try.
+   */
+  public static final String EXTRACTION_DROPOUT_PENDING_FALLBACK = "EXTRACTION_DROPOUT_PENDING_FALLBACK";
+
+  /**
+   * Extraction dropout (tempdoc 790) that every eligible tier failed to recover — the terminal
+   * state of the fallback chain. Written together with
+   * {@code SchemaFields.EXTRACTION_METHOD_NONE} so search-side callers can surface an honest hole
+   * instead of an invisible one.
+   */
+  public static final String EXTRACTION_DROPOUT_UNRECOVERED = "EXTRACTION_DROPOUT_UNRECOVERED";
+
   public static final String SKIPPED_TEMP_OR_SYSTEM = "SKIPPED_TEMP_OR_SYSTEM";
   public static final String UNCHANGED = "UNCHANGED";
   public static final String NON_REGULAR_SOURCE = "NON_REGULAR_SOURCE";

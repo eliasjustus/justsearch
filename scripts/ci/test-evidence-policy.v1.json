@@ -12,6 +12,15 @@
       "cadence": "local before changing PDF extraction, VDU eligibility, or fixture resources"
     },
     {
+      "path": "modules/worker-services/src/test/java/io/justsearch/indexerworker/loop/ExtractionDropoutPdfFixturesTest.java",
+      "element": "class ExtractionDropoutPdfFixturesTest",
+      "tier": "local-parser-fixture",
+      "owner": "worker extraction / dropout fallback chain (tempdoc 790)",
+      "reason": "Runs the production Tika extractor over real PDF bytes; the same Tika/PDFBox cold-start cost that keeps its sibling VduEligibilityPdfFixturesTest out of the hosted Windows unit lane.",
+      "replacementEvidence": "The chain's law is covered in the hosted lane by ExtractionDropoutPolicyTest, ExtractionFallbackBudgetTest, ExtractionDropoutFallbackChainTest, ExtractionDropoutMarkerTest and VisualRoutingDecisionTest (all CI-enabled); this site adds the real-PDF end-to-end shape only. Local targeted run of :modules:worker-services:test with CI unset.",
+      "cadence": "local before changing the dropout threshold, the fallback chain, VDU routing, or the PDF fixture resources"
+    },
+    {
       "path": "modules/worker-services/src/test/java/io/justsearch/indexerworker/extract/StructuredExtractionIntegrationTest.java",
       "element": "class PdfFixture",
       "tier": "local-parser-fixture",

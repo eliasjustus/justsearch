@@ -7,6 +7,7 @@ import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.embed.EmbeddingProvider;
 import io.justsearch.indexerworker.embed.NoOpEmbeddingProvider;
 import io.justsearch.indexerworker.extract.ContentExtractor.ExtractionResult;
+import io.justsearch.indexerworker.extract.ExtractionDropoutPolicy;
 import io.justsearch.indexerworker.extract.ValidatedExtractionArtifact;
 import io.justsearch.indexerworker.ingest.IngestionReasonCodes;
 import io.justsearch.indexerworker.rag.ChunkDocumentWriter;
@@ -275,7 +276,43 @@ public final class IndexingDocumentOps {
       }
     }
 
+    markExtractionDropout(extraction.content(), fields);
+
     return new IndexDocument(fields);
+  }
+
+  /**
+   * Tempdoc 790 item 3 — the honest-hole marker. A document whose indexed text is an extraction
+   * dropout gets one of two terminal-vs-pending states written to the provenance fields the search
+   * path already reads:
+   *
+   * <ul>
+   *   <li>a further fallback tier is queued ({@code vdu_status=PENDING}) → reason code
+   *       {@code EXTRACTION_DROPOUT_PENDING_FALLBACK}, and {@code extraction_method} keeps naming
+   *       the tier that ran;
+   *   <li>no tier remains → {@code extraction_method=NONE} +
+   *       {@code EXTRACTION_DROPOUT_UNRECOVERED}. The document stays indexed (path, filename,
+   *       metadata are real and findable) but is no longer indistinguishable from a document that
+   *       genuinely has no text to give.
+   * </ul>
+   *
+   * <p>Order matters: this runs after the artifact-status block, so the dropout code wins over the
+   * broader {@code SUCCESS_EMPTY} it refines.
+   */
+  static void markExtractionDropout(String content, Map<String, Object> fields) {
+    if (!ExtractionDropoutPolicy.isDropout(content)) {
+      return;
+    }
+    boolean fallbackPending =
+        SchemaFields.VDU_STATUS_PENDING.equals(fields.get(SchemaFields.VDU_STATUS));
+    if (fallbackPending) {
+      fields.put(
+          SchemaFields.EXTRACTION_REASON_CODE, IngestionReasonCodes.EXTRACTION_DROPOUT_PENDING_FALLBACK);
+      return;
+    }
+    fields.put(SchemaFields.EXTRACTION_METHOD, SchemaFields.EXTRACTION_METHOD_NONE);
+    fields.put(
+        SchemaFields.EXTRACTION_REASON_CODE, IngestionReasonCodes.EXTRACTION_DROPOUT_UNRECOVERED);
   }
 
   private static SourceFileMetadata withArtifact(
