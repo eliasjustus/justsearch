@@ -73,11 +73,15 @@ def cmd_utility_replay(publication, root):
 @click.command("utility-evidence-export")
 @click.option("--log-dir", required=True, type=click.Path(exists=True, file_okay=False))
 @click.option("--out", required=True, type=click.Path(dir_okay=False))
-def cmd_utility_evidence_export(log_dir, out):
+@click.option("--judge-overlay", "judge_overlay", default=None,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Optional overlay; otherwise use LOG_DIR's judge-overlay.json if present "
+                   "(same resolution as utility-recompose --log-dir).")
+def cmd_utility_evidence_export(log_dir, out, judge_overlay):
     """Export every attempted cell through the strict public allowlist."""
     from ..utility_evidence import export_log_dir
 
-    path = export_log_dir(log_dir, out)
+    path = export_log_dir(log_dir, out, judge_overlay=judge_overlay)
     click.echo(f"Wrote {path}")
 
 
