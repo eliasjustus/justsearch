@@ -644,8 +644,12 @@ correct under `require_all_present`, and it is detectable pre-launch from the co
 ## §H Freeze execution record (2026-07-28)
 
 **Freeze commit:** `docs(782): FREEZE the hero pre-registration protocol` — short SHA
-**`5346c522`** on `worktree-agent-a4fa71b45c297d4ac` (this commit; the SHA was injected by a
-single `--amend`, 624's convention for a commit that must name itself). Every §E.7 row is disposed (§E.7); §E.1–§E.6
+**`28c2cced`** on `worktree-agent-a4fa71b45c297d4ac` — the commit that froze §E.1–§E.6 + §E.8 and
+introduced this §H. Its SHA is recorded by the immediately following one-line commit rather than by
+amending it into itself: an `--amend` that injects a SHA changes that very SHA, so the injected
+value names an unreachable object. (624's "reference the commit introducing this line" convention,
+resolved the non-regressive way. The freeze is `28c2cced`; the recording commit is not part of the
+frozen content and does not touch §E.1–§E.6.) Every §E.7 row is disposed (§E.7); §E.1–§E.6
 plus §E.8 are frozen; §E.0 records the two triggers and the active policy. The campaign driver
 prepared by the same commit lives at `scripts/jseval/782-hero/` (`campaign-plan.md`,
 `preflight.py`, `cells.v1.json`) — **dry artifacts only: no paid call was made, no backend was
