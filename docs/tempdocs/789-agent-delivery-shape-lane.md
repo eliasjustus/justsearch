@@ -462,3 +462,17 @@ framing fired on healthy deliveries (content ~5 KB); at the rendered-size number
 nothing was comparable. Final: floor = 2000 CONTENT bytes - smoke-verified three ways below
 (weak/gated 3-hit delivery fires; rare-phrase multi-hit delivery silent; healthy delivery
 silent). 2b's floor never governed any measured cell.
+
+**AMENDMENT 3 (2026-07-28, F3 DROPPED before any measured cell).** Three floor calibrations
+(400 default / 2000 / 6000) could not establish F3's positive control: direct measurement of
+the trigger metric's inputs shows every query class - gibberish, rare-phrase, healthy -
+returns 10 hits at 1,630-1,725 content-bytes (6% spread). The deliveredBodyBytes trigger has
+no dynamic range on this backend (dense legs always fill the hit list; per-hit content is
+near-constant), so no floor discriminates weak from healthy deliveries and an F3 arm could
+not deliver a verifiable dose. Per the probe's pre-launch discipline (unestablishable
+positive control = do not launch the arm), F3 is dropped from this probe: the framing code
+remains shipped default-off; a future arm requires a redesigned trigger keyed on retrieval
+signals with real variance (totalHits, top-score, or leg-agreement), which is engine-side
+design work, not a floor constant. The probe completes as F0/F1/F2 (120 measured cells).
+Zero F3 cells were run; F3 spend $0 (three calibration pilots ~$4.5 total across the probe
+are setup, not cells).
