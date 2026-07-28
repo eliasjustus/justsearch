@@ -1,9 +1,9 @@
 ---
 title: "hero campaign pre-registration protocol — the binding measurement contract the 766 program closes with"
 type: tempdocs
-status: "DRAFTED, NOT FROZEN (2026-07-27) — §E carries the six frozen-section drafts; 11 PENDING-AT-FREEZE items indexed in §E.7. FREEZES when both triggers land: distribution readiness (760) + rebuilt corpora fully-certified (781 §E.4). Founder decision 2 (766 §G) is the authority: sonnet-class, enron-1k/10k + legal-1k, n=60/stratum, USD-binding, cap ~$300, legal-10k excluded."
+status: "FROZEN 2026-07-28 (§E.0, §H) — §E.1–§E.6 + §E.8 are frozen; any later edit to them voids claim eligibility. Both triggers verified: 760 installer artifact (run 29914075529) + 781 cohort fully-certified (#311). Active policy agent-utility-public-v3 (#310). §E.7 disposed 9 FILLED / 2 CALIBRATION-TIME. LAUNCH NOT ELIGIBLE: §H BLOCKER-1 — all three hero strata are 100% 1_hop, so v3's require_all_present schema_strata_reported gate cannot pass; founder decision needed (amend known_schemas vs regenerate gold sets). Campaign driver prepared dry at scripts/jseval/782-hero/."
 created: 2026-07-22
-updated: 2026-07-27
+updated: 2026-07-28
 author: agent (Fable orchestration), chartered from the 2026-07-22 remaining-work map (founder-directed)
 category: eval-campaign / pre-registration
 related:
@@ -73,16 +73,24 @@ taught.
 > any edit to §E.1–§E.6 voids the run's claim eligibility; amendments made *before the first
 > measured cell* follow 624's dated-amendment convention and must be appended, never inlined.
 
-## §E.0 Freeze record
+## §E.0 Freeze record — **FROZEN 2026-07-28**
+
+**§E.1–§E.6 are FROZEN as of the commit that introduces this line** (the freeze commit; its short
+SHA is recorded in §H once the commit exists — 624's convention, since a commit cannot contain its
+own hash). **Any later edit to §E.1–§E.6 voids the run's claim eligibility.** The frozen sections
+are: §E.1 Design, §E.2 Validity rules, §E.3 Scorer/judge validity, §E.4 At-capture
+instrumentation, §E.5 Claim grammar, §E.6 Ledgers/resume/stop rules — plus §E.8, which is the
+frozen qid selection this freeze commit materializes.
 
 | field | value |
 |---|---|
-| freeze commit | `PENDING-AT-FREEZE: <sha>` |
-| freeze timestamp (UTC) | `PENDING-AT-FREEZE:` |
-| trigger 1 — 760 installer artifact | `PENDING-AT-FREEZE: <artifact + run id>` |
-| trigger 2 — 781 cohort `fully-certified` | `PENDING-AT-FREEZE: <member.v1.json status per member>` |
-| active claim policy at freeze | `PENDING-AT-FREEZE: <policy_id>` (see §E.2 P0) |
-| launch authorization | founder-gated; recorded in §E.6 ledger, never here |
+| freeze commit | the commit introducing this line (short SHA recorded in §H) |
+| freeze timestamp (UTC) | 2026-07-28 |
+| trigger 1 — 760 installer artifact | **SATISFIED** — `build-installer.yml` dispatch run `29914075529` (2026-07-22) is GREEN end-to-end; artifact `windows-installer` (`.github/workflows/build-installer.yml:268-278`), 259.9 MB, downloaded and PE-census-verified (177 PEs: 99 rehearsal-signed + timestamped, 78 vendor-signed untouched, zero NotSigned) — 760 §CI signing rehearsal campaign. **Honest scope:** this is a *rehearsal-signed CI artifact*, not a GA-released real-cert-signed installer; the GA cut and the cert/vendor decision remain owner-gated and are **not** 782 launch preconditions (§C requires only that the artifact exists). Actions retention is 7d, so the blob itself has expired — the durable evidence is 760's recorded census, and a fresh artifact is one `gh workflow run build-installer.yml --ref main` dispatch away with no release cut. |
+| trigger 2 — 781 cohort `fully-certified` | **SATISFIED** — both members `status: "fully-certified"`, `structural_passed: true`, `fully_certified: true` in `scripts/jseval/781-corpora/<member>/structural-certification.v1.json`, committed by `6e3db1a6` (#311). Blobs: `en-email-enron-raw` `21c05563`, `en-legal-clerc` `73b08679`. All three hero cells carry `checks` 9/9 true and `scientific_gates` `closed_book`/`retrieval_calibration`/`union_recall`/`leak_floor` all `passed: true`. **Pointer correction (this freeze):** P2's original pointer to `member.v1.json` is wrong — that file carries no `status` key and its `remaining_gates` is pre-#311 residue still listing the four scientific gates. The machine authority is the certification file (`corpus_certify.py:815-817` reads `status == "fully-certified"` there); P2's check is hereby pinned to `structural-certification.v1.json`. |
+| active claim policy at freeze | **`agent-utility-public-v3`** — `scripts/jseval/utility-claim-policy.v3.json` (blob `1d6d4b41`), `status: "active"`, `unresolved: []`, ratified by squash `76185d82` (#310, 2026-07-28). It is the only `utility-claim-policy.*.json` with `status: "active"`; `utility-claim-policy.v1.json` is `superseded`. `required_strata` = §E.1 verbatim, cheapest-first, each `query_count: 20`, `seed_ids: [0,1,2]`, `requested_model: "sonnet"`. |
+| launch authorization | founder-gated; recorded in §E.6 ledger, never here. **NOT GRANTED at freeze.** |
+| launch eligibility at freeze | **BLOCKED — one founder decision outstanding.** See §H BLOCKER-1 (`schema_strata_reported` cannot pass on any hero stratum as the corpora stand). Freezing the protocol is not launching it; the blocker is recorded here so it cannot be discovered after spend. |
 
 ## §E.1 Design (frozen section 1)
 
@@ -105,8 +113,14 @@ taught.
   (resource-exhaustion-as-failure) primary, per-protocol secondary.
 - **n = 60 paired observations per stratum** = 20 committed qids × 3 seeds `{0,1,2}` × 2 arms
   = **120 cells/stratum, 360 cells total**. The v2 cells carry 50 queries each; the 20 are
-  selected by a deterministic committed rule, never by hand.
-  `PENDING-AT-FREEZE: the 20-qid list per stratum + its sha256, and the selection rule.`
+  selected by a deterministic committed rule, never by hand. ✅ **RESOLVED at freeze — see §E.8.**
+  The rule is `--max-queries 20` over the committed, certified `queries.json` in its committed
+  order, i.e. **qids `q0001`–`q0020`**. This is not a style preference: it is the only selection
+  that survives the certification digest check (`agent_utility_inspect.py:1794-1824` hashes the
+  WHOLE queries file's bytes and truncates only the sample rows, so any *rewritten* subset file —
+  including a PRNG sample — fails `query_gold_sha256` with "query-and-gold digest disagrees").
+  624 set the same precedent (`retained_query_indices: [0..19]`,
+  `624-run-2026-07-21-relaunch/calibration-email-enron-raw-1k-verbose.json`).
 - **Ordering: cheapest-first** — enron-1k → enron-10k → legal-1k. (624 confirmatory amendment 1:
   the max-extrapolation guard over-projects when the most expensive stratum calibrates first;
   the fix is order, not cap.)
@@ -114,7 +128,22 @@ taught.
   --cap 300` (max-extrapolation over `cost_estimate_usd` of known calibrations) before each
   stratum launch. **Binding limit is USD, never wall-clock** (765 §E: 69/86 wall-clock kills lost
   their cost receipt; USD kills retain them).
-  `PENDING-AT-FREEZE: per-cell max_budget USD from fresh sonnet calibrations; concurrency.`
+  **CALIBRATION-TIME (procedure frozen here, number derived at run time — 624's precedent, which
+  also set `--max-budget` from fresh calibrations rather than pre-registering a number):** per-cell
+  `max_budget` USD and `concurrency` come from the *fresh sonnet* `utility-calibrate` for each
+  stratum, run on the campaign day against the live backend. **The frozen part is the derivation
+  rule, not the value:**
+  - `concurrency` — taken from the calibration file's `concurrency` key, which `utility-run` reads
+    and overrides the CLI flag with (`commands/utility.py:355`). Calibration is invoked at the
+    campaign's target concurrency (`--concurrency 6`, 624's value; the calibration pilot runs *at*
+    it so the estimate is not a single-threaded extrapolation).
+  - `max_budget` — `ceil2(1.6 × p95_per_cell_cost_usd_at_sonnet)` from the same calibration, floored
+    at `$0.50` (624's haiku value) and **capped at `$2.00`**; `ceil2` = round up to cents. The 1.6
+    headroom and the floor/cap are frozen now so the number cannot be re-chosen after seeing a
+    stratum's first cells. If a stratum's derived value would exceed `$2.00`, that is a **stop**,
+    not a raise: record it and escalate (a cap raise is founder-gated, §E.6).
+  - The derived pair is written into the run dir's `spend-ledger.md` at the phase boundary *before*
+    that stratum's launch, and into `campaign-plan.md`'s per-cell record — never adjusted after.
 - **No partial-value ladder.** `required_strata_exact` means a 2-stratum record cannot promote,
   so a projected over-cap → **ABORT the whole campaign and report** (624 confirmatory §Budget).
 
@@ -144,9 +173,16 @@ matrix contradicted decision 2 — is deleted.
 
 Read from `scripts/jseval/781-corpora/<member>/structural-certification.v1.json`; asserted
 against the composed record's `strata[*].corpus.corpus_signature`. A mismatch is fatal — never
-"the corpus moved, re-pin the protocol". `PENDING-AT-FREEZE: re-confirm these three signatures
-are unchanged by 781 §E.4 (they hash corpus.jsonl+qrels only, so they should not move; verify,
-do not assume).`
+"the corpus moved, re-pin the protocol". ✅ **RE-CONFIRMED at freeze 2026-07-28 by primary re-read
+(not assumption)** of the certifications committed by `6e3db1a6` (#311) — blobs `21c05563`
+(`en-email-enron-raw`) and `73b08679` (`en-legal-clerc`). All six values above match byte for byte;
+781 §E.4's scientific pass did not move them, as predicted. Also re-read at the same time and
+recorded here so P2 is evaluable from one place: every hero cell's `query_count` is **50** (the
+committed gold set; the campaign measures the first 20 — §E.8), and every hero cell's
+`field_selectivity` gate is `passed: true` with `max_field_separability: 0` ≤ `native_base_rate: 0`
+on `n_fields_compared: 2`, worst field `text` (method
+`field-presence-null-calibrated-separability`) — the title-presence leak class (774 §J.7) is closed
+at zero separability on all three strata.
 
 **P2 — gold-selectivity certification.** Every stratum's member must be `fully-certified`
 (`781-corpora/<member>/member.v1.json`), and the `field_selectivity` gate must be PASS on
@@ -210,8 +246,27 @@ thresholds, α, estimand, cap. Any post-hoc change → the run is not claim-elig
 **Scorer identity first.** 764 §E established that the production scorer is `substring_scorer`
 (gold string ⊆ answer), **not** an LLM judge — and that its full-string requirement was the only
 thing neutralizing the v1 naming leak. So the audit's shape depends on what is active at the
-freeze commit. `PENDING-AT-FREEZE: read the scorer wired in the jseval Inspect task at the freeze
-commit and record it here verbatim (file:line).` Then:
+freeze commit. ✅ **READ AT THE FREEZE COMMIT, verbatim:** the wired scorer is
+**`substring_scorer`** — `scorer=substring_scorer()` at
+`scripts/jseval/jseval/agent_utility_inspect.py:1512`, defined at `:1454-1460` (delegates to
+`_score_answer(target.text, completion)`; gold string ⊆ answer, with the abstention/error branch
+returning `"I"`). The task's declared `judge_kind` default is `"substring-em"`
+(`agent_utility_inspect.py:1483`). **No LLM judge is active in the primary scoring path.**
+
+**Operational reading of the two-layer scorer (this is the frozen §F.3 semantics).** The primary
+scorer for the hero campaign is `substring_scorer` (EM). The hybrid **EM→local-LLM judge overlay**
+is a *post-hoc, zero-paid-API* re-score applied to the already-completed logs —
+`jseval utility-judge` → `scripts/jseval/jseval/utility_judge.py:141 judge_logs(...)`, which keeps
+EM as a high-precision auto-PASS and only sends EM-misses to the judge, stamping
+`kind="hybrid-em-llm"` when it judged anything and `"substring-em"` when it did not (`:197`). The
+overlay **never changes which cells were run or what they cost** — it is attached at compose via
+`utility-recompose --judge-overlay`. **Judge-family control stays intact:** the cross-family grader
+panel (`utility_judge.py:691 judge_cross_family`, with `cohens_kappa` `:290`, `bootstrap_kappa_ci`
+`:313`, `is_degenerate_pe` `:273`, `rater_agreement_report` `:356`) is the calibration instrument,
+and the local model does the bulk pass (`utility-judge-local-swap-smoketest` proves the swap), so
+no paid judge call is required for the overlay. Because the *primary* scorer at freeze is
+`substring_scorer`, the branch that runs pre-launch is the **derivability audit** below, not the
+agreement spot-check (§E.7 row 10). Then:
 
 - **If `substring_scorer` is active** — run the *derivability* audit instead of an agreement
   audit: for every selected qid, assert the gold answer string is **not** derivable from any
@@ -365,25 +420,82 @@ publication, any change to §E.1's design parameters, policy ratification.
 cites this protocol **by its §E.0 freeze commit SHA**. Results are never written into §E.1–§E.6 —
 that would be editing a frozen section.
 
-## §E.7 PENDING-AT-FREEZE index (the mechanical freeze checklist)
+## §E.7 PENDING-AT-FREEZE index (the mechanical freeze checklist) — **CLOSED OUT 2026-07-28**
 
-| # | item | section | resolved by |
+| # | item | section | disposition at freeze |
 |---|---|---|---|
-| 1 | freeze commit SHA + timestamp | §E.0 | the freeze commit itself |
-| 2 | 760 installer artifact identity | §E.0 | 760 lane |
-| 3 | 781 members `fully-certified` (not `structurally-certified`) | §E.0 / P2 | 781 §E.4 phases B–E |
-| 4 | ~~ratified `policy_id` + `required_strata` re-pinned to §E.1~~ ✅ **CLOSED 2026-07-28 (§G)** — `agent-utility-public-v3`, `scripts/jseval/utility-claim-policy.v3.json`, strata = §E.1 verbatim | P0 | founder ratification (delegated) |
-| 5 | re-confirm the three `corpus_signature` pins are unmoved by 781 §E.4 | P1 | verify against `structural-certification.v1.json` |
-| 6 | ~~ratified `maximum_closed_book_accuracy`~~ ✅ **CLOSED 2026-07-28 (§G)** — `0.1` as a post-hoc failure CEILING; P3's pre-launch bar stays `0.000` at sonnet | P3 | founder |
-| 7 | the 20-qid list per stratum + sha256 + the deterministic selection rule | §E.1 | committed before launch |
-| 8 | per-cell `max_budget` USD from fresh **sonnet** calibrations; concurrency | §E.1 | calibration run |
-| 9 | active scorer identity at the freeze commit (`substring_scorer` vs LLM judge), recorded `file:line` | §E.3 | read the wired task |
-| 10 | which §E.3 branch runs (derivability audit vs agreement spot-check) — follows item 9 | §E.3 | follows item 9 |
-| 11 | run-directory date suffix | §E.6 | launch day |
+| 1 | freeze commit SHA + timestamp | §E.0 | **FILLED** — timestamp 2026-07-28; SHA recorded in §H per 624's "the commit introducing this line" convention |
+| 2 | 760 installer artifact identity | §E.0 | **FILLED** — `build-installer.yml` run `29914075529`, artifact `windows-installer`, PE-census-verified (760 §CI signing rehearsal campaign) |
+| 3 | 781 members `fully-certified` (not `structurally-certified`) | §E.0 / P2 | **FILLED** — both members `status: "fully-certified"` / `fully_certified: true` in `structural-certification.v1.json` (`6e3db1a6`, #311); P2's pointer corrected from `member.v1.json` (which has no `status` and stale `remaining_gates`) to the certification file |
+| 4 | ~~ratified `policy_id` + `required_strata` re-pinned to §E.1~~ ✅ **CLOSED 2026-07-28 (§G)** — `agent-utility-public-v3`, `scripts/jseval/utility-claim-policy.v3.json`, strata = §E.1 verbatim | P0 | **FILLED** — merge commit `76185d82` (#310) recorded in §E.0 |
+| 5 | re-confirm the three `corpus_signature` pins are unmoved by 781 §E.4 | P1 | **FILLED** — all six values (3 signatures + 3 gold digests) re-read and byte-identical to §E.2's pinned table; see P1 |
+| 6 | ~~ratified `maximum_closed_book_accuracy`~~ ✅ **CLOSED 2026-07-28 (§G)** — `0.1` as a post-hoc failure CEILING; P3's pre-launch bar stays `0.000` at sonnet | P3 | **FILLED** |
+| 7 | the 20-qid list per stratum + sha256 + the deterministic selection rule | §E.1 | **FILLED** — §E.8 (rule + the three lists + both digests + schema census) |
+| 8 | per-cell `max_budget` USD from fresh **sonnet** calibrations; concurrency | §E.1 | **CALIBRATION-TIME** — the derivation rule, floor and cap are frozen in §E.1; the number comes from the campaign-day sonnet calibration. 624's precedent set `--max-budget` the same way. |
+| 9 | active scorer identity at the freeze commit (`substring_scorer` vs LLM judge), recorded `file:line` | §E.3 | **FILLED** — `substring_scorer`, `agent_utility_inspect.py:1512` (def `:1454-1460`), `judge_kind` default `"substring-em"` `:1483` |
+| 10 | which §E.3 branch runs (derivability audit vs agreement spot-check) — follows item 9 | §E.3 | **FILLED** — the **derivability audit** branch (row 9 resolved to `substring_scorer`) |
+| 11 | run-directory date suffix | §E.6 | **CALIBRATION-TIME** (launch-day) — `scripts/jseval/782-run-<YYYY-MM-DD>-hero/`; the *pattern* is frozen, only the launch date is unknown until the founder authorizes |
+| 12 | **NEW at freeze — `known_schemas` coverage vs the hero query sets** | P-rule (new) / §E.5 | **BLOCKER, founder-gated** — see §H BLOCKER-1. Not resolvable by an agent; recorded rather than worked around. |
 
-Nothing in this table is a judgment call at supervision time: each row is read from a named file
-or is a founder decision recorded before launch. **9 of 11 remain open** (rows 4 and 6 closed by
-the §G ratification, 2026-07-28).
+**11 of 11 original rows disposed: 9 FILLED, 2 CALIBRATION-TIME** (rows 8 and 11 — each is a value
+624's precedent also set at run time; the freeze pins the *procedure and guard*, not the number).
+Row 12 is new: the freeze's own mechanical check found a pre-launch blocker that §G.1 predicted
+would be findable from the committed qid list. Nothing in this table is a judgment call at
+supervision time.
+
+## §E.8 The frozen 20-qid selection (frozen section 7 — §E.7 row 7)
+
+**Selection rule (mechanical, no PRNG, no hand-picking).** For each stratum: take the committed,
+certified `queries.json` in its committed order and keep the **first 20 rows**, i.e. `--max-queries
+20` on `jseval utility-run`. qids are the rows' own `query_family_id` values, `q0001`–`q0020`;
+Inspect sample ids are `{condition}|q{index}` with `index` 0-based, so `A|q0`–`A|q19` and
+`B|q0`–`B|q19` per seed.
+
+**Why this rule and not a seeded sample.** `run_utility_eval` computes
+`query_identity.sha256` over the **entire queries file's bytes** and only afterwards truncates
+`rows` to `max_queries` (`scripts/jseval/jseval/agent_utility_inspect.py:1796-1812`), then refuses
+the run when that digest differs from the certification's `query_gold_sha256` (`:1818-1824`,
+`"corpus_certification rejected: query-and-gold digest disagrees with queries"`). A seeded sample
+would have to be written to a new file, whose bytes differ, so it would fail the certified-identity
+check — the certification would have to be re-issued to bless a subset. Truncation is therefore the
+only certification-preserving selection, and it is fully deterministic. 624 used the same shape
+(`retained_query_indices: [0..19]`, 0 dropped).
+
+**The lists.** Identical qid labels across all three strata by construction (positional ids), which
+is why the label digest alone is not an identity — the per-stratum **content** digest below is the
+binding pin.
+
+| stratum | dataset | qids | `qid_list_sha256` | `selected_query_sha256` |
+|---|---|---|---|---|
+| enron-1k | `mixed/en-email-enron-raw-1k-verbose` | `q0001`…`q0020` | `7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b` | `27aba99517718d0fe1cecab16232d563a6ed8ee11d7ba0bed547c5183a75d065` |
+| enron-10k | `mixed/en-email-enron-raw-10k-verbose` | `q0001`…`q0020` | `7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b` | `27aba99517718d0fe1cecab16232d563a6ed8ee11d7ba0bed547c5183a75d065` |
+| legal-1k | `mixed/en-legal-clerc-1k-verbose` | `q0001`…`q0020` | `7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b` | `316f80bb6e0144aad11c8ebddfe660ee1881afde4b6b862d889f0a44fea96cb2` |
+
+- `qid_list_sha256` = `sha256(utf8("q0001\n…\nq0020\n"))`.
+- `selected_query_sha256` = `sha256(utf8(json.dumps([{qid, query, answer, question_type}, …],
+  separators=(",",":"))))` over the 20 selected rows in order, read from
+  `scripts/jseval/781-corpora/<member>/<size>-verbose/fabricated-queries.json`.
+- The two enron strata share a digest **correctly**: they share one gold query set (§E.2 P1 pins the
+  same `query_gold_sha256` `1138c58c…` for both). legal-1k differs, as its gold digest
+  (`2797469a…`) does.
+- Cross-checked at freeze: the first 20 rows of the **materialized** `queries.json` match these on
+  `query`/`answer`/`question_type`/`query_family_id` at both visible materializations
+  (`tmp/781-v2-datasets/mixed/…` and the `datasets/mixed/…` junction) — MATCH on all three strata.
+- Reproduce: `python scripts/jseval/782-hero/preflight.py` (prints both digests per stratum).
+
+**Schema-coverage picture at freeze (§G.1's residual limit, evaluated).**
+
+| stratum | selected 20 | full committed 50 | policy `known_schemas` | `schema_strata_reported` projection |
+|---|---|---|---|---|
+| enron-1k | `1_hop`: 20 | `1_hop`: 50 | `["1_hop","2_hop"]` | **WILL FAIL** — `2_hop` missing |
+| enron-10k | `1_hop`: 20 | `1_hop`: 50 | `["1_hop","2_hop"]` | **WILL FAIL** — `2_hop` missing |
+| legal-1k | `1_hop`: 20 | `1_hop`: 50 | `["1_hop","2_hop"]` | **WILL FAIL** — `2_hop` missing |
+
+Every stratum is single-schema. This is **not** an artifact of the 20-of-50 truncation — the full
+committed 50-query gold set of every one of the eight 781 v2 cells is 100 % `1_hop`, and so is
+every 707 English cell. `2_hop` exists only in older corpora (`635-corpora/synth-multihop-prose-v2`,
+`624-corpora/battlefield-en-v1`, `707-corpora/de-miracl/gold-short-natural`), none of which is a
+hero stratum. Recorded here at freeze so compose-time cannot surprise; escalated as §H BLOCKER-1.
 
 ## §G Claim policy v3 — RATIFIED 2026-07-28 (closes §E.7 items 4 and 6)
 
@@ -528,3 +640,79 @@ still fails `schema_strata_reported`, because the composer has no access to the 
 `known_schemas` vocabulary and cannot invent a null for a schema it never saw. That failure is
 correct under `require_all_present`, and it is detectable pre-launch from the committed 20-qid list
 (§E.7 row 7) rather than at compose time on a paid record — which is the property that mattered.
+
+## §H Freeze execution record (2026-07-28)
+
+**Freeze commit:** `docs(782): FREEZE the hero pre-registration protocol` — short SHA
+**`5346c522`** on `worktree-agent-a4fa71b45c297d4ac` (this commit; the SHA was injected by a
+single `--amend`, 624's convention for a commit that must name itself). Every §E.7 row is disposed (§E.7); §E.1–§E.6
+plus §E.8 are frozen; §E.0 records the two triggers and the active policy. The campaign driver
+prepared by the same commit lives at `scripts/jseval/782-hero/` (`campaign-plan.md`,
+`preflight.py`, `cells.v1.json`) — **dry artifacts only: no paid call was made, no backend was
+started, no dataset or certification was touched.**
+
+Two findings the freeze's own mechanical checks produced. Both are recorded rather than worked
+around; neither is an agent's to decide.
+
+### BLOCKER-1 — `schema_strata_reported` cannot pass on any hero stratum (founder decision)
+
+**What.** v3 declares `required_schema_strata.known_schemas: ["1_hop","2_hop"]` with
+`require_all_present: true` (`scripts/jseval/utility-claim-policy.v3.json`). The gate
+(`scripts/jseval/jseval/utility_claim_policy.py:517-542`) requires every known schema to appear in
+each measured cell's `schema_stratified.by_stratum`. **All three hero strata's gold query sets are
+100 % `1_hop`** — verified over the whole committed 50-query set of all eight 781 v2 cells, not just
+the selected 20 (§E.8). So `2_hop` is absent from the breakdown on every cell, the gate fails, and
+`claim_verdict` cannot be `accepted` — **the full $300 would buy an unpromotable record.**
+
+**Why it wasn't caught earlier.** §G.1 item 6 fixed the *composer* so a schema whose pairs collapse
+is reported as an honest null instead of vanishing, and stated the residual limit exactly: a schema
+absent from the query set entirely still fails, "detectable pre-launch from the committed 20-qid
+list (§E.7 row 7)". Row 7 is this freeze. The prediction held and the detector fired — before spend,
+which is the property that mattered.
+
+**Resolutions, both founder-gated (§E.6: policy ratification and §E.1 design changes are
+founder-only).** Recorded without a recommendation:
+
+1. **Amend `known_schemas` to `["1_hop"]`** in the v3 policy. Cheapest; honest (the hero corpora
+   genuinely measure one schema); costs the 2-hop reporting axis 768 D4 introduced, and re-opens the
+   policy-identity digest re-pin class (5th occurrence — `test_historical_fixture_semantic_digest_*`).
+   Note this is a *policy* change after §E.0's freeze, not an edit to a frozen §E section.
+2. **Add `2_hop` queries to the three hero corpora.** Preserves the reporting axis; requires
+   regenerating the gold sets → new `query_gold_sha256` and (if `corpus.jsonl` changes) new
+   `corpus_signature` → **full 781 re-certification** → §E.2 P1's pinned table must be re-issued,
+   which means re-freezing §E.2. Expensive and slow.
+
+Until one lands, §E.0's `launch eligibility` stays **BLOCKED**. `preflight.py` fails closed on this
+item by design.
+
+### FINDING-2 — the committed closed-book measurement is at haiku; P3's bar is sonnet
+
+`scientific_gates.closed_book.observed` in both 781 certifications reads
+`{"closed_book_accuracy": 0, "n_queries": 50, "model": "haiku", "date": "2026-07-27",
+"method": "closed-book-slot-guess"}`. Two different bars read it:
+
+- The **policy gate** `closed_book_at_hero_tier`
+  (`utility_claim_policy.py:478-515`) requires only a numeric accuracy ≤ `0.1` and a **non-empty
+  model name** — it does **not** check the measurement tier. The committed haiku measurement
+  therefore **passes the gate as it stands**.
+- **§E.2 P3**, this protocol's own pre-launch rule, requires `0.000` measured **at sonnet**. That
+  measurement does not exist. P3 is *not* satisfied by committed artifacts.
+
+P3 is frozen and is the stricter bar, so a **fresh sonnet closed-book measurement on all three
+strata is a mandatory pre-launch step** — it is Step 0b in `campaign-plan.md`. It is a real (small)
+paid step: 3 strata × 50 queries, no tools, no corpus. Its cost is charged to the $300 cap and
+recorded in the spend ledger like any other phase. It does not change the certification files; it is
+attached as the campaign's own P3 evidence in the run dir. **This is not a licence to relax P3** —
+if the sonnet measurement is anything other than `0.000`, §E.6 stop rule 3 applies.
+
+### Pointer corrections made at freeze (operator-facing, pre-freeze so not frozen-section edits)
+
+- **P2's certification pointer** moved from `member.v1.json` to `structural-certification.v1.json`.
+  `member.v1.json` carries no `status` key at all and its `remaining_gates` still lists all four
+  scientific gates — pre-#311 residue. The machine authority is
+  `corpus_certify.py:815-817`, which reads `status == "fully-certified"` from the certification
+  file. An operator following the original pointer would have concluded the trigger was unmet.
+  (Logged to the observations inbox as a repo-side residue to sweep separately.)
+- **§E.1's selection rule** is now the mechanically-forced truncation rule rather than an abstract
+  "deterministic committed rule", with the certification-digest reason stated inline so a future
+  agent cannot "improve" it into a seeded sample and silently break certified identity.
