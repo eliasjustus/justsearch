@@ -29,13 +29,20 @@ def _publication_root(value):
 @click.option("--publication-id", required=True)
 @click.option("--policy", default=None, type=click.Path(exists=True, dir_okay=False))
 @click.option("--root", default=None, type=click.Path())
-def cmd_utility_publication_build(record, evidence, publication_id, policy, root):
+@click.option("--max-evidence-bytes", type=int, default=None,
+              help="Refuse to build a bundle whose evidence file exceeds this size "
+                   "(default 80 MiB; a bundle is committed and GitHub rejects blobs "
+                   "over 100 MB).")
+def cmd_utility_publication_build(record, evidence, publication_id, policy, root,
+                                  max_evidence_bytes):
     """Build an immutable accepted publication bundle."""
-    from ..utility_publication import build_publication
+    from ..utility_publication import DEFAULT_MAX_EVIDENCE_BYTES, build_publication
 
     path = build_publication(
         root=_publication_root(root), record_path=record, evidence_path=evidence,
         publication_id=publication_id, policy_path=policy,
+        max_evidence_bytes=(
+            DEFAULT_MAX_EVIDENCE_BYTES if max_evidence_bytes is None else max_evidence_bytes),
     )
     click.echo(f"Wrote {path}")
 

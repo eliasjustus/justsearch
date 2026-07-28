@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "agent-utility-observation.v1",
+  "$comment": "One observation LINE of a sanitized evidence file, in either format version. v1 carries its `source` block inline. v2 (tempdoc 719 follow-up) carries `source_ref` instead -- the identical block, hoisted into one `agent-utility-evidence-source.v1` header line per DISTINCT source, because the run-constant block (dominated by corpus_certification.certification_base64) is ~1.93 MB and repeating it per observation made a 360-cell campaign's evidence 788 MB, past GitHub's 100 MB blob limit. The two versions are exclusive, enforced below: neither line shape can carry both or neither.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10,10 +11,25 @@
     "resolved_provider_model", "num_turns", "tool_call_names",
     "blocked_tool_call_names", "disallowed_tool_call_names", "leak_suspect",
     "mcp_server_statuses", "mcp_tools_offered", "mcp_surface_unverified",
-    "mcp_tools_deferred", "source"
+    "mcp_tools_deferred"
+  ],
+  "allOf": [
+    {
+      "if": {"properties": {"schema": {"const": "agent-utility-observation.v1"}}},
+      "then": {"required": ["source"], "not": {"required": ["source_ref"]}}
+    },
+    {
+      "if": {"properties": {"schema": {"const": "agent-utility-observation.v2"}}},
+      "then": {"required": ["source_ref"], "not": {"required": ["source"]}}
+    }
   ],
   "properties": {
-    "schema": {"const": "agent-utility-observation.v1"},
+    "schema": {"enum": ["agent-utility-observation.v1", "agent-utility-observation.v2"]},
+    "source_ref": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "$comment": "v2 only: the sha256 of the canonical JSON of this observation's `source` block, declared once by a preceding agent-utility-evidence-source.v1 header line. `read_evidence` recomputes it and fails closed on a mismatch, so a ref cannot silently bind to an altered source."
+    },
     "condition": {"enum": ["A", "B", "C"]},
     "question_type": {
       "type": ["string", "null"],
