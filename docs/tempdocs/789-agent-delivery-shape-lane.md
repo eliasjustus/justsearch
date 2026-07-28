@@ -448,3 +448,9 @@ JUSTSEARCH_SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES=2000, reinterpreting F3 as
 weak/thin-result calibration framing (the failure mode as it actually occurs) rather than
 literal zero-result framing. Verified by smoke before spend: fires on an exact-phrase thin
 query, does not fire on a healthy query.
+
+**Amendment 2b (2026-07-28, same pre-F3-spend window):** floor 2000 B is still vacuous - the
+low-signal-gated minimum delivery (~3 dense hits) measures ~5 KB, and a rare-phrase query
+delivered 14 KB. Floor set to 6000 B: fires on gated/weak deliveries (measured 5.1 KB
+gibberish probe), silent on healthy ones (measured 17.2 KB). Dose verified by smoke both
+polarities before any F3 cell; no F3 cell had run under 2000 B either.
