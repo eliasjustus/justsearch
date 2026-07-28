@@ -86,9 +86,23 @@ public final class McpEvidenceProjection {
         h.put("matchedFields", hc.matchedFields());
       }
       projectHitExcerptsAndTrace(hit, h, includeDetail);
+      // Tempdoc 789 Phase 2 (F1): the per-hit continuation line on the structured tier, from the
+      // same content instance the text renderer consumed.
+      if (hc.continuation() != null) {
+        h.put("continuation", hc.continuation());
+      }
       results.add(h);
     }
     out.put("results", results);
+
+    // Tempdoc 789 Phase 2 (F2/F3): the response-level framings on the structured tier — a client
+    // that delivers structuredContent instead of text must see the same framing (735 G3).
+    if (content.evidenceHeader() != null) {
+      out.put("evidenceHeader", content.evidenceHeader());
+    }
+    if (content.absenceNote() != null) {
+      out.put("absenceNote", content.absenceNote());
+    }
 
     // Tempdoc 735 W6: the tier-equivalence additions — previously text-only facts, now delivered
     // on structuredContent too, from the SAME content instance the text renderer consumed.
@@ -268,6 +282,12 @@ public final class McpEvidenceProjection {
     coverage.put("documents", content.distinctDocs());
     out.put("coverage", coverage);
     out.put("truncated", content.contextTruncated());
+    // Tempdoc 789 Phase 2 (F2): the evidence-not-answer header reaches the structured tier too — a
+    // client that delivers structuredContent instead of text must see the same framing, or the
+    // probe arm would silently not apply to it (the 735 G3 tier-equivalence rule).
+    if (content.evidenceHeader() != null) {
+      out.put("evidenceHeader", content.evidenceHeader());
+    }
     return out;
   }
 

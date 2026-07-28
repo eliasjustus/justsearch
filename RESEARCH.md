@@ -29,15 +29,15 @@ collapse on our own corpus. Full comparison-class detail: `docs/reference/benchm
 
 <!-- agent-utility:generated:start - run: node scripts/docs/gen-public-agent-utility.mjs -->
 
-No agent-utility result is currently accepted for publication. No agent-utility result has passed the active scientific claim policy; the 2026-07-18 confirmatory campaign was rejected on identity-verification gates. The checked-in claim policy (`agent-utility-public-v5`) is active and fully resolved: it pins a required 3-stratum campaign matrix, a model cohort, and its scientific margins. One pre-registered confirmatory campaign has run against an earlier policy revision (2026-07-18); it rejected promotion on identity-verification gates, and the complete evidence — including both voided runs — is committed under `scripts/jseval/624-run-2026-07-18-confirmatory/`. Owner decisions, certifications, and any paid rerun require separate authorization; the harness does not invent them.
+Accepted publication `agent-utility-hero-2026-07-28` (record `c5a75457b264`, policy `agent-utility-public-v4`). Agents adopted JustSearch, but the campaign did not establish an efficiency or accuracy improvement across every required stratum.
 
-The latest rejected campaign record (with its policy-evaluated verdict and per-gate reasons) lives in the evidence directory above; earlier sanitized pilot evidence is retained as a rejected fixture and can be recomposed without credentials, a backend, or model calls. A result can appear here only after an immutable bundle replays, passes the settled policy, and is explicitly selected by the owner.
+| Corpus stratum | Agent model | Outcome | Provider cache-creation token delta | Accuracy delta | Adoption | Paired n |
+|---|---|---|---:|---:|---:|---:|
+| en-email-enron-raw / mixed/en-email-enron-raw-10k-verbose / 10000 / verbose | sonnet | adoption-only | n/a (CI unavailable) | -11.7 pp (CI -25.0 pp to +0.0 pp) | 100.0% | 60 |
+| en-email-enron-raw / mixed/en-email-enron-raw-1k-verbose / 1000 / verbose | sonnet | adoption-only | n/a (CI unavailable) | -18.3 pp (CI -35.0 pp to -1.7 pp) | 100.0% | 60 |
+| en-legal-clerc / mixed/en-legal-clerc-1k-verbose / 1000 / verbose | sonnet | adoption-only | n/a (CI unavailable) | -1.7 pp (CI -16.7 pp to +13.3 pp) | 100.0% | 60 |
 
-```bash
-cd scripts/jseval
-python -m jseval utility-recompose --evidence tests/fixtures/agent-utility-rejected-2026-07-12/observations.v1.jsonl --output-dir out
-python -m jseval utility-replay --publication <publication-id>
-```
+Provider cache-creation input tokens exclude cache reads and retain the provider-specific meaning of that counter. See the [agent-utility benchmark reference](docs/reference/benchmarks/agent-utility.md) for arm distributions, cost, loss, certification, and replay evidence.
 
 <!-- agent-utility:generated:end -->
 

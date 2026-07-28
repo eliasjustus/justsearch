@@ -85,14 +85,23 @@ function scenario(label, body) {
   }
 }
 
-// --- the committed real pointer (current: null) passes pointer-shape validation ---
+// --- the committed real pointer selects the first accepted publication (2026-07-28) ---
+// Reality flipped with the founder-authorized hero publication: the pointer now
+// carries an accepted result, and the gate's real-repo pass must replay it.
 {
   const REPO_ROOT = path.resolve(path.dirname(SCRIPT), "..", "..");
   const realPointer = JSON.parse(fs.readFileSync(pointerPath(REPO_ROOT), "utf8"));
-  ok("the committed real pointer currently has no accepted result (current: null)", realPointer.current === null);
+  ok(
+    "the committed real pointer selects the accepted hero publication",
+    realPointer.current !== null
+      && realPointer.current.publication_id === "agent-utility-hero-2026-07-28",
+  );
   const result = spawnSync(process.execPath, [SCRIPT], { encoding: "utf8" });
   ok("running against the real repo (no override) exits 0", result.status === 0);
-  ok("running against the real repo reports no accepted result", (result.stdout || "").includes("no accepted result"));
+  ok(
+    "running against the real repo replays the accepted result",
+    (result.stdout || "").includes("accepted result replayed"),
+  );
 }
 
 // --- pointer-shape failures ---

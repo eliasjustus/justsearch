@@ -31,12 +31,22 @@ record McpSearchResponseContent(
     boolean truncated,
     List<HitContent> hits,
     Map<String, Map<String, Long>> facets,
-    List<String> hints) {
+    List<String> hints,
+    // Tempdoc 789 Phase 2 — the flag-gated delivery framings, carried as content-model facts for
+    // the same reason every other fact here is: so the text renderer and the structured renderer
+    // read ONE computation and cannot diverge (735 G3). Both are null when their framing flag is
+    // off, which is the default — a null fact renders nothing on either tier.
+    String evidenceHeader,
+    String absenceNote) {
 
   /**
    * Per-hit facts computed once: the same {@code matchedTerms}/{@code matchedFields} the text
    * tier's {@code Matched:} line renders are read by the structured tier from this record instead
    * of being independently re-derived from {@code hit.matchSpans()} (the pre-735 duplication).
+   *
+   * <p>{@code continuation} (tempdoc 789 Phase 2, F1) is the per-hit framing line — null unless the
+   * continuation framing is enabled AND this hit's delivered text names an indexed entity the query
+   * did not.
    */
   record HitContent(
       int rank,
@@ -45,7 +55,8 @@ record McpSearchResponseContent(
       double score,
       String preview,
       List<String> matchedTerms,
-      List<String> matchedFields) {
+      List<String> matchedFields,
+      String continuation) {
 
     /** True when no distinctive term overlap was found — renders the "Match basis:" line. */
     boolean semanticFallback() {
