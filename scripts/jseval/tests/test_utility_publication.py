@@ -116,6 +116,82 @@ def test_publication_builder_refuses_rejected_record(tmp_path):
         )
 
 
+def test_publication_builder_refuses_evidence_above_the_size_ceiling(tmp_path):
+    """tempdoc 719 follow-up: a bundle is a COMMITTED artifact, and the 2026-07-28 hero
+    campaign's inline-`source` evidence was 788 MB -- past GitHub's 100 MB blob limit,
+    discovered only at push time, after the immutable bundle already existed. The
+    builder now fails closed BEFORE writing anything, naming the deduped format."""
+    root, record, evidence, policy_path = _setup_accepted(tmp_path)
+    ceiling = evidence.stat().st_size - 1
+    with pytest.raises(ValueError, match="publication ceiling") as excinfo:
+        publication.build_publication(
+            root=root, record_path=record, evidence_path=evidence,
+            publication_id="oversized", policy_path=policy_path,
+            max_evidence_bytes=ceiling,
+        )
+    assert "agent-utility-evidence-source.v1" in str(excinfo.value)
+    assert not (root / "publications" / "oversized").exists()
+    # The same bundle builds under the default ceiling, so the guard fires on size
+    # alone and not on anything else about this evidence.
+    assert publication.build_publication(
+        root=root, record_path=record, evidence_path=evidence,
+        publication_id="within-ceiling", policy_path=policy_path,
+    ).is_file()
+
+
+def test_publication_manifest_records_the_evidence_format_it_bundled(tmp_path):
+    """`sanitizer_version` is read off the copied evidence, not hardcoded -- a v2
+    bundle that claimed v1 would be exactly the stale-residue class the format bump
+    is supposed to make legible."""
+    from jseval.utility_evidence import SCHEMA, SCHEMA_V2, dedupe_source_blocks, read_evidence
+
+    root, record, evidence, policy_path = _setup_accepted(tmp_path)
+    inline_manifest = json.loads(publication.build_publication(
+        root=root, record_path=record, evidence_path=evidence,
+        publication_id="inline-format", policy_path=policy_path,
+    ).read_text(encoding="utf-8"))
+    assert inline_manifest["sanitizer_version"] == SCHEMA
+
+    # Same BASENAME in its own directory: read_evidence stamps source.log_file from
+    # the path, so an equality assertion below is about the observations, not the name.
+    deduped = evidence.parent / "deduped" / "observations.v1.jsonl"
+    deduped.parent.mkdir()
+    deduped.write_text("".join(
+        json.dumps(line, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+        for line in dedupe_source_blocks(
+            json.loads(line) for line in evidence.read_text(encoding="utf-8").splitlines()
+        )
+    ), encoding="utf-8")
+    # Same evidence, hoisted: same observations, smaller file, replayable bundle.
+    assert read_evidence(deduped) == read_evidence(evidence)
+    assert deduped.stat().st_size < evidence.stat().st_size
+    deduped_manifest = json.loads(publication.build_publication(
+        root=root, record_path=record, evidence_path=deduped,
+        publication_id="deduped-format", policy_path=policy_path,
+    ).read_text(encoding="utf-8"))
+    assert deduped_manifest["sanitizer_version"] == SCHEMA_V2
+    assert deduped_manifest["record"]["semantic_digest"] == inline_manifest["record"]["semantic_digest"]
+
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(
+        (Path(__file__).parents[1] / "agent-utility-publication.v1.schema.json")
+        .read_text(encoding="utf-8"))
+    jsonschema.validate(deduped_manifest, schema)
+
+
+def test_replay_rejects_a_manifest_that_misdeclares_the_evidence_format(tmp_path):
+    root, record, evidence, policy_path = _setup_accepted(tmp_path)
+    manifest_path = publication.build_publication(
+        root=root, record_path=record, evidence_path=evidence,
+        publication_id="format-tamper", policy_path=policy_path,
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["sanitizer_version"] = "agent-utility-observation.v2"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="sanitizer_version disagrees"):
+        publication.replay_publication(manifest_path)
+
+
 def test_replay_detects_evidence_tampering(tmp_path):
     root, record, evidence, policy_path = _setup_accepted(tmp_path)
     manifest = publication.build_publication(

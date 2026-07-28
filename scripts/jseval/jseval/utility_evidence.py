@@ -2,16 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Iterable
 
-from jseval.agent_utility_observations import read_inspect_observations
+from jseval.agent_utility_observations import read_inspect_observations, resolve_judge_overlay
 from jseval.env_fingerprint import safe_environment_identity
 
 SCHEMA = "agent-utility-observation.v1"
+# tempdoc 719 follow-up: v2 lines carry `source_ref` instead of an inline `source`.
+# The per-observation `source` block is RUN-CONSTANT and dominated by
+# `corpus_certification.certification_base64` (2.26 MB of a 2.48 MB source-identity
+# manifest on the 2026-07-28 hero logs), so repeating it verbatim per observation cost
+# ~1.93 MB/cell -- 788 MB for a 360-cell 3-stratum campaign, past GitHub's 100 MB blob
+# limit and therefore unpublishable. v1 (inline `source`) stays readable forever.
+SCHEMA_V2 = "agent-utility-observation.v2"
+SOURCE_SCHEMA = "agent-utility-evidence-source.v1"
+_OBSERVATION_SCHEMAS = {SCHEMA, SCHEMA_V2}
+_SOURCE_HEADER_KEYS = {"schema", "source_id", "source"}
 _OBSERVATION_KEYS = {
-    "schema", "condition", "question_type", "seed", "qid", "attempted", "excluded",
+    "schema", "source_ref", "condition", "question_type", "seed", "qid", "attempted", "excluded",
     "error_class", "attempts", "first_error_class", "correct", "cost_usd",
     "usage_truncated",
     "working_time", "total_time",
@@ -384,35 +395,141 @@ def sanitize_observations(observations: Iterable[dict]) -> list[dict]:
     )
 
 
-def export_log_dir(log_dir: str | Path, output: str | Path) -> Path:
-    observations = sanitize_observations(read_inspect_observations(log_dir))
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def source_id(source: dict) -> str:
+    """Content address of one sanitized `source` block (sha256 of its canonical JSON)."""
+    return hashlib.sha256(_canonical_json(source).encode("utf-8")).hexdigest()
+
+
+def dedupe_source_blocks(observations: Iterable[dict]) -> list[dict]:
+    """Hoist run-constant `source` blocks into `agent-utility-evidence-source.v1` headers.
+
+    Returns the exact line sequence to write: every DISTINCT source value once, as a
+    header line in first-appearance order, then the observations as v2 lines carrying
+    `source_ref`. Semantically identical to the v1 lines it replaces -- `read_evidence`
+    resolves the ref back to the same dict, so every downstream consumer sees the same
+    observation and the composed record's `semantic_digest` is unchanged.
+    """
+    headers: list[dict] = []
+    seen: dict[str, None] = {}
+    rows: list[dict] = []
+    for observation in observations:
+        source = observation.get("source") or {}
+        identifier = source_id(source)
+        if identifier not in seen:
+            seen[identifier] = None
+            headers.append({
+                "schema": SOURCE_SCHEMA, "source_id": identifier, "source": source,
+            })
+        row = {key: value for key, value in observation.items() if key != "source"}
+        row["schema"] = SCHEMA_V2
+        row["source_ref"] = identifier
+        rows.append(row)
+    return headers + rows
+
+
+def evidence_schema_version(path: str | Path) -> str:
+    """The observation-line schema an existing evidence file is written in."""
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        schema = json.loads(line).get("schema")
+        if schema in _OBSERVATION_SCHEMAS:
+            return schema
+    return SCHEMA
+
+
+def export_log_dir(
+    log_dir: str | Path, output: str | Path, *, judge_overlay: str | Path | None = None
+) -> Path:
+    """Export a log directory's attempted cells through the strict public allowlist.
+
+    Reads the log directory through the SAME judge-overlay resolution
+    `finalize_logs` uses (`resolve_judge_overlay`), so the exported `correct` is
+    the authoritative post-judge verdict. Before tempdoc 719's first real
+    publication this path read the directory with no overlay, so every
+    judge-rescored cell was exported pre-judge: recomposing the export then
+    produced different measured accuracy from recomposing the logs, and the
+    publication builder's evidence-recompose digest check fired
+    (`utility_publication.py`, "record does not semantically match the supplied
+    evidence").
+    """
+    overlay = resolve_judge_overlay(log_dir, judge_overlay)
+    observations = sanitize_observations(
+        read_inspect_observations(log_dir, judge_overlay=overlay)
+    )
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(
-        json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
-        for item in observations
+        _canonical_json(item) + "\n" for item in dedupe_source_blocks(observations)
     )
     path.write_text(body, encoding="utf-8")
     return path
 
 
+def _read_source_header(item: dict, line_number: int) -> tuple[str, dict]:
+    unknown = set(item) - _SOURCE_HEADER_KEYS
+    missing = _SOURCE_HEADER_KEYS - set(item)
+    if unknown or missing:
+        raise ValueError(
+            f"malformed evidence source header at line {line_number}: "
+            f"missing={sorted(missing)} unknown={sorted(unknown)}"
+        )
+    source = item.get("source") or {}
+    unknown_source = set(source) - _SOURCE_KEYS
+    if unknown_source:
+        raise ValueError(
+            f"unknown observation source fields at line {line_number}: {sorted(unknown_source)}"
+        )
+    identifier = item["source_id"]
+    if identifier != source_id(source):
+        raise ValueError(
+            f"evidence source header id does not match its content at line {line_number}"
+        )
+    return identifier, source
+
+
 def read_evidence(path: str | Path) -> list[dict]:
     observations = []
+    sources: dict[str, dict] = {}
     for line_number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             continue
         item = json.loads(line)
-        if item.get("schema") != SCHEMA:
+        schema = item.get("schema")
+        if schema == SOURCE_SCHEMA:
+            identifier, source = _read_source_header(item, line_number)
+            sources[identifier] = source
+            continue
+        if schema not in _OBSERVATION_SCHEMAS:
             raise ValueError(f"unsupported observation schema at line {line_number}")
         unknown = set(item) - _OBSERVATION_KEYS
         if unknown:
             raise ValueError(f"unknown observation fields at line {line_number}: {sorted(unknown)}")
-        source = item.get("source") or {}
-        unknown_source = set(source) - _SOURCE_KEYS
-        if unknown_source:
+        deduped = schema == SCHEMA_V2
+        if ("source_ref" in item) != deduped or ("source" in item) == deduped:
             raise ValueError(
-                f"unknown observation source fields at line {line_number}: {sorted(unknown_source)}"
+                f"{schema} observation must carry exactly "
+                f"{'source_ref' if deduped else 'source'} at line {line_number}"
             )
+        if deduped:
+            reference = item["source_ref"]
+            if reference not in sources:
+                raise ValueError(
+                    f"observation references an undeclared evidence source at line {line_number}"
+                )
+            source = sources[reference]
+        else:
+            source = item.get("source") or {}
+            unknown_source = set(source) - _SOURCE_KEYS
+            if unknown_source:
+                raise ValueError(
+                    f"unknown observation source fields at line {line_number}: "
+                    f"{sorted(unknown_source)}"
+                )
         cohort = {
             key: source.get(key)
             for key in (

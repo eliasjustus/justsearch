@@ -29,13 +29,20 @@ def _publication_root(value):
 @click.option("--publication-id", required=True)
 @click.option("--policy", default=None, type=click.Path(exists=True, dir_okay=False))
 @click.option("--root", default=None, type=click.Path())
-def cmd_utility_publication_build(record, evidence, publication_id, policy, root):
+@click.option("--max-evidence-bytes", type=int, default=None,
+              help="Refuse to build a bundle whose evidence file exceeds this size "
+                   "(default 80 MiB; a bundle is committed and GitHub rejects blobs "
+                   "over 100 MB).")
+def cmd_utility_publication_build(record, evidence, publication_id, policy, root,
+                                  max_evidence_bytes):
     """Build an immutable accepted publication bundle."""
-    from ..utility_publication import build_publication
+    from ..utility_publication import DEFAULT_MAX_EVIDENCE_BYTES, build_publication
 
     path = build_publication(
         root=_publication_root(root), record_path=record, evidence_path=evidence,
         publication_id=publication_id, policy_path=policy,
+        max_evidence_bytes=(
+            DEFAULT_MAX_EVIDENCE_BYTES if max_evidence_bytes is None else max_evidence_bytes),
     )
     click.echo(f"Wrote {path}")
 
@@ -73,11 +80,15 @@ def cmd_utility_replay(publication, root):
 @click.command("utility-evidence-export")
 @click.option("--log-dir", required=True, type=click.Path(exists=True, file_okay=False))
 @click.option("--out", required=True, type=click.Path(dir_okay=False))
-def cmd_utility_evidence_export(log_dir, out):
+@click.option("--judge-overlay", "judge_overlay", default=None,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Optional overlay; otherwise use LOG_DIR's judge-overlay.json if present "
+                   "(same resolution as utility-recompose --log-dir).")
+def cmd_utility_evidence_export(log_dir, out, judge_overlay):
     """Export every attempted cell through the strict public allowlist."""
     from ..utility_evidence import export_log_dir
 
-    path = export_log_dir(log_dir, out)
+    path = export_log_dir(log_dir, out, judge_overlay=judge_overlay)
     click.echo(f"Wrote {path}")
 
 
