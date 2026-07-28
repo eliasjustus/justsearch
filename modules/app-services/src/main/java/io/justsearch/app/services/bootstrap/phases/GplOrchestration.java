@@ -111,6 +111,11 @@ public final class GplOrchestration {
               .setQuery("*:*")
               .setQuerySyntax(io.justsearch.ipc.SearchQuerySyntax.SEARCH_QUERY_SYNTAX_LUCENE)
               .setLimit(0)
+              // Tempdoc 787 item 4b: a bare request (no pipeline) resolves on the Worker via
+              // SearchPlanner's `deprecated_mode_fallback` branch. PipelineConfigs.TEXT is that
+              // branch's leg set stated explicitly (sparse+lmart+expansion), so the wire shape
+              // becomes current without changing which legs run for this facet-only probe.
+              .setPipeline(io.justsearch.ipc.PipelineConfigs.TEXT)
               .setFacets(
                   io.justsearch.ipc.FacetSpec.newBuilder()
                       .setInclude(true)
