@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Iterable
 
-from jseval.agent_utility_observations import read_inspect_observations
+from jseval.agent_utility_observations import read_inspect_observations, resolve_judge_overlay
 from jseval.env_fingerprint import safe_environment_identity
 
 SCHEMA = "agent-utility-observation.v1"
@@ -384,8 +384,25 @@ def sanitize_observations(observations: Iterable[dict]) -> list[dict]:
     )
 
 
-def export_log_dir(log_dir: str | Path, output: str | Path) -> Path:
-    observations = sanitize_observations(read_inspect_observations(log_dir))
+def export_log_dir(
+    log_dir: str | Path, output: str | Path, *, judge_overlay: str | Path | None = None
+) -> Path:
+    """Export a log directory's attempted cells through the strict public allowlist.
+
+    Reads the log directory through the SAME judge-overlay resolution
+    `finalize_logs` uses (`resolve_judge_overlay`), so the exported `correct` is
+    the authoritative post-judge verdict. Before tempdoc 719's first real
+    publication this path read the directory with no overlay, so every
+    judge-rescored cell was exported pre-judge: recomposing the export then
+    produced different measured accuracy from recomposing the logs, and the
+    publication builder's evidence-recompose digest check fired
+    (`utility_publication.py`, "record does not semantically match the supplied
+    evidence").
+    """
+    overlay = resolve_judge_overlay(log_dir, judge_overlay)
+    observations = sanitize_observations(
+        read_inspect_observations(log_dir, judge_overlay=overlay)
+    )
     path = Path(output)
     path.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(
