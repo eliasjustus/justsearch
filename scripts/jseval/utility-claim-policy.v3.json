@@ -27,6 +27,23 @@
       "notes": [
         "thresholds.maximum_closed_book_accuracy stays at 0.1 as the policy's failure CEILING. The pre-launch protocol bar is STRICTER: 782 §E.2 P3 requires measured closed-book accuracy 0.000 at sonnet on every stratum before launch (measured closed-book on the v2 corpora is already 0.000). The ceiling never relaxes P3; it is the post-hoc gate that voids a benefit headline if a stratum's closed-book number is materially non-zero."
       ]
+    },
+    {
+      "amendment": 1,
+      "policy_id": "agent-utility-public-v3",
+      "date": "2026-07-28",
+      "summary": "Amendment 1 (pre-launch, zero cells measured): known_schemas [1_hop,2_hop]->[1_hop] — corpus-description correction per 782 §E.7 row 12 / BLOCKER-1; thresholds untouched; decided under founder delegation of 2026-07-28",
+      "authority": "orchestrator, under the founder's 2026-07-28 blanket delegation; 624's dated-amendment convention (amendments are permitted until the first measured cell, then frozen)",
+      "changed": ["required_schema_strata.known_schemas: [\"1_hop\", \"2_hop\"] -> [\"1_hop\"]"],
+      "unchanged": [
+        "every value in thresholds",
+        "required_strata (3 sonnet strata, cheapest-first)",
+        "requirements (all keys, including schema_strata_reported: true)",
+        "required_schema_strata.require_all_present stays true — now satisfiable and still load-bearing: the 1_hop stratum must be reported, an absent breakdown still refuses the record"
+      ],
+      "rationale": "This is a corpus-description correction, not a threshold/bar change. The certified 781 v2 gold sets (and all 707 English cells) are 100% 1_hop by construction; the v3-DRAFT's 2_hop entry described a multi-schema cohort that was never built. Requiring the presence of a schema absent from the corpus is a spec error, and the refusal gate surfaced it PRE-SPEND, exactly as intended (782 §G.1's stated residual limit: 'a schema absent from a cell's query set entirely still fails schema_strata_reported ... detectable pre-launch from the committed 20-qid list'). Without this amendment all three hero strata would have failed schema_strata_reported at compose and the full $300 would have bought an unpromotable record.",
+      "measured_cells_at_amendment": 0,
+      "tempdoc": "782 (§E.0 Amendment 1, §E.7 row 12, §H BLOCKER-1)"
     }
   ],
   "required_strata": [
@@ -62,10 +79,10 @@
     }
   ],
   "required_schema_strata": {
-    "_note": "tempdoc 768 D4: within each required stratum the composed record carries a schema_stratified.by_stratum breakdown keyed on question_type (utility_comparison._default_schema_stratify). v3 requires every schema present in the queries file to be represented and reported; a schema that collapses (e.g. email/1_hop null) is reported as an honest null, never dropped.",
+    "_note": "tempdoc 768 D4: within each required stratum the composed record carries a schema_stratified.by_stratum breakdown keyed on question_type (utility_comparison._default_schema_stratify). v3 requires every schema present in the queries file to be represented and reported; a schema that collapses (e.g. email/1_hop null) is reported as an honest null, never dropped. AMENDMENT 1 (2026-07-28, pre-launch): known_schemas is [1_hop] because the certified hero corpora are 100% 1_hop by construction — see policy_changelog.",
     "keyed_on": "question_type",
     "require_all_present": true,
-    "known_schemas": ["1_hop", "2_hop"],
+    "known_schemas": ["1_hop"],
     "null_result_handling": "report-never-lead",
     "evidence_path": "measured[<dataset>][<requested_model>].schema_stratified.by_stratum"
   },
