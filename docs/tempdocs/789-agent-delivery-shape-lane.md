@@ -436,3 +436,15 @@ per-arm smoke only. Also recorded: the eval-mode env whitelist initially dropped
 flags entirely (fixed on this branch, modules/ui/build.gradle.kts HEADLESS_AI_ENV_VARS); the
 F0 arm ran before that fix, which is immaterial because F0 is all-flags-off by design and its
 smoke asserted absence.
+
+**AMENDMENT 2 (2026-07-28, before any F3 cell; F0-F2 complete).** F3's pre-launch smoke showed
+its zero-result trigger is unreachable on this backend: hybrid retrieval returns dense-leg
+neighbors for even gibberish queries (measured 5,119 B for a nonsense probe), and every
+delivery exceeds the 400-byte default thin floor - the arm as configured would render its
+framing on approximately no eval calls. The census independently measured the REAL
+trusted-emptiness class as THIN deliveries (<1,600 B, ~15% of B-arm search calls, mostly
+exact-phrase queries). Amendment: the F3 arm runs with
+JUSTSEARCH_SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES=2000, reinterpreting F3 as
+weak/thin-result calibration framing (the failure mode as it actually occurs) rather than
+literal zero-result framing. Verified by smoke before spend: fires on an exact-phrase thin
+query, does not fire on a healthy query.
