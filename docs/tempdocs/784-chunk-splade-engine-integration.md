@@ -394,3 +394,20 @@ retroactively gain fields — measurement must be on fresh `--clean` builds
   proposal cannot supply — it must come from the Step-0 / Option-B measurement runs, and I
   recommend capturing `du` of the index dir per arm at that point.
 
+
+## §B.3 Step 0 executed — verdict: lane parked pending adaptive fusion (2026-07-28)
+
+The §B.2-proposal's Step 0 ran as a 4-arm 2×2 (chunk-splade flag × parent-length gate) on
+legal-clerc-200, knob-firing verified per arm (worker config line + `WorkerSpawner` JVM-opts log
+line). Full table + reading in the register's F-036 RESOLVED annotation. Summary: the gate WAS
+masking the isolated revival (0.2902 un-gated), but un-gating costs hybrid ~7% and the harm is
+weight-policy-driven, not leg-quality-driven — A4 (garbage leg, un-gated) ≈ A3 (revived leg,
+un-gated). A 0.29 leg cannot help a 0.64 ensemble under static CC weights regardless of storage
+shape.
+
+**Lane disposition:** PARKED. The §B.2 storage options (incl. zero-delta Option B) are moot until
+fusion can exploit a mid-quality leg — score-aware/adaptive fusion is the prerequisite, and that
+belongs to the 783 program's intervention space, not to this lane. Re-open trigger: an adaptive-
+fusion mechanism that demonstrably benefits from a revived sparse leg on long docs. The Step-0
+pre-declared decision rule (ship only a >10% improvement with a correctness story) resolved to
+freeze: no engine change ships pre-hero.
