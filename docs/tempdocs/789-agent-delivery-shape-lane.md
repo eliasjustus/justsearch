@@ -372,3 +372,148 @@ unavailable it returns `-1` and the coverage clause is omitted rather than guess
 * Not done here (correctly out of scope): engine-side hop-2, retrieval changes, the F4
   compact-first candidate, and the naturalistic-replication (enron-qa) check the 788 §4 Goodhart
   guard requires before any framing ships as a DEFAULT.
+
+## Phase 2 probe pre-registration — 789-P2-probe-2026-07-28 (frozen at first measured cell; amendments dated)
+
+Written BEFORE any measured cell. Substrate: the F1/F2/F3 framings merged in #321 (all
+default-off, byte-golden-verified inert when off); the behavioral telemetry merged in #319.
+Founder spend authorization 2026-07-28: "you can proceed with the remaining items 2 and 3"
+(item 2 = this probe, presented as a few tens of dollars).
+
+**Question.** Does response framing move the tool arm's behavioral metrics and accuracy,
+retrieval held fixed?
+
+**Arms (backend -D sysprops at serve boot; one framing per arm, no compositions):**
+F0 control (all off) | F1 search.mcp_framing.continuation_enabled=true |
+F2 search.mcp_framing.evidence_not_answer_enabled=true |
+F3 search.mcp_framing.calibrated_absence_enabled=true.
+
+**Design.** Stratum mixed/en-email-enron-raw-1k-verbose only (the question-systematic
+mechanism stratum; pivot deficit 11). Condition B ONLY (framings cannot affect arm A; the
+campaign's A baseline is context, not a test arm). The frozen 20 qids, seeds {0,1}.
+4 x 20 x 2 = 160 cells, sonnet, max_budget $0.80/cell (hero-comparable), est ~$56
+(campaign B mean $0.358/cell), ABORT if projected total exceeds $90. Env pins per the 782
+Amendment-2 lesson (ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-sonnet-5,
+CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-5); gitignored run dir; detached serve + driver;
+porcelain-0 asserted per arm.
+
+**Primary outcomes (behavioral, from the #319 block):** name_pivot rate, hop1_stop rate,
+abstained rate; secondary: fallback_after_mcp, post_search_reads, EM accuracy vs F0, cost,
+duration, exhaustions. **Primary test:** question-level paired sign-flip permutation
+(Fx vs F0 per qid, seeds as replicates), alpha=0.05. n=20 questions powers only large
+effects — this probe is pre-registered as a DIRECTION-FINDER, not a shipping gate.
+
+**Decision rule (pre-registered).** A framing GRADUATES to the naturalistic replication
+step (enron-qa) if (a) pivot or hop1_stop improves at question-level p<0.05, OR (b) it
+point-improves >=2 behavioral primaries AND accuracy point-delta >= 0. A framing is
+DROPPED if its accuracy point-delta < -0.05 regardless of behavioral movement. Anything
+else: inconclusive — report, no ship, founder decides any larger probe. NO framing ships
+as default from this probe alone; naturalistic replication is a hard prerequisite
+(the 788 S4 Goodhart guard).
+
+**Validity checks (pre-registered, per arm before analysis):** single resolved model per
+cell (mixed-model guard clean); one MCP tool-surface hash across ALL arms (framing is
+response content, not tool schema — a surface split voids the probe); a 1-query smoke per
+arm asserting the framing text APPEARS in the delivered payload (positive control) and a
+F0 smoke asserting its ABSENCE; zero leak-suspect cells; behavioral block present on every
+record. Known limits recorded up front: single synthetic stratum, B-only, 2 seeds, and the
+generalized name_pivot definition (validated against this corpus's ground truth in the P1
+replay, exact agreement on 360/360 cells).
+
+**AMENDMENT 1 (2026-07-28, before any F1 cell; F0 complete).** Pre-launch smoke on gold-bearing
+queries showed F1's entity condition fires only on NER-taggable entities: real carrier-text
+names ("David", "California") trigger the continuation line; the fabricated bridge persons
+(e.g. "Langna Solational Tna") are never NER-tagged and never marked. Consequence, recorded
+before F1 spend: on this corpus the F1 arm tests the continuation INSTRUCTION ("if this is an
+intermediate fact, a follow-up search may locate the final answer") attached to
+non-bridge entities — the generic-move half of the treatment, not the entity-targeting half.
+F1 is RETAINED under this reinterpretation (the census mechanism is about making the second
+move at all); a null on F1 does not falsify entity-targeted continuation, and a positive
+cannot be attributed to entity targeting. Additional dose limit: F1 renders only when a
+delivered excerpt names a taggable entity absent from the query, so per-cell dose varies and
+is NOT verifiable post-hoc (transcripts persist digests, not text) — dose evidence is the
+per-arm smoke only. Also recorded: the eval-mode env whitelist initially dropped the framing
+flags entirely (fixed on this branch, modules/ui/build.gradle.kts HEADLESS_AI_ENV_VARS); the
+F0 arm ran before that fix, which is immaterial because F0 is all-flags-off by design and its
+smoke asserted absence.
+
+**AMENDMENT 2 (2026-07-28, before any F3 cell; F0-F2 complete).** F3's pre-launch smoke showed
+its zero-result trigger is unreachable on this backend: hybrid retrieval returns dense-leg
+neighbors for even gibberish queries (measured 5,119 B for a nonsense probe), and every
+delivery exceeds the 400-byte default thin floor - the arm as configured would render its
+framing on approximately no eval calls. The census independently measured the REAL
+trusted-emptiness class as THIN deliveries (<1,600 B, ~15% of B-arm search calls, mostly
+exact-phrase queries). Amendment: the F3 arm runs with
+JUSTSEARCH_SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES=2000, reinterpreting F3 as
+weak/thin-result calibration framing (the failure mode as it actually occurs) rather than
+literal zero-result framing. Verified by smoke before spend: fires on an exact-phrase thin
+query, does not fire on a healthy query.
+
+**Amendment 2b (2026-07-28, same pre-F3-spend window):** floor 2000 B is still vacuous - the
+low-signal-gated minimum delivery (~3 dense hits) measures ~5 KB, and a rare-phrase query
+delivered 14 KB. Floor set to 6000 B: fires on gated/weak deliveries (measured 5.1 KB
+gibberish probe), silent on healthy ones (measured 17.2 KB). Dose verified by smoke both
+polarities before any F3 cell; no F3 cell had run under 2000 B either.
+
+**Amendment 2c (2026-07-28, same window; supersedes 2b's floor value):** 2b misread the floor
+metric - deliveredBodyBytes counts hit CONTENT (title+path+preview+matched terms,
+McpDeliveryFraming.deliveredBodyBytes), not the rendered response size. At floor 6000 the
+framing fired on healthy deliveries (content ~5 KB); at the rendered-size numbers 2b cited,
+nothing was comparable. Final: floor = 2000 CONTENT bytes - smoke-verified three ways below
+(weak/gated 3-hit delivery fires; rare-phrase multi-hit delivery silent; healthy delivery
+silent). 2b's floor never governed any measured cell.
+
+**AMENDMENT 3 (2026-07-28, F3 DROPPED before any measured cell).** Three floor calibrations
+(400 default / 2000 / 6000) could not establish F3's positive control: direct measurement of
+the trigger metric's inputs shows every query class - gibberish, rare-phrase, healthy -
+returns 10 hits at 1,630-1,725 content-bytes (6% spread). The deliveredBodyBytes trigger has
+no dynamic range on this backend (dense legs always fill the hit list; per-hit content is
+near-constant), so no floor discriminates weak from healthy deliveries and an F3 arm could
+not deliver a verifiable dose. Per the probe's pre-launch discipline (unestablishable
+positive control = do not launch the arm), F3 is dropped from this probe: the framing code
+remains shipped default-off; a future arm requires a redesigned trigger keyed on retrieval
+signals with real variance (totalHits, top-score, or leg-agreement), which is engine-side
+design work, not a floor constant. The probe completes as F0/F1/F2 (120 measured cells).
+Zero F3 cells were run; F3 spend $0 (three calibration pilots ~$4.5 total across the probe
+are setup, not cells).
+
+## Phase 2 probe RESULTS (2026-07-28, pre-registered analysis; arms F0/F1/F2, 40 B-cells each)
+
+Validity (pre-registered): ONE identical mcp_tool_surface_hash across all three arms
+(202c5221...) - framing confirmed content-only; comparable:true and zero leak-suspect cells
+on every arm; per-arm framing dose verified by MCP smoke before each launch (F0 absence,
+F1/F2 presence); mixed-model guard clean; zero exhaustions in any arm. F3 was dropped by
+Amendment 3 (unestablishable positive control), zero F3 cells run. Probe cell spend ~ $40
+plus ~$5 of calibration pilots - under the pre-registered $90 abort line.
+
+Arm aggregates (n=40 cells: 20 qids x 2 seeds, condition B only):
+
+| arm | accuracy | hop1_stop | abstained | name_pivot(gen.) | fallback_after_mcp |
+|---|---|---|---|---|---|
+| F0 control | 0.275 | 0.350 | 0.375 | 0.850 | 0.850 |
+| F1 continuation | 0.425 | 0.225 | 0.300 | 0.900 | 0.900 |
+| F2 evidence-not-answer | 0.325 | 0.250 | 0.300 | 0.800 | 0.900 |
+
+Question-level paired tests vs F0 (sign-flip permutation, 20k draws, seeded):
+F1: accuracy +0.150 (p=0.24), hop1_stop -0.125 (p=0.27), abstained -0.075 (p=0.56).
+F2: accuracy +0.050 (p=0.69), hop1_stop -0.100 (p=0.35), abstained -0.075 (p=0.56).
+Nothing reaches alpha=0.05 at n=20 questions - as pre-registered, this probe is a
+DIRECTION-FINDER, and every F1/F2 primary moved in the mechanism-predicted direction.
+
+**Decision per the pre-registered rule: F1 and F2 both GRADUATE via clause (b)** (>=2
+behavioral primaries point-improved AND accuracy delta >= 0); nothing is dropped; NO framing
+ships as a default from this probe (naturalistic replication on a natural-question set is
+the hard prerequisite - the 788 S4 Goodhart guard). Context worth recording: F0's 0.275
+replicates the hero campaign's B-arm on this stratum (0.267-0.286), and F1's 0.425 closes
+most of the gap toward the campaign's file-tools baseline (~0.47) - directionally, one
+sentence of continuation framing recovered the bulk of the tool arm's measured deficit.
+
+Caveats (pre-registered + amendments): single synthetic stratum; B-only; 2 seeds;
+F1 tests the generic continuation move, not entity-targeted continuation (Amendment 1 -
+fabricated bridge names are NER-invisible); the generalized name_pivot field is near-ceiling
+(0.80-0.90) and does NOT reproduce the census's hop-1-person pivot semantics on this data -
+hop1_stop carried the discriminating signal instead. Raw run dirs (logs, records, per-arm
+smokes) retained at probe-789/tmp/789-probe-2026-07-28/.
+
+Next steps this licenses: naturalistic replication design (enron-qa) for F1/F2; F3 trigger
+redesign is engine-side design work (Amendment 3), parked.
