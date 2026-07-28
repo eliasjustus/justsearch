@@ -1,0 +1,594 @@
+{
+  "judge_identity": {
+    "kind": "hybrid-em-llm",
+    "model": "Qwen_Qwen3.5-9B-Q4_K_M.gguf",
+    "version": "Qwen_Qwen3.5-9B-Q4_K_M.gguf",
+    "prompt_hash": "6e84a3d0f25145d88783e8a8834ae79e23d8a58a60a1101845d87d2870a182f9"
+  },
+  "stats": {
+    "em_auto_pass": 44,
+    "judged_misses": 71,
+    "judge_flips": 1,
+    "judge_disagreements": 8,
+    "agreement_rate": 0.8873,
+    "call_failures": 0,
+    "degraded_to_em": false
+  },
+  "scores": {
+    "A|0|q0": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|0|q1": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|0|q10": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|0|q11": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|0|q12": {
+      "em": false,
+      "judge": null,
+      "final": false
+    },
+    "A|0|q13": {
+      "em": false,
+      "judge": null,
+      "final": false
+    },
+    "A|0|q14": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|0|q15": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|0|q16": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|0|q17": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|0|q18": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|0|q19": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|0|q2": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|0|q3": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|0|q4": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|0|q5": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|0|q6": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|0|q7": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|0|q8": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|0|q9": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|0|q0": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q1": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q10": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q11": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q12": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q13": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q14": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q15": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q16": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|0|q17": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|0|q18": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q19": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q2": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q3": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q4": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q5": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|0|q6": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|0|q7": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|0|q8": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|0|q9": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|1|q0": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|1|q1": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|1|q10": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|1|q11": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|1|q12": {
+      "em": false,
+      "judge": null,
+      "final": false
+    },
+    "A|1|q13": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|1|q14": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|1|q15": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|1|q16": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|1|q17": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|1|q18": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|1|q19": {
+      "em": false,
+      "judge": null,
+      "final": false
+    },
+    "A|1|q2": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|1|q3": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|1|q4": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|1|q5": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|1|q6": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|1|q7": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|1|q8": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|1|q9": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|1|q1": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|1|q10": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|1|q11": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|1|q12": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|1|q13": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|1|q15": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|1|q16": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|1|q17": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|1|q18": {
+      "em": false,
+      "judge": null,
+      "final": false
+    },
+    "B|1|q19": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|1|q2": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|1|q3": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|1|q4": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|1|q5": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|1|q6": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|1|q7": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|1|q8": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|1|q9": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|2|q1": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|2|q10": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|2|q12": {
+      "em": false,
+      "judge": null,
+      "final": false
+    },
+    "A|2|q13": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|2|q14": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|2|q15": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|2|q16": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|2|q17": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|2|q18": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|2|q19": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|2|q2": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|2|q3": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|2|q4": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|2|q5": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|2|q6": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|2|q7": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "A|2|q8": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "A|2|q9": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|2|q1": {
+      "em": false,
+      "judge": true,
+      "final": true
+    },
+    "B|2|q10": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|2|q11": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|2|q12": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|2|q13": {
+      "em": false,
+      "judge": null,
+      "final": false
+    },
+    "B|2|q14": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|2|q15": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|2|q16": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|2|q17": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|2|q18": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|2|q19": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|2|q2": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|2|q3": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|2|q4": {
+      "em": false,
+      "judge": null,
+      "final": false
+    },
+    "B|2|q5": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|2|q6": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|2|q7": {
+      "em": false,
+      "judge": false,
+      "final": false
+    },
+    "B|2|q8": {
+      "em": true,
+      "judge": null,
+      "final": true
+    },
+    "B|2|q9": {
+      "em": true,
+      "judge": null,
+      "final": true
+    }
+  }
+}

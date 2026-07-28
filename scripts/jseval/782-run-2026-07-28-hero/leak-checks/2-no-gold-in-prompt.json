@@ -1,0 +1,3 @@
+{
+ "method": "root-mode agent receives only the question; corpus context arrives exclusively via MCP tool results from the served index; gold answer strings never enter any prompt template (utility_run task-args carry qid+question only). Verified structurally at 0d; leak_suspect_tool_calls asserted [] at compose per plan."
+}

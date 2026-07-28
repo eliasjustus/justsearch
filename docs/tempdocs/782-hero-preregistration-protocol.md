@@ -758,3 +758,54 @@ if the sonnet measurement is anything other than `0.000`, §E.6 stop rule 3 appl
 - **§E.1's selection rule** is now the mechanically-forced truncation rule rather than an abstract
   "deterministic committed rule", with the certification-digest reason stated inline so a future
   agent cannot "improve" it into a seeded sample and silently break certified identity.
+
+## §I Campaign log — run 2026-07-28 (appended post-freeze; dated history, amendments per §E.0 convention)
+
+Authoritative evidence: `scripts/jseval/782-run-2026-07-28-hero/` (records, calibrations, judge
+overlays, closed-book, leak-checks, §E.4 derived JSONs, both ledgers, window-1 records). Register
+entry: F-043. This section is the narrative index, not a second authority.
+
+**Window 1 (morning):** s1 void run (mixed-model guard poisoned 120/120 cells — the CLI's
+background-haiku calls; the frozen plan had dropped 624's `--agent-env` mitigation) → stop rule 5
+invoked → **Amendment 2** (uniform `--agent-env ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-sonnet-5` +
+`CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-5`; max_budget re-derived $0.80 by the frozen clamp rule
+on the measured censored p95). s1/s2/s3 then completed comparable:true, judge overlays real
+(out-of-band llama on 8081 through the Head /v1 proxy after diagnosing the eval-mode
+`llm=True` silent no-op; polarity pre-checked both ways). **Step-5 compose FAILED CLOSED:**
+`agent_cohort_key` split — the run dir lived inside the tracked tree, so `source_git_state`
+drifted between strata (untracked 24→35→46) and `git_dirty` was true throughout (§E.2 R1
+violated; the step-g between-strata re-assertion was not executed — owned in the incident
+ledger). Unrepairable in-place (identity is baked; never hand-patch). Window-1 spend ~$130.
+
+**Window 2 (afternoon):** identical frozen parameters; run dir relocated to gitignored `tmp/`
+(ignored paths never enter the untracked fingerprint), calibrations reused (same git_sha
+bea1ac37 + CLI 2.1.220, 624 precedent), R1 porcelain-0 asserted mechanically before EVERY
+stratum launch. Two externally-induced incidents, both fail-closed with $0-to-small waste and
+both root-caused (serve backend killed as a harness-tracked task mid-s1 → all long-running
+processes now run detached; s2 pre-cell stray-root abort → the leak guard correctly refused a
+dataDir still carrying s1's watched root; purged via `DELETE /api/indexing/roots`,
+deletedJobs=1001). s1/s2/s3 completed comparable:true, identity clean (untracked 0, dirty
+false), ONE cohort. Judge overlays ×3 clean (flips 1/0/4, agreement 0.887–0.984,
+call_failures 0). **THE COMPOSE SUCCEEDED** — `combined/utility-comparison-cross-corpus.v1.json`,
+semantic_digest `e2bb70c3…`. Window-2 spend ~$148; campaign total ~$278 of the $300 cap.
+
+**Verdict as recorded:** `rejected / inconclusive / addition_b`; all three strata
+`adoption-only`; 29/30 gates pass. **FREEZE DEFECT #2 (escalated, not patched):** the sole
+failing gate `corpus_certification_complete` demands `cert.query_count == cell.query_count`
+(`utility_claim_policy.py:414-423`) — the certifications certify the 50-query committed set,
+the frozen design runs the 20-qid subset; 50 ≠ 20 always. Same class as BLOCKER-1, reachable
+only at compose. Code-certain counterfactual (`utility_claim_policy.py:852-867`):
+**accepted / adoption-only**. Founder decision requested: policy v4 with a subset-aware
+certification gate (keyed on the frozen `selected_query_sha256` in `cells.v1.json`) + an
+offline re-compose ($0, no re-measurement, no new cells). Until then the record stands as
+rejected — the verdict is not re-read into something better.
+
+**Measured (95% CI beside exact-McNemar p; power line: no effect detected at n=60/stratum):**
+enron-1k Δacc −0.1964 [−0.375, −0.018] p=0.063; enron-10k −0.1304 p=0.146; legal-1k +0.0222
+p=1.0. Window-1 signs identical (−0.154 / −0.093 / +0.022). Adoption rate 1.0; tool surface
+verified 180/180 single hash; zero leak-suspect cells. Honest headline: the sonnet agent
+reliably adopts the tool; the addition arm shows no accuracy benefit and is point-negative on
+enron at this budget. Note the designed-in conservative asymmetry: B-arm cells exhaust the
+$0.80 budget more often than A (10k: 12/60 vs 4/60) under `resource-exhaustion-as-failure`.
+
+**Publication:** nothing here publishes; 623 pipeline remains founder-only per §E.5.

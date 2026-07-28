@@ -862,6 +862,48 @@ above)*
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
 
+### F-043: the 782 hero agent-utility campaign composed one clean three-stratum cohort at sonnet — verdict as-recorded REJECTED/inconclusive on a freeze-level gate defect; code-certain counterfactual ACCEPTED/adoption-only (adoption 1.0, no accuracy benefit, point-negative on enron); founder-gated v4 re-compose escalated (tempdoc 782 window 2, 2026-07-28)
+
+- **Answer:** the preregistered hero campaign (782 §E frozen; policy `agent-utility-public-v3`;
+  3 strata × 20 qids × 3 seeds × 2 arms at sonnet, $0.80/cell, private-synthetic tier C, 781 v2
+  certified corpora) composed all three strata into ONE harness cohort
+  (`agent_cohort_key ebdf4a74…` identical; window 1's identity split closed by running from a
+  gitignored run dir) — the compose that failed closed in window 1 succeeded. Composed
+  `claim_verdict`: **status rejected, outcome inconclusive, arm addition_b**; per-stratum outcomes
+  **adoption-only on all three**. 29 of 30 policy gates pass — `verified_tool_surface` rate 1.0
+  (180/180 B cells, single observed hash), `no_leak_suspect_cells` 0, `minimum_adoption_rate`
+  observed **1.0**, `closed_book_at_hero_tier` pass, `completion_triple_reported` pass.
+- **The single failing gate is a freeze defect, not a measurement defect:**
+  `corpus_certification_complete` requires `cert.query_count == cell.query_count` exactly
+  (`utility_claim_policy.py:414-423`); the 781 certifications certify the 50-query committed gold
+  set while the frozen §E.1 design runs the pre-registered 20-qid subset — 50 ≠ 20 on every
+  stratum, so **no run under this frozen design could ever pass** (same class as BLOCKER-1, but
+  only reachable at compose). `query_gold_sha256` matches (identity chains the full committed
+  set); only the count equality fails. Code-certain counterfactual
+  (`utility_claim_policy.py:852-867`, read not re-run): with that validity gate passing, the
+  verdict is **accepted / adoption-only**. Per §E.6 stop rule 5 the amendment window is closed —
+  a subset-aware policy v4 (keyed on the design's own `selected_query_sha256`) plus an OFFLINE
+  re-compose ($0, no re-measurement) is **escalated to the founder**, not applied.
+- **Measured deltas (accuracy, with-tool minus baseline; 95% CI beside exact-McNemar p;
+  power-honesty: no effect detected at n=60/stratum):** enron-1k **−0.1964** [−0.375, −0.018]
+  p=0.063 (9 fixes / 20 breaks); enron-10k **−0.1304** p=0.146 (3/9); legal-1k **+0.0222** p=1.0
+  (7/6). Window-1 signs identical on all three strata (−0.154 / −0.093 / +0.022) — two
+  independent windows agree. Substrate exonerated: zero connection errors, tool surface verified
+  on every B cell. Honest headline: **the sonnet agent adopts the JustSearch MCP tool at rate 1.0
+  when offered, with no measurable accuracy benefit in the ADDITION arm — and point-negative on
+  enron email.**
+- **Conditions/caveats:** addition arm only (B = generic file tools + MCP; the substitution arm
+  was not run); sonnet only; fabricated-gold private-synthetic corpora (781 v2, title-leak
+  closed); outcome rule `resource-exhaustion-as-failure` with a designed-in conservative
+  asymmetry — B exhausts the $0.80/cell budget more often than A (10k: 12/60 vs 4/60) because
+  tool calls consume budget, which biases against B. Judge overlay: local Qwen3.5-9B
+  (different family), flips 1/0/4, agreement 0.887–0.984, call_failures 0, degraded_to_em false.
+- **Evidence:** `scripts/jseval/782-run-2026-07-28-hero/` (per-stratum + combined records,
+  calibrations, judge overlays, closed-book, leak-checks, both ledgers, §E.4 derived JSONs,
+  window-1 records under `window1/`); composed `semantic_digest e2bb70c3…`; spend ~$278 of the
+  $300 cap. Full incident history (void run, mixed-model guard, backend kill, stray-root guard)
+  in the committed `incident-ledger.md`; campaign narrative in tempdoc 782 §I.
+
 ### F-042: the shipped Tika extraction path costs −13.74% nDCG@10 at HEAD hybrid defaults — but the obvious fix (swap to a better OCR engine) is measurement-rejected: GOT is statistically tied with Tika (tempdoc 786 §E, 2026-07-28; the full-pipeline sibling of F-009's lexical-only measurement)
 
 - **Answer:** the four OHR-Bench extraction variants re-measured at HEAD defaults (hybrid, CE on,
