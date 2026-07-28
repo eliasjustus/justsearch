@@ -230,13 +230,15 @@ function referenceStratum(cell, outcome) {
 function noResult(selection, target, root) {
   const reason = selection.pointer.reason;
   const state = selection.pointer.previous ? "The previously selected result was withdrawn. " : "";
-  const policyPath = path.join(root, "scripts", "jseval", "utility-claim-policy.v1.json");
-  const policyId = readJson(policyPath).policy_id;
+  const policyPath = path.join(root, "scripts", "jseval", "utility-claim-policy.v3.json");
+  const policy = readJson(policyPath);
+  const policyId = policy.policy_id;
+  const strataCount = (policy.required_strata || []).length;
   const common =
     `No agent-utility result is currently accepted for publication. ${state}${reason} ` +
-    `The checked-in claim policy (\`${policyId}\`) is active and fully resolved: it pins a required four-stratum ` +
-    "campaign matrix (CLERC legal + Enron email, each at 1k and 10k documents), a model cohort, and its scientific margins. " +
-    "One pre-registered confirmatory campaign has run against it (2026-07-18); the policy rejected promotion on " +
+    `The checked-in claim policy (\`${policyId}\`) is active and fully resolved: it pins a required ${strataCount}-stratum ` +
+    "campaign matrix, a model cohort, and its scientific margins. " +
+    "One pre-registered confirmatory campaign has run against an earlier policy revision (2026-07-18); it rejected promotion on " +
     "identity-verification gates, and the complete evidence — including both voided runs — is committed under " +
     "`scripts/jseval/624-run-2026-07-18-confirmatory/`. " +
     "Owner decisions, certifications, and any paid rerun require separate authorization; the harness does not invent them.";

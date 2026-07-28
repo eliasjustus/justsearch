@@ -32,11 +32,13 @@ function fixture() {
     schema: "agent-utility-publication-pointer.v1", schema_version: 1,
     current: null, previous: null, reason: "No accepted result.", selected_at: null,
   });
-  // The no-result block renders the ACTIVE claim-policy id, read dynamically from this
-  // file (it used to be hardcoded, which silently named a superseded policy). The
-  // fixture must provide it so the generator has its real input.
-  writeJson(path.join(root, "scripts/jseval/utility-claim-policy.v1.json"), {
+  // The no-result block renders the ACTIVE claim-policy id + stratum count, read
+  // dynamically from this file (they used to be hardcoded, which silently named a
+  // superseded policy and a stale four-stratum matrix). The fixture must provide
+  // them so the generator has its real input.
+  writeJson(path.join(root, "scripts/jseval/utility-claim-policy.v3.json"), {
     policy_id: FIXTURE_POLICY_ID, status: "active",
+    required_strata: [{ stratum_id: "a" }, { stratum_id: "b" }, { stratum_id: "c" }],
   });
   return root;
 }

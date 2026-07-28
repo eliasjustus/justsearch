@@ -7,9 +7,11 @@ from pathlib import Path
 import pytest
 
 from jseval.utility_claim_policy import (
+    MANDATORY_REQUIREMENTS,
     SUPPORTED_REQUIREMENTS,
     evaluate_claim,
     load_policy,
+    load_superseded_policy,
     policy_digest,
 )
 from tests.test_corpus_inject import _certification_snapshot_fixture
@@ -25,7 +27,7 @@ def _record(seed_ids: list[int] | None = None) -> dict:
     ]
     n_attempted = len(seed_ids) * 20
     certification = _certification_snapshot_fixture()
-    return {
+    record = {
         "schema": "utility-comparison.v1",
         "schema_version": 2,
         "seed_count": len(seed_ids),
@@ -134,6 +136,53 @@ def _record(seed_ids: list[int] | None = None) -> dict:
             }
         },
     }
+    _sync_v3_reporting(record)
+    return record
+
+
+def _sync_v3_reporting(record: dict) -> None:
+    """Mirror the two producer-emitted reporting blocks the v3 policy requires.
+
+    `utility_recompose._project_estimands` always emits the per-arm completion
+    estimand alongside ITT, and `utility_comparison._compose_cell` attaches
+    `schema_stratified.by_stratum` to each measured cell that spans more than one
+    `question_type`. The fixture reproduces BOTH from its own ITT strata rather
+    than hand-pinning them, so a test that appends a stratum stays consistent
+    with what the real producer would have composed for it (the
+    `unreachable-seed-green` discipline)."""
+    cells = record["estimands"]["intention_to_treat"]["strata"]
+    record["estimands"]["completion"] = {
+        "role": "secondary",
+        "source": "measured",
+        "strata": [
+            {
+                "stratum_id": cell["stratum_id"],
+                "corpus": cell["corpus"],
+                "model": cell["model"],
+                "by_arm": {
+                    arm: {
+                        "n_expected": cell["per_arm_loss"][arm]["n_expected"],
+                        "n_attempted": cell["per_arm_loss"][arm]["n_attempted"],
+                        "n_completed": cell["per_arm_loss"][arm]["n_completed"],
+                        "n_exhausted": 0,
+                        "completion_rate": 1.0,
+                    }
+                    for arm in ("A", "B")
+                },
+            }
+            for cell in cells
+        ],
+    }
+    measured = record.setdefault("measured", {})
+    for cell in cells:
+        by_model = measured.setdefault(cell["corpus"], {})
+        block = by_model.setdefault(cell["model"], {})
+        block.setdefault("primary_arm", "addition_b")
+        block["schema_stratified"] = {"by_stratum": {
+            schema: {"n_paired_observations": cell["n_paired_observations"] // 2,
+                     "accuracy": {"delta_ci95": [-0.01, 0.05]}}
+            for schema in ("1_hop", "2_hop")
+        }}
 
 
 def _active_policy(record: dict | None = None) -> dict:
@@ -172,37 +221,36 @@ def _sync_tool_assertion_counts(record: dict) -> None:
     assertions["cells_total"] = total
     assertions["cells_with_mcp_surface_verified"] = total
     assertions["cells_with_exposure_mode_verified"] = total
+    # A test that appends a stratum must also carry that stratum's producer-emitted
+    # completion + schema-stratification blocks (v3 requirements) -- same resync
+    # point, so there is one place to keep a mutated fixture self-consistent.
+    _sync_v3_reporting(record)
 
 
-def test_checked_in_policy_is_active_confirmatory_four_stratum():
-    """Founder-delegated activation (tempdoc 624 §Confirmatory pre-registration,
-    2026-07-17): the checked-in policy is ACTIVE with the exact haiku confirmatory
-    matrix (legal 1k/10k + email 1k/10k, verbose, seeds {0,1,2}, 20q) and fully
-    resolved thresholds (seeds floor 3 = harness SEED_FLOOR; paired >= 54 = 90%%
-    of the 60-pair complete matrix; adoption >= 0.9; noninferiority margin 0.10).
-    Thresholds were set BEFORE the confirmatory campaign ran — pre-registration,
-    not post-hoc selection.
+def test_checked_in_policy_is_ratified_v3_three_stratum_sonnet_hero():
+    """Founder-delegated ratification (766 §G decision 2, delegated 2026-07-28):
+    the checked-in ACTIVE policy is `agent-utility-public-v3` with exactly the
+    tempdoc 782 §E.1 three-stratum sonnet hero matrix — enron-1k, enron-10k,
+    legal-1k, verbose, seeds {0,1,2}, 20q. legal-10k is EXCLUDED (771 §E M5), and
+    haiku is not run in this campaign.
 
-    RATIFIED 2026-07-21 (founder-authorized, tempdoc 755 §J): the rate-based
-    verified_tool_surface amendment became part of the ACTIVE policy — policy_id
-    advanced to `agent-utility-public-v2` and thresholds now carry
-    minimum_surface_verification_rate = 0.9. The matrix, other thresholds, and
-    requirements are byte-unchanged from the v1 activation."""
+    Supersedes the 2026-07-17 four-stratum haiku confirmatory activation and its
+    2026-07-21 v2 amendment (tempdoc 755 §J), whose rate-based
+    verified_tool_surface semantics carry over unchanged (782 §E.2 R2)."""
     policy = load_policy()
     jsonschema = pytest.importorskip("jsonschema")
-    schema_path = __import__("pathlib").Path(__file__).parents[1] / "utility-claim-policy.v1.schema.json"
+    schema_path = Path(__file__).parents[1] / "utility-claim-policy.v1.schema.json"
     jsonschema.validate(policy, json.loads(schema_path.read_text(encoding="utf-8")))
 
     assert policy["status"] == "active"
     assert policy["unresolved"] == []
-    assert policy["policy_id"] == "agent-utility-public-v2"
+    assert policy["policy_id"] == "agent-utility-public-v3"
     assert policy["thresholds"]["minimum_surface_verification_rate"] == 0.9
-    assert {item["stratum_id"] for item in policy["required_strata"]} == {
-        "en-legal-clerc|mixed/en-legal-clerc-1k-verbose|1000|verbose|haiku",
-        "en-legal-clerc|mixed/en-legal-clerc-10k-verbose|10000|verbose|haiku",
-        "en-email-enron-raw|mixed/en-email-enron-raw-1k-verbose|1000|verbose|haiku",
-        "en-email-enron-raw|mixed/en-email-enron-raw-10k-verbose|10000|verbose|haiku",
-    }
+    assert [item["stratum_id"] for item in policy["required_strata"]] == [
+        "en-email-enron-raw|mixed/en-email-enron-raw-1k-verbose|1000|verbose|sonnet",
+        "en-email-enron-raw|mixed/en-email-enron-raw-10k-verbose|10000|verbose|sonnet",
+        "en-legal-clerc|mixed/en-legal-clerc-1k-verbose|1000|verbose|sonnet",
+    ]
     assert all(item["seed_ids"] == [0, 1, 2] and item["query_count"] == 20
                for item in policy["required_strata"])
     thresholds = policy["thresholds"]
@@ -215,6 +263,42 @@ def test_checked_in_policy_is_active_confirmatory_four_stratum():
     verdict = evaluate_claim(_record(), policy)
     assert verdict["accepted"] is False
     assert verdict["policy_hash"] == policy_digest(policy)
+
+
+def test_v3_ratification_tuned_no_threshold_and_dropped_legal_10k():
+    """The ratification's composition rule, enforced literally rather than in
+    prose: v3 = v3-DRAFT machinery + v2's thresholds VERBATIM + decision-2 strata.
+
+    Comparing v3's thresholds against the SUPERSEDED v2 document byte-for-byte on
+    every shared key is what makes "no threshold was tuned during ratification" a
+    mechanical property. The only permitted difference is the additive
+    closed-book ceiling, which has no v2 counterpart."""
+    policy = load_policy()
+    superseded = load_superseded_policy()
+
+    assert superseded["status"] == "superseded"
+    assert superseded["superseded_by"] == policy["policy_id"]
+
+    shared = set(policy["thresholds"]) & set(superseded["thresholds"])
+    assert {name: policy["thresholds"][name] for name in sorted(shared)} == {
+        name: superseded["thresholds"][name] for name in sorted(shared)
+    }
+    # The additive keys are the ONLY divergence, in the v3 direction only.
+    assert set(policy["thresholds"]) - set(superseded["thresholds"]) == {
+        "maximum_closed_book_accuracy",
+    }
+    assert set(superseded["thresholds"]) - set(policy["thresholds"]) == set()
+
+    strata = policy["required_strata"]
+    assert len(strata) == 3
+    assert all(item["requested_model"] == "sonnet" for item in strata)
+    assert not any(
+        item["corpus_member"] == "en-legal-clerc" and item["size"] == 10000
+        for item in strata
+    ), "legal-10k is excluded by founder decision 2 (766 §G / 782 §E.1)"
+    assert policy["requirements"]["closed_book_at_hero_tier"] is True
+    assert policy["hero_tier"]["requested_model_class"] == "sonnet-or-stronger"
+    assert policy["policy_changelog"][0]["policy_id"] == policy["policy_id"]
 
 
 def test_favorable_outcomes_cannot_override_unresolved_policy():
@@ -637,8 +721,15 @@ def test_supported_requirements_match_schema_properties_exactly():
     schema_path = Path(__file__).parents[1] / "utility-claim-policy.v1.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     requirements_schema = schema["properties"]["requirements"]
+    # Every requirement the evaluator supports is a schema property, and every
+    # MANDATORY one is schema-`required`. The v3 ratification (2026-07-28) split
+    # these two sets: `completion_triple_reported` / `closed_book_at_hero_tier` /
+    # `schema_strata_reported` are additive requirements a policy MAY declare
+    # (their gates fire only when declared), so the superseded v2 document stays
+    # schema-valid history without back-dating them into it.
     assert SUPPORTED_REQUIREMENTS == set(requirements_schema["properties"])
-    assert SUPPORTED_REQUIREMENTS == set(requirements_schema["required"])
+    assert MANDATORY_REQUIREMENTS == set(requirements_schema["required"])
+    assert MANDATORY_REQUIREMENTS < SUPPORTED_REQUIREMENTS
 
 
 # --- verified_exposure_mode (tempdoc 725 increment 2) -----------------------
@@ -839,7 +930,7 @@ def test_checked_in_active_policy_evaluates_surface_via_rate_branch():
     capture-miss rate (0.92 >= 0.9) passes. This is the runnable proof that the
     rate semantics hold against the policy the harness actually loads."""
     policy = load_policy()
-    assert policy["policy_id"] == "agent-utility-public-v2"
+    assert policy["policy_id"] == "agent-utility-public-v3"
     assert policy["thresholds"]["minimum_surface_verification_rate"] == 0.9
 
     record = _record()

@@ -380,3 +380,78 @@ that would be editing a frozen section.
 
 Nothing in this table is a judgment call at supervision time: each row is read from a named file
 or is a founder decision recorded before launch.
+
+## §G Claim policy v3 — RATIFIED 2026-07-28 (closes §E.7 items 4 and 6)
+
+**Authority.** Founder decision 2 (766 §G); the ratification act itself was delegated to the
+orchestrator on 2026-07-28 with a fixed composition rule — **v3-DRAFT's structural machinery +
+v1's (`agent-utility-public-v2`'s) numeric thresholds VERBATIM + founder-decision-2 strata**.
+No threshold was tuned and no stratum was chosen by an agent.
+
+**File.** `scripts/jseval/utility-claim-policy.v3.json` — `policy_id: agent-utility-public-v3`,
+`status: active`. `required_strata` are exactly §E.1, in §E.1's cheapest-first order:
+
+| # | `stratum_id` |
+|---|---|
+| 1 | `en-email-enron-raw\|mixed/en-email-enron-raw-1k-verbose\|1000\|verbose\|sonnet` |
+| 2 | `en-email-enron-raw\|mixed/en-email-enron-raw-10k-verbose\|10000\|verbose\|sonnet` |
+| 3 | `en-legal-clerc\|mixed/en-legal-clerc-1k-verbose\|1000\|verbose\|sonnet` |
+
+each `query_count: 20`, `seed_ids: [0,1,2]`. **legal-10k is absent** — item 4's contradiction
+(the draft declared legal-10k×sonnet + legal-1k×sonnet + legal-10k×haiku) is resolved in favour
+of decision 2. Item 6 is resolved by keeping the draft's `maximum_closed_book_accuracy: 0.1` as a
+post-hoc failure **CEILING**; it does not relax P3, whose pre-launch bar stays 0.000 at sonnet.
+
+**Selector change.** `utility_claim_policy.policy_path()` now returns the v3 file. The v2
+document (`utility-claim-policy.v1.json`) is `status: "superseded"` +
+`superseded_by: "agent-utility-public-v3"`, retained as history and as the byte-source the
+no-tuning test compares against. `utility-claim-policy.v3-DRAFT.json` is DELETED, and its
+`v3_draft_policy_path`/`load_v3_draft_policy` accessors are gone; the only live references that
+moved were `scripts/docs/gen-public-agent-utility.mjs` (+ its test), which also stopped hardcoding
+"four-stratum … 1k and 10k" and now renders the stratum count from the policy.
+
+**Three additive requirements are now wired, not decorative.** `completion_triple_reported`,
+`closed_book_at_hero_tier` and `schema_strata_reported` were declared by the draft but would have
+failed the `supported_policy_requirements` gate closed, making every record unpromotable. Each is
+now a real conditional gate (fires only when a policy declares it, so records under v1/v2 project
+byte-identically):
+
+- `completion_triple_reported` — every ITT stratum must carry `n_per_protocol_pairs` and a per-arm
+  `completion_rate` (`estimands.completion.strata[*].by_arm[*]`).
+- `closed_book_at_hero_tier` — every stratum's 707 certification snapshot must carry a measured
+  `scientific_gates.closed_book.observed.closed_book_accuracy` at or below the ceiling, with a
+  named measurement model.
+- `schema_strata_reported` — every composed measured cell must publish a `schema_stratified.by_stratum`
+  covering both known schemas. Cells are located by their own `primary_arm` marker, not by joining
+  on a dataset key (the measured key is the canonical slug `beir/fixture` while the ITT stratum's
+  `corpus` is `fixture` — a join there would silently miss).
+
+**Defect found and fixed by that third gate (768 D4 round-trip).** `sanitize_observation` wrote
+`question_type` and `_OBSERVATION_KEYS` accepted it, but `read_evidence` never restored it — so
+every *offline replay* recomposed with no schema tag and silently dropped `schema_stratified`,
+contradicting the write-side comment's own promise. Repaired at
+`scripts/jseval/jseval/utility_evidence.py` (`read_evidence`). This mattered directly: the
+publication/replay path is how a hero record gets published.
+
+**Test evidence.** Full jseval suite: **2520 passed, 2 skipped** (`python -m pytest tests/`).
+`node scripts/docs/gen-public-agent-utility.test.mjs` → OK (98 assertions); `--check` in sync after
+regenerating README/RESEARCH/`docs/reference/benchmarks/agent-utility.md`. Deliberate pin changes:
+
+| pin | change | why it is the new truth |
+|---|---|---|
+| `test_checked_in_policy_is_active_confirmatory_four_stratum` | renamed `…_is_ratified_v3_three_stratum_sonnet_hero`; asserts v3 id + the §E.1 ordered stratum list | the four-stratum haiku matrix is superseded by decision 2 |
+| `test_checked_in_active_policy_evaluates_surface_via_rate_branch` | `agent-utility-public-v2` → `…-v3` | same rate semantics, new carrier (§E.2 R2) |
+| `test_supported_requirements_match_schema_properties_exactly` | `required` now compared against a new explicit `MANDATORY_REQUIREMENTS` constant, still an exact set equality | supported ≠ mandatory once requirements became additive; keeps the superseded v2 document schema-valid without back-dating keys into it |
+| `test_historical_fixture_semantic_digest_repinned_after_624_itt_change` | `ed81f79b…` → `c3f98ebd…` | 4th occurrence of the documented policy-identity re-pin class; verified the old pin reproduces byte-for-byte when the superseded v2 document is passed as the policy, so policy identity is the sole mover and the `question_type` repair is digest-neutral for this pre-768 fixture |
+
+New test: `test_v3_ratification_tuned_no_threshold_and_dropped_legal_10k` — literally compares v3's
+thresholds against the superseded v2 file on every shared key, asserts the only divergence is the
+additive `maximum_closed_book_accuracy`, and asserts 3 strata / all sonnet / no legal-10k. That
+makes "no threshold was tuned during ratification" a mechanical property rather than a claim.
+
+**Known follow-up (not a blocker for ratification).** `utility_comparison._stratified_breakdown`
+DROPS a schema whose paired observations collapse, while `required_schema_strata.null_result_handling`
+says such a schema is "reported as an honest null, never dropped". Under v3 a collapsed schema
+therefore fails `schema_strata_reported` rather than being reported as null. That is the policy
+enforcing its own words, but the composer should be taught to emit the null so the failure reads as
+"null result" rather than "missing breakdown".

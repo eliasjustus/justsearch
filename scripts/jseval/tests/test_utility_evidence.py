@@ -422,7 +422,20 @@ def test_historical_fixture_semantic_digest_repinned_after_624_itt_change():
     digest. Verified empirically that completion is the SOLE mover: stripping
     `estimands.completion` from the semantic projection reproduces the prior pin
     `3d0bf53b…` byte-for-byte. `tool_result_digests`' new gold_rank/ordered_doc_ids/
-    scores fields stay digest-EXCLUDED (evidence/sanitizer tier only, per U1)."""
+    scores fields stay digest-EXCLUDED (evidence/sanitizer tier only, per U1).
+
+    Re-pinned AGAIN 2026-07-28 (v3 RATIFICATION, founder decision 2 / 766 §G —
+    the SAME re-pin class as the 2026-07-17 activation and the 2026-07-21 v2
+    ratification above, 4th occurrence): the checked-in ACTIVE policy advanced to
+    `agent-utility-public-v3` (three sonnet strata + closed-book / completion /
+    schema-strata requirements). `claim_verdict` is digest-covered and carries
+    `policy_id`/`policy_hash`, so the new policy identity moved this fixture's
+    digest again — it is still REJECTED, for the same structural reason as before
+    (its strata cannot match the required matrix). Verified that the previous pin
+    `ed81f79b…` reproduces byte-for-byte when the SUPERSEDED v2 document is passed
+    as the policy, i.e. the policy identity is the SOLE mover and the 768 D4
+    `question_type` read-path repair in this commit is digest-neutral for this
+    pre-768 fixture (whose question_type is null on every row)."""
     path = (
         Path(__file__).parent
         / "fixtures"
@@ -431,7 +444,7 @@ def test_historical_fixture_semantic_digest_repinned_after_624_itt_change():
     )
     record = finalize_evidence([path], composed_at="fixture")
     assert record["semantic_digest"] == (
-        "ed81f79b34a3537da84c20bc3b978b804dc0419dedaae88597bfc95c5827876b"
+        "c3f98ebd0c32cb95b84755ac43322cc48e782eb79c1ce3a120409ac3e7260bfe"
     )
 
 
