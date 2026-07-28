@@ -199,3 +199,176 @@ identical `semantic_digest` with and without the block.
 tests were deliberately updated (`_NON_SEMANTIC_TOP_LEVEL_FIELDS` and the observation-schema
 key set — both exist precisely to make this kind of growth a visible, justified act) and the
 known `test_percentile_within_bounds` flake; green after. No Java touched.
+
+## Phase 2 implementation log — framing substrate (2026-07-28)
+
+Shipped; $0 (no model call anywhere in the work or its verification). This increment ships the
+three framings as **flag-gated substrate, ALL DEFAULT OFF** — it does NOT run the probe and does
+NOT change any shipped delivery. Measured cells remain founder-gated.
+
+### Seam map
+
+The framings live entirely in MCP response CONTENT. No MCP schema or tool parameter changed
+(F-016), no retrieval path changed.
+
+| Seam | File:line | Role |
+|---|---|---|
+| Framing logic (all three) | `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpDeliveryFraming.java` (new, 1) | Pure static functions + `Settings` record; unit-testable without a backend |
+| F1 computation | `McpToolSurface.java:955` (`buildSearchContent`, per-hit loop) | Continuation line per delivered hit |
+| F2/F3 computation | `McpToolSurface.java:1001` / `:1008` (`buildSearchContent`, tail) | Response-level header + absence note |
+| F2 answer computation | `McpToolSurface.java:619` (`buildAnswerContent`) | The one framing the charter applies to `justsearch_answer` |
+| F2 text placement (search) | `McpToolSurface.java:1062` (`renderSearchText`, head) | Header leads the delivery |
+| F1 text placement | `McpToolSurface.java:1099` (`renderSearchText`, per-hit) | Line directly under the excerpt it qualifies |
+| F3 text placement | `McpToolSurface.java:1116` (`renderSearchText`, after result count) | Block under "Found N results" |
+| F2 text placement (answer) | `McpToolSurface.java:649` (`renderAnswerText`, head) | Prepends above the pre-existing "Evidence pack" line |
+| Structured-tier projection | `McpEvidenceProjection.java:91` (per-hit `continuation`), `:100`/`:103` (`evidenceHeader`/`absenceNote`), `:288` (answer `evidenceHeader`) | Tier equivalence (735 G3) — a structuredContent-only client must sit inside the probe arm too |
+| Content models | `McpSearchResponseContent.java:27`, `McpAnswerResponseContent.java:25` | Framings are content-model facts, computed once, read by both renderers |
+| Settings resolution | `McpDeliveryFraming.resolveSettings()`; call sites `McpToolSurface.java:518` (answer), `:841` (search) | Mirrors `resolveDeliveryBudgetBytes()`; null store → `Settings.OFF` |
+
+### Config names (and why)
+
+Followed the existing `search.mcp_delivery.budget_bytes` precedent (same subsystem, same file),
+with the four related settings grouped into a nested `McpFraming` record mirroring the established
+`Search.Corrections` pattern rather than adding four flat components to an already-large record.
+
+| Key (`-D` sysprop) | Env var | Default |
+|---|---|---|
+| `search.mcp_framing.continuation_enabled` | `JUSTSEARCH_SEARCH_MCP_FRAMING_CONTINUATION_ENABLED` | `false` |
+| `search.mcp_framing.evidence_not_answer_enabled` | `JUSTSEARCH_SEARCH_MCP_FRAMING_EVIDENCE_NOT_ANSWER_ENABLED` | `false` |
+| `search.mcp_framing.calibrated_absence_enabled` | `JUSTSEARCH_SEARCH_MCP_FRAMING_CALIBRATED_ABSENCE_ENABLED` | `false` |
+| `search.mcp_framing.thin_result_floor_bytes` | `JUSTSEARCH_SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES` | `400` |
+
+**What the probe arms will set** (one framing per arm, per the charter):
+
+* F0 (control) — nothing set. This is the shipped default.
+* F1 — `-Dsearch.mcp_framing.continuation_enabled=true`
+* F2 — `-Dsearch.mcp_framing.evidence_not_answer_enabled=true`
+* F3 — `-Dsearch.mcp_framing.calibrated_absence_enabled=true`
+
+Sysprops are preferred over env vars on this platform (Windows env vars unreliable). Framings
+compose, so a later 2-factor cell can set any subset without code change.
+
+### Rendered before/after (captured from the real renderers, not hand-written)
+
+**F1 — continuation.** Query: *"what happened to the Q3 hedging memo"*.
+
+```
+ [1] Q3 hedging memo (score: 0.91)
+     Path: docs/memos/q3-hedging.md
+     Preview: Please route the Q3 hedging memo through Vince Kaminski before the Friday close.
+     Matched: "hedging" in content_preview
++    note: this excerpt names "Vince Kaminski" — 12 of the documents matching this search also
++    reference it. If that is an intermediate fact rather than your answer, a follow-up search
++    for it may locate the final answer.
+```
+
+(rendered as one unwrapped line). A query that already names the entity renders identically to
+OFF — asserted by `f1SuppressedWhenQueryNamesEntity`.
+
+**F2 — evidence, not answer.** Search (`justsearch_search`):
+
+```
++Retrieval evidence — 1 document matches on "hedging". These are lexical and semantic matches to
++your query, not verified answers to your question — read the excerpts and judge for yourself
++whether they answer it.
++
+ [1] Q3 hedging memo (score: 0.91)
+     ...
+```
+
+Answer (`justsearch_answer`) — the charter's carve-out, and it was NOT structurally messy, so it
+ships as chartered:
+
+```
++Retrieval evidence — 2 passages from 2 documents, selected by lexical and semantic match to your
++query. This is retrieved evidence, not a verified answer to your question — the passages may be
++relevant without containing the answer.
++
+ Evidence pack: 2 passages from 2 documents (retrieval mode: HYBRID). No synthesized answer is
+ included. Pack selection: 2 of 4 candidate passages (retrieval coverage 0.50).
+```
+
+**F3 — calibrated absence.** Zero-result search for *"quarterly hedging policy"*:
+
+```
+ Found 0 results (took 6ms).
++
++10432 documents are indexed and were searched for "quarterly hedging policy". No document
++matched. Absence of results is not evidence of absence: the index may phrase the fact
++differently, the document may not be indexed, or the match may sit in a field this query did not
++reach. Before concluding the information does not exist, try alternate phrasings or narrower
++terms; if you have native file tools, reading or grepping the source directory directly will
++settle it.
+ Hints:
+ - No results found. Try broader terms, or use justsearch_status to check what's indexed.
+```
+
+### Decisions the charter left open, and how they were settled
+
+**Entity source (F1) — the facet snapshot, not query-time NER.** `callSearch` already requests
+facets over `entity_persons_raw` / `entity_organizations_raw` / `entity_locations_raw`
+(`McpToolSurface.java:796-798`), so the response arrives carrying the per-document NER entity
+values (tempdoc 326) for the matched set, with counts. F1 reads that snapshot and keeps only
+entities the delivered excerpt actually contains. Zero new query paths, zero query-time NER.
+Per-hit entity fields were checked first and are NOT carried on `Hit.fields()` — the facet
+snapshot is the only existing surface that has them.
+
+**Count semantics — scoped wording, not the charter's phrasing.** The charter suggested "the
+corpus contains further documents referencing it". The available count is a MATCHED-document
+tally, not a corpus-wide document frequency: `FacetingEngine` tallies facet values over the docs
+matching this query (its own comment: "facet value <= matchedDocs by construction"). Reporting it
+as a corpus count would be a fabricated statistic, and a true corpus count needs a second query
+path the charter rules out. So the count ships with honest scoped wording — *"N of the documents
+matching this search also reference it"*. This is a deliberate deviation from the charter's
+example sentence, not an oversight.
+
+**Thin-result measure (F3).** Delivered body = per-hit title + path + preview + matched terms,
+summed. Deliberately excludes response scaffolding (result count, facets, hints) so boilerplate
+cannot lift a substantively empty delivery over the floor, and excludes the framing lines
+themselves so F1's continuation lines cannot suppress F3 — asserted by
+`continuationDoesNotInflateBodyBytes`.
+
+**Corpus coverage source (F3).** `KnowledgeStatus.docCount()` via the adapter — the same surface
+`justsearch_status` already renders. Read at most once per search and only when F3 is on. When
+unavailable it returns `-1` and the coverage clause is omitted rather than guessed
+(`unavailableDocCountOmitsCoverage`).
+
+### Verification
+
+* `./gradlew.bat build -x test` — green.
+* `./gradlew.bat test` (full unit suite) — green.
+* New: `McpDeliveryFramingTest` (21 cases: F1 entity-not-in-query incl. partial-overlap and
+  case-insensitivity, F2 header composition and plural agreement, F3 zero/thin/substantive
+  boundary and missing-doc-count, Settings composition and null-store resolution) and
+  `McpFramingRenderSnapshotTest` (10 cases: rendered before/after per framing, both tiers,
+  F1+F3 composition, and the all-OFF control arm).
+* **The strongest default-off evidence is a test I did not write:** `McpTierEquivalenceGoldenTest`
+  asserts the text renderer reproduces byte-goldens captured from 0.3.1, and it stayed green
+  through this increment — so the shipped default is byte-identical to pre-789 delivery, not
+  merely believed to be. `McpTierEquivalenceTest`'s reflective guard also forced every new
+  content-model component to be declared and projected onto `structuredContent`, which is why the
+  framings reach both tiers rather than text only.
+
+### Honest limits / notes for the probe
+
+* **Governor interaction.** `McpDeliveryGovernor` re-renders through a view lambda when it drops
+  tail results; framing settings and the doc count are resolved OUTSIDE the lambda, so every
+  degradation step renders under one framing decision. A consequence worth knowing at probe time:
+  because the F3 thin measure runs on the SURVIVING hits, a heavily-degraded delivery can newly
+  trip the thin floor. That is arguably correct (the agent really did receive little text), but it
+  means F3's trigger rate is not independent of payload size.
+* **F1 emits at most one line per hit and 3 per response**, so its payload cost is bounded; the
+  cap is a constant in `McpDeliveryFraming`, not a config key, because the probe does not vary it.
+* **`response_format: concise` suppresses F1 in the TEXT tier.** Caught by the post-implementation
+  critical-analysis pass, not by a test: concise mode omits the `Preview:` line, so a continuation
+  reading *"this excerpt names X"* would have pointed at text the agent was never shown in that
+  tier. The line is now gated on the same `!concise` condition as the preview it annotates. The
+  structured tier is unaffected — it carries per-hit `excerpts` unconditionally, so the claim stays
+  true there and the fact is projected regardless of density (`f1SuppressedInConciseTextTier`).
+  Probe arms use the default (verbose) density, so this does not narrow F1's arm.
+* **F1 is silent when NER has not completed** (no entity facets → empty vocabulary). A probe arm
+  must confirm enrichment coverage before attributing an F1 null-effect to the framing rather than
+  to a missing entity source.
+* Not done here (correctly out of scope): engine-side hop-2, retrieval changes, the F4
+  compact-first candidate, and the naturalistic-replication (enron-qa) check the 788 §4 Goodhart
+  guard requires before any framing ships as a DEFAULT.

@@ -29,4 +29,9 @@ record McpAnswerResponseContent(
     String comparativeHint,
     String enrichmentHint,
     String zeroResultHint,
-    List<String> hints) {}
+    List<String> hints,
+    // Tempdoc 789 Phase 2 (F2) — the evidence-not-answer header. The charter defers justsearch_answer
+    // generally, but carves out F2 for it: the census found answer-shaped output the most terminal
+    // delivery shape of all (register F-043), so the probe needs this arm coverage. Null unless the
+    // evidence-not-answer framing is enabled (default off).
+    String evidenceHeader) {}
