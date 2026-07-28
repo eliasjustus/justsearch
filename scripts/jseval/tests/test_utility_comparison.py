@@ -1105,22 +1105,75 @@ def test_compose_cell_schema_stratified_by_question_type():
     assert "schema_stratified" in cell["arms"]["substitution_c"]
 
 
-def test_no_schema_stratify_field_when_cell_is_single_schema():
-    """Single-schema cell (or pre-768 evidence lacking question_type) adds no
-    ``schema_stratified`` key — byte-identical to the pre-768 composed shape."""
-    # Uniform question_type across all queries -> single population -> no key.
+def test_single_schema_cell_still_reports_its_one_schema_but_untagged_adds_no_key():
+    """Claim policy v3 splits the two cases the pre-768 no-op conflated.
+
+    A cell whose queries all share ONE schema now REPORTS that schema's
+    breakdown: "one schema measured" and "schema coverage never computed" are
+    different facts, and v3's `required_schema_strata` (`require_all_present`)
+    has to tell them apart — under the old no-op both looked like an absent key,
+    so a single-schema cell was indistinguishable from pre-768 evidence.
+
+    The genuine byte-identity contract is unchanged and still asserted below:
+    evidence with NO `question_type` at all composes with no key, so historical
+    records keep their digests."""
+    # Uniform question_type across all queries -> the one measured schema is reported.
     a_pq = _schema_pq([False, True, False, True], ["2_hop"] * 4)
     c_pq = _schema_pq([True, True, True, False], ["2_hop"] * 4)
     summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="search-XYZ")]
     rec = utility_comparison.compose_utility(summaries, composed_at="t")
     cell = rec["measured"]["mixed/multihop-rag"]["haiku"]
-    assert "schema_stratified" not in cell
-    assert "schema_stratified" not in cell["arms"]["substitution_c"]
+    assert set(cell["schema_stratified"]["by_stratum"]) == {"2_hop"}
+    assert "schema_stratified" in cell["arms"]["substitution_c"]
     # And when question_type is absent entirely (pre-768 per_query), still no key.
     a_pq2, c_pq2 = _cell_pq([False, True, False, True], [True, True, True, False])
     rec2 = utility_comparison.compose_utility(
         [_summary("A", a_pq2), _summary("C", c_pq2, search_key="s")], composed_at="t")
     assert "schema_stratified" not in rec2["measured"]["mixed/multihop-rag"]["haiku"]
+
+
+def test_collapsed_schema_reports_an_honest_null_never_a_dropped_key():
+    """The pre-campaign landmine (782 §G follow-up): a schema whose paired
+    observations all vanish used to be DROPPED from `by_stratum`, which the v3
+    `schema_strata_reported` gate reads as "missing breakdown" — capable of
+    making a PAID hero record unpromotable for a reporting artefact rather than a
+    measurement fact. The composer now emits the explicit null entry that
+    `required_schema_strata.null_result_handling: report-never-lead` promises.
+
+    Collapse is reproduced the way it actually happens: every 1_hop query is
+    excluded on one side of the pair, so 1_hop has zero surviving pairs while
+    2_hop still computes."""
+    qtypes = ["1_hop", "1_hop", "2_hop", "2_hop"]
+    a_pq = _schema_pq([True, True, False, False], qtypes)
+    c_pq = _schema_pq([True, True, True, True], qtypes)
+    # Drop both 1_hop queries from the with-tool arm -> no 1_hop pair survives.
+    for qid in ("q0", "q1"):
+        del c_pq[qid]
+    summaries = [_summary("A", a_pq), _summary("C", c_pq, search_key="search-XYZ")]
+    rec = utility_comparison.compose_utility(summaries, composed_at="t")
+    by_stratum = rec["measured"]["mixed/multihop-rag"]["haiku"]["schema_stratified"]["by_stratum"]
+
+    assert set(by_stratum) == {"1_hop", "2_hop"}, "collapsed label must not be dropped"
+    assert by_stratum["1_hop"]["available"] is False
+    assert by_stratum["1_hop"]["n_paired_observations"] == 0
+    assert "collapsed" in by_stratum["1_hop"]["reason"]
+    # The surviving schema still carries real stats — the null is per-label.
+    assert by_stratum["2_hop"]["accuracy"]["with_tool"] == 1.0
+
+
+def test_null_strata_emission_is_opt_in_so_the_corpus_axis_is_unchanged():
+    """`emit_null_strata` is opt-in and only the schema axis passes it, so the
+    corpus axis (§T.4) keeps its original drop behaviour and records composed
+    before the v3 ratification stay byte-identical.
+
+    Driven with zero surviving pairs, which is what "collapsed" means to
+    `_stats_from_pairs`, so the two branches are compared on the same input."""
+    stratify_by = {"q0": "collapsed"}
+    assert utility_comparison._stratified_breakdown(
+        {}, stratify_by, statistical_alpha=0.05) is None
+    opted_in = utility_comparison._stratified_breakdown(
+        {}, stratify_by, statistical_alpha=0.05, emit_null_strata=True)
+    assert opted_in["by_stratum"]["collapsed"]["available"] is False
 
 
 # --- Inspect-AI execution path (tempdoc 624 execution design) ----------------

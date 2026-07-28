@@ -1132,15 +1132,29 @@ def _stats_from_pairs(
 
 def _stratified_breakdown(
     pairs: dict, stratify_by: dict[str, str], *, statistical_alpha: float,
+    emit_null_strata: bool = False,
 ) -> dict | None:
     """Independent per-stratum McNemar+bootstrap re-run over ``pairs`` under one
     ``qid -> label`` map, returning ``{"by_stratum": {label: stats}}`` or ``None``
     when no stratum yields a result. One derivation shared by every stratification
     axis (corpus §T.4, schema 768 D4) so a stratum's stats are computed exactly
-    one way regardless of which axis produced the label."""
-    labels = sorted({
-        stratify_by[p["qid"]] for p in pairs.values() if p["qid"] in stratify_by
-    })
+    one way regardless of which axis produced the label.
+
+    ``emit_null_strata`` (claim-policy v3) makes a label whose paired
+    observations all vanish report an explicit NULL entry instead of being
+    dropped from the map. Dropping is indistinguishable from "never measured",
+    which is why the v3 policy's ``required_schema_strata.null_result_handling``
+    is ``report-never-lead``: a collapsed schema must still be reported, just
+    never headlined. Off by default, so the corpus axis (§T.4) composes
+    byte-identically to before this parameter existed."""
+    # With nulls enabled the label vocabulary is the WHOLE `stratify_by` map, not
+    # just the labels that still have a surviving pair -- otherwise a fully
+    # collapsed schema has no label to report and would silently vanish again,
+    # which is the exact drop this parameter exists to prevent.
+    labels = sorted(
+        set(stratify_by.values()) if emit_null_strata
+        else {stratify_by[p["qid"]] for p in pairs.values() if p["qid"] in stratify_by}
+    )
     by_stratum: dict = {}
     for label in labels:
         sub_pairs = {
@@ -1150,6 +1164,12 @@ def _stratified_breakdown(
         sub_stats = _stats_from_pairs(sub_pairs, statistical_alpha=statistical_alpha)
         if sub_stats is not None:
             by_stratum[label] = sub_stats
+        elif emit_null_strata:
+            by_stratum[label] = {
+                "available": False,
+                "reason": "collapsed (no surviving paired observations)",
+                "n_paired_observations": 0,
+            }
     return {"by_stratum": by_stratum} if by_stratum else None
 
 
@@ -1202,7 +1222,8 @@ def _arm_comparison(
             result["stratified"] = strat
     if schema_stratify_by:
         schema_strat = _stratified_breakdown(
-            pairs, schema_stratify_by, statistical_alpha=statistical_alpha)
+            pairs, schema_stratify_by, statistical_alpha=statistical_alpha,
+            emit_null_strata=True)
         if schema_strat is not None:
             result["schema_stratified"] = schema_strat
 
@@ -1250,19 +1271,21 @@ def _default_schema_stratify(cell_summaries: list[dict]) -> dict[str, str] | Non
     ``question_type`` schema tag (threaded into each ``per_query`` entry by
     ``agent_utility_observations`` — tempdoc 768 D4) rather than the corpus
     signature. Each query's label is its own ``question_type``; a query with no
-    tag contributes no label. Returns ``None`` (no stratification) when every
-    query resolves to the same schema — the single-population no-op contract, so
-    a single-schema cell composes byte-identically to the pre-768 behavior
-    (mirrors the corpus stratifier)."""
+    tag contributes no label.
+
+    Returns ``None`` only when NO query carries a tag — pre-768 evidence, which
+    must compose byte-identically to before this axis existed. A cell whose
+    queries all share ONE schema still reports that schema's breakdown (claim
+    policy v3): the corpus stratifier's single-population no-op is wrong for this
+    axis, because "one schema measured" and "schema coverage never computed" are
+    different facts and v3's ``required_schema_strata`` has to tell them apart."""
     qid_to_label: dict[str, str] = {}
     for s in cell_summaries:
         for qid, pq in (s.get("per_query") or {}).items():
             qt = (pq or {}).get("question_type")
             if qt is not None:
                 qid_to_label[qid] = qt
-    if len({*qid_to_label.values()}) < 2:
-        return None
-    return qid_to_label
+    return qid_to_label or None
 
 
 def _namespace_for_cross_corpus(summaries: list[dict]) -> list[dict]:

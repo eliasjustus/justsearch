@@ -349,6 +349,12 @@ def read_evidence(path: str | Path) -> list[dict]:
                 "packages": source.get("packages") or {},
             },
             "condition": item.get("condition"),
+            # tempdoc 768 D4 round-trip: `sanitize_observation` writes this and
+            # `_OBSERVATION_KEYS` accepts it, but the read side never restored it
+            # -- so an offline replay recomposed WITHOUT any question_type and
+            # silently dropped `schema_stratified`, the exact thing the write-side
+            # comment promises. Found by v3's `schema_strata_reported` gate.
+            "question_type": item.get("question_type"),
             "seed": item.get("seed"),
             "qid": item.get("qid"),
             "attempted": True,
