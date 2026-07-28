@@ -912,6 +912,34 @@ above)*
   window-1 records under `window1/`); composed `semantic_digest e2bb70c3…`; spend ~$278 of the
   $300 cap. Full incident history (void run, mixed-model guard, backend kill, stray-root guard)
   in the committed `incident-ledger.md`; campaign narrative in tempdoc 782 §I.
+- **UPDATE 2026-07-28 — the escalation was authorized and the counterfactual is now MEASURED, not
+  inferred.** Founder authorization, verbatim: *"firstly i would be up for upgrading the rule, but
+  i think we shouldnt rerun today"* — rule upgrade + $0 offline re-compose granted, no
+  re-measurement. Claim policy **`agent-utility-public-v4`** (v3 verbatim + the additive
+  `certified_query_subset` requirement) makes `corpus_certification_complete` subset-aware: with
+  the requirement declared, a certification of the FULL committed gold set no longer refuses a
+  pre-registered leading-prefix subset of it. The gate keeps `query_gold_sha256` equality and adds
+  `cell.query_count <= cert.query_count` plus a cryptographic subset identity derived from
+  `campaign_identity.expected_cells` and matched against the frozen `cells.v1.json`
+  `qid_list_sha256` (`7b7856e8…`) — **fail-closed**: no derivable identity, no pre-registered
+  digest, or a non-leading-prefix qid set all REFUSE. It keys on `qid_list_sha256` rather than the
+  escalation's proposed `selected_query_sha256` because the composed record carries no query text,
+  so a post-hoc verdict cannot verify the latter (it stays the pre-launch pin in
+  `782-hero/preflight.py`). v3 is now `status: superseded`.
+- **Re-composed verdict (offline, $0, same frozen Step-5 invocation):**
+  `scripts/jseval/782-run-2026-07-28-hero/combined-v4/`, `semantic_digest c5a75457…` —
+  **`status accepted`, `outcome adoption-only`, `arm addition_b`, `strata all_required`,
+  `reasons []`, 30/30 gates pass**, per-stratum `adoption-only` on all three. A recursive diff
+  against the committed v3-scored record shows **differences ONLY under `claim_verdict`,
+  `semantic_digest` and `composed_at` — zero elsewhere**; `measured`, `estimands`, `cohort`,
+  `comparability` and `tool_call_assertions` are byte-identical, so **every number in this entry
+  stands unchanged**. `corpus_certification_complete` is the sole gate whose value moved (0
+  regressions). The v3-scored record at `combined/` **remains committed unchanged as dated
+  history**. Design + assertions: tempdoc 782 §J.
+- **What the acceptance does and does not say.** `adoption-only` is a promotion CLASS, not a
+  benefit claim: the accuracy deltas above are unchanged and remain point-negative on enron with
+  no effect detected at n=60/stratum. v4's `triple_reporting_semantics` still forbids
+  adoption-rate-as-benefit as a headline, and publication (623) remains founder-only.
 
 ### F-042: the shipped Tika extraction path costs −13.74% nDCG@10 at HEAD hybrid defaults — but the obvious fix (swap to a better OCR engine) is measurement-rejected: GOT is statistically tied with Tika (tempdoc 786 §E, 2026-07-28; the full-pipeline sibling of F-009's lexical-only measurement)
 

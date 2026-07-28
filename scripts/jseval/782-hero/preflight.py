@@ -75,10 +75,26 @@ def _canonical_selection_digests(rows: list[dict]) -> tuple[str, str, dict[str, 
 # --- 1. active claim policy is the ratified v3 -------------------------------------
 
 
+def _supersede_chain(documents: dict[str, dict], start: str) -> list[str]:
+    """Walk `superseded_by` from the frozen policy id to the end of the chain."""
+    chain, seen = [start], {start}
+    current = documents.get(start) or {}
+    while current.get("superseded_by") and current["superseded_by"] not in seen:
+        nxt = current["superseded_by"]
+        chain.append(nxt)
+        seen.add(nxt)
+        current = documents.get(nxt) or {}
+    return chain
+
+
 def check_policy() -> dict:
     active = []
+    by_id: dict[str, dict] = {}
     for path in sorted((REPO / "scripts" / "jseval").glob("utility-claim-policy.*.json")):
+        if path.name.endswith(".schema.json"):
+            continue
         doc = json.loads(path.read_text(encoding="utf-8"))
+        by_id[str(doc.get("policy_id"))] = doc
         if doc.get("status") == "active":
             active.append((path, doc))
     if len(active) != 1:
@@ -86,10 +102,17 @@ def check_policy() -> dict:
                f"found {len(active)} with status=active: {[p.name for p, _ in active]}")
         return {}
     path, doc = active[0]
-    want = CELLS["protocol"]["policy_id"]
-    ok = doc.get("policy_id") == want and doc.get("unresolved") == []
-    record(PASS if ok else FAIL, "policy: ratified v3 is active",
-           f"{path.name} policy_id={doc.get('policy_id')!r} (want {want!r}) "
+    # The freeze pinned `agent-utility-public-v3`. A LATER policy is acceptable only
+    # if it is that policy's declared successor -- the `superseded_by` chain is the
+    # only thing that makes "the frozen protocol still governs" mechanically true
+    # (tempdoc 782 §J: v4 is v3 verbatim + the additive certified_query_subset
+    # requirement, founder-authorized 2026-07-28). An unrelated active policy FAILs.
+    frozen = CELLS["protocol"]["policy_id"]
+    chain = _supersede_chain(by_id, frozen)
+    ok = doc.get("policy_id") in chain and doc.get("unresolved") == []
+    record(PASS if ok else FAIL, "policy: the frozen policy (or its successor) is active",
+           f"{path.name} policy_id={doc.get('policy_id')!r} "
+           f"(frozen {frozen!r}; accepted chain {chain}) "
            f"unresolved={doc.get('unresolved')!r}")
     return doc
 

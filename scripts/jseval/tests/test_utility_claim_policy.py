@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -9,8 +10,10 @@ import pytest
 from jseval.utility_claim_policy import (
     MANDATORY_REQUIREMENTS,
     SUPPORTED_REQUIREMENTS,
+    canonical_bytes,
     evaluate_claim,
     load_policy,
+    load_previous_policy,
     load_superseded_policy,
     policy_digest,
 )
@@ -237,16 +240,18 @@ def _sync_tool_assertion_counts(record: dict) -> None:
     _sync_v3_reporting(record)
 
 
-def test_checked_in_policy_is_ratified_v3_three_stratum_sonnet_hero():
-    """Founder-delegated ratification (766 §G decision 2, delegated 2026-07-28):
-    the checked-in ACTIVE policy is `agent-utility-public-v3` with exactly the
-    tempdoc 782 §E.1 three-stratum sonnet hero matrix — enron-1k, enron-10k,
-    legal-1k, verbose, seeds {0,1,2}, 20q. legal-10k is EXCLUDED (771 §E M5), and
-    haiku is not run in this campaign.
+def test_checked_in_policy_is_ratified_v4_three_stratum_sonnet_hero():
+    """Founder-authorized ratification (2026-07-28, tempdoc 782 §J): the
+    checked-in ACTIVE policy is `agent-utility-public-v4`, carrying forward the
+    tempdoc 782 §E.1 three-stratum sonnet hero matrix VERBATIM — enron-1k,
+    enron-10k, legal-1k, verbose, seeds {0,1,2}, 20q. legal-10k is EXCLUDED
+    (771 §E M5), and haiku is not run in this campaign.
 
-    Supersedes the 2026-07-17 four-stratum haiku confirmatory activation and its
-    2026-07-21 v2 amendment (tempdoc 755 §J), whose rate-based
-    verified_tool_surface semantics carry over unchanged (782 §E.2 R2)."""
+    Supersedes the 2026-07-17 four-stratum haiku confirmatory activation, its
+    2026-07-21 v2 amendment (tempdoc 755 §J, whose rate-based
+    verified_tool_surface semantics carry over unchanged — 782 §E.2 R2), and the
+    2026-07-28 v3 ratification (766 §G decision 2), which v4 changes in exactly
+    one respect: the additive `certified_query_subset` requirement."""
     policy = load_policy()
     jsonschema = pytest.importorskip("jsonschema")
     schema_path = Path(__file__).parents[1] / "utility-claim-policy.v1.schema.json"
@@ -254,7 +259,7 @@ def test_checked_in_policy_is_ratified_v3_three_stratum_sonnet_hero():
 
     assert policy["status"] == "active"
     assert policy["unresolved"] == []
-    assert policy["policy_id"] == "agent-utility-public-v3"
+    assert policy["policy_id"] == "agent-utility-public-v4"
     assert policy["thresholds"]["minimum_surface_verification_rate"] == 0.9
     assert [item["stratum_id"] for item in policy["required_strata"]] == [
         "en-email-enron-raw|mixed/en-email-enron-raw-1k-verbose|1000|verbose|sonnet",
@@ -285,9 +290,16 @@ def test_v3_ratification_tuned_no_threshold_and_dropped_legal_10k():
     closed-book ceiling, which has no v2 counterpart."""
     policy = load_policy()
     superseded = load_superseded_policy()
+    previous = load_previous_policy()
 
+    # The supersede chain, asserted link by link: v2 -> v3 -> v4 (the ACTIVE one).
     assert superseded["status"] == "superseded"
-    assert superseded["superseded_by"] == policy["policy_id"]
+    assert superseded["superseded_by"] == previous["policy_id"] == "agent-utility-public-v3"
+    assert previous["status"] == "superseded"
+    assert previous["superseded_by"] == policy["policy_id"]
+    # v4 carries v3's numbers forward untouched, so comparing the ACTIVE policy
+    # against the v2 byte-source still enforces "no threshold was ever tuned".
+    assert policy["thresholds"] == previous["thresholds"]
 
     shared = set(policy["thresholds"]) & set(superseded["thresholds"])
     assert {name: policy["thresholds"][name] for name in sorted(shared)} == {
@@ -309,6 +321,13 @@ def test_v3_ratification_tuned_no_threshold_and_dropped_legal_10k():
     assert policy["requirements"]["closed_book_at_hero_tier"] is True
     assert policy["hero_tier"]["requested_model_class"] == "sonnet-or-stronger"
     assert policy["policy_changelog"][0]["policy_id"] == policy["policy_id"]
+    # v4's own composition rule: v3 verbatim + exactly ONE additive requirement.
+    assert (set(policy["requirements"]) - set(previous["requirements"])
+            == {"certified_query_subset"})
+    assert set(previous["requirements"]) - set(policy["requirements"]) == set()
+    assert policy["required_schema_strata"] == previous["required_schema_strata"]
+    assert policy["hero_tier"] == previous["hero_tier"]
+    assert policy["triple_reporting_semantics"] == previous["triple_reporting_semantics"]
 
 
 # --- v3 additive gates: the REFUSAL branch ----------------------------------
@@ -413,6 +432,178 @@ def test_closed_book_at_hero_tier_rejects_accuracy_above_the_ceiling():
     assert gate["observed"][0]["closed_book_accuracy"] == ceiling + 0.5
     assert "closed_book_at_hero_tier" in verdict["reasons"]
     assert verdict["accepted"] is False
+
+
+# --- v4 `certified_query_subset` (tempdoc 782 §J / FREEZE DEFECT #2) ---------
+#
+# v3's `corpus_certification_complete` required `cert.query_count ==
+# cell.query_count` EXACTLY, which refused every legitimate pre-registered
+# SUBSET run: the 781 certifications certify the 50-query committed gold set
+# while the frozen 782 §E.1 design measures the pre-registered 20-qid leading
+# prefix. `query_gold_sha256` -- the identity that actually chains the certified
+# queries -- matched all along. v4 replaces the count comparison with a
+# three-legged check that is STRICTER for a subset and unchanged for a full run.
+
+_SUBSET_QID_SHA256 = hashlib.sha256(
+    ("\n".join(f"q{index + 1:04d}" for index in range(20)) + "\n").encode("utf-8")
+).hexdigest()
+
+
+def _subset_record() -> dict:
+    """The hero-cohort shape: a certification over the FULL 50-query committed
+    gold set, a run over the pre-registered 20-qid leading prefix.
+
+    Only the certification's `query_count` moves -- `query_gold_sha256` still
+    chains the whole committed file, exactly as the real harness emits it (it
+    hashes the queries file's bytes and truncates only the sample rows)."""
+    record = _record()
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        cell["corpus_certification"] = _certification_snapshot_fixture(query_count=50)
+    return record
+
+
+def _subset_policy(record: dict, qid_sha: str | None = _SUBSET_QID_SHA256) -> dict:
+    policy = _active_policy(record)
+    assert policy["requirements"]["certified_query_subset"] is True
+    for item in policy["required_strata"]:
+        if qid_sha is None:
+            item.pop("qid_list_sha256", None)
+        else:
+            item["qid_list_sha256"] = qid_sha
+    return policy
+
+
+def _certification_gate(verdict: dict) -> dict:
+    return next(item for item in verdict["gates"]
+                if item["name"] == "corpus_certification_complete")
+
+
+def test_certified_query_subset_accepts_the_pre_registered_subset():
+    """The defect's direct regression: a 20-of-50 subset run passes ONLY when the
+    record's derived qid-list digest equals the policy's pre-registered one.
+
+    The before/after on the SAME gate is what proves the new branch does real
+    work (a branch inverted to always-True could not produce the `False` half):
+    the identical record is REFUSED by a policy that does not declare the
+    requirement, because that is v3's literal count comparison."""
+    record = _subset_record()
+
+    accepted = evaluate_claim(record, _subset_policy(record))
+    assert _certification_gate(accepted)["passed"] is True
+    assert "corpus_certification_complete" not in accepted["reasons"]
+    assert accepted["accepted"] is True
+
+    v3_shaped = _subset_policy(record)
+    v3_shaped["requirements"].pop("certified_query_subset")
+    refused = evaluate_claim(record, v3_shaped)
+    assert _certification_gate(refused)["passed"] is False
+    assert "corpus_certification_complete" in refused["reasons"]
+    assert refused["accepted"] is False
+
+
+def test_certified_query_subset_fails_closed_without_a_pre_registered_identity():
+    """Fail-closed, not permissive: a count mismatch with NO pre-registered
+    subset digest in the policy is refused. Otherwise v4 would be a blanket
+    relaxation of the count rule rather than a subset-identity check."""
+    record = _subset_record()
+
+    verdict = evaluate_claim(record, _subset_policy(record, None))
+
+    assert _certification_gate(verdict)["passed"] is False
+    assert "corpus_certification_complete" in verdict["reasons"]
+    assert verdict["accepted"] is False
+
+
+def test_certified_query_subset_fails_on_a_mismatched_subset_digest():
+    """A subset that is not the pre-registered one is refused — this is the leg
+    that makes the gate a cryptographic check rather than a `<=` on counts."""
+    record = _subset_record()
+
+    verdict = evaluate_claim(record, _subset_policy(record, "a" * 64))
+
+    assert _certification_gate(verdict)["passed"] is False
+    assert "corpus_certification_complete" in verdict["reasons"]
+    assert verdict["accepted"] is False
+
+
+def test_certified_query_subset_fails_when_the_qid_set_is_not_a_leading_prefix():
+    """Truncation in committed order is the ONLY certification-preserving
+    selection (any other subset needs its own gold file, which breaks
+    `query_gold_sha256`). A hole in the ordinal set yields NO derivable subset
+    identity, so the gate refuses even though the digest would be re-derivable
+    from some other vocabulary."""
+    record = _subset_record()
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        cell["campaign_identity"]["expected_cells"] = [
+            value.replace("|q19", "|q25")
+            for value in cell["campaign_identity"]["expected_cells"]
+        ]
+
+    verdict = evaluate_claim(record, _subset_policy(record))
+
+    assert _certification_gate(verdict)["passed"] is False
+    assert verdict["accepted"] is False
+
+
+def test_certified_query_subset_refuses_a_superset_of_the_certified_set():
+    """`cell.query_count <= cert.query_count` is a real leg: a run claiming MORE
+    queries than the certification covers is not a subset and is refused
+    regardless of any declared digest."""
+    record = _subset_record()
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        cell["corpus_certification"] = _certification_snapshot_fixture(query_count=5)
+
+    verdict = evaluate_claim(record, _subset_policy(record))
+
+    assert _certification_gate(verdict)["passed"] is False
+    assert verdict["accepted"] is False
+
+
+def test_certified_query_subset_leaves_full_count_runs_byte_identical():
+    """The conditional-gate discipline, asserted directly: a policy that does
+    NOT declare `certified_query_subset` evaluates any record exactly as the
+    committed v3 document does, so no historical verdict moves.
+
+    Compared as canonical bytes with the policy identity removed (`policy_id` /
+    `policy_hash` necessarily differ between two different documents — that is
+    the re-pin the digest test in `test_utility_evidence.py` covers)."""
+    pre_supersede_v3 = load_previous_policy()
+    assert pre_supersede_v3.pop("superseded_by") == "agent-utility-public-v4"
+    pre_supersede_v3["status"] = "active"
+    v4_without_the_requirement = copy.deepcopy(load_policy())
+    v4_without_the_requirement["requirements"].pop("certified_query_subset")
+
+    for record in (_record(), _subset_record()):
+        left = evaluate_claim(record, pre_supersede_v3)
+        right = evaluate_claim(record, v4_without_the_requirement)
+        for verdict in (left, right):
+            del verdict["policy_id"]
+            del verdict["policy_hash"]
+        assert canonical_bytes(left) == canonical_bytes(right)
+
+    # …and that shared behaviour is v3's literal rule: equal counts pass,
+    # unequal counts fail. (Passes for the RIGHT reason, not incidentally.)
+    assert _certification_gate(
+        evaluate_claim(_record(), v4_without_the_requirement))["passed"] is True
+    assert _certification_gate(
+        evaluate_claim(_subset_record(), v4_without_the_requirement))["passed"] is False
+
+
+def test_checked_in_v4_policy_pins_the_frozen_782_subset_digests():
+    """The pre-registered digests are copied from the frozen `cells.v1.json`
+    (§E.8, frozen before any measured cell) — not minted during this fix. Read
+    both sides and compare, so a drift in either file fails here."""
+    cells = json.loads(
+        (Path(__file__).parents[1] / "782-hero" / "cells.v1.json")
+        .read_text(encoding="utf-8")
+    )
+    frozen = {item["stratum_id"]: item["qid_list_sha256"] for item in cells["strata"]}
+    declared = {
+        item["stratum_id"]: item["qid_list_sha256"]
+        for item in load_policy()["required_strata"]
+    }
+    assert declared == frozen
+    assert set(declared.values()) == {_SUBSET_QID_SHA256}
 
 
 def test_favorable_outcomes_cannot_override_unresolved_policy():
@@ -1044,7 +1235,7 @@ def test_checked_in_active_policy_evaluates_surface_via_rate_branch():
     capture-miss rate (0.92 >= 0.9) passes. This is the runnable proof that the
     rate semantics hold against the policy the harness actually loads."""
     policy = load_policy()
-    assert policy["policy_id"] == "agent-utility-public-v3"
+    assert policy["policy_id"] == "agent-utility-public-v4"
     assert policy["thresholds"]["minimum_surface_verification_rate"] == 0.9
 
     record = _record()

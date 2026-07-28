@@ -30,7 +30,9 @@
           "seed_ids": {
             "type": "array", "minItems": 1, "uniqueItems": true,
             "items": {"type": "integer", "minimum": 0}
-          }
+          },
+          "query_count_committed": {"type": "integer", "minimum": 1},
+          "qid_list_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
         }
       }
     },
@@ -75,10 +77,12 @@
         "completion_triple_reported": {"const": true},
         "closed_book_at_hero_tier": {"const": true},
         "schema_strata_reported": {"const": true},
+        "certified_query_subset": {"const": true},
         "per_stratum_promotion": {"const": "all_required_strata_pass"}
       }
     },
     "verified_tool_surface_semantics": {"type": "object"},
+    "certified_query_subset_semantics": {"type": "object"},
     "required_schema_strata": {"type": "object"},
     "hero_tier": {"type": "object"},
     "triple_reporting_semantics": {"type": "object"},
