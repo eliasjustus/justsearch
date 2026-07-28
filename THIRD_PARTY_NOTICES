@@ -537,7 +537,7 @@ Licenses of third-party components redistributed with JustSearch.
   objc2-user-notifications 0.3.2 — Zlib OR Apache-2.0 OR MIT
   objc2-web-kit 0.3.2 — Zlib OR Apache-2.0 OR MIT
   once_cell 1.21.3 — MIT OR Apache-2.0
-  open 5.3.5 — MIT
+  open 5.4.0 — MIT
   option-ext 0.2.0 — MPL-2.0
   ordered-multimap 0.7.3 — MIT
   ordered-stream 0.2.0 — MIT OR Apache-2.0
@@ -546,7 +546,6 @@ Licenses of third-party components redistributed with JustSearch.
   parking 2.2.1 — Apache-2.0 OR MIT
   parking_lot 0.12.5 — MIT OR Apache-2.0
   parking_lot_core 0.9.12 — MIT OR Apache-2.0
-  pathdiff 0.2.3 — MIT/Apache-2.0
   percent-encoding 2.3.2 — MIT OR Apache-2.0
   phf 0.10.1 — MIT
   phf 0.11.3 — MIT
@@ -626,11 +625,11 @@ Licenses of third-party components redistributed with JustSearch.
   selectors 0.24.0 — MPL-2.0
   selectors 0.36.1 — MPL-2.0
   semver 1.0.27 — MIT OR Apache-2.0
-  serde 1.0.228 — MIT OR Apache-2.0
-  serde_core 1.0.228 — MIT OR Apache-2.0
-  serde_derive 1.0.228 — MIT OR Apache-2.0
+  serde 1.0.229 — MIT OR Apache-2.0
+  serde_core 1.0.229 — MIT OR Apache-2.0
+  serde_derive 1.0.229 — MIT OR Apache-2.0
   serde_derive_internals 0.29.1 — MIT OR Apache-2.0
-  serde_json 1.0.150 — MIT OR Apache-2.0
+  serde_json 1.0.151 — MIT OR Apache-2.0
   serde_repr 0.1.20 — MIT OR Apache-2.0
   serde_spanned 0.6.9 — MIT OR Apache-2.0
   serde_spanned 1.1.1 — MIT OR Apache-2.0
@@ -663,27 +662,28 @@ Licenses of third-party components redistributed with JustSearch.
   swift-rs 1.0.7 — MIT OR Apache-2.0
   syn 1.0.109 — MIT OR Apache-2.0
   syn 2.0.117 — MIT OR Apache-2.0
+  syn 3.0.3 — MIT OR Apache-2.0
   sync_wrapper 1.0.2 — Apache-2.0
   synstructure 0.13.2 — MIT
   system-deps 6.2.2 — MIT OR Apache-2.0
   tao 0.35.3 — Apache-2.0
   tao-macros 0.1.3 — MIT OR Apache-2.0
   target-lexicon 0.12.16 — Apache-2.0 WITH LLVM-exception
-  tauri 2.11.3 — Apache-2.0 OR MIT
+  tauri 2.11.5 — Apache-2.0 OR MIT
   tauri-build 2.6.3 — Apache-2.0 OR MIT
   tauri-codegen 2.6.3 — Apache-2.0 OR MIT
   tauri-macros 2.6.3 — Apache-2.0 OR MIT
   tauri-plugin 2.5.4 — Apache-2.0 OR MIT
   tauri-plugin-autostart 2.5.1 — Apache-2.0 OR MIT
   tauri-plugin-deep-link 2.4.9 — Apache-2.0 OR MIT
-  tauri-plugin-dialog 2.7.1 — Apache-2.0 OR MIT
+  tauri-plugin-dialog 2.7.2 — Apache-2.0 OR MIT
   tauri-plugin-fs 2.5.1 — Apache-2.0 OR MIT
   tauri-plugin-notification 2.3.3 — Apache-2.0 OR MIT
   tauri-plugin-opener 2.5.4 — Apache-2.0 OR MIT
-  tauri-plugin-single-instance 2.4.2 — Apache-2.0 OR MIT
+  tauri-plugin-single-instance 2.4.3 — Apache-2.0 OR MIT
   tauri-plugin-window-state 2.4.1 — Apache-2.0 OR MIT
   tauri-runtime 2.11.3 — Apache-2.0 OR MIT
-  tauri-runtime-wry 2.11.3 — Apache-2.0 OR MIT
+  tauri-runtime-wry 2.11.4 — Apache-2.0 OR MIT
   tauri-utils 2.9.3 — Apache-2.0 OR MIT
   tauri-winres 0.3.5 — MIT
   tauri-winrt-notification 0.7.2 — MIT OR Apache-2.0
@@ -699,7 +699,7 @@ Licenses of third-party components redistributed with JustSearch.
   time-macros 0.2.27 — MIT OR Apache-2.0
   tiny-keccak 2.0.2 — CC0-1.0
   tinystr 0.8.2 — Unicode-3.0
-  tokio 1.52.3 — MIT
+  tokio 1.53.1 — MIT
   tokio-macros 2.7.0 — MIT
   tokio-util 0.7.18 — MIT
   toml 0.8.2 — MIT OR Apache-2.0
@@ -737,7 +737,7 @@ Licenses of third-party components redistributed with JustSearch.
   urlpattern 0.3.0 — MIT
   utf-8 0.7.6 — MIT OR Apache-2.0
   utf8_iter 1.0.4 — Apache-2.0 OR MIT
-  uuid 1.23.4 — Apache-2.0 OR MIT
+  uuid 1.24.0 — Apache-2.0 OR MIT
   version_check 0.9.5 — MIT/Apache-2.0
   version-compare 0.2.1 — MIT
   vswhom 0.1.0 — MIT
