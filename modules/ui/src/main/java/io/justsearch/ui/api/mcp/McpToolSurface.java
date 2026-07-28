@@ -1006,11 +1006,14 @@ public final class McpToolSurface {
     String absenceNote =
         framing.calibratedAbsenceEnabled()
             ? McpDeliveryFraming.absenceNote(
-                resp.totalHits(),
-                McpDeliveryFraming.deliveredBodyBytes(hits),
-                indexedDocs,
+                new McpDeliveryFraming.AbsenceSignals(
+                    resp.totalHits(),
+                    McpDeliveryFraming.topDeliveredScore(hits),
+                    McpDeliveryFraming.normalizedFusionScale(resp.searchTrace()),
+                    McpDeliveryFraming.deliveredBodyBytes(hits),
+                    indexedDocs),
                 query,
-                framing.thinResultFloorBytes())
+                framing)
             : null;
 
     return new McpSearchResponseContent(
