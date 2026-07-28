@@ -11,6 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable
 
+from jseval.agent_behavioral import behavioral_record
+
 WITH_TOOL_CONDITIONS = frozenset({"B", "C"})
 
 
@@ -20,6 +22,28 @@ def _error_text(value: Any) -> str | None:
     if isinstance(value, str):
         return value
     return str(value)
+
+
+def _completion_text(sample: Any) -> str:
+    """The cell's final answer off an Inspect sample (tempdoc 789). Read for
+    classification only -- never stored on the observation."""
+    output = getattr(sample, "output", None)
+    completion = getattr(output, "completion", None) if output is not None else None
+    return completion if isinstance(completion, str) else ""
+
+
+def _target_text(sample: Any) -> str | None:
+    """The gold answer off an Inspect sample's `target` (str or `Sequence[str]`)."""
+    target = getattr(sample, "target", None)
+    if target is None:
+        return None
+    if isinstance(target, str):
+        return target or None
+    if isinstance(target, (list, tuple)):
+        items = [item for item in target if isinstance(item, str)]
+        return items[0] if items else None
+    text = getattr(target, "text", None)
+    return text if isinstance(text, str) and text else None
 
 
 def _normalized_qid(raw_id: Any, condition: str | None) -> str:
@@ -153,6 +177,25 @@ def read_inspect_observations(
                 # touch). This keeps the composed-record semantic_digest (U1)
                 # untouched by construction.
                 "tool_result_digests": metadata.get("tool_result_digests"),
+                # tempdoc 789 Phase 1: the per-cell behavioral (continuation-survival)
+                # record. Derived HERE rather than threaded from cell metadata so it is
+                # available for logs recorded before tempdoc 789 too -- everything except
+                # the delivered-span half (`name_pivot`/`hop1_stop`, which needs raw tool
+                # RESULT text and so is computed at cell time) is a function of what an
+                # Inspect log already persists. Booleans/counts only: the answer and
+                # target text this reads never enter the observation.
+                "behavioral": behavioral_record(
+                    answer=_completion_text(sample),
+                    gold=_target_text(sample),
+                    error=error,
+                    correct=correct,
+                    tool_call_sequence=metadata.get("tool_call_sequence"),
+                    tool_calls=tool_calls,
+                    delivered=metadata.get("behavioral_delivered"),
+                ),
+                # tempdoc 789 Phase 1 item 2: per-turn usage receipts (token series;
+                # the SDK exposes no per-turn USD -- see agent_utility_inspect).
+                "turn_receipts": metadata.get("turn_receipts"),
             })
     if require_complete:
         expected_sets = {
