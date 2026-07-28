@@ -2038,6 +2038,19 @@ def test_non_semantic_digest_exclusion_list_is_exactly_pinned():
     # provenance): `outcome_rule` is a fixed constant stamped on every record --
     # pure self-description, never discriminating measurement content -- so it is
     # excluded from the digest by the same rationale as `denominators`.
+    #
+    # tempdoc 789 Phase 1 item 4: `behavioral` is excluded on a DIFFERENT and weaker
+    # rationale than the four above, recorded here rather than glossed over. It is
+    # NOT a re-derivation of already-digested content (the wrongness classes derive
+    # from answer TEXT, which the record does not carry), so excluding it does remove
+    # real information from digest coverage. It is excluded because (a) it is
+    # descriptive-only -- attached after `claim_verdict`, read by no gate, verdict or
+    # comparability rule (asserted in test_agent_behavioral_789) -- and (b) including
+    # it would change the digest of any pre-789 campaign recomposed from its RAW logs,
+    # breaking the publication builder's recompose check on already-published records.
+    # When Phase 2 gives the block a deciding consumer it moves INTO the digest as a
+    # declared schema change; that is the tempdoc-recorded condition for this row.
     assert _NON_SEMANTIC_TOP_LEVEL_FIELDS == frozenset(
-        {"denominators", "seed_floor_met", "exposure_contrast_ineligible", "outcome_rule"}
+        {"denominators", "seed_floor_met", "exposure_contrast_ineligible", "outcome_rule",
+         "behavioral"}
     )
