@@ -59,10 +59,11 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ## Conditions
 
 ### obs:shell — 3 unused eslint-disable(no-console) directive warnings — `modules/ui-web/src/shell-v0/chrome/Shell.t
-`kind: defect` `anchor: modules/ui-web/src/shell-v0/chrome/Shell.ts` `seen: 3` `first: 2026-05-25` `last: 2026-06-04`
+`kind: defect` `anchor: modules/ui-web/src/shell-v0/chrome/Shell.ts` `seen: 4` `first: 2026-05-25` `last: 2026-07-28`
 - [ ] 3 unused eslint-disable(no-console) directive warnings — `modules/ui-web/src/shell-v0/chrome/Shell.ts:409,753,1253` (2026-05-25)
 - [ ] Shell.ts has 4 redundant `// eslint-disable-next-line no-console` directives above `console.warn` calls (config allows warn) — lines ~426/804/811/1346 (2026-05-30)
 - [ ] 565 §12.3.E: two SourcesPane instances exist at wide viewport (the docked rail + the dormant display:none OverlayHost drawer), both subscribed to agentSession+selectedSource — redundant render work, not a bug; consider gating the drawer mount out in agent mode — `Shell.ts`/`SourcesPane.ts` (2026-06-04)
+- [ ] UI tooltip advertises Ctrl+L as "Copy URL" but the registered mod+l keybinding is shell.focus-composer — tooltip is wrong, pressing Ctrl+L focuses the search bar — `modules/ui-web/src/shell-v0/chrome/Shell.ts:2237` vs `:924` (2026-07-28)
 
 ### obs:agent-tool-arg-coercion — Agent tool schema rejects string-typed numbers ("limit":"10") — burns an iteration every session; no coercion at tool boundary
 `kind: defect` `anchor: modules/app-services/.../registry/executor/OperationInputSchemaValidator.java` `seen: 2` `first: 2026-05-30` `last: 2026-06-11`
@@ -149,12 +150,13 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Dev-stack: orphaned dev-runner/Worker processes accumulate across sessions and hold `index/default.index.lock` + squat port 5173, crash-looping new Workers (`Index base path is already locked`) and tearing the stack down — symptom looks like a code boot failure but isn't. Recover: kill stray java/node dev PIDs + delete the stale lock; run `dev-runner.cjs start` as a BARE persistent background process (its children are in a KILL_ON_JOB_CLOSE Job Object, so a timeout/pipe wrapper kills the whole stack). Hit during 629 LAYER live-validation. (2026-06-22)
 
 ### obs:agent-utility-inspect — jseval utility-run (Inspect eval_set): re-invoking a FULLY-COMPLETED set errors 'log file not associ
-`kind: defect?` `anchor: agent_utility_inspect.py` `seen: 5` `first: 2026-06-22` `last: 2026-07-28`
+`kind: defect?` `anchor: agent_utility_inspect.py` `seen: 6` `first: 2026-06-22` `last: 2026-07-28`
 - [ ] jseval utility-run (Inspect eval_set): re-invoking a FULLY-COMPLETED set errors 'log file not associated with a task' — needs --log-dir-allow-dirty; partial-crash resume uses the now-pinned deterministic eval_set_id. tempdoc 624 run-governance validation — `scripts/jseval/jseval/agent_utility_inspect.py:run_utility_eval` (2026-06-22)
 - [ ] furniture_markers all-False in the one live L1 capture cell despite extraction verified correct on both content shapes against live 0.3.1 responses (evidence_pack=True in-process) — child-agent-session content path discrepancy, unrecoverable from redacted logs; settle via one debug-instrumented cell — `scripts/jseval/jseval/agent_utility_inspect.py:548-621` (2026-07-14)
 - [ ] Inspect eval_set post-hoc retry is structurally unavailable: completed evals with per-sample errors are terminal, and task identity embeds live-captured MCP surface/initialize fields so a fresh backend can never adopt an old log ('log not associated') — retry budget must be designed into the run — `scripts/jseval/jseval/agent_utility_inspect.py:1278` (2026-07-17)
 - [ ] Tier-probe harness lesson: Claude CLI background haiku calls void every cell of a non-haiku campaign via the resolved-model cohort guard (39/40 sonnet cells, 'resolved provider model changed within one cell') — pin ANTHROPIC_DEFAULT_HAIKU_MODEL + CLAUDE_CODE_SUBAGENT_MODEL to the campaign tier via --agent-env for any non-haiku run; consider a harness-level default — `scripts/jseval/jseval/agent_utility_inspect.py` (2026-07-17)
 - [ ] 782 campaign harness: rank-of-gold capture dead — MCP delivery emits hit identity as 'path' but _gold_rank_capture reads only h.get('id') — `scripts/jseval/jseval/agent_utility_inspect.py:921`; fix alongside the mixed-model-guard exhaustion-label masking (1404 vs 1424) (2026-07-28)
+- [ ] test_run_utility_eval_resumes_a_multi_sample_full_completion fails under full-suite load when the worktree's git state changes mid-run (a commit landing between the two run_utility_eval invocations makes the source-identity sidecar's source_git_state differ) — passes in isolation; the resume test is sensitive to concurrent working-tree mutation — `scripts/jseval/jseval/agent_utility_inspect.py:2009` (2026-07-28)
 
 ### obs:knowledgeapi — Pre-existing: modules/app-api/.../KnowledgeApi.java is a 1-byte empty stub (no package/class) — like
 `kind: environment?` `anchor: modules/app-api/src/main/java/io/justsearch/app/api/KnowledgeApi.java` `seen: 1` `first: 2026-06-23` `last: 2026-06-23`
@@ -260,9 +262,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] 526 §17 review note 3 — T1A citation anchor publish has no regression test; if `event.currentTarget` rect extraction regresses, only manual browser testing would catch it. — `modules/ui-web/src/shell-v0/components/chat/CitationsPanel.ts:222` (2026-05-21)
 
 ### obs:dev-runner — Dev-runner is bound to main repo path (`F:/JustSearch`) and cannot live-verify Java backend changes
-`kind: defect?` `anchor: scripts/dev/dev-runner.cjs` `seen: 2` `first: 2026-07-14` `last: 2026-07-14`
+`kind: defect?` `anchor: scripts/dev/dev-runner.cjs` `seen: 3` `first: 2026-07-14` `last: 2026-07-29`
 - [ ] Dev-runner is bound to main repo path (`F:/JustSearch`) and cannot live-verify Java backend changes made in worktrees. Worsened by main's gradle currently failing with a snakeyaml lockfile issue (`Resolved 'org.snakeyaml:snakeyaml-engine:3.0.1' which is not part of the dependency lock state`). Net effect: tempdoc 530 §4.2 `/api/governance/state` endpoint compiled cleanly in the worktree (class present in worktree's installed jar; route registered in source) but could not be live-HTTP-verified due to this contradiction. Resolution path: fix main's lockfile, or extend dev-runner to honor worktree CWD. — `scripts/dev/dev-runner.cjs` + `F:/JustSearch` main lockfile (2026-05-21, tempdoc 530 Pass-7 Phase D2)
 - [ ] justsearch_dev_stop broke after its origin worktree was torn down: the MCP dev server resolves scripts/dev/dev-runner.cjs from the session-inject-time worktree path (removed adoption-legibility) -> MODULE_NOT_FOUND; stack had to be killed by PID tree. dev-runner stop path should resolve from the run record or repoRoot, not the session cwd at inject time. Hit 2026-07-14 during 725 A/B teardown; no stop-report written for run b1784f21. (2026-07-14)
+- [ ] dev-runner does not capture Head-process stdout (backend.stdout.log is 27 bytes, only the port line), so Head-side VDU/ inference failures cannot be diagnosed from logs at all — only worker.log is written — `scripts/dev/dev-runner.cjs` (2026-07-29)
 
 ### obs:logger — Governance `ts-any` gate: silent-growth across ~16 files untouched by 549 (logger.ts, platform.ts, t
 `kind: environment?` `anchor: logger.ts` `seen: 1` `first: 2026-05-26` `last: 2026-05-26`
@@ -1289,8 +1292,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] chain-level banked calibration.json survives across git SHA changes between launch attempts — v4 confirmatory chain adopted a 23:33 calibration pinned at 92ec2e6d into a 079e63e5 run, splitting the config cohort and failing recompose (incident #5, tempdoc 624). Fix direction: utility-calibrate should stamp git_sha into calibration.json and chains should invalidate banked calibrations on mismatch — `scripts/jseval/jseval/utility_calibrate.py:252` (2026-07-18)
 
 ### obs:agent-utility-observations — utility claim policy treats resource-exhausted cells (wall-clock/USD budget) as EXCLUDED rather than
-`kind: defect?` `anchor: scripts/jseval/jseval/agent_utility_observations.py` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
+`kind: defect?` `anchor: scripts/jseval/jseval/agent_utility_observations.py` `seen: 2` `first: 2026-07-17` `last: 2026-07-28`
 - [ ] utility claim policy treats resource-exhausted cells (wall-clock/USD budget) as EXCLUDED rather than as ITT failures — the conventional exhaustion-as-failure outcome rule would have made Step-2's matrices complete (60/60 pairs) instead of comparability-voided; encode it as the pre-registered primary rule before the next campaign, then re-verdict Step-2 offline via 719 replay — `scripts/jseval/jseval/agent_utility_observations.py:96` (2026-07-17)
+- [ ] Judge provenance gap: a composed utility record scored through a judge-overlay.json still stamps cohort.judge.kind='substring-em' (taken from task metadata), so the record understates how its correctness was produced — pre-existing on both the log and evidence paths, digest-affecting to change — `scripts/jseval/jseval/agent_utility_observations.py:107` (2026-07-28)
 
 ### obs:chain-phase2 — chain-phase2 first launch: serve_up call frame silently aborted ~2s in (no marker, no branch log; ch
 `kind: defect?` `anchor: scripts/jseval/chain-phase2.bat` `seen: 1` `first: 2026-07-17` `last: 2026-07-17`
@@ -1560,6 +1564,62 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:runtimespecstore — AI autostart silently no-ops under eval mode: InferenceWiring.seedAutostartSpec logs 'seeded runtime
 `kind: defect?` `anchor: modules/app-services/src/main/java/io/justsearch/app/services/runtimestate/RuntimeSpecStore.java` `seen: 1` `first: 2026-07-28` `last: 2026-07-28`
 - [ ] AI autostart silently no-ops under eval mode: InferenceWiring.seedAutostartSpec logs 'seeded runtime spec chatEnabled=true' but RuntimeSpecStore.setChatEnabled writes into the IN_MEMORY read-only settings store (POST /api/settings/v2 -> 409 SETTINGS_READ_ONLY), so RuntimeReconciler computes effective=false and never spawns llama-server; jseval start_backend(llm=True) then always fails 'inference stayed offline' under runHeadlessEval — `modules/app-services/src/main/java/io/justsearch/app/services/runtimestate/RuntimeSpecStore.java:61-70` (2026-07-28)
+
+### obs:pyproject — scripts/jseval had no dependency lock (floor-only pyproject.toml, no upper bounds) despite backing p
+`kind: defect?` `anchor: scripts/jseval/pyproject.toml` `seen: 1` `first: 2026-07-28` `last: 2026-07-28`
+- [ ] scripts/jseval had no dependency lock (floor-only pyproject.toml, no upper bounds) despite backing published claim replay in CI — closed via requirements.lock.txt + check-jseval-lock.mjs gate (tempdoc 792 §6) — `scripts/jseval/pyproject.toml:10` (2026-07-28)
+
+### obs:corpus-leak — Corpus leak instruments are ASCII/English-only: `_TOKEN_RE=[a-z0-9']+` splits German umlauts and `_S
+`kind: defect?` `anchor: scripts/jseval/jseval/corpus_leak.py` `seen: 1` `first: 2026-07-29` `last: 2026-07-29`
+- [ ] Corpus leak instruments are ASCII/English-only: `_TOKEN_RE=[a-z0-9']+` splits German umlauts and `_STOPWORDS` holds only English function words, so `query_overlap_report`/`ngram_selectivity_report` mis-measure any non-English member (tempdoc 748 Phase 0) — `scripts/jseval/jseval/corpus_leak.py:60-91` (2026-07-29)
+
+### obs:corpus-generate-error — tempdoc 748: rebuilt de-miracl gold still carries a single-token grep anchor — 'Standort' has gold c
+`kind: follow-up?` `anchor: scripts/jseval/jseval/corpus_generate.py` `seen: 1` `first: 2026-07-29` `last: 2026-07-29`
+- [ ] tempdoc 748: rebuilt de-miracl gold still carries a single-token grep anchor — 'Standort' has gold coverage 0.500 vs native 0.007 in every cell (Youden J 0.493), because the German semantic-descriptor frame is `Standort: {type}, {place}.` in body AND title while German-Wikipedia natives almost never use the word. Invisible to every gated instrument: ngram_selectivity is n=5, rare_token_leak's df_floor=5 is far below the token's df. Same class as 776 §H (instrument gap). Candidate fix: render the DE descriptor bare (drop the literal 'Standort'), mirroring EN's 'The {type} in the {place}' whose frame word is ubiquitous — `scripts/jseval/jseval/corpus_generate.py:551` (2026-07-29)
+
+### obs:retriever — jseval scores eval runs with ir_measures over hit['score'] (the fused score) while the API returns h
+`kind: defect?` `anchor: scripts/jseval/jseval/retriever.py` `seen: 1` `first: 2026-07-29` `last: 2026-07-29`
+- [ ] jseval scores eval runs with ir_measures over hit['score'] (the fused score) while the API returns hits in cross-encoder order — reported nDCG@10 is the CE-selected set re-ordered by the fused score; a reorder-only stage is invisible to the metric — `scripts/jseval/jseval/retriever.py:143` (2026-07-29)
+
+### obs:hybridfusionutils — wrong-gate defect: justsearch.splade.zero_weight_min_tokens is one constant read by BOTH spladeParen
+`kind: defect?` `anchor: modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/HybridFusionUtils.java` `seen: 1` `first: 2026-07-29` `last: 2026-07-29`
+- [ ] wrong-gate defect: justsearch.splade.zero_weight_min_tokens is one constant read by BOTH spladeParentLengthMultiplier (Stage 3A leg) and chunkBranchParentLengthMultiplier (Stage 3B whole-vs-chunk branch ramp) — a SPLADE-named knob silently retunes branch balance ~4x; needs separate bounds defaulting to 1024/4096 — `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/HybridFusionUtils.java:26-27,826-834` (2026-07-29)
+
+### obs:readpathops — Multi-valued keyword fields reach the wire with two different joiners depending on read path — store
+`kind: defect?` `anchor: modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/ReadPathOps.java` `seen: 1` `first: 2026-07-29` `last: 2026-07-29`
+- [ ] Multi-valued keyword fields reach the wire with two different joiners depending on read path — stored-fields merge with ' | ' while the DocValues projection joins with ', ' — so any consumer splitting a multi-value field must guess, and ', ' is ambiguous with commas inside entity values (14/50 legal bridge entities are 'Name, ST' shaped) — `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/ReadPathOps.java:184` vs `SearchResultFormatter.java:63` (2026-07-29)
+
+### obs:0018-vlm-pdf-extraction-via-chat-model — JUSTSEARCH_LAYOUT_ENABLED is documented as the VDU/VLM enable flag but zero code reads it — grep of 
+`kind: defect?` `anchor: docs/decisions/0018-vlm-pdf-extraction-via-chat-model.md` `seen: 1` `first: 2026-07-29` `last: 2026-07-29`
+- [ ] JUSTSEARCH_LAYOUT_ENABLED is documented as the VDU/VLM enable flag but zero code reads it — grep of modules/ returns no hits; the real gating is capability-based (mmproj present + VRAM + LLM online) — `docs/decisions/0018-vlm-pdf-extraction-via-chat-model.md:26` (2026-07-29)
+
+### obs:inferenceconfig — Setting llm.modelPath via POST /api/settings/v2 silently disables the VDU vision tier: usingLlmModel
+`kind: defect?` `anchor: modules/app-inference/src/main/java/io/justsearch/app/inference/InferenceConfig.java` `seen: 1` `first: 2026-07-29` `last: 2026-07-29`
+- [ ] Setting llm.modelPath via POST /api/settings/v2 silently disables the VDU vision tier: usingLlmModelOverride && !MMPROJ_MODEL.isSet() nulls mmprojPath, so VDU blocks on vdu.missing_mmproj with no user-facing explanation — `modules/app-inference/src/main/java/io/justsearch/app/inference/InferenceConfig.java:159-170` (2026-07-29)
+
+### obs:api-contract-map — POST /api/knowledge/search doc_ids scoping does not restrict the result set (measured: 2 doc_ids ret
+`kind: defect?` `anchor: docs/reference/api-contract-map.md` `seen: 1` `first: 2026-07-29` `last: 2026-07-29`
+- [ ] POST /api/knowledge/search doc_ids scoping does not restrict the result set (measured: 2 doc_ids returned 20 unrelated docs, totalHits 78), contradicting the contract's 'TermInSetQuery on PATH — scopes search to specific documents' — `docs/reference/api-contract-map.md:424` (2026-07-29)
+
+### obs:chunk-completeness — chunk_completeness guard is blind on a `raw_files` corpus — it computes `expected` from corpus.jsonl
+`kind: defect?` `anchor: scripts/jseval/jseval/chunk_completeness.py` `seen: 1` `first: 2026-07-29` `last: 2026-07-29`
+- [ ] chunk_completeness guard is blind on a `raw_files` corpus — it computes `expected` from corpus.jsonl, which such a corpus does not have, so mixed/ohr-bench-pdf-live reported `expected: 0, observed: 3144, verdict: chunk-free` against an index with 3144 real chunk documents — `scripts/jseval/jseval/chunk_completeness.py` (2026-07-29)
+
+### obs:judge-overlay — Reconcile: stats-analysis worker (tmp/hero-arc-analysis/stats) reported validating 120/120 vs commit
+`kind: defect?` `anchor: judge-overlay.json` `seen: 1` `first: 2026-07-28` `last: 2026-07-28`
+- [ ] Reconcile: stats-analysis worker (tmp/hero-arc-analysis/stats) reported validating 120/120 vs committed records using RAW substring EM via read_inspect_observations WITHOUT overlay, but PR #322 established finalize_logs auto-applies judge-overlay.json and 5 w2 cells flip (legal A|q5 x3, B|0|q8; enron B|2|q1) — both claims cannot be exactly true; re-check which reader the matrix actually used before trusting per-cell em_correct at the flipped cells (2026-07-28)
+
+### obs:unanchored-general-92 — RESOLVED (follow-up to the raw-EM-vs-overlay reconciliation note): PR #328's control verified the st
+`kind: follow-up?` `anchor: none` `seen: 1` `first: 2026-07-28` `last: 2026-07-28`
+- [ ] RESOLVED (follow-up to the raw-EM-vs-overlay reconciliation note): PR #328's control verified the stats-analysis matrix used raw EM while committed records are judge-overlaid; flip counts (1/0/4) explain all diffs exactly. Question-level understatement holds under both scorings (~2x on p). Also: reconciliation with the 795-lane agent agreed — #328 is the base; their gate_evaluation declaration + preflight retirement layer on top; stats owned by 791. (2026-07-28)
+
+### obs:unanchored-general-93 — Machine thermal limit hit 2026-07-29: parallel CPU-heavy orchestration lanes (torch-CPU encoder prob
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-29` `last: 2026-07-29`
+- [ ] Machine thermal limit hit 2026-07-29: parallel CPU-heavy orchestration lanes (torch-CPU encoder probes + OCR pool + gradle) drove core temp to 100C; founder killed the heavy processes. Standing orchestration rule from now: SERIALIZE CPU-heavy compute lanes (one at a time), prefer-CPU-to-spare-GPU instructions must not multiply concurrent CPU probes, and a 30-min resource watchdog runs during multi-lane orchestration (2026-07-29)
+
+### obs:unanchored-general-94 — Hard Invariant #1 enforcement claim vs lockfile fact: tier-register row 1 states 'Lucene types are n
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-28` `last: 2026-07-28`
+- [ ] Hard Invariant #1 enforcement claim vs lockfile fact: tier-register row 1 states 'Lucene types are not on Head's classpath', but lucene-core:10.4.0 is on modules/ui's compileClasspath AND runtimeClasspath — `modules/ui/gradle.lockfile`. ArchUnit may still forbid Head *imports* (the real invariant), but the register's stated mechanism is inaccurate as written. Found during tempdoc 792 R6 derisking. (2026-07-28)
 
 ## Parked
 
