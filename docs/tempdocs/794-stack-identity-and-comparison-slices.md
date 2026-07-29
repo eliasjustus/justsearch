@@ -44,10 +44,24 @@ numbers."* **This lane's work is to generalize instance #1**, not to build a mec
 1. **Where it lives is already decided.** Tempdoc 501 §6's closure rule — gate-enforced — makes any
    runtime fact a non-JVM consumer needs a field on the runtime manifest. jseval is such a consumer.
    Projection, not fork (654's stance): read each version from its existing single source.
-2. **Identity is question-relative** (792 §10). Three slices already exist independently
+2. **Identity is question-relative** (792 §10). **Four** slices now exist independently
    (`manifest.py` cohort hash, `bisection.py` axes, `release.py` `config_cohort_key` +
-   `_MODEL_EXECUTION_FLAGS`). The stack axis must be added to all three, which is why they are
-   declared once here rather than hand-edited a fourth time.
+   `_MODEL_EXECUTION_FLAGS`, and — added 2026-07-29 by the 719 agent-utility publication work —
+   the publication cohort in `utility_evidence.py`). The stack axis must be added across all of
+   them, which is why they are declared once here rather than hand-edited a fifth time.
+
+   **The fourth slice matters disproportionately, on two counts.** First, it *independently invented
+   stack identity*: it carries `cli_version` and `mcp_tool_surface_hash` — "what software produced
+   this number", arrived at separately, for a different question, under different names. That is the
+   792 §10 principle confirmed by a case that appeared **while** 792 was being written, not before it.
+   Second, it raises this lane's blast radius: the publication record is content-addressed and
+   byte-stable, PR #322 made digest reproduction **fail-closed**, and the record composes
+   `search_config_cohort_key` into itself. So changing what enters that key now breaks a published-record
+   guarantee that did not exist when hazard R5 was assessed.
+
+   **Scope-stability caveat, recorded honestly:** this slice was found by reading `main` after the
+   fact, not by 792's derisking pass. One appearing by luck is reason to assume the enumeration is
+   not closed — re-enumerate the slices at implementation time rather than trusting this list.
 3. **Stack membership differs by slice.** Attribution always carries stack; the σ-envelope slice
    carries it only for axes the stack can reach. Otherwise every bump orphans every envelope, which
    would make the design unusable.

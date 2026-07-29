@@ -136,11 +136,30 @@ proves the normal resolution path is unaffected but cannot exercise the CI path.
 gate**, and the decisive signal is behavioural: the next scheduled Gradle Dependabot run must produce
 a PR containing a `[libraries]` entry.
 
-**Residue not swept here (deliberate):** `config/revapi/analysis.json`, `config/revapi/differences.json`,
-`config/revapi/app-api-baseline.json`, and `gradle.properties`' "Revapi baselines" comment all survive
-and are now unreferenced. Kept out of this change to hold a build-critical diff surgical and
-reviewable; logged to the observations inbox as a `retire-with-a-sweep` follow-up. The inline comment
-left in `settings.gradle.kts` is what prevents the repository from being re-added in the meantime.
+**On sweeping the Revapi fingerprints — corrected.** The first draft of this section deferred the
+sweep to "a follow-up", which is precisely the evasion `retire-with-a-sweep` names. Going back to do
+it properly produced a better answer: **there is nothing to sweep, because Revapi was never
+abandoned.** `docs/reference/contracts/api-evolution.md:71` states the baseline is *"self-referential
+until first public release; becomes actionable for real Java API surface comparison then"*. The first
+public release shipped 2026-06-25 — **the stated trigger has fired and nobody noticed.**
+
+So the surviving fingerprints (`modules/app-api/config/revapi/analysis.json`,
+`config/revapi/app-api-baseline.json`, 63 checksum entries in `gradle/verification-metadata.xml`,
+`gradle.properties:30`, and the defensive tool-config exclusions at
+`build-logic/src/main/kotlin/conventions/LockingConventionsPlugin.kt:19,66`) are **scaffolding awaiting
+activation, not debt awaiting deletion.** Sweeping them would destroy a live commitment. The open
+question is a decision — wire Revapi up, or retire it explicitly and sweep — and it is not this
+lane's to make; logged to the observations inbox.
+
+This does not weaken the change above. `LockingConventionsPlugin.kt:64` records that `revapiOld`
+resolves its baseline JAR from **Maven Central**, so even a fully-wired Revapi never needed the
+GitHub Packages repository. The deleted block was unnecessary under both the current and the intended
+state of Revapi.
+
+**Method note.** The initial "Revapi is applied by no build script" check grepped only `*.kts`/`*.gradle`
+and would have missed a `.kt` convention plugin — `LockingConventionsPlugin.kt` was found only on a
+second pass across all file types. The conclusion survived re-checking (no `org.revapi`, no `id("revapi…")`,
+no catalog entry), but the first pass was not sound enough to have justified it.
 
 ## Candidate fixes considered (superseded by the deletion above)
 

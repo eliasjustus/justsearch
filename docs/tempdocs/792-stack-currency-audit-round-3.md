@@ -161,7 +161,12 @@ codeql-action@v4, rust-cache@v2 all at latest major. Three majors sitting unmerg
 `contributor-assistant/github-action` is at latest, but upstream's last release was 2024-09-26 — a
 lightly-maintained dependency on the CLA path.
 
-## 6. Python (jseval)
+## 6. Python (jseval) — **CLOSED 2026-07-29**
+
+> **Shipped independently of this lane.** PR #326 (`e78a0415`) landed
+> `scripts/jseval/requirements.lock.txt` pinning the base transitive closure, plus
+> `scripts/ci/check-jseval-lock.mjs` as a drift gate wired into CI — citing this section by number.
+> The finding below stands as the diagnosis; the remedy is done and is removed from §33's sequence.
 
 `scripts/jseval/pyproject.toml` declares `requires-python = ">=3.11"` and floor-only constraints
 with **no upper bounds and no lockfile**; CI pins 3.13, the local interpreter is 3.14.4. This is not
