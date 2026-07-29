@@ -22,7 +22,9 @@ dependencyResolutionManagement {
     // conditional, to resolve previously-published artifacts as Revapi baselines.
     //
     // It was removed because it resolved nothing and broke dependency automation:
-    //   * Revapi is not applied by any build script, so no baseline is ever resolved.
+    //   * Revapi has since been retired outright (docs/reference/contracts/api-evolution.md):
+    //     it guarded the Java API of modules/app-api, which is not one of the Runtime Contract's
+    //     promised surfaces, and no release artifact was ever published for it to compare against.
     //   * No module declares an external `io.justsearch:` dependency — inter-module edges are
     //     all `project(...)` — and no `gradle.lockfile` has ever pinned an `io.justsearch`
     //     artifact, so the repository had no resolution to serve.
@@ -36,8 +38,9 @@ dependencyResolutionManagement {
     // Publishing to GitHub Packages is unaffected: that is a separate `publishing { repositories }`
     // block in modules/app-api and modules/api-contract-projection-java.
     //
-    // If Revapi baseline resolution is ever wired up, do NOT re-add it here — supply it through a
-    // CI-only init script so the settings file Dependabot reads stays free of private registries.
+    // If a private registry is ever genuinely needed for resolution, do NOT re-add it here —
+    // supply it through a CI-only init script so the settings file Dependabot reads stays free of
+    // private registries, or the Gradle library lane breaks again in exactly this silent way.
 
     // 1) Google for AndroidX & GMS (exclusive content)
     exclusiveContent {

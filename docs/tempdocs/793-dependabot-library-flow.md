@@ -136,7 +136,39 @@ proves the normal resolution path is unaffected but cannot exercise the CI path.
 gate**, and the decisive signal is behavioural: the next scheduled Gradle Dependabot run must produce
 a PR containing a `[libraries]` entry.
 
-**On sweeping the Revapi fingerprints — corrected.** The first draft of this section deferred the
+## Revapi retired and swept (2026-07-29, owner-directed)
+
+The disposition below ("parked commitment, decision needed") was resolved by investigating whether
+the surface Revapi guards is actually promised. It is not, and the sweep followed.
+
+**Evidence for retirement, in order of weight:**
+
+1. **It guards an unpromised surface.** `docs/reference/runtime-contract.md:56` — *"Only the surfaces
+   classified public-contract below are promised"* — names three constituents, all wire-level:
+   runtime manifest schema, health/status lifecycle subset, MCP endpoint + curated tools. The Java
+   API of `modules/app-api` is not among them.
+2. **The promised surfaces already have a working guard.** The Runtime Contract changelog's `0.2.0`
+   row records a real break (MCP tool surface `0.4.0` → `0.5.0`) that was detected and versioned by
+   tool-surface hashing and constituent pinning — not by Revapi.
+3. **No baseline exists, and never did.** No CI workflow runs a publish task and `io.justsearch` is
+   not advertised as a consumable library, so no release artifact has ever been published for a
+   comparison to run against. Wiring Revapi would have required either publishing to Maven Central
+   for an artifact with no documented consumer, or resolving from the very private registry whose
+   removal this tempdoc is about.
+
+**Swept:** `config/revapi/`, `modules/app-api/config/revapi/`, 25 `org.revapi*` component blocks
+(179 lines) in `gradle/verification-metadata.xml`, the `revapiAnt` tool-config entry and the
+`revapiOld` resolution skip in `LockingConventionsPlugin.kt`, the `gradle.properties` coordinate
+comment, and the tool list in `docs/explanation/19-module-architecture.md` (its `module-arch` skill
+copy regenerated via `skills-sync`). `docs/reference/contracts/api-evolution.md` now states plainly
+that Java API surface comparison is deliberately not performed, and why.
+
+**Deliberately not bundled:** the `publishing { repositories { … } }` blocks in `modules/app-api` and
+`modules/api-contract-projection-java`, which never fire for the same reason (no publish task runs
+in CI). Same class of never-fired scaffolding, but a separate decision — publish for real, or retire
+them — so it is logged rather than swept alongside.
+
+**On sweeping the Revapi fingerprints — the earlier reasoning, superseded above.** The first draft of this section deferred the
 sweep to "a follow-up", which is precisely the evasion `retire-with-a-sweep` names. Going back to do
 it properly produced a better answer: **there is nothing to sweep, because Revapi was never
 abandoned.** `docs/reference/contracts/api-evolution.md:71` states the baseline is *"self-referential
