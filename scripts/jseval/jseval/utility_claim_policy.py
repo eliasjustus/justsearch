@@ -1,8 +1,23 @@
 """Versioned, outcome-neutral claim policy evaluation for tempdoc 719.
 
-The ACTIVE policy is ``utility-claim-policy.v4.json`` (``policy_id
-agent-utility-public-v4``); ``evaluate_claim`` reads it via :func:`policy_path` /
+The ACTIVE policy is ``utility-claim-policy.v5.json`` (``policy_id
+agent-utility-public-v5``); ``evaluate_claim`` reads it via :func:`policy_path` /
 :func:`load_policy` and every gate below is defined against it.
+
+v5 was ratified 2026-07-29 under tempdoc 791 (campaign-v2 charter) design axis 4.
+It is v4 VERBATIM plus ONE additive requirement, ``question_level_primary``,
+which makes the QUESTION (``qid``) the unit of analysis for the accuracy
+outcome: a paired sign-flip permutation test and a question-cluster bootstrap
+interval replace the cell-level exact McNemar as the pre-registered primary,
+because the cell-level test treats a question's seed replicates as independent
+observations and understates ``p`` (measured on the hero cohort: cell-level
+``p = 0.045`` vs question-level ``p = 0.136`` on the decisive stratum). The
+cell-level McNemar stays REPORTED as a descriptive companion; only what the
+outcome READS changes. ``utility-claim-policy.v4.json`` is retained as
+``status: "superseded"`` history. Like every additive gate before it, the new
+branch is CONDITIONAL -- it fires only when the selected policy declares the
+requirement, so a v1/v2/v3/v4-evaluated record projects a byte-identical
+verdict.
 
 v4 was ratified 2026-07-28 under founder authorization ("firstly i would be up
 for upgrading the rule, but i think we shouldnt rerun today"). It is v3 VERBATIM
@@ -33,6 +48,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 
 from jseval.utility_comparison import SEED_FLOOR
@@ -48,6 +64,7 @@ SUPPORTED_REQUIREMENTS = frozenset({
     "intention_to_treat", "per_protocol_is_secondary",
     "completion_triple_reported", "closed_book_at_hero_tier",
     "schema_strata_reported", "certified_query_subset",
+    "question_level_primary",
     "per_stratum_promotion",
 })
 
@@ -81,8 +98,8 @@ def _certification_snapshot_valid(value: object) -> bool:
 
 
 def policy_path() -> Path:
-    """Path to the ACTIVE claim policy (ratified v4, 2026-07-28)."""
-    return Path(__file__).parents[1] / "utility-claim-policy.v4.json"
+    """Path to the ACTIVE claim policy (ratified v5, 2026-07-29)."""
+    return Path(__file__).parents[1] / "utility-claim-policy.v5.json"
 
 
 def load_policy(path: str | Path | None = None) -> dict:
@@ -94,8 +111,8 @@ def superseded_policy_path() -> Path:
 
     Retained as dated history and as the byte-source the v3 ratification test
     compares the shared thresholds against, so "thresholds carried over
-    verbatim" stays mechanically enforced rather than asserted in prose. v4
-    carries the same numbers forward, so the chain still terminates here.
+    verbatim" stays mechanically enforced rather than asserted in prose. v4 and
+    v5 carry the same numbers forward, so the chain still terminates here.
     """
     return Path(__file__).parents[1] / "utility-claim-policy.v1.json"
 
@@ -106,19 +123,19 @@ def load_superseded_policy() -> dict:
 
 
 def previous_policy_path() -> Path:
-    """Path to the policy the ACTIVE one directly supersedes (v3).
+    """Path to the policy the ACTIVE one directly supersedes (v4).
 
     Distinct from :func:`superseded_policy_path`, which stays pinned to the v2
     document because that is the no-threshold-tuning byte source the v3
-    ratification test reads. This one is the immediate predecessor: v4's
+    ratification test reads. This one is the immediate predecessor: v5's
     ratification test compares against it, and the digest re-pin test
     reconstructs its pre-supersede shape from it.
     """
-    return Path(__file__).parents[1] / "utility-claim-policy.v3.json"
+    return Path(__file__).parents[1] / "utility-claim-policy.v4.json"
 
 
 def load_previous_policy() -> dict:
-    """Load the directly-superseded v3 policy document. Selects no gate."""
+    """Load the directly-superseded v4 policy document. Selects no gate."""
     return json.loads(previous_policy_path().read_text(encoding="utf-8"))
 
 
@@ -258,6 +275,79 @@ def _certified_query_subset_ok(
          ((cell.get("campaign_identity") or {}).get("expected_cells") or [])}
     )
     return derived == expected and subset_size == measured_count
+
+
+def _is_finite_number(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+    )
+
+
+def _question_level_defects(cell: dict, thresholds: dict) -> list[str]:
+    """v5 ``question_level_primary``: why THIS stratum's block is unusable.
+
+    An empty list means the block can back a pre-registered primary claim.
+    Every branch is fail-closed -- a missing, malformed, under-powered or
+    non-re-derivable block yields a named defect, never a silent fall-back to
+    the cell-level numbers the requirement exists to demote.
+    """
+    from jseval.utility_question_level import METHOD_ID, derive_rng_seed
+
+    block = cell.get("question_level")
+    if not isinstance(block, dict):
+        return ["absent"]
+    defects: list[str] = []
+    if block.get("method") != METHOD_ID:
+        defects.append("unknown_method")
+    if block.get("unit") != "qid":
+        defects.append("unit_is_not_the_question")
+    n_qids = block.get("n_qids")
+    # Two clusters is the arithmetic floor for a resampling test; below it the
+    # permutation null has 2 points and the interval is the observation itself.
+    if not isinstance(n_qids, int) or isinstance(n_qids, bool) or n_qids < 2:
+        defects.append("fewer_than_two_question_clusters")
+    p_value = block.get("signflip_p_two_sided")
+    if not _is_finite_number(p_value) or not 0.0 <= float(p_value) <= 1.0:
+        defects.append("permutation_p_out_of_range")
+    interval = block.get("delta_ci")
+    if (
+        not isinstance(interval, list)
+        or len(interval) != 2
+        or not all(_is_finite_number(value) for value in interval)
+        or float(interval[0]) > float(interval[1])
+    ):
+        defects.append("cluster_interval_malformed")
+    if not _is_finite_number(block.get("aggregate_delta")):
+        defects.append("aggregate_delta_malformed")
+    if block.get("ci_method") not in ("BCa", "percentile"):
+        defects.append("interval_method_unnamed")
+    if block.get("ci_alpha") != thresholds.get("significance_alpha"):
+        defects.append("interval_alpha_disagrees_with_policy")
+    for key, floor in (
+        ("permutation_draws", thresholds.get("minimum_permutation_draws")),
+        ("bootstrap_draws", thresholds.get("minimum_cluster_bootstrap_draws")),
+    ):
+        draws = block.get(key)
+        if (
+            not isinstance(draws, int) or isinstance(draws, bool)
+            or floor is None or draws < floor
+        ):
+            defects.append(f"{key}_below_policy_floor")
+    material = block.get("rng_seed_material")
+    seed = block.get("rng_seed")
+    if not isinstance(material, dict) or not isinstance(seed, int) or isinstance(seed, bool):
+        defects.append("rng_seed_not_recorded")
+    elif derive_rng_seed(material) != seed:
+        # The seed is claimed to be content-addressed; a seed that does not
+        # re-derive from its own recorded material is not re-derivable evidence.
+        defects.append("rng_seed_does_not_re_derive_from_its_material")
+    elif block.get("rng_seed_bootstrap") != seed + 1 or block.get(
+        "rng_seed_permutation"
+    ) != seed:
+        defects.append("rng_streams_not_derived_from_the_recorded_seed")
+    return defects
 
 
 def _stratum_matrix_consistent(cell: dict) -> bool:
@@ -668,6 +758,56 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
             "every known question_type schema must appear in the composed "
             "schema_stratified breakdown, null included",
         )
+    # --- v5 (agent-utility-public-v5, ratified 2026-07-29) additive gate ------
+    #
+    # tempdoc 791 axis 4. CONDITIONAL like every additive gate above it: absent
+    # `requirements.question_level_primary` nothing below runs, no gate is
+    # appended, and the accuracy outcome keeps reading the cell-level interval
+    # -- so a v1/v2/v3/v4-evaluated record projects a byte-identical verdict.
+    #
+    # The defect: the cell-level exact McNemar over the (seed, qid) grid treats
+    # a question's seed replicates as independent observations, inflating n by
+    # the replicate factor. Measured on the hero cohort's decisive stratum,
+    # cell-level p=0.045 vs question-level sign-flip p=0.136, with every
+    # question-cluster interval crossing zero. v5 promotes the question-level
+    # pair to primary; the cell-level numbers stay REPORTED as descriptive.
+    question_level_primary = bool(requirements.get("question_level_primary"))
+    if question_level_primary:
+        question_level_defects = [
+            {
+                "stratum_id": cell.get("stratum_id"),
+                "defects": _question_level_defects(cell, thresholds),
+            }
+            for cell in cells
+        ]
+        question_level_observed = [
+            {
+                "stratum_id": item["stratum_id"],
+                "defects": item["defects"],
+                "signflip_p_two_sided": (
+                    (cell.get("question_level") or {}).get("signflip_p_two_sided")
+                ),
+                "delta_ci": (cell.get("question_level") or {}).get("delta_ci"),
+                "ci_method": (cell.get("question_level") or {}).get("ci_method"),
+                "n_qids": (cell.get("question_level") or {}).get("n_qids"),
+            }
+            for item, cell in zip(question_level_defects, cells)
+        ]
+        gate(
+            "question_level_primary_reported",
+            question_level_observed,
+            {
+                "minimum_permutation_draws": thresholds.get("minimum_permutation_draws"),
+                "minimum_cluster_bootstrap_draws": thresholds.get(
+                    "minimum_cluster_bootstrap_draws"
+                ),
+            },
+            bool(cells) and not any(item["defects"] for item in question_level_defects),
+            "every required stratum must carry a re-derivable question-level "
+            "sign-flip permutation p and question-cluster interval; the "
+            "cell-level McNemar is descriptive under this policy",
+        )
+
     interval_present = bool(cells) and all(
         len((cell.get("accuracy") or {}).get("delta_ci")
             or (cell.get("accuracy") or {}).get("delta_ci95") or []) == 2
@@ -842,9 +982,24 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
         block = cell.get(metric) or {}
         return list(block.get("delta_ci") or block.get("delta_ci95") or [])
 
+    def accuracy_interval_for(cell: dict) -> list:
+        """The interval the ACCURACY outcome reads.
+
+        Under v5 that is the question-cluster bootstrap interval, not the
+        cell-level one: the outcome must not inherit a width that was computed
+        by counting a question's seed replicates as independent observations.
+        A malformed block yields `[]` -- no interval, so no accuracy-based
+        outcome -- which is the fail-closed direction, and the
+        `question_level_primary_reported` gate has already refused the record.
+        """
+        if not question_level_primary:
+            return interval(cell, "accuracy")
+        candidate = (cell.get("question_level") or {}).get("delta_ci")
+        return list(candidate) if isinstance(candidate, list) else []
+
     stratum_outcomes = []
     for cell in cells:
-        accuracy_interval = interval(cell, "accuracy")
+        accuracy_interval = accuracy_interval_for(cell)
         metric_intervals = {
             metric: interval(cell, metric)
             for metric in ("provider_cache_creation_input_tokens", "cost_usd")
@@ -976,6 +1131,26 @@ def evaluate_claim(record: dict, policy: dict | None = None) -> dict:
                 },
             },
         })
+        if question_level_primary:
+            # Which interval this outcome actually read, recorded beside the
+            # outcome rather than inferred from the policy id. Appended (never
+            # inserted) so a v1-v4 verdict's gate map is untouched.
+            cell_defects = _question_level_defects(cell, thresholds)
+            stratum_outcomes[-1]["gates"]["question_level_primary"] = {
+                "observed": {
+                    "accuracy_interval_source": "question_level.delta_ci",
+                    "delta_ci": accuracy_interval,
+                    "signflip_p_two_sided": (
+                        (cell.get("question_level") or {}).get("signflip_p_two_sided")
+                    ),
+                    "cell_level_mcnemar_p": (
+                        (cell.get("accuracy") or {}).get("mcnemar_p")
+                    ),
+                    "defects": cell_defects,
+                },
+                "threshold": "a re-derivable question-clustered interval and p",
+                "passed": not cell_defects,
+            }
 
     outcomes = [item["outcome"] for item in stratum_outcomes]
     if not validity_passed or not outcomes or "inconclusive" in outcomes:

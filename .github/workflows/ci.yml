@@ -49,8 +49,19 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: jseval dependency lock drift guard
+        # Fails fast, before installing, if pyproject.toml's floors and the committed
+        # lock (tempdoc 792 §6) disagree — e.g. a dependency added or a floor raised
+        # without regenerating scripts/jseval/requirements.lock.txt.
+        run: node scripts/ci/check-jseval-lock.mjs
+
       - name: Install canonical jseval
-        run: python -m pip install -e scripts/jseval
+        # Constraint-installed against the dependency lock (tempdoc 792 §6) so the
+        # measurement harness behind public claims resolves the same versions on every
+        # run instead of whatever floor-only pyproject.toml + an unpinned resolver
+        # happens to pick that day. `-c` only pins packages pyproject.toml already
+        # requires; it can't force-install anything extra.
+        run: python -m pip install -e scripts/jseval -c scripts/jseval/requirements.lock.txt
 
       - name: Test sandbox validation harness (Python)
         # Pillow backs plant_defects.py's mislabeled-capture re-encode (a SHA-unique
