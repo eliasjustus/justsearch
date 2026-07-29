@@ -871,6 +871,58 @@ above)*
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
 
+### F-044: paraphrase bridging is a steep step function of isolated pair cosine (knee ≈0.65) and the generator's own synonym pools straddle it; the lexical control bridges 0/180 pairs; the hero's `reactor` anchor does NOT fail at the descriptor level (tempdoc 796, 2026-07-29; the standing metric 788 §3.B.10 asked for)
+
+- **Answer:** a reusable offline suite (`scripts/jseval/experiments/paraphrase_bridge_suite.py`)
+  measures how reliably the shipped semantic stack bridges a query-side paraphrase to the
+  document-side surface it was generated from. Pairs are **imported from
+  `jseval.corpus_generate`** (never hand-authored) and joined to the committed 781 corpora by
+  surface match: **90 EN + 90 DE pool pairs, 65 EN exercised, 800 observations, 0 mismatches**, and
+  an independent cross-check confirms the surface join reproduces `_sem_for`'s `(g % 21, g % 44)`
+  index arithmetic without using it. **Tier P** (pair-isolated, same-pool hard negatives, bridge =
+  top-1) bridge rate by `dense_pair_cosine` bucket, EN: **0.00 (n=3) / 0.19 (n=21) / 0.92 (n=50) /
+  1.00 (n=16)** across [0,0.55) / [0.55,0.65) / [0.65,0.75) / [0.75,0.85); at top-3, 0.00 / 0.81 /
+  1.00 / 1.00. The EN pair distribution straddles the knee (min 0.499, p25 0.639, median 0.699,
+  max 0.816). **The lexical control bridges 0/180 pairs at any k in either language** (MRR 0.033 =
+  the all-tie floor) — by construction, since every pair is token- *and* stem-disjoint — so
+  everything recovered here is the semantic stack's doing, not residual lexical overlap.
+- **Secondary findings:** (1) **Place is the weak axis** (EN dense top-1: type 0.81, place 0.57,
+  qualifier 0.96) — multi-word locatives ("mountain pass" ↔ "high col", "chalk downs" ↔ "white
+  escarpment hills") are where the mapping is lost; both EN pairs the dense arm cannot reach even at
+  top-10 are place pairs. (2) **German is measurably worse at the identical task** — DE tier-P dense
+  top-1 0.578 vs EN 0.733, with the curve shifted right (0.00 / 0.07 / 0.68 / 1.00 / 1.00): German
+  needs a higher isolated cosine for the same bridge rate. A cheap, leak-free datapoint for Q-018,
+  measured on the pools rather than on the un-rebuilt de-miracl corpus. (3) **SPLADE's query mode
+  matters more than SPLADE** — `query_mode=onnx` (the shipped default,
+  `ResolvedConfigBuilder.java:1174`) bridges 45.6% at top-1 vs 33.9% for the inference-free `idf`
+  query encoder, which cannot expand and is therefore structurally incapable of bridging.
+  (4) **Tier S** (sentence-isolated, 100 candidates, all 8 committed members, 400 rows) is
+  saturated — dense bridge@10 **0.995**, splade 0.985, lexical 0.035, and the dense curve is flat
+  across every cosine bucket. Isolation is not where the difficulty lives.
+- **Anchor reproduction (Gate-0 discipline, and it disagrees):** the works→mint hero win reproduces
+  (`en:type:16` tier-P rank 1/21, `en:place:16` rank 2/44; q16 tier-S dense rank 1/100). **The
+  reactor case does not** — `power station → reactor` is tier-P rank 2/21 (cosine 0.618) and
+  `upper wetlands → northern marshlands` rank 1/44 (0.706), with q0 at tier-S dense rank 2/100. So
+  q0's 6/6 hero failure across both arms is **not** a failure of the paraphrase pair, and the
+  investigation re-points away from "the encoder can't bridge that pair."
+- **Conditions/caveats:** offline exact-NN/exact-scoring only — no ANN, no fusion, no cross-encoder,
+  no engine. Per the F-033/F-034 treatment the load-bearing result is the **delta between arms**,
+  never the absolute level; F-040 measured on these very strata that the shipped engine hybrid can
+  *beat* an offline passage exact-NN ceiling, so an offline rank is not "what the engine would
+  return." Pairs are procedurally generated to be token-disjoint and domain-neutral — a clean
+  instrument for bridging, not a sample of how real users paraphrase (the 788 §C.17 naturalistic
+  concern applies to this axis too). All 25 qualifier pairs and both DE pools are unobserved by any
+  committed corpus (pool-only measurements). Tier S is scale-invariant by construction — the
+  committed `fabricated-docs.jsonl` is byte-identical across a corpus's 1k and 10k members, so the
+  10k tier-S rows duplicate the 1k rows exactly. CPU-only, single run, no variance estimate.
+- **Not yet measured — see Q-019:** the in-corpus tier (tier D), which is where the interesting
+  variance must be. It is implemented, checkpointed and scripted; execution was deferred to a
+  serialized compute slot after a machine-wide thermal event.
+- **Evidence:** tempdoc 796 (tier tables, pair census, anchor rows, reproduction commands, the
+  pre-registered tier-D hypothesis); artifacts `tmp/paraphrase-bridge/{pairs,tier-p,tier-s,report}.v1.json`
+  (worktree, gitignored — scripts and result tables are what this repo commits, per 708's convention);
+  CI-runnable tests `scripts/jseval/tests/test_paraphrase_bridge_suite.py`.
+
 ### F-043: the 782 hero agent-utility campaign composed one clean three-stratum cohort at sonnet — verdict as-recorded REJECTED/inconclusive on a freeze-level gate defect; code-certain counterfactual ACCEPTED/adoption-only (adoption 1.0, no accuracy benefit, point-negative on enron); founder-gated v4 re-compose escalated (tempdoc 782 window 2, 2026-07-28)
 
 - **Answer:** the preregistered hero campaign (782 §E frozen; policy `agent-utility-public-v3`;
@@ -2195,6 +2247,39 @@ above)*
   *true* semantic-bridging numbers are likely even weaker than quoted — the collapse is real, its
   magnitude is not reproducible. **748's charter should re-verify every experiment on a defillered
   de-miracl rebuild** before drawing (a)/(b)/(c)/(d). See the 767/776 Corpus provenance note.
+- **Cheap new datapoint (2026-07-29, F-044):** German bridging is worse than English on the
+  *pools alone* — DE tier-P dense top-1 0.578 vs EN 0.733, curve shifted right — measured with no
+  corpus involved and therefore immune to the `_FILLER` leak that makes the de-miracl magnitudes
+  unreproducible. This does not answer (a)–(d), but it says at least part of the DE deficit is
+  present before any corpus, scale or host-dilution effect, which 748's experiment ordering should
+  account for.
+
+### Q-019: In the real corpus, does paraphrase bridging survive the query SHAPE agents actually issue — and is that what cost the hero campaign q0?
+
+- **Question:** F-044 measured bridging in isolation (tier P) and at sentence granularity (tier S)
+  and found both anchors bridging, including `power station → reactor`, whose hero cells failed 6/6
+  in both arms. The in-corpus tier (**tier D**: injected sentences inside real host documents, at
+  production doc- and chunk-granularity, over the full 1000-doc dataset) is implemented and scripted
+  but **not run** — a machine-wide thermal event took the compute slot. Which of these explains q0:
+  **(a) query shape** — the bridge survives the generated question but not the 4-token forms agents
+  send; **(b) host dilution** — the injected sentence is one line inside a real ~2.5 KB email and the
+  whole-doc representation drowns it (the F-031/F-040 mechanism); or **(c) neither**, i.e. the
+  failure is downstream of retrieval (hop-2, or 788 §1's satisficing/stopping mechanism)?
+- **Why it matters:** it decides whether "paraphrase bridging is the tool's unique value" is a
+  capability claim or a capability-at-a-query-shape claim. The hero census recorded that agents type
+  a median of **4** content tokens, and recorded verbatim two q0 query strings —
+  `power station in the upper wetlands` and `upper wetlands power station` — while F-034's secondary
+  finding is that dense retrieval is markedly weaker on keyword-shaped queries. If the answer is (a),
+  788 §3.A's delivery-layer work and 788 §3.B.10's engine axis are the same problem from two ends,
+  and neither an encoder swap (708: no swap) nor more bridging capacity is the lever.
+- **Prior art / do not re-run:** F-044 (tiers P/S, pair census, anchors); F-034 (query-shape
+  sensitivity, no-model-swap verdict); F-040 (offline-vs-engine inversion on these exact strata —
+  the reason a tier-D rank is not an engine claim); F-030(678)/F-031/F-032 (the dilution mechanisms).
+- **Suggested approach:** run the scripted tier-D pass in a serialized compute slot — exact commands,
+  expected outputs, sanity checks and the pre-registered hypothesis are in tempdoc 796 §Deferred. The
+  suite scores three query forms (`question` / `descriptor` / `keyword`, all derived from the pair
+  register) against the same cached document encodings, so the shape comparison is nearly free once
+  the corpus is encoded, and encoding is block-checkpointed and resumable.
 
 ---
 
