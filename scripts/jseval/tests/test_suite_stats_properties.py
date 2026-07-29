@@ -7,14 +7,20 @@ the statistical quality of any metric (which is not an invariant and stays in th
 
 from __future__ import annotations
 
-from hypothesis import given
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from jseval.suite_stats import compute_stats, percentile
 
 _finite = st.floats(min_value=-1e6, max_value=1e6, allow_nan=False, allow_infinity=False)
 
+# These are algebraic-invariant properties, not timing properties: a slow shared machine
+# (parallel Gradle/eval runs) must not turn wall-clock into a test failure. Strategies and
+# assertions are unchanged; only the timing health checks are suppressed.
+_law = settings(suppress_health_check=[HealthCheck.too_slow], deadline=None)
 
+
+@_law
 @given(st.lists(_finite, min_size=1, max_size=50), st.floats(min_value=0, max_value=100))
 def test_percentile_within_bounds(values: list[float], p: float) -> None:
     sv = sorted(values)
@@ -22,6 +28,7 @@ def test_percentile_within_bounds(values: list[float], p: float) -> None:
     assert sv[0] <= r <= sv[-1]
 
 
+@_law
 @given(
     st.lists(_finite, min_size=1, max_size=50),
     st.floats(min_value=0, max_value=100),
@@ -33,6 +40,7 @@ def test_percentile_monotonic_in_p(values: list[float], p1: float, p2: float) ->
     assert percentile(sv, lo) <= percentile(sv, hi)
 
 
+@_law
 @given(st.lists(_finite, min_size=1, max_size=50))
 def test_percentile_endpoints_are_min_and_max(values: list[float]) -> None:
     sv = sorted(values)
@@ -40,6 +48,7 @@ def test_percentile_endpoints_are_min_and_max(values: list[float]) -> None:
     assert percentile(sv, 100.0) == sv[-1]
 
 
+@_law
 @given(st.lists(_finite, min_size=1, max_size=50))
 def test_compute_stats_orders_and_brackets(values: list[float]) -> None:
     s = compute_stats(values)
@@ -50,6 +59,7 @@ def test_compute_stats_orders_and_brackets(values: list[float]) -> None:
         assert s["stddev"] >= 0
 
 
+@_law
 @given(st.lists(_finite, min_size=1, max_size=50), st.permutations(list(range(50))))
 def test_compute_stats_permutation_invariant(values: list[float], perm: list[int]) -> None:
     shuffled = [values[i] for i in perm if i < len(values)]

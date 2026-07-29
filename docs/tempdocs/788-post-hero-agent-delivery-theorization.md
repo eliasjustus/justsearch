@@ -190,3 +190,168 @@ No item above is licensed for implementation by this tempdoc. The likely next co
 steps (delivery-shape probe design, dropout-fallback design, v2 campaign charter) each
 deserve their own numbered tempdoc with pre-registered acceptance criteria; this document
 exists so those charters start from the full option space rather than the first idea.
+
+---
+
+## 6. Tool-choice rationality findings (hero census, post-hoc) — 2026-07-29
+
+§2 asserted, without evidence, that **100% MCP adoption is over-trust rather than fit**. A
+$0 offline analysis pass over the already-captured hero transcripts now tests that assertion
+directly. It is a *post-hoc census of existing logs* — no new campaign, no counterfactual
+replay, no spend. The answer is **yes, by three independent cuts**, with the limits below.
+
+**Provenance.** Scripts and outputs live under `tmp/hero-arc-analysis/tool-choice/`
+(uncommitted analysis artifacts, not repo content): `common.py` (shared loader + trajectory
+classifier), `q1_choice_map.py` → `q1_choice_map.v1.json`, `q2_counterfactual_leaning.py` →
+`q2_counterfactual_leaning.v1.json`, `q3_rationality_score.py` → `q3_rationality_score.v1.json`,
+`q4_framing_effect.py` → `q4_framing_effect.v1.json`, prose summary in `findings.txt`. Every
+number is re-derivable with
+`PYTHONUTF8=1 PYTHONPATH=<repo>/scripts/jseval python qN_*.py`. All reads go through
+`jseval.agent_utility_observations.read_inspect_observations` (`require_complete=False`,
+**judge overlay NOT applied** — substring-EM only, the same convention
+`tmp/hero-arc-analysis/stats/matrix.v1.json` uses). Each output JSON embeds the classification
+rules verbatim in its `classification_rules` field.
+
+**Scope.** Hero window-1 (`782-run-2026-07-28-hero-window1`) + window-2
+(`782-run-2026-07-28b-hero`): 3 strata × A/B × 3 seeds = **360 B cells**, each with a paired A
+(grep-only) twin on the same (window, stratum, seed, qid); plus the 789 framing probe (F0/F1/F2,
+B-only, 40 attempted cells each, all `en-email-enron-raw-1k-verbose`). F3 is excluded — never
+composed, no `utility-comparison.v1.json`.
+
+**Trajectory classification.** Each B cell's `tool_call_sequence` is reduced to an M/N string
+(M = MCP search/answer call, N = Grep/Read/Glob/Bash; other tools dropped by design), then
+bucketed by switch count and block order into: MCP-only, MCP-then-native-fallback,
+native-dominant-after-first-MCP, interleaved (≥2 switches; `native-first-then-mcp` folded in),
+and native-only-despite-offer (**observed n=0** in hero).
+
+### 6.1 Q1 — paired-cell choice map (`q1_choice_map.v1.json`)
+
+Of 360 B cells, **299 have a usable paired A twin** (both attempted+scored, neither
+harness-excluded):
+
+| verdict | n / 299 | share |
+|---|---:|---:|
+| over-trust candidate (B underperforms its own A twin) | 65 | **21.7%** |
+| fit (B beats its own A twin) | 37 | **12.4%** |
+| tie, both correct | 68 | 22.7% |
+| tie, both wrong | 129 | 43.1% |
+
+Over-trust outnumbers fit **~1.8:1** at the paired-cell level. By trajectory class
+(over-trust rate / fit rate, derivable pairs):
+
+| class | over-trust | fit | n |
+|---|---:|---:|---:|
+| MCP-only | 30.8% | 7.7% | 26 |
+| MCP-then-native-fallback | 25.0% | 2.3% | 44 |
+| native-dominant-after-first-MCP | 30.1% | 8.2% | 73 |
+| **interleaved** | 15.4% | **17.9%** | 156 |
+
+**Interleaved is the only net-positive class** — the agent treating MCP as one signal among
+several (≥2 switches) rather than trusting a single pass or abandoning it after one fallback.
+
+### 6.2 Q2 — per-qid win-rate gap and behavioral flags (`q2_counterfactual_leaning.v1.json`)
+
+Mean gap = B-class accuracy minus that qid's A accuracy, averaged over (stratum, qid) groups:
+
+| class | mean gap vs A | qid-groups ≥ A |
+|---|---:|---:|
+| MCP-only | −0.250 | 43.8% |
+| MCP-then-native-fallback | −0.262 | 44.8% |
+| native-dominant-after-first-MCP | −0.133 | 55.3% |
+| **interleaved** | **+0.054** | 67.2% |
+
+A single clean fallback is not enough; only repeated cross-checking closes the gap on average.
+Behavioral flags, pooled over all B cells:
+
+| class | abstained | fabricated_specific |
+|---|---:|---:|
+| MCP-only | 23.1% | **42.3%** |
+| MCP-then-native-fallback | 44.7% | **42.6%** |
+| interleaved | 33.5% | **17.4%** |
+| native-dominant-after-first-MCP | **63.2%** | 14.5% |
+
+The two MCP-first classes fabricate most (commit to an MCP-shaped answer and stop);
+native-dominant abstains most (heavy native searching after MCP ends in "not found").
+Interleaved has both the lowest fabrication and a below-median abstention rate.
+
+**Honest gap, not estimated:** `hop1_stop` is `None` for **every** hero window-1/window-2 cell —
+both windows predate the delivered-span behavioral fields shipped in 789/#319 (confirmed
+directly: 0 cells have `entity_source` set). Q2's hop-1 question is therefore answerable only
+via the probe (§6.4), and is reported as not-derivable rather than inferred.
+
+### 6.3 Q3 — rationality score and choice-oracle bound (`q3_rationality_score.v1.json`)
+
+Channels per (stratum, qid): A (grep-only), `B_mcp_heavy` (MCP-only + MCP-then-native-fallback),
+`B_mixed` (interleaved + native-dominant). A B cell is "rational" iff its own channel is in its
+qid's empirically-best channel set. **Stated limit, up front: this is an in-sample /
+retrospective score** — the best channel is computed from the very cells scored against it
+(typically 1–6 cells per channel per qid, no held-out fold). Descriptive, not "the agent could
+have known this in advance."
+
+- Overall rational-choice rate (B cells): **49.1% (155/316)**
+- …of which **114/316** qid-groups had "no MCP at all" as the sole best channel (any MCP use
+  scores irrational there)
+- Shape-conditional rate (excluding those 114 — "given MCP use was justified, was the shape
+  right?"): **76.7% (155/202)**
+- Per stratum: en-email-1k **33.6%** | en-email-10k **55.9%** | en-legal-clerc-1k **58.6%**
+- Per B-channel: `B_mcp_heavy` **24.7%** | `B_mixed` **56.4%**
+
+Choice-oracle upper bound (**explicitly an upper bound, same in-sample caveat**):
+
+| | accuracy | Δ |
+|---|---:|---:|
+| observed B | 35.1% | — |
+| full oracle (may also choose "no MCP at all" per qid) | 57.9% | **+22.8 pts** |
+| shape-only oracle (must use MCP; may choose the shape) | 44.7% | +9.6 pts |
+
+**~2.4× more theoretical upside comes from knowing when *not* to touch the tool than from using
+it in the right shape once committed.** With the 76.7% shape-conditional number, this is the
+sharpest support for §2's reading: the failure is over-adoption, not technique.
+
+### 6.4 Q4 — framing effect on choice, 789 Phase-2 probe (`q4_framing_effect.v1.json`)
+
+Accuracy is ITT (correct / all 40 attempted cells, excluded counted wrong) — recomputed from
+source and matching the previously-cited figures exactly (F0 11/40 = 0.275 with 6 excluded,
+F1 17/40 = 0.425 with 3 excluded).
+
+| metric | F0 | F1 | F2 |
+|---|---:|---:|---:|
+| accuracy (ITT) | 0.275 | **0.425** (+0.150) | 0.325 (+0.050) |
+| hop1_stop rate | 0.350 | **0.225** (−0.125) | 0.250 (−0.100) |
+| abstained | 0.375 | 0.300 (−0.075) | 0.300 (−0.075) |
+| native-followup-after-MCP | 0.850 | 0.900 (+0.050) | 0.900 (+0.050) |
+| 2nd-search-or-more | 0.925 | 0.950 (+0.025) | 0.825 (−0.100) |
+| name_pivot | 0.850 | 0.900 (+0.050) | 0.800 (−0.050) |
+
+Trajectory shift F0 → F1 (n=40 each): MCP-only 6 → 4; **MCP-then-native-fallback 4 → 8
+(doubled)**; interleaved 18 → 19 (flat); native-dominant 12 → 9.
+
+F1 (continuation framing) moves trajectory choice in the direction §2 theorized — it roughly
+doubles the clean single-fallback share at the expense of MCP-only and native-dominant cells,
+and **nearly halves the hop-1-stop rate**, which plausibly explains most of its +15pp accuracy
+gain. F2 (evidence-not-answer framing) moves the same dials the same direction but more weakly,
+for a much smaller gain, while *reducing* the 2nd-search (−10pp) and name-pivot (−5pp) rates
+versus F0 — so F2's benefit appears to come from a different, less continuation-driven
+mechanism than F1's.
+
+### 6.5 What this changes here, and what it does not
+
+It converts §2's over-trust hypothesis from an assertion into a measured claim, and it
+re-weights the option space: the dominant lever indicated by Q3 is **adoption calibration**
+(when the tool should be reached for at all — §A.1–3's calibrated-negative/coverage family and
+§A.6's framing work), not within-tool technique. Q4 shows framing is a real, cheap lever on the
+same pathway with retrieval held fixed. **Nothing here is licensed for implementation** — §5
+still governs; this is evidence for the charters, not a design.
+
+**Limits carried forward verbatim from `findings.txt` (do not over-read):**
+
+- Q1/Q2/Q3 are **correlational / in-sample**; no counterfactual replay exists.
+- `hop1_stop` is **not derivable** for all hero window-1/window-2 cells (pre-789 logs) — the
+  hop-1 evidence comes only from the Q4 probe.
+- Trajectory classes are a 2-symbol (M/N) reduction of the full tool vocabulary;
+  ToolSearch/Task/WebFetch calls are dropped from the reduced trace **by design** (documented in
+  `common.py`), not silently miscounted.
+- Q3's oracle bound assumes perfect per-qid foreknowledge drawn from the same outcomes being
+  scored — an upper bound, never an achievable target.
+- The Q4 probe is a **single stratum** (`en-email-enron-raw-1k-verbose`), n=40 per framing — a
+  3-arm shift on 40 cells each, not a high-power replication.
