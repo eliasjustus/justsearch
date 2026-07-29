@@ -1,0 +1,9 @@
+{
+  "method": "fetch-ohrbench-pdf-corpus",
+  "script": "scripts/search/fetch-ohrbench-pdf-corpus.py",
+  "source": "opendatalab/OHR-Bench pdfs.zip (CC-BY-4.0) split to single pages",
+  "id_source": "datasets/mixed/ohr-bench-tika-pdf (same _id space, byte-identical queries/qrels)",
+  "n_docs": 1000,
+  "n_queries": 962,
+  "tempdoc": "790"
+}
