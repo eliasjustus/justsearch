@@ -1586,4 +1586,50 @@ final class ResolvedConfigBuilderTest {
           "documents the pre-fix divergence: env-only standalone defaulted recovery off");
     }
   }
+
+  // ==================== 771 item (b): MCP entity carriage ====================
+
+  @Nested
+  @DisplayName("MCP entity carriage (tempdoc 771 item (b))")
+  class McpEntityCarriage {
+
+    @Test
+    @DisplayName("defaults OFF at the shipped default chain — carriage never turns on by omission")
+    void defaultsOff() {
+      ResolvedConfig config = new ResolvedConfigBuilder().contributeEnvRegistry().build();
+      assertNotNull(config.search().mcpEntityCarriage());
+      assertFalse(
+          config.search().mcpEntityCarriage().enabled(),
+          "D-004 default-off template: an unconfigured process must deliver the pre-771 response");
+      assertEquals(
+          ResolvedConfig.Search.DEFAULT_ENTITY_CARRIAGE_MAX_CHARS,
+          config.search().mcpEntityCarriage().maxChars());
+    }
+
+    @Test
+    @DisplayName("the operator sysprop actually reaches the resolved record — the gate really fires")
+    void syspropTurnsCarriageOn() {
+      String prevEnabled = System.getProperty("search.mcp_delivery.entity_carriage_enabled");
+      String prevMax = System.getProperty("search.mcp_delivery.entity_carriage_max_chars");
+      try {
+        System.setProperty("search.mcp_delivery.entity_carriage_enabled", "true");
+        System.setProperty("search.mcp_delivery.entity_carriage_max_chars", "321");
+
+        ResolvedConfig config = new ResolvedConfigBuilder().contributeEnvRegistry().build();
+
+        assertTrue(
+            config.search().mcpEntityCarriage().enabled(),
+            "the carriage flag must resolve through EnvRegistry, not just exist as a symbol");
+        assertEquals(321, config.search().mcpEntityCarriage().maxChars());
+      } finally {
+        restore("search.mcp_delivery.entity_carriage_enabled", prevEnabled);
+        restore("search.mcp_delivery.entity_carriage_max_chars", prevMax);
+      }
+    }
+
+    private void restore(String key, String prev) {
+      if (prev != null) System.setProperty(key, prev);
+      else System.clearProperty(key);
+    }
+  }
 }

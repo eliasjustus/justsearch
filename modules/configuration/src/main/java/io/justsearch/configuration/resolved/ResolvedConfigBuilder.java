@@ -565,6 +565,22 @@ public final class ResolvedConfigBuilder {
         Integer.toString(
             io.justsearch.configuration.resolved.ResolvedConfig.Search
                 .DEFAULT_THIN_RESULT_FLOOR_BYTES));
+    // 771 item (b): entity carriage — default OFF, so an unconfigured process delivers exactly the
+    // pre-771 response.
+    putYamlFromNode(
+        "search.mcp_delivery.entity_carriage_enabled",
+        searchRoot,
+        "mcp_delivery.entity_carriage_enabled");
+    putDefault("search.mcp_delivery.entity_carriage_enabled", "false");
+    putYamlIntFromNode(
+        "search.mcp_delivery.entity_carriage_max_chars",
+        searchRoot,
+        "mcp_delivery.entity_carriage_max_chars");
+    putDefault(
+        "search.mcp_delivery.entity_carriage_max_chars",
+        Integer.toString(
+            io.justsearch.configuration.resolved.ResolvedConfig.Search
+                .DEFAULT_ENTITY_CARRIAGE_MAX_CHARS));
     putYamlDouble(
         "search.mcp_framing.weak_score_floor", searchRoot, "mcp_framing.weak_score_floor");
     putDefault(
@@ -1316,7 +1332,20 @@ public final class ResolvedConfigBuilder {
             "search.mcp_delivery.budget_bytes",
             ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES),
         buildSearchMcpFraming(),
+        buildSearchEntityCarriage(),
         buildSearchCorrections());
+  }
+
+  /**
+   * 771 item (b): the MCP entity-carriage settings. The enabled fallback is {@code false} — carriage
+   * is a measured lever under the D-004 default-off template and must never turn on by omission.
+   */
+  private ResolvedConfig.Search.EntityCarriage buildSearchEntityCarriage() {
+    return new ResolvedConfig.Search.EntityCarriage(
+        resolveBoolean("search.mcp_delivery.entity_carriage_enabled", false),
+        resolveInt(
+            "search.mcp_delivery.entity_carriage_max_chars",
+            ResolvedConfig.Search.DEFAULT_ENTITY_CARRIAGE_MAX_CHARS));
   }
 
   /**

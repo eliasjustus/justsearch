@@ -1259,6 +1259,28 @@ above)*
   evidence-content excerpt gap (small, design-here) plus (d) the known encoder-domain floor (not
   new); F-039 is marked **resolved-decomposed**. No F-030 successor is opened (708 closed the
   encoder question); no new engine charter is licensed.
+- **(b) SHIPPED as entity carriage, default off (2026-07-29, tempdoc 771 §G).** 775's evidence-span
+  authority fixed the case where the bridge entity is *inside* the 4,096-char `content_preview` but
+  wasn't the densest query-term cluster; it cannot fix (b)'s actual geometry, where the bridge
+  sentence sits at median char-offset **5,005 — outside `content_preview` altogether**, so no
+  excerpt-*selection* strategy can deliver it. **Entity carriage** appends the document's indexed
+  `entity_*_raw` names (326) that the delivered excerpt does not already carry, as one bounded line
+  on both MCP tiers — content-only at the delivery layer, no retrieval/fusion/excerpt-selection or
+  ranking change, no MCP tool-schema change (F-016), governed by the 775 §E delivery budget.
+  Flag `search.mcp_delivery.entity_carriage_enabled` (+ `…_max_chars`, default 200), **default OFF**
+  per D-004's default-off → measure → flip template. A chunk hit's stored-field allowlist is
+  chunk-scoped, so the parent's entity values are resolved in one batched read onto the RESULT
+  builder only (`hit.fields()` untouched → EvidenceSpan's NER-membership signal and all span/ranking
+  computation are byte-unchanged).
+  **Measured offline ($0, real 781-v2 documents through the production renderers;
+  `McpEntityCarriageMetricTest` + `scripts/analysis/771-entity-carriage/extract-bridge-cases.py`):**
+  legal-clerc-1k-verbose carriage **40.0% → 100.0%** at **+39.4 bytes/hit (6.7% of delivery)**;
+  enron-1k-verbose **92.0% → 100.0%** at **+5.2 bytes (0.8%)**. The OFF column reproduces this
+  finding's own live 45%/93% to within 5 points on both strata without being tuned to them, which is
+  the model's validation; the model's one assumption is that NER extracted the bridge name (where it
+  did not, carriage cannot help). Composes with 789's F1 continuation framing, which could previously
+  only mark entities the excerpt window happened to include. **Live-backend smoke is pending** — the
+  evidence here is offline-with-real-renderers, not a running stack.
 
 ### F-038: RAG chunk retrieval was blind to chunkless (sub-2000-char) docs — a doc-level union leg into the PRIMARY RAG candidate set fixes it with no re-index; interactive hybrid on-baseline (tempdoc 749, 2026-07-18)
 
@@ -1404,6 +1426,54 @@ above)*
   mechanism prose in the Answer above is superseded by this weight-policy account. Engine frozen
   as-is for the 781/hero window (Step 0's pre-declared decision rule: a >10% *improvement* with a
   correctness story would have shipped; a 7% harm banks the finding).
+- **MECHANISM CORRECTED AGAIN (2026-07-29, tempdoc 784 §K fusion-attribution study — offline,
+  per-query, over the same `tmp/781-certification/step0/arm-A{1..4}` artifacts; script
+  `scripts/jseval/experiments/fusion_attribution_784.py`, outputs `tmp/784-fusion-attribution/`).**
+  The (b) "weight policy for a weak leg" account above is **superseded**: the ~7% harm is not the
+  SPLADE leg's cost at all, and the Step-0 gate arm was **not a one-lever change**.
+  `justsearch.splade.zero_weight_min_tokens` is ONE static constant
+  (`HybridFusionUtils.java:26-27`) read by TWO levers — `spladeParentLengthMultiplier` (Stage 3A
+  SPLADE leg, `:803-806`, applied `:693`) **and** `chunkBranchParentLengthMultiplier` (Stage 3B
+  whole-vs-chunk **branch** ramp, `:826-834`, applied `:488-491` from `SearchExecutor.java:766-780`).
+  Raising it past the corpus token range flips the chunk-branch multiplier from **1.0 → 0.25**
+  (`branchChunkMinWeightMultiplier`) for every document, i.e. the effective whole:chunk split for a
+  doc found by BOTH branches moves **[0.5, 0.5] → [0.8, 0.2]** — a ~4× de-weighting of the chunk
+  branch, entirely independent of SPLADE. Evidence, in decreasing order of decisiveness:
+  (i) **SPLADE-invariance** — the two gate-raise comparisons (A1→A4 over the truncated 0.0591 leg;
+  A2→A3 over the revived 0.2902 leg, 4.9× better) produce **exactly identical per-query harm on
+  195/200 queries** (Pearson r 0.980, mean |diff| 0.005); whatever causes the harm does not read the
+  leg's contents. (ii) **No SPLADE displacement** — `splade_rank` is null on 100% of hybrid
+  judgeSignal rows in all four arms; overlap between the isolated SPLADE top-10 and the final top-10
+  does **not** rise when the gate is raised on the leg-identical comparison (1.065 → 1.045), and only
+  7.7% of docs entering the raised-gate top-10 are SPLADE top-10 docs — *below* the 10.5% base rate.
+  (iii) **~23% of the harm has no displacement at all** — 13 harmed queries have a byte-identical
+  returned top-10 SET (nothing entered, nothing left), carrying 3.39 of 14.53 nDCG of harm; the fused
+  score itself moved. (iv) **Arithmetic** — 97.4% of the 1,741 doc-pairs present in both arms' top-10
+  admit `fused = e_whole·nWhole + e_chunk·nChunk` with both normalised branch scores in [0,1] under
+  the source-derived [0.5,0.5]→[0.8,0.2] shift; "no change" (0.51) explains only 27.9%, and any
+  whole-weight below ~0.75 explains at most 84% — the movement **requires** a branch-weight shift far
+  larger than adding a 0.2-weight leg could produce (identifiability is a lower bound, not a point
+  estimate — the curve saturates above 0.83).
+  **Consequences.** (1) Step 0's decision (engine frozen, chunk-SPLADE default OFF) **stands** — it
+  was the right call for the wrong reason. (2) The 7% is *not* evidence that fusion cannot exploit a
+  mid-quality sparse leg; that question is **unmeasured**, because no Step-0 arm isolated the SPLADE
+  lever. (3) The shared constant is a genuine engine defect of the `wrong-gate` class: a knob named
+  for SPLADE silently retunes the whole-vs-chunk branch balance. Fixing it is a one-line separation
+  (give the Stage-3B ramp its own bounds defaulting to today's 1024/4096, so shipped behaviour is
+  byte-identical) — **not made by this study, which was analysis-only**. (4) Under `zeroExclude`
+  (`fuseWithCCNamed:495-503`) the de-weighting bites only on docs **both** branches found; whole-only
+  and chunk-only docs renormalise to weight 1.0 and are untouched — so the gate raise selectively
+  demotes exactly the documents two independent branches agreed on.
+  **Method caveat surfaced (affects any per-query re-analysis of these artifacts):** the API returns
+  the final top-10 in **cross-encoder** order (0 violations across 200 queries × 4 arms), but jseval
+  scores with `ir_measures.ScoredDoc(score=hit['score'])` (`retriever.py:143`), and `hit['score']` is
+  the fused score — so the reported nDCG@10 is the CE-**selected** set re-ordered by the **fused**
+  score. Both channels of a fusion change land on the metric. Not a defect in the Step-0 comparison
+  (both arms measured identically), but it is why (iii) is observable at all.
+  **not_derivable from these artifacts:** per-leg SPLADE score under hybrid; chunk-branch membership
+  and scores (the `chunk-merge` stage is on the wire, dropped by `provenance.py:341-361`); normalised
+  per-leg scores / effective weights / `parent_token_count` (detail tier needs `include_detail`, which
+  jseval's eval path never sets); and anything below the top-10.
 
 ### F-033: the SPLADE (sparse) leg's ~0.059 on legal-clerc-200 is substantially a 512-token TRUNCATION artifact — per-chunk SPLADE revives it 6–10× offline; the sparse sibling of F-031/F-032 (tempdoc 712, 2026-07-11; refines F-030(678) for the sparse leg)
 
