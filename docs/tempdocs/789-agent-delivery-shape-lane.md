@@ -1,5 +1,5 @@
 ---
-status: "chartered (2026-07-28). Owner lane for the delivery-shape work tempdoc 788 §3.A theorized. Phase 1 (behavioral telemetry) is $0 and implementation-licensed; Phase 2 (framing probe, paid cells) is design-licensed but SPEND IS FOUNDER-GATED. Source evidence: register F-043, 782 §I, the transcript census + statistics under tmp/hero-arc-analysis/ (methodology in 782 §I / F-043)."
+status: "chartered (2026-07-28). Owner lane for the delivery-shape work tempdoc 788 §3.A theorized. Phase 1 (behavioral telemetry) is $0 and implementation-licensed; Phase 2 (framing probe, paid cells) is design-licensed but SPEND IS FOUNDER-GATED. Source evidence: register F-043, 782 §I, the transcript census + statistics under tmp/hero-arc-analysis/ (methodology in 782 §I / F-043). Naturalistic-replication (enron-qa) $0 PREP COMPLETE (2026-07-29) — subset frozen, answers resolved, launch-ready; the measured launch itself remains founder-gated, unstarted."
 created: 2026-07-28
 ---
 
@@ -629,3 +629,226 @@ tempdoc 790 targets). The score arm structurally cannot see that case — a hit 
 on a title match while delivering ~30 bytes of body. The Amendment-3 corpus never tripped
 the floor because every delivery there carried ~1.6 KB, which is a fact about that corpus,
 not evidence the arm is vacuous.
+
+## Naturalistic replication — $0 preparation complete (2026-07-29)
+
+F1 and F2 graduated the 2026-07-28 probe (above) via clause (b) of the pre-registered
+decision rule; the hard prerequisite before either ships as a default is the 788 §4
+Goodhart guard — checking the effect on REAL natural questions (`mixed/enron-qa`), not
+only the fabricated 2-hop chains the probe itself used. This section is the $0
+preparation for that check: subset frozen, reference answers resolved, launch-ready.
+**No measured cell has been run under this identity.** The launch itself is a separate,
+founder-gated spend decision. Substrate: `scripts/jseval/789-corpora/enron-qa-answers/`
+(`cells.v1.json`, `recipe.json`, `select_subset.py`, `synthesize_answers.py`,
+`closed_book_screen.py`, `local_llm_client.py`, `answer-synthesis-prompt.v1.txt`).
+
+### The scout finding this closes
+
+`datasets/mixed/enron-qa/queries.jsonl` is BEIR-shape (`{_id, text}`) with no answer
+strings, while `agent_utility_task` requires `r["answer"]` per query
+(`scripts/jseval/jseval/agent_utility_inspect.py:1649`) — `mixed/enron-qa` could not be
+handed to `utility-run` as-is. `scripts/search/convert-enronqa-to-beir.py` never
+projected an answer field; this section explains why, and supplies one.
+
+### Answers resolution — upstream field exists, but is NOT used
+
+Checked live against the HuggingFace datasets-server `first-rows` API for
+`MichaelR207/enron_qa_0922` (2026-07-29): the upstream row schema DOES carry an answer
+layer — `gold_answers`, `rephrased_questions`, `alternate_answers`, `incorrect_answers`,
+`gold_rationales`, `alternate_rationales` — index-aligned with `questions`. Naively this
+is the task's branch (a): extend the converter, project `gold_answers`.
+
+**That field is not used here.** Tempdoc 707's founder-ratified "EnronQA email-member
+source decision" memo (707, section "Founder memo — EnronQA email-member source
+decision", ratified 2026-07-16 per 707's own status line: *"EN-email raw-Enron
+(16/16, founder-ratified cells, claim_eligible)"*) already investigated this **exact**
+HF dataset for a sibling corpus member and found: no HF license tag/field/file, and
+arXiv 2505.00263 states no dataset redistribution terms for the paper's own derived
+QA-annotation layer (707: *"HF card ... no license stated ... The QA-annotation layer
+remains unlicensed"*). The founder-ratified resolution there (Option 2) was to drop
+that annotation layer project-wide and use real public-domain email text (FERC/CMU
+investigation-closure precedent) plus the project's own gold instead of the paper's.
+
+This section applies the identical resolution, not a fresh judgment call: keep the real
+`questions` field (the pre-existing, years-long `mixed/enron-qa` usage that predates
+707 entirely — tempdoc 666 already documents it as one of the "working,
+register-validated `mixed/` corpora"), but do **not** read `gold_answers` off the HF
+row. Instead, a LOCAL model synthesizes an independent reference answer from
+(question, the FULL gold email text) — the same "fabricated/synthesized-and-ours"
+gold pattern 707 already established, applied to natural rather than fabricated
+questions. Scoring against these references is judge-authoritative by design (the
+launch mandates a judge overlay per the P2 probe's own convention), so the reference
+wording never needs to match any external ground truth — only to state, in our own
+words, what the gold email actually supports.
+
+Nothing from the upstream annotation layer, and nothing from the synthesized
+queries/answers, is committed to the repository — this matches the established
+convention for every other real-external-dataset member in this codebase
+(`666-corpora/*/recipe.json`, `707-corpora/*/member.v1.json`: method + source + seed
+only, never fetched content). Only `cells.v1.json`'s identity hashes are committed.
+
+### Subset freeze
+
+Deterministic rule (`select_subset.py`): sanity-filter the 300 committed
+`mixed/enron-qa` queries to (a) qrel-gold doc present in `corpus.jsonl` (always true by
+the converter's construction, asserted rather than assumed), (b) question
+non-trivial (>= 6 tokens), (c) gold email <= 3000 chars (see "one fix" below) — then
+`random.Random(789).shuffle()` the sanity-passing pool and take the first 20 in draw
+order, labeled `q0001`..`q0020` (782-hero convention: positional labels, source `_id`
+kept separately as `source_qid`).
+
+| | value |
+|---|---|
+| Base corpus | `mixed/enron-qa`: 5,485 docs, 300 queries, user `dasovich-j` (verified: byte-reproduced independently in this worktree from a fresh `convert-enronqa-to-beir.py` run against the cached HF dataset — matches the pre-existing main-checkout materialization exactly) |
+| `corpus_signature` | `c11e4e0b871ebaaac8aa4ba17b3c6cc02eaf8094b19a59bfb33322ed9d0fe96b` (`sha256(corpus.jsonl + qrels/test.tsv)`, `jseval.corpus_identity.corpus_signature`) |
+| Selection seed | 789 |
+| `qid_list_sha256` | `7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b` |
+| `selected_question_sha256` | `c75d7686555d56825bd0048f5e9eda22d7d67141b8729582ca44b2a3ed4b4c92` (question + evidence_ids identity only — see below for why the answer is excluded) |
+| `synthesized_answer_sha256` | `d9c4b023d5e829c7490109422c2f507a038258681899c01ecd8e4b38f368896e` (recorded, not frozen — see below) |
+
+**Why the answer digest is recorded but not frozen.** 782-hero's `selected_query_sha256`
+covered `{qid, query, answer, question_type}` because its answers were fixed, committed,
+fabricated content. Here the answer comes from a LOCAL model generation — not guaranteed
+bit-identical across a different GPU/driver/llama.cpp build even at temperature 0 — so
+the frozen identity (`selected_question_sha256`) deliberately covers only
+`{qid, question, evidence_ids}`, the part that **is** deterministically reproducible
+from the committed HF revision + seed 789. The synthesized-answer digest is recorded for
+this run's own record, not as a re-run gate.
+
+**One fix found and applied before freezing (interrogate-the-result pass).** The first
+selection pass (no length cap) drew 4/20 gold emails over 7.2 KB (up to 56.8 KB); the
+synthesizer's prompt truncates gold email text at 3,000 chars (context-window
+budgeting), so those 4 answers degraded to "the provided email does not contain
+information regarding...". Root cause was the *selection* step handing the synthesizer
+material it structurally could not use in full, not the synthesizer itself — fixed by
+adding sanity filter (c) (gold email <= 3000 chars) to `select_subset.py` and
+re-drawing under the same seed. The re-drawn 20 all have gold emails between 1,007 and
+2,677 chars (fully within the truncation budget); 0/20 degenerate answers on the
+corrected pass. `selected_question_sha256` above is the corrected draw; the
+pre-fix draw was never frozen or shipped anywhere.
+
+### Spot-check — 10 of the 20 selected pairs (seeded sample, seed=789)
+
+For human review before founder go. Question, gold-document subject line, and the
+local-model-synthesized reference answer; not the full gold email.
+
+| qid | question | gold subject | synthesized reference answer |
+|---|---|---|---|
+| q0002 | What is the sender's reason for sending the press account about Bill Berry to the recipient, according to the email? | "Greetings: You know this fellow?" | The sender is sending the press account to ask if the recipient knew Bill Berry when they were at Lehman and to request any insights regarding his career path. |
+| q0005 | What is the nickname given to the C4C Halloween Ball, according to the email? | "FW: UPDATED: C4C Halloween Ball Information" | The nickname given to the C4C Halloween Ball is the "HAAS FREAK SHOW." |
+| q0009 | What is the status of the combination, according to Jeff Dasovich's email to Michael Tribolet on November 12, 2001...? | "RE: Revised appointment 11/9/01 PG&E Official Creditors Committee" | According to Jeff Dasovich's email, the combination is far from consummated. |
+| q0010 | What holiday did John Protzel mention in his email to Jeff Dasovich, and what did he hope Jeff did not experience during that time? | "Cambira" | John Protzel mentioned Thanksgiving and hoped Jeff did not experience power emergencies during that time. |
+| q0013 | According to Nancy Sellers' email, what is the estimated cost of chemotherapy for Annie, and what is the potential extension of her life with treatment? | "RE: Annie" | According to Nancy Sellers' email, the minimum cost of chemotherapy for Annie is about $1,500, and the treatment could reasonably comfortably prolong her life from 6 months to a year. |
+| q0014 | What type of recruiter directory is mentioned in the email as a resource available to May 2001 graduates? | "Important info. for MAY GRADS..." | The email mentions the Executive Recruiter Directory as a resource available to May 2001 graduates. |
+| q0015 | In his response to Nancy Sellers' email ("Many many thanks") regarding a birthday dinner, what two dishes does Jeff Dasovich offer to cook or bring for Friday? | "Re: Many many thanks" | Jeff Dasovich offers to cook or bring oyster stuffing and homemade cranberry sauce for Friday. |
+| q0016 | What is the date/time/location of the event hosted by the Haas Biotechnology Club and the Lester Center for Entrepreneurship and Innovation? | "Haas School Biotech Club Seminar/UC Berkeley Business Plan Mixer" | ...will take place on Monday, October 30th at 7:30 PM in the Wells Fargo Room at the Haas School of Business, UC Berkeley. |
+| q0017 | What information about DWR's exposure is mentioned in Barry Tycholiz's email, and who is attributed with it? | "RE: DWR Power Assets" | Barry Tycholiz attributes the information that DWR's exposure was about one-third of their total, with most located in the south service area, to Mark. |
+| q0020 | In what context are the abbreviations WPTF and IEP mentioned in Alan Comnes' email about the CA ISO's compliance filing? | "RE: ISO Compliance Filing on Credit May Need Protest" | ...WPTF and IEP are mentioned as examples of coalitions that could protest the CA ISO's compliance filing regarding credit requirements. |
+
+Verdict on spot-check: all 10 answers are grounded, on-topic responses to their
+question, traceable to their gold document's evident subject; no fabrication, no
+"insufficient context" filler, no leakage of the question's own wording back as the
+answer. Judge-authoritative scoring at launch time is still the actual quality gate —
+this spot-check is a sanity pass, not a certification.
+
+### Closed-book contamination screen — $0 LOCAL-MODEL PROXY (not the real gate)
+
+Per the task brief: do not run the paid sonnet closed-book calibrate here. Instead, the
+same local model (Qwen3.5-9B, thinking disabled) was asked each of the 20 questions
+with NO corpus context, and asked (as its own judge, separately) whether its closed-book
+answer conveyed the same core fact as the synthesized reference. Result:
+**0/20 flagged contamination-suspect.**
+
+**Interrogating that result, not just reporting it.** A flat zero from a 9B local model
+is a WEAK negative, not evidence the corpus is memorization-clean for the actual launch
+model (sonnet). Two reasons this zero is plausible without meaning "no risk": (1) a 9B
+model has far less training-data memorization capacity than a frontier model; (2) more
+importantly, most of these 20 questions are personal/logistics minutiae specific to one
+inbox (a dial-in PIN, what to cook for a Friday dinner, a Halloween-ball nickname) —
+not the well-known Enron-scandal narrative facts (Skilling, Lay, the California energy
+crisis) that heavy academic re-use of this corpus makes plausibly memorized by a
+frontier model. Every closed-book answer literally opened with "I don't know" (see
+`tmp/789-naturalistic-enron-qa/closed-book-screen.v1.json`, not committed — regenerate
+via `recipe.json`), consistent with genuine non-memorization on THIS model for THESE
+specific questions, not a judge-prompt failure (the judge correctly says NO for a
+non-answer). **This proxy does not license skipping the real sonnet closed-book
+calibration at launch** (`jseval corpus-certify` / the `utility-calibrate`
+closed-book step) — it is a prior, not a substitute, exactly as scoped.
+
+### Launch-ready commands (founder-gated; NOT run)
+
+Per the 789 P2 probe's own arms/conditions convention (condition B only — framings
+cannot affect condition A; contamination-class `public-pre-cutoff` since Enron email
+text is public and pre-training-cutoff for any current model). Certification flags
+(`--corpus-certification`, `--corpus-root`) are omitted — `mixed/enron-qa` has no
+707-style structural certification record, unlike the hero corpora.
+
+```bash
+# 0. Per-arm backend restart (framing is a backend -D sysprop, set at serve boot —
+#    F0 = no flag; F1/F2 below; F3 excluded per tempdoc 789's own F3 disposition,
+#    engine-side trigger redesign, separately gated):
+#    F1: -Dsearch.mcp_framing.continuation_enabled=true
+#    F2: -Dsearch.mcp_framing.evidence_not_answer_enabled=true
+
+# 1. Per arm, per seed (F0/F1/F2 x seeds {0,1} = 6 runs; 20 qids each = 120 cells):
+cd scripts/jseval
+# queries.json is NOT committed (matches the no-external-content convention below) --
+# regenerate it first via 789-corpora/enron-qa-answers/recipe.json's subset_selection +
+# answer_synthesis commands, then point --queries at wherever that wrote it.
+python -m jseval utility-run \
+  --queries <regenerated queries.json, see recipe.json> \
+  --corpus-dir <materialized mixed/enron-qa staged dir> \
+  --dataset mixed/enron-qa \
+  --mcp-config <justsearch MCP config> \
+  --model sonnet --conditions B --seeds 2 --concurrency 6 \
+  --max-queries 20 --max-budget 0.80 \
+  --contamination-class public-pre-cutoff --confidence-tier C \
+  --log-dir <gitignored run dir>/<arm>-seed<N>
+
+# 2. Judge overlay (mandatory per the P2 probe convention — different model family
+#    than the agent under test, C-6 self-preference control):
+python -m jseval utility-judge <log-dir> \
+  --contamination-class public-pre-cutoff --confidence-tier C \
+  --output-dir <gitignored run dir>/<arm>-seed<N>/judged
+```
+
+Env pins per the 782 Amendment-2 lesson: `ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-sonnet-5`,
+`CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-5`, `PYTHONUTF8=1`, `INSPECT_DISPLAY=none`,
+detached serve + driver, porcelain-0 asserted per arm (782-hero conventions, reused
+here — this probe is smaller so does not warrant its own new set of lessons).
+
+**Cost estimate: $45-100 ceiling.** 3 arms (F0/F1/F2) x 20 qids x 2 seeds = 120 cells at
+sonnet, `max_budget` $0.80/cell (hero-comparable) — same shape as the 2026-07-28 P2
+probe's B-arm cells, which spent ~$40 for 120 cells (~$0.33/cell mean). A 2-arm
+launch (F1/F2 only, F0 context already measured 2026-07-28) would be ~$27-45 for 80
+cells; the $45-100 figure covers the 3-arm re-measurement (a fresh F0 on THIS
+naturalistic stratum is warranted since accuracy baselines differ by corpus/question
+style) with headroom for the judge-overlay pass (local model, $0) and one retry budget.
+
+### Deviations from the task brief, recorded
+
+- **`python -m jseval materialize --dataset mixed/enron-qa` does not work as literally
+  stated** — verified against source: `ops.py:cmd_materialize` requires
+  `dataset in corpora.BEIR_DATASETS` (ir_datasets-registered corpora only); `mixed/`
+  datasets are loaded via `corpora._load_local`, not `materialize`. Used the actual
+  established mechanism instead — `scripts/search/convert-enronqa-to-beir.py` (this
+  dataset's real regeneration path, tempdoc 666) plus
+  `jseval.corpus_identity.corpus_signature()` directly for the identity hash.
+- **Qwen3.5-9B is a reasoning model; thinking had to be explicitly disabled**
+  (`chat_template_kwargs: {"enable_thinking": false}`) — the first synthesis attempt at
+  a modest `max_tokens` budget left 18/20 answers empty (`finish_reason: "length"`, the
+  entire budget consumed by the `reasoning_content` trace before any `content` token).
+- **GPU contention mid-run**: the shared machine hit thermal/VRAM limits while another
+  worktree's lane was also GPU-active; this session's llama-server was killed mid
+  synthesis loop by that contention (not a bug in this substrate). Recovered by adding
+  incremental JSON-lines checkpointing to `synthesize_answers.py` (resumable — a crash
+  loses only the in-flight item) and re-running once the GPU was confirmed idle and
+  exclusively held by this session. No corrupt/partial output files resulted: the
+  interrupted run's `.json` outputs are written only at the very end, so the crash left
+  no half-written artifact; only the checkpoint `.jsonl` had partial content, and it was
+  correctly resumed/regenerated.
+- **The 20-qid draw changed once** (see "one fix found and applied" above) after the
+  length-truncation defect was found; the pre-fix draw was never frozen in `cells.v1.json`
+  and never reached the synthesis or closed-book step in its final committed form.
+- Server always shut down after each LLM step; exactly one llama-server instance was
+  held at a time, on a free port outside the shared dev-stack port (33221).
