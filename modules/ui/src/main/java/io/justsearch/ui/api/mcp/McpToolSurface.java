@@ -513,7 +513,10 @@ public final class McpToolSurface {
       // Tempdoc 735 W6: every response fact — header counts, hints, facets — computed ONCE by the
       // content-model builder, then consumed by both the text renderer and the structured
       // renderer, so the two tiers cannot silently diverge (735 G3).
-      McpAnswerResponseContent content = buildAnswerContent(result, query);
+      // Tempdoc 789 Phase 2: framing flags resolved once per call, defaulting to OFF when the
+      // config store is not initialized — an unconfigured process delivers exactly the pre-789 text.
+      McpDeliveryFraming.Settings framing = McpDeliveryFraming.resolveSettings();
+      McpAnswerResponseContent content = buildAnswerContent(result, query, framing);
       String text = renderAnswerText(result, content, concise, query);
 
       // Tempdoc 658/735: the citation provenance + quality signals, PLUS the tier-equivalence
@@ -550,8 +553,8 @@ public final class McpToolSurface {
    * computations (the pre-735 shape: the facet sidecar and enrichment hint were appended directly
    * to the text StringBuilder, invisible to structuredContent).
    */
-  private McpAnswerResponseContent buildAnswerContent(
-      DocumentService.ContextResult result, String query) {
+  McpAnswerResponseContent buildAnswerContent(
+      DocumentService.ContextResult result, String query, McpDeliveryFraming.Settings framing) {
     // Tempdoc 725 W2a: N/M come from the in-hand result: N is the citation count (== chunksUsed;
     // both are derived from the same worker-reported chunk list —
     // RemoteDocumentService.mapRetrieveContextResponse), which equals the number of rendered
@@ -609,6 +612,13 @@ public final class McpToolSurface {
     if (enrichmentHintText != null) hints.add(enrichmentHintText);
     if (zeroResultHint != null) hints.add(zeroResultHint);
 
+    // Tempdoc 789 Phase 2 (F2): the evidence-not-answer header — the one framing the charter applies
+    // to justsearch_answer.
+    String evidenceHeader =
+        framing.evidenceNotAnswerEnabled()
+            ? McpDeliveryFraming.answerEvidenceHeader(passages, distinctDocs)
+            : null;
+
     return new McpAnswerResponseContent(
         passages,
         distinctDocs,
@@ -616,7 +626,8 @@ public final class McpToolSurface {
         comparativeHint,
         enrichmentHintText,
         zeroResultHint,
-        hints);
+        hints,
+        evidenceHeader);
   }
 
   /**
@@ -626,12 +637,18 @@ public final class McpToolSurface {
    * model does not carry, e.g. {@code retrievalMode} and the {@code QualitySignals} block) instead
    * of recomputing them.
    */
-  private static String renderAnswerText(
+  static String renderAnswerText(
       DocumentService.ContextResult result,
       McpAnswerResponseContent content,
       boolean concise,
       String query) {
     var sb = new StringBuilder();
+
+    // Tempdoc 789 Phase 2 (F2): the evidence-not-answer header, above the pre-existing "Evidence
+    // pack" line. Null (and so absent, byte-for-byte) unless the framing is enabled.
+    if (content.evidenceHeader() != null) {
+      sb.append(content.evidenceHeader()).append("\n\n");
+    }
 
     // Tempdoc 725 W2a: a self-describing header, stated once, ahead of the passages — this pack
     // is retrieved evidence, not a synthesized answer.
@@ -817,11 +834,21 @@ public final class McpToolSurface {
       // Tempdoc 735 W6: within a single render every response fact is computed ONCE by the
       // content-model builder and consumed by both renderers, so the two tiers cannot diverge.
       boolean includeDetail = Boolean.TRUE.equals(detail);
+      // Tempdoc 789 Phase 2: framing flags resolved once per call (OFF when the config store is not
+      // initialized). Resolved OUTSIDE the governor's view lambda so every degradation step renders
+      // under the same framing decision. The index doc count backing F3's coverage clause is read
+      // once, and only when F3 is enabled — an unconfigured or F3-off process makes no extra call.
+      McpDeliveryFraming.Settings framing = McpDeliveryFraming.resolveSettings();
+      long indexedDocs = framing.calibratedAbsenceEnabled() ? indexedDocCount() : -1L;
+      // Tempdoc 771 item (b): carriage settings resolved once per call, outside the governor's view
+      // lambda for the same reason the framing flags are — every degradation step renders under one
+      // carriage decision, so the governor's re-renders cannot disagree about delivered content.
+      McpEntityCarriage.Settings carriage = McpEntityCarriage.resolveSettings();
       McpDeliveryGovernor.ResultView view =
           (keep, includeProvenance) -> {
             KnowledgeSearchResponse sub =
                 keep >= resp.results().size() ? resp : truncateResults(resp, keep);
-            McpSearchResponseContent c = buildSearchContent(sub, args);
+            McpSearchResponseContent c = buildSearchContent(sub, args, framing, indexedDocs, carriage);
             String t = renderSearchText(sub, c, concise);
             Map<String, Object> structured =
                 McpEvidenceProjection.searchEvidence(sub, c, includeProvenance);
@@ -891,8 +918,22 @@ public final class McpToolSurface {
    * derive from the same instance instead of two independent {@code filterInformative} calls (the
    * pre-735 duplication).
    */
-  private McpSearchResponseContent buildSearchContent(
-      KnowledgeSearchResponse resp, Map<String, Object> args) {
+  McpSearchResponseContent buildSearchContent(
+      KnowledgeSearchResponse resp,
+      Map<String, Object> args,
+      McpDeliveryFraming.Settings framing,
+      long indexedDocs,
+      McpEntityCarriage.Settings carriage) {
+    // Tempdoc 789 Phase 2 (F1): the entity vocabulary comes from the facet snapshot this response
+    // already carries — no new query path, no query-time NER (charter: prefer existing fields).
+    // Empty (so F1 emits nothing) when the framing is off or the response carries no entity facets.
+    Map<String, Long> entityVocabulary =
+        framing.continuationEnabled()
+            ? McpDeliveryFraming.entityVocabulary(resp.facets())
+            : Map.of();
+    String query = (String) args.getOrDefault("query", "");
+    int continuationsEmitted = 0;
+
     List<McpSearchResponseContent.HitContent> hits = new ArrayList<>();
     if (resp.results() != null) {
       int rank = 1;
@@ -911,9 +952,43 @@ public final class McpToolSurface {
                 : McpSearchResultFormatter.informativeTerms(informative);
         List<String> matchedFields =
             hit.matchedFields() == null ? List.of() : hit.matchedFields();
+        // Tempdoc 771 item (b): the entity-carriage line, computed BEFORE the F1 continuation so
+        // the two compose — carriage puts the document's buried entity names into delivered text,
+        // and F1 may then mark one of them as a possible intermediate fact. Without carriage F1 can
+        // only ever mark entities the excerpt window happened to include, which on long documents is
+        // the 45%-of-successful-retrievals case 771 §E measured.
+        String entityCarriage =
+            carriage.enabled()
+                ? McpEntityCarriage.line(
+                    McpEntityCarriage.deliveredText(hit, preview),
+                    hit.fields(),
+                    carriage.maxChars())
+                : null;
+        // Tempdoc 789 Phase 2 (F1): the continuation line, computed against the text this hit
+        // actually delivers (its preview, plus any carriage line) so the line never names an entity
+        // the agent was not shown.
+        String continuation = null;
+        if (!entityVocabulary.isEmpty()
+            && continuationsEmitted < McpDeliveryFraming.MAX_CONTINUATION_LINES) {
+          String deliveredText =
+              entityCarriage == null ? preview : preview + "\n" + entityCarriage;
+          continuation =
+              McpDeliveryFraming.continuationLine(deliveredText, query, entityVocabulary);
+          if (continuation != null) {
+            continuationsEmitted++;
+          }
+        }
         hits.add(
             new McpSearchResponseContent.HitContent(
-                rank++, title, path, hit.score(), preview, matchedTerms, matchedFields));
+                rank++,
+                title,
+                path,
+                hit.score(),
+                preview,
+                matchedTerms,
+                matchedFields,
+                continuation,
+                entityCarriage));
       }
     }
 
@@ -941,8 +1016,58 @@ public final class McpToolSurface {
       hints.add(enrichmentHintText);
     }
 
+    // Tempdoc 789 Phase 2 (F2/F3): the two response-level framings. Both null when their flag is
+    // off, so the rendered text is byte-identical to pre-789 by default.
+    String evidenceHeader =
+        framing.evidenceNotAnswerEnabled()
+            ? McpDeliveryFraming.searchEvidenceHeader(
+                resp.totalHits(),
+                McpDeliveryFraming.responseMatchedTerms(
+                    hits, McpSearchResultFormatter.MAX_INFORMATIVE_TERMS))
+            : null;
+    String absenceNote =
+        framing.calibratedAbsenceEnabled()
+            ? McpDeliveryFraming.absenceNote(
+                new McpDeliveryFraming.AbsenceSignals(
+                    resp.totalHits(),
+                    McpDeliveryFraming.topDeliveredScore(hits),
+                    McpDeliveryFraming.normalizedFusionScale(resp.searchTrace()),
+                    McpDeliveryFraming.deliveredBodyBytes(hits),
+                    indexedDocs),
+                query,
+                framing)
+            : null;
+
     return new McpSearchResponseContent(
-        resp.totalHits(), resp.tookMs(), shownCount, truncated, hits, resp.facets(), hints);
+        resp.totalHits(),
+        resp.tookMs(),
+        shownCount,
+        truncated,
+        hits,
+        resp.facets(),
+        hints,
+        evidenceHeader,
+        absenceNote);
+  }
+
+  /**
+   * Tempdoc 789 Phase 2 (F3): the indexed-document count backing the calibrated-absence coverage
+   * clause, read from the same {@code KnowledgeStatus} surface {@code justsearch_status} already
+   * exposes ({@code docCount}). Returns {@code -1} when unavailable, which makes the framing omit
+   * the coverage clause rather than guess a number. Called at most once per search, and only when
+   * the F3 framing is enabled.
+   */
+  private long indexedDocCount() {
+    try {
+      KnowledgeSearchController ctrl = knowledgeLookup.get();
+      if (ctrl == null) {
+        return -1L;
+      }
+      return ctrl.getAdapter().status().docCount();
+    } catch (Exception e) {
+      log.debug("MCP framing: index doc count unavailable", e);
+      return -1L;
+    }
   }
 
   /**
@@ -953,9 +1078,16 @@ public final class McpToolSurface {
    * already tier-equivalent before this increment — see {@link McpSearchResponseContent}'s
    * class-level note).
    */
-  private static String renderSearchText(
+  static String renderSearchText(
       KnowledgeSearchResponse resp, McpSearchResponseContent content, boolean concise) {
     var sb = new StringBuilder();
+
+    // Tempdoc 789 Phase 2 (F2): the evidence-not-answer header leads the delivery, so the framing
+    // is read before any excerpt. Null (and so absent, byte-for-byte) unless the framing is enabled.
+    if (content.evidenceHeader() != null) {
+      sb.append(content.evidenceHeader()).append("\n\n");
+    }
+
     for (var h : content.hits()) {
       sb.append("[")
           .append(h.rank())
@@ -973,6 +1105,13 @@ public final class McpToolSurface {
           sb.append("    Preview: ").append(h.preview()).append("\n");
         }
       }
+      // Tempdoc 771 item (b): the entity-carriage line, directly under the excerpt whose gaps it
+      // fills. Rendered at BOTH densities — unlike the Preview and F1 lines it makes no claim about
+      // the excerpt (its wording is about the document), and it is the highest-value content per
+      // byte in a delivery whose whole failure mode is a name the agent was never handed.
+      if (h.entityCarriage() != null) {
+        sb.append("    ").append(h.entityCarriage()).append("\n");
+      }
       if (!h.semanticFallback()) {
         StringBuilder quoted = new StringBuilder();
         for (int i = 0; i < h.matchedTerms().size(); i++) {
@@ -987,6 +1126,17 @@ public final class McpToolSurface {
       } else {
         sb.append("    Match basis: semantic similarity (no distinctive term overlap)\n");
       }
+      // Tempdoc 789 Phase 2 (F1): the per-hit continuation line, directly under the excerpt whose
+      // entity it names. Null unless the framing is enabled and this hit qualifies.
+      //
+      // Gated on !concise for the same reason the Preview line is: the sentence says "this excerpt
+      // names X", and concise mode does not render the excerpt in the TEXT tier — the claim would
+      // point at text the agent was never shown. The structured tier is unaffected (it carries
+      // per-hit excerpts unconditionally, so the continuation stays true there and is projected
+      // regardless of density).
+      if (!concise && h.continuation() != null) {
+        sb.append("    ").append(h.continuation()).append("\n");
+      }
       sb.append("\n");
     }
 
@@ -998,6 +1148,12 @@ public final class McpToolSurface {
       sb.append(".");
     }
     appendDegradationNote(sb, resp.searchTrace());
+
+    // Tempdoc 789 Phase 2 (F3): the calibrated-absence block, immediately under the result count it
+    // qualifies. Null unless the framing is enabled and the delivery is empty or thin.
+    if (content.absenceNote() != null) {
+      sb.append("\n\n").append(content.absenceNote());
+    }
 
     // Facets
     if (content.facets() != null && !content.facets().isEmpty()) {

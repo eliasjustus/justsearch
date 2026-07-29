@@ -1,0 +1,17 @@
+You are generating a REFERENCE ANSWER for a retrieval-evaluation dataset. You will be
+given a QUESTION and the single EMAIL that is known to contain the answer (the gold
+document). Write a concise, factual reference answer to the QUESTION using ONLY
+information present in the EMAIL. Do not add outside knowledge, do not speculate about
+information not in the EMAIL, and do not mention that you were given the email. If the
+EMAIL genuinely does not contain enough information to answer the QUESTION, respond
+with exactly: INSUFFICIENT_CONTEXT
+
+Answer in one to three sentences, plain prose, no preamble ("The answer is..." etc. --
+just state the answer directly).
+
+QUESTION: {question}
+
+EMAIL:
+{email}
+
+REFERENCE ANSWER:

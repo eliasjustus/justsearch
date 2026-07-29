@@ -406,6 +406,14 @@
       "note": "Tempdoc 725 W1: the justsearch_search text block reads SearchTrace.Degradation directly (imports SearchTrace) to render a once-per-response DESCRIPTIVE 'semantic ranking degraded' note (appendDegradationNote), null-safe on trace/degradation. Sibling to mcp-evidence-projection's structuredContent projection of the same canonical record \u2014 this is the human-text rendering half. Guarded by McpSearchTraceLegibilityTest, which also covers the informative-term filter and preview-window helpers in the package-private McpSearchResultFormatter (no independent import of SearchTrace, so not separately registered)."
     },
     {
+      "id": "mcp-framing-fusion-scale",
+      "kind": "consumer",
+      "lang": "java",
+      "path": "modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpDeliveryFraming.java",
+      "guard": "test:McpDeliveryFramingTest",
+      "note": "Tempdoc 789 (post-Amendment-3 F3 trigger redesign): reads ONE fact off the canonical SearchTrace — the FUSION stage's status + detail (the fusion method) — to decide whether this response's fused hit score is on the bounded [0,1] scale an absolute relevance floor may be compared against (normalizedFusionScale: true for 'hybrid'/'cc', false for 'rrf' and single-leg). A read-only scale predicate, not a second model of execution: it re-authors nothing and derives no ranking. Sibling to mcp-search-text-degradation (the same file's package reading Degradation for the text note) and mcp-evidence-projection (the structuredContent half). Guarded by McpDeliveryFramingTest, whose FusionScaleScope cases pin true/false across every fusion-method value the worker's SearchTraceProjector can emit plus the SKIPPED/null/absent-trace paths."
+    },
+    {
       "id": "evidence-span-source",
       "kind": "source",
       "lang": "java",

@@ -448,6 +448,61 @@ public enum EnvRegistry {
     SEARCH_MCP_DELIVERY_BUDGET_BYTES(
         "search.mcp_delivery.budget_bytes", "JUSTSEARCH_SEARCH_MCP_DELIVERY_BUDGET_BYTES"),
 
+    /**
+     * 771 item (b): append the document's indexed NER entity names to a delivered {@code
+     * justsearch_search} hit whose excerpt does not already carry them (default: false via builder).
+     * The engine-side half of the hop-2 fix — an agent cannot re-query a bridge entity whose name
+     * was never delivered. OFF ships byte-identical delivery.
+     */
+    SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED(
+        "search.mcp_delivery.entity_carriage_enabled",
+        "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED"),
+    /**
+     * 771 item (b): byte ceiling for the whole rendered entity-carriage line, per hit (default: 200
+     * via builder). Only consulted when {@code entity_carriage_enabled} is on.
+     */
+    SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS(
+        "search.mcp_delivery.entity_carriage_max_chars",
+        "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS"),
+
+    /**
+     * 789 Phase 2 (F1): append a continuation line to a delivered excerpt that names an indexed
+     * entity the query did not (default: false via builder). Probe substrate for the hop-1
+     * satisficing effect measured by the 782 hero campaign; OFF ships byte-identical delivery.
+     */
+    SEARCH_MCP_FRAMING_CONTINUATION(
+        "search.mcp_framing.continuation_enabled",
+        "JUSTSEARCH_SEARCH_MCP_FRAMING_CONTINUATION_ENABLED"),
+    /**
+     * 789 Phase 2 (F2): frame search/answer deliveries explicitly as retrieval evidence rather than
+     * verified answers (default: false via builder).
+     */
+    SEARCH_MCP_FRAMING_EVIDENCE_NOT_ANSWER(
+        "search.mcp_framing.evidence_not_answer_enabled",
+        "JUSTSEARCH_SEARCH_MCP_FRAMING_EVIDENCE_NOT_ANSWER_ENABLED"),
+    /**
+     * 789 Phase 2 (F3): carry corpus coverage + absence-is-not-evidence framing on zero-result and
+     * thin-result deliveries (default: false via builder).
+     */
+    SEARCH_MCP_FRAMING_CALIBRATED_ABSENCE(
+        "search.mcp_framing.calibrated_absence_enabled",
+        "JUSTSEARCH_SEARCH_MCP_FRAMING_CALIBRATED_ABSENCE_ENABLED"),
+    /**
+     * 789 Phase 2 (F3): delivered-body byte floor below which a non-empty result set still counts as
+     * "thin" and receives the calibrated-absence framing (default: 400 via builder).
+     */
+    SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES(
+        "search.mcp_framing.thin_result_floor_bytes",
+        "JUSTSEARCH_SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES"),
+    /**
+     * 789 (post-Amendment-3): normalized top-relevance floor below which a non-empty result set is
+     * framed as a weak-relevance delivery (default: 0.40 via builder). Only consulted where the
+     * fused score is bounded [0,1] — the {@code cc}/{@code hybrid} fusion methods; RRF and
+     * single-leg deliveries are out of scope for the arm. {@code 0} disables it.
+     */
+    SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR(
+        "search.mcp_framing.weak_score_floor", "JUSTSEARCH_SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR"),
+
     /** UI automation mode enabled flag. */
     UI_AUTOMATION_ENABLED("justsearch.ui.automation.enabled", "JUSTSEARCH_UI_AUTOMATION"),
 

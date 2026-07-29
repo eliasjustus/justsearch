@@ -8,10 +8,17 @@ import json
 import shutil
 from pathlib import Path
 
+from jseval.utility_evidence import SCHEMA_V2, SOURCE_SCHEMA, evidence_schema_version
 from jseval.utility_recompose import finalize_evidence, semantic_digest
 
 PUBLICATION_SCHEMA = "agent-utility-publication.v1"
 POINTER_SCHEMA = "agent-utility-publication-pointer.v1"
+
+# tempdoc 719 follow-up: a publication bundle is a COMMITTED artifact, so an evidence
+# file GitHub refuses (>100 MB per blob) makes the whole bundle unpublishable. The
+# ceiling fails the build closed, well below that limit, instead of discovering it at
+# `git push` after the immutable bundle already exists on disk.
+DEFAULT_MAX_EVIDENCE_BYTES = 80 * 1024 * 1024
 
 POINTER_REF_KEYS = frozenset({"publication_id", "path", "manifest_sha256"})
 
@@ -40,7 +47,11 @@ def _write_new(path: Path, body: str) -> None:
     if path.exists():
         raise FileExistsError(f"immutable publication artifact already exists: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8")
+    # newline="" keeps artifact bytes LF on every platform: these files are
+    # content-addressed by the manifest hash chain and must be byte-stable
+    # across Windows builders and Linux CI (git LF normalization otherwise
+    # breaks the recorded sha256 -- caught on the first real bundle).
+    path.write_text(body, encoding="utf-8", newline="")
 
 
 def load_pointer(root: str | Path) -> dict:
@@ -82,12 +93,23 @@ def build_publication(
     publication_id: str,
     created_at: str | None = None,
     policy_path: str | Path | None = None,
+    max_evidence_bytes: int = DEFAULT_MAX_EVIDENCE_BYTES,
 ) -> Path:
     """Create one immutable accepted bundle with its exact policy snapshot."""
     root = Path(root)
     pointer = load_pointer(root)
     record_source = Path(record_path)
     evidence_source = Path(evidence_path)
+    evidence_bytes = evidence_source.stat().st_size
+    if evidence_bytes > max_evidence_bytes:
+        raise ValueError(
+            f"evidence file is {evidence_bytes} bytes, above the {max_evidence_bytes}-byte "
+            "publication ceiling (a bundle is committed, and GitHub rejects blobs over "
+            "100 MB). Re-export it with `python -m jseval utility-evidence-export`: the "
+            f"{SCHEMA_V2} format hoists each run-constant `source` block "
+            f"into one {SOURCE_SCHEMA} header line instead of repeating it "
+            "per observation. Raise --max-evidence-bytes only deliberately."
+        )
     record = json.loads(record_source.read_text(encoding="utf-8"))
     if record.get("semantic_digest") != semantic_digest(record):
         raise ValueError("record semantic_digest is missing or incorrect")
@@ -114,11 +136,13 @@ def build_publication(
     record_dir = root.parent / "agent-utility-records" / record_id
     canonical_record = record_dir / record_source.name
     if record_dir.exists():
-        if not canonical_record.is_file() or _sha256(canonical_record) != _sha256(record_source):
+        if not canonical_record.is_file() or canonical_record.read_text(encoding="utf-8") != record_source.read_text(encoding="utf-8"):
             raise FileExistsError(f"record id collision or attempted mutation: {record_dir}")
     else:
         record_dir.mkdir(parents=True)
-        shutil.copyfile(record_source, canonical_record)
+        canonical_record.write_text(
+            record_source.read_text(encoding="utf-8"), encoding="utf-8", newline=""
+        )  # normalized copy: byte-stable LF regardless of the checkout's smudge filter
 
     publication_dir = root / "publications" / publication_id
     if publication_dir.exists():
@@ -130,6 +154,7 @@ def build_publication(
     copied_policy.write_text(
         json.dumps(selected_policy, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
+        newline="",
     )
     record_relative = Path("..") / ".." / ".." / "agent-utility-records" / record_id / canonical_record.name
     manifest = {
@@ -153,7 +178,7 @@ def build_publication(
             "sha256": _sha256(copied_policy),
             "status": verdict.get("policy_status"),
         },
-        "sanitizer_version": "agent-utility-observation.v1",
+        "sanitizer_version": evidence_schema_version(copied_evidence),
         "replay_command": f"python -m jseval utility-replay --publication {publication_id}",
         "supersedes": ((pointer.get("current") or {}).get("publication_id")),
     }
@@ -210,6 +235,8 @@ def replay_publication(publication: str | Path) -> dict:
         raise ValueError("observation evidence byte hash mismatch")
     if _sha256(policy_path) != manifest["policy"]["sha256"]:
         raise ValueError("policy byte hash mismatch")
+    if manifest.get("sanitizer_version") != evidence_schema_version(evidence_path):
+        raise ValueError("publication sanitizer_version disagrees with the bundled evidence")
     stored = json.loads(record_path.read_text(encoding="utf-8"))
     expected_state = (
         "accepted" if (stored.get("claim_verdict") or {}).get("accepted") is True else "rejected"
@@ -286,5 +313,5 @@ def select_publication(
         "reason": reason,
         "selected_at": selected_at or dt.datetime.now(dt.timezone.utc).isoformat(),
     }
-    pointer_path.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
+    pointer_path.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8", newline="")
     return pointer_path

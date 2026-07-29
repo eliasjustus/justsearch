@@ -63,6 +63,7 @@ per-user/no-admin (`tauri.conf.json:29-33`, `installMode: currentUser`).
 | winget manifest | **Absent** (repo-wide grep: only this tempdoc mentions it) | Author 3-file manifest + runbook; `InstallerType: nullsoft` auto-provides silent switches | M |
 | Signing drop-in | Chain intact on paper (`tauri.signing.conf.json:4-14` → `sign-windows.ps1`, path resolves, fail-closed env contract) | **NOT drop-in — the charter's assumption fails.** CI calls `package-installer-win.ps1` **without `-Release`** (`build-installer.yml:173`) so it always takes the `--no-sign` branch (`package-installer-win.ps1:247`); the signing overlay only fires under `-Release` (`:233-244`), which is coupled to heavy `installer_verify` CI deliberately skips (`:274-290`). No PFX secret plumbing exists in the workflow. | M |
 | Verify-download doc | Partial content scattered in README (`:37-47, :196`) + `SHA256SUMS` header comment; no `docs/how-to/` page, no user-facing SAC note | Consolidate + extend into `docs/how-to/verify-your-download.md` (scope: consolidation, not creation) | S |
+| Credential mode for the cert we'd actually buy | Chain is **PFX-only**: `sign-windows.ps1:31-35` reads `JUSTSEARCH_CODESIGN_PFX_PATH` / `_PFX_B64` / `_PFX_PASSWORD` / `_TIMESTAMP_URL`, gates on a resolvable PFX (`:74-93`), and signs via `signtool sign /f <pfx> /p <password>` (`:117-123`) | **Cloud-HSM signing has no PFX to point at.** CA/B Forum rules since 2023-06 require code-signing keys on FIPS 140-2 L2 hardware, so the leading candidate (cloud-HSM/eSigner-style, signed via a provider's key adapter) cannot satisfy the `/f`+`/p` contract at all. USB-token certs — the other compliant option — are not automatable on GitHub-hosted runners (no USB passthrough), so they are not an escape hatch. `sign-windows.ps1` needs a **second credential mode** alongside PFX. | M |
 
 **winget manifest dry-run:** `PackageIdentifier` (e.g. `eliasjustus.JustSearch`) + `Publisher`
 legal name = **owner decisions**; `PublisherUrl`/homepage empty = external website dependency;
@@ -80,8 +81,12 @@ unsigned NSIS apps listed) — re-confirm against current CONTRIBUTING before su
 3. Decouple signing from heavy verify: a `-Sign`-style flag so CI can engage the signing
    overlay + `JUSTSEARCH_REQUIRE_SIGNING` without `installer_verify`; add
    `JUSTSEARCH_CODESIGN_*` secret plumbing to `build-installer.yml`; dry-run with self-signed
-   PFX; unsigned path unchanged when secrets absent. This is what actually makes a cert
-   drop-in. (M, delegable)
+   PFX; unsigned path unchanged when secrets absent. (M, delegable)
+   **Correction (see the credential-mode row):** this closes the *CI-never-engages-signing* gap,
+   but it does not by itself make a cert drop-in. `sign-windows.ps1` is built around a PFX on disk
+   (`:31-35`, `:74-93`, `:117-123`); a cloud-HSM cert has no PFX, so activating one also requires a
+   second credential mode in that script. Scope "purchase a cert → signing works" accordingly — it
+   is not accurate as stated in the charter.
 4. `docs/how-to/verify-your-download.md`: certutil sha256 check, why SmartScreen warns +
    More-info→Run-anyway, build-from-source trust path, end-user SAC note (mirror of
    `package-installer-win.ps1:210-220` dev-side self-diagnosis); link from README. (S, delegable)

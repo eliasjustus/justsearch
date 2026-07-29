@@ -66,6 +66,13 @@ public enum ConfigKey {
     SEARCH_EVIDENCE_SPAN_ENABLED("search.evidence_span.enabled"),
     SEARCH_EVIDENCE_SPAN_ENTITY_SIGNAL("search.evidence_span.entity_signal"),
     SEARCH_MCP_DELIVERY_BUDGET_BYTES("search.mcp_delivery.budget_bytes"),
+    SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED("search.mcp_delivery.entity_carriage_enabled"),
+    SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS("search.mcp_delivery.entity_carriage_max_chars"),
+    SEARCH_MCP_FRAMING_CONTINUATION("search.mcp_framing.continuation_enabled"),
+    SEARCH_MCP_FRAMING_EVIDENCE_NOT_ANSWER("search.mcp_framing.evidence_not_answer_enabled"),
+    SEARCH_MCP_FRAMING_CALIBRATED_ABSENCE("search.mcp_framing.calibrated_absence_enabled"),
+    SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES("search.mcp_framing.thin_result_floor_bytes"),
+    SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR("search.mcp_framing.weak_score_floor"),
 
     // -- Worker indexer --
     INDEXER_BACKPRESSURE_MODE("workers.indexer.backpressure_mode"),

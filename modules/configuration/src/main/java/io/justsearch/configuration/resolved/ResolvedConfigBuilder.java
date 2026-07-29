@@ -541,6 +541,52 @@ public final class ResolvedConfigBuilder {
         Integer.toString(
             io.justsearch.configuration.resolved.ResolvedConfig.Search
                 .DEFAULT_MCP_DELIVERY_BUDGET_BYTES));
+    // 789 Phase 2: the three agent-delivery framings — probe substrate, ALL default OFF. Nothing
+    // in the delivered response changes until an arm turns one on.
+    putYamlFromNode(
+        "search.mcp_framing.continuation_enabled", searchRoot, "mcp_framing.continuation_enabled");
+    putDefault("search.mcp_framing.continuation_enabled", "false");
+    putYamlFromNode(
+        "search.mcp_framing.evidence_not_answer_enabled",
+        searchRoot,
+        "mcp_framing.evidence_not_answer_enabled");
+    putDefault("search.mcp_framing.evidence_not_answer_enabled", "false");
+    putYamlFromNode(
+        "search.mcp_framing.calibrated_absence_enabled",
+        searchRoot,
+        "mcp_framing.calibrated_absence_enabled");
+    putDefault("search.mcp_framing.calibrated_absence_enabled", "false");
+    putYamlIntFromNode(
+        "search.mcp_framing.thin_result_floor_bytes",
+        searchRoot,
+        "mcp_framing.thin_result_floor_bytes");
+    putDefault(
+        "search.mcp_framing.thin_result_floor_bytes",
+        Integer.toString(
+            io.justsearch.configuration.resolved.ResolvedConfig.Search
+                .DEFAULT_THIN_RESULT_FLOOR_BYTES));
+    // 771 item (b): entity carriage — default OFF, so an unconfigured process delivers exactly the
+    // pre-771 response.
+    putYamlFromNode(
+        "search.mcp_delivery.entity_carriage_enabled",
+        searchRoot,
+        "mcp_delivery.entity_carriage_enabled");
+    putDefault("search.mcp_delivery.entity_carriage_enabled", "false");
+    putYamlIntFromNode(
+        "search.mcp_delivery.entity_carriage_max_chars",
+        searchRoot,
+        "mcp_delivery.entity_carriage_max_chars");
+    putDefault(
+        "search.mcp_delivery.entity_carriage_max_chars",
+        Integer.toString(
+            io.justsearch.configuration.resolved.ResolvedConfig.Search
+                .DEFAULT_ENTITY_CARRIAGE_MAX_CHARS));
+    putYamlDouble(
+        "search.mcp_framing.weak_score_floor", searchRoot, "mcp_framing.weak_score_floor");
+    putDefault(
+        "search.mcp_framing.weak_score_floor",
+        Double.toString(
+            io.justsearch.configuration.resolved.ResolvedConfig.Search.DEFAULT_WEAK_SCORE_FLOOR));
     // Facet fields list
     JsonNode fieldsNode = searchRoot.path("facets").path("fields");
     if (fieldsNode.isArray()) {
@@ -1285,7 +1331,38 @@ public final class ResolvedConfigBuilder {
         resolveInt(
             "search.mcp_delivery.budget_bytes",
             ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES),
+        buildSearchMcpFraming(),
+        buildSearchEntityCarriage(),
         buildSearchCorrections());
+  }
+
+  /**
+   * 771 item (b): the MCP entity-carriage settings. The enabled fallback is {@code false} — carriage
+   * is a measured lever under the D-004 default-off template and must never turn on by omission.
+   */
+  private ResolvedConfig.Search.EntityCarriage buildSearchEntityCarriage() {
+    return new ResolvedConfig.Search.EntityCarriage(
+        resolveBoolean("search.mcp_delivery.entity_carriage_enabled", false),
+        resolveInt(
+            "search.mcp_delivery.entity_carriage_max_chars",
+            ResolvedConfig.Search.DEFAULT_ENTITY_CARRIAGE_MAX_CHARS));
+  }
+
+  /**
+   * 789 Phase 2: the agent-delivery framing flags. Every boolean fallback is {@code false} — the
+   * framings are probe substrate and must never turn on by omission.
+   */
+  private ResolvedConfig.Search.McpFraming buildSearchMcpFraming() {
+    return new ResolvedConfig.Search.McpFraming(
+        resolveBoolean("search.mcp_framing.continuation_enabled", false),
+        resolveBoolean("search.mcp_framing.evidence_not_answer_enabled", false),
+        resolveBoolean("search.mcp_framing.calibrated_absence_enabled", false),
+        resolveInt(
+            "search.mcp_framing.thin_result_floor_bytes",
+            ResolvedConfig.Search.DEFAULT_THIN_RESULT_FLOOR_BYTES),
+        resolveDouble(
+            "search.mcp_framing.weak_score_floor",
+            ResolvedConfig.Search.DEFAULT_WEAK_SCORE_FLOOR));
   }
 
   private ResolvedConfig.Search.Corrections buildSearchCorrections() {
