@@ -105,7 +105,44 @@ referenced only by `[plugins]`; **0** bumped keys are referenced by any `[librar
 conclusion happened to be right; the argument was not. This is the `interrogate-results` failure in its
 most common form — a confirming-shaped result accepted without checking that it bears on the claim.
 
-## Candidate fixes (not yet applied — touches build-critical resolution)
+## FIX APPLIED (2026-07-29) — the repository was dead residue; deleted rather than relocated
+
+Investigating the three candidate fixes below turned up a fourth, strictly better option: **the
+repository resolved nothing at all.** Four independent checks, all negative:
+
+| Check | Result |
+|---|---|
+| Is Revapi applied by any build script? | **No** — no plugin, no task, anywhere |
+| Does any module declare an external `io.justsearch:` dependency? | **No** — inter-module edges are all `project(...)` |
+| Has any `gradle.lockfile` ever pinned an `io.justsearch` artifact? | **No** |
+| Does anything else need the repo? | **No** — it was filtered to `includeGroup("io.justsearch")` |
+
+So the block was **residue from an abandoned Revapi baseline setup** — and residue that had become
+actively destructive, silently costing the repository every library update for its entire public
+history. This is the `retire-with-a-sweep` class exactly: the retiree's fingerprint outlived its
+reason and acquired false authority.
+
+**Change:** the `exclusiveContent { … GitHubPackages … }` block is deleted from
+`settings.gradle.kts`, replaced by a comment recording why it is gone and instructing that a future
+Revapi wiring supply the repository through a **CI-only init script** rather than re-adding it here.
+
+**Explicitly untouched:** publishing to GitHub Packages. That is a separate
+`publishing { repositories { … } }` block in `modules/app-api/build.gradle.kts` and
+`modules/api-contract-projection-java/build.gradle.kts`, verified independent of resolution.
+
+**Blast radius, honestly:** lower than feared. The deleted block was guarded by
+`if (GITHUB_ACTOR != null && GITHUB_TOKEN != null)`, so it was already inert locally — a local build
+proves the normal resolution path is unaffected but cannot exercise the CI path. **CI is the real
+gate**, and the decisive signal is behavioural: the next scheduled Gradle Dependabot run must produce
+a PR containing a `[libraries]` entry.
+
+**Residue not swept here (deliberate):** `config/revapi/analysis.json`, `config/revapi/differences.json`,
+`config/revapi/app-api-baseline.json`, and `gradle.properties`' "Revapi baselines" comment all survive
+and are now unreferenced. Kept out of this change to hold a build-critical diff surgical and
+reviewable; logged to the observations inbox as a `retire-with-a-sweep` follow-up. The inline comment
+left in `settings.gradle.kts` is what prevents the repository from being re-added in the meantime.
+
+## Candidate fixes considered (superseded by the deletion above)
 
 The GitHub Packages repository is needed **only in CI**, and is already conditional on CI-only env
 vars. The conditional is what Dependabot cannot see.

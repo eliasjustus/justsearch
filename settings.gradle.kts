@@ -17,33 +17,28 @@ dependencyResolutionManagement {
   // Enforce centralized repositories; forbid project-level repos
   repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
   repositories {
-    // 0) GitHub Packages (read-only) for previous release artifacts (Revapi baselines)
-    // Enabled only in CI or environments providing GITHUB_ACTOR/TOKEN
-    if (System.getenv("GITHUB_ACTOR") != null && System.getenv("GITHUB_TOKEN") != null) {
-      exclusiveContent {
-        forRepository {
-          maven {
-            name = "GitHubPackages"
-            // e.g., owner/repo => https://maven.pkg.github.com/owner/repo
-            val ghRepo = System.getenv("GITHUB_REPOSITORY")
-            if (ghRepo != null && ghRepo.contains('/')) {
-              url = uri("https://maven.pkg.github.com/$ghRepo")
-            } else {
-              // Fallback to a placeholder to avoid configuration errors
-              url = uri("https://maven.pkg.github.com/owner/repo")
-            }
-            credentials {
-              username = System.getenv("GITHUB_ACTOR")
-              password = System.getenv("GITHUB_TOKEN")
-            }
-            // Resolves only released artifacts; snapshots are not part of the Phase 1 posture.
-            mavenContent { releasesOnly() }
-          }
-        }
-        // Limit to our published group only
-        filter { includeGroup("io.justsearch") }
-      }
-    }
+    // NOTE (tempdoc 793): a credentialed GitHub Packages repository used to be declared here,
+    // filtered to `includeGroup("io.justsearch")` and guarded by a GITHUB_ACTOR/GITHUB_TOKEN
+    // conditional, to resolve previously-published artifacts as Revapi baselines.
+    //
+    // It was removed because it resolved nothing and broke dependency automation:
+    //   * Revapi is not applied by any build script, so no baseline is ever resolved.
+    //   * No module declares an external `io.justsearch:` dependency — inter-module edges are
+    //     all `project(...)` — and no `gradle.lockfile` has ever pinned an `io.justsearch`
+    //     artifact, so the repository had no resolution to serve.
+    //   * Dependabot parses this block STATICALLY and does not evaluate the env-var guard, so
+    //     it saw a private registry it cannot authenticate to (unsupported for the `gradle`
+    //     ecosystem) and every Gradle job failed with "Dependabot can't authenticate to a
+    //     private package registry". Plugins kept updating because they resolve through
+    //     `pluginManagement` above; ALL library updates were silently lost for the repository's
+    //     entire public history.
+    //
+    // Publishing to GitHub Packages is unaffected: that is a separate `publishing { repositories }`
+    // block in modules/app-api and modules/api-contract-projection-java.
+    //
+    // If Revapi baseline resolution is ever wired up, do NOT re-add it here — supply it through a
+    // CI-only init script so the settings file Dependabot reads stays free of private registries.
+
     // 1) Google for AndroidX & GMS (exclusive content)
     exclusiveContent {
       forRepository { google() }
