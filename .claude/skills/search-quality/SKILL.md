@@ -2336,8 +2336,9 @@ above)*
   whole-doc representation drowns it (the F-031/F-040 mechanism); or **(c) neither**, i.e. the
   failure is downstream of retrieval (hop-2, or 788 §1's satisficing/stopping mechanism)?
 - **Why it matters:** it decides whether "paraphrase bridging is the tool's unique value" is a
-  capability claim or a capability-at-a-query-shape claim. The hero census recorded that agents type
-  a median of **4** content tokens, and recorded verbatim two q0 query strings —
+  capability claim or a capability-at-a-query-shape claim. The hero census (F-043; derived from the
+  committed 782 records, replayable via `scripts/jseval/experiments/replay_behavioral_789.py`)
+  recorded that agents type a median of **4** content tokens, and recorded verbatim two q0 query strings —
   `power station in the upper wetlands` and `upper wetlands power station` — while F-034's secondary
   finding is that dense retrieval is markedly weaker on keyword-shaped queries. If the answer is (a),
   788 §3.A's delivery-layer work and 788 §3.B.10's engine axis are the same problem from two ends,
