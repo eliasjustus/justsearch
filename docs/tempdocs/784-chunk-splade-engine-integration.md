@@ -411,3 +411,165 @@ belongs to the 783 program's intervention space, not to this lane. Re-open trigg
 fusion mechanism that demonstrably benefits from a revived sparse leg on long docs. The Step-0
 pre-declared decision rule (ship only a >10% improvement with a correctness story) resolved to
 freeze: no engine change ships pre-hero.
+
+## §K. Fusion-attribution study — the Step-0 gate-harm mechanism, per-query (2026-07-29)
+
+**Why this ran.** §B.3 parked this lane on a mechanism claim: "a 0.29 leg cannot help a 0.64
+ensemble under static CC weights." That claim was then refuted per-query on 2026-07-28 — harm is
+uncorrelated with per-query SPLADE strength (rho ~ +0.08, wrong-signed; 6 of the 10 worst-harmed
+queries had SPLADE STRONG). The park therefore rested on an explanation the data did not support.
+This study explains the harm offline, over the existing arm artifacts. Analysis only — no engine
+change was made, and none is licensed by this section.
+
+**Deliverables.** `scripts/jseval/experiments/fusion_attribution_784.py` (pure-offline, no backend,
+no GPU, no paid calls) → `tmp/784-fusion-attribution/fusion-attribution.v1.json` + `report.md`
+(worktree `tmp/`, gitignored; regenerate with the command in the report header).
+
+### §K.1 Data inventory — what the Step-0 arm dirs actually hold
+
+Each `tmp/781-certification/step0/arm-A{1..4}/` contains: `hybrid_per_query.json` and
+`splade_per_query.json` (200 records each — metrics, `predictedDocIds`, and `judgeSignals` for the
+top-10 only), `hybrid_run.trec` / `splade_run.trec`, `qrels.json`, `manifest.json`, `summary.json`,
+`metrics{,-worker}.ndjson`, and `projections/{bootstrap_ci,stratified_metrics,staged_recall_accounting,rank_diff,encoder_drift,...}.json`.
+
+`judgeSignals` carries per-hit `{bm25,splade,dense}_{rank,score}`, `fusion_score`, `ce_score`
+(`scripts/jseval/jseval/provenance.py:325-361`). Coverage measured across all four arms
+(2,000 rows each): bm25 rank present 1,610-1,638; dense 1,102-1,159; `fusion_score` 2,000;
+`ce_score` 1,990; **`splade_rank`/`splade_score` present 0 — in every arm.**
+
+**not_derivable (honest limits).**
+- *Per-leg SPLADE score under hybrid.* The typed splade leg IS attached
+  (`SearchExecutor.java:470-472` → `HitProvenanceProjector.attachRetrieval`), so a null means the
+  returned doc was absent from the whole-doc SPLADE candidate list. No doc reaching a final top-10
+  has a recoverable SPLADE contribution.
+- *Chunk-branch membership/scores.* `attachChunkMerge` puts a `chunk-merge` stage on the wire
+  (`HitProvenanceProjector.java:134-164`), but `extract_judge_signals` reads only
+  sparse/splade/dense/branch-fusion/fusion/cross-encoder — dropped at the artifact boundary.
+- *Normalised per-leg scores, effective weights, `parent_token_count`.* Emitted only under
+  `include_detail`/`debug` (`SearchResponseBuilder.java:297-299`; keys at
+  `HybridFusionUtils.java:752-777`). jseval's eval path never sets `debug`, so the numeric detail
+  tier was never on the wire for these arms.
+- *Anything below the top-10.* A gold doc that fell out of the raised-gate top-10 has no record there.
+
+**Ranking-semantics finding (method caveat).** The API returns the top-10 in **cross-encoder**
+order — verified: 0 non-CE-descending queries across 200 queries × 4 arms, while 199/200 are
+non-fusion-descending. But jseval scores with `ir_measures.ScoredDoc(score=hit["score"])`
+(`retriever.py:143`) and `hit["score"]` is the fused score. So the reported nDCG@10 is the
+**CE-selected set re-ordered by the fused score**. Both arms were measured identically, so Step 0's
+comparison is sound — but it means a fusion change reaches the metric through two channels (which
+ten docs the CE keeps, and how the fused score orders them), and it is why §K.2(iii) is observable.
+
+### §K.2 Verdict — the knob moved two levers, and the harm belongs to the second
+
+`SPLADE_ZERO_WEIGHT_MIN_TOKENS` is ONE static constant (`HybridFusionUtils.java:26-27`) read by
+TWO functions:
+
+| lever | function | applied at | direction |
+|---|---|---|---|
+| Stage 3A SPLADE leg suppression | `spladeParentLengthMultiplier` (`:803-806`) | `:693` (`fuseWithCC3`) | 1.0 → **0.0** as parents lengthen |
+| Stage 3B whole-vs-chunk **branch** ramp | `chunkBranchParentLengthMultiplier` (`:826-834`) | `:488-491`, called from `SearchExecutor.java:766-780` | **0.25** → 1.0 as parents lengthen |
+
+At the default (1024, 4096) with this corpus's median parent of 6,615 tokens (F-033), the chunk
+branch runs at multiplier **1.0**. The Step-0 recipe (§B.2's own lines 200-203) raised the bounds to
+1e9, which pins the chunk multiplier at the ramp's **low** end, **0.25**
+(`branchChunkMinWeightMultiplier`, confirmed in every arm manifest). For a document found by BOTH
+branches the effective whole:chunk split therefore moves **[0.5, 0.5] → [0.8, 0.2]** — the chunk
+branch loses ~60% of its relative influence, for every document, with no involvement from SPLADE.
+(Robustness: with only `zero_weight_min_tokens` raised, the multiplier is
+`0.25 + (tokens-1024)/(1e9-1024)*0.75` = 0.2500 to four decimals — same conclusion. And A3's
+splade-mode 0.2902 vs A2's 0.0901 proves `zero_weight_min_tokens` *was* raised.)
+
+Under `zeroExclude` (`fuseWithCCNamed:495-503`) this bites **only** on docs present in both branches
+— whole-only and chunk-only docs renormalise to weight 1.0 on their single branch and are untouched.
+The gate raise thus selectively demotes exactly the documents two independent branches agreed on.
+
+**Per-query evidence, decisiveness order.**
+
+1. **SPLADE-invariance (decisive).** A1→A4 raises the gate over the truncated 0.0591 leg; A2→A3 over
+   the revived 0.2902 leg (4.9× better). Per-query harm is **exactly identical on 195/200 queries**
+   (Pearson r = 0.980, mean |diff| 0.0051, max 0.333 — the 5 differing queries are F-036's known
+   chunk-splade-sensitive set). The worst-10 harmed qid lists are identical with identical deltas.
+   Whatever causes the harm does not read the SPLADE leg's contents.
+2. **No SPLADE displacement (refutes hypothesis (a)).** `splade_rank` null on 100% of returned hits.
+   On the leg-identical comparison A1→A4, overlap between the isolated SPLADE top-10 and the final
+   top-10 does not rise (1.065 → 1.045); of 259 docs entering the raised-gate top-10, 20 (7.7%) are
+   SPLADE top-10 docs — *below* the 10.5% base rate. Entrants are less SPLADE-flavoured than the
+   average surviving doc. (A2→A3's overlap rise 1.095 → 2.455 is the SPLADE *ranking itself*
+   improving; it coincides with identical harm, so it is not the causal channel.)
+3. **~23% of the harm has zero displacement (hypothesis (b), cleanly).** 13 harmed queries (A1→A4;
+   12 for A2→A3) have a **byte-identical returned top-10 set** — nothing entered, nothing left —
+   carrying 3.394 of 14.534 total nDCG of harm (23.35%). Seven of them lose exactly 0.3691. With the
+   same ten documents and the same CE ordering, only the fused score can have moved.
+4. **Arithmetic reconstruction (hypothesis (b), quantified).** Solving
+   `fused = e_whole·nWhole + e_chunk·nChunk` across the two arms for every doc present in both
+   top-10s: **97.4%** of 1,741 doc-pairs admit a solution with both normalised branch scores in
+   [0,1] under the source-derived [0.5,0.5]→[0.8,0.2] shift. Sweeping the hypothesised shift:
+   "no change" (whole weight 0.51) explains 27.9%; 0.75 explains 84.4%; 0.80 explains 97.4% and the
+   curve saturates above 0.83. **This is a lower bound, not a point estimate** — but it rules out
+   any small re-weighting, and adding a leg at CC weight 0.2 cannot produce a shift of this size.
+   Recovered values are semantically coherent: on q0003, doc `349014` recovers nChunk 1.00 /
+   nWhole 0.67 and loses 0.099 fused score, while doc `11848476` recovers nWhole 0.51 / nChunk 0.30
+   and gains 0.064. (Caveat: each branch's min-max normalisation is over its own candidate set, which
+   the gate can perturb — the recovered values are a consistency test, not exact arithmetic.)
+5. **Worst-10 profile.** Six of the ten worst-harmed queries have splade-mode nDCG exactly **0.000**
+   — SPLADE found nothing for them — and they are still among the worst harmed. Of 12 entrant docs
+   across those queries, 11 carry whole-doc-branch provenance and 1 is a SPLADE top-10 doc. Two
+   queries (q0003, q0005) lose 0.369 with **zero** entrants and the gold doc at an unchanged
+   returned position.
+
+**Mechanism named:** *the gate raise de-weights the Stage-3B chunk branch ~4× via a constant shared
+with the SPLADE lever, demoting documents both branches found; the harm reaches the metric as a
+fused-score re-ordering (~23%, no displacement) plus the pool/composition consequences of the same
+re-ordering one stage earlier (~77%).* Hypothesis (a) is refuted; (b) is confirmed as the direct
+channel; (c) is the same cause acting upstream; (d) is not needed.
+
+### §K.3 What this un-parks — and what it does not
+
+- **Step 0's decision stands.** Engine frozen, chunk-SPLADE default OFF, no pre-hero change. Right
+  call, wrong reason.
+- **The park's stated reason does not stand.** "A 0.29 leg cannot help a 0.64 ensemble under static
+  CC weights" was never measured: no Step-0 arm isolated the SPLADE lever. The 7% is the chunk
+  branch's cost, not the sparse leg's. **Whether static CC fusion can exploit a mid-quality sparse
+  leg on long documents is OPEN and unmeasured.** The lane stays parked pending the §K.4 rerun, but
+  it is now parked on an honest "unmeasured", not on a refuted mechanism.
+- **A real engine defect is now named** (`wrong-gate` class): a knob named for SPLADE silently
+  retunes the whole-vs-chunk branch balance. Any future experiment touching
+  `justsearch.splade.*_tokens` is confounded until it is separated. **Not fixed here** — the fix is a
+  one-line separation: give the Stage-3B ramp its own bounds
+  (e.g. `justsearch.chunk_branch.{full_weight_max,min_weight_max}_tokens`) defaulting to today's
+  1024/4096 so shipped behaviour is byte-identical (`HybridFusionUtils.java:826-834`).
+- **A second, independent finding for the 783 program:** the chunk-branch weight is worth ~7% nDCG on
+  this corpus in the wrong direction — so it is a *live lever*, not inert. Its parent-length ramp has
+  never been A/B'd on its own.
+
+### §K.4 The rerun this needs (scripted, $0, not run here)
+
+A definitive attribution cannot be finished offline because both levers moved together and no arm
+separates them. The rerun is four arms on legal-clerc-200, same session, same index generation, 200
+queries, hybrid + splade modes, local GPU only:
+
+| arm | SPLADE gate | chunk-branch ramp |
+|---|---|---|
+| (i) | default | default |
+| (ii) | raised (via a knob that does NOT touch the branch ramp) | default |
+| (iii) | default | collapsed to 0.25 |
+| (iv) | raised | collapsed |
+
+**Arm (iii) is decisive**: if it reproduces the ~7% harm on its own, the chunk-branch coupling is the
+whole story, and arm (ii) then gives the first clean measurement of the SPLADE lever's true cost or
+benefit. Arms (ii)/(iii) require the one-line constant separation above, so this rerun is gated on an
+engine change this study was not licensed to make. Wall clock ≈ 8 min/arm (Step-0 arm timestamps
+00:22 / 00:30 / 00:37 / 00:41).
+
+**Instrumentation the rerun should add** (all cheap, all in jseval):
+1. Pass `debug`/`include_detail` on eval queries — `retriever.py:165-177` already supports it;
+   `run.py` never sets it. That puts the numeric detail tier on the wire.
+2. Extend `extract_judge_signals` (`provenance.py:325-361`) to carry: `chunk-merge` stage rank/score;
+   `whole_branch`/`chunk_branch`/`branch_merge_cc_effective_weight_*`/`cc_modifier_*`; Stage-3A
+   `cc_effective_weight_{sparse,dense,splade}` + `cc_modifier_splade`; and `parent_token_count`.
+3. Persist judgeSignals for the full returned window (or the pre-CE fused pool), not only the final
+   top-10, so a gold doc that falls out still has a record.
+
+**Why it was not run in this session:** the brief forbids contending for the shared backend/GPU
+(another worker may hold port 33221 for hours), and arms (ii)/(iii) need an engine change outside
+this study's licence. Documented as the open step, per the brief.
