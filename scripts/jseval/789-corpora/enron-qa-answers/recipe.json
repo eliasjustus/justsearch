@@ -1,0 +1,44 @@
+{
+  "schema": "789-naturalistic-recipe.v1",
+  "_note": "Regeneration recipe for the tempdoc-789 F1/F2 naturalistic-replication substrate. No corpus/query/answer CONTENT is committed here (matching the established convention for every other real-external-dataset member -- 666-corpora/*/recipe.json, 707-corpora/*/member.v1.json -- none of which check in fetched text, only method/source/seed). Only cells.v1.json's hashes are committed as the frozen identity.",
+  "base_corpus": {
+    "method": "huggingface-dataset-filter-flatten",
+    "source": "MichaelR207/enron_qa_0922 (arXiv 2505.00263)",
+    "converter": "scripts/search/convert-enronqa-to-beir.py",
+    "params": {"split": "train", "user": "auto (largest inbox)", "max_queries": 300, "seed": 42},
+    "regenerate": "python scripts/search/convert-enronqa-to-beir.py --out-dir datasets/mixed/enron-qa",
+    "verified_output": {"corpus_size": 5485, "query_count": 300, "user_selected": "dasovich-j"}
+  },
+  "answers_resolution": {
+    "outcome": "upstream_field_exists_but_not_used",
+    "finding": "HuggingFace datasets-server first-rows API (queried live 2026-07-29) confirms MichaelR207/enron_qa_0922 carries gold_answers (+ rephrased_questions, alternate_answers, incorrect_answers, gold_rationales, alternate_rationales), index-aligned with questions.",
+    "decision": "Do NOT project gold_answers. tempdoc 707's founder-ratified 'EnronQA email-member source decision' memo (707, section 'Founder memo -- EnronQA email-member source decision', ratified 2026-07-16) already investigated this exact HF dataset's QA-annotation layer for a sibling corpus member and found it unlicensed (no HF license tag/field/file; arXiv 2505.00263 states no dataset redistribution terms for the annotation layer) -- and ratified dropping that layer entirely in favor of real public-domain email text (FERC/CMU precedent) plus the project's OWN gold. This recipe applies the same resolution: keep the real `questions` field (the pre-existing, years-long mixed/enron-qa usage predating 707, tempdoc 666's 'working, register-validated mixed/ corpora'), synthesize an independent reference answer locally instead of reading gold_answers off the HF row.",
+    "synthesis_method": "local model (Qwen3.5-9B-Q4_K_M, out-of-band llama-server, temperature=0, thinking disabled), prompt scripts/jseval/789-corpora/enron-qa-answers/answer-synthesis-prompt.v1.txt, input = (question, FULL untruncated gold email text)",
+    "scoring_implication": "Reference answers are advisory to an LLM judge, not exact-match ground truth -- the launch's judge-overlay is mandatory (789 P2 probe convention), consistent with this design."
+  },
+  "subset_selection": {
+    "script": "scripts/jseval/789-corpora/enron-qa-answers/select_subset.py",
+    "seed": 789,
+    "n": 20,
+    "max_email_chars": 3000,
+    "sanity_filters": [
+      "qrel gold doc id exists in corpus.jsonl",
+      "question >= 6 whitespace-separated tokens",
+      "gold email <= max_email_chars (added after a first pass at unlimited length produced 4/20 degenerate synthesized answers on the 4 longest gold emails, 7.2KB-56.8KB -- tempdoc 789 dated section has the before/after)"
+    ],
+    "regenerate": "python select_subset.py --corpus-dir <materialized mixed/enron-qa> --seed 789 --n 20 --max-email-chars 3000 --out selected.json"
+  },
+  "answer_synthesis": {
+    "script": "scripts/jseval/789-corpora/enron-qa-answers/synthesize_answers.py",
+    "model": "Qwen_Qwen3.5-9B-Q4_K_M.gguf",
+    "server_recipe": "782 Section I out-of-band pattern: <main-checkout>/modules/ui/native-bin/llama-server/variants/cuda12/llama-server.exe -m models/Qwen_Qwen3.5-9B-Q4_K_M.gguf --jinja --host 127.0.0.1 --port <free> -c 4096 -ngl 99 --seed 42",
+    "seed": 42,
+    "regenerate": "python synthesize_answers.py --corpus-dir <materialized mixed/enron-qa> --selected selected.json --base-url http://127.0.0.1:<port> --seed 42 --out synthesized-answers.json --queries-out queries.json"
+  },
+  "closed_book_screen": {
+    "script": "scripts/jseval/789-corpora/enron-qa-answers/closed_book_screen.py",
+    "method": "local-model-proxy (NOT the sonnet closed-book calibration the real campaign runs)",
+    "model": "Qwen_Qwen3.5-9B-Q4_K_M.gguf",
+    "regenerate": "python closed_book_screen.py --queries queries.json --base-url http://127.0.0.1:<port> --seed 42 --out closed-book-screen.v1.json"
+  }
+}
