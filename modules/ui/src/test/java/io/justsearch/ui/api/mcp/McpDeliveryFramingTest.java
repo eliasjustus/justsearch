@@ -255,7 +255,7 @@ final class McpDeliveryFramingTest {
       assertEquals(0, McpDeliveryFraming.deliveredBodyBytes(null));
       McpSearchResponseContent.HitContent h =
           new McpSearchResponseContent.HitContent(
-              1, "ab", "cde", 1.0, "fghi", List.of("jk"), List.of("content_preview"), null);
+              1, "ab", "cde", 1.0, "fghi", List.of("jk"), List.of("content_preview"), null, null);
       // title 2 + path 3 + preview 4 + matched term 2 = 11; matchedFields are not delivered text.
       assertEquals(11, McpDeliveryFraming.deliveredBodyBytes(List.of(h)));
     }
@@ -265,7 +265,7 @@ final class McpDeliveryFramingTest {
     void continuationDoesNotInflateBodyBytes() {
       McpSearchResponseContent.HitContent without =
           new McpSearchResponseContent.HitContent(
-              1, "ab", "cde", 1.0, "fghi", List.of("jk"), List.of(), null);
+              1, "ab", "cde", 1.0, "fghi", List.of("jk"), List.of(), null, null);
       McpSearchResponseContent.HitContent with =
           new McpSearchResponseContent.HitContent(
               1,
@@ -275,7 +275,8 @@ final class McpDeliveryFramingTest {
               "fghi",
               List.of("jk"),
               List.of(),
-              "note: this excerpt names \"Someone\" — a very long continuation line indeed.");
+              "note: this excerpt names \"Someone\" — a very long continuation line indeed.",
+              null);
       assertEquals(
           McpDeliveryFraming.deliveredBodyBytes(List.of(without)),
           McpDeliveryFraming.deliveredBodyBytes(List.of(with)));
@@ -452,7 +453,7 @@ final class McpDeliveryFramingTest {
 
     private McpSearchResponseContent.HitContent scored(int rank, double score) {
       return new McpSearchResponseContent.HitContent(
-          rank, "t", "/p", score, "preview", List.of(), List.of(), null);
+          rank, "t", "/p", score, "preview", List.of(), List.of(), null, null);
     }
   }
 
@@ -493,6 +494,6 @@ final class McpDeliveryFramingTest {
 
   private static McpSearchResponseContent.HitContent hit(int rank, List<String> matchedTerms) {
     return new McpSearchResponseContent.HitContent(
-        rank, "t" + rank, "/p" + rank, 1.0, "preview", matchedTerms, List.of(), null);
+        rank, "t" + rank, "/p" + rank, 1.0, "preview", matchedTerms, List.of(), null, null);
   }
 }

@@ -359,6 +359,7 @@ final class SearchPlannerApprovalCorpusTest {
             /* evidenceSpanEnabled= */ false, /* entitySignal= */ "df_rarity",
             /* mcpDeliveryBudgetBytes= */ ResolvedConfig.Search.DEFAULT_MCP_DELIVERY_BUDGET_BYTES,
             /* mcpFraming= */ ResolvedConfig.Search.McpFraming.OFF,
+            /* mcpEntityCarriage= */ ResolvedConfig.Search.EntityCarriage.OFF,
             corrections);
     ResolvedConfig config = mock(ResolvedConfig.class);
     when(config.search()).thenReturn(search);
