@@ -840,11 +840,15 @@ public final class McpToolSurface {
       // once, and only when F3 is enabled — an unconfigured or F3-off process makes no extra call.
       McpDeliveryFraming.Settings framing = McpDeliveryFraming.resolveSettings();
       long indexedDocs = framing.calibratedAbsenceEnabled() ? indexedDocCount() : -1L;
+      // Tempdoc 771 item (b): carriage settings resolved once per call, outside the governor's view
+      // lambda for the same reason the framing flags are — every degradation step renders under one
+      // carriage decision, so the governor's re-renders cannot disagree about delivered content.
+      McpEntityCarriage.Settings carriage = McpEntityCarriage.resolveSettings();
       McpDeliveryGovernor.ResultView view =
           (keep, includeProvenance) -> {
             KnowledgeSearchResponse sub =
                 keep >= resp.results().size() ? resp : truncateResults(resp, keep);
-            McpSearchResponseContent c = buildSearchContent(sub, args, framing, indexedDocs);
+            McpSearchResponseContent c = buildSearchContent(sub, args, framing, indexedDocs, carriage);
             String t = renderSearchText(sub, c, concise);
             Map<String, Object> structured =
                 McpEvidenceProjection.searchEvidence(sub, c, includeProvenance);
@@ -918,7 +922,8 @@ public final class McpToolSurface {
       KnowledgeSearchResponse resp,
       Map<String, Object> args,
       McpDeliveryFraming.Settings framing,
-      long indexedDocs) {
+      long indexedDocs,
+      McpEntityCarriage.Settings carriage) {
     // Tempdoc 789 Phase 2 (F1): the entity vocabulary comes from the facet snapshot this response
     // already carries — no new query path, no query-time NER (charter: prefer existing fields).
     // Empty (so F1 emits nothing) when the framing is off or the response carries no entity facets.
@@ -947,12 +952,28 @@ public final class McpToolSurface {
                 : McpSearchResultFormatter.informativeTerms(informative);
         List<String> matchedFields =
             hit.matchedFields() == null ? List.of() : hit.matchedFields();
+        // Tempdoc 771 item (b): the entity-carriage line, computed BEFORE the F1 continuation so
+        // the two compose — carriage puts the document's buried entity names into delivered text,
+        // and F1 may then mark one of them as a possible intermediate fact. Without carriage F1 can
+        // only ever mark entities the excerpt window happened to include, which on long documents is
+        // the 45%-of-successful-retrievals case 771 §E measured.
+        String entityCarriage =
+            carriage.enabled()
+                ? McpEntityCarriage.line(
+                    McpEntityCarriage.deliveredText(hit, preview),
+                    hit.fields(),
+                    carriage.maxChars())
+                : null;
         // Tempdoc 789 Phase 2 (F1): the continuation line, computed against the text this hit
-        // actually delivers (its preview) so the line never names an entity the agent was not shown.
+        // actually delivers (its preview, plus any carriage line) so the line never names an entity
+        // the agent was not shown.
         String continuation = null;
         if (!entityVocabulary.isEmpty()
             && continuationsEmitted < McpDeliveryFraming.MAX_CONTINUATION_LINES) {
-          continuation = McpDeliveryFraming.continuationLine(preview, query, entityVocabulary);
+          String deliveredText =
+              entityCarriage == null ? preview : preview + "\n" + entityCarriage;
+          continuation =
+              McpDeliveryFraming.continuationLine(deliveredText, query, entityVocabulary);
           if (continuation != null) {
             continuationsEmitted++;
           }
@@ -966,7 +987,8 @@ public final class McpToolSurface {
                 preview,
                 matchedTerms,
                 matchedFields,
-                continuation));
+                continuation,
+                entityCarriage));
       }
     }
 
@@ -1082,6 +1104,13 @@ public final class McpToolSurface {
         if (!h.preview().isBlank()) {
           sb.append("    Preview: ").append(h.preview()).append("\n");
         }
+      }
+      // Tempdoc 771 item (b): the entity-carriage line, directly under the excerpt whose gaps it
+      // fills. Rendered at BOTH densities — unlike the Preview and F1 lines it makes no claim about
+      // the excerpt (its wording is about the document), and it is the highest-value content per
+      // byte in a delivery whose whole failure mode is a name the agent was never handed.
+      if (h.entityCarriage() != null) {
+        sb.append("    ").append(h.entityCarriage()).append("\n");
       }
       if (!h.semanticFallback()) {
         StringBuilder quoted = new StringBuilder();
