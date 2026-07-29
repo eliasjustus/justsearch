@@ -1,7 +1,7 @@
 ---
 title: "post-arc platform hygiene sweep — the small, enumerated debts the 2026-07-22 arc surfaced, bundled so they don't evaporate"
 type: tempdocs
-status: "ALL 6 ITEMS DISPOSED (2026-07-28). Items 1/2/5 shipped in PR #298 (dbba0291); items 3/4a in PR #300 (28d1dd31) with 4b refuted-as-charted; this PR closes the re-scoped 4b caller hunt (2 real bare-request callers found and migrated — the F-037 candidate was wrong), records item 1's re-measured false-positive rate (6 flagged, 3 true-stale / 3 FP = 50%, gate-mode stays OFF), and records item 6's queue dispositions. Every §A item now carries a dated disposition line; §B acceptance met. Awaiting founder review — NOT merged."
+status: "MERGED to main as PR #316 (ca684558) — 2026-07-29 reconciliation. [pre-merge status retained: ALL 6 ITEMS DISPOSED (2026-07-28). Items 1/2/5 shipped in PR #298 (dbba0291); items 3/4a in PR #300 (28d1dd31) with 4b refuted-as-charted; this PR closes the re-scoped 4b caller hunt (2 real bare-request callers found and migrated — the F-037 candidate was wrong), records item 1's re-measured false-positive rate (6 flagged, 3 true-stale / 3 FP = 50%, gate-mode stays OFF), and records item 6's queue dispositions. Every §A item now carries a dated disposition line; §B acceptance met. Awaiting founder review — NOT merged.]"
 created: 2026-07-22
 author: agent (Fable orchestration), chartered from the 2026-07-22 remaining-work map (founder-directed)
 category: platform / hygiene
