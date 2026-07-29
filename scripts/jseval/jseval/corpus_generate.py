@@ -459,6 +459,63 @@ _TAIL_PHRASINGS = [
     "The final annotation for {last} gives {attr}. ",
 ]
 
+# --- German relation + tail vocabulary (tempdoc 748 §D-2) ------------------------------
+#
+# The German prose path had the defect tempdoc 767 §I.3 closed for English, but never
+# closed for German: `_render_prose`'s `de` branch emitted ONE fixed link sentence
+# ("Das Objekt {x} ist mit {y} verknüpft.") and ONE fixed tail ("{last} ist mit dem Wert
+# {attr} verbunden."), so every German gold document in every 707 de-miracl cell carried a
+# byte-identical template — "Das Objekt" selects the whole head set and "ist mit dem Wert"
+# the whole tail set, one grep each. These pools are rotated per CHAIN by `generate()`
+# exactly like their English counterparts.
+#
+# STRUCTURAL NOTE: the English tuple's doc phrasing is contiguous between the two entities
+# ("The {a} was designed by the engineer {b}"). German word order does not allow that for a
+# passive agent phrase — "wurde von {b} entworfen" puts the participle after the agent — so
+# the German doc member is the trailing participle and the frame is
+# "{a} wurde von {b} {participle}." That frame ("wurde … von") is among the most common
+# constructions in German encyclopedic prose, i.e. camouflage rather than a signature, and
+# the varying participle is what the rotation spreads.
+#
+# INVARIANT (mirrors `_RELATIONS`): a tuple's doc phrasing and question phrasing must share
+# no content token, or the semantic bridge leaks lexically. "entworfen"/"Konstrukteurs" are
+# distinct tokens — as are English's "designed"/"designer". Guarded by
+# `test_relation_phrasings_are_token_disjoint` (both pools).
+_RELATIONS_DE = [
+    ("entworfen", "entworfen", "des Konstrukteurs"),
+    ("gegründet", "gegründet", "des Urhebers"),
+    ("erbaut", "erbaut", "des Baumeisters"),
+    ("geleitet", "geleitet", "der Leitung"),
+    ("beauftragt", "beauftragt", "des Auftraggebers"),
+    ("betrieben", "betrieben", "der Betriebsführung"),
+    ("finanziert", "finanziert", "des Geldgebers"),
+    ("restauriert", "restauriert", "der Instandsetzung"),
+]
+
+# The TERMINAL (attribute) sentence of a German prose chain — the counterpart of
+# `_TAIL_PHRASINGS`.
+#
+# INVARIANT: no template may contain 5 consecutive LITERAL tokens **as
+# `corpus_leak._tokenize` counts them** — that tokenizer is `[a-z0-9']+`, so a German
+# umlaut or ß SPLITS one word into two tokens ("abschließende" -> "abschlie" + "ende",
+# "für" -> "f" + "r"). A 4-WORD German literal run therefore becomes a 5-TOKEN n-gram
+# anchor, which is exactly how the first draft of this pool failed
+# `ngram_selectivity_report` at gold coverage 0.06 against a 0.02 German-Wikipedia null
+# (measured, tempdoc 748 §D-2). Every literal span below is <= 3 tokens under that
+# tokenizer, so every 5-gram window necessarily contains a slot-derived token. Guarded by
+# `test_tail_phrasings_have_no_fixed_5gram`, which now counts tokens the leak instrument's
+# way rather than the Unicode way.
+_TAIL_PHRASINGS_DE = [
+    "{last} ist dem Wert {attr} zugeordnet. ",
+    "Der Eintrag zu {last} nennt {attr}. ",
+    "{last} hat die Kennung {attr}. ",
+    "Im Verzeichnis steht {last} mit {attr}. ",
+    "{last} entspricht {attr}. ",
+    "Das Register vermerkt {attr} zu {last}. ",
+    "{last} ist als {attr} erfasst. ",
+    "Notiz zu {last}: {attr}. ",
+]
+
 
 def _rotate(pool, offset):
     """``pool`` rotated left by ``offset`` — the per-chain template spread (tempdoc 767 §I.3).
@@ -545,14 +602,18 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None, tails=_TA
     for i in range(len(ents) - 1):
         rel = rels[i % len(rels)]
         if lang == "de":
+            # tempdoc 748 §D-2: the link sentence used to be the fixed string "Das Objekt
+            # {x} ist mit {y} verknüpft." on every German gold doc. `rels` is now the
+            # per-chain-rotated `_RELATIONS_DE`, so the participle varies; see that pool
+            # for why the German doc member is a participle rather than a full phrase.
+            link = f"{ents[i]} wurde von {ents[i+1]} {rel[1]}. "
             if sem and i == 0:
                 # head doc: German descriptor (sem[0]/sem[2]/sem[4]); the query references it
                 # by German SYNONYMS (sem[1]/sem[3]/sem[5]) → grep fails, multilingual dense bridges.
-                body = (f"Standort: {sem[0]}, {sem[2]}{dq}. "
-                        f"Das Objekt {ents[i]} ist mit {ents[i+1]} verknüpft. ")
+                body = f"Standort: {sem[0]}, {sem[2]}{dq}. " + link
                 title = f"Standort {sem[0]}, {sem[2]}{dq}"
             else:
-                body = f"Das Objekt {ents[i]} ist mit {ents[i+1]} verknüpft. "
+                body = link
                 title = f"Über {ents[i]}"
         elif sem and i == 0:
             # head doc: surface descriptor (doc_noun/doc_place[/doc_qual]) + name + link
@@ -565,15 +626,20 @@ def _render_prose(ents, attr, rels, target_words, lang="en", sem=None, tails=_TA
         docs.append((ents[i].lower(), title, _pad(body, target_words)))
     last = ents[-1]
     if lang == "de":
+        # tempdoc 748 §D-2: the tail was the fixed "{last} ist mit dem Wert {attr}
+        # verbunden." on every German gold tail doc; `tails` is now the per-chain-rotated
+        # pool, exactly as on the English path.
         docs.append((last.lower(), f"Über {last}",
-                     _pad(f"{last} ist mit dem Wert {attr} verbunden. ", target_words)))
-        if sem:
-            # reference the head by its German synonym descriptor (sem[1]/sem[3][/sem[5]]), NOT its name
-            q = (f"Folgt man den Verknüpfungen ausgehend vom Standort {sem[1]}, {sem[3]}{qq}, "
-                 f"mit welchem Wert ist die letzte Entität verbunden?")
-        else:
-            q = (f"Folgt man den Verknüpfungen ausgehend von {ents[0]}, "
-                 f"mit welchem Wert ist die letzte Entität verbunden?")
+                     _pad(tails[0].format(last=last, attr=attr), target_words)))
+        # head reference: SYNONYM descriptor (semantic) or the verbatim name (lexical),
+        # wrapped in one genitive relation phrase per hop — the German mirror of the
+        # English `f"{rels[i][2]} {phrase}"` nesting. Genitive chains natively in German
+        # ("des Konstrukteurs des Standorts …"), so multi-hop nests without a connector.
+        head_ref = f"des Standorts {sem[1]}, {sem[3]}{qq}" if sem else ents[0]
+        phrase = head_ref
+        for i in range(len(ents) - 1):
+            phrase = f"{rels[i % len(rels)][2]} {phrase}"
+        q = f"Welcher Wert steht am Ende der Kette {phrase}?"
     else:
         # tail phrasing is rotated per chain by `generate()` (tempdoc 767 §I.3) — a single
         # fixed string here made every gold tail doc share one template.
@@ -662,7 +728,9 @@ def _render_aggregation(members, answer, sem, gold_kind, chain_idx, target_words
     ``gold_kind`` (the ``set`` join / the ``count`` / the ``extremum`` value); the comparator
     registry (:mod:`jseval.corpus_comparators`) scores it deterministically, no judge.
     """
-    if lang == "de":
+    # tempdoc 748: the pool is chosen by the caller (`generate()` picks per language) rather
+    # than overridden here, so an explicitly-passed pool is never silently discarded.
+    if lang == "de" and memberships is _MEMBERSHIP_PHRASINGS:
         memberships = _MEMBERSHIP_PHRASINGS_DE
     dq = f", {sem[4]}" if sem and sem[4] is not None else ""
     qq = f", {sem[5]}" if sem and sem[5] is not None else ""
@@ -1056,7 +1124,12 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
     rng = random.Random(seed + axis_offset)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    rels = _RELATIONS["prose"]
+    # tempdoc 748 §D-2: German gets its own relation + tail pools. Before this, `rels` was
+    # unused on the German render path (which emitted one fixed link sentence) and the
+    # German tail was a fixed string, so every German gold doc shared one template.
+    rels = _RELATIONS_DE if lang == "de" else _RELATIONS["prose"]
+    tail_pool = _TAIL_PHRASINGS_DE if lang == "de" else _TAIL_PHRASINGS
+    membership_pool = _MEMBERSHIP_PHRASINGS_DE if lang == "de" else _MEMBERSHIP_PHRASINGS
     # Semantic (synonym-bridge) queries are now supported on ALL axes (prose/code/tabular)
     # and both languages — the head doc carries a descriptor and the query references it via
     # zero-overlap synonyms, so grep/pure-BM25 fail and dense must bridge (the only setup where
@@ -1137,7 +1210,7 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
             # single phrasing dominates the gold set. `_rotate` is rng-free, so this adds
             # no draw to the seeded stream (distractors rotate off their own counter).
             return _render_prose(e, a, _rotate(rels, chain_idx), doc_words, lang, sem=sem,
-                                 tails=_rotate(_TAIL_PHRASINGS, chain_idx))
+                                 tails=_rotate(tail_pool, chain_idx))
         if axis == "code":
             return _render_code(e, a, doc_words, rng.randint(0, 999), sem=sem)
         return _render_tabular(e, a, doc_words, rng.randint(0, 999), sem=sem)
@@ -1161,18 +1234,21 @@ def generate(out_dir, *, axis="prose", lang="en", n_chains=20, hops=2,
             if kind == "bridge":
                 ents, attr = _chain(rng, hops, minter)
                 docs, q = _render_prose(ents, attr, _rotate(rels, g), doc_words, lang,
-                                        sem=sem, tails=_rotate(_TAIL_PHRASINGS, g))
+                                        sem=sem, tails=_rotate(tail_pool, g))
                 q["gold_kind"] = "single_value"
             elif kind == "single_fact":
                 ent = minter.mint_entity(rng)
                 attr = minter.mint_value(rng)
-                docs, q = _render_single_fact(ent, attr, sem, g, doc_words, lang)
+                docs, q = _render_single_fact(ent, attr, sem, g, doc_words, lang,
+                                              tails=tail_pool)
             else:  # aggregation
                 k = _AGGREGATION_SIZES[g % len(_AGGREGATION_SIZES)]
                 gold_kind = _AGGREGATION_KINDS[agg_counter % len(_AGGREGATION_KINDS)]
                 agg_counter += 1
                 members, answer = _aggregation_members(rng, minter, k, gold_kind)
-                docs, q = _render_aggregation(members, answer, sem, gold_kind, g, doc_words, lang)
+                docs, q = _render_aggregation(members, answer, sem, gold_kind, g, doc_words,
+                                              lang, memberships=membership_pool,
+                                              tails=tail_pool)
             for did, title, text in docs:
                 all_docs.append({"_id": did, "title": title, "text": text})
             queries.append(q)

@@ -78,7 +78,7 @@ every committed cell signature. The behavioral count is already derivable withou
 | golden/battlefield-de-v1 | synthetic/2-hop chains | de | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | In-band at HEAD defaults (711 re-measure: hybrid 0.5924 — exact match to the 624 certification — vector 0.58, "moderate") — remains a valid difficulty corpus in both modes. Source `scripts/jseval/624-corpora/battlefield-de-v1`; same re-measure command shape as en-v1. **LEAKY — id-shape enumeration (776 item 3):** gold occupies `trailing_int(id)` 1..78, distractors 79..390; `trailing_int(id)<=78` selects gold at P/R 1.0 (native base 0.20) via materialized filenames. `_FILLER` uniform (not gold-selective here); minor query-overlap elevation (0/26 zero-overlap queries, median Jaccard 0.072). See the 767/776 Corpus provenance note. |
 | mixed/en-legal-clerc-{1k,10k}-{verbose,short-natural} | legal (real CLERC hosts + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates under the ACTIVE pre-run policy `scripts/jseval/707-corpus-certification-policy.v1.json`; closed-book 0.000 ×4). Hybrid 0.5051 / 0.4685 / 0.3238 / 0.2806 (1k-v / 1k-sn / 10k-v / 10k-sn) — **pre-rebuild / leak-inflated** (`_FILLER` gold-only feature, ~1/3 of measured retrieval; 767 §Q). **Certified leak-free (2026-07-22, PR #273): hybrid 0.33 / 0.25 / 0.06 / 0.08** (767 §R.1). **SUPERSEDED by the v2 cohort (2026-07-27, tempdoc 781 §F): hybrid 0.3103 / 0.2419 / 0.0996 / 0.1105**, title-class leak closed, new commitments + recipes at `scripts/jseval/781-corpora/en-legal-clerc/` and new policy pins — the v1 signatures are dated history. See the 781 Corpus provenance note. Commitments + recipes (v1): `scripts/jseval/707-corpora/en-legal-clerc/`. |
 | mixed/en-email-enron-raw-{1k,10k}-{verbose,short-natural} | email (raw public-domain Enron distractors + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates, same ACTIVE policy; closed-book 0.000 ×4; license `LicenseRef-Enron-FERC-public-record`). Hybrid 0.8043 / 0.7699 / 0.7052 / 0.6627 — strongest member; graceful scale decay — **pre-rebuild / leak-inflated** (`_FILLER` gold-only feature; 767 §Q). **Certified leak-free (2026-07-22, PR #273): hybrid 0.66 / 0.61 / 0.49 / 0.44** (767 §R.1). **Re-certified in the v2 cohort (2026-07-27, tempdoc 781 §F): hybrid 0.6585 / 0.6122 / 0.4756 / 0.4701** — the enron corpus bytes are UNCHANGED from v1 (it was already title-clean, 781 §E.3), so these four cells double as the run-to-run/engine-drift control band for the legal deltas; new commitments + policy pins at `scripts/jseval/781-corpora/en-email-enron-raw/`. See the 781 Corpus provenance note. Commitments + recipes (v1): `scripts/jseval/707-corpora/en-email-enron-raw/`. |
-| mixed/de-miracl-{1k,10k}-{verbose,short-natural} | wikipedia-de distractors + fabricated injected gold (v2, hops=1) | de | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 secondary stratum — NOT claim-bearing** (deliberately absent from the ACTIVE policy). 1k out-of-band (hybrid 0.2053 / 0.2660), 10k semantically collapsed (0.0431 / 0.0428, union recall 0.10); lexical 0.0 everywhere (pre-registered German grep-collapse, confirmed). The 10k collapse is chartered as tempdoc 748 → Q-018. **LEAKY / pre-rebuild — NOT rebuilt (776 item 3):** fabricated gold (gold source `635-corpora/synth-multiling-de-v1`) carries the identical *English* `_FILLER` block in 240/240 docs per cell among real German MIRACL hosts — the same gold-selective leak as legal, cross-language; the quoted hybrid numbers are leak-inflated and Q-018 needs re-verification on a defillered rebuild. See the 767/776 Corpus provenance note. Commitments: `scripts/jseval/707-corpora/de-miracl/`. |
+| mixed/de-miracl-{1k,10k}-{verbose,short-natural} | wikipedia-de distractors + fabricated injected gold (v2, hops=1) | de | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 secondary stratum — NOT claim-bearing** (deliberately absent from the ACTIVE policy). 1k out-of-band (hybrid 0.2053 / 0.2660), 10k semantically collapsed (0.0431 / 0.0428, union recall 0.10); lexical 0.0 everywhere (pre-registered German grep-collapse, confirmed). The 10k collapse is chartered as tempdoc 748 → Q-018. **LEAKY / pre-rebuild — NOT rebuilt (776 item 3):** fabricated gold (gold source `635-corpora/synth-multiling-de-v1`) carries the identical *English* `_FILLER` block in 240/240 docs per cell among real German MIRACL hosts — the same gold-selective leak as legal, cross-language; the quoted hybrid numbers are leak-inflated and Q-018 needs re-verification on a defillered rebuild. See the 767/776 Corpus provenance note. Commitments (v1, leaky): `scripts/jseval/707-corpora/de-miracl/`. **DEFILLERED REBUILD EXISTS (2026-07-29, tempdoc 748 §B): `scripts/jseval/748-corpora/de-miracl/`** — payload.v2 construction matched to the English member (`doc_words=null` ⇒ no `_FILLER`, entity bank harvested from the real MIRACL-de hosts, per-chain relation/tail rotation now applied on the German render path too). The rebuild is **`claim_eligible: false` and certified STRUCTURALLY ONLY**: the four `SCIENTIFIC_GATES` (`closed_book`, `retrieval_calibration`, `union_recall`, `leak_floor`) are **pending** because 748's pass ran under a no-paid-API constraint and without the shared eval backend. **No retrieval number has been measured on the rebuilt cells** — the v1 figures above remain the only (leak-inflated) ones on record, and DE remains a non-claim-bearing secondary stratum. |
 
 ---
 
@@ -2186,6 +2186,47 @@ above)*
   *true* semantic-bridging numbers are likely even weaker than quoted — the collapse is real, its
   magnitude is not reproducible. **748's charter should re-verify every experiment on a defillered
   de-miracl rebuild** before drawing (a)/(b)/(c)/(d). See the 767/776 Corpus provenance note.
+- **INTERIM ATTRIBUTION (2026-07-29, tempdoc 748 §A-§H — offline pass, phases 0-2; NOT closed):**
+  four measurements, all offline (no paid API, no backend, no GPU — the shared machine was held by
+  another worker), move the balance decisively toward **(c)** and away from **(a)**/**(d)**:
+  1. **The charter's EN control already existed and it collapses too.** `781-corpora/en-legal-clerc`
+     is the same generator, the same zero-lexical-overlap synonym descriptors, defillered and
+     fully certified — and its own `retrieval_calibration` artifacts read hybrid **0.3103 / 0.2419**
+     at 1k and **0.0996 / 0.1105** at 10k, with the **lexical leg exactly 0.0 at every size**. The
+     charter's pre-registered rule ("if EN-synonym gold also collapses at 10k, the finding is
+     task-shape, not German") therefore fires. The lexical zero is *constructed* by the generator
+     (`corpus_generate.py:60-75`), not a German grep-collapse.
+  2. **Real German is healthy.** On `mixed/miracl-de-2k` (real docs, real MIRACL questions, real
+     qrels, no fabricated gold, no leak): nDCG@10 0.7283, R@10 0.9805 — and stratified by
+     IDF-weighted query/gold lexical overlap, the **lowest stratum still returns the gold document
+     in the top 10 for 87% of queries**, with `recall@10` 1.0 on all three queries whose overlap is
+     literally zero. Instrument: `scripts/jseval/experiments/de_bridge_lexical_stratification_748.py`.
+  3. **No ANN/fusion tax on real German.** Exact-NN (no ANN, no fusion, no reranker, production
+     encoder, CPU) gives R@10 0.9934 / nDCG 0.7749 at 3,104 docs — the shipped hybrid (0.7283) sits
+     just under that ceiling. The gold-vs-distractor cosine margin, however, decays 0.185 → 0.018
+     from 803 to 3,104 docs. Instrument:
+     `scripts/jseval/experiments/encoder_bridge_scale_748.py`.
+  4. **The fabricated bridge starts thin in BOTH languages, and thinner in DE.** Gold-payload-only
+     exact cosine at a matched 100-doc pool: EN P@1 0.84-0.88 / margin 0.042-0.046 / gold-rank p90
+     2.0, DE 0.55 / 0.014-0.016 / 7.5-12.2 (Fisher exact p = 0.015 and 0.007). Combined with (3),
+     a construction whose margin starts near 0.04 has no headroom left by 10⁴ — a language-neutral
+     collapse mechanism. Instrument: `scripts/jseval/experiments/gold_bridge_pair_748.py`.
+  5. **Hypothesis (b) is refuted on the EN member by evidence that already existed — F-040.** That
+     finding's offline exact-NN passage probe (no ANN graph, no candidate cut-off, no fusion, no
+     reranker) collapses on these very cells from recall@10 0.20 at 1k to **0.04** at 10k
+     (R@100 0.50 → 0.20). A method with no candidate cut-off cannot be losing gold to one, so the
+     charter's candidate-depth sweep is **skipped with reason**, not left unrun. F-040's H.4 arm
+     also supplies the positive mechanism: a uniform 150-char doc-lead prefix on every chunk embed
+     lifts the 10k floor from R@100 0.20 to 0.42 — the fabricated gold's problem is **context
+     starvation of a short planted payload**, which is the same story measurements 3 and 4 tell
+     from the crowding and margin sides.
+  **Standing confound:** measurement 4 compares EN **payload.v2** with DE **v1**, so language is
+  confounded with payload version; the defillered DE rebuild (`748-corpora/de-miracl/`) exists to
+  remove it, and the one-command rerun is tempdoc 748 §G.1.
+  **What still could not run:** the 2026-07-16 `mixed/de-miracl-*` run artifacts are **gone from
+  every jseval run root on the machine**, so the staged-recall decomposition needs a fresh
+  multi-mode run; the DE-side exact-NN replication and the chunk-granularity probe are scripted but
+  unrun. **Q-018 stays OPEN**; DE stays a non-claim-bearing secondary stratum.
 
 ---
 
