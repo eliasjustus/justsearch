@@ -109,6 +109,18 @@ rationality is itself measurable from existing transcripts.
     Indicated: a synonym-pair probe suite measuring bridge reliability by paraphrase
     distance — the engine-side counterpart of the delivery work, since agents provably will
     not reformulate (query containment 0.74 in the question, 0.18 in gold).
+    **BUILT + FIRST RESULTS (2026-07-29) → tempdoc 796.** The suite exists
+    (`scripts/jseval/experiments/paraphrase_bridge_suite.py`, three tiers, five arms, pairs
+    extracted from the generator rather than hand-authored). Headline: bridging is a steep step
+    function of isolated pair cosine with a knee near 0.65, and the generator's own pools straddle
+    it; the lexical control bridges 0/180 pairs, so everything recovered here is the semantic
+    stack's doing. **The reactor anchor does not reproduce** — `power station → reactor` bridges
+    about as well at the descriptor level (tier P rank 2/21, tier S rank 2/100) as the case that
+    succeeded, so q0's 6/6 hero failure is not a failure of the paraphrase pair. The in-corpus tier
+    that would discriminate the remaining explanations — query shape vs host dilution vs a
+    downstream/agent cause — is scripted but **deferred to a serialized compute slot** (796
+    §Deferred), with a pre-registered hypothesis. If it lands on query shape, this item and §3.A's
+    delivery work are the same problem from two ends.
 
 ### C. Measurement & methodology
 

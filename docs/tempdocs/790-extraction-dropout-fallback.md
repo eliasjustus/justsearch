@@ -1,6 +1,7 @@
 ---
-status: "chartered (2026-07-28), implementation-licensed — all verification is local/$0. Source evidence: register F-042 + the 786 per-query analysis (tmp/hero-arc-analysis/engine-joins/ohr-per-query.v1.json; methodology in F-042/786 §E)."
+status: "measured (2026-07-29) — §G's open acceptance item is CLOSED: the recovery is quantified on real OHR-Bench PDF bytes and the VLM leg is live-verified (§H). Chartered 2026-07-28, implementation-licensed; all verification local/$0. Source evidence: register F-042 + the 786 per-query analysis (tmp/hero-arc-analysis/engine-joins/ohr-per-query.v1.json; methodology in F-042/786 §E)."
 created: 2026-07-28
+updated: 2026-07-29
 ---
 
 # 790 — Extraction dropout fallback: target the 83% of the tax carried by empty extractions
@@ -245,3 +246,264 @@ Consequences, recorded rather than papered over:
    measured threshold).
 3. The recoverability ceiling from §B (110/126 = 87% of the dropout set has ground-truth text at
    all) bounds what the sweep could ever show, independent of this implementation.
+
+---
+
+# §H. The recovery, measured on real OHR-Bench PDF bytes — 2026-07-29
+
+**§G is closed.** The missing substrate was built, the 1000 documents were ingested through the
+live extraction chain with the 790 fallback active and the VDU/VLM tier reachable, and the same
+962 queries were run against the result. Headline: **the shipped Tika path's −0.1303 extraction
+tax shrinks to −0.0297 — 77.2% of the gap is recovered — and 95.2% of that gain comes from
+exactly the queries 790 targeted.** The VLM leg is live-verified with quoted output.
+
+Everything below is one session, one machine, `git_sha 8fccbf42` (this branch, #320 merged),
+$0 external spend.
+
+## §H.1 The substrate: `mixed/ohr-bench-pdf-live`
+
+`pdfs.zip` from HuggingFace `opendatalab/OHR-Bench` (1 516 951 813 bytes,
+`sha256 f9bc65f383172c4ea47940c47dfab01dd36c03a120bc0450d7a962917098c783`, 1261 PDFs, 7 domains)
+split to the 1000 single-page PDFs matching the shipped arm's `_id` space.
+Builder: `scripts/search/fetch-ohrbench-pdf-corpus.py`; recipe + per-file manifest +
+reconstruction README under `scripts/jseval/666-corpora/ohr-bench-pdf-live/`. No corpus content
+is committed (gitignored `datasets/`, 240 MB on disk).
+
+- **Id → PDF mapping**: `_id` = `<domain>/<doc_name>_p<page_idx>`, matched case-insensitively
+  against `<domain>/<DocName>.pdf`; **all 1000 ids resolve**, to 387 distinct source PDFs.
+  `page_idx` is **0-based** — probed, not assumed (page `page_idx` is the best text match against
+  the `ohr-bench-clean` ground truth among `{p-1, p, p+1}` on every sampled document, and
+  `page_idx < page_count` holds for all 1000).
+- **Queries/qrels are byte-identical** to `mixed/ohr-bench-tika-pdf` (SHA256-verified on both
+  files) — the arms answer the same question set, which is the only way the comparison means
+  anything.
+- **License**: OHR-Bench is **CC-BY-4.0, research use**. Internal measurement is fine; any public
+  claim needs attribution + scope (*OCR Hinders RAG*, arXiv 2412.02592, opendatalab/OHR-Bench).
+
+**Validity control (pre-registered, run before any retrieval number was seen).** Splitting pages
+could have destroyed the text layers, which would have made every document look like a dropout
+and manufactured the result. Measured on the built corpus with PyMuPDF:
+
+| | count |
+|---|---|
+| PDFs with a real text layer (≥ 2 alphanumerics) | 875 (median 2071 alnum chars) |
+| PDFs with no text layer | 125 |
+| …that the shipped Tika arm also extracts empty | **125 (all of them)** |
+| Shipped-arm dropouts that DO have a text layer here | 2 |
+| Shipped-arm healthy documents with no text layer | **0** |
+
+The no-text-layer set *is* the shipped arm's dropout set. The split preserved what was there.
+(127 = the dropout set at the shipped `alnum < 2` threshold — 126 empty + the one single-backslash
+document §B already named; 111 of the 127 have real ground-truth text, so §B's 87% ceiling holds
+at 111/127.)
+
+## §H.2 What the extraction chain actually did — per-document census (all 1000)
+
+Read back per document from `GET /api/preview` after ingest + a fully drained VDU queue
+(`scripts/search/extraction-outcomes-report.py`, 1000/1000 documents, 0 errors).
+`textProvenance` is the Head's derived tier label (`PreviewController.computeTextProvenance`,
+from `extraction_method` + `vdu_status`).
+
+| tier that produced the indexed text | non-empty | empty |
+|---|---:|---:|
+| `ocr` (tier 1, Tesseract via Tika) | 748 | 0 |
+| `vdu` (tier 2, Qwen3.5-9B + mmproj vision) | 147 | 0 |
+| `vdu_rejected` (VLM output vetoed by `VduAbstentionGate`, baseline retained) | 88 | **13** |
+| `vdu_failed` | 4 | 0 |
+
+**On the 127-document dropout set** — the documents the shipped arm loses entirely:
+
+| outcome | n |
+|---|---:|
+| recovered by **OCR** (tier 1) | 43 |
+| recovered by **VDU/VLM** (tier 2) | 64 |
+| non-empty but VLM-rejected (OCR noise retained) | 7 |
+| **still empty** (terminal honest hole) | 13 |
+| **non-empty total** | **114 / 127 = 89.8%** |
+
+Restricted to the 111 with real ground truth (§B's ceiling population): **106/111 = 95.5%**
+non-empty. Recovered text lengths: median 1000 alnum chars, range 20–6697.
+
+**Quality-adjusted, because "non-empty" is not the same as "right".** Word-overlap of the indexed
+text against the clean ground truth, over the 111 recoverable documents:
+
+| fidelity | n | share |
+|---|---:|---:|
+| useful (overlap ≥ 0.5) | **92** (52 VDU + 40 OCR) | 82.9% |
+| partial (0.1–0.5) | 6 | 5.4% |
+| noise (< 0.1) | 8 | 7.2% |
+| still empty | 5 | 4.5% |
+
+Per-tier fidelity: OCR median overlap **0.90** (n=43), VDU median **0.93** (n=64) — but VDU's
+p10 is 0.00, i.e. roughly a tenth of VLM recoveries are text with no lexical relationship to the
+page. The 7 `vdu_rejected`-but-non-empty documents have median overlap 0.00: the abstention gate
+correctly vetoed the VLM, and what remains indexed is OCR noise, not a recovery. Counting them as
+recoveries would overstate the result, which is why the fidelity table above is the number to
+quote, not the 89.8%.
+
+**The 13 terminal holes are mostly correct.** All 13 are `vdu_status=REJECTED` — the abstention
+gate refused the VLM output and 790's `EXTRACTION_DROPOUT_UNRECOVERED` marker is the terminal
+state. **8 of the 13 are blank in the ground truth too** (`gt_alnum = 0`): an honest hole is the
+right answer there. Only **5** documents with real ground-truth text end unrecovered
+(`academic/dude_72a8558a…_p1` 19 chars, `textbook/gnhk_eng_eu_014_p0` 85,
+`textbook/gnhk_eng_na_137_p0` 168, `textbook/gnhk_eng_na_136_p0` 317,
+`news/dude_d7d024763949a421053be022696238bc_p10` 1522).
+
+**Control — the fallback does not fire where it shouldn't.** Of the 873 documents the shipped arm
+extracted fine, **zero** end empty; none carries a dropout marker. Combined with §F's 0 fires on
+5184 scifact documents, the threshold's zero-false-positive property holds on real bytes too.
+
+## §H.3 VLM-output leg — live-verified (closes §D's "pending-live-verify")
+
+The tier-2 leg ran for real: **147 documents carry VLM-extracted text as their indexed content**
+(`GrpcIngestService.updateVduResult` replaces `content` and re-queues embedding on
+`SUCCESS_TEXT`), produced by `Qwen_Qwen3.5-9B-Q4_K_M.gguf` + `mmproj-F16.gguf` through the local
+cuda12 llama-server (`hasVisionCapability: true`, verified at `/api/inference/status` before the
+run). Three of the 64 dropout-set VDU recoveries, quoted verbatim from the indexed text:
+
+- `textbook/00e2c609b433…_p0` — indexed: *"tions are that the publishers are having moderate
+  success with the first model, less with the second.\n\nAcquiring the critical mass\nPublisher
+  buyouts are another response to market uncertainty and ar…"*; ground truth begins with the same
+  sentence. 3919 alnum chars from a page the shipped arm indexed as empty.
+- `manual/dude_59e7bde1539f952ab01c87a0aba014d8_p11` — indexed: *"WORKING DRAWINGS\n\n100-BUSHEL
+  HOG FEEDER\n5-1308\n\nPLAN\nSECTION\n\n2x4 RIDGE\n2x4 BRACE\nCANVAS\nNAILED TO\nTHIS SIDE\nDOOR\nRIDGE…"* —
+  a scanned engineering drawing; ground truth is *"WORKING DRAWINGS … 100-BUSHEL HOG FEEDER S-1308
+  … PLAN … CORNER DETAIL "F" … FRONT ELEVATION"*. The VLM read the drawing's callouts.
+- `administration/dude_1f31d620634896d8c87d7665e8ca1e13_p2` (OCR tier, for contrast) — indexed:
+  *"POWER PURCHASE AGREEMENT\nTERMS AND CONDITIONS\nAgreement fail to include a provision that is
+  required as a…"*, matching the ground truth's opening exactly.
+
+**And one honest counter-example**, because the tail matters: `news/dude_ce4c991a…_p14` was
+"recovered" by VDU with 3861 alnum chars about *"Set of $. DOLLAR CE 1795! Shorter life than the
+1794-95 Flowing Anthony Dollar…"* while its ground truth is a Monsanto/Aroclor news story — the
+VLM produced fluent, plausible, wrong text that the abstention gate did not catch. This is the
+p10 = 0.00 tail made concrete: the tier-2 leg works, and its failure mode is confabulation, not
+silence.
+
+## §H.4 Retrieval recovery — three same-session arms, 962 queries each
+
+All three arms: same backend, same session, hybrid + CE on, full enrichment, all leg modes,
+`comparable: true`, `error_count 0`, arms confirmed distinct by `corpus_identity.signature`.
+
+| arm | corpus_identity | nDCG@10 | P@1 | R@10 |
+|---|---|---:|---:|---:|
+| `mixed/ohr-bench-clean` (ceiling) | `641ec0b7ae96…` | **0.9508** | 0.9116 | 0.9875 |
+| **`mixed/ohr-bench-pdf-live`** (real bytes, 790 chain) | `2e810833d5ce…` | **0.9211** | 0.8815 | 0.9543 |
+| `mixed/ohr-bench-tika-pdf` (shipped, pre-extracted) | `f90ba56d8e73…` | **0.8205** | 0.7661 | 0.8649 |
+
+**The two control arms reproduce 786 to the fourth decimal** — tika-text 0.8205 / 0.7661 / 0.8649
+vs 786's 0.8205 / 0.7661 / 0.8649, and clean 0.9508 vs 0.9512 — on a *different backend* (dev
+stack, not the eval backend) at a *different git SHA*. That is the comparability evidence the
+headline rests on: the +0.1006 is not a harness artifact, because the same harness reproduces the
+baselines exactly.
+
+- extraction tax, shipped path: **−0.1303** (clean − tika)
+- extraction tax, live path with the 790 chain: **−0.0297**
+- **recovered: +0.1006 = 77.2% of the gap**
+
+**Where the gain comes from (per-query decomposition, hybrid):**
+
+| query group | n | tika-text | pdf-live | Δ | share of total gain |
+|---|---:|---:|---:|---:|---:|
+| gold document is in the dropout set | 110 | 0.0468 | **0.8855** | **+0.8387** | **95.2%** |
+| gold document is not | 852 | 0.9203 | 0.9258 | +0.0054 | 4.8% |
+| all | 962 | 0.8205 | 0.9211 | +0.1006 | 100% |
+
+The clean-arm ceiling on those same 110 queries is 0.9710, so the dropout class goes from
+**4.8% of its ceiling to 91.2% of it**. This is the charter's thesis measured end-to-end: the tax
+lived in the empty-extraction class, and closing that class recovers essentially all of the
+recoverable tax. 103 of the 130 queries that scored a flat 0.0 on the shipped arm now score above
+zero.
+
+**Honest limits on the retrieval number.**
+1. This is *not* an isolated measurement of the 790 fallback. The pdf-live arm runs the **whole
+   live extraction chain** — tier-0 structured Tika, tier-1 OCR escalation (748 documents ended
+   `ocr`, far more than the dropout set), and tier-2 VDU. 790's contribution is the dropout
+   detection + the tier-2 routing fix that made an empty OCR result reach the VLM; the +0.1006 is
+   the chain's, not one commit's. The decomposition bounds it: 95.2% of the gain is on the
+   dropout class, which is precisely the class 790 unblocked, and 64 of those recoveries came
+   from the tier-2 route that §A shows was previously unreachable for empty-OCR documents.
+2. **17 queries regressed to 0.0** that were non-zero on the shipped arm (44 zeros total vs 130).
+   Live extraction is not a uniform improvement — for some documents the shipped corpus's
+   offline-extracted text is better than what the live chain produces today.
+3. Single run per arm, no multi-seed, one corpus family, extractive queries. Same scope caveats
+   as F-042.
+4. The 962-query set is shared with the corpus construction (§B's ceiling analysis), so the
+   dropout-class split is descriptive, not held-out.
+
+## §H.5 Throughput impact
+
+Ingest of the same 1000 documents, same backend, same enrichment settings — the only difference
+is whether the pipeline reads bytes or replays text:
+
+| arm | end-to-end ingest | primary indexing | enrichment 100% at |
+|---|---:|---:|---:|
+| `ohr-bench-tika-pdf` (text) | **74 s** (13.5 docs/s) | 6.5 s (130 docs/s) | t = 69 s |
+| `ohr-bench-clean` (text) | **80 s** (12.5 docs/s) | 6.5 s (117 docs/s) | t = 75 s |
+| **`ohr-bench-pdf-live` (bytes)** | **1188 s** (0.84 docs/s) | **1087 s (0.92 docs/s)** | t = 1186 s |
+
+**Real-byte extraction costs ~1.09 s/document and dominates ingest ~16× over replaying
+pre-extracted text.** That cost is extraction, not enrichment: the enrichment tail is ~99 s for
+1000 documents in the pdf-live run vs ~63 s in the text runs — the same order, and the ONNX
+encoder profiles are comparable (`embed` p50 37.0 ms vs 18.2 ms ORT; `splade` p50 73.7 ms vs
+71.5 ms). Against tempdoc 785's chars/s framing, the pdf-live enrichment tail runs at roughly
+55 kB/s vs 785's ~35 kB/s register band — enrichment is *not* the regression surface here.
+
+**The VDU tier is the expensive part and it is off the ingest critical path.** 252 documents were
+queued for VDU (139 needing visual *text* — the dropout class — and 113 needing visual
+enrichment); the queue drained in **~172 minutes ≈ 41 s/document wall-clock**, well above the
+13.7 s/page recorded in tempdoc 705 (that number was a bare-model page benchmark; this is the
+deferred backfill under a live stack, with per-document rendering, a 120 s per-call ceiling that
+a minority of pages hit, and llama-server mode transitions between batches). Because it is a
+deferred backfill, ingest readiness and search were never blocked on it — the corpus was fully
+searchable at t = 1188 s and the VLM recoveries landed afterwards, each re-queuing its own
+embedding.
+
+## §H.6 Operational findings (filed to the inbox, not fixed here)
+
+Four pre-existing issues surfaced while getting the tier-2 leg to run; all are logged as
+observations and none is in this PR's scope:
+
+1. **`JUSTSEARCH_LAYOUT_ENABLED` does not exist in code.** It is named as the VDU enable flag in
+   ADR-0018, three canonical docs, and this tempdoc's own §charter — and `grep` over `modules/`
+   returns zero hits. The real gating is capability-based: mmproj present + VRAM + LLM online +
+   pending work. Setting the documented flag is a no-op. (This tempdoc's item-1 text inherits the
+   error; treat §H as the correction.)
+2. **Setting `llm.modelPath` via `POST /api/settings/v2` silently disables the vision tier** —
+   `usingLlmModelOverride && !MMPROJ_MODEL.isSet()` nulls `mmprojPath`
+   (`InferenceConfig.java:159-170`), so VDU blocks on `vdu.missing_mmproj`. Working around it
+   needs `JUSTSEARCH_MMPROJ_MODEL`, which is what this campaign did.
+3. **The dev-runner captures no Head-process stdout** (`backend.stdout.log` is 27 bytes), so
+   Head-side VDU failures are undiagnosable from logs; every diagnosis here came from
+   `/api/status` + `worker.log`.
+4. **`POST /api/knowledge/search`'s `doc_ids` scoping did not restrict the result set** (2 ids →
+   20 unrelated documents), contradicting the contract map. The census therefore uses
+   `/api/preview`, which is keyed by document id and exact.
+
+A fifth, worth naming because it affects a *guard*: the `chunk_completeness` oracle computes its
+expectation from `corpus.jsonl`, which a `raw_files` corpus does not have — the pdf-live run
+reports `expected: 0, observed: 3144, verdict: "chunk-free"` while the index plainly has 3144
+chunk documents. The guard is blind on raw-file corpora rather than wrong, but it cannot catch a
+degenerate chunk build there.
+
+## §H.7 What ran, and what did not
+
+Ran: corpus build + validity control; full 1000-document live ingest (twice — the first was
+discarded, see below); full VDU drain to `pendingVduCount = 0`; 1000-document extraction census;
+962-query hybrid+3-leg runs on all three arms.
+
+Not run: multi-seed repeats; bootstrap CIs on the new arm (786's CIs are the reference, and the
++0.1006 is ~8× the clean/tika CI half-width, but no resampling was done here); a domain-stratified
+breakdown (still unavailable for the same reason F-042 records); `mixed/realdocs-v1` as a second
+substrate.
+
+Discarded and re-run: the first ingest completed cleanly, but the VDU tier was then run under a
+configuration that churned — an `/api/inference/reload` mid-batch, engine restarts, and documents
+burning their 3 retries — so the VDU queue state was contaminated. The whole ingest was repeated
+from a hard-clean data dir with the vision tier verified *before* the run, and only that second
+run is reported above. Two mechanisms cost most of the wall clock and are worth knowing:
+`VduBatchProcessor`'s cooperative interrupt treats **any `/api/preview` or `/api/knowledge/search`
+call as user activity** and stops the batch (`VduPacingPolicy`, 5-minute idle threshold), so a
+census run mid-drain silently halts VDU; and each manual
+`POST /api/operations/core.trigger-offline-processing/invoke` processes at most a 100-document
+slice (`VduOps.queryPendingVduDocIds(100)`), so draining 252 documents needs repeated triggers.
