@@ -47,6 +47,10 @@ record McpSearchResponseContent(
    * <p>{@code continuation} (tempdoc 789 Phase 2, F1) is the per-hit framing line — null unless the
    * continuation framing is enabled AND this hit's delivered text names an indexed entity the query
    * did not.
+   *
+   * <p>{@code entityCarriage} (tempdoc 771 item (b)) is the per-hit entity-carriage line — null
+   * unless carriage is enabled AND this hit's document has indexed entities its excerpt does not
+   * already name. A content fact like every other here, so both renderers read ONE computation.
    */
   record HitContent(
       int rank,
@@ -56,7 +60,8 @@ record McpSearchResponseContent(
       String preview,
       List<String> matchedTerms,
       List<String> matchedFields,
-      String continuation) {
+      String continuation,
+      String entityCarriage) {
 
     /** True when no distinctive term overlap was found — renders the "Match basis:" line. */
     boolean semanticFallback() {

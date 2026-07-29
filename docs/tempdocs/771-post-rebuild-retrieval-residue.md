@@ -258,3 +258,123 @@ the two design-here survivors of §E — transfer to tempdoc 775, which owns
 the unified evidence-span authority they both point at. Item 3
 (read-amplification) remains deferred to the hero campaign's at-capture
 instrumentation. Nothing else remains; this lane closes.
+
+## §G. Item 1b SHIPPED — entity carriage, default off (2026-07-29)
+
+Reopened for one increment: 775 took ownership of item 1b via the evidence-span
+authority and shipped `EvidenceSpanSelector` with NER-membership entity coverage
+ranked first — which fixes the case where the bridge entity is *inside* the
+4,096-char `content_preview` and merely wasn't the densest query-term cluster.
+It cannot fix §E's actual legal geometry, where the bridge sentence sits at
+median char-offset **5,005 — outside `content_preview` altogether**. No
+excerpt-*selection* strategy can deliver a name that is not in the field being
+selected from. That residue is what this section closes.
+
+### The lever
+
+**Entity carriage**: when a delivered `justsearch_search` hit's excerpt does not
+already name some of the document's indexed NER entities (`entity_*_raw`, 326),
+the delivery appends one bounded line listing the missing names, on both the text
+and structured tiers. Flag-gated, **default OFF** (D-004: default-off → measure →
+flip); `search.mcp_delivery.entity_carriage_enabled` / `…_max_chars` (default 200).
+
+Content-only at the delivery layer: no retrieval, fusion, excerpt-selection or
+ranking change; no MCP tool-schema or parameter change (F-016); the line is
+governed by the same 775 §E delivery budget as any other body text. Entity values
+are read off the hit's own field map — no document re-read at delivery time, no
+second query path, no query-time NER.
+
+Two halves, because the doc branch and the chunk branch differ:
+
+| half | file | what |
+|---|---|---|
+| delivery | `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpEntityCarriage.java` | selection + rendering, pure functions |
+| chunk branch | `SearchResponseBuilder#resolveChunkParentEntities` | a chunk hit's stored-field allowlist is chunk-scoped, so the parent's entity values never reached the wire — one batched read puts them there, only when carriage is on |
+
+The chunk half writes to the **result** builder only; `hit.fields()` is untouched,
+so the EvidenceSpan NER-membership signal and every span/ranking computation see
+exactly what they saw before. Carriage is a delivered-content lever, not a
+ranking one.
+
+### Measured, offline, $0
+
+`McpEntityCarriageMetricTest` runs the real renderers (`buildSearchContent` /
+`renderSearchText`) over real 781-v2 documents; the corpus-parsing half is
+`scripts/analysis/771-entity-carriage/extract-bridge-cases.py`. Bridge entities
+are *derived* (longest token run shared by the two evidence sentences), not
+assumed. Excerpt selection is modelled as it ships — when the bridge name is
+inside `content_preview`, the entity-coverage selector finds it — which is the
+conservative choice, maximising the OFF baseline.
+
+| cell | carriage OFF | carriage ON | mean overhead | as % of delivery |
+|---|---|---|---|---|
+| legal-clerc-1k-verbose (n=50) | **40.0%** | **100.0%** | +39.4 B | 6.7% |
+| enron-1k-verbose (n=50) | **92.0%** | **100.0%** | +5.2 B | 0.8% |
+| synthetic legal geometry (n=200) | 0.0% | 100.0% | +67 B | 12.3% |
+| synthetic email geometry (n=200) | 100.0% | 100.0% | +0 B | 0% |
+
+The OFF column reproduces §E's live numbers (45% legal / 93% email) to within
+5 points on both strata, which is the model's validation — it was not tuned to
+them. Overhead is bounded per hit by `max_chars`; on the stratum that already
+works the lever self-suppresses and costs literally zero bytes.
+
+**Interrogation of the first run.** ON came out at 82% on legal, not ~100%. Cause:
+carriage split multi-valued entity fields on `", "` as well as `" | "`, and 14 of
+the 50 legal bridge entities are `"Name, ST"` shaped — the split fragmented the
+exact names the lever exists to deliver. Verified against source that `" | "` is
+the only joiner reaching a search hit (`extractFromDocument` /
+`extractFromStoredFields` both merge that way, and the `entity_*_raw` fields are
+`stored: true`, so `projectDocValues` — which skips a field already in the map —
+never gets to offer its `", "` rendering). The comma split was removed and the
+worker half's `", "`→`" | "` normalisation with it; a comma-joined value is now
+carried whole as one budget unit. ON: 82% → 100%. Regression-guarded by
+`commaIsNotASeparator`.
+
+### Composition with 789 F1
+
+F1 (continuation) can only mark an entity that appears in delivered text, so
+before carriage it was structurally silent on exactly the long-document hits that
+need hop 2. Carriage runs first and F1's delivered-text input includes the
+carriage line, so the two compose: carriage puts the name there, F1 marks it as a
+possible intermediate fact. Asserted by `composesWithContinuationFraming`.
+
+Honest caveat for whoever runs a combined arm: F1's sentence says "this *excerpt*
+names X", which is imprecise when X arrived via carriage rather than the excerpt.
+F1's wording was deliberately **not** touched — it is 789's probe substrate and
+was already measured at that wording (#324). A combined arm should take a wording
+tweak owned by 789, not a silent edit here.
+
+### Operating it
+
+One key gates both halves, and they live in different processes: the Head renders the
+line, the Worker resolves chunk-parent entities. Both read their own
+`ConfigStore.global()`, so the flag must be visible to both — exactly the path
+`search.evidence_span.enabled` already takes (`SearchResponseBuilder` reads it from
+the same `lifecycle::resolvedConfig` supplier), so no new propagation mechanism is
+involved. Eval mode additionally needs the env var whitelisted, which is why
+`JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_{ENABLED,MAX_CHARS}` were added to
+`modules/ui/build.gradle.kts`'s headless-eval forwarding list — the 789 §P2 lesson,
+where the whitelist silently dropped an arm's framing flag.
+
+Reproducing the numbers:
+
+```bash
+python scripts/analysis/771-entity-carriage/extract-bridge-cases.py \
+  --cell tmp/781-v2-datasets/mixed/en-legal-clerc-1k-verbose --out tmp/771-cases-legal.tsv
+./gradlew.bat :modules:ui:test --tests "*McpEntityCarriageMetricTest*" \
+  -Djustsearch.entityCarriage.casesTsv=<abs path>
+```
+
+Without the property the real-corpus arm skips and only the synthetic strata run —
+which is what CI does, so CI still guards the mechanism without needing the corpus.
+
+### Not done here
+
+- **No live-backend check.** The metric is offline against real corpus geometry
+  and the real renderers; a live smoke (carriage on, chunk-branch hits, one legal
+  query) is the remaining tier and is named as pending, not claimed.
+- **NER dependence.** Carriage delivers what the index holds. Where NER missed the
+  bridge name entirely there is nothing to carry — the metric's one load-bearing
+  assumption, stated in the test's own javadoc.
+- **Default stays off.** The flip is a measurement decision for a hero arm, not
+  this increment's to make.

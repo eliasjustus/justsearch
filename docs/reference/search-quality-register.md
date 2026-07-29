@@ -1198,6 +1198,28 @@ above)*
   evidence-content excerpt gap (small, design-here) plus (d) the known encoder-domain floor (not
   new); F-039 is marked **resolved-decomposed**. No F-030 successor is opened (708 closed the
   encoder question); no new engine charter is licensed.
+- **(b) SHIPPED as entity carriage, default off (2026-07-29, tempdoc 771 §G).** 775's evidence-span
+  authority fixed the case where the bridge entity is *inside* the 4,096-char `content_preview` but
+  wasn't the densest query-term cluster; it cannot fix (b)'s actual geometry, where the bridge
+  sentence sits at median char-offset **5,005 — outside `content_preview` altogether**, so no
+  excerpt-*selection* strategy can deliver it. **Entity carriage** appends the document's indexed
+  `entity_*_raw` names (326) that the delivered excerpt does not already carry, as one bounded line
+  on both MCP tiers — content-only at the delivery layer, no retrieval/fusion/excerpt-selection or
+  ranking change, no MCP tool-schema change (F-016), governed by the 775 §E delivery budget.
+  Flag `search.mcp_delivery.entity_carriage_enabled` (+ `…_max_chars`, default 200), **default OFF**
+  per D-004's default-off → measure → flip template. A chunk hit's stored-field allowlist is
+  chunk-scoped, so the parent's entity values are resolved in one batched read onto the RESULT
+  builder only (`hit.fields()` untouched → EvidenceSpan's NER-membership signal and all span/ranking
+  computation are byte-unchanged).
+  **Measured offline ($0, real 781-v2 documents through the production renderers;
+  `McpEntityCarriageMetricTest` + `scripts/analysis/771-entity-carriage/extract-bridge-cases.py`):**
+  legal-clerc-1k-verbose carriage **40.0% → 100.0%** at **+39.4 bytes/hit (6.7% of delivery)**;
+  enron-1k-verbose **92.0% → 100.0%** at **+5.2 bytes (0.8%)**. The OFF column reproduces this
+  finding's own live 45%/93% to within 5 points on both strata without being tuned to them, which is
+  the model's validation; the model's one assumption is that NER extracted the bridge name (where it
+  did not, carriage cannot help). Composes with 789's F1 continuation framing, which could previously
+  only mark entities the excerpt window happened to include. **Live-backend smoke is pending** — the
+  evidence here is offline-with-real-renderers, not a running stack.
 
 ### F-038: RAG chunk retrieval was blind to chunkless (sub-2000-char) docs — a doc-level union leg into the PRIMARY RAG candidate set fixes it with no re-index; interactive hybrid on-baseline (tempdoc 749, 2026-07-18)
 
