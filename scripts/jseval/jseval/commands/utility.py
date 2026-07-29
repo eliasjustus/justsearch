@@ -29,13 +29,20 @@ def _publication_root(value):
 @click.option("--publication-id", required=True)
 @click.option("--policy", default=None, type=click.Path(exists=True, dir_okay=False))
 @click.option("--root", default=None, type=click.Path())
-def cmd_utility_publication_build(record, evidence, publication_id, policy, root):
+@click.option("--max-evidence-bytes", type=int, default=None,
+              help="Refuse to build a bundle whose evidence file exceeds this size "
+                   "(default 80 MiB; a bundle is committed and GitHub rejects blobs "
+                   "over 100 MB).")
+def cmd_utility_publication_build(record, evidence, publication_id, policy, root,
+                                  max_evidence_bytes):
     """Build an immutable accepted publication bundle."""
-    from ..utility_publication import build_publication
+    from ..utility_publication import DEFAULT_MAX_EVIDENCE_BYTES, build_publication
 
     path = build_publication(
         root=_publication_root(root), record_path=record, evidence_path=evidence,
         publication_id=publication_id, policy_path=policy,
+        max_evidence_bytes=(
+            DEFAULT_MAX_EVIDENCE_BYTES if max_evidence_bytes is None else max_evidence_bytes),
     )
     click.echo(f"Wrote {path}")
 
@@ -73,11 +80,15 @@ def cmd_utility_replay(publication, root):
 @click.command("utility-evidence-export")
 @click.option("--log-dir", required=True, type=click.Path(exists=True, file_okay=False))
 @click.option("--out", required=True, type=click.Path(dir_okay=False))
-def cmd_utility_evidence_export(log_dir, out):
+@click.option("--judge-overlay", "judge_overlay", default=None,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Optional overlay; otherwise use LOG_DIR's judge-overlay.json if present "
+                   "(same resolution as utility-recompose --log-dir).")
+def cmd_utility_evidence_export(log_dir, out, judge_overlay):
     """Export every attempted cell through the strict public allowlist."""
     from ..utility_evidence import export_log_dir
 
-    path = export_log_dir(log_dir, out)
+    path = export_log_dir(log_dir, out, judge_overlay=judge_overlay)
     click.echo(f"Wrote {path}")
 
 
@@ -126,6 +137,46 @@ def cmd_utility_recompose(ctx, log_dirs, evidence_paths, judge_overlays, contami
     else:
         click.echo(f"Wrote {path}")
         click.echo(f"semantic_digest={record['semantic_digest']}")
+
+
+@click.command("utility-policy-dryrun")
+@click.option("--design", required=True, type=click.Path(exists=True, dir_okay=False),
+              help="A frozen campaign design (782-hero-campaign-cells.v1 shape), "
+                   "e.g. scripts/jseval/782-hero/cells.v1.json.")
+@click.option("--policy", "policy_path", default=None,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Claim policy to dry-run against; defaults to the ACTIVE policy.")
+@click.option("--out", default=None, type=click.Path(dir_okay=False),
+              help="Optional path for the full JSON report.")
+@click.pass_context
+def cmd_utility_policy_dryrun(ctx, design, policy_path, out):
+    """Dry-run a claim policy against a campaign design BEFORE freezing it.
+
+    Synthesizes a minimal structurally-valid composed record with the design's
+    declared shape, evaluates every policy gate against it, and reports which
+    gates can never pass. Exits non-zero on any structurally-impossible or
+    undetermined gate. Both tempdoc 782 freeze defects were policy-vs-design
+    incompatibilities reachable only at run/compose time; this makes them $0.
+    """
+    from .._paths import REPO_ROOT
+    from ..utility_claim_policy import load_policy
+    from ..utility_policy_dryrun import DryRunError, dryrun, format_report, load_design
+
+    try:
+        report = dryrun(
+            load_design(design), load_policy(policy_path), repo_root=REPO_ROOT,
+        )
+    except DryRunError as error:
+        raise click.ClickException(str(error)) from error
+    if out:
+        Path(out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    if ctx.obj.get("json"):
+        click.echo(json.dumps(report, indent=2))
+    else:
+        click.echo(format_report(report))
+        if out:
+            click.echo(f"Wrote {out}")
+    ctx.exit(report["exit_code"])
 
 
 @click.command("utility-compose")
@@ -1015,6 +1066,7 @@ def cmd_utility_payload_decompose(ctx, log_dirs, payload_dir, out):
 
 
 COMMANDS = [cmd_utility_publication_build, cmd_utility_publication_select, cmd_utility_replay,
-           cmd_utility_evidence_export, cmd_utility_recompose, cmd_utility_compose, cmd_utility_run, cmd_utility_calibrate, cmd_utility_status,
+           cmd_utility_evidence_export, cmd_utility_recompose, cmd_utility_policy_dryrun,
+           cmd_utility_compose, cmd_utility_run, cmd_utility_calibrate, cmd_utility_status,
            cmd_utility_judge, cmd_utility_judge_cross_family, cmd_utility_judge_local_swap_smoketest,
            cmd_utility_compose_cross_corpus, cmd_utility_payload_decompose]

@@ -1843,3 +1843,55 @@ Deferred/known issues not owned here: `test_correction_probe` 2-red on main (mis
 tempdoc-720 number collision between two other worktrees (pre-existing note in the deferred-checks
 section above); post-merge simplify candidates (monolith decomposition of `evaluate_claim` /
 `corpus_certify.py`, dataclass typing of the observation seam, `corpus_inject._canonical_digest`).
+
+---
+
+# Field defect: evidence-export / recompose divergence (2026-07-28, first real publication)
+
+The publication builder's own fail-closed check caught a real defect on 719's first real-world
+use — `build_publication` (`scripts/jseval/jseval/utility_publication.py:102-110`) recomposes the
+supplied sanitized evidence and requires
+`semantic_digest(recomposed) == semantic_digest(record)`; it raised
+*"record does not semantically match the supplied evidence"* for the 782 window-2 hero record.
+
+## Root cause
+
+Two readers of the SAME log directory disagreed on `correct`:
+
+- `finalize_logs` resolved the directory's `judge-overlay.json` and passed it to
+  `read_inspect_observations`, which lets the overlay's `final` verdict override the raw
+  `substring_scorer` value (`scripts/jseval/jseval/agent_utility_observations.py:107-109`).
+- `export_log_dir` called `read_inspect_observations(log_dir)` with **no** overlay
+  (`scripts/jseval/jseval/utility_evidence.py:387-388`, pre-fix), so every judge-rescored cell was
+  exported with its pre-judge verdict.
+
+Nothing in the sanitized schema was missing or renamed — `correct` was always exported; it just
+carried the wrong (pre-judge) value. The two paths therefore agreed cell-for-cell on the error
+classification, the exhaustion accounting, cost/tokens and the pair set, and diverged only on
+accuracy, which is why the symptom looked like a stratification bug.
+
+Diverging cells on the 782 window-2 evidence (5 of 360):
+`en-email-enron-raw-1k-verbose` `B|2|q1`; `en-legal-clerc-1k-verbose` `A|0|q5`, `A|1|q5`,
+`A|2|q5`, `B|0|q8`. The three baseline-arm legal cells are the 64-vs-61 A-correct gap
+(pooled baseline 0.4354 vs 0.415, delta -0.1156 vs -0.1088).
+
+## Fix (seam)
+
+The overlay resolution is now one authority, `resolve_judge_overlay`, in
+`agent_utility_observations.py` next to `read_inspect_observations` — the module that owns "how a
+log directory becomes observations". `finalize_logs`, `export_log_dir` and
+`partial_status_projection` all call it; `utility_recompose._load_overlay` (the private duplicate)
+is deleted, and `utility-evidence-export` gains the same optional `--judge-overlay` that
+`utility-recompose --log-dir` has.
+
+The strict allowlist is **unchanged**: no new field crosses the public boundary, because the fix
+corrects the value of a field that was already exported. The digest check itself is untouched.
+
+## Proof
+
+Fresh export of the three window-2 log dirs, then `finalize_evidence`, reproduces the composed
+record exactly: `semantic_digest == c5a75457b264e0cfdecf5ab1ac552d3430a93300f3241766b9c72a49be1560bb`
+(identical to `finalize_logs` over the same dirs). Regression coverage lives in
+`scripts/jseval/tests/test_evidence_export_judge_overlay_719.py` (real Inspect `EvalLog` fixture via
+`eval_set` + an overlay that both rescues and overturns a cell; asserts per-cell agreement and
+export-vs-logs digest equality, and that a directory with no overlay is byte-unchanged).

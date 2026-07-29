@@ -17,6 +17,10 @@ from jseval.utility_claim_policy import (
     load_superseded_policy,
     policy_digest,
 )
+from jseval.utility_question_level import (
+    METHOD_ID as QUESTION_LEVEL_METHOD_ID,
+    question_level_statistics,
+)
 from tests.test_corpus_inject import _certification_snapshot_fixture
 
 # Derived from the checked-in ACTIVE policy, not hand-pinned: the fixture below
@@ -148,7 +152,54 @@ def _record(seed_ids: list[int] | None = None) -> dict:
         },
     }
     _sync_v3_reporting(record)
+    _sync_v5_reporting(record)
     return record
+
+
+def _sync_v5_reporting(record: dict) -> None:
+    """Mirror the producer's v5 `question_level` block on every ITT stratum.
+
+    Built by calling the REAL producer (`question_level_statistics`) over a
+    paired set reconstructed from the stratum's own `campaign_identity`, with
+    the SAME `seed_material` recipe `utility_recompose` uses — so a fixture that
+    appends or mutates a stratum stays consistent with what the harness would
+    have composed for it, rather than carrying a hand-pinned block that no
+    producer could emit (`unreachable-seed-green`).
+
+    The two arms are deliberately IDENTICAL, so every per-question delta is 0
+    and the cluster interval is a degenerate `[0.0, 0.0]`. That is what keeps
+    this fixture's purpose intact: it exists to exercise the OTHER gates, and a
+    zero-difference stratum satisfies any non-inferiority margin, exactly as its
+    hand-pinned cell-level `accuracy.delta_ci95` always did. The non-degenerate
+    behaviour of the estimators is covered by
+    `tests/test_utility_question_level.py` and by the v5 gate tests below.
+    """
+    policy = load_policy()
+    thresholds = policy["thresholds"]
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        expected = (cell.get("campaign_identity") or {}).get("expected_cells") or []
+        pairs = {}
+        for value in expected:
+            condition, seed, qid = str(value).split("|", 2)
+            if condition != "A":
+                continue
+            correct = (int(seed) + len(qid)) % 2 == 0
+            pairs[f"{seed}|{qid}"] = {
+                "seed": int(seed), "a_correct": correct, "c_correct": correct,
+            }
+        cell["question_level"] = question_level_statistics(
+            pairs,
+            seed_material={
+                "method": QUESTION_LEVEL_METHOD_ID,
+                "stratum_id": cell.get("stratum_id"),
+                "corpus_signature": cell.get("corpus_signature"),
+                "query_identity_sha256": (cell.get("query_identity") or {}).get("sha256"),
+                "n_expected_cells": len(expected),
+            },
+            alpha=record["statistical_alpha"],
+            permutation_draws=thresholds["minimum_permutation_draws"],
+            bootstrap_draws=thresholds["minimum_cluster_bootstrap_draws"],
+        )
 
 
 def _sync_v3_reporting(record: dict) -> None:
@@ -198,6 +249,41 @@ def _sync_v3_reporting(record: dict) -> None:
         }}
 
 
+def _load_v3_policy() -> dict:
+    """The v3 document, by path.
+
+    `load_previous_policy()` follows the ACTIVE policy's immediate predecessor
+    and now resolves to v4, so the chain tests that still need the v3 link read
+    it explicitly rather than through a helper whose target moves each
+    ratification.
+    """
+    return json.loads(
+        (Path(__file__).parents[1] / "utility-claim-policy.v3.json")
+        .read_text(encoding="utf-8")
+    )
+
+
+def _set_primary_accuracy_interval(cell: dict, interval: list) -> None:
+    """Set the accuracy interval the OUTCOME CLASSIFIER reads, on both tiers.
+
+    Under v5 the per-stratum accuracy outcome reads the question-level cluster
+    interval and the cell-level one is descriptive (782 §I second-pass: the
+    cell-level test counts a question's seed replicates as independent). These
+    tests exercise the CLASSIFIER, not the estimators, so they must move the
+    primary; both tiers are set so the fixture stays internally coherent and the
+    same call keeps expressing the same scenario under either source.
+
+    Call AFTER any `_sync_tool_assertion_counts`, which re-derives the
+    question-level block from the stratum's paired grid.
+    """
+    cell["accuracy"]["delta_ci95"] = list(interval)
+    block = cell.get("question_level")
+    if isinstance(block, dict):
+        block["delta_ci"] = list(interval)
+        block["delta_ci_percentile"] = list(interval)
+        block["aggregate_delta"] = (interval[0] + interval[1]) / 2.0
+
+
 def _active_policy(record: dict | None = None) -> dict:
     record = record or _record()
     policy = copy.deepcopy(load_policy())
@@ -238,20 +324,23 @@ def _sync_tool_assertion_counts(record: dict) -> None:
     # completion + schema-stratification blocks (v3 requirements) -- same resync
     # point, so there is one place to keep a mutated fixture self-consistent.
     _sync_v3_reporting(record)
+    _sync_v5_reporting(record)
 
 
-def test_checked_in_policy_is_ratified_v4_three_stratum_sonnet_hero():
-    """Founder-authorized ratification (2026-07-28, tempdoc 782 §J): the
-    checked-in ACTIVE policy is `agent-utility-public-v4`, carrying forward the
-    tempdoc 782 §E.1 three-stratum sonnet hero matrix VERBATIM — enron-1k,
-    enron-10k, legal-1k, verbose, seeds {0,1,2}, 20q. legal-10k is EXCLUDED
-    (771 §E M5), and haiku is not run in this campaign.
+def test_checked_in_policy_is_ratified_v5_three_stratum_sonnet_hero():
+    """Ratification (2026-07-29, tempdoc 791 axis 4): the checked-in ACTIVE
+    policy is `agent-utility-public-v5`, carrying forward the tempdoc 782 §E.1
+    three-stratum sonnet hero matrix VERBATIM — enron-1k, enron-10k, legal-1k,
+    verbose, seeds {0,1,2}, 20q. legal-10k is EXCLUDED (771 §E M5), and haiku is
+    not run in this campaign.
 
     Supersedes the 2026-07-17 four-stratum haiku confirmatory activation, its
     2026-07-21 v2 amendment (tempdoc 755 §J, whose rate-based
-    verified_tool_surface semantics carry over unchanged — 782 §E.2 R2), and the
-    2026-07-28 v3 ratification (766 §G decision 2), which v4 changes in exactly
-    one respect: the additive `certified_query_subset` requirement."""
+    verified_tool_surface semantics carry over unchanged — 782 §E.2 R2), the
+    2026-07-28 v3 ratification (766 §G decision 2), and the 2026-07-28 v4
+    ratification (782 §J, additive `certified_query_subset`), which v5 changes
+    in exactly one respect: the additive `question_level_primary` requirement
+    and the two resampling-effort floors it needs."""
     policy = load_policy()
     jsonschema = pytest.importorskip("jsonschema")
     schema_path = Path(__file__).parents[1] / "utility-claim-policy.v1.schema.json"
@@ -259,8 +348,11 @@ def test_checked_in_policy_is_ratified_v4_three_stratum_sonnet_hero():
 
     assert policy["status"] == "active"
     assert policy["unresolved"] == []
-    assert policy["policy_id"] == "agent-utility-public-v4"
+    assert policy["policy_id"] == "agent-utility-public-v5"
     assert policy["thresholds"]["minimum_surface_verification_rate"] == 0.9
+    assert policy["requirements"]["question_level_primary"] is True
+    assert policy["thresholds"]["minimum_permutation_draws"] == 20000
+    assert policy["thresholds"]["minimum_cluster_bootstrap_draws"] == 20000
     assert [item["stratum_id"] for item in policy["required_strata"]] == [
         "en-email-enron-raw|mixed/en-email-enron-raw-1k-verbose|1000|verbose|sonnet",
         "en-email-enron-raw|mixed/en-email-enron-raw-10k-verbose|10000|verbose|sonnet",
@@ -291,23 +383,37 @@ def test_v3_ratification_tuned_no_threshold_and_dropped_legal_10k():
     policy = load_policy()
     superseded = load_superseded_policy()
     previous = load_previous_policy()
+    v3 = _load_v3_policy()
 
-    # The supersede chain, asserted link by link: v2 -> v3 -> v4 (the ACTIVE one).
+    # The supersede chain, asserted link by link: v2 -> v3 -> v4 -> v5 (ACTIVE).
     assert superseded["status"] == "superseded"
-    assert superseded["superseded_by"] == previous["policy_id"] == "agent-utility-public-v3"
+    assert superseded["superseded_by"] == v3["policy_id"] == "agent-utility-public-v3"
+    assert v3["status"] == "superseded"
+    assert v3["superseded_by"] == previous["policy_id"] == "agent-utility-public-v4"
     assert previous["status"] == "superseded"
     assert previous["superseded_by"] == policy["policy_id"]
-    # v4 carries v3's numbers forward untouched, so comparing the ACTIVE policy
-    # against the v2 byte-source still enforces "no threshold was ever tuned".
-    assert policy["thresholds"] == previous["thresholds"]
+    # v5 carries v4's (and so v3's) numbers forward untouched on every shared
+    # key, so comparing the ACTIVE policy against the v2 byte-source still
+    # enforces "no threshold was ever tuned". The two v5 resampling-effort
+    # floors are NEW keys with no predecessor counterpart.
+    assert set(policy["thresholds"]) - set(previous["thresholds"]) == {
+        "minimum_permutation_draws", "minimum_cluster_bootstrap_draws",
+    }
+    assert set(previous["thresholds"]) - set(policy["thresholds"]) == set()
+    assert previous["thresholds"] == v3["thresholds"]
+    assert all(
+        policy["thresholds"][name] == previous["thresholds"][name]
+        for name in previous["thresholds"]
+    )
 
     shared = set(policy["thresholds"]) & set(superseded["thresholds"])
     assert {name: policy["thresholds"][name] for name in sorted(shared)} == {
         name: superseded["thresholds"][name] for name in sorted(shared)
     }
-    # The additive keys are the ONLY divergence, in the v3 direction only.
+    # The additive keys are the ONLY divergence, in the later direction only.
     assert set(policy["thresholds"]) - set(superseded["thresholds"]) == {
         "maximum_closed_book_accuracy",
+        "minimum_permutation_draws", "minimum_cluster_bootstrap_draws",
     }
     assert set(superseded["thresholds"]) - set(policy["thresholds"]) == set()
 
@@ -322,12 +428,24 @@ def test_v3_ratification_tuned_no_threshold_and_dropped_legal_10k():
     assert policy["hero_tier"]["requested_model_class"] == "sonnet-or-stronger"
     assert policy["policy_changelog"][0]["policy_id"] == policy["policy_id"]
     # v4's own composition rule: v3 verbatim + exactly ONE additive requirement.
-    assert (set(policy["requirements"]) - set(previous["requirements"])
+    assert (set(previous["requirements"]) - set(v3["requirements"])
             == {"certified_query_subset"})
+    assert set(v3["requirements"]) - set(previous["requirements"]) == set()
+    # v5's own composition rule: v4 verbatim + exactly ONE additive requirement.
+    assert (set(policy["requirements"]) - set(previous["requirements"])
+            == {"question_level_primary"})
     assert set(previous["requirements"]) - set(policy["requirements"]) == set()
     assert policy["required_schema_strata"] == previous["required_schema_strata"]
     assert policy["hero_tier"] == previous["hero_tier"]
     assert policy["triple_reporting_semantics"] == previous["triple_reporting_semantics"]
+    # Everything v4 already carried is byte-identical in v5 — the composition
+    # rule is mechanical, not prose.
+    assert policy["required_strata"] == previous["required_strata"]
+    assert (policy["certified_query_subset_semantics"]
+            == previous["certified_query_subset_semantics"])
+    assert (policy["verified_tool_surface_semantics"]
+            == previous["verified_tool_surface_semantics"])
+    assert policy["policy_changelog"][1:] == previous["policy_changelog"]
 
 
 # --- v3 additive gates: the REFUSAL branch ----------------------------------
@@ -567,10 +685,12 @@ def test_certified_query_subset_leaves_full_count_runs_byte_identical():
     Compared as canonical bytes with the policy identity removed (`policy_id` /
     `policy_hash` necessarily differ between two different documents — that is
     the re-pin the digest test in `test_utility_evidence.py` covers)."""
-    pre_supersede_v3 = load_previous_policy()
+    pre_supersede_v3 = _load_v3_policy()
     assert pre_supersede_v3.pop("superseded_by") == "agent-utility-public-v4"
     pre_supersede_v3["status"] = "active"
-    v4_without_the_requirement = copy.deepcopy(load_policy())
+    v4_without_the_requirement = copy.deepcopy(load_previous_policy())
+    assert v4_without_the_requirement.pop("superseded_by") == "agent-utility-public-v5"
+    v4_without_the_requirement["status"] = "active"
     v4_without_the_requirement["requirements"].pop("certified_query_subset")
 
     for record in (_record(), _subset_record()):
@@ -606,6 +726,142 @@ def test_checked_in_v4_policy_pins_the_frozen_782_subset_digests():
     assert set(declared.values()) == {_SUBSET_QID_SHA256}
 
 
+# --- v5 `question_level_primary` (2026-07-29, tempdoc 791 axis 4) -----------
+#
+# The defect: the cell-level exact McNemar over the (seed, qid) grid treats a
+# question's seed replicates as independent observations, inflating n by the
+# replicate factor. Measured on the 782 hero cohort's decisive stratum,
+# cell-level p=0.045 vs question-level sign-flip p=0.136. v5 promotes the
+# question-level pair to primary; the cell-level numbers stay REPORTED.
+
+def _question_level_gate(verdict: dict) -> dict:
+    return next(item for item in verdict["gates"]
+                if item["name"] == "question_level_primary_reported")
+
+
+def test_question_level_primary_rejects_when_the_block_is_missing():
+    """A record with no question-level statistics cannot back a v5 primary
+    claim, and must not silently fall back to the cell-level numbers the
+    requirement exists to demote."""
+    record = _record()
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        del cell["question_level"]
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    assert _question_level_gate(verdict)["passed"] is False
+    assert _question_level_gate(verdict)["observed"][0]["defects"] == ["absent"]
+    assert "question_level_primary_reported" in verdict["reasons"]
+    assert verdict["accepted"] is False
+
+
+@pytest.mark.parametrize(
+    ("mutation", "defect"),
+    [
+        ({"permutation_draws": 19999}, "permutation_draws_below_policy_floor"),
+        ({"bootstrap_draws": 19999}, "bootstrap_draws_below_policy_floor"),
+        ({"n_qids": 1}, "fewer_than_two_question_clusters"),
+        ({"signflip_p_two_sided": 1.5}, "permutation_p_out_of_range"),
+        ({"delta_ci": [0.1]}, "cluster_interval_malformed"),
+        ({"delta_ci": [0.4, -0.4]}, "cluster_interval_malformed"),
+        ({"ci_method": "eyeballed"}, "interval_method_unnamed"),
+        ({"ci_alpha": 0.1}, "interval_alpha_disagrees_with_policy"),
+        ({"unit": "cell"}, "unit_is_not_the_question"),
+        ({"method": "something-else"}, "unknown_method"),
+        ({"rng_seed": 12345}, "rng_seed_does_not_re_derive_from_its_material"),
+        ({"rng_seed_bootstrap": 7}, "rng_streams_not_derived_from_the_recorded_seed"),
+    ],
+)
+def test_question_level_primary_fails_closed_on_each_malformation(mutation, defect):
+    """Every branch of the fail-closed contract, one at a time.
+
+    Without this parametrization a gate inverted to always-True would ship
+    green: a passing gate and an absent gate look identical from
+    `accepted is True` alone, and a single refusal case only proves ONE branch
+    bites."""
+    record = _record()
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        cell["question_level"].update(mutation)
+
+    verdict = evaluate_claim(record, _active_policy(record))
+
+    assert defect in _question_level_gate(verdict)["observed"][0]["defects"]
+    assert _question_level_gate(verdict)["passed"] is False
+    assert "question_level_primary_reported" in verdict["reasons"]
+    assert verdict["accepted"] is False
+
+
+def test_question_level_primary_moves_the_outcome_the_cell_level_interval_would_give():
+    """The switch does real WORK, not just extra reporting.
+
+    One record, two policies. Its CELL-level interval is tight enough to read as
+    equivalence; its QUESTION-level cluster interval — the honest one, because
+    it does not count a question's seed replicates as independent — is wide
+    enough that no accuracy claim survives. v4 promotes it to `null`; v5 demotes
+    it to `adoption-only`. That is exactly the 782 §I disagreement, in one
+    assertion pair."""
+    record = _record()
+    cell = record["estimands"]["intention_to_treat"]["strata"][0]
+    cell["accuracy"]["delta_ci95"] = [-0.01, 0.01]
+    cell["provider_cache_creation_input_tokens"]["delta_ci95"] = [-5, 5]
+    cell["cost_usd"]["delta_ci95"] = [-0.005, 0.005]
+    cell["question_level"]["delta_ci"] = [-0.30, 0.30]
+
+    v5_policy = _active_policy(record)
+    v5_policy["thresholds"].update({
+        "minimum_adoption_rate": 0.5, "accuracy_noninferiority_margin": 0.05,
+        "provider_token_equivalence_margin": 50, "cost_equivalence_margin_usd": 0.05,
+    })
+    v4_shaped = copy.deepcopy(v5_policy)
+    v4_shaped["requirements"].pop("question_level_primary")
+
+    assert evaluate_claim(record, v4_shaped)["outcome"] == "null"
+
+    v5_verdict = evaluate_claim(record, v5_policy)
+    assert v5_verdict["outcome"] == "adoption-only"
+    # …and the record says WHICH interval it read, rather than leaving a reader
+    # to infer it from the policy id.
+    stratum_gate = v5_verdict["stratum_outcomes"][0]["gates"]["question_level_primary"]
+    assert stratum_gate["observed"]["accuracy_interval_source"] == "question_level.delta_ci"
+    assert stratum_gate["observed"]["delta_ci"] == [-0.30, 0.30]
+    # The cell-level McNemar is DEMOTED, never dropped.
+    assert "question_level_primary" not in evaluate_claim(
+        record, v4_shaped)["stratum_outcomes"][0]["gates"]
+
+
+def test_question_level_primary_leaves_pre_v5_policies_byte_identical():
+    """The conditional-gate discipline, asserted directly (the same shape as the
+    v4 subset test above): a policy that does NOT declare
+    `question_level_primary` evaluates any record exactly as the committed v4
+    document does, so no historical verdict moves.
+
+    Compared as canonical bytes with the policy identity removed (`policy_id` /
+    `policy_hash` necessarily differ between two different documents — that is
+    the re-pin `test_utility_evidence.py` covers)."""
+    pre_supersede_v4 = load_previous_policy()
+    assert pre_supersede_v4.pop("superseded_by") == "agent-utility-public-v5"
+    assert "question_level_primary" not in pre_supersede_v4["requirements"]
+    pre_supersede_v4["status"] = "active"
+    v5_without_the_requirement = copy.deepcopy(load_policy())
+    v5_without_the_requirement["requirements"].pop("question_level_primary")
+
+    for record in (_record(), _subset_record()):
+        left = evaluate_claim(record, pre_supersede_v4)
+        right = evaluate_claim(record, v5_without_the_requirement)
+        for verdict in (left, right):
+            del verdict["policy_id"]
+            del verdict["policy_hash"]
+        assert canonical_bytes(left) == canonical_bytes(right)
+        # Passes for the RIGHT reason: neither appends the v5 gate at all.
+        assert not any(item["name"] == "question_level_primary_reported"
+                       for item in left["gates"])
+
+    # …and the ACTIVE policy DOES append it, so the byte-identity above is a
+    # property of the requirement being absent, not of the gate never firing.
+    assert any(item["name"] == "question_level_primary_reported"
+               for item in evaluate_claim(_record(), _active_policy())["gates"])
+
+
 def test_favorable_outcomes_cannot_override_unresolved_policy():
     """The unresolved-blocks-promotion behavior, now tested via a draft fixture
     (the checked-in policy activated 2026-07-17 — tempdoc 624)."""
@@ -628,7 +884,8 @@ def test_settled_active_policy_is_machine_evaluable_without_posthoc_wording():
     assert verdict["outcome"] == "benefit"
 
     harmed = _record()
-    harmed["estimands"]["intention_to_treat"]["strata"][0]["accuracy"]["delta_ci95"] = [-0.2, -0.1]
+    _set_primary_accuracy_interval(
+        harmed["estimands"]["intention_to_treat"]["strata"][0], [-0.2, -0.1])
     harmed["estimands"]["intention_to_treat"]["strata"][0]["adoption"]["with_tool"]["adoption_rate"] = 0.1
     accepted_harm = evaluate_claim(harmed, policy)
     assert accepted_harm["accepted"] is True
@@ -683,7 +940,8 @@ def test_single_seed_harmful_claim_still_publishes_below_seed_floor():
     minimum_adoption_rate never blocks a harm claim, utility_claim_policy.py
     ~line 470)."""
     record = _record(seed_ids=[0])
-    record["estimands"]["intention_to_treat"]["strata"][0]["accuracy"]["delta_ci95"] = [-0.2, -0.1]
+    _set_primary_accuracy_interval(
+        record["estimands"]["intention_to_treat"]["strata"][0], [-0.2, -0.1])
     policy = _single_seed_policy(record)
 
     verdict = evaluate_claim(record, policy)
@@ -723,13 +981,16 @@ def test_every_required_stratum_must_support_a_benefit_claim():
             "minimum_paired_retention", "minimum_excluded_jaccard",
             "accuracy_delta_interval", "minimum_adoption_rate", "seed_floor_met",
             "outcome_resolved",
+            # v5 (2026-07-29): the per-stratum record of which interval the
+            # accuracy outcome read. Appended, never inserted -- a v1-v4
+            # verdict's gate map is unchanged.
+            "question_level_primary",
         }
 
 
 def test_inconclusive_required_stratum_prevents_harm_promotion():
     record = _record()
     first = record["estimands"]["intention_to_treat"]["strata"][0]
-    first["accuracy"]["delta_ci95"] = [-0.2, -0.1]
     second = copy.deepcopy(first)
     second.update({
         "stratum_id": "second-member|second|1000|verbose|haiku",
@@ -741,12 +1002,16 @@ def test_inconclusive_required_stratum_prevents_harm_promotion():
     second["corpus_certification"].update({
         "member": "second-member", "dataset": "second", "corpus_signature": "d" * 64,
     })
-    second["accuracy"]["delta_ci95"] = [-0.04, 0.20]
     second["provider_cache_creation_input_tokens"]["delta_ci95"] = [-100, 100]
     second["cost_usd"]["delta_ci95"] = [-0.1, 0.1]
     second["adoption"]["with_tool"]["adoption_rate"] = 0.1
     record["estimands"]["intention_to_treat"]["strata"].append(second)
     _sync_tool_assertion_counts(record)
+    # After the resync (which re-derives every stratum's question-level block
+    # from its paired grid), so the primary interval the classifier reads is the
+    # one this scenario intends.
+    _set_primary_accuracy_interval(first, [-0.2, -0.1])
+    _set_primary_accuracy_interval(second, [-0.04, 0.20])
 
     verdict = evaluate_claim(record, _active_policy(record))
 
@@ -974,7 +1239,7 @@ def test_accuracy_and_equivalence_margins_change_outcome_classification():
     })
     record = _record()
     stratum = record["estimands"]["intention_to_treat"]["strata"][0]
-    stratum["accuracy"]["delta_ci95"] = [-0.01, 0.01]
+    _set_primary_accuracy_interval(stratum, [-0.01, 0.01])
     stratum["provider_cache_creation_input_tokens"]["delta_ci95"] = [-5, 5]
     stratum["cost_usd"]["delta_ci95"] = [-0.005, 0.005]
     assert evaluate_claim(record, policy)["outcome"] == "null"
@@ -1003,14 +1268,14 @@ def test_all_outcome_classes_are_reachable_under_one_active_policy():
 
     null_record = _record()
     stratum = null_record["estimands"]["intention_to_treat"]["strata"][0]
-    stratum["accuracy"]["delta_ci95"] = [-0.01, 0.01]
+    _set_primary_accuracy_interval(stratum, [-0.01, 0.01])
     stratum["provider_cache_creation_input_tokens"]["delta_ci95"] = [-5, 5]
     stratum["cost_usd"]["delta_ci95"] = [-0.005, 0.005]
     assert evaluate_claim(null_record, policy)["outcome"] == "null"
 
     adoption_only = copy.deepcopy(null_record)
     adoption_stratum = adoption_only["estimands"]["intention_to_treat"]["strata"][0]
-    adoption_stratum["accuracy"]["delta_ci95"] = [-0.04, 0.20]
+    _set_primary_accuracy_interval(adoption_stratum, [-0.04, 0.20])
     adoption_stratum["provider_cache_creation_input_tokens"]["delta_ci95"] = [-100, 100]
     adoption_stratum["cost_usd"]["delta_ci95"] = [-0.1, 0.1]
     assert evaluate_claim(adoption_only, policy)["outcome"] == "adoption-only"
@@ -1235,7 +1500,7 @@ def test_checked_in_active_policy_evaluates_surface_via_rate_branch():
     capture-miss rate (0.92 >= 0.9) passes. This is the runnable proof that the
     rate semantics hold against the policy the harness actually loads."""
     policy = load_policy()
-    assert policy["policy_id"] == "agent-utility-public-v4"
+    assert policy["policy_id"] == "agent-utility-public-v5"
     assert policy["thresholds"]["minimum_surface_verification_rate"] == 0.9
 
     record = _record()

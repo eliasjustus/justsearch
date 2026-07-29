@@ -2,8 +2,7 @@
   "schema": "utility-claim-policy.v1",
   "schema_version": 1,
   "policy_id": "agent-utility-public-v4",
-  "status": "superseded",
-  "superseded_by": "agent-utility-public-v5",
+  "status": "active",
   "primary_estimand": "addition_b",
   "policy_changelog": [
     {
@@ -52,7 +51,9 @@
       "date": "2026-07-28",
       "summary": "Amendment 1 (pre-launch, zero cells measured): known_schemas [1_hop,2_hop]->[1_hop] — corpus-description correction per 782 §E.7 row 12 / BLOCKER-1; thresholds untouched; decided under founder delegation of 2026-07-28",
       "authority": "orchestrator, under the founder's 2026-07-28 blanket delegation; 624's dated-amendment convention (amendments are permitted until the first measured cell, then frozen)",
-      "changed": ["required_schema_strata.known_schemas: [\"1_hop\", \"2_hop\"] -> [\"1_hop\"]"],
+      "changed": [
+        "required_schema_strata.known_schemas: [\"1_hop\", \"2_hop\"] -> [\"1_hop\"]"
+      ],
       "unchanged": [
         "every value in thresholds",
         "required_strata (3 sonnet strata, cheapest-first)",
@@ -73,7 +74,11 @@
       "query_variant": "verbose",
       "requested_model": "sonnet",
       "query_count": 20,
-      "seed_ids": [0, 1, 2],
+      "seed_ids": [
+        0,
+        1,
+        2
+      ],
       "query_count_committed": 50,
       "qid_list_sha256": "7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b"
     },
@@ -85,7 +90,11 @@
       "query_variant": "verbose",
       "requested_model": "sonnet",
       "query_count": 20,
-      "seed_ids": [0, 1, 2],
+      "seed_ids": [
+        0,
+        1,
+        2
+      ],
       "query_count_committed": 50,
       "qid_list_sha256": "7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b"
     },
@@ -97,7 +106,11 @@
       "query_variant": "verbose",
       "requested_model": "sonnet",
       "query_count": 20,
-      "seed_ids": [0, 1, 2],
+      "seed_ids": [
+        0,
+        1,
+        2
+      ],
       "query_count_committed": 50,
       "qid_list_sha256": "7b7856e8d8d0f3ce4ca8499798ce93ac1e5aec58633fc03fe514d7f3853c5b5b"
     }
@@ -117,7 +130,9 @@
     "_note": "tempdoc 768 D4: within each required stratum the composed record carries a schema_stratified.by_stratum breakdown keyed on question_type (utility_comparison._default_schema_stratify). v3 requires every schema present in the queries file to be represented and reported; a schema that collapses (e.g. email/1_hop null) is reported as an honest null, never dropped. AMENDMENT 1 (2026-07-28, pre-launch): known_schemas is [1_hop] because the certified hero corpora are 100% 1_hop by construction — see policy_changelog.",
     "keyed_on": "question_type",
     "require_all_present": true,
-    "known_schemas": ["1_hop"],
+    "known_schemas": [
+      "1_hop"
+    ],
     "null_result_handling": "report-never-lead",
     "evidence_path": "measured[<dataset>][<requested_model>].schema_stratified.by_stratum"
   },
@@ -169,7 +184,10 @@
   "triple_reporting_semantics": {
     "_note": "tempdoc 768 item 6 / 762 §T4: the ITT/per-protocol/completion triple wording constraints. Enforces the 'bridge, don't inflate' rule.",
     "headline_estimand": "intention_to_treat",
-    "must_publish_beside_headline": ["per_protocol_accuracy", "completion_rate"],
+    "must_publish_beside_headline": [
+      "per_protocol_accuracy",
+      "completion_rate"
+    ],
     "must_state_budget_explicitly": true,
     "forbidden_headlines": [
       "raw absolute accuracy of the haiku arm",
