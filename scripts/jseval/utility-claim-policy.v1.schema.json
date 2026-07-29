@@ -52,7 +52,9 @@
         "provider_token_equivalence_margin": {"type": ["number", "null"], "minimum": 0},
         "cost_equivalence_margin_usd": {"type": ["number", "null"], "minimum": 0},
         "minimum_surface_verification_rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
-        "maximum_closed_book_accuracy": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+        "maximum_closed_book_accuracy": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "minimum_permutation_draws": {"type": "integer", "minimum": 20000},
+        "minimum_cluster_bootstrap_draws": {"type": "integer", "minimum": 20000}
       }
     },
     "requirements": {
@@ -78,11 +80,13 @@
         "closed_book_at_hero_tier": {"const": true},
         "schema_strata_reported": {"const": true},
         "certified_query_subset": {"const": true},
+        "question_level_primary": {"const": true},
         "per_stratum_promotion": {"const": "all_required_strata_pass"}
       }
     },
     "verified_tool_surface_semantics": {"type": "object"},
     "certified_query_subset_semantics": {"type": "object"},
+    "question_level_primary_semantics": {"type": "object"},
     "required_schema_strata": {"type": "object"},
     "hero_tier": {"type": "object"},
     "triple_reporting_semantics": {"type": "object"},

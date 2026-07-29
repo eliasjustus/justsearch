@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent-utility-evidence-source.v1",
+  "$comment": "One HEADER line of a v2 sanitized evidence file (tempdoc 719 follow-up): a run-constant `source` block declared once, addressed by the sha256 of its canonical JSON, and referenced by every observation line that shares it via `source_ref`. The block itself is byte-identical to the inline `source` of a v1 observation line -- this is a layout change, never a content change, so the composed record's semantic_digest is unaffected. `source` is deliberately NOT redeclared here: `agent-utility-observation.v1.schema.json` remains its single authority (a copy would be a second authority that drifts).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "source_id", "source"],
+  "properties": {
+    "schema": {"const": "agent-utility-evidence-source.v1"},
+    "source_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source": {"type": "object"}
+  }
+}

@@ -17,6 +17,7 @@ from jseval.agent_utility_observations import (
     WITH_TOOL_CONDITIONS,
     all_attempt_tool_call_assertions,
     read_inspect_observations,
+    resolve_judge_overlay,
     successful_summaries,
 )
 from jseval.utility_claim_policy import canonical_bytes, canonical_digest
@@ -32,6 +33,11 @@ from jseval.utility_governance import (
     classify_error_kind,
     loss_accounting_from_observations,
     paired_comparability,
+)
+from jseval.utility_question_level import (
+    METHOD_ID as QUESTION_LEVEL_METHOD_ID,
+    MINIMUM_DRAWS as QUESTION_LEVEL_MINIMUM_DRAWS,
+    question_level_statistics,
 )
 
 # tempdoc 624 (2026-07-17): the primary ITT outcome rule this recompose applies,
@@ -118,13 +124,6 @@ def semantic_digest(record: dict) -> str:
     return canonical_digest(semantic_projection(record))
 
 
-def _load_overlay(log_dir: Path, explicit: str | Path | None) -> dict | None:
-    path = Path(explicit) if explicit else log_dir / "judge-overlay.json"
-    if not path.is_file():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 def _namespace_for_loss(observations: Iterable[dict], namespace: str) -> list[dict]:
     out = []
     for observation in observations:
@@ -135,9 +134,21 @@ def _namespace_for_loss(observations: Iterable[dict], namespace: str) -> list[di
 
 
 def _intention_to_treat_estimand(
-    observations: Iterable[dict], *, statistical_alpha: float = 0.05
+    observations: Iterable[dict],
+    *,
+    statistical_alpha: float = 0.05,
+    question_level_primary: bool = False,
+    permutation_draws: int = QUESTION_LEVEL_MINIMUM_DRAWS,
+    bootstrap_draws: int = QUESTION_LEVEL_MINIMUM_DRAWS,
 ) -> dict:
-    """Compose the primary ITT view; errored attempts count as incorrect/non-adoption."""
+    """Compose the primary ITT view; errored attempts count as incorrect/non-adoption.
+
+    ``question_level_primary`` is CONDITIONAL on the selected claim policy
+    declaring ``requirements.question_level_primary`` (v5). Absent it no
+    ``question_level`` block is emitted at all, so evidence composed under
+    v1–v4 projects a byte-identical record — the same additive-and-conditional
+    discipline the ``funnel``/``duration``/``completion`` blocks follow.
+    """
     observations = list(observations)
 
     def _coarse_key(observation: dict) -> tuple:
@@ -440,6 +451,28 @@ def _intention_to_treat_estimand(
         # byte-identical to before it existed (the funnel precedent).
         if stats and "duration" in stats:
             stratum["duration"] = stats["duration"]
+        # Question-level PRIMARY statistics (tempdoc 791 axis 4, claim policy
+        # v5). Computed from the SAME `pairs` dict the cell-level McNemar reads,
+        # so this is a re-projection of one paired set at a coarser resampling
+        # unit, never a second, divergent pairing. Emitted only when the
+        # selected policy declares the requirement: absent it, a record composed
+        # from identical evidence is byte-identical to the pre-v5 shape.
+        if question_level_primary and pairs:
+            stratum["question_level"] = question_level_statistics(
+                pairs,
+                seed_material={
+                    "method": QUESTION_LEVEL_METHOD_ID,
+                    "stratum_id": stratum_id,
+                    "corpus_signature": signature,
+                    "query_identity_sha256": (query_identity or {}).get("sha256"),
+                    "n_expected_cells": len(
+                        (campaign_identity or {}).get("expected_cells") or []
+                    ),
+                },
+                alpha=statistical_alpha,
+                permutation_draws=permutation_draws,
+                bootstrap_draws=bootstrap_draws,
+            )
         strata.append(stratum)
         # Completion estimand (762 §T4, the third of the ITT/per-protocol/
         # completion triple). Completion = finished within budget; under the
@@ -535,7 +568,7 @@ def finalize_logs(
 
     observation_groups: list[list[dict]] = []
     for index, root in enumerate(roots):
-        overlay = _load_overlay(root, overlays[index] if overlays else None)
+        overlay = resolve_judge_overlay(root, overlays[index] if overlays else None)
         observations = read_inspect_observations(root, judge_overlay=overlay)
         if not observations:
             raise ValueError(f"no Inspect observations found in {root}")
@@ -566,13 +599,17 @@ def partial_status_projection(log_dir: str | Path, *, policy: dict | None = None
 
     This deliberately does not emit a claim verdict: partial evidence is not a
     scientific record. It does use the selected policy's loss thresholds so the
-    live comparability signal cannot drift from finalization.
+    live comparability signal cannot drift from finalization -- and, for the same
+    reason, it resolves the log directory's judge overlay exactly as
+    `finalize_logs` does (usually absent mid-run; present when the status view is
+    taken after a judge pass, and then the live accuracy must be the judged one).
     """
     from jseval.utility_claim_policy import load_policy
 
     selected_policy = policy or load_policy()
     thresholds = selected_policy.get("thresholds") or {}
-    observations = read_inspect_observations(log_dir, require_complete=False)
+    observations = read_inspect_observations(
+        log_dir, judge_overlay=resolve_judge_overlay(log_dir), require_complete=False)
     arms = loss_accounting_from_observations(observations)
     verdict, metrics = paired_comparability(
         arms,
@@ -759,8 +796,17 @@ def finalize_observation_groups(
     else:
         record = compose_utility(summaries, **kwargs)
     record["tool_call_assertions"] = all_attempt_tool_call_assertions(all_observations)
+    requirements = selected_policy.get("requirements") or {}
     record["estimands"] = _intention_to_treat_estimand(
-        all_observations, statistical_alpha=alpha
+        all_observations,
+        statistical_alpha=alpha,
+        question_level_primary=bool(requirements.get("question_level_primary")),
+        permutation_draws=thresholds.get(
+            "minimum_permutation_draws", QUESTION_LEVEL_MINIMUM_DRAWS
+        ),
+        bootstrap_draws=thresholds.get(
+            "minimum_cluster_bootstrap_draws", QUESTION_LEVEL_MINIMUM_DRAWS
+        ),
     )
     record["statistical_alpha"] = alpha
     # tempdoc 624 (2026-07-17): explicit provenance stamp of the primary outcome

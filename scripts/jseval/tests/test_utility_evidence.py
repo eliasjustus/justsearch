@@ -21,6 +21,17 @@ _SURFACE = [{
 _SURFACE_HASH = mcp_tool_surface_hash(_SURFACE)
 
 
+def _v3_policy_path() -> Path:
+    """The v3 document, by path.
+
+    `previous_policy_path()` follows the ACTIVE policy's immediate predecessor
+    and moves at every ratification (it now resolves to v4). The re-pin
+    reproductions below each need ONE specific historical document, so they
+    address it directly rather than through a moving helper.
+    """
+    return Path(__file__).parents[1] / "utility-claim-policy.v3.json"
+
+
 def _observation(condition="A", *, excluded=False, qid="q0") -> dict:
     return {
         "source": {
@@ -458,7 +469,21 @@ def test_historical_fixture_semantic_digest_repinned_after_624_itt_change():
     match the required matrix). This fixture is a FULL-count fixture, so the new
     branch resolves through the unchanged count-equality path; the sole-mover
     proof is runnable, not prose:
-    `test_v4_repin_is_policy_identity_only_prior_pin_reproduces`."""
+    `test_v4_repin_is_policy_identity_only_prior_pin_reproduces`.
+
+    Re-pinned AGAIN 2026-07-29 (v5 RATIFICATION, tempdoc 791 axis 4 — 7th
+    occurrence, and the FIRST of this class that is not policy-identity-only):
+    `agent-utility-public-v5` declares `question_level_primary`, which moves the
+    digest through TWO channels at once, both legitimate and both declared:
+    (a) the usual `policy_id`/`policy_hash` carried by the digest-covered
+    `claim_verdict`, and (b) new MEASUREMENT content — every ITT stratum now
+    carries a `question_level` block (question-clustered permutation p +
+    cluster-bootstrap interval), the same class of digest move `estimands.
+    completion` made under 768 D4. The record is still REJECTED, for the same
+    structural reason as before. That the block is CONDITIONAL — so evidence
+    composed under any pre-v5 policy is byte-identical to before it existed — is
+    runnable, not prose:
+    `test_v5_repin_reproduces_the_v4_pin_under_the_pre_supersede_v4_policy`."""
     path = (
         Path(__file__).parent
         / "fixtures"
@@ -467,7 +492,81 @@ def test_historical_fixture_semantic_digest_repinned_after_624_itt_change():
     )
     record = finalize_evidence([path], composed_at="fixture")
     assert record["semantic_digest"] == (
+        "a85c844e89eff2baaa2029e4ea1f865d9c0eb7aa2e047d895102745fbdcc09a8"
+    )
+
+
+def test_v5_repin_reproduces_the_v4_pin_under_the_pre_supersede_v4_policy():
+    """v5's re-pin is legitimate only if a pre-v5 policy still reproduces the
+    v4-era digest EXACTLY — i.e. the new question-level machinery is genuinely
+    conditional and cannot reach a record composed under an older policy.
+
+    Same discipline (and same trap avoided) as the three tests below:
+    reconstruct the v4 document in its PRE-SUPERSEDE shape — same bytes,
+    `status: "active"`, no `superseded_by` — from the committed superseded file,
+    so it cannot drift from it, and assert the v4-era pin `e3c3c9fd…`
+    reproduces byte-for-byte.
+
+    That is the direct evidence for both halves of the conditional contract: no
+    `question_level` block is emitted, and `evaluate_claim` appends no
+    `question_level_primary_reported` gate."""
+    path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "agent-utility-rejected-2026-07-12"
+        / "observations.v1.jsonl"
+    )
+    pre_supersede_v4 = json.loads(
+        previous_policy_path().read_text(encoding="utf-8")
+    )
+    assert pre_supersede_v4["policy_id"] == "agent-utility-public-v4"
+    assert pre_supersede_v4["status"] == "superseded"
+    assert pre_supersede_v4.pop("superseded_by") == "agent-utility-public-v5"
+    assert "question_level_primary" not in pre_supersede_v4["requirements"]
+    pre_supersede_v4["status"] = "active"
+
+    record = finalize_evidence(
+        [path], composed_at="fixture", policy=pre_supersede_v4)
+
+    assert record["semantic_digest"] == (
         "e3c3c9fd0f20c8ac54484a7b783470cf9ae4c9272c00c3a45df5f402a57a10fe"
+    )
+    for cell in record["estimands"]["intention_to_treat"]["strata"]:
+        assert "question_level" not in cell
+    assert not any(
+        item["name"] == "question_level_primary_reported"
+        for item in record["claim_verdict"]["gates"]
+    )
+
+
+def test_v5_question_level_block_is_emitted_under_the_active_policy():
+    """The other half of the conditional contract: under v5 the block IS there,
+    re-derivable from its own recorded material. Without this the byte-identity
+    test above would also pass if the producer never emitted anything."""
+    from jseval.utility_question_level import derive_rng_seed
+
+    path = (
+        Path(__file__).parent
+        / "fixtures"
+        / "agent-utility-rejected-2026-07-12"
+        / "observations.v1.jsonl"
+    )
+    record = finalize_evidence([path], composed_at="fixture")
+
+    strata = record["estimands"]["intention_to_treat"]["strata"]
+    assert strata
+    for cell in strata:
+        block = cell["question_level"]
+        assert block["unit"] == "qid"
+        assert block["permutation_draws"] >= 20000
+        assert block["bootstrap_draws"] >= 20000
+        assert derive_rng_seed(block["rng_seed_material"]) == block["rng_seed"]
+        # The cell-level McNemar is DEMOTED, never dropped.
+        assert "mcnemar_p" in cell["accuracy"]
+        assert block["cell_level_mcnemar_role"] == "descriptive"
+    assert any(
+        item["name"] == "question_level_primary_reported"
+        for item in record["claim_verdict"]["gates"]
     )
 
 
@@ -491,7 +590,7 @@ def test_v4_repin_is_policy_identity_only_prior_pin_reproduces():
         / "observations.v1.jsonl"
     )
     pre_supersede_v3 = json.loads(
-        previous_policy_path().read_text(encoding="utf-8")
+        _v3_policy_path().read_text(encoding="utf-8")
     )
     assert pre_supersede_v3["status"] == "superseded"
     assert pre_supersede_v3.pop("superseded_by") == "agent-utility-public-v4"
@@ -559,7 +658,7 @@ def test_amendment_1_repin_is_policy_identity_only_prior_pin_reproduces():
         / "agent-utility-rejected-2026-07-12"
         / "observations.v1.jsonl"
     )
-    pre_amendment = json.loads(previous_policy_path().read_text(encoding="utf-8"))
+    pre_amendment = json.loads(_v3_policy_path().read_text(encoding="utf-8"))
     assert pre_amendment.pop("superseded_by") == "agent-utility-public-v4"
     pre_amendment["status"] = "active"
     schema_spec = pre_amendment["required_schema_strata"]

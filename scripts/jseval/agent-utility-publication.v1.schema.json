@@ -37,7 +37,10 @@
         "status": {"const": "active"}
       }
     },
-    "sanitizer_version": {"const": "agent-utility-observation.v1"},
+    "sanitizer_version": {
+      "enum": ["agent-utility-observation.v1", "agent-utility-observation.v2"],
+      "$comment": "The observation-line schema the bundled evidence is written in, read off the copied file rather than hardcoded. v2 is v1's identical field allowlist with each run-constant `source` block hoisted into an `agent-utility-evidence-source.v1` header line (tempdoc 719 follow-up); both replay to the same observations and the same semantic_digest."
+    },
     "replay_command": {"type": "string"},
     "supersedes": {"type": ["string", "null"]}
   }
