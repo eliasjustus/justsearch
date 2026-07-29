@@ -28,6 +28,7 @@ import io.justsearch.ipc.MatchSpan;
 import io.justsearch.ipc.SearchRequest;
 import io.justsearch.ipc.SearchResponse;
 import io.justsearch.ipc.SearchResult;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -56,6 +57,17 @@ public final class SearchResponseBuilder {
           "_chunk_source_doc_id",
           SchemaFields.CHUNK_EMBEDDING_STATUS,
           SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT);
+
+  /**
+   * Tempdoc 771 item (b): the per-document NER entity fields resolved from a chunk hit's parent so
+   * the delivery layer has entity names to carry on the chunk branch. Same three {@code *_raw}
+   * fields the Head's carriage reads off doc-branch hits.
+   */
+  private static final Set<String> ENTITY_CARRIAGE_FIELDS =
+      Set.of(
+          SchemaFields.ENTITY_PERSONS_RAW,
+          SchemaFields.ENTITY_ORGANIZATIONS_RAW,
+          SchemaFields.ENTITY_LOCATIONS_RAW);
 
   private static final Map<String, String> ENTITY_FACET_TYPE_MAP =
       Map.of(
@@ -425,6 +437,14 @@ public final class SearchResponseBuilder {
     EvidenceSpanSelector evidenceSelector =
         buildEvidenceSelector(resolvedConfig, includeExcerpts, analyzer);
 
+    // Tempdoc 771 item (b): the chunk branch's half of entity carriage. A chunk hit's stored-field
+    // allowlist (ChunkSearchOps#buildChunkHits) is chunk-scoped, so the parent document's NER
+    // entity values never reach the wire — the delivery layer would have nothing to carry for
+    // exactly the branch that recovers golds the doc legs miss on the legal strata. Resolved in ONE
+    // batched read for all chunk hits, and only when carriage is enabled.
+    Map<String, Map<String, String>> chunkParentEntities =
+        resolveChunkParentEntities(resolvedConfig, result.hits());
+
     for (LuceneRuntimeTypes.SearchHit hit : result.hits()) {
       SearchResult.Builder resultBuilder = SearchResult.newBuilder().setScore(hit.score());
 
@@ -453,6 +473,18 @@ public final class SearchResponseBuilder {
       // (e.g. rank 11-20 promoted into view) with a blank title/filename/excerpt.
       if (isChunkHit) {
         resolveParentMetadata(parentDocId, resultBuilder);
+        // Tempdoc 771 item (b): put the parent document's entity values on the wire so the delivery
+        // layer can carry them. Written to the RESULT builder only — `hit.fields()` is untouched, so
+        // the EvidenceSpan NER_MEMBERSHIP signal and every span/ranking computation below see
+        // exactly what they saw before. Carriage is a delivered-content lever, not a ranking one.
+        Map<String, String> parentEntities = chunkParentEntities.get(parentDocId);
+        if (parentEntities != null) {
+          for (var e : parentEntities.entrySet()) {
+            if (e.getValue() != null && !e.getValue().isBlank()) {
+              resultBuilder.putFields(e.getKey(), e.getValue());
+            }
+          }
+        }
       }
 
       // Compute the effective debug-score map ONCE: the worker's own per-hit scores, or — for
@@ -588,6 +620,57 @@ public final class SearchResponseBuilder {
     if (filename != null && !filename.isEmpty()) {
       resultBuilder.putFields(SchemaFields.FILENAME, filename);
     }
+  }
+
+  /**
+   * Tempdoc 771 item (b): the parent documents' NER entity values for every chunk hit in this
+   * result, keyed by parent doc id, or an empty map when entity carriage is off / there are no
+   * chunk hits.
+   *
+   * <p>One batched {@code getDocumentFieldsBatch} read for the whole result rather than a lookup per
+   * hit per field: the {@code entity_*_raw} fields are DocValues-backed, so the batch resolves each
+   * parent once and projects all three fields O(1) from the same searcher.
+   *
+   * <p>The value is passed through VERBATIM. A multi-valued DocValues read joins with {@code ", "}
+   * rather than the {@code " | "} the doc-hit branch's stored-field extraction uses, and rewriting
+   * one into the other would corrupt every entity value that legitimately contains a comma — on the
+   * 781-v2 legal cell that is 14 of 50 bridge entities ({@code "Name, ST"} shaped), i.e. the exact
+   * names carriage exists to deliver. The delivery layer therefore splits only on {@code " | "} and
+   * treats a comma-joined value as one whole unit: coarser budget accounting, never a cut name.
+   */
+  private Map<String, Map<String, String>> resolveChunkParentEntities(
+      io.justsearch.configuration.resolved.ResolvedConfig resolvedConfig,
+      List<LuceneRuntimeTypes.SearchHit> hits) {
+    if (resolvedConfig == null
+        || resolvedConfig.search().mcpEntityCarriage() == null
+        || !resolvedConfig.search().mcpEntityCarriage().enabled()) {
+      return Map.of();
+    }
+    List<String> parentIds = new ArrayList<>();
+    for (LuceneRuntimeTypes.SearchHit hit : hits) {
+      String parentDocId = hit.fields().get(SchemaFields.PARENT_DOC_ID);
+      if (parentDocId != null && !parentDocId.isEmpty() && !parentIds.contains(parentDocId)) {
+        parentIds.add(parentDocId);
+      }
+    }
+    if (parentIds.isEmpty()) {
+      return Map.of();
+    }
+    Map<String, Map<String, String>> batch =
+        documentFieldOps.getDocumentFieldsBatch(parentIds, ENTITY_CARRIAGE_FIELDS);
+    Map<String, Map<String, String>> normalized = new HashMap<>(batch.size());
+    for (var doc : batch.entrySet()) {
+      Map<String, String> values = new HashMap<>(ENTITY_CARRIAGE_FIELDS.size());
+      for (var field : doc.getValue().entrySet()) {
+        if (field.getValue() != null && !field.getValue().isBlank()) {
+          values.put(field.getKey(), field.getValue());
+        }
+      }
+      if (!values.isEmpty()) {
+        normalized.put(doc.getKey(), values);
+      }
+    }
+    return normalized;
   }
 
   /** Tempdoc 774 Stage 2: cap the chunk-text evidence preview at {@link #EVIDENCE_PREVIEW_CAP}. */

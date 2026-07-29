@@ -27,3 +27,8 @@ modules/adapters-lucene/src/main/resources/SSOT/catalogs/synonyms.*.v1.txt text 
 *.int8-backup filter=lfs diff=lfs merge=lfs -text
 *.fp32-backup filter=lfs diff=lfs merge=lfs -text
 *onnx_data filter=lfs diff=lfs merge=lfs -text
+
+# Agent-utility publication artifacts are content-addressed (manifest sha256 chain):
+# bytes must be identical on every platform - no newline normalization or smudging.
+scripts/jseval/public-agent-utility/** -text
+scripts/jseval/agent-utility-records/** -text
