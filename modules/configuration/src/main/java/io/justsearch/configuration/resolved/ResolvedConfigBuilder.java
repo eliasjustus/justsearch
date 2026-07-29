@@ -581,6 +581,12 @@ public final class ResolvedConfigBuilder {
         Integer.toString(
             io.justsearch.configuration.resolved.ResolvedConfig.Search
                 .DEFAULT_ENTITY_CARRIAGE_MAX_CHARS));
+    putYamlDouble(
+        "search.mcp_framing.weak_score_floor", searchRoot, "mcp_framing.weak_score_floor");
+    putDefault(
+        "search.mcp_framing.weak_score_floor",
+        Double.toString(
+            io.justsearch.configuration.resolved.ResolvedConfig.Search.DEFAULT_WEAK_SCORE_FLOOR));
     // Facet fields list
     JsonNode fieldsNode = searchRoot.path("facets").path("fields");
     if (fieldsNode.isArray()) {
@@ -1353,7 +1359,10 @@ public final class ResolvedConfigBuilder {
         resolveBoolean("search.mcp_framing.calibrated_absence_enabled", false),
         resolveInt(
             "search.mcp_framing.thin_result_floor_bytes",
-            ResolvedConfig.Search.DEFAULT_THIN_RESULT_FLOOR_BYTES));
+            ResolvedConfig.Search.DEFAULT_THIN_RESULT_FLOOR_BYTES),
+        resolveDouble(
+            "search.mcp_framing.weak_score_floor",
+            ResolvedConfig.Search.DEFAULT_WEAK_SCORE_FLOOR));
   }
 
   private ResolvedConfig.Search.Corrections buildSearchCorrections() {

@@ -1,12 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.ui.api.mcp;
 
+import static io.justsearch.app.api.knowledge.SearchTrace.StageStatus.EXECUTED;
+import static io.justsearch.app.api.knowledge.SearchTrace.StageStatus.SKIPPED;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.justsearch.app.api.knowledge.SearchTrace;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +26,33 @@ import org.junit.jupiter.api.Test;
  */
 @DisplayName("McpDeliveryFraming: F1/F2/F3 framing logic (tempdoc 789 Phase 2)")
 final class McpDeliveryFramingTest {
+
+  /** The shipped F3 floors: a 400-byte delivered body and a 0.40 normalized relevance floor. */
+  private static final McpDeliveryFraming.Settings DEFAULTS =
+      new McpDeliveryFraming.Settings(false, false, true, 400, 0.40);
+
+  private static McpDeliveryFraming.AbsenceSignals signals(
+      long totalHits,
+      double topScore,
+      boolean scoreComparable,
+      int deliveredBodyBytes,
+      long indexedDocs) {
+    return new McpDeliveryFraming.AbsenceSignals(
+        totalHits, topScore, scoreComparable, deliveredBodyBytes, indexedDocs);
+  }
+
+  /** A trace carrying exactly one FUSION stage with the given status + fusion-method detail. */
+  private static SearchTrace traceWithFusion(SearchTrace.StageStatus status, String detail) {
+    return new SearchTrace(
+        SearchTrace.SCHEMA_VERSION,
+        null,
+        null,
+        null,
+        null,
+        List.of(
+            new SearchTrace.TraceStage(
+                SearchTrace.StageId.FUSION, status, null, 7L, detail, 42L)));
+  }
 
   private static Map<String, Map<String, Long>> facets(Map<String, Long> persons) {
     Map<String, Map<String, Long>> out = new LinkedHashMap<>();
@@ -172,7 +202,9 @@ final class McpDeliveryFramingTest {
     @Test
     @DisplayName("zero results carry coverage, what was searched, and absence-is-not-evidence")
     void zeroResultsCarryFullFraming() {
-      String note = McpDeliveryFraming.absenceNote(0, 0, 10_432L, "quarterly hedging policy", 400);
+      String note =
+          McpDeliveryFraming.absenceNote(
+              signals(0, -1.0, false, 0, 10_432L), "quarterly hedging policy", DEFAULTS);
       assertNotNull(note);
       assertTrue(note.contains("10432 documents are indexed and were searched"), note);
       assertTrue(note.contains("\"quarterly hedging policy\""), note);
@@ -185,7 +217,9 @@ final class McpDeliveryFramingTest {
     @Test
     @DisplayName("a non-empty but thin delivery trips the floor and names the measured size")
     void thinResultTripsFloor() {
-      String note = McpDeliveryFraming.absenceNote(5, 120, 900L, "widget torque", 400);
+      String note =
+          McpDeliveryFraming.absenceNote(
+              signals(5, -1.0, false, 120, 900L), "widget torque", DEFAULTS);
       assertNotNull(note);
       assertTrue(note.contains("120 bytes, under the 400-byte floor"), note);
       assertTrue(note.contains("Absence of results is not evidence of absence"), note);
@@ -194,14 +228,20 @@ final class McpDeliveryFramingTest {
     @Test
     @DisplayName("a substantive delivery at or above the floor is not framed at all")
     void substantiveDeliveryNotFramed() {
-      assertNull(McpDeliveryFraming.absenceNote(5, 400, 900L, "widget torque", 400));
-      assertNull(McpDeliveryFraming.absenceNote(5, 5_000, 900L, "widget torque", 400));
+      assertNull(
+          McpDeliveryFraming.absenceNote(
+              signals(5, -1.0, false, 400, 900L), "widget torque", DEFAULTS));
+      assertNull(
+          McpDeliveryFraming.absenceNote(
+              signals(5, -1.0, false, 5_000, 900L), "widget torque", DEFAULTS));
     }
 
     @Test
     @DisplayName("an unavailable doc count omits the coverage clause rather than guessing a number")
     void unavailableDocCountOmitsCoverage() {
-      String note = McpDeliveryFraming.absenceNote(0, 0, -1L, "widget torque", 400);
+      String note =
+          McpDeliveryFraming.absenceNote(
+              signals(0, -1.0, false, 0, -1L), "widget torque", DEFAULTS);
       assertNotNull(note);
       assertTrue(note.contains("The index was searched for \"widget torque\""), note);
       assertFalse(note.contains("-1"), note);
@@ -243,6 +283,180 @@ final class McpDeliveryFramingTest {
     }
   }
 
+  /**
+   * Tempdoc 789, post-Amendment-3 F3 trigger redesign — the POSITIVE CONTROL the byte arm never had.
+   *
+   * <p>Amendment 3's live measurement killed the original probe arm: gibberish, rare-phrase and
+   * healthy queries all delivered ~1,630-1,725 content bytes (a 6% spread), so the thin arm could
+   * not fire and no arm had a demonstrated positive control. The score signal measured on the same
+   * corpus DID separate — 0.22 for a gibberish query, 1.00 for a gold-bearing healthy one. These
+   * cases mechanically demonstrate that separation at the shipped default floor, with the delivered
+   * bytes pinned at the Amendment-3 measurement (~1,650) so the byte arm is provably not what fires.
+   */
+  @Nested
+  @DisplayName("F3 score arm — dynamic range positive control (post-Amendment-3)")
+  final class WeakScoreDynamicRange {
+
+    /** The Amendment-3 measured delivery size — comfortably above the 400-byte floor. */
+    private static final int MEASURED_BODY_BYTES = 1_650;
+
+    @Test
+    @DisplayName("the measured gibberish score (0.22) fires the weak arm, and only the weak arm")
+    void weakScoreFires() {
+      String note =
+          McpDeliveryFraming.absenceNote(
+              signals(10, 0.22, true, MEASURED_BODY_BYTES, 10_432L), "zxqw plorb", DEFAULTS);
+      assertNotNull(note);
+      assertTrue(note.contains("scored weakly"), note);
+      assertTrue(note.contains("top relevance 0.22 of a possible 1.00"), note);
+      assertTrue(note.contains("under the 0.40 floor for a substantive match"), note);
+      assertFalse(note.contains("No document matched"), note);
+      assertFalse(note.contains("carry very little text"), note);
+      assertTrue(note.contains("Absence of results is not evidence of absence"), note);
+    }
+
+    @Test
+    @DisplayName("the measured healthy score (1.00) on the same fixture is silent")
+    void healthyScoreSilent() {
+      assertNull(
+          McpDeliveryFraming.absenceNote(
+              signals(10, 1.00, true, MEASURED_BODY_BYTES, 10_432L),
+              "quarterly hedging policy",
+              DEFAULTS));
+    }
+
+    @Test
+    @DisplayName("a zero-hit delivery still fires the zero arm, not the score arm")
+    void zeroHitFires() {
+      String note =
+          McpDeliveryFraming.absenceNote(
+              signals(0, -1.0, true, 0, 10_432L), "quarterly hedging policy", DEFAULTS);
+      assertNotNull(note);
+      assertTrue(note.contains("No document matched"), note);
+      assertFalse(note.contains("scored weakly"), note);
+    }
+
+    @Test
+    @DisplayName("the default 0.40 floor separates the two measured regimes with margin on both sides")
+    void theRangeIsReal() {
+      for (double weak : new double[] {0.10, 0.22, 0.39}) {
+        String note =
+            McpDeliveryFraming.absenceNote(
+                signals(10, weak, true, MEASURED_BODY_BYTES, 10_432L), "q", DEFAULTS);
+        assertNotNull(note, "expected the weak arm to fire at score " + weak);
+        assertTrue(note.contains("scored weakly"), "score " + weak + " -> " + note);
+      }
+      for (double healthy : new double[] {0.40, 0.55, 1.00}) {
+        assertNull(
+            McpDeliveryFraming.absenceNote(
+                signals(10, healthy, true, MEASURED_BODY_BYTES, 10_432L), "q", DEFAULTS),
+            "expected silence at score " + healthy);
+      }
+    }
+
+    @Test
+    @DisplayName("scope honesty: an incomparable scale (RRF / single-leg) gets no score arm at all")
+    void incomparableScaleGetsNoScoreArm() {
+      assertNull(
+          McpDeliveryFraming.absenceNote(
+              signals(10, 0.22, false, MEASURED_BODY_BYTES, 10_432L), "zxqw plorb", DEFAULTS));
+    }
+
+    @Test
+    @DisplayName("the byte arm stays distinct: a healthy score with no deliverable text still fires")
+    void byteArmRemainsDistinct() {
+      String note =
+          McpDeliveryFraming.absenceNote(
+              signals(10, 1.00, true, 30, 10_432L), "widget torque", DEFAULTS);
+      assertNotNull(note);
+      assertTrue(note.contains("carry very little text"), note);
+      assertTrue(note.contains("30 bytes, under the 400-byte floor"), note);
+      assertFalse(note.contains("scored weakly"), note);
+    }
+
+    @Test
+    @DisplayName("both arms fire together when a delivery is weakly scored AND textless")
+    void bothArmsCompose() {
+      String note =
+          McpDeliveryFraming.absenceNote(
+              signals(10, 0.22, true, 30, 10_432L), "widget torque", DEFAULTS);
+      assertNotNull(note);
+      assertTrue(note.contains("top relevance 0.22 of a possible 1.00"), note);
+      assertTrue(note.contains("30 bytes, under the 400-byte floor"), note);
+      assertTrue(note.indexOf("scored weakly") < note.indexOf("carry very little text"), note);
+    }
+  }
+
+  @Nested
+  @DisplayName("F3 score arm — fusion-scale scope")
+  final class FusionScaleScope {
+
+    @Test
+    @DisplayName("the two bounded convex-combination fusion methods are comparable")
+    void boundedFusionMethodsAreComparable() {
+      assertTrue(McpDeliveryFraming.normalizedFusionScale(traceWithFusion(EXECUTED, "hybrid")));
+      assertTrue(McpDeliveryFraming.normalizedFusionScale(traceWithFusion(EXECUTED, "cc")));
+      assertTrue(McpDeliveryFraming.normalizedFusionScale(traceWithFusion(EXECUTED, "  CC  ")));
+    }
+
+    @Test
+    @DisplayName("RRF is not comparable — its values sit around 0.016-0.033, not on [0,1]")
+    void rrfIsNotComparable() {
+      assertFalse(McpDeliveryFraming.normalizedFusionScale(traceWithFusion(EXECUTED, "rrf")));
+    }
+
+    @Test
+    @DisplayName("a skipped fusion stage means a single-leg raw score — not comparable")
+    void skippedFusionIsNotComparable() {
+      assertFalse(McpDeliveryFraming.normalizedFusionScale(traceWithFusion(SKIPPED, "")));
+      assertFalse(McpDeliveryFraming.normalizedFusionScale(traceWithFusion(SKIPPED, "hybrid")));
+    }
+
+    @Test
+    @DisplayName("a null/blank detail, a traceless response and a fusion-less trace are all silent")
+    void missingSignalsAreNotComparable() {
+      assertFalse(McpDeliveryFraming.normalizedFusionScale(traceWithFusion(EXECUTED, null)));
+      assertFalse(McpDeliveryFraming.normalizedFusionScale(traceWithFusion(EXECUTED, "")));
+      assertFalse(McpDeliveryFraming.normalizedFusionScale(null));
+      assertFalse(
+          McpDeliveryFraming.normalizedFusionScale(
+              new SearchTrace(
+                  SearchTrace.SCHEMA_VERSION,
+                  null,
+                  null,
+                  null,
+                  null,
+                  List.of(
+                      new SearchTrace.TraceStage(
+                          SearchTrace.StageId.SPARSE_RETRIEVAL, EXECUTED, null, 3L, "", null)))));
+    }
+  }
+
+  @Nested
+  @DisplayName("F3 score arm — top delivered score")
+  final class TopDeliveredScore {
+
+    @Test
+    @DisplayName("returns the MAX, not rank 1 — the cross-encoder reorders without rewriting scores")
+    void returnsMaxNotFirst() {
+      List<McpSearchResponseContent.HitContent> reordered =
+          List.of(scored(1, 0.31), scored(2, 0.97), scored(3, 0.44));
+      assertEquals(0.97, McpDeliveryFraming.topDeliveredScore(reordered), 1e-9);
+    }
+
+    @Test
+    @DisplayName("an empty or absent hit list reports the unavailable sentinel")
+    void emptyReportsSentinel() {
+      assertEquals(-1.0, McpDeliveryFraming.topDeliveredScore(List.of()), 1e-9);
+      assertEquals(-1.0, McpDeliveryFraming.topDeliveredScore(null), 1e-9);
+    }
+
+    private McpSearchResponseContent.HitContent scored(int rank, double score) {
+      return new McpSearchResponseContent.HitContent(
+          rank, "t", "/p", score, "preview", List.of(), List.of(), null, null);
+    }
+  }
+
   @Nested
   @DisplayName("Settings")
   final class SettingsBehaviour {
@@ -270,7 +484,8 @@ final class McpDeliveryFramingTest {
     @Test
     @DisplayName("framings compose — any subset may be active at once")
     void framingsCompose() {
-      McpDeliveryFraming.Settings both = new McpDeliveryFraming.Settings(true, false, true, 400);
+      McpDeliveryFraming.Settings both =
+          new McpDeliveryFraming.Settings(true, false, true, 400, 0.40);
       assertTrue(both.continuationEnabled());
       assertFalse(both.evidenceNotAnswerEnabled());
       assertTrue(both.calibratedAbsenceEnabled());

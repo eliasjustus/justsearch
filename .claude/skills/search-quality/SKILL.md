@@ -940,6 +940,43 @@ above)*
   benefit claim: the accuracy deltas above are unchanged and remain point-negative on enron with
   no effect detected at n=60/stratum. v4's `triple_reporting_semantics` still forbids
   adoption-rate-as-benefit as a headline, and publication (623) remains founder-only.
+- **UPDATE 2026-07-29 — the record's SIGNIFICANCE machinery was the next defect, and it is now
+  fixed forward (tempdoc 791 axis 4).** The headline p-values above are CELL-level exact McNemar
+  over the `(seed, qid)` grid, which counts a question's 3 seed replicates as 3 independent
+  observations and so understates `p`. Measured, not argued: on the decisive stratum (window-2
+  enron-1k, raw-EM scoring) cell-level `p = 0.0446` against a question-level sign-flip
+  permutation `p = 0.1358`, and every question-cluster bootstrap interval crosses zero
+  (`tmp/hero-arc-analysis/stats/heterogeneity.v1.json`). Claim policy
+  **`agent-utility-public-v5`** (v4 verbatim + the additive `question_level_primary`
+  requirement) makes the QUESTION the unit of analysis: a paired sign-flip permutation over
+  per-question mean deltas and a question-cluster bootstrap interval (BCa, percentile recorded
+  beside it), both >=20 000 draws with the RNG content-addressed from record-resident material.
+  The per-stratum accuracy outcome reads the CLUSTER interval; the cell-level McNemar stays
+  reported as an explicitly descriptive companion. v4 is now `status: superseded`.
+- **Re-evaluated offline under v5 ($0, no re-measurement, not committed as a new record):**
+  **`accepted / adoption-only`, 31/31 gates, `reasons []`** — unchanged, because `adoption-only`
+  never rested on significance. Control first: the same inputs re-composed under the
+  pre-supersede v4 document reproduce the committed `combined-v4` digest `c5a75457…` exactly, so
+  the v5 difference is attributable to the policy. Every measured number outside
+  `claim_verdict` and the new `question_level` block is byte-identical. Question-level vs
+  cell-level `p` on the committed (judge-overlaid) scoring: enron-1k **0.160 vs 0.063**,
+  enron-10k **0.152 vs 0.118**, legal-1k **1.0 vs 1.0** — the same systematic understatement,
+  with no stratum significant under either test on this cohort. The committed `combined/` and
+  `combined-v4/` records **remain unchanged as dated history**; nothing here is re-scored.
+- **The accepted publication is NOT re-scored by v5 and does not become stale.**
+  `agent-utility-hero-2026-07-28` carries its own immutable, hash-pinned copy of the policy it
+  was accepted under (`publications/agent-utility-hero-2026-07-28/policy.v1.json` =
+  `agent-utility-public-v4`), so `utility-replay` still verifies against v4 and the public pages
+  correctly quote v4 as THAT publication's policy while `agent-utility-public-v5` is the active
+  one for future campaigns. A published bundle's policy is historical fact, not a pointer to
+  whatever is current.
+- **A pre-freeze dry-run now exists so this class cannot recur silently.**
+  `jseval utility-policy-dryrun --design <cells.v1.json> --policy <policy>` synthesizes a
+  minimal structurally-valid record with a design's declared shape, evaluates every gate, and
+  exits non-zero on any gate that can never pass. Replayed against the REAL frozen 782 design it
+  catches BOTH original freeze defects for $0: BLOCKER-1 (`schema_strata_reported`, `2_hop`
+  required from a 100%-`1_hop` corpus) and FREEZE DEFECT #2 (`corpus_certification_complete`,
+  50-query certification vs 20-qid design). Both were reachable only at run/compose time before.
 
 ### F-042: the shipped Tika extraction path costs −13.74% nDCG@10 at HEAD hybrid defaults — but the obvious fix (swap to a better OCR engine) is measurement-rejected: GOT is statistically tied with Tika (tempdoc 786 §E, 2026-07-28; the full-pipeline sibling of F-009's lexical-only measurement)
 

@@ -295,7 +295,8 @@ final class McpEntityCarriageTest {
     @DisplayName("carriage composes with F1: the newly delivered entity becomes markable")
     void composesWithContinuationFraming() {
       KnowledgeSearchResponse resp = withEntityFacets(buriedEntityResponse());
-      McpDeliveryFraming.Settings f1 = new McpDeliveryFraming.Settings(true, false, false, 400);
+      McpDeliveryFraming.Settings f1 =
+          new McpDeliveryFraming.Settings(true, false, false, 400, 0.40);
 
       // Without carriage F1 has nothing to mark: the entity is not in the delivered text at all.
       McpSearchResponseContent withoutCarriage =

@@ -533,3 +533,99 @@ smokes) retained at probe-789/tmp/789-probe-2026-07-28/.
 
 Next steps this licenses: naturalistic replication design (enron-qa) for F1/F2; F3 trigger
 redesign is engine-side design work (Amendment 3), parked.
+
+## F3 trigger redesign (post-Amendment-3) — 2026-07-29
+
+Unparks the item above. Amendment 3 killed the F3 probe arm for want of a positive
+control: the byte signal had no dynamic range (gibberish, rare-phrase and healthy queries
+all returned ~1,630-1,725 content bytes, a 6% spread), so the thin arm never fired. The
+same measurement showed the rendered top score DOES separate — 0.22 for gibberish, 1.00
+for a gold-bearing healthy query. This section records the redesign that turns that into a
+third trigger arm with a demonstrated range.
+
+### 1. Signal map (what exists, what does not)
+
+What the F3 call site can read, verified against source:
+
+| Signal | Where | Verdict |
+|---|---|---|
+| `KnowledgeSearchResponse.Hit.score` | `modules/app-api/src/main/java/io/justsearch/app/api/knowledge/KnowledgeSearchResponse.java:58` (record `Hit` at `:56-66`) | **Used.** Undocumented `double`; its meaning and scale are set entirely by the producer chain. |
+| Fused-score scale (`Bm25Dense`) | `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/HybridFusionUtils.java:368-380`, `normalizeScore` at `:904-906` | Convex combination `alpha*normDense + (1-alpha)*normSparse` over min-max-normalized legs ⇒ **bounded [0,1]**. |
+| Fused-score scale (`ThreeWay`) | `HybridFusionUtils.java:682-700` | Same shape, three legs ⇒ **bounded [0,1]**. |
+| Fused-score scale (`Bm25Splade` / `DenseSplade`) | RRF, `Σ 1/(60+rank)` | Values ≈0.016-0.033 ⇒ **not comparable** to an absolute [0,1] floor. |
+| Fused-score scale (single-leg) | `Bm25Only` raw BM25 (unbounded), `DenseOnly` raw cosine | **Not comparable.** |
+| Fusion method (the scale discriminator) | producer `SearchTraceProjector.legsOfMultiLeg` at `modules/worker-services/src/main/java/io/justsearch/indexerworker/services/respond/SearchTraceProjector.java:157-177`, emitted as the FUSION stage `detail` at `:121`, mapped head-side **unconditionally** at `modules/app-services/src/main/java/io/justsearch/app/services/worker/SearchTraceMapper.java:114` | **Used.** Always-on, NOT `debug`-gated. Values: `"hybrid"` (Bm25Dense), `"cc"` (ThreeWay), `"rrf"` (splade pairs), `""`/absent (single-leg — fusion SKIPPED with reason `single-leg-or-no-retrieval`). |
+| Freshness decay | `modules/app-services/src/main/java/io/justsearch/app/services/worker/SearchResultMapper.java:229-240` | Multiplies the final score by a factor in [0.95, 1.0] — stays inside [0,1], so it does not break the bound. |
+| Cross-encoder reordering | `modules/app-services/src/main/java/io/justsearch/app/services/worker/KnowledgeSearchEngine.java:1005-1014` | Builds `rerankedResults` **by index with `score` untouched** ⇒ `hits.get(0).score()` is NOT the maximum. The trigger takes the max over delivered hits. |
+| `QualitySignals` (`bestChunkScore`, `scoreGap`, `retrievalCoverage`) | `modules/app-api/src/main/java/io/justsearch/app/api/DocumentService.java:190-197` | **Does not exist for this trigger.** It is a `ContextResult` (RAG) field and never reaches `justsearch_search`. |
+| `rawScore` / `maxScore` / any absolute-relevance field | — | **Does not exist** on `KnowledgeSearchResponse` (record at `KnowledgeSearchResponse.java:16-40`; `Hit` at `:56-66`). |
+| `SearchTrace.Degradation`, `TraceStage.cardinality`, `Qpp.maxIdf` | `SearchTrace.java:61-67`, `:134-142`, `:53` | Exist and are readable; **not used by this trigger** (recorded so a future arm does not re-derive their availability). |
+
+### 2. The trigger
+
+`McpDeliveryFraming.absenceNote(AbsenceSignals, String query, Settings)` now has three
+named, independent arms:
+
+* `empty` — `totalHits == 0`.
+* `weakScore` — `!empty && scoreComparable && topScore >= 0 && topScore < weakScoreFloor`.
+* `thinBytes` — `!empty && deliveredBodyBytes < thinResultFloorBytes`.
+
+`scoreComparable` is `McpDeliveryFraming.normalizedFusionScale(trace)`: true iff the trace
+carries a FUSION stage with status EXECUTED and detail `hybrid` or `cc`. `topScore` is
+`McpDeliveryFraming.topDeliveredScore(hits)` — the MAX over delivered hits (see the
+cross-encoder row above), `-1.0` when nothing was delivered.
+
+**What the score arm measures, stated honestly.** The fused score is min-max normalized
+WITHIN the query's own candidate set, so it measures how decisively the top document won
+its own retrieval window — not absolute corpus relevance. That is the property the framing
+wants ("matches came back but nothing really matched"), but it is not a relevance
+probability and the rendered text does not claim to be one.
+
+**Default floor `0.40` and its landmarks.** Above the measured weak regime (0.22,
+gibberish) and below both the measured healthy value (1.00, gold-bearing) and the
+structural landmark `alpha = 0.5` (the default `index.hybrid.cc_alpha`), which is the fused
+score a document topping exactly one normalized leg receives. Config key
+`search.mcp_framing.weak_score_floor` / `JUSTSEARCH_SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR`;
+`0` disables the arm.
+
+### 3. Range evidence
+
+`McpDeliveryFramingTest.WeakScoreDynamicRange` (`modules/ui/src/test/java/io/justsearch/ui/api/mcp/McpDeliveryFramingTest.java`)
+is the positive control the byte arm never had. It pins delivered bytes at the Amendment-3
+measurement (1,650 — comfortably over the 400-byte floor, so the byte arm provably is not
+what fires) and demonstrates: the measured gibberish score 0.22 fires the weak arm and only
+the weak arm; the measured healthy score 1.00 on the same fixture is silent; the sweep
+{0.10, 0.22, 0.39} all fire while {0.40, 0.55, 1.00} are all silent, i.e. the default floor
+separates the two measured regimes with margin on both sides; an incomparable scale
+(`scoreComparable=false`) gets no score arm at all; a healthy score with a 30-byte body
+still fires the byte arm alone; and a weak-and-textless delivery renders both sentences.
+`McpDeliveryFramingTest.FusionScaleScope` pins `normalizedFusionScale` across every fusion
+method the worker can emit plus the SKIPPED / null-detail / no-fusion-stage / null-trace
+paths; `McpDeliveryFramingTest.TopDeliveredScore` pins the max-not-rank-1 semantics on a
+list whose first element is not the maximum.
+
+### 4. What a future probe arm needs
+
+The arm stays unspent until a **framing-presence smoke** asserts polarity BEFORE any paid
+cell — the same discipline that caught the env-forwarding gap on 2026-07-28. Required smoke
+queries and expected polarities:
+
+| Smoke query | Expected |
+|---|---|
+| a gibberish / nonsense query that still retrieves (e.g. random consonant strings over an indexed corpus) | F3 present, containing "scored weakly" |
+| a gold-bearing healthy query from the eval set | F3 **absent** |
+| a query with no lexical or semantic match at all | F3 present, containing "No document matched" |
+
+All three must be observed on the live stack, on the arm's own corpus, with the arm's own
+config, before the first paid cell. A smoke that cannot produce the first row means the
+corpus has no weak regime and the arm has no positive control there — which is exactly the
+Amendment-3 failure, and the arm must be dropped rather than run blind.
+
+### 5. Byte-floor disposition
+
+`thin_result_floor_bytes` is **RETAINED**, re-scoped as the degenerate-delivery arm:
+documents matched but carry essentially no deliverable text (the empty-extraction share
+tempdoc 790 targets). The score arm structurally cannot see that case — a hit can score 1.00
+on a title match while delivering ~30 bytes of body. The Amendment-3 corpus never tripped
+the floor because every delivery there carried ~1.6 KB, which is a fact about that corpus,
+not evidence the arm is vacuous.

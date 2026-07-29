@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.ui.api.mcp;
 
+import io.justsearch.app.api.knowledge.SearchTrace;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.resolved.ResolvedConfig;
 import java.util.ArrayList;
@@ -28,8 +29,8 @@ import java.util.Set;
  *       the query did not carries one line marking it as a possible intermediate fact.
  *   <li><b>F2 evidence-not-answer</b> — against the terminal answer shape: deliveries are framed as
  *       lexical/semantic matches, not verified answers.
- *   <li><b>F3 calibrated absence</b> — against over-trusted emptiness: zero/thin deliveries carry
- *       corpus coverage and explicit absence-is-not-evidence framing.
+ *   <li><b>F3 calibrated absence</b> — against over-trusted emptiness: zero-hit, weak-relevance and
+ *       thin deliveries carry corpus coverage and explicit absence-is-not-evidence framing.
  * </ul>
  *
  * <p><b>Content-only by construction.</b> Nothing here touches retrieval, the MCP tool schema, or any
@@ -73,11 +74,17 @@ final class McpDeliveryFraming {
       boolean continuationEnabled,
       boolean evidenceNotAnswerEnabled,
       boolean calibratedAbsenceEnabled,
-      int thinResultFloorBytes) {
+      int thinResultFloorBytes,
+      double weakScoreFloor) {
 
     /** Every framing off — the shipped default. */
     static final Settings OFF =
-        new Settings(false, false, false, ResolvedConfig.Search.DEFAULT_THIN_RESULT_FLOOR_BYTES);
+        new Settings(
+            false,
+            false,
+            false,
+            ResolvedConfig.Search.DEFAULT_THIN_RESULT_FLOOR_BYTES,
+            ResolvedConfig.Search.DEFAULT_WEAK_SCORE_FLOOR);
   }
 
   /**
@@ -99,7 +106,8 @@ final class McpDeliveryFraming {
         framing.continuationEnabled(),
         framing.evidenceNotAnswerEnabled(),
         framing.calibratedAbsenceEnabled(),
-        framing.thinResultFloorBytes());
+        framing.thinResultFloorBytes(),
+        framing.weakScoreFloor());
   }
 
   // =========================================================================
@@ -300,8 +308,88 @@ final class McpDeliveryFraming {
   // =========================================================================
 
   /**
-   * F3: the calibrated-absence block for a zero-result or thin-result delivery, or {@code null} when
-   * the delivery is neither.
+   * The trigger inputs F3 reads, carried as one record so the arms are named at the call site rather
+   * than positional in a five-scalar signature.
+   *
+   * @param totalHits the response's total match count — 0 is the zero-hit arm
+   * @param topScore the MAXIMUM score over delivered hits, or negative when unavailable — see {@link
+   *     #topDeliveredScore}
+   * @param scoreComparable whether {@code topScore} is on the bounded [0,1] scale an absolute floor
+   *     can be compared against — see {@link #normalizedFusionScale}
+   * @param deliveredBodyBytes the rendered hit-body size — see {@link #deliveredBodyBytes}
+   * @param indexedDocs the corpus coverage count, or negative when unavailable
+   */
+  record AbsenceSignals(
+      long totalHits,
+      double topScore,
+      boolean scoreComparable,
+      int deliveredBodyBytes,
+      long indexedDocs) {}
+
+  /**
+   * True when this response's fused score is on a bounded [0,1] scale that an absolute floor can be
+   * compared against — the precondition for the weak-score arm.
+   *
+   * <p><b>Why the scope limit.</b> {@code KnowledgeSearchResponse.Hit.score} has no documented
+   * meaning; its SCALE is set by which retrieval legs ran. Only two fusion methods produce a convex
+   * combination of min-max-normalized leg scores and are therefore bounded [0,1]: {@code "hybrid"}
+   * (the Bm25+Dense pair) and {@code "cc"} (the three-way combination). The splade pairings fuse by
+   * RRF, whose values sit around 0.016-0.033, and a single-leg delivery carries a raw unbounded BM25
+   * score or a raw cosine — comparing any of those against a [0,1] floor would fire the arm on every
+   * healthy delivery. So the score arm stays SILENT for them and the zero-hit and byte arms carry
+   * those deliveries alone.
+   *
+   * <p>The fusion method is read from the FUSION stage's {@code detail}, which the worker sets from
+   * the chosen leg set and the head maps unconditionally — it is an always-on response fact, not a
+   * {@code debug}-gated one, so the arm needs no new query path or parameter.
+   */
+  static boolean normalizedFusionScale(SearchTrace trace) {
+    if (trace == null || trace.stages() == null) {
+      return false;
+    }
+    for (SearchTrace.TraceStage stage : trace.stages()) {
+      if (stage == null
+          || stage.id() != SearchTrace.StageId.FUSION
+          || stage.status() != SearchTrace.StageStatus.EXECUTED) {
+        continue;
+      }
+      String detail = stage.detail();
+      if (detail == null) {
+        continue;
+      }
+      String method = detail.trim().toLowerCase(Locale.ROOT);
+      if ("hybrid".equals(method) || "cc".equals(method)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * The MAXIMUM score over the delivered hits, or {@code -1.0} when nothing was delivered.
+   *
+   * <p><b>Max, not {@code hits.get(0)}.</b> The cross-encoder REORDERS results without rewriting
+   * their scores ({@code KnowledgeSearchEngine} builds its reranked list by index and leaves each
+   * hit's {@code score} untouched), so the first delivered hit is not in general the highest-scoring
+   * one. Reading rank 1 would make the arm fire on reranked deliveries whose actual top score is
+   * healthy.
+   */
+  static double topDeliveredScore(List<McpSearchResponseContent.HitContent> hits) {
+    if (hits == null || hits.isEmpty()) {
+      return -1.0;
+    }
+    double max = -1.0;
+    for (McpSearchResponseContent.HitContent hit : hits) {
+      if (hit != null && hit.score() > max) {
+        max = hit.score();
+      }
+    }
+    return max;
+  }
+
+  /**
+   * F3: the calibrated-absence block for a zero-result, weak-relevance or thin-result delivery, or
+   * {@code null} when the delivery is none of the three.
    *
    * <p>Carries the three things the charter names: corpus coverage ({@code indexedDocs}, read from
    * the index status surface {@code justsearch_status} already exposes), what was searched, and an
@@ -309,16 +397,40 @@ final class McpDeliveryFraming {
    * suggestion. {@code indexedDocs < 0} means the count was unavailable, and the coverage clause is
    * omitted rather than guessed.
    *
-   * @param deliveredBodyBytes the rendered hit-body size — see {@link #deliveredBodyBytes}
+   * <p><b>Design note — what the score arm measures (post-Amendment-3 redesign).</b> The fused score
+   * is min-max normalized WITHIN the query's own candidate set, so it measures how decisively the
+   * top document won its own candidate set, not absolute relevance against the corpus. That is the
+   * discriminating property the arm wants: a query whose best candidate barely separates from the
+   * rest of its own retrieval window is the "matches were returned but nothing really matched" shape
+   * the framing targets. It is scoped by {@link #normalizedFusionScale} to the {@code cc}/{@code
+   * hybrid} fusion methods, where the score is bounded [0,1]; RRF and single-leg deliveries get the
+   * zero-hit and byte arms only.
+   *
+   * <p>The arm exists because the byte signal had no dynamic range in live measurement (tempdoc 789
+   * Amendment 3): gibberish, rare-phrase and healthy queries all delivered ~1,630-1,725 content
+   * bytes, so the thin arm never fired and the probe arm was dropped for want of a positive control.
+   * The score signal does have range on the same corpus — 0.22 for a gibberish query, 1.00 for a
+   * gold-bearing healthy one. The default floor of 0.40 sits above the measured weak regime and
+   * below both the measured healthy value and the structural landmark at {@code alpha = 0.5} (the
+   * default {@code index.hybrid.cc_alpha}), the fused score a document topping exactly one
+   * normalized leg receives.
+   *
+   * <p>The three arms are independent: a zero-hit delivery is framed as such, and a non-empty
+   * delivery may trip the score arm, the byte arm, or both.
    */
-  static String absenceNote(
-      long totalHits, int deliveredBodyBytes, long indexedDocs, String query, int floorBytes) {
-    boolean empty = totalHits == 0;
-    boolean thin = !empty && deliveredBodyBytes < floorBytes;
-    if (!empty && !thin) {
+  static String absenceNote(AbsenceSignals signals, String query, Settings settings) {
+    boolean empty = signals.totalHits() == 0;
+    boolean weakScore =
+        !empty
+            && signals.scoreComparable()
+            && signals.topScore() >= 0.0
+            && signals.topScore() < settings.weakScoreFloor();
+    boolean thinBytes = !empty && signals.deliveredBodyBytes() < settings.thinResultFloorBytes();
+    if (!empty && !weakScore && !thinBytes) {
       return null;
     }
     StringBuilder sb = new StringBuilder();
+    long indexedDocs = signals.indexedDocs();
     if (indexedDocs >= 0) {
       sb.append(indexedDocs)
           .append(indexedDocs == 1 ? " document is" : " documents are")
@@ -336,11 +448,20 @@ final class McpDeliveryFraming {
     if (empty) {
       sb.append("No document matched. ");
     } else {
-      sb.append("Matches were returned but carry very little text (")
-          .append(deliveredBodyBytes)
-          .append(" bytes, under the ")
-          .append(floorBytes)
-          .append("-byte floor for a substantive result). ");
+      if (weakScore) {
+        sb.append("Matches were returned but scored weakly (top relevance ")
+            .append(fixed2(signals.topScore()))
+            .append(" of a possible 1.00, under the ")
+            .append(fixed2(settings.weakScoreFloor()))
+            .append(" floor for a substantive match). ");
+      }
+      if (thinBytes) {
+        sb.append("Matches were returned but carry very little text (")
+            .append(signals.deliveredBodyBytes())
+            .append(" bytes, under the ")
+            .append(settings.thinResultFloorBytes())
+            .append("-byte floor for a substantive result). ");
+      }
     }
     sb.append(
         "Absence of results is not evidence of absence: the index may phrase the fact differently,"
@@ -351,9 +472,21 @@ final class McpDeliveryFraming {
     return sb.toString();
   }
 
+  /** Two-decimal rendering of a relevance value, locale-independent so the text is stable. */
+  private static String fixed2(double value) {
+    return String.format(Locale.ROOT, "%.2f", value);
+  }
+
   /**
    * The delivered-body size the F3 thin-result trigger measures: the per-hit text an agent actually
    * receives — title, path, preview and matched terms — summed across delivered hits.
+   *
+   * <p><b>Disposition after the post-Amendment-3 redesign: RETAINED</b> as the degenerate-delivery
+   * arm — documents matched but carry essentially no deliverable text (the empty-extraction share
+   * tempdoc 790 targets). The score arm structurally cannot see that case: a hit can score 1.00 on a
+   * title match while delivering ~30 bytes of body. The Amendment-3 corpus never tripped this floor
+   * because every delivery there carried ~1.6 KB, which is a fact about that corpus, not evidence
+   * the arm is vacuous.
    *
    * <p>Deliberately excludes the response-level scaffolding (the "Found N results" line, facets,
    * hints, and the framing lines themselves): those are constant-ish overhead present even on a

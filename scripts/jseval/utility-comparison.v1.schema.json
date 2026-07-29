@@ -67,7 +67,8 @@
         "cost_usd": {"type": ["object", "null"]},
         "adoption": {"type": "object"},
         "funnel": {"type": ["object", "null"]},
-        "duration": {"type": ["object", "null"], "description": "tempdoc 624 (2026-07-17) duration metric family: per-arm wall-clock distribution + mandatory n_censored/completion_rate. Omitted when no paired cell carried a time."}
+        "duration": {"type": ["object", "null"], "description": "tempdoc 624 (2026-07-17) duration metric family: per-arm wall-clock distribution + mandatory n_censored/completion_rate. Omitted when no paired cell carried a time."},
+        "question_level": {"type": ["object", "null"], "description": "tempdoc 791 axis 4 / claim policy v5: question-clustered PRIMARY accuracy statistics (paired sign-flip permutation p + question-cluster bootstrap interval, RNG content-addressed from recorded material). Emitted only when the selected policy declares requirements.question_level_primary, so evidence composed under v1-v4 is byte-identical to before this key existed."}
       }
     }
   },

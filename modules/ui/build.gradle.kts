@@ -2038,6 +2038,7 @@ val HEADLESS_AI_ENV_VARS = listOf(
     // unlisted knob is silently dropped and the arm measures the default.
     "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED",
     "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS",
+    "JUSTSEARCH_SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR",
 )
 
 /** GPU/model env vars forwarded from operator shell for eval runs (tempdoc 329). */
