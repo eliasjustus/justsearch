@@ -417,6 +417,11 @@ def _candidates(
                 add(start, start + len(name.group(0)), "PER", name.group(0))
         for m in _RE_DOTTED_LOCALPART.finditer(text):
             add_derived("PER", f"{m.group(1).title()} {m.group(2).title()}")
+    elif domain == "wiki":
+        # Encyclopedic prose (tempdoc 748): no domain-specific apparatus. The generic
+        # extractors above ARE the harvest. Named explicitly so the absence is a decision
+        # on the record rather than a fall-through nobody chose.
+        pass
 
     return out, derived
 
@@ -523,15 +528,26 @@ def length_weights(rows: Sequence[dict]) -> dict[str, int]:
     return {str(length): counts[length] for length in sorted(counts)}
 
 
-def trim_bank(full: dict) -> dict:
+def trim_bank(full: dict, *, mintable_types: Sequence[str] | None = None) -> dict:
     """Derive the committed ``entity-bank.v2`` from a full harvest (pure; no IO).
 
     Keeps exemplars + length weights for the mintable types and a collision index over
     every real surface of every type; drops the surfaces the build path never reads.
+
+    ``mintable_types`` narrows the draw for THIS bank (tempdoc 748) — see
+    :func:`jseval.entity_bank.bank_mintable_types` for why a German host corpus needs it.
+    The narrowed set is recorded in ``parameters.mintable_types`` so the build path reads
+    it off the committed artifact rather than being told out of band.
     """
     entities = full["entities"]
-    mintable = [t for t in MINTABLE_TYPES if entities.get(t)]
+    allowed = MINTABLE_TYPES if mintable_types is None else tuple(
+        t for t in MINTABLE_TYPES if t in set(mintable_types))
+    if not allowed:
+        raise ValueError(f"mintable_types must name at least one of {MINTABLE_TYPES}")
+    mintable = [t for t in allowed if entities.get(t)]
     parameters = dict(full["parameters"], exemplars_per_length=EXEMPLARS_PER_LENGTH)
+    if mintable_types is not None:
+        parameters["mintable_types"] = list(allowed)
     return {
         "schema": BANK_SCHEMA,
         "harvester_version": full["harvester_version"],
@@ -554,13 +570,14 @@ def build_bank(
     source_revision: str | None = None,
     raw_source_signature: str | None = None,
     corpus_sig: str | None = None,
+    mintable_types: Sequence[str] | None = None,
 ) -> dict:
     """The committed, trimmed bank for ``documents`` — what the build path loads."""
     return trim_bank(build_full_harvest(
         documents, domain=domain, host_corpus=host_corpus,
         source_revision=source_revision, raw_source_signature=raw_source_signature,
         corpus_sig=corpus_sig,
-    ))
+    ), mintable_types=mintable_types)
 
 
 def build_full_harvest(
@@ -669,7 +686,17 @@ def _main(argv: Sequence[str] | None = None) -> int:
         "--emit-full", default=None, metavar="PATH",
         help=(f"also write the full harvest ({FULL_HARVEST_FILENAME}-shaped) for offline "
               "analysis; not loadable by the build path"))
+    ap.add_argument(
+        "--mintable-types", default=None, metavar="T1,T2",
+        help=(f"narrow the types the build path may mint from (subset of {MINTABLE_TYPES}); "
+              "recorded in the committed bank's parameters.mintable_types. Omit to keep all."))
     args = ap.parse_args(argv)
+    mintable_types = None
+    if args.mintable_types:
+        mintable_types = [t.strip().upper() for t in args.mintable_types.split(",") if t.strip()]
+        unknown = sorted(set(mintable_types) - set(MINTABLE_TYPES))
+        if unknown:
+            ap.error(f"--mintable-types: unknown type(s) {unknown}; expected {MINTABLE_TYPES}")
 
     docs_dir = Path(args.docs_dir)
     paths = sorted(docs_dir.glob("*.txt"), key=lambda p: p.name)
@@ -684,7 +711,7 @@ def _main(argv: Sequence[str] | None = None) -> int:
         raw_source_signature=args.raw_source_signature,
         corpus_sig=corpus_signature(docs_dir, files=paths),
     )
-    bank = trim_bank(full)
+    bank = trim_bank(full, mintable_types=mintable_types)
     elapsed = time.perf_counter() - started
     commitment = write_bank(bank, args.out)
     report = {

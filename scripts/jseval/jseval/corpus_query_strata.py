@@ -23,14 +23,36 @@ def _short_natural(query: str, language: str) -> str:
             raise ValueError(f"unsupported English verbose query template: {query!r}")
         candidate = f"What value identifies {match.group(2)}'s {match.group(1)}?"
     elif language == "de":
+        # tempdoc 748 §D-2 spread the German head phrasing across `_RELATIONS_DE` the way
+        # 767 §I.3 did for English, so the verbose German template now carries one genitive
+        # relation phrase per hop ahead of the descriptor ("… der Kette des Konstrukteurs
+        # des Standorts <type>, <place>?"). Group 1 absorbs that relation chain (non-greedy,
+        # so multi-hop nesting lands there whole) and group 2 is the descriptor. The
+        # short-natural rendering deliberately DROPS the relation chain: it is redundant at
+        # hops=1 and keeping it would add 2-3 words per hop to a stratum defined by a 5-12
+        # word cap, which is exactly what the 624 triple-render broke.
         match = re.fullmatch(
-            r"Folgt man den Verknüpfungen ausgehend vom Standort (.+), "
-            r"mit welchem Wert ist die letzte Entität verbunden\?",
+            r"Welcher Wert steht am Ende der Kette (.+?)des Standorts (.+)\?",
             query,
         )
-        if not match:
-            raise ValueError(f"unsupported German verbose query template: {query!r}")
-        candidate = f"Welcher Wert folgt ab Standort {match.group(1)}?"
+        if match:
+            descriptor = match.group(2)
+        else:
+            # The pre-748 German verbose template. The committed 635-era German gold
+            # (`635-corpora/synth-multiling-de-v1`, `624-corpora/battlefield-de-v1`) is
+            # frozen in it and must keep rebuilding its short-natural sibling byte-for-byte
+            # — those are commitment-bound inputs, not code that can be migrated. Both
+            # templates render to the SAME short-natural shape, so the stratum's own
+            # definition is unchanged; only the verbose source generation moved on.
+            legacy = re.fullmatch(
+                r"Folgt man den Verknüpfungen ausgehend vom Standort (.+), "
+                r"mit welchem Wert ist die letzte Entität verbunden\?",
+                query,
+            )
+            if not legacy:
+                raise ValueError(f"unsupported German verbose query template: {query!r}")
+            descriptor = legacy.group(1)
+        candidate = f"Welcher Wert folgt ab Standort {descriptor}?"
     else:
         raise ValueError("language must be 'en' or 'de'")
     words = candidate.split()

@@ -108,7 +108,14 @@ ENTITY_TYPES: tuple[str, ...] = (
     "PER", "ORG", "LOC", "CASE", "CITATION", "DOCKET", "EMAIL", "DATE", "CARDINAL",
 )
 
-DOMAINS: tuple[str, ...] = ("legal", "email")
+# Host-corpus domains a bank may be harvested from. `legal`/`email` each add their own
+# domain-specific extraction patterns in `entity_harvest._candidates`; `wiki`
+# (tempdoc 748) deliberately adds NONE — encyclopedic prose (MIRACL/Wikipedia) has no
+# citation/docket/header apparatus to key on, so the generic capitalized-run +
+# date/cardinal/email extractors are the whole harvest. It exists as its own value rather
+# than reusing `legal` because `host.domain` is committed provenance: labelling a German
+# Wikipedia bank "legal" would misdescribe the artifact for every later reader.
+DOMAINS: tuple[str, ...] = ("legal", "email", "wiki")
 
 # --------------------------------------------------------------------------------------
 # Quality-filter parameters
@@ -139,6 +146,25 @@ MAX_RESAMPLES = 5
 #: CARDINAL surface would not read as a subject there. Ordered — the minter cycles this
 #: tuple by entity index, so the type mix of a corpus is deterministic and reproducible.
 MINTABLE_TYPES: tuple[str, ...] = ("PER", "ORG", "LOC")
+
+
+def bank_mintable_types(bank: dict) -> tuple[str, ...]:
+    """The types :class:`Minter` may draw from for THIS bank, in mint-cycle order.
+
+    Defaults to :data:`MINTABLE_TYPES`. A bank may narrow it via
+    ``parameters.mintable_types`` (tempdoc 748): the harvester's classifier is
+    English-lexicon, so on a German host corpus it recovers ~2k PER surfaces but only a
+    couple of dozen ORG/LOC — and those ORG/LOC surfaces are themselves ENGLISH
+    ("American Film Institute", "Los Angeles"), because they entered German Wikipedia as
+    foreign proper names. Minting from them would splice English-shaped names into German
+    host documents: a language-of-origin signal separating gold from native, i.e. a new
+    leak of exactly the class this rebuild removes. Narrowing is a per-bank fact, so it is
+    recorded in the committed bank rather than mutating this module-level constant.
+    """
+    declared = ((bank.get("parameters") or {}).get("mintable_types")) or None
+    if not declared:
+        return MINTABLE_TYPES
+    return tuple(t for t in MINTABLE_TYPES if t in set(declared))
 
 #: Attempts before the minter widens its escape suffix. See :meth:`Minter.mint_entity`.
 MINT_ATTEMPTS_PER_WIDTH = 8
@@ -541,10 +567,11 @@ class Minter:
     def __init__(self, bank: dict) -> None:
         self._bank = bank
         exemplars = bank.get("exemplars") or {}
-        self._types: tuple[str, ...] = tuple(t for t in MINTABLE_TYPES if exemplars.get(t))
+        allowed = bank_mintable_types(bank)
+        self._types: tuple[str, ...] = tuple(t for t in allowed if exemplars.get(t))
         if not self._types:
             raise ValueError(
-                f"entity bank carries none of the mintable types {MINTABLE_TYPES}; "
+                f"entity bank carries none of the mintable types {allowed}; "
                 "a bank harvested from a host corpus always does"
             )
         #: Truncated digests of every real surface in the bank, all types — the "must not
