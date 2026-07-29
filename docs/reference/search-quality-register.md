@@ -71,14 +71,15 @@ every committed cell signature. The behavioral count is already derivable withou
 | mixed/ohr-bench-clean | multi-domain | en | 1000 | 962 | extractive | 2026-03-19 | 252 | OHR-Bench ground-truth text (7 domains). |
 | mixed/ohr-bench-got-moderate | multi-domain | en | 1000 | 962 | extractive | 2026-03-19 | 252 | OHR-Bench GOT OCR extraction (moderate noise). |
 | mixed/ohr-bench-mineru-moderate | multi-domain | en | 1000 | 962 | extractive | 2026-03-19 | 252 | OHR-Bench MinerU extraction (moderate noise). |
-| mixed/ohr-bench-tika-pdf | multi-domain | en | 1000 | 962 | extractive | 2026-03-20 | 252 | OHR-Bench original PDFs through Tika StructuredContentExtractor. **126 of the 1000 documents extracted to zero characters** (110 of them have real ground-truth text in the clean arm; 16 are blank pages there too) — the empty-extraction share F-042's tax is concentrated in (790 §B). Corpus is pre-extracted TEXT, not PDF bytes. |
+| mixed/ohr-bench-tika-pdf | multi-domain | en | 1000 | 962 | extractive | 2026-03-20 | 252 | OHR-Bench original PDFs through Tika StructuredContentExtractor. **126 of the 1000 documents extracted to zero characters** (110 of them have real ground-truth text in the clean arm; 16 are blank pages there too) — the empty-extraction share F-042's tax is concentrated in (790 §B); at the shipped `alnum < 2` dropout threshold the set is **127** (126 empty + one single-backslash document), of which **111** have real ground truth (790 §H.1). Corpus is pre-extracted TEXT, not PDF bytes — **ingesting it never exercises the live extraction chain**; use `mixed/ohr-bench-pdf-live` for that. |
+| mixed/ohr-bench-pdf-live | multi-domain | en | 1000 | 962 | extractive | 2026-07-29 | 790 §H | **The byte-level twin of `ohr-bench-tika-pdf`** — same 1000 `_id`s, byte-identical queries/qrels (SHA256-verified), but the documents are the source single-page PDFs, so ingest runs the Worker's real extraction chain (`raw_files: true`, the `mixed/realdocs-v1` mechanism from 686). Source: HF `opendatalab/OHR-Bench` `pdfs.zip` (`sha256 f9bc65f3…c783`), **CC-BY-4.0 research-use — public claims need attribution + scope**. `page_idx` is 0-based (probed). Validity control: 875/1000 have a real text layer and the 125 without are exactly the shipped arm's dropout set. Rebuild: `scripts/search/fetch-ohrbench-pdf-corpus.py`; recipe + per-file manifest + README at `scripts/jseval/666-corpora/ohr-bench-pdf-live/`. Costs ~16× the ingest wall-clock of the text arm (1188 s vs 74 s for 1000 docs) and queues ~252 documents of VDU backfill. **Caveat:** `chunk_completeness` is blind on a `raw_files` corpus (no `corpus.jsonl` to compute `expected` from) — it reported `chunk-free` against 3144 real chunk documents. |
 | mixed/multihop-rag-2556 | news/multi-hop | en | 609 | 2556 | multi-hop inference/comparison/temporal/null | 2026-04-07 | 366 §9d | Retrieval eval, filter-bearing |
 | golden/needle-burial-v1 | synthetic/buried-signal | en | 280 | 20 | zero-overlap paraphrase | 2026-06-23 | 636 | Buried-signal regression guard (F-023). Source `scripts/jseval/635-corpora/needle-burial-v1`; s30/s60 scales regenerable via seed=636/ratio in `meta.json`. **Content regenerated 2026-07-01 (tempdoc 664)** — see Corpus provenance note under Findings. **LEAKY — id-shape enumeration (776 item 3):** gold occupies `trailing_int(id)` 1..40, distractors 41..280; `trailing_int(id)<=40` selects gold at P/R 1.0 (native base 0.29) via materialized `<doc_id>.txt` filenames. `_FILLER` uniform (not gold-selective here). See the 767/776 Corpus provenance note. |
 | golden/battlefield-en-v1 | synthetic/2-hop chains | en | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | Certified in-band 624 (hybrid 0.4143 "hard", pre-F-031). **Out of band at HEAD defaults post-F-031** (711 re-measure: hybrid 0.9517, vector 1.0000 — saturated in BOTH modes) — no longer a difficulty discriminator in any mode; still valid for throughput profiling (691). Difficulty successor: 704 Pillar 1. Source `scripts/jseval/624-corpora/battlefield-en-v1`; re-measure: `jseval corpus-fidelity --dataset battlefield-en-v1 --modes hybrid,vector --embedding --start-backend --clean`. **LEAKY — id-shape enumeration (776 item 3):** gold occupies `trailing_int(id)` 1..78, distractors 79..390; `trailing_int(id)<=78` selects gold at P/R 1.0 (native base 0.20) via materialized filenames. `_FILLER` uniform (not gold-selective here). See the 767/776 Corpus provenance note. |
 | golden/battlefield-de-v1 | synthetic/2-hop chains | de | 390 | 26 | 2-hop chain | 2026-07-11 | 711 | In-band at HEAD defaults (711 re-measure: hybrid 0.5924 — exact match to the 624 certification — vector 0.58, "moderate") — remains a valid difficulty corpus in both modes. Source `scripts/jseval/624-corpora/battlefield-de-v1`; same re-measure command shape as en-v1. **LEAKY — id-shape enumeration (776 item 3):** gold occupies `trailing_int(id)` 1..78, distractors 79..390; `trailing_int(id)<=78` selects gold at P/R 1.0 (native base 0.20) via materialized filenames. `_FILLER` uniform (not gold-selective here); minor query-overlap elevation (0/26 zero-overlap queries, median Jaccard 0.072). See the 767/776 Corpus provenance note. |
 | mixed/en-legal-clerc-{1k,10k}-{verbose,short-natural} | legal (real CLERC hosts + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates under the ACTIVE pre-run policy `scripts/jseval/707-corpus-certification-policy.v1.json`; closed-book 0.000 ×4). Hybrid 0.5051 / 0.4685 / 0.3238 / 0.2806 (1k-v / 1k-sn / 10k-v / 10k-sn) — **pre-rebuild / leak-inflated** (`_FILLER` gold-only feature, ~1/3 of measured retrieval; 767 §Q). **Certified leak-free (2026-07-22, PR #273): hybrid 0.33 / 0.25 / 0.06 / 0.08** (767 §R.1). **SUPERSEDED by the v2 cohort (2026-07-27, tempdoc 781 §F): hybrid 0.3103 / 0.2419 / 0.0996 / 0.1105**, title-class leak closed, new commitments + recipes at `scripts/jseval/781-corpora/en-legal-clerc/` and new policy pins — the v1 signatures are dated history. See the 781 Corpus provenance note. Commitments + recipes (v1): `scripts/jseval/707-corpora/en-legal-clerc/`. |
 | mixed/en-email-enron-raw-{1k,10k}-{verbose,short-natural} | email (raw public-domain Enron distractors + fabricated injected gold) | en | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 U0 member, FULLY CERTIFIED** (16/16 gates, same ACTIVE policy; closed-book 0.000 ×4; license `LicenseRef-Enron-FERC-public-record`). Hybrid 0.8043 / 0.7699 / 0.7052 / 0.6627 — strongest member; graceful scale decay — **pre-rebuild / leak-inflated** (`_FILLER` gold-only feature; 767 §Q). **Certified leak-free (2026-07-22, PR #273): hybrid 0.66 / 0.61 / 0.49 / 0.44** (767 §R.1). **Re-certified in the v2 cohort (2026-07-27, tempdoc 781 §F): hybrid 0.6585 / 0.6122 / 0.4756 / 0.4701** — the enron corpus bytes are UNCHANGED from v1 (it was already title-clean, 781 §E.3), so these four cells double as the run-to-run/engine-drift control band for the legal deltas; new commitments + policy pins at `scripts/jseval/781-corpora/en-email-enron-raw/`. See the 781 Corpus provenance note. Commitments + recipes (v1): `scripts/jseval/707-corpora/en-email-enron-raw/`. |
-| mixed/de-miracl-{1k,10k}-{verbose,short-natural} | wikipedia-de distractors + fabricated injected gold (v2, hops=1) | de | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 secondary stratum — NOT claim-bearing** (deliberately absent from the ACTIVE policy). 1k out-of-band (hybrid 0.2053 / 0.2660), 10k semantically collapsed (0.0431 / 0.0428, union recall 0.10); lexical 0.0 everywhere (pre-registered German grep-collapse, confirmed). The 10k collapse is chartered as tempdoc 748 → Q-018. **LEAKY / pre-rebuild — NOT rebuilt (776 item 3):** fabricated gold (gold source `635-corpora/synth-multiling-de-v1`) carries the identical *English* `_FILLER` block in 240/240 docs per cell among real German MIRACL hosts — the same gold-selective leak as legal, cross-language; the quoted hybrid numbers are leak-inflated and Q-018 needs re-verification on a defillered rebuild. See the 767/776 Corpus provenance note. Commitments: `scripts/jseval/707-corpora/de-miracl/`. |
+| mixed/de-miracl-{1k,10k}-{verbose,short-natural} | wikipedia-de distractors + fabricated injected gold (v2, hops=1) | de | 1000/10000 | 20/cell | verbose + short-natural strata | 2026-07-16 | 707 | **707 secondary stratum — NOT claim-bearing** (deliberately absent from the ACTIVE policy). 1k out-of-band (hybrid 0.2053 / 0.2660), 10k semantically collapsed (0.0431 / 0.0428, union recall 0.10); lexical 0.0 everywhere (pre-registered German grep-collapse, confirmed). The 10k collapse is chartered as tempdoc 748 → Q-018. **LEAKY / pre-rebuild — NOT rebuilt (776 item 3):** fabricated gold (gold source `635-corpora/synth-multiling-de-v1`) carries the identical *English* `_FILLER` block in 240/240 docs per cell among real German MIRACL hosts — the same gold-selective leak as legal, cross-language; the quoted hybrid numbers are leak-inflated and Q-018 needs re-verification on a defillered rebuild. See the 767/776 Corpus provenance note. Commitments (v1, leaky): `scripts/jseval/707-corpora/de-miracl/`. **DEFILLERED REBUILD EXISTS (2026-07-29, tempdoc 748 §B): `scripts/jseval/748-corpora/de-miracl/`** — payload.v2 construction matched to the English member (`doc_words=null` ⇒ no `_FILLER`, entity bank harvested from the real MIRACL-de hosts, per-chain relation/tail rotation now applied on the German render path too). The rebuild is **`claim_eligible: false` and certified STRUCTURALLY ONLY**: the four `SCIENTIFIC_GATES` (`closed_book`, `retrieval_calibration`, `union_recall`, `leak_floor`) are **pending** because 748's pass ran under a no-paid-API constraint and without the shared eval backend. **No retrieval number has been measured on the rebuilt cells** — the v1 figures above remain the only (leak-inflated) ones on record, and DE remains a non-claim-bearing secondary stratum. |
 
 ---
 
@@ -497,7 +498,7 @@ A/B experiments on the same dataset, same queries.
 | GOT moderate | 0.8377 | 0.8171–0.8595 | 0.7817 | 0.8888 | **-11.93%** |
 | MinerU moderate | 0.7249 | 0.7008–0.7500 | 0.6466 | 0.8046 | **-23.78%** |
 
-**Conclusion:** Extraction quality is the single largest quality bottleneck (F-009). Exceeds the >5% decision gate in both configurations. At HEAD hybrid defaults the shipped Tika path loses **13.74%** and **GOT's CI overlaps Tika's** — a better conventional OCR engine is *not* a measured win (F-042); the recoverable headroom is the clean-minus-Tika 0.1307. **VLM extraction via existing chat model (Qwen 3.5) is the chosen path (252). Docling integration cancelled.** The two tables are different configurations, not a before/after — see F-042 for why the taxes shrank and the GOT/Tika ordering changed.
+**Conclusion:** Extraction quality is the single largest quality bottleneck (F-009). Exceeds the >5% decision gate in both configurations. At HEAD hybrid defaults the shipped Tika path loses **13.74%** and **GOT's CI overlaps Tika's** — a better conventional OCR engine is *not* a measured win (F-042); the recoverable headroom is the clean-minus-Tika 0.1307. **VLM extraction via existing chat model (Qwen 3.5) is the chosen path (252). Docling integration cancelled.** The two tables are different configurations, not a before/after — see F-042 for why the taxes shrank and the GOT/Tika ordering changed. **That chosen path is now measured end-to-end on real PDF bytes (790 §H, 2026-07-29): the live chain with 790's dropout fallback closes 77.2% of the 0.1303 headroom (0.8205 → 0.9211 vs a 0.9508 clean ceiling), 95.2% of it on the empty-extraction class — see the F-042 recovery bullet.**
 
 ---
 
@@ -862,6 +863,58 @@ above)*
   refinement note below; tempdoc 678 §E5-D correction annotation (its "+3.0 pts at chunk granularity"
   was an F-032 artifact — the probe's chunk-hybrid arm had zero chunk vectors).
 
+### F-044: paraphrase bridging is a steep step function of isolated pair cosine (knee ≈0.65) and the generator's own synonym pools straddle it; the lexical control bridges 0/180 pairs; the hero's `reactor` anchor does NOT fail at the descriptor level (tempdoc 796, 2026-07-29; the standing metric 788 §3.B.10 asked for)
+
+- **Answer:** a reusable offline suite (`scripts/jseval/experiments/paraphrase_bridge_suite.py`)
+  measures how reliably the shipped semantic stack bridges a query-side paraphrase to the
+  document-side surface it was generated from. Pairs are **imported from
+  `jseval.corpus_generate`** (never hand-authored) and joined to the committed 781 corpora by
+  surface match: **90 EN + 90 DE pool pairs, 65 EN exercised, 800 observations, 0 mismatches**, and
+  an independent cross-check confirms the surface join reproduces `_sem_for`'s `(g % 21, g % 44)`
+  index arithmetic without using it. **Tier P** (pair-isolated, same-pool hard negatives, bridge =
+  top-1) bridge rate by `dense_pair_cosine` bucket, EN: **0.00 (n=3) / 0.19 (n=21) / 0.92 (n=50) /
+  1.00 (n=16)** across [0,0.55) / [0.55,0.65) / [0.65,0.75) / [0.75,0.85); at top-3, 0.00 / 0.81 /
+  1.00 / 1.00. The EN pair distribution straddles the knee (min 0.499, p25 0.639, median 0.699,
+  max 0.816). **The lexical control bridges 0/180 pairs at any k in either language** (MRR 0.033 =
+  the all-tie floor) — by construction, since every pair is token- *and* stem-disjoint — so
+  everything recovered here is the semantic stack's doing, not residual lexical overlap.
+- **Secondary findings:** (1) **Place is the weak axis** (EN dense top-1: type 0.81, place 0.57,
+  qualifier 0.96) — multi-word locatives ("mountain pass" ↔ "high col", "chalk downs" ↔ "white
+  escarpment hills") are where the mapping is lost; both EN pairs the dense arm cannot reach even at
+  top-10 are place pairs. (2) **German is measurably worse at the identical task** — DE tier-P dense
+  top-1 0.578 vs EN 0.733, with the curve shifted right (0.00 / 0.07 / 0.68 / 1.00 / 1.00): German
+  needs a higher isolated cosine for the same bridge rate. A cheap, leak-free datapoint for Q-018,
+  measured on the pools rather than on the un-rebuilt de-miracl corpus. (3) **SPLADE's query mode
+  matters more than SPLADE** — `query_mode=onnx` (the shipped default,
+  `ResolvedConfigBuilder.java:1174`) bridges 45.6% at top-1 vs 33.9% for the inference-free `idf`
+  query encoder, which cannot expand and is therefore structurally incapable of bridging.
+  (4) **Tier S** (sentence-isolated, 100 candidates, all 8 committed members, 400 rows) is
+  saturated — dense bridge@10 **0.995**, splade 0.985, lexical 0.035, and the dense curve is flat
+  across every cosine bucket. Isolation is not where the difficulty lives.
+- **Anchor reproduction (Gate-0 discipline, and it disagrees):** the works→mint hero win reproduces
+  (`en:type:16` tier-P rank 1/21, `en:place:16` rank 2/44; q16 tier-S dense rank 1/100). **The
+  reactor case does not** — `power station → reactor` is tier-P rank 2/21 (cosine 0.618) and
+  `upper wetlands → northern marshlands` rank 1/44 (0.706), with q0 at tier-S dense rank 2/100. So
+  q0's 6/6 hero failure across both arms is **not** a failure of the paraphrase pair, and the
+  investigation re-points away from "the encoder can't bridge that pair."
+- **Conditions/caveats:** offline exact-NN/exact-scoring only — no ANN, no fusion, no cross-encoder,
+  no engine. Per the F-033/F-034 treatment the load-bearing result is the **delta between arms**,
+  never the absolute level; F-040 measured on these very strata that the shipped engine hybrid can
+  *beat* an offline passage exact-NN ceiling, so an offline rank is not "what the engine would
+  return." Pairs are procedurally generated to be token-disjoint and domain-neutral — a clean
+  instrument for bridging, not a sample of how real users paraphrase (the 788 §C.17 naturalistic
+  concern applies to this axis too). All 25 qualifier pairs and both DE pools are unobserved by any
+  committed corpus (pool-only measurements). Tier S is scale-invariant by construction — the
+  committed `fabricated-docs.jsonl` is byte-identical across a corpus's 1k and 10k members, so the
+  10k tier-S rows duplicate the 1k rows exactly. CPU-only, single run, no variance estimate.
+- **Not yet measured — see Q-019:** the in-corpus tier (tier D), which is where the interesting
+  variance must be. It is implemented, checkpointed and scripted; execution was deferred to a
+  serialized compute slot after a machine-wide thermal event.
+- **Evidence:** tempdoc 796 (tier tables, pair census, anchor rows, reproduction commands, the
+  pre-registered tier-D hypothesis); artifacts `tmp/paraphrase-bridge/{pairs,tier-p,tier-s,report}.v1.json`
+  (worktree, gitignored — scripts and result tables are what this repo commits, per 708's convention);
+  CI-runnable tests `scripts/jseval/tests/test_paraphrase_bridge_suite.py`.
+
 ### F-043: the 782 hero agent-utility campaign composed one clean three-stratum cohort at sonnet — verdict as-recorded REJECTED/inconclusive on a freeze-level gate defect; code-certain counterfactual ACCEPTED/adoption-only (adoption 1.0, no accuracy benefit, point-negative on enron); founder-gated v4 re-compose escalated (tempdoc 782 window 2, 2026-07-28)
 
 - **Answer:** the preregistered hero campaign (782 §E frozen; policy `agent-utility-public-v3`;
@@ -1013,10 +1066,34 @@ above)*
   alphanumeric-count threshold with **zero** false positives is "fewer than 2 letters-or-digits"
   (`ExtractionDropoutPolicy.MIN_USABLE_ALPHANUMERIC_CHARS`). 790 ships detection + the
   structured→OCR→VDU fallback chain with a per-document budget and an explicit `extraction_method=
-  NONE` / `EXTRACTION_DROPOUT_UNRECOVERED` marker. **No recovery is claimed against this number
-  yet:** the OHR arms are pre-extracted *text*, so re-extraction has no bytes to read — measuring
-  recovery needs a corpus of real PDF bytes (`mixed/realdocs-v1`, or re-materialized OHR source
-  PDFs). Open acceptance item, 790 §G.
+  NONE` / `EXTRACTION_DROPOUT_UNRECOVERED` marker.
+- **Recovery MEASURED on real PDF bytes (tempdoc 790 §H, 2026-07-29) — the open §G acceptance item
+  is closed.** The OHR source PDFs were re-materialized as `mixed/ohr-bench-pdf-live` (same 1000
+  `_id`s, byte-identical queries/qrels) and ingested through the live extraction chain with the
+  VDU/VLM tier reachable. Three same-session arms, 962 queries, hybrid + CE, full enrichment,
+  `comparable: true` / `error_count 0`, pairwise-distinct `corpus_identity`: **clean 0.9508**
+  (`641ec0b7ae96`), **pdf-live 0.9211** (`2e810833d5ce`), **tika-text 0.8205** (`f90ba56d8e73`).
+  The two control arms reproduce this entry's numbers to the fourth decimal on a *different*
+  backend (dev stack, not the eval backend) at a different git SHA — that is what makes the delta
+  a corpus effect rather than a harness artifact. **The extraction tax falls from −0.1303 to
+  −0.0297: +0.1006, i.e. 77.2% of the gap recovered.** The per-query decomposition attributes it
+  where 790 predicted: the 110 queries whose gold document is in the dropout set go **0.0468 →
+  0.8855 (+0.8387), carrying 95.2% of the total gain**, against a clean-arm ceiling of 0.9710 on
+  the same queries; the other 852 queries move +0.0054. Per-document census (1000/1000, 0 errors):
+  of the 127-document dropout set, **43 recovered at the OCR tier and 64 at the VDU/VLM tier**, 7
+  are non-empty-but-VLM-rejected, and 13 end as terminal honest holes — of which **8 are blank in
+  the ground truth too**, so only 5 recoverable documents are genuinely lost. Quality-adjusted over
+  the 111 with real ground truth: **92 (82.9%) recovered *useful* text** (word-overlap ≥ 0.5; 52
+  VDU + 40 OCR), 6 partial, 8 noise, 5 empty. Zero false fires: none of the 873 healthy documents
+  ends empty. **VLM leg live-verified** — 147 documents carry Qwen3.5-9B + mmproj vision output as
+  their indexed content, quoted in 790 §H.3. **Honest limits:** the arm exercises the *whole* live
+  chain (tier-0/1/2), not 790 alone, so +0.1006 is the chain's and the decomposition is what bounds
+  790's share; 17 queries regressed to a 0.0 score that the shipped arm scored above zero; roughly
+  a tenth of VLM recoveries are confabulation with no lexical relationship to the page (one worked
+  example in §H.3); single run per arm, no CIs on the new arm, same one-corpus-family scope as
+  above. **Cost:** real-byte extraction is ~1.09 s/document, ~16× the ingest wall-clock of replaying
+  pre-extracted text (1188 s vs 74 s per 1000 documents), and the VDU backfill drained 252 documents
+  in ~172 min (~41 s/doc) — off the ingest critical path, so search readiness was never blocked.
 
 ### F-041: the Head cross-encoder was judging doc-head previews, not evidence — feeding it the winning passage lifts legal hybrid +15% and FLIPS the CE from harmful to helpful on email; shipped default-off (tempdoc 774 Stages 1-2, 2026-07-22; answers Q-001's mechanism)
 
@@ -1365,6 +1442,54 @@ above)*
   mechanism prose in the Answer above is superseded by this weight-policy account. Engine frozen
   as-is for the 781/hero window (Step 0's pre-declared decision rule: a >10% *improvement* with a
   correctness story would have shipped; a 7% harm banks the finding).
+- **MECHANISM CORRECTED AGAIN (2026-07-29, tempdoc 784 §K fusion-attribution study — offline,
+  per-query, over the same `tmp/781-certification/step0/arm-A{1..4}` artifacts; script
+  `scripts/jseval/experiments/fusion_attribution_784.py`, outputs `tmp/784-fusion-attribution/`).**
+  The (b) "weight policy for a weak leg" account above is **superseded**: the ~7% harm is not the
+  SPLADE leg's cost at all, and the Step-0 gate arm was **not a one-lever change**.
+  `justsearch.splade.zero_weight_min_tokens` is ONE static constant
+  (`HybridFusionUtils.java:26-27`) read by TWO levers — `spladeParentLengthMultiplier` (Stage 3A
+  SPLADE leg, `:803-806`, applied `:693`) **and** `chunkBranchParentLengthMultiplier` (Stage 3B
+  whole-vs-chunk **branch** ramp, `:826-834`, applied `:488-491` from `SearchExecutor.java:766-780`).
+  Raising it past the corpus token range flips the chunk-branch multiplier from **1.0 → 0.25**
+  (`branchChunkMinWeightMultiplier`) for every document, i.e. the effective whole:chunk split for a
+  doc found by BOTH branches moves **[0.5, 0.5] → [0.8, 0.2]** — a ~4× de-weighting of the chunk
+  branch, entirely independent of SPLADE. Evidence, in decreasing order of decisiveness:
+  (i) **SPLADE-invariance** — the two gate-raise comparisons (A1→A4 over the truncated 0.0591 leg;
+  A2→A3 over the revived 0.2902 leg, 4.9× better) produce **exactly identical per-query harm on
+  195/200 queries** (Pearson r 0.980, mean |diff| 0.005); whatever causes the harm does not read the
+  leg's contents. (ii) **No SPLADE displacement** — `splade_rank` is null on 100% of hybrid
+  judgeSignal rows in all four arms; overlap between the isolated SPLADE top-10 and the final top-10
+  does **not** rise when the gate is raised on the leg-identical comparison (1.065 → 1.045), and only
+  7.7% of docs entering the raised-gate top-10 are SPLADE top-10 docs — *below* the 10.5% base rate.
+  (iii) **~23% of the harm has no displacement at all** — 13 harmed queries have a byte-identical
+  returned top-10 SET (nothing entered, nothing left), carrying 3.39 of 14.53 nDCG of harm; the fused
+  score itself moved. (iv) **Arithmetic** — 97.4% of the 1,741 doc-pairs present in both arms' top-10
+  admit `fused = e_whole·nWhole + e_chunk·nChunk` with both normalised branch scores in [0,1] under
+  the source-derived [0.5,0.5]→[0.8,0.2] shift; "no change" (0.51) explains only 27.9%, and any
+  whole-weight below ~0.75 explains at most 84% — the movement **requires** a branch-weight shift far
+  larger than adding a 0.2-weight leg could produce (identifiability is a lower bound, not a point
+  estimate — the curve saturates above 0.83).
+  **Consequences.** (1) Step 0's decision (engine frozen, chunk-SPLADE default OFF) **stands** — it
+  was the right call for the wrong reason. (2) The 7% is *not* evidence that fusion cannot exploit a
+  mid-quality sparse leg; that question is **unmeasured**, because no Step-0 arm isolated the SPLADE
+  lever. (3) The shared constant is a genuine engine defect of the `wrong-gate` class: a knob named
+  for SPLADE silently retunes the whole-vs-chunk branch balance. Fixing it is a one-line separation
+  (give the Stage-3B ramp its own bounds defaulting to today's 1024/4096, so shipped behaviour is
+  byte-identical) — **not made by this study, which was analysis-only**. (4) Under `zeroExclude`
+  (`fuseWithCCNamed:495-503`) the de-weighting bites only on docs **both** branches found; whole-only
+  and chunk-only docs renormalise to weight 1.0 and are untouched — so the gate raise selectively
+  demotes exactly the documents two independent branches agreed on.
+  **Method caveat surfaced (affects any per-query re-analysis of these artifacts):** the API returns
+  the final top-10 in **cross-encoder** order (0 violations across 200 queries × 4 arms), but jseval
+  scores with `ir_measures.ScoredDoc(score=hit['score'])` (`retriever.py:143`), and `hit['score']` is
+  the fused score — so the reported nDCG@10 is the CE-**selected** set re-ordered by the **fused**
+  score. Both channels of a fusion change land on the metric. Not a defect in the Step-0 comparison
+  (both arms measured identically), but it is why (iii) is observable at all.
+  **not_derivable from these artifacts:** per-leg SPLADE score under hybrid; chunk-branch membership
+  and scores (the `chunk-merge` stage is on the wire, dropped by `provenance.py:341-361`); normalised
+  per-leg scores / effective weights / `parent_token_count` (detail tier needs `include_detail`, which
+  jseval's eval path never sets); and anything below the top-10.
 
 ### F-033: the SPLADE (sparse) leg's ~0.059 on legal-clerc-200 is substantially a 512-token TRUNCATION artifact — per-chunk SPLADE revives it 6–10× offline; the sparse sibling of F-031/F-032 (tempdoc 712, 2026-07-11; refines F-030(678) for the sparse leg)
 
@@ -2208,6 +2333,81 @@ above)*
   *true* semantic-bridging numbers are likely even weaker than quoted — the collapse is real, its
   magnitude is not reproducible. **748's charter should re-verify every experiment on a defillered
   de-miracl rebuild** before drawing (a)/(b)/(c)/(d). See the 767/776 Corpus provenance note.
+- **INTERIM ATTRIBUTION (2026-07-29, tempdoc 748 §A-§H — offline pass, phases 0-2; NOT closed):**
+  four measurements, all offline (no paid API, no backend, no GPU — the shared machine was held by
+  another worker), move the balance decisively toward **(c)** and away from **(a)**/**(d)**:
+  1. **The charter's EN control already existed and it collapses too.** `781-corpora/en-legal-clerc`
+     is the same generator, the same zero-lexical-overlap synonym descriptors, defillered and
+     fully certified — and its own `retrieval_calibration` artifacts read hybrid **0.3103 / 0.2419**
+     at 1k and **0.0996 / 0.1105** at 10k, with the **lexical leg exactly 0.0 at every size**. The
+     charter's pre-registered rule ("if EN-synonym gold also collapses at 10k, the finding is
+     task-shape, not German") therefore fires. The lexical zero is *constructed* by the generator
+     (`corpus_generate.py:60-75`), not a German grep-collapse.
+  2. **Real German is healthy.** On `mixed/miracl-de-2k` (real docs, real MIRACL questions, real
+     qrels, no fabricated gold, no leak): nDCG@10 0.7283, R@10 0.9805 — and stratified by
+     IDF-weighted query/gold lexical overlap, the **lowest stratum still returns the gold document
+     in the top 10 for 87% of queries**, with `recall@10` 1.0 on all three queries whose overlap is
+     literally zero. Instrument: `scripts/jseval/experiments/de_bridge_lexical_stratification_748.py`.
+  3. **No ANN/fusion tax on real German.** Exact-NN (no ANN, no fusion, no reranker, production
+     encoder, CPU) gives R@10 0.9934 / nDCG 0.7749 at 3,104 docs — the shipped hybrid (0.7283) sits
+     just under that ceiling. The gold-vs-distractor cosine margin, however, decays 0.185 → 0.018
+     from 803 to 3,104 docs. Instrument:
+     `scripts/jseval/experiments/encoder_bridge_scale_748.py`.
+  4. **The fabricated bridge starts thin in BOTH languages, and thinner in DE.** Gold-payload-only
+     exact cosine at a matched 100-doc pool: EN P@1 0.84-0.88 / margin 0.042-0.046 / gold-rank p90
+     2.0, DE 0.55 / 0.014-0.016 / 7.5-12.2 (Fisher exact p = 0.015 and 0.007). Combined with (3),
+     a construction whose margin starts near 0.04 has no headroom left by 10⁴ — a language-neutral
+     collapse mechanism. Instrument: `scripts/jseval/experiments/gold_bridge_pair_748.py`.
+  5. **Hypothesis (b) is refuted on the EN member by evidence that already existed — F-040.** That
+     finding's offline exact-NN passage probe (no ANN graph, no candidate cut-off, no fusion, no
+     reranker) collapses on these very cells from recall@10 0.20 at 1k to **0.04** at 10k
+     (R@100 0.50 → 0.20). A method with no candidate cut-off cannot be losing gold to one, so the
+     charter's candidate-depth sweep is **skipped with reason**, not left unrun. F-040's H.4 arm
+     also supplies the positive mechanism: a uniform 150-char doc-lead prefix on every chunk embed
+     lifts the 10k floor from R@100 0.20 to 0.42 — the fabricated gold's problem is **context
+     starvation of a short planted payload**, which is the same story measurements 3 and 4 tell
+     from the crowding and margin sides.
+  **Standing confound:** measurement 4 compares EN **payload.v2** with DE **v1**, so language is
+  confounded with payload version; the defillered DE rebuild (`748-corpora/de-miracl/`) exists to
+  remove it, and the one-command rerun is tempdoc 748 §G.1.
+  **What still could not run:** the 2026-07-16 `mixed/de-miracl-*` run artifacts are **gone from
+  every jseval run root on the machine**, so the staged-recall decomposition needs a fresh
+  multi-mode run; the DE-side exact-NN replication and the chunk-granularity probe are scripted but
+  unrun. **Q-018 stays OPEN**; DE stays a non-claim-bearing secondary stratum.
+- **Cheap new datapoint (2026-07-29, F-044):** German bridging is worse than English on the
+  *pools alone* — DE tier-P dense top-1 0.578 vs EN 0.733, curve shifted right — measured with no
+  corpus involved and therefore immune to the `_FILLER` leak that makes the de-miracl magnitudes
+  unreproducible. This does not answer (a)–(d), but it says at least part of the DE deficit is
+  present before any corpus, scale or host-dilution effect, which 748's experiment ordering should
+  account for.
+
+### Q-019: In the real corpus, does paraphrase bridging survive the query SHAPE agents actually issue — and is that what cost the hero campaign q0?
+
+- **Question:** F-044 measured bridging in isolation (tier P) and at sentence granularity (tier S)
+  and found both anchors bridging, including `power station → reactor`, whose hero cells failed 6/6
+  in both arms. The in-corpus tier (**tier D**: injected sentences inside real host documents, at
+  production doc- and chunk-granularity, over the full 1000-doc dataset) is implemented and scripted
+  but **not run** — a machine-wide thermal event took the compute slot. Which of these explains q0:
+  **(a) query shape** — the bridge survives the generated question but not the 4-token forms agents
+  send; **(b) host dilution** — the injected sentence is one line inside a real ~2.5 KB email and the
+  whole-doc representation drowns it (the F-031/F-040 mechanism); or **(c) neither**, i.e. the
+  failure is downstream of retrieval (hop-2, or 788 §1's satisficing/stopping mechanism)?
+- **Why it matters:** it decides whether "paraphrase bridging is the tool's unique value" is a
+  capability claim or a capability-at-a-query-shape claim. The hero census (F-043; derived from the
+  committed 782 records, replayable via `scripts/jseval/experiments/replay_behavioral_789.py`)
+  recorded that agents type a median of **4** content tokens, and recorded verbatim two q0 query strings —
+  `power station in the upper wetlands` and `upper wetlands power station` — while F-034's secondary
+  finding is that dense retrieval is markedly weaker on keyword-shaped queries. If the answer is (a),
+  788 §3.A's delivery-layer work and 788 §3.B.10's engine axis are the same problem from two ends,
+  and neither an encoder swap (708: no swap) nor more bridging capacity is the lever.
+- **Prior art / do not re-run:** F-044 (tiers P/S, pair census, anchors); F-034 (query-shape
+  sensitivity, no-model-swap verdict); F-040 (offline-vs-engine inversion on these exact strata —
+  the reason a tier-D rank is not an engine claim); F-030(678)/F-031/F-032 (the dilution mechanisms).
+- **Suggested approach:** run the scripted tier-D pass in a serialized compute slot — exact commands,
+  expected outputs, sanity checks and the pre-registered hypothesis are in tempdoc 796 §Deferred. The
+  suite scores three query forms (`question` / `descriptor` / `keyword`, all derived from the pair
+  register) against the same cached document encodings, so the shape comparison is nearly free once
+  the corpus is encoded, and encoding is block-checkpointed and resumable.
 
 ---
 

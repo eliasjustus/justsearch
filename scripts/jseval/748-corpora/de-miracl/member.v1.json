@@ -1,0 +1,71 @@
+{
+  "schema": "707-corpus-member.v1",
+  "name": "de-miracl",
+  "language": "de",
+  "domain": "encyclopedic",
+  "rebuild_lineage": {
+    "supersedes": "707-corpora/de-miracl",
+    "tempdoc": "748",
+    "reason": "the v1 fabricated gold was padded to `doc_words=520` with `corpus_generate._FILLER` — one identical ENGLISH boilerplate block ('The surrounding district is known for long winters and quiet markets…') present in 240/240 gold documents of every cell, planted among real German MIRACL hosts that contain no English at all. One grep for that block enumerated the entire gold set, so every retrieval number ever measured on `mixed/de-miracl-*` is leak-inflated (767 §I.1 'bulk' layer; register Q-018). This rebuild generates with `doc_words=null`, which disables all padding, and additionally closes two German-only construction defects the English rebuilds never had: (a) the German render path had NO relation/tail pool — every gold doc carried the byte-identical link sentence 'Das Objekt {x} ist mit {y} verknüpft.' and tail '{last} ist mit dem Wert {attr} verbunden.', the template-anchor class 767 §I.3 closed for English only; (b) the entity bank was English-legal (CLERC), so minted German gold names were spliced from American legal surfaces.",
+    "generator": "corpus_generate.generate(lang='de', doc_words=None) + _RELATIONS_DE/_TAIL_PHRASINGS_DE rotation (tempdoc 748 §D-2); corpus_inject._perturb_digit_runs short-run inheritance (tempdoc 748)"
+  },
+  "real_source": {
+    "recipe": "../../666-corpora/miracl-de-hosts-30k/recipe.json",
+    "real_source_id": "miracl/de/dev:seed707:hosts30k",
+    "real_source_sha256": "bb2d828be25143d2fce29121d38c9d9284b41128c85973aa5fb6c28cd326d5d2",
+    "content_scope": "MIRACL German document text sampled through ir_datasets; MIRACL queries and qrels are not used as injected gold",
+    "license": "Apache-2.0",
+    "license_status": "verified",
+    "redistribute": false
+  },
+  "gold_source": {
+    "note": "Generated fresh for this rebuild (NOT reused from v1 — the v1 bytes are the leak). Each cell's committed fabricated-docs.jsonl / fabricated-queries.json / fabricated-meta.json IS the gold-source snapshot; `fabricated-meta.json.generation_provenance` carries the full parameter set and the entity bank's sha256.",
+    "generator": "jseval.corpus_generate.generate",
+    "parameters": {
+      "axis": "prose",
+      "lang": "de",
+      "n_chains": 50,
+      "hops": 1,
+      "distractor_ratio": 0,
+      "doc_words": null,
+      "semantic": true,
+      "seed": 635,
+      "suite": "748-de-miracl-defillered-v1",
+      "entity_bank": "748-corpora/de-miracl/entity-bank"
+    },
+    "parameter_parity": "identical to the English member's construction except `lang` and the host-matched entity bank, so EN and DE differ only in language + host corpus"
+  },
+  "entity_bank": {
+    "path": "entity-bank/",
+    "harvested_from": "datasets/mixed/miracl-de-hosts-30k/corpus-dir (30001 real MIRACL-de host documents)",
+    "domain": "wiki",
+    "mintable_types": ["PER"],
+    "mintable_types_reason": "MEASURED (tempdoc 748 §D-3): the harvester's classifier is English-lexicon, so on German Wikipedia it recovers 78794 unique PER surfaces (36.1% German-marked, 0.7% English-marked, 63.1% unmarked-German) but only 2366 ORG (49.2% English-marked vs 19.9% German-marked) and 22 LOC — and all 22 LOC surfaces are US/UK toponyms ('Los Angeles', 'New York', 'Salt Lake City'), 0% German. Minting from ORG/LOC would splice English-shaped names into German host documents, a language-of-origin signal separating gold from native — a NEW leak of the class this rebuild removes. Restricted at bank level (`parameters.mintable_types`) rather than by mutating `entity_bank.MINTABLE_TYPES`, which is a global the English members depend on."
+  },
+  "assembly": {
+    "command": "jseval corpus-inject-real",
+    "style": "interleave",
+    "seed": 707,
+    "host_min_words": 60,
+    "n_distractors": {"1000": 900, "10000": 9900}
+  },
+  "sizes": [1000, 10000],
+  "query_variants": ["verbose", "short-natural"],
+  "materialized_datasets": [
+    "mixed/de-miracl-1k-verbose",
+    "mixed/de-miracl-1k-short-natural",
+    "mixed/de-miracl-10k-verbose",
+    "mixed/de-miracl-10k-short-natural"
+  ],
+  "structural_certification": "structural-certification.v1.json",
+  "claim_eligible": false,
+  "certification_scope": "structurally-verified, not claim-eligible — no closed-book / retrieval / union-recall / leak-floor evidence was produced (tempdoc 748 ran under a no-paid-API constraint and without the shared eval backend). No retrieval number has been measured on these cells; the v1 (leak-inflated) figures in the search-quality register remain the only ones on record and do NOT transfer to this rebuild.",
+  "scientific_gates": {
+    "closed_book": "pending — requires a paid model run",
+    "retrieval_calibration": "pending — requires the shared eval backend (GPU)",
+    "union_recall": "pending — requires the shared eval backend (GPU)",
+    "leak_floor": "pending — requires the shared eval backend (GPU)"
+  },
+  "remaining_gates": ["closed_book", "retrieval_calibration", "union_recall", "leak_floor"],
+  "certification_policy_status": "NOT registered in scripts/jseval/707-corpus-certification-policy.v1.json — these cells' corpus_signature / query_gold_sha256 / query_count are not pinned and no thresholds were derived. Any scientific gate run against them will fail closed until the policy is re-pinned from this member's structural-certification.v1.json (767 §R.4-4 no-reuse rule: thresholds must come from fresh measurements, never inherited from v1)."
+}

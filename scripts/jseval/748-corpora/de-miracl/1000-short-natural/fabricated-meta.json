@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "type_axis": "prose",
+  "suite": "748-de-miracl-defillered-v1",
+  "contamination_class": "private-synthetic",
+  "generation_provenance": {
+    "method": "procedural-fabricated",
+    "axis": "prose",
+    "lang": "de",
+    "seed": 635,
+    "hops": 1,
+    "distractor_ratio": 0,
+    "semantic": true,
+    "templated": true,
+    "n_chains": 50,
+    "doc_words": null,
+    "payload_version": "payload.v2",
+    "entity_bank": "748-corpora/de-miracl/entity-bank",
+    "entity_bank_sha256": "3d1388d2399bbdf113410cba4ed56981999414b80533c3d1872ee1bc050326ab"
+  },
+  "query_variant_provenance": {
+    "variant": "short-natural",
+    "language": "de",
+    "method": "deterministic-natural-template",
+    "tool_version": "jseval.corpus_query_strata/1",
+    "source": "verbose"
+  }
+}

@@ -1375,40 +1375,62 @@ def test_sem_pools_are_root_disjoint(pool_name):
         f"query-side member, leaking a lexical anchor across the semantic bridge: {offenders}")
 
 
-def test_relation_phrasings_are_token_disjoint():
+def _relation_pool(pool_name):
+    pool = getattr(corpus_generate, pool_name)
+    return pool["prose"] if isinstance(pool, dict) else pool
+
+
+@pytest.mark.parametrize("pool_name", ["_RELATIONS", "_RELATIONS_DE"])
+def test_relation_phrasings_are_token_disjoint(pool_name):
     """A relation's doc phrasing and question phrasing must share no content token.
 
     "designed"/"designer", "financed"/"financier" are distinct tokens; a pair that reused
     one verbatim would put the same surface in the query and the gold doc, defeating the
     same synonym bridge `_SEM_*` implements and raising `query_overlap_report`.
+
+    tempdoc 748 §D-2 extends the guard to `_RELATIONS_DE`, whose German counterparts
+    ("entworfen"/"des Konstrukteurs") are subject to exactly the same failure mode — the
+    German render path previously had no relation pool at all, so nothing was guarded.
     """
-    stop = {"was", "by", "the", "of", "a", "an"}
+    stop = {"was", "by", "the", "of", "a", "an", "der", "des", "die", "das", "von", "dem"}
     offenders = []
-    for kind, doc_phrasing, question_phrasing in corpus_generate._RELATIONS["prose"]:
+    for kind, doc_phrasing, question_phrasing in _relation_pool(pool_name):
         shared = (_pool_tokens(doc_phrasing) & _pool_tokens(question_phrasing)) - stop
         if shared:
             offenders.append((kind, doc_phrasing, question_phrasing, sorted(shared)))
-    assert not offenders, f"relation phrasings leak a shared content token: {offenders}"
+    assert not offenders, f"{pool_name} phrasings leak a shared content token: {offenders}"
 
 
-def test_tail_phrasings_have_no_fixed_5gram():
+@pytest.mark.parametrize("pool_name", ["_TAIL_PHRASINGS", "_TAIL_PHRASINGS_DE"])
+def test_tail_phrasings_have_no_fixed_5gram(pool_name):
     """No tail template may contain 5 consecutive LITERAL tokens.
 
     Spreading the templates across chains caps how many gold docs any ONE template covers,
     but a template carrying a fixed 5-token run is still a `ngram_selectivity_report(n=5)`
     anchor within its own share. The `{last}`/`{attr}` slots are what break the runs, so the
-    guard is on the literal spans between them.
+    guard is on the literal spans between them. tempdoc 748 §D-2 adds the German pool.
+
+    Tokens are counted with `corpus_leak._tokenize` — the *instrument's* tokenizer — not a
+    Unicode word split. `[a-z0-9']+` treats an umlaut/ß as a separator, so the German word
+    "für" is TWO tokens to the leak report and a 4-word German literal run is a 5-token
+    anchor. Counting the Unicode way here would have passed a pool that the instrument
+    then failed at gold coverage 0.06 vs a 0.02 null — which is exactly what happened on
+    the first draft of `_TAIL_PHRASINGS_DE` (tempdoc 748 §D-2). The guard must count the
+    way the thing it is protecting against counts.
     """
+    from jseval import corpus_leak
+
     offenders = []
-    for tpl in corpus_generate._TAIL_PHRASINGS:
+    for tpl in getattr(corpus_generate, pool_name):
         for span in re.split(r"\{\w+\}", tpl):
-            literal = _POOL_TOKEN_RE.findall(span)
+            literal = corpus_leak._tokenize(span)
             if len(literal) >= 5:
                 offenders.append((tpl, literal))
-    assert not offenders, f"tail templates carry a fixed 5-gram anchor: {offenders}"
+    assert not offenders, f"{pool_name} templates carry a fixed 5-gram anchor: {offenders}"
 
 
-def test_relation_and_tail_templates_are_spread_across_gold(tmp_path):
+@pytest.mark.parametrize("lang", ["en", "de"])
+def test_relation_and_tail_templates_are_spread_across_gold(tmp_path, lang):
     """No single relation or tail phrasing may dominate a generated gold set.
 
     The measured defect: `_render_prose` indexes the relation pool by HOP
@@ -1417,9 +1439,13 @@ def test_relation_and_tail_templates_are_spread_across_gold(tmp_path):
     fix rotates both pools per CHAIN. Asserted against the native base rate the real
     en-legal-clerc dry run measured (0.225): every template's gold coverage must sit
     comfortably under it, not merely under 0.500.
+
+    tempdoc 748 §D-2: the German path went further — it had NO relation pool, so every
+    German gold doc carried one fixed link sentence and one fixed tail (coverage 1.0, not
+    0.5). The `de` parametrization is the regression guard for that.
     """
-    out = tmp_path / "gold-spread"
-    corpus_generate.generate(out, axis="prose", lang="en", n_chains=20, hops=1,
+    out = tmp_path / f"gold-spread-{lang}"
+    corpus_generate.generate(out, axis="prose", lang=lang, n_chains=20, hops=1,
                              distractor_ratio=2, doc_words=None, suite="test",
                              seed=636, semantic=True, entity_bank=BANK)
     docs = [json.loads(l) for l in
@@ -1429,27 +1455,30 @@ def test_relation_and_tail_templates_are_spread_across_gold(tmp_path):
     gold = [d for d in docs if d["_id"] in gold_ids]
     assert len(gold) == 40, f"expected 40 gold docs (20 chains x 2 hops), got {len(gold)}"
 
+    relations = (corpus_generate._RELATIONS_DE if lang == "de"
+                 else corpus_generate._RELATIONS["prose"])
+    tails = (corpus_generate._TAIL_PHRASINGS_DE if lang == "de"
+             else corpus_generate._TAIL_PHRASINGS)
     native_base_rate = 0.225
-    for _kind, doc_phrasing, _q in corpus_generate._RELATIONS["prose"]:
+    for _kind, doc_phrasing, _q in relations:
         hits = sum(1 for d in gold if doc_phrasing in d["text"])
         assert hits / len(gold) <= native_base_rate, (
-            f"relation phrasing {doc_phrasing!r} covers {hits}/{len(gold)} gold docs, "
-            f"above the {native_base_rate} native base rate — a grep anchor")
+            f"{lang}: relation phrasing {doc_phrasing!r} covers {hits}/{len(gold)} gold "
+            f"docs, above the {native_base_rate} native base rate — a grep anchor")
 
-    for tpl in corpus_generate._TAIL_PHRASINGS:
+    for tpl in tails:
         pattern = re.escape(tpl.strip()).replace(r"\{last\}", ".+?").replace(r"\{attr\}", ".+?")
         hits = sum(1 for d in gold if re.search(pattern, d["text"]))
         assert hits / len(gold) <= native_base_rate, (
-            f"tail phrasing {tpl!r} covers {hits}/{len(gold)} gold docs, above the "
+            f"{lang}: tail phrasing {tpl!r} covers {hits}/{len(gold)} gold docs, above the "
             f"{native_base_rate} native base rate — a grep anchor")
 
     # Every phrasing must actually be reachable, or "spread" would be satisfied trivially
     # by a pool whose extra members are dead code.
-    used_relations = {dp for _k, dp, _q in corpus_generate._RELATIONS["prose"]
-                      if any(dp in d["text"] for d in gold)}
-    assert len(used_relations) == len(corpus_generate._RELATIONS["prose"]), (
-        f"only {len(used_relations)} of {len(corpus_generate._RELATIONS['prose'])} relation "
-        f"phrasings appear in a 20-chain gold set")
+    used_relations = {dp for _k, dp, _q in relations if any(dp in d["text"] for d in gold)}
+    assert len(used_relations) == len(relations), (
+        f"{lang}: only {len(used_relations)} of {len(relations)} relation phrasings appear "
+        f"in a 20-chain gold set")
 
 
 # ---------------------------------------------------------------------------

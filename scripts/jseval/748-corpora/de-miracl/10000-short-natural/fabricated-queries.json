@@ -1,0 +1,552 @@
+[
+ {
+  "query": "Welcher Wert folgt ab Standort Kraftwerk, oberes Feuchtgebiet?",
+  "answer": "grade 61-LQ-9",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "anastaternehmen pawljutschenktomobile",
+   "mitgter kazuya"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0001"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Beobachtungsstation, Höhenzug im Osten?",
+  "answer": "MQ-9000",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "kn natuod",
+   "gutshoertsch rodelle"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0002"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Getreidemühle, Krümmung des Flusses?",
+  "answer": "lot 9539576",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "intsmerkmale national fornoten",
+   "goldlusspunkt maske"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0003"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Aktenlager, früheres Justizgebäude?",
+  "answer": "ref-17-7993",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "pnn pop squad",
+   "isla hummrbeck"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0004"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Metallwerk, Viertel im Westen?",
+  "answer": "ZEM 323",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "sommermonatarry jueek",
+   "nestn nicopolis"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0005"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Fernrohr, erhöhte Tafelebene?",
+  "answer": "grade 53-CX-9",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "finalierlauf silvija nedeljachse",
+   "erhebunsenbahnraub von geb"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0006"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Trambahn, Stadt an den Hängen?",
+  "answer": "lot 3016205",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "dampfds die",
+   "birhaftung riberhus"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0007"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Wasserleitung, Anhöhen im Süden?",
+  "answer": "CC-0939",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "definititrop der fastperntrop",
+   "oren johen crawfuaatsexamens"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0008"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Verlagshaus, zentrales Marktviertel?",
+  "answer": "grade 11-XY-4",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "stersstattungsteil sirius",
+   "kans henry peans"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0009"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Küstenfeuer, steiniges Vorgebirge?",
+  "answer": "lot 0200478",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "mersheia heen",
+   "politl gemeellstr"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0010"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Weinanbaugebiet, lichtdurchflutete Senke?",
+  "answer": "grade 64-HS-0",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "egzon shalresbeginn",
+   "provinry matconos"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0011"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Thermalbad, Steilküste am Ufer?",
+  "answer": "XKM 716",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "raclene mittlerwen",
+   "friisteams fr"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0012"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Getreidelager, immergrüner Forst?",
+  "answer": "lot 7853392",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "leitunnd von sad fujiokines",
+   "davaer polosters"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0013"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Schiffsbauanlage, salzhaltiges Flachland?",
+  "answer": "3862F",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "entsprecheny ausbildnch",
+   "atolis oeno"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0014"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Bierhaus, Steingrube?",
+  "answer": "VC-1568",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "posthornschnecegen posthoriedenheit",
+   "sebnt saich"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0015"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Lederwerk, Zugang zum Hafen?",
+  "answer": "ref-06-4671",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "zamit art al zamiurt",
+   "untern anfanel"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0016"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Prägeanstalt, trockene Mulde?",
+  "answer": "ref-96-1545",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "klen tittmr",
+   "rheiniscira adelsmatrikang"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0017"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Eisenwerkstatt, vereister Bergsee?",
+  "answer": "TUR 643",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "mogen barbara",
+   "bwiese jode"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0018"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Pflanzenhalle, eingefriedete Anlage?",
+  "answer": "6659Y",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "ortsteiurzio untelaparte",
+   "engo gruco"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0019"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort kleines Gotteshaus, Glockenturm?",
+  "answer": "1463Z",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "karl wilhelutsche blssenschaft",
+   "ns deoge namialvins"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0020"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Getreidemahlturm, Erzgrube?",
+  "answer": "8204L",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "sritin engelberorrie",
+   "cipiutorium auc"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0021"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Kraftwerk, stürmisches Moor?",
+  "answer": "lot 3717035",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "gaen konrad",
+   "cousine beabiet"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0022"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Beobachtungsstation, Mündungsfächer?",
+  "answer": "0318G",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "slessandro meri",
+   "cosd die gend"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0023"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Getreidemühle, hohes Joch?",
+  "answer": "lot 5815371",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "als parhus",
+   "daam wwagjan"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0024"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Aktenlager, Anglersteg?",
+  "answer": "DV-8082",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "auf der sekuadt",
+   "vstum von gruppistum"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0025"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Metallwerk, Obstgarten am Hang?",
+  "answer": "grade 28-VC-6",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "krolachspitze show",
+   "berliner tenbr"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0026"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Fernrohr, unterirdische Hohlräume?",
+  "answer": "FAM 552",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "rainer wp",
+   "scle aorest"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0027"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Trambahn, Flussübergang aus Metall?",
+  "answer": "WS-5145",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "schulhrkscheider der realschder",
+   "jeement gesdier"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0028"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Wasserleitung, tiefliegende Siedlung am Fluss?",
+  "answer": "lot 0374521",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "wtrix sig",
+   "ktsbuch vasapapagei"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0029"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Verlagshaus, gestufte Böschungsflächen?",
+  "answer": "ref-39-9711",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "mincoy gegner",
+   "calvilied theologe"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0030"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Küstenfeuer, aufgegebenes Verschiebegelände?",
+  "answer": "AKH 612",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "julen laen sie",
+   "senanahme von mn"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0031"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Weinanbaugebiet, weiße Steilhänge?",
+  "answer": "NH-4106",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "eroberuseum khloss",
+   "tarum bne"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0032"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Thermalbad, schlammige Untiefen?",
+  "answer": "ref-29-7671",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "beisprnt teppiche",
+   "entideolongen der erziehus"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0033"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Getreidelager, Kontrollpunkt am Übergang?",
+  "answer": "ref-25-6658",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "freidt universglas",
+   "nebede violoch"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0034"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Schiffsbauanlage, ungenutztes Landefeld?",
+  "answer": "lot 4178469",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "eintracarktischen frerges",
+   "positiohann der reservatnn"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0035"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Bierhaus, verborgener Wasserspeicher?",
+  "answer": "VZ-0579",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "johsubstitution von stution",
+   "hse ludolf"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0036"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Lederwerk, Einbuchtung mit versunkenen Schiffen?",
+  "answer": "grade 99-UY-1",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "igor iggenegende",
+   "andaul wajde"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0037"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Prägeanstalt, heiße Wassermulde?",
+  "answer": "lot 9953405",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "ners digreies awan",
+   "stan mesn"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0038"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Eisenwerkstatt, rötliche Steilkante?",
+  "answer": "lot 0511360",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "kindichte jiens dennistohichte bns",
+   "seianer oktober"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0039"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Pflanzenhalle, Übersetzstelle für Boote?",
+  "answer": "ref-56-1691",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "rogerf rangers",
+   "kiethe eneer"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0040"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort kleines Gotteshaus, verschüttete Grabungsstätte?",
+  "answer": "DZD 266",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "stephen simon keilung",
+   "lisaichutzengeln lisl"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0041"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Getreidemahlturm, sonnenzugewandte Terrassenkante?",
+  "answer": "FDD 321",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "mitgliedern kj",
+   "wieneans premann"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0042"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Kraftwerk, salzige Meeresbucht?",
+  "answer": "RF-3336",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "ketshof numodai de",
+   "rogmas rangeor"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0043"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Beobachtungsstation, aufgegebener Beobachtungsposten?",
+  "answer": "SDE 944",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "kompanie von lemen infanterie",
+   "enate ri krnate pr"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0044"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Getreidemühle, oberes Feuchtgebiet?",
+  "answer": "lot 2453509",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "gous tadas",
+   "gebietason den wson"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0045"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Aktenlager, Höhenzug im Osten?",
+  "answer": "3558G",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "mariesbadener di piner",
+   "auf bairiscun"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0046"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Metallwerk, Krümmung des Flusses?",
+  "answer": "grade 10-DJ-7",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "die porsche holdchio",
+   "claurch magneirat"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0047"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Fernrohr, früheres Justizgebäude?",
+  "answer": "EXQ 512",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "lasmus lascana",
+   "deuers kinematherlage"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0048"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Trambahn, Viertel im Westen?",
+  "answer": "JNB 451",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "regionalanische leipzie anzahach",
+   "karffenhausen wilhelm bter"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0049"
+ },
+ {
+  "query": "Welcher Wert folgt ab Standort Wasserleitung, erhöhte Tafelebene?",
+  "answer": "ref-26-4735",
+  "question_type": "1_hop",
+  "evidence_ids": [
+   "tigeana tascana",
+   "konkurrent raicde"
+  ],
+  "query_variant": "short-natural",
+  "query_family_id": "q0050"
+ }
+]
