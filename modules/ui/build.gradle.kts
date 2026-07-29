@@ -143,6 +143,12 @@ sourceSets.named("integrationTest").configure {
 tasks.withType<Test>().configureEach {
   systemProperty("prism.allowhidpi", "false")
   jvmArgs("--enable-native-access=ALL-UNNAMED")
+  // Tempdoc 771 item (b): forward the entity-carriage metric's corpus input to the test JVM. Unset
+  // is the normal case — McpEntityCarriageMetricTest's real-corpus arm then skips and only its
+  // synthetic strata run, which is what CI does.
+  providers.systemProperty("justsearch.entityCarriage.casesTsv").orNull?.let {
+    systemProperty("justsearch.entityCarriage.casesTsv", it)
+  }
 }
 
 // Integration tests must be hermetic and must not read/write real machine policy locations.
@@ -2027,6 +2033,11 @@ val HEADLESS_AI_ENV_VARS = listOf(
     "JUSTSEARCH_SEARCH_MCP_FRAMING_EVIDENCE_NOT_ANSWER_ENABLED",
     "JUSTSEARCH_SEARCH_MCP_FRAMING_CALIBRATED_ABSENCE_ENABLED",
     "JUSTSEARCH_SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES",
+    // Tempdoc 771 item (b): entity carriage must be arm-selectable in eval mode for the same
+    // reason the 789 framings are — applyHeadlessEvalContract whitelist-filters env vars, so an
+    // unlisted knob is silently dropped and the arm measures the default.
+    "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_ENABLED",
+    "JUSTSEARCH_SEARCH_MCP_DELIVERY_ENTITY_CARRIAGE_MAX_CHARS",
     "JUSTSEARCH_SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR",
 )
 

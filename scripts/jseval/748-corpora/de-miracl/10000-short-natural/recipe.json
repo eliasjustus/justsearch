@@ -1,0 +1,921 @@
+{
+  "method": "real-text-injection-v1",
+  "seed": 707,
+  "style": "interleave",
+  "n_gold_docs": 100,
+  "n_distractors": 9900,
+  "host_min_words": 60,
+  "host_mapping": [
+    {
+      "gold_id": "9625578#1",
+      "host_id": "382426#12",
+      "fabricated_id": "als parhus"
+    },
+    {
+      "gold_id": "3326443#1",
+      "host_id": "8405140#1",
+      "fabricated_id": "anastaternehmen pawljutschenktomobile"
+    },
+    {
+      "gold_id": "3273725#3",
+      "host_id": "10725487#2",
+      "fabricated_id": "andaul wajde"
+    },
+    {
+      "gold_id": "1212056#2",
+      "host_id": "5659797#25",
+      "fabricated_id": "atolis oeno"
+    },
+    {
+      "gold_id": "109094#2",
+      "host_id": "10234523#0",
+      "fabricated_id": "auf bairiscun"
+    },
+    {
+      "gold_id": "1529859#2",
+      "host_id": "10749001#15",
+      "fabricated_id": "auf der sekuadt"
+    },
+    {
+      "gold_id": "1699447#4",
+      "host_id": "8964079#1",
+      "fabricated_id": "beisprnt teppiche"
+    },
+    {
+      "gold_id": "1447804#8",
+      "host_id": "7606097#3",
+      "fabricated_id": "berliner tenbr"
+    },
+    {
+      "gold_id": "9363685#6",
+      "host_id": "3955373#18",
+      "fabricated_id": "birhaftung riberhus"
+    },
+    {
+      "gold_id": "8898944#4",
+      "host_id": "11507528#0",
+      "fabricated_id": "bwiese jode"
+    },
+    {
+      "gold_id": "10097523#45",
+      "host_id": "10296001#11",
+      "fabricated_id": "calvilied theologe"
+    },
+    {
+      "gold_id": "10967080#4",
+      "host_id": "217525#5",
+      "fabricated_id": "cipiutorium auc"
+    },
+    {
+      "gold_id": "9993094#226",
+      "host_id": "4743349#1",
+      "fabricated_id": "claurch magneirat"
+    },
+    {
+      "gold_id": "145263#11",
+      "host_id": "11410759#15",
+      "fabricated_id": "cosd die gend"
+    },
+    {
+      "gold_id": "9128360#3",
+      "host_id": "26173#54",
+      "fabricated_id": "cousine beabiet"
+    },
+    {
+      "gold_id": "248590#83",
+      "host_id": "1117918#7",
+      "fabricated_id": "daam wwagjan"
+    },
+    {
+      "gold_id": "6777132#3",
+      "host_id": "8343053#1",
+      "fabricated_id": "dampfds die"
+    },
+    {
+      "gold_id": "1073736#4",
+      "host_id": "3399848#2",
+      "fabricated_id": "davaer polosters"
+    },
+    {
+      "gold_id": "130951#4",
+      "host_id": "47817#6",
+      "fabricated_id": "definititrop der fastperntrop"
+    },
+    {
+      "gold_id": "347524#12",
+      "host_id": "11182347#0",
+      "fabricated_id": "deuers kinematherlage"
+    },
+    {
+      "gold_id": "230775#12",
+      "host_id": "10923430#3",
+      "fabricated_id": "die porsche holdchio"
+    },
+    {
+      "gold_id": "9830972#4",
+      "host_id": "11943313#11",
+      "fabricated_id": "egzon shalresbeginn"
+    },
+    {
+      "gold_id": "5003611#10",
+      "host_id": "967309#74",
+      "fabricated_id": "eintracarktischen frerges"
+    },
+    {
+      "gold_id": "2087679#9",
+      "host_id": "4097601#2",
+      "fabricated_id": "enate ri krnate pr"
+    },
+    {
+      "gold_id": "109919#21",
+      "host_id": "3597299#3",
+      "fabricated_id": "engo gruco"
+    },
+    {
+      "gold_id": "1128298#14",
+      "host_id": "1911654#3",
+      "fabricated_id": "entideolongen der erziehus"
+    },
+    {
+      "gold_id": "2782795#1",
+      "host_id": "7707315#2",
+      "fabricated_id": "entsprecheny ausbildnch"
+    },
+    {
+      "gold_id": "11217375#1",
+      "host_id": "1010471#9",
+      "fabricated_id": "erhebunsenbahnraub von geb"
+    },
+    {
+      "gold_id": "6873765#19",
+      "host_id": "1340124#3",
+      "fabricated_id": "eroberuseum khloss"
+    },
+    {
+      "gold_id": "10301644#6",
+      "host_id": "2033387#8",
+      "fabricated_id": "finalierlauf silvija nedeljachse"
+    },
+    {
+      "gold_id": "3505916#16",
+      "host_id": "715#63",
+      "fabricated_id": "freidt universglas"
+    },
+    {
+      "gold_id": "598732#6",
+      "host_id": "6629333#14",
+      "fabricated_id": "friisteams fr"
+    },
+    {
+      "gold_id": "6246414#2",
+      "host_id": "6177082#5",
+      "fabricated_id": "gaen konrad"
+    },
+    {
+      "gold_id": "452540#28",
+      "host_id": "11226387#20",
+      "fabricated_id": "gebietason den wson"
+    },
+    {
+      "gold_id": "8101902#15",
+      "host_id": "6993674#2",
+      "fabricated_id": "goldlusspunkt maske"
+    },
+    {
+      "gold_id": "6237568#1",
+      "host_id": "4831252#3",
+      "fabricated_id": "gous tadas"
+    },
+    {
+      "gold_id": "1248826#1",
+      "host_id": "10908067#4",
+      "fabricated_id": "gutshoertsch rodelle"
+    },
+    {
+      "gold_id": "5061701#6",
+      "host_id": "11333605#13",
+      "fabricated_id": "hse ludolf"
+    },
+    {
+      "gold_id": "2821233#1",
+      "host_id": "3798667#4",
+      "fabricated_id": "igor iggenegende"
+    },
+    {
+      "gold_id": "8314698#17",
+      "host_id": "3130784#11",
+      "fabricated_id": "intsmerkmale national fornoten"
+    },
+    {
+      "gold_id": "8117360#2",
+      "host_id": "4914052#4",
+      "fabricated_id": "isla hummrbeck"
+    },
+    {
+      "gold_id": "4172317#3",
+      "host_id": "67354#2",
+      "fabricated_id": "jeement gesdier"
+    },
+    {
+      "gold_id": "7387003#2",
+      "host_id": "11662667#3",
+      "fabricated_id": "johsubstitution von stution"
+    },
+    {
+      "gold_id": "9326685#2",
+      "host_id": "7921695#2",
+      "fabricated_id": "julen laen sie"
+    },
+    {
+      "gold_id": "9352845#12",
+      "host_id": "5776480#4",
+      "fabricated_id": "kans henry peans"
+    },
+    {
+      "gold_id": "666853#11",
+      "host_id": "284184#6",
+      "fabricated_id": "karffenhausen wilhelm bter"
+    },
+    {
+      "gold_id": "6853265#28",
+      "host_id": "1102819#57",
+      "fabricated_id": "karl wilhelutsche blssenschaft"
+    },
+    {
+      "gold_id": "1944#52",
+      "host_id": "1121392#22",
+      "fabricated_id": "ketshof numodai de"
+    },
+    {
+      "gold_id": "9711018#2",
+      "host_id": "3411648#6",
+      "fabricated_id": "kiethe eneer"
+    },
+    {
+      "gold_id": "4191665#1",
+      "host_id": "789852#4",
+      "fabricated_id": "kindichte jiens dennistohichte bns"
+    },
+    {
+      "gold_id": "10090468#1",
+      "host_id": "2687844#13",
+      "fabricated_id": "klen tittmr"
+    },
+    {
+      "gold_id": "81463#2",
+      "host_id": "7677001#3",
+      "fabricated_id": "kn natuod"
+    },
+    {
+      "gold_id": "10259850#1",
+      "host_id": "3131078#7",
+      "fabricated_id": "kompanie von lemen infanterie"
+    },
+    {
+      "gold_id": "832778#1",
+      "host_id": "4785048#11",
+      "fabricated_id": "konkurrent raicde"
+    },
+    {
+      "gold_id": "2081991#6",
+      "host_id": "1140824#4",
+      "fabricated_id": "krolachspitze show"
+    },
+    {
+      "gold_id": "7036954#2",
+      "host_id": "2157142#2",
+      "fabricated_id": "ktsbuch vasapapagei"
+    },
+    {
+      "gold_id": "4094239#4",
+      "host_id": "9570619#2",
+      "fabricated_id": "lasmus lascana"
+    },
+    {
+      "gold_id": "10656334#3",
+      "host_id": "9749680#4",
+      "fabricated_id": "leitunnd von sad fujiokines"
+    },
+    {
+      "gold_id": "11679249#1",
+      "host_id": "8801426#8",
+      "fabricated_id": "lisaichutzengeln lisl"
+    },
+    {
+      "gold_id": "8576747#1",
+      "host_id": "1369244#4",
+      "fabricated_id": "mariesbadener di piner"
+    },
+    {
+      "gold_id": "8851343#2",
+      "host_id": "10691044#196",
+      "fabricated_id": "mersheia heen"
+    },
+    {
+      "gold_id": "13670#24",
+      "host_id": "1915906#1",
+      "fabricated_id": "mincoy gegner"
+    },
+    {
+      "gold_id": "5407187#6",
+      "host_id": "55513#5",
+      "fabricated_id": "mitgliedern kj"
+    },
+    {
+      "gold_id": "8941758#6",
+      "host_id": "117050#6",
+      "fabricated_id": "mitgter kazuya"
+    },
+    {
+      "gold_id": "614292#7",
+      "host_id": "24200#90",
+      "fabricated_id": "mogen barbara"
+    },
+    {
+      "gold_id": "564#8",
+      "host_id": "4605206#3",
+      "fabricated_id": "nebede violoch"
+    },
+    {
+      "gold_id": "65047#6",
+      "host_id": "4197564#34",
+      "fabricated_id": "ners digreies awan"
+    },
+    {
+      "gold_id": "3371957#8",
+      "host_id": "274005#12",
+      "fabricated_id": "nestn nicopolis"
+    },
+    {
+      "gold_id": "147157#27",
+      "host_id": "12023#1",
+      "fabricated_id": "ns deoge namialvins"
+    },
+    {
+      "gold_id": "4868535#3",
+      "host_id": "11593629#1",
+      "fabricated_id": "oren johen crawfuaatsexamens"
+    },
+    {
+      "gold_id": "3233981#6",
+      "host_id": "9829349#16",
+      "fabricated_id": "ortsteiurzio untelaparte"
+    },
+    {
+      "gold_id": "1448926#3",
+      "host_id": "428220#8",
+      "fabricated_id": "pnn pop squad"
+    },
+    {
+      "gold_id": "440746#3",
+      "host_id": "10848934#1",
+      "fabricated_id": "politl gemeellstr"
+    },
+    {
+      "gold_id": "868994#5",
+      "host_id": "1026914#4",
+      "fabricated_id": "positiohann der reservatnn"
+    },
+    {
+      "gold_id": "463319#10",
+      "host_id": "10804992#4",
+      "fabricated_id": "posthornschnecegen posthoriedenheit"
+    },
+    {
+      "gold_id": "9663399#1",
+      "host_id": "1571742#1",
+      "fabricated_id": "provinry matconos"
+    },
+    {
+      "gold_id": "9556202#3",
+      "host_id": "4501804#6",
+      "fabricated_id": "raclene mittlerwen"
+    },
+    {
+      "gold_id": "8280705#2",
+      "host_id": "2839744#7",
+      "fabricated_id": "rainer wp"
+    },
+    {
+      "gold_id": "914303#4",
+      "host_id": "6674207#2",
+      "fabricated_id": "regionalanische leipzie anzahach"
+    },
+    {
+      "gold_id": "9923044#3",
+      "host_id": "10861947#2",
+      "fabricated_id": "rheiniscira adelsmatrikang"
+    },
+    {
+      "gold_id": "10450331#1",
+      "host_id": "504930#1",
+      "fabricated_id": "rogerf rangers"
+    },
+    {
+      "gold_id": "7456183#3",
+      "host_id": "3161853#5",
+      "fabricated_id": "rogmas rangeor"
+    },
+    {
+      "gold_id": "7771648#1",
+      "host_id": "8221162#1",
+      "fabricated_id": "schulhrkscheider der realschder"
+    },
+    {
+      "gold_id": "4720784#1",
+      "host_id": "7479430#1",
+      "fabricated_id": "scle aorest"
+    },
+    {
+      "gold_id": "11503#177",
+      "host_id": "3016353#7",
+      "fabricated_id": "sebnt saich"
+    },
+    {
+      "gold_id": "3599128#12",
+      "host_id": "11202049#3",
+      "fabricated_id": "seianer oktober"
+    },
+    {
+      "gold_id": "26612#1",
+      "host_id": "2333241#15",
+      "fabricated_id": "senanahme von mn"
+    },
+    {
+      "gold_id": "8401782#5",
+      "host_id": "2079417#14",
+      "fabricated_id": "slessandro meri"
+    },
+    {
+      "gold_id": "9207522#2",
+      "host_id": "389131#4",
+      "fabricated_id": "sommermonatarry jueek"
+    },
+    {
+      "gold_id": "7787254#2",
+      "host_id": "4103367#6",
+      "fabricated_id": "sritin engelberorrie"
+    },
+    {
+      "gold_id": "9782186#1",
+      "host_id": "3659143#5",
+      "fabricated_id": "stan mesn"
+    },
+    {
+      "gold_id": "1457792#1",
+      "host_id": "418506#2",
+      "fabricated_id": "stephen simon keilung"
+    },
+    {
+      "gold_id": "313994#3",
+      "host_id": "6031975#7",
+      "fabricated_id": "stersstattungsteil sirius"
+    },
+    {
+      "gold_id": "844224#61",
+      "host_id": "9647391#2",
+      "fabricated_id": "tarum bne"
+    },
+    {
+      "gold_id": "10833608#1",
+      "host_id": "9633090#3",
+      "fabricated_id": "tigeana tascana"
+    },
+    {
+      "gold_id": "9072443#4",
+      "host_id": "3708476#0",
+      "fabricated_id": "untern anfanel"
+    },
+    {
+      "gold_id": "10443399#1",
+      "host_id": "945042#20",
+      "fabricated_id": "vstum von gruppistum"
+    },
+    {
+      "gold_id": "5471222#1",
+      "host_id": "7621938#0",
+      "fabricated_id": "wieneans premann"
+    },
+    {
+      "gold_id": "7854875#1",
+      "host_id": "198732#7",
+      "fabricated_id": "wtrix sig"
+    },
+    {
+      "gold_id": "496718#10",
+      "host_id": "4254201#1",
+      "fabricated_id": "zamit art al zamiurt"
+    }
+  ],
+  "gold_id_mapping": [
+    {
+      "fabricated_id": "als parhus",
+      "assembled_id": "9625578#1"
+    },
+    {
+      "fabricated_id": "anastaternehmen pawljutschenktomobile",
+      "assembled_id": "3326443#1"
+    },
+    {
+      "fabricated_id": "andaul wajde",
+      "assembled_id": "3273725#3"
+    },
+    {
+      "fabricated_id": "atolis oeno",
+      "assembled_id": "1212056#2"
+    },
+    {
+      "fabricated_id": "auf bairiscun",
+      "assembled_id": "109094#2"
+    },
+    {
+      "fabricated_id": "auf der sekuadt",
+      "assembled_id": "1529859#2"
+    },
+    {
+      "fabricated_id": "beisprnt teppiche",
+      "assembled_id": "1699447#4"
+    },
+    {
+      "fabricated_id": "berliner tenbr",
+      "assembled_id": "1447804#8"
+    },
+    {
+      "fabricated_id": "birhaftung riberhus",
+      "assembled_id": "9363685#6"
+    },
+    {
+      "fabricated_id": "bwiese jode",
+      "assembled_id": "8898944#4"
+    },
+    {
+      "fabricated_id": "calvilied theologe",
+      "assembled_id": "10097523#45"
+    },
+    {
+      "fabricated_id": "cipiutorium auc",
+      "assembled_id": "10967080#4"
+    },
+    {
+      "fabricated_id": "claurch magneirat",
+      "assembled_id": "9993094#226"
+    },
+    {
+      "fabricated_id": "cosd die gend",
+      "assembled_id": "145263#11"
+    },
+    {
+      "fabricated_id": "cousine beabiet",
+      "assembled_id": "9128360#3"
+    },
+    {
+      "fabricated_id": "daam wwagjan",
+      "assembled_id": "248590#83"
+    },
+    {
+      "fabricated_id": "dampfds die",
+      "assembled_id": "6777132#3"
+    },
+    {
+      "fabricated_id": "davaer polosters",
+      "assembled_id": "1073736#4"
+    },
+    {
+      "fabricated_id": "definititrop der fastperntrop",
+      "assembled_id": "130951#4"
+    },
+    {
+      "fabricated_id": "deuers kinematherlage",
+      "assembled_id": "347524#12"
+    },
+    {
+      "fabricated_id": "die porsche holdchio",
+      "assembled_id": "230775#12"
+    },
+    {
+      "fabricated_id": "egzon shalresbeginn",
+      "assembled_id": "9830972#4"
+    },
+    {
+      "fabricated_id": "eintracarktischen frerges",
+      "assembled_id": "5003611#10"
+    },
+    {
+      "fabricated_id": "enate ri krnate pr",
+      "assembled_id": "2087679#9"
+    },
+    {
+      "fabricated_id": "engo gruco",
+      "assembled_id": "109919#21"
+    },
+    {
+      "fabricated_id": "entideolongen der erziehus",
+      "assembled_id": "1128298#14"
+    },
+    {
+      "fabricated_id": "entsprecheny ausbildnch",
+      "assembled_id": "2782795#1"
+    },
+    {
+      "fabricated_id": "erhebunsenbahnraub von geb",
+      "assembled_id": "11217375#1"
+    },
+    {
+      "fabricated_id": "eroberuseum khloss",
+      "assembled_id": "6873765#19"
+    },
+    {
+      "fabricated_id": "finalierlauf silvija nedeljachse",
+      "assembled_id": "10301644#6"
+    },
+    {
+      "fabricated_id": "freidt universglas",
+      "assembled_id": "3505916#16"
+    },
+    {
+      "fabricated_id": "friisteams fr",
+      "assembled_id": "598732#6"
+    },
+    {
+      "fabricated_id": "gaen konrad",
+      "assembled_id": "6246414#2"
+    },
+    {
+      "fabricated_id": "gebietason den wson",
+      "assembled_id": "452540#28"
+    },
+    {
+      "fabricated_id": "goldlusspunkt maske",
+      "assembled_id": "8101902#15"
+    },
+    {
+      "fabricated_id": "gous tadas",
+      "assembled_id": "6237568#1"
+    },
+    {
+      "fabricated_id": "gutshoertsch rodelle",
+      "assembled_id": "1248826#1"
+    },
+    {
+      "fabricated_id": "hse ludolf",
+      "assembled_id": "5061701#6"
+    },
+    {
+      "fabricated_id": "igor iggenegende",
+      "assembled_id": "2821233#1"
+    },
+    {
+      "fabricated_id": "intsmerkmale national fornoten",
+      "assembled_id": "8314698#17"
+    },
+    {
+      "fabricated_id": "isla hummrbeck",
+      "assembled_id": "8117360#2"
+    },
+    {
+      "fabricated_id": "jeement gesdier",
+      "assembled_id": "4172317#3"
+    },
+    {
+      "fabricated_id": "johsubstitution von stution",
+      "assembled_id": "7387003#2"
+    },
+    {
+      "fabricated_id": "julen laen sie",
+      "assembled_id": "9326685#2"
+    },
+    {
+      "fabricated_id": "kans henry peans",
+      "assembled_id": "9352845#12"
+    },
+    {
+      "fabricated_id": "karffenhausen wilhelm bter",
+      "assembled_id": "666853#11"
+    },
+    {
+      "fabricated_id": "karl wilhelutsche blssenschaft",
+      "assembled_id": "6853265#28"
+    },
+    {
+      "fabricated_id": "ketshof numodai de",
+      "assembled_id": "1944#52"
+    },
+    {
+      "fabricated_id": "kiethe eneer",
+      "assembled_id": "9711018#2"
+    },
+    {
+      "fabricated_id": "kindichte jiens dennistohichte bns",
+      "assembled_id": "4191665#1"
+    },
+    {
+      "fabricated_id": "klen tittmr",
+      "assembled_id": "10090468#1"
+    },
+    {
+      "fabricated_id": "kn natuod",
+      "assembled_id": "81463#2"
+    },
+    {
+      "fabricated_id": "kompanie von lemen infanterie",
+      "assembled_id": "10259850#1"
+    },
+    {
+      "fabricated_id": "konkurrent raicde",
+      "assembled_id": "832778#1"
+    },
+    {
+      "fabricated_id": "krolachspitze show",
+      "assembled_id": "2081991#6"
+    },
+    {
+      "fabricated_id": "ktsbuch vasapapagei",
+      "assembled_id": "7036954#2"
+    },
+    {
+      "fabricated_id": "lasmus lascana",
+      "assembled_id": "4094239#4"
+    },
+    {
+      "fabricated_id": "leitunnd von sad fujiokines",
+      "assembled_id": "10656334#3"
+    },
+    {
+      "fabricated_id": "lisaichutzengeln lisl",
+      "assembled_id": "11679249#1"
+    },
+    {
+      "fabricated_id": "mariesbadener di piner",
+      "assembled_id": "8576747#1"
+    },
+    {
+      "fabricated_id": "mersheia heen",
+      "assembled_id": "8851343#2"
+    },
+    {
+      "fabricated_id": "mincoy gegner",
+      "assembled_id": "13670#24"
+    },
+    {
+      "fabricated_id": "mitgliedern kj",
+      "assembled_id": "5407187#6"
+    },
+    {
+      "fabricated_id": "mitgter kazuya",
+      "assembled_id": "8941758#6"
+    },
+    {
+      "fabricated_id": "mogen barbara",
+      "assembled_id": "614292#7"
+    },
+    {
+      "fabricated_id": "nebede violoch",
+      "assembled_id": "564#8"
+    },
+    {
+      "fabricated_id": "ners digreies awan",
+      "assembled_id": "65047#6"
+    },
+    {
+      "fabricated_id": "nestn nicopolis",
+      "assembled_id": "3371957#8"
+    },
+    {
+      "fabricated_id": "ns deoge namialvins",
+      "assembled_id": "147157#27"
+    },
+    {
+      "fabricated_id": "oren johen crawfuaatsexamens",
+      "assembled_id": "4868535#3"
+    },
+    {
+      "fabricated_id": "ortsteiurzio untelaparte",
+      "assembled_id": "3233981#6"
+    },
+    {
+      "fabricated_id": "pnn pop squad",
+      "assembled_id": "1448926#3"
+    },
+    {
+      "fabricated_id": "politl gemeellstr",
+      "assembled_id": "440746#3"
+    },
+    {
+      "fabricated_id": "positiohann der reservatnn",
+      "assembled_id": "868994#5"
+    },
+    {
+      "fabricated_id": "posthornschnecegen posthoriedenheit",
+      "assembled_id": "463319#10"
+    },
+    {
+      "fabricated_id": "provinry matconos",
+      "assembled_id": "9663399#1"
+    },
+    {
+      "fabricated_id": "raclene mittlerwen",
+      "assembled_id": "9556202#3"
+    },
+    {
+      "fabricated_id": "rainer wp",
+      "assembled_id": "8280705#2"
+    },
+    {
+      "fabricated_id": "regionalanische leipzie anzahach",
+      "assembled_id": "914303#4"
+    },
+    {
+      "fabricated_id": "rheiniscira adelsmatrikang",
+      "assembled_id": "9923044#3"
+    },
+    {
+      "fabricated_id": "rogerf rangers",
+      "assembled_id": "10450331#1"
+    },
+    {
+      "fabricated_id": "rogmas rangeor",
+      "assembled_id": "7456183#3"
+    },
+    {
+      "fabricated_id": "schulhrkscheider der realschder",
+      "assembled_id": "7771648#1"
+    },
+    {
+      "fabricated_id": "scle aorest",
+      "assembled_id": "4720784#1"
+    },
+    {
+      "fabricated_id": "sebnt saich",
+      "assembled_id": "11503#177"
+    },
+    {
+      "fabricated_id": "seianer oktober",
+      "assembled_id": "3599128#12"
+    },
+    {
+      "fabricated_id": "senanahme von mn",
+      "assembled_id": "26612#1"
+    },
+    {
+      "fabricated_id": "slessandro meri",
+      "assembled_id": "8401782#5"
+    },
+    {
+      "fabricated_id": "sommermonatarry jueek",
+      "assembled_id": "9207522#2"
+    },
+    {
+      "fabricated_id": "sritin engelberorrie",
+      "assembled_id": "7787254#2"
+    },
+    {
+      "fabricated_id": "stan mesn",
+      "assembled_id": "9782186#1"
+    },
+    {
+      "fabricated_id": "stephen simon keilung",
+      "assembled_id": "1457792#1"
+    },
+    {
+      "fabricated_id": "stersstattungsteil sirius",
+      "assembled_id": "313994#3"
+    },
+    {
+      "fabricated_id": "tarum bne",
+      "assembled_id": "844224#61"
+    },
+    {
+      "fabricated_id": "tigeana tascana",
+      "assembled_id": "10833608#1"
+    },
+    {
+      "fabricated_id": "untern anfanel",
+      "assembled_id": "9072443#4"
+    },
+    {
+      "fabricated_id": "vstum von gruppistum",
+      "assembled_id": "10443399#1"
+    },
+    {
+      "fabricated_id": "wieneans premann",
+      "assembled_id": "5471222#1"
+    },
+    {
+      "fabricated_id": "wtrix sig",
+      "assembled_id": "7854875#1"
+    },
+    {
+      "fabricated_id": "zamit art al zamiurt",
+      "assembled_id": "496718#10"
+    }
+  ],
+  "assembled_digest": "5b6e8eccc3d39f27b95830b8bf107bc4d9246b7f060320467a38964b2b57296b",
+  "real_source_id": "miracl/de/dev:seed707:hosts30k",
+  "real_source_sha256": "bb2d828be25143d2fce29121d38c9d9284b41128c85973aa5fb6c28cd326d5d2",
+  "license": "Apache-2.0",
+  "assembly_determinism": {
+    "passed": true,
+    "method": "cross-process-regeneration-diff",
+    "digest": "5b6e8eccc3d39f27b95830b8bf107bc4d9246b7f060320467a38964b2b57296b"
+  }
+}
