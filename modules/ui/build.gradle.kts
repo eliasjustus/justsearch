@@ -2020,6 +2020,14 @@ val HEADLESS_AI_ENV_VARS = listOf(
     "JUSTSEARCH_INGESTION_SKIP_PATTERNS",
     "JUSTSEARCH_INGESTION_SKIP_EXTENSIONS",
     "JUSTSEARCH_INGESTION_SKIP_DIRECTORY_NAMES",
+    // Tempdoc 789 Phase 2: MCP delivery framings must be arm-selectable in eval
+    // mode; without explicit forwarding the whitelist silently drops them (the
+    // probe's framing-presence smoke caught this before any spend, 2026-07-28).
+    "JUSTSEARCH_SEARCH_MCP_FRAMING_CONTINUATION_ENABLED",
+    "JUSTSEARCH_SEARCH_MCP_FRAMING_EVIDENCE_NOT_ANSWER_ENABLED",
+    "JUSTSEARCH_SEARCH_MCP_FRAMING_CALIBRATED_ABSENCE_ENABLED",
+    "JUSTSEARCH_SEARCH_MCP_FRAMING_THIN_RESULT_FLOOR_BYTES",
+    "JUSTSEARCH_SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR",
 )
 
 /** GPU/model env vars forwarded from operator shell for eval runs (tempdoc 329). */

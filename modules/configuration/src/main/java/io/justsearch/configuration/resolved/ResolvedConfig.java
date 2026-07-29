@@ -452,6 +452,7 @@ public record ResolvedConfig(
    *     selector — {@code df_rarity} or {@code ner_membership}
    * @param mcpDeliveryBudgetBytes 775: the MCP delivery governor's serialized-JSON budget in bytes
    *     (default {@link Search#DEFAULT_MCP_DELIVERY_BUDGET_BYTES}; 0 disables the governor)
+   * @param mcpFraming 789 Phase 2: the agent-delivery framing flags (all default OFF)
    */
   public record Search(
       String profile,
@@ -474,6 +475,11 @@ public record ResolvedConfig(
       // tail results, never mid-payload) to fit this budget before delivery — a margin under the
       // lowest characterized 770 §E.3 client truncation cliff (46,617). 0 disables the governor.
       int mcpDeliveryBudgetBytes,
+      // Tempdoc 789 Phase 2: the agent-delivery framing flags. Probe substrate for the 782 hero
+      // campaign's delivery-shape finding (register F-043) — the MCP response shape terminates
+      // agent reasoning at intermediate facts. Each framing is independently selectable and ALL
+      // default OFF; the probe runs one framing per arm.
+      McpFraming mcpFraming,
       Corrections corrections) {
 
     /**
@@ -482,6 +488,59 @@ public record ResolvedConfig(
      * characterized 770 §E.3 truncation cliff at 46,617 bytes.
      */
     public static final int DEFAULT_MCP_DELIVERY_BUDGET_BYTES = 45_000;
+
+    /**
+     * Tempdoc 789 Phase 2 — the three flag-gated MCP delivery framings. Content-only: no MCP tool
+     * schema or parameter changes (F-016: schema complexity measurably hurts agents), no retrieval
+     * changes. Framings compose — any subset may be enabled at once.
+     *
+     * @param continuationEnabled F1: a delivered excerpt naming an indexed entity absent from the
+     *     query carries one appended continuation line
+     * @param evidenceNotAnswerEnabled F2: search and answer deliveries carry an explicit
+     *     retrieval-evidence header instead of reading as answers
+     * @param calibratedAbsenceEnabled F3: zero-result and thin-result deliveries carry corpus
+     *     coverage, what was searched, and explicit absence-is-not-evidence framing
+     * @param thinResultFloorBytes F3: delivered-body byte floor below which a non-empty result set
+     *     is still treated as thin (default {@link #DEFAULT_THIN_RESULT_FLOOR_BYTES})
+     * @param weakScoreFloor F3: normalized top-relevance floor below which a non-empty result set is
+     *     treated as a weak-relevance delivery (default {@link #DEFAULT_WEAK_SCORE_FLOOR}). Only
+     *     consulted where the fused score is bounded [0,1] (the {@code cc}/{@code hybrid} fusion
+     *     methods). {@code 0} disables the arm: the trigger compares strictly less-than and rendered
+     *     scores are never negative, so no delivery can fall under a floor of zero.
+     */
+    public record McpFraming(
+        boolean continuationEnabled,
+        boolean evidenceNotAnswerEnabled,
+        boolean calibratedAbsenceEnabled,
+        int thinResultFloorBytes,
+        double weakScoreFloor) {
+
+      /** Every framing off — the shipped default, byte-identical to pre-789 delivery. */
+      public static final McpFraming OFF =
+          new McpFraming(
+              false, false, false, DEFAULT_THIN_RESULT_FLOOR_BYTES, DEFAULT_WEAK_SCORE_FLOOR);
+    }
+
+    /**
+     * Default delivered-body byte floor for the F3 thin-result trigger (tempdoc 789 Phase 2): 400
+     * bytes of rendered hit body. Below this a result set carries so little text that an agent
+     * treating it as coverage evidence is the 2x-abstention failure the framing targets.
+     */
+    public static final int DEFAULT_THIN_RESULT_FLOOR_BYTES = 400;
+
+    /**
+     * Default normalized top-relevance floor for the F3 weak-score trigger (tempdoc 789, post-
+     * Amendment-3 redesign): 0.40.
+     *
+     * <p>Calibrated against the Amendment-3 live measurement, which is also what motivated the arm:
+     * the byte signal had no dynamic range (gibberish, rare-phrase and healthy queries all delivered
+     * ~1,630-1,725 content bytes, a 6% spread), while the rendered top score did — a gibberish query
+     * scored 0.22 and a gold-bearing healthy query scored 1.00. 0.40 sits above the measured weak
+     * regime and below both the measured healthy value and the structural landmark at {@code alpha =
+     * 0.5} (the default {@code index.hybrid.cc_alpha}), which is the fused score a document topping
+     * exactly one normalized leg receives.
+     */
+    public static final double DEFAULT_WEAK_SCORE_FLOOR = 0.40;
 
     /** Spelling/fuzzy correction settings. */
     public record Corrections(

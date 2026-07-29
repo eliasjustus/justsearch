@@ -8,12 +8,33 @@ that lossless input.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Iterable
 
 from jseval.agent_behavioral import behavioral_record
 
 WITH_TOOL_CONDITIONS = frozenset({"B", "C"})
+
+JUDGE_OVERLAY_FILENAME = "judge-overlay.json"
+
+
+def resolve_judge_overlay(log_dir: str | Path, explicit: str | Path | None = None) -> dict | None:
+    """The single authority for *which* judge overlay governs a log directory.
+
+    A log directory's authoritative `correct` is the overlay's `final` verdict
+    whenever `utility-judge` has written one (`read_inspect_observations` applies
+    it); the raw `substring_scorer` value is only the fallback. Every reader of a
+    log directory must resolve the overlay the same way, or two readers of the
+    SAME cells disagree on correctness -- tempdoc 719's evidence-export path did
+    exactly that (it read the log dir with no overlay), so `finalize_evidence`
+    over an export scored the judge-rescored cells pre-judge and the publication
+    builder's `semantic_digest(recompose(evidence)) == stored` check fired.
+    """
+    path = Path(explicit) if explicit else Path(log_dir) / JUDGE_OVERLAY_FILENAME
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _error_text(value: Any) -> str | None:
@@ -72,7 +93,7 @@ def read_inspect_observations(
 
     ignored_json = {
         "eval-set.json", "logs.json", "source-identity.v1.json",
-        "judge-overlay.json",
+        JUDGE_OVERLAY_FILENAME,
     }
     for path in files:
         if path.name in ignored_json:

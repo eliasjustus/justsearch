@@ -982,3 +982,39 @@ adoption-rate-as-benefit.
   `88e98a93…` exactly; the pre-amendment pin `c3f98ebd…` and the v2 pin `ed81f79b…` still
   reproduce from their own reconstructions. The active-policy fixture digest re-pins to
   `e3c3c9fd…` (6th occurrence of the same policy-identity re-pin class).
+
+---
+
+## §J.5 Addendum 2026-07-29 — claim policy v5 exists; this record stands as dated history
+
+Appended post-hoc under the §E.0 convention. **Nothing in §I or §J is re-scored, edited or
+replaced, and no cell was measured.** Written here only so a reader arriving at §J does not take
+`agent-utility-public-v4` to be the active policy.
+
+**What changed upstream.** Tempdoc 791 (campaign-v2 charter) axis 4 landed on 2026-07-29:
+`agent-utility-public-v5` is now the ACTIVE claim policy (v4 verbatim + the additive
+`question_level_primary` requirement), and v4 is `status: superseded`. v5 makes the QUESTION the
+unit of analysis for the accuracy outcome — a paired sign-flip permutation over per-question mean
+deltas and a question-cluster bootstrap interval — because the CELL-level exact McNemar reported
+throughout §I counts a question's 3 seed replicates as 3 independent observations and so
+understates `p`. The cell-level numbers stay reported, labelled descriptive.
+
+**This record is not restated under v5.** `combined/` (v3-scored) and `combined-v4/` (the
+founder-authorized offline re-compose) remain committed exactly as they are. A $0 offline
+re-evaluation under v5 was run to report what would change, and is recorded in tempdoc 791, not
+here; its result is `accepted / adoption-only`, 31/31 gates, `reasons []` — **unchanged**, because
+`adoption-only` is an adoption-rate promotion class that never rested on significance. A control
+re-compose under the pre-supersede v4 document reproduced this record's `semantic_digest
+c5a75457…` exactly, which is what makes that attribution sound.
+
+**The §I p-values remain what they were, and remain cell-level.** Read them as descriptive. On the
+question-level primary, no stratum in this cohort clears α = 0.05 under either test; the
+disagreement that motivated v5 (raw-EM window-2 enron-1k: cell-level 0.0446 vs question-level
+0.1358) is a scoring-tier apart from this record's judge-overlaid numbers, and tempdoc 791
+documents the reconciliation cell-for-cell.
+
+**Both defects in §H/§J.1 are now $0 to find in advance.** `jseval utility-policy-dryrun` replays a
+frozen design against a policy before the freeze commit; run against the real
+`782-hero/cells.v1.json` it reports BLOCKER-1 and FREEZE DEFECT #2 as `structurally-impossible`,
+per stratum, with the exact diagnosis each originally took a launch and a compose to surface.
+Those two replays are committed regression tests (`tests/test_utility_policy_dryrun.py`).
