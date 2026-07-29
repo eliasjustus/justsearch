@@ -1,0 +1,333 @@
+{
+  "schema": "707-corpus-structural-certification.v1",
+  "member": "de-miracl",
+  "status": "structurally-certified",
+  "datasets": {
+    "1000": {
+      "short-natural": {
+        "dataset": "mixed/de-miracl-1k-short-natural",
+        "corpus_signature": "f1989d7f809824b68dfa348fd9053e93ec3f62403aaaa0c7ec08927601693591",
+        "query_gold_sha256": "73fec44fb0879846d6a12287d55f2e918624d0153c65332133c6907ce2eb4c08",
+        "query_count": 50,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true,
+          "indistinguishability": true,
+          "field_selectivity": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "ffbd47f1c2107516a11f7e160b5b03bf29c7519046d2699c3b4fc284fb05f890",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "4e57be7c5af33e9c00040ac41a7ac640c723bb7f5ef4f7339d4de47ae26f5a8f",
+          "recipe_sha256": "760b79bdf2aafa4f4ae358bce4c637feef9e780d66e4e0d848d8f7455cf50f3a"
+        },
+        "descriptor_collision": {
+          "n_groups": 1,
+          "n_docs_involved": 2,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "indistinguishability": {
+          "id_shape_separability": 0.0922222222222222,
+          "id_shape_native_base_rate": 0.17874999999999996,
+          "id_shape_rule": "len(id) <= 9",
+          "id_shape_passed": true,
+          "ngram_max_gold_coverage": 0.01,
+          "ngram_native_base_rate": 0.02,
+          "ngram_passed": true,
+          "passed": true,
+          "method": "null-calibrated-id-shape-and-ngram-selectivity"
+        },
+        "field_selectivity": {
+          "worst_field": "text",
+          "max_field_separability": 0.0,
+          "native_base_rate": 0.0,
+          "n_fields_compared": 2,
+          "passed": true,
+          "method": "field-presence-null-calibrated-separability"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      },
+      "verbose": {
+        "dataset": "mixed/de-miracl-1k-verbose",
+        "corpus_signature": "f1989d7f809824b68dfa348fd9053e93ec3f62403aaaa0c7ec08927601693591",
+        "query_gold_sha256": "1bdac5a30e7a2cee9a769064033c3cfd9cd76147b708d5bb0ae26ee80548b665",
+        "query_count": 50,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true,
+          "indistinguishability": true,
+          "field_selectivity": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "f168a182683953ad2ce0e44d3f0ec6ceb985118f69f9528585eff3e66ec8b2db",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "7736bf0d0da0309d3468092152a8f311fb4071c3d18f005a94a5975288a90cf8",
+          "recipe_sha256": "336095b0517172ec73fcae78513404c074ef583504d4f1dd8826161f91a42c52"
+        },
+        "descriptor_collision": {
+          "n_groups": 1,
+          "n_docs_involved": 2,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "indistinguishability": {
+          "id_shape_separability": 0.0922222222222222,
+          "id_shape_native_base_rate": 0.17874999999999996,
+          "id_shape_rule": "len(id) <= 9",
+          "id_shape_passed": true,
+          "ngram_max_gold_coverage": 0.01,
+          "ngram_native_base_rate": 0.02,
+          "ngram_passed": true,
+          "passed": true,
+          "method": "null-calibrated-id-shape-and-ngram-selectivity"
+        },
+        "field_selectivity": {
+          "worst_field": "text",
+          "max_field_separability": 0.0,
+          "native_base_rate": 0.0,
+          "n_fields_compared": 2,
+          "passed": true,
+          "method": "field-presence-null-calibrated-separability"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      }
+    },
+    "10000": {
+      "short-natural": {
+        "dataset": "mixed/de-miracl-10k-short-natural",
+        "corpus_signature": "1d077ade0ae7ef6fea74dbb695215b79770514f2bee19e9ed39ea29af2153018",
+        "query_gold_sha256": "73fec44fb0879846d6a12287d55f2e918624d0153c65332133c6907ce2eb4c08",
+        "query_count": 50,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true,
+          "indistinguishability": true,
+          "field_selectivity": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "5b6e8eccc3d39f27b95830b8bf107bc4d9246b7f060320467a38964b2b57296b",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "52e34629c2b5436f1e49ecfadbd09af129acf2e1a7db4229acc48ac17fc72d8b",
+          "recipe_sha256": "6017437e7e5db5a24fa3c882b7ee91188cca57f676ca9ccabf90d9878108da3e"
+        },
+        "descriptor_collision": {
+          "n_groups": 146,
+          "n_docs_involved": 319,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "indistinguishability": {
+          "id_shape_separability": 0.07606060606060616,
+          "id_shape_native_base_rate": 0.1495918367346939,
+          "id_shape_rule": "not (leading_int(id) <= 6777055)",
+          "id_shape_passed": true,
+          "ngram_max_gold_coverage": 0.01,
+          "ngram_native_base_rate": 0.02,
+          "ngram_passed": true,
+          "passed": true,
+          "method": "null-calibrated-id-shape-and-ngram-selectivity"
+        },
+        "field_selectivity": {
+          "worst_field": "text",
+          "max_field_separability": 0.0,
+          "native_base_rate": 0.0,
+          "n_fields_compared": 2,
+          "passed": true,
+          "method": "field-presence-null-calibrated-separability"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      },
+      "verbose": {
+        "dataset": "mixed/de-miracl-10k-verbose",
+        "corpus_signature": "1d077ade0ae7ef6fea74dbb695215b79770514f2bee19e9ed39ea29af2153018",
+        "query_gold_sha256": "1bdac5a30e7a2cee9a769064033c3cfd9cd76147b708d5bb0ae26ee80548b665",
+        "query_count": 50,
+        "checks": {
+          "size": true,
+          "signature": true,
+          "query_variant": true,
+          "query_family_ids": true,
+          "cross_process_regeneration": true,
+          "immutable_commitment": true,
+          "descriptor_collision": true,
+          "indistinguishability": true,
+          "field_selectivity": true
+        },
+        "regeneration": {
+          "passed": true,
+          "method": "cross-process-regeneration-diff",
+          "digest": "06f7725ae883ecead2d50892daa68456d7e91075517e7cfedd731f7a4fe1d289",
+          "reason": null
+        },
+        "commitment": {
+          "passed": true,
+          "manifest_sha256": "8696644f52fdac04f9d6da24b37609b5a2e776eebb6775fd64fabe00ff689e62",
+          "recipe_sha256": "c1de2bc85bb309c765950e90e865415ca8130ae4e80e077a9c5bd03e3d55a873"
+        },
+        "descriptor_collision": {
+          "n_groups": 146,
+          "n_docs_involved": 319,
+          "n_gold_involved": 0,
+          "passed": true,
+          "method": "exact-title-match"
+        },
+        "indistinguishability": {
+          "id_shape_separability": 0.07606060606060616,
+          "id_shape_native_base_rate": 0.1495918367346939,
+          "id_shape_rule": "not (leading_int(id) <= 6777055)",
+          "id_shape_passed": true,
+          "ngram_max_gold_coverage": 0.01,
+          "ngram_native_base_rate": 0.02,
+          "ngram_passed": true,
+          "passed": true,
+          "method": "null-calibrated-id-shape-and-ngram-selectivity"
+        },
+        "field_selectivity": {
+          "worst_field": "text",
+          "max_field_separability": 0.0,
+          "native_base_rate": 0.0,
+          "n_fields_compared": 2,
+          "passed": true,
+          "method": "field-presence-null-calibrated-separability"
+        },
+        "scientific_gates": {
+          "closed_book": {
+            "passed": false,
+            "status": "pending-model-run"
+          },
+          "retrieval_calibration": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "union_recall": {
+            "passed": false,
+            "status": "pending-backend-run"
+          },
+          "leak_floor": {
+            "passed": false,
+            "status": "pending-backend-run"
+          }
+        },
+        "passed": true,
+        "fully_certified": false
+      }
+    }
+  },
+  "family_checks": {
+    "verbose": {
+      "queries_identical_across_sizes": true,
+      "qrels_identical_across_sizes": true,
+      "one_k_docs_are_subset_of_ten_k": true
+    },
+    "short-natural": {
+      "queries_identical_across_sizes": true,
+      "qrels_identical_across_sizes": true,
+      "one_k_docs_are_subset_of_ten_k": true
+    },
+    "strata": {
+      "same_family_ids": true,
+      "same_answers_and_evidence": true,
+      "distinct_query_text": true,
+      "same_corpus_and_qrels_per_size": true
+    }
+  },
+  "structural_passed": true,
+  "scientific_gates": {
+    "closed_book": "pending-model-run",
+    "retrieval_calibration": "pending-backend-run",
+    "union_recall": "pending-backend-run",
+    "leak_floor": "pending-backend-run"
+  },
+  "fully_certified": false
+}

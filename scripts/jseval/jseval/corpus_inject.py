@@ -274,12 +274,31 @@ def _perturb_digit_runs(donor_id: str, rng: random.Random) -> str:
     MIRACL `#` separator native. A run no longer than :data:`_ID_PERTURB_TAIL` is
     redrawn whole, so its leading digit is drawn rather than inherited; that digit
     reproduces the donor's leading-zero-ness in both directions (see inline).
+
+    tempdoc 748: a WHOLE-run redraw replaces the donor's value with a UNIFORM draw over
+    the same digit width, which destroys the donor population's value distribution for
+    that run. Measured on MIRACL-de (ids are ``<page-id>#<passage-index>``): the real
+    1-digit passage index is Zipf-like (``#1`` 24%, ``#9`` 2.7%) while the redrawn gold
+    index came out flat, so gold ids ran a mean trailing value of 28.97 against native
+    10.49 and ``id_shape_report`` correctly caught ``not (trailing_int(id) <= 2)`` at
+    J=0.208 against a 0.179 null. Fix: a run is only redrawn when the id has NO run with
+    an inheritable head; when at least one run does, the short runs are copied verbatim
+    from the donor and therefore carry a real value by construction. This is provably a
+    no-op for any id with a SINGLE digit run — the whole CLERC id space (bare integers)
+    and every Enron id observed (400/400 committed 781 host donors are single-run) — and
+    changes only mixed-width multi-run ids, which is the defect's exact footprint.
     """
+    runs = [m.group() for m in _DIGIT_RUN_RE.finditer(donor_id)]
+    inheritable = any(len(run) > _ID_PERTURB_TAIL for run in runs)
     out = []
     cursor = 0
     for match in _DIGIT_RUN_RE.finditer(donor_id):
         out.append(donor_id[cursor:match.start()])
         run = match.group()
+        if inheritable and len(run) <= _ID_PERTURB_TAIL:
+            out.append(run)
+            cursor = match.end()
+            continue
         keep = max(0, len(run) - _ID_PERTURB_TAIL)
         head = run[:keep]
         tail = []

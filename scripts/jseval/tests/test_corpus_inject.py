@@ -1022,6 +1022,64 @@ def test_minted_ids_are_deterministic_for_the_same_rng_seed():
     assert corpus_inject.mint_native_shaped_ids(shuffled, 25, random.Random(707)) == first
 
 
+def test_minted_ids_preserve_the_donor_value_distribution_of_short_runs():
+    """A short digit run beside a long one must be INHERITED, not uniformly redrawn.
+
+    tempdoc 748: MIRACL ids are ``<page-id>#<passage-index>``, and the real passage index
+    is heavily skewed to small values. `_perturb_digit_runs` used to redraw any run of
+    <= `_ID_PERTURB_TAIL` digits WHOLE, i.e. uniformly over its digit width — so the
+    minted gold ids carried a flat index distribution against a Zipf-like native one, and
+    `id_shape_report` separated gold from native at J=0.208 (null 0.179) with
+    ``not (trailing_int(id) <= 2)``. Asserting the mechanism (the suffix is one of the
+    donors') rather than a distribution statistic keeps the guard exact and seed-free.
+    """
+    # Real MIRACL page ids are 4-8 digits (the module-level `_MIRACL_IDS` fixture uses
+    # 3-digit stand-ins, which have no inheritable head and so exercise the fallback).
+    real_shaped = [f"{1000731 + index * 7919}#{index % 30}" for index in range(200)]
+    donor_suffixes = {i.split("#")[1] for i in real_shaped}
+    minted = corpus_inject.mint_native_shaped_ids(real_shaped, 60, random.Random(707))
+    assert all("#" in i for i in minted)
+    assert {i.split("#")[1] for i in minted} <= donor_suffixes, (
+        "a minted MIRACL-shaped id carries a passage index absent from the host "
+        "population — the short run was redrawn instead of inherited")
+    # The long run still varies, or minting would collide with the hosts it copies.
+    assert not set(minted) & set(_MIRACL_IDS)
+    assert len({i.split("#")[0] for i in minted}) > 1
+
+
+def test_single_digit_run_ids_are_unaffected_by_the_short_run_inheritance_rule():
+    """The tempdoc 748 rule is a provable no-op for a single-run id.
+
+    CLERC ids are bare integers and every committed Enron host donor observed is
+    single-run, so their minted ids — and therefore the committed `assembled_digest` of
+    every English 707/781 cell — must be byte-identical across the change. Pinned here as
+    a property (`inheritable` can never fire on a lone run: either it is long, and is
+    perturbed exactly as before, or it is short and no OTHER run qualifies).
+    """
+    for donor in ("12706857", "611", "dasovich-j/inbox/1420.", "a1"):
+        rng_a = random.Random(707)
+        rng_b = random.Random(707)
+        redrawn = corpus_inject._perturb_digit_runs(donor, rng_a)
+        # Re-derive the pre-748 behaviour inline: every run redrawn, keep = len - TAIL.
+        expected = []
+        cursor = 0
+        for match in corpus_inject._DIGIT_RUN_RE.finditer(donor):
+            expected.append(donor[cursor:match.start()])
+            run = match.group()
+            keep = max(0, len(run) - corpus_inject._ID_PERTURB_TAIL)
+            head = run[:keep]
+            tail = []
+            for index in range(len(run) - keep):
+                if index == 0 and not head and len(run) > 1:
+                    tail.append("0" if run[0] == "0" else str(rng_b.randrange(1, 10)))
+                else:
+                    tail.append(str(rng_b.randrange(10)))
+            expected.append(head + "".join(tail))
+            cursor = match.end()
+        expected.append(donor[cursor:])
+        assert redrawn == "".join(expected), donor
+
+
 def test_minted_ids_never_carry_a_qrels_breaking_character():
     # qrels/test.tsv rows are tab-separated and newline-delimited (corpus_build), so a
     # tab/CR/LF in a doc id would silently corrupt the relevance judgments.
