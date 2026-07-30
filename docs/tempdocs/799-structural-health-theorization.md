@@ -1,9 +1,9 @@
 ---
 title: "799 — Structural health: assertion channels, ratchet gaps, unexercised substrate, corpus topology (theorization)"
 type: tempdocs
-status: "theorization (2026-07-30) — no design settled, no implementation licensed. Source: a measured code-structure/health pass over `main` at 4d94d034. Every number here is reproducible by the command cited next to it. The Hard-Invariant/ArchUnit item from the same pass is deliberately OUT OF SCOPE (owner set it aside); so is release/distribution work (owned elsewhere). UPDATED same day with §K owner decisions (3 of the 4 §J questions answered) and a §F.1 self-correction that downgrades this document's own headline idea."
+status: "IMPLEMENTED (2026-07-31). Began as theorization over a measured code-structure/health pass on `main` @ 4d94d034; §K records the owner decisions, §L the derisking, §M/§N/§P/§R the implementation, §O the root-cause archaeology, §Q an adversarial review that refuted two of this document's own claims. Shipped: always-loaded budget paid down 80,837 -> 54,628 B and the ratchet WIRED into CI; tier-register evicted; config-surface gate + dead-config detector built and CI-wired; 22 shadowed config knobs withdrawn, 4 wired, and the dead ResolvedConfig.Llm record retired. OUT OF SCOPE throughout: the Hard-Invariant/ArchUnit item (owner set it aside) and release/distribution (owned elsewhere). Six self-corrections are recorded in place rather than edited away — that record is part of the document's point."
 created: 2026-07-30
-updated: 2026-07-30 (§K owner decisions; §F.1 confidence corrected down and split; §E.1 resolved as early-bet)
+updated: 2026-07-31 (§Q adversarial review + fixes; §R the Llm-record retirement and the three bookkeeping corrections this status line is one of)
 category: structural / governance / dx / context-engineering
 related:
   - 530-class-size-ratchet-automation.md      # the discipline-gate kernel; §What's-already-shipped ledger
@@ -1499,3 +1499,95 @@ because it is the tempdoc's own thesis turned on its author: I built a mechanism
 claims that outrun their enforcement, and it shipped making exactly that kind of claim — twice.
 The adversarial pass, not the test suite and not the gate, is what caught it.
 
+---
+
+## §R Final pass (2026-07-31) — the dead `Llm` record, and three corrections to this document
+
+### R.1 `ResolvedConfig.Llm` retired — one dead record, not ten stray knobs
+
+§Q.3 surfaced this as "~10 documented settings are false promises" and staged it for an owner
+decision. A derisking pass then corrected the framing, which changed the disposition from an
+open question into an evidenced one: **`Llm` was a dead parallel of the live `Ai` record.**
+`ResolvedConfig.Ai` is what the inference layer actually reads (`.ai().contextSize`,
+`.ai().gpuLayers`, `.ai().llmModelPath`, `.ai().useThinking`, `.ai().reasoningBudget`); `Llm`
+was consumed by nothing. Same defect as the `llm.gpu_layers` / `gpu.layers` twin deleted earlier
+on this branch — but at record scale.
+
+**Withdrawn rather than wired, for a design reason rather than a tidiness one.**
+`SamplingParams` sets `temperature`/`topP` **per purpose** — `AGENT (0.7, 0.8)`,
+`DETERMINISTIC (0.1, 0.9)`, `VDU (0.0, 0.9)` — and references configuration zero times. A single
+global `justsearch.llm.temperature` could not sensibly override all three, which is very likely
+*why* it was never wired. `maxNewTokens`/`rngSeed` are per-call. `contextLength` duplicated
+`Ai.contextSize()`. Corroboration: `LocalIntentTranslatorConfig` mirrors the same fields, so
+`Llm` looks like an abandoned earlier shape of what `Ai` + that config became.
+
+**The split that mattered.** Four `justsearch.llm.*` keys feed the **live `Ai`** record —
+`enabled`, `model_path`, `reasoning_budget`, `use_thinking`. Removing them would have broken
+inference. The removal was guarded by an assertion on every deletion pass, and verified live.
+
+Removed: the `Llm` record, its component on `ResolvedConfig`, `buildLlm()`, 10 `EnvRegistry`
+entries, 10 doc rows. Surface: `env_sysprop_pairs` 249 → **239**.
+
+**The gate caught its own author.** After the first removal pass, `config-surface` **failed** on
+`justsearch.llm.model_sha256` — a registry entry left behind once `buildLlm()` was gone. That is
+the identical residue class that, one day earlier (§N.2.f.1), only a running backend exposed.
+This time a gate caught it *before* the commit. That is the clearest evidence in this document
+that the detector earns its keep.
+
+Also fixed while sweeping: `Ai`'s javadoc said "LLM runtime tuning lives in `{@link Llm}`" — both
+a dangling reference and backwards, since `Ai` is where it actually lives.
+
+**A small irony worth recording.** `EnvRegistryTest` exercised `getInt`/`getLong` using
+`LLM_THREADS` and `LLM_DEADLINE_MS` as arbitrary vehicles. §M.2 had already substituted
+`LLM_THREADS` in as a supposedly "live" constant — and it was itself dead, so this pass deleted
+it. Both are now `API_PORT` and `HEAD_PID`, chosen because they have real production readers.
+Substituting one dead vehicle for another is exactly the mistake this tempdoc is about.
+
+**Verification:** full `./gradlew.bat test` BUILD SUCCESSFUL · `config-surface` PASS at the new
+baseline · `verify-runtime-config-matrix` OK (yaml=110, pairs=239) · `verify-canonical-doc-links`
+OK · scanner unit test PASS · always-loaded budget PASS · **live**: all 10 retired keys absent
+from a running backend's `effective_config` while all 4 live `Ai` keys remain present.
+
+### R.2 Correction — K.1's own open item was never closed
+
+§K.1 resolved the plugin framework as a held bet and then named its own residue: nothing in the
+repo distinguishes a *deliberately held* bet from neglect, so the distinguishing artifact would
+be a **recorded trigger**. None was recorded, and §K.1's prediction duly came true — a later
+review re-flagged it exactly as the first pass had.
+
+**Trigger, recorded now.** The bet is exercised or folded when either fires:
+
+- **Exercise** — a second real consumer of `shell-v0/plugin-api` is designed (not merely wanted).
+  The most plausible candidate is the public-center thesis in
+  `docs/explanation/28`: an external agent contributing a surface. Designing that is the signal
+  the option is being cashed.
+- **Fold** — the next structural-health pass finds `plugins/` still contains exactly one plugin
+  AND `docs/explanation/28` has not moved toward external surface contribution. At that point the
+  option has gone unexercised across two review cycles and the ~10,300 lines should be collapsed
+  into the shell with a `retire-with-a-sweep`.
+
+Neither is a date, deliberately — a date would be the "wait-for-more-evidence" deferral
+`structural-defects-no-repeat` bans. Both are observable conditions.
+
+### R.3 Correction — §K.4 delivered something narrower than its own wording
+
+§K.4 reads: *re-triage the config surface by **why each knob exists*** (incident escape hatch /
+A-B lever / genuine user preference / never-flipped).
+
+**That taxonomy was never produced.** What shipped was a *disposition* pass — wire-or-withdraw
+over 754's existing per-module list — plus a count-based regrowth gate that encodes no origin
+categories. The narrowing was agreed in conversation (§D.1 argued the origin cut is worth more as
+input to the gate's design than as a labelling exercise, and the owner agreed with that
+recommendation), but the page never recorded it, so the decision and the delivery did not match.
+
+Recorded now: **K.4 as delivered = bounded disposition + regrowth ratchet. The origin taxonomy
+remains unbuilt**, and it is the natural input if a future pass wants the gate to distinguish
+*kinds* of knob rather than counting them.
+
+### R.4 What remains open
+
+Unchanged and correctly scoped out: the eval-harness scoring bug (`retriever.py:143`, still the
+highest-value single finding in this document), the 13 orphaned CI checks, the class-size
+ratchet, and §J.5–7. §O.6 stands: Cause 1's pattern and Cause 2 are untouched — only Cause 3 is
+now closed for the declared config surface, and even there §D.1's three-delivery-path caveat
+still applies.

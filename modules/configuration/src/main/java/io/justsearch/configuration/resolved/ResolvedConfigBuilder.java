@@ -887,7 +887,6 @@ public final class ResolvedConfigBuilder {
     ResolvedConfig.Paths paths = buildPaths();
     ResolvedConfig.Ports ports = buildPorts();
     ResolvedConfig.Ai ai = buildAi();
-    ResolvedConfig.Llm llm = buildLlm();
     ResolvedConfig.Agent agent = buildAgent();
     ResolvedConfig.Summary summary = buildSummary();
     ResolvedConfig.Search search = buildSearch();
@@ -908,7 +907,7 @@ public final class ResolvedConfigBuilder {
 
     ResolvedConfig config =
         new ResolvedConfig(
-            paths, ports, ai, llm, agent, summary,
+            paths, ports, ai, agent, summary,
             search, telemetry, policy, ui,
             watcher, ocr, index, rag, hybridSearch, worker,
             collections, workerAi, workerIndexer,
@@ -1251,20 +1250,6 @@ public final class ResolvedConfigBuilder {
         resolveDouble("justsearch.citation.scorer.threshold", 0.5),
         resolveInt("justsearch.citation.scorer.max_seq_len", 512),
         resolveInt("justsearch.citation.scorer.deadline_ms", 2000));
-  }
-
-  private ResolvedConfig.Llm buildLlm() {
-    return new ResolvedConfig.Llm(
-        resolveString("justsearch.llm.model_sha256", ""),
-        resolveLong("justsearch.llm.deadline_ms", 0L),
-        resolveLong("justsearch.llm.simulated_latency_ms", 0L),
-        resolveInt("justsearch.llm.threads", 0),
-        resolveInt("justsearch.llm.context_length", 0),
-        resolveInt("justsearch.llm.max_new_tokens", 0),
-        resolveDouble("justsearch.llm.temperature", 0.0),
-        resolveDouble("justsearch.llm.top_p", 0.0),
-        resolveDouble("justsearch.llm.min_p", 0.0),
-        resolveLong("justsearch.llm.rng_seed", 42L));
   }
 
   private ResolvedConfig.Agent buildAgent() {

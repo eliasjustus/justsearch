@@ -2,10 +2,8 @@
 # These are settings that resolve but nothing reads. They are RECORDED, not blessed: the gate
 # fails on any NEW one. Shrinking this list is the point; it never ratchets up without a changeset.
 #
-# Measured 2026-07-31 after 799 withdrew 22 shadowed knobs. Left in place rather than deleted
-# because each is a wire-it-or-withdraw-it product call, the same judgement 754 deferred — the
-# gate's job is to stop the list GROWING while those calls are made.
-component:simulatedLatencyMs
+# Left in place rather than deleted because each is a wire-it-or-withdraw-it product call, the same
+# judgement 754 deferred — the gate's job is to stop the list GROWING while those calls are made.
 key:justsearch.embed.dimension
 key:justsearch.path_resolution.retention_days
 key:search.facets.enabled
@@ -16,13 +14,14 @@ key:search.rerank.enabled
 key:search.rerank.k
 key:search.rerank.reduced_k
 #
-# NOT LISTED, because the scanner cannot currently see them (tempdoc 799 §Q). ResolvedConfig.llm()
-# is never called in production, so the whole Llm record is unreachable and ~10 documented settings
-# behind it are false promises — justsearch.llm.{min_p,rng_seed,temperature,top_p,threads,
-# context_length,max_new_tokens,deadline_ms,model_sha256} plus simulatedLatencyMs (the only one
-# above, because its name is unique). Bare-name matching masks the rest. Surfaced for an owner
-# wire-it-or-withdraw-it decision rather than deleted here; see 799 §Q.
+# ---- history ----
 #
-# REMOVED 2026-07-31: justsearch.fieldCatalog was never dead — it is read via
-# EnvRegistry.FIELD_CATALOG at JustSearchConfigurationLoader.java:116. It was a false positive
-# caused by the scanner excluding the entire configuration package from its reader corpus.
+# 2026-07-31 (799 §R) — `component:simulatedLatencyMs` REMOVED, and the block that used to list ~10
+# settings as "undetectable by the scanner" is gone with it. The whole ResolvedConfig.Llm record was
+# retired: it was a dead parallel of the live ResolvedConfig.Ai record and nothing read it. Unread
+# components are now 0, so the scanner's known blind spot has no live instance — the limitation is
+# still real and still documented in dead-config.mjs, it just no longer hides anything here.
+#
+# 2026-07-31 (799 §Q.2) — `key:justsearch.fieldCatalog` REMOVED: it was never dead. It is read via
+# EnvRegistry.FIELD_CATALOG at JustSearchConfigurationLoader.java:116. A false positive caused by
+# the scanner excluding the entire configuration package from its reader corpus.

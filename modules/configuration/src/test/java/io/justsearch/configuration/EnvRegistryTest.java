@@ -11,7 +11,6 @@ class EnvRegistryTest {
     void sysProp_returnsCorrectValue() {
         assertEquals("justsearch.data.dir", EnvRegistry.DATA_DIR.sysProp());
         assertEquals("justsearch.ssot.path", EnvRegistry.SSOT_PATH.sysProp());
-        assertEquals("justsearch.llm.model_sha256", EnvRegistry.LLM_MODEL_SHA256.sysProp());
         assertEquals("justsearch.summary.pipeline", EnvRegistry.SUMMARY_PIPELINE.sysProp());
         assertEquals(
             "justsearch.embed.dimension", EnvRegistry.EMBED_DIMENSION_OVERRIDE.sysProp());
@@ -24,7 +23,6 @@ class EnvRegistryTest {
     void envVar_returnsCorrectValue() {
         assertEquals("JUSTSEARCH_DATA_DIR", EnvRegistry.DATA_DIR.envVar());
         assertEquals("JUSTSEARCH_SSOT_PATH", EnvRegistry.SSOT_PATH.envVar());
-        assertEquals("JUSTSEARCH_LLM_MODEL_SHA256", EnvRegistry.LLM_MODEL_SHA256.envVar());
         assertEquals("JUSTSEARCH_SUMMARY_PIPELINE", EnvRegistry.SUMMARY_PIPELINE.envVar());
         assertEquals("JUSTSEARCH_EMBED_DIM", EnvRegistry.EMBED_DIMENSION_OVERRIDE.envVar());
         assertEquals("JUSTSEARCH_VRAM_THRESHOLD_12GB", EnvRegistry.VRAM_THRESHOLD_12GB.envVar());
@@ -49,16 +47,16 @@ class EnvRegistryTest {
 
     @Test
     void getInt_readsSystemPropertyAndFallsBackOnInvalid() {
-        withSysProp(EnvRegistry.LLM_THREADS.sysProp(), "7", () ->
-            assertEquals(7, EnvRegistry.LLM_THREADS.getInt(1)));
-        withSysProp(EnvRegistry.LLM_THREADS.sysProp(), "invalid", () ->
-            assertEquals(1, EnvRegistry.LLM_THREADS.getInt(1)));
+        withSysProp(EnvRegistry.API_PORT.sysProp(), "7", () ->
+            assertEquals(7, EnvRegistry.API_PORT.getInt(1)));
+        withSysProp(EnvRegistry.API_PORT.sysProp(), "invalid", () ->
+            assertEquals(1, EnvRegistry.API_PORT.getInt(1)));
     }
 
     @Test
     void getLong_readsSystemProperty() {
-        withSysProp(EnvRegistry.LLM_DEADLINE_MS.sysProp(), "1234", () ->
-            assertEquals(1234L, EnvRegistry.LLM_DEADLINE_MS.getLong(900L)));
+        withSysProp(EnvRegistry.HEAD_PID.sysProp(), "1234", () ->
+            assertEquals(1234L, EnvRegistry.HEAD_PID.getLong(900L)));
     }
 
     @Test

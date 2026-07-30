@@ -91,16 +91,6 @@ Scope:
 | `JUSTSEARCH_SUMMARY_MAX_TOKENS` | `justsearch.summary.max_tokens` | Int | Max summary estimated tokens before rejection (default `20000`, clamped `>= 1`). |
 | `JUSTSEARCH_SUMMARY_PIPELINE` | `justsearch.summary.pipeline` | String | Summary pipeline id (default `summary_mapreduce_v1` after sanitize). |
 | **LLM runtime tuning** | | | |
-| `JUSTSEARCH_LLM_MODEL_SHA256` | `justsearch.llm.model_sha256` | String | Expected model SHA-256 metadata (default `unknown`). |
-| `JUSTSEARCH_LLM_DEADLINE_MS` | `justsearch.llm.deadline_ms` | Long | LLM request deadline in milliseconds. |
-| `JUSTSEARCH_LLM_SIMULATED_LATENCY_MS` | `justsearch.llm.simulated_latency_ms` | Long | Simulated latency for test/dev. |
-| `JUSTSEARCH_LLM_THREADS` | `justsearch.llm.threads` | Int | LLM worker threads override. |
-| `JUSTSEARCH_LLM_CONTEXT_LENGTH` | `justsearch.llm.context_length` | Int | LLM context length. |
-| `JUSTSEARCH_LLM_MAX_NEW_TOKENS` | `justsearch.llm.max_new_tokens` | Int | Max generated tokens per request. |
-| `JUSTSEARCH_LLM_TEMPERATURE` | `justsearch.llm.temperature` | Double | Sampling temperature (finite, non-negative). |
-| `JUSTSEARCH_LLM_TOP_P` | `justsearch.llm.top_p` | Double | Top-p sampling parameter. |
-| `JUSTSEARCH_LLM_MIN_P` | `justsearch.llm.min_p` | Double | Min-p sampling parameter. |
-| `JUSTSEARCH_LLM_RNG_SEED` | `justsearch.llm.rng_seed` | Long | RNG seed override. |
 | **Pipeline ids** | | | |
 | **RAG** | | | |
 | `JUSTSEARCH_RAG_TOP_K` | `justsearch.rag.top_k` | Int | Number of chunks to retrieve for RAG context (default 5). |

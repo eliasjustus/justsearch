@@ -91,12 +91,6 @@ public enum EnvRegistry {
      */
     MODE("justsearch.mode", "JUSTSEARCH_MODE"),
 
-    /** LLM model file hash (sha256). */
-    LLM_MODEL_SHA256("justsearch.llm.model_sha256", "JUSTSEARCH_LLM_MODEL_SHA256"),
-
-
-    /** LLM request deadline in milliseconds. */
-    LLM_DEADLINE_MS("justsearch.llm.deadline_ms", "JUSTSEARCH_LLM_DEADLINE_MS"),
 
 
 
@@ -107,27 +101,14 @@ public enum EnvRegistry {
 
 
 
-    /** Simulated backend latency in milliseconds. */
-    LLM_SIMULATED_LATENCY_MS(
-        "justsearch.llm.simulated_latency_ms", "JUSTSEARCH_LLM_SIMULATED_LATENCY_MS"),
 
-    /** LLM execution thread count. */
-    LLM_THREADS("justsearch.llm.threads", "JUSTSEARCH_LLM_THREADS"),
 
-    /** LLM context window. */
-    LLM_CONTEXT_LENGTH("justsearch.llm.context_length", "JUSTSEARCH_LLM_CONTEXT_LENGTH"),
 
-    /** Max generated tokens per request. */
-    LLM_MAX_NEW_TOKENS("justsearch.llm.max_new_tokens", "JUSTSEARCH_LLM_MAX_NEW_TOKENS"),
 
-    /** Sampling temperature. */
-    LLM_TEMPERATURE("justsearch.llm.temperature", "JUSTSEARCH_LLM_TEMPERATURE"),
 
-    /** Top-p sampling parameter. */
-    LLM_TOP_P("justsearch.llm.top_p", "JUSTSEARCH_LLM_TOP_P"),
 
-    /** Min-p sampling parameter. */
-    LLM_MIN_P("justsearch.llm.min_p", "JUSTSEARCH_LLM_MIN_P"),
+
+
 
     /** Enables thinking mode (reasoning_content parsing, --reasoning-format deepseek). Default true. */
     USE_THINKING("justsearch.llm.use_thinking", "JUSTSEARCH_USE_THINKING"),
@@ -174,8 +155,6 @@ public enum EnvRegistry {
 
 
 
-    /** RNG seed used by deterministic test/dev paths. */
-    LLM_RNG_SEED("justsearch.llm.rng_seed", "JUSTSEARCH_LLM_RNG_SEED"),
 
 
 

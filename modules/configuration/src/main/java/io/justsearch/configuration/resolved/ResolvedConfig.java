@@ -33,7 +33,6 @@ import java.util.TreeMap;
  *   <li>{@link Paths} — file system paths (data dir, index path, home, models, SSOT, repo root)
  *   <li>{@link Ports} — network ports (API, AI worker, llama-server)
  *   <li>{@link Ai} — AI/inference feature flags, GPU layers, model paths
- *   <li>{@link Llm} — LLM runtime tuning (sampling, VRAM, templates, deadlines)
  *   <li>{@link Agent} — agent tool configuration (limits, compression)
  *   <li>{@link Summary} — summary pipeline configuration
  *   <li>{@link Search} — search pipeline configuration
@@ -48,7 +47,6 @@ public record ResolvedConfig(
     Paths paths,
     Ports ports,
     Ai ai,
-    Llm llm,
     Agent agent,
     Summary summary,
     Search search,
@@ -72,7 +70,6 @@ public record ResolvedConfig(
     Objects.requireNonNull(paths, "paths");
     Objects.requireNonNull(ports, "ports");
     Objects.requireNonNull(ai, "ai");
-    Objects.requireNonNull(llm, "llm");
     Objects.requireNonNull(agent, "agent");
     Objects.requireNonNull(summary, "summary");
     Objects.requireNonNull(search, "search");
@@ -201,7 +198,13 @@ public record ResolvedConfig(
 
   /**
    * AI and inference feature configuration — model paths, GPU layers, feature flags, and VRAM
-   * thresholds. LLM runtime tuning lives in {@link Llm}.
+   * thresholds.
+   *
+   * <p>This is the record the inference layer actually reads ({@code InferenceConfig},
+   * {@code LlamaServerOps}). A parallel {@code Llm} record once claimed to hold "LLM runtime
+   * tuning" and was consumed by nothing — its ten components resolved, were documented, and were
+   * read by no production code. Retired by tempdoc 799 §R; sampling parameters are set per purpose
+   * in {@code SamplingParams} and per call, not by a global knob.
    */
   public record Ai(
       Path serverExe,
@@ -391,36 +394,6 @@ public record ResolvedConfig(
           new BackfillPacing(16, 100, 100, 500, 200, 10, 5_000L, 10_000L, 1000, 50, 50, 10);
     }
   }
-
-  /**
-   * LLM runtime tuning — sampling, deadlines, remote config.
-   *
-   * <p>Seventeen components were removed by tempdoc 799 §N.2 as <em>shadowed</em> knobs: they
-   * resolved correctly, were documented, and were read by nothing, because a live consumer
-   * hardcoded the value instead. Each was verified to have zero record-accessor calls in
-   * production before removal. The VRAM/session cluster ({@code vramFraction}, {@code
-   * vramProjected}, {@code vramLimitBytes}, {@code vramAutoScale}, {@code maxSlots}, {@code
-   * maxParallel}, {@code maxSessions}, {@code sessionWarmupMs}, {@code queueCapacity}, {@code
-   * backendSelector}, {@code backendSupports}) is governed instead by {@code
-   * HardwareProfile.MINIMUM_VRAM_FOR_GGUF}, {@code VramRequirements.COMFORTABLE_VRAM_BYTES}, the
-   * single lock in {@code OnlineModeOps}, and {@code LlamaServerOps}' hardcoded {@code -np 1} —
-   * deliberate safety thresholds, not user-tunable. The summarization group ({@code
-   * summaryChunkTokens}, {@code summaryChunkOverlap}, {@code templateRoot}, {@code
-   * templateSummary}, {@code templateReduce}) is governed by {@code HierarchicalShapeRunner} and
-   * {@code PromptTemplateLoader}. {@code llmGpuLayers} was a dead duplicate of {@code
-   * justsearch.gpu.layers}, which is the key that actually works.
-   */
-  public record Llm(
-      String modelSha256,
-      long deadlineMs,
-      long simulatedLatencyMs,
-      int threads,
-      int contextLength,
-      int maxNewTokens,
-      double temperature,
-      double topP,
-      double minP,
-      long rngSeed) {}
 
   /** Agent tool configuration — search/browse limits, context compression. */
   public record Agent(
