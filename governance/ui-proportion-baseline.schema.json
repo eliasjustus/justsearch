@@ -10,6 +10,8 @@
     "version": { "const": 1 },
     "description": { "type": "string" },
     "captureState": { "type": "string" },
+    "constraintKinds": { "type": "string", "description": "Prose summary of the constraint vocabulary an element may declare." },
+    "occlusionNote": { "type": "string", "description": "Prose record of the measured defects the overlap/floor constraints were added for, including the honest residual." },
     "tolerancePx": {
       "type": "integer",
       "minimum": 0,
@@ -32,7 +34,13 @@
             "type": "array",
             "items": {
               "type": "object",
-              "required": ["selector", "maxHeightPx"],
+              "required": ["selector"],
+              "anyOf": [
+                { "required": ["maxHeightPx"] },
+                { "required": ["minWidthPx"] },
+                { "required": ["mustNotOverlapSelector"] }
+              ],
+              "description": "An element declares at least one geometric constraint; the gate reports an element with none as an ERROR rather than a silent pass.",
               "properties": {
                 "selector": {
                   "type": "string",
@@ -42,6 +50,15 @@
                   "type": "integer",
                   "minimum": 0,
                   "description": "Recorded rendered-height ceiling in px. A measured height above maxHeightPx + tolerancePx is a growth violation."
+                },
+                "minWidthPx": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Rendered-width FLOOR in px for primary content that chrome must not starve. A measured width below minWidthPx - tolerancePx is a starvation violation."
+                },
+                "mustNotOverlapSelector": {
+                  "type": "string",
+                  "description": "A second registered selector whose rect this element's rect must not intersect (by more than tolerancePx on both axes). Expresses occlusion, which no per-element size budget can."
                 }
               },
               "additionalProperties": false

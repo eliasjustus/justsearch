@@ -60,23 +60,34 @@ _A11Y_BASELINE = _find_a11y_baseline()
 
 def _find_proportion_baseline() -> dict[str, list[str]]:
     """Load the shared chrome-proportion baseline register (tempdoc 697): the ONE
-    authority for which persistent-chrome element selectors are tracked per ui-shot
-    step. Returns {uiShotStep -> [selector]}. Best-effort: an absent/garbled register
-    yields an empty map (geometry capture is unaffected — the extra selectors are
-    simply not unioned in, mirroring `_find_a11y_baseline`'s fail-open contract)."""
+    authority for which element selectors are tracked per ui-shot step. Returns
+    {uiShotStep -> [selector]}. Best-effort: an absent/garbled register yields an empty
+    map (geometry capture is unaffected — the extra selectors are simply not unioned in,
+    mirroring `_find_a11y_baseline`'s fail-open contract).
+
+    A `mustNotOverlapSelector` counterpart is collected too: an overlap constraint is a
+    RELATION, so the gate needs BOTH rects out of the one capture, and a counterpart that
+    is only ever named (never registered as its own row) would otherwise be missing from
+    the geometry and read as a capture error."""
     here = Path(__file__).resolve()
     for parent in here.parents:
         cand = parent / "governance" / "ui-proportion-baseline.v1.json"
         if cand.exists():
             try:
                 reg = json.loads(cand.read_text(encoding="utf-8"))
-                return {
-                    s["uiShotStep"]: [
-                        el["selector"] for el in (s.get("elements") or []) if el.get("selector")
-                    ]
-                    for s in reg.get("steps", [])
-                    if s.get("uiShotStep")
-                }
+                out: dict[str, list[str]] = {}
+                for s in reg.get("steps", []):
+                    step = s.get("uiShotStep")
+                    if not step:
+                        continue
+                    sels: list[str] = []
+                    for el in s.get("elements") or []:
+                        for key in ("selector", "mustNotOverlapSelector"):
+                            sel = el.get(key)
+                            if sel and sel not in sels:
+                                sels.append(sel)
+                    out[step] = sels
+                return out
             except Exception:
                 return {}
     return {}

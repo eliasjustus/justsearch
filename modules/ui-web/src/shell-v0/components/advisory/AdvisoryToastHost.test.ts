@@ -252,6 +252,103 @@ describe('AdvisoryToastHost (Group A2 + B4)', () => {
     expect(el.visible.length).toBe(0);
   });
 
+  // Sandbox round 7 — the OverlayHost `.top-right` slot is an uncapped, unscrolled fixed flex
+  // column, so an unbounded `visible` array stacked a burst of toasts downward over the chat
+  // surface's header control row. The stack is now a BOUNDED projection.
+  describe('bounded toast stack (round 7 — occlusion of the header control row)', () => {
+    /** Drive `n` new stream advisories through the store as consecutive UPDATE frames. */
+    async function burst(el: AdvisoryToastHost, store: StubAdvisoryStore, n: number) {
+      store.push({ advisories: [], lastFrameKind: 'snapshot' });
+      const advisories: AdvisoryRecord[] = [];
+      for (let i = 0; i < n; i += 1) {
+        advisories.push(rec(`core.burst-${i}`, `2026-05-12T09:0${i}:00Z`, false, 'REQUIRES_ACK'));
+        store.push({ advisories: [...advisories], lastFrameKind: 'update' });
+      }
+      await el.updateComplete;
+    }
+
+    it('renders at most 3 toasts for a burst of 8, summarizing the rest as "+N earlier"', async () => {
+      const store = new StubAdvisoryStore();
+      const el = make(store as unknown as AdvisoryStore);
+      await burst(el, store, 8);
+      // All 8 stay live (nothing is silently acknowledged or dropped) — only the RENDER is bounded.
+      expect(el.visible.length).toBe(8);
+      expect(el.shadowRoot?.querySelectorAll('.toast').length).toBe(3);
+      const more = el.shadowRoot?.querySelector('[data-testid="toast-more"]');
+      expect(more?.textContent?.replace(/\s+/g, ' ').trim()).toBe('+5 earlier notifications');
+    });
+
+    it('keeps the NEWEST toasts visible — a burst never buries the just-arrived advisory', async () => {
+      const store = new StubAdvisoryStore();
+      const el = make(store as unknown as AdvisoryStore);
+      await burst(el, store, 5);
+      const keys = Array.from(el.shadowRoot?.querySelectorAll('.toast') ?? []).map((t) =>
+        t.getAttribute('data-key'),
+      );
+      expect(keys).toEqual([
+        'operation.completed:core.burst-2:SUCCESS',
+        'operation.completed:core.burst-3:SUCCESS',
+        'operation.completed:core.burst-4:SUCCESS',
+      ]);
+    });
+
+    it('renders no overflow summary while the stack is within the cap', async () => {
+      const store = new StubAdvisoryStore();
+      const el = make(store as unknown as AdvisoryStore);
+      await burst(el, store, 3);
+      expect(el.shadowRoot?.querySelectorAll('.toast').length).toBe(3);
+      expect(el.shadowRoot?.querySelector('[data-testid="toast-more"]')).toBeNull();
+    });
+
+    it('does NOT add an auto-dismiss timer to the capped-out acknowledge-required toasts', async () => {
+      // Bounding the RENDER must not become a covert timeout: persistence-until-acknowledged is
+      // correct for REQUIRES_ACK, so every held-back record must still have a null timeout.
+      const store = new StubAdvisoryStore();
+      const el = make(store as unknown as AdvisoryStore);
+      await burst(el, store, 6);
+      expect(el.visible.every((t) => t.timeoutId === null)).toBe(true);
+    });
+  });
+
+  describe('visible dismiss control (round 7 — dismissal was click-anywhere and undiscoverable)', () => {
+    function dismissButton(el: AdvisoryToastHost): HTMLElement | null {
+      return el.shadowRoot?.querySelector(
+        '.toast jf-button[label="Dismiss notification"]',
+      ) as HTMLElement | null;
+    }
+
+    it('renders a labelled dismiss button on each toast', async () => {
+      const store = new StubAdvisoryStore();
+      const el = make(store as unknown as AdvisoryStore);
+      store.push({ advisories: [], lastFrameKind: 'snapshot' });
+      store.push({
+        advisories: [rec('core.dismissable', '2026-05-12T09:00:00Z', false, 'REQUIRES_ACK')],
+        lastFrameKind: 'update',
+      });
+      await el.updateComplete;
+      expect(dismissButton(el)).not.toBeNull();
+    });
+
+    it('activating it acknowledges + dismisses exactly once (the wrapper stops the toast click)', async () => {
+      const store = new StubAdvisoryStore();
+      const el = make(store as unknown as AdvisoryStore);
+      store.push({ advisories: [], lastFrameKind: 'snapshot' });
+      store.push({
+        advisories: [rec('core.dismissable', '2026-05-12T09:00:00Z', false, 'REQUIRES_ACK')],
+        lastFrameKind: 'update',
+      });
+      await el.updateComplete;
+      const btn = dismissButton(el);
+      expect(btn).not.toBeNull();
+      // jf-button activates through its nested shadow <button>; drive the same callback the
+      // control would, then assert the click it emits does not ALSO reach `.toast`'s handler.
+      (btn as unknown as { onActivate: () => void }).onActivate();
+      btn!.dispatchEvent(new Event('click', { bubbles: true, composed: true }));
+      expect(store.acknowledge).toHaveBeenCalledTimes(1);
+      expect(el.visible.length).toBe(0);
+    });
+  });
+
   // Tempdoc 559 Authority III — local-origin ephemeral records render through the
   // ONE toast host (no second SimpleToast renderer), ungated by frame-kind.
   function localRec(message: string, severity: 'info' | 'success' | 'warning' | 'error'): AdvisoryRecord {

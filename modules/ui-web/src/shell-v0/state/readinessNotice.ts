@@ -259,7 +259,10 @@ const CAUSE_ROWS: ReadonlyArray<{
   {
     code: 'conversations.locked',
     wording: 'Your chat history is encrypted and locked',
-    remedy: { kind: 'navigate', target: 'core.settings-surface', label: 'Unlock in Settings' },
+    // The remedy must point at the surface that OWNS the unlock capability: `unlockEncryption()`
+    // lives on SecuritySurface (`core.security-surface`, CorePlugin.ts), NOT on Settings — 629 moved
+    // the encryption control out of Settings and this remedy was left behind pointing one hop short.
+    remedy: { kind: 'navigate', target: 'core.security-surface', label: 'Unlock in Security' },
     severity: 'warn',
   },
   // Tempdoc 600 Design A — the embedding/schema compatibility causes the worker emits on the
