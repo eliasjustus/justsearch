@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.indexerworker.extract;
 
+import io.justsearch.configuration.resolved.ResolvedConfig;
 import java.util.Set;
 
 /**
@@ -69,6 +70,54 @@ public record TikaExtractionPolicy(
         true,
         Set.of(),
         Set.of());
+  }
+
+  /**
+   * Policy honouring the operator's {@code worker.limits.*} settings (tempdoc 799 §N.2). Before
+   * this, {@code maxContentLength} / {@code maxFileSize} resolved correctly and were read by
+   * nothing — {@link #DEFAULT_MAX_EXTRACTED_CHARS} / {@link #DEFAULT_MAX_INPUT_BYTES} always won.
+   *
+   * <p><strong>Why this is a separate factory rather than making {@link #defaults()}
+   * config-aware.</strong> {@code policyId} is a PERSISTED IDENTITY: {@code ExtractionArtifact}
+   * stamps it onto every extraction and {@code SqliteJobQueue} stores it in the ledger. If the
+   * limits behind {@code "tika-default-v1"} varied with configuration while the id stayed
+   * constant, that identity would silently stop identifying the policy — a document extracted
+   * under a 1 MB cap and one extracted under 10 MB would record the same id, and any staleness or
+   * re-extract decision keyed on it would treat them as equivalent. {@code defaults()} therefore
+   * stays deterministic (it is also the fallback inside {@code ExtractionArtifact.validate} and
+   * the only policy available to {@code ExtractionSandboxChild}, which runs in a child process
+   * where no global ConfigStore need exist), and a configured policy carries its OWN id.
+   *
+   * <p>Returns {@link #defaults()} unchanged when config is absent or matches the defaults, so the
+   * common path is byte-identical and no new policy id enters the ledger for an unconfigured
+   * install.
+   */
+  public static TikaExtractionPolicy fromWorkerLimits(ResolvedConfig.Worker worker) {
+    if (worker == null) {
+      return defaults();
+    }
+    int chars = worker.maxContentLength() > 0 ? worker.maxContentLength() : DEFAULT_MAX_EXTRACTED_CHARS;
+    long bytes = worker.maxFileSize() > 0 ? worker.maxFileSize() : DEFAULT_MAX_INPUT_BYTES;
+    if (chars == DEFAULT_MAX_EXTRACTED_CHARS && bytes == DEFAULT_MAX_INPUT_BYTES) {
+      return defaults();
+    }
+    TikaExtractionPolicy base = defaults();
+    return new TikaExtractionPolicy(
+        // Deterministic and human-readable in the ledger — the same limits always yield the same
+        // id, across processes, with no hashing.
+        "tika-config-v1-" + chars + "-" + bytes,
+        chars,
+        bytes,
+        Math.min(base.maxOfficeInputBytes(), bytes),
+        base.maxMetadataEntries(),
+        base.maxMetadataKeyChars(),
+        base.maxMetadataValueChars(),
+        base.maxEmbeddedResources(),
+        base.maxEmbeddedDepth(),
+        base.maxCompressionRatio(),
+        base.requireXmlEntitySafeTikaDefaults(),
+        base.allowedMimeTypes(),
+        base.excludedMimeTypes());
   }
 
   public boolean permitsMimeType(String mimeType) {

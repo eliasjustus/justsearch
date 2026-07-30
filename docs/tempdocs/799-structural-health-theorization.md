@@ -1043,7 +1043,48 @@ shrink within the same session.
 **BUILD SUCCESSFUL** · `verify-runtime-config-matrix` OK · `verify-canonical-doc-links` OK
 · `config-surface` PASS at the new baseline.
 
-#### N.2.f The 4 wirings — analysed, NOT implemented, and why
+#### N.2.f The 4 wirings — IMPLEMENTED 2026-07-30 (analysis retained below)
+
+All four are wired, tested and green. Two corrections to the analysis that follows, both
+found by reading the code before editing it:
+
+1. **The hazard's mechanism was mis-stated.** It is not a "digest". `ExtractionArtifact`
+   stamps `policyId` — a *name* — onto every extraction, and `SqliteJobQueue` persists it.
+   So the failure mode is that a **persisted identity silently stops identifying the
+   policy**: two materially different policies would both call themselves
+   `tika-default-v1`, and any staleness or re-extract decision keyed on the id would treat
+   them as equivalent. Worse than a mismatch, because nothing would ever error.
+   Resolved by `TikaExtractionPolicy.fromWorkerLimits(...)`, which returns `defaults()`
+   byte-identical when limits match, and otherwise mints a deterministic
+   `tika-config-v1-<chars>-<bytes>` id. `defaults()` is untouched, so the sandbox-child
+   path and `validate()`'s fallback stay deterministic. Eight tests guard it; the central
+   one fails under the naive "make defaults() read config" implementation, which is the
+   point of writing it.
+2. **The claimed teardown did not exist.** §N.2.f originally said
+   `StreamingCitationMatcher` duplicated `DEFAULT_CITATION_SIMILARITY_THRESHOLD`. It does
+   not — it already delegates to the `DocumentService` constant; tempdoc 565 §15.A unified
+   them. No duplicate to remove. **Fifth self-correction in this document**, and the one
+   that most vindicates reading before editing.
+
+A constraint that shaped the citation wiring and was not in the plan: 565 §15.A made that
+cutoff *one shared value* precisely because a divergent local `0.45` was a defect. Wiring
+only the RAG path would have recreated it, so **both** composition roots
+(`ConversationApiAssembly`, `AgentLoopWiring`) read the same key.
+
+Config is read at composition roots, never inside the SPI classes, so `RAGContext`,
+`StreamingCitationMatcher` and `AgentCitationResolver` stay constructor-injected and
+unit-testable. `ragTopK` precedence is **body → configured → 5**: an explicit per-request
+`topK` still wins.
+
+**Verification:** full `./gradlew.bat test` BUILD SUCCESSFUL · `config-surface` PASS at an
+**unchanged** key count (251 — the plan's own mis-scope check) · `verify-runtime-config-matrix`
+OK · always-loaded budget PASS · kernel `--self-test` PASS.
+
+**Not yet done:** the live tier. `ragTopK` changes what the model actually answers with, so
+unit tests are not sufficient evidence under `use-every-verification-tier`. The dev stack is
+shared and contended; that run is outstanding.
+
+##### Original analysis (retained — it is why the design is shaped this way)
 
 The withdrawal half is done and green. The wiring half is deliberately left for a scoped
 follow-up, because the investigation turned up a hazard that makes "just read it from
