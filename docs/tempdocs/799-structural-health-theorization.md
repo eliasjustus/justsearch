@@ -944,8 +944,25 @@ Pinned baseline (measured 2026-07-30, post-754): `yaml_keys 115`,
 
 **A kernel gate, deliberately, not a `scripts/ci/check-*.mjs`.** That choice *is* this
 document's Class-1 finding applied to its own output: an unwired lint rots (§C.1/§C.3),
-a registered gate runs. Registering it also means it is self-tested, changeset-governed
-and SARIF-reporting for free.
+a registered gate is enumerable, self-tested, changeset-governed and SARIF-reporting.
+
+⚠️ **Qualification — the first draft of this section overstated it.** "A registered gate
+runs" is not true *automatically* in this repo: **no workflow and no Gradle task invokes
+`scripts/governance/run.mjs`.** The kernel is agent-invoked pre-merge (CLAUDE.md's
+Pre-merge table). `scripts/agent-analytics/expected-state.v1.json:40` matches on a
+`verifyGovernanceGates` Gradle task that **does not exist here** — the same go-public
+retirement residue as §M.4's class-size/ui-bundle entry, in the same expected-state row.
+
+So the honest claim is narrower: a registered gate is *discoverable, self-tested and
+delivered at the moment of relevance* (here, via the `workflow-config-key` recipe),
+where the always-loaded lint was referenced by nothing at all and had no bite proof.
+That is a real tier difference and it justifies the choice — but it is not CI
+enforcement, and this document should not imply it is while criticising exactly that
+kind of overclaim. Two consequences worth separating for a later decision:
+
+- The gate cannot break `main` (nothing runs it there), so shipping it carries no CI risk.
+- Whether the kernel itself should be CI-invoked is a *bigger* question than K.4 and is
+  deliberately not answered here. It is the natural successor to §C.5.
 
 Growth stays possible but must be **declared** — a changeset under
 `gates/config-surface/.changesets/` classified `declared-growth` with a tempdoc/adr
