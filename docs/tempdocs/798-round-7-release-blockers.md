@@ -396,6 +396,122 @@ work, but without it a regression here is undetectable again.
 
 ---
 
+# D6 — Design for the remaining work (B2, B3, B5, B6)
+
+Written after B1, B4 and B7 shipped. The remaining eight findings are not eight unrelated
+bugs; **five of them are the same defect as B1, one plane over.**
+
+## D6.0 The shape
+
+B1 was the **data plane**: a status field claiming an artifact that did not exist. The
+governance registers are the **control plane**: a declaration claiming a consumer. These five
+are the **presentation plane** — claims made to a human — and they share a sharper, more
+actionable form than "unwitnessed claim":
+
+> **Prose hardcoded next to the data that would have made it true.**
+
+- B5: the consent dialog says *"several GB"* as a string constant while
+  `planPreview.totalDownloadBytes` — the exact figure, 10.14 GB — is already in the same
+  component's state, and renders on the very next screen. It says *"you must accept the
+  upstream model terms"* while every package on the wire already carries `termsUrl` and a
+  SPDX `license`.
+- B6-9: *"Unknown — needs admin"* is reached because `qualityKnown` is a hardcoded `false`,
+  while process elevation is never actually checked — so the remedy named is one the system
+  has no basis to recommend.
+- B6-5: *"Unlock in Settings"* points one hop short. `SettingsSurface` itself navigates to
+  `core.security-surface` for the unlock, so the remedy sends a user to a surface whose own
+  answer is "go somewhere else."
+- B6-6: *"slow request"* is asserted about a connection that is a long-lived stream by
+  design — the label describes a latency event that did not occur.
+- B3: an ADR states the installer bundles ONNX models, while no built artifact has ever
+  contained them.
+
+When the message is a constant and the truth is a variable, they drift — and the drift is
+invisible because **prose does not compile**.
+
+**The witness for a presentation claim: it must be derived from the state that makes it true,
+rather than authored beside it.** "Derive, don't author" is the whole design.
+
+## D6.1 Applying it (B5, B6-5, B6-6, B6-9, B3)
+
+Each fix is the same move — replace an authored assertion with a derived one — and the
+scope of each follows from how far the derivation reaches:
+
+- **B5** is the largest because the dialog must be *composed from* the manifest and plan
+  preview it already holds, not merely have its numbers corrected: real package names, real
+  licences, a clickable `termsUrl`, and the true byte total. `ConfirmDialog` renders `message`
+  as a single plain-text paragraph, so it needs to accept structured content for a link to be
+  a link. The cancel path additionally needs to *state its own consequence*, which is itself a
+  derived claim: the bytes about to be discarded are known.
+- **B6-9** needs a distinct state for "there is nothing here to encrypt" so that the wording
+  can be conditioned on a real distinction instead of a blanket constant. Today PKEY 4
+  (*NotApplicable*) and PKEY 3 (*indeterminate*) collapse into one bucket, which is what makes
+  an honest message impossible to write.
+- **B6-5, B6-6, B3** are each a single derivation corrected at its source.
+
+**Deliberately not built:** a general mechanism binding every user-facing string to its data.
+The reason-code registers already do exactly that for *reason vocabularies*
+(`readiness-reason-codes`, `search-degradation-reason-codes`), and their gates enforce
+producer↔consumer correspondence. But they witness **"is this code worded?"**, not **"does the
+remedy this wording names actually work?"** — which is precisely why B6-5 was invisible to a
+green gate. Extending them to witness remedy *resolvability* is the natural next step and is
+**recorded here, not built**: one instance is not evidence of a class, and a static check
+could only prove the target is a registered surface — `core.settings-surface` *is* registered,
+so it would not have caught this bug. The honest, proportionate witness for one instance is a
+test that pins the remedy to the surface owning the capability.
+
+## D6.2 A different shape: precedence (B6-7, B6-8)
+
+The two layout findings are **not** instances of the above. They share their own shape, and
+it is one this tempdoc has already fixed once:
+
+> **Primary content must not be starved by secondary chrome.**
+
+- B6-7: `.conversation` — the primary reading column — is the **only** grid track given an
+  explicit `0` floor, so it absorbs all shortfall while its `fit-content` siblings hold their
+  width. The most important element has the weakest claim on space. Correct design: the
+  primary column carries the strongest floor, and the content-adaptive siblings yield.
+- B6-8: a fixed overlay slot with an unbounded vertical stack versus a surface header with no
+  reserved space and no stacking protection. Two defensible repairs exist — armour the header,
+  or bound the stack. **Bound the stack** (there is a `capWithOverflow` precedent in the
+  codebase): armouring headers fixes the symptom at every future header, whereas bounding the
+  producer fixes the cause once. Separately, a toast whose only dismissal is "click the toast"
+  needs a visible control; persistence until acknowledged is correct, undiscoverable dismissal
+  is not.
+
+This is the same invariant as B1's containment fix, where **primary indexing always beats
+background enrichment** — there, a background loop starved the foreground; here, secondary
+chrome starves primary content.
+
+## D6.3 B2 — honest exemption, and what it costs
+
+The owner decision is exempt-now, wire-later. The design point is that the exemption must be
+**honest rather than silencing**: the register's `reach` field should record the truth — no
+shipped entry point — in the same form `core.memory-surface` already uses to record a real
+path, rather than leaving `unknown` and an assertion of sandbox-tier coverage that no round
+can satisfy.
+
+What must *not* happen, and is recorded so a future reader does not mistake it for an option:
+renaming evidence files to satisfy the token match, or stamping a shape-id purely to flip the
+flag. Both would make a feature that no user can reach look covered.
+
+The deeper finding stays open and stated: `check-intent-tier-coverage` is **green for two
+unreachable features**, because it regex-matches a static table and never asks whether
+anything exercises it. That is the same "symbol exists ≠ code path fires" trap as the
+`wrong-gate` handle, now with two live instances.
+
+## D6.4 What this design orphans
+
+- The hardcoded consent-dialog strings, once the dialog composes from the manifest.
+- `ConfirmDialog`'s plain-text-only `message` contract, if it gains structured content — the
+  single-paragraph assumption must be removed, not left beside the new path.
+- The conflated `UNKNOWN` disk-encryption bucket, once *NotApplicable* is distinct.
+- The false ADR-0024 claim **and its provenance chain**: the still-open observation that
+  originated it and tempdoc 657's "drift fix" that promoted it. Correcting the ADR while
+  leaving the note that produced it would let the same claim be re-derived.
+- B2's exemption rows are themselves an orphan-in-waiting: wiring the entry points later must
+  remove them in that same change.
+
 # R — Reach
 
 ## R1. The principle, and where it already lives
@@ -437,6 +553,53 @@ to bite, which is why it surfaced as a release blocker rather than a red build.
 - **`check-intent-tier-coverage`** — a live example of a gate that witnesses the wrong thing:
   it proves a mapping *exists* by regex-matching a static table, never that anything exercises
   it. Same trap as the `wrong-gate` postmortem handle.
+
+## R1b. The presentation-plane form: "derive, don't author"
+
+The remaining work (D6) showed the witness principle has a **third plane**, with a form
+specific enough to be actionable on sight:
+
+> A user-facing claim must be **derived from the state that makes it true**, not authored
+> beside it. When the message is a constant and the truth is a variable, they drift silently,
+> because prose does not compile.
+
+Planes, now all three named: **data** (a status field claiming an artifact — B1), **control**
+(a declaration claiming a consumer — the existing registers), **presentation** (a message
+claiming a fact or a remedy — B5, B6-5, B6-6, B6-9, B3).
+
+**Where it already exists:** the reason-code registers (`readiness-reason-codes`,
+`search-degradation-reason-codes`) are this principle, gated — every producer code must be
+worded, every wording must be a real code. They exist because an unworded code once rendered
+a raw `Degraded: <code>` string to a user.
+
+**Where existing code violates it:** those same gates witness *wording presence* but not
+*remedy resolvability*, which is why B6-5 was invisible to a green gate. Also every hardcoded
+size/consequence string sitting next to the state that would compute it — B5 is the measured
+instance; the class is not audited.
+
+**Earning its keep:** new user-facing messages cite state rather than restating it; validation
+rounds stop finding "the UI says X while the API says Y" (round 7 produced at least four).
+**Retire it if:** over the next few rounds the finding class does not recur, or the derivation
+discipline starts producing messages that are accurate but unreadable — accuracy that costs
+comprehension has missed the point of a user-facing string.
+
+## R1c. Precedence: primary work must not be starved by secondary work
+
+A second, smaller shape, and this tempdoc has now fixed it in two unrelated substrates:
+
+> Primary work must not be starved by secondary work — in scheduling **or** in layout.
+
+B1's containment fix asserts *primary indexing always beats background enrichment*; B6-7 and
+B6-8 are the same invariant in CSS, where the primary reading column carries the weakest space
+floor and an unbounded overlay stack occludes the header.
+
+**Candidate scope:** any place a secondary producer can consume a shared, bounded resource —
+thread time, screen space, GPU, the job queue. **Where existing code violates it:** unknown
+beyond the three instances here; not audited.
+
+**Earning its keep:** it predicts a defect before it is reported. **Retire it if:** it is only
+ever applied retrospectively to defects already found by other means, which would make it a
+description rather than a tool.
 
 ## R3. Earning its keep, and when to retire it
 
