@@ -110,6 +110,15 @@ class TestGateEvaluate:
         assert report["exit_code"] == 0
         assert report["rows"] == []
 
+    def test_element_with_no_constraint_is_exit_2(self, monkeypatch, tmp_path):
+        # A registered element that declares NO constraint asserts nothing; reporting it clean
+        # would be a dangling guard (green while checking nothing), so it is an error.
+        _register(monkeypatch, [{"selector": "jf-rail"}])
+        mf = _measure_file(tmp_path, {"jf-rail": 100})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 2
+        assert report["rows"][0]["status"] == "ERROR"
+
     def test_step_with_no_elements_is_skipped(self, monkeypatch):
         monkeypatch.setattr(
             ui_proportion_gate, "load_register_steps",
@@ -122,3 +131,140 @@ class TestGateEvaluate:
         report = ui_proportion_gate.evaluate(_boom)
         assert report["exit_code"] == 0
         assert report["rows"] == []
+
+
+def _rect_measure_file(tmp_path, rects: dict[str, dict[str, int]]):
+    """Write a `<step>.measure.json` with full x/y/w/h geometry; return its path."""
+    p = tmp_path / "rects.measure.json"
+    p.write_text(
+        json.dumps({"geometry": {"elements": {s: {"rect": r} for s, r in rects.items()}}}),
+        encoding="utf-8",
+    )
+    return str(p)
+
+
+class TestMinWidthFloor:
+    """Sandbox round 7 defect (1): the RAG reading column was starved to ~102px by the
+    document pane beside it. A height ceiling cannot express "must not get SMALLER", so
+    the floor is its own constraint kind."""
+
+    def test_clean_when_above_floor(self, monkeypatch, tmp_path):
+        _register(monkeypatch, [{"selector": ".conversation", "minWidthPx": 384}])
+        mf = _rect_measure_file(tmp_path, {".conversation": {"x": 0, "y": 0, "w": 410, "h": 500}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+        assert report["rows"][0]["status"] == "ok"
+
+    def test_clean_exactly_at_floor(self, monkeypatch, tmp_path):
+        _register(monkeypatch, [{"selector": ".conversation", "minWidthPx": 384}])
+        mf = _rect_measure_file(tmp_path, {".conversation": {"x": 0, "y": 0, "w": 384, "h": 500}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+
+    def test_clean_within_tolerance_below_floor(self, monkeypatch, tmp_path):
+        _register(monkeypatch, [{"selector": ".conversation", "minWidthPx": 384}], tolerance_px=2)
+        mf = _rect_measure_file(tmp_path, {".conversation": {"x": 0, "y": 0, "w": 382, "h": 500}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+
+    def test_fails_when_starved_past_tolerance(self, monkeypatch, tmp_path):
+        # The measured pre-fix value: `minmax(0, 50rem)` sized the track to 102px at 1050x800.
+        _register(monkeypatch, [{"selector": ".conversation", "minWidthPx": 384}], tolerance_px=2)
+        mf = _rect_measure_file(tmp_path, {".conversation": {"x": 0, "y": 0, "w": 102, "h": 500}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "STARVED"
+        assert report["rows"][0]["measuredWidth"] == 102
+        assert report["rows"][0]["minWidthPx"] == 384
+
+    def test_growing_wider_is_never_a_violation(self, monkeypatch, tmp_path):
+        _register(monkeypatch, [{"selector": ".conversation", "minWidthPx": 384}])
+        mf = _rect_measure_file(tmp_path, {".conversation": {"x": 0, "y": 0, "w": 800, "h": 500}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+
+
+class TestMustNotOverlap:
+    """Sandbox round 7 defect (2): the toast column docked at 48px, inside the chat
+    surface's 56-88px header band. Both elements were individually within every size
+    budget — the defect was the RELATION, so it needs its own constraint kind."""
+
+    def test_flags_a_real_overlap(self, monkeypatch, tmp_path):
+        # The measured pre-fix rects: 32px of vertical intersection across 280px of width.
+        _register(monkeypatch, [{"selector": ".toast", "mustNotOverlapSelector": ".header"}])
+        mf = _rect_measure_file(tmp_path, {
+            ".toast": {"x": 754, "y": 56, "w": 288, "h": 50},
+            ".header": {"x": 68, "y": 56, "w": 966, "h": 32},
+        })
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 1
+        assert report["rows"][0]["status"] == "OVERLAPS"
+
+    def test_clean_when_the_toast_column_clears_the_header_band(self, monkeypatch, tmp_path):
+        # The measured post-fix rects: the column docks at 135px, 47px below the header band.
+        _register(monkeypatch, [{"selector": ".toast", "mustNotOverlapSelector": ".header"}])
+        mf = _rect_measure_file(tmp_path, {
+            ".toast": {"x": 754, "y": 135, "w": 288, "h": 50},
+            ".header": {"x": 68, "y": 56, "w": 966, "h": 32},
+        })
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+        assert report["rows"][0]["status"] == "ok"
+
+    def test_clean_when_separated_horizontally_despite_sharing_rows(self, monkeypatch, tmp_path):
+        # Same vertical band, disjoint columns — not an occlusion.
+        _register(monkeypatch, [{"selector": ".toast", "mustNotOverlapSelector": ".header"}])
+        mf = _rect_measure_file(tmp_path, {
+            ".toast": {"x": 754, "y": 56, "w": 288, "h": 50},
+            ".header": {"x": 68, "y": 56, "w": 200, "h": 32},
+        })
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+
+    def test_a_touching_edge_is_not_an_overlap(self, monkeypatch, tmp_path):
+        # Header ends at y=88; the column starts at y=88. Flush, not occluding.
+        _register(monkeypatch, [{"selector": ".toast", "mustNotOverlapSelector": ".header"}])
+        mf = _rect_measure_file(tmp_path, {
+            ".toast": {"x": 754, "y": 88, "w": 288, "h": 50},
+            ".header": {"x": 68, "y": 56, "w": 966, "h": 32},
+        })
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+
+    def test_sub_tolerance_intersection_is_not_an_overlap(self, monkeypatch, tmp_path):
+        _register(monkeypatch, [{"selector": ".toast", "mustNotOverlapSelector": ".header"}],
+                  tolerance_px=2)
+        mf = _rect_measure_file(tmp_path, {
+            ".toast": {"x": 754, "y": 86, "w": 288, "h": 50},  # 2px into the header band
+            ".header": {"x": 68, "y": 56, "w": 966, "h": 32},
+        })
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 0
+
+    def test_missing_counterpart_is_exit_2(self, monkeypatch, tmp_path):
+        # A renamed/absent counterpart must not read as "nothing to overlap, therefore clean".
+        _register(monkeypatch, [{"selector": ".toast", "mustNotOverlapSelector": ".header"}])
+        mf = _rect_measure_file(tmp_path, {".toast": {"x": 754, "y": 56, "w": 288, "h": 50}})
+        report = ui_proportion_gate.evaluate(lambda step: _cap(mf))
+        assert report["exit_code"] == 2
+        assert report["rows"][0]["status"] == "ERROR"
+
+
+class TestRegisterAndCaptureAgreeOnSelectors:
+    """The capture unions the register's selectors into its geometry probe. An overlap
+    counterpart is only ever NAMED (never its own row), so it must be collected too —
+    otherwise every overlap constraint reports a capture error instead of a verdict."""
+
+    def test_counterpart_selectors_are_collected_for_capture(self):
+        from jseval import ui_measure
+
+        sels = ui_measure._find_proportion_baseline().get("chat-occlusion") or []
+        assert ".toast" in sels
+        assert ".header" in sels, "the overlap counterpart must be captured, not just named"
+        assert ".conversation" in sels
+
+    def test_registered_selectors_have_no_duplicates(self):
+        from jseval import ui_measure
+
+        for step, sels in ui_measure._find_proportion_baseline().items():
+            assert len(sels) == len(set(sels)), f"{step} registers a duplicate selector"

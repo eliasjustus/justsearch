@@ -6,7 +6,7 @@
  * Pure projection of the typed `/api/status` snapshot (`atRestProtection` + `conversationProtection`)
  * — no host, no fetch, no state. The card never over-claims: the index is only OS-disk-encrypted, an
  * unlocked window is readable, and configuration quality (TPM-only vs pre-boot PIN) shows
- * "unknown — needs admin" when it can't be sensed.
+ * "unknown — needs admin" when it can't be sensed AND elevation is what would sense it.
  */
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { icon } from '../../components/Icon.js';
@@ -53,25 +53,67 @@ export const atRestCardStyles = css`
   }
 `;
 
+const NEUTRAL_PILL = 'background: var(--surface-2); color: var(--text-secondary);';
+
+/**
+ * The wording this card derives from one `diskEncryption` state. Exported (and pure) so the
+ * honesty rules below are assertable without rendering.
+ *
+ * Sandbox round 7: the `Configuration` row used to read "Unknown — needs admin" for EVERY state
+ * whose quality could not be sensed, which recommended elevation in cases elevation cannot resolve.
+ * Elevation reveals the TPM-only-vs-pre-boot-PIN distinction only where encryption exists or might
+ * exist (ENCRYPTED / ENCRYPTING / UNKNOWN). Where the volume is plainly unencrypted, or cannot be
+ * OS-encrypted at all (NOT_APPLICABLE), there is no configuration to learn and no admin to ask.
+ */
+export function atRestPresentation(
+  state: string,
+  qualityKnown: boolean,
+): { pillLabel: string; pillCss: string; storeStatus: string; configuration: string } {
+  const pill =
+    state === 'ENCRYPTED'
+      ? {
+          label: 'Encrypted',
+          css: 'background: var(--accent-success-16); color: var(--text-success);',
+        }
+      : state === 'NOT_ENCRYPTED'
+        ? {
+            label: 'Not encrypted',
+            css: 'background: var(--accent-warning-16); color: var(--text-warning);',
+          }
+        : state === 'ENCRYPTING'
+          ? { label: 'Encrypting…', css: NEUTRAL_PILL }
+          : state === 'NOT_APPLICABLE'
+            ? { label: 'Not applicable', css: NEUTRAL_PILL }
+            : { label: 'Unknown', css: NEUTRAL_PILL };
+  const storeStatus =
+    state === 'ENCRYPTED'
+      ? 'Protected by OS disk encryption'
+      : state === 'NOT_ENCRYPTED'
+        ? 'Not encrypted'
+        : state === 'NOT_APPLICABLE'
+          ? 'This volume cannot be encrypted by the OS'
+          : 'Unknown';
+  // Stated as an exclusion, not an allowlist: an unrecognized state (a newer backend than this
+  // bundle) renders as Unknown, and "Unknown — needs admin" is the honest pairing for it.
+  const elevationCouldResolveIt = state !== 'NOT_ENCRYPTED' && state !== 'NOT_APPLICABLE';
+  const configuration = qualityKnown
+    ? 'Known'
+    : elevationCouldResolveIt
+      ? 'Unknown — needs admin'
+      : 'Not applicable';
+  return { pillLabel: pill.label, pillCss: pill.css, storeStatus, configuration };
+}
+
 /** Render the Data-protection card from the status snapshot, or `nothing` if at-rest data is absent. */
 export function renderAtRestCard(status: StatusSnapshot | null): TemplateResult | typeof nothing {
   const ar = status?.atRestProtection;
   if (!ar) return nothing;
   const state = ar.diskEncryption ?? 'UNKNOWN';
-  const encrypted = state === 'ENCRYPTED';
   const notEncrypted = state === 'NOT_ENCRYPTED';
-  const pill = encrypted
-    ? { label: 'Encrypted', css: 'background: var(--accent-success-16); color: var(--text-success);' }
-    : notEncrypted
-      ? { label: 'Not encrypted', css: 'background: var(--accent-warning-16); color: var(--text-warning);' }
-      : state === 'ENCRYPTING'
-        ? { label: 'Encrypting…', css: 'background: var(--surface-2); color: var(--text-secondary);' }
-        : { label: 'Unknown', css: 'background: var(--surface-2); color: var(--text-secondary);' };
-  const storeStatus = encrypted
-    ? 'Protected by OS disk encryption'
-    : notEncrypted
-      ? 'Not encrypted'
-      : 'Unknown';
+  const { pillLabel, pillCss, storeStatus, configuration } = atRestPresentation(
+    state,
+    ar.qualityKnown ?? false,
+  );
   // Conversations carry an additional app-encryption dimension (passphrase), read from the REACTIVE
   // status field so the row can never go stale (629 FE design §4).
   const convState = status?.conversationProtection?.state;
@@ -85,13 +127,13 @@ export function renderAtRestCard(status: StatusSnapshot | null): TemplateResult 
     <div class="card section">
       <h3>${icon({ name: 'shield', size: 12 })} Data protection
         <span
-          style="float:right; padding: 0.125rem 0.5rem; border-radius: 0.25rem; font-weight: 500; ${pill.css}"
-          >${pill.label}</span
+          style="float:right; padding: 0.125rem 0.5rem; border-radius: 0.25rem; font-weight: 500; ${pillCss}"
+          >${pillLabel}</span
         >
       </h3>
       <div class="data-row">
         <span class="key">Disk encryption</span>
-        <span class="val">${pill.label}</span>
+        <span class="val">${pillLabel}</span>
       </div>
       ${ar.source && ar.source !== 'none'
         ? html`
@@ -103,7 +145,7 @@ export function renderAtRestCard(status: StatusSnapshot | null): TemplateResult 
         : nothing}
       <div class="data-row">
         <span class="key">Configuration</span>
-        <span class="val">${ar.qualityKnown ? 'Known' : 'Unknown — needs admin'}</span>
+        <span class="val">${configuration}</span>
       </div>
       <div class="data-row">
         <span class="key">Index</span>
