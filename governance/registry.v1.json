@@ -118,7 +118,7 @@
       "classifications": "scripts/governance/gates/prose-tier-register/classifications.mjs",
       "baseline": {
         "kind": "ratchet-file",
-        "path": ".claude/rules/tier-register.md",
+        "path": "docs/reference/contributing/tier-register.md",
         "diffStrategy": "git-base",
         "diffFallback": "HEAD~1"
       },

@@ -103,6 +103,13 @@ jobs:
       - name: Root README entrypoint guard
         run: node scripts/ci/check-root-readme.mjs
 
+      # Tempdoc 799 L.1: the ratchet shipped in 620 Move 3 but was wired to nothing,
+      # so the always-loaded set drifted 18.5% past its ceiling across four sessions
+      # that each logged it. Growth is still allowed — it just has to be declared
+      # (`--bump <file> --reason "<why>"`), which is what an unrun check can't ask for.
+      - name: Always-loaded agent-doc budget ratchet
+        run: node scripts/ci/check-always-loaded-budget.mjs
+
       - name: README benchmark numbers match the canonical release
         run: node scripts/ci/check-readme-benchmark-numbers.mjs
 

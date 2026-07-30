@@ -14,7 +14,7 @@
  * have. Always-loaded CLAUDE.md prose is budget-capped and low-adherence, and this guidance is
  * not broadly applicable (only eval/corpus work needs it). A PreToolUse hint hook delivers it at
  * the moment of relevance to EVERY agent regardless of skill loading — the highest-adherence,
- * smallest-scope channel for this gap (`.claude/rules/tier-register.md` tier ordering).
+ * smallest-scope channel for this gap (`docs/reference/contributing/tier-register.md` tier ordering).
  *
  * Two trigger classes (see `classifyCorpusFetch` + the dataset-cache-hint.test.mjs precision
  * corpus):

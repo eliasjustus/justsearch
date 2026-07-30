@@ -813,3 +813,110 @@ tempdoc 686), so a directory of `.md` files can be ingested without authoring a
 `corpus.jsonl`. But ingest drives `/api/indexing/roots` (`ingest.py:189`), i.e. it needs a
 running backend — the **shared, contended** dev stack, requiring a lease and owner
 coordination. "An afternoon" in §F.1.c understated this even before L.4 killed the probe.
+
+---
+
+## §M Implementation log — workstreams A + B + C (2026-07-30)
+
+Branch `worktree-799-structural-health`. K.4 (config surface) is deliberately **not** in
+this changeset — different subject, separate PR.
+
+### M.1 Outcome
+
+| | before | after |
+|---|---:|---:|
+| always-loaded total | 80,837 B (~20,209 tok) | **54,628 B (~13,657 tok)** |
+| ceiling | 68,198 B | 55,287 B |
+| verdict | **RED, +12,639 B** | **PASS** |
+| files over ceiling | 5 of 7 | **0 of 6** |
+
+**≈6,550 fewer tokens loaded into every session**, and the check now runs in CI, so it
+cannot silently drift back.
+
+### M.2 What was done
+
+**A1 — `CLAUDE.md` −3,324 B.** `## Common Pitfalls` cut from 11 rows to 4. Three rows
+(`lockfiles`, `ssot-catalog`, `api-record`) were **deleted** as verified-redundant — each
+is already double-delivered by a shipped hook *and* a skill (checked, not assumed: the
+destination skills were grepped for the specific commands first). Three rows migrated to
+new `governance/consult-register.v1.json` regions (`model-blobs`,
+`index-rebuild-after-field-change`, `dev-stack-stale-jar`). Two environmental rows and the
+installer row (release-lane scope) stay.
+
+`## Key Modules` was **deleted**: a hand-maintained list of 10 modules that omitted
+`app-services` (62k LOC) and `worker-services` (30k) — the two largest in the repo — i.e. a
+stale fork. Its unique content (role descriptions) moved to a corrected **Module roles**
+table in `docs/explanation/01-system-overview.md`, the doc CLAUDE.md already cited as
+authority; the inventory + dependency graph remain generated in
+`docs/reference/architecture/module-deps.md`.
+
+**A2 — `agent-lessons.md` −3,599 B.** The `## Named substrate-discipline principles`
+section self-described as an index into `agent-postmortems.md` and then restated all 13
+handles with glosses — a fork. Collapsed to a pointer + bare handle list. The
+`subset-isnt-the-suite` bullet was **kept** in shortened form because it carries a
+registered anchor (tier-register row 42); deleting it would have failed
+`prose-tier-register/orphan-register-row`. Three unanchored platform-constraint bullets
+were promoted to real postmortem cases: #25 `parked-subagent`, #26
+`probe-reports-own-leak`, #27 `chrome-tab-exhaustion`.
+
+**A3 — declared growth, not migration.** `branch-safety.md` (+2,612 B) and
+`hooks-reference.md` (+202 B) were `--bump`ed with recorded reasons. Rationale for the
+split: worktree/branch safety must be known *before* the first tool call, which is 620's
+own residence test — the content is in the right tier and the ceiling was the wrong
+constraint. 202 B does not repay migration overhead.
+
+**B — `tier-register.md` evicted** to `docs/reference/contributing/tier-register.md`
+(19,286 B out of always-loaded), with the full §L.3 sweep. Both traps materialised as
+predicted: `hook-integrity/enforcer.mjs` hardcoded the path (now config-driven via
+`gate.config.tierRegister`, so the next move is a registry edit), and the settings chain
+needed codegen rather than hand-editing.
+
+**C — the actual fix.** `check-always-loaded-budget.mjs` added to `ci.yml`'s
+`public-claims` job. The stale `$comment` claiming "run pre-merge (manual now)" was
+corrected in the same commit.
+
+### M.3 Three things the plan did not predict
+
+1. **`skills-sync` silently reverted an edit.** The jseval content was first written into
+   `.claude/skills/jseval/SKILL.md` — inside a `<!-- generated:start -->` fence — and the
+   next `skills-sync.mjs` run erased it. The source of truth is
+   `docs/reference/jseval-pipeline-reference.md`. Caught by re-grepping for the moved
+   strings rather than trusting the edit.
+2. **Moving the register into `docs/reference/` subjected it to the canonical-doc link
+   rule**, which forbids `docs/tempdocs/*.md` references. One "See also" line failed. Fixed
+   by pointing at `discipline-gate-kernel.md` (the checker was *not* weakened — prose
+   "tempdoc 530" mentions are unaffected, only explicit paths).
+3. **Self-test fixtures embed the register path.** Four fixture copies under
+   `scripts/governance/_fixtures/prose-tier-register/` had to move too, or
+   `--self-test` fails `register-missing`. `--gate ... --mode gate` passed while the
+   self-test was broken, so gate-green alone would have shipped it.
+
+### M.4 ⚠️ CORRECTION to §C.4 — the missing gates were removed deliberately
+
+§C.4 attributed the absent `class-size` / `ui-bundle` gates to inherited-authority drift
+across the public/private cut. `docs/reference/contributing/discipline-gate-kernel.md`'s
+own frontmatter states it plainly: *"The size/count ratchets (class-size, clone,
+ui-bundle, exception-count) **were removed for go-public — tempdoc 634**."*
+
+So the gates were **deliberately retired**, not lost in the cut. §C.4's mechanism is wrong
+for the gates. What survives is narrower and still real: `expected-state.v1.json:40-45`
+still warns agents that both gates "carry standing RED on main," citing observation
+conditions absent from this repo — residue of a retirement that did not sweep its
+fingerprints. That is a `retire-with-a-sweep` miss, not inherited authority. §G.4 (already
+the weakest candidate principle, n=1) loses this as supporting evidence.
+
+**Fourth self-correction in this document.** Recorded rather than quietly amended, because
+the error rate under scrutiny is the most useful thing 799 has measured about itself.
+
+### M.5 Verification
+
+`check-always-loaded-budget` PASS · `prose-tier-register` PASS · `hook-integrity` PASS ·
+`run.mjs --self-test` PASS · `llmstxt-generate --check` OK · `skills-sync --check` OK ·
+`verify-canonical-doc-links` OK (159 files) · `gen-agent-hooks-wiring --check` PASS ·
+`check-workflow-triggers` OK · `check-premerge-table` PASS · `module-deps --check-canonical`
+OK · diff carries no unintended non-ASCII.
+
+Full kernel: 31/34 pass. The 3 fails are all `kernel/input-missing` in a fresh worktree
+with no `node_modules` (`npm-audit`, `dead-code`, `dead-code-jvm`); `npm-audit` was
+confirmed **passing on `main`**, so they are environmental, not introduced. No gate that
+reads the register fails.

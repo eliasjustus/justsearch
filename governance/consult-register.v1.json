@@ -133,6 +133,39 @@
         "Verify: ./gradlew.bat :modules:app-agent:test :modules:app-services:test",
         "Full reference: docs/reference/contributing/common-workflows.md (Add an agent tool)."
       ]
+    },
+    {
+      "id": "model-blobs",
+      "pathIncludes": ["models/"],
+      "region": "the models/ tree (weights are never tracked in this repo)",
+      "docs": [],
+      "recipe": [
+        "This public repo NEVER tracks model blobs — 0 .onnx in its history; CI builds without them.",
+        "models/.gitignore excludes the weights so `git add -A` cannot stage ~2.6 GB via the *.onnx LFS filter. Do not 'fix' that ignore rule.",
+        "The PRIVATE repo LFS-tracks them, so the inherited rule 'do not gitignore model files' applies THERE and was carried here at v0.1.0 despite never being true of this repo (inherited-authority drift — tempdoc 799 §C.4)."
+      ]
+    },
+    {
+      "id": "index-rebuild-after-field-change",
+      "pathIncludes": ["SSOT/catalogs/fields.v1.json", "IndexingDocumentOps"],
+      "region": "the index field schema / document extraction path",
+      "docs": [],
+      "recipe": [
+        "Adding a field to fields.v1.json or changing extraction in IndexingDocumentOps does NOT update existing documents.",
+        "Existing indices must be REBUILT: `jseval run --reset` (eval mode) or `jseval run --start-backend --clean`.",
+        "Test corpora indexed before your change will silently lack the new fields — a green run over a stale corpus proves nothing about the new field."
+      ]
+    },
+    {
+      "id": "dev-stack-stale-jar",
+      "pathIncludes": ["modules/app-services/", "modules/app-agent-api/"],
+      "region": "Java on the head-process classpath (dev-stack freshness)",
+      "docs": [],
+      "recipe": [
+        "The MCP justsearch_dev_start does not always re-install the worker dist when upstream Gradle tasks report UP-TO-DATE.",
+        "After editing Java here (or in any module on the head-process classpath), run `./gradlew.bat :modules:ui:installDist` explicitly BEFORE dev_start / restart, so the jar in modules/ui/build/install/ui/lib/ is fresh.",
+        "Symptom if skipped: the wire payload reflects the PREVIOUS build despite a successful `gradlew build`. Discovered tempdoc 511-followup Track E live-verify."
+      ]
     }
   ]
 }

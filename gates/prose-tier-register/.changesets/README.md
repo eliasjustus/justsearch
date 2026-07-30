@@ -1,7 +1,7 @@
 # `gates/prose-tier-register/.changesets/`
 
 Per-PR classification declarations for changes to
-`.claude/rules/tier-register.md` (tempdoc 530 §Meta-loop).
+`docs/reference/contributing/tier-register.md` (tempdoc 530 §Meta-loop).
 
 ## When to author a changeset
 
@@ -39,6 +39,6 @@ that prose-tier-register is wired. References gate id 'prose-tier-register'.
 
 ## See also
 
-- `.claude/rules/tier-register.md` — the seed data
+- `docs/reference/contributing/tier-register.md` — the seed data
 - Tempdoc 530 §Meta-loop
 - Kernel runner: `scripts/governance/run.mjs`
