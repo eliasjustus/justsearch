@@ -920,3 +920,78 @@ Full kernel: 31/34 pass. The 3 fails are all `kernel/input-missing` in a fresh w
 with no `node_modules` (`npm-audit`, `dead-code`, `dead-code-jvm`); `npm-audit` was
 confirmed **passing on `main`**, so they are environmental, not introduced. No gate that
 reads the register fails.
+
+---
+
+## §N Workstream D — config surface (K.4)
+
+Committed separately from A+B+C so the two can publish as separate PRs (different
+subjects); both currently sit on `worktree-799-structural-health`.
+
+### N.1 D2 — the `config-surface` regrowth gate — DONE
+
+754's status line names its own gap verbatim: *"no regrowth gate."* That is now closed.
+
+**Built on existing infrastructure rather than a new counter** (`explore-before-implementing`):
+`scripts/docs/generate-runtime-config-matrix.mjs` already reads the three configuration
+authorities (`EnvRegistry`, `ConfigKey`, `ResolvedConfigBuilder`) and emits
+`yamlKeyCount` / `envSyspropPairCount` / `configKeyCount`. The gate consumes that report
+via `config.inputs` with the generator declared as its producer — the `module-deps`
+pattern exactly.
+
+Pinned baseline (measured 2026-07-30, post-754): `yaml_keys 115`,
+`env_sysprop_pairs 269`, `config_keys 56`.
+
+**A kernel gate, deliberately, not a `scripts/ci/check-*.mjs`.** That choice *is* this
+document's Class-1 finding applied to its own output: an unwired lint rots (§C.1/§C.3),
+a registered gate runs. Registering it also means it is self-tested, changeset-governed
+and SARIF-reporting for free.
+
+Growth stays possible but must be **declared** — a changeset under
+`gates/config-surface/.changesets/` classified `declared-growth` with a tempdoc/adr
+justification. Same shape as `--bump` in §L.1: the goal is attribution, not prohibition.
+
+Delivery: the rule reaches an author at the moment of relevance through the existing
+`workflow-config-key` consult-register recipe (which already fires on
+`EnvRegistry.java` / `ConfigKey.java` / `ResolvedConfigBuilder.java`), so it costs zero
+always-loaded bytes — the residence discipline §L.2 was paid for.
+
+**Honest limit, stated in the gate's own header rather than discovered later:**
+configuration reaches the Worker by three parallel paths (snapshot, blanket
+`JUSTSEARCH_*` env forwarding, the explicit `WorkerSpawner` forwarded-props list) and the
+post-handshake divergence check only WARNs. The gate ratchets what is *declared*; it does
+not claim to see every effective knob.
+
+Verification: `--gate config-surface --mode gate` PASS; `--self-test` positive PASS /
+negative FAIL, both expected; full kernel now **35 gates** (was 34) with no new failure;
+`check-premerge-table` resolves the new gate reference (11 gate refs, was 10).
+
+### N.2 D1 — the 28 shadowed knobs — NOT DONE, and deliberately so
+
+**This is an owner decision, not an implementation gap.** 754 §150 is explicit:
+
+> "Per owner scope, they are logged, not fixed, and **not deleted** — deleting would erase
+> the record of intent without delivering the feature."
+
+Each of the 28 resolves one of two ways — *wire the knob to its consumer* (deliver the
+feature) or *delete it* (withdraw the promise) — and both are product calls the owner
+already parked once. Making 28 of them unilaterally would re-open a settled deferral and
+would be exactly the "summarize-and-suggest-closure" move `tempdoc-is-your-contract`
+warns against, in reverse.
+
+What is ready for that decision: 754 §150 already enumerates every knob with its shadowing
+constant at `file:line` (e.g. `Worker.maxBatchSize`/`maxQueueDepth` ←
+`GrpcIngestService.java:99,102`; the 11-knob `Llm` VRAM/session cluster ←
+`HardwareProfile.java:24` + `VramRequirements.java:32` + `OnlineModeOps.java:73` +
+`LlamaServerOps.java:230-232`; `Rag.ragTopK` ← `RAGContext.java:55`). The two genuinely
+distinct sub-cases worth separating when the call is made:
+
+1. **`Llm.llmGpuLayers` is a *duplicate*, not merely shadowed** — `justsearch.llm.gpu_layers`
+   is dead while `justsearch.gpu.layers` works, and **both are documented**
+   (`environment-variables.md:103` and `:81`). One of the two doc rows is simply false.
+   This one is closer to a documentation defect than a product call.
+2. **The rest are undelivered features.** Wiring them is real work with real behavioural
+   risk (e.g. making `Worker.maxBatchSize` live changes ingest characteristics).
+
+Note the new gate does **not** pressure these: it ratchets the *count*, and these knobs
+already exist. Deleting any of them would only make the gate greener.

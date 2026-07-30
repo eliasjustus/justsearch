@@ -620,6 +620,31 @@
         "registry": "governance/registry.v1.json"
       },
       "selfTestFixturesDir": "scripts/governance/_fixtures/contribution-surface"
+    },
+    {
+      "id": "config-surface",
+      "title": "Runtime configuration-surface ratchet (tempdoc 799 K.4 — 754 classified 70 knobs and deleted 31, then recorded 'no regrowth gate'; this is that pressure)",
+      "enforcer": "scripts/governance/gates/config-surface/enforcer.mjs",
+      "ruleDescriptions": "scripts/governance/gates/config-surface/rule-descriptions.mjs",
+      "changesetsDir": "gates/config-surface/.changesets",
+      "classifications": "scripts/governance/gates/config-surface/classifications.mjs",
+      "baseline": {
+        "kind": "ratchet-file",
+        "path": "gates/config-surface/baseline.txt",
+        "diffStrategy": "git-base",
+        "diffFallback": "HEAD~1"
+      },
+      "config": {
+        "reportPath": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",
+        "inputs": [
+          {
+            "path": "tmp/agent-evidence/_summaries/runtime-config-ownership-matrix.generated.json",
+            "producer": "node scripts/docs/generate-runtime-config-matrix.mjs",
+            "class": "required"
+          }
+        ]
+      },
+      "selfTestFixturesDir": "scripts/governance/_fixtures/config-surface"
     }
   ]
 }

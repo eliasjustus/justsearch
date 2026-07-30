@@ -116,6 +116,7 @@
         "Expose it via a ResolvedConfig record field.",
         "Document it in docs/reference/configuration/environment-variables.md.",
         "Verify: ./gradlew.bat :modules:configuration:test",
+        "Regrowth ratchet (tempdoc 799 K.4): a NET-NEW key fails the config-surface gate. Run `node scripts/docs/generate-runtime-config-matrix.mjs` then `node scripts/governance/run.mjs --gate config-surface --mode gate`. Growth is allowed but must be DECLARED — add a changeset under gates/config-surface/.changesets/ classified `declared-growth` with a tempdoc/adr justification. Before declaring, check the knob is not already shadowed by a hardcoded constant: tempdoc 754 found 28 that were (a documented knob that does nothing is worse than no knob).",
         "Full reference: docs/reference/contributing/common-workflows.md (Add a configuration key)."
       ]
     },
