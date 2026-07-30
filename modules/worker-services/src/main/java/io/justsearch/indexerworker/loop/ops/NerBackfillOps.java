@@ -80,11 +80,19 @@ public final class NerBackfillOps {
         try {
           String content = context.documentFieldOps().getDocumentContent(docId);
           if (content == null || content.isBlank()) {
-            context.log().debug("NER backfill: no content for {}, marking COMPLETED", docId);
-            Map<String, Object> updates = new HashMap<>();
-            updates.put(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED);
-            batchUpdates.add(Map.entry(docId, updates));
-            processed++;
+            // NER never ran, so this is not a legitimately-empty extraction — marking COMPLETED
+            // would claim an enrichment that does not exist (the F-032 "status lies" class,
+            // tempdoc 717). Escalate through the retry-count seam the same way
+            // EmbeddingBackfillOps handles missing content: retry next cycle, FAILED at max.
+            context.log().warn("NER backfill: content missing or blank for {}", docId);
+            markedFailed +=
+                handleNerFailure(
+                    context.documentFieldOps(),
+                    context.indexingCoordinator(),
+                    docId,
+                    "Content missing or blank",
+                    context.log());
+            failed++;
             continue;
           }
 
@@ -97,7 +105,13 @@ public final class NerBackfillOps {
           NerResult result = nerBatch.isEmpty() ? NerResult.EMPTY : nerBatch.get(0);
 
           Map<String, Object> updates = new HashMap<>();
-          updates.put(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED);
+          // NER ran; zero entities is a valid terminal outcome, but it must stay distinguishable
+          // from an actually-enriched document (SchemaFields.VDU_STATUS_COMPLETED_EMPTY precedent).
+          updates.put(
+              SchemaFields.NER_STATUS,
+              result.isEmpty()
+                  ? SchemaFields.NER_STATUS_COMPLETED_EMPTY
+                  : SchemaFields.NER_STATUS_COMPLETED);
           updates.put(SchemaFields.NER_RETRY_COUNT, "0");
 
           applyEntityFieldUpdates(updates, result);
