@@ -93,6 +93,7 @@ public final class FieldMapper {
   private final Map<String, FieldDef> byId;
   private final FieldDef primaryKeyField;
   private final FieldDef docUidField;
+  private final Map<String, List<String>> statusWitnessFields;
 
   /**
    * Creates a FieldMapper from an explicit {@link FieldCatalogDef}.
@@ -107,6 +108,7 @@ public final class FieldMapper {
     validateMultiValuedConstraints(byId);
     this.primaryKeyField = resolvePrimaryKey(byId);
     this.docUidField = resolveDocUid(byId);
+    this.statusWitnessFields = deriveStatusWitnessFields(byId);
   }
 
   /**
@@ -132,6 +134,7 @@ public final class FieldMapper {
     validateMultiValuedConstraints(byId);
     this.primaryKeyField = resolvePrimaryKey(byId);
     this.docUidField = resolveDocUid(byId);
+    this.statusWitnessFields = deriveStatusWitnessFields(byId);
   }
 
   Document toDocument(Map<String, Object> fields) {
@@ -267,6 +270,50 @@ public final class FieldMapper {
       if (def.rmwPolicy != null && !def.rmwPolicy.isBlank()) out.add(def);
     }
     return out;
+  }
+
+  /**
+   * The status field a {@code reset-status:} / {@code preserve-reread-or-reset:} policy names, or
+   * null for a policy that names none ({@code preserve-reread}) or no policy at all. Single parse
+   * point for the policy suffix, shared by the RMW engine's inversion below.
+   */
+  static String rmwPolicyStatusTarget(String policy) {
+    if (policy == null || policy.isBlank()) return null;
+    if (policy.startsWith(RMW_PRESERVE_REREAD_OR_RESET_PREFIX)) {
+      return policy.substring(RMW_PRESERVE_REREAD_OR_RESET_PREFIX.length());
+    }
+    if (policy.startsWith(RMW_RESET_STATUS_PREFIX)) {
+      return policy.substring(RMW_RESET_STATUS_PREFIX.length());
+    }
+    return null;
+  }
+
+  /**
+   * Status field -&gt; the artifact fields that witness a {@code COMPLETED} value on it, derived by
+   * inverting the catalog's existing {@code rmwPolicy} declarations (tempdoc 798). The pairing is
+   * already declared there — {@code vector} names {@code embedding_status}, {@code chunk_vector}
+   * names {@code chunk_embedding_status}, {@code splade} names {@code splade_status} — so the
+   * write-time contract needs no second catalog key that could drift from this one.
+   *
+   * <p>Keys are sorted so a violation is reported deterministically.
+   */
+  Map<String, List<String>> statusWitnessFields() {
+    return statusWitnessFields;
+  }
+
+  private static Map<String, List<String>> deriveStatusWitnessFields(Map<String, FieldDef> byId) {
+    java.util.TreeMap<String, List<String>> out = new java.util.TreeMap<>();
+    for (FieldDef def : byId.values()) {
+      String status = rmwPolicyStatusTarget(def.rmwPolicy);
+      if (status == null) continue;
+      out.computeIfAbsent(status, k -> new ArrayList<>()).add(def.id);
+    }
+    out.replaceAll(
+        (k, v) -> {
+          java.util.Collections.sort(v);
+          return List.copyOf(v);
+        });
+    return java.util.Collections.unmodifiableMap(out);
   }
 
   void validatePrimaryKeySupport() {

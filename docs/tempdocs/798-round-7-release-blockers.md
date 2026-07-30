@@ -1,10 +1,88 @@
 ---
 title: "Round 7 release blockers — artifact-truthful readiness at the write boundary"
-status: "diagnosis complete; design settled 2026-07-30; NO implementation licensed"
+status: "B1 IMPLEMENTED 2026-07-30 (branch worktree-798-ingest-livelock, not merged); B2-B7 designed, not implemented"
 created: 2026-07-30
 updated: 2026-07-30
 related: [734, 749, 750, 772, 760, 717, 711, 712, 597, 565, 553, 560, 516]
 ---
+
+## Owner decisions (2026-07-30)
+
+1. **PR scope: B1 only.** The livelock ships alone — it is the one change that can silently
+   break indexing, and bundling it with CSS fixes would bury it in review.
+2. **No data repair. There are no current users**, so phantom statuses in existing indices need
+   no migration, repair pass, or release note. Any *dev* index built before this fix should be
+   rebuilt (`--clean`); pre-fix indices may carry manufactured COMPLETED statuses.
+3. **B2 shapes: exempt honestly now, wire later.** Mark the register rows exempt with the real
+   reason (no shipped entry point); file the feature work separately. Not in this PR.
+4. **B7 parity: demote overlap@10 to descriptive**, gating on the environment-robust signal
+   (golden #1 in top-3, green on all ten queries) — tempdoc 750's pre-designed A4. Not in this PR.
+
+## B1 implementation record (2026-07-30)
+
+Landed on `worktree-798-ingest-livelock` as `e0d76521` + the write-contract commit. Verified:
+full suite genuinely re-run (`cleanTest test`, not an up-to-date pass) — **33 modules, 6,884
+tests, 0 failures, 0 errors**.
+
+**Part 1 (root cause).** Absent status no longer defaults to `PENDING` — absent means the stage
+does not apply (`CombinedEnrichmentBackfillOps.java:351-353`). Blank-content branches escalate
+through each stage's retry/`FAILED` seam instead of claiming COMPLETED without an artifact
+(`:355-384`, plus `SpladeBackfillOps.java:97-111`, `BgeM3BackfillOps.java:108-136`,
+`NerBackfillOps.java:82-95`). `SchemaFields.NER_STATUS_COMPLETED_EMPTY` carries the
+legitimately-empty NER result, mirroring the existing `VDU_STATUS_COMPLETED_EMPTY` precedent.
+
+*Deviation from plan, accepted:* the plan said "delete the splade COMPLETED fallback". Deleting
+it outright would leave those documents permanently `PENDING` and re-queried every cycle — a
+second churn loop. They escalate to `FAILED` instead, which is terminal for the pending queries,
+so the population actually drains.
+
+*The reader sweep caught a real silent regression before it shipped:*
+`IndexStatusOps.java:640-647` would have stopped counting `COMPLETED_EMPTY` toward
+`completedNerCount`, which feeds `/api/status` and the jseval readiness gate — NER would have
+appeared never to finish. Two existing tests asserted the OLD wrong behaviour (one whose name
+said it pinned "the historical silent data-less COMPLETED behavior byte-identically"); both were
+rewritten to assert the correct behaviour rather than quietly deleted.
+
+**Part 2 (the contract).** `StatusArtifactContract` (new, `modules/adapters-lucene`) rejects any
+write setting `<status>=COMPLETED` without its witnessing artifact. The map is *derived* by
+inverting the existing `rmwPolicy` declarations (`FieldMapper.rmwPolicyStatusTarget()`,
+`deriveStatusWitnessFields()`) — **zero schema changes**. Enforced at **both** lanes:
+`IndexingCoordinator.validate()` (full-doc) and `WritePathOps.readModifyWrite` after the merged
+map is complete (RMW). Pure map check, no index I/O. Production runs FAIL mode
+(`ValidationMode.from(null) → FAIL`; no config sets the key), so it genuinely rejects.
+The RMW reset lanes are untouched and remain the backstop behind it.
+
+**Part 3 (containment).** The tight loop terminates on `progressed`, not `wroteAnything`
+(renamed from `anyWorkDone` so it cannot be reused as a loop condition). Pending ingest is a
+third `WorkerSignalBus` yield signal alongside `isUserActive`/`shouldYieldGpuBackfill`, probed
+on a 250 ms TTL via the cheap indexed `queueDepth()` before the more expensive precise count.
+Hard 5 s per-cycle budget with a WARN naming the diagnosis. The same unbounded-loop twin in
+individual mode was fixed too.
+
+**Bite proofs (all performed, not merely claimed).** T1 hangs against the pre-fix loop
+condition; T2 fails its latch; T3's two rejection tests fail when the contract is disabled — and
+with *only* the coordinator call restored, the RMW-lane test still failed, proving that lane's
+check is independently load-bearing and that `validate()` alone would not have been sufficient.
+
+### Residuals recorded, deliberately not fixed here
+
+- **Chunk docs escalating to `splade_status=FAILED` will not self-heal if chunk-SPLADE is later
+  enabled** — `FAILED` is never resurrected by design. Turning that evidence-gated flag on would
+  need a reindex. The deeper fix is birth-status hygiene (chunk docs should not be born carrying
+  a parent-lane `splade_status`), which 717 §TH-4 already named.
+- **The contract checks artifact *presence*, not non-emptiness.** `splade_status=COMPLETED` with
+  an empty weights map would pass. Tightening it requires the writers to guard emptiness first
+  (`SpladeBackfillOps.java:198` and `CombinedEnrichmentBackfillOps.java:565` index into the
+  result unguarded), or a legitimately-empty encoder result would throw and abort a whole batch
+  of good writes — a worse failure than the one it would catch.
+- **`progressed` under-reports blank-content escalations** (they advance documents without
+  incrementing stage counters). Benign and in the safe direction: the tight loop exits, and
+  `IndexingLoop` sleeps 100 ms then re-polls ingest every cycle, so nothing spins and the
+  population still drains at roughly a batch per 100 ms.
+- **Presence-truthful counting covers only chunk-embedding.** Parent `embedding_status`,
+  `splade_status` and the NER count remain status-field `TermQuery` counts, so this bug class
+  stays invisible to health reporting on three of four lanes. Separable, but without it a
+  regression here is undetectable again.
 
 # 798 — Round 7 release blockers
 
