@@ -3,6 +3,7 @@ package io.justsearch.indexerworker.coordination;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.function.BooleanSupplier;
 
 /**
  * Interface for worker-main process coordination signals.
@@ -115,6 +116,37 @@ public interface WorkerSignalBus extends Closeable {
    */
   default boolean shouldYieldGpuBackfill() {
     return isMainGpuActive() || isEnergyReduced();
+  }
+
+  /**
+   * Whether primary indexing (ingest) work is waiting in the job queue right now (tempdoc 798).
+   *
+   * <p>The third "yield to something more important" signal, alongside {@link #isUserActive()} and
+   * {@link #shouldYieldGpuBackfill()}: background enrichment backfill must never starve primary
+   * indexing. Backfill drains a finite population and can always resume next cycle; a queued
+   * ingest job the user is waiting on cannot.
+   *
+   * <p>Unlike the other two this is an intra-process signal — the worker's own indexing loop owns
+   * the job queue and publishes the probe via {@link #setPendingIngestProbe(BooleanSupplier)};
+   * nothing crosses the memory-mapped region.
+   *
+   * <p>Default {@code false} (conservative, matching {@link #isEnergyReduced()}): an impl with no
+   * probe registered never claims pending ingest, so backfill behaves as it did before.
+   *
+   * @return true if ingest jobs are waiting to be claimed
+   */
+  default boolean hasPendingIngest() {
+    return false;
+  }
+
+  /**
+   * Registers the probe that {@link #hasPendingIngest()} reads. Called by the component that owns
+   * the job queue (the indexing loop). A {@code null} probe clears the registration.
+   *
+   * @param probe the pending-ingest probe, or null to clear
+   */
+  default void setPendingIngestProbe(BooleanSupplier probe) {
+    // no-op by default
   }
 
   /**

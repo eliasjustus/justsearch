@@ -637,8 +637,14 @@ final class IndexStatusOps {
                 .build())
         .setPendingNerCount(
             countPendingByStatus(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING))
+        // NER's terminal-success vocabulary is two-valued: COMPLETED (entities found) and
+        // COMPLETED_EMPTY (ran fine, found none). Both are "NER is done for this document", so the
+        // progress counter must sum them — counting only COMPLETED would make NER look permanently
+        // unfinished to every readiness gate reading this field once pending hits zero.
         .setCompletedNerCount(
-            countPendingByStatus(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED))
+            countPendingByStatus(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED)
+                + countPendingByStatus(
+                    SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED_EMPTY))
         .setEmbeddingEnabled(embeddingEnabled)
         .setSpladeEnabled(spladeEnabled)
         .setNerEnabled(nerEnabled)
