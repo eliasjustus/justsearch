@@ -95,6 +95,9 @@ export class MultiplexedStream {
   private readonly reconnectDebounceMs: number;
   /** Pending debounced late-subscribe reconnect timer, or null when none is scheduled. */
   private reconnectDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** True between `start()` and `stop()` — gates `nudgeReconnect` so a consumer-requested
+   * reconnect can never resurrect a connection the owner intentionally closed. */
+  private started = false;
 
   constructor(config: MultiplexedStreamConfig) {
     this.reconnectDebounceMs = config.reconnectDebounceMs ?? 50;
@@ -126,17 +129,55 @@ export class MultiplexedStream {
 
   /** Opens the shared physical connection. Idempotent (delegates to `EnvelopeStream.start`). */
   start(): void {
+    this.started = true;
     this.inner.start();
   }
 
   /** Closes the shared physical connection. Idempotent. Cancels any pending late-subscribe
    * reconnect (an intentional stop() supersedes it — the caller no longer wants a connection). */
   stop(): void {
+    this.started = false;
     if (this.reconnectDebounceTimer !== null) {
       clearTimeout(this.reconnectDebounceTimer);
       this.reconnectDebounceTimer = null;
     }
     this.inner.stop();
+  }
+
+  /**
+   * Re-establish the shared physical connection NOW, at a consumer's request — the actuator for
+   * a per-channel stall (tempdoc 798 B4).
+   *
+   * `EnvelopeStream`'s heartbeat-absence watchdog and reconnect backoff operate on the PHYSICAL
+   * connection: ANY frame on ANY multiplexed channel re-arms the watchdog. So a single wedged
+   * channel is invisible to it — the backend stops emitting `surface:indexing-jobs` frames while
+   * advisories/intent/ledger keep flowing, the transport is provably alive, and only one demuxed
+   * channel is dead. Nothing at the transport layer can observe that; only a consumer holding a
+   * per-channel liveness signal can (`indexingJobsBridge`'s `isFeedStalled`), and before this
+   * method it had nowhere to route that observation — the UI rendered "reconnecting…" while no
+   * code reconnected anything.
+   *
+   * Mechanism is `scheduleLateSubscribeReconnect`'s, unchanged: `inner.stop()` + `inner.start()`,
+   * so the `?since=` bundle is rebuilt from the CURRENT entries and every already-flowing channel
+   * resumes from its own token (`bundleResumeToken`). The demux `entries` — payload, seq,
+   * resumeToken — are owned by THIS object and untouched by the transport cycle, so no cursor or
+   * accumulated state is lost.
+   *
+   * Rate-limiting is deliberately the CALLER's: this performs the reconnect on every call while
+   * started, and the consumer that owns the stall policy owns how often it may fire
+   * (`indexingJobsBridge`'s `FEED_STALL_NUDGE_MIN_INTERVAL_MS`). Keeping the policy at one site
+   * avoids two independent throttles whose interaction nobody can reason about.
+   *
+   * @returns `true` when a reconnect was performed; `false` when the stream is not started (never
+   * started, or intentionally stopped) — a nudge must not resurrect a closed connection.
+   */
+  nudgeReconnect(): boolean {
+    if (!this.started) {
+      return false;
+    }
+    this.inner.stop();
+    this.inner.start();
+    return true;
   }
 
   /**

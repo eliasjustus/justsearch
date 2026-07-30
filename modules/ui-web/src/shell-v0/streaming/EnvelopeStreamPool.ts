@@ -73,6 +73,32 @@ export function subscribePooled<T>(
   };
 }
 
+/**
+ * Re-establish a pooled stream in place, at a consumer's request — the fallback-transport twin of
+ * `MultiplexedStream.nudgeReconnect()` (tempdoc 798 B4), so a consumer with a per-channel stall
+ * detector has ONE actuator call site regardless of which transport it happens to be running on.
+ *
+ * The gap this closes is narrower here than on the multiplexed transport: a pooled stream's
+ * physical connection IS the channel, so `EnvelopeStream`'s own heartbeat-absence watchdog observes
+ * the same silence a consumer-level stall detector does and normally reconnects first. It exists so
+ * the actuator is not silently ABSENT on this path — a consumer switched back to the pooled
+ * transport must not lose its recovery action without anyone noticing.
+ *
+ * `stop()` + `start()` (not a raw reopen) so the stream re-reads its freshest `resumeToken` for the
+ * `?since=` replay, exactly as its internal reconnect does.
+ *
+ * @returns `true` when a reconnect was performed; `false` when the URL is not pooled.
+ */
+export function nudgePooledStream(url: string): boolean {
+  const entry = pool.get(url);
+  if (!entry) {
+    return false;
+  }
+  entry.stream.stop();
+  entry.stream.start();
+  return true;
+}
+
 /** Test-only: drop all pooled streams without firing their stops. */
 export function __resetEnvelopeStreamPoolForTest(): void {
   for (const entry of pool.values()) {
