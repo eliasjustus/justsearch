@@ -44,7 +44,9 @@ public final class DisambiguationBackfillOps {
         return;
       }
 
-      // Query documents with completed NER
+      // Query documents with completed NER. NER_STATUS_COMPLETED_EMPTY is deliberately excluded:
+      // it is terminal too, but it means zero entities were extracted, so those docs carry no
+      // ENTITY_*_RAW fields for collectEntityMentions to harvest.
       List<String> completedIds =
           context
               .documentFieldOps()
