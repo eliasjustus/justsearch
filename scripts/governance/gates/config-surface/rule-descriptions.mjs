@@ -11,6 +11,14 @@ export const CONFIG_SURFACE_RULE_DESCRIPTIONS = {
     'Configuration surface shrank below baseline; ratchet may be rebalanced',
   'config-surface/silent-baseline-shift':
     'Configuration-surface baseline relaxed in this PR without a declared changeset',
+  'config-surface/dead-key':
+    'A setting is declared but nothing reads it — not resolved into ResolvedConfig, not read via its EnvRegistry constant, and its key string appears nowhere outside the configuration module. Wire it or delete the declaration.',
+  'config-surface/dead-key-baselined':
+    'A known dead setting, recorded in the dead-config baseline (not blessed — shrinking that list is the point)',
+  'config-surface/unread-component':
+    'A ResolvedConfig record component whose accessor is never called in production code',
+  'config-surface/unread-component-baselined':
+    'A known unread component, recorded in the dead-config baseline',
   'config-surface/report-malformed':
     'The runtime-config matrix report could not be parsed',
 };

@@ -1,0 +1,18 @@
+# Dead-config baseline — tempdoc 799 §O.3. One entry per line: `key:<key>` or `component:<name>`.
+# These are settings that resolve but nothing reads. They are RECORDED, not blessed: the gate
+# fails on any NEW one. Shrinking this list is the point; it never ratchets up without a changeset.
+#
+# Measured 2026-07-31 after 799 withdrew 22 shadowed knobs. Left in place rather than deleted
+# because each is a wire-it-or-withdraw-it product call, the same judgement 754 deferred — the
+# gate's job is to stop the list GROWING while those calls are made.
+component:simulatedLatencyMs
+key:justsearch.embed.dimension
+key:justsearch.fieldCatalog
+key:justsearch.path_resolution.retention_days
+key:search.facets.enabled
+key:search.hybrid.ann_k
+key:search.hybrid.auto_embed
+key:search.hybrid.bm25_k
+key:search.rerank.enabled
+key:search.rerank.k
+key:search.rerank.reduced_k

@@ -62,3 +62,50 @@ export function verdictForBaselineShift(input) {
     reason: `${metric}: baseline raised ${priorPin} → ${livePin}; '${classification}' covers`,
   };
 }
+
+/**
+ * A declared setting with no reader on any of the three paths (tempdoc 799 §O.3).
+ *
+ * @param {{key: string, baselined: boolean}} input
+ */
+export function verdictForDeadKey({ key, baselined }) {
+  if (baselined) {
+    return {
+      ruleId: 'config-surface/dead-key-baselined',
+      status: 'info',
+      reason: `${key}: declared with no reader (known — in the dead-config baseline)`,
+    };
+  }
+  return {
+    ruleId: 'config-surface/dead-key',
+    status: 'fail',
+    reason:
+      `${key}: declared but NOTHING reads it — not resolved into ResolvedConfig, not read via its ` +
+      `EnvRegistry constant, and the key string appears nowhere outside the configuration module. ` +
+      `A documented setting that does nothing is worse than no setting (tempdoc 754). Wire it, or ` +
+      `delete the declaration.`,
+  };
+}
+
+/**
+ * A ResolvedConfig record component whose accessor is never called (tempdoc 799 §N.2).
+ *
+ * @param {{component: string, baselined: boolean}} input
+ */
+export function verdictForUnreadComponent({ component, baselined }) {
+  if (baselined) {
+    return {
+      ruleId: 'config-surface/unread-component-baselined',
+      status: 'info',
+      reason: `${component}: no accessor call (known — in the dead-config baseline)`,
+    };
+  }
+  return {
+    ruleId: 'config-surface/unread-component',
+    status: 'fail',
+    reason:
+      `${component}: ResolvedConfig exposes it but no production code calls the accessor. It ` +
+      `resolves, it is reachable, and it changes nothing — the exact shape of the 22 knobs ` +
+      `tempdoc 799 withdrew.`,
+  };
+}

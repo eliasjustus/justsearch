@@ -110,6 +110,9 @@ jobs:
       - name: Always-loaded agent-doc budget ratchet
         run: node scripts/ci/check-always-loaded-budget.mjs
 
+      - name: Test dead-config scanner (config-surface gate)
+        run: node scripts/ci/test-config-surface-dead-config.mjs
+
       - name: README benchmark numbers match the canonical release
         run: node scripts/ci/check-readme-benchmark-numbers.mjs
 

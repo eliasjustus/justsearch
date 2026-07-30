@@ -1318,3 +1318,67 @@ Stated plainly so no one over-reads what this branch accomplished:
 
 The generalised fix for Causes 1 and 2 is the same object: a reachability control over the
 whole control surface (§C.5), which is deliberately not built here.
+
+---
+
+## §P Cause 3 closed — the dead-config detector (2026-07-31)
+
+§O.6 said the `config-surface` gate "cannot tell whether a key is read, so Cause 3 remains
+open". §N.2.f.1 then proved it at my own expense: four dead keys survived this branch's own
+cleanup with the full unit suite, `build -x test`, and the count ratchet all green. That is
+the argument for building the reader check, and it is now built.
+
+### P.1 What it checks
+
+`scripts/governance/gates/config-surface/dead-config.mjs`, folded into the existing
+`config-surface` gate rather than authored as a new one (582 R4 — finish wiring rather than
+grow the gate count). Two rules:
+
+- **`config-surface/dead-key`** — a setting is declared but no reader exists.
+- **`config-surface/unread-component`** — a `ResolvedConfig` record component whose accessor
+  is never called.
+
+### P.2 Three read paths, and why that matters more than the rule itself
+
+A setting counts as read if **any** of three paths reaches it: resolved into a record
+component someone calls; read directly via `EnvRegistry.CONST.getX()`; or its raw key string
+appearing anywhere outside the configuration module.
+
+This was not obvious and it was not free. The first draft knew only path 1 and reported **33
+dead keys**. Adding path 2 cut it to 10; adding path 3 removed a further false positive
+(`justsearch.lite.mode`, read as a raw string elsewhere). A gate shipping with ~30 false
+positives is not a strict gate — it is a gate that gets switched off, which is §O.1's failure
+mode arriving by a different road. The iteration was the work; the rule was the easy part.
+
+### P.3 Measured state, and what is baselined
+
+**1 unread component + 10 dead keys**, pinned in
+`gates/config-surface/dead-config-baseline.txt`. The gate fails on any NEW one.
+
+The component is `simulatedLatencyMs` — an `Llm` field this very branch *kept* while removing
+22 others. The detector found it within minutes of existing, which is the most direct evidence
+available that manual sweeps do not substitute for it.
+
+They are baselined rather than deleted because each is another wire-it-or-withdraw-it product
+call — the same judgement 754 deferred and §N.2 put to the owner. The gate's job is to stop
+the list growing while those calls are made, not to make them silently.
+
+### P.4 Bite verified, not assumed
+
+§C.3 found that "reachable but advisory" is its own failure mode, so reporting is not enough.
+Verified by injecting a plausible unread knob into `EnvRegistry`:
+
+- with the knob: gate **exits 1**, naming the key and both remedies (wire it or delete it);
+- after revert: **exits 0**, and the injection is byte-clean gone.
+
+`scripts/ci/test-config-surface-dead-config.mjs` makes the deciding logic permanently covered
+(6 assertions, including that a *baselined* entry stays `info` while a new one *fails*), and
+is wired into `ci.yml` so it is not itself an unrun check — which would be Cause 2, committed
+by the person who wrote Cause 2 up.
+
+### P.5 What is still open
+
+Cause 1 (one instance fixed, pattern untouched) and Cause 2 (13 orphaned checks) remain. This
+closes Cause 3 for the *declared* config surface only — §D.1's warning stands that
+configuration reaches the Worker by three parallel paths, and a key travelling an undeclared
+one is still invisible.

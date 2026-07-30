@@ -30,11 +30,23 @@ import {
   aggregateConfigSurfaceClassifications,
 } from './classifications.mjs';
 import { CONFIG_SURFACE_RULE_DESCRIPTIONS } from './rule-descriptions.mjs';
-import { verdictForMetric, verdictForBaselineShift } from './truth-table.mjs';
+import { scanDeadConfig } from './dead-config.mjs';
+import {
+  verdictForMetric,
+  verdictForBaselineShift,
+  verdictForDeadKey,
+  verdictForUnreadComponent,
+} from './truth-table.mjs';
 import { loadChangesets } from '../../lib/changeset-loader.mjs';
 import { readFileAtRef } from '../../lib/git-utils.mjs';
 
-const TOOL = { toolName: 'justsearch-config-surface', toolVersion: '0.1.0' };
+const TOOL = { toolName: 'justsearch-config-surface', toolVersion: '0.2.0' };
+
+const SPLIT_LINES = new RegExp("\\r?\\n");
+
+function deadBaselineUri(gate) {
+  return gate.config?.deadConfigBaseline ?? 'gates/config-surface/dead-config-baseline.txt';
+}
 
 /** Report field → baseline metric name. */
 const METRICS = {
@@ -127,6 +139,49 @@ export async function enforceConfigSurface(options) {
     } else if (v.status === 'info') {
       findings.push({ ruleId: v.ruleId, level: 'note', message: v.reason, uri: gate.baseline.path });
       if (rebalance && current < pinned) rebalanceWrites.set(metric, current);
+    }
+  }
+
+  // --- Reader-presence (tempdoc 799 §O.3). The count ratchet above answers "how many settings
+  // exist"; this answers "does anything read them", which is the defect 754 catalogued and which
+  // 799 §N.2.f.1 proved the count ratchet cannot see. Skipped in fixtureMode: the fixtures are
+  // synthetic count-ratchet trees with no Java sources, and dead-config.mjs has its own unit test.
+  if (!fixtureMode) {
+    const deadBaselinePath = resolve(
+      sourceRoot,
+      gate.config?.deadConfigBaseline ?? 'gates/config-surface/dead-config-baseline.txt',
+    );
+    const pinned = new Set();
+    if (existsSync(deadBaselinePath)) {
+      for (const raw of readFileSync(deadBaselinePath, 'utf8').split(SPLIT_LINES)) {
+        const line = raw.trim();
+        if (!line || line.startsWith('#')) continue;
+        pinned.add(line);
+      }
+    }
+    const scan = scanDeadConfig(sourceRoot);
+    if (!scan.skipped) {
+      for (const key of scan.deadKeys) {
+        const v = verdictForDeadKey({ key, baselined: pinned.has('key:' + key) });
+        if (v.status === 'fail') {
+          verdict = 'fail';
+          findings.push({ ruleId: v.ruleId, level: 'error', message: v.reason, uri: deadBaselineUri(gate) });
+        } else {
+          findings.push({ ruleId: v.ruleId, level: 'note', message: v.reason, uri: deadBaselineUri(gate) });
+        }
+      }
+      for (const component of scan.unreadComponents) {
+        const v = verdictForUnreadComponent({
+          component,
+          baselined: pinned.has('component:' + component),
+        });
+        if (v.status === 'fail') {
+          verdict = 'fail';
+          findings.push({ ruleId: v.ruleId, level: 'error', message: v.reason, uri: deadBaselineUri(gate) });
+        } else {
+          findings.push({ ruleId: v.ruleId, level: 'note', message: v.reason, uri: deadBaselineUri(gate) });
+        }
+      }
     }
   }
 
