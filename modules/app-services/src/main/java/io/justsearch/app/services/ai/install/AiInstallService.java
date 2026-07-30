@@ -517,6 +517,13 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
               () -> cleanupBitsTmpFiles(targetFile.getParent()),
               () -> updatePackageState(dl.packageId(), "verifying"));
 
+      // Project the resume verdict onto the package so the UI can say the earlier progress was
+      // kept. Sticky across a multi-file package: one resumed file makes the package resumed.
+      if (outcome.firstAction() == DownloadResume.Action.RESUME_RANGE
+          || outcome.firstAction() == DownloadResume.Action.RESUME_BITS) {
+        markPackageResumed(dl.packageId());
+      }
+
       if (!outcome.ok()) {
         if (outcome.cancelled() || cancelFlag.get()) {
           cancelled();
@@ -1229,6 +1236,17 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           return;
         }
         ps.state = state;
+      }
+      touch();
+    }
+  }
+
+  /** Records that this package continued an earlier run's bytes instead of restarting from zero. */
+  private void markPackageResumed(String packageId) {
+    synchronized (lock) {
+      var ps = findPackageStatus(packageId);
+      if (ps != null) {
+        ps.resumed = true;
       }
       touch();
     }
