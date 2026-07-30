@@ -983,7 +983,67 @@ Verification: `--gate config-surface --mode gate` PASS; `--self-test` positive P
 negative FAIL, both expected; full kernel now **35 gates** (was 34) with no new failure;
 `check-premerge-table` resolves the new gate reference (11 gate refs, was 10).
 
-### N.2 D1 — the 28 shadowed knobs — NOT DONE, and deliberately so
+### N.2 D1 — the shadowed knobs — owner-decided 2026-07-30, removal half DONE
+
+**Owner disposition received:** delete the duplicate, wire the user-facing few, withdraw the
+rest. Executed as **22 removals + 4 wirings** (not 28 — see N.2.a).
+
+#### N.2.a Two of 754's 28 were already gone
+
+`Health.refreshIntervalMs` and `Health.stalenessAlertSeconds` have no trace in
+`EnvRegistry`, `ResolvedConfig` or the docs — 754's own deletion pass took them with the
+dead `Translator` tree. 754 §150 is dated history and its count was stale by two.
+`tempdocs-are-dated-history`, third instance in this document.
+
+#### N.2.b The measurement that made removal safe
+
+Before touching anything, every candidate was counted by **record-accessor calls**
+(`.field()`), not by name — a plain word-grep overcounts badly because names like
+`maxBatchSize` and `maxSlots` collide with unrelated locals (17-18 hits each).
+
+**17 of the 22 had ZERO accessor calls anywhere.** The remaining 5 had 9 call sites
+between them, and **all 9 were in `ResolvedConfigBuilderTest`** — tests asserting that
+resolution works for values nothing reads. That is `unreachable-seed-green` in its purest
+form: green tests around a pipe that goes nowhere.
+
+The full build then confirmed it independently — after removal, **every compile error was
+in a test file. No production code broke.**
+
+#### N.2.c Disposition
+
+| Group | # | Action |
+|---|---:|---|
+| `Llm.llmGpuLayers` | 1 | **Deleted** — dead duplicate of `justsearch.gpu.layers` |
+| `Rag.retrieveTopK` | 1 | **Deleted** — 754 records it as a second attempt at `ragTopK`; wiring both would recreate a duplicate |
+| `Llm` VRAM/session cluster | 11 | **Withdrawn** — governed by deliberate safety thresholds, not user preference |
+| `Llm` summarization group | 5 | **Withdrawn** — internal tuning + a hardcoded SSOT prompts root |
+| `Worker.maxBatchSize`/`maxQueueDepth` | 2 | **Withdrawn** — gRPC transport internals |
+| `Index.commitDebounceMs`, `Watcher.overflowRescanOnOverflow` | 2 | **Withdrawn** — internal timers |
+| `Rag.ragTopK`, `Rag.citationMatchThreshold`, `Worker.maxContentLength`, `Worker.maxFileSize` | 4 | **To wire** — genuine user-facing choices |
+
+17 doc rows deleted from `environment-variables.md`. That is the half users actually see:
+each was a documented promise that did nothing.
+
+#### N.2.d A test improved rather than deleted
+
+`HeadlessAppGpuAutoPopulateTest` asserted `justsearch.llm.gpu_layers == "99"`, with the
+comment *"BOTH gpu.layers and llm.gpu_layers sysprops set, since `rc.ai().gpuLayers` and
+`rc.llm().gpuLayers` read different keys"* — i.e. it asserted the duplicate. Rather than
+delete the assertion, it was **inverted to `assertNull`**, so the test now guards against
+the duplicate being re-introduced. Stronger coverage than before, not weaker.
+
+#### N.2.e The new gate exercised itself
+
+Removing the knobs shrank the surface, and `config-surface` detected it immediately:
+`env_sysprop_pairs` 269 → 251, `yaml_keys` 115 → 114, reported as `rebalance-available`,
+then ratcheted down via `--rebalance`. The gate was built and validated against a real
+shrink within the same session.
+
+**Verification:** `./gradlew.bat build -x test` clean · full `./gradlew.bat test`
+**BUILD SUCCESSFUL** · `verify-runtime-config-matrix` OK · `verify-canonical-doc-links` OK
+· `config-surface` PASS at the new baseline.
+
+#### N.2.f Original blocking analysis (retained)
 
 **This is an owner decision, not an implementation gap.** 754 §150 is explicit:
 

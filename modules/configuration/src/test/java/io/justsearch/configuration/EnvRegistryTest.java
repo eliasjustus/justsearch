@@ -49,10 +49,10 @@ class EnvRegistryTest {
 
     @Test
     void getInt_readsSystemPropertyAndFallsBackOnInvalid() {
-        withSysProp(EnvRegistry.LLM_MAX_PARALLEL.sysProp(), "7", () ->
-            assertEquals(7, EnvRegistry.LLM_MAX_PARALLEL.getInt(1)));
-        withSysProp(EnvRegistry.LLM_MAX_PARALLEL.sysProp(), "invalid", () ->
-            assertEquals(1, EnvRegistry.LLM_MAX_PARALLEL.getInt(1)));
+        withSysProp(EnvRegistry.LLM_THREADS.sysProp(), "7", () ->
+            assertEquals(7, EnvRegistry.LLM_THREADS.getInt(1)));
+        withSysProp(EnvRegistry.LLM_THREADS.sysProp(), "invalid", () ->
+            assertEquals(1, EnvRegistry.LLM_THREADS.getInt(1)));
     }
 
     @Test
@@ -72,8 +72,8 @@ class EnvRegistryTest {
     @Test
     void getPath_readsSystemProperty() {
         Path expected = Path.of("tmp", "registry-test");
-        withSysProp(EnvRegistry.LLM_TEMPLATE_ROOT.sysProp(), expected.toString(), () ->
-            assertEquals(expected, EnvRegistry.LLM_TEMPLATE_ROOT.getPath()));
+        withSysProp(EnvRegistry.SSOT_PATH.sysProp(), expected.toString(), () ->
+            assertEquals(expected, EnvRegistry.SSOT_PATH.getPath()));
     }
 
     @Test

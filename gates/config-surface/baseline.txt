@@ -1,6 +1,5 @@
 # config-surface ratchet — tempdoc 799 K.4. <metric> <count> <date>
 # Produced from scripts/docs/generate-runtime-config-matrix.mjs. Only ratchets DOWN.
-# Pinned at the surface as measured on 2026-07-30, after tempdoc 754 deleted 31 knobs.
-yaml_keys 115 2026-07-30
-env_sysprop_pairs 269 2026-07-30
+yaml_keys 114 2026-07-30
+env_sysprop_pairs 251 2026-07-30
 config_keys 56 2026-07-30
