@@ -1118,3 +1118,132 @@ distinct sub-cases worth separating when the call is made:
 
 Note the new gate does **not** pressure these: it ratchets the *count*, and these knobs
 already exist. Deleting any of them would only make the gate greener.
+
+---
+
+## §O Root causes (git archaeology, 2026-07-30)
+
+Everything above this section describes *what* is broken. This section is the *why*, traced
+through history rather than reasoned from the symptoms. It is the most reusable output of
+this tempdoc, because the three findings turn out to be one mechanism wearing three
+costumes.
+
+**Method note and its limit:** this repo's history begins at the v0.1.0 public squash
+(`29579e51`, 2026-06-25) — 425 commits. Anything born before that date is unknowable here,
+which is why Cause 3 is argued from code shape rather than from commits.
+
+### O.1 Cause 1 — a deferral with no trigger
+
+The always-loaded budget ratchet shipped with its own excuse written into its config file,
+present in the **first public commit** and unchanged for **35 days** until this branch
+edited it:
+
+> *"Wiring: run pre-merge (manual now); fold into the prose-tier-register gate or
+> verifyGovernanceGates **once the doc set stabilizes**."*
+
+The deferral itself was defensible. The *condition* was not: "once the doc set stabilizes"
+has no definition of done, no owner, and no date — and it can never fire, because the
+always-loaded set is living documentation that changes most weeks. A permanent deferral
+written in the grammar of a temporary one.
+
+What the history then shows (reconstructed by replaying actual vs. ceiling at every commit
+that touched either):
+
+| date | state | note |
+|---|---|---|
+| 2026-06-25 | **RED** 78,606 / 76,480 | over its limit on day one, at the public cut |
+| 2026-07-01 | ok | ceiling *raised* twice (76,480 → 81,661 → 83,187) |
+| 2026-07-03 | RED 86,094 | drifted past the raised ceiling |
+| 2026-07-07 | ok 66,493 | a genuine cleanup — "681: instruction-layer re-baseline" |
+| 2026-07-11 | **RED** | four days later |
+| …19 days… | RED | climbing to 79,201 with the ceiling frozen at 68,004 |
+
+So this was never slow neglect. It is a **cycle**: clean, drift, clean. Nothing made the
+drift cost anything at the moment it happened, so it always resumed. Note also that raising
+the ceiling and cleaning up are indistinguishable from outside — both turn the check green.
+
+### O.2 Cause 2 — a retirement that swept the wiring but not the tools
+
+Commit `88d14e8c` (2026-06-25, one day after the cut) built the public CI lane and cut
+`ci.yml` from **771 lines to 59** — a 712-line deletion. Among the deleted lines:
+
+```
+- run: node scripts/ci/check-ui-cycles.mjs … --mode gate
+- run: node scripts/ci/check-chip-fact-authority.mjs
+```
+
+The check *scripts* stayed in the tree. Only their invocations left.
+
+**11 of the 13 non-release orphaned checks date from that single day.** They were not
+accumulated over a month of neglect; they were created in one restructuring, by one commit,
+as a side effect of a decision that was itself correct — a public repo *should* have a
+smaller CI surface than a private one.
+
+This also explains a detail §C.3 observed but could not account for: `check-ui-cycles`
+reports 6 real circular dependencies and exits 0. Its `--mode gate` flag was in the deleted
+line. The same commit family retired the `class-size` / `ui-bundle` gates (§M.4), leaving
+`expected-state.v1.json` still warning agents about them a month later.
+
+The missing step was never "don't trim CI". It was the follow-up question: **what did we
+just stop enforcing, and do we still claim to enforce it?**
+
+### O.3 Cause 3 — nothing links a config key to a reader
+
+Pre-cut history hides these knobs' birth, so the argument is from code shape — and the
+shape is unambiguous.
+
+The hardcoded constants match the config defaults **exactly**: `MAX_BATCH_SIZE = 10_000`
+against `resolveInt(…, 10_000)`; `MAX_QUEUE_DEPTH = 100_000` against
+`resolveLong(…, 100_000L)`; 10 MB and 100 MB likewise. That is not coincidence — both
+authors knew the same number. Yet **neither constant references the knob**, and
+`GrpcIngestService`'s javadoc describes its constant as *"Maximum files allowed in a single
+batch request"*, i.e. as the authority. `HierarchicalShapeRunner`'s says its value
+*"matches legacy `TokenEstimationUtils.SECTION_TARGET_TOKENS`"* — carried from another
+constant, not from config.
+
+Two people writing the same number in two places at different times, and **nothing in the
+system able to notice**. Verified: `consumer-presence` covers registry declarations, not
+config keys, and no unused-config-key detector exists anywhere in `scripts/`.
+
+### O.4 The mechanism underneath all three
+
+> **This project can create an authority faster than it can create the thing that enforces
+> it — and nothing notices when a claim loses its enforcer.**
+
+Each individual decision was reasonable. Deferring wiring until things settle sounds
+prudent. Trimming CI for a public repo is correct. Adding a config knob for a value is
+routine. None of them is a mistake in isolation; the failure is that a document row, a doc
+sentence, or a config key costs nothing to write and nothing to *keep* after the mechanism
+behind it disappears. There is no decay pressure on claims.
+
+That is why §B's Class 1 is a **class** and not three incidents, and it is the honest
+justification for the `config-surface` gate being a registered kernel gate rather than
+another `scripts/ci/check-*.mjs`.
+
+**The public cut concentrated the damage.** Two of the three causes trace to the same week.
+A large one-time restructuring is precisely when authority-to-enforcement links snap, and
+no post-cut audit asked what had quietly become untrue.
+
+### O.5 Coda — the same failure, applied to me
+
+This document corrected itself four times (§L.1, §L.2, §L.4, §M.4). Every one had the same
+shape: **I trusted a document that had stopped being true.** A tempdoc row marked `OPEN`
+for a mechanism that had shipped; a list of 28 items of which 2 were already gone; a theory
+about missing gates that had been deliberately retired.
+
+That is Cause 1 and Cause 3 applied to documentation instead of code, and it is why §F.1's
+"design history is 12× canonical" is not a tidiness complaint. The corpus is the same
+hazard surface as the config surface — claims with no decay pressure — and it caught the
+agent that was writing *about* the hazard.
+
+### O.6 What this implies for the fixes already shipped
+
+Stated plainly so no one over-reads what this branch accomplished:
+
+- Wiring the budget check fixes **one instance** of Cause 1. The pattern is untouched.
+- The `config-surface` gate caps **how many** config keys exist. It cannot tell whether one
+  is read, so **Cause 3 remains open** — the same 22 could regrow, merely fewer of them.
+- **Nothing here addresses Cause 2.** The other 13 orphaned checks are still orphaned.
+
+The generalised fix for Causes 1 and 2 is the same object: a reachability control over the
+whole control surface (§C.5), which is deliberately not built here.

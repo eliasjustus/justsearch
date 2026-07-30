@@ -29,15 +29,31 @@ final class AgentCitationResolver {
    * shared cutoff (tempdoc 565 §15.A), read from the matcher API contract so the agent and RAG paths
    * cite identically (was a divergent local 0.45).
    */
-  private static final double SIMILARITY_THRESHOLD =
+  private static final double DEFAULT_SIMILARITY_THRESHOLD =
       DocumentService.DEFAULT_CITATION_SIMILARITY_THRESHOLD;
   /** The agent loop blocks at most this long on the matcher before citing sources without marks. */
   private static final long MATCH_TIMEOUT_MS = 4000L;
 
   private final DocumentService documentService;
 
+  /**
+   * The cosine floor actually used. Injected so the agent path and the RAG path read the SAME
+   * configured value (tempdoc 565 15.A made this one shared cutoff; tempdoc 799 N.2 wired it to
+   * {@code justsearch.citation.match_threshold}). Wiring only one path would recreate the 0.45/0.5
+   * divergence 565 removed.
+   */
+  private final double similarityThreshold;
+
   AgentCitationResolver(DocumentService documentService) {
+    this(documentService, DEFAULT_SIMILARITY_THRESHOLD);
+  }
+
+  AgentCitationResolver(DocumentService documentService, double similarityThreshold) {
     this.documentService = documentService;
+    this.similarityThreshold =
+        similarityThreshold > 0.0 && similarityThreshold <= 1.0
+            ? similarityThreshold
+            : DEFAULT_SIMILARITY_THRESHOLD;
   }
 
   /**
@@ -60,7 +76,7 @@ final class AgentCitationResolver {
     try {
       DocumentService.CitationMatchResult result =
           documentService
-              .matchCitations(answer, citations, SIMILARITY_THRESHOLD)
+              .matchCitations(answer, citations, similarityThreshold)
               .toCompletableFuture()
               .get(MATCH_TIMEOUT_MS, TimeUnit.MILLISECONDS);
       List<AgentEvent.AgentSentenceCite> out = new ArrayList<>();

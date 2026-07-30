@@ -1548,7 +1548,7 @@ public final class ResolvedConfigBuilder {
         resolveBoolean("rag.chunk_splade.enabled", false),
         resolveBoolean("rag.union.enabled", true),
         resolveInt("justsearch.rag.top_k", 5),
-        resolveString("justsearch.citation.match_threshold", ""),
+        Math.max(0.0, Math.min(1.0, resolveDouble("justsearch.citation.match_threshold", 0.5))),
         Math.max(1, Math.min(10, resolveInt("rag.max_chunks_per_article", 2))));
   }
 

@@ -84,13 +84,36 @@ public final class RAGContext implements ContextInjector {
   private final DocumentService documents;
   private final Duration timeout;
 
+  /**
+   * Fallback top-K when the request body does not specify one. Sourced from
+   * {@code justsearch.rag.top_k} at the composition root (tempdoc 799 N.2). Before that the
+   * setting resolved correctly and was read by nothing — {@link #DEFAULT_TOP_K} always won.
+   *
+   * <p>Precedence is body -> this -> {@link #DEFAULT_TOP_K}; an explicit per-request topK still
+   * wins, so wiring config cannot override a caller that asked for a specific value.
+   */
+  private final int defaultTopK;
+
   public RAGContext(DocumentService documents) {
-    this(documents, DEFAULT_TIMEOUT);
+    this(documents, DEFAULT_TIMEOUT, DEFAULT_TOP_K);
   }
 
   public RAGContext(DocumentService documents, Duration timeout) {
+    this(documents, timeout, DEFAULT_TOP_K);
+  }
+
+  /**
+   * Configured-top-K constructor (tempdoc 799 N.2). Keeps {@link #DEFAULT_TIMEOUT} internal so the
+   * composition root does not need visibility of it.
+   */
+  public RAGContext(DocumentService documents, int defaultTopK) {
+    this(documents, DEFAULT_TIMEOUT, defaultTopK);
+  }
+
+  public RAGContext(DocumentService documents, Duration timeout, int defaultTopK) {
     this.documents = Objects.requireNonNull(documents, "documents");
     this.timeout = Objects.requireNonNull(timeout, "timeout");
+    this.defaultTopK = defaultTopK > 0 ? defaultTopK : DEFAULT_TOP_K;
   }
 
   @Override
@@ -340,13 +363,13 @@ public final class RAGContext implements ContextInjector {
         .collect(Collectors.toUnmodifiableList());
   }
 
-  private static int extractTopK(Map<String, Object> body) {
+  private int extractTopK(Map<String, Object> body) {
     Object raw = body == null ? null : body.get("topK");
     if (raw instanceof Number n) {
       int v = n.intValue();
-      return v > 0 ? v : DEFAULT_TOP_K;
+      return v > 0 ? v : defaultTopK;
     }
-    return DEFAULT_TOP_K;
+    return defaultTopK;
   }
 
   private static String asString(Object o) {

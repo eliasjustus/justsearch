@@ -60,6 +60,14 @@ public final class StreamingCitationMatcher implements StreamConsumer {
     this(documents, MATCH_TIMEOUT, DEFAULT_THRESHOLD);
   }
 
+  /**
+   * Configured-threshold constructor (tempdoc 799 N.2). Keeps {@link #MATCH_TIMEOUT} internal so
+   * the composition root does not need visibility of it.
+   */
+  public StreamingCitationMatcher(DocumentService documents, double threshold) {
+    this(documents, MATCH_TIMEOUT, threshold);
+  }
+
   public StreamingCitationMatcher(
       DocumentService documents, Duration timeout, double threshold) {
     this.documents = Objects.requireNonNull(documents, "documents");

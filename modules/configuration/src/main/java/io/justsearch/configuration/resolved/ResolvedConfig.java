@@ -761,7 +761,10 @@ public record ResolvedConfig(
    * @param unionEnabled whether the RAG doc-level union leg for chunkless docs is enabled
    *     (tempdoc 749; default true)
    * @param ragTopK env var override for RAG top-k (justsearch.rag.top_k)
-   * @param citationMatchThreshold cosine similarity threshold for citation matching
+   * @param citationMatchThreshold cosine-similarity floor for citation matching, [0,1] (tempdoc
+   *     799 N.2: was typed String and never parsed; the live value was a hardcoded 0.5). This is the
+   *     ONE cutoff shared by the RAG and agent citation paths (tempdoc 565 15.A) — both composition
+   *     roots must read it, or the two paths cite differently.
    * @param maxChunksPerArticle 385: max chunks per parent document in RAG context (diversity cap)
    */
   public record Rag(
@@ -774,7 +777,7 @@ public record ResolvedConfig(
       boolean chunkSpladeEnabled,
       boolean unionEnabled,
       int ragTopK,
-      String citationMatchThreshold,
+      double citationMatchThreshold,
       int maxChunksPerArticle) {}
 
   /**

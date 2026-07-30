@@ -259,6 +259,48 @@ final class StreamingCitationMatcherTest {
     };
   }
 
+  // --- tempdoc 799 §N.2: justsearch.citation.match_threshold is wired. It previously resolved as
+  // a String, was never parsed, and a hardcoded 0.5 always won. Tempdoc 565 §15.A made this the ONE
+  // cutoff shared with the agent path, so the value must actually reach the DocumentService call.
+
+  @Test
+  @DisplayName("799 N.2: the configured cutoff reaches matchCitations, not the compiled default")
+  void configuredThresholdReachesMatchCall() {
+    double[] seen = {-1.0};
+    var docs = thresholdCapturingDocs(seen);
+    var matcher = new StreamingCitationMatcher(docs, 0.83);
+    var ctx = ctxWithCitations(List.of(citation("doc-1", 0, "the grass is green in the field")));
+    matcher.onDone("The grass is green in the field.", ctx);
+    assertEquals(0.83, seen[0], 1e-9, "configured cutoff must reach the matcher call");
+  }
+
+  @Test
+  @DisplayName("799 N.2: an out-of-range cutoff falls back to the shared default")
+  void outOfRangeThresholdFallsBack() {
+    double[] seen = {-1.0};
+    var docs = thresholdCapturingDocs(seen);
+    var matcher = new StreamingCitationMatcher(docs, 9.0);
+    var ctx = ctxWithCitations(List.of(citation("doc-1", 0, "the grass is green in the field")));
+    matcher.onDone("The grass is green in the field.", ctx);
+    assertEquals(1.0, seen[0], 1e-9, "clamped to the [0.01,1.0] band the ctor documents");
+  }
+
+  private static DocumentService thresholdCapturingDocs(double[] sink) {
+    return new DocumentService() {
+      @Override
+      public CompletionStage<DocumentRecord> fetch(String docId) {
+        return CompletableFuture.completedFuture(null);
+      }
+
+      @Override
+      public CompletionStage<CitationMatchResult> matchCitations(
+          String answerText, List<ContextCitation> citations, double threshold) {
+        sink[0] = threshold;
+        return CompletableFuture.completedFuture(null);
+      }
+    };
+  }
+
   private static DocumentService stubDocs(CitationMatchResult result) {
     return new DocumentService() {
       @Override

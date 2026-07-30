@@ -27,6 +27,45 @@ import org.junit.jupiter.api.Test;
 /** Unit tests for {@link RAGContext} (slice 491 C3). */
 final class RAGContextTest {
 
+  // --- tempdoc 799 §N.2: justsearch.rag.top_k is wired. Before this, the setting resolved
+  // correctly and DEFAULT_TOP_K always won. Precedence must be body -> configured -> 5.
+
+  @Test
+  @DisplayName("799 N.2: configured top-K replaces the hardcoded default when body omits topK")
+  void configuredTopKUsedWhenBodyOmitsIt() {
+    var docs = new TrackingDocs();
+    var injector = new RAGContext(docs, 17);
+    injector.inject(stubCtx(Map.of("question", "what?")));
+    assertEquals(17, docs.lastTopK, "configured default must reach the retrieval call");
+  }
+
+  @Test
+  @DisplayName("799 N.2: an explicit body topK still wins over the configured default")
+  void bodyTopKWinsOverConfiguredDefault() {
+    var docs = new TrackingDocs();
+    var injector = new RAGContext(docs, 17);
+    injector.inject(stubCtx(Map.of("question", "what?", "topK", 3)));
+    assertEquals(3, docs.lastTopK, "per-request topK must not be overridden by config");
+  }
+
+  @Test
+  @DisplayName("799 N.2: no configured value falls back to DEFAULT_TOP_K")
+  void fallsBackToCompiledDefault() {
+    var docs = new TrackingDocs();
+    var injector = new RAGContext(docs);
+    injector.inject(stubCtx(Map.of("question", "what?")));
+    assertEquals(RAGContext.DEFAULT_TOP_K, docs.lastTopK);
+  }
+
+  @Test
+  @DisplayName("799 N.2: a non-positive configured value is rejected, not propagated")
+  void nonPositiveConfiguredValueRejected() {
+    var docs = new TrackingDocs();
+    var injector = new RAGContext(docs, 0);
+    injector.inject(stubCtx(Map.of("question", "what?")));
+    assertEquals(RAGContext.DEFAULT_TOP_K, docs.lastTopK);
+  }
+
   @Test
   @DisplayName("ID is stable and namespaced under core")
   void idIsCoreNamespaced() {

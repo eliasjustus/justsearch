@@ -756,8 +756,21 @@ public final class AgentLoopService implements AgentService {
    * leaves answers citing their grounding sources without per-sentence marks.
    */
   public void setCitationDocumentService(io.justsearch.app.api.DocumentService documentService) {
+    setCitationDocumentService(
+        documentService, io.justsearch.app.api.DocumentService.DEFAULT_CITATION_SIMILARITY_THRESHOLD);
+  }
+
+  /**
+   * Same, with the configured cosine cutoff (tempdoc 799 N.2 — {@code
+   * justsearch.citation.match_threshold}). Kept as an overload so callers without config resolved
+   * keep the compiled default.
+   */
+  public void setCitationDocumentService(
+      io.justsearch.app.api.DocumentService documentService, double similarityThreshold) {
     stepRunner.setCitationResolver(
-        documentService == null ? null : new AgentCitationResolver(documentService));
+        documentService == null
+            ? null
+            : new AgentCitationResolver(documentService, similarityThreshold));
   }
 
   // --- Internal ---
