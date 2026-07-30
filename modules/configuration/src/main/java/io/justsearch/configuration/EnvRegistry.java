@@ -1038,10 +1038,6 @@ public enum EnvRegistry {
 
     // ==================== Worker Limits (tempdoc 347 D2: sysProp = configKey) ====================
 
-    /** Max batch size for indexing operations. */
-    WORKER_MAX_BATCH_SIZE("worker.limits.max_batch_size", "JUSTSEARCH_WORKER_MAX_BATCH_SIZE"),
-    /** Max queue depth for pending indexing jobs. */
-    WORKER_MAX_QUEUE_DEPTH("worker.limits.max_queue_depth", "JUSTSEARCH_WORKER_MAX_QUEUE_DEPTH"),
     /** Max content length per document (characters). */
     WORKER_MAX_CONTENT_LENGTH("worker.limits.max_content_length",
         "JUSTSEARCH_WORKER_MAX_CONTENT_LENGTH"),

@@ -316,10 +316,8 @@ Precedence note:
 | search.mcp_framing.thin_result_floor_bytes | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.mcp_framing.weak_score_floor | JUSTSEARCH_SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR | search.mcp_framing.weak_score_floor | SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | search.mcp_framing.weak_score_floor | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| worker.limits.max_batch_size | JUSTSEARCH_WORKER_MAX_BATCH_SIZE | worker.limits.max_batch_size | WORKER_MAX_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_content_length | JUSTSEARCH_WORKER_MAX_CONTENT_LENGTH | worker.limits.max_content_length | WORKER_MAX_CONTENT_LENGTH | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_file_size | JUSTSEARCH_WORKER_MAX_FILE_SIZE | worker.limits.max_file_size | WORKER_MAX_FILE_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| worker.limits.max_queue_depth | JUSTSEARCH_WORKER_MAX_QUEUE_DEPTH | worker.limits.max_queue_depth | WORKER_MAX_QUEUE_DEPTH | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | workers.ai.enabled | JUSTSEARCH_AI_ENABLED | workers.ai.enabled | AI_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | workers.indexer.backpressure_mode | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | workers.indexer.enabled | JUSTSEARCH_INDEXER_ENABLED | workers.indexer.enabled | INDEXER_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |

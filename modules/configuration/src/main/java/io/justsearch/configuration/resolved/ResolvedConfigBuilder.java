@@ -282,7 +282,6 @@ public final class ResolvedConfigBuilder {
    */
   public ResolvedConfigBuilder contributeYaml(JsonNode root) {
     if (root == null || root.isMissingNode()) return this;
-    contributeYamlWatcher(root);
     contributeYamlOcr(root);
     contributeYamlIndex(root);
     contributeYamlPolicy(root);
@@ -319,10 +318,6 @@ public final class ResolvedConfigBuilder {
     return this;
   }
 
-  private void contributeYamlWatcher(JsonNode root) {
-    putYamlBoolean("index.watcher.overflow.rescan_on_overflow", root,
-        "index.watcher.overflow.rescan_on_overflow");
-  }
 
   private void contributeYamlOcr(JsonNode root) {
     putYamlBoolean("index.ocr.enabled", root, "index.ocr.enabled");
@@ -351,7 +346,6 @@ public final class ResolvedConfigBuilder {
     putYamlInt("index.writer.ram_buffer_mb", root, "index.writer.ram_buffer_mb");
     putYamlInt("index.writer.max_buffered_docs", root, "index.writer.max_buffered_docs");
     putYamlInt("index.queue.max_depth", root, "index.queue.max_depth");
-    putYamlInt("index.commit.debounce_ms", root, "index.commit.debounce_ms");
     putYamlBoolean("index.commit.meta.enabled", root, "index.commit.meta.enabled");
     putYamlInt("index.nrt.target_max_stale_ms", root, "index.nrt.target_max_stale_ms");
     putYamlInt("index.nrt.max_stale_ms", root, "index.nrt.max_stale_ms");
@@ -405,8 +399,6 @@ public final class ResolvedConfigBuilder {
   }
 
   private void contributeYamlWorker(JsonNode root) {
-    putYamlInt("worker.limits.max_batch_size", root, "worker.limits.max_batch_size");
-    putYamlLong("worker.limits.max_queue_depth", root, "worker.limits.max_queue_depth");
     putYamlInt("worker.limits.max_content_length", root, "worker.limits.max_content_length");
     putYamlLong("worker.limits.max_file_size", root, "worker.limits.max_file_size");
     // 347: worker limit env/sysprop overrides now handled by EnvRegistry entries.

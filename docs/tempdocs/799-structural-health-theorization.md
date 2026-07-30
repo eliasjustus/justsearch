@@ -1080,9 +1080,39 @@ unit-testable. `ragTopK` precedence is **body → configured → 5**: an explici
 **unchanged** key count (251 — the plan's own mis-scope check) · `verify-runtime-config-matrix`
 OK · always-loaded budget PASS · kernel `--self-test` PASS.
 
-**Not yet done:** the live tier. `ragTopK` changes what the model actually answers with, so
-unit tests are not sufficient evidence under `use-every-verification-tier`. The dev stack is
-shared and contended; that run is outstanding.
+#### N.2.f.1 The live tier ran — and caught what everything else missed
+
+`use-every-verification-tier` says check whether a tool provides the tier before declaring it
+unavailable. The stack was free (no contention), so it was run: dist built from this worktree,
+`distFrom` start, `ready_worker` reached. Two results.
+
+**1. Boot smoke passed.** The change adds a `ConfigStore` read at two composition roots, which
+no unit test covers. The stack reaches `ready_worker` with it, so the read does not break
+startup.
+
+**2. It found residue I had left — my own `retire-with-a-sweep` failure.** `effective_config`
+on the running backend still listed `worker.limits.max_queue_depth`. The consumer was gone, but
+the **`EnvRegistry` declaration and the YAML contribution were not**, so the key still resolved
+into the live resolution map: declared, documented as removed, read by nothing. Precisely the
+defect class this whole tempdoc is about, reintroduced by an incomplete sweep of my own.
+
+A full audit then found **four** such knobs (`worker.limits.max_batch_size`,
+`worker.limits.max_queue_depth`, `index.commit.debounce_ms`,
+`index.watcher.overflow.rescan_on_overflow`) — two with orphaned `EnvRegistry` entries, all four
+with orphaned `putYaml*` contributions, plus a `contributeYamlWatcher` method left empty. All
+removed; the surface shrank again (`yaml_keys` 114→110, `env_sysprop_pairs` 251→249) and the
+gate ratcheted down.
+
+**Nothing else would have caught this.** The full unit suite was green, `build -x test` was
+green, and `config-surface` was green — because a key that resolves but is never read is exactly
+what none of them can see (§O.3). Only looking at the running system's own config surface
+exposed it. That is the concrete argument for the live tier, and a live instance of §O.6's
+warning that the new gate counts keys without knowing whether anyone reads them.
+
+**Not done:** observing a changed retrieved-chunk count under a non-default
+`justsearch.rag.top_k`. The MCP `dev_start` surface has no sysprop-injection parameter, so that
+specific observation was not reachable without driving the backend outside the dev-runner.
+Precedence is covered by unit tests instead; the gap is stated rather than papered over.
 
 ##### Original analysis (retained — it is why the design is shaped this way)
 
