@@ -305,11 +305,24 @@ public final class IndexCountOps {
                 .build();
         int total = searcher.count(wholeDocsQuery);
 
+        // SPLADE's terminal-success vocabulary is two-valued: COMPLETED (postings written) and
+        // COMPLETED_EMPTY (encode ran fine, produced no materialisable weight). Both mean "SPLADE is
+        // done for this document", so coverage must sum them — counting only COMPLETED would leave
+        // spladeCoveragePercent permanently below the 99.9 readiness bar every consumer gates on
+        // (scripts/jseval/jseval/readiness.py) once pending hits zero. Mirrors the NER precedent in
+        // IndexStatusOps#buildEnrichment.
         Query completedQuery = new BooleanQuery.Builder()
             .add(wholeDocsQuery, BooleanClause.Occur.FILTER)
-            .add(new TermQuery(new Term(
-                    SchemaFields.SPLADE_STATUS,
-                    SchemaFields.SPLADE_STATUS_COMPLETED)),
+            .add(new BooleanQuery.Builder()
+                    .add(new TermQuery(new Term(
+                            SchemaFields.SPLADE_STATUS,
+                            SchemaFields.SPLADE_STATUS_COMPLETED)),
+                        BooleanClause.Occur.SHOULD)
+                    .add(new TermQuery(new Term(
+                            SchemaFields.SPLADE_STATUS,
+                            SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY)),
+                        BooleanClause.Occur.SHOULD)
+                    .build(),
                 BooleanClause.Occur.FILTER)
             .build();
         int completed = searcher.count(completedQuery);

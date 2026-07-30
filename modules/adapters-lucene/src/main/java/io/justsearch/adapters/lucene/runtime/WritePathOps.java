@@ -305,6 +305,14 @@ public final class WritePathOps {
     // Apply updates (overwrites existing values, including anything the engine restored)
     fields.putAll(updates);
 
+    // Write-time status/artifact contract (tempdoc 798). The merged map — existing stored fields
+    // union rmwPolicy-preserved fields union the caller's updates — is exactly what will be
+    // indexed, so it is the only place the RMW lane can tell a truthful COMPLETED from a lie.
+    // IndexingCoordinator.validate() never runs here (only indexSingle/indexBatch call it), and
+    // readModifyWriteBatch / updateDocumentPaths funnel through this method, so this one call
+    // covers every partial-update path.
+    StatusArtifactContract.enforce(session, fields, "read-modify-write:" + docId);
+
     // Re-index with updated fields
     Document newDoc = session.fieldMapper.toDocument(fields);
     LifecycleSnapshot rmwSnap = session.snapshot;
