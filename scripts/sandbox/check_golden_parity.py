@@ -11,15 +11,43 @@ the Sandbox agent runs the same fixed query set (golden-queries.json) against
 the installed candidate's API and saves each raw response as evidence
 (evidence/golden/<queryId>.json — collect-evidence.ps1 does this). This script
 runs on the HOST at finalize and compares the two, with TOLERANCE, not exact
-rank equality:
+rank equality.
 
-  - per query, at least 7 of the golden top-10 doc identities must appear
-    (in any order) in the captured top-10, AND
+BLOCKING assertion (one, environment-robust):
+
   - the golden #1 doc must appear somewhere in the captured top-3.
 
+DESCRIPTIVE signal (computed, reported, never suppressed — but not a verdict):
+
+  - per query, how many of the golden top-10 doc identities appear (in any
+    order) in the captured top-10, and whether that count is below the
+    historical floor of 7.
+
+Overlap@10 USED to be the second blocking half of the rule. It was demoted to
+descriptive on 2026-07-30 (owner decision; tempdoc 750's pre-designed option
+A4, evidence in tempdoc 798 section B7). The reason is instrument validity, NOT a
+weakened bar: the overlap floor was calibrated on a same-machine dev-rebuild
+population only — the baseline's own `calibration` block says so — while this
+checker applies it across the dev -> Sandbox environment boundary. Measured,
+that boundary moves dense scores 1.7e-2 to 6.8e-2 against a calibrated
+envelope of 2.0e-4 (two to three orders of magnitude over) on ALL ten queries,
+while two runs on ONE dev stack are bit-identical (delta exactly 0.000e+00).
+A sub-floor overlap on that population is therefore an uncalibrated
+measurement, not a demonstrated ranking regression, and it must not return a
+blocking exit code.
+
+What did NOT change, and is what keeps this from being "lower the floor until
+it passes": overlap is still computed per query, still printed per query, and
+every query below the old floor is still called out in its own prominent
+summary block with the [PARITY_OVERLAP_MISS] reason code. Nothing is skipped
+or hidden; the number simply no longer decides the exit code. The blocking
+assertion that remains is the one the same evidence shows IS environment-
+robust — golden #1 in the captured top-3 held on all ten queries, including
+the three whose overlap fell below the floor.
+
 Goldens are regenerated per candidate, so this is self-maintaining across
-intentional ranking changes — it only fails when the *installed candidate*
-retrieves meaningfully differently than the dev build that qualified it.
+intentional ranking changes — it only blocks when the *installed candidate*
+loses the golden top hit relative to the dev build that qualified it.
 
 Fails CLOSED, matching check_coverage.py's philosophy: any query with a
 missing capture file is a failure, not a skip.
@@ -49,20 +77,17 @@ A baseline generated before this provenance was recorded (no
 identity/corpus preconditions are skipped with a printed WARNING naming what
 couldn't be checked, rather than crashing.
 
-Overlap-with-tolerance is now DESCRIPTIVE-plus-blocking-legacy, not the sole
-instrument (tempdoc 750 Part A): a v2 baseline (`formatVersion` 2, produced by
-the current gen_golden_parity.py) additionally carries per-hit dense-leg
-scores and per-leg (vector/text/splade) top-10s, so this checker also reports,
-per query, a score-identity probe (do the SHARED (query, doc) pairs' dense
-scores match within the baseline's calibrated envelope, or did the embedding
-output itself vary?) and a leg-attribution breakdown (which single retrieval
-leg diverges on a FAILED query, so a failure can be root-caused host-side
-instead of just reported as a symptom). Both signals are REPORT PAYLOAD ONLY --
-the BLOCKING/exit-code rule stays intentionally UNCHANGED while 734 finding 5
-(the dev-vs-sandbox divergence's root cause) is still open; demoting overlap
-to a non-blocking gate is a follow-up decision, not made here. A v1 baseline
-(no `formatVersion`, or `formatVersion` 1) still runs the full legacy
-comparison; the report just notes the new signals aren't available for it.
+Alongside overlap, a v2 baseline (`formatVersion` 2, produced by the current
+gen_golden_parity.py) carries per-hit dense-leg scores and per-leg
+(vector/text/splade) top-10s, so this checker also reports, per query, a
+score-identity probe (do the SHARED (query, doc) pairs' dense scores match
+within the baseline's calibrated envelope, or did the embedding output itself
+vary?) and a leg-attribution breakdown (which single retrieval leg diverges,
+so a divergence can be root-caused host-side instead of just reported as a
+symptom). These sit in the same descriptive tier as overlap. A v1 baseline (no
+`formatVersion`, or `formatVersion` 1) silently loses both — it has no
+`legScores`/`legTop10` at all, which is what made earlier rounds
+unattributable — so the report says so explicitly; keep the baseline at v2.
 
 Pure Python 3 standard library only. No network access.
 """
@@ -93,7 +118,12 @@ from golden_common import (  # noqa: E402
     normalize_identity,
 )
 
-MIN_OVERLAP = 7
+# Formerly MIN_OVERLAP, the second BLOCKING half of the tolerance rule. Renamed
+# with the 2026-07-30 demotion so the name cannot imply an enforced minimum:
+# this floor now only decides whether a query's (always computed, always
+# printed) overlap is called out as a descriptive finding. See the module
+# docstring for why the floor is not valid across the dev -> Sandbox boundary.
+OVERLAP_DESCRIPTIVE_FLOOR = 7
 TOP_N = 10
 FIRST_WITHIN_TOP = 3
 
@@ -122,23 +152,42 @@ LEG_MODE_DISPLAY: dict[str, str] = {"vector": "dense", "text": "text", "splade":
 # and every descriptive attribution signal below tags its report line with
 # one of these, mirroring the product layer's SearchReasonCode closed-
 # vocabulary pattern instead of ad-hoc strings.
+#
+# BLOCKING codes — each one returns a non-zero exit.
 PARITY_MODEL_MISMATCH = "PARITY_MODEL_MISMATCH"
 PARITY_CORPUS_MISMATCH = "PARITY_CORPUS_MISMATCH"
 PARITY_DENSE_LEG_SKIPPED = "PARITY_DENSE_LEG_SKIPPED"
+PARITY_CAPTURE_MISSING = "PARITY_CAPTURE_MISSING"
+PARITY_BASELINE_INCOMPLETE = "PARITY_BASELINE_INCOMPLETE"
+PARITY_FIRST_HIT_MISS = "PARITY_FIRST_HIT_MISS"
+
+# DESCRIPTIVE codes — reported prominently, never suppressed, never blocking.
 PARITY_EMBEDDING_VARIANCE = "PARITY_EMBEDDING_VARIANCE"
 PARITY_LEG_DIVERGENCE = "PARITY_LEG_DIVERGENCE"
 PARITY_UNCALIBRATED_POPULATION = "PARITY_UNCALIBRATED_POPULATION"
+# PARITY_OVERLAP_MISS was a BLOCKING code until 2026-07-30; it is now
+# descriptive. The code itself is deliberately kept (not renamed away) so a
+# round's log still names the same finding an operator has seen before, and so
+# the demotion is legible rather than looking like the finding disappeared.
 PARITY_OVERLAP_MISS = "PARITY_OVERLAP_MISS"
 
-PARITY_REASON_CODES: tuple[str, ...] = (
+PARITY_BLOCKING_REASON_CODES: tuple[str, ...] = (
     PARITY_MODEL_MISMATCH,
     PARITY_CORPUS_MISMATCH,
     PARITY_DENSE_LEG_SKIPPED,
+    PARITY_CAPTURE_MISSING,
+    PARITY_BASELINE_INCOMPLETE,
+    PARITY_FIRST_HIT_MISS,
+)
+
+PARITY_DESCRIPTIVE_REASON_CODES: tuple[str, ...] = (
     PARITY_EMBEDDING_VARIANCE,
     PARITY_LEG_DIVERGENCE,
     PARITY_UNCALIBRATED_POPULATION,
     PARITY_OVERLAP_MISS,
 )
+
+PARITY_REASON_CODES: tuple[str, ...] = PARITY_BLOCKING_REASON_CODES + PARITY_DESCRIPTIVE_REASON_CODES
 
 
 # ---------------------------------------------------------------------------
@@ -173,9 +222,20 @@ class GoldenQuery:
 @dataclass
 class QueryVerdict:
     query: GoldenQuery
+    # BLOCKING verdict only: the capture was readable, the baseline had
+    # something to compare against, and the golden #1 doc landed in the
+    # captured top-FIRST_WITHIN_TOP. Overlap does NOT feed this (2026-07-30
+    # demotion) -- see `overlap_ok` for the descriptive half.
     passed: bool
     reason: str
     overlap: int | None = None
+    # DESCRIPTIVE: overlap >= OVERLAP_DESCRIPTIVE_FLOOR. False means "called
+    # out prominently in the report", never "blocks". None means overlap was
+    # not computable (missing capture / empty baseline expectedTop10).
+    overlap_ok: bool | None = None
+    # Which PARITY_BLOCKING_REASON_CODES member made this verdict block, or
+    # None when it did not block.
+    blocking_code: str | None = None
     captured_top10: list[str] | None = None
     # tempdoc 750 Part A1: {identity: {"sparse"?, "dense"?, "splade"?,
     # "fusion"?: float}} for the captured top-10's hits, keyed the same way as
@@ -368,33 +428,51 @@ def check_dense_leg(golden: dict[str, Any], evidence_dir: str) -> str | None:
 
 
 def evaluate_query(golden_query: GoldenQuery, captured_top10: list[str]) -> QueryVerdict:
-    """Apply the tolerance rule: >=MIN_OVERLAP/TOP_N overlap AND golden #1
-    within the captured top FIRST_WITHIN_TOP. NOT exact rank equality."""
+    """Apply the tolerance rule. BLOCKING: golden #1 within the captured top
+    FIRST_WITHIN_TOP. DESCRIPTIVE: top-10 overlap vs
+    OVERLAP_DESCRIPTIVE_FLOOR — computed and reported on every query, but not
+    part of `passed` (2026-07-30 demotion; module docstring has the why).
+    Neither half is exact rank equality."""
     expected = golden_query.expected_top10
     if not expected:
         return QueryVerdict(
             query=golden_query,
             passed=False,
-            reason="golden baseline has an empty expectedTop10 for this query — nothing to compare",
+            reason=(
+                f"[{PARITY_BASELINE_INCOMPLETE}] golden baseline has an empty expectedTop10 for "
+                "this query — nothing to compare"
+            ),
             overlap=0,
+            overlap_ok=None,
+            blocking_code=PARITY_BASELINE_INCOMPLETE,
             captured_top10=captured_top10,
         )
 
     overlap = len(set(expected) & set(captured_top10))
-    overlap_ok = overlap >= MIN_OVERLAP
+    overlap_ok = overlap >= OVERLAP_DESCRIPTIVE_FLOOR
 
     golden_first = expected[0]
     first_ok = golden_first in captured_top10[:FIRST_WITHIN_TOP]
 
-    passed = overlap_ok and first_ok
-    reason = (
-        f"overlap {overlap}/{len(expected)} (need >={MIN_OVERLAP}) "
-        f"{'OK' if overlap_ok else 'FAIL'}; "
-        f"golden #1 {golden_first!r} "
-        f"{'found' if first_ok else 'NOT found'} in captured top-{FIRST_WITHIN_TOP} "
-        f"{'OK' if first_ok else 'FAIL'}"
+    overlap_note = (
+        "OK" if overlap_ok else f"BELOW FLOOR [{PARITY_OVERLAP_MISS}] (descriptive, does not block)"
     )
-    return QueryVerdict(query=golden_query, passed=passed, reason=reason, overlap=overlap, captured_top10=captured_top10)
+    reason = (
+        f"BLOCKING: golden #1 {golden_first!r} "
+        f"{'found' if first_ok else 'NOT found'} in captured top-{FIRST_WITHIN_TOP} "
+        f"{'OK' if first_ok else f'FAIL [{PARITY_FIRST_HIT_MISS}]'}; "
+        f"descriptive: overlap {overlap}/{len(expected)} "
+        f"(floor >={OVERLAP_DESCRIPTIVE_FLOOR}) {overlap_note}"
+    )
+    return QueryVerdict(
+        query=golden_query,
+        passed=first_ok,
+        reason=reason,
+        overlap=overlap,
+        overlap_ok=overlap_ok,
+        blocking_code=None if first_ok else PARITY_FIRST_HIT_MISS,
+        captured_top10=captured_top10,
+    )
 
 
 def evaluate_all(golden: dict[str, Any], evidence_dir: str) -> list[QueryVerdict]:
@@ -408,9 +486,11 @@ def evaluate_all(golden: dict[str, Any], evidence_dir: str) -> list[QueryVerdict
                     query=gq,
                     passed=False,
                     reason=(
-                        f"missing or unreadable capture file 'golden/{gq.id}.json' in evidence dir "
-                        f"{evidence_dir!r} — fail closed, not skipped"
+                        f"[{PARITY_CAPTURE_MISSING}] missing or unreadable capture file "
+                        f"'golden/{gq.id}.json' in evidence dir {evidence_dir!r} — fail closed, "
+                        "not skipped"
                     ),
+                    blocking_code=PARITY_CAPTURE_MISSING,
                 )
             )
             continue
@@ -533,14 +613,53 @@ def format_leg_attribution_line(overlaps: dict[str, int] | None) -> str:
 # ---------------------------------------------------------------------------
 
 
+def print_overlap_policy_note(golden: dict[str, Any]) -> None:
+    """State, in the round's own log, WHY overlap@10 is descriptive.
+
+    An operator reading a log that shows sub-floor overlap next to a green
+    exit code must be able to see the policy rather than infer that coverage
+    was quietly dropped. This prints the population the floor WAS calibrated
+    on (from the baseline's own `calibration` block, so it cites the artifact
+    rather than a hardcoded claim) and the boundary it is being applied
+    across."""
+    calibration = golden.get("calibration") or {}
+    population = calibration.get("population") or "same-machine dev rebuilds"
+    print(
+        f"[{PARITY_UNCALIBRATED_POPULATION}] overlap@10 is DESCRIPTIVE, not blocking "
+        "(owner decision 2026-07-30; tempdoc 750 option A4):"
+    )
+    print(
+        f"  the >={OVERLAP_DESCRIPTIVE_FLOOR}/{TOP_N} overlap floor was calibrated ONLY on the "
+        f"{population!r} population, but this"
+    )
+    print(
+        "  comparison crosses the dev -> Sandbox environment boundary, which that calibration "
+        "never sampled."
+    )
+    print(
+        "  A sub-floor overlap here is an UNCALIBRATED MEASUREMENT, not a demonstrated ranking "
+        "regression, so it"
+    )
+    print(
+        "  is reported in full above and below — never suppressed — but does not decide the exit "
+        "code. The blocking"
+    )
+    print(
+        f"  assertion is the environment-robust one: golden #1 within the captured "
+        f"top-{FIRST_WITHIN_TOP}."
+    )
+
+
 def print_report(golden: dict[str, Any], evidence_dir: str, verdicts: list[QueryVerdict]) -> bool:
     """Print the deterministic per-query verdict table plus the tempdoc 750
     Part A attribution signals (v2 baselines only), then an attribution
-    summary and the totals/BLOCKING block.
+    summary, the descriptive overlap findings + policy note, and the
+    totals/BLOCKING block.
 
-    Returns True iff all queries passed the tolerance rule -- EXACTLY the same
-    condition as before this signal work landed. The two new signals are
-    report payload only and never influence this return value.
+    Returns True iff no query BLOCKED — i.e. every capture was readable and
+    every golden #1 landed in the captured top-FIRST_WITHIN_TOP. Overlap and
+    the two attribution signals are report payload and never influence this
+    return value (2026-07-30 demotion).
     """
     is_v2 = golden.get("formatVersion") == BASELINE_FORMAT_VERSION
     envelope_abs = (golden.get("calibration") or {}).get("denseScoreEnvelopeAbs")
@@ -556,8 +675,14 @@ def print_report(golden: dict[str, Any], evidence_dir: str, verdicts: list[Query
     leg_unavailable_count = 0
 
     for verdict in sorted(verdicts, key=lambda v: v.query.id):
-        status = "PASS" if verdict.passed else "FAIL"
-        marker = "  " if verdict.passed else "**"
+        if not verdict.passed:
+            status, marker = "BLOCK", "**"
+        elif verdict.overlap_ok is False:
+            # Passes the blocking assertion, but carries a descriptive finding
+            # -- given its own label so it is never read as an unqualified pass.
+            status, marker = "PASS (overlap below floor)", "!!"
+        else:
+            status, marker = "PASS", "  "
         print(f"{marker}[{status}]{marker} {verdict.query.id} ({verdict.query.kind}): {verdict.query.query!r}")
         print(f"    reason: {verdict.reason}")
 
@@ -572,8 +697,11 @@ def print_report(golden: dict[str, Any], evidence_dir: str, verdicts: list[Query
                 emb_no_pairs_count += 1
 
             # Leg attribution is diagnostic -- it exists to root-cause a
-            # failure, so it is only printed for queries that failed.
-            if not verdict.passed:
+            # divergence. Since the 2026-07-30 demotion a sub-floor overlap is
+            # a divergence that no longer blocks, so it must still get the
+            # attribution line; printing it only for blocking failures is what
+            # left rounds 5 and 6 unattributable.
+            if not verdict.passed or verdict.overlap_ok is False:
                 leg_overlaps = compute_leg_attribution(verdict.query, evidence_dir)
                 print(f"    {format_leg_attribution_line(leg_overlaps)}")
                 if leg_overlaps is None:
@@ -582,7 +710,8 @@ def print_report(golden: dict[str, Any], evidence_dir: str, verdicts: list[Query
                     leg_divergence_count += 1
 
     passed_count = sum(1 for v in verdicts if v.passed)
-    failed_count = len(verdicts) - passed_count
+    blocked_count = len(verdicts) - passed_count
+    overlap_findings = [v for v in verdicts if v.overlap_ok is False]
 
     print("-" * 72)
     print("attribution summary")
@@ -611,22 +740,45 @@ def print_report(golden: dict[str, Any], evidence_dir: str, verdicts: list[Query
                 "block for whether this population was ever sampled."
             )
         print(
-            f"leg attribution: {leg_divergence_count} failed queries attributed to a diverging "
-            f"leg, {leg_unavailable_count} failed queries with leg attribution unavailable"
+            f"leg attribution: {leg_divergence_count} diverging queries attributed to a diverging "
+            f"leg, {leg_unavailable_count} diverging queries with leg attribution unavailable"
         )
 
     print("-" * 72)
-    print(f"Golden queries: {len(verdicts)} total, {passed_count} passed, {failed_count} FAILED")
+    print("descriptive findings (reported, NOT blocking)")
+    print("-" * 72)
+    if overlap_findings:
+        print(
+            f"[{PARITY_OVERLAP_MISS}] {len(overlap_findings)} of {len(verdicts)} golden queries are "
+            f"below the >={OVERLAP_DESCRIPTIVE_FLOOR}/{TOP_N} overlap floor:"
+        )
+        for verdict in sorted(overlap_findings, key=lambda v: v.query.id):
+            print(
+                f"  - {verdict.query.id} ({verdict.query.kind}): overlap {verdict.overlap}/{TOP_N} "
+                f"(floor >={OVERLAP_DESCRIPTIVE_FLOOR})"
+            )
+    else:
+        print(
+            f"[{PARITY_OVERLAP_MISS}] none: every golden query is at or above the "
+            f">={OVERLAP_DESCRIPTIVE_FLOOR}/{TOP_N} overlap floor."
+        )
+    print_overlap_policy_note(golden)
 
-    if failed_count:
+    print("-" * 72)
+    print(
+        f"Golden queries: {len(verdicts)} total, {passed_count} passed the BLOCKING assertion, "
+        f"{blocked_count} BLOCKED; {len(overlap_findings)} with a descriptive overlap finding"
+    )
+
+    if blocked_count:
         print("=" * 72)
-        print(f"BLOCKING [{PARITY_OVERLAP_MISS}]: the following golden queries failed parity-with-dev:")
+        print("BLOCKING: the following golden queries failed the environment-robust assertion:")
         for verdict in sorted(verdicts, key=lambda v: v.query.id):
             if not verdict.passed:
                 print(f"  - {verdict.query.id}: {verdict.reason}")
         print("=" * 72)
 
-    return failed_count == 0
+    return blocked_count == 0
 
 
 # ---------------------------------------------------------------------------
