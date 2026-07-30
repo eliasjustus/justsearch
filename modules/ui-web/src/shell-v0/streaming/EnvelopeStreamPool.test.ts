@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   subscribePooled,
+  nudgePooledStream,
   __resetEnvelopeStreamPoolForTest,
   __poolSizeForTest,
 } from './EnvelopeStreamPool.js';
@@ -96,6 +97,25 @@ describe('EnvelopeStreamPool (tempdoc 508-followup §γ3)', () => {
     unsub1();
     subscribePooled('/a', vi.fn(), configFor('/a'));
     expect(FakeEventSource.instances).toHaveLength(2);
+  });
+
+  it('nudgePooledStream reconnects the pooled stream in place (tempdoc 798 B4 fallback actuator)', () => {
+    subscribePooled('/a', vi.fn(), configFor('/a'));
+    expect(FakeEventSource.instances).toHaveLength(1);
+
+    expect(nudgePooledStream('/a')).toBe(true);
+
+    // The old EventSource is closed and a fresh one opened — the same in-place re-establishment
+    // the stream's own watchdog performs, reachable by a consumer-owned stall detector.
+    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(FakeEventSource.instances[0]!.closed).toBe(true);
+    expect(FakeEventSource.instances[1]!.closed).toBe(false);
+    expect(__poolSizeForTest()).toBe(1); // still the same pool entry, same refcount
+  });
+
+  it('nudgePooledStream on an unpooled URL is a no-op returning false', () => {
+    expect(nudgePooledStream('/never-pooled')).toBe(false);
+    expect(FakeEventSource.instances).toHaveLength(0);
   });
 
   it('idempotent unsubscribe does not double-decrement', () => {

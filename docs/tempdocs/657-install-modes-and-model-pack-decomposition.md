@@ -55,6 +55,14 @@ this section is the design/investigation record it was built from; this section 
 - **Drift fix:** ADR-0024 reconciled (models are bundled today; only the GGUF LLM + CUDA runtime
   download on demand). `JUSTSEARCH_MODE` documented in `environment-variables.md`; plan-preview + the
   manifest `mode` field documented in `api-contract-map.md`.
+  > **SUPERSEDED (2026-07-30, sandbox round 7) — this "Drift fix" bullet's premise was false.**
+  > "Models are bundled today" was inferred from the `includeOnnxModels` Gradle default; the only
+  > installer-building workflow has set `ORG_GRADLE_PROJECT_skipOnnxModels: "true"` unconditionally
+  > since 2026-06-25, so no built installer has ever bundled them, and round 7 measured zero `.onnx`
+  > bytes after a clean install. The ADR-0024 update block this bullet promoted into canonical text
+  > has been retracted; ADR-0024 Decision #2 (no models bundled) stands. Left in place as dated
+  > history per `tempdocs-are-dated-history` — the rest of this tempdoc's work (install-intent axis,
+  > per-tier weights, plan-preview) is unaffected.
 
 ### Verification evidence
 
