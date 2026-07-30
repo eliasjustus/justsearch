@@ -1337,6 +1337,12 @@ class IndexingLoopTest {
      * including the pending-ingest probe the loop publishes onto the signal bus. Batch A is
      * drained, batch B arrives while the loop is inside the non-converging backfill, and batch B
      * must still get claimed.
+     *
+     * <p>What it pins (tempdoc 798 review TQ2): the END-TO-END containment — that control does come
+     * back to {@code pollPending} and a queued batch is claimed — not any one of the three
+     * mechanisms that make it come back. Its 20s bound is deliberately generous enough that ANY of
+     * them satisfies it. The per-mechanism isolation lives in {@code
+     * BackfillSchedulerTightLoopTest}, where each case's bounds exclude the other two.
      */
     @Test
     @DisplayName(

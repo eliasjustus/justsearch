@@ -167,6 +167,10 @@ public final class BackfillScheduler {
         final boolean[] useCombinedRef = {useCombined};
         final int[] tightLoopBatches = {1};
         final boolean[] budgetTripped = {false};
+        // Tempdoc 798 review F3: cumulative across the whole cycle, mode-selection probe included.
+        // Budget exhaustion means very different things depending on this flag, and the diagnostic
+        // must not assert non-convergence when enrichment was demonstrably converging.
+        final boolean[] anyProgressThisCycle = {outcome.progressed()};
         // 334 Phase 8: NRT suspend during tight loop prevents mmap accumulation from
         // ControlledRealTimeReopenThread while commits are deferred (every 5 batches).
         commitOps.withNrtSuspended(
@@ -189,20 +193,37 @@ public final class BackfillScheduler {
                 // Tempdoc 798: PROGRESS, not activity. `wroteAnything()` stays true forever for a
                 // document that is rewritten every batch without ever advancing a stage.
                 useCombinedRef[0] = tightLoopOutcome.progressed();
-                if (useCombinedRef[0]) tightLoopBatches[0]++;
+                if (useCombinedRef[0]) {
+                  anyProgressThisCycle[0] = true;
+                  tightLoopBatches[0]++;
+                }
               }
               if (batchCommitCounter[0] > 0) {
                 commitOps.commitAndTrack(CommitReason.BACKFILL_COMBINED_FINAL);
               }
             });
         if (budgetTripped[0]) {
-          log.warn(
-              "Combined enrichment backfill hit its {}ms cycle budget after {} batches without"
-                  + " draining — returning to the job-queue poll (tempdoc 798). Recurring hits"
-                  + " mean enrichment is not converging: the same documents are rewritten every"
-                  + " batch without any stage advancing.",
-              CYCLE_BUDGET_MS,
-              tightLoopBatches[0]);
+          // Tempdoc 798 review F3: the budget is smaller than two large legitimate enrichment
+          // batches, so its most common trigger is a healthy cycle that simply ran out of window.
+          // Only a cycle in which NOTHING advanced is the non-convergence this WARN describes;
+          // crying wolf on the healthy case trains operators to ignore the one signal 798 added.
+          // Both branches return control to the job-queue poll — only the log level differs.
+          if (anyProgressThisCycle[0]) {
+            log.info(
+                "Combined enrichment backfill reached its {}ms cycle budget after {} batches while"
+                    + " still advancing documents — returning to the job-queue poll; the remaining"
+                    + " enrichment resumes next idle cycle (tempdoc 798).",
+                CYCLE_BUDGET_MS,
+                tightLoopBatches[0]);
+          } else {
+            log.warn(
+                "Combined enrichment backfill hit its {}ms cycle budget after {} batches with ZERO"
+                    + " stage advancement — returning to the job-queue poll (tempdoc 798). This is"
+                    + " the non-converging shape: the same documents are rewritten every batch"
+                    + " without any stage advancing.",
+                CYCLE_BUDGET_MS,
+                tightLoopBatches[0]);
+          }
         }
         if (tightLoopBatches[0] > 1) {
           log.debug("Tight backfill loop: {} consecutive batches", tightLoopBatches[0]);
@@ -295,6 +316,9 @@ public final class BackfillScheduler {
         StageOutcome chunkOutcome = processChunkEmbeddingBackfill();
         recordStageOutcome(BatchTimingKeys.EMBED, chunkOutcome);
         boolean chunkDidWork = chunkOutcome.success();
+        // Tempdoc 798 review F3: same distinction as the combined loop — a budget hit while chunks
+        // were genuinely embedding is a healthy long cycle, not non-convergence.
+        boolean anyChunkProgress = chunkOutcome.docsProcessed() > 0;
         while (chunkDidWork) {
           backfillDidWork = true;
           if (!running.get() || Thread.currentThread().isInterrupted()) break;
@@ -302,15 +326,24 @@ public final class BackfillScheduler {
           if (signalBus.shouldYieldGpuBackfill()) break; // tempdoc 630: GPU-claimed OR energy-reduced
           if (signalBus.hasPendingIngest()) break; // tempdoc 798: primary indexing outranks backfill
           if (System.nanoTime() >= cycleDeadlineNanos) {
-            log.warn(
-                "Chunk-embedding backfill hit its {}ms cycle budget without draining — returning"
-                    + " to the job-queue poll (tempdoc 798).",
-                CYCLE_BUDGET_MS);
+            if (anyChunkProgress) {
+              log.info(
+                  "Chunk-embedding backfill reached its {}ms cycle budget while still embedding"
+                      + " chunks — returning to the job-queue poll; the remainder resumes next idle"
+                      + " cycle (tempdoc 798).",
+                  CYCLE_BUDGET_MS);
+            } else {
+              log.warn(
+                  "Chunk-embedding backfill hit its {}ms cycle budget with ZERO chunks embedded —"
+                      + " returning to the job-queue poll (tempdoc 798).",
+                  CYCLE_BUDGET_MS);
+            }
             break;
           }
           chunkOutcome = processChunkEmbeddingBackfill();
           recordStageOutcome(BatchTimingKeys.EMBED, chunkOutcome);
           chunkDidWork = chunkOutcome.success();
+          if (chunkOutcome.docsProcessed() > 0) anyChunkProgress = true;
         }
       }
     }
@@ -372,6 +405,13 @@ public final class BackfillScheduler {
     int pendingNer =
         indexCountOps.countByField(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING);
     if (pendingNer != 0) return;
+    // Tempdoc 798 review F4: deliberately COMPLETED only, NOT COMPLETED_EMPTY. This counter is a
+    // change-detector for "new entities exist, so the disambiguation pass is stale". A
+    // COMPLETED_EMPTY document is one NER ran on and found no entities — it contributes nothing to
+    // the entity graph, so a batch that finishes entirely as COMPLETED_EMPTY genuinely has nothing
+    // to re-disambiguate and must not re-trigger a full pass. A mixed batch still moves this
+    // counter via its entity-bearing documents, so nothing is missed. (Contrast the coverage
+    // counters in IndexCountOps, which ask "is the stage done?" — there both tokens must sum.)
     int nerCompleted =
         indexCountOps.countByField(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED);
     if (nerCompleted != lastKnownNerCompletedCount) {

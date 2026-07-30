@@ -53,7 +53,7 @@ final class StatusArtifactContract {
       String statusField = entry.getKey();
       if (!claimsCompleted(fields.get(statusField))) continue;
       List<String> artifacts = entry.getValue();
-      if (anyArtifactPresent(fields, artifacts)) continue;
+      if (anyArtifactMaterializes(session, fields, artifacts)) continue;
 
       TelemetryEvents events = session.telemetryEvents;
       if (events != null) events.onValidationFailure(ValidationReason.STATUS_WITHOUT_ARTIFACT);
@@ -78,9 +78,16 @@ final class StatusArtifactContract {
     return statusValue instanceof CharSequence cs && STATUS_COMPLETED.contentEquals(cs);
   }
 
-  private static boolean anyArtifactPresent(Map<String, Object> fields, List<String> artifacts) {
+  /**
+   * The question is materialization, not presence: an empty (or all-non-positive) {@code splade}
+   * weight map is non-null yet indexes zero postings, so a bare null check would wave through the
+   * very data-less COMPLETED this contract exists to reject. {@link FieldMapper#wouldMaterialize}
+   * owns the predicate so it stays identical to what {@code addFields} actually does.
+   */
+  private static boolean anyArtifactMaterializes(
+      RuntimeSession session, Map<String, Object> fields, List<String> artifacts) {
     for (String artifact : artifacts) {
-      if (fields.get(artifact) != null) return true;
+      if (session.fieldMapper.wouldMaterialize(artifact, fields.get(artifact))) return true;
     }
     return false;
   }

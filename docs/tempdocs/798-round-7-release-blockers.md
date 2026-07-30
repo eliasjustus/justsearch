@@ -64,25 +64,94 @@ condition; T2 fails its latch; T3's two rejection tests fail when the contract i
 with *only* the coordinator call restored, the RMW-lane test still failed, proving that lane's
 check is independently load-bearing and that `validate()` alone would not have been sufficient.
 
-### Residuals recorded, deliberately not fixed here
+## Adversarial review and the fixes it forced (2026-07-30, same day)
+
+A refute-first review of ten verification claims **refuted two and found a HIGH-severity defect
+that left the livelock class partially open.** Eight claims survived, including the one that
+mattered most: an exhaustive bypass hunt found **no production write path** that reaches Lucene
+without passing a contract call site.
+
+### F1 (HIGH, FIXED) — the contract was a null check, so an empty artifact still wrote a lie
+
+`anyArtifactPresent` accepted any non-null value, but `FieldMapper.addFields` emits a SPLADE
+posting **only for `weight > 0.0f`**. An empty or all-non-positive weights map is non-null —
+contract satisfied — yet materialises **zero postings**. The writers set it with `COMPLETED`
+unguarded. On any later RMW, `applyResetStatus` saw `COMPLETED`, reset to `PENDING` **and zeroed
+`splade_retry_count`**, so escalation could never reach `SPLADE_MAX_RETRIES`. **That is the
+incident cycle, reopened** — bounded by the budget, but burning a full cycle forever on a
+document that never converges.
+
+This tempdoc previously recorded it as a residual "presence, not emptiness" limitation. That
+framing was wrong: it was a live defect, not a narrowed scope.
+
+Fixed in two ordered halves. Writers first: `SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY` on the
+existing VDU/NER precedent, chosen because it is terminal for the pending queries *and* falls to
+`applyResetStatus`'s else-branch, which preserves status and retry counter instead of resetting.
+Then the contract: `FieldMapper.wouldMaterialize(fieldId, value)` expresses the same predicate
+`addFields` uses, so the semantics live in one place, and the contract delegates to it.
+
+The reader sweep caught a would-be regression: `IndexCountOps`' completed count feeds
+`spladeCoveragePercent`, and the jseval readiness gate requires ≥ 99.9% — counting only
+`COMPLETED` would have parked coverage below the bar permanently once pending drained, stalling
+the very harness used to verify ingest. Same class as the `IndexStatusOps` catch during the NER
+change; found twice now by sweeping rather than assuming.
+
+### Also fixed
+
+- **F2** — `progressed()` now counts blank-content escalations, matching its own javadoc.
+  Deliberately scoped to the *terminal* step, not every retry bump: counting intermediate bumps
+  would make `progressed ⟺ wroteAnything` (a non-empty update map is the only way `written > 0`)
+  and collapse the exact distinction this fix introduced.
+- **A second defect found while fixing F2:** the embed batch null/size-mismatch branch did
+  `embedFailed += embedDocIds.size()` while writing **no update at all** — a false progress
+  signal that would spin the tight loop against a systematically failing encoder until the
+  budget. Split into a separate counter excluded from progress.
+- **F3** — the budget diagnostic now WARNs only on zero cumulative progress. It previously
+  asserted "the same documents are rewritten every batch without any stage advancing" while
+  firing during genuine enrichment, training operators to discount the one diagnostic this work
+  added.
+- **F4** — the disambiguation change-detector deliberately **excludes** `COMPLETED_EMPTY` (a doc
+  with zero entities contributes nothing to the entity graph). This is the opposite call from
+  `IndexCountOps`, which must sum both tokens; the comment names the contrast so the next reader
+  does not "fix" one to match the other.
+- **F5** — the reported null-throw could not actually occur (`spladeStatusFor(null)` returns
+  `COMPLETED_EMPTY`); the narrower real hazard — a null value under the `splade` key making
+  `applyRmwPolicies` treat the field as caller-supplied and skip preservation — is guarded.
+- **F6** — the witness map is now asserted against the **real** `SSOT/catalogs/fields.v1.json`,
+  not a hand-mirrored test catalog, so the contract cannot go partially vacuous unnoticed.
+- **TQ1/TQ2** — the tight-loop test's timeout equalled `CYCLE_BUDGET_MS` exactly (a ~0-margin
+  race with a false docstring), and the tests could be satisfied by the budget alone — i.e. they
+  proved the backstop, not the mechanism. Now three tests each pin a distinct mechanism with
+  measured separation (0.017 s progress-drive / 6.173 s budget / 0.009 s ingest-yield).
+
+### Claims corrected (the record, not the code)
+
+- **The live probe was overstated.** The log shows a 12.1 s idle gap, not the "2.1 s" reported,
+  and 48 documents not 45. Substantively: it recorded **zero blank-content escalations**, so it
+  never exercised the branch this fix rewrote. Honest statement: the two-batch property held
+  live on the worktree build at 43-document scale, without exercising the escalation path.
+- **T4 had never run.** It was reported green on a worker's word; only `GoldenCorpus` results
+  existed. It has now genuinely executed (`--rerun`, after Gradle first served `FROM-CACHE`):
+  `IngestStarvationE2ETest` — 1 test, 0 failures, 8.59 s.
+- **`callerSuppliedRetry` is not this work's** — it came from `4e9a17fa fix(711)`. The mechanism
+  was verified here; its provenance was not.
+- Line numbers: the progress drive is `BackfillScheduler.java:191`; `:180` is the ingest break.
+  Production validation mode is resolved by `RuntimeSession.java:374-376`, not
+  `ValidationMode.from`.
+
+### Residuals still open (deliberately)
 
 - **Chunk docs escalating to `splade_status=FAILED` will not self-heal if chunk-SPLADE is later
-  enabled** — `FAILED` is never resurrected by design. Turning that evidence-gated flag on would
+  enabled** — `FAILED` is never resurrected by design; enabling that evidence-gated flag would
   need a reindex. The deeper fix is birth-status hygiene (chunk docs should not be born carrying
   a parent-lane `splade_status`), which 717 §TH-4 already named.
-- **The contract checks artifact *presence*, not non-emptiness.** `splade_status=COMPLETED` with
-  an empty weights map would pass. Tightening it requires the writers to guard emptiness first
-  (`SpladeBackfillOps.java:198` and `CombinedEnrichmentBackfillOps.java:565` index into the
-  result unguarded), or a legitimately-empty encoder result would throw and abort a whole batch
-  of good writes — a worse failure than the one it would catch.
-- **`progressed` under-reports blank-content escalations** (they advance documents without
-  incrementing stage counters). Benign and in the safe direction: the tight loop exits, and
-  `IndexingLoop` sleeps 100 ms then re-polls ingest every cycle, so nothing spins and the
-  population still drains at roughly a batch per 100 ms.
 - **Presence-truthful counting covers only chunk-embedding.** Parent `embedding_status`,
   `splade_status` and the NER count remain status-field `TermQuery` counts, so this bug class
   stays invisible to health reporting on three of four lanes. Separable, but without it a
   regression here is undetectable again.
+- **The integration tier runs in no CI lane** (`ci.yml` runs only `:test`; `check` depends on
+  `test`). That blind spot is why the whole `IsolatedBackendFixture` tier had rotted to
+  `ClassNotFoundException` unnoticed, and why T4 will not guard anything until a lane runs it.
 
 # 798 — Round 7 release blockers
 

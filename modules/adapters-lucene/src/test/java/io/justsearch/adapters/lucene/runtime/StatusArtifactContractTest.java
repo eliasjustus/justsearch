@@ -3,6 +3,8 @@ package io.justsearch.adapters.lucene.runtime;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.justsearch.configuration.FieldCatalogDef;
+import io.justsearch.configuration.JustSearchConfigurationLoader;
 import io.justsearch.indexing.SchemaFields;
 import io.justsearch.indexing.api.IndexDocument;
 import java.nio.file.Files;
@@ -53,6 +55,31 @@ class StatusArtifactContractTest {
         3, witnesses.size(), "only rmwPolicy-declared pairings participate: " + witnesses.keySet());
     // A status no artifact witnesses (ner_status, vdu_status) is unconstrained by the contract.
     assertNull(witnesses.get(SchemaFields.NER_STATUS));
+  }
+
+  /**
+   * The test above builds its {@link FieldMapper} from {@link #CHUNK_CATALOG} — a hand-mirrored
+   * copy of the production declarations. That copy cannot notice the failure mode that actually
+   * matters (tempdoc 798 review F6): if {@code SSOT/catalogs/fields.v1.json} ever loses an {@code
+   * rmwPolicy}, the derived witness map silently shrinks, the contract stops constraining that
+   * status, every test here stays green, and unwitnessed COMPLETEDs can be written again. So this
+   * asserts the pairing against the REAL catalog the running worker loads — same loader the
+   * production bootstrap uses ({@code KnowledgeServer}, {@code GoldenCorpusIntegrationTest}).
+   */
+  @Test
+  void statusWitnessMapMatchesTheProductionCatalog() {
+    FieldCatalogDef production = new JustSearchConfigurationLoader().loadFieldCatalog();
+    Map<String, List<String>> witnesses = new FieldMapper(production).statusWitnessFields();
+
+    assertEquals(
+        Map.of(
+            SchemaFields.EMBEDDING_STATUS, List.of(SchemaFields.VECTOR),
+            SchemaFields.CHUNK_EMBEDDING_STATUS, List.of(SchemaFields.CHUNK_VECTOR),
+            SchemaFields.SPLADE_STATUS, List.of(SchemaFields.SPLADE)),
+        witnesses,
+        "the write-time contract's reach is exactly these three pairings; a shrunk map means"
+            + " SSOT/catalogs/fields.v1.json lost an rmwPolicy and the contract went partially"
+            + " vacuous, a grown map means a new artifact needs contract coverage decided");
   }
 
   // ---- full-document lane ----
@@ -133,6 +160,149 @@ class StatusArtifactContractTest {
           // chunk_embedding_status=PENDING, no artifacts at all.
           assertDoesNotThrow(
               () -> runtime.indexingCoordinator().indexSingle(new IndexDocument(chunkDoc("chunk-0"))));
+        });
+  }
+
+  // ---- materialization, not presence (the splade zero-postings hole) ----
+
+  /**
+   * An EMPTY splade weight map is non-null, so a presence check waves it through — yet {@code
+   * FieldMapper.addFields} emits a {@code FeatureField} only for a strictly-positive weight, so the
+   * write indexes ZERO postings. That is a data-less COMPLETED: the next unrelated RMW sees it, the
+   * reset-status lane downgrades it to PENDING and zeroes {@code splade_retry_count}, and the doc
+   * can never escalate to a terminal state. The contract must ask whether the artifact
+   * materializes, not whether the key is set.
+   */
+  @Test
+  void failModeRejectsCompletedWithEmptySpladeMap() throws Exception {
+    withRuntime(
+        ValidationMode.FAIL,
+        (runtime) -> {
+          Map<String, Object> chunk = chunkDoc("chunk-0");
+          chunk.put(SchemaFields.SPLADE, Map.<String, Float>of());
+          chunk.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
+
+          IndexRuntimeIOException ex =
+              assertThrows(
+                  IndexRuntimeIOException.class,
+                  () -> runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk)));
+          assertTrue(ex.getMessage().contains("status_without_artifact"), ex.getMessage());
+          assertTrue(ex.getMessage().contains(SchemaFields.SPLADE_STATUS), ex.getMessage());
+        });
+  }
+
+  /** Same hole, non-empty map: every weight &lt;= 0 also materializes nothing. */
+  @Test
+  void failModeRejectsCompletedWithAllNonPositiveSpladeWeights() throws Exception {
+    withRuntime(
+        ValidationMode.FAIL,
+        (runtime) -> {
+          Map<String, Object> chunk = chunkDoc("chunk-0");
+          chunk.put(SchemaFields.SPLADE, Map.of("alpha", 0.0f, "beta", -1.5f));
+          chunk.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
+
+          IndexRuntimeIOException ex =
+              assertThrows(
+                  IndexRuntimeIOException.class,
+                  () -> runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk)));
+          assertTrue(ex.getMessage().contains("status_without_artifact"), ex.getMessage());
+        });
+  }
+
+  /** The RMW lane has the same hole, and the same fix. */
+  @Test
+  void failModeRejectsCompletedWithEmptySpladeMapOnRmw() throws Exception {
+    withRuntime(
+        ValidationMode.FAIL,
+        (runtime) -> {
+          runtime.indexingCoordinator().indexSingle(new IndexDocument(chunkDoc("chunk-0")));
+          commit(runtime);
+
+          IndexRuntimeIOException ex =
+              assertThrows(
+                  IndexRuntimeIOException.class,
+                  () ->
+                      runtime
+                          .indexingCoordinator()
+                          .updateDocument(
+                              "chunk-0",
+                              Map.of(
+                                  SchemaFields.SPLADE, Map.<String, Float>of(),
+                                  SchemaFields.SPLADE_STATUS,
+                                      SchemaFields.SPLADE_STATUS_COMPLETED)));
+          assertTrue(ex.getMessage().contains("status_without_artifact"), ex.getMessage());
+
+          commit(runtime);
+          assertEquals(
+              SchemaFields.SPLADE_STATUS_PENDING,
+              runtime.documentFieldOps().getDocumentField("chunk-0", SchemaFields.SPLADE_STATUS),
+              "the rejected write must not have landed");
+        });
+  }
+
+  /** A weight map with at least one positive entry does materialize, so COMPLETED is truthful. */
+  @Test
+  void completedWithMaterializingSpladeWeightsPasses() throws Exception {
+    withRuntime(
+        ValidationMode.FAIL,
+        (runtime) -> {
+          Map<String, Object> chunk = chunkDoc("chunk-0");
+          chunk.put(SchemaFields.SPLADE, Map.of("alpha", 0.0f, "beta", 2.5f));
+          chunk.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
+
+          assertDoesNotThrow(
+              () -> runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk)));
+          commit(runtime);
+
+          assertEquals(
+              SchemaFields.SPLADE_STATUS_COMPLETED,
+              runtime.documentFieldOps().getDocumentField("chunk-0", SchemaFields.SPLADE_STATUS));
+        });
+  }
+
+  /**
+   * The writers' half of the fix: an encode that legitimately produced nothing writes {@code
+   * COMPLETED_EMPTY}, which claims no artifact — so the contract accepts it, and (critically) the
+   * RMW reset lane's else-branch PRESERVES it rather than resetting to PENDING and zeroing the
+   * retry counter. That is what lets such a document drain instead of livelocking.
+   */
+  @Test
+  void completedEmptyWithNoMaterializingSpladeIsAcceptedAndSurvivesRmw() throws Exception {
+    withRuntime(
+        ValidationMode.FAIL,
+        (runtime) -> {
+          Map<String, Object> chunk = chunkDoc("chunk-0");
+          chunk.put(SchemaFields.SPLADE, Map.<String, Float>of());
+          chunk.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY);
+          // A non-zero seed so "preserved" is distinguishable from "reset to 0" below.
+          chunk.put(SchemaFields.SPLADE_RETRY_COUNT, "2");
+
+          assertDoesNotThrow(
+              () -> runtime.indexingCoordinator().indexSingle(new IndexDocument(chunk)));
+          commit(runtime);
+          assertEquals(
+              SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY,
+              runtime.documentFieldOps().getDocumentField("chunk-0", SchemaFields.SPLADE_STATUS));
+
+          // An unrelated RMW: the reset-status lane must leave COMPLETED_EMPTY alone.
+          assertDoesNotThrow(
+              () ->
+                  runtime
+                      .indexingCoordinator()
+                      .updateDocument("chunk-0", Map.of(SchemaFields.PARENT_DOC_ID, "doc-renamed")));
+          commit(runtime);
+
+          assertEquals(
+              SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY,
+              runtime.documentFieldOps().getDocumentField("chunk-0", SchemaFields.SPLADE_STATUS),
+              "COMPLETED_EMPTY is terminal: resetting it to PENDING would re-open the livelock");
+          assertEquals(
+              "2",
+              runtime
+                  .documentFieldOps()
+                  .getDocumentField("chunk-0", SchemaFields.SPLADE_RETRY_COUNT),
+              "the retry counter must be preserved, not zeroed — zeroing it is what stops the"
+                  + " escalation from ever reaching SPLADE_MAX_RETRIES");
         });
   }
 

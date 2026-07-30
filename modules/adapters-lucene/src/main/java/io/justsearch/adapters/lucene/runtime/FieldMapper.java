@@ -333,6 +333,34 @@ public final class FieldMapper {
     }
   }
 
+  /**
+   * Whether {@code value} would actually materialize at least one Lucene field for {@code fieldId} —
+   * the same predicate {@link #addFields} applies, expressed once here so callers ask "did this
+   * write bring data?" instead of the weaker "is the key non-null?".
+   *
+   * <p>Motivating case (tempdoc 798): a {@code splade} weight map that is empty, or whose weights
+   * are all &lt;= 0, is non-null yet produces zero {@code FeatureField} postings — a null check would
+   * accept it, and the resulting data-less {@code COMPLETED} is exactly the livelock the write-time
+   * {@link StatusArtifactContract} exists to stop. Keeping the predicate next to {@code addFields}
+   * is what stops the two from drifting apart.
+   */
+  boolean wouldMaterialize(String fieldId, Object value) {
+    FieldDef def = byId.get(fieldId);
+    if (def == null) return value != null;
+    if ("splade".equals(def.type)) {
+      if (!(value instanceof Map<?, ?> sparseVec)) return false;
+      for (Object weight : sparseVec.values()) {
+        if (weight instanceof Number n && n.floatValue() > 0.0f) return true;
+      }
+      return false;
+    }
+    if ("vector".equals(def.type)) {
+      float[] vec = asFloatArray(value);
+      return vec != null && (def.vectorDim == null || vec.length == def.vectorDim);
+    }
+    return value != null;
+  }
+
   private int addFields(Document doc, FieldDef def, Object value) {
     int count = 0;
     switch (def.type) {

@@ -233,9 +233,7 @@ public final class BgeM3BackfillOps {
         BgeM3Output output = outputs.get(i);
         boolean isChunk = batchIsChunk.get(i);
         Map<String, Object> updates = new HashMap<>();
-        updates.put(SchemaFields.SPLADE, output.sparseWeights());
-        updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
-        updates.put(SchemaFields.SPLADE_RETRY_COUNT, "0");
+        putSparse(updates, output.sparseWeights());
         if (output.denseVector() != null && output.denseVector().length > 0) {
           // Tempdoc 710 D.3: chunk docs use CHUNK_VECTOR/CHUNK_EMBEDDING_STATUS; parents use
           // VECTOR/EMBEDDING_STATUS.
@@ -285,9 +283,7 @@ public final class BgeM3BackfillOps {
   private static void writeOutput(
       BackfillContext context, String docId, boolean isChunk, BgeM3Output output) {
     Map<String, Object> updates = new HashMap<>();
-    updates.put(SchemaFields.SPLADE, output.sparseWeights());
-    updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
-    updates.put(SchemaFields.SPLADE_RETRY_COUNT, "0");
+    putSparse(updates, output.sparseWeights());
     if (output.denseVector() != null && output.denseVector().length > 0) {
       // Tempdoc 710 D.3: chunk docs use CHUNK_VECTOR/CHUNK_EMBEDDING_STATUS; parents use
       // VECTOR/EMBEDDING_STATUS.
@@ -300,6 +296,25 @@ public final class BgeM3BackfillOps {
           "0");
     }
     context.indexingCoordinator().updateDocument(docId, updates);
+  }
+
+  /**
+   * Writes the sparse half of a BGE-M3 output into an update map. {@code BgeM3Output} is a bare
+   * record with no validation, so {@code sparseWeights()} can be null; the key is then OMITTED
+   * rather than set to null (tempdoc 798 review F5). A null VALUE would still reach the RMW merge
+   * and, because the preservation engine skips any field the caller supplied ({@code
+   * updates.containsKey}), it would be indistinguishable from "this write brings splade data" while
+   * indexing none. Omitting the key states the truth. The status is derived by the shared {@link
+   * SpladeBackfillOps#spladeStatusFor} predicate either way, which already answers null with
+   * {@code COMPLETED_EMPTY} — so the write-time status/artifact contract never sees an
+   * unwitnessed COMPLETED from this path.
+   */
+  private static void putSparse(Map<String, Object> updates, Map<String, Float> sparseWeights) {
+    if (sparseWeights != null) {
+      updates.put(SchemaFields.SPLADE, sparseWeights);
+    }
+    updates.put(SchemaFields.SPLADE_STATUS, SpladeBackfillOps.spladeStatusFor(sparseWeights));
+    updates.put(SchemaFields.SPLADE_RETRY_COUNT, "0");
   }
 
   private static void commitIfNeeded(BackfillContext context, int processed, int failed) {

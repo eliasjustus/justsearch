@@ -385,6 +385,96 @@ class CombinedEnrichmentBackfillOpsTest {
     verify(indexingCoordinator, never()).updateDocument(anyString(), anyMap());
   }
 
+  /**
+   * Tempdoc 798 review F2 — the {@code progressed} contract, which is the combined tight loop's
+   * termination signal (see {@code BackfillScheduler.runIdleCycle}).
+   *
+   * <p>The Phase-2 blank-content escalation branch produces a real write every batch. Only its
+   * TERMINAL step is progress: until the retry counter reaches {@code *_MAX_RETRIES} the document
+   * is still PENDING, still selected, and the next batch would be identical — so the loop must
+   * hand control back to the ingest poll rather than spin. This is the case where {@code
+   * wroteAnything()} and {@code progressed()} diverge, and it is the only reason the tight loop's
+   * drive is not just a rename of the pre-798 one.
+   *
+   * <p>The fake index here PERSISTS the retry count, so the escalation actually advances across
+   * cycles (unreachable-seed-green, agent-lessons.md) and the terminal cycle is reached for real.
+   */
+  @Test
+  @DisplayName(
+      "blank-content escalation: writes every cycle, but progressed() is false until the terminal"
+          + " FAILED step (tempdoc 798 F2)")
+  void blankContentEscalation_progressedOnlyOnTheTerminalCycle() {
+    seedDoc(
+        "doc-blank",
+        "",
+        Map.of(
+            SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING,
+            SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING));
+
+    for (int cycle = 1; cycle < SchemaFields.SPLADE_MAX_RETRIES; cycle++) {
+      var outcome =
+          CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, true));
+      assertTrue(
+          outcome.wroteAnything(),
+          "cycle " + cycle + ": the escalation write lands, so ACTIVITY is true");
+      assertFalse(
+          outcome.progressed(),
+          "cycle "
+              + cycle
+              + ": the doc only bumped its retry counter — it is still PENDING and still selected,"
+              + " so the tight loop must NOT continue on it");
+      assertEquals(
+          String.valueOf(cycle), fakeIndex.get("doc-blank").get(SchemaFields.SPLADE_RETRY_COUNT));
+    }
+
+    var terminal = CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, true));
+    assertTrue(
+        terminal.progressed(),
+        "the terminal cycle flips both stages to FAILED — the doc leaves the pending population,"
+            + " which is exactly what CombinedOutcome#progressed promises counts");
+    Map<String, Object> state = fakeIndex.get("doc-blank");
+    assertEquals(SchemaFields.SPLADE_STATUS_FAILED, state.get(SchemaFields.SPLADE_STATUS));
+    assertEquals(SchemaFields.NER_STATUS_FAILED, state.get(SchemaFields.NER_STATUS));
+
+    var drained = CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, true));
+    assertFalse(drained.wroteAnything(), "a FAILED doc must not be re-selected");
+    assertFalse(drained.progressed());
+  }
+
+  /**
+   * The other half of {@code progressed}'s contract (tempdoc 798 review F2): an embed batch whose
+   * result is null or size-mismatched gives its documents NO update at all — not even a retry bump
+   * — so nothing changed on disk and the next batch would be byte-identical. Counting those docs
+   * as progress kept the tight loop spinning on a systematically failing encoder until the cycle
+   * budget expired.
+   */
+  @Test
+  @DisplayName("embed batch size mismatch is NOT progress (no doc received any update)")
+  void embedBatchSizeMismatch_isNotProgress() {
+    seedDoc(
+        "doc-x",
+        "content x",
+        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
+    seedDoc(
+        "doc-y",
+        "content y",
+        Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
+    // One vector back for two requested docs — the index-aligned loop cannot use it.
+    when(embeddingProvider.embedDocumentBatch(anyList()))
+        .thenReturn(List.of(new float[] {1f, 2f}));
+
+    var outcome = CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext());
+
+    assertFalse(outcome.wroteAnything(), "no update map was populated, so no write went out");
+    assertFalse(
+        outcome.progressed(),
+        "a doc that received no update has not advanced — reporting progress here spins the tight"
+            + " loop against a systematically failing embed batch until the cycle budget expires");
+    assertNull(
+        fakeIndex.get("doc-x").get(SchemaFields.EMBEDDING_RETRY_COUNT),
+        "the size-mismatch branch deliberately leaves the docs untouched for the next cycle");
+  }
+
   @Test
   @DisplayName("SPLADE failure increments retry count then reaches FAILED at SPLADE_MAX_RETRIES")
   void spladeFailure_incrementsRetryCount_thenReachesFailedAtMaxRetries() throws Exception {
@@ -898,6 +988,28 @@ class CombinedEnrichmentBackfillOpsTest {
                         && list.get(0).getKey().equals("chunk-1")
                         && list.get(0).getValue().containsKey(SchemaFields.CHUNK_VECTOR)
                         && list.get(0).getValue().containsKey(SchemaFields.SPLADE)));
+  }
+
+  @Test
+  @DisplayName(
+      "an encode that produced no materialisable weight writes COMPLETED_EMPTY, not COMPLETED —"
+          + " COMPLETED would be a data-less claim the write-time contract rejects and the RMW"
+          + " reset lane would bounce back to PENDING forever")
+  void spladeEncodeWithNoMaterialisableWeight_writesCompletedEmpty() throws Exception {
+    seedSpladeChunkDoc(
+        "chunk-1", "parent-1", "chunk body text", SchemaFields.SPLADE_STATUS_PENDING, null);
+    // Empty map and all-non-positive weights both materialise ZERO FeatureField postings
+    // (FieldMapper.addFields emits one only for weight > 0).
+    when(spladeEncoder.encodeBatch(anyList()))
+        .thenReturn(new ArrayList<>(List.of(Map.of("tok", 0.0f))));
+
+    CombinedEnrichmentBackfillOps.processCombinedBackfill(
+        context(false, true, false, false, false, true));
+
+    Map<String, Object> state = fakeIndex.get("chunk-1");
+    assertEquals(
+        SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY, state.get(SchemaFields.SPLADE_STATUS));
+    assertEquals("0", state.get(SchemaFields.SPLADE_RETRY_COUNT));
   }
 
   @Test
