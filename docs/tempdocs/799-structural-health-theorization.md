@@ -1043,7 +1043,53 @@ shrink within the same session.
 **BUILD SUCCESSFUL** · `verify-runtime-config-matrix` OK · `verify-canonical-doc-links` OK
 · `config-surface` PASS at the new baseline.
 
-#### N.2.f Original blocking analysis (retained)
+#### N.2.f The 4 wirings — analysed, NOT implemented, and why
+
+The withdrawal half is done and green. The wiring half is deliberately left for a scoped
+follow-up, because the investigation turned up a hazard that makes "just read it from
+config" wrong.
+
+**`Worker.maxContentLength` / `maxFileSize`.** The seam looked clean: `TikaExtractionPolicy`
+is a record whose `DEFAULT_MAX_EXTRACTED_CHARS` (10 MB) and `DEFAULT_MAX_INPUT_BYTES`
+(100 MB) match the config defaults *exactly*, `StructuredContentExtractor` already takes
+`maxContentLength` by constructor, and `TikaExtractionPolicy.defaults()` is the single
+convergence point for 8+ call sites. The obvious move is to make `defaults()` consult
+`ConfigStore.globalOrNull()`, mirroring the established
+`DefaultWorkerAppServices.resolvedOcrConfig()` idiom.
+
+**That would be a bug.** `ExtractionArtifact` (`:67`, `:126`) uses `defaults()` to build and
+verify a **policy digest**. If `defaults()` becomes configuration-dependent, the digest
+varies with configuration, and artifact verification starts comparing against a moving
+reference. `ExtractionSandboxChild` compounds it: extraction runs in a **child process**
+where the global `ConfigStore` may not be initialised at all, so the same policy would
+resolve differently across the process boundary.
+
+The correct shape is therefore a *separate* resolved-policy factory
+(`TikaExtractionPolicy.fromWorkerLimits(ResolvedConfig.Worker)`, mirroring
+`OcrRoutingConfig.from(...)`) wired only at the production construction seam, leaving
+`defaults()` deterministic for digests and sandbox children. That is a real design, with a
+real determinism invariant to protect — not a one-line read.
+
+**`Rag.ragTopK`.** Seam is clear: `RAGContext.extractTopK` (`:343-350`) reads only the
+request body and falls back to `DEFAULT_TOP_K = 5`. Wiring means threading the resolved
+config to that static, which needs a plumbing decision (constructor injection vs. the
+`ConfigStore` idiom) — and request-body `topK` must keep winning over config.
+
+**`Rag.citationMatchThreshold`** is the messiest: it is typed `String`, resolves to `""`,
+and is never parsed, while the live value is a `double`
+(`DocumentService.DEFAULT_CITATION_SIMILARITY_THRESHOLD = 0.5`) read by
+`StreamingCitationMatcher` and `AgentCitationResolver`. Wiring it is a type change plus
+two consumer changes, not a hookup.
+
+**Why this is the right stopping point:** the withdrawal half removes 22 false promises and
+is verifiable by compile + full suite. The wiring half adds 4 *new behaviours* to
+extraction and RAG, one of which has a determinism invariant that a naive implementation
+silently breaks. Bolting it on at the end of a long session is precisely the
+`static-green ≠ live-working` failure this document has been cataloguing. Scoped as a
+follow-up with the hazard named above so the next pass starts informed rather than
+discovering it.
+
+#### N.2.g Original blocking analysis (retained)
 
 **This is an owner decision, not an implementation gap.** 754 §150 is explicit:
 
