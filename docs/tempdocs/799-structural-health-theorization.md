@@ -1,0 +1,815 @@
+---
+title: "799 — Structural health: assertion channels, ratchet gaps, unexercised substrate, corpus topology (theorization)"
+type: tempdocs
+status: "theorization (2026-07-30) — no design settled, no implementation licensed. Source: a measured code-structure/health pass over `main` at 4d94d034. Every number here is reproducible by the command cited next to it. The Hard-Invariant/ArchUnit item from the same pass is deliberately OUT OF SCOPE (owner set it aside); so is release/distribution work (owned elsewhere). UPDATED same day with §K owner decisions (3 of the 4 §J questions answered) and a §F.1 self-correction that downgrades this document's own headline idea."
+created: 2026-07-30
+updated: 2026-07-30 (§K owner decisions; §F.1 confidence corrected down and split; §E.1 resolved as early-bet)
+category: structural / governance / dx / context-engineering
+related:
+  - 530-class-size-ratchet-automation.md      # the discipline-gate kernel; §What's-already-shipped ledger
+  - 620-always-loaded-agent-doc-audit-and-prose-to-infrastructure.md  # Moves 1-3; the residence rule
+  - 618-agent-developer-velocity-friction.md  # §13 always-loaded-budget --init/--bump, still OPEN
+  - 742-history-survivorship-audit.md         # "unevaluated assertion channel" as a named class
+  - 754-config-surface-triage.md              # 70/70 classified, 31 deleted, 28 shadowed left, no regrowth gate
+  - .claude/rules/tier-register.md            # the prose-tier register
+  - scripts/ci/check-always-loaded-budget.mjs # the worked example
+---
+
+## §0 How to read this
+
+This is **theorization, not design**. It collects directions, reframings, tradeoffs and
+hidden assumptions surfaced by one measured health pass. Nothing here is decided; several
+ideas are recorded specifically because they may be useful later even if they are not the
+answer. Where a claim is uncertain it says so.
+
+The pass covered six items. Sorted by *what kind of thing is failing* they collapse into
+**four classes**, and the first class is the keystone — it explains why the other three
+persisted rather than being caught.
+
+---
+
+## §A The measured baseline
+
+| Layer | Files | LOC |
+|---|---:|---:|
+| Java production | 1,516 | 240,819 |
+| Java tests | 912 | 174,288 |
+| TypeScript production | 514 | 112,798 |
+| TypeScript tests | 369 | 64,577 |
+| **Product (production only)** | **2,030** | **353,617** |
+| `scripts/jseval` | 345 | 107,602 |
+| `scripts/ci` | 140 | 25,003 |
+| `scripts/agent-analytics` | 104 | 22,129 |
+| `scripts/governance` | 162 | 15,430 |
+| `scripts/{dev,search,docs}` | 75 | 19,140 |
+| **Tooling / harness** | **826** | **189,304** |
+| `docs/tempdocs` | 545 | 390,567 |
+| `docs/{explanation,reference,how-to,decisions}` | 157 | 33,337 |
+
+Plus 34 registered gates, 57 hooks, 51 `governance/*.json`, 75 SSOT files, 85
+`scripts/ci/check-*.mjs`.
+
+Conventional debt markers are **near zero** and should be recorded as such, because the
+rest of this document is critical and would otherwise read as a general indictment:
+0 `FIXME`, 23 `TODO`, 7 `@Deprecated`, 11 `@Disabled` across 240k LOC of Java; 0
+`@ts-ignore`, 16 `@ts-expect-error`, 12 ` as any` across 113k LOC of TypeScript. Java
+test:production ratio 0.72. Production module graph acyclic (the apparent
+`adapters-lucene ↔ indexing` cycle is test-scope only —
+`modules/indexing/build.gradle.kts:67`). Governance kernel 33/34 pass. CI median ~7 min,
+green.
+
+**The health problem here is not rot. It is that some controls do not run.**
+
+---
+
+## §B The four classes
+
+1. **Assertion channels with no evaluator** — a control exists, is believed to be
+   enforcing, and is invoked by nothing. (742 already named this class; this pass finds
+   it is not a one-off.)
+2. **Ratchet gaps precisely where churn is highest** — config surface, class size.
+3. **Substrate whose consumer count never grew** — the plugin framework, the
+   `app-agent-api` vocabulary layer.
+4. **Corpus topology** — design history 12× canonical docs; tooling 54% of product.
+
+Classes 2-4 are ordinary engineering tradeoffs and could be argued either way. Class 1 is
+not a tradeoff — it is a system believing something false about itself, and it is what
+allowed 2-4 to persist unremarked.
+
+---
+
+## §C Class 1 — assertion channels without evaluators (keystone)
+
+### C.1 The worked example: the always-loaded budget
+
+620 Move 3 designed a byte ratchet over the always-loaded agent docs, and its
+implementation log records it landing green on 2026-06-20 at an 82,432 B baseline. The
+mechanism is real and well-built: `scripts/ci/check-always-loaded-budget.mjs`, with a
+one-way `--rebalance` that only ever shrinks the ceiling.
+
+Today (`node scripts/ci/check-always-loaded-budget.mjs`):
+
+```
+OVER  CLAUDE.md                          25805 / 22850 B
+OVER  .claude/rules/tier-register.md     19286 / 15725 B
+OVER  .claude/rules/agent-lessons.md     13010 /  9680 B
+OVER  .claude/rules/branch-safety.md     13193 / 10581 B
+OVER  .claude/rules/hooks-reference.md    2942 /  2740 B
+---- total 80837 B (~20209 tok) / ceiling 68198 B
+```
+
+5 of 7 files over; **+18.5%**. And:
+
+- `git log --all -S 'always-loaded-budget' -- .github/workflows/` → **empty**. It has
+  never been wired into a workflow in this repo's history.
+- `node scripts/governance/run.mjs --gate always-loaded-budget` →
+  *"gate id 'always-loaded-budget' not found in governance/registry.v1.json."*
+
+The ratchet worked exactly as designed *during* 620 — the ceiling ratcheted down from
+82,432 to 68,198 as content migrated out — and then the files regrew, because after 620
+ended nothing ran it again.
+
+The drift is monotone and accelerating, and the repo watched it happen. Five separate
+observations, four sessions: **+1.6 KB** over (2026-07-15) → **~9 KB** (2026-07-16) →
+**+12.6 KB** (today). One of them states the diagnosis exactly:
+
+> "the check isn't wired into the public CI workflow so nothing catches the drift. The
+> ratchet only bites the honest agent who runs it locally"
+
+and another files it under the right class: *"742-class: unevaluated assertion channel."*
+
+The irony is load-bearing rather than decorative. `CLAUDE.md`'s `before-appending-to-rules`
+rule opens by citing this ratchet as what caps its bytes, and quotes Anthropic's
+"bloated CLAUDE.md files cause Claude to ignore your actual instructions." That rule is
+in the file that is 2,955 B over its own ceiling, enforced by nothing.
+
+### C.2 The gate deadlock (the genuinely new finding)
+
+Two gates in the same kernel impose contradictory obligations over the same file:
+
+- **`prose-tier-register`** (registered, passing): every new `<!-- rule:slug -->` anchor
+  MUST have a row in `.claude/rules/tier-register.md`, or the build fails with
+  `prose-tier-register/new-untagged-rule`.
+- **`always-loaded-budget`** (unregistered, red): `tier-register.md` MUST NOT grow, and
+  the ceiling **never ratchets up** — by design, per 620 Move 3.
+
+Adding a correctly-registered rule therefore *must* push the budget further red, unless
+the author simultaneously migrates unrelated content out of an always-loaded file.
+**Neither gate asks for that migration; neither gate can see the other.** The only
+conforming move lives outside both gates' scope.
+
+A session hit this in 2026-07-14 and wrote it down verbatim: *"Tension between two of this
+repo's own gates... Needs a real trim/reconciliation pass by whoever owns these files'
+content."* 618 §13 records the missing escape hatch — an `--init/--bump` path for declared
+growth — still marked **OPEN**.
+
+The abstraction: **two ratchets over one substrate with no shared arithmetic.** There is a
+conserved quantity here ("rule mass") and each gate measures only one side of it. This
+shape is worth naming because it will recur anywhere the repo ratchets a *container* while
+another gate mandates *contents*.
+
+Directions (none preferred yet):
+
+- **(a) Couple the budgets.** Ceiling becomes a function of registered-rule count, so a
+  registered rule buys its own bytes and back-pressure lands on *unregistered* prose
+  instead. Preserves both gates' intent. Cost: the ceiling is no longer a simple
+  one-way ratchet, which is the property that made it trustworthy.
+- **(b) Declared-growth path (618 §13).** Cheapest. The kernel already has the honest
+  form of this — a classified changeset with a `tempdoc:`/`adr:` reference — so growth
+  becomes *possible but expensive and attributed*, not silent. Risk: a negotiable ratchet
+  is the thing ratchets exist to prevent; needs the changeset requirement to be real.
+- **(c) Dissolve it — the register should not be always-loaded at all.** 620 Move 1
+  already argued tier-register.md should be a **generated projection**. If it is
+  generated, an agent needs the *rules*, not the enforcement-tier table; the table is a
+  maintainer artifact. This removes 19,286 B (24% of the always-loaded set) and the
+  deadlock together, rather than mediating between them. **Currently the strongest
+  candidate**, and it is a move the repo already designed and did not finish.
+  **→ ACCEPTED IN PRINCIPLE (owner, 2026-07-30): `tier-register.md` should not be in
+  always-loaded context.** Direction settled; the *mechanism* is not — see §K.2 for what
+  a design pass still has to answer (projection vs eviction, and where the
+  `prose-tier-register` gate reads its register from afterwards).
+- **(d) Accept and re-baseline** at 80,837. Honest and free, and gives up the only
+  mechanism opposing the bloat CLAUDE.md says makes rules unfollowed. Recorded so the
+  option is explicit rather than arrived at by default — which is what is happening now.
+
+### C.3 The class is not a one-off: 15 unreferenced checks
+
+`scripts/ci/` holds 85 `check-*.mjs`. Cross-referencing every basename against
+`.github/workflows/`, `build-logic/`, `governance/`, `scripts/governance/`, `CLAUDE.md`,
+`.claude/rules/` and `docs/reference/contributing/`:
+
+- **62** are referenced somewhere — most via CLAUDE.md's Pre-merge table or the
+  consult-register, i.e. a legitimate *agent-invoked* tier.
+- **8** are `.test` self-tests of other checks (fine).
+- **15** are referenced **nowhere at all**:
+  `check-agent-hooks-wiring-regen`, `check-agent-quality-trend`,
+  `check-always-loaded-budget`, `check-api-client-regen`, `check-chip-fact-authority`,
+  `check-field-constants-regen`, `check-installer-execution-level`,
+  `check-liveness-constants-single-authority`, `check-mcp-conformance`,
+  `check-release-baseline-sync`, `check-shape-handler-regen`,
+  `check-shape-view-coverage`, `check-tempdoc-status-staleness`, `check-ui-cycles`,
+  `check-wire-schema-types-regen`.
+
+Five of those are `*-regen` checks — the generated-fence family, whose entire job is to
+catch generated-artifact drift. One is `check-mcp-conformance`, guarding the production
+MCP server, which is the repo's public contract. (Two —
+`check-installer-execution-level`, `check-release-baseline-sync` — belong to the
+release/distribution lane and are out of scope here.)
+
+Sampling four of them produced **three distinct failure modes**, which is the useful part:
+
+| Check | Result | Failure mode |
+|---|---|---|
+| `check-field-constants-regen` | exit 0, clean | none — genuinely fine |
+| `check-ui-cycles` | **6 circular dependency paths**, exit **0** | *advisory by default* — gating needs `--mode gate`, so wiring it naively would still bite nothing |
+| `check-agent-hooks-wiring-regen` | exit **1** | *structurally unrunnable in CI* — it validates `.claude/settings.local.json`, which is gitignored (`.gitignore:148`), so the drift is plausibly expected machine-local state and the check can never run meaningfully in CI as written |
+| `check-tempdoc-status-staleness` | exit 0, lists stale tempdocs | reporting-only by design |
+
+So "unwired" is really three problems: **not invoked**, **invoked but advisory**, and
+**cannot be invoked meaningfully**. A fix that only addresses the first would produce a
+false sense of closure — worth stating up front, because "wire the orphans" is the
+obvious move and it is insufficient.
+
+Uncertainty to flag: the `check-agent-hooks-wiring-regen` failure is **not** asserted as a
+real defect. It may be entirely expected on a machine with local hook customization. What
+*is* asserted is that two authorities on hook wiring exist (`hook-integrity`, registered
+and passing; `check-agent-hooks-wiring-regen`, unregistered and failing) and nothing
+reconciles them.
+
+### C.4 A second source: inherited authority across the public/private boundary
+
+While tracing the missing class-size ratchet, a different mechanism surfaced.
+
+530's §What's-already-shipped ledger states four Layer-2 gates shipped: `class-size`,
+`npm-audit`, `ui-bundle`, `prose-tier-register` — and records that the Kotlin
+`CheckClassSizeTask` was **retired** because "Node gate is the sole class-size enforcer."
+In this repo, `scripts/governance/gates/` contains neither `class-size` nor `ui-bundle`;
+neither is in `governance/registry.v1.json`; `git log --all` shows
+`scripts/governance/gates/class-size/**` was never added here; and `CheckClassSizeTask` is
+absent. `scripts/agent-analytics/expected-state.v1.json:40-45` nonetheless warns agents
+that both gates "carry standing RED on main," citing observation conditions
+(`obs:class-size-pin-drift`, `obs:ui-bundle-gate-red`, seen 12× each) that do not exist in
+this repo's `docs/observations.md`.
+
+This repo's history begins at `29579e51 JustSearch v0.1.0 — initial public release`. It is
+a public cut of a larger lineage, and it **inherited authority artifacts describing a
+superset system**: a tempdoc ledger asserting gates that did not cross the cut, and an
+expected-state claim about their status.
+
+CLAUDE.md already documents exactly one instance of this pattern — the "do not gitignore
+model files" pitfall, noted as inherited at v0.1.0 "despite never being true of this
+repo." **The instance is recorded; the class is not.** Any artifact that asserts what the
+system *contains* (tempdoc shipped-ledgers, expected-state claims, tier-register
+`Resolves to` markers, ADR references) is exposed to it.
+
+Credit where due, and it matters for how urgent this is: the `governance-gates-standing-red`
+entry is the *only* expected-state entry carrying a `reviewBy` (2026-08-03, four days from
+this writing) and an owner. The mechanism for catching this already exists and is armed.
+The question is whether one dated review is the general answer or a lucky instance.
+
+### C.5 What the class suggests, abstractly
+
+The repo is **excellent at authoring controls and weak at proving they run**. It already
+solved this once, for exactly one tier: the `hook-integrity` gate proves hooks are wired,
+load, and bite. There is no analogue for the CI-lint tier — `scripts/ci/check-*.mjs` are
+wired by convention, and nothing checks that a given check is reachable from anything.
+
+The obvious generalization is a **reachability gate over the control surface**: every
+`check-*.mjs` must be invoked by a workflow, a Gradle task, or a registry gate — or carry
+an explicit `advisory`/`agent-invoked` declaration naming its tier. That single control
+would have caught the always-loaded drift on day one and would have surfaced the other 14.
+
+Note what makes it attractive: it is not a new *kind* of thing. It is `hook-integrity`'s
+shape applied one tier over, which conforms to 582 R4 ("finish wiring rather than author
+anew") rather than growing the meta-tier. And note the hazard it inherits: a gate that
+checks reachability is itself an assertion channel, and needs to be registered — the
+recursion terminates only because `prose-tier-register` and the registry are themselves
+run by `verifyGovernanceGates`. Worth stating explicitly in any eventual design so the
+termination argument is on the record rather than assumed.
+
+---
+
+## §D Class 2 — ratchet gaps where churn is highest
+
+### D.1 Configuration
+
+Churn, last 90 days, `modules/**`. Four of the top five files are configuration:
+
+| Changes | File | LOC |
+|---:|---|---:|
+| 18 | `configuration/resolved/ResolvedConfigBuilder.java` | 1,711 |
+| 16 | `configuration/resolved/ResolvedConfig.java` | — |
+| 16 | `configuration/EnvRegistry.java` | 1,420 |
+| 11 | `ui/api/mcp/McpToolSurface.java` | 1,820 |
+| 9 | `configuration/ConfigKey.java` | — |
+
+Surface: **240 distinct `justsearch.*` sysprop keys + 298 distinct `JUSTSEARCH_*` env
+keys**, 140 raw `System.getProperty`/`getLong`/`getBoolean` sites in production Java.
+754 classified 70/70 and deleted 31 — so classification is demonstrably tractable — and
+its own status line records what was left: *"the 28 shadowed/duplicate knobs (logged as
+bugs, product call), **no regrowth gate**."*
+
+**Reframe worth holding:** the count is not the problem; the **absence of a lifecycle** is.
+Knobs are born during incidents and never die. 754 was a one-shot campaign against a
+surface with no regrowth pressure, so the surface returns to the same place and the next
+campaign pays the same cost. A ratchet is not primarily about the current number — it is
+what makes a cleanup *durable*.
+
+Directions:
+
+- **Count ratchet on distinct keys.** Cheapest; mirrors `module-deps` exactly.
+- **Birth certificates.** A new key requires a registry entry with an owner and a
+  review date. Turns knobs into leased resources rather than permanent grants. The
+  precedent is already in-repo and already working: `expected-state.v1.json` entries
+  carry `reviewBy` + `owner`, and §C.4 shows that is the one mechanism that caught its
+  own staleness.
+- **Shadow detection as a gate.** The 28 known-shadowed knobs are a ready-made baseline
+  *and* fixture pair for the kernel's self-test convention.
+
+**Sharper reframe, offered as theory:** every knob is a decision deferred to runtime. For
+a local-first single-user desktop application, most of ~538 should be resolvable to
+constants. Read that way the knob count is not a config metric but a **decision-debt**
+metric, and the interesting question is not "how do we cap it" but "which decisions are we
+declining to make, and why." That framing suggests triage by *why the knob exists*
+(incident escape hatch / A-B lever / genuine user preference / never-flipped) rather than
+by module — which is a different cut from 754's and might route more knobs to deletion.
+
+Hidden assumption to check before any of this: configuration reaches the Worker by **three
+parallel paths** (full snapshot, blanket `JUSTSEARCH_*` env forwarding, and an explicit
+`WorkerSpawner.WORKER_FORWARDED_PROPS` list), and post-handshake divergence checks only
+**WARN**. The *effective* surface is therefore larger than any single count, and a count
+ratchet over one path could read green while another path grows.
+
+### D.2 Class size
+
+26 Java production files exceed 1,000 LOC (90 exceed 500); 11 TypeScript production files
+exceed 1,000. Per §C.4 the gate that enforced this did not cross the public cut, and the
+Gradle task it replaced is gone, so class size is currently enforced by nothing here.
+
+**The interesting observation is not the sizes but their location.** The largest
+production files cluster on process seams: `KnowledgeServer` 2,149, `GrpcIngestService`
+2,040, `McpToolSurface` 1,820, `RagContextOps` 1,802, `RemoteKnowledgeClient` 1,671,
+`StatusLifecycleHandler` 1,591. Seam files grow because every cross-process concern must
+land somewhere and the seam is the only place both sides are visible.
+
+That has a design consequence worth testing before ratcheting: **a pure LOC ratchet would
+redistribute mass without changing the topology** — the classic response is to split a
+2,000-line seam file into three 700-line seam files and call it progress. The prior
+question is whether a *layer* is missing at the IPC seam (a translation/projection tier)
+that these files are currently absorbing. If yes, the ratchet is the wrong first move; if
+no, the ratchet is fine and cheap. This is answerable by reading two or three of them with
+that specific question in hand.
+
+`UnifiedChatView.ts` at 5,562 lines (plus a 4,116-line test) is a different animal — a
+view that accreted, not a seam absorbing a missing layer — and probably wants ordinary
+decomposition rather than an architectural answer.
+
+---
+
+## §E Class 3 — substrate whose consumer count never grew
+
+### E.1 The frontend plugin framework
+
+`modules/ui-web/src/shell-v0/plugin-api/`: 40 files, **6,328 production LOC + 3,995 test
+LOC**. Consumers: `shell-v0/plugins/token-editor` (**504 LOC**) and `CorePlugin` (the
+shell hosting itself). knip reports 84 unused exports in that package alone; repo-wide it
+reports 600 unused exports/types across 171 files, of which roughly 140 are barrel
+re-exports and generated schema types and should be discounted.
+
+**Frame it as an option, not a mistake.** The framework was purchased as an option on
+future extensibility. Options carry a premium (~10.3k lines) and should carry an expiry.
+The question is not "was this wrong" — it is *"is the option still worth its premium, and
+when does it expire?"*
+
+Three honest exits, deliberately including the one the repo's own rules make awkward:
+
+- **Exercise it.** Name the second plugin and build it. The public-center thesis
+  (`docs/explanation/28`) makes "external agents contribute surfaces" a plausible second
+  consumer — if that is the intent, the framework is early rather than speculative.
+- **Let it expire.** Collapse `plugin-api` into the shell, keep `token-editor` inline.
+  This is a `retire-with-a-sweep` operation, and the sweep matters more than the deletion.
+- **Hold with a dated trigger.** Note the tension honestly: `structural-defects-no-repeat`
+  forbids "wait-for-more-evidence" deferral framings. That rule governs **known defects**.
+  An unexercised option is not a defect — it is a bet whose payoff hasn't resolved — so a
+  dated review is legitimate here and is *not* the evasion that rule names. Recording the
+  distinction explicitly, because blurring it in either direction is the likely error:
+  treating this as a defect forces premature deletion; treating defects as options licenses
+  exactly the deferral the rule bans.
+
+The `consumer-presence` / `consumer-drift` gates exist to police substrate-without-readers
+and currently **pass**. So the repo's formal position is that these types have declared
+consumers. The interesting question is therefore not "add a gate" but **whether "declared
+consumer" and "real consumer" have diverged** — a gate-*precision* question. That is
+cheap to probe and would generalize to every register in the repo.
+
+**RESOLVED (owner, 2026-07-30): exit 1 — the framework is an early bet, deliberately
+held.** It is not residue and is not up for retirement; §J.2 is closed.
+
+One consequence worth recording, and it is the only open thread left here: a *deliberately
+held bet* and *expiry-by-neglect* are currently indistinguishable from the repo's side —
+nothing marks this substrate as intentional, so the next health pass will re-flag it
+exactly as this one did. What a bet wants that a defect does not is a **recorded trigger**:
+the condition under which it gets exercised or folded. Naming that condition is what
+converts "we are holding this" from a memory into an artifact. Not designed here; noted so
+the distinction §E.1 drew between defects and options has somewhere to land.
+
+### E.2 The `app-agent-api` vocabulary layer
+
+168 files / 10,978 LOC, of which **124 files sit in `agent/api/registry`** averaging
+**65 LOC each**: `Altitude`, `Audience`, `AuditPolicy`, `AutonomyLevel`,
+`AvailabilityExpression`, `ConfirmStrategy`, `ConsentCapsuleAuthority`, `DataClass`,
+`DeliveryMode`, `EmissionPolicy`, `GateBehavior`, `HistoryPolicy`, `I18nKey`…
+
+That size profile says these are mostly enums and small records — **vocabulary, not
+behavior**. Vocabulary is cheap to hold and expensive to *change*: the risk is not the
+line count, it is that a 124-term ontology makes every new feature a naming negotiation
+against prior art, and that cost is paid on every feature rather than once.
+
+No direction proposed. Flagged because the line-count framing would mis-rank it against
+§E.1 — the plugin framework is 10k lines of *mechanism* with one consumer, which is a
+different and more tractable problem than 11k lines of *vocabulary* with many.
+
+---
+
+## §F Class 4 — corpus topology
+
+### F.1 Design history is 12× canonical
+
+390,567 lines of tempdocs vs 33,337 canonical. The rules that manage this
+(`tempdocs-are-dated-history`, the `tempdoc-age-hint` hook) manage **reading** risk —
+they tell an agent a document may be stale. Nothing manages **volume**, and volume's real
+cost is not reading, it is **search**: every "has this been tried?" question traverses
+390k lines of stale-by-design prose, and getting it wrong is expensive. The observations
+store records four brief-premise errors in a single chartering sitting, each refutable by
+one command — a symptom of exactly this.
+
+Also observed, and worth noting as the drift this topology produces: tempdoc 775's
+frontmatter reads "STEP 1 IMPLEMENTED" while §I/§J of the same file document a settled
+default flip and a live-verified delivery governor. Status lines age faster than bodies.
+
+**The idea:** the repo contains a well-measured retrieval engine and an MCP server built
+to let agents search a corpus, and it points neither at `docs/tempdocs/`. Verified not
+already done — nothing under `scripts/jseval/` builds a corpus over repo docs.
+
+### F.1.a Self-correction (2026-07-30, same day)
+
+This idea was first written up as a single high-confidence item — "a fix, a free
+measurement corpus, and the best possible demo." **Three of those claims do not survive
+scrutiny and are withdrawn here rather than quietly softened.**
+
+- **"Free corpus" is wrong.** The *documents* are free; the *gold* is not. 767 needed a
+  full lane plus a certification runbook plus 32 scientific gates to certify two members.
+  Anything claiming eval-corpus status here inherits that cost. The original phrasing
+  compressed "no licence, no acquisition cost" into "free" and skipped the expensive half.
+- **Leak exposure is severe, and it is the exact class the corpus program just paid twice
+  to close.** Tempdoc filenames are `NNN-descriptive-slug.md`. For the natural question
+  shape ("was X tried?"), the slug **is** the answer key. That is field_selectivity title
+  separability — what 781's v2 rebuild existed to close (§E/§F.5), after 767 §Q.3 before
+  it. A tempdoc corpus is maximally exposed to it.
+- **The "honest test" argument does not survive scale.** It rested on tempdocs resembling
+  the camouflaged-paraphrase shape the engine struggles with. But the collapse findings
+  (F-030; the legal-10k floor in 774 §J.5; Q-018's German collapse) are **scale**
+  phenomena at ~10⁴ documents. This corpus is **545 documents**. At that size retrieval
+  works regardless of shape, so the property claimed to make it scientifically interesting
+  is not present.
+
+A better reason, missed in the first pass and not dependent on scale: several tempdocs
+exceed 4,000 lines, so this is a genuine **long-document** corpus — which is exactly
+783's chartered territory (long-document representation) and 785's (enrichment
+throughput). That fit holds at n=545 where the paraphrase argument does not.
+
+### F.1.b The two uses have different costs and should not be bundled
+
+| Use | Needs gold? | Confidence | Note |
+|---|---|---|---|
+| **Dogfood / product** — index it, search it, answer "was this tried?" | **No** | **high** | Directly attacks the §F.1 volume problem; corpus is already on disk; ingest is a solved path |
+| **Certified eval corpus** | Yes, expensive | **low** | Inherits 767-scale certification cost, severe title-leak exposure, wrong scale for the open retrieval questions |
+
+Bundling them was the original error: the cheap high-value use was priced as if it carried
+the expensive one's obligations.
+
+### F.1.c A zero-cost validity test for the dogfood use
+
+The observations store records **four orchestrator brief-premise errors in a single
+chartering sitting** (787-4b, 783 §B.1, 784, 785), each refutable by one command, each
+caught only after a full worker round-trip. Those are known-wrong premises whose correct
+answers are already written down elsewhere in the corpus.
+
+That makes a retrospective replay possible with **no gold authoring at all**: index the
+corpus, issue the four premises as queries, check whether the refuting document surfaces
+in top-k. The questions were not written from the documents, so there is no leak path;
+the answers are already known, so there is nothing to label.
+
+- Catches 3-4 → the dogfood use is demonstrated on real, pre-existing failures.
+- Catches 0-1 → the idea dies for the price of an afternoon.
+
+This is a better first move than the lane originally proposed, and it is explicitly *not*
+an eval lane — it is a one-shot probe whose result decides whether a lane is warranted.
+
+### F.2 Tooling mass, and the asymmetry underneath it
+
+189k of tooling against 354k of product invites "too much." That instinct should be
+pushed back on: the eval harness is the only reason search quality is knowable, and the
+agent-analytics layer is the only reason the development process is knowable. Both are
+load-bearing, and `scripts/jseval` carries 130 test files, so it is not unowned.
+
+The real question is not size but **whether the instrument is held to the standard of the
+thing it measures**. Four of the ten newest defect observations are *in* the harness —
+`retriever.py:143`, `chunk_completeness.py`, the ASCII-only corpus-leak instruments, and
+`campaign_preflight`. The first is the sharpest: eval scores with `ir_measures` over
+`hit['score']` (the fused score) while the API returns hits in cross-encoder order, so
+**a reorder-only stage is invisible to the metric** — which is exactly what a
+cross-encoder is.
+
+That is a categorically worse kind of bug than a product bug, and the difference is worth
+naming:
+
+> A product defect produces wrong **behavior**, visible now.
+> An instrument defect produces a wrong **belief**, dated back to every measurement the
+> instrument touched — silently, and retroactively.
+
+Which yields a candidate principle (§G.2).
+
+---
+
+## §G Candidate principles (named, not built)
+
+**G.1 — A control that is not reachable is a claim, not a control.**
+Applies to CI lints, gates, hooks, expected-state entries, and tempdoc shipped-ledgers
+alike. The repo already implements this for hooks (`hook-integrity`) and nowhere else.
+The generalization is reachability-as-a-first-class-property of the control surface, with
+"advisory" and "agent-invoked" as *declared* tiers rather than accidents. Corollary from
+§C.3: reachability alone is insufficient — a reachable check that exits 0 on violations is
+still a claim.
+
+**G.2 — An instrument needs stronger verification than the system it measures.**
+Because instrument failures are silent and retroactive, while product failures are loud
+and current. The repo has a name for the neighbouring idea already —
+`static-green ≠ live-working` — and this is its measurement-layer sibling. If adopted, the
+concrete form is not more tests but an *oracle*: a known-answer replay the harness must
+reproduce, which is what `768`'s smoke oracle (18/18 gold_rank vs replay) already is for
+one path. The direction is to generalize that shape, not to invent one.
+
+**G.3 — Two ratchets over one substrate need shared arithmetic.**
+From §C.2. Where one gate mandates contents and another caps the container, the
+conforming action may lie outside both. Either couple them, give one a declared-growth
+path, or remove the substrate from the contested tier. Predictable failure without this:
+the author does the locally-correct thing, both gates are individually satisfiable, and
+the system still degrades.
+
+**G.4 (weaker, offered tentatively) — Inherited authority needs an expiry.**
+From §C.4. An artifact asserting what the system *contains*, carried across a repository
+boundary, is a claim about a system that no longer exists. The one entry in this repo that
+caught its own staleness is the one carrying `reviewBy` + `owner`. Whether that
+generalizes to a mechanism or stays a habit is genuinely open — the sample size is one,
+and it is recorded here as an observation rather than a recommendation.
+
+---
+
+## §H What this does NOT claim
+
+- **No claim that the codebase is unhealthy.** By conventional measures it is unusually
+  clean (§A). The findings are about controls and proportion, not craft.
+- **No claim that the tooling should shrink.** §F.2 argues the opposite.
+- **No claim that `check-agent-hooks-wiring-regen`'s failure is a real defect** — it
+  validates a gitignored file and the drift is plausibly expected (§C.3).
+- **No claim that the plugin framework was a mistake** (§E.1). Only that an unexercised
+  option should have an explicit expiry, and currently has none.
+- **No claim about the Hard-Invariant / ArchUnit item.** Out of scope by owner direction;
+  deliberately not restated here so this document does not become its back door.
+- **No claim that the 15 unreferenced checks should all be wired.** §C.3 shows three
+  distinct failure modes; wiring addresses one.
+
+## §I Falsifiers
+
+Stated so this document can be wrong in a checkable way:
+
+- If the always-loaded set returns to its ceiling and **stays** there for two months
+  without a reachability mechanism, §C.5's premise is weaker than claimed and the problem
+  was editorial discipline, not missing enforcement.
+- If a reachability control ships and surfaces ≤2 real issues across the 15 checks, the
+  generalization was over-fitted to the always-loaded instance and should be reduced to
+  wiring that one check.
+- If the config surface is re-measured in three months and the distinct-key count is flat
+  or down **without** a regrowth gate, §D.1's "no regrowth pressure" premise is wrong and
+  the ratchet is unnecessary.
+- If a second real plugin lands, §E.1's early-bet call is vindicated and the option
+  premium was correctly paid. (§E.1 is now owner-resolved as a held bet, so this is a
+  confirmation test, not a decision input.)
+- **§F.1's replay probe is its own falsifier and is the sharpest one in this document:**
+  index the corpus, issue the four known-wrong brief premises, count how many surface
+  their refuting document in top-k. 0-1 kills the dogfood use outright. This is the only
+  item here that can be settled in an afternoon with no gold authoring and no spend.
+
+## §J Open questions for the owner
+
+1. ~~Is §C.2(c) acceptable in principle?~~ **ANSWERED 2026-07-30 — yes** (§K.2).
+2. ~~Is the plugin framework an early bet, or residue?~~ **ANSWERED 2026-07-30 — early
+   bet, held** (§K.1, §E.1).
+3. ~~Should §F.1's tempdoc-corpus idea be chartered as an eval lane?~~ **REFRAMED, NOT
+   ANSWERED.** The question was malformed: it bundled a cheap no-gold product use with an
+   expensive certified-corpus use. Split in §F.1.b; the answerable version is "run the
+   §F.1.c replay probe?" — an afternoon, not a lane (§K.3).
+4. ~~Re-triage the config surface by why each knob exists?~~ **ANSWERED 2026-07-30 — yes**
+   (§K.4).
+
+**Still open, and not yet put to the owner:**
+
+5. §C.5's reachability control — is generalizing `hook-integrity`'s shape to the CI-lint
+   tier worth building, given §C.3 shows reachability alone would not have caught 2 of the
+   4 sampled failure modes?
+6. §D.2 — does the IPC seam have a missing layer, or is a class-size ratchet the right
+   first move? Answerable by reading 2-3 seam files with that question in hand; not yet
+   done.
+7. §C.4 / §G.4 — does inherited-authority drift warrant a mechanism, or is the single
+   `reviewBy` entry that caught it (due 2026-08-03, four days out) the general answer?
+
+## §K Owner decisions (2026-07-30)
+
+Recorded at the point of decision so later readers do not have to reconstruct them from
+conversation. Each names what is settled and, more importantly, **what is still open
+underneath it** — a settled direction is not a settled design.
+
+### K.1 — The plugin framework is an early bet, held
+
+Owner: it is an early bet on the extensibility thesis, not residue. §E.1 exit 1.
+`plugin-api` stays; no retirement, no sweep, no expiry-by-default.
+
+**Open underneath:** nothing in the repo distinguishes a deliberately-held bet from
+neglect, so the next structural pass will re-flag it identically. The distinguishing
+artifact would be a recorded **trigger** — the condition under which the bet is exercised
+or folded. Not designed here.
+
+### K.2 — `tier-register.md` does not belong in always-loaded context
+
+Owner: accepted. This is the largest single lever available (19,286 B, 24% of the
+always-loaded set) and it dissolves the §C.2 gate deadlock rather than mediating it.
+
+**Open underneath — the direction is settled, the mechanism is not.** A design pass owes
+answers to at least:
+
+1. **Projection or eviction?** 620 Move 1 said *generated projection*. But if the agent
+   needs the rules and not the enforcement-tier table, the table may not need to be
+   projected into always-loaded context at all — it may simply move. These are different
+   designs with different failure modes.
+2. **Where does `prose-tier-register` read its register from afterwards?** The gate
+   cross-validates `<!-- rule:slug -->` anchors against register rows. It must keep
+   working, and it must not become the thing that drags the file back.
+3. **Does this actually clear the deadlock, or relocate it?** §C.2's arithmetic problem is
+   two ratchets over one substrate. Removing this substrate from the contested tier
+   resolves *this* instance; it does not establish that the next mandate/cap pair will
+   not recreate it. §G.3 is the general form and stays open.
+4. **What is the residual overage?** Removing 19,286 B against a 12,639 B overage leaves
+   headroom — but four other files are individually over their own ceilings, so the
+   per-file ratchets stay red even when the total goes green. Whether the per-file
+   ceilings are then re-derived is a separate call.
+
+### K.3 — The tempdoc-corpus idea is reframed, not chartered
+
+Owner asked how confident this document was in its own headline idea. On examination:
+**not very** — see §F.1.a, where three of its four supporting claims are withdrawn.
+
+What survives is the split in §F.1.b: the **dogfood use needs no gold and is
+high-confidence**; the **certified-eval use is low-confidence and expensive**. The
+next move is neither a lane nor a charter but the §F.1.c **replay probe** — four
+already-known-wrong brief premises, replayed against the indexed corpus, zero gold
+authoring, result decides whether anything further is warranted.
+
+Recorded because the correction is the useful artifact here: this document's own
+best-sounding idea was the one most in need of interrogation, and the property that made
+it sound attractive (an "honest" corpus shape) turned out not to be present at this
+corpus's scale.
+
+### K.4 — Config surface: re-triage by knob origin (see §L.5 — input verified, bounded)
+
+Owner: agreed with §D.1's decision-debt reframe. Re-triage by *why each knob exists*
+(incident escape hatch / A-B lever / genuine user preference / never-flipped) rather than
+by module.
+
+**Open underneath:** 754's per-module classification is not invalidated by this — it is a
+different cut of the same surface, and 754 already did the expensive part (70/70
+classified, 31 deleted). The question a design pass must answer is whether the origin cut
+is applied to the **28 shadowed knobs 754 explicitly left** as a bounded second pass, or
+to the whole ~538-key surface as a fresh campaign. Also unresolved: §D.1's warning that
+three parallel config-delivery paths make the *effective* surface larger than any single
+count, so a triage over one path can read complete while another grows.
+
+---
+
+## §L Derisking pass (2026-07-30, same day)
+
+A `/derisk` pass ran read-only investigation against §K before any implementation. **It
+invalidated three claims made earlier in this document.** They are corrected in place
+below rather than softened, because the corrections are the pass's main product.
+
+### L.1 — ⚠️ CORRECTION: the §C.2 "gate deadlock" is substantially weaker than claimed
+
+§C.2 called this "the genuinely new finding" and rested it on
+`always-loaded-budget` having no upward path.
+
+**A declared-growth path exists and has been used.** `check-always-loaded-budget.mjs:41,
+125-161` implements `--bump <file> --reason "<why>"`, raising one ceiling to current size
+and appending to `baseline.bumps`. Real bumps are recorded in
+`always-loaded-budget.v1.json`: `CLAUDE.md` 24846→25051, `agent-lessons.md` 7285→8677,
+`branch-safety.md` 9499→9763.
+
+§C.2 cited tempdoc 618 §13 ("no intentional-raise path — **OPEN**") as evidence. **That
+row is stale.** This document reproduced the exact hazard it describes in §F.1 — trusting
+a dated tempdoc row as current truth — while complaining about it. Recorded as the
+sharpest self-instance available.
+
+**Revised, narrower finding:** the mechanism is complete and well-designed; the files grew
+past *even the bumped ceilings*; nothing runs the check, so nobody is routed to the
+declared path. This is a **wiring** problem, not a design contradiction.
+
+Consequences: §G.3 ("two ratchets over one substrate need shared arithmetic") loses its
+motivating instance and is **demoted to speculative**. §C.2 options (a) and (b) are moot —
+(b) already shipped. §C.2 (c) survives, but on its own merits, not as deadlock relief.
+
+### L.2 — ⚠️ CORRECTION: evicting `tier-register.md` does NOT make the budget green
+
+§K.2 and its surrounding prose treated eviction as "the largest single lever" on the
+overage. Measured:
+
+| | total | ceiling | verdict |
+|---|---:|---:|---|
+| today | 80,837 | 68,198 | RED (+12,639) |
+| after evicting `tier-register.md` | 61,551 | 52,473 | **STILL RED (+9,078)** |
+
+Removing the file removes its **ceiling too**, so the overage barely moves. All four other
+files remain individually over: `CLAUDE.md` +2,955, `agent-lessons.md` +3,330,
+`branch-safety.md` +2,612, `hooks-reference.md` +202.
+
+**K.2 is justified on its own merits** — an agent needs the rules, not the
+enforcement-tier table — **but it is not a fix for the budget.** The overage lives in the
+other four files and must be paid down separately, or declared via `--bump` per L.1.
+
+### L.3 — ✅ RESOLVED: K.2 is eviction, not projection — but the sweep is ~3× larger than assumed
+
+620 Move 1's "projection, not fork" **cannot apply here**: the register's load-bearing
+columns (`Tier`, `Resolves to`, `Catches violations via`) are enforcement judgments, not
+derivable from a `<!-- rule:slug -->` anchor. Only `Slug` is derivable. §K.2 open-question
+1 is answered: **move it, do not generate it.**
+
+The cost estimate was optimistic. A path sweep found **~16 references across 12 files**,
+including two that a naive move would break:
+
+- **`hook-integrity/enforcer.mjs:110` hardcodes** `resolve(sourceRoot,
+  '.claude/rules/tier-register.md')` with **no config fallback** — unlike
+  `prose-tier-register`, whose path *is* config (`registry.v1.json` →
+  `baseline.path`, read at `enforcer.mjs:48`). So a second gate reads the register and
+  must be edited in code.
+- **A generated-file chain:** the `Edit(.claude/rules/tier-register.md)` hook condition
+  appears in `governance/agent-hooks.v1.json:514` → `.claude/settings.json:221` →
+  `.claude/settings.local.json:356`, policed by `check-agent-hooks-wiring-regen` (itself
+  currently failing, §C.3). The move requires a regen step, not a hand-edit.
+
+Remaining touch points: `governance-hint.mjs:52`, `always-loaded-budget.v1.json` (×2),
+three canonical docs (`discipline-gate-kernel.md` ×3, `conflict-ledger.md` ×2), the
+changesets README (×2), two skill copies, and three cosmetic hook comments.
+
+**Incidental finding while sweeping:** `hook-integrity/enforcer.mjs:109` also hardcodes
+`.claude/settings.local.json` — a **gitignored** file (`.gitignore:148`). A gate
+validating a file absent from the repo may be partly vacuous in CI, which would explain
+how `hook-integrity` passes while `check-agent-hooks-wiring-regen` fails on the same
+subject (§C.3). Not investigated further; flagged.
+
+### L.4 — ⚠️ CORRECTION: the §F.1.c replay probe is dead, and its rescue failed
+
+§F.1.c called this "a better first move than anything I proposed originally" and §I called
+it "the sharpest falsifier in this document." Checking whether each premise's refutation
+is actually in the corpus:
+
+| Premise | Refuting document | Verdict |
+|---|---|---|
+| 784 — chunk-SPLADE assumed unbuilt | tempdocs **707, 712**, both predating 784 | ✅ valid |
+| 785 — enrichment anomaly | only 785 itself, and 790 (later) | ❌ post-hoc |
+| 787-4b — deprecated wire shape | only 787 itself | ❌ post-hoc, circular |
+| 783 §B.1 — corpora carry answer strings | **no tempdoc has it**; the fact lives in corpus data | ❌ absent |
+
+**1 of 4.** Retrieving a refutation from the document that *records* the mistake proves
+nothing about prevention.
+
+The planned rescue — using the search-quality register's `Q-###` → `ANSWERED → F-###`
+pairs as gold — **also fails, on both criteria set before looking**:
+
+1. Only **6 of 18** `Q-` entries carry an `ANSWERED → F-` pointer (the pre-registered
+   kill threshold was ~8).
+2. `Q-###` and `F-###` are sections of **the same file**
+   (`docs/reference/search-quality-register.md` — e.g. Q-015 at line 2211, F-030 at
+   1537), so the retrieval task is degenerate unless the register is excluded from the
+   corpus, at which point the answer key is a pointer chain into tempdocs and n=6.
+
+**Verdict: §F.1's cheap validity test does not exist.** Per the pre-registered kill
+criterion, the dogfood use is recorded as **plausible but unproven, with no known
+cheap way to prove it** — not as a promoted next move. §I's falsifier list is wrong on
+this point and is superseded here.
+
+### L.5 — ✅ RESOLVED: K.4's input exists and is bounded
+
+754 §150 enumerates all 28 shadowed/duplicate knobs **with their shadowing constants at
+file:line** (e.g. `SECTION_TARGET_TOKENS = 1800` at `HierarchicalShapeRunner.java:63`;
+`Worker.maxBatchSize`/`maxQueueDepth` shadowed by `GrpcIngestService.java:99,102`). Prose,
+not machine-readable, but concrete — so K.4's bounded second pass has a real input and a
+knowable cost. No machine-readable config registry exists under `SSOT/catalogs/` (only
+`aliases`, `analyzers`, `fields`), so a key inventory must be derived.
+
+**Independent support for Class 1 from a prior pass:** 754 §289 separately found
+`app-config.schema.json` is "itself unenforced scaffolding" — another assertion channel
+with no evaluator, found by someone else, before this document existed. Class 1 survives
+L.1 intact; it was only §C.2's *deadlock* framing that was wrong.
+
+### L.6 — Sequencing constraint discovered
+
+Wiring `always-loaded-budget` into CI while it is **red turns `main` red for every other
+agent**. Order must be: pay down (or `--bump` with declared reasons) **first**, wire
+**second** — or wire in report mode and flip to gate mode after. This constraint did not
+appear anywhere in §C or §K and would have been discovered the hard way.
+
+### L.7 — §F.1 probe would need the shared dev stack
+
+`raw_files` corpus mode exists (`ingest.py:237,256`, introduced for `mixed/realdocs-v1`,
+tempdoc 686), so a directory of `.md` files can be ingested without authoring a
+`corpus.jsonl`. But ingest drives `/api/indexing/roots` (`ingest.py:189`), i.e. it needs a
+running backend — the **shared, contended** dev stack, requiring a lease and owner
+coordination. "An afternoon" in §F.1.c understated this even before L.4 killed the probe.
