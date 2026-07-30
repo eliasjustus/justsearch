@@ -220,7 +220,7 @@ class CombinedEnrichmentBackfillOpsTest {
     boolean didWork =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(
                 context(true, false, false, false, true, false))
-            .anyWorkDone();
+            .wroteAnything();
 
     assertTrue(didWork);
     Map<String, Object> chunkState = fakeIndex.get("chunk-blank");
@@ -245,7 +245,7 @@ class CombinedEnrichmentBackfillOpsTest {
       boolean didWork =
           CombinedEnrichmentBackfillOps.processCombinedBackfill(
                   context(true, false, false, false, true, false))
-              .anyWorkDone();
+              .wroteAnything();
       assertTrue(didWork, "cycle " + cycle + " should still find the pending chunk");
       Map<String, Object> state = fakeIndex.get("chunk-blank");
       assertEquals(String.valueOf(cycle), state.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
@@ -258,7 +258,7 @@ class CombinedEnrichmentBackfillOpsTest {
     // Final cycle: retry count reaches EMBEDDING_MAX_RETRIES -> FAILED (never COMPLETED).
     CombinedEnrichmentBackfillOps.processCombinedBackfill(
             context(true, false, false, false, true, false))
-        .anyWorkDone();
+        .wroteAnything();
     Map<String, Object> state = fakeIndex.get("chunk-blank");
     assertEquals(
         String.valueOf(SchemaFields.EMBEDDING_MAX_RETRIES),
@@ -269,7 +269,7 @@ class CombinedEnrichmentBackfillOpsTest {
     boolean ranAgain =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(
                 context(true, false, false, false, true, false))
-            .anyWorkDone();
+            .wroteAnything();
     assertFalse(ranAgain, "a FAILED chunk must not be re-selected for another attempt");
   }
 
@@ -283,7 +283,7 @@ class CombinedEnrichmentBackfillOpsTest {
     poisonContents.add("poison content");
 
     boolean didWork =
-        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).anyWorkDone();
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).wroteAnything();
 
     assertTrue(didWork);
     Map<String, Object> docState = fakeIndex.get("doc-bad");
@@ -309,7 +309,7 @@ class CombinedEnrichmentBackfillOpsTest {
 
     for (int cycle = 1; cycle < SchemaFields.EMBEDDING_MAX_RETRIES; cycle++) {
       boolean didWork =
-        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).anyWorkDone();
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).wroteAnything();
       assertTrue(didWork, "cycle " + cycle + " should still find the pending doc");
       Map<String, Object> docState = fakeIndex.get("doc-bad");
       assertEquals(String.valueOf(cycle), docState.get(SchemaFields.EMBEDDING_RETRY_COUNT));
@@ -319,7 +319,7 @@ class CombinedEnrichmentBackfillOpsTest {
 
     // Final cycle: retry count reaches EMBEDDING_MAX_RETRIES -> FAILED.
     boolean lastCycleDidWork =
-        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).anyWorkDone();
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).wroteAnything();
     assertTrue(lastCycleDidWork);
     Map<String, Object> docState = fakeIndex.get("doc-bad");
     assertEquals(
@@ -329,7 +329,7 @@ class CombinedEnrichmentBackfillOpsTest {
 
     // Poison-pill stops being re-selected: a further cycle finds nothing pending and does no work.
     boolean ranAgain =
-        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).anyWorkDone();
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).wroteAnything();
     assertFalse(ranAgain, "a FAILED doc must not be re-selected for another attempt");
     verify(embeddingProvider, times(SchemaFields.EMBEDDING_MAX_RETRIES))
         .embedDocumentBatch(anyList());
@@ -344,7 +344,7 @@ class CombinedEnrichmentBackfillOpsTest {
         Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING));
 
     boolean didWork =
-        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).anyWorkDone();
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).wroteAnything();
 
     assertTrue(didWork);
     Map<String, Object> docState = fakeIndex.get("doc-ok");
@@ -369,7 +369,7 @@ class CombinedEnrichmentBackfillOpsTest {
     poisonContents.add("poison content");
 
     boolean didWork =
-        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).anyWorkDone();
+        CombinedEnrichmentBackfillOps.processCombinedBackfill(embedOnlyContext()).wroteAnything();
 
     assertTrue(didWork);
     Map<String, Object> okState = fakeIndex.get("doc-ok");
@@ -397,7 +397,7 @@ class CombinedEnrichmentBackfillOpsTest {
     for (int cycle = 1; cycle < SchemaFields.SPLADE_MAX_RETRIES; cycle++) {
       boolean didWork =
           CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, false))
-              .anyWorkDone();
+              .wroteAnything();
       assertTrue(didWork, "cycle " + cycle + " should still find the pending doc");
       Map<String, Object> docState = fakeIndex.get("doc-bad");
       assertEquals(String.valueOf(cycle), docState.get(SchemaFields.SPLADE_RETRY_COUNT));
@@ -413,7 +413,7 @@ class CombinedEnrichmentBackfillOpsTest {
 
     boolean ranAgain =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, false))
-            .anyWorkDone();
+            .wroteAnything();
     assertFalse(ranAgain, "a FAILED doc must not be re-selected for another attempt");
   }
 
@@ -467,7 +467,7 @@ class CombinedEnrichmentBackfillOpsTest {
     for (int cycle = 1; cycle < SchemaFields.NER_MAX_RETRIES; cycle++) {
       boolean didWork =
           CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, false, true))
-              .anyWorkDone();
+              .wroteAnything();
       assertTrue(didWork, "cycle " + cycle + " should still find the pending doc");
       Map<String, Object> docState = fakeIndex.get("doc-bad");
       assertEquals(String.valueOf(cycle), docState.get(SchemaFields.NER_RETRY_COUNT));
@@ -482,7 +482,7 @@ class CombinedEnrichmentBackfillOpsTest {
 
     boolean ranAgain =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, false, true))
-            .anyWorkDone();
+            .wroteAnything();
     assertFalse(ranAgain, "a FAILED doc must not be re-selected for another attempt");
   }
 
@@ -506,7 +506,7 @@ class CombinedEnrichmentBackfillOpsTest {
 
     boolean didWork =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, true, true))
-            .anyWorkDone();
+            .wroteAnything();
 
     assertTrue(didWork);
     Map<String, Object> state = fakeIndex.get("doc-multi");
@@ -560,7 +560,7 @@ class CombinedEnrichmentBackfillOpsTest {
 
     boolean didWork =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, true, true, true))
-            .anyWorkDone();
+            .wroteAnything();
 
     assertTrue(didWork);
     verify(embeddingProvider, times(1))
@@ -613,7 +613,7 @@ class CombinedEnrichmentBackfillOpsTest {
 
     boolean didWork =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, false, false, true))
-            .anyWorkDone();
+            .wroteAnything();
 
     assertTrue(didWork);
     verify(embeddingProvider, times(1)).embedWithSpans(anyString(), any(int[][].class));
@@ -659,7 +659,7 @@ class CombinedEnrichmentBackfillOpsTest {
 
     boolean didWork =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, false, false, true))
-            .anyWorkDone();
+            .wroteAnything();
 
     assertTrue(didWork);
     verify(embeddingProvider, times(1))
@@ -699,7 +699,7 @@ class CombinedEnrichmentBackfillOpsTest {
 
     boolean didWork =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, true, false, true))
-            .anyWorkDone();
+            .wroteAnything();
 
     assertTrue(didWork, "a failure-escalation write is still recorded as work");
     verify(embeddingProvider, never()).embedDocumentBatch(anyList());
@@ -732,7 +732,7 @@ class CombinedEnrichmentBackfillOpsTest {
 
     boolean didWork =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, false, false, true))
-            .anyWorkDone();
+            .wroteAnything();
 
     assertTrue(didWork);
     verify(embeddingProvider, never()).embedWithSpans(anyString(), any());
@@ -758,7 +758,7 @@ class CombinedEnrichmentBackfillOpsTest {
 
     boolean didWork =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, false, false, false))
-            .anyWorkDone();
+            .wroteAnything();
 
     assertTrue(didWork);
     verify(embeddingProvider, never()).embedWithSpans(anyString(), any());
@@ -795,21 +795,40 @@ class CombinedEnrichmentBackfillOpsTest {
 
   @Test
   @DisplayName(
-      "chunk-SPLADE flag OFF (default): a splade-PENDING chunk doc is marked COMPLETED without"
-          + " encoding — pins the historical silent data-less COMPLETED behavior byte-identically")
-  void chunkSpladeOff_chunkDocSpladePending_markedCompletedWithoutEncode() throws Exception {
+      "chunk-SPLADE flag OFF (default): a splade-PENDING chunk doc escalates through the retry"
+          + " seam — no encode, and no data-less COMPLETED for the RMW reset policy to bounce")
+  void chunkSpladeOff_chunkDocSpladePending_escalatesInsteadOfClaimingCompleted() throws Exception {
     seedSpladeChunkDoc(
         "chunk-1", "parent-1", "chunk body text", SchemaFields.SPLADE_STATUS_PENDING, null);
 
-    boolean didWork =
-        CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, false))
-            .anyWorkDone();
+    CombinedEnrichmentBackfillOps.processCombinedBackfill(context(false, true, false));
 
-    assertTrue(didWork, "the status-marker write is still work");
     Map<String, Object> state = fakeIndex.get("chunk-1");
-    assertEquals(SchemaFields.SPLADE_STATUS_COMPLETED, state.get(SchemaFields.SPLADE_STATUS));
+    // Flag off there is nothing to encode, so the stage may not claim COMPLETED: marking it would
+    // be a data-less COMPLETED that the reset-status RMW policy sends back to PENDING forever.
+    assertEquals(SchemaFields.SPLADE_STATUS_PENDING, state.get(SchemaFields.SPLADE_STATUS));
+    assertEquals("1", state.get(SchemaFields.SPLADE_RETRY_COUNT));
     assertNull(state.get(SchemaFields.SPLADE), "flag off must never write sparse data");
     verify(spladeEncoder, never()).encodeBatch(anyList());
+  }
+
+  @Test
+  @DisplayName(
+      "a chunk doc pulled in by the splade-status query must not have EMBEDDING_STATUS or"
+          + " NER_STATUS manufactured for it — an ABSENT status means the stage does not apply")
+  void chunkDocParentLane_absentStatusesAreNotManufactured() throws Exception {
+    seedSpladeChunkDoc(
+        "chunk-1", "parent-1", "chunk body text", SchemaFields.SPLADE_STATUS_PENDING, null);
+
+    CombinedEnrichmentBackfillOps.processCombinedBackfill(context(true, true, true));
+
+    Map<String, Object> state = fakeIndex.get("chunk-1");
+    assertNull(
+        state.get(SchemaFields.EMBEDDING_STATUS),
+        "a chunk doc has no embedding_status; stamping COMPLETED here claims a vector that will"
+            + " never exist and livelocks against the RMW reset policy");
+    assertNull(state.get(SchemaFields.NER_STATUS), "a chunk doc has no ner_status");
+    assertNull(state.get(SchemaFields.VECTOR));
   }
 
   @Test
@@ -825,7 +844,7 @@ class CombinedEnrichmentBackfillOpsTest {
     boolean didWork =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(
                 context(false, true, false, false, false, true))
-            .anyWorkDone();
+            .wroteAnything();
 
     assertTrue(didWork);
     verify(spladeEncoder, times(1))
@@ -862,7 +881,7 @@ class CombinedEnrichmentBackfillOpsTest {
     boolean didWork =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(
                 context(true, true, false, false, true, true))
-            .anyWorkDone();
+            .wroteAnything();
 
     assertTrue(didWork);
     Map<String, Object> state = fakeIndex.get("chunk-1");
@@ -896,7 +915,7 @@ class CombinedEnrichmentBackfillOpsTest {
     boolean didWork =
         CombinedEnrichmentBackfillOps.processCombinedBackfill(
                 context(true, true, false, false, true, true))
-            .anyWorkDone();
+            .wroteAnything();
 
     assertTrue(didWork);
     Map<String, Object> state = fakeIndex.get("chunk-1");

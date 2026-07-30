@@ -1319,6 +1319,268 @@ class IndexingLoopTest {
     }
   }
 
+  // ==================== Ingest starvation containment (tempdoc 798) ====================
+
+  @Nested
+  @DisplayName("background enrichment must never starve the ingest poll (tempdoc 798)")
+  class IngestStarvationTests {
+
+    /**
+     * The field incident: the single {@code indexing-loop} thread entered the combined-enrichment
+     * tight loop on 2 documents that were rewritten every batch but could never advance a stage,
+     * and its continue-condition was "the write touched a doc" — so it never returned to {@code
+     * pollPending}. Every user ingest after the first sat in the queue for 20+ minutes with zero
+     * errors and every health surface green.
+     *
+     * <p>This is the end-to-end property {@code BackfillSchedulerTightLoopTest} cannot reach: it
+     * drives the REAL {@link IndexingLoop} against the REAL {@link BackfillScheduler} wiring,
+     * including the pending-ingest probe the loop publishes onto the signal bus. Batch A is
+     * drained, batch B arrives while the loop is inside the non-converging backfill, and batch B
+     * must still get claimed.
+     */
+    @Test
+    @DisplayName(
+        "non-converging enrichment population: the next ingest batch is still claimed")
+    void nonConvergingBackfill_stillClaimsNextIngestBatch(@org.junit.jupiter.api.io.TempDir Path tmp)
+        throws Exception {
+      Path fileA = Files.writeString(tmp.resolve("a.txt"), "alpha content");
+      Path fileB = Files.writeString(tmp.resolve("b.txt"), "beta content");
+      List<JobQueue.IndexJob> batchB =
+          List.of(new JobQueue.IndexJob(fileA, null), new JobQueue.IndexJob(fileB, null));
+
+      java.util.concurrent.atomic.AtomicInteger pending =
+          new java.util.concurrent.atomic.AtomicInteger(0);
+      java.util.concurrent.atomic.AtomicInteger polls =
+          new java.util.concurrent.atomic.AtomicInteger(0);
+      java.util.concurrent.CountDownLatch batchBClaimed =
+          new java.util.concurrent.CountDownLatch(1);
+
+      JobQueue queue = mock(JobQueue.class);
+      lenient()
+          .when(queue.pollPending(anyInt()))
+          .thenAnswer(
+              inv -> {
+                if (polls.incrementAndGet() == 1) {
+                  // Batch A is drained. Batch B is enqueued right as the loop hands control to
+                  // background enrichment — the exact ordering that livelocked in the field.
+                  pending.set(batchB.size());
+                  return List.of();
+                }
+                if (pending.getAndSet(0) > 0) {
+                  batchBClaimed.countDown();
+                  return batchB;
+                }
+                return List.of();
+              });
+      lenient()
+          .when(queue.jobStateCounts())
+          .thenAnswer(
+              inv -> new JobQueue.JobStateCounts(pending.get(), pending.get(), 0L, 0L, 0L));
+      lenient().when(queue.queueDepth()).thenAnswer(inv -> (long) pending.get());
+
+      ProbeSignalBus signalBus = new ProbeSignalBus();
+      IndexingLoop loop = nonConvergingBackfillLoop(queue, signalBus);
+      loop.start();
+      try {
+        assertTrue(
+            batchBClaimed.await(20, java.util.concurrent.TimeUnit.SECONDS),
+            "the indexing loop must return from background enrichment and claim batch B."
+                + " Pre-fix the combined tight loop continued on `written > 0` — activity, not"
+                + " progress — so pollPending was never reached again (tempdoc 798). Observed"
+                + " polls: "
+                + polls.get());
+        assertTrue(
+            signalBus.probeRegistered(),
+            "IndexingLoop must publish the pending-ingest probe onto the signal bus, otherwise"
+                + " BackfillScheduler's third yield-signal is permanently blind");
+      } finally {
+        loop.close();
+      }
+    }
+
+    /**
+     * Builds an {@link IndexingLoop} whose enrichment backfill can never converge: the doc-id
+     * query returns the same two ids on every call, every batch write reports both docs updated,
+     * and no stage can advance (blank content, so the SPLADE and NER phases skip the docs while
+     * the write still lands their status fields). SPLADE + NER bound (embedding unavailable) puts
+     * the scheduler in combined mode.
+     */
+    private IndexingLoop nonConvergingBackfillLoop(JobQueue queue, WorkerSignalBus signalBus) {
+      List<String> stuckIds = List.of("stuck-doc-1", "stuck-doc-2");
+
+      DocumentFieldOps documentFieldOps = mock(DocumentFieldOps.class);
+      lenient()
+          .when(documentFieldOps.queryDocIdsByField(anyString(), anyString(), anyInt()))
+          .thenReturn(stuckIds);
+      lenient().when(documentFieldOps.getDocumentContentBatch(anyList())).thenReturn(Map.of());
+      lenient()
+          .when(documentFieldOps.getDocumentFieldsBatch(anyList(), anySet()))
+          .thenAnswer(
+              inv -> {
+                List<String> ids = inv.getArgument(0);
+                Map<String, Map<String, String>> result = new java.util.HashMap<>();
+                for (String id : ids) {
+                  result.put(
+                      id,
+                      Map.of(
+                          SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING,
+                          SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING));
+                }
+                return result;
+              });
+
+      IndexingCoordinator coordinator = mock(IndexingCoordinator.class);
+      lenient()
+          .when(coordinator.updateDocumentsBatch(anyList()))
+          .thenAnswer(
+              inv -> {
+                List<?> batch = inv.getArgument(0);
+                return new io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes
+                    .BatchUpdateResult(batch.size(), 0);
+              });
+
+      CommitOps commitOps = mock(CommitOps.class);
+      lenient()
+          .doAnswer(
+              inv -> {
+                ((Runnable) inv.getArgument(0)).run();
+                return null;
+              })
+          .when(commitOps)
+          .withNrtSuspended(any());
+
+      IndexCountOps indexCountOps = mock(IndexCountOps.class);
+      lenient().when(indexCountOps.countByField(anyString(), anyString())).thenReturn(0);
+
+      io.justsearch.indexerworker.ner.NerService nerService =
+          mock(io.justsearch.indexerworker.ner.NerService.class);
+      lenient().when(nerService.isAvailable()).thenReturn(true);
+      var encoderBindings = new io.justsearch.indexerworker.server.EncoderBindings();
+      encoderBindings.bindSpladeEncoder(mock(SpladeEncoder.class));
+      encoderBindings.bindNerService(nerService);
+
+      return new IndexingLoop(
+          queue,
+          coordinator,
+          commitOps,
+          documentFieldOps,
+          indexCountOps,
+          this::resolvedConfig,
+          signalBus,
+          null,
+          null,
+          null,
+          null,
+          new TimeboxedContentExtractor(
+              new ContentExtractorProvider() {
+                @Override
+                public ExtractionResult extract(Path file) {
+                  return new ExtractionResult("content of " + file.getFileName(), null, "text/plain");
+                }
+
+                @Override
+                public String detectMimeType(Path file) {
+                  return "text/plain";
+                }
+              },
+              Duration.ofSeconds(5),
+              (io.justsearch.indexerworker.extract.ExtractionMetricCatalog) null),
+          encoderBindings,
+          null);
+    }
+
+    private io.justsearch.configuration.resolved.ResolvedConfig resolvedConfig() {
+      var config = mock(io.justsearch.configuration.resolved.ResolvedConfig.class);
+      var rag = mock(io.justsearch.configuration.resolved.ResolvedConfig.Rag.class);
+      lenient().when(rag.chunkVectorsEnabled()).thenReturn(false);
+      lenient().when(rag.chunkSpladeEnabled()).thenReturn(false);
+      lenient().when(config.rag()).thenReturn(rag);
+      var ai = mock(io.justsearch.configuration.resolved.ResolvedConfig.Ai.class);
+      var embedding = mock(io.justsearch.configuration.resolved.ResolvedConfig.Ai.Embedding.class);
+      lenient().when(embedding.lateChunkingEnabled()).thenReturn(false);
+      lenient().when(ai.embedding()).thenReturn(embedding);
+      lenient()
+          .when(ai.backfillPacing())
+          .thenReturn(
+              io.justsearch.configuration.resolved.ResolvedConfig.Ai.BackfillPacing.DEFAULTS);
+      lenient().when(config.ai()).thenReturn(ai);
+      return config;
+    }
+  }
+
+  /**
+   * Minimal {@link WorkerSignalBus} that honours the tempdoc 798 pending-ingest probe. A Mockito
+   * mock cannot stand in here: its {@code setPendingIngestProbe} would no-op and {@code
+   * hasPendingIngest()} would answer a constant false, so the wiring under test would be stubbed
+   * out of existence.
+   */
+  private static final class ProbeSignalBus implements WorkerSignalBus {
+    private volatile java.util.function.BooleanSupplier probe;
+    private volatile boolean everRegistered;
+
+    boolean probeRegistered() {
+      return everRegistered;
+    }
+
+    @Override
+    public void setPendingIngestProbe(java.util.function.BooleanSupplier probe) {
+      this.probe = probe;
+      if (probe != null) {
+        this.everRegistered = true;
+      }
+    }
+
+    @Override
+    public boolean hasPendingIngest() {
+      var p = probe;
+      return p != null && p.getAsBoolean();
+    }
+
+    @Override
+    public void open() {}
+
+    @Override
+    public void writePort(int port) {}
+
+    @Override
+    public long readActivity() {
+      return 0L;
+    }
+
+    @Override
+    public long readHeartbeat() {
+      return 0L;
+    }
+
+    @Override
+    public boolean isShutdownRequested() {
+      return false;
+    }
+
+    @Override
+    public boolean shouldDie() {
+      return false;
+    }
+
+    @Override
+    public boolean isUserActive() {
+      return false;
+    }
+
+    @Override
+    public boolean isMainGpuActive() {
+      return false;
+    }
+
+    @Override
+    public long startupTime() {
+      return 0L;
+    }
+
+    @Override
+    public void close() {}
+  }
+
   private static final class RecordingQueue implements JobQueue {
     IngestionOutcome lastOutcome;
     IngestionLedgerEntry lastEntry;

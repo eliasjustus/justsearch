@@ -156,6 +156,15 @@ public final class SchemaFields {
   public static final String NER_STATUS = "ner_status";
   public static final String NER_STATUS_PENDING = "PENDING";
   public static final String NER_STATUS_COMPLETED = "COMPLETED";
+
+  /**
+   * NER ran successfully and extracted zero entities. Terminal like {@link #NER_STATUS_COMPLETED}
+   * (no re-queue), but distinguishable, so a document carrying no {@code ENTITY_*} fields is not
+   * indistinguishable from an enriched one. Mirrors the {@link #VDU_STATUS_COMPLETED_EMPTY}
+   * precedent for the same "stage ran fine, produced nothing" case.
+   */
+  public static final String NER_STATUS_COMPLETED_EMPTY = "COMPLETED_EMPTY";
+
   public static final String NER_STATUS_FAILED = "FAILED";
   /** NER retry count for poison pill protection. */
   public static final String NER_RETRY_COUNT = "ner_retry_count";

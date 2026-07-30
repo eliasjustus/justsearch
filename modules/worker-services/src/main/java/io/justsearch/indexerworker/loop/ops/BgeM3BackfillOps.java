@@ -106,14 +106,34 @@ public final class BgeM3BackfillOps {
           String content = isChunk ? chunkContent : context.documentFieldOps().getDocumentContent(docId);
 
           if (content == null || content.isBlank()) {
-            context.log().debug("BGE-M3 backfill: no content for {}, marking COMPLETED", docId);
-            Map<String, Object> updates = new HashMap<>();
-            updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
-            updates.put(
-                isChunk ? SchemaFields.CHUNK_EMBEDDING_STATUS : SchemaFields.EMBEDDING_STATUS,
-                SchemaFields.EMBEDDING_STATUS_COMPLETED);
-            context.indexingCoordinator().updateDocument(docId, updates);
-            processed++;
+            // Neither the sparse postings nor the dense vector can exist without content. Stamping
+            // COMPLETED on both stages claims two artifacts that will never be written — a
+            // data-less COMPLETED (the F-032 "status lies" class) that the reset-status RMW policy
+            // (tempdoc 711/717) bounces straight back to PENDING, forever. Escalate each stage
+            // through its own retry-count seam instead: retry next cycle, FAILED at max.
+            context.log().warn("BGE-M3 backfill: content missing or blank for {}", docId);
+            SpladeBackfillOps.handleSpladeFailure(
+                context.documentFieldOps(),
+                context.indexingCoordinator(),
+                docId,
+                "Content missing or blank",
+                context.log());
+            if (isChunk) {
+              EmbeddingBackfillOps.handleChunkEmbeddingFailure(
+                  context.documentFieldOps(),
+                  context.indexingCoordinator(),
+                  docId,
+                  "Content missing or blank",
+                  context.log());
+            } else {
+              EmbeddingBackfillOps.handleEmbeddingFailure(
+                  context.documentFieldOps(),
+                  context.indexingCoordinator(),
+                  docId,
+                  "Content missing or blank",
+                  context.log());
+            }
+            failed++;
             continue;
           }
 

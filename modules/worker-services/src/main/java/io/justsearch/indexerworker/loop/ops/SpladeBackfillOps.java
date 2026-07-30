@@ -95,11 +95,20 @@ public final class SpladeBackfillOps {
           }
 
           if (content == null || content.isBlank()) {
-            context.log().debug("SPLADE backfill: no content for {}, marking COMPLETED", docId);
-            Map<String, Object> updates = new HashMap<>();
-            updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
-            context.indexingCoordinator().updateDocument(docId, updates);
-            processed++;
+            // No content means no postings were produced. Marking COMPLETED here claims a splade
+            // field that will never exist — a data-less COMPLETED (the F-032 "status lies" class)
+            // that the reset-status RMW policy (tempdoc 711/717) sends straight back to PENDING,
+            // forever. Escalate through the retry-count seam instead, mirroring
+            // EmbeddingBackfillOps' handling of the identical condition.
+            context.log().warn("SPLADE backfill: content missing or blank for {}", docId);
+            markedFailed +=
+                handleSpladeFailure(
+                    context.documentFieldOps(),
+                    context.indexingCoordinator(),
+                    docId,
+                    "Content missing or blank",
+                    context.log());
+            failed++;
             continue;
           }
 
