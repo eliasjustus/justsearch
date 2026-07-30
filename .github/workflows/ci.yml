@@ -368,6 +368,63 @@ jobs:
       - name: Windows-only tests (@Tag windows) for the Linux-migrated modules
         run: ./gradlew.bat :modules:app-util:test :modules:app-agent:test :modules:app-services:test :modules:adapters-lucene:test :modules:app-inference:test -PwindowsOnly=true --console=plain
 
+  # `:modules:system-tests:integrationTest` ran in NO lane until now: ci.yml ran only
+  # `:modules:system-tests:test`, and the module's `check` depends on `test` alone
+  # (modules/system-tests/build.gradle.kts:297). The tier rotted unobserved as a result —
+  # every IsolatedBackendFixture class was failing at @BeforeAll with
+  # `ClassNotFoundException: io.justsearch.ui.HeadlessApp` and nobody noticed, because
+  # nothing ran it. This job closes that blind spot.
+  #
+  # Own job, not folded into windows-native-tests: that lane is deliberately "@Tag(windows)
+  # only, small + fast", and this file's header requires each job be named after the fact it
+  # proves rather than becoming "one opaque Windows bucket".
+  #
+  # Windows, not ubuntu: the tier spawns a real Head child JVM (HeadlessApp), which in turn
+  # spawns the Worker from `:modules:indexer-worker:installDist` — process spawn, argfile
+  # classpath quoting, and worker-lib path resolution are exactly the surfaces that differ per
+  # OS, and Windows is the OS the product ships on. The tier has never been validated on Linux;
+  # moving it there is a separate exercise with its own evidence, not an assumption to make here.
+  #
+  # ADVISORY (continue-on-error + deliberately absent from workflow-signal-policy.v1.json's
+  # requiredStatusChecks, same pattern as `ci-walltime`): the HeadlessApp classpath rot above is
+  # still open on `main`, so a blocking lane would red-wall every PR on a known, unrelated
+  # failure. Advisory already closes the blind spot the tier had — it now runs on every PR and
+  # its results are visible and archived, so rot cannot be silent again. Flip
+  # `continue-on-error` off and add "Integration tests (system-tests tier)" to
+  # requiredStatusChecks once the tier is green.
+  integration-tests:
+    name: Integration tests (system-tests tier)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      # No model blobs on a public checkout, so the model-dependent cases self-skip via their
+      # own assumeTrue guards; the Golden Corpus cases use frozen vectors and need no model.
+      - name: Integration tier (Golden Corpus, relevance, isolated-backend E2E)
+        run: ./gradlew.bat :modules:system-tests:integrationTest -PskipWebBuild=true --console=plain
+
+      - name: Upload integration-test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-test-results
+          path: |
+            modules/system-tests/build/test-results/integrationTest/TEST-*.xml
+            modules/system-tests/build/reports/tests/integrationTest/**
+          if-no-files-found: warn
+
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
@@ -392,7 +449,7 @@ jobs:
     name: CI wall-clock attribution
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [public-claims, license-and-notices, build, unit-tests, secret-scan]
+    needs: [public-claims, license-and-notices, build, unit-tests, integration-tests, secret-scan]
     if: always()
     steps:
       - name: Checkout
