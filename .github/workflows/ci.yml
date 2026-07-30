@@ -113,6 +113,16 @@ jobs:
       - name: Test dead-config scanner (config-surface gate)
         run: node scripts/ci/test-config-surface-dead-config.mjs
 
+      # Tempdoc 799 Q. An adversarial review found the gate itself ran NOWHERE -- the step above
+      # tests the scanner, but nothing invoked the gate on a PR. That is the same "shipped but
+      # wired to nothing" shape L.1 documents for the always-loaded ratchet, reproduced in the
+      # branch that documents it. Scoped to this one gate: other kernel gates need inputs (knip,
+      # npm audit, a Gradle run) this fast job does not build.
+      - name: Config-surface gate (dead settings + surface ratchet)
+        run: |
+          node scripts/docs/generate-runtime-config-matrix.mjs
+          node scripts/governance/run.mjs --gate config-surface --mode gate
+
       - name: README benchmark numbers match the canonical release
         run: node scripts/ci/check-readme-benchmark-numbers.mjs
 

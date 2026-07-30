@@ -50,10 +50,8 @@ final class AgentCitationResolver {
 
   AgentCitationResolver(DocumentService documentService, double similarityThreshold) {
     this.documentService = documentService;
-    this.similarityThreshold =
-        similarityThreshold > 0.0 && similarityThreshold <= 1.0
-            ? similarityThreshold
-            : DEFAULT_SIMILARITY_THRESHOLD;
+    // Tempdoc 799 Q: the ONE normaliser, shared with the RAG path (see DocumentService).
+    this.similarityThreshold = DocumentService.effectiveCitationThreshold(similarityThreshold);
   }
 
   /**

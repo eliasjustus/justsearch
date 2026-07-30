@@ -21,16 +21,46 @@
  *      ({@code EnvRegistry.SOME_KEY.getString(...)});
  *   3. its raw key string appears anywhere in production sources outside the configuration module.
  *
- * Deliberately NOT a whole-program analysis: it is a string-level scan, so it can only prove a
- * NEGATIVE (nothing anywhere mentions this) — which is exactly the claim being made. Reflection or
- * a computed key name would be a false positive; none exist in this repo today, and the baseline
- * exists to absorb any that appear.
+ * Deliberately NOT a whole-program analysis: it is a string-level scan. Reflection or a computed
+ * key name would be a false positive; none exist in this repo today, and the baseline absorbs any
+ * that appear.
+ *
+ * KNOWN LIMITATION — bare-name collision can MASK a dead component (tempdoc 799 §Q). The
+ * `unreadComponents` half matches a bare `.name(`, so an unrelated call on a different type counts
+ * as a read. Live instance: `ResolvedConfig.llm()` is never called in production (the only
+ * non-declaration `.llm()` is `LlmSettingsV2.llm()` at SettingsController.java:200, a different
+ * type), so the ENTIRE `Llm` record is unreachable — yet only `simulatedLatencyMs`, the one
+ * uniquely-named component, is reported. Roughly ten documented settings behind that record are
+ * therefore false promises this scanner does not catch, including `JUSTSEARCH_LLM_MIN_P` and
+ * `JUSTSEARCH_LLM_RNG_SEED` (environment-variables.md:102-103).
+ *
+ * Two disambiguating heuristics were tried and REJECTED, both falsified against real code:
+ * requiring the chained `.parent().component()` form (defeated — `hybridSearch()` is consumed only
+ * via assignment), and requiring the containing file to mention `ResolvedConfig` (defeated —
+ * SettingsController mentions it incidentally). Precision here needs type information a string
+ * scan does not have. An honest limitation beats a heuristic that misfires: a gate that cries wolf
+ * gets switched off, which is the §O.1 failure mode this whole tempdoc is about.
+ *
+ * So: this scanner catches the dead-KEY class reliably and the dead-COMPONENT class only when the
+ * name is unique. Do not read a green result as "the config surface is clean".
  */
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-const CFG_PKG = '/io/justsearch/configuration/';
+// Only the three DECLARATION files are excluded from the reader corpus. A key naming itself in
+// its own declaration is not a reader — but everything else, including other files inside the
+// configuration package, must stay visible.
+//
+// Tempdoc 799 §Q: this previously excluded the whole `/io/justsearch/configuration/` package,
+// which made every in-package reader invisible BY CONSTRUCTION and produced a false positive —
+// `justsearch.fieldCatalog` is read at JustSearchConfigurationLoader.java:116 (called from
+// KnowledgeServer) and was reported as a false promise. An adversarial review caught it.
+const DECLARATION_FILES = [
+  '/io/justsearch/configuration/EnvRegistry.java',
+  '/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java',
+  '/io/justsearch/configuration/resolved/ResolvedConfig.java',
+];
 const PRIMITIVES = new Set(['int', 'long', 'double', 'boolean', 'float', 'short', 'byte', 'char']);
 
 function collectJavaMainSources(root) {
@@ -93,7 +123,10 @@ export function scanDeadConfig(sourceRoot) {
   const files = collectJavaMainSources(sourceRoot);
   const allSources = files.map((f) => readFileSync(f, 'utf8')).join('\n');
   const outsideConfig = files
-    .filter((f) => !f.replace(/\\/g, '/').includes(CFG_PKG))
+    .filter((f) => {
+      const n = f.replace(/\\/g, '/');
+      return !DECLARATION_FILES.some((d) => n.endsWith(d));
+    })
     .map((f) => readFileSync(f, 'utf8'))
     .join('\n');
 

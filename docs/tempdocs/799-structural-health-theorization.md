@@ -1382,3 +1382,120 @@ Cause 1 (one instance fixed, pattern untouched) and Cause 2 (13 orphaned checks)
 closes Cause 3 for the *declared* config surface only — §D.1's warning stands that
 configuration reaches the Worker by three parallel paths, and a key travelling an undeclared
 one is still invisible.
+
+> ⚠️ **§P.5 overstated.** An adversarial review (§Q) then refuted "Cause 3 closed" outright.
+> It is **narrowed**, not closed — see §Q.3.
+
+---
+
+## §Q Adversarial review of this branch (2026-07-31)
+
+A refute-first review was run over the nine commits, with the brief that **every claim is wrong
+until the evidence forces concession**. It refuted two. I re-verified both against primary
+sources before acting: **both are real, and both are mine.** One is a correctness bug in the
+commit whose own message argues it cannot happen.
+
+Confirmed sound, no change needed: Phase-0 config ordering (`resolveConfig()` is the first
+statement of the boot try-block, so the composition-root reads are not silent no-ops);
+`ragTopK` precedence; the `TikaExtractionPolicy` identity design; and that the gate
+mechanically bites.
+
+### Q.1 ⚠️ CORRECTNESS BUG — the citation cutoff diverged after all
+
+`64f022a1`'s message argued that reading the same key at both composition roots made RAG/agent
+divergence impossible. It did not. The two matchers **clamped the configured value
+differently**:
+
+| Path | Site | Clamp |
+|---|---|---|
+| RAG | `StreamingCitationMatcher.java:75` | `Math.max(0.01, Math.min(1.0, t))` |
+| Agent | `AgentCitationResolver.java:51-57` | `t > 0.0 && t <= 1.0 ? t : 0.5` |
+
+A configured `0` therefore meant **0.01 on the RAG path and 0.5 on the agent path** — a *wider*
+split than the 0.45/0.5 drift tempdoc 565 §15.A was written to remove.
+
+The lesson is sharper than the bug: **sharing a constant is not sharing a decision.** 565
+unified the *value*; nothing unified the *interpretation of an out-of-range value*, and that is
+where the divergence came back.
+
+**Fix:** one normaliser, `DocumentService.effectiveCitationThreshold(double)`, beside the
+constant both paths already import; both constructors delegate to it and neither clamps locally.
+Out-of-range resolves to the default rather than to a silent floor — a nonsensical cutoff should
+behave like "unset", not like "cite almost anything".
+
+**Tests:** the assertion whose absence let this ship, added in three places. The parity
+assertion deliberately does **not** live in `app-api` alone: asserting it there could only call
+the shared function twice, which is tautological and would still pass if a matcher re-clamped
+afterwards. The real assertions observe the value each matcher actually hands to
+`DocumentService.matchCitations` — `StreamingCitationMatcherTest` for RAG,
+`AgentCitationResolverThresholdTest` for the agent path.
+
+One of my own earlier tests failed on this fix, correctly: it asserted `9.0` to `1.0`, encoding
+the very clamp that caused the divergence. Updated, with the reason recorded inline.
+
+### Q.2 ⚠️ The scanner had a false positive, by construction
+
+`dead-config.mjs` built its reader corpus by excluding the **entire**
+`/io/justsearch/configuration/` package, making every in-package reader invisible.
+`justsearch.fieldCatalog` is read via `EnvRegistry.FIELD_CATALOG.getPath()` at
+`JustSearchConfigurationLoader.java:116` (called from `KnowledgeServer.java:1334,1383`) — a
+working override that the gate recorded as a false promise.
+
+**Fix:** exclude only the three *declaration* files, not the package. A key naming itself in its
+own declaration is not a reader; everything else must stay visible. Dead-key count 10 to 9, and
+`justsearch.fieldCatalog` is removed from the baseline with the reason recorded there.
+
+### Q.3 The scanner's blind spot is larger than §P admitted — and there is a real finding inside it
+
+`unreadComponents` matches a bare `.name(`, so an unrelated call on a different type counts as a
+read. Consequence: **`ResolvedConfig.llm()` is never called in production** — the only
+non-declaration `.llm()` is `LlmSettingsV2.llm()` at `SettingsController.java:200`, a different
+type. The entire `Llm` record is unreachable, and roughly **ten documented settings behind it are
+false promises**, including `JUSTSEARCH_LLM_MIN_P` and `JUSTSEARCH_LLM_RNG_SEED`
+(`environment-variables.md:102-103`). The scanner reports exactly one of them —
+`simulatedLatencyMs`, the only uniquely-named component.
+
+That is the same class as the 22 already withdrawn, found by the review rather than by the gate
+built to find it.
+
+**Not fixed with a heuristic, deliberately.** Two were tried and both falsified against real
+code: requiring the chained `.parent().component()` form (defeated — `hybridSearch()` is consumed
+only via assignment), and requiring the containing file to mention `ResolvedConfig` (defeated —
+`SettingsController` mentions it incidentally). Precision needs type information a string scan
+does not have, and a gate that cries wolf gets switched off — §O.1's failure mode.
+
+So the limitation is **written into the scanner's header** instead, naming the `Llm` instance and
+saying plainly that a green result does not mean the surface is clean. The ten settings are
+recorded in the baseline as a comment block and **staged for an owner wire-it-or-withdraw-it
+decision**, not deleted here.
+
+### Q.4 The gate ran nowhere
+
+The review's sharpest structural point: `grep -rn governance .github/workflows/` returned
+**nothing**. The kernel — and so `config-surface` — ran only when an agent typed the command.
+`ci.yml` ran the scanner's *unit test*, not the gate.
+
+That is exactly §L.1's "shipped but wired to nothing", reproduced by me in the branch that
+documents it. §N.1 had qualified the tier claim, but qualifying is not wiring.
+
+**Fix:** a CI step in `public-claims` that produces the declared input and runs the gate in gate
+mode. Verified by running that step verbatim from a cleaned `tmp/`, not by assuming it works.
+Scoped to this gate only — other kernel gates need inputs (knip, npm audit, a Gradle run) that
+this fast job does not build, which is a separate decision.
+
+### Q.5 Carried forward, not fixed
+
+- **Post-boot config rebuild.** `ConfigStoreRebuilder.rebuild(...)` replaces the global store at
+  runtime, but both newly wired values are captured once at composition, so a settings change
+  does not reach them until restart. Pre-existing for every other composition-time read and a
+  larger design question than this branch — recorded, not silently accepted.
+- **Body `topK` of 0 or negative** now falls back to the *configured* default rather than the
+  compiled 5. Defensible ("0 means unspecified") but untested.
+
+### Q.6 What this says about the work
+
+The gate's green was, in part, evidence of its own blind spots. That is worth stating plainly
+because it is the tempdoc's own thesis turned on its author: I built a mechanism to detect
+claims that outrun their enforcement, and it shipped making exactly that kind of claim — twice.
+The adversarial pass, not the test suite and not the gate, is what caught it.
+

@@ -72,7 +72,9 @@ public final class StreamingCitationMatcher implements StreamConsumer {
       DocumentService documents, Duration timeout, double threshold) {
     this.documents = Objects.requireNonNull(documents, "documents");
     this.timeout = Objects.requireNonNull(timeout, "timeout");
-    this.threshold = Math.max(0.01, Math.min(1.0, threshold));
+    // Tempdoc 799 Q: the ONE normaliser, shared with the agent path. A local clamp here is what
+    // let a configured 0 mean 0.01 on this path and 0.5 on the other.
+    this.threshold = DocumentService.effectiveCitationThreshold(threshold);
   }
 
   @Override

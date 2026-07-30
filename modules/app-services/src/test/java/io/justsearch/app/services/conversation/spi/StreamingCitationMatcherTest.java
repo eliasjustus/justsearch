@@ -1,6 +1,7 @@
 package io.justsearch.app.services.conversation.spi;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -282,7 +283,23 @@ final class StreamingCitationMatcherTest {
     var matcher = new StreamingCitationMatcher(docs, 9.0);
     var ctx = ctxWithCitations(List.of(citation("doc-1", 0, "the grass is green in the field")));
     matcher.onDone("The grass is green in the field.", ctx);
-    assertEquals(1.0, seen[0], 1e-9, "clamped to the [0.01,1.0] band the ctor documents");
+    // 799 §Q changed this deliberately. It previously asserted 1.0, encoding the local clamp
+    // `max(0.01, min(1.0, t))` — the very clamp that made a configured 0 mean 0.01 here and 0.5 on
+    // the agent path. Out-of-range now resolves to the shared default on BOTH paths.
+    assertEquals(DocumentService.DEFAULT_CITATION_SIMILARITY_THRESHOLD, seen[0], 1e-9);
+  }
+
+  @Test
+  @DisplayName("799 Q: a configured 0 resolves to the DEFAULT on this path, not the old 0.01 floor")
+  void configuredZeroResolvesToDefaultNotFloor() {
+    double[] seen = {-1.0};
+    var docs = thresholdCapturingDocs(seen);
+    var matcher = new StreamingCitationMatcher(docs, 0.0);
+    var ctx = ctxWithCitations(List.of(citation("doc-1", 0, "the grass is green in the field")));
+    matcher.onDone("The grass is green in the field.", ctx);
+    // Before the fix this observed 0.01 while the agent path observed 0.5 for the same setting.
+    assertEquals(DocumentService.DEFAULT_CITATION_SIMILARITY_THRESHOLD, seen[0], 1e-9);
+    assertNotEquals(0.01, seen[0], 1e-9, "the old local floor must not come back");
   }
 
   private static DocumentService thresholdCapturingDocs(double[] sink) {

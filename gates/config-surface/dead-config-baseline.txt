@@ -7,7 +7,6 @@
 # gate's job is to stop the list GROWING while those calls are made.
 component:simulatedLatencyMs
 key:justsearch.embed.dimension
-key:justsearch.fieldCatalog
 key:justsearch.path_resolution.retention_days
 key:search.facets.enabled
 key:search.hybrid.ann_k
@@ -16,3 +15,14 @@ key:search.hybrid.bm25_k
 key:search.rerank.enabled
 key:search.rerank.k
 key:search.rerank.reduced_k
+#
+# NOT LISTED, because the scanner cannot currently see them (tempdoc 799 §Q). ResolvedConfig.llm()
+# is never called in production, so the whole Llm record is unreachable and ~10 documented settings
+# behind it are false promises — justsearch.llm.{min_p,rng_seed,temperature,top_p,threads,
+# context_length,max_new_tokens,deadline_ms,model_sha256} plus simulatedLatencyMs (the only one
+# above, because its name is unique). Bare-name matching masks the rest. Surfaced for an owner
+# wire-it-or-withdraw-it decision rather than deleted here; see 799 §Q.
+#
+# REMOVED 2026-07-31: justsearch.fieldCatalog was never dead — it is read via
+# EnvRegistry.FIELD_CATALOG at JustSearchConfigurationLoader.java:116. It was a false positive
+# caused by the scanner excluding the entire configuration package from its reader corpus.
