@@ -95,11 +95,20 @@ public final class SpladeBackfillOps {
           }
 
           if (content == null || content.isBlank()) {
-            context.log().debug("SPLADE backfill: no content for {}, marking COMPLETED", docId);
-            Map<String, Object> updates = new HashMap<>();
-            updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
-            context.indexingCoordinator().updateDocument(docId, updates);
-            processed++;
+            // No content means no postings were produced. Marking COMPLETED here claims a splade
+            // field that will never exist — a data-less COMPLETED (the F-032 "status lies" class)
+            // that the reset-status RMW policy (tempdoc 711/717) sends straight back to PENDING,
+            // forever. Escalate through the retry-count seam instead, mirroring
+            // EmbeddingBackfillOps' handling of the identical condition.
+            context.log().warn("SPLADE backfill: content missing or blank for {}", docId);
+            markedFailed +=
+                handleSpladeFailure(
+                    context.documentFieldOps(),
+                    context.indexingCoordinator(),
+                    docId,
+                    "Content missing or blank",
+                    context.log());
+            failed++;
             continue;
           }
 
@@ -149,7 +158,7 @@ public final class SpladeBackfillOps {
             Map<String, Float> sparseVec = encoder.encode(batchContents.get(i));
             Map<String, Object> updates = new HashMap<>();
             updates.put(SchemaFields.SPLADE, sparseVec);
-            updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
+            updates.put(SchemaFields.SPLADE_STATUS, spladeStatusFor(sparseVec));
             updates.put(SchemaFields.SPLADE_RETRY_COUNT, "0");
             context.indexingCoordinator().updateDocument(batchDocIds.get(i), updates);
             processed++;
@@ -187,7 +196,7 @@ public final class SpladeBackfillOps {
       for (int i = 0; i < batchDocIds.size(); i++) {
         Map<String, Object> updates = new HashMap<>();
         updates.put(SchemaFields.SPLADE, sparseVecs.get(i));
-        updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
+        updates.put(SchemaFields.SPLADE_STATUS, spladeStatusFor(sparseVecs.get(i)));
         updates.put(SchemaFields.SPLADE_RETRY_COUNT, "0");
         batchUpdates.add(Map.entry(batchDocIds.get(i), updates));
       }
@@ -286,6 +295,30 @@ public final class SpladeBackfillOps {
       log.error("Failed to update SPLADE retry count for {}", docId, e);
       return 0;
     }
+  }
+
+  /**
+   * The terminal SPLADE status a successful encode earns: {@code COMPLETED} when the weights will
+   * actually materialise at least one posting, {@code COMPLETED_EMPTY} when they will not (null map,
+   * empty map, or no strictly-positive weight — {@code FieldMapper.addFields} emits a
+   * {@code FeatureField} only for {@code weight > 0}).
+   *
+   * <p>Shared by every SPLADE write site (this class, {@link BgeM3BackfillOps}, {@link
+   * CombinedEnrichmentBackfillOps}) so the "did the encode produce anything?" question is answered
+   * identically at all of them. Stamping COMPLETED here without postings is the data-less COMPLETED
+   * the write-time status/artifact contract rejects (tempdoc 798) and the RMW reset lane would
+   * otherwise heal back to PENDING forever.
+   */
+  static String spladeStatusFor(Map<String, Float> sparseVec) {
+    if (sparseVec == null) {
+      return SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY;
+    }
+    for (Float weight : sparseVec.values()) {
+      if (weight != null && weight > 0.0f) {
+        return SchemaFields.SPLADE_STATUS_COMPLETED;
+      }
+    }
+    return SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY;
   }
 
   /**

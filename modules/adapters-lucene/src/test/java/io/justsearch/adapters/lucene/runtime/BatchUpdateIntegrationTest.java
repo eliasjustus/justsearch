@@ -257,6 +257,7 @@ class BatchUpdateIntegrationTest {
                   SchemaFields.DOC_UID, "doc-0#0",
                   SchemaFields.PATH, "test/doc-0.txt",
                   SchemaFields.CONTENT, "content that has been SPLADE-encoded",
+                  SchemaFields.SPLADE, Map.of("alpha", 2.0f, "beta", 1.0f),
                   SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED,
                   SchemaFields.SPLADE_RETRY_COUNT, "3")));
       runtime.commitOps().commitAndTrack();
@@ -362,6 +363,7 @@ class BatchUpdateIntegrationTest {
                   SchemaFields.DOC_UID, "doc-0#0",
                   SchemaFields.PATH, "test/doc-0.txt",
                   SchemaFields.CONTENT, "content",
+                  SchemaFields.SPLADE, Map.of("alpha", 2.0f, "beta", 1.0f),
                   SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED)));
       runtime.commitOps().commitAndTrack();
       runtime.commitOps().maybeRefreshBlocking();
@@ -505,6 +507,7 @@ class BatchUpdateIntegrationTest {
                     SchemaFields.DOC_UID, "doc-" + i + "#0",
                     SchemaFields.PATH, "test/doc-" + i + ".txt",
                     SchemaFields.CONTENT, "content " + i,
+                    SchemaFields.SPLADE, Map.of("alpha", 2.0f, "beta", 1.0f),
                     SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED,
                     SchemaFields.SPLADE_RETRY_COUNT, "0")));
       }
