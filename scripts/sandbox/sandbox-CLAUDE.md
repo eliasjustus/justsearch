@@ -16,7 +16,8 @@ Five staged files govern this round. Read them before launching JustSearch:
    is the authority for *what to cover*; it cannot silently omit a newly-shipped
    surface. If a surface is on it and you cannot reach it, that is a finding.
 2. **`validation-mode.md`** — the model mode for this instance (`fresh-install`
-   vs `pre-staged-models` vs `upgrade-from-release`). Overrides any static
+   vs `pre-staged-models` vs `upgrade-from-release` vs
+   `in-app-update-from-release`). Overrides any static
    wording about host models.
    **Round-mode policy:** a release's FIRST round and its FINAL qualifying round
    MUST run `fresh-install` (the only mode that covers the real download path);
@@ -27,6 +28,11 @@ Five staged files govern this round. Read them before launching JustSearch:
    over it) — real users arrive from the previous version, not only from a clean
    machine, and the strongest defect repro this harness ever produced came from a
    non-fresh arrival state (tempdoc 734 A.1, round 2). Tempdoc 750 Part C.
+   For `in-app-update-from-release`, also follow
+   `updater-qualification.md`: the installed source is a previous-source
+   Sandbox build with the updater test gate, the target is served from the
+   authenticated loopback closed set, and `collect-updater-evidence.ps1`
+   captures the durable recovery oracle before interruption and after restart.
 3. **`charter.md`** — this round's pre-registration (SBTM's *charter*, adapted —
    see *Retrospective / debrief* below): what the round is FOR, each open
    blocker's needs-round vs. needs-dig classification, the chosen mode and why,
@@ -299,6 +305,16 @@ a CPU-generated baseline — it just is not finding 5's cause. Treat a sub-7 ove
 as a **finding to explain, not** noise to wave through; the check's report now
 carries typed reasons and per-leg attribution so the explanation can start
 host-side instead of costing another round.
+
+**Policy status (owner decision 2026-07-30, tempdoc 798 B7 / 750 option A4):** a
+sub-7 overlap is **DESCRIPTIVE — reported in full, but it does not block the
+round**. The floor was calibrated only on the same-machine dev-rebuild
+population; a dev to Sandbox comparison crosses a boundary that calibration never
+sampled, so a sub-floor overlap there is an uncalibrated measurement rather than a
+demonstrated ranking regression. The **blocking** assertion is the
+environment-robust one: golden #1 within the captured top-3. This is a demotion of
+what the number decides, not of what is measured or reported — explaining a
+sub-floor overlap is still expected of the round.
 
 ## Required validation phases
 

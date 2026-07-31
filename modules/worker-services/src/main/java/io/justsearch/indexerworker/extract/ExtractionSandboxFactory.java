@@ -78,9 +78,18 @@ public final class ExtractionSandboxFactory {
 
   public static TimeboxedContentExtractor inProcessStructured(
       ExtractionMetricCatalog catalog, OcrRoutingConfig ocrConfig, OcrMetricCatalog ocrMetricCatalog) {
+    return inProcessStructured(catalog, ocrConfig, ocrMetricCatalog, TikaExtractionPolicy.defaults());
+  }
+
+  /** As above, with an explicit policy (tempdoc 799 §N.2 — operator worker.limits.*). */
+  public static TimeboxedContentExtractor inProcessStructured(
+      ExtractionMetricCatalog catalog,
+      OcrRoutingConfig ocrConfig,
+      OcrMetricCatalog ocrMetricCatalog,
+      TikaExtractionPolicy policy) {
     return create(
         Mode.IN_PROCESS,
-        TikaExtractionPolicy.defaults(),
+        policy,
         ocrConfig,
         TimeboxedContentExtractor.DEFAULT_TIMEOUT,
         catalog,

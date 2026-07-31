@@ -109,9 +109,23 @@ public final class DiskEncryptionProbe {
     } catch (NumberFormatException e) {
       return AtRestProtection.unknown();
     }
+    return mapPkeyValue(value);
+  }
+
+  /**
+   * Maps a {@code System.Volume.BitLockerProtection} PKEY value to the domain state. Package-private
+   * so the mapping is testable without a Windows host or a subprocess.
+   *
+   * <p>PKEY 4 ({@code NotApplicable} — the volume cannot be encrypted by the OS at all) gets its own
+   * state rather than falling into {@code UNKNOWN}: both are "not on/off", but only PKEY 3 is
+   * genuinely indeterminate. Merging them made the status surface tell the user to elevate in a case
+   * where elevation cannot produce an answer.
+   */
+  static AtRestProtection mapPkeyValue(int value) {
     return switch (value) {
       case 1 -> new AtRestProtection(AtRestProtection.State.ENCRYPTED, SOURCE, AtRestProtection.Confidence.MEDIUM);
       case 2 -> new AtRestProtection(AtRestProtection.State.NOT_ENCRYPTED, SOURCE, AtRestProtection.Confidence.MEDIUM);
+      case 4 -> new AtRestProtection(AtRestProtection.State.NOT_APPLICABLE, SOURCE, AtRestProtection.Confidence.MEDIUM);
       case 5, 6 -> new AtRestProtection(AtRestProtection.State.ENCRYPTING, SOURCE, AtRestProtection.Confidence.MEDIUM);
       default -> new AtRestProtection(AtRestProtection.State.UNKNOWN, SOURCE, AtRestProtection.Confidence.LOW);
     };

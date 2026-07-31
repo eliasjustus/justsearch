@@ -7,6 +7,10 @@ import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.InstallPlanPreview;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
+import io.justsearch.app.api.OpCriticality;
+import io.justsearch.app.api.OpLeaseOutcome;
+import io.justsearch.app.api.OperationLeaseHandle;
+import io.justsearch.app.api.OperationLeaseService;
 import io.justsearch.app.services.runtimestate.RuntimeReconciler;
 import io.justsearch.app.services.runtimestate.RuntimeStatus;
 import io.justsearch.configuration.PlatformPaths;
@@ -93,6 +97,25 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
   private final Object lock = new Object();
   private final AtomicBoolean running = new AtomicBoolean(false);
+
+  /**
+   * Op-lease SPI (tempdoc 617). This is the primary model-acquisition path: it downloads and moves
+   * roughly 9 GB into AI Home on a virtual thread that outlives its HTTP request, so the
+   * request-scoped mutation lease in {@code ApiSecurityFilters} is long released while
+   * {@code DownloadExecutor.moveAtomicBestEffort} is still promoting partial files into place.
+   * Without a lease, upgrade prepare reports no blocker and the installer can launch mid-download —
+   * the exact outcome D2's "an update never touches models" invariant exists to prevent. Defaults
+   * to no-op so existing constructors and tests are unaffected.
+   */
+  private volatile OperationLeaseService operationLeases = OperationLeaseService.noOp();
+
+  /**
+   * Late-binds the op-lease SPI. Set by {@code ServicePhase}, which creates the lease service after
+   * this service is constructed.
+   */
+  public void setOperationLeaseService(OperationLeaseService leases) {
+    this.operationLeases = leases == null ? OperationLeaseService.noOp() : leases;
+  }
   private final AtomicBoolean cancelFlag = new AtomicBoolean(false);
   private final AiInstallStatus status = new AiInstallStatus();
   private volatile DownloadExecutor downloadExecutor;
@@ -367,16 +390,41 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           409, ApiErrorCode.INSTALL_ALREADY_RUNNING, "AI install is already running.");
     }
     cancelFlag.set(false);
-    Thread.ofVirtual()
-        .name("ai-install-v2")
-        .start(
-            () -> {
-              try {
-                runInstallInternal();
-              } finally {
-                running.set(false);
-              }
-            });
+    // Registered on the CALLING thread, before the virtual thread starts: registering inside it
+    // leaves a window where upgrade prepare sees no blocker while the download is about to begin.
+    // Same race-window closure as BulkReindexHandler.
+    OperationLeaseHandle lease =
+        operationLeases.register(
+            "ai.model-install",
+            OpCriticality.INTERRUPTIBLE_WITH_LOSS,
+            7200L,
+            Map.of("source", "ai.model-install"),
+            // Cancellation callback: upgrade prepare drains every active lease, so without this a
+            // consented update would sit behind a multi-hour download instead of asking it to
+            // stop. Safe to honour because a cancelled download resumes from its .partial rather
+            // than restarting (tempdoc 798). The lease still blocks until this actually returns —
+            // the request is an ask, not a release.
+            this::cancel);
+    try {
+      Thread.ofVirtual()
+          .name("ai-install-v2")
+          .start(
+              () -> {
+                boolean ok = false;
+                try {
+                  runInstallInternal();
+                  ok = true;
+                } finally {
+                  running.set(false);
+                  lease.release(ok ? OpLeaseOutcome.SUCCESS : OpLeaseOutcome.FAILURE);
+                }
+              });
+    } catch (RuntimeException e) {
+      // The thread never ran, so its finally block will not release the lease.
+      running.set(false);
+      lease.release(OpLeaseOutcome.FAILURE);
+      throw e;
+    }
   }
 
   public void cancel() {
@@ -484,12 +532,6 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       Path partialFile = targetFile.resolveSibling(targetFile.getFileName() + ".partial");
       try {
         Files.createDirectories(targetFile.getParent());
-        Files.deleteIfExists(partialFile);
-        // Tempdoc 374 sandbox round 4 issue G: BITS leaves BIT*.tmp scratch
-        // files when its download fails. The .partial cleanup above only
-        // catches our own naming; orphaned BITS tmps would otherwise
-        // accumulate across retries (~hundreds of MB on slow connections).
-        cleanupBitsTmpFiles(targetFile.getParent());
       } catch (IOException e) {
         failPackage(dl.packageId(), "Failed to prepare download directory: " + e.getMessage());
         continue;
@@ -497,10 +539,15 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
       final long progressBase = downloadedSoFar;
       final long packageBaseBytes = packageCompletedBytes.getOrDefault(dl.packageId(), 0L);
-      boolean downloaded =
-          downloadExecutor.download(
-              dl.url(),
-              partialFile,
+      // A cancelled multi-GB install used to delete its .partial here and start over from zero.
+      // ResumableFetch decides instead whether the bytes on disk provably belong to THIS download
+      // (sidecar identity) and resumes them — always followed by the same SHA-256 verification a
+      // fresh download gets, with a discard-and-restart-once on mismatch.
+      ResumableFetch.Outcome outcome =
+          ResumableFetch.fetch(
+              new ResumableFetch.Request(
+                  partialFile, dl.url(), dl.sizeBytes(), dl.sha256(), dl.targetPath()),
+              downloadExecutor,
               (bytes, total) -> {
                 synchronized (lock) {
                   status.downloadedBytes = progressBase + bytes;
@@ -510,23 +557,27 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
                   updatePackageProgress(dl.packageId(), packageBaseBytes + bytes, 0);
                   touch();
                 }
-              });
+              },
+              cancelFlag::get,
+              // Tempdoc 374 sandbox round 4 issue G: BITS leaves BIT*.tmp scratch files when its
+              // download fails; they would otherwise accumulate across retries. Only on a fresh
+              // start — a suspended BITS job we are about to resume still owns its scratch file.
+              () -> cleanupBitsTmpFiles(targetFile.getParent()),
+              () -> updatePackageState(dl.packageId(), "verifying"));
 
-      if (!downloaded) {
-        if (cancelFlag.get()) {
+      // Project the resume verdict onto the package so the UI can say the earlier progress was
+      // kept. Sticky across a multi-file package: one resumed file makes the package resumed.
+      if (outcome.firstAction() == DownloadResume.Action.RESUME_RANGE
+          || outcome.firstAction() == DownloadResume.Action.RESUME_BITS) {
+        markPackageResumed(dl.packageId());
+      }
+
+      if (!outcome.ok()) {
+        if (outcome.cancelled() || cancelFlag.get()) {
           cancelled();
           return;
         }
-        failPackage(dl.packageId(), "Download failed for " + dl.targetPath());
-        continue;
-      }
-
-      // Verify
-      updatePackageState(dl.packageId(), "verifying");
-      try {
-        DownloadExecutor.verify(partialFile, dl.sizeBytes(), dl.sha256());
-      } catch (Exception e) {
-        failPackage(dl.packageId(), "Verification failed: " + e.getMessage());
+        failPackage(dl.packageId(), outcome.error());
         continue;
       }
 
@@ -1233,6 +1284,17 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           return;
         }
         ps.state = state;
+      }
+      touch();
+    }
+  }
+
+  /** Records that this package continued an earlier run's bytes instead of restarting from zero. */
+  private void markPackageResumed(String packageId) {
+    synchronized (lock) {
+      var ps = findPackageStatus(packageId);
+      if (ps != null) {
+        ps.resumed = true;
       }
       touch();
     }

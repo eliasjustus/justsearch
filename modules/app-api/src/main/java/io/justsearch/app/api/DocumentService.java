@@ -31,6 +31,31 @@ public interface DocumentService {
   double DEFAULT_CITATION_SIMILARITY_THRESHOLD = 0.5;
 
   /**
+   * Normalises a configured citation cutoff to its effective value — the ONE place that decides
+   * what an out-of-range setting means.
+   *
+   * <p>Tempdoc 799 §Q: when {@code justsearch.citation.match_threshold} was wired, each matcher
+   * clamped it locally and the two clamps disagreed — the RAG path floored at {@code 0.01} while
+   * the agent path fell back to the default. A configured {@code 0} therefore produced an
+   * effective {@code 0.01} on one path and {@code 0.5} on the other: a WIDER divergence than the
+   * 0.45/0.5 drift §15.A above was written to remove, reintroduced by the change that claimed to
+   * make divergence impossible. Sharing the constant was not enough — the interpretation of
+   * out-of-range values has to be shared too.
+   *
+   * <p>Out-of-range resolves to the default rather than to a silent floor: a nonsensical cutoff
+   * should behave like "unset", not like "cite almost everything".
+   *
+   * @param configured the raw configured value
+   * @return {@code configured} when in {@code (0,1]}, otherwise
+   *     {@link #DEFAULT_CITATION_SIMILARITY_THRESHOLD}
+   */
+  static double effectiveCitationThreshold(double configured) {
+    return configured > 0.0 && configured <= 1.0
+        ? configured
+        : DEFAULT_CITATION_SIMILARITY_THRESHOLD;
+  }
+
+  /**
    * Fetch the full document content for the supplied identifier.
    *
    * @param docId canonical document identifier

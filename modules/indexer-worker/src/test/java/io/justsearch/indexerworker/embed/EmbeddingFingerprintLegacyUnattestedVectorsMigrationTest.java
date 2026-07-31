@@ -49,6 +49,14 @@ class EmbeddingFingerprintLegacyUnattestedVectorsMigrationTest {
   private static final String FP = "unattested-migration-embed-fp-sha256";
   private static final String SPLADE_FP = "unattested-migration-splade-fp-sha256";
   private static final CommitMetadataValidator PERMISSIVE = metadata -> {};
+
+  /**
+   * A dense vector to accompany every {@code embedding_status=COMPLETED} write. The write-time
+   * contract (tempdoc 798) rejects a COMPLETED that carries no vector, and the "unattested vectors"
+   * this test probes are real vectors with unknowable provenance — not absent ones.
+   */
+  private static final float[] VEC = vec();
+
   private static final org.slf4j.Logger LOG =
       LoggerFactory.getLogger(EmbeddingFingerprintLegacyUnattestedVectorsMigrationTest.class);
 
@@ -82,6 +90,8 @@ class EmbeddingFingerprintLegacyUnattestedVectorsMigrationTest {
                       "d1",
                       SchemaFields.DOC_UID,
                       "d1#0",
+                      SchemaFields.VECTOR,
+                      VEC,
                       SchemaFields.EMBEDDING_STATUS,
                       SchemaFields.EMBEDDING_STATUS_COMPLETED)));
       r1.commitOps().commitAndTrack();
@@ -217,6 +227,8 @@ class EmbeddingFingerprintLegacyUnattestedVectorsMigrationTest {
                       "d1",
                       SchemaFields.DOC_UID,
                       "d1#0",
+                      SchemaFields.VECTOR,
+                      VEC,
                       SchemaFields.EMBEDDING_STATUS,
                       SchemaFields.EMBEDDING_STATUS_COMPLETED)));
       r1.commitOps().commitAndTrack();
@@ -305,6 +317,12 @@ class EmbeddingFingerprintLegacyUnattestedVectorsMigrationTest {
     }
   }
 
+  private static float[] vec() {
+    float[] v = new float[768];
+    java.util.Arrays.fill(v, 0.05f);
+    return v;
+  }
+
   private static io.justsearch.adapters.lucene.runtime.RunningRuntime openRuntime(
       Path dir, Supplier<CommitMetadataSource> commitMetadata) {
     return io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
@@ -329,7 +347,10 @@ class EmbeddingFingerprintLegacyUnattestedVectorsMigrationTest {
     for (String id : pending) {
       updates.add(
           Map.entry(
-              id, Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED)));
+              id,
+              Map.of(
+                  SchemaFields.VECTOR, VEC,
+                  SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED)));
     }
     r.indexingCoordinator().updateDocumentsBatch(updates);
   }

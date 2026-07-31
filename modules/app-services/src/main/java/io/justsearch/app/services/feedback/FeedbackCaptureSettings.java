@@ -1,33 +1,35 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.feedback;
 
-import java.nio.charset.StandardCharsets;
+import io.justsearch.configuration.persistence.AtomicFileWrites;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.StoreFormatVersions;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Tempdoc 778 — the default-on local flag governing implicit-feedback capture (the 580 §17
- * disposition stream). Loopback-privacy is the product's story AND the constraint: nothing captured
- * ever leaves the machine, and the user can turn even local capture off.
+ * The local-only implicit-feedback preference.
  *
- * <p>Persisted as a one-key preference file {@code <dataDir>/feedback-capture.json} — a SIBLING of the
- * AUTHORED {@code feedback/} data dir, not inside it (a preference, not captured data). Default ON: a
- * missing/blank/unreadable file reads as enabled, so day-one usage is captured without a setup step.
- * The value is cached after first read; {@link #setEnabled} updates cache + file together.
+ * <p>A missing file defaults on. A present but unreadable or future-version file fails closed:
+ * capture is disabled and writes are locked so the user's prior privacy choice cannot be silently
+ * overwritten.
  */
 public final class FeedbackCaptureSettings {
-
   private static final Logger log = LoggerFactory.getLogger(FeedbackCaptureSettings.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
   private static final TypeReference<Map<String, Object>> MAP_REF = new TypeReference<>() {};
   private static final String FILE = "feedback-capture.json";
+  static final int CURRENT_SCHEMA_VERSION = 1;
 
-  /** The visible privacy note rendered in the settings surface (§B work item 1). */
   public static final String PRIVACY_NOTE =
       "Feedback capture is local-only. Your clicks, opens, and dwell time on search results and chat"
           + " citations are recorded on this machine to improve ranking over time. Nothing is ever"
@@ -35,48 +37,100 @@ public final class FeedbackCaptureSettings {
 
   private final Path file;
   private volatile Boolean cached;
+  private volatile String persistenceError;
+  private volatile boolean writeLocked;
 
   public FeedbackCaptureSettings(Path dataDir) {
     this.file = dataDir.resolve(FILE);
   }
 
-  /** True unless the user explicitly turned capture off. Default-on (§C acceptance). */
+  /** True unless the user turned capture off; corrupt persisted state returns false. */
   public boolean isEnabled() {
-    Boolean c = cached;
-    if (c != null) {
-      return c;
-    }
-    boolean value = readEnabled();
+    Boolean value = cached;
+    if (value != null) return value;
+    value = readEnabled();
     cached = value;
     return value;
   }
 
-  /** Persist the flag (cache + file). Best-effort — a write failure leaves the cache authoritative. */
+  /** Persist atomically. Corrupt or future state must be repaired before it can be replaced. */
   public synchronized void setEnabled(boolean enabled) {
-    cached = enabled;
+    isEnabled();
+    if (writeLocked) {
+      throw new CorruptDurableStoreException(
+          "feedback-capture-preference",
+          "writes are locked because the existing preference is unreadable: " + persistenceError);
+    }
     try {
-      Files.createDirectories(file.getParent());
-      Files.writeString(
-          file, MAPPER.writeValueAsString(Map.of("enabled", enabled)), StandardCharsets.UTF_8);
-    } catch (Exception e) {
-      log.warn("Failed to persist feedback-capture flag: {}", e.toString());
+      AtomicFileWrites.replaceUtf8(
+          file,
+          MAPPER.writeValueAsString(
+              Map.of("schemaVersion", CURRENT_SCHEMA_VERSION, "enabled", enabled)));
+      cached = enabled;
+    } catch (IOException e) {
+      throw new UncheckedIOException(
+          "Failed to persist feedback-capture preference to " + file, e);
     }
   }
 
+  public boolean isWriteLocked() {
+    isEnabled();
+    return writeLocked;
+  }
+
+  public Optional<String> persistenceError() {
+    isEnabled();
+    return Optional.ofNullable(persistenceError);
+  }
+
   private boolean readEnabled() {
-    if (!Files.exists(file)) {
-      return true; // default-on
-    }
+    if (!Files.exists(file)) return true;
     try {
-      String raw = Files.readString(file, StandardCharsets.UTF_8);
+      String raw = Files.readString(file);
       if (raw.isBlank()) {
-        return true;
+        throw new CorruptDurableStoreException(
+            "feedback-capture-preference", "preference file is blank");
       }
-      Object enabled = MAPPER.readValue(raw, MAP_REF).get("enabled");
-      return !(enabled instanceof Boolean b) || b; // any non-false value → on
+      Map<String, Object> state = MAPPER.readValue(raw, MAP_REF);
+      Object versionValue = state.get("schemaVersion");
+      Integer observedVersion =
+          versionValue == null
+              ? null
+              : versionValue instanceof Number number
+                  ? number.intValue()
+                  : throwCorruptVersion(versionValue);
+      StoreFormatVersions.requireReadable(
+          "feedback-capture-preference",
+          observedVersion,
+          CURRENT_SCHEMA_VERSION,
+          0,
+          0);
+      Object enabled = state.get("enabled");
+      if (!(enabled instanceof Boolean value)) {
+        throw new CorruptDurableStoreException(
+            "feedback-capture-preference", "enabled must be a boolean");
+      }
+      return value;
+    } catch (CorruptDurableStoreException | UnsupportedStoreVersionException e) {
+      lockOnReadFailure(e);
+      return false;
     } catch (Exception e) {
-      log.warn("Failed to read feedback-capture flag ({}); defaulting on", e.toString());
-      return true;
+      CorruptDurableStoreException corrupt =
+          new CorruptDurableStoreException(
+              "feedback-capture-preference", "cannot parse " + file, e);
+      lockOnReadFailure(corrupt);
+      return false;
     }
+  }
+
+  private void lockOnReadFailure(RuntimeException error) {
+    persistenceError = error.getMessage();
+    writeLocked = true;
+    log.warn("Feedback capture disabled and preference writes locked: {}", persistenceError);
+  }
+
+  private static int throwCorruptVersion(Object value) {
+    throw new CorruptDurableStoreException(
+        "feedback-capture-preference", "schemaVersion must be an integer, got " + value);
   }
 }

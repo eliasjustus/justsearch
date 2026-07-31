@@ -140,6 +140,20 @@
         "does_not_measure": { "type": "string" }
       }
     },
-    "notes": { "type": "object" }
+    "notes": { "type": "object" },
+    "sources": {
+      "type": "array",
+      "description": "Artifact provenance (tempdoc 802): which eval runs this release was projected from, one entry per member in compose order. `cohort` records the CONFIG a release was measured under (git sha, hashes, hardware, model fingerprints); this records the ARTIFACTS, so the published numbers can be re-scored or re-derived later. Absent on releases composed before 802 — `715-rebaseline-2026-07-16` is the case that motivated it: its run dirs were cleaned up and its numbers became impossible to reproduce.",
+      "items": {
+        "type": "object",
+        "required": ["dataset", "summary_sha256"],
+        "additionalProperties": true,
+        "properties": {
+          "dataset": { "type": ["string", "null"], "description": "Canonical dataset slug of the contributing run." },
+          "run_dir": { "type": ["string", "null"], "description": "Repo-relative run directory when resolvable, else absolute. Best-effort pointer, not an identity — paths rot." },
+          "summary_sha256": { "type": ["string", "null"], "description": "sha256 over the run's summary.json bytes — the identity that survives the directory being deleted." }
+        }
+      }
+    }
   }
 }

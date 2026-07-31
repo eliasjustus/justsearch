@@ -4,7 +4,11 @@ package io.justsearch.agent;
 import io.justsearch.agent.api.encryption.StoreCipher;
 import io.justsearch.agent.api.memory.MemoryRecord;
 import io.justsearch.agent.api.memory.MemoryStore;
+import io.justsearch.configuration.persistence.AtomicFileWrites;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.StoreFormatVersions;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,9 +18,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -27,9 +30,9 @@ import tools.jackson.databind.ObjectMapper;
  */
 public final class FileMemoryStore implements MemoryStore {
 
-  private static final Logger LOG = LoggerFactory.getLogger(FileMemoryStore.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
   private static final TypeReference<List<Map<String, Object>>> LIST_REF = new TypeReference<>() {};
+  static final int CURRENT_SCHEMA_VERSION = 1;
 
   private final Path file;
   private final StoreCipher cipher;
@@ -104,14 +107,37 @@ public final class FileMemoryStore implements MemoryStore {
       return;
     }
     try {
-      List<Map<String, Object>> rows =
-          MAPPER.readValue(cipher.open(Files.readString(file, StandardCharsets.UTF_8)), LIST_REF);
+      String plaintext = cipher.open(Files.readString(file, StandardCharsets.UTF_8));
+      JsonNode root = MAPPER.readTree(plaintext);
+      if (root == null || (!root.isArray() && !root.isObject())) {
+        throw new CorruptDurableStoreException(
+            "memories", "expected a legacy array or versioned object");
+      }
+      List<Map<String, Object>> rows;
+      if (root.isArray()) {
+        rows = MAPPER.readValue(root.toString(), LIST_REF);
+      } else {
+        JsonNode versionNode = root.get("schemaVersion");
+        if (versionNode == null || !versionNode.isIntegralNumber()) {
+          throw new CorruptDurableStoreException("memories", "schemaVersion must be an integer");
+        }
+        StoreFormatVersions.requireReadable(
+            "memories", versionNode.asInt(), CURRENT_SCHEMA_VERSION, 0, 0);
+        MemoryEnvelope envelope = MAPPER.treeToValue(root, MemoryEnvelope.class);
+        rows = envelope.memories();
+      }
+      if (rows == null) {
+        throw new CorruptDurableStoreException("memories", "memories payload is missing");
+      }
       for (Map<String, Object> r : rows) {
         MemoryRecord rec = fromMap(r);
         byId.put(rec.id(), rec);
       }
+    } catch (CorruptDurableStoreException
+        | io.justsearch.configuration.persistence.UnsupportedStoreVersionException e) {
+      throw e;
     } catch (Exception e) {
-      LOG.warn("Failed to load memory from {}", file, e);
+      throw new CorruptDurableStoreException("memories", "cannot parse " + file, e);
     }
   }
 
@@ -122,19 +148,22 @@ public final class FileMemoryStore implements MemoryStore {
       throw new io.justsearch.agent.api.encryption.KeyLockedException();
     }
     try {
-      Files.createDirectories(file.getParent());
       List<Map<String, Object>> rows = new ArrayList<>(byId.size());
       for (MemoryRecord r : byId.values()) {
         rows.add(toMap(r));
       }
-      Files.writeString(
+      AtomicFileWrites.replaceUtf8(
           file,
-          cipher.seal(MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(rows)),
-          StandardCharsets.UTF_8);
+          cipher.seal(
+              MAPPER
+                  .writerWithDefaultPrettyPrinter()
+                  .writeValueAsString(new MemoryEnvelope(CURRENT_SCHEMA_VERSION, rows))));
     } catch (IOException e) {
-      LOG.warn("Failed to persist memory to {}", file, e);
+      throw new UncheckedIOException("Failed to persist memories to " + file, e);
     }
   }
+
+  private record MemoryEnvelope(int schemaVersion, List<Map<String, Object>> memories) {}
 
   private static Map<String, Object> toMap(MemoryRecord r) {
     Map<String, Object> m = new LinkedHashMap<>();

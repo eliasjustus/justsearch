@@ -43,6 +43,8 @@ import io.justsearch.ipc.UpdatePathsRequest;
 import io.justsearch.ipc.UpdatePathsResponse;
 import io.justsearch.ipc.UpdateVduResultRequest;
 import io.justsearch.ipc.UpdateVduResultResponse;
+import io.justsearch.ipc.UpgradeQuiescenceRequest;
+import io.justsearch.ipc.UpgradeQuiescenceResponse;
 import java.util.Objects;
 
 /**
@@ -157,6 +159,24 @@ public final class DelegatingIngestService extends IngestServiceGrpc.IngestServi
   @Override
   public void runIndexGc(IndexGcRequest req, StreamObserver<IndexGcResponse> obs) {
     delegate.runIndexGc(req, obs);
+  }
+
+  @Override
+  public void prepareUpgrade(
+      UpgradeQuiescenceRequest req, StreamObserver<UpgradeQuiescenceResponse> obs) {
+    delegate.prepareUpgrade(req, obs);
+  }
+
+  @Override
+  public void upgradeStatus(
+      UpgradeQuiescenceRequest req, StreamObserver<UpgradeQuiescenceResponse> obs) {
+    delegate.upgradeStatus(req, obs);
+  }
+
+  @Override
+  public void cancelUpgrade(
+      UpgradeQuiescenceRequest req, StreamObserver<UpgradeQuiescenceResponse> obs) {
+    delegate.cancelUpgrade(req, obs);
   }
 
   @Override

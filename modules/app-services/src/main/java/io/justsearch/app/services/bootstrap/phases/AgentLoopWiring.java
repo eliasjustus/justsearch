@@ -98,7 +98,17 @@ public final class AgentLoopWiring {
     // Tempdoc 561 P-D1: the pending-approval event carries the backend gate verdict.
     agentHolder[0].setIntentPreviewer(intentPreviewer);
     // Tempdoc 565 §3.A: the terminal answer carries verifiable local-passage citations.
-    agentHolder[0].setCitationDocumentService(citationDocumentService);
+    // Tempdoc 799 §N.2: the cutoff comes from justsearch.citation.match_threshold. This MUST read
+    // the same key as ConversationApiAssembly's StreamingCitationMatcher — 565 §15.A unified the
+    // agent and RAG cutoffs precisely because a divergent local value was a defect.
+    io.justsearch.configuration.resolved.ConfigStore citationConfigStore =
+        io.justsearch.configuration.resolved.ConfigStore.globalOrNull();
+    if (citationConfigStore == null || citationConfigStore.get() == null) {
+      agentHolder[0].setCitationDocumentService(citationDocumentService);
+    } else {
+      agentHolder[0].setCitationDocumentService(
+          citationDocumentService, citationConfigStore.get().rag().citationMatchThreshold());
+    }
     return agentHolder[0];
   }
 }

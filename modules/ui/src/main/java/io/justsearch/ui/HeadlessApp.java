@@ -143,8 +143,9 @@ public class HeadlessApp {
 
     // Phase F: VRAM-tier auto-populate gpu_layers when GPU should be used.
     if (shouldUseGpu(augmented)) {
-      boolean alreadySet = EnvRegistry.GPU_LAYERS.get().isPresent()
-          || EnvRegistry.LLM_GPU_LAYERS.get().isPresent();
+      // LLM_GPU_LAYERS was a dead duplicate of GPU_LAYERS (resolved, documented, read by
+      // nothing) — removed in tempdoc 799 §N.2, so only the live key is consulted here.
+      boolean alreadySet = EnvRegistry.GPU_LAYERS.get().isPresent();
       if (!alreadySet) {
         long vramBytes = -1;
         try {
@@ -157,7 +158,8 @@ public class HeadlessApp {
           String layers = "99";
           augmented.put("justsearch.gpu.layers", layers);
           SystemPropertyUtils.setSysPropIfBlank("justsearch.gpu.layers", layers);
-          SystemPropertyUtils.setSysPropIfBlank("justsearch.llm.gpu_layers", layers);
+          // justsearch.llm.gpu_layers was a dead duplicate of the key above — resolved,
+          // documented, and read by nothing. Removed in tempdoc 799 §N.2.
           log.info(
               "VRAM auto-populate: gpu.layers={} (vramBytes={}, threshold={})",
               layers,
@@ -339,7 +341,8 @@ public class HeadlessApp {
       InfraPhaseResult infraPhase,
       io.justsearch.app.services.settings.UiSettingsStore settingsStore,
       RuntimeManifestPublisher manifestPublisher,
-      io.justsearch.app.services.lifecycle.WorkerCapability sharedWorkerCapability)
+      io.justsearch.app.services.lifecycle.WorkerCapability sharedWorkerCapability,
+      io.justsearch.ui.api.UpgradeShutdownBridge upgradeShutdownBridge)
       throws Exception {
     Telemetry telemetry = infraPhase.telemetry();
     ResolvedConfig resolvedConfig = infraPhase.config().resolvedConfig();
@@ -376,6 +379,12 @@ public class HeadlessApp {
             .gplEvalSnapshotSupplier(headInfra.gplEvalSnapshotSupplier())
             .HeadAssembly(bootstrap)
             .runtimeManifestPublisher(manifestPublisher)
+            .upgradeShutdownAction(upgradeShutdownBridge)
+            .upgradeReconciliation(
+                resolvedConfig.paths().dataDir(),
+                () -> EnvRegistry.APP_VERSION.get().orElse(""),
+                () -> true,
+                null)
             .build();
     int port = apiServer.getPort();
 
@@ -608,6 +617,8 @@ public class HeadlessApp {
     RuntimeManifestPublisher manifestPublisher = null;
     AppInstanceLock appInstanceLock = null;
     CountDownLatch latch = new CountDownLatch(1);
+    io.justsearch.ui.api.UpgradeShutdownBridge upgradeShutdownBridge =
+        new io.justsearch.ui.api.UpgradeShutdownBridge();
 
     try {
       // Phase 0: resolve config (tempdoc 502 §3.3)
@@ -667,7 +678,12 @@ public class HeadlessApp {
 
       // Phase 2: Build API server (degraded mode — no Worker yet)
       ApiPhaseResult apiPhase =
-          buildApi(infraPhase, settingsStore, manifestPublisher, sharedWorkerCapability);
+          buildApi(
+              infraPhase,
+              settingsStore,
+              manifestPublisher,
+              sharedWorkerCapability,
+              upgradeShutdownBridge);
       bootstrap = apiPhase.bootstrap();
       apiServer = apiPhase.apiServer();
 
@@ -743,78 +759,28 @@ public class HeadlessApp {
       final KnowledgeServerHealthMonitor knowledgeServerHealthMonitorRef = workerResult.healthMonitor();
       final RuntimeManifestPublisher manifestPublisherRef = manifestPublisher;
       final AppInstanceLock appInstanceLockRef = appInstanceLock;
+      final HeadShutdownCoordinator shutdownCoordinator =
+          new HeadShutdownCoordinator(
+              configPhase.dataDir(),
+              () ->
+                  performOrderedShutdown(
+                      apiServerRef,
+                      bootstrapRef,
+                      knowledgeServerHealthMonitorRef,
+                      knowledgeServerRef,
+                      manifestPublisherRef,
+                      infraPhase.tracingBootstrap(),
+                      telemetryRef,
+                      appInstanceLockRef),
+              System::exit);
+      upgradeShutdownBridge.install(shutdownCoordinator);
 
       Runtime.getRuntime()
           .addShutdownHook(
               new Thread(
                   () -> {
                     log.info("Shutting down HeadlessApp...");
-                    // Tempdoc 501 §3.4: remove the manifest before tearing down the HTTP
-                    // server so a consumer that reads-and-finds-no-file is correctly informed
-                    // the producer has cleanly torn down.
-                    try {
-                      if (manifestPublisherRef != null) {
-                        manifestPublisherRef.close();
-                      }
-                    } catch (Exception e) {
-                      log.warn("Error closing RuntimeManifestPublisher", e);
-                    }
-                    try {
-                      if (apiServerRef != null) {
-                        apiServerRef.stop();
-                      }
-                    } catch (Exception e) {
-                      log.warn("Error stopping LocalApiServer", e);
-                    }
-                    // Stop the health monitor BEFORE closing the bootstrap so an in-flight
-                    // tick can't observe a half-closed worker.
-                    try {
-                      if (knowledgeServerHealthMonitorRef != null) {
-                        knowledgeServerHealthMonitorRef.close();
-                      }
-                    } catch (Exception e) {
-                      log.warn("Error closing KnowledgeServerHealthMonitor", e);
-                    }
-                    try {
-                      if (bootstrapRef != null) {
-                        bootstrapRef.close();
-                      }
-                    } catch (Exception e) {
-                      log.warn("Error closing HeadAssembly", e);
-                    }
-                    try {
-                      if (knowledgeServerRef != null) {
-                        knowledgeServerRef.close();
-                      }
-                    } catch (Exception e) {
-                      log.warn("Error closing KnowledgeServer", e);
-                    }
-                    try {
-                      // Tempdoc 518 Appendix G W4.2 — close head-side TracingBootstrap
-                      // before telemetry so any final spans flush through the exporter
-                      // before the underlying NDJSON file handle closes.
-                      if (infraPhase.tracingBootstrap() != null) {
-                        infraPhase.tracingBootstrap().close();
-                      }
-                    } catch (Exception e) {
-                      log.warn("Error closing head TracingBootstrap", e);
-                    }
-                    try {
-                      if (telemetryRef != null) {
-                        telemetryRef.close();
-                      }
-                    } catch (Exception e) {
-                      log.warn("Error closing telemetry", e);
-                    }
-                    // Tempdoc 501 Phase 3: release AppInstanceLock LAST so any subsystem
-                    // that touches the dataDir during shutdown still sees the lock held.
-                    try {
-                      if (appInstanceLockRef != null) {
-                        appInstanceLockRef.close();
-                      }
-                    } catch (Exception e) {
-                      log.warn("Error releasing AppInstanceLock", e);
-                    }
+                    shutdownCoordinator.shutdownNormally();
                     latch.countDown();
                   },
                   "justsearch-headless-shutdown"));
@@ -880,6 +846,67 @@ public class HeadlessApp {
   }
 
   private record KnowledgeServerStartResult(KnowledgeServerBootstrap bootstrap, String startError) {}
+
+  private static HeadShutdownCoordinator.ShutdownResult performOrderedShutdown(
+      LocalApiServer apiServer,
+      HeadAssembly bootstrap,
+      KnowledgeServerHealthMonitor healthMonitor,
+      KnowledgeServerBootstrap knowledgeServer,
+      RuntimeManifestPublisher manifestPublisher,
+      io.justsearch.telemetry.TracingBootstrap tracing,
+      Telemetry telemetry,
+      AppInstanceLock appInstanceLock) {
+    java.util.List<String> errors = new java.util.ArrayList<>();
+    String workerOutcome = "GRACEFUL";
+    try {
+      if (manifestPublisher != null) manifestPublisher.close();
+    } catch (Exception e) {
+      errors.add("runtime-manifest");
+    }
+    try {
+      if (apiServer != null) apiServer.stop();
+    } catch (Exception e) {
+      errors.add("local-api");
+    }
+    try {
+      if (healthMonitor != null) healthMonitor.close();
+    } catch (Exception e) {
+      errors.add("worker-health-monitor");
+    }
+    try {
+      if (bootstrap != null) bootstrap.close();
+    } catch (Exception e) {
+      errors.add("head-assembly");
+    }
+    try {
+      if (knowledgeServer != null) {
+        workerOutcome = knowledgeServer.closeForUpgrade().name();
+        if (!"GRACEFUL".equals(workerOutcome)) {
+          errors.add("worker-" + workerOutcome.toLowerCase(java.util.Locale.ROOT));
+        }
+      }
+    } catch (Exception e) {
+      workerOutcome = "FAILED";
+      errors.add("worker");
+    }
+    try {
+      if (tracing != null) tracing.close();
+    } catch (Exception e) {
+      errors.add("tracing");
+    }
+    try {
+      if (telemetry != null) telemetry.close();
+    } catch (Exception e) {
+      errors.add("telemetry");
+    }
+    try {
+      if (appInstanceLock != null) appInstanceLock.close();
+    } catch (Exception e) {
+      errors.add("app-instance-lock");
+    }
+    return new HeadShutdownCoordinator.ShutdownResult(
+        errors.isEmpty(), workerOutcome, errors);
+  }
 
   private static KnowledgeServerStartResult tryStartKnowledgeServer(
       io.justsearch.app.services.lifecycle.WorkerCapability sharedWorkerCapability) {

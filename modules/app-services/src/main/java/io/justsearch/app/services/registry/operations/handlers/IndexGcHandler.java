@@ -92,8 +92,7 @@ public final class IndexGcHandler implements OperationHandler {
       return OperationResult.failure("Indexing service unavailable");
     }
     // Tempdoc 542 Phase 3: index-gc is MUST_COMPLETE — file deletions are irreversible.
-    // Fire-and-forget RPC: register the lease and let it expire naturally after the Worker
-    // completes (300s typical bound, capped by impl at 1 hour).
+    // The Worker RPC performs the deletion synchronously.
     OperationLeaseHandle handle = leaseService.register(
         "indexing.index-gc",
         OpCriticality.MUST_COMPLETE,
@@ -106,7 +105,7 @@ public final class IndexGcHandler implements OperationHandler {
         return OperationResult.failure(
             outcome.error().isBlank() ? "Index GC rejected by worker" : outcome.error());
       }
-      // Accepted by Worker — leave lease alive; expiry covers the async deletion window.
+      handle.release(OpLeaseOutcome.SUCCESS);
       String message =
           "Index GC accepted: marked "
               + outcome.markedCount()

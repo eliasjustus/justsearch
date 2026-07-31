@@ -324,6 +324,13 @@ public final class ServicePhase {
     // unset (production / non-dev-runner launch). Single Java writer to op-leases.json.
     OperationLeaseService operationLeaseService = new OperationLeaseServiceImpl();
 
+    // Tempdoc 617: both services run their work on background threads that outlive the HTTP
+    // request, so the request-scoped mutation lease is released while multi-GB asset writes are
+    // still in flight. Late-bound here because the lease service is created after they are built.
+    aiInstallHelper.setOperationLeaseService(operationLeaseService);
+    aiPackImportHelper.setOperationLeaseService(operationLeaseService);
+    runtimeActivationHelper.setOperationLeaseService(operationLeaseService);
+
     BrainInstallService brainInstall = new BrainInstallServiceImpl(aiInstallHelper);
     BrainRuntimeService brainRuntime =
         new BrainRuntimeServiceImpl(

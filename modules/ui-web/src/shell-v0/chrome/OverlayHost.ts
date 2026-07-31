@@ -43,9 +43,19 @@ export class OverlayHost extends JfElement {
     /* corner + edge anchors (content-sized) */
     /* Tempdoc 602 R4 — dock below the 2.5rem topbar grid row (Shell.ts
        grid-template-rows) so a top-right overlay (nav toast, badge, plugin-error)
-       never occludes the topbar control cluster (Copy URL / bookmark). */
+       never occludes the topbar control cluster (Copy URL / bookmark).
+
+       Sandbox round 7 — the same defect one row down. A surface's OWN header control row
+       (UnifiedChatView's .header: Activity / New chat / Export / the shape badge) sits
+       immediately below the topbar, and a column docked at 2.5rem + 0.5rem = 48px landed
+       squarely on it. Measured at 1050x800 with --fixtures: header band y 56-88px, toast
+       column top y 56px, the shape badge (47x23px) completely covered. So the reserved band
+       is the topbar row PLUS the surface header row — declared once here, in the ONE slot
+       authority (559 Authority I), rather than re-derived by each overlay that docks here.
+       Asserted by the chat-occlusion step's mustNotOverlapSelector row in
+       governance/ui-proportion-baseline.v1.json. */
     .top-right {
-      top: calc(2.5rem + 0.5rem);
+      top: calc(2.5rem + 3rem + 0.5rem);
       right: 0.5rem;
       flex-direction: column;
       align-items: flex-end;

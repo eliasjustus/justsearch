@@ -5,7 +5,10 @@
   "entries": [
     {
       "id": "ui-web-typecheck-ts5101",
-      "match": ["npm .*typecheck", "tsc\\b.*-p\\b|tsc\\b.*--noEmit"],
+      "match": [
+        "npm .*typecheck",
+        "tsc\\b.*-p\\b|tsc\\b.*--noEmit"
+      ],
       "claim": "ui-web `npm run typecheck` is RED repo-wide (TS5101: tsconfig.json baseUrl deprecation vs pinned typescript 6.x) — pre-existing on main since ~2026-07-01; a typecheck failure that is ONLY TS5101 is not caused by your change.",
       "evidence": "observations condition obs:ui-web-typecheck-ts5101 (seen 5); probe re-confirmed 2026-07-05",
       "added": "2026-07-06",
@@ -13,7 +16,9 @@
     },
     {
       "id": "theme-token-closure-red",
-      "match": ["check-theme-token-closure"],
+      "match": [
+        "check-theme-token-closure"
+      ],
       "claim": "check-theme-token-closure is RED on main (8 ghost tokens in shell-v0/components/RecentsMenu.ts) — pre-existing; only NEW ghost tokens beyond RecentsMenu.ts are yours.",
       "evidence": "observations condition obs:theme-token-closure-red (seen 8); probe re-confirmed 2026-07-06",
       "added": "2026-07-06",
@@ -21,7 +26,9 @@
     },
     {
       "id": "accent-as-text-red",
-      "match": ["check-accent-as-text"],
+      "match": [
+        "check-accent-as-text"
+      ],
       "claim": "check-accent-as-text is RED on main (accent-fill-as-text over baseline in ActionLedgerView.ts) — pre-existing; only NEW accent-as-text uses are yours.",
       "evidence": "observations condition obs:accent-as-text-red (seen 6); probe re-confirmed 2026-07-06",
       "added": "2026-07-06",
@@ -29,20 +36,14 @@
     },
     {
       "id": "vdu-pdf-fixtures-local-env",
-      "match": ["gradlew(\\.bat)? .*test", "gradle .*test"],
+      "match": [
+        "gradlew(\\.bat)? .*test",
+        "gradle .*test"
+      ],
       "claim": "VduEligibilityPdfFixturesTest can be RED on THIS machine only (Tesseract/tessdata + Tika PDF env; @DisabledIfEnvironmentVariable CI=true, CI is green) — a local failure there is environmental, not your change.",
       "evidence": "observations condition obs:vdu-pdf-fixtures-local-env (seen 9)",
       "added": "2026-07-06",
       "exitProbe": "slow: ./gradlew.bat :modules:worker-services:test --tests \"*VduEligibilityPdfFixturesTest*\""
-    },
-    {
-      "id": "governance-gates-standing-red",
-      "match": ["verifyGovernanceGates", "gradlew(\\.bat)? build(?!.*-x)", "governance/run\\.mjs --gate (class-size|ui-bundle)"],
-      "claim": "class-size and ui-bundle gates carry standing RED on main (pin drift behind merges; bundle hard-cap owner decision pending) — check whether the reported files are YOURS before treating the gate as your failure.",
-      "evidence": "observations conditions obs:class-size-pin-drift (seen 12) + obs:ui-bundle-gate-red (seen 12)",
-      "added": "2026-07-06",
-      "reviewBy": "2026-08-03",
-      "owner": "gate owners (class-size pins / bundle budget) — re-affirm or clear by reviewBy"
     }
   ]
 }

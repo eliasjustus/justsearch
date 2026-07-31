@@ -49,6 +49,8 @@ import io.justsearch.ipc.RecoverVduProcessingRequest;
 import io.justsearch.ipc.RecoverVduProcessingResponse;
 import io.justsearch.ipc.UpdatePathsRequest;
 import io.justsearch.ipc.UpdatePathsResponse;
+import io.justsearch.ipc.UpgradeQuiescenceRequest;
+import io.justsearch.ipc.UpgradeQuiescenceResponse;
 import io.justsearch.ipc.PathMapping;
 import io.justsearch.ipc.PruneRequest;
 import io.justsearch.ipc.PruneResponse;
@@ -123,6 +125,7 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
   private final SyncDirectoryOps syncOps;
   private final IngestSwitchBufferOps switchBufferOps;
   private final MigrationControlOps migrationOps;
+  private final WorkerUpgradeQuiescence upgradeQuiescence;
   private RootWatcherRegistry rootWatcherRegistry = new RootWatcherRegistry();
 
   // Tempdoc 419 / T5.3 (ADR-0028): scoped reverse-lookup store. Defaults to NOOP so any
@@ -163,6 +166,8 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
     this.ingestLifecycle = ingestLifecycle;
     this.indexGenerationManager = indexBasePath == null ? null : new IndexGenerationManager(indexBasePath);
     this.migrationOps = new MigrationControlOps(this.indexGenerationManager, restartWorkerCallback);
+    this.upgradeQuiescence =
+        new WorkerUpgradeQuiescence(jobQueue, indexingLoop, this.indexGenerationManager);
     io.justsearch.adapters.lucene.runtime.IndexCountOps ingestCountOps =
         ingestLifecycle != null ? ingestLifecycle.indexCountOps() : null;
     io.justsearch.adapters.lucene.runtime.IndexCountOps searchCountOps =
@@ -192,6 +197,47 @@ public final class GrpcIngestService extends IngestServiceGrpc.IngestServiceImpl
         signalBus);
     this.switchBufferOps =
         new IngestSwitchBufferOps(jobQueue, this.indexGenerationManager, metrics);
+  }
+
+  @Override
+  public void prepareUpgrade(
+      UpgradeQuiescenceRequest request,
+      StreamObserver<UpgradeQuiescenceResponse> responseObserver) {
+    respondUpgrade(
+        responseObserver,
+        () -> upgradeQuiescence.prepare(request == null ? "" : request.getPreparationId()));
+  }
+
+  @Override
+  public void upgradeStatus(
+      UpgradeQuiescenceRequest request,
+      StreamObserver<UpgradeQuiescenceResponse> responseObserver) {
+    respondUpgrade(
+        responseObserver,
+        () -> upgradeQuiescence.status(request == null ? "" : request.getPreparationId()));
+  }
+
+  @Override
+  public void cancelUpgrade(
+      UpgradeQuiescenceRequest request,
+      StreamObserver<UpgradeQuiescenceResponse> responseObserver) {
+    respondUpgrade(
+        responseObserver,
+        () -> upgradeQuiescence.cancel(request == null ? "" : request.getPreparationId()));
+  }
+
+  private static void respondUpgrade(
+      StreamObserver<UpgradeQuiescenceResponse> responseObserver,
+      java.util.function.Supplier<UpgradeQuiescenceResponse> action) {
+    try {
+      responseObserver.onNext(action.get());
+      responseObserver.onCompleted();
+    } catch (RuntimeException e) {
+      responseObserver.onError(
+          io.grpc.Status.FAILED_PRECONDITION
+              .withDescription(e.getMessage())
+              .asRuntimeException());
+    }
   }
 
   /**

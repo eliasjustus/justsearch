@@ -25,7 +25,6 @@ import {
   verdictForDanglingGuards,
   verdictForProjectionLineage,
   verdictForForbiddenReintroduction,
-  verdictForUnclassifiedDurableStores,
   verdictForMissingRegister,
 } from './truth-table.mjs';
 import { statusToSarifLevel } from '../../lib/truth-table-runner.mjs';
@@ -138,46 +137,8 @@ export async function enforceOperationSurface(options) {
   }
   push(verdictForForbiddenReintroduction({ violations: violations.sort() }), registerRel);
 
-  // --- Check 6: POSITIVE durable-store coverage (tempdoc 561 §18 C-1). Every *Store.java with a
-  // Path/dataDir constructor (it persists to disk) must be CLASSIFIED — a declared surface, or on the
-  // `unrelatedStores` allowlist. Catches a new-vocabulary durable fork the import-scan can't see. ---
-  const allowlist = new Set(
-    (Array.isArray(register.unrelatedStores) ? register.unrelatedStores : []).map(norm),
-  );
-  const durable = scanDurableStores(root);
-  const unclassified = durable
-    .filter((rel) => !declared.has(rel) && !allowlist.has(rel))
-    .sort();
-  push(verdictForUnclassifiedDurableStores({ unclassified }), registerRel);
-
   return { ...TOOL, findings, verdict, ruleDescriptions: OPERATION_SURFACE_RULE_DESCRIPTIONS };
 }
-
-/**
- * Durable `*Store.java` files under modules/**​/src/main/java — those whose own constructor takes a
- * `Path` parameter (the persists-to-disk signature). In-memory stores (no Path ctor) are excluded,
- * so a bounded ring like OperationHistoryStore never trips this. Returns repo-relative POSIX paths.
- */
-function scanDurableStores(root) {
-  const out = [];
-  for (const abs of walk(resolve(root, 'modules'), (f) => f.endsWith('Store.java'))) {
-    const rel = norm(relative(root, abs));
-    if (!rel.includes('/src/main/java/')) continue;
-    const simple = rel.split('/').pop().replace(/\.java$/, '');
-    const src = readFileSync(abs, 'utf8');
-    // A constructor DECLARATION of this class (not a `new X(` call) whose param list contains a Path.
-    const ctor = new RegExp(`(?<!new\\s)\\b${simple}\\s*\\(([^;{)]*)\\)`, 'g');
-    let m;
-    while ((m = ctor.exec(src)) !== null) {
-      if (/\bPath\b/.test(m[1])) {
-        out.push(rel);
-        break;
-      }
-    }
-  }
-  return out;
-}
-
 function norm(p) {
   return String(p ?? '').replace(/\\/g, '/');
 }

@@ -66,20 +66,6 @@
       "note": "Tempdoc 561 P-D: the FE's parallel risk->approval authority (agentToolAutoApprove) was deleted; this file-name backstop catches a NEW FE autonomy-policy module. The function-re-add-within-a-file ceiling is the §6 name-guard/test tier — the rewritten AgentSessionController tests are the behavioral lock (auto-approve iff the wire gateBehavior is AUTO)."
     }
   ],
-  "unrelatedStores": [
-    "modules/app-services/src/main/java/io/justsearch/app/services/intent/DurableGrantStore.java",
-    "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/InstalledPacksStore.java",
-    "modules/app-services/src/main/java/io/justsearch/app/services/gpl/GplTrainingTripleStore.java",
-    "modules/app-services/src/main/java/io/justsearch/app/services/feedback/NdjsonAppendStore.java",
-    "modules/app-services/src/main/java/io/justsearch/app/services/settings/PluginAllowlistStore.java",
-    "modules/app-services/src/main/java/io/justsearch/app/services/settings/UiSettingsStore.java",
-    "modules/app-services/src/main/java/io/justsearch/app/services/worker/WatchedRootsStore.java",
-    "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/queue/SqlitePathResolutionStore.java",
-    "modules/telemetry/src/main/java/io/justsearch/telemetry/RrdMetricStore.java",
-    "modules/worker-core/src/main/java/io/justsearch/indexerworker/disambiguation/EntityClusterStore.java",
-    "modules/worker-core/src/main/java/io/justsearch/indexerworker/index/MigrationProgressStore.java"
-  ],
-  "unrelatedStoresNote": "Tempdoc 561 §18 C-1: the POSITIVE durable-store gate (operation-surface/unclassified-durable-store) requires EVERY *Store.java with a Path constructor to be classified — a declared surface above (an interaction/action/memory authority) OR listed here as genuinely unrelated (UI settings, AI-pack install state, GPL training data, watched-roots config, worker path-resolution, telemetry, worker entity-clustering, index-migration progress). A NEW durable store thus cannot be added without a human deciding which it is — closing the new-vocabulary fork the import-scan + name-denylist can't catch. RESIDUE (named): a durable persister with neither a *Store name nor a canonical import (a bare DialogJournal) is still import-invisible; the forbiddenReintroduction denylist is the backstop for the known thread/memory fork vocabularies. Tempdoc 580 §17: the generic NdjsonAppendStore (the feedback-outcome backing persister) is unrelated to the indexing-job/action lifecycle THIS register governs — it is the storage tier of the 575 observed-happening `feedback-outcome` concept (search-trace snapshots + result dispositions), governed by governance/observed-happening.v1.json + its Category.HISTORY Resource catalogs, the sibling anti-fork register.",
   "scan": {
     "comment": "Auto-detect undeclared surfaces by scanning for references to the canonical IndexingJobView type (indexing-job lifecycle) OR the ActionEvent unified-action-log sibling (tempdoc 561 P-C: Java importers of io...ledger.ActionEvent; TS referencers of its FE projection types BackendLedgerEntry/UnifiedActionEntry/ActionLedgerClient). Import-invisible surfaces (the same-package app-observability ledger authorities; the worker change-stream; the count projection) are declared explicitly below.",
     "javaImportPatterns": [

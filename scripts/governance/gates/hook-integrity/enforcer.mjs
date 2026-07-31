@@ -107,7 +107,12 @@ export async function enforceHookIntegrity(options) {
   const sourceRoot = fixtureMode && fixtureRoot ? fixtureRoot : repoRoot;
   const manifestPath = resolve(sourceRoot, gate.config?.manifest ?? 'governance/agent-hooks.v1.json');
   const settingsPath = resolve(sourceRoot, '.claude/settings.local.json');
-  const tierRegisterPath = resolve(sourceRoot, '.claude/rules/tier-register.md');
+  // Relocated out of always-loaded context by tempdoc 799 K.2. Config-driven so a
+  // future move is a registry edit, not a code edit (the trap this gate itself hit).
+  const tierRegisterPath = resolve(
+    sourceRoot,
+    gate.config?.tierRegister ?? 'docs/reference/contributing/tier-register.md',
+  );
 
   const findings = [];
   let verdict = 'pass';
@@ -217,7 +222,7 @@ export async function enforceHookIntegrity(options) {
       if (seen.has(file)) continue;
       seen.add(file);
       const id = file.replace(/\.mjs$/, '');
-      push(verdictForTierRegisterSync({ marker: file, resolved: !!catalog[id] }), '.claude/rules/tier-register.md');
+      push(verdictForTierRegisterSync({ marker: file, resolved: !!catalog[id] }), 'docs/reference/contributing/tier-register.md');
     }
   }
 

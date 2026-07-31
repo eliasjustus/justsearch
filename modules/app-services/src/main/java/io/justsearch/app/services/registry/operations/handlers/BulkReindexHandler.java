@@ -60,12 +60,8 @@ public final class BulkReindexHandler implements OperationHandler {
     // the index in an inconsistent state. Register the lease BEFORE issuing the gRPC call so
     // any concurrent takeover gate read sees the lease (race-window closure per §B.3).
     //
-    // Critical: this is a fire-and-forget RPC. The Worker's actual migration runs async after
-    // the call returns. We deliberately DO NOT close the handle on success — the lease lives
-    // in op-leases.json with expiresAt = now + 1h (impl-capped) and protects the entire Worker-
-    // side migration window. Failure paths release explicitly so we don't leak a phantom lease.
-    // Amendment B follow-up (Worker autonomy) will replace this with Worker-side renewal +
-    // explicit completion notification.
+    // Worker persists MIGRATING before acknowledging. The Head lease protects request dispatch;
+    // Worker-owned upgrade quiescence protects the asynchronous migration lifetime.
     OperationLeaseHandle handle = leaseService.register(
         "indexing.bulk-reindex",
         OpCriticality.MUST_COMPLETE,
@@ -77,7 +73,7 @@ public final class BulkReindexHandler implements OperationHandler {
         handle.release(OpLeaseOutcome.FAILURE);
         return OperationResult.failure("Bulk reindex could not be started; see worker logs");
       }
-      // Migration accepted by Worker — leave the lease alive; expiry covers the async window.
+      handle.release(OpLeaseOutcome.SUCCESS);
       return OperationResult.success("Bulk reindex (migration) started");
     } catch (RuntimeException e) {
       handle.release(OpLeaseOutcome.FAILURE);

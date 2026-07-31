@@ -65,5 +65,14 @@ public final class AiInstallStatus {
     public long bytesTotal;
     public String skipReason = "";
     public String error = "";
+
+    /**
+     * True when at least one of this package's files continued a download an earlier run had left
+     * on disk (an HTTP {@code Range} resume or a resumed BITS job) rather than starting from byte
+     * zero. Projects {@code ResumableFetch.Outcome.firstAction} so the UI can tell a returning user
+     * their cancelled progress was kept — the reassurance the resumable-cancel work earns but which
+     * is otherwise invisible.
+     */
+    public boolean resumed;
   }
 }

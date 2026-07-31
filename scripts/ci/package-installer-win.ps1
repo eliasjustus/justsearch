@@ -41,6 +41,18 @@ param(
   # server.json's version + asset URL match the gradle.properties version being cut.
   [switch]$AssembleReleaseAssets,
 
+  # Produce Tauri updater signatures and the authenticated release descriptor/feed.
+  # Requires -AssembleReleaseAssets and the release key/sequence parameters below.
+  [switch]$AssembleUpdaterAssets,
+
+  [long]$ReleaseSequence = 0,
+  [string]$InstallerUrl,
+  [string]$ArtifactKeyId,
+  [string]$ArtifactPublicKey,
+  [string]$MetadataKeyId,
+  [string]$MetadataPrivateKeyPath,
+  [string]$MetadataPublicKeyPath,
+
   # If set (independent of -Release/signing), verify server.json version + asset URL match the
   # gradle.properties version during asset assembly. The release workflow passes this on v* tag
   # refs so a real release cut cannot ship a stale server.json version/URL. (Tempdoc 726 review.)
@@ -49,6 +61,24 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ($AssembleUpdaterAssets.IsPresent -and -not $AssembleReleaseAssets.IsPresent) {
+  throw "-AssembleUpdaterAssets requires -AssembleReleaseAssets."
+}
+if ($Release.IsPresent -and $env:JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE) {
+  throw "Production -Release builds must not enable JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE."
+}
+if ($AssembleUpdaterAssets.IsPresent) {
+  foreach ($name in @(
+      "JUSTSEARCH_RELEASE_DESCRIPTOR_URL",
+      "JUSTSEARCH_RELEASE_METADATA_ROOT_PUBLIC_KEY",
+      "JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID")) {
+    $value = [Environment]::GetEnvironmentVariable($name)
+    if ([string]::IsNullOrWhiteSpace($value)) {
+      throw "-AssembleUpdaterAssets requires compile-time release input $name."
+    }
+  }
+}
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir) # scripts/ci -> scripts -> repo root
@@ -250,13 +280,30 @@ try {
 
     Measure-Phase "tauri_build" {
       # Build NSIS installer (tauri.conf.json enforces ui-web build + bundleSidecar via hooks).
-      if ($doSign) {
-        # Signing build (-Sign/-Release): enable signing config overlay; fail later if signing inputs are missing (JUSTSEARCH_REQUIRE_SIGNING=true).
-        & npm --prefix .\modules\shell run tauri -- build --bundles nsis --config .\src-tauri\tauri.signing.conf.json
+      $tauriArgs = @("--prefix", ".\modules\shell", "run", "tauri", "--", "build", "--bundles", "nsis")
+      if ($AssembleUpdaterAssets.IsPresent) {
+        if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+          throw "-AssembleUpdaterAssets requires TAURI_SIGNING_PRIVATE_KEY so Tauri emits a verifiable NSIS signature."
+        }
+        $updaterConfig = ".\src-tauri\tauri.updater.conf.json"
+        if ($doSign) {
+          # Tauri accepts one config overlay. Compose the release-only updater overlay with the
+          # independent Authenticode signCommand overlay in memory so neither concern leaks into
+          # the base development config.
+          $merged = Get-Content -Raw -LiteralPath ".\modules\shell\src-tauri\tauri.updater.conf.json" | ConvertFrom-Json
+          $signing = Get-Content -Raw -LiteralPath ".\modules\shell\src-tauri\tauri.signing.conf.json" | ConvertFrom-Json
+          $merged.bundle | Add-Member -MemberType NoteProperty -Name windows -Value $signing.bundle.windows -Force
+          $tauriArgs += @("--config", ($merged | ConvertTo-Json -Depth 20 -Compress))
+        } else {
+          $tauriArgs += @("--config", $updaterConfig)
+        }
+      } elseif ($doSign) {
+        $tauriArgs += @("--config", ".\src-tauri\tauri.signing.conf.json")
       } else {
-        # Dev/CI smoke: avoid requiring Windows SDK SignTool.
-        & npm --prefix .\modules\shell run tauri -- build --bundles nsis --no-sign
+        # Dev/CI smoke: avoid requiring updater signing or Windows SDK SignTool.
+        $tauriArgs += "--no-sign"
       }
+      & npm @tauriArgs
       if ($LASTEXITCODE -ne 0) { throw "tauri build failed (exit=$LASTEXITCODE)" }
     }
   } else {
@@ -300,9 +347,49 @@ try {
     Skip-Phase "signature_verify" "not a signing build"
   }
 
+  $sourceInstallerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $SetupExePath).Hash.ToLowerInvariant()
+  $sourceInstallerSize = (Get-Item -LiteralPath $SetupExePath).Length
   $dest = Join-Path -Path $outDirPath -ChildPath ([System.IO.Path]::GetFileName($SetupExePath))
   if (-not [string]::Equals($SetupExePath, $dest, [System.StringComparison]::OrdinalIgnoreCase)) {
-    Copy-Item -LiteralPath $SetupExePath -Destination $dest -Force
+    $stagedDest = "$dest.staging-$PID"
+    try {
+      Copy-Item -LiteralPath $SetupExePath -Destination $stagedDest -Force
+      $stagedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $stagedDest).Hash.ToLowerInvariant()
+      $stagedSize = (Get-Item -LiteralPath $stagedDest).Length
+      if ($stagedHash -ne $sourceInstallerHash -or $stagedSize -ne $sourceInstallerSize) {
+        throw "Staged installer failed post-copy digest/size verification."
+      }
+      Move-Item -LiteralPath $stagedDest -Destination $dest -Force
+    } finally {
+      if (Test-Path -LiteralPath $stagedDest) {
+        Remove-Item -LiteralPath $stagedDest -Force -ErrorAction SilentlyContinue
+      }
+    }
+  }
+  $destHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $dest).Hash.ToLowerInvariant()
+  $destSize = (Get-Item -LiteralPath $dest).Length
+  if ($destHash -ne $sourceInstallerHash -or $destSize -ne $sourceInstallerSize) {
+    throw "Published installer staging failed digest/size verification."
+  }
+
+  if ($AssembleUpdaterAssets.IsPresent) {
+    $sourceSignature = "$SetupExePath.sig"
+    if (-not (Test-Path -LiteralPath $sourceSignature -PathType Leaf)) {
+      throw "Tauri updater signature not found beside NSIS installer: $sourceSignature"
+    }
+    $destSignature = "$dest.sig"
+    if (-not [string]::Equals($sourceSignature, $destSignature, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $signatureBytes = [System.IO.File]::ReadAllBytes($sourceSignature)
+      [System.IO.File]::WriteAllBytes($destSignature, $signatureBytes)
+      $stagedSignatureBytes = [System.IO.File]::ReadAllBytes($destSignature)
+      if (
+        $signatureBytes.Length -ne $stagedSignatureBytes.Length -or
+        (Get-FileHash -Algorithm SHA256 -LiteralPath $sourceSignature).Hash -ne
+          (Get-FileHash -Algorithm SHA256 -LiteralPath $destSignature).Hash
+      ) {
+        throw "Published updater signature failed byte-for-byte staging verification."
+      }
+    }
   }
   $installerSizeBytes = (Get-Item -LiteralPath $dest).Length
   $installerSizeMB = [math]::Round($installerSizeBytes / 1MB, 1)
@@ -379,6 +466,23 @@ try {
     Measure-Phase "release_assets" {
       $assetArgs = @("-OutDir", $outDirPath)
       if ($Release.IsPresent -or $VerifyReleaseVersion.IsPresent) { $assetArgs += "-VerifyReleaseVersion" }
+      if ($AssembleUpdaterAssets.IsPresent) {
+        if ([string]::IsNullOrWhiteSpace($InstallerUrl)) {
+          throw "-AssembleUpdaterAssets requires -InstallerUrl (use {filename} as an optional placeholder)."
+        }
+        $resolvedInstallerUrl = $InstallerUrl.Replace(
+          "{filename}",
+          [Uri]::EscapeDataString([System.IO.Path]::GetFileName($dest)))
+        $assetArgs += @(
+          "-AssembleUpdaterAssets",
+          "-ReleaseSequence", $ReleaseSequence,
+          "-InstallerUrl", $resolvedInstallerUrl,
+          "-ArtifactKeyId", $ArtifactKeyId,
+          "-ArtifactPublicKey", $ArtifactPublicKey,
+          "-MetadataKeyId", $MetadataKeyId,
+          "-MetadataPrivateKeyPath", $MetadataPrivateKeyPath,
+          "-MetadataPublicKeyPath", $MetadataPublicKeyPath)
+      }
       & powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ci\build-release-assets.ps1 @assetArgs
       if ($LASTEXITCODE -ne 0) { throw "build-release-assets.ps1 failed (exit=$LASTEXITCODE)" }
     }
