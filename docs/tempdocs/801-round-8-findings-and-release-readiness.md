@@ -1026,6 +1026,38 @@ live model. What remains is to confirm the assembled prompt actually contains th
 affordance-to-shape map running parallel to the resolver — the same drift shape §D0 describes, found
 while fixing three of its siblings.
 
+### Wave 2 — F5 and F2/F9
+
+**F5's horizontal half had a root cause neither §D11.a nor the plan predicted.** The multi-column
+decision was a **viewport media query** (`@media (min-width: 64rem)`), not a container query — so the
+layout committed to multi-column at a 1040px window while the surface only had 832px
+(`viewport − rail − host padding`). The 888px-of-minimums figure was never the defect; it was the
+symptom of a decision made against the wrong width. Fixed by moving to `@container chat-surface` on
+`.answer-plane`, with the responsive authority repurposed from "viewport ≥ 64rem" to "reported
+surface content width ≥ 64rem". No container queries existed anywhere in `shell-v0` before this.
+
+A side-effect caught during implementation and worth recording: `container-type` implies layout
+containment, which makes the element a containing block for `position: fixed` descendants — it would
+have re-anchored the citation hover card, which positions from viewport coordinates. Scoping the
+container to `.answer-plane` rather than `:host` avoids it, and a test pins both the placement and
+the wrapping.
+
+The same measurement error was found **in our own harness**: the `chat-occlusion` ui-shot step ran at
+1050×800 with a comment making the identical viewport-vs-container mistake. After the fix, 1050px
+would starve the surface and the document pane would drop out of the capture — which the proportion
+gate treats as a hard ERROR. The step moved to 1250×800.
+
+F5's vertical half suppresses the landing collapse while a reading pane is mounted, on the reasoning
+that a preview is opened by a deliberate act and carries its own close control, while clearing a
+search box is query-scoped and should not destroy a reading surface.
+
+**F2/F9 kept two quantities apart that it would have been easy to conflate.** `totalBytes` remains
+the progress denominator (`downloadedBytes` starts at the resumed offset, so subtracting there would
+overshoot 100%), while a new `remainingBytes() = totalBytes − resumableBytes` feeds the consent
+total. Verified independently by the orchestrator at both call sites. The consequence is that consent
+and progress now state *different numbers by design* — network transfer versus file completion — so
+the dialog names the gap on its own line rather than leaving the reader to reconcile them.
+
 ### Orchestration note worth carrying forward
 
 Three workers shared one worktree. Their file sets were disjoint and nothing collided, but **two of
@@ -1033,6 +1065,43 @@ the three reported the others' in-progress edits as "pre-existing foreign work"*
 a typecheck error to it. Both correctly declined to "fix" what they had not written. The lesson is
 that no single worker's green is trustworthy under concurrency — the authoritative run is the
 orchestrator's, once on the settled tree.
+
+## V — Verification ledger (2026-07-31)
+
+Recorded per tier so a later reader can see what is actually established and what is still a claim.
+A green suite is not the same as a live-verified fix, and this table keeps the difference visible.
+
+| Fix | Unit/bite-proven | Measured (geometry) | Live (browser) | Live (through a model) |
+|---|---|---|---|---|
+| F4 advisory persistence | yes, incl. inverted pre-existing tests | proportion gate clean | not exercised (needs a `REQUIRES_ACK` advisory) | n/a |
+| F5 layout | declarations + arithmetic only (happy-dom does no layout) | proportion gate clean at the new 1250×800 | **yes** — container query active, single column below threshold, no overflow | n/a |
+| F6 extraction | yes, both wire sides | n/a | not exercised | **NO — see below** |
+| F1 disk-encryption | yes; producer conflation additionally **executed** (§D13) | n/a | **yes** — card coherent, no false claim, but on PKEY 2 (an *unchanged* branch) | n/a |
+| F2/F9 install resume | yes | n/a | not exercised (needs a real partial download) | n/a |
+| F7 skin swatches | yes | n/a | **yes** — 9 swatches, 7 distinct colours | n/a |
+| F8 Brain telemetry | yes | n/a | not exercised (needs `traces.ndjson` present) | n/a |
+
+Suite: `test --rerun-tasks --no-build-cache` → **BUILD SUCCESSFUL, 190 of 190 tasks executed**, cache
+disabled, real exit 0. Note a first attempt with `cleanTest test` reported success in **8 seconds**
+with 78 tasks from cache — the third false green of this shape in this work, and the reason the
+forced form is now written into the plan.
+
+**The one genuine gap: F6 through a live model.** The chain is proven link by link — the frontend
+sends `body.selection`, the shape declares a document-bearing injector, the injector resolves the
+reference to real `DocumentService` content. What is *not* proven is that the assembled prompt the
+model receives contains the document text. Per `ai-offline-isnt-a-wall` this was pursued rather than
+declared unavailable: the blocker is that the **cuda12 llama-server runtime has never been staged on
+this machine** (`:modules:ui:stageLlamaCudaVariant` downloads it), not that the tier does not exist.
+Honest weighting: the *new* links are all tested, and the untested link is long-shipped engine
+behaviour that `SummarizeShape` already depends on — so the residual risk is lower than the empty
+cell suggests, but it is not zero and it is not closed.
+
+**Measurement traps hit while verifying, all the same shape.** Three times a *proxy* was read instead
+of the subject: a stale local `main` ref made an unrelated worktree look like a collision; browser
+HMR staleness made this worktree's code look like the main checkout's (the served module was correct
+all along — a hard reload settled it); and `window.innerWidth` reported 1493 while the window was
+actually 720px wide, which only the element rects revealed. The durable rule for live UI work:
+**hard-reload before measuring, and trust `getBoundingClientRect` over `window.innerWidth`.**
 
 ## D7. Strand B — the qualifying-set gap needs a round, not a design
 
