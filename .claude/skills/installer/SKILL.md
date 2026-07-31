@@ -314,6 +314,23 @@ Current behavior:
   `JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE=1`; production binaries reject runtime
   trust overrides and non-HTTPS endpoints by design.
 
+  Build that candidate with the `Build Installer` workflow's `sandboxTestMode`
+  input (`candidateVersion` produces the source/target pair an N→N+1 round
+  needs). The workflow refuses that input on a `v*` tag: a published binary
+  honouring runtime trust overrides would hand the update channel to anything
+  able to set an environment variable.
+
+  Inside the sandbox, `start-in-app-update-test.ps1 -Autorun` drives check and
+  install with no operator input, so the apply machinery — prepare, freeze,
+  witnessed shutdown, installer launch, restart reconciliation — is qualified
+  unattended. The verdict appears as `autorunVerdict` in
+  `collect-updater-evidence.ps1` output, written by the **second** boot, because
+  a successful apply exits the process that started it.
+
+  `-Autorun` does not replace the operator round. That the user is asked before
+  anything is applied, and that the apply machinery is correct, fail
+  independently; run both.
+
 In addition, `scripts/ci/package-installer-win.ps1` keeps the Sandbox share “fresh” by staging the newest installer under a
 stable alias plus a unique alias:
 
