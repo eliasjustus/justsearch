@@ -4,8 +4,14 @@ import { extname, join, relative, resolve } from 'node:path';
 const WALK_EXCLUDES = new Set(['build', 'node_modules', 'dist', '.git', '.gradle', 'target', 'tmp']);
 const SOURCE_EXTENSIONS = new Set(['.java', '.rs']);
 
+// Write-creating idioms only. `FileChannel.open` and `new RandomAccessFile` are deliberately
+// excluded: both are mode-dependent (`StandardOpenOption.READ`, `"r"`) and matching them by name
+// flags read-only sites — the SQLite header preflight and the diagnostics log tail both are.
+// A false positive here is worse than a gap, because clearing it means adding a read-only file to
+// `nonDurableWriteSites`, i.e. registering false authority. Detecting their write modes needs
+// argument analysis this scanner deliberately does not do.
 const JAVA_MUTATION =
-  /\b(?:Files\.(?:write|writeString|newOutputStream|move|copy|delete|deleteIfExists)|AtomicFileWrites\.(?:replace|replaceUtf8)|DriverManager\.getConnection|RrdDb|RrdDef)\b/;
+  /\b(?:Files\.(?:write|writeString|newOutputStream|newBufferedWriter|createFile|move|copy|delete|deleteIfExists)|AtomicFileWrites\.(?:replace|replaceUtf8)|DriverManager\.getConnection|RrdDb|RrdDef)\b|\bnew\s+(?:FileOutputStream|FileWriter|PrintWriter|ObjectOutputStream)\b/;
 const RUST_MUTATION =
   /\b(?:std::fs|fs)::(?:write|rename|copy|remove_file|remove_dir_all|create_dir_all)\b|\bOpenOptions::new\b/;
 const DURABLE_ANCHOR =

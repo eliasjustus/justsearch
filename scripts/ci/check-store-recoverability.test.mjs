@@ -198,6 +198,40 @@ test('classified non-durable write sites satisfy coverage explicitly', () => {
   );
 });
 
+// The gate only inspects sites the scanner discovers (check-store-recoverability.mjs:194), so an
+// idiom the detector misses is an unregistered writer nothing can notice. These pin both edges.
+const JAVA_SRC = 'modules/x/src/main/java/io/justsearch/X.java';
+
+for (const idiom of [
+  'Files.newBufferedWriter(p, UTF_8)',
+  'Files.createFile(p)',
+  'new FileOutputStream(f)',
+  'new FileWriter(f)',
+  'new PrintWriter(f)',
+  'new ObjectOutputStream(out)',
+]) {
+  test(`detects durable write idiom: ${idiom}`, () => {
+    assert.equal(isPersistenceWriteSource(JAVA_SRC, `var p = dataDir.resolve("s"); ${idiom};`), true);
+  });
+}
+
+test('read-only mode-dependent APIs are not write sites', () => {
+  // Both appear in production against durable anchors and are strictly reads; flagging them would
+  // force read-only files into nonDurableWriteSites, which registers false authority.
+  assert.equal(
+    isPersistenceWriteSource(JAVA_SRC, 'FileChannel.open(dbPath, StandardOpenOption.READ);'),
+    false,
+  );
+  assert.equal(
+    isPersistenceWriteSource(JAVA_SRC, 'new RandomAccessFile(dataDir.resolve("t").toFile(), "r");'),
+    false,
+  );
+});
+
+test('a durable write idiom without a durable anchor stays out of the gate', () => {
+  assert.equal(isPersistenceWriteSource(JAVA_SRC, 'new FileWriter(userChosenExportTarget);'), false);
+});
+
 if (failures.length > 0) {
   console.error(`check-store-recoverability.test FAILED (${failures.length}):`);
   for (const failure of failures) console.error(`  - ${failure}`);
