@@ -69,10 +69,9 @@ set complete"*, and it is not. Detail and reasoning in 798 §T6; the items are:
 2. **The signed build is a different artifact.** The certificate is in identity validation and the
    validated candidate is unsigned by design. Signing changes the binary and the Windows trust
    path; equivalence should be demonstrated, not assumed.
-3. **There is no auto-updater.** `tauri.conf.json` declares no updater configuration. Open
-   decision, and one that is cheapest before a first real release: an un-updatable build in the
-   field must be reached by some other channel forever. This should be decided explicitly rather
-   than by omission.
+3. **There is no auto-updater** — `tauri.conf.json` declares none, and `updater` appears nowhere in
+   the repo. Researched 2026-07-31; **§D9 reframes this from one binary choice into two separable
+   decisions**, only one of which is irreversible.
 
 ### Strand C — harness and process items
 
@@ -344,11 +343,78 @@ the cheaper of the two by a wide margin.
 One asymmetry makes this tractable without measuring anything at runtime: **over-reserving is
 harmless — it shows as a gap — while under-reserving is the defect.** The header's height is
 `2 × --density-header-pad-y` plus its content, and content varies because some headers carry a
-subtitle line and some do not (`surfaceLayout.ts:62-76`). A band declared by the component that
-owns the header, sized for the taller case, is derived rather than guessed and needs no observer,
-no JS, and no per-surface knowledge. The design direction is that the header's owner **publishes**
-its reserved band and the overlay consumes it; exactly how that token is expressed is an
-implementation choice, not a design one.
+subtitle line and some do not (`surfaceLayout.ts:62-76`).
+
+### D4.a Correction — the first form of this design was architecturally impossible
+
+An earlier draft of this section said *"the header's owner **publishes** its reserved band and the
+overlay consumes it"* and called the expression an implementation detail. **That is wrong, and the
+distinction is not a detail — it decides whether the mechanism works at all.** A research pass
+(2026-07-31) established the topology:
+
+```
+&lt;jf-shell&gt; #shadow-root
+  ├─ &lt;div class="stage"&gt; → &lt;jf-stage&gt; #shadow-root → &lt;jf-*-surface&gt; #shadow-root → .header
+  └─ &lt;jf-overlay-host&gt;   #shadow-root → .slot.top-right
+```
+
+The header and the overlay slot are in **sibling shadow trees two levels apart**
+(`Shell.ts:2272,2292`; `JfElement.ts:20-25` gives every `jf-*` a real shadow root, with no
+`createRenderRoot` override; Stage renders surfaces into its own root rather than slotting them,
+`Shell.ts:2814-2853`). Custom properties inherit strictly parent→child. **A value set inside the
+surface's shadow root is invisible to the sibling overlay host, in every density — not just in
+unanticipated ones.** "The header's owner publishes it" cannot be built.
+
+The workable form is the other reading of the same sentence: **a token declared at `:root` in the
+global token layer, derived by `calc()` from the same `--density-header-pad-y` that the header
+itself consumes**, with `surfaceLayout.ts` and `OverlayHost.ts` both reading it. `:root` custom
+properties do inherit into every shadow root, and `tokens.css` already depends on exactly that
+(`tokens.css:306-310`). This removes the density axis as a source of error — the 16/12/20 split
+stops being something an author has to remember — and it needs no observer and no JS.
+
+**The honest residual:** it fixes the *density* half and not the *content* half. A header whose
+intrinsic content exceeds the assumed line count — a wrapped title, an added control row, a variant
+with a subtitle where the constant assumed none — reopens the bug identically, and the token cannot
+detect that. The measured `mustNotOverlapSelector` assertion stays the backstop for that axis, which
+is what it already caught the round-7 instance with.
+
+### D4.b Two mechanisms considered and rejected, with reasons
+
+**CSS Anchor Positioning: ruled out, and not on version grounds.** Support is adequate — Edge and
+therefore WebView2 have shipped `anchor-name`/`position-anchor`/`anchor()` since Chromium 125
+(~May 2024), `position-area` since 129, and this app ships Evergreen WebView2 with no pinned
+version (`tauri.conf.json` declares no `webviewInstallMode`, so Tauri's `downloadBootstrapper`
+default applies, and no `minimumWebview2Version` exists anywhere in the repo). The blocker is
+structural: **anchor names are tree-scoped**, and the spec permits referencing a name only from a
+*higher* tree, never a sibling one. Chromium is additionally stricter than the spec here by Chrome's
+own documentation ("Chromium doesn't allow inheriting `anchor-name` rules in a shadow root"), so a
+newer runtime does not obviously unblock it. The `::part()` escape hatch (CSSWG #10525) would need
+two-level `exportparts` forwarding that no surface declares, landing on the precise spec corner
+Chrome documents as inconsistently implemented. The repo's own spike works only because its anchor
+and target share one shadow root (`spike/NativePopoverSpike.ts:53,68-70`).
+
+Worth noting what anchor positioning *would* have contributed: `anchor(…, <fallback>)` degrades to
+a literal when no anchor is mounted. Any measurement-based alternative must handle unmount
+explicitly — and unmount is a live path here, since Stage's instance-retention cache
+(`Shell.ts:2722`) detaches and reattaches surfaces on navigation. The `:root` token sidesteps this
+entirely, because the token always exists.
+
+**`ResizeObserver` → custom property: rejected for a concrete reason, not a stylistic one.** It is
+the only option that tracks the actual rendered height across every density *and* content variation,
+and JS crosses shadow boundaries freely, so the topology problem disappears. But it would add a
+**second writer to `:root`**, and `JfElement.ts:8-10` documents `applyAppearance` as the single
+writer of that surface. It also carries a first-frame default before the first callback and a
+stale-value path on unmount, which — per the cache above — is routine rather than hypothetical.
+If the content axis ever produces a real defect the token cannot cover, this is the option to
+revisit, and the single-writer invariant is the thing that would have to be reconciled first.
+
+**Ecosystem check: there is no established pattern being missed here.** Sonner uses a constant
+offset, Radix defines no placement variable at all, React Spectrum offers corner placement only,
+and Fluent UI has "scope Toaster to a particular region of the screen" as an **open** issue
+(microsoft/fluentui#28449). CSS's obvious right primitive — an author-declared environment inset
+alongside `safe-area-inset-*` — does not exist; it is an open issue in the Environment Variables
+spec itself (csswg-drafts#2820). The modest token approach is not naive; this is a genuine gap in
+the platform and in every major design system.
 
 **This extends existing structure rather than adding any.** The repo already asserts this class at
 the choke point: `check-layout-purity` plus `governance/overlay-positioning-classes.v1.json` walks
@@ -515,6 +581,80 @@ rerouting discards the schema and makes the chip lie about what was sent.
 `SelectionContextInjector`, or establish that `ExternalContextInjector` already covers the attached
 -document case), then hoist the explicit affordance above the selection switch. Doing the second
 without the first converts a visible wrong-answer into a visible no-answer.
+
+## D9. The updater decision separates into two, and only one of them is irreversible
+
+Researched 2026-07-31 against Tauri's own documentation and plugin sources. The repo is Tauri
+**2.11.5** with no updater plugin, no `plugins.updater` section, and no
+`bundle.createUpdaterArtifacts`. The framing in Strand B — "ship an updater or accept an
+un-updatable cohort" — turns out to be a false binary.
+
+### What the research settles
+
+**The irreversibility claim holds, and is narrower than stated.** The updater is code compiled into
+the binary. A shipped 0.2.0 with no updater configuration has no polling agent, no endpoint and no
+public key, so nothing a later release does can reach it. But what is permanent is *the 0.2.0
+cohort specifically*, not the option: 0.3.0 can add an updater freely. The debt is
+(0.2.0 install count) × (how long those users sit on it) — which for a first release with no
+current users is close to zero, and grows the longer 0.2.0 is the public version.
+
+**Authenticode and the updater's signature are fully independent**, which removes a coupling this
+tempdoc had implicitly assumed. The updater uses **Ed25519 via minisign**, its public half compiled
+into every binary, its private half held as a CI secret; the code-signing certificate plays no part
+in it, and an update artifact without a valid minisign signature is rejected unconditionally
+(`pubkey` is a required `String`, not an `Option`). So **waiting on certificate validation is not a
+reason to defer this decision**, and holding the certificate does not partially cover it. The
+converse also holds: the minisign signature does nothing for SmartScreen, so an OV certificate's
+reputation-building period applies to updates exactly as it does to first installs.
+
+**Shipping the updater creates a permanent custody obligation from day one.** Tauri's documentation
+is blunt that losing the private key means you cannot publish updates to anyone already installed —
+i.e. key loss is *exactly equivalent* to never having shipped an updater, for that cohort. Rotation
+is only possible through an update signed with the old key.
+
+**Three costs that are easy to under-count.** Every update is a **full ~260 MB installer download**
+— no deltas, no in-place patching. The app is **force-exited** on Windows during install (a
+documented platform limitation), so `downloadAndInstall()` never returns there. And the release
+workflow does **not** use `tauri-action`, so `latest.json` generation is net-new work in a pipeline
+that already does substantial custom staging.
+
+**One thing our configuration already gets right.** `installMode: currentUser` is the mode that
+works: the NSIS template emits `RequestExecutionLevel user`, and the updater launches the installer
+via a non-elevating `ShellExecuteW`. The `perMachine`/`both` modes fail with `Os error 740`
+(elevation required), the app quits, and no installer appears. This is inference from the two
+mechanisms rather than an explicit maintainer statement, but the mechanism is unambiguous.
+
+### The reframing
+
+The thing that is irreversible is **reachability** — whether a shipped build can ever learn that a
+newer one exists. It is not *auto-installation*. Those separate cleanly:
+
+| | Closes reachability | Permanent obligation | Reversible later |
+|---|---|---|---|
+| **Notify-only**: startup version check against a small JSON or the GitHub releases API, in-app notice linking to the download | Yes | None — no keypair, no signing, no NSIS interaction | Yes; the endpoint can be repointed at anything, including a later real updater |
+| **Full updater plugin** | Yes | Minisign key custody, forever | Only forward |
+| **Nothing** | **No** | None | The cohort is stranded |
+
+A notify-only mechanism closes the one gap that cannot be closed later, at no permanent cost, and
+does not foreclose the full updater. It also degrades honestly: a user who is told a version exists
+and chooses to install it manually gets a correct in-place upgrade, because the NSIS installer
+already reads `DisplayVersion` from the uninstall registry key, runs a semver comparison, and
+invokes the stored `UninstallString` — with `allowDowngrades: false` respected.
+
+### What is not established, and why one of them matters
+
+- **Whether the updater-downloaded `setup.exe` triggers SmartScreen mid-update.** No authoritative
+  source found either way. This is the sharpest open risk in the full-updater option: a SmartScreen
+  prompt appearing in the middle of an ostensibly automatic update is a materially worse experience
+  than no updater at all, and it would apply for the whole period an OV certificate is building
+  reputation — which is precisely the period after 0.2.0.
+- **Whether `nsis/installer-hooks.nsh` behaves correctly under `/P` + `/UPDATE`.** That path has
+  never executed. Only a real update run settles it.
+- **Expected install count for 0.2.0**, which is what actually prices the irreversibility.
+
+Taken together these argue for deciding reachability now and auto-installation later, on evidence,
+rather than treating them as one call that has to be made before the certificate lands. The owner
+decision this tempdoc needs is therefore narrower than it first appeared.
 
 ## D7. Strand B — the qualifying-set gap needs a round, not a design
 
