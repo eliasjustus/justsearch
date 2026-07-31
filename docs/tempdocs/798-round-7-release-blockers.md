@@ -1,8 +1,8 @@
 ---
 title: "Round 7 release blockers — artifact-truthful readiness at the write boundary"
-status: "B1 IMPLEMENTED 2026-07-30 (branch worktree-798-ingest-livelock, not merged); B2-B7 designed, not implemented"
+status: "CLOSED 2026-07-31 — B1-B7 all implemented and merged to main (PRs #339-#346); validated end-to-end by Sandbox round 8, which returned QUALIFIABLE with no blocking defect. Round 8's own 8 findings + 1 host-side finding (F9) are recorded in tempdoc 734, not here."
 created: 2026-07-30
-updated: 2026-07-30
+updated: 2026-07-31 (round-8 outcome)
 related: [734, 749, 750, 772, 760, 717, 711, 712, 597, 565, 553, 560, 516]
 ---
 
@@ -950,6 +950,268 @@ rounds 5 and 6 unattributable. Round 7 used `tmp/finding5/golden-parity-v2-dev.j
 - Post-restart search executes the full ladder — dense-retrieval, fusion, cross-encoder all
   `executed`, no silent BM25 collapse. The 734 A.1 recovery path is healthy.
 - Presentation preference survived a cold restart *and* a full uninstall→reinstall.
+
+## Round 8 outcome — this tempdoc's verdict (2026-07-31)
+
+Sandbox round 8 ran against a candidate cut from merged `main` (`JustSearch_0.2.0_x64-setup.exe`,
+259,859,565 bytes, hash-verified against its `SHA256SUMS`). It returned **QUALIFIABLE — no
+blocking defect**. Full round record lives in tempdoc 734; only what this tempdoc's items were
+judged on is recorded here.
+
+**All eight PRs merged** (#339–#346), full suite genuinely re-run on merged `main` (33 modules,
+6,940 tests, 0 failures — `cleanTest test`, not an UP-TO-DATE pass).
+
+### Per-item verdict
+
+| Item | Round-8 result |
+|---|---|
+| **B1** ingest livelock (HIGH) | **FIXED, verified — not inferred.** Three sequential ingests in a **single worker lifetime** (pid 4508 unchanged, checked before and after each), with folder A drained *and* its enrichment tail driven to idle (100 %/100 %/0-pending) before B was added. docCount 5 → 5189 → 5192 → 5193 → 5194; every marker searchable with the correct top hit. This is the test the charter demanded; a single-folder run would have passed against the old defect. |
+| **B2** exempt shapes | Held. `core.free-chat` / `core.workflow-run` classified `exempt`, not blocking; no entry point found incidentally; no evidence file renamed to fake coverage. `check_coverage.py` exit 0. |
+| **B3** ADR-0024 claim | No contradiction surfaced; per-user install at `%LOCALAPPDATA%` behaved as ADR-0024 states. |
+| **B4** Tasks panel reconnect | **FIXED** — live `64 RUNNING / 1920 QUEUED` tracking real jobs, matching the status bar's `⚡64`. A **new** residual was found (734 F3: the panel's "QUEUED" and the status bar's "queue" share a label but not a definition). |
+| **B5** consent dialog | **FIXED for the fresh-install case** — 7 real package names, real licences (Apache-2.0, AFL-3.0, LicenseRef-NVIDIA-CUDA-EULA), working Terms links, true byte total (10.14 GB stated = 10.14 GB shown). **Not fixed for the resume case** — see below. |
+| **B6-7** RAG answer column | **FIXED** — normal multi-word wrapping with the preview open, no one-word-per-line collapse. A *different* layout defect was found in the same area (734 F5: clearing results with the preview open clips the composer below the viewport). |
+| **B6-8** toast occlusion | **NOT fixed in practice.** 734 F4 reproduces it three times, including a toast hiding the **Add Folder** button while the empty state instructs the user to click it. Toasts also do not auto-dismiss — the same two were still covering the header ~6 minutes and several navigations later. |
+| **B6-5** "Unlock in Settings" | Not exercised — no locked state arose. Carry forward. |
+| **B6-9** disk-encryption wording | **NOT fixed.** 734 F1: the card still reads "Unknown — needs admin" on a machine with nothing encryptable, in a session that already held admin. |
+| **B7** parity policy | **Worked as designed.** 10/10 on the blocking assertion (golden #1 at rank 1 in every case, not merely within top-3); overlap reported in full as descriptive. The demotion did not hide anything — it moved the number from deciding to describing. |
+| Cancel → resume (PR C) | **FIXED and live-validated for the first time.** Pause retained 1199.7 MB; resume skipped completed files, recomputed 10.14 GB → 9.08 GB, and said so explicitly. The *backend* mechanism works; its disclosure does not — see F9. |
+
+### B7 closed: finding 5 is attributed
+
+Round 8 is the first round whose per-leg captures could be compared against a v2 baseline, and
+the answer is unambiguous. Divergence is **entirely in the dense leg** — q06 dense 5/10 against
+splade 10/10 and text 10/10; q08 dense 4/10 against splade 10/10 and text 10/10 — and the
+dense-score identity check flags **all ten** queries as systematically out of envelope: deltas of
+1.7e-2–6.8e-2 against a sandbox↔sandbox envelope of 1.8e-4, roughly 200–400× larger, with
+byte-identical weights (fingerprint `f1d0f4ec…cc38e`).
+
+Same weights, different numbers ⇒ the **embedding inference path** differs between the dev stack
+and the Sandbox. This refutes both hypotheses previously on the table (HNSW/approximate tail
+churn, and FP16-vs-FP32), each of which had already been independently refuted by a calibration
+population. Finding 5 is an environment-level measurement artefact, not a ranking regression —
+which is what §B7 argued on weaker evidence and what round 8 now demonstrates.
+
+One correction to the round's self-report: it predicted q04/q06/q08 below floor. The host re-run
+puts **q04 at exactly 7/10, which passes**. Two descriptive findings, not three.
+
+### F9 — found host-side, and it is B5's other half
+
+Reviewing the round's own screenshots surfaced a finding the round did not file, in the same
+defect family as its F2:
+
+1. `15-brain-install-cancel-confirm.png` — the confirm dialog promises "Everything already
+   downloaded stays on disk and the next install resumes from where it stopped instead of
+   starting over."
+2. `16-brain-install-paused.png`, taken immediately after with **~1.2 GB retained on disk** — the
+   Brain surface reads "**Not Installed** — Install AI models to get started" above a bare
+   "Install AI" button. Nothing acknowledges the retained bytes or the paused state.
+3. `17-brain-install-consent-resume.png` — the consent dialog re-states the **full 10.14 GB**
+   (this is the round's F2).
+4. `18-brain-install-progress-after-resume.png` — the truth finally appears: 9.08 GB, "Resumed
+   from your earlier download." **After** the user has already consented.
+
+F2 and F9 are one defect with one fix: **the pre-download surfaces do not read the resume state
+the backend already holds.** F9 is arguably the worse half — a user who pauses and returns the
+next day has no signal their 1.2 GB survived, and the surface actively implies otherwise. This is
+the same "prose authored next to the data that would have made it true" shape §D6 names, landing
+in the one place §D6's own fix did not reach.
+
+### What this says about the design
+
+§D6's thesis — five findings were one defect, *prose hardcoded next to the data that would have
+made it true* — held up, with a qualification worth recording. The **backend** halves converged
+cleanly (resume works, the manifest composes, the contract rejects unwitnessed claims). The
+**presentation** halves converged only where a fix was written: F1, F4 and F9 are all the same
+defect in surfaces the design named but the implementation did not reach, and F4's toast bounding
+is a fix that shipped and still does not hold in a real window. That is evidence for the
+principle and against assuming a principle's articulation propagates to every instance — each
+site needs its own fix and its own measured assertion.
+
+---
+
+# T — Theorization after round 8 (2026-07-31)
+
+Written after the verdict, not before it, so this section is reflection on evidence rather than
+prediction. Nothing here is a settled design or licensed work; the forward vehicle is tempdoc 801.
+
+## T1. The one contrast worth keeping: mechanism-scoped vs instance-scoped fixes
+
+This tempdoc shipped both kinds of fix, in the same PR series, validated by the same round. The
+results diverge cleanly enough to be worth stating as a claim rather than an impression.
+
+**B1 was fixed at the mechanism.** The livelock was observed at one call site, but the fix went to
+the write lanes — a contract that rejects a status claim no artifact backs, at *both* lanes,
+regardless of which caller made the claim. Round 8 exercised paths that call site never sees (UI
+add-folder, `POST /api/knowledge/ingest`, MCP `justsearch_ingest` behind a TYPED_CONFIRM
+approval), and all of them held.
+
+**B6-8 was fixed at the instance.** The toast occlusion was observed on the chat surface; the dock
+was adjusted to clear the chat surface's header band, and the measured assertion was registered
+against the `chat-occlusion` ui-shot step. Round 8 reproduced the same defect three times on
+surfaces that step does not capture (Library, and after an MCP approval), including a toast
+covering the **Add Folder** button while the empty state instructed the user to click it.
+
+The assertion is not wrong and it is not weak — `.toast` `mustNotOverlapSelector: ".header"` is a
+real geometric check on real captured geometry. It is *scoped to the observation*. The overlay it
+guards is docked globally and floats above every surface, so the check certifies one surface out
+of fourteen and is silent about the rest. The baseline file's own `occlusionNote` says so
+honestly ("not solved at the slot") — the disclosure was correct, and round 8 is that disclosure
+firing.
+
+**Candidate principle: an assertion inherits the scope of the mechanism it guards, not the scope
+of the observation that motivated it.** Where the two differ, the gap is exactly the set of
+untested instances, and it is silent by construction — every existing test passes.
+
+This is not the same claim as "test more surfaces." It is a claim about *where a check is
+anchored*: to a rendering step (an instance) or to the docked overlay's own contract (the
+mechanism). Anchoring to the mechanism here would mean asserting a property of the overlay host —
+that its rect never intersects any surface's header band — evaluated wherever the host mounts,
+rather than at one named capture. The same restatement applies to F1 and F9 below.
+
+Where else this shape may already exist, named but not investigated: any ui-shot assertion on a
+globally-mounted component (rail, status bar, command palette, plugin-error overlay); any check
+registered per-step for something that is not per-step. Worth a survey before treating it as
+general — one contrast is a hypothesis, not a pattern.
+
+## T2. "Derive, don't author" is insufficient as stated — round 8 supplies two counter-examples
+
+§R1b claims presentation defects come from prose authored next to the data that would have made it
+true. Round 8 confirms the shape and finds two defects the principle **as written would pass**:
+
+- **F7 (skin swatches)** derives. It just derives from the wrong subject: every card's swatch
+  reads the *active* skin's accent rather than the accent of the skin that card represents, so
+  applying Violet turns all nine swatches violet. Nothing is hardcoded; the gallery still cannot
+  preview anything.
+- **F3 (Tasks panel)** derives honestly *and* labels the result with a word that already denotes a
+  different quantity. The panel's "4308 QUEUED" and the status bar's "queue: 0" are both true of
+  their own field, in the same window, in the same frame.
+
+So the principle needs two clauses it does not currently have: **derive from the subject you are
+describing**, and **a derived value still needs a label that does not collide with another
+quantity's label on the same screen.** F7 fails the first; F3 fails the second. Both would sail
+past "don't author prose."
+
+The second clause points at something with no obvious home today: labels are a shared namespace
+across independently-authored components, and nothing owns that namespace. A component can be
+locally correct and globally ambiguous. Whether that deserves structure (a vocabulary register in
+the shape of the existing execution/operation-surface registers) or is simply a review concern is
+genuinely open — the honest answer is that two instances is not enough to justify a register, and
+the observation should be recorded and left to accumulate.
+
+## T3. The highest-yield defect channel this round was re-reading evidence, not capturing it
+
+Of nine findings, **three came from reading captures that already existed**: F2 and F3 during the
+mandatory evidence review, and F9 during the host-side review afterwards. Marginal capture cost:
+zero. This is the second round in a row where the review gate found something live testing missed,
+and it is direct evidence against streamlining it away.
+
+**F9 sharpens the point: it is invisible in every individual frame.** The confirm dialog promising
+that downloaded bytes are kept is honest. The "Not Installed" surface is technically honest. The
+consent dialog's 10.14 GB is a true total. The contradiction exists only in the *sequence*
+15 → 16 → 17 → 18. The review gate asks readers to examine images one at a time and judge whether
+each one's pixels support its filename — a per-frame question, which cannot surface a per-sequence
+defect. Nobody was asked to read the evidence as a narrative.
+
+That suggests a cheap new instrument: a reading pass whose brief is *"read these captures in
+timestamp order and name every place two consecutive frames contradict each other"* — a different
+lens over the same bytes, not more bytes. It is a natural fit for parallel readers with distinct
+lenses (per-frame honesty; sequence consistency; cross-surface vocabulary), which is also the
+shape that would surface T2's label collisions.
+
+The tension to respect: the retrospective measures this channel as the round's dominant token
+cost (~70 full-resolution reads, ~70–80 k tokens), and the review gate *mandates* opening every
+credit-eligible capture, which pulls directly against the crop-first advice. Adding lenses
+multiplies that. The plausible resolutions — downscaled thumbnails for the sweep with
+full-resolution only where a claim is in doubt, and sharding lenses across parallel readers rather
+than stacking them on one — are cheap enough to try before concluding the channel is unaffordable.
+
+## T4. A pre-registered expectation is an instrument, and can inject a false finding
+
+The round-8 charter (written in this session) told the round that
+`Combined backfill: docs=N (embed=0,splade=0,chunks=0)` repeating at high frequency *is* the
+livelock and must not appear. It appeared 143 times, six of them inside 142 ms — and was not the
+livelock: the lines carried `written=100`, the run terminated on its own, enrichment completed,
+and a 60-second idle window produced zero new lines. A round following the charter literally would
+have filed a false HIGH against a working build.
+
+The charter encoded a **symptom signature** where it needed a **discriminator**. The signature is
+emitted by healthy backfill too; what distinguishes the defect is *non-termination* — the
+signature still firing while every coverage counter is static and ingest jobs are starved.
+
+This is the mirror image of a lesson already recorded for measurement probes (a probe without
+pre-registered validity rules can report its own leak as a win). The same discipline applies to
+pre-registration itself: a charter watch-item needs a stated answer to *"what would this look like
+if the build were healthy?"* before it is handed to a round. Cheap to add — one field per watch
+item — and it prevents the expensive failure, which is not a missed defect but a fabricated one.
+
+## T5. Staleness that only the next reader can detect will not be detected
+
+Tempdoc 734 is the convergence document; `sandbox-CLAUDE.md` requires each round to read it to
+learn which prior findings the round exists to re-confirm. It silently lost round 7 entirely.
+Round 8 survived only because the charter happened to duplicate the content, and paid for it
+anyway: the round-6 skins-swatch MEDIUM was rediscovered from scratch and still reproduces (F7).
+
+The mechanism is worth naming beyond this instance. Updating the document is a host-side step
+after a round ends; the party positioned to notice it was skipped is the *next* round — a
+different agent, with no baseline for what should be there, reading the document precisely because
+it does not already know its contents. **A document whose staleness is detectable only by a reader
+who cannot detect it is structurally unmaintainable, however clear the instruction to maintain
+it.** The remedy class is not diligence but a mechanical liveness check at the point of use — here,
+refusing to stage a convergence tempdoc whose latest recorded round is older than the charter's
+round number, which would have failed loudly at staging time and cost nothing.
+
+Same family as retirement residue (tempdoc 742) and the prose-tier register's own meta-loop: a
+document that claims authority needs something that fails when the claim goes stale.
+
+## T6. What actually stands between "qualifiable" and "shipped" — and one gap the verdict does not cover
+
+Round 8's verdict answers a narrower question than it appears to. It says *no blocking defect on a
+clean machine*. It does not say the qualifying set is complete, and it is not.
+
+**The harness's own round-mode policy requires at least one `upgrade-from-release` round in a
+release's qualifying set** — install the previous public release, seed data, install the candidate
+over it — on the recorded grounds that the strongest defect reproduction this harness ever produced
+came from a non-fresh arrival state. For 0.2.0 that round has never run. Rounds 7 and 8 were both
+`fresh-install`, and `v0.1.0` exists and is installable, so the round is possible, not vacuous.
+
+The obvious objection is that there are no current users (owner decision 2 above), so nobody
+actually arrives by upgrade. That objection does not reach the argument: the non-fresh round finds
+defects because of *state migration over a pre-existing index, config and data directory*, not
+because of who is holding the machine. A first release is also the last moment when the migration
+path is cheap to get wrong invisibly.
+
+Two further items belong on the same list, both currently unowned by any tempdoc:
+
+- **Signing.** The certificate is in identity validation; the candidate is unsigned by design and
+  round 8 was told to treat SmartScreen prompts as expected. A signed build is materially a
+  different artifact and needs at least a reachability round, not an assumption of equivalence.
+- **There is no auto-updater.** `tauri.conf.json` declares no updater configuration. This is worth
+  deciding *before* the first real release rather than after: once an un-updatable build is in the
+  field, every user on it must be reached by some other channel forever. The decision is cheapest
+  now and irreversible in one direction only, which is the signature of a decision that should not
+  default by omission.
+
+None of these is a defect. They are the difference between "this build is sound" and "this release
+is ready", and the round is not the instrument that answers the second.
+
+## T7. Retirement conditions for the principles this tempdoc named
+
+§R3 asked what would show the principles earning their keep. Round 8 supplies a first reading, and
+the honest one is mixed:
+
+- **The write-time witness contract (§D2) earned it.** It held across four ingest paths, three of
+  which its author never exercised. If a future round finds a status claim unbacked by an artifact
+  at a lane the contract covers, the principle is wrong and the contract should be replaced, not
+  extended.
+- **"Derive, don't author" (§R1b) is under-specified rather than earning or failing.** T2 gives it
+  two clauses it lacks. Retire it if, after those clauses are added, presentation findings keep
+  arriving that none of the three clauses would have caught — that would mean the frame is wrong,
+  not incomplete.
+- **Precedence (§R1c) has not been tested.** F5 (composer clipped below the viewport when results
+  are cleared with the preview open) is a precedence failure in a surface the principle names, and
+  it shipped after the principle was written. One instance is not a verdict, but the principle
+  should be considered unsupported until a fix built on it survives a round.
 
 ## Suggested sequencing (not licensed)
 
