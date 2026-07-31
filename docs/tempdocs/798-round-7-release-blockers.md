@@ -1083,21 +1083,25 @@ true. Round 8 confirms the shape and finds two defects the principle **as writte
   reads the *active* skin's accent rather than the accent of the skin that card represents, so
   applying Violet turns all nine swatches violet. Nothing is hardcoded; the gallery still cannot
   preview anything.
-- **F3 (Tasks panel)** derives honestly *and* labels the result with a word that already denotes a
-  different quantity. The panel's "4308 QUEUED" and the status bar's "queue: 0" are both true of
-  their own field, in the same window, in the same frame.
+- **F3 (Tasks panel)** was read here as a *label collision* — two components naming different
+  quantities with the same word. **That reading is withdrawn; tempdoc 801 §D0/§D6 refutes it on
+  evidence.** Both figures describe the same worker `jobs` table: the status bar via a live
+  `COUNT(*)` over `PENDING`+`PROCESSING`, the panel via a per-row SSE projection through a
+  head-side in-memory mirror that is repaired only when a frame arrives. The words agree; the two
+  derivations drift. The enrichment-backlog hypothesis in round 8's own write-up is refuted too —
+  nothing in the tasks path reads `status.embedding`.
 
-So the principle needs two clauses it does not currently have: **derive from the subject you are
-describing**, and **a derived value still needs a label that does not collide with another
-quantity's label on the same screen.** F7 fails the first; F3 fails the second. Both would sail
-past "don't author prose."
+So the principle needs one clause, not two: **derive from the subject you are describing.** F7
+reads global applied-theme state instead of its card's own skin; F3 reads a stale mirror instead of
+the table. Tempdoc 801 §D0 sharpens this further and supersedes §R1b outright — the invariant is
+that *a claim must be computed from the thing it claims about*, of which authoring prose is merely
+the degenerate case.
 
-The second clause points at something with no obvious home today: labels are a shared namespace
-across independently-authored components, and nothing owns that namespace. A component can be
-locally correct and globally ambiguous. Whether that deserves structure (a vocabulary register in
-the shape of the existing execution/operation-surface registers) or is simply a review concern is
-genuinely open — the honest answer is that two instances is not enough to justify a register, and
-the observation should be recorded and left to accumulate.
+The label-collision idea is recorded here only as a hypothesis that did not survive contact with
+the mechanism. It cost nothing to hold and it is worth noting why it was attractive: two numbers
+under one word is what the *screenshot* shows, and the vocabulary reading explains that surface
+appearance perfectly while being wrong about the cause. A defect's appearance and its mechanism can
+support entirely different stories.
 
 ## T3. The highest-yield defect channel this round was re-reading evidence, not capturing it
 
