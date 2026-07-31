@@ -154,6 +154,33 @@ which do.
    survive — but they were reached from the wrong ordering, so they are currently right-by-luck
    rather than right-by-evidence, and need recomputing before being leant on again.
 
+### Replicated across two further run sets (2026-07-31)
+
+The same script was run over every other run directory on disk. The finding replicates on
+**16 hybrid cells across three independent run sets**, and the control holds everywhere.
+
+| run set | cells | n/cell | hybrid delta range | non-CE modes |
+|---|---:|---:|---|---|
+| `781-certification` (enron / legal) | 8 | 50 | −0.0586 … +0.0382 | 0.0000 on all |
+| `781-certification/step0` (arms A1–A4) | 4 | 200 | −0.0547 … −0.0263 | 0.0000 on all |
+| `786-sweep` (OHR-bench) | 4 | 645–708 | −0.0016 … +0.0121 | n/a (hybrid only) |
+
+Two things the wider sample adds:
+
+1. **Effect size tracks headroom.** OHR-bench sits at nDCG@10 ≈ 0.96 and moves by ~0.001–0.012;
+   the enron/legal cells sit at 0.10–0.66 and move by up to 0.06. Where the engine is already
+   near-perfect a reorder cannot change much — so the defect matters *most* exactly where quality
+   findings are most contested.
+2. **step0's arms are uniformly negative** (all four cells, 199/200 queries reordered), whereas the
+   781 cells split by corpus. So "bidirectional" is a property of the corpus, not noise.
+
+**A caveat the script surfaced rather than hid.** On the 786 sweep, 254 of 962 queries per cell had
+same-length but *non-identical* document sets between the trec file and `predictedDocIds` — not a
+pure reorder, so not a valid A/B subject. The script skips them, reports the count as a WARNING,
+and the printed `n` reflects only the valid queries (e.g. 708, not 962). The cause is uninvestigated
+and is a separate question from this defect; the 786 numbers above are therefore sound but drawn
+from a subset.
+
 ### What this does not settle
 
 The 781 cells are a certification corpus, not the published release cohort. The README table and
