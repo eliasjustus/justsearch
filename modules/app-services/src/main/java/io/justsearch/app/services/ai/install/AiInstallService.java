@@ -398,7 +398,13 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
             "ai.model-install",
             OpCriticality.INTERRUPTIBLE_WITH_LOSS,
             7200L,
-            Map.of("source", "ai.model-install"));
+            Map.of("source", "ai.model-install"),
+            // Cancellation callback: upgrade prepare drains every active lease, so without this a
+            // consented update would sit behind a multi-hour download instead of asking it to
+            // stop. Safe to honour because a cancelled download resumes from its .partial rather
+            // than restarting (tempdoc 798). The lease still blocks until this actually returns —
+            // the request is an ask, not a release.
+            this::cancel);
     try {
       Thread.ofVirtual()
           .name("ai-install-v2")
