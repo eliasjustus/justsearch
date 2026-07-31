@@ -290,3 +290,34 @@ status for F-001/F-006 today is *unmeasured*, not *measured as zero*.
 
 Riders recording this were added to the four findings in
 `docs/reference/search-quality-register.md`.
+
+## Superseded on the published corpora (2026-07-31, tempdoc 802)
+
+This document was explicit that its cells were "a certification corpus, not the published release
+cohort" and that the release delta was "**unmeasured**". Tempdoc 802 measured it — all five corpora
+in `release.v1.json`, re-run and scored both ways with ir_measures — and **the directions found here
+do not transfer**:
+
+| | 781 cells (this doc) | published corpus (802) |
+|---|---|---|
+| Enron | mostly **harmful** | `mixed/enron-qa` **+0.0184 helpful** |
+| Legal | 4 of 4 **helpful** | `mixed/legal-clerc-200` **−0.0418 harmful** |
+
+Both signs reverse. `mixed/en-email-enron-raw-*` and `mixed/en-legal-clerc-*` are certification
+corpora with synthesized queries; the published benchmarks are different datasets that happen to
+share a name. The caveat in "What this does not settle" was the right one, and it is what made this
+checkable.
+
+Two further corrections from 802, recorded here so this document is not read as current:
+
+- **"Effect size tracks headroom" does not hold on the published cohort** — `miracl-fr` at nDCG 0.87
+  moves +0.0128 while `scifact` at 0.76 moves only −0.0061.
+- **`metric_order_ab.mjs` is not precise enough to quote.** It reports `measured=0.7844` on
+  `enron-qa` where ir_measures says `0.7807`, because the trec file's stale fusion scores contain
+  ties its `sort()` breaks differently; the delivered side (strictly distinct synthetic scores)
+  agrees exactly. Sound for detecting and ranking the effect — which is all this document used it
+  for — but any figure reaching a public claim must come from ir_measures.
+
+The core finding of this document is unaffected: the metric reconstructs fusion order and discards
+the cross-encoder's ranking. 802 confirms that on the published corpora, where the top-1 result
+changes on 30–53% of queries and the ordering term ranges −0.0418 to +0.0184.

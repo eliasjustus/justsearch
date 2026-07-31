@@ -1,7 +1,7 @@
 ---
 title: "802 — A release recorded the config it was measured under, but not the artifacts it was measured from"
 type: tempdocs
-status: "STEPS 1-2 DONE, STEP 3 IS AN OWNER DECISION (2026-07-31). Step 1 (merged, 09c7afee): `compose()` records a `sources` section — per-member run_dir + summary sha256 — so a release can be re-scored later; verified by a mutation check (removing the wiring turns the new CLI test red with `KeyError: 'sources'`), 50/50 in `test_release.py`, now CI-wired where 132 pytest files previously ran nowhere. Step 2 (sizing pilot, mixed/enron-qa, 300 queries, the REAL published corpus): the ordering channel is worth **+0.0184 nDCG@10 by ir_measures** — POSITIVE, i.e. the published Enron-QA figure is UNDERSTATED, which REFUTES this document's own prediction that it was overstated; 800's `en-email-enron-raw-*` cells are a different benchmark from the published `mixed/enron-qa` despite the shared name. Per the pre-registered decision rule that is the calm case: the harness fix is correct and non-urgent, and can ride the next release. Step 3 (harness fix + re-run + re-baseline) is NOT done. Four of five published corpora remain unmeasured and no claim is made about them."
+status: "STEPS 1-2 DONE, STEP 3 IS AN OWNER DECISION (2026-07-31). Step 1 (merged, 09c7afee): `compose()` records a `sources` section — per-member run_dir + summary sha256 — so a release can be re-scored later; verified by a mutation check (removing the wiring turns the new CLI test red with `KeyError: 'sources'`), 50/50 in `test_release.py`, now CI-wired where 132 pytest files previously ran nowhere. Step 2: ALL FIVE published corpora re-run at current config and scored both ways WITH ir_measures. The cross-encoder ordering term the metric discards is BIDIRECTIONAL and corpus-specific: legal-clerc-200 **-0.0418** (overstated), enron-qa **+0.0184**, miracl-fr +0.0128, scifact -0.0061, miracl-de -0.0026; top-1 changes on 30-53% of queries everywhere. TWO OF THIS DOCUMENT'S OWN INTERIM CONCLUSIONS WERE REFUTED BY ITS OWN MEASUREMENTS and are left standing in place: (a) that enron-qa was likely OVERSTATED (it is understated), (b) the one-corpus \"calm case\" verdict (legal is materially overstated). Tempdoc 800's 781-cell directions do NOT transfer to the published corpora — both signs reverse — and the register riders derived from them are RETRACTED in this change. Step 3 (harness fix + re-run + re-baseline) is NOT done: the deltas are properties of today's engine and cannot be applied arithmetically to the published table."
 created: 2026-07-31
 category: measurement-integrity / provenance / eval-harness
 related:
@@ -227,3 +227,76 @@ Also note the pilot ran at **current `main` config, not the release cohort's** �
 against the published 0.736 is itself evidence the config has moved since `715-rebaseline-2026-07-16`.
 So `+0.0184` is the ordering delta *today*, not a correction that can be added to the published
 number on paper. That remains what step 3's re-run is for.
+
+## Step 2 completed — all five published corpora (2026-07-31)
+
+The Enron pilot was extended to the whole published cohort. Every corpus in `release.v1.json`'s
+`measured` set was re-run at current `main` config, hybrid mode, clean data dir, and scored **both
+ways with ir_measures** (never the A/B helper — see the tie-breaking caveat above).
+
+| corpus | published | measured today | delivered | delta | n | top-1 changed |
+|---|---:|---:|---:|---:|---:|---:|
+| `beir/scifact` | 0.760 | 0.7605 | 0.7544 | **−0.0061** | 300 | 100 |
+| `mixed/enron-qa` | 0.736 | 0.7807 | 0.7991 | **+0.0184** | 300 | 117 |
+| `mixed/legal-clerc-200` | 0.598 | 0.6407 | 0.5989 | **−0.0418** | 200 | 108 |
+| `mixed/miracl-de-2k` | 0.862 | 0.8600 | 0.8575 | **−0.0026** | 305 | 102 |
+| `mixed/miracl-fr-2k` | 0.873 | 0.8716 | 0.8844 | **+0.0128** | 343 | 90 |
+
+Zero doc-set mismatches on any corpus — all five are pure reorders. The top-10 ordering differs on
+essentially every query (287/300, 300/300, 199/200, 305/305, 343/343), and the **top-1 result**
+changes on 30–53% of queries.
+
+### The interim "calm case" verdict was wrong
+
+After the Enron corpus alone, this document concluded: *"+0.018 and positive is the calm case …
+understatement is not a claims-integrity emergency."* **Four corpora later that does not hold.**
+
+`mixed/legal-clerc-200` is **overstated by 0.042** — the largest effect in the cohort and precisely
+the direction called "cannot be left sitting". Generalising from one corpus was the same mistake as
+generalising from a corpus *name*, one step further along. The verdict is left above rather than
+edited out.
+
+### Two of tempdoc 800's conclusions do not transfer
+
+800's re-scoring of the 781-certification artifacts found Enron cells **mostly harmful** and CLERC
+legal cells **4 of 4 helpful**. On the corpora that are actually published, **both signs are
+reversed**:
+
+| | 781 cells (800) | published corpus (802) |
+|---|---|---|
+| Enron | mostly **harmful** | `enron-qa` **+0.0184 helpful** |
+| Legal | 4 of 4 **helpful** | `legal-clerc-200` **−0.0418 harmful** |
+
+This is not noise — it is the corpus-identity error twice over. `en-email-enron-raw-*` and
+`en-legal-clerc-*` are certification corpora with synthesized queries; `mixed/enron-qa` and
+`mixed/legal-clerc-200` are the published benchmarks. 800 was explicit that its cells were "a
+certification corpus, not the published release cohort" and that the release delta was
+"**unmeasured**" — that caution was correct and is what made this checkable. What was not warranted
+was the register rider derived from it (corrected in this change).
+
+800's secondary claim that **effect size tracks headroom** also fails here: `miracl-fr` at 0.87 moves
++0.0128 while `scifact` at 0.76 moves only −0.0061. Headroom does not predict the magnitude on this
+cohort.
+
+### What this means for the fix decision
+
+The honest summary is **bidirectional and corpus-specific, with one material overstatement**:
+
+- Correcting the metric would move `legal-clerc-200` **down** by roughly 0.04 and `enron-qa` **up**
+  by roughly 0.02; the other three move by less than 0.013.
+- The mean signed delta across the cohort is ≈ **−0.004**, so the *table as a whole* is close to
+  neutral — which is exactly why a per-corpus view was necessary. An aggregate would have hidden
+  the legal result.
+- The claims-integrity issue is therefore **specific and locatable**, not diffuse: one published
+  figure is materially overstated by the metric it is computed with.
+
+**These deltas cannot be arithmetically applied to the published numbers.** Today's measured values
+differ from the published ones (legal 0.6407 vs 0.598; enron 0.7807 vs 0.736), which is independent
+evidence that config has moved since `715-rebaseline-2026-07-16`. The delta is a property of
+today's engine, not a correction factor for a 2026-07-16 number. Only step 3's re-run produces
+numbers that can actually be published.
+
+One coincidence explicitly **not** being read as a finding: delivered legal (0.5989) lands almost
+exactly on the published legal figure (0.598). With a moved config between the two, there is no
+mechanism that would make that meaningful, and it is recorded only so a later reader does not
+rediscover it and over-interpret it.
