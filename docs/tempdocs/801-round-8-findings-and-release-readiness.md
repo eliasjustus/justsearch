@@ -1086,15 +1086,34 @@ disabled, real exit 0. Note a first attempt with `cleanTest test` reported succe
 with 78 tasks from cache — the third false green of this shape in this work, and the reason the
 forced form is now written into the plan.
 
-**The one genuine gap: F6 through a live model.** The chain is proven link by link — the frontend
-sends `body.selection`, the shape declares a document-bearing injector, the injector resolves the
-reference to real `DocumentService` content. What is *not* proven is that the assembled prompt the
-model receives contains the document text. Per `ai-offline-isnt-a-wall` this was pursued rather than
-declared unavailable: the blocker is that the **cuda12 llama-server runtime has never been staged on
-this machine** (`:modules:ui:stageLlamaCudaVariant` downloads it), not that the tier does not exist.
-Honest weighting: the *new* links are all tested, and the untested link is long-shipped engine
-behaviour that `SummarizeShape` already depends on — so the residual risk is lower than the empty
-cell suggests, but it is not zero and it is not closed.
+**The one genuine gap: F6 through a live model — pursued, then stopped on cost, with the state
+recorded so the next attempt starts two steps ahead.** The chain is proven link by link — the
+frontend sends `body.selection`, the shape declares a document-bearing injector, the injector
+resolves the reference to real `DocumentService` content. What is *not* proven is that the assembled
+prompt the model receives contains the document text.
+
+Per `ai-offline-isnt-a-wall` this was not declared unavailable; it was worked. What was done and what
+remains, precisely:
+
+1. `prepare-worktree.cjs` run (needed the dev stack stopped first — a running Vite holds
+   `lightningcss.win32-x64-msvc.node` and `npm ci` fails `EPERM`).
+2. `:modules:ui:stageLlamaCudaVariant` at the main checkout — succeeded, 2m25s. Re-running it in the
+   worktree failed on a transient `SSLHandshakeException`, so the staged artifact was **copied**
+   rather than re-downloaded.
+3. The variant resolves from `<dataDir>/native-bin/llama-server/variants/cuda12/` (`InferenceConfig`
+   `findCudaVariant`, and `nativeBin = baseDir.resolve("native-bin").resolve("llama-server")`).
+   Copying it there changed the error from *"Variant not installed: cuda12"* to **"No chat model
+   configured. Import a models pack first."** — i.e. the runtime half is now solved.
+4. **Remaining:** a chat model must be configured for this worktree's fresh dataDir. A usable GGUF
+   exists in the main checkout (`models/Qwen_Qwen3.5-9B-Q4_K_M.gguf`); the `dataDir` start parameter
+   is ignored by the dev-runner, so pointing the stack at the main checkout's data directory was not
+   available.
+
+Stopped there deliberately. Honest weighting of what is left unproven: the *new* links are all
+tested, and the untested link is long-shipped engine behaviour that `SummarizeShape` already depends
+on — so the residual risk is lower than the empty cell suggests. It is not zero, and it is not
+closed. The cheapest close is a models-pack import into this dataDir, or running the check from the
+main checkout once these commits are merged there.
 
 **Measurement traps hit while verifying, all the same shape.** Three times a *proxy* was read instead
 of the subject: a stale local `main` ref made an unrelated worktree look like a collision; browser
