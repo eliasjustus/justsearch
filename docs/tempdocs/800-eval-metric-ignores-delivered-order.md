@@ -191,7 +191,102 @@ and costs nothing.
 
 ## Provenance
 
-Logged as an observation by another session on 2026-07-29 (`obs:retriever`), which identified
-half the mechanism (the harness side). Tempdoc 799's pass flagged it as the highest-value
-unactioned finding; this document verifies the engine side, which the original note asserted
-but did not evidence, and establishes the blast radius.
+**Correction (2026-07-31): this is not a new discovery, and an earlier draft of this document
+implied it was.** The defect was found independently on **2026-07-01** during tempdoc 643's
+post-implementation critical-analysis pass, and stated in the search-quality register at F-026 in
+terms that leave nothing out:
+
+> trec-based rank is structurally blind to the floor's reordering, since the floor never rewrites
+> a hit's `score` field, only its list order.
+
+That session did the right thing locally: it recomputed F-026's four numbers "from a trec-based
+computation to the true final-response-order computation" and published the corrected figures,
+retracting a claim ("shifted 5 queries rank_3_5→rank_6_10... confirming the gate fires") that had
+been describing noise.
+
+What did not happen is the step from *this experiment's numbers are wrong* to *the apparatus that
+produced them is wrong*. `retriever.py` was never changed, so every subsequent `.trec`-derived
+number — and every prior one — still carries the blindness that bullet named. This is
+`fix-root-causes-not-symptoms` in its quiet form: nothing was suppressed or disabled, the local fix
+was correct and honestly reported, and the general case simply never got raised.
+
+That prior discovery **strengthens** everything above rather than diminishing it. The mechanism is
+not my inference from reading code; it was established a month earlier by someone measuring, and
+this document's contribution is the part that was missing — the blast radius (16 cells, three run
+sets), the direction (bidirectional, corpus-keyed), the magnitude (up to ±0.06 nDCG@10), and which
+register findings are load-bearing on it.
+
+Also logged as an observation by another session on 2026-07-29 (`obs:retriever`), covering the
+harness half of the mechanism. Tempdoc 799's pass flagged it as the highest-value unactioned
+finding, which is how it reached this document.
+
+## The aperture: which half of the cross-encoder the metric can see (2026-07-31)
+
+The re-derivation this section was opened to do — recomputing the register's CE findings from
+their original artifacts — **is not possible**: only `781-certification` and `786-sweep` survive on
+disk, and F-001/F-002/F-006/F-008 rest on tempdoc 309's runs, which do not. Recorded as a limit
+rather than worked around.
+
+But the sharper question turned out to be answerable from source alone, and it changes how those
+findings should be read.
+
+### The geometry
+
+Three constants decide what the metric can perceive:
+
+| quantity | value | source |
+|---|---|---|
+| eval's requested `limit` | 10 | `scripts/jseval/jseval/retriever.py:105`, passed as `{"limit": top_k}` at `:169` |
+| `justsearch.rerank.top_k` | 20 | `EnvRegistry.java:731` |
+| fetch window | `max(limit, topK)` = 20 | `KnowledgeSearchEngine.java:577-578` |
+| post-rerank trim | first 10 | `KnowledgeSearchEngine.java:1027-1028` |
+
+So the cross-encoder does **two** things to a 20-candidate window:
+
+1. **Selects** which 10 survive the trim.
+2. **Orders** those 10.
+
+The trec score is the pre-rerank fusion score, so `ir_measures` re-sorts the delivered 10 back into
+fusion order. **Selection passes through to the metric; ordering is discarded.** The engine is
+measured through a half-open aperture — and the closed half is the ranking one, which is what a
+rank-sensitive metric like nDCG@10 exists to measure in the first place.
+
+This also explains a detail that would otherwise look odd: the deltas are non-zero but not enormous.
+They are exactly the size of the discarded ordering term, no more — the selection term was already
+in the reported number.
+
+### What that does to the register's CE findings
+
+- **F-001 / F-006 ("CE model upgrade produces zero measurable difference on ANY corpus").**
+  A model swap changes both channels, but two reranker models agree far more about *which* 10 of 20
+  documents are best than about the order within them. The swap's signal therefore lands mostly in
+  the channel the metric deletes. "Zero difference, within noise, on every corpus" is precisely the
+  output an apparatus produces when the differing part has been discarded — so the observation is
+  consistent with the finding being true, and equally consistent with it being an artifact. These
+  two findings are **not refuted, but their evidentiary weight is far lower than the register
+  states**, and no amount of re-reading the old numbers can separate the cases.
+- **F-002 / F-008 ("CE hurts personal email, helps academic/legal").** These are *corroborated*,
+  and from a channel their original evidence could not see. Splitting the 781 cells by corpus:
+
+  | corpus | cells | ordering-channel delta | direction |
+  |---|---:|---|---|
+  | Enron (email) | 4 | −0.0586, −0.0463, −0.0102, +0.0176 | 3 of 4 **harmful** |
+  | CLERC (legal) | 4 | +0.0037, +0.0199, +0.0363, +0.0382 | 4 of 4 **helpful** |
+
+  That is F-008's exact shape, reproduced on an independent corpus pair through the previously
+  invisible half of the CE's contribution. It also implies the register **understates** the harm on
+  email and **understates** the benefit on legal, since in both cases the omitted term points the
+  same way as the reported one.
+
+The CE changes the top-1 result on 28–41 of every 50 queries. None of that has ever reached a
+reported number.
+
+### Consequence for the fix decision
+
+This raises the stakes on the harness fix without changing its shape. Correcting the scoring does
+not merely adjust published numbers; it re-opens two register findings that currently read as
+settled and are load-bearing for the "is a better cross-encoder worth it" question. The honest
+status for F-001/F-006 today is *unmeasured*, not *measured as zero*.
+
+Riders recording this were added to the four findings in
+`docs/reference/search-quality-register.md`.
