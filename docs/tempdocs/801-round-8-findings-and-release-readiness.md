@@ -458,6 +458,64 @@ while the span data is fetched out-of-band by raw `fetch` to `/api/diagnostics/t
 derives altitude from *declared consumes*, so a surface that reaches around its own declaration is
 invisible to it. That is R1's scope error again, in the governance plane.
 
+## D8. F6's "product decision" was already made, and the resolver contradicts it
+
+§D6 called the selection-vs-mode question an open product call needing an owner. On inspection it
+is not open, and recording why is more useful than recording the answer.
+
+**The project decided this and wrote the decision down.** `UnifiedChatView.ts:806-809`, carrying
+decision B14 verbatim:
+
+> the selection carries into sends as docIds; it no longer auto-flips the standing tier out from
+> under the user.
+
+That *is* the answer: a selection contributes **scope**, not **operation**. But `resolveShape`
+(`compose.ts:139-155`) does precisely what B14 forbids — every selection kind other than `'none'`
+returns `core.rag-ask`, flipping the tier out from under the user. Its own comment explains why it
+looks the way it does: the affordance hint was designed to disambiguate *"the ask-without-selection
+case"* (tempdoc 526 §14.5 T5), written when selection genuinely did determine the shape. B14 (a
+later tempdoc) changed the policy; this function was never revisited. Two decisions, one
+unrevisited resolver.
+
+**The two inputs are orthogonal, so the framing "which wins" was itself the error.** Selection
+answers *over what*; affordance answers *do what*. They only compete because `resolveShape`
+resolves both from one switch into one shape id. And the cost of the current collapse is
+one-directional: `buildRequestBody`'s `core.rag-ask` branch has no schema field at all
+(`unifiedChatRequest.ts:78-85`), so a user's attached JSON schema is silently discarded. There is
+no reading under which *"user attached a 2-property schema"* expresses a preference for prose.
+
+**One part of the current behaviour is right and must survive the fix.** When the affordance is
+`'none'` — nothing explicitly chosen — a selection upgrading free-chat to `core.rag-ask` is good
+behaviour, not a bug. So the corrective is *not* "affordance always wins". It is:
+
+> An **explicitly chosen** operation is never overridden by ambient selection state; an
+> **unspecified** operation may be resolved by it.
+
+That is one structural change — hoist the explicit-affordance check above the selection switch —
+and it preserves every useful row in the existing table.
+
+**The genuinely non-obvious part, and the reason this cannot be a one-line change.**
+`ExtractShape.definition()` declares its injectors as
+`List.of(ExternalContextInjector.ID, "core.user-prompt")` — **`SelectionContextInjector` is not
+among them.** The frontend forwards `body.selection` for every shape
+(`unifiedChatRequest.ts:97-103`), but extraction does not read it; it sources documents through
+`ExternalContextInjector`. So simply letting extraction win could trade a wrong-mode failure for a
+no-document failure — which is what the round's own direct API call produced when it invoked
+`/api/chat/extract` with a schema and no document, and got back schema-conforming JSON reading
+`{"error": "No document provided"}` (note: model output, not a server error — the string appears
+nowhere in the Java sources).
+
+This also supplies the most charitable reading of the current code, which is worth stating because
+it is coherent: *if extraction cannot consume a selection anyway, routing a selection-bearing send
+to RAG-ask at least uses the selection.* That rationale is defensible and still leads to the same
+conclusion — the fix is to let extraction read the selection, not to reroute away from it, because
+rerouting discards the schema and makes the chip lie about what was sent.
+
+**So the sequence is forced:** give extraction a document channel first (declare
+`SelectionContextInjector`, or establish that `ExternalContextInjector` already covers the attached
+-document case), then hoist the explicit affordance above the selection switch. Doing the second
+without the first converts a visible wrong-answer into a visible no-answer.
+
 ## D7. Strand B — the qualifying-set gap needs a round, not a design
 
 Verified while designing, so this is settled rather than proposed:
@@ -616,9 +674,10 @@ the part worth keeping:
    enumerates eight surfaces needing steps — real work that should be sized before it is committed
    to. The alternative is declaring them `exempt` with honest reasons, which at minimum converts an
    invisible gap into a visible one.
-2. **Should a selection override an explicitly chosen Extraction mode** (§D6)? This is a product
-   question underneath F6's truthfulness defect, and it needs an owner call. The chip must stop
-   lying either way; what it should say depends on the answer.
+2. ~~Should a selection override an explicitly chosen Extraction mode?~~ **Largely settled — see
+   §D8.** The project already decided it (decision B14) and `resolveShape` contradicts the
+   decision. What remains is not a product call but a mechanical precondition: extraction must
+   actually receive a document before it can be allowed to win.
 3. **Is a sequence-reading pass over evidence worth adding** (798 §T3)? Three of nine findings came
    from re-reading existing captures, and F9 was invisible in any single frame. Cheap instrument;
    the review is already the round's dominant token cost, which argues for sharding lenses across
