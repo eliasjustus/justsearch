@@ -668,10 +668,16 @@ def _build_steps(ui_url: str, cooldown_ms: int, timeout_ms: int) -> list[Step]:
         # than an assertion bolted onto `chat-proportion` (whose own screenshot/a11y
         # baseline must stay undisturbed, same reasoning that step records).
         #
-        # 1050x800: just OVER the 64rem (1024px) wide breakpoint, which is where round 7
-        # measured the collapse — the wide grid mounts every zone but has the least room
-        # to fit them, so it is the worst case, not an arbitrary width.
-        await page.set_viewport_size({"width": 1050, "height": 800})
+        # 1250x800: just OVER the 64rem (1024px) wide breakpoint AS THE CHAT SURFACE SEES IT.
+        # Round 8 corrected the measurement this width was originally derived from: the
+        # breakpoint is a `@container` query on the surface box, not a `@media` query on the
+        # viewport, and the surface box is the viewport minus the Shell rail (11rem expanded)
+        # minus the surface's own 1rem padding. At the old 1050 the surface got ~842px and the
+        # wide grid no longer commits at all (the pane moves to the OverlayHost drawer, so
+        # `.document-pane` would drop out of this capture entirely). 1250 puts the surface at
+        # ~1042px — still the worst case the gate wants (every zone mounted, least room to fit
+        # them), now computed against the box the tracks are actually laid out in.
+        await page.set_viewport_size({"width": 1250, "height": 800})
         # Same rail-click + composer path `setup_chat_proportion` uses, and for the same
         # reason: `_type_and_search` / `S.SEARCH_INPUT` target a searchbox role + testid
         # that tempdoc 687 retired (see the ui_selectors.py note).

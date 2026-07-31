@@ -42,6 +42,7 @@ import {
 // Tempdoc 657 — pre-install per-tier weight breakdown (GET /api/ai/install/plan-preview).
 import type { InstallPlanPreview } from '../utils/aiInstallPoll.js';
 import {
+  aiEngineBody,
   aiEngineHeadline,
   aiEngineTone,
   applyLocalIntent,
@@ -207,6 +208,13 @@ export interface InstallConsentContent {
    * (`refreshAll()` is fire-and-forget from `connectedCallback`, so the dialog can open first).
    */
   downloadTotal: string | null;
+  /**
+   * Sandbox round 8 — formatted bytes an interrupted earlier download left on disk, which this
+   * install resumes rather than re-fetches. `null` when there is no paused download (the common
+   * first-run case) or the preview has not resolved. `downloadTotal` already EXCLUDES these bytes,
+   * so the two numbers add up to the full model footprint rather than double-counting it.
+   */
+  resumedTotal: string | null;
   packages: InstallConsentPackage[];
   /** True when the manifest has not resolved (or declares no packages) — nothing to show. */
   termsUnavailable: boolean;
@@ -239,6 +247,13 @@ export function composeInstallConsent(
   const downloadTotal =
     typeof totalBytes === 'number' && totalBytes > 0 ? formatBytes(totalBytes) : null;
 
+  // Sandbox round 8 — the pause dialog promises the already-downloaded bytes stay and the next
+  // install resumes from them; this dialog then quoted the FULL footprint as if they were gone.
+  // The planner now reports them (`InstallPlan.resumableBytes`), so the consent states them too.
+  const resumedBytes = preview?.resumableBytes;
+  const resumedTotal =
+    typeof resumedBytes === 'number' && resumedBytes > 0 ? formatBytes(resumedBytes) : null;
+
   const excludedTiers = new Set(
     (preview?.tiers ?? [])
       .filter((t) => t.includedByIntent === false)
@@ -258,7 +273,7 @@ export function composeInstallConsent(
       termsUrl: p.termsUrl ?? null,
     }));
 
-  return { downloadTotal, packages, termsUnavailable: packages.length === 0 };
+  return { downloadTotal, resumedTotal, packages, termsUnavailable: packages.length === 0 };
 }
 
 /**
@@ -826,8 +841,8 @@ export class BrainSurface extends JfElement {
         this.transitions = t.transitions;
       }
       // Tempdoc 518 Appendix G Wave D.1 — recent spans for the trace explorer panel.
-      // Best-effort: the endpoint returns tracesAvailable=false when HEAD_TRACING_LEVEL=none
-      // (the default), in which case we suppress the panel below.
+      // Best-effort: the endpoint reports tracesAvailable=false when no traces.ndjson exists on
+      // disk (a file check, NOT a tracing-level check), in which case we suppress the panel below.
       const traces = await this.fetchJson<TraceExplorerResponse>(
         '/api/diagnostics/traces?limit=10',
       );
@@ -954,8 +969,22 @@ export class BrainSurface extends JfElement {
    * the way up through the plugin-api host contract, so enriching it would change a capability
    * interface; `AdvisoryInboxDrawer`'s in-template anchors are the precedent followed here.
    */
-  private startInstall(): void {
+  private async startInstall(): Promise<void> {
+    // Sandbox round 8 — `planPreview` is a MOUNT-time value: `refreshAll()` runs from
+    // `connectedCallback`, the manual refresh, and one op-success handler, and nothing else re-asked.
+    // Between mount and this click a download can finish files or be paused with bytes retained, both
+    // of which change the total the dialog is about to state. Re-ask first rather than quoting a
+    // number the backend has already superseded; if the re-ask fails, the last-known preview (or the
+    // "still being calculated" fallback) stands, exactly as before.
+    await this.refreshInstallPlanPreview();
     this.installConsentOpen = true;
+  }
+
+  /** Re-reads the plan preview alone — the one consent input whose value goes stale while mounted. */
+  private async refreshInstallPlanPreview(): Promise<void> {
+    if (!this.apiBase && this.apiBase !== '') return;
+    const preview = await this.fetchJson<InstallPlanPreview>('/api/ai/install/plan-preview');
+    if (preview) this.planPreview = preview;
   }
 
   private async confirmInstall(): Promise<void> {
@@ -1201,6 +1230,15 @@ export class BrainSurface extends JfElement {
         label: 'Not Installed',
         sub: 'Install AI models to get started.',
       },
+      // Sandbox round 8 — this row exists because the one above was rendered over 1.2 GB of retained
+      // download. Label and sub PROJECT `aiEngineHeadline`/`aiEngineBody` (the one authority, which
+      // carries the byte count) rather than restating them here; that is the fork discipline the
+      // `online`/`indexing` rows below already follow.
+      paused: {
+        dot: 'notinstalled',
+        label: aiEngineHeadline(aiVerdict),
+        sub: aiEngineBody(aiVerdict),
+      },
       installing: {
         dot: 'installing',
         label: 'Installing…',
@@ -1272,10 +1310,13 @@ export class BrainSurface extends JfElement {
     // "wait" to show).
     const primaryAction = (() => {
       switch (aiState) {
+        // `paused` shares the install action but not its label: "Install AI" over a half-downloaded
+        // 10 GB reads as "start over", which is the very fear the pause dialog set out to remove.
+        case 'paused':
         case 'not_installed':
         case 'install_failed':
           return {
-            label: 'Install AI',
+            label: aiState === 'paused' ? 'Resume Download' : 'Install AI',
             iconName: 'hard-drive' as const,
             onClick: () => void this.startInstall(),
             availability: downloadsDisabled
@@ -1463,9 +1504,6 @@ export class BrainSurface extends JfElement {
               >Install failed: ${aiVerdict.installFailure}</jf-error-alert
             >`
           : nothing}
-
-        ${this.renderTransitionTimeline()}
-        ${this.renderTraceExplorer()}
       </div>
     `;
   }
@@ -1605,8 +1643,11 @@ export class BrainSurface extends JfElement {
 
   /**
    * Tempdoc 518 Appendix G Wave D.1 — in-product trace explorer panel.
-   * Lists the 10 most recent spans from /api/diagnostics/traces. Hidden when tracing is off
-   * (HEAD_TRACING_LEVEL=none, the default — endpoint reports tracesAvailable=false).
+   * Lists the 10 most recent spans from /api/diagnostics/traces. Hidden when the endpoint reports
+   * `tracesAvailable: false` — which DiagnosticsController derives purely from whether
+   * `<dataDir>/telemetry/traces.ndjson` is a regular file, NOT from the tracing level: with
+   * JUSTSEARCH_HEAD_TRACING_LEVEL=none but a leftover traces file on disk, the panel still renders
+   * (verified empirically). Advanced-mode-only for that reason among others.
    * Clicking a row copies its trace_id to the clipboard so it can be looked up in
    * otel-desktop-viewer or grep'd against traces.ndjson.
    */
@@ -1938,10 +1979,16 @@ export class BrainSurface extends JfElement {
 
   /**
    * Sandbox round 7 — the consent screen states what the app already knows: the exact total from the
-   * plan preview (the same number the very next screen renders), and every package it will install
-   * with its SPDX licence and a clickable link to the upstream terms the copy asks you to accept.
+   * plan preview, and every package it will install with its SPDX licence and a clickable link to the
+   * upstream terms the copy asks you to accept.
    *
-   * Both inputs arrive from the fire-and-forget `refreshAll()`, so either can still be missing when
+   * Sandbox round 8 — the preview is re-read on the way in ({@link startInstall}) rather than trusted
+   * from mount, and when an earlier download was paused the retained bytes get their own line. The
+   * quoted total is what the network will TRANSFER (retained bytes excluded); the progress screen's
+   * denominator is the file-size total those bytes count up to, so the two differ by exactly the
+   * resumed amount this dialog now names.
+   *
+   * The manifest still arrives from the fire-and-forget `refreshAll()`, so it can be missing when
    * the dialog opens. Neither gap is papered over with a plausible-looking number or an empty list:
    * an unresolved preview says the size is still being computed, and an unresolved manifest says the
    * terms could not be listed (and that continuing still accepts them) rather than implying there
@@ -1970,6 +2017,12 @@ export class BrainSurface extends JfElement {
               : html`This downloads the recommended model files into AI Home. The exact size is still
                   being calculated — it is shown on the progress screen once the download starts.`}
           </p>
+          ${consent.resumedTotal
+            ? html`<p class="consent-lede">
+                <strong>${consent.resumedTotal}</strong> from your earlier paused download is still on
+                disk and will be resumed, not downloaded again.
+              </p>`
+            : nothing}
           <p class="consent-lede">
             ${consent.termsUnavailable
               ? 'The upstream model terms could not be listed right now. Downloading still accepts the licence each package is published under; reopen this dialog once the connection is back to read them first.'
@@ -2411,6 +2464,11 @@ export class BrainSurface extends JfElement {
               )}
               ${this.renderModels()}
               ${this.renderPackImport()}
+              <!-- Developer telemetry: Advanced-only. Both panels expose runtime internals (mode
+                   transitions, span/trace IDs) that have no meaning on the first-run Simple panel,
+                   where they previously rendered. -->
+              ${this.renderTransitionTimeline()}
+              ${this.renderTraceExplorer()}
             `
           : nothing}
         ${this.renderInstallConsent()}

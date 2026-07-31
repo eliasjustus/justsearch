@@ -30,6 +30,11 @@ export interface ZoneDecl {
 export interface ComposeOpts {
   /** The grid container's CSS class (e.g. `'.conversation-zone'`). */
   readonly container: string;
+  /**
+   * The `container-name` of the SURFACE box the breakpoint is evaluated against — an ancestor of
+   * {@link container} that declares `container-type: inline-size` (a box cannot query itself).
+   */
+  readonly containerName: string;
   /** The wide breakpoint, e.g. `'64rem'`. */
   readonly breakpoint: string;
   /** The inter-zone gap (a token reference or a literal). */
@@ -50,9 +55,17 @@ export function trackTemplate(zones: readonly ZoneDecl[], viewport: 'narrow' | '
  * §13 Pillar B — generate the grid-frame {@link CSSResult} for a declared zone-set. Faithful to the
  * de-risk Probe S2 (reproduces the prior hand-authored grid exactly). Empty-collapse needs no branch:
  * a zone whose element is unmounted leaves its `minmax(0,…)` track to collapse to zero width.
+ *
+ * 798 round 8 — the breakpoint is a `@container` query against the SURFACE box, not a `@media` query
+ * against the viewport. A zone-set's declared track minimums are a budget on the width the CONTAINER
+ * gets; the viewport is a different, always-larger number (it still contains the Shell rail and the
+ * surface's own padding), so a media query committed the grid to multi-column at widths where the
+ * tracks provably did not fit and the surface overflowed by the difference. Querying the box the tracks
+ * are actually laid out in makes that class of error unrepresentable rather than re-tuned.
  */
 export function composeGridStyles(zones: readonly ZoneDecl[], opts: ComposeOpts): CSSResult {
   const container = unsafeCSS(opts.container);
+  const containerName = unsafeCSS(opts.containerName);
   const narrow = unsafeCSS(trackTemplate(zones, 'narrow'));
   const wide = unsafeCSS(trackTemplate(zones, 'wide'));
   const gap = unsafeCSS(opts.gap);
@@ -72,7 +85,7 @@ export function composeGridStyles(zones: readonly ZoneDecl[], opts: ComposeOpts)
       grid-template-columns: ${narrow};
       gap: ${gap};
     }
-    @media (min-width: ${bp}) {
+    @container ${containerName} (min-width: ${bp}) {
       ${container} {
         grid-template-columns: ${wide};
       }

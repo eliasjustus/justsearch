@@ -33,6 +33,7 @@
  *     shared-signal precedent was considered and deliberately not reused here - see the design doc §R).
  */
 import { isKnown } from './known.js';
+import { formatBytes } from '../display/format.js';
 import type { AiRuntime, InstallStatus, AiRuntimeStatus } from './aiStateStore.js';
 
 /** Why the AI-engine state is provisional (real-now-but-in-flux). Closed union - every consumer
@@ -51,6 +52,12 @@ export type AiStability =
 
 export type AiEngineKind =
   | 'not_installed'
+  // Sandbox round 8: an interrupted install left multi-GB of `.partial` bytes on disk. Distinct from
+  // `not_installed` because `not_installed` is a SETTLED claim that nothing is there — rendered over
+  // 1.2 GB of retained download it is simply false, and it contradicts the pause dialog's own promise
+  // that the bytes stay and the next install resumes. Derived from the DISK-probed
+  // `installStatus.resumableBytes`, never from the session-ephemeral `state: 'cancelled'`.
+  | 'paused'
   | 'installing'
   | 'install_failed'
   | 'offline'
@@ -84,6 +91,12 @@ export interface AiEngineVerdict {
    * in the 'indexing' kind at all.
    */
   readonly awaitingChatEnable?: boolean;
+  /**
+   * Set only when `kind === 'paused'`: bytes an interrupted install left on disk, which resuming
+   * keeps. Carried on the verdict so the ONE presentation projection (`aiEngineBody`) can name the
+   * amount, rather than each surface re-reading `installStatus` and formatting its own number.
+   */
+  readonly resumableBytes?: number;
 }
 
 /**
@@ -208,6 +221,19 @@ export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVe
         installFailure: null,
       };
     }
+    // Sandbox round 8: "Not Installed" is a CONFIDENT negative. Over bytes an interrupted install
+    // left on disk it is a false one, and it contradicts the cancel dialog's promise that they are
+    // kept. `resumableBytes` is disk-derived by the backend planner, so this survives the restart
+    // that erases `state: 'cancelled'`.
+    const staged = installStatus?.resumableBytes ?? 0;
+    if (staged > 0) {
+      return {
+        kind: 'paused',
+        stability: { kind: 'settled' },
+        installFailure: null,
+        resumableBytes: staged,
+      };
+    }
     return { kind: 'not_installed', stability: { kind: 'settled' }, installFailure: null };
   }
 
@@ -313,6 +339,8 @@ export function aiEngineHeadline(v: AiEngineVerdict): string {
   switch (v.kind) {
     case 'not_installed':
       return 'Not Installed';
+    case 'paused':
+      return 'Download Paused';
     case 'installing':
       return 'Installing…';
     case 'install_failed':
@@ -366,6 +394,10 @@ export function aiEngineTone(kind: AiEngineKind): NoticeTone {
       return 'error';
     case 'offline':
     case 'not_installed':
+    // `paused` is calm, not an alarm: nothing is broken and nothing was lost. It shares
+    // `not_installed`'s neutral tone; what distinguishes them is the headline and body, which say
+    // the download is paused and how much of it is already on disk.
+    case 'paused':
     default:
       return 'neutral';
   }
@@ -377,6 +409,13 @@ export function aiEngineBody(v: AiEngineVerdict): string {
   switch (v.kind) {
     case 'not_installed':
       return 'Install AI models to get started.';
+    case 'paused':
+      // The number is the whole point: the pause dialog promised the bytes would stay, so the idle
+      // surface has to be able to show that they did. Falls back to the unquantified claim only if
+      // the backend somehow reported a paused state without a byte count.
+      return v.resumableBytes && v.resumableBytes > 0
+        ? `${formatBytes(v.resumableBytes)} already downloaded is kept on disk — resuming continues from there.`
+        : 'An earlier download is paused — resuming continues from where it stopped.';
     case 'installing':
       return 'Downloading models.';
     case 'install_failed':

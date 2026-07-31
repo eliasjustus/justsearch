@@ -12,20 +12,45 @@ import java.util.List;
  * @param profile the download profile selected for this hardware
  * @param downloads files to download (model variants + supporting files)
  * @param skipped model packages skipped due to hardware constraints
- * @param totalBytes total download size in bytes
+ * @param totalBytes total size of the planned downloads, in bytes — the denominator the install
+ *     run's per-package progress is measured against (a resumed file still ends up this large)
  * @param alreadyInstalled model packages that are already correctly installed
+ * @param resumableBytes of {@code totalBytes}, how many are already staged on disk in {@code
+ *     .partial} files from an earlier, interrupted run. Bytes a resumed download will not fetch
+ *     again — so {@link #remainingBytes()}, not {@code totalBytes}, is what the network still owes.
  */
 public record InstallPlan(
     DownloadProfile profile,
     List<PlannedDownload> downloads,
     List<SkippedPackage> skipped,
     long totalBytes,
-    List<String> alreadyInstalled) {
+    List<String> alreadyInstalled,
+    long resumableBytes) {
 
   public InstallPlan {
     if (downloads == null) downloads = List.of();
     if (skipped == null) skipped = List.of();
     if (alreadyInstalled == null) alreadyInstalled = List.of();
+    if (resumableBytes < 0) resumableBytes = 0;
+  }
+
+  /** Backwards-compat constructor — a plan with nothing staged on disk. */
+  public InstallPlan(
+      DownloadProfile profile,
+      List<PlannedDownload> downloads,
+      List<SkippedPackage> skipped,
+      long totalBytes,
+      List<String> alreadyInstalled) {
+    this(profile, downloads, skipped, totalBytes, alreadyInstalled, 0L);
+  }
+
+  /**
+   * Bytes that still have to come over the network — {@code totalBytes} minus whatever an earlier
+   * run already staged. This is the number a pre-download consent surface owes the user; {@code
+   * totalBytes} is the file-size total the progress bar counts up to.
+   */
+  public long remainingBytes() {
+    return Math.max(0L, totalBytes - resumableBytes);
   }
 
   /**
