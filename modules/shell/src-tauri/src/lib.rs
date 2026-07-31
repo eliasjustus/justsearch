@@ -1405,8 +1405,20 @@ pub fn run() {
             let reconciliation_coordinator = update_coordinator.clone();
             tauri::async_runtime::spawn(async move {
                 reconciliation_coordinator
-                    .reconcile_after_backend_ready(reconciliation_app, reconciliation_state)
+                    .reconcile_after_backend_ready(
+                        reconciliation_app.clone(),
+                        reconciliation_state.clone(),
+                    )
                     .await;
+                // Sandbox qualification lane only; inert unless compiled with the test gate AND
+                // explicitly opted in at runtime. Sequenced after reconciliation, never
+                // concurrently: the PASS verdict IS the reconciled phase.
+                updater::maybe_autorun_qualification(
+                    reconciliation_app,
+                    reconciliation_state,
+                    reconciliation_coordinator.clone(),
+                )
+                .await;
             });
 
             // System tray: icon with Show/Quit menu, left-click to show window.

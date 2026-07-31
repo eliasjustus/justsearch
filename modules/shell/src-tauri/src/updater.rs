@@ -337,6 +337,18 @@ pub async fn install_app_update(
     backend: tauri::State<'_, Arc<BackendState>>,
     coordinator: tauri::State<'_, Arc<UpdateCoordinator>>,
 ) -> Result<(), String> {
+    run_install_now(app, (*backend).clone(), (*coordinator).clone()).await
+}
+
+/// The apply path, expressed without Tauri `State` so it can also be driven headlessly by the
+/// Sandbox qualification lane (`maybe_autorun_qualification`). The command above is a thin
+/// delegate, so the lane exercises the same code the button does rather than a parallel path —
+/// a qualification round that proved a different code path would prove nothing.
+pub(crate) async fn run_install_now(
+    app: AppHandle,
+    backend: Arc<BackendState>,
+    coordinator: Arc<UpdateCoordinator>,
+) -> Result<(), String> {
     ensure_no_unresolved_intent(&coordinator)?;
     let _install_guard = InstallGuard::begin(&coordinator.installing)?;
     let descriptor = coordinator
@@ -518,7 +530,7 @@ pub async fn install_app_update(
     let (process_id, launched_at_epoch_ms) = match launch {
         Ok(witness) => witness,
         Err(error) => {
-            let restart = restart_headless_backend(&app, backend.inner().clone());
+            let restart = restart_headless_backend(&app, backend.clone());
             let (phase, message) = match restart {
                 Ok(()) => (
                     UpgradePhase::Cancelled,
@@ -558,6 +570,124 @@ pub async fn install_app_update(
     // a live process handle, which is witnessed before the shell asks Tauri to exit.
     app.exit(0);
     Ok(())
+}
+
+/// Sandbox qualification autorun — tempdoc 617 §9 items 3-4.
+///
+/// Drives check -> install with no human present so the N->N+1 machinery (prepare, freeze,
+/// witnessed shutdown, installer launch, restart reconciliation) can be qualified unattended. It
+/// deliberately calls [`run_install_now`], the same function the UI button delegates to: a lane
+/// that exercised a parallel code path would prove nothing about the shipped one.
+///
+/// This does NOT replace the consent round. "The user is asked before anything is applied" and
+/// "the apply machinery is correct" are separate claims; this covers the second, and the
+/// human whole-product Sandbox round covers the first.
+///
+/// Double-gated. `sandbox_test_mode()` is `option_env!`, so in any build not compiled for
+/// qualification this function is dead on the first line and no environment variable can revive
+/// it. The runtime opt-in exists so that even a qualification build does not self-update merely
+/// by being launched.
+///
+/// Spans two boots by construction: a successful apply exits this process, so PASS can only be
+/// observed by the *next* launch reconciling the durable intent to COMMITTED. Reading the phase
+/// first is therefore the terminal check, not a shortcut.
+pub(crate) async fn maybe_autorun_qualification(
+    app: AppHandle,
+    backend: Arc<BackendState>,
+    coordinator: Arc<UpdateCoordinator>,
+) {
+    if !sandbox_test_mode() {
+        return;
+    }
+    if std::env::var("JUSTSEARCH_UPDATER_QUALIFICATION_AUTORUN")
+        .ok()
+        .as_deref()
+        != Some("1")
+    {
+        return;
+    }
+
+    match qualification_step(coordinator.snapshot().intent_phase) {
+        QualificationStep::Report(verdict, detail) => {
+            write_qualification_result(&app, verdict, &detail);
+            return;
+        }
+        QualificationStep::Attempt => {}
+    }
+
+    match run_qualification_attempt(&app, &backend, &coordinator).await {
+        // Unreachable on the happy path: a successful apply exits before returning.
+        Ok(version) => write_qualification_result(
+            &app,
+            "FAIL",
+            &format!("Install returned without handing off to the {version} installer"),
+        ),
+        Err(error) => write_qualification_result(&app, "FAIL", &error),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum QualificationStep {
+    /// Terminal: emit this verdict and stop.
+    Report(&'static str, String),
+    /// No attempt is on record; start one.
+    Attempt,
+}
+
+/// The two-boot decision, kept pure so it can be tested without a Tauri app.
+///
+/// A successful apply exits the process, so the lane's PASS is never observed by the boot that
+/// started it — only by the next one, reconciling the durable intent. Anything other than
+/// COMMITTED is a FAIL rather than a retry: re-attempting from a non-terminal phase would stack a
+/// second update on an unresolved one, and re-attempting from a terminal failure would overwrite
+/// the evidence the round exists to capture.
+fn qualification_step(phase: Option<UpgradePhase>) -> QualificationStep {
+    match phase {
+        None => QualificationStep::Attempt,
+        Some(UpgradePhase::Committed) => QualificationStep::Report(
+            "PASS",
+            "Update applied and reconciled to COMMITTED".to_string(),
+        ),
+        Some(phase @ (UpgradePhase::RepairRequired | UpgradePhase::Cancelled)) => {
+            QualificationStep::Report("FAIL", format!("Update ended in terminal phase {phase:?}"))
+        }
+        Some(phase) => QualificationStep::Report(
+            "FAIL",
+            format!("Update is stuck in non-terminal phase {phase:?}"),
+        ),
+    }
+}
+
+async fn run_qualification_attempt(
+    app: &AppHandle,
+    backend: &Arc<BackendState>,
+    coordinator: &Arc<UpdateCoordinator>,
+) -> Result<String, String> {
+    let descriptor = check_release(app)
+        .await?
+        .ok_or_else(|| "Qualification feed offered no update".to_string())?;
+    let version = descriptor.version.clone();
+    *coordinator
+        .pending
+        .lock()
+        .expect("pending update mutex poisoned") = Some(descriptor);
+    run_install_now(app.clone(), backend.clone(), coordinator.clone()).await?;
+    Ok(version)
+}
+
+/// Emits the lane's verdict in the same shape `sandbox-silent-install-test.ps1` uses, so
+/// `collect-updater-evidence.ps1` can read one file rather than infer success from logs.
+fn write_qualification_result(app: &AppHandle, verdict: &str, detail: &str) {
+    let payload = serde_json::json!({
+        "schema": "justsearch.sandbox-in-app-update-test.v1",
+        "verdict": verdict,
+        "detail": detail,
+        "currentVersion": app.package_info().version.to_string(),
+    });
+    let path = upgrade_root(app).join("qualification-result.v1.json");
+    if let Err(error) = write_json_atomic(&path, &payload) {
+        eprintln!("Failed to write qualification result to {}: {error}", path.display());
+    }
 }
 
 async fn check_release(app: &AppHandle) -> Result<Option<ReleaseDescriptor>, String> {
@@ -1777,6 +1907,72 @@ mod tests {
             fixture.intent,
         )
         .is_err());
+    }
+
+    #[test]
+    fn the_sandbox_gate_is_compile_time_not_runtime() {
+        // The safety argument for the qualification autorun and the loopback allowance is that
+        // both are compile-gated. Written to hold in BOTH build modes: asserting "the gate is off"
+        // outright would fail the suite for the qualification build itself, which still has to be
+        // testable. What must never vary is that the environment cannot flip the gate.
+        let before = sandbox_test_mode();
+        std::env::set_var("JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE", "1");
+        let after = sandbox_test_mode();
+        std::env::remove_var("JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE");
+        assert_eq!(
+            before, after,
+            "setting the variable at runtime must not change a gate resolved at compile time"
+        );
+
+        // The transport allowance tracks the gate exactly - never wider.
+        assert_eq!(
+            ensure_https("http://127.0.0.1:8765/release.v1.json").is_ok(),
+            sandbox_test_mode(),
+            "loopback HTTP is permitted if and only if this build was compiled for qualification"
+        );
+        // Non-loopback plaintext is refused in every build, gated or not.
+        assert!(ensure_https("http://example.com/release.v1.json").is_err());
+        assert!(ensure_https("https://example.com/release.v1.json").is_ok());
+    }
+
+    #[test]
+    fn qualification_reports_pass_only_from_committed() {
+        assert_eq!(
+            qualification_step(Some(UpgradePhase::Committed)),
+            QualificationStep::Report(
+                "PASS",
+                "Update applied and reconciled to COMMITTED".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn qualification_attempts_only_when_no_intent_exists() {
+        assert_eq!(qualification_step(None), QualificationStep::Attempt);
+    }
+
+    #[test]
+    fn qualification_never_retries_over_an_existing_intent() {
+        // Re-attempting from a non-terminal phase would stack a second update on an unresolved
+        // one; re-attempting from a terminal failure would overwrite the evidence being captured.
+        for phase in [
+            UpgradePhase::Prepared,
+            UpgradePhase::HeadStopped,
+            UpgradePhase::InstallLaunching,
+            UpgradePhase::InstallLaunched,
+            UpgradePhase::Reconciling,
+            UpgradePhase::RepairRequired,
+            UpgradePhase::Cancelled,
+        ] {
+            match qualification_step(Some(phase.clone())) {
+                QualificationStep::Report(verdict, _) => {
+                    assert_eq!(verdict, "FAIL", "phase {phase:?} must not report PASS")
+                }
+                QualificationStep::Attempt => {
+                    panic!("phase {phase:?} must not start a second attempt")
+                }
+            }
+        }
     }
 
     #[test]
