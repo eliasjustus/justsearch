@@ -536,7 +536,69 @@ Whoever publishes should expect to reconcile those four by hand, and should
 verify by content, not ancestry (`squash-merge-verify-content-not-ancestry`) —
 the sibling work may already have landed under a differently-titled squash.
 
-### 10.7 Also fixed
+### 10.7 Predecessor-session transcript: triage of its own risk register
+
+The prior Codex session's full transcript was reviewed (3,428 lines). Its last
+formal verdict was **"NO-GO for merge or release. Final confidence: 4/10"** —
+materially more cautious than this doc's frontmatter, which read
+`implemented; release qualification pending`. The doc had drifted optimistic
+relative to its author's judgment; the frontmatter is corrected above.
+
+The session ended mid-flow, on *"then I'll run the integrated verification and
+independent review"* — neither ran. That, not carelessness, is why §10.4's three
+gate violations survived: they were never given a chance to fail. Leaving the
+tree uncommitted was likewise a stated policy (*"I'll leave all changes
+uncommitted"*), not an oversight — but it is what made §10.1 necessary.
+
+Its confidence trajectory is worth preserving: 6/10 → 7/10 after derisk →
+**3/10** after an independent refute-first review that found ten P0/P1 blockers
+→ 4/10 after remediation. Confidence fell under scrutiny, twice. The
+"version equality is only an observation" rule in §7.5 is a *remediation* of one
+of those P0s, not original design — the review loop earned it.
+
+One dated claim needs retiring: the session recorded *"Rust test execution is
+blocked locally by Windows Smart App Control."* That diagnosis was wrong. The
+real blocker was the unstaged `resources/headless` bundle glob; with SAC still
+enforcing, staging a placeholder ran all 39 tests (§10.3). This is the
+`ai-offline-isnt-a-wall` handle: a tier declared environmentally unavailable
+while a tool for it was at hand.
+
+Its remaining-risk register, re-checked against current code rather than taken
+as read:
+
+| Item | Status |
+|---|---|
+| P0 no durable-owner reconciliation protocol | **closed** — `updater.rs:931` gates `COMMITTED` on a durable-owner format check, `UpgradeReconciliationProbe` backs it |
+| P0 release workflow cannot publish the closed asset set | **closed** — `tauri.updater.conf.json` overlay carries `createUpdaterArtifacts` + `basicUi`, applied at `package-installer-win.ps1:288-298`, signing secrets wired at `build-installer.yml:231` |
+| P0 quiescence coverage incomplete | **partly closed** — see §10.8 |
+| P0 Sandbox lane does not exercise the in-app updater | **open** — §9 items 3-4, needs a human at the keyboard |
+| P1 inventory completeness unproven | **closed** — `dd749c1d` |
+| P1 authored stores at version 0 | **not a defect** — the two remaining (`byo-ai-assets`, `user-plugin-payloads`) are `PRESERVE_EXTERNAL` formats the app never parses or rewrites; version-stamping them would be meaningless. Run events are versioned |
+| P1 Tauri exits after `ShellExecuteW` unchecked | **closed** — §7.5's witnessed `ShellExecuteExW` |
+| P1 tempdoc contradicts the implemented Tier-A decision | **closed** — the header note |
+| P2 `tauri.conf.json` collides with 772 | **open** — §10.6 |
+
+### 10.8 The quiescence hole, and what is still open
+
+`AiPackImportService` and `RuntimeActivationService` run their work on
+background threads that outlive the HTTP request, so the request-scoped mutation
+lease in `ApiSecurityFilters` was already released while the write ran.
+`POST /api/upgrade/prepare` saw no blocker and reported ready — while a
+multi-GB pack could be mid-write into `models/**`, or the GPU runtime mid-swap
+under `native-bin/**`. Those are `managed-ai-assets` / `byo-ai-assets`, whose
+corruption policy is `NEVER_DELETE_OR_OVERWRITE_UNKNOWN_ASSET`: state the
+forward-only contract cannot repair.
+
+Fixed in `32d2f4e6`; each now holds an op-lease for its thread's whole lifetime,
+registered on the calling thread before `start()` to close the race window.
+§7.4's claim that these two "participate in the same blocker/drain model" was
+untrue when written and is true now.
+
+**Still uncovered, and not claimed closed:** agent file operations and other
+background writers. Anything that mutates durable state off-request without a
+lease reopens the same hole.
+
+### 10.9 Also fixed
 
 Four lines of the cp1252 mojibake described in `agent-lessons.md`
 (`utf8-bulk-edits`) — `Â§7`, `â†'` in the phase vocabulary and §9 item 2.
