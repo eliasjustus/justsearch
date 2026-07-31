@@ -153,6 +153,17 @@ jobs:
       - name: Verify agent-utility publication and projections
         run: node scripts/ci/check-public-agent-utility.mjs
 
+      - name: Test the update-preserves-models gate
+        run: node scripts/ci/check-update-preserves-models.test.mjs
+
+      # Tempdoc 617 D2 made "an update never touches models" a condition of choosing monolithic
+      # full-installer updates, and §7.1 asserts it as fact. Nothing enforced it, so it held only
+      # by accident of how the payload happened to be assembled. A monolithic update is
+      # uninstall-then-install over a live install, so one recursive delete in an uninstall hook,
+      # or one models glob in the bundle, destroys ~9 GB of user assets on first upgrade.
+      - name: Update never ships or deletes models
+        run: node scripts/ci/check-update-preserves-models.mjs
+
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
 
