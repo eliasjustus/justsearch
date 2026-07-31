@@ -214,3 +214,113 @@ is embodied in an enforced check and restating it is bloat.
 **Sequencing note (not design, recorded so implementation doesn't reinvent it).** B1+B2+B3+B4
 are the release-critical path and gate round 11; B5's authority-fork half needs its producer
 located before its fix is scoped; everything else is parallelizable worker-grade work.
+
+## §D Derisk addendum (2026-08-01) — what investigation changed before implementation
+
+Eight uncertainties (U1-U8, derisk plan) resolved; three amend the design. Load-bearing claims
+below were re-verified at source by the orchestrator.
+
+### D1 — B5 rewritten: two true claims, forked in the UI's bucketing (U1)
+
+`/api/status`'s `schema_mismatch` and `/api/knowledge/status`'s `COMPATIBLE` are **both true**
+— they are different comparisons over different data. `index_schema_fp` is the SHA-256 of the
+canonical `SSOT/catalogs/fields.v1.json` (`SsotCommitMetadataSource.java:81-93`), compared at
+`IndexStatusOps.java:995`; three post-v0.1.0 catalog edits (one dead-field deletion, three
+`rmwPolicy` annotations) flipped it with **zero physical consequence for a v0.1.0 index**. The
+embedding fingerprint hashes the model file itself and gates the dense leg
+(`SearchPlanner.java:87` via `allowQueryEmbeddings()`); the schema state has **zero query-path
+consumers** — purely advisory. The fork is one layer up: `readinessNotice.ts:330-335`'s
+`REINDEX_CAUSE_CODES` buckets the advisory code with the genuinely-degrading `embedding_*`
+codes and asserts the degrading bucket's consequence ("results may be keyword-only") for all.
+**B5 is therefore frontend-only**: split the bucket — degrading reindex causes keep the
+current wording; `index.schema_mismatch` gets its own branch (info-severity when the embedding
+axis is COMPATIBLE) with honest wording ("Index format is out of date. Search is fully
+working... rebuilding picks up newer index features"). No backend change; no producer
+reconciliation. Force Rebuild does work and does deliver chunk vectors, so the remedy stays.
+
+Two adjacent defects ride along (found by U1, verified):
+
+- **The parity guard is unconditionally neutered**: `HeadlessApp.java:267` and `:607` both set
+  `justsearch.index.parity.allow_mismatch=true` with no dev guard, while
+  `docs/explanation/11-index-schema-migration.md` and
+  `docs/reference/index-schema-mismatch-reindex-noop.md` advertise `FAIL_CLOSED` as shipped
+  production enforcement. Either condition the set-sites or retract the docs — the current
+  state is a docs/reality drift on an enforcement surface (`verify-dont-guess` applies to our
+  own docs too).
+- **The banner is the default first-run experience by construction**: on a fresh empty install
+  `chunk_embedding.not_ready` fires whenever no chunks exist and `lambdamart.not_configured`
+  is an unconditional default — so `retrieval` reads DEGRADED on every fresh install
+  independent of any fault. "Not ready" is the wrong claim about work that does not exist;
+  the empty-corpus case must not present as degradation.
+
+### D2 — B6 shrinks: the wedge IS B1 (U5)
+
+The INDEXING "wedge" has no independent existence: `RuntimeReconciler` is level-triggered on
+`RuntimeSpec.chatEnabled`, and the spec write evaporates in the prod in-memory settings store —
+same root as F3/F4. INDEXING never had a queue input to miss (it means "engine parked, GPU
+yielded"; `switchToIndexingMode` stops llama-server and schedules nothing). **Rejected
+implementation**: a queue-coupled INDEXING exit — it adds a second writer against tempdoc
+737's single-writer reconciler and contradicts INDEXING's planned re-projection (737 records
+the Mode enum as derivation-then-deletion). What remains of B6: (a) `/api/inference/mode`'s
+`success` is a literal (`InferenceHandlers.java:382`) paired with a live mode read taken
+before the async reconciler runs — replace with an honest tri-state (intent recorded /
+converged / deferred-with-reason); the self-contradicting shape is pinned by
+`BrainRuntimeServiceImplTest.java:99-103`, re-pinned deliberately; (b) surface truthfulness:
+after install, chat is off because install ≠ enable (`AiInstallService.java:1171-1175` —
+deliberate), and nothing on the surface says so. Repro is deterministic at the unit tier —
+every existing reconciler/spec test pins READ_WRITE, which is exactly why the suite stayed
+green while the shipped app wedged.
+
+### D3 — B3 resized: two seams, one latent hazard, and the eslint gate is weaker than designed (U2)
+
+- **Two patch points, not one**: `performFetch` covers the 7 `doFetch` surfaces (11 non-GET
+  sites), but `host.data.invokeOperation` routes through `OperationClient`, whose
+  `fetchImpl ?? globalThis.fetch` family (`OperationClient`, `ActionLedgerClient`,
+  `TrustChannel`, `VirtualToolDispatcher`) is a second de-facto seam. Sweep size: **38 live
+  non-GET sites** (31 bare + 7 `globalThis.fetch`) + `main.jsx:362`; 25 GET-only sites are
+  unaffected. Two hand-rolled stream duplicates (`conversationListStore.ts:218`,
+  `capabilities/ai.ts:39`) skip the token and should route through `consumeShapeStream` or the
+  helper. `TrustChannel.ts:130-133`'s "why we avoid request()" comment is stale — its POST
+  401s in prod today; convert, don't disable.
+- **Latent boot hazard the helper must not inherit**: `resolveSessionTokenFromTauri` caches
+  `null` permanently if the shell's 10s `session_token` wait elapses (slow cold start) — every
+  mutating call for the app's lifetime then 401s with no recovery. Amendment: mark resolved
+  only when a token was actually obtained or the runtime is genuinely non-Tauri. (Existing
+  non-Tauri behavior is safe: no-op, header omitted, no import.)
+- **The eslint flip is not the gate**: `no-restricted-globals` never sees `globalThis.fetch`
+  (member expression — all 7 (e)-class sites invisible), `main.jsx` is outside the `files`
+  glob, and lint is not wired into CI at all (plus 23 pre-existing unrelated errors). Gate
+  design: add a `no-restricted-properties`/`no-restricted-syntax` companion for
+  `globalThis.fetch`/`window.fetch`, and either wire lint into CI (clearing the 23) or accept
+  that the enforced regression homes are the unit + packaged tiers. 66 warnings across 25
+  files is the flip's cleanup surface; `PluginLoader.ts:119` keeps its justified disable;
+  `themeState.ts`'s four default-parameter references need a decided treatment.
+
+### D4 — B7 rescoped: the empty 400s are unexplained, not unimplemented (U6)
+
+All three "empty-body" endpoints have written JSON bodies via `ApiErrorHandler` **since
+v0.1.0** (`AiRuntimeController.java:52`, `IndexingController.java:162`,
+`AiInstallController.java:129`), and a global exception fallback exists
+(`LocalApiServer.java:447`). Yet two independent rounds measured zero-length 400 bodies with a
+client that read 401 bodies fine. B7's first step is now a live packaged-mode repro to find
+what strips the body (candidates: an after-hook interaction, the #350 admission filter, a
+prod-only response path) — not a shared-error-path build-out, which already exists. The
+sweep-style "no empty-body 4xx" assertion still lands, in the B4.3 packaged lane where the
+strip manifests.
+
+### D5 — Confirmations with no design change (U3, U4, U7, U8)
+
+- **U3**: B1 blast radius is exactly as designed — three `prod=true` launch sites; both
+  harnesses already pass explicit `IN_MEMORY`; one pinning test updates deliberately. Tempdoc
+  246's founding rationale ("no settings.json exists in prod") is obsolete — it predates the
+  desktop product being prod. The Worker's own `justsearch.prod` semantic (AOT-cache path
+  selection, `WorkerSpawner.java:437`) is benign with graceful absence — recorded on the
+  principle-1 audit list, no change.
+- **U4**: B4.2 fits `LocalApiIntegrationTestBase` (in-process Head, arbitrary sysprops,
+  `@TempDir` seeding). The `smokeSidecarBundle` task is manual-only; the CI-wired packaged
+  lane is `verify-installer-nsis-win.ps1` via `build-installer.yml` — B4.3 lands there.
+- **U7**: mode-conditional coverage is cheap — a `modes` field on register items, filtered by
+  `sandbox-launch.py` when writing the per-round `coverage-manifest.json`; `check_coverage.py`
+  unchanged.
+- **U8**: no open PRs touch the campaign's files; implementation branches fresh from
+  `origin/main` (`b3dfe0db`).
