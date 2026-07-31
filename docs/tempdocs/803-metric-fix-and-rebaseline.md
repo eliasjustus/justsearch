@@ -174,3 +174,56 @@ to say so.
 The harness fix is verified and stands. The re-baseline **cannot be honestly completed** until
 blocker 1 is resolved, because the release object would either omit a published corpus or contain a
 member the harness itself says is not comparable.
+
+## Root cause of both anomalies: 802 measured a stale engine (2026-07-31)
+
+Both "blockers" above trace to one fact, found by checking rather than assuming.
+
+**Tempdoc 802's measurement runs were made on a checkout that lacked ten merged commits**,
+including `967f94bf` — *"fix(798): ingest livelock — writers stop claiming COMPLETED without an
+artifact, and the backfill loop can no longer starve ingest"* (#339).
+
+```
+git merge-base --is-ancestor 967f94bf f3f6909e  →  false
+```
+
+802's runs were launched from the main checkout, whose local `main` was behind `origin/main` at the
+time (world-state had been reporting it as such all session). `f3f6909e` is that stale tree. The 803
+runs are at `40841ad9`, current `origin/main` plus this fix — **15 commits apart, not the "same
+engine, different session" the earlier analysis assumed.**
+
+That explains both anomalies with one mechanism, and inverts what they mean:
+
+- **`miracl-fr-2k`'s SPLADE failure is probably not new — it is newly VISIBLE.** #339 stops writers
+  claiming COMPLETED without an artifact. A document whose SPLADE artifact never materialised would
+  previously have been counted complete and silently included; now it is marked FAILED and the
+  readiness gate refuses the run. If that is what happened, the published release's
+  `comparable: true` for this corpus was computed over an index with a silently-missing artifact,
+  and the gate is now telling the truth where it previously did not.
+- **`legal-clerc-200`'s retrieval shift** sits in the same window and has the same candidate cause:
+  enrichment completion semantics changed, so the features present at query time changed, so the
+  rankings changed. This supersedes the "cause unidentified" note above.
+
+**Not yet proven** — #339 is the strongest candidate by subject matter and timing, not a bisected
+result. Confirming it means identifying the specific failing document, which is one more ingest run.
+
+### What this does to 802's numbers
+
+Less than it might appear, and the reason is worth stating.
+
+802's per-corpus deltas were computed **within a single run** — one retrieved set, scored two ways.
+They never depended on cross-run or cross-commit stability, so they remain valid measurements of the
+ordering channel *on the engine build that produced them*. The 803 re-runs, on an engine 15 commits
+newer, reproduce four of the five predictions to ≤0.0001 — which is independent evidence that the
+ordering-channel effect is stable across that engine change.
+
+What is **not** safe is 802's "measured today" column as a statement about current `main`: those
+absolute figures are from the stale build. The register riders quote deltas rather than absolutes,
+so they stand; but any future reader comparing 802's absolutes against a fresh run will see the
+15-commit gap, not a metric effect.
+
+### Consequence for this tempdoc
+
+The re-baseline is **not** blocked on a claims decision, which is how it was first written up here.
+It is blocked on a concrete, ordinary engineering question — *which document fails SPLADE
+enrichment, and why* — that is answerable with one more ingest run and was escalated prematurely.
