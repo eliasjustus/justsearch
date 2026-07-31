@@ -584,6 +584,15 @@ without the first converts a visible wrong-answer into a visible no-answer.
 
 ## D9. The updater decision separates into two, and only one of them is irreversible
 
+> **SUPERSEDED 2026-07-31, same day — by implementation, not by decision.** While this section was
+> open as an owner question, tempdoc 617 (PR #350, `6a6e4835`) landed a full in-app updater on
+> `main`: authenticated release descriptors (Ed25519), forward-only release-sequence rollback
+> protection, and an update path guarded by a CI gate asserting an update never touches AI Home.
+> Both halves of this section's split — reachability *and* auto-installation — shipped together, so
+> the notify-only middle option was overtaken. The section is kept because its analysis of the
+> *independence of Authenticode and updater signing* remains true and is now load-bearing for the
+> release run. What the next release run must verify as a consequence is in §D14.
+
 Researched 2026-07-31 against Tauri's own documentation and plugin sources. The repo is Tauri
 **2.11.5** with no updater plugin, no `plugins.updater` section, and no
 `bundle.createUpdaterArtifacts`. The framing in Strand B — "ship an updater or accept an
@@ -1121,6 +1130,98 @@ HMR staleness made this worktree's code look like the main checkout's (the serve
 all along — a hard reload settled it); and `window.innerWidth` reported 1493 while the window was
 actually 720px wide, which only the element rects revealed. The durable rule for live UI work:
 **hard-reload before measuring, and trust `getBoundingClientRect` over `window.innerWidth`.**
+
+## D14. Reorientation after tempdoc 617 landed — what the next release run must now analyse
+
+Written 2026-07-31 after merging `origin/main` (three commits: 617's updater `6a6e4835`, 802's
+release-artifact recording, and an 802 rider retraction) into this branch. The merge conflicted in
+exactly one place — `AiInstallService.startInstall`, where 617 wrapped the install in an operation
+lease while this branch added a disk-state refresh to the same `finally` — the tempdoc-734 shape,
+resolved as the union with the refresh ordered *before* the lease release (so a draining upgrade
+reads truthful resumable-bytes state) and nested so a refresh failure cannot leak the lease. Full
+suite forced on the merged tree.
+
+Every claim below is verified against the merged tree or the live repo API, not taken from the
+handoff analysis.
+
+### D14.a The provisioning state — verified, and it reframes the priorities
+
+**Zero Actions secrets and zero repo variables exist** (`gh api …/actions/secrets` →
+`total_count: 0`; both list commands empty). Consequences, in order of when they bite:
+
+1. **A stable `v*` tag build fails immediately today.** The guard at
+   `build-installer.yml:190-208` fires on `refs/tags/v*` without a `-` and throws on the missing
+   `JUSTSEARCH_RELEASE_METADATA_PRIVATE_KEY_PEM` / `…PUBLIC_KEY_PEM`. Loud, safe, and currently
+   guaranteed.
+2. **The quiet failure mode is live, not hypothetical.** `JUSTSEARCH_RELEASE_DESCRIPTOR_URL` is
+   wired from `vars.` at `build-installer.yml:279` and compile-pinned via `option_env!` — unset, the
+   build still succeeds while every update check in the shipped app fails at runtime. Today the loud
+   guard fires first, which *masks* this one. **The trap is the provisioning sequence itself**: the
+   moment the two key items are provisioned (they are named in a runbook step; the variable is not
+   part of the same guard), a tag build goes green with a runtime-dead updater. A preflight assert
+   that the descriptor URL was pinned belongs in the same guard block as the keys — one `throw`
+   alongside the existing two.
+3. `TAURI_SIGNING_PRIVATE_KEY` is also absent, so no `.sig` exists and `build-release-assets.ps1`
+   fails closed on it for stable tags — a second loud guard on the same path.
+
+### D14.b The release-sequence trap is real and worth fixing before the first stable tag
+
+`ReleaseSequence = GITHUB_RUN_NUMBER` (`build-installer.yml:305`); clients persist
+`highest_accepted_sequence` and refuse anything lower. `run_number` is scoped to the workflow *file*
+— renaming or recreating `build-installer.yml` resets it to 1, after which **every client that ever
+accepted a release permanently refuses all subsequent ones**. There is no recovery path in the
+shipped client short of manual reinstall, which is precisely the failure the updater exists to
+prevent. Before the first stable tag ships this sequence to real clients, the source should be
+something durable — the count of prior releases, a checked-in counter, or the tag's own ordinal —
+because after the first accepted descriptor the trap is armed forever.
+
+### D14.c Prereleases are exempt, and that is the correct next cut
+
+Both the workflow guard (`!contains(github.ref, '-')`) and `build-release-assets.ps1` restrict the
+updater path to stable `x.y.z`. A `v0.2.0-alpha.1` tag cuts exactly as before — no keys, no
+descriptor, no sequence. This decouples shipping a validated build from provisioning the key
+material, and matches the state of the qualifying set: **no tag build has run with 617's code at
+all** — its evidence is static reading plus branch dispatches, its own author says so.
+
+### D14.d What this does to the qualifying set — the round map, restated
+
+617 growing the release path grows what a round must witness. The set now has three distinct axes,
+and conflating them would repeat the F4 scope error at round scale:
+
+1. **v0.1.0 → candidate, NSIS-over-install** (this branch's staged round 9): state migration across
+   a real version boundary via the *manual* arrival path. Unaffected by 617 — v0.1.0 has no updater,
+   so its users arrive manually by definition. Still valid, still needed. **But the staged share at
+   `tmp/round9-test` is stale**: its candidate predates both 617 and this branch's six fixes.
+   Restage from a post-merge build.
+2. **N → N+1 through the in-app updater** (the other agent's axis; qualification candidates
+   `0.2.0-qual.1`/`qual.2` already built from `6a6e4835`, runs 30635105795/30635114814): the
+   updater's own consent → download → verify → swap → relaunch path, release-sequence acceptance,
+   and the AI-Home-preservation guarantee (617 D2) under a real model install. This is a **new
+   mandatory member** of the qualifying set — an updater that has never updated anything is the
+   'cancel-resume never live-validated' gap of this cycle, and those candidates contain neither this
+   branch's fixes nor, obviously, any later fix.
+3. **Post-signing round** (unchanged): Authenticode and the updater's minisign signing are fully
+   independent (§D9's surviving analysis), so the certificate landing changes SmartScreen behaviour
+   only — but the *first signed build* is still a materially different artifact.
+
+Coordination note, logged rather than resolved here: two agents are now staging rounds against one
+convergence tempdoc, and this branch's staleness guard keys on the charter's declared round number.
+Round numbers are now a shared, collision-prone namespace — the same class as tempdoc numbers, which
+already needed `check-tempdoc-numbers`. One line in the convergence tempdoc claiming the next round
+number before staging would do.
+
+### D14.e Owner decisions surfaced by 617 that this document inherits
+
+- **617 §10.10**: D4's recorded rationale ("the Ed25519 key isn't needed since Tier A doesn't use
+  it") is now false — shipped Tier A depends on it end to end. The record needs correcting where it
+  lives, not here.
+- **D7 channel topology** was resolved *implicitly* to a single feed — alpha/beta/stable appear
+  nowhere in the implementation. Fine as a decision, but it is currently a decision by omission, and
+  §D9's history in this very document shows how that reads a week later.
+- The `candidate-provenance.md` gap this branch closed read-side (§harness) now has a natural
+  write-side home: 802's release-artifact recording (`09c7afee`) and the updater metadata both put
+  build identity in the release path — `github.sha` beside the installer is one line in the same
+  script that now assembles authenticated assets.
 
 ## D7. Strand B — the qualifying-set gap needs a round, not a design
 
