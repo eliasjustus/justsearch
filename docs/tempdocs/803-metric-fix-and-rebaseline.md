@@ -1,7 +1,7 @@
 ---
 title: "803 — Score the ranking the engine delivers, and re-baseline what that changes"
 type: tempdocs
-status: "IN PROGRESS (2026-07-31). The one-line harness fix is in and verified against a falsifiable prediction: tempdoc 802 computed offline that enron-qa's delivered ordering scores 0.7991; the fixed harness re-run returns 0.7990 (was 0.7807). Regression tests are mutation-checked. The re-baseline campaign (5 corpora x 4 modes, one cohort) and the README/floor updates are NOT done yet."
+status: "HARNESS FIX DONE AND VERIFIED; RE-BASELINE BLOCKED ON AN OWNER DECISION (2026-07-31). The fix scores by delivered rank instead of the engine's stale pre-rerank score. Verified as a PREDICTION, not an inspection: tempdoc 802 computed each corpus's delivered-order score offline from different artifacts before this harness existed, and the re-runs land on all four testable predictions within 0.0001 (enron 0.7992 vs 0.7991, scifact 0.7543 vs 0.7544, miracl-de and miracl-fr exact). Regression tests mutation-checked. The 5-corpus x 4-mode campaign RAN, but the release CANNOT be composed: **miracl-fr-2k is comparable=false, reproducibly** — one document of 5408 fails SPLADE enrichment and the readiness gate requires complete coverage. `--allow-incomparable` is deliberately NOT used. Second open finding: legal-clerc-200 shifted 0.021 between sessions at different commits with an identical corpus signature, cause unidentified — and an earlier explanation in this session (run-to-run nondeterminism) was WRONG and is corrected in place. README and ratchet floors are UNCHANGED; no published number moved."
 created: 2026-07-31
 category: measurement-integrity / search-quality / eval-harness
 related:
@@ -101,3 +101,76 @@ Recorded because either would have produced a confidently wrong result:
 - **Everything before this fix is on the old basis.** Register findings, ratchet floors, and prior
   tempdoc numbers were computed by an apparatus that discarded the cross-encoder's ranking. This
   change makes future numbers right; it does not retroactively repair the corpus of past ones.
+
+## Re-baseline campaign — results and two blockers (2026-07-31)
+
+All five corpora re-run at one commit (`40841ad9`), 4 modes each, clean index, full enrichment.
+
+| corpus | hybrid | lexical | bm25_splade | vector | comparable |
+|---|---:|---:|---:|---:|---|
+| `mixed/enron-qa` | **0.7992** | 0.8250 | 0.8145 | 0.5802 | yes |
+| `beir/scifact` | **0.7543** | 0.6610 | 0.6686 | 0.7271 | yes |
+| `mixed/legal-clerc-200` | **0.5783** | 0.6878 | 0.6827 | 0.6220 | yes |
+| `mixed/miracl-de-2k` | **0.8575** | 0.7024 | 0.7449 | 0.8510 | yes |
+| `mixed/miracl-fr-2k` | **0.8844** | 0.7010 | 0.7613 | 0.8900 | **NO** |
+
+### The fix is confirmed on four corpora independently
+
+802 computed each corpus's delivered-order score offline, from different artifacts, before this
+harness existed. The re-runs land on those numbers:
+
+| corpus | 802 predicted | measured | Δ |
+|---|---:|---:|---:|
+| `enron-qa` | 0.7991 | 0.7992 | +0.0001 |
+| `scifact` | 0.7544 | 0.7543 | −0.0001 |
+| `miracl-de-2k` | 0.8575 | 0.8575 | 0.0000 |
+| `miracl-fr-2k` | 0.8844 | 0.8844 | 0.0000 |
+
+Four independent confirmations at ≤0.0001. The fix does what it claimed and nothing else.
+
+### Blocker 1 — `miracl-fr-2k` is not comparable, reproducibly
+
+`comparability_reasons: ["readiness_failed: splade_requested_but_splade_features_not_ready"]` on
+all four modes. Cause found in the run manifest:
+
+| corpus | splade docs | completed | **failed** |
+|---|---:|---:|---:|
+| `miracl-de-2k` | 3104 | 3104 | 0 |
+| `miracl-fr-2k` | 5408 | 5407 | **1** |
+
+**One document of 5,408 fails SPLADE enrichment**, and the readiness gate requires complete
+coverage, so a single failure marks the whole run incomparable. It is not a flake — a second full
+run reproduced it exactly (same reasons, nDCG identical to 4 decimal places). The published release
+records `comparable: true` for this corpus, so this is new since `715-rebaseline-2026-07-16`.
+
+`compose()` refuses a non-comparable default-mode run. **`--allow-incomparable` exists and is not
+being used**: overriding a conservative gate in order to publish is the exact move this tempdoc's
+lineage exists to prevent. The options are to identify and fix the failing document, to publish a
+four-corpus release and say French was dropped, or to leave the release uncomposed — and which of
+those is acceptable is a claims decision, not a mechanical one.
+
+### Blocker 2 — `legal-clerc-200` moved between sessions and I do not know why
+
+Its measured hybrid (0.5783) is 0.021 below 802's predicted 0.5989. **The first explanation
+recorded here was wrong** — an observation note claimed run-to-run nondeterminism, from a two-run
+comparison that confounded *session* with *commit*. Measuring properly:
+
+| comparison | identical top-10 doc sets | Jaccard |
+|---|---:|---:|
+| 803 runs vs each other (3 runs) | 160–175 / 200 | **0.964–0.977** |
+| 802 run vs any 803 run | 6–7 / 200 | **0.54** |
+
+Within a session, legal is as stable as every other corpus, and its three runs cluster tightly
+(0.5783 / 0.5811 / 0.5800). Across the two sessions it is barely the same ranking. Corpus signature
+is **identical** (`90d4300d…`, 198 docs), so it is not a data difference. The sessions differ by
+commit (`f3f6909e` → `40841ad9`, with #350 in between) — but #350 is app-update work with no
+obvious retrieval path, and the other four corpora reproduce to 0.0001 across the same gap.
+
+**Cause unidentified.** Recorded as an open question rather than guessed at; the note is corrected
+to say so.
+
+### Status
+
+The harness fix is verified and stands. The re-baseline **cannot be honestly completed** until
+blocker 1 is resolved, because the release object would either omit a published corpus or contain a
+member the harness itself says is not comparable.
