@@ -32,9 +32,9 @@ final class AiInstallServiceUpgradeLeaseTest {
     svc.startInstall(true);
 
     assertEquals(
-        java.util.List.of("register:ai.model-install"),
-        leases.events(),
-        "lease must be registered before startInstall returns, not inside the install thread — "
+        caller,
+        leases.registerThread(),
+        "lease must be registered on the calling thread, before the install thread starts — "
             + "otherwise upgrade prepare can observe no blocker while the download is starting");
 
     long deadline = System.currentTimeMillis() + 10_000;

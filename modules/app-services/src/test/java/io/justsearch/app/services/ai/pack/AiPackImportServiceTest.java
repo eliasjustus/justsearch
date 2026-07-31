@@ -669,9 +669,9 @@ class AiPackImportServiceTest {
     service.startImport(pack, false);
 
     assertEquals(
-        List.of("register:ai.pack-import"),
-        leases.events(),
-        "lease must be registered before startImport returns, not inside the import thread");
+        Thread.currentThread().getName(),
+        leases.registerThread(),
+        "lease must be registered on the calling thread, before the import thread starts");
 
     awaitDone(service);
     service.awaitThreadCompletion(5_000);

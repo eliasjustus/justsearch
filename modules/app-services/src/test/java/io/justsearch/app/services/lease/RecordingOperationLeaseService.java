@@ -20,9 +20,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>Two things need pinning, and they fail in different ways, so both are captured:
  *
  * <ul>
- *   <li>{@link #events()} in order — a lease registered inside the worker thread rather than before
- *       it starts leaves a window where upgrade prepare observes no blocker while the write is
- *       about to begin.
+ *   <li>{@link #registerThread()} — registration must happen on the CALLER's thread. Registering
+ *       inside the worker leaves a window where upgrade prepare observes no blocker while the write
+ *       is about to begin. Asserted by thread identity rather than by event order, because a worker
+ *       that fails fast can finish before the starting call returns, which made an
+ *       order-based assertion pass on Windows and fail on Linux.
  *   <li>{@link #releaseThread()} — a release performed on the caller's thread means the lease ended
  *       when the work was handed off, not when it finished.
  * </ul>
@@ -30,11 +32,17 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class RecordingOperationLeaseService implements OperationLeaseService {
 
   private final List<String> events = Collections.synchronizedList(new ArrayList<>());
+  private final AtomicReference<String> registerThread = new AtomicReference<>();
   private final AtomicReference<String> releaseThread = new AtomicReference<>();
 
   /** Ordered {@code register:<opClass>} / {@code release:<outcome>} events. */
   public List<String> events() {
     return List.copyOf(events);
+  }
+
+  /** Name of the thread that registered the lease, or null if nothing registered one. */
+  public String registerThread() {
+    return registerThread.get();
   }
 
   /** Name of the thread that released the lease, or null if it has not been released. */
@@ -46,6 +54,7 @@ public final class RecordingOperationLeaseService implements OperationLeaseServi
   public OperationLeaseHandle register(
       String opClass, OpCriticality criticality, long expectedDurationSec, Map<String, Object> md) {
     events.add("register:" + opClass);
+    registerThread.set(Thread.currentThread().getName());
     return new OperationLeaseHandle() {
       private final AtomicBoolean released = new AtomicBoolean(false);
 
