@@ -227,3 +227,50 @@ so they stand; but any future reader comparing 802's absolutes against a fresh r
 The re-baseline is **not** blocked on a claims decision, which is how it was first written up here.
 It is blocked on a concrete, ordinary engineering question — *which document fails SPLADE
 enrichment, and why* — that is answerable with one more ingest run and was escalated prematurely.
+
+## Investigating the `miracl-fr-2k` blocker (2026-07-31)
+
+Escalating this as a claims decision was premature — it is an engineering question. Investigated.
+Two of my own intermediate conclusions were wrong and are corrected below.
+
+### What was tested
+
+| # | probe | result |
+|---|---|---|
+| 1 | Gate logic — is it misbehaving? | **No.** `readiness.py:474-476` fires on `spladeFailedCount > 0` **or** coverage < 99.9. Coverage is 99.9815 and passes; the *failed-count* clause fires. Zero-tolerance by construction, and asymmetric with dense, which allows 0.1% missing. |
+| 2 | Corpus content — a pathological document? | **No evidence.** 5,408 files, smallest 14 B, largest 4.4 KB, no empty files, contents are ordinary short French text. |
+| 3 | Same corpus via the **dev-stack** ingest path | **0 failures, 100% coverage.** So it is not the documents. |
+| 4 | Third eval-mode run | **Failed again**, `spladeFailedCount=1`, identical reasons. **3/3 in eval mode.** |
+| 5 | Can the dev-stack path produce a release-grade run instead? | **No.** A clean dev stack indexes **5 documents before any ingest** — the app's built-in help files (`SSOT/docs/help/*.md`). Using it would put 5 English help docs inside a French corpus. |
+
+### Two corrections to my own earlier calls
+
+- **"A flake."** Wrong — it reproduces 3/3 in eval mode.
+- **"Reproducible, therefore one bad document."** Also wrong, and the opposite error: probe 3 shows the
+  identical corpus enriches cleanly through a different ingest path. Reproducible ≠ content-caused.
+
+### Where it actually lives
+
+The failure is **specific to the eval ingest path** (`runHeadlessEval` + `syncDirectory` on a watched
+root), reproducibly, on one document in 5,408. The dev-stack API ingest path does not produce it.
+
+The likely reason it appeared only now is #339 (see the stale-engine section above): writers no
+longer claim COMPLETED without an artifact, so an enrichment failure that was previously counted as
+complete is now correctly marked FAILED. On that reading the published release's `comparable: true`
+for this corpus was computed over an index with a silently-missing SPLADE artifact — the gate is not
+newly broken, it is newly honest.
+
+### Why this is now genuinely a decision, not more work
+
+Unblocking requires making eval-path SPLADE enrichment succeed on that document — ingest/enrichment
+reliability work in the worker, not measurement work. Three ways forward, and the choice is a
+claims/scope call rather than a technical one:
+
+1. **Fix the eval-path enrichment failure**, then compose all five corpora. Correct, unbounded scope.
+2. **Compose a four-corpus release** and state plainly that French was withheld because its run could
+   not be certified comparable. Honest, but changes the public table's shape.
+3. **Leave the release uncomposed.** The harness fix still lands on its own merit; published numbers
+   stay as they are, on the old basis, with the register riders already flagging that.
+
+**`--allow-incomparable` remains unused.** It would produce a five-corpus release by overriding the
+only mechanism that noticed the problem.
