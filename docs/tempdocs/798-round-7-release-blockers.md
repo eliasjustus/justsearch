@@ -977,20 +977,34 @@ judged on is recorded here.
 | **B7** parity policy | **Worked as designed.** 10/10 on the blocking assertion (golden #1 at rank 1 in every case, not merely within top-3); overlap reported in full as descriptive. The demotion did not hide anything — it moved the number from deciding to describing. |
 | Cancel → resume (PR C) | **FIXED and live-validated for the first time.** Pause retained 1199.7 MB; resume skipped completed files, recomputed 10.14 GB → 9.08 GB, and said so explicitly. The *backend* mechanism works; its disclosure does not — see F9. |
 
-### B7 closed: finding 5 is attributed
+### B7: finding 5's LEG is attributed; its CAUSE is not (conclusion retracted same day)
 
-Round 8 is the first round whose per-leg captures could be compared against a v2 baseline, and
-the answer is unambiguous. Divergence is **entirely in the dense leg** — q06 dense 5/10 against
-splade 10/10 and text 10/10; q08 dense 4/10 against splade 10/10 and text 10/10 — and the
-dense-score identity check flags **all ten** queries as systematically out of envelope: deltas of
-1.7e-2–6.8e-2 against a sandbox↔sandbox envelope of 1.8e-4, roughly 200–400× larger, with
-byte-identical weights (fingerprint `f1d0f4ec…cc38e`).
+Round 8 is the first round whose per-leg captures could be compared against a v2 baseline. The
+**leg attribution stands**: divergence is entirely in the dense leg — q06 dense 5/10 against splade
+10/10 and text 10/10; q08 dense 4/10 against splade 10/10 and text 10/10 — with all ten queries
+out of envelope at 1.7e-2–6.8e-2 against a sandbox↔sandbox envelope of 1.8e-4.
 
-Same weights, different numbers ⇒ the **embedding inference path** differs between the dev stack
-and the Sandbox. This refutes both hypotheses previously on the table (HNSW/approximate tail
-churn, and FP16-vs-FP32), each of which had already been independently refuted by a calibration
-population. Finding 5 is an environment-level measurement artefact, not a ranking regression —
-which is what §B7 argued on weaker evidence and what round 8 now demonstrates.
+**The causal conclusion first written here — "same weights, different numbers ⇒ the embedding
+inference path differs" — is RETRACTED.** A stress-test pass the same day (tempdoc 801 §D10)
+found both halves unsupported:
+
+- **The magnitude and sign do not fit an execution-path cause.** Documented CPU↔CUDA execution-
+  provider divergence is ~1e-5–1e-4, two to three orders too small. And **65 of 75 shared pairs
+  shift in the same direction** (mean +2.2e-2 in cosine terms). Floating-point divergence is
+  zero-mean and symmetric; a systematic one-directional shift is not a numerics signature at all.
+- **"Byte-identical weights" was never established.** The fingerprint hashes one file, selected by
+  a `Files.isRegularFile` check preferring the FP16 model, and never asks which file the session
+  loaded — so FP16-on-CUDA, FP32-on-CUDA and FP32-on-CPU all produce the same fingerprint. The
+  sidecars governing truncation, pooling and query/passage prefixes are not hashed at all.
+
+**The prior refutation of the FP16-vs-FP32 hypothesis is withdrawn with it**, since it rested on
+the same fingerprint. What survives: the divergence is dense-leg-only; pooling and normalisation
+happen in Java after the graph and are excludable; and the ORT batch size is a fixed constant, not
+VRAM-derived, which eliminates one otherwise-attractive hypothesis.
+
+§B7's original and weaker claim — that finding 5 is an environment-level artefact rather than a
+ranking regression in the candidate — is **not** affected by this retraction, and the blocking
+top-3 assertion passing 10/10 remains the evidence for it. What is not known is *why*.
 
 One correction to the round's self-report: it predicted q04/q06/q08 below floor. The host re-run
 puts **q04 at exactly 7/10, which passes**. Two descriptive findings, not three.

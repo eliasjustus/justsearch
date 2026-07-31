@@ -656,6 +656,87 @@ Taken together these argue for deciding reachability now and auto-installation l
 rather than treating them as one call that has to be made before the certificate lands. The owner
 decision this tempdoc needs is therefore narrower than it first appeared.
 
+## D10. The parity instrument commits this document's own defect
+
+A stress-test pass (2026-07-31, briefed to refute rather than confirm) was run against the
+conclusion this session had already written into tempdocs 798 and 734: *"same weights, different
+numbers ⇒ the embedding inference path differs between dev and the Sandbox."* **It does not hold,
+and the reason it does not hold is §D0's invariant, committed by the measuring instrument.**
+
+### Why the conclusion fails
+
+**The sign structure is decisive and was never examined.** Recomputed from the raw captures: 75
+shared (query, doc) pairs across 10 queries, of which **65 shift in the same direction**, mean
+**+2.2e-2** in cosine terms. (The captured score is not cosine — it is Lucene's euclidean
+`1/(3−2·cos)`; converting *increases* the anomaly by about 15%.) Floating-point divergence from
+execution providers, TF32, precision, drivers or kernel selection is **zero-mean and symmetric**.
+A consistent one-directional shift is not a rounding signature — it means a different quantity is
+being computed, not the same quantity computed differently.
+
+**The magnitude was also wrong by orders of magnitude.** Documented CPU-EP↔CUDA-EP divergence sits
+at ~1e-5–1e-4. Even ORT's own acceptance bound for a full FP32→FP16 conversion is `rtol=0.01` —
+below the observed mean. Attributing 2e-2 to execution-path noise required the noise to be 100–1000×
+its documented size.
+
+### The instrument's defect, stated in this document's own terms
+
+`EmbeddingFingerprint` is the field the parity checker uses to certify that both environments ran
+the same model. It hashes **one file, chosen by a `Files.isRegularFile` check that prefers the FP16
+model whenever it is present on disk** — and never asks which file the session actually loaded.
+There are three states it cannot distinguish: FP16-on-CUDA, FP32-on-CUDA (a documented fallback
+when FP16 session creation fails), and FP32-on-CPU. The sidecar JSONs that set truncation length,
+pooling strategy and query/passage prefixes are not hashed at all, and round 8 logged all three as
+degraded or undeclared.
+
+So the fingerprint's **claim** is *"these are the weights that ran"*. What it **reads** is *"a file
+that exists on disk."* That is precisely the defect in §D0's table — a claim computed from
+something adjacent to its subject — and it appears here in the instrument the project uses to
+decide whether search quality regressed. §R1's sibling framing is exactly on point: the artifact is
+connected to a proxy that resembles its subject rather than to the subject.
+
+It is worth being blunt about the consequence: **the parity check has been certifying "same
+weights" across three rounds on evidence that cannot support it**, and the earlier refutation of
+the FP16-vs-FP32 hypothesis — which rested entirely on this fingerprint — is withdrawn with it.
+Finding 5 is un-attributed again, and has been un-attributable all along.
+
+### What is now known, and what the corrective is
+
+Established and worth keeping: the divergence is dense-leg-only; pooling and L2 normalisation
+happen in Java after the ONNX graph, with identical bytecode both sides, so they are excluded; and
+the ORT batch size is a fixed constant rather than VRAM-derived, which eliminates the
+"paravirtualised GPU picks a different batch size" hypothesis. A second uncontrolled variable was
+also surfaced: the index is int8 scalar-quantized with per-segment, corpus-dependent quantiles, and
+round 8's live index held 5194 documents against the baseline's 5189 — a second-order effect, but
+not a zero-mean one, and not currently controlled for.
+
+The corrective is not a better guess at the cause. It is that **neither environment records what
+ran**, so the question is currently untestable rather than merely unanswered:
+
+1. **Record the actual model path, execution provider and precision** at session selection, and
+   surface them next to the fingerprint. Near-zero cost, and nothing further can be concluded
+   before it exists.
+2. **Extend the fingerprint from a file hash to a directory manifest hash**, covering the sidecars
+   that set truncation, pooling and prefixes; and record EP + precision in the baseline itself.
+   This is the structural fix — without it the checker keeps certifying a property it cannot see.
+3. **Embed one fixed string on both machines and compare the raw vectors.** This removes the index,
+   quantization, HNSW and corpus from the experiment entirely. Per-element deltas around 1e-4 would
+   exonerate the encoder and move the investigation index-side; deltas around 1e-2 with a
+   consistent sign would confirm it.
+
+Only after those does anything about TF32 or provider tuning become worth testing.
+
+### The methodological point, which is the durable part
+
+This conclusion was reached in one pass, written into two tempdocs, and reported as settled —
+and it was wrong in both halves. What caught it was not more evidence but a **brief that required
+refutation as the default stance**. The sign test that killed it takes one line of arithmetic over
+data that was already on disk when the original conclusion was written.
+
+That is the same lesson as §D3's two tests: the failure mode is not insufficient data, it is an
+oracle that agrees with the hypothesis by construction. Here the hypothesis was *"the environments
+differ"* and the fingerprint was read as evidence *against* the alternative — while being
+structurally incapable of distinguishing them.
+
 ## D7. Strand B — the qualifying-set gap needs a round, not a design
 
 Verified while designing, so this is settled rather than proposed:
