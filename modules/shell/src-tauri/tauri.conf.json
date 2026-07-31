@@ -41,6 +41,13 @@
       "desktop": {
         "schemes": ["justsearch"]
       }
+    },
+    "updater": {
+      "pubkey": "",
+      "endpoints": [],
+      "windows": {
+        "installMode": "basicUi"
+      }
     }
   },
   "app": {
