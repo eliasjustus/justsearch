@@ -205,7 +205,7 @@ lines, so the run's own JSON artifacts are the reliable source.
 > **`--clean` caveat:** `jseval run --clean` does **not** reliably wipe the index /
 > `watched_roots` (observations-logged defect). When a clean state matters between
 > arms, wipe `tmp/headless-eval-data` manually.
-
+>
 > **Windows console encoding:** Inspect AI's rich display crashes with
 > `UnicodeEncodeError` when stdout is redirected or backgrounded — cp1252 cannot encode
 > its braille spinner. Set `INSPECT_DISPLAY=none PYTHONUTF8=1` for **any** backgrounded
