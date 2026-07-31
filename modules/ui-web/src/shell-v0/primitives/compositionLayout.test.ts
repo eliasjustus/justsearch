@@ -2,6 +2,11 @@
 import { describe, it, expect } from 'vitest';
 import { trackTemplate, composeGridStyles, type ZoneDecl } from './compositionLayout.js';
 import { CONVERSATION_ZONES } from '../views/unifiedChatRequest.js';
+import { unifiedChatBodyStyles } from '../views/unifiedChatStyles.js';
+import { isWideLayout, reportLayoutWidth } from '../state/responsiveState.js';
+
+/** A stand-in for a mounted surface reporting its measured width to the breakpoint authority. */
+const REPORTER = {};
 
 // A generator FIXTURE modelled on the agent-window zone-set (the §13.9 re-zone:
 // the reading column FLANKED by a content-sized spine gutter (col 2) + rail (col 4) that COLLAPSE when
@@ -27,13 +32,14 @@ describe('compositionLayout — §13 Pillar B generator', () => {
   it('emits the grid frame CSS: display:grid, the breakpoint, the gap, and per-zone placements', () => {
     const cssText = composeGridStyles(ZONES, {
       container: '.conversation-zone',
+      containerName: 'chat-surface',
       breakpoint: '64rem',
       gap: '1.5rem',
     }).cssText;
     expect(cssText).toContain('display: grid');
     expect(cssText).toContain('grid-template-columns: minmax(0, 1fr);'); // narrow track
     expect(cssText).toContain('gap: 1.5rem');
-    expect(cssText).toContain('@media (min-width: 64rem)');
+    expect(cssText).toContain('@container chat-surface (min-width: 64rem)');
     expect(cssText).toContain(
       'grid-template-columns: minmax(0, 8rem) auto minmax(0, 50rem) fit-content(20rem) minmax(0, 8rem)',
     ); // wide track
@@ -104,5 +110,97 @@ describe('CONVERSATION_ZONES — the reading column is floored in its own grid t
     // trackTemplate's narrow branch hardcodes `minmax(0, 1fr)` per non-wideOnly zone and ignores
     // the declared track, so a wide-mode floor is a no-op narrow (verified, not assumed).
     expect(trackTemplate(CONVERSATION_ZONES, 'narrow')).toBe('minmax(0, 1fr)');
+  });
+});
+
+// Sandbox round 8 — a permanent horizontal overflow whenever the reading pane and the conversation
+// were both mounted at a 1040px window. The declared track minimums are a budget on the CONTAINER's
+// width, but the breakpoint that decided whether to spend that budget was a `@media` query on the
+// VIEWPORT — a strictly larger number, because the Shell rail and the surface's own padding come off
+// it first. These assert the two halves that make the class of error unrepresentable: the query is
+// evaluated against the surface box, and the budget fits inside the width at which it commits.
+describe('798 — the wide layout commits only at a width its declared minimums fit in', () => {
+  const REM_PX = 16;
+  const GAP_REM = 1.5;
+  const BREAKPOINT_REM = 64;
+  // Shell.ts `:host([data-rail-expanded]) { grid-template-columns: 11rem 1fr; }`
+  const RAIL_EXPANDED_REM = 11;
+  // unifiedChatBodyStyles `:host { padding: 1rem; box-sizing: border-box; }` — both inline sides.
+  const SURFACE_PADDING_REM = 2;
+  /** The reproduction's window width. */
+  const DEFECT_VIEWPORT_PX = 1040;
+
+  /**
+   * The largest `min-width: <n>rem` the surface stylesheet declares on `.document-pane` — the pane's
+   * item-side floor, which the grid charges to the pane's `fit-content` track. Read from the CSS
+   * rather than restated here so moving the floor moves this budget with it.
+   */
+  function documentPaneFloorRem(): number {
+    const re = /\.document-pane\s*\{[^}]*min-width:\s*([\d.]+)rem/g;
+    let max = 0;
+    for (const m of unifiedChatBodyStyles.cssText.matchAll(re)) max = Math.max(max, Number(m[1]));
+    return max;
+  }
+
+  /** A track's declared minimum in rem (`minmax(<min>, …)`, else 0 for content-sized tracks). */
+  const zoneMinRem = (selector: string) =>
+    trackMinimumRem(CONVERSATION_ZONES.find((z) => z.selector === selector)!.track);
+
+  it('evaluates the breakpoint against the SURFACE box, not the viewport', () => {
+    const cssText = composeGridStyles(CONVERSATION_ZONES, {
+      container: '.conversation-zone',
+      containerName: 'chat-surface',
+      breakpoint: '64rem',
+      gap: '1.5rem',
+    }).cssText;
+    expect(cssText).toContain('@container chat-surface (min-width: 64rem)');
+    expect(cssText).not.toContain('@media');
+    // A `@container` query with no container established is inert — it would silently never match and
+    // the surface would be stuck narrow forever. The named container has to be declared, and on the
+    // `.answer-plane` wrapper specifically: NOT on :host, whose layout containment would re-anchor the
+    // fixed-position <jf-citation-hover-card> appended to the same shadow root.
+    const plane = /\.answer-plane\s*\{([^}]*)\}/.exec(unifiedChatBodyStyles.cssText);
+    expect(plane).not.toBeNull();
+    expect(plane![1]).toContain('container-type: inline-size');
+    expect(plane![1]).toContain('container-name: chat-surface');
+    expect(/:host\s*\{[^}]*container-type/.test(unifiedChatBodyStyles.cssText)).toBe(false);
+  });
+
+  it('the reading column + reading pane + gutters fit inside the container width that commits them', () => {
+    // Six declared tracks always charge five gutters, including across the collapsed ones.
+    const gutterRem = (CONVERSATION_ZONES.length - 1) * GAP_REM;
+    const paneFloorRem = documentPaneFloorRem();
+    expect(paneFloorRem).toBeGreaterThan(0); // the floor is real, not a parse miss
+    const budgetRem = zoneMinRem('.conversation') + paneFloorRem + gutterRem;
+    // The load-bearing inequality. Pre-fix this compared 55.5rem against a 65rem VIEWPORT and passed
+    // while the surface itself had only 52rem — 888px of tracks in an 832px box.
+    expect(budgetRem).toBeLessThanOrEqual(BREAKPOINT_REM);
+  });
+
+  it('does not commit the wide layout at the 1040px window that overflowed', () => {
+    const surfacePx =
+      DEFECT_VIEWPORT_PX - (RAIL_EXPANDED_REM + SURFACE_PADDING_REM) * REM_PX;
+    expect(surfacePx).toBe(832);
+    reportLayoutWidth(REPORTER, surfacePx);
+    expect(isWideLayout()).toBe(false);
+    reportLayoutWidth(REPORTER, null);
+  });
+
+  it('does commit once the surface itself reaches the breakpoint', () => {
+    reportLayoutWidth(REPORTER, BREAKPOINT_REM * REM_PX);
+    expect(isWideLayout()).toBe(true);
+    reportLayoutWidth(REPORTER, null);
+  });
+
+  it('the narrowest reported surface governs, and a withdrawal cannot clear a live neighbour', () => {
+    // The split stage mounts two surfaces; a half-width one must not talk the shared decision into a
+    // layout that does not fit it, and its unmount must not reset the decision for the other.
+    const other = {};
+    reportLayoutWidth(REPORTER, 1600);
+    reportLayoutWidth(other, 700);
+    expect(isWideLayout()).toBe(false);
+    reportLayoutWidth(other, null);
+    expect(isWideLayout()).toBe(true);
+    reportLayoutWidth(REPORTER, null);
   });
 });

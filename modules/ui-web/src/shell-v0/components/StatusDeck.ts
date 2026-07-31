@@ -519,7 +519,12 @@ export class StatusDeck extends JfElement {
         // Health cannot act on), route to the AI Brain surface instead — the ONE state where Health
         // is not the right destination for this pill.
         const aiEngineKind = this.aiState?.aiEngine.kind;
-        const needsBrain = aiEngineKind === 'not_installed' || aiEngineKind === 'install_failed';
+        const needsBrain =
+          aiEngineKind === 'not_installed' ||
+          aiEngineKind === 'install_failed' ||
+          // `paused` is the same shape of state: the actionable next step is "resume the download",
+          // which lives on the Brain surface, not on Health.
+          aiEngineKind === 'paused';
         const actionLabel = needsBrain ? 'Open AI Brain.' : 'Open Health.';
         return html`<jf-control
           class="status-pill group"

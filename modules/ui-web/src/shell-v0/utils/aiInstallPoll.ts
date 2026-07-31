@@ -40,6 +40,13 @@ export interface InstallStatus {
   }>;
   downloadedBytes?: number;
   totalBytes?: number;
+  /**
+   * Bytes an interrupted earlier run left staged in `.partial` files, which a resume keeps
+   * (`AiInstallStatus.resumableBytes`). Backend-derived from DISK via the planner, not from
+   * `state: 'cancelled'` — that state is session-ephemeral and reads `idle` again after a restart,
+   * so keying the paused UI on it would tell a returning user their GBs were discarded.
+   */
+  resumableBytes?: number;
   startedAtEpochMs?: number;
   updatedAtEpochMs?: number;
   cancelRequested?: boolean;
@@ -52,7 +59,10 @@ export interface InstallStatus {
 export interface InstallPlanPreview {
   intent?: string;
   downloadProfile?: string;
+  /** Bytes the download will actually transfer — complete files AND staged `.partial` bytes excluded. */
   totalDownloadBytes?: number;
+  /** Of the planned downloads, bytes already staged on disk that a resume keeps. */
+  resumableBytes?: number;
   tiers?: Array<{
     tier?: string;
     label?: string;

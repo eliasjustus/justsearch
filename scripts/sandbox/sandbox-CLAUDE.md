@@ -39,6 +39,22 @@ Five staged files govern this round. Read them before launching JustSearch:
    and expectations. Written before the round runs; the debrief is read against
    it. A round asked to verify something the charter classifies needs-dig should
    flag that, not silently spend itself on it.
+   **A watch item that names only a broken signature is under-specified — do not
+   file a finding on the signature alone.** Charters must state what the signal
+   looks like when the build is HEALTHY as well as when it is broken (the rule
+   lives in `docs/how-to/cut-a-release.md` step 2, addressed to whoever writes
+   the charter). When one does not, establish the discriminator yourself before
+   calling anything a defect, and record the charter's imprecision as a
+   harness finding. Worked example (round 8, 2026-07-31): the charter said
+   `Combined backfill: docs=N (embed=0,splade=0,chunks=0)` "repeating at high
+   frequency … is the livelock; it must not appear." It appeared **143 times,
+   six within 142 ms — and was not the livelock**: the lines carried real
+   progress, the run terminated on its own, enrichment completed, and a
+   60-second idle window afterwards produced zero new lines. Healthy backfill
+   emits that exact signature. The defect is **non-termination** — the
+   signature still firing while every coverage counter is static and ingest
+   jobs are starved. Following that charter literally would have produced a
+   false HIGH against a working build.
 4. **`sandbox-environment.md`** — directory layout, what is staged, environment
    characteristics.
 5. **`staging-gaps.md`** — assets the host failed to stage this round (e.g. the
@@ -52,8 +68,11 @@ Five staged files govern this round. Read them before launching JustSearch:
    verify, not as a substitute for verifying it: check every claim it makes
    against the running candidate, don't just cite the tempdoc's own words back.
 
-The final validation summary must state the mode explicitly and report coverage
-against `coverage-brief.md`.
+The final validation summary must state the mode explicitly, report coverage
+against `coverage-brief.md`, and quote `candidate-provenance.md` (the staged
+record of the installer's filename, SHA-256 and — when the build made it
+derivable — its commit) so the archived evidence identifies the build it came
+from without host-side archaeology afterwards.
 
 ## Mission (durable)
 

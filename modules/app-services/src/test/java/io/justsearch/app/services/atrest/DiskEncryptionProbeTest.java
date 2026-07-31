@@ -2,6 +2,7 @@ package io.justsearch.app.services.atrest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -99,6 +100,74 @@ final class DiskEncryptionProbeTest {
       assertEquals(
           AtRestProtection.State.UNKNOWN, DiskEncryptionProbe.mapPkeyValue(pkey).state(), "PKEY " + pkey);
     }
+  }
+
+  /**
+   * Tempdoc 798 Part 2 — the root cause behind the "needs admin on a machine with nothing
+   * encryptable" bug: {@code ExtendedProperty} returns {@code $null} when there is no BitLocker
+   * feature to report on, and PowerShell's {@code [int]$null} silently coerces that to {@code 0}
+   * (an undocumented-but-parseable value), which used to reach {@link
+   * DiskEncryptionProbe#mapPkeyValue} indistinguishably from a genuine probed "0". The producer now
+   * emits an explicit sentinel for the null case instead, caught by {@link
+   * DiskEncryptionProbe#parseShellPropertyOutput} before the value ever reaches the PKEY table.
+   *
+   * <p>This is deliberately a NEW test, not a change to {@link #undocumentedPkeyValuesStayUnknown()}:
+   * {@code mapPkeyValue(0) -> UNKNOWN} stays correct (an undocumented numeric PKEY value really is
+   * indeterminate) — the fix is that a null property no longer becomes a "0" in the first place, so
+   * it never calls {@code mapPkeyValue} at all. Both degrade to {@code State.UNKNOWN}, but only the
+   * absent-property path carries {@code source = "none"} (no answer at all), distinguishing it from a
+   * probed-but-indeterminate reading — the distinction the FE honesty fix (atRestCard.ts) depends on.
+   */
+  @Test
+  void absentPropertyIsDistinguishedFromAGenuineZero() {
+    AtRestProtection absent = DiskEncryptionProbe.parseShellPropertyOutput("PROPERTY_ABSENT");
+    assertEquals(AtRestProtection.State.UNKNOWN, absent.state());
+    assertEquals("none", absent.source(), "absence must NOT be attributed to the shell-property probe");
+    assertEquals(AtRestProtection.Confidence.UNKNOWN, absent.confidence());
+
+    AtRestProtection genuineZero = DiskEncryptionProbe.parseShellPropertyOutput("0");
+    assertEquals(AtRestProtection.State.UNKNOWN, genuineZero.state());
+    assertEquals(
+        "shell-property",
+        genuineZero.source(),
+        "a probed (if undocumented) numeric value keeps its shell-property provenance");
+    assertEquals(AtRestProtection.Confidence.LOW, genuineZero.confidence());
+
+    assertNotEquals(absent, genuineZero, "absence and a real 0 reading must not collapse to one value");
+  }
+
+  /**
+   * Pins the actual producer change (798 Part 2), not just the parser's tolerance for an arbitrary
+   * sentinel string: the emitted PowerShell must itself distinguish a null {@code ExtendedProperty}
+   * read from a coerced numeric one, by checking {@code $v} for {@code $null} before casting it.
+   * Without this check, {@code [int]$null} silently becomes the string {@code "0"} and the sentinel
+   * is never emitted at all — the exact defect this whole slice fixes.
+   */
+  @Test
+  void probeScriptChecksForNullBeforeCoercingToInt() {
+    String script = DiskEncryptionProbe.buildProbeScript("C:\\");
+    assertTrue(
+        script.contains("$null -eq $v"),
+        "script must check the property for null before casting it to int: " + script);
+    assertTrue(
+        script.contains("PROPERTY_ABSENT"),
+        "script must emit the absence sentinel on the null branch: " + script);
+  }
+
+  @Test
+  void parseShellPropertyOutputHandlesEmptyAndWhitespaceAndNonNumericOutput() {
+    assertEquals(AtRestProtection.State.UNKNOWN, DiskEncryptionProbe.parseShellPropertyOutput("").state());
+    assertEquals(AtRestProtection.State.UNKNOWN, DiskEncryptionProbe.parseShellPropertyOutput(null).state());
+    assertEquals(
+        AtRestProtection.State.UNKNOWN,
+        DiskEncryptionProbe.parseShellPropertyOutput("   \n").state());
+    assertEquals(
+        AtRestProtection.State.UNKNOWN,
+        DiskEncryptionProbe.parseShellPropertyOutput("not-a-number").state());
+    assertEquals(
+        AtRestProtection.State.ENCRYPTED,
+        DiskEncryptionProbe.parseShellPropertyOutput("  1  \n").state(),
+        "surrounding whitespace from the subprocess line is trimmed before parsing");
   }
 
   @Test

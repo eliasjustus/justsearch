@@ -6,7 +6,9 @@
  * Pure projection of the typed `/api/status` snapshot (`atRestProtection` + `conversationProtection`)
  * — no host, no fetch, no state. The card never over-claims: the index is only OS-disk-encrypted, an
  * unlocked window is readable, and configuration quality (TPM-only vs pre-boot PIN) shows
- * "unknown — needs admin" when it can't be sensed AND elevation is what would sense it.
+ * "unknown — needs admin" only where there is a real reason to believe elevation would help — never
+ * as a blanket answer for every unsensed case (798: a machine with nothing encryptable, probed in an
+ * already-elevated session, was still told to "get admin" — advice that cannot possibly help there).
  */
 import { html, css, nothing, type TemplateResult } from 'lit';
 import { icon } from '../../components/Icon.js';
@@ -56,18 +58,35 @@ export const atRestCardStyles = css`
 const NEUTRAL_PILL = 'background: var(--surface-2); color: var(--text-secondary);';
 
 /**
- * The wording this card derives from one `diskEncryption` state. Exported (and pure) so the
- * honesty rules below are assertable without rendering.
+ * The wording this card derives from one `diskEncryption` state (plus its provenance). Exported (and
+ * pure) so the honesty rules below are assertable without rendering.
  *
  * Sandbox round 7: the `Configuration` row used to read "Unknown — needs admin" for EVERY state
  * whose quality could not be sensed, which recommended elevation in cases elevation cannot resolve.
- * Elevation reveals the TPM-only-vs-pre-boot-PIN distinction only where encryption exists or might
- * exist (ENCRYPTED / ENCRYPTING / UNKNOWN). Where the volume is plainly unencrypted, or cannot be
- * OS-encrypted at all (NOT_APPLICABLE), there is no configuration to learn and no admin to ask.
+ * Elevation reveals the TPM-only-vs-pre-boot-PIN distinction only where an encrypted (or encrypting)
+ * volume is known to exist (ENCRYPTED / ENCRYPTING) — there the claim is a general architectural fact
+ * about the OS APIs (`manage-bde` / `Get-BitLockerVolume` / WMI all require elevation), independent of
+ * this session. Where the volume is plainly unencrypted, or cannot be OS-encrypted at all
+ * (NOT_APPLICABLE), there is no configuration to learn and no admin to ask.
+ *
+ * 798: UNKNOWN needed a second look. Nothing in this codebase ever checks whether the *current*
+ * process is elevated, so "needs admin" is never a verified claim — it must rest on the state alone
+ * telling us a question exists. UNKNOWN splits into two wire-distinguishable shapes (source ·
+ * confidence, mirroring the GPU-capability confidence axis, tempdoc 587):
+ *   - `source === 'shell-property' && confidence === 'LOW'` — the probe ran, exited 0, and returned a
+ *     value the OS itself calls indeterminate, or one this bundle doesn't recognise. A real BitLocker
+ *     state may still be sitting behind that read, so elevation might resolve it.
+ *   - `source === 'none'` — the probe produced no answer at all (non-Windows, execution failure, or
+ *     the property was absent — e.g. no BitLocker feature present, the "nothing encryptable" shape).
+ *     There is no basis to believe an encrypted volume exists here, so offering elevation repeats the
+ *     original bug. An unrecognised future state (no source/confidence supplied) gets the same,
+ *     more conservative answer: make no claim about elevation in either direction.
  */
 export function atRestPresentation(
   state: string,
   qualityKnown: boolean,
+  source?: string,
+  confidence?: string,
 ): { pillLabel: string; pillCss: string; storeStatus: string; configuration: string } {
   const pill =
     state === 'ENCRYPTED'
@@ -93,9 +112,12 @@ export function atRestPresentation(
         : state === 'NOT_APPLICABLE'
           ? 'This volume cannot be encrypted by the OS'
           : 'Unknown';
-  // Stated as an exclusion, not an allowlist: an unrecognized state (a newer backend than this
-  // bundle) renders as Unknown, and "Unknown — needs admin" is the honest pairing for it.
-  const elevationCouldResolveIt = state !== 'NOT_ENCRYPTED' && state !== 'NOT_APPLICABLE';
+  // An allowlist, not an exclusion (798): an unrecognized state (a newer backend than this bundle, or
+  // an UNKNOWN with no positive signal that a real encrypted volume exists) makes no claim about
+  // elevation and reads "Not applicable" — the conservative default when we cannot verify the claim.
+  const probedButIndeterminate =
+    state === 'UNKNOWN' && source === 'shell-property' && confidence === 'LOW';
+  const elevationCouldResolveIt = state === 'ENCRYPTED' || state === 'ENCRYPTING' || probedButIndeterminate;
   const configuration = qualityKnown
     ? 'Known'
     : elevationCouldResolveIt
@@ -113,6 +135,8 @@ export function renderAtRestCard(status: StatusSnapshot | null): TemplateResult 
   const { pillLabel, pillCss, storeStatus, configuration } = atRestPresentation(
     state,
     ar.qualityKnown ?? false,
+    ar.source,
+    ar.confidence,
   );
   // Conversations carry an additional app-encryption dimension (passphrase), read from the REACTIVE
   // status field so the row can never go stale (629 FE design §4).

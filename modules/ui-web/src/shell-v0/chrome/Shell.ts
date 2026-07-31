@@ -125,7 +125,7 @@ import {
   subscribeInspector,
   type InspectorState,
 } from '../state/inspectorState.js';
-import { isWideViewport, subscribeWide } from '../state/responsiveState.js';
+import { isWideLayout, subscribeWide } from '../state/responsiveState.js';
 // 687 R5b — the narrow-viewport reading mount: the SAME <jf-document-pane> presents through the
 // OverlayHost right-drawer slot below the breakpoint (UnifiedChatView's grid mount is wide-only).
 import '../components/documentPane/DocumentPane.js';
@@ -1337,10 +1337,13 @@ export class Shell extends JfElement {
     // dispatch + the ProvenanceBadge visibility.
     // Slice 472 — also re-filter rail when surfaceVisibility /
     // surfaceOrder change.
-    // 687 R5b — narrow reading mount inputs (viewport + the shared inspector selection).
+    // 687 R5b — narrow reading mount inputs (the wide-layout decision + the shared inspector
+    // selection). 798 round 8 — that decision is the reading SURFACE's measured width, not the raw
+    // viewport, and it is the same one UnifiedChatView's grid mount reads; the two must stay exact
+    // complements or the pane renders twice, or nowhere.
     this.narrowReadingUnsubs = [
       subscribeWide(() => {
-        this.wideForReading = isWideViewport();
+        this.wideForReading = isWideLayout();
         this.requestUpdate();
       }),
       subscribeInspector((st) => {
@@ -2072,7 +2075,7 @@ export class Shell extends JfElement {
     }
   }
 
-  private wideForReading = isWideViewport();
+  private wideForReading = isWideLayout();
   private inspectorForReading: InspectorState = getInspectorStateInternal();
   private narrowReadingUnsubs: Array<() => void> = [];
 

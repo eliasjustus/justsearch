@@ -137,13 +137,15 @@ export function resolveShape(
     case 'core.summarize':
       return 'core.summarize';
     case 'core.ask':
+      // An EXPLICITLY chosen operation is never overridden by ambient selection state; an
+      // unspecified one may be resolved by it. The affordance check used to sit inside the
+      // `kind === 'none'` arm, so picking Extraction and then having anything selected
+      // silently downgraded the send to `core.rag-ask` — dropping both the chosen mode and
+      // the schema, while the mode chip still read "Extraction".
+      if (affordance === 'extract') return 'core.extract';
+      if (affordance === 'documents') return 'core.rag-ask';
       switch (selectionKind) {
         case 'none':
-          // Tempdoc 526 §14.5 T5 — affordance hint disambiguates the
-          // ask-without-selection case: 'documents' → RAG, 'extract' →
-          // Extract shape, 'none' → FreeChat continuation.
-          if (affordance === 'documents') return 'core.rag-ask';
-          if (affordance === 'extract') return 'core.extract';
           return 'core.free-chat';
         case 'text-range':
         case 'item':
@@ -153,6 +155,44 @@ export function resolveShape(
         default:
           return 'core.rag-ask';
       }
+  }
+}
+
+/**
+ * The ONE shape computation the chat window's mode chip, streaming header, and `send()` share.
+ *
+ * <p>The chip used to call {@link resolveShape} with the selection kind hardcoded to `'none'`
+ * while `send()` passed the live kind — one resolver, two argument sets, so the label could
+ * name a shape that was never dispatched. Both call this instead.
+ *
+ * `'agent'` is the action-plane MODE, not an answer-plane shape, so it resolves as if no
+ * affordance were chosen (the agent path hosts its own view rather than dispatching a shape).
+ */
+export function resolveDispatchShape(
+  affordance: Affordance,
+  selectionKind: SelectionPayload['kind'] | 'none',
+): string {
+  return resolveShape('core.ask', selectionKind, affordance === 'agent' ? 'none' : affordance);
+}
+
+/**
+ * Narrow the live selection store's kind to the wire kinds {@link resolveShape} understands.
+ * The FE-only item kinds (search-hit / browse-node / plugin-item) all ride the wire as `'item'`;
+ * anything else resolves as if nothing were selected. Lifted verbatim from `UnifiedChatView.send()`
+ * so the chip and the dispatch cannot normalize the same selection differently.
+ */
+export function wireSelectionKind(kind: string | undefined): SelectionPayload['kind'] | 'none' {
+  switch (kind) {
+    case 'text-range':
+    case 'citation':
+    case 'result-set':
+      return kind;
+    case 'search-hit':
+    case 'browse-node':
+    case 'plugin-item':
+      return 'item';
+    default:
+      return 'none';
   }
 }
 

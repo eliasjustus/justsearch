@@ -12,6 +12,7 @@ import io.justsearch.agent.api.registry.I18nKey;
 import io.justsearch.agent.api.registry.Presentation;
 import io.justsearch.agent.api.registry.Provenance;
 import io.justsearch.app.services.conversation.spi.ExternalContextInjector;
+import io.justsearch.app.services.conversation.spi.SelectionContextInjector;
 import io.justsearch.app.services.conversation.spi.ValidatingController;
 import io.justsearch.app.services.conversation.spi.ValidationConsumer;
 import java.util.List;
@@ -41,8 +42,14 @@ public final class ExtractShape {
   public static final I18nKey DESCRIPTION_KEY =
       new I18nKey("registry-conversation-shape.extract.description");
 
+  /**
+   * {@code rag.citations} is declared because {@link SelectionContextInjector} genuinely emits it
+   * for the item / text-range / citation arms — it names the document the extraction was taken
+   * from. Suppressing it would leave a structured answer with no visible provenance, which is the
+   * opposite of what a grounded extraction should offer.
+   */
   private static final List<String> EVENT_SCHEMA =
-      List.of("chunk", "reasoning_chunk", "done", "error");
+      List.of("chunk", "reasoning_chunk", "rag.citations", "done", "error");
 
   private ExtractShape() {}
 
@@ -56,7 +63,11 @@ public final class ExtractShape {
         IterationMode.WITHIN_TURN_ITERATION,
         PersistenceMode.EPHEMERAL,
         List.of(),
-        List.of(ExternalContextInjector.ID, "core.user-prompt"),
+        // Injected messages compose in declaration order, before the user message: prior chat
+        // turns, then the document the user picked, then the extraction instruction. Without
+        // SelectionContextInjector the shape saw no document at all — the schema constraint was
+        // honoured against the prompt and chat history alone, i.e. confabulated structured output.
+        List.of(ExternalContextInjector.ID, SelectionContextInjector.ID, "core.user-prompt"),
         List.of(ValidationConsumer.ID),
         ValidatingController.ID,
         EventDescriptor.namesOnly(EVENT_SCHEMA));
