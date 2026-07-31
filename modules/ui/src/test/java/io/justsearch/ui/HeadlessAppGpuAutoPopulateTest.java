@@ -74,10 +74,13 @@ final class HeadlessAppGpuAutoPopulateTest {
     // Phase E: gpu.enabled mirrored to sysprop (so it survives ConfigStoreRebuilder
     // + propagates to worker via WORKER_FORWARDED_PROPS).
     assertEquals("true", System.getProperty(GPU_ENABLED_KEY));
-    // Phase F: BOTH gpu.layers and llm.gpu_layers sysprops set, since rc.ai().gpuLayers
-    // and rc.llm().gpuLayers read different keys.
+    // Phase F: gpu.layers is mirrored to a sysprop so it survives ConfigStoreRebuilder.
     assertEquals("99", System.getProperty(GPU_LAYERS_KEY));
-    assertEquals("99", System.getProperty(LLM_GPU_LAYERS_KEY));
+    // Regression guard (tempdoc 799 §N.2): justsearch.llm.gpu_layers was a DEAD DUPLICATE —
+    // resolved and documented, but read by nothing once rc.llm().llmGpuLayers was removed.
+    // This previously asserted "99" because both keys were mirrored. Asserting null now keeps
+    // the duplicate from being re-introduced; justsearch.gpu.layers is the one live key.
+    assertNull(System.getProperty(LLM_GPU_LAYERS_KEY));
   }
 
   /**

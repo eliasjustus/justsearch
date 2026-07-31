@@ -1,4 +1,9 @@
-<!-- budget: always-loaded; ceiling in scripts/ci/always-loaded-budget.v1.json (ratchets down) — tempdoc 620. -->
+---
+title: Prose-rule Enforcement Tier Register
+type: reference
+status: stable
+description: "Which tier enforces each load-bearing prose rule in CLAUDE.md and .claude/rules/*.md. Read by the prose-tier-register and hook-integrity gates. Relocated out of always-loaded context (tempdoc 799 K.2): agents need the rules, which live in the rule files; the enforcement-tier table is a maintainer artifact."
+---
 
 # Prose-rule Enforcement Tier Register
 
@@ -159,7 +164,8 @@ classified as `new-rule-registered` with a `tempdoc:` or `adr:` reference.
 
 ## See also
 
-- `docs/tempdocs/530-class-size-ratchet-automation.md` — the design tempdoc
+- `docs/reference/contributing/discipline-gate-kernel.md` — the kernel this register belongs to
+  (substrate, gate catalog, changeset protocol). The originating design history is tempdoc 530.
 - `governance/registry.v1.json` — the gate registry the future meta-loop gate will cross-validate against
 - `scripts/agent-analytics/hooks/` — the hook handlers
 - `.claude/rules/hooks-reference.md` — what each hook does

@@ -49,7 +49,7 @@ function detectGate(filePath, baselines) {
     }
   }
   // Tier-register edits.
-  if (p.endsWith('.claude/rules/tier-register.md')) {
+  if (p.endsWith('docs/reference/contributing/tier-register.md')) {
     return { gate: 'prose-tier-register', kind: 'register' };
   }
   return null;
