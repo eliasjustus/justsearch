@@ -153,6 +153,10 @@ struct UpgradeIntent {
     shutdown_nonce: String,
     shutdown_receipt: Option<ShutdownReceipt>,
     head_shutdown_receipt: Option<HeadShutdownReceipt>,
+    /// PID of the Head child observed at commit-shutdown time, persisted independently of the
+    /// receipt so that restart reconciliation has a witness the receipt cannot supply for itself.
+    /// Absent before HEAD_STOPPED.
+    head_pid: Option<u64>,
     staged_artifact: StagedArtifact,
     launch_witness: Option<InstallerLaunchWitness>,
     owner_expectations: Vec<OwnerExpectation>,
@@ -384,6 +388,7 @@ pub async fn install_app_update(
         shutdown_nonce: prepared.shutdown_nonce.clone(),
         shutdown_receipt: None,
         head_shutdown_receipt: None,
+        head_pid: None,
         staged_artifact: staged,
         launch_witness: None,
         owner_expectations: descriptor
@@ -503,6 +508,7 @@ pub async fn install_app_update(
         return Err(error);
     }
     intent.head_shutdown_receipt = Some(head_receipt);
+    intent.head_pid = Some(u64::from(expected_head_pid));
     transition(&mut intent, UpgradePhase::HeadStopped, None)?;
     persist_intent(&app, &coordinator, &intent)?;
     transition(&mut intent, UpgradePhase::InstallLaunching, None)?;
@@ -1274,6 +1280,22 @@ fn reconcile_intent(
     Ok(intent)
 }
 
+/// The Head PID recorded on the intent at commit-shutdown time.
+///
+/// Reconciliation must validate a shutdown receipt against this independently persisted value.
+/// Passing the receipt's own `head_pid` back in makes the comparison tautological, so a receipt
+/// fabricated or carried over from a different attempt would satisfy the PID clause on the one
+/// path — restart — where the live `backend.child_pid()` witness is gone.
+fn expected_head_pid(intent: &UpgradeIntent) -> Result<u32, String> {
+    let pid = intent.head_pid.ok_or_else(|| {
+        "Upgrade intent is missing the Head process id recorded at commit-shutdown".to_string()
+    })?;
+    if pid == 0 || pid > u64::from(u32::MAX) {
+        return Err("Upgrade intent recorded an out-of-range Head process id".into());
+    }
+    Ok(pid as u32)
+}
+
 fn validate_intent_evidence(
     intent: &UpgradeIntent,
     witness_path: &Path,
@@ -1303,7 +1325,7 @@ fn validate_intent_evidence(
             final_receipt,
             &intent.preparation_id,
             &intent.shutdown_nonce,
-            final_receipt.head_pid as u32,
+            expected_head_pid(intent)?,
         )?;
         if intent.launch_witness.is_none() {
             return Err("Committed intent is missing its embedded installer witness".into());
@@ -1331,7 +1353,7 @@ fn validate_intent_evidence(
             final_receipt,
             &intent.preparation_id,
             &intent.shutdown_nonce,
-            final_receipt.head_pid as u32,
+            expected_head_pid(intent)?,
         )?;
     }
     if matches!(
@@ -1758,6 +1780,41 @@ mod tests {
     }
 
     #[test]
+    fn head_receipt_must_match_independently_recorded_pid() {
+        let fixture = evidence_fixture(UpgradePhase::InstallLaunched);
+        let mut intent = fixture.intent;
+        // An internally consistent receipt that describes a different process than the one this
+        // attempt actually prepared. Validating a receipt against its own head_pid accepts this;
+        // only the separately recorded intent.head_pid can reject it.
+        let mut receipt = intent.head_shutdown_receipt.clone().unwrap();
+        receipt.head_pid += 1;
+        intent.head_shutdown_receipt = Some(receipt);
+        assert!(reconcile_intent(
+            &fixture.intent_path,
+            &fixture.witness_path,
+            &fixture.staging_root,
+            "1.1.0",
+            intent,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn receipt_bearing_phase_without_recorded_pid_cannot_reconcile() {
+        let fixture = evidence_fixture(UpgradePhase::InstallLaunched);
+        let mut intent = fixture.intent;
+        intent.head_pid = None;
+        assert!(reconcile_intent(
+            &fixture.intent_path,
+            &fixture.witness_path,
+            &fixture.staging_root,
+            "1.1.0",
+            intent,
+        )
+        .is_err());
+    }
+
+    #[test]
     fn strategy_aware_compatibility_rejects_role_change() {
         let local: LocalStoreRegister = serde_json::from_str(LOCAL_STORE_REGISTER).unwrap();
         let compatibility = local
@@ -1832,6 +1889,7 @@ mod tests {
         ) {
             intent.shutdown_receipt = Some(test_receipt());
             intent.head_shutdown_receipt = Some(test_head_receipt());
+            intent.head_pid = Some(test_head_receipt().head_pid);
         }
         if matches!(
             phase,
@@ -1860,6 +1918,7 @@ mod tests {
             shutdown_nonce: "n".repeat(32),
             shutdown_receipt: None,
             head_shutdown_receipt: None,
+            head_pid: None,
             staged_artifact: StagedArtifact {
                 path: "unused".into(),
                 sha256: "0".repeat(64),
