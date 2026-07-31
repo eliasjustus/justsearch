@@ -179,6 +179,15 @@ jobs:
       - name: Update never ships or deletes models
         run: node scripts/ci/check-update-preserves-models.mjs
 
+      # Sandbox round 9 F1 (BLOCKER): lib.rs registered tauri_plugin_updater unconditionally
+      # while plugins.updater lived only in the tag-build overlay, so every non-tag candidate's
+      # shell panicked at startup (PluginInitialization, exit 101) before any window or log.
+      # The overlay was also missing the serde-required `pubkey`, so the first tag build would
+      # have panicked identically. A registered plugin with a required config must have a valid
+      # block in the BASE config.
+      - name: Registered Tauri plugins have a base config block
+        run: node scripts/ci/check-tauri-plugin-config.mjs
+
       - name: Verify frontend-stack claims
         run: node scripts/docs/check-frontend-stack-claims.mjs
 
