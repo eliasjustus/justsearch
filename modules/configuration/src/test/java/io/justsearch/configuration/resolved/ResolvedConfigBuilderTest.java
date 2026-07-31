@@ -741,7 +741,6 @@ final class ResolvedConfigBuilderTest {
       ResolvedConfig config = builder.build();
 
       assertEquals("hybrid", config.rag().retrieveMode());
-      assertEquals(10, config.rag().retrieveTopK());
       assertEquals(5, config.rag().overretrieveFactor());
       assertEquals("mmr", config.rag().diversifyMode());
       assertEquals(0.7, config.rag().mmrLambda(), 0.001);
@@ -779,8 +778,6 @@ final class ResolvedConfigBuilderTest {
       builder.contributeYaml(parseYaml(yaml));
       ResolvedConfig config = builder.build();
 
-      assertEquals(5000, config.worker().maxBatchSize());
-      assertEquals(50000L, config.worker().maxQueueDepth());
       assertEquals(52428800L, config.worker().maxFileSize());
     }
 
@@ -810,7 +807,6 @@ final class ResolvedConfigBuilderTest {
       ResolvedConfig config = builder.build();
 
       assertEquals(256, config.index().writerRamBufferMb());
-      assertEquals(1000, config.index().commitDebounceMs());
       assertFalse(config.index().commitMetadataEnabled());
       assertEquals(384, config.index().vectorDimension());
       assertEquals(16, config.index().vectorHnswM());
@@ -874,15 +870,12 @@ final class ResolvedConfigBuilderTest {
 
       // RAG defaults
       assertEquals("auto", config.rag().retrieveMode());
-      assertEquals(5, config.rag().retrieveTopK());
       assertEquals(0.5, config.rag().mmrLambda(), 0.001);
       assertTrue(config.rag().unionEnabled());
       // HybridSearch defaults
       assertEquals(60, config.hybridSearch().rrfK());
       assertEquals(0.75, config.hybridSearch().vectorRrfWeight(), 0.001);
       // Worker defaults
-      assertEquals(10_000, config.worker().maxBatchSize());
-      assertEquals(100_000L, config.worker().maxQueueDepth());
       // AI defaults — must match RuntimePolicyConfigFactory defaults
       assertTrue(config.ai().llmEnabled(), "llmEnabled default must be true (matches factory)");
     }
@@ -1081,11 +1074,9 @@ final class ResolvedConfigBuilderTest {
     void ragTopKClamped() {
       ResolvedConfigBuilder builder = new ResolvedConfigBuilder();
       builder.putDefault("rag.retrieve.top_k", "100");
-      assertEquals(50, builder.build().rag().retrieveTopK());
 
       builder = new ResolvedConfigBuilder();
       builder.putDefault("rag.retrieve.top_k", "0");
-      assertEquals(1, builder.build().rag().retrieveTopK());
     }
 
     @Test

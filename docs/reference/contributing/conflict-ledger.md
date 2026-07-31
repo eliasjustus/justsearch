@@ -26,7 +26,7 @@ This protocol is defined in full in
 here is one of the override artifacts that doc requires (alongside the commit
 message naming the verdict and a committed follow-up slice id). See also the
 `independent-reviewer-required` and `ux-audit-closure` rows in
-`.claude/rules/tier-register.md`.
+`docs/reference/contributing/tier-register.md`.
 
 ## How to add a row
 
@@ -47,5 +47,5 @@ The historical `C-001 … C-018` conflict family was authored during the
 frontend-rewrite kernel work (the retired `421` draft, ~2026-05) and was retired
 with that draft on 2026-06-09. Those rows are preserved in git history; the
 substrate-discipline lessons they produced live on as named principles in
-`docs/reference/contributing/agent-postmortems.md` and `.claude/rules/tier-register.md`
+`docs/reference/contributing/agent-postmortems.md` and `docs/reference/contributing/tier-register.md`
 (rows `independent-reviewer-required`, `substrate-without-consumer-flavors`, etc.).

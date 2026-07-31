@@ -1,7 +1,7 @@
 /**
  * prose-tier-register gate classification vocabulary — tempdoc 530 §Meta-loop.
  *
- * Used when a PR modifies `.claude/rules/tier-register.md` (changing a rule's
+ * Used when a PR modifies `docs/reference/contributing/tier-register.md` (changing a rule's
  * tier, retiring a rule, etc.) or when a referenced gate id doesn't exist.
  */
 

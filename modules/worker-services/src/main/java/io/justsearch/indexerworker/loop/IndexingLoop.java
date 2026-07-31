@@ -86,6 +86,18 @@ public class IndexingLoop implements Closeable {
 
   private static final long ERROR_BACKOFF_MS = 1000; // back-off after a recovered error (tempdoc 588)
 
+  /**
+   * Staleness bound for the pending-ingest probe published to the signal bus (tempdoc 798).
+   *
+   * <p>{@link BackfillScheduler}'s tight loop reads {@code signalBus.hasPendingIngest()} once per
+   * batch, and the idle branch iterates at ~64 Hz, so an unmemoized SQLite aggregate would be a
+   * per-iteration round trip. A wall-clock TTL (rather than an every-N-iterations counter) bounds
+   * staleness in the unit that matters — how long a queued ingest job can wait — and stays correct
+   * if the loop's iteration rate ever changes. 250 ms caps the probe at ~4 queries/second while
+   * keeping the worst-case ingest delay well under a single idle sleep.
+   */
+  private static final long PENDING_INGEST_PROBE_TTL_MS = 250L;
+
   // Tempdoc 516 Slice 4d (W6): backfill batch-size constants moved to BackfillScheduler.
 
   private final JobQueue jobQueue;
@@ -189,6 +201,10 @@ public class IndexingLoop implements Closeable {
 
   // Force reindex tracking - paths that should bypass "unchanged" check
   private final Set<String> forcedPaths = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+  // Tempdoc 798: memoization for the pending-ingest probe (see PENDING_INGEST_PROBE_TTL_MS).
+  private volatile long pendingIngestProbedAtMs = 0L;
+  private volatile boolean pendingIngestCached = false;
 
   /**
    * Creates a new IndexingLoop with default content extractor and no embedding or telemetry.
@@ -514,6 +530,10 @@ public class IndexingLoop implements Closeable {
    */
   public void start() {
     if (running.compareAndSet(false, true)) {
+      // Tempdoc 798: publish the third backfill-yield signal. This loop owns the job queue, so it
+      // is the only component that can answer "is primary indexing work waiting"; BackfillScheduler
+      // reads it through the signal bus alongside isUserActive() / shouldYieldGpuBackfill().
+      signalBus.setPendingIngestProbe(this::hasPendingIngestWork);
       loopThread = new Thread(this::runLoop, "indexing-loop");
       loopThread.setDaemon(true);
       // Tempdoc 588 F-1 defense-in-depth: if the loop thread ever dies uncaught, flip `running`
@@ -526,6 +546,30 @@ public class IndexingLoop implements Closeable {
       loopThread.start();
       log.info("IndexingLoop started");
     }
+  }
+
+  /**
+   * Answers "is primary ingest work waiting in the queue right now" for {@code
+   * WorkerSignalBus.hasPendingIngest()} (tempdoc 798), memoized for {@link
+   * #PENDING_INGEST_PROBE_TTL_MS}.
+   *
+   * <p>Two tiers, cheapest first. {@link JobQueue#queueDepth()} is a {@code COUNT(*) WHERE state
+   * IN ('PENDING','PROCESSING')} served by {@code idx_jobs_state}, so the steady state — an empty
+   * ingest lane while backfill drains — costs one indexed count. Only when that is non-zero is
+   * {@link JobQueue#jobStateCounts()} consulted, which is the precise answer (PENDING-ready only:
+   * a job still in retry backoff cannot be claimed, so yielding backfill for it would buy
+   * nothing) but a full scan of {@code jobs} including DONE/FAILED rows.
+   */
+  private boolean hasPendingIngestWork() {
+    long now = System.currentTimeMillis();
+    if (now - pendingIngestProbedAtMs < PENDING_INGEST_PROBE_TTL_MS) {
+      return pendingIngestCached;
+    }
+    boolean pending =
+        jobQueue.queueDepth() > 0 && jobQueue.jobStateCounts().pendingReadyCount() > 0;
+    pendingIngestCached = pending;
+    pendingIngestProbedAtMs = now;
+    return pending;
   }
 
   /**
@@ -970,6 +1014,9 @@ public class IndexingLoop implements Closeable {
   public void close() throws IOException {
     log.info("Stopping IndexingLoop...");
     running.set(false);
+    // Tempdoc 798: drop the probe so a signal bus that outlives this loop can't answer from a
+    // dead queue reference.
+    signalBus.setPendingIngestProbe(null);
 
     if (loopThread != null) {
       loopThread.interrupt();

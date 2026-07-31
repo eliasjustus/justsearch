@@ -98,8 +98,25 @@ public final class CombinedEnrichmentBackfillOps {
    * Recording moves to {@link BackfillScheduler} (the only component that knows which pass ran);
    * this record carries exactly what that {@code finally} block used to read directly.
    *
-   * @param anyWorkDone the original return value ({@code written > 0}) — drives the tight-loop /
-   *     {@code useCombined} control flow in {@link BackfillScheduler}.
+   * @param wroteAnything the original return value ({@code written > 0}) — ACTIVITY, not progress:
+   *     a document that is rewritten every batch without ever advancing a stage pins this true
+   *     forever. Tempdoc 798 renamed it from {@code anyWorkDone} because that name invited exactly
+   *     one wrong use: driving a loop's continue-condition (a 20-minute ingest livelock, zero
+   *     diagnostics). It selects combined-vs-individual mode and feeds logging/sleep selection —
+   *     it must NEVER be a loop's continue-condition. Use {@link #progressed()} for that.
+   * @param progressed whether at least one document actually ADVANCED a stage this batch: a stage
+   *     completed, an attempted stage failed (the encoder ran and its retry seam consumed the
+   *     attempt), or a document with no usable content reached its terminal {@code FAILED} state.
+   *     This is the termination signal for the tight loop — the population it drains is finite, so
+   *     a loop conditioned on it cannot livelock.
+   *     <p>Deliberately excluded (tempdoc 798 review F2): the INTERMEDIATE retry-count bump of the
+   *     Phase-2 blank-content escalation branch. Nothing was attempted there — no encoder ran, no
+   *     artifact could exist — and the document has not left the pending population, so the next
+   *     tight-loop batch would be an identical no-work batch. Only its terminal step counts.
+   *     Counting every bump instead would make this field equal {@link #wroteAnything()}: every
+   *     mutation of a document's update map in {@link #processCombinedBackfill} increments some
+   *     stage counter, so "the write was non-empty" and "a counter moved" would coincide, and the
+   *     distinction this field exists to draw would collapse.
    * @param recordTiming the original {@code recordTiming} flag: {@code true} once processing got
    *     past the early-return/interruption checks (mirrors the pre-move gate on whether the
    *     {@code finally} block recorded anything at all). {@code false} means every count/timing
@@ -108,7 +125,8 @@ public final class CombinedEnrichmentBackfillOps {
    * @param embedMs / spladeMs / nerMs / fetchMs / writeMs / totalMs per-phase wall-clock ms.
    */
   public record CombinedOutcome(
-      boolean anyWorkDone,
+      boolean wroteAnything,
+      boolean progressed,
       boolean recordTiming,
       int embedProcessed,
       int spladeProcessed,
@@ -122,7 +140,7 @@ public final class CombinedEnrichmentBackfillOps {
 
     /** No pending work / interrupted before any stage ran — nothing to record. */
     public static CombinedOutcome none() {
-      return new CombinedOutcome(false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+      return new CombinedOutcome(false, false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
   }
 
@@ -131,8 +149,9 @@ public final class CombinedEnrichmentBackfillOps {
    * document is read once, enriched with embedding + SPLADE + NER as needed, and written once via a
    * single batch RMW call.
    *
-   * @return the batch outcome; {@code outcome.anyWorkDone()} replaces the pre-Move-2 boolean
-   *     return for backfillDidWork/tight-loop tracking.
+   * @return the batch outcome; {@code outcome.wroteAnything()} replaces the pre-Move-2 boolean
+   *     return for backfillDidWork/mode selection, and {@code outcome.progressed()} is what any
+   *     loop over this method must terminate on (tempdoc 798).
    */
   public static CombinedOutcome processCombinedBackfill(BackfillContext context) {
     // Timing/count accumulators hoisted so they survive exceptions (350).
@@ -281,6 +300,11 @@ public final class CombinedEnrichmentBackfillOps {
       // Track which doc IDs are chunk docs (need CHUNK_VECTOR instead of VECTOR)
       Set<String> chunkIdsInBatch = new HashSet<>();
 
+      // Tempdoc 798 review F2: blank-content escalations that reached their terminal FAILED state
+      // this batch. Those documents leave the pending population, so they are progress; the
+      // intermediate retry bumps below are not (see CombinedOutcome#progressed).
+      int blankContentTerminal = 0;
+
       for (String docId : pendingIds) {
         boolean isChunkDoc = chunkDocIds.contains(docId);
         updatesByDocId.put(docId, new HashMap<>());
@@ -303,9 +327,10 @@ public final class CombinedEnrichmentBackfillOps {
             // max — never COMPLETED-without-data.
             int currentRetryCount =
                 parseRetryCountOrZero(docFields.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
-            updatesByDocId
-                .get(docId)
-                .putAll(EmbeddingBackfillOps.computeChunkEmbeddingFailureUpdate(currentRetryCount));
+            Map<String, Object> escalation =
+                EmbeddingBackfillOps.computeChunkEmbeddingFailureUpdate(currentRetryCount);
+            if (escalation.containsKey(SchemaFields.CHUNK_EMBEDDING_STATUS)) blankContentTerminal++;
+            updatesByDocId.get(docId).putAll(escalation);
             continue;
           }
           embedDocIds.add(docId);
@@ -331,40 +356,52 @@ public final class CombinedEnrichmentBackfillOps {
         // Parent doc: full enrichment (embed + SPLADE + NER)
         String content = contentByDocId.get(docId);
 
-        String embedStatus = docFields.getOrDefault(
-            SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
-        String spladeStatus = docFields.getOrDefault(
-            SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
-        String nerStatus = docFields.getOrDefault(
-            SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING);
+        // Read the RAW status: an ABSENT status means the stage does not apply to this document,
+        // not that it is PENDING. Chunk docs are written with SPLADE_STATUS/CHUNK_EMBEDDING_STATUS
+        // but no EMBEDDING_STATUS and no NER_STATUS (ChunkDocumentWriter), and reach this parent
+        // branch whenever the splade-status query pulls them in. Defaulting absent to PENDING made
+        // the blank-content branch below manufacture an EMBEDDING_STATUS=COMPLETED on a chunk doc
+        // that has no vector — a data-less COMPLETED the RMW reset policy (tempdoc 711) then
+        // resets straight back to PENDING, forever (the F-032 "status lies" class).
+        String embedStatus = docFields.get(SchemaFields.EMBEDDING_STATUS);
+        String spladeStatus = docFields.get(SchemaFields.SPLADE_STATUS);
+        String nerStatus = docFields.get(SchemaFields.NER_STATUS);
 
         if (content == null || content.isBlank()) {
+          // No content means no artifact can be produced for any stage that applies here. Escalate
+          // through each stage's retry-count seam (retry next cycle, FAILED at max) exactly as
+          // EmbeddingBackfillOps does for the identical condition — never COMPLETED-without-data.
           Map<String, Object> updates = updatesByDocId.get(docId);
           if (embedAvailable && SchemaFields.EMBEDDING_STATUS_PENDING.equals(embedStatus)) {
-            updates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+            Map<String, Object> escalation =
+                EmbeddingBackfillOps.computeEmbeddingFailureUpdate(
+                    parseRetryCountOrZero(docFields.get(SchemaFields.EMBEDDING_RETRY_COUNT)));
+            if (escalation.containsKey(SchemaFields.EMBEDDING_STATUS)) blankContentTerminal++;
+            updates.putAll(escalation);
           }
           if (nerAvailable && SchemaFields.NER_STATUS_PENDING.equals(nerStatus)) {
-            updates.put(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED);
+            Map<String, Object> escalation =
+                NerBackfillOps.computeNerFailureUpdate(
+                    parseRetryCountOrZero(docFields.get(SchemaFields.NER_RETRY_COUNT)));
+            if (escalation.containsKey(SchemaFields.NER_STATUS)) blankContentTerminal++;
+            updates.putAll(escalation);
           }
-          if (spladeAvailable) {
+          if (spladeAvailable && SchemaFields.SPLADE_STATUS_PENDING.equals(spladeStatus)) {
             // A splade-PENDING doc with no CONTENT is a chunk doc picked up via the splade-status
             // query (chunks carry CHUNK_CONTENT, never CONTENT). With chunk-SPLADE on (tempdoc
-            // 712) encode it; flag-off keeps the historical mark-COMPLETED-without-data. The
-            // COMPLETED-and-writing-anyway case also re-derives: an RMW that omits splade
-            // destroys the postings and reset-statuses them back to PENDING (tempdoc 711);
-            // carrying a fresh encode in the same bundled write skips that churn cycle.
+            // 712) its CHUNK_CONTENT is encoded here and lands in this doc's bundled write.
+            // Flag-off there is nothing to encode, so the stage escalates like any other
+            // artifact-less outcome rather than claiming COMPLETED with no postings.
             String chunkContent = docFields.get(SchemaFields.CHUNK_CONTENT);
-            boolean chunkSparseEligible =
-                context.chunkSpladeEnabled()
-                    && chunkContent != null
-                    && !chunkContent.isBlank()
-                    && !SchemaFields.SPLADE_STATUS_FAILED.equals(spladeStatus);
-            boolean spladePending = SchemaFields.SPLADE_STATUS_PENDING.equals(spladeStatus);
-            if (chunkSparseEligible && (spladePending || !updates.isEmpty())) {
+            if (context.chunkSpladeEnabled() && chunkContent != null && !chunkContent.isBlank()) {
               spladeDocIds.add(docId);
               spladeContents.add(chunkContent);
-            } else if (spladePending) {
-              updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
+            } else {
+              Map<String, Object> escalation =
+                  SpladeBackfillOps.computeSpladeFailureUpdate(
+                      parseRetryCountOrZero(docFields.get(SchemaFields.SPLADE_RETRY_COUNT)));
+              if (escalation.containsKey(SchemaFields.SPLADE_STATUS)) blankContentTerminal++;
+              updates.putAll(escalation);
             }
           }
           continue;
@@ -411,6 +448,10 @@ public final class CombinedEnrichmentBackfillOps {
       // Phase 3a: Batch embedding
       long tEmbed = System.nanoTime();
       int embedFailed = 0;
+      // Docs the embed batch could not serve AT ALL (null / size-mismatched result). They receive
+      // no update of any kind, so unlike embedFailed they are NOT progress — see the
+      // size-mismatch branch below (tempdoc 798 review F2).
+      int embedBatchUnusable = 0;
       int singlePassProcessed = 0;
       int longDocWindowed = 0;
       int arenaOomWindowed = 0;
@@ -528,11 +569,13 @@ public final class CombinedEnrichmentBackfillOps {
               "Combined backfill: batch embedding returned {} (expected {} vectors)",
               vectors == null ? "null" : vectors.size() + " results",
               embedDocIds.size());
-          // += not =: embedDocIds can now include late-chunking windowed-fallback docs, and
-          // embedFailed may already carry Phase 3a-i single-pass escalation failures — a bare
-          // reassignment here would silently erase those from the summary log (tempdoc 691
-          // forensics fold-in; the write correctness is unaffected, only this counter).
-          embedFailed += embedDocIds.size();
+          // Tempdoc 798 review F2: these docs get NO update — not even a retry bump — so nothing
+          // about them changed on disk and the next batch would be byte-identical. Counting them
+          // as progress kept the tight loop spinning on a systematically failing embed batch until
+          // the cycle budget expired. They stay out of `progressed` and are folded back into the
+          // summary log's fail= count only (a separate counter, so the Phase 3a-i single-pass
+          // escalation failures already in embedFailed are still reported — tempdoc 691).
+          embedBatchUnusable = embedDocIds.size();
         }
       }
       embedMs = (System.nanoTime() - tEmbed) / 1_000_000;
@@ -547,7 +590,9 @@ public final class CombinedEnrichmentBackfillOps {
           for (int i = 0; i < spladeDocIds.size(); i++) {
             Map<String, Object> updates = updatesByDocId.get(spladeDocIds.get(i));
             updates.put(SchemaFields.SPLADE, sparseVecs.get(i));
-            updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
+            updates.put(
+                SchemaFields.SPLADE_STATUS,
+                SpladeBackfillOps.spladeStatusFor(sparseVecs.get(i)));
             updates.put(SchemaFields.SPLADE_RETRY_COUNT, "0");
             spladeProcessed++;
           }
@@ -559,8 +604,12 @@ public final class CombinedEnrichmentBackfillOps {
           int stillFailed = 0;
           for (String spladeDocId : spladeDocIds) {
             Map<String, Object> docUpdates = updatesByDocId.get(spladeDocId);
-            if (SchemaFields.SPLADE_STATUS_COMPLETED.equals(
-                docUpdates.get(SchemaFields.SPLADE_STATUS))) {
+            // Both terminal-success tokens count as "already written above" — a COMPLETED_EMPTY
+            // entry is a finished encode too, and overwriting it with a retry/FAILED update would
+            // re-open the doc the empty-encode just drained.
+            Object alreadyWritten = docUpdates.get(SchemaFields.SPLADE_STATUS);
+            if (SchemaFields.SPLADE_STATUS_COMPLETED.equals(alreadyWritten)
+                || SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY.equals(alreadyWritten)) {
               continue;
             }
             Map<String, String> spladeDocFields = batchedFields.getOrDefault(spladeDocId, Map.of());
@@ -595,7 +644,11 @@ public final class CombinedEnrichmentBackfillOps {
             List<NerResult> nerBatch = nerService.extractEntitiesBatch(List.of(content));
             NerResult result = nerBatch.isEmpty() ? NerResult.EMPTY : nerBatch.get(0);
             Map<String, Object> updates = updatesByDocId.get(docId);
-            updates.put(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED);
+            updates.put(
+                SchemaFields.NER_STATUS,
+                result.isEmpty()
+                    ? SchemaFields.NER_STATUS_COMPLETED_EMPTY
+                    : SchemaFields.NER_STATUS_COMPLETED);
             updates.put(SchemaFields.NER_RETRY_COUNT, "0");
             NerBackfillOps.applyEntityFieldUpdates(updates, result);
             nerProcessed++;
@@ -664,7 +717,7 @@ public final class CombinedEnrichmentBackfillOps {
               fetchMs,
               embedMs,
               embedProcessed,
-              embedFailed,
+              embedFailed + embedBatchUnusable,
               singlePassProcessed,
               longDocWindowed,
               arenaOomWindowed,
@@ -683,8 +736,21 @@ public final class CombinedEnrichmentBackfillOps {
       // outcome (mirrors the pre-move finally-block gate) so BackfillScheduler can record from
       // completed-stage data even when a later stage throws (the same "survives exceptions in
       // later stages" property the old finally block had — see the catch block below).
+      // Tempdoc 798: `progressed` is the tight loop's termination signal — at least one doc
+      // advanced a stage (processed, an attempted stage resolved into its retry seam, or a
+      // blank-content doc reached terminal FAILED). `written > 0` is only ACTIVITY and can stay
+      // true forever. See CombinedOutcome#progressed for what is deliberately NOT counted.
       return new CombinedOutcome(
           written > 0,
+          embedProcessed
+                  + spladeProcessed
+                  + nerProcessed
+                  + singlePassProcessed
+                  + embedFailed
+                  + spladeFailed
+                  + nerFailed
+                  + blankContentTerminal
+              > 0,
           recordTiming,
           embedProcessed,
           spladeProcessed,
@@ -700,6 +766,9 @@ public final class CombinedEnrichmentBackfillOps {
       context.log().error("Error during combined enrichment backfill", e);
       return recordTiming
           ? new CombinedOutcome(
+              false,
+              // The batch aborted before its single write, so nothing landed: no doc advanced a
+              // stage durably, whatever the in-flight stage counters say (tempdoc 798).
               false,
               true,
               embedProcessed,

@@ -21,6 +21,9 @@ import {
   type AdvisorySnapshot,
 } from './AdvisoryStore.js';
 import { advisoryClassChrome } from './AdvisoryClassChrome.js';
+import { capWithOverflow } from '../../projections/boundedProjection.js';
+import { icon } from '../Icon.js';
+import '../Button.js';
 import { type NoticeTone, type NoticeLive } from '../SystemNotice.js';
 // Tempdoc 613 §14 — the local toast's tone/politeness/dwell are a projection of its declared severity,
 // not render-site literals (the former `severityToTone` is absorbed by this one authority).
@@ -32,6 +35,19 @@ import { isWindowFocused } from '../../../utils/windowFocus.js';
 import { sendDesktopNotification } from '../../../utils/notify.js';
 
 const TOAST_DURATION_MS = 5000;
+
+/**
+ * How many toasts render at once. The OverlayHost `.top-right` slot is an uncapped, unscrolled
+ * fixed flex column, so an unbounded `visible` array stacks N toasts downward over whatever the
+ * surface puts near the top — round 7 observed toasts sitting over the chat header's New chat /
+ * Export controls for 20+ minutes. Bounding is a property of the PROJECTION, not the data
+ * (tempdoc 550 thesis III(b)): capped toasts stay in `visible` (their timers, acknowledgement and
+ * inbox state are untouched) and are simply summarized by a `+N earlier` row.
+ *
+ * NOT a timeout: an acknowledge-required advisory still persists until the user acts on it — the
+ * round-7 defect was undiscoverable dismissal and unbounded growth, not persistence.
+ */
+const MAX_VISIBLE_TOASTS = 3;
 
 interface VisibleToast {
   readonly record: AdvisoryRecord;
@@ -97,9 +113,32 @@ export class AdvisoryToastHost extends JfElement {
       cursor: pointer;
       animation: jf-toast-in 180ms ease-out;
     }
+    .title-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+    }
     .title {
       font-weight: 600;
       margin-bottom: 0.25rem;
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .dismiss {
+      flex: 0 0 auto;
+      margin: -0.25rem -0.25rem 0 0;
+    }
+    /* The bounded-projection summary for the toasts held back by MAX_VISIBLE_TOASTS — the same
+       "+N more" affordance shape the rail's task list uses (TaskList.ts). */
+    .more {
+      pointer-events: auto;
+      align-self: flex-end;
+      padding: 0.15rem 0.5rem;
+      border-radius: 0.25rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-size: var(--font-size-xs);
     }
     .meta {
       color: var(--text-secondary);
@@ -380,7 +419,17 @@ export class AdvisoryToastHost extends JfElement {
 
   override render(): TemplateResult | typeof nothing {
     if (this.visible.length === 0) return nothing;
-    return html`${this.visible.map((t) => {
+    // `visible` is append-ordered (oldest first) and the slot stacks downward, so cap the REVERSED
+    // list — a burst must never push the just-arrived toast out of view — then restore render order.
+    const capped = capWithOverflow([...this.visible].reverse(), MAX_VISIBLE_TOASTS);
+    const overflow = capped.overflow;
+    const stack = [...capped.shown].reverse();
+    return html`${overflow > 0
+      ? html`<div class="more" data-testid="toast-more">
+          +${overflow} earlier ${overflow === 1 ? 'notification' : 'notifications'}
+        </div>`
+      : nothing}
+    ${stack.map((t) => {
       // 559 Authority III — local-origin records render their literal message +
       // severity tone + plain callback action (no advisory class chrome / meta).
       const isLocal = t.record.origin === 'local';
@@ -430,7 +479,27 @@ export class AdvisoryToastHost extends JfElement {
             @click=${() => this.handleClick(t.record)}
           >
             <jf-system-notice tone=${tone} live=${live}>
-              <div class="title">${isLocal ? nothing : chrome.icon} ${title}</div>
+              <div class="title-row">
+                <div class="title">${isLocal ? nothing : chrome.icon} ${title}</div>
+                <!-- Until now the ONLY way to dismiss a toast was clicking anywhere on it — an
+                     undiscoverable affordance, and the reason round 7 saw toasts sit over the header
+                     for 20+ minutes. The whole-toast click stays; this just makes it visible. The
+                     wrapper stops the click before the toast div's own handler so the record is not
+                     acknowledged twice (same guard shape as handleAction's stopPropagation). -->
+                <span
+                  class="dismiss"
+                  @click=${(e: Event) => e.stopPropagation()}
+                >
+                  <jf-button
+                    variant="ghost"
+                    size="icon"
+                    label="Dismiss notification"
+                    .onActivate=${() => this.handleClick(t.record)}
+                  >
+                    ${icon({ name: 'x', size: 14 })}
+                  </jf-button>
+                </span>
+              </div>
               ${isLocal
                 ? nothing
                 : html`<div class="meta">

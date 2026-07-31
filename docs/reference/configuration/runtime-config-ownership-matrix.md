@@ -7,7 +7,7 @@ description: "Canonical YAML/env/sysprop ownership and precedence map."
 
 # Runtime Config Ownership Matrix
 
-Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-07-22.
+Generated from `modules/configuration/src/main/java/io/justsearch/configuration/EnvRegistry.java`, `modules/configuration/src/main/java/io/justsearch/configuration/ConfigKey.java`, and `modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java` on 2026-07-30.
 
 Precedence note:
 1. `YAML > sysprop > env > default` where a YAML key and env/sysprop fallback both exist.
@@ -180,37 +180,10 @@ Precedence note:
 | - | JUSTSEARCH_INGESTION_SKIP_PATTERNS | justsearch.ingestion.skip.patterns | INGESTION_SKIP_PATTERNS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LAMBDAMART_ENABLED | justsearch.lambdamart.enabled | LAMBDAMART_ENABLED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_LITE_MODE | justsearch.lite.mode | LITE_MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_BACKEND_SELECTOR | justsearch.llm.backend_selector | LLM_BACKEND_SELECTOR | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_BACKEND_SUPPORTS | justsearch.llm.backend_supports | LLM_BACKEND_SUPPORTS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_CONTEXT_LENGTH | justsearch.llm.context_length | LLM_CONTEXT_LENGTH | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_DEADLINE_MS | justsearch.llm.deadline_ms | LLM_DEADLINE_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | justsearch.llm.enabled | JUSTSEARCH_LLM_ENABLED | justsearch.llm.enabled | LLM_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| - | JUSTSEARCH_LLM_GPU_LAYERS | justsearch.llm.gpu_layers | LLM_GPU_LAYERS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_MAX_NEW_TOKENS | justsearch.llm.max_new_tokens | LLM_MAX_NEW_TOKENS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_MAX_PARALLEL | justsearch.llm.max_parallel | LLM_MAX_PARALLEL | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_MAX_SESSIONS | justsearch.llm.max_sessions | LLM_MAX_SESSIONS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_MAX_SLOTS | justsearch.llm.max_slots | LLM_MAX_SLOTS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_MIN_P | justsearch.llm.min_p | LLM_MIN_P | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | justsearch.llm.model_path | JUSTSEARCH_LLM_MODEL_PATH | justsearch.llm.model_path | LLM_MODEL_PATH | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| - | JUSTSEARCH_LLM_MODEL_SHA256 | justsearch.llm.model_sha256 | LLM_MODEL_SHA256 | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_QUEUE_CAPACITY | justsearch.llm.queue_capacity | LLM_QUEUE_CAPACITY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_REASONING_BUDGET | justsearch.llm.reasoning_budget | REASONING_BUDGET | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_RNG_SEED | justsearch.llm.rng_seed | LLM_RNG_SEED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_SESSION_WARMUP_MS | justsearch.llm.session_warmup_ms | LLM_SESSION_WARMUP_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_SIMULATED_LATENCY_MS | justsearch.llm.simulated_latency_ms | LLM_SIMULATED_LATENCY_MS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_SUMMARY_CHUNK_OVERLAP | justsearch.llm.summary_chunk_overlap | LLM_SUMMARY_CHUNK_OVERLAP | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_SUMMARY_CHUNK_TOKENS | justsearch.llm.summary_chunk_tokens | LLM_SUMMARY_CHUNK_TOKENS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_TEMPERATURE | justsearch.llm.temperature | LLM_TEMPERATURE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_TEMPLATE_REDUCE | justsearch.llm.template_reduce | LLM_TEMPLATE_REDUCE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_TEMPLATE_ROOT | justsearch.llm.template_root | LLM_TEMPLATE_ROOT | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_TEMPLATE_SUMMARY | justsearch.llm.template_summary | LLM_TEMPLATE_SUMMARY | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_THREADS | justsearch.llm.threads | LLM_THREADS | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_TOP_P | justsearch.llm.top_p | LLM_TOP_P | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_USE_THINKING | justsearch.llm.use_thinking | USE_THINKING | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_VRAM_AUTO_SCALE | justsearch.llm.vram_auto_scale | LLM_VRAM_AUTO_SCALE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_VRAM_FRACTION | justsearch.llm.vram_fraction | LLM_VRAM_FRACTION | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_VRAM_LIMIT_BYTES | justsearch.llm.vram_limit_bytes | LLM_VRAM_LIMIT_BYTES | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
-| - | JUSTSEARCH_LLM_VRAM_PROJECTED | justsearch.llm.vram_projected | LLM_VRAM_PROJECTED | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_MCP_HOST_CONFIG | justsearch.mcp.host.config | MCP_HOST_CONFIG | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_MMPROJ_MODEL | justsearch.mmproj.model | MMPROJ_MODEL | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
 | - | JUSTSEARCH_MODE | justsearch.mode | MODE | modules/configuration (ResolvedConfigBuilder) | sysprop > env > default |
@@ -304,7 +277,6 @@ Precedence note:
 | rag.mmr.max_candidates | JUSTSEARCH_RAG_MMR_MAX_CANDIDATES | rag.mmr.max_candidates | RAG_MMR_MAX_CANDIDATES | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.retrieve.mode | JUSTSEARCH_RAG_RETRIEVE_MODE | rag.retrieve.mode | RAG_RETRIEVE_MODE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.retrieve.overretrieve_factor | JUSTSEARCH_RAG_OVERRETRIEVE_FACTOR | rag.retrieve.overretrieve_factor | RAG_OVERRETRIEVE_FACTOR | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| rag.retrieve.top_k | JUSTSEARCH_RAG_RETRIEVE_TOP_K | rag.retrieve.top_k | RAG_RETRIEVE_TOP_K | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | rag.union.enabled | JUSTSEARCH_RAG_UNION_ENABLED | rag.union.enabled | RAG_UNION_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | search.chunk_aware.enabled | JUSTSEARCH_SEARCH_CHUNK_AWARE_ENABLED | search.chunk_aware.enabled | SEARCH_CHUNK_AWARE_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | search.chunk_aware.enabled | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
@@ -334,10 +306,8 @@ Precedence note:
 | search.mcp_framing.thin_result_floor_bytes | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | search.mcp_framing.weak_score_floor | JUSTSEARCH_SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR | search.mcp_framing.weak_score_floor | SEARCH_MCP_FRAMING_WEAK_SCORE_FLOOR | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | search.mcp_framing.weak_score_floor | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
-| worker.limits.max_batch_size | JUSTSEARCH_WORKER_MAX_BATCH_SIZE | worker.limits.max_batch_size | WORKER_MAX_BATCH_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_content_length | JUSTSEARCH_WORKER_MAX_CONTENT_LENGTH | worker.limits.max_content_length | WORKER_MAX_CONTENT_LENGTH | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | worker.limits.max_file_size | JUSTSEARCH_WORKER_MAX_FILE_SIZE | worker.limits.max_file_size | WORKER_MAX_FILE_SIZE | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
-| worker.limits.max_queue_depth | JUSTSEARCH_WORKER_MAX_QUEUE_DEPTH | worker.limits.max_queue_depth | WORKER_MAX_QUEUE_DEPTH | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | workers.ai.enabled | JUSTSEARCH_AI_ENABLED | workers.ai.enabled | AI_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |
 | workers.indexer.backpressure_mode | - | - | - | modules/configuration (ResolvedConfigBuilder) | YAML > default |
 | workers.indexer.enabled | JUSTSEARCH_INDEXER_ENABLED | workers.indexer.enabled | INDEXER_ENABLED | modules/configuration (ResolvedConfigBuilder) | YAML > sysprop > env > default |

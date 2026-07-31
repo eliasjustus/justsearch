@@ -456,8 +456,10 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
     String mode = EnvRegistry.EXTRACTION_SANDBOX_MODE.getString("in_process").trim();
     OcrRoutingConfig ocrConfig = resolvedOcrConfig();
     logEffectiveOcrConfig(ocrConfig);
+    TikaExtractionPolicy extractionPolicy = resolvedExtractionPolicy();
     if (mode.isEmpty() || "in_process".equalsIgnoreCase(mode)) {
-      return ExtractionSandboxFactory.inProcessStructured(catalog, ocrConfig, ocrCatalog);
+      return ExtractionSandboxFactory.inProcessStructured(
+          catalog, ocrConfig, ocrCatalog, extractionPolicy);
     }
     if (!"process".equalsIgnoreCase(mode)) {
       throw new IllegalStateException(
@@ -477,12 +479,26 @@ public final class DefaultWorkerAppServices implements WorkerAppServices {
     }
     return ExtractionSandboxFactory.create(
         ExtractionSandboxFactory.Mode.PROCESS,
-        TikaExtractionPolicy.defaults(),
+        extractionPolicy,
         ocrConfig,
         TimeboxedContentExtractor.DEFAULT_TIMEOUT,
         catalog,
         ocrCatalog,
         command);
+  }
+
+  /**
+   * Extraction policy honouring {@code worker.limits.max_content_length} / {@code max_file_size}
+   * (tempdoc 799 §N.2). Mirrors {@link #resolvedOcrConfig()}. Returns the deterministic defaults
+   * when no ConfigStore is installed or the limits match the defaults, so an unconfigured install
+   * keeps the {@code tika-default-v1} identity in the extraction ledger.
+   */
+  private static TikaExtractionPolicy resolvedExtractionPolicy() {
+    ConfigStore store = ConfigStore.globalOrNull();
+    if (store == null || store.get() == null) {
+      return TikaExtractionPolicy.defaults();
+    }
+    return TikaExtractionPolicy.fromWorkerLimits(store.get().worker());
   }
 
   private static OcrRoutingConfig resolvedOcrConfig() {

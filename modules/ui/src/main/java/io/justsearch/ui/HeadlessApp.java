@@ -143,8 +143,9 @@ public class HeadlessApp {
 
     // Phase F: VRAM-tier auto-populate gpu_layers when GPU should be used.
     if (shouldUseGpu(augmented)) {
-      boolean alreadySet = EnvRegistry.GPU_LAYERS.get().isPresent()
-          || EnvRegistry.LLM_GPU_LAYERS.get().isPresent();
+      // LLM_GPU_LAYERS was a dead duplicate of GPU_LAYERS (resolved, documented, read by
+      // nothing) — removed in tempdoc 799 §N.2, so only the live key is consulted here.
+      boolean alreadySet = EnvRegistry.GPU_LAYERS.get().isPresent();
       if (!alreadySet) {
         long vramBytes = -1;
         try {
@@ -157,7 +158,8 @@ public class HeadlessApp {
           String layers = "99";
           augmented.put("justsearch.gpu.layers", layers);
           SystemPropertyUtils.setSysPropIfBlank("justsearch.gpu.layers", layers);
-          SystemPropertyUtils.setSysPropIfBlank("justsearch.llm.gpu_layers", layers);
+          // justsearch.llm.gpu_layers was a dead duplicate of the key above — resolved,
+          // documented, and read by nothing. Removed in tempdoc 799 §N.2.
           log.info(
               "VRAM auto-populate: gpu.layers={} (vramBytes={}, threshold={})",
               layers,
