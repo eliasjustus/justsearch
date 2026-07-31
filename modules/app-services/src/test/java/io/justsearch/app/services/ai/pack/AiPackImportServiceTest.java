@@ -36,6 +36,31 @@ class AiPackImportServiceTest {
   }
 
   @Test
+  void stalePersistedImportStatusResetsToIdleOnStartup() throws Exception {
+    setHome(tmp);
+    Files.writeString(
+        tmp.resolve("pack-import-state.json"),
+        """
+        {"state":"running","phase":"install","message":"stale","errorCode":"",
+         "bytesTotal":100,"bytesDone":40,"startedAtEpochMs":1,"updatedAtEpochMs":2}
+        """);
+
+    AiPackImportService service =
+        new AiPackImportService(
+            OnlineAiService.unavailable(),
+            new UiSettingsStore(UiSettingsStore.PersistenceMode.READ_WRITE),
+            null,
+            new EnterprisePolicyServiceImpl(),
+            new PackAllowlistService(Set.of()));
+
+    AiPackImportStatus status = service.getStatus();
+    assertEquals("idle", status.state);
+    assertEquals("", status.phase);
+    assertEquals(0, status.bytesDone);
+    assertTrue(Files.readString(tmp.resolve("pack-import-state.json")).contains("\"state\" : \"idle\""));
+  }
+
+  @Test
   void zipImportSucceedsAndWritesInstalledPacks() throws Exception {
     setHome(tmp);
 
@@ -74,6 +99,11 @@ class AiPackImportServiceTest {
     entries.put("payload/models/embed.gguf", embedBytes);
     writeZip(zip, entries);
 
+    byte[] userOwnedBytes = "user-owned-model".getBytes(StandardCharsets.UTF_8);
+    Path userOwnedModel = tmp.resolve("models").resolve("user-owned.gguf");
+    Files.createDirectories(userOwnedModel.getParent());
+    Files.write(userOwnedModel, userOwnedBytes);
+
     AiPackImportService svc =
         new AiPackImportService(
             OnlineAiService.unavailable(),
@@ -88,6 +118,7 @@ class AiPackImportServiceTest {
 
     assertTrue(Files.isRegularFile(tmp.resolve("models").resolve("chat.gguf")));
     assertTrue(Files.isRegularFile(tmp.resolve("models").resolve("embed.gguf")));
+    assertArrayEquals(userOwnedBytes, Files.readAllBytes(userOwnedModel));
     assertTrue(Files.isRegularFile(tmp.resolve("installed-packs.v1.json")));
 
     var record = svc.getInstalledPacks();

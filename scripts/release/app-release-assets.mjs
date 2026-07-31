@@ -44,6 +44,7 @@ export async function buildReleaseAssets(options) {
     installerUrl,
     artifactKeyId,
     artifactPublicKey,
+    metadataKeyId,
     publishedAt = new Date().toISOString(),
     notes = '',
   } = options;
@@ -51,6 +52,7 @@ export async function buildReleaseAssets(options) {
   requireNonBlank('installerUrl', installerUrl);
   requireNonBlank('artifactKeyId', artifactKeyId);
   requireNonBlank('artifactPublicKey', artifactPublicKey);
+  requireNonBlank('metadataKeyId', metadataKeyId);
   if (!Number.isSafeInteger(sequence) || sequence <= 0) {
     throw new Error('sequence must be a positive safe integer');
   }
@@ -76,14 +78,27 @@ export async function buildReleaseAssets(options) {
     if (store.status !== 'READY') {
       throw new Error(`durable store ${store.id} is not READY`);
     }
+    for (const [field, value] of Object.entries({
+      id: store.id,
+      owner: store.owner,
+      recoverability: store.recoverability,
+      reconciliation: store.reconciliation,
+    })) {
+      requireNonBlank(`durable store ${store.id ?? '<missing>'} ${field}`, value);
+    }
+    if (!Number.isSafeInteger(store.currentVersion) || store.currentVersion < 0) {
+      throw new Error(`durable store ${store.id} has an invalid currentVersion`);
+    }
     return {
       ownerId: store.id,
-      currentVersion: store.currentVersion,
-      readableSourceVersions: [
+      owner: store.owner,
+      role: store.recoverability,
+      formatVersion: store.currentVersion,
+      readableSourceVersions: [...new Set([
         ...(store.readableLegacyVersions ?? []),
         store.currentVersion,
-      ].sort((a, b) => a - b),
-      reconciliation: store.reconciliation,
+      ])].sort((a, b) => a - b),
+      reconciliationStrategy: store.reconciliation,
     };
   });
 
@@ -93,11 +108,18 @@ export async function buildReleaseAssets(options) {
     version,
     channel: 'stable',
     target: 'windows-x86_64',
+    metadataKeyId,
+    // v1 deliberately has one compiled root. It is an offline, long-lived trust anchor;
+    // emergency replacement requires a separately designed bridge/dual-root release.
+    metadataRootPolicy: 'OFFLINE_LONG_LIVED_V1',
     publishedAt,
     artifact: {
       url: installerUrl,
       sha256: createHash('sha256').update(installer).digest('hex'),
+      size: installer.length,
       signature: artifactSignature.trim(),
+      // Artifact keys may rotate per release because this id+key pair is authenticated by the
+      // long-lived metadata root above.
       keyId: artifactKeyId,
       publicKey: artifactPublicKey.trim(),
     },
@@ -136,6 +158,8 @@ export async function verifyReleaseAssets(options) {
     artifactSignaturePath,
     metadataPublicKeyPath,
     releaseDir,
+    expectedMetadataKeyId,
+    expectedMetadataPublicKeyBase64,
   } = options;
   const [installer, artifactSignatureRaw, publicKeyPem, descriptorBytes, signatureRaw, latestRaw] =
     await Promise.all([
@@ -148,8 +172,31 @@ export async function verifyReleaseAssets(options) {
     ]);
   const descriptor = JSON.parse(descriptorBytes);
   const latest = JSON.parse(latestRaw);
-  if (descriptor.schemaVersion !== 1 || descriptor.channel !== 'stable') {
-    throw new Error('release descriptor schema/channel mismatch');
+  if (
+    expectedMetadataKeyId != null
+    && descriptor.metadataKeyId !== expectedMetadataKeyId
+  ) {
+    throw new Error('release metadata key id does not match the compiled root key id');
+  }
+  if (expectedMetadataPublicKeyBase64 != null) {
+    const publicKeyDer = createPublicKey(publicKeyPem).export({
+      type: 'spki',
+      format: 'der',
+    });
+    const rawPublicKey = publicKeyDer.subarray(-32).toString('base64');
+    if (rawPublicKey !== expectedMetadataPublicKeyBase64.trim()) {
+      throw new Error('metadata PEM does not match the compiled raw root public key');
+    }
+  }
+  if (
+    descriptor.schemaVersion !== 1
+    || descriptor.channel !== 'stable'
+    || descriptor.target !== 'windows-x86_64'
+    || typeof descriptor.metadataKeyId !== 'string'
+    || descriptor.metadataKeyId.trim() === ''
+    || descriptor.metadataRootPolicy !== 'OFFLINE_LONG_LIVED_V1'
+  ) {
+    throw new Error('release descriptor schema/channel/target/key mismatch');
   }
   if (!Number.isSafeInteger(descriptor.sequence) || descriptor.sequence <= 0) {
     throw new Error('release descriptor sequence is invalid');
@@ -165,8 +212,11 @@ export async function verifyReleaseAssets(options) {
     throw new Error('release metadata signature verification failed');
   }
   const installerHash = createHash('sha256').update(installer).digest('hex');
-  if (descriptor.artifact?.sha256 !== installerHash) {
-    throw new Error('installer digest does not match release descriptor');
+  if (
+    descriptor.artifact?.sha256 !== installerHash
+    || descriptor.artifact?.size !== installer.length
+  ) {
+    throw new Error('installer digest or size does not match release descriptor');
   }
   const artifactSignature = artifactSignatureRaw.trim();
   verifyTauriArtifactSignature(
@@ -189,8 +239,13 @@ export async function verifyReleaseAssets(options) {
       throw new Error(`duplicate or missing compatibility owner: ${owner.ownerId}`);
     }
     owners.add(owner.ownerId);
-    if (!owner.readableSourceVersions?.includes(owner.currentVersion)) {
-      throw new Error(`compatibility owner ${owner.ownerId} cannot read its current version`);
+    if (
+      !owner.owner
+      || !owner.role
+      || !owner.reconciliationStrategy
+      || !owner.readableSourceVersions?.includes(owner.formatVersion)
+    ) {
+      throw new Error(`compatibility owner ${owner.ownerId} has incomplete strategy data`);
     }
   }
   return { descriptor, latest };
@@ -316,6 +371,7 @@ async function main() {
       installerUrl: args.url,
       artifactKeyId: args['artifact-key-id'],
       artifactPublicKey: args['artifact-public-key'],
+      metadataKeyId: args['metadata-key-id'],
       publishedAt: args['published-at'],
       notes: args.notes ?? '',
     });
@@ -325,6 +381,8 @@ async function main() {
       artifactSignaturePath: args['artifact-signature'],
       metadataPublicKeyPath: args['metadata-public-key'],
       releaseDir: args['release-dir'],
+      expectedMetadataKeyId: args['metadata-key-id'],
+      expectedMetadataPublicKeyBase64: args['metadata-root-public-key'],
     });
   } else {
     throw new Error('usage: app-release-assets.mjs <build|verify> [options]');

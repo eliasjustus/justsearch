@@ -1058,10 +1058,15 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
         // After a JVM restart, terminal activation states are stale — the self-test
         // server (ephemeral port) is dead and the apply-config was for the previous
         // lifecycle. Reset to idle so the next activate() re-runs the full flow.
-        if ("completed".equals(status.state) || "failed".equals(status.state)) {
+        if (!status.state.isBlank() && !"idle".equalsIgnoreCase(status.state)) {
           status.state = "idle";
           status.phase = "";
           status.message = "";
+          status.errorCode = "";
+          status.selfTestPort = 0L;
+          status.startedAtEpochMs = 0;
+          status.updatedAtEpochMs = System.currentTimeMillis();
+          saveStatusBestEffort();
         }
       }
     } catch (Exception ignored) {

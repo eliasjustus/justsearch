@@ -3,6 +3,10 @@ package io.justsearch.ui.api;
 
 import io.javalin.Javalin;
 import io.javalin.http.Context;
+import io.justsearch.app.api.OpCriticality;
+import io.justsearch.app.api.OpLeaseOutcome;
+import io.justsearch.app.api.OperationAdmissionClosedException;
+import io.justsearch.app.api.OperationLeaseHandle;
 import io.justsearch.app.services.HeadAssembly;
 import io.justsearch.app.api.OperationLeaseService;
 import java.net.URI;
@@ -39,6 +43,7 @@ final class ApiSecurityFilters {
   private static final Set<String> TOKEN_REQUIRED_METHODS = Set.of("POST", "PUT", "DELETE");
   private static final long SLOW_REQUEST_THRESHOLD_MS = 3000;
   private static final long SLOW_DUMP_RATE_LIMIT_MS = 30_000;
+  private static final String MUTATION_LEASE_ATTRIBUTE = "__upgrade_mutation_lease__";
 
   private final boolean prodMode;
   private final String sessionToken;
@@ -53,6 +58,15 @@ final class ApiSecurityFilters {
   private final AtomicLong lastTokenDenyAtMs = new AtomicLong(0);
   private final AtomicLong lastHostDenyAtMs = new AtomicLong(0);
   private final AtomicLong lastSlowDumpAtMs = new AtomicLong(0);
+
+  ApiSecurityFilters(
+      boolean prodMode,
+      String sessionToken,
+      EventBuffer eventBuffer,
+      ExecutorService slowRequestExecutor,
+      HeadAssembly headAssembly) {
+    this(prodMode, sessionToken, eventBuffer, slowRequestExecutor, headAssembly, null);
+  }
 
   ApiSecurityFilters(
       boolean prodMode,
@@ -85,15 +99,31 @@ final class ApiSecurityFilters {
           String method = ctx.method().name().toUpperCase(Locale.ROOT);
           if ("GET".equals(method) || "OPTIONS".equals(method)) return;
           if (ctx.path().startsWith("/api/upgrade/")) return;
-          var snapshot = operationLeases.snapshot();
-          if (!snapshot.admissionFrozen()) return;
-          ctx.status(503)
-              .json(
-                  Map.of(
-                      "error", "Application upgrade preparation has frozen mutating operations",
-                      "errorCode", "UPGRADE_PREPARING",
-                      "preparationId", snapshot.preparationId()));
-          throw new io.javalin.http.HttpResponseException(503, "Upgrade preparing");
+          try {
+            OperationLeaseHandle handle =
+                operationLeases.register(
+                    "api.mutation",
+                    OpCriticality.MUST_COMPLETE,
+                    300,
+                    Map.of("method", method, "path", ctx.path()));
+            ctx.attribute(MUTATION_LEASE_ATTRIBUTE, handle);
+          } catch (OperationAdmissionClosedException e) {
+            ctx.status(503)
+                .json(
+                    Map.of(
+                        "error", "Application upgrade preparation has frozen mutating operations",
+                        "errorCode", "UPGRADE_PREPARING",
+                        "preparationId", e.preparationId()));
+            throw new io.javalin.http.HttpResponseException(503, "Upgrade preparing");
+          }
+        });
+    app.after(
+        ctx -> {
+          OperationLeaseHandle handle = ctx.attribute(MUTATION_LEASE_ATTRIBUTE);
+          if (handle != null) {
+            handle.release(
+                ctx.statusCode() >= 500 ? OpLeaseOutcome.FAILURE : OpLeaseOutcome.SUCCESS);
+          }
         });
   }
 

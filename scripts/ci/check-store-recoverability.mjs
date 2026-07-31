@@ -9,12 +9,18 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { scanDurableStores } from '../governance/lib/durable-store-scan.mjs';
+import { scanPersistenceWriteSites } from '../governance/lib/persistence-write-scan.mjs';
 
 const REGISTER = 'governance/store-recoverability.v1.json';
 const OWNERS = new Set(['SHELL', 'HEAD', 'WORKER', 'EXTERNAL']);
 const RECOVERABILITY = new Set(['AUTHORED', 'DERIVED', 'MIXED', 'EPHEMERAL']);
 const STATUSES = new Set(['READY', 'HARDENING_REQUIRED']);
+const UPGRADE_HANDLING = new Set([
+  'READ_IN_PLACE',
+  'REBUILD',
+  'RESET',
+  'PRESERVE_EXTERNAL',
+]);
 
 /** Extract `NAME("dir", StoreRecoverability.CLASS, ...)` entries from StoreCatalog.java. */
 export function extractCatalogEntries(javaSrc) {
@@ -73,7 +79,8 @@ export function checkDurableStoreRegister({
   durableStores,
   knownCompatibilityGaps,
   catalogEntries,
-  discoveredStores,
+  discoveredWriteSites,
+  nonDurableWriteSites = [],
   pathExists = existsSync,
 }) {
   const failures = [];
@@ -81,6 +88,7 @@ export function checkDurableStoreRegister({
   const gaps = new Set(Array.isArray(knownCompatibilityGaps) ? knownCompatibilityGaps : []);
   const ids = new Set();
   const coveredImplementations = new Set();
+  const classifiedNonDurable = new Set((nonDurableWriteSites ?? []).map(normalize));
   const catalogRows = new Map();
 
   for (const row of rows) {
@@ -97,7 +105,17 @@ export function checkDurableStoreRegister({
       failures.push(`${label}: invalid recoverability \`${row.recoverability}\`.`);
     }
     if (!STATUSES.has(row.status)) failures.push(`${label}: invalid status \`${row.status}\`.`);
-    for (const field of ['root', 'path', 'format', 'atomicity', 'corruptionPolicy', 'reconciliation']) {
+    if (!UPGRADE_HANDLING.has(row.upgradeHandling)) {
+      failures.push(`${label}: invalid upgradeHandling \`${row.upgradeHandling}\`.`);
+    }
+    if (!Array.isArray(row.ownedPaths) || row.ownedPaths.length === 0) {
+      failures.push(`${label}: ownedPaths must name at least one exact path or glob.`);
+    } else if (
+      row.ownedPaths.some((path) => typeof path !== 'string' || path.trim() === '')
+    ) {
+      failures.push(`${label}: ownedPaths entries must be non-blank strings.`);
+    }
+    for (const field of ['root', 'format', 'atomicity', 'corruptionPolicy', 'reconciliation']) {
       if (typeof row[field] !== 'string' || row[field].trim() === '') {
         failures.push(`${label}: ${field} is required.`);
       }
@@ -131,11 +149,15 @@ export function checkDurableStoreRegister({
       }
       if (
         row.writeMode === 'FULL_REWRITE' &&
+        row.upgradeHandling === 'READ_IN_PLACE' &&
         !['ATOMIC_REPLACE', 'TRANSACTIONAL'].includes(row.atomicity)
       ) {
         failures.push(`${label}: a READY full rewrite must be atomic or transactional.`);
       }
-      if (Number(row.currentVersion) > 0) {
+      if (row.upgradeHandling === 'READ_IN_PLACE' && Number(row.currentVersion) <= 0) {
+        failures.push(`${label}: READ_IN_PLACE state must have a positive currentVersion.`);
+      }
+      if (row.upgradeHandling === 'READ_IN_PLACE') {
         if (!row.versionAuthority) failures.push(`${label}: versionAuthority is required.`);
         if (!row.futureVersionRefusalTest) {
           failures.push(`${label}: futureVersionRefusalTest is required.`);
@@ -144,6 +166,12 @@ export function checkDurableStoreRegister({
             `${label}: futureVersionRefusalTest does not exist: ${row.futureVersionRefusalTest}.`,
           );
         }
+      }
+      if (
+        ['REBUILD', 'RESET', 'PRESERVE_EXTERNAL'].includes(row.upgradeHandling)
+        && (row.tests ?? []).length === 0
+      ) {
+        failures.push(`${label}: ${row.upgradeHandling} requires a recovery/preservation test.`);
       }
     }
   }
@@ -163,9 +191,15 @@ export function checkDurableStoreRegister({
     }
   }
 
-  for (const source of discoveredStores ?? []) {
-    if (!coveredImplementations.has(normalize(source))) {
-      failures.push(`coverage: discovered durable store is unregistered: ${source}.`);
+  for (const source of discoveredWriteSites ?? []) {
+    const normalized = normalize(source);
+    if (!coveredImplementations.has(normalized) && !classifiedNonDurable.has(normalized)) {
+      failures.push(`coverage: persistence write site is unclassified: ${source}.`);
+    }
+  }
+  for (const source of classifiedNonDurable) {
+    if (!pathExists(resolve(root, source))) {
+      failures.push(`coverage: classified non-durable write site does not exist: ${source}.`);
     }
   }
 
@@ -203,7 +237,8 @@ function main() {
       durableStores: register.durableStores,
       knownCompatibilityGaps: register.knownCompatibilityGaps,
       catalogEntries,
-      discoveredStores: scanDurableStores(root),
+      discoveredWriteSites: scanPersistenceWriteSites(root),
+      nonDurableWriteSites: register.nonDurableWriteSites,
     }),
   ];
 

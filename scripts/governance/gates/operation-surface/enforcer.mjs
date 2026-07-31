@@ -25,12 +25,10 @@ import {
   verdictForDanglingGuards,
   verdictForProjectionLineage,
   verdictForForbiddenReintroduction,
-  verdictForUnclassifiedDurableStores,
   verdictForMissingRegister,
 } from './truth-table.mjs';
 import { statusToSarifLevel } from '../../lib/truth-table-runner.mjs';
 import { verdictForVacuousScan } from '../../lib/population-floor.mjs';
-import { scanDurableStores } from '../../lib/durable-store-scan.mjs';
 
 const TOOL = { toolName: 'justsearch-operation-surface', toolVersion: '0.1.0' };
 const WALK_EXCLUDES = new Set(['build', 'node_modules', 'dist', '.git', '.gradle', 'tmp']);
@@ -139,27 +137,8 @@ export async function enforceOperationSurface(options) {
   }
   push(verdictForForbiddenReintroduction({ violations: violations.sort() }), registerRel);
 
-  // --- Check 6: POSITIVE durable-store coverage (tempdoc 561 §18 C-1). Every *Store.java with a
-  // Path/dataDir constructor (it persists to disk) must be CLASSIFIED — a declared surface, or on the
-  // `unrelatedStores` allowlist. Catches a new-vocabulary durable fork the import-scan can't see. ---
-  const allowlist = new Set(
-    (Array.isArray(register.unrelatedStores) ? register.unrelatedStores : []).map(norm),
-  );
-  const durable = scanDurableStores(root);
-  const unclassified = durable
-    .filter((rel) => !declared.has(rel) && !allowlist.has(rel))
-    .sort();
-  push(verdictForUnclassifiedDurableStores({ unclassified }), registerRel);
-
   return { ...TOOL, findings, verdict, ruleDescriptions: OPERATION_SURFACE_RULE_DESCRIPTIONS };
 }
-
-/**
- * Durable `*Store.java` files under modules/**​/src/main/java — those whose own constructor takes a
- * `Path` parameter (the persists-to-disk signature). In-memory stores (no Path ctor) are excluded,
- * so a bounded ring like OperationHistoryStore never trips this. Returns repo-relative POSIX paths.
- */
-// Scanner implementation is shared from scripts/governance/lib/durable-store-scan.mjs.
 function norm(p) {
   return String(p ?? '').replace(/\\/g, '/');
 }

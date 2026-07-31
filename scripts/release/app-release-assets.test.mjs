@@ -46,6 +46,8 @@ async function fixture() {
         durableStores: [
           {
             id: 'preferences',
+            owner: 'HEAD',
+            recoverability: 'AUTHORED',
             status: 'READY',
             currentVersion: 1,
             readableLegacyVersions: [0],
@@ -74,6 +76,7 @@ test('build and verify a closed descriptor/latest/artifact set', async () => {
     installerUrl: 'https://example.invalid/JustSearch-setup.exe',
     artifactKeyId: 'artifact-2026-01',
     artifactPublicKey: TAURI_PUBLIC_KEY,
+    metadataKeyId: 'metadata-2026-01',
     publishedAt: '2026-07-30T00:00:00.000Z',
   });
   const verified = await verifyReleaseAssets({
@@ -85,6 +88,12 @@ test('build and verify a closed descriptor/latest/artifact set', async () => {
     verified.descriptor.compatibility[0].readableSourceVersions,
     [0, 1],
   );
+  assert.equal(verified.descriptor.compatibility[0].role, 'AUTHORED');
+  assert.equal(verified.descriptor.compatibility[0].formatVersion, 1);
+  assert.equal(verified.descriptor.metadataKeyId, 'metadata-2026-01');
+  assert.equal(verified.descriptor.metadataRootPolicy, 'OFFLINE_LONG_LIVED_V1');
+  assert.equal(verified.descriptor.artifact.size, 4);
+  assert.equal(verified.descriptor.artifact.keyId, 'artifact-2026-01');
 });
 
 test('tampered descriptor fails metadata verification', async () => {
@@ -96,6 +105,7 @@ test('tampered descriptor fails metadata verification', async () => {
     installerUrl: 'https://example.invalid/JustSearch-setup.exe',
     artifactKeyId: 'artifact-2026-01',
     artifactPublicKey: TAURI_PUBLIC_KEY,
+    metadataKeyId: 'metadata-2026-01',
   });
   const descriptorPath = path.join(f.outDir, 'release.v1.json');
   const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8'));
@@ -124,8 +134,107 @@ test('non-ready compatibility register blocks publication', async () => {
       installerUrl: 'https://example.invalid/JustSearch-setup.exe',
       artifactKeyId: 'artifact-2026-01',
       artifactPublicKey: TAURI_PUBLIC_KEY,
+      metadataKeyId: 'metadata-2026-01',
     }),
     /not release-ready/,
+  );
+});
+
+test('missing compatibility strategy blocks descriptor assembly', async () => {
+  const f = await fixture();
+  await writeFile(
+    f.compatibilityRegisterPath,
+    JSON.stringify({
+      knownCompatibilityGaps: [],
+      durableStores: [{
+        id: 'preferences',
+        owner: 'HEAD',
+        status: 'READY',
+        currentVersion: 1,
+        readableLegacyVersions: [0],
+        reconciliation: 'READ_V0_OR_V1',
+      }],
+    }),
+  );
+  await assert.rejects(
+    buildReleaseAssets({
+      ...f,
+      version: '1.2.3',
+      sequence: 42,
+      installerUrl: 'https://example.invalid/JustSearch-setup.exe',
+      artifactKeyId: 'artifact-2026-01',
+      artifactPublicKey: TAURI_PUBLIC_KEY,
+      metadataKeyId: 'metadata-2026-01',
+    }),
+    /recoverability must be non-blank/,
+  );
+});
+
+test('downloaded-set verification rejects latest feed drift', async () => {
+  const f = await fixture();
+  await buildReleaseAssets({
+    ...f,
+    version: '1.2.3',
+    sequence: 42,
+    installerUrl: 'https://example.invalid/JustSearch-setup.exe',
+    artifactKeyId: 'artifact-2026-01',
+    artifactPublicKey: TAURI_PUBLIC_KEY,
+    metadataKeyId: 'metadata-2026-01',
+  });
+  const latestPath = path.join(f.outDir, 'latest.json');
+  const latest = JSON.parse(await readFile(latestPath, 'utf8'));
+  latest.platforms['windows-x86_64'].url = 'https://example.invalid/other.exe';
+  await writeFile(latestPath, `${JSON.stringify(latest)}\n`);
+  await assert.rejects(
+    verifyReleaseAssets({ ...f, releaseDir: f.outDir }),
+    /not a closed set/,
+  );
+});
+
+test('downloaded-set verification rejects artifact byte drift', async () => {
+  const f = await fixture();
+  await buildReleaseAssets({
+    ...f,
+    version: '1.2.3',
+    sequence: 42,
+    installerUrl: 'https://example.invalid/JustSearch-setup.exe',
+    artifactKeyId: 'artifact-2026-01',
+    artifactPublicKey: TAURI_PUBLIC_KEY,
+    metadataKeyId: 'metadata-2026-01',
+  });
+  await writeFile(f.installerPath, 'tampered');
+  await assert.rejects(
+    verifyReleaseAssets({ ...f, releaseDir: f.outDir }),
+    /digest or size/,
+  );
+});
+
+test('compiled metadata root identity must match release verification key', async () => {
+  const f = await fixture();
+  await buildReleaseAssets({
+    ...f,
+    version: '1.2.3',
+    sequence: 42,
+    installerUrl: 'https://example.invalid/JustSearch-setup.exe',
+    artifactKeyId: 'artifact-2026-01',
+    artifactPublicKey: TAURI_PUBLIC_KEY,
+    metadataKeyId: 'metadata-2026-01',
+  });
+  await assert.rejects(
+    verifyReleaseAssets({
+      ...f,
+      releaseDir: f.outDir,
+      expectedMetadataKeyId: 'metadata-emergency-rotation',
+    }),
+    /compiled root key id/,
+  );
+  await assert.rejects(
+    verifyReleaseAssets({
+      ...f,
+      releaseDir: f.outDir,
+      expectedMetadataPublicKeyBase64: Buffer.alloc(32, 7).toString('base64'),
+    }),
+    /compiled raw root public key/,
   );
 });
 

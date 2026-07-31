@@ -1085,6 +1085,39 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return migrationOps.runIndexGc(keepLatest, pruneMarkedOnly);
     }
 
+    public io.justsearch.ipc.UpgradeQuiescenceResponse prepareUpgrade(String preparationId) {
+        var request =
+                io.justsearch.ipc.UpgradeQuiescenceRequest.newBuilder()
+                        .setPreparationId(preparationId)
+                        .build();
+        return executeIngestRpc(
+                "prepareUpgrade",
+                RpcDeadlineCategory.STANDARD,
+                stub -> stub.prepareUpgrade(request));
+    }
+
+    public io.justsearch.ipc.UpgradeQuiescenceResponse upgradeStatus(String preparationId) {
+        var request =
+                io.justsearch.ipc.UpgradeQuiescenceRequest.newBuilder()
+                        .setPreparationId(preparationId)
+                        .build();
+        return executeIngestRpc(
+                "upgradeStatus",
+                RpcDeadlineCategory.STANDARD,
+                stub -> stub.upgradeStatus(request));
+    }
+
+    public io.justsearch.ipc.UpgradeQuiescenceResponse cancelUpgrade(String preparationId) {
+        var request =
+                io.justsearch.ipc.UpgradeQuiescenceRequest.newBuilder()
+                        .setPreparationId(preparationId)
+                        .build();
+        return executeIngestRpc(
+                "cancelUpgrade",
+                RpcDeadlineCategory.STANDARD,
+                stub -> stub.cancelUpgrade(request));
+    }
+
     @Override
     public List<IndexingService.FailedJobInfo> listFailedJobs(int limit) {
         ListFailedJobsRequest req = ListFailedJobsRequest.newBuilder()

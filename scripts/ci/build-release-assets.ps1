@@ -40,6 +40,7 @@ param(
   [string]$InstallerUrl,
   [string]$ArtifactKeyId,
   [string]$ArtifactPublicKey,
+  [string]$MetadataKeyId,
   [string]$MetadataPrivateKeyPath,
   [string]$MetadataPublicKeyPath
 )
@@ -99,6 +100,9 @@ try {
     if (-not $VerifyReleaseVersion.IsPresent) {
       throw "-AssembleUpdaterAssets requires -VerifyReleaseVersion."
     }
+    if ($version -notmatch '^\d+\.\d+\.\d+$') {
+      throw "Authenticated channel 'stable' requires a stable x.y.z version; prereleases do not publish updater metadata."
+    }
     $artifactSignature = "$($installer.FullName).sig"
     foreach ($required in @(
         @{ Name = "installer signature"; Value = $artifactSignature },
@@ -112,7 +116,8 @@ try {
     foreach ($requiredValue in @(
         @{ Name = "InstallerUrl"; Value = $InstallerUrl },
         @{ Name = "ArtifactKeyId"; Value = $ArtifactKeyId },
-        @{ Name = "ArtifactPublicKey"; Value = $ArtifactPublicKey })) {
+        @{ Name = "ArtifactPublicKey"; Value = $ArtifactPublicKey },
+        @{ Name = "MetadataKeyId"; Value = $MetadataKeyId })) {
       if ([string]::IsNullOrWhiteSpace($requiredValue.Value)) {
         throw "-$($requiredValue.Name) is required for a release cut."
       }
@@ -128,13 +133,16 @@ try {
       --sequence $ReleaseSequence `
       --url $InstallerUrl `
       --artifact-key-id $ArtifactKeyId `
-      --artifact-public-key $ArtifactPublicKey
+      --artifact-public-key $ArtifactPublicKey `
+      --metadata-key-id $MetadataKeyId
     if ($LASTEXITCODE -ne 0) { throw "Authenticated release descriptor assembly failed." }
 
     & node $releaseAssets verify `
       --installer $installer.FullName `
       --artifact-signature $artifactSignature `
       --metadata-public-key $MetadataPublicKeyPath `
+      --metadata-key-id $MetadataKeyId `
+      --metadata-root-public-key $env:JUSTSEARCH_RELEASE_METADATA_ROOT_PUBLIC_KEY `
       --release-dir $outDirPath
     if ($LASTEXITCODE -ne 0) { throw "Authenticated release asset-set verification failed." }
 

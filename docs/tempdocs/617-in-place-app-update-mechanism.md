@@ -1,9 +1,9 @@
 ---
 title: "Full auto-update (374 G1 deep-dive): decisions before design"
 type: tempdocs
-status: open
+status: implemented; release qualification pending
 created: 2026-06-20
-updated: 2026-06-20
+updated: 2026-07-31
 author: agent analysis (production-readiness pass), filed by agent
 category: production-readiness / packaging / distribution / desktop-shell / migration
 parent: 374
@@ -17,6 +17,14 @@ related:
 ---
 
 # 617 - Full auto-update: decisions before design (374 G1 deep-dive)
+
+> **Implementation update (2026-07-31).** The decision-scoping text below is
+> retained as dated history. The implemented design supersedes its earlier
+> assumption that `tauri-plugin-updater` belongs only to a future silent tier.
+> JustSearch now uses the plugin as an authenticated download verifier while
+> keeping apply user-consented, coordinating Head/Worker shutdown itself, and
+> launching the verified NSIS installer through a witnessed Windows process.
+> See Â§7 onward for the implemented contract and remaining release gates.
 
 > What this document is. The **decision-scoping** doc for full auto-update — the deep-dive
 > child of tempdoc **374 G1** ("Auto-updater", Tier 3 / GA). 374 deferred G1 with the
@@ -224,3 +232,189 @@ fold the version-sync enforcement (fail build on drift) in as the prerequisite i
 execute §5.1–§5.2 (version hygiene + the migration audit) as the first concrete investigations —
 the signing-independent spine — each producing a findings appendix. Tier B (silent apply) stays
 sequenced behind 374 G4 (signing).*
+
+## 7. Implemented design (2026-07-31)
+
+### 7.1 Scope and user contract
+
+The implementation is a **monolithic, explicit-consent NSIS update**:
+
+- The always-mounted shell performs a delayed background **check only**.
+- An authenticated available release is shown in global chrome and Settings.
+- Download and apply begin only after the user activates **Install update**.
+- Models under AI Home are not part of the installer artifact and are not
+  redownloaded by the app-update path.
+- Silent unattended apply, staged rollout, product telemetry, and automatic
+  rollback remain out of scope.
+
+The UI is a projection, not a trust authority. Only the Tauri shell can read
+the authenticated release feed, download the installer, coordinate shutdown,
+or launch the installer. Plugin-facing APIs do not expose those commands.
+
+### 7.2 Authenticated release closed set
+
+A release cut produces one closed set:
+
+| Artifact | Purpose |
+|---|---|
+| `release.v1.json` | Signed JustSearch release identity, monotonic sequence, target, installer digest/size/signature/key, and durable-store compatibility. |
+| `release.v1.json.sig` | Detached Ed25519 signature over the exact descriptor bytes. |
+| `latest.json` | Tauri updater feed generated from the same descriptor inputs. |
+| `JustSearch_<version>_x64-setup.exe` | Monolithic NSIS target. |
+| `JustSearch_<version>_x64-setup.exe.sig` | Tauri/Minisign artifact signature. |
+
+`release.v1.json` and `latest.json` must name the same version, URL, and
+artifact signature. The shell additionally verifies the descriptor signature,
+monotonic release sequence, durable-store compatibility, Tauri signature,
+downloaded byte count, SHA-256, and Windows executable shape before preparing
+shutdown. A mismatch anywhere fails closed.
+
+Production release endpoint, metadata root public key, and metadata key id are
+compile-time inputs. Production accepts HTTPS only. A separately compiled
+Sandbox test gate permits runtime overrides and loopback HTTP only; it cannot
+enable arbitrary insecure production endpoints.
+
+### 7.3 Persistence closure
+
+`governance/store-recoverability.v1.json` is the compatibility register for
+durable authorities across dataDir, AI Home, configuration, shell upgrade
+state, and Worker state. Each entry names:
+
+- process owner and owned paths;
+- AUTHORED or DERIVED recoverability;
+- current and readable legacy format versions;
+- atomicity/write mode and corruption policy;
+- reconciliation strategy, implementation sources, tests, and fixtures.
+
+The store gate now combines the declared register with a persistence-write
+scanner. A new writer cannot silently exist outside the register. Full-rewrite
+authored JSON stores use atomic replace, preserve corrupt/future data, read
+legacy v0, and emit versioned v1 envelopes. Worker SQLite migration now runs a
+pre-writable-header compatibility preflight before a connection can mutate the
+database. At implementation close there are no declared compatibility gaps.
+
+### 7.4 Prepare, freeze, shutdown
+
+The implemented protocol reuses the Local API and Worker gRPC transports:
+
+1. Shell calls `POST /api/upgrade/prepare`.
+2. Head closes mutating admission, reports real operation-lease blockers, and
+   asks Worker to quiesce.
+3. Worker stops ingest admission, drains accepted work, performs a final queue
+   commit/checkpoint, and returns its graceful outcome.
+4. Head returns the preparation id, shutdown nonce, and blocker/loss posture.
+5. Shell downloads and independently revalidates the installer.
+6. Shell calls `POST /api/upgrade/commit-shutdown` with the same preparation id
+   and shutdown nonce.
+7. Head acknowledges the frozen preparation, runs its ordered shutdown once,
+   and atomically writes `upgrade/head-shutdown-receipt.v1.json`.
+8. After observing the original Head child exit, Shell validates the receipt's
+   preparation id, nonce, original PID, clean outcome, graceful Worker outcome,
+   and empty error set before entering `HEAD_STOPPED`.
+
+Mutating HTTP requests acquire request-scoped operation leases. Long-running
+bulk reindex, index GC, rebuild, AI pack import, and runtime activation
+operations participate in the same blocker/drain model. Cancellation reopens
+admission and Worker ingest only for the matching preparation and nonce.
+
+### 7.5 Durable updater state and recovery
+
+The shell persists:
+
+- `upgrade/intent.v1.json`;
+- `upgrade/sequence.v1.json`;
+- `upgrade/head-shutdown-receipt.v1.json` (Head-owned);
+- `upgrade/installer-launch-witness.v1.json`;
+- the staged installer artifact.
+
+The phase vocabulary is closed:
+
+`PREPARED â†’ HEAD_STOPPED â†’ INSTALL_LAUNCHING â†’ INSTALL_LAUNCHED â†’
+RECONCILING â†’ COMMITTED`, with terminal `CANCELLED` and
+`REPAIR_REQUIRED`.
+
+Before launch, Shell rehashes the staged artifact. It launches the NSIS updater
+with `ShellExecuteExW`, requires a nonzero process witness, and atomically
+persists that witness before allowing shell exit. It does not call
+`Update::install`, because that API launches through an unobserved path and
+exits the process without a recoverable error boundary.
+
+Startup reconciliation is evidence-based:
+
+- A pre-launch intent still on the source version becomes `CANCELLED`.
+- A witnessed launched intent on the target version becomes `COMMITTED`.
+- Version equality alone never proves success.
+- Missing, corrupt, contradictory, or unprovable evidence becomes
+  `REPAIR_REQUIRED`.
+- If handoff fails after clean Head shutdown, Shell resets the upgrade
+  preparation and restarts Head rather than leaving the app unnecessarily
+  offline.
+
+### 7.6 UI
+
+`appUpdateState.ts` is the one frontend projection of Tauri updater status.
+Settings and `jf-app-update-banner` subscribe to it. The global banner is
+visible only for actionable `available` and `repair_required` states and routes
+the user to Settings. Settings owns check/install actions and never initiates
+install without explicit activation.
+
+### 7.7 Release and Sandbox qualification
+
+Tag release workflow inputs include the metadata signing key, public root,
+monotonic release sequence, artifact signing key/id, and production descriptor
+URL. Tag builds assemble and verify the complete updater closed set before
+upload; ordinary branch installer builds do not pretend to be publishable
+updater releases.
+
+The existing `upgrade-from-release` Sandbox lane remains the exact published
+installer-over-installer arrival test. The new
+`in-app-update-from-release` lane stages a verified loopback release set plus:
+
+- `serve-updater-feed.ps1`;
+- `start-in-app-update-test.ps1`;
+- `collect-updater-evidence.ps1`;
+- `updater-qualification.v1.json` and recovery instructions.
+
+The in-app lane necessarily installs a previous-source Sandbox build compiled
+with the updater test gate; an exact production source binary rejects runtime
+trust overrides by design. The ordinary upgrade lane therefore remains
+required to qualify the exact published previous installer.
+
+## 8. Verification evidence
+
+The focused implementation pass records evidence in source tests and command
+output rather than claiming a GUI round that was not run:
+
+- persistence register/scanner gate and its fixture tests;
+- atomic store, legacy-read, future-version refusal, and Worker SQLite
+  compatibility tests;
+- operation lease callback/ack, admission freeze/cancel, Worker quiescence,
+  Head shutdown receipt, and lifecycle contract tests;
+- Rust descriptor/transition/reconciliation/receipt/witness/reset tests;
+- release descriptor build/verify/tamper/key-rotation tests;
+- updater UI state/banner/Settings tests, TypeScript check, live Settings
+  capture, source-to-step coverage, and six-surface accessibility gate;
+- Sandbox launcher in-app lane tests and PowerShell parser checks.
+
+The GUI-gated Windows Sandbox was deliberately not launched during this pass.
+Its real NSIS handoff, Windows process witness, state survival, and restart
+reconciliation remain release-qualification evidence, not implementation-unit
+evidence.
+
+## 9. Remaining gates
+
+Implementation is complete when the full integrated verification below is
+green. Release enablement still requires:
+
+1. Configure production metadata signing keys, artifact signing key/id,
+   monotonic release sequence, and the HTTPS release descriptor endpoint.
+2. Cut two updater-capable candidate versions or an equivalent previous-source
+   Sandbox build plus target so the in-app Nâ†’N+1 lane is executable.
+3. Run the exact published installer-over-release lane.
+4. Run the in-app Sandbox lane through normal commit plus at least one captured
+   interruption/reconciliation case.
+5. Retain the resulting intent, shutdown receipt, launch witness, installed
+   version, and authored-state survival evidence.
+
+These are qualification/operations gates. They do not justify weakening
+production trust or adding force-kill behavior to NSIS.

@@ -36,12 +36,6 @@
     ]
   },
   "plugins": {
-    "updater": {
-      "pubkey": "",
-      "windows": {
-        "installMode": "basicUi"
-      }
-    },
     "deep-link": {
       "mobile": [],
       "desktop": {
@@ -72,4 +66,3 @@
     }
   }
 }
-

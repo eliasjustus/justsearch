@@ -6,6 +6,7 @@ import {
   extractCatalogEntries,
   findHardcodedCipherCalls,
 } from './check-store-recoverability.mjs';
+import { isPersistenceWriteSource } from '../governance/lib/persistence-write-scan.mjs';
 
 let passed = 0;
 const failures = [];
@@ -78,6 +79,7 @@ function readyRow(overrides = {}) {
     owner: 'HEAD',
     root: 'DATA_DIR',
     path: 'conversations/',
+    ownedPaths: ['conversations/**'],
     recoverability: 'AUTHORED',
     format: 'JSON envelope v1',
     currentVersion: 1,
@@ -89,6 +91,7 @@ function readyRow(overrides = {}) {
     corruptionPolicy: 'FAIL_LOUD',
     reconciliation: 'UPCAST_AND_REWRITE',
     status: 'READY',
+    upgradeHandling: 'READ_IN_PLACE',
     implementationSources: ['Store.java'],
     tests: ['StoreTest.java'],
     fixtures: ['v0.json'],
@@ -102,7 +105,8 @@ function check(rows, options = {}) {
     durableStores: rows,
     knownCompatibilityGaps: options.gaps ?? [],
     catalogEntries: options.catalog ?? [CATALOG[0]],
-    discoveredStores: options.discovered ?? ['Store.java'],
+    discoveredWriteSites: options.discovered ?? ['Store.java'],
+    nonDurableWriteSites: options.nonDurable ?? [],
     pathExists: options.pathExists ?? (() => true),
   });
 }
@@ -162,6 +166,36 @@ test('all declared source and evidence paths must resolve', () => {
     pathExists: (path) => !path.endsWith('v0.json'),
   });
   assert.ok(result.some((failure) => failure.includes('v0.json')));
+});
+
+test('write-site scanner finds Java writers without Store names or Path constructors', () => {
+  assert.equal(
+    isPersistenceWriteSource(
+      'modules/app-x/src/main/java/io/justsearch/x/DialogJournal.java',
+      'class DialogJournal { void save() { Files.writeString(dataDir.resolve("x"), "x"); } }',
+    ),
+    true,
+  );
+});
+
+test('write-site scanner finds Rust app-data writers', () => {
+  assert.equal(
+    isPersistenceWriteSource(
+      'modules/shell/src-tauri/src/state.rs',
+      'fn save(app_data_dir: &Path) { std::fs::write(app_data_dir.join("x"), b"x"); }',
+    ),
+    true,
+  );
+});
+
+test('classified non-durable write sites satisfy coverage explicitly', () => {
+  assert.deepEqual(
+    check([readyRow()], {
+      discovered: ['Store.java', 'Diagnostics.java'],
+      nonDurable: ['Diagnostics.java'],
+    }),
+    [],
+  );
 });
 
 if (failures.length > 0) {

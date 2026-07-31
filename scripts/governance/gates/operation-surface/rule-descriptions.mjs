@@ -35,14 +35,6 @@ export const OPERATION_SURFACE_RULE_DESCRIPTIONS = {
     'class is named explicitly. Project the canonical record named in the violation; do not fork.',
   'operation-surface/no-second-authority':
     'No forbidden second-authority (§11 fork-class) pattern is present (healthy).',
-  'operation-surface/unclassified-durable-store':
-    'A durable *Store.java (a Path/dataDir constructor → it persists to disk) is neither a declared ' +
-    'interaction surface nor on the register unrelatedStores allowlist (tempdoc 561 §18 C-1, the ' +
-    'positive gate). Classify it: declare it a governed projection (kind:store) if it carries ' +
-    'interaction/action/memory state, or add its path to unrelatedStores if it is genuinely ' +
-    'unrelated. This catches a new-vocabulary durable fork the import-scan + name-denylist cannot.',
-  'operation-surface/durable-stores-classified':
-    'Every durable *Store.java is classified — a declared surface or an allowlisted unrelated store (healthy).',
   'operation-surface/vacuous-scan':
     'The auto-scan found fewer lifecycle-record-referencing files than scan.expectedMinPopulation ' +
     '(default 1) — almost always a renamed/moved scan root, not a real removal. A positive-coverage ' +

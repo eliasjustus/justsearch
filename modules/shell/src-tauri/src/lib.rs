@@ -75,6 +75,23 @@ struct BackendState {
 static TRAY_CONTEXT: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 
 impl BackendState {
+    /// Clear per-process discovery state before starting a replacement Head in the same shell.
+    /// The updater uses this only after `wait_for_child_exit` has observed the old child exit.
+    fn reset_for_restart(&self) -> Result<(), String> {
+        if self.child.lock().expect("child mutex poisoned").is_some() {
+            return Err("Cannot reset backend state while Head is still running".into());
+        }
+        *self.port.lock().expect("port mutex poisoned") = None;
+        *self
+            .session_token
+            .lock()
+            .expect("session_token mutex poisoned") = None;
+        *self.spawn_error.lock().expect("spawn_error mutex poisoned") = None;
+        *self.instance_id.lock().expect("instance_id mutex poisoned") = None;
+        *self.killed.lock().expect("killed mutex poisoned") = false;
+        Ok(())
+    }
+
     fn set_port(&self, port: u16) {
         {
             let mut guard = self.port.lock().expect("port mutex poisoned");
@@ -208,6 +225,14 @@ impl BackendState {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    fn child_pid(&self) -> Option<u32> {
+        self.child
+            .lock()
+            .expect("child mutex poisoned")
+            .as_ref()
+            .map(Child::id)
     }
 }
 
@@ -720,6 +745,10 @@ fn spawn_headless_backend<R: tauri::Runtime>(
         // uses the separate dev-stack launch path and does not pass through this command.
         .arg("-Djustsearch.prod=true")
         .arg(format!(
+            "-Djustsearch.app.version={}",
+            app.package_info().version
+        ))
+        .arg(format!(
             "-Djustsearch.data.dir={}",
             app_data_dir.to_string_lossy()
         ))
@@ -865,6 +894,27 @@ fn spawn_headless_backend<R: tauri::Runtime>(
         *guard = Some(child);
     }
 
+    Ok(())
+}
+
+/// Restart Head after an updater handoff fails after orderly shutdown.
+///
+/// This is intentionally crate-visible rather than a Tauri command: only the shell lifecycle
+/// coordinator may replace Head, never untrusted webview code.
+pub(crate) fn restart_headless_backend(
+    app: &tauri::AppHandle,
+    state: Arc<BackendState>,
+) -> Result<(), String> {
+    state.reset_for_restart()?;
+    if let Err(error) = spawn_headless_backend(app, state.clone()) {
+        *state
+            .spawn_error
+            .lock()
+            .expect("spawn_error mutex poisoned") = Some(error.clone());
+        state.port_ready.notify_waiters();
+        state.session_token_ready.notify_waiters();
+        return Err(error);
+    }
     Ok(())
 }
 
@@ -1350,6 +1400,14 @@ pub fn run() {
                 state.session_token_ready.notify_waiters();
                 eprintln!("Failed to spawn headless backend: {err}");
             }
+            let reconciliation_app = app.handle().clone();
+            let reconciliation_state = state.clone();
+            let reconciliation_coordinator = update_coordinator.clone();
+            tauri::async_runtime::spawn(async move {
+                reconciliation_coordinator
+                    .reconcile_after_backend_ready(reconciliation_app, reconciliation_state)
+                    .await;
+            });
 
             // System tray: icon with Show/Quit menu, left-click to show window.
             let show_i = MenuItem::with_id(app, "show", "Show JustSearch", true, None::<&str>)?;
@@ -1597,6 +1655,24 @@ mod tests {
         assert_eq!(state.get_port(), Some(11111));
         state.force_set_port(33333); // restart override
         assert_eq!(state.get_port(), Some(33333));
+    }
+
+    #[test]
+    fn backend_reset_clears_process_scoped_discovery_for_updater_restart() {
+        let state = BackendState::default();
+        state.set_port(11111);
+        state.set_session_token("old-token".into());
+        *state.spawn_error.lock().unwrap() = Some("old failure".into());
+        *state.instance_id.lock().unwrap() = Some("old-instance".into());
+        *state.killed.lock().unwrap() = true;
+
+        state.reset_for_restart().unwrap();
+
+        assert_eq!(state.get_port(), None);
+        assert_eq!(state.get_session_token(), None);
+        assert!(!state.has_spawn_error());
+        assert_eq!(*state.instance_id.lock().unwrap(), None);
+        assert!(!*state.killed.lock().unwrap());
     }
 
     #[test]

@@ -97,6 +97,13 @@ import type { Audience } from '../../api/types/registry.js';
 // confirm modal + manual `client.invoke` here are replaced.
 import '../aggregate-substrate/components/JfOperation.js';
 import type { OpErrorEventDetail } from '../components/OpButton.js';
+import {
+  checkForAppUpdate as checkForAppUpdateFromHost,
+  installAppUpdate as installAppUpdateFromHost,
+  refreshAppUpdateStatus,
+  subscribeAppUpdate,
+  type AppUpdateStatus,
+} from '../state/appUpdateState.js';
 
 interface UISettings {
   mode?: 'simple' | 'advanced';
@@ -110,15 +117,6 @@ interface UISettings {
 interface AllSettings {
   ui?: UISettings;
   settingsMode?: string;
-}
-
-interface AppUpdateStatus {
-  state: string;
-  currentVersion: string;
-  availableVersion?: string | null;
-  releaseSequence?: number | null;
-  intentPhase?: string | null;
-  error?: string | null;
 }
 
 export class SettingsSurface extends JfElement {
@@ -251,6 +249,7 @@ export class SettingsSurface extends JfElement {
   private viewerAudienceUnsub: (() => void) | null = null;
   // Tempdoc 543 §20.7 B6 — WorkspaceProfile registry subscription.
   private workspaceProfilesUnsub: (() => void) | null = null;
+  private appUpdateUnsub: (() => void) | null = null;
 
   constructor() {
     super();
@@ -642,6 +641,9 @@ export class SettingsSurface extends JfElement {
     void this.loadFeedbackCapture();
     if (this.host_.platform.capabilities.has('native-notifications')) {
       void this.loadAutostart();
+      this.appUpdateUnsub = subscribeAppUpdate((status) => {
+        this.updateStatus = status;
+      });
       void this.loadAppUpdateStatus();
     } else {
       this.autostartLoaded = true;
@@ -761,6 +763,8 @@ export class SettingsSurface extends JfElement {
     this.memberTabUnsub = null;
     this.viewerAudienceUnsub?.();
     this.workspaceProfilesUnsub?.();
+    this.appUpdateUnsub?.();
+    this.appUpdateUnsub = null;
     this.consentUnsub?.();
     if (this.saveSettingsListener) {
       document.removeEventListener('jf-save-settings', this.saveSettingsListener);
@@ -954,26 +958,15 @@ export class SettingsSurface extends JfElement {
     }
   }
 
-  private async invokeAppUpdate<T>(command: string): Promise<T> {
-    const mod = await import('@tauri-apps/api/core');
-    return mod.invoke<T>(command);
-  }
-
   private async loadAppUpdateStatus(): Promise<void> {
-    try {
-      this.updateStatus = await this.invokeAppUpdate<AppUpdateStatus>('app_update_status');
-    } catch {
-      // The updater is a desktop-only capability. An older shell can host a newer web bundle.
-      this.updateStatus = null;
-    }
+    this.updateStatus = await refreshAppUpdateStatus();
   }
 
   private async checkForAppUpdate(): Promise<void> {
     this.updateBusy = true;
     this.error = null;
     try {
-      this.updateStatus =
-        await this.invokeAppUpdate<AppUpdateStatus>('check_for_app_update');
+      this.updateStatus = await checkForAppUpdateFromHost();
     } catch (err) {
       this.error = err instanceof Error ? err.message : String(err);
       await this.loadAppUpdateStatus();
@@ -986,7 +979,7 @@ export class SettingsSurface extends JfElement {
     this.updateBusy = true;
     this.error = null;
     try {
-      await this.invokeAppUpdate<void>('install_app_update');
+      await installAppUpdateFromHost();
     } catch (err) {
       this.error = err instanceof Error ? err.message : String(err);
       await this.loadAppUpdateStatus();

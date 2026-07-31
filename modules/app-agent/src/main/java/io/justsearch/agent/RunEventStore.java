@@ -6,6 +6,7 @@ import tools.jackson.databind.ObjectMapper;
 import io.justsearch.agent.api.encryption.StoreCipher;
 import io.justsearch.configuration.persistence.AtomicFileWrites;
 import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,6 +40,7 @@ public final class RunEventStore {
   private static final Logger LOG = LoggerFactory.getLogger(RunEventStore.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
   private static final TypeReference<Map<String, Object>> MAP_REF = new TypeReference<>() {};
+  static final int CURRENT_SCHEMA_VERSION = 1;
 
   private final Path rootDir; // nullable for noop
   private final StoreCipher cipher; // tempdoc 629 (LAYER) — seals events.ndjson + meta.json when enabled
@@ -107,6 +109,7 @@ public final class RunEventStore {
     try {
       Files.createDirectories(runDir(sessionId));
       var record = new LinkedHashMap<String, Object>();
+      record.put("schemaVersion", CURRENT_SCHEMA_VERSION);
       record.put("timestamp", Instant.now().toString());
       record.put("shapeId", shapeId);
       record.put("eventType", eventType);
@@ -120,8 +123,8 @@ public final class RunEventStore {
           StandardOpenOption.APPEND);
       return record;
     } catch (Exception e) {
-      LOG.warn("Failed to append event for session {}", sessionId, e);
-      return null;
+      throw new CorruptDurableStoreException(
+          "run-events", "Failed to append event for session " + sessionId, e);
     }
   }
 
@@ -157,7 +160,8 @@ public final class RunEventStore {
           StandardOpenOption.CREATE,
           StandardOpenOption.APPEND);
     } catch (Exception e) {
-      LOG.warn("Failed to append raw events for session {}", sessionId, e);
+      throw new CorruptDurableStoreException(
+          "run-events", "Failed to append imported events for session " + sessionId, e);
     }
   }
 
@@ -181,9 +185,17 @@ public final class RunEventStore {
           continue;
         }
         Map<String, Object> event = MAPPER.readValue(cipher.open(line), MAP_REF);
+        int version =
+            event.get("schemaVersion") instanceof Number number ? number.intValue() : 0;
+        if (version > CURRENT_SCHEMA_VERSION) {
+          throw new UnsupportedStoreVersionException(
+              "run-events", version, CURRENT_SCHEMA_VERSION);
+        }
         out.add(EventPayloadUpcaster.upcast(event));
       }
       return out;
+    } catch (UnsupportedStoreVersionException e) {
+      throw e;
     } catch (Exception e) {
       throw new CorruptDurableStoreException(
           "run-events", "Event log is unreadable for session " + sessionId, e);
@@ -205,7 +217,8 @@ public final class RunEventStore {
       String json = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(meta);
       AtomicFileWrites.replaceUtf8(metaPath(sessionId), cipher.seal(json));
     } catch (Exception e) {
-      LOG.warn("Failed to write run meta for session {}", sessionId, e);
+      throw new CorruptDurableStoreException(
+          "run-events", "Failed to write run metadata for session " + sessionId, e);
     }
   }
 

@@ -31,6 +31,42 @@ final class JobQueueMigrationTest {
 
   @TempDir Path tempDir;
 
+  @Test
+  void futureSchemaIsRefusedBeforeDdlAndDatabaseBytesRemainUnchanged() throws Exception {
+    Path dbPath = tempDir.resolve("future.db");
+    String jdbcUrl = "jdbc:sqlite:" + dbPath.toAbsolutePath();
+    try (Connection conn = DriverManager.getConnection(jdbcUrl);
+        Statement stmt = conn.createStatement()) {
+      stmt.execute("CREATE TABLE future_owned (value TEXT NOT NULL)");
+      stmt.execute("INSERT INTO future_owned(value) VALUES ('preserve-me')");
+      stmt.execute("PRAGMA user_version = " + (SqliteSchema.TARGET_VERSION + 1));
+    }
+    byte[] before = Files.readAllBytes(dbPath);
+
+    SqliteJobQueue queue = new SqliteJobQueue(dbPath);
+    Exception thrown = null;
+    try {
+      queue.open();
+    } catch (Exception error) {
+      thrown = error;
+    } finally {
+      queue.close();
+    }
+
+    assertNotNull(thrown, "a future database must be refused");
+    assertTrue(
+        thrown.getMessage().contains("Unsupported jobs database schema version")
+            || (thrown.getCause() != null
+                && thrown
+                    .getCause()
+                    .getMessage()
+                    .contains("Unsupported jobs database schema version")),
+        "future-version refusal must be observable: " + thrown);
+    assertTrue(
+        java.util.Arrays.equals(before, Files.readAllBytes(dbPath)),
+        "refusal must happen before DDL or other database mutation");
+  }
+
   /**
    * Test that opening SqliteJobQueue on a V1 database correctly upgrades it to V2.
    *

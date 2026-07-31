@@ -100,6 +100,7 @@ public class LocalApiServer {
   // Carve-out: reassigned in lateBindKnowledgeServer (Worker reconnect), so it stays a mutable field
   // seeded from core.knowledgeSearchController() — it cannot live in the immutable Result.
   private volatile KnowledgeSearchController knowledgeSearchController;
+  private volatile KnowledgeServerBootstrap upgradeKnowledgeServer;
   // Tempdoc 419 / T4: shared scan-progress registry (adapter producer -> ScanProgressController),
   // one per process, closed on shutdown.
   private final io.justsearch.app.services.worker.ScanProgressRegistry scanProgressRegistry =
@@ -214,7 +215,27 @@ public class LocalApiServer {
             : null;
     MetaApiModule metaApiModule = new MetaApiModule(() -> this.app, () -> this.apiModules);
     UpgradeApiModule upgradeApiModule =
-        new UpgradeApiModule(leaseSvc, b.upgradeShutdownAction);
+        new UpgradeApiModule(
+            leaseSvc,
+            b.upgradeShutdownAction,
+            b.HeadAssembly == null
+                ? null
+                : () -> {
+                  KnowledgeServerBootstrap worker = this.upgradeKnowledgeServer;
+                  return worker == null ? null : worker.client();
+                },
+            b.upgradeDataDir,
+            b.upgradeRunningVersion,
+            b.upgradeHeadReady != null ? b.upgradeHeadReady : () -> b.HeadAssembly != null,
+            b.upgradeWorkerReady != null
+                ? b.upgradeWorkerReady
+                : () -> {
+                  KnowledgeServerBootstrap worker = this.upgradeKnowledgeServer;
+                  return b.HeadAssembly != null
+                      && b.HeadAssembly.capabilities().worker().available()
+                      && worker != null
+                      && worker.client() != null;
+                });
     this.apiModules =
         resourceApiModule != null
             ? java.util.List.of(metaApiModule, resourceApiModule, upgradeApiModule)
@@ -768,6 +789,7 @@ public class LocalApiServer {
    * @param startError the start error string, or null if startup succeeded
    */
   public void lateBindKnowledgeServer(KnowledgeServerBootstrap ks, String startError) {
+    this.upgradeKnowledgeServer = ks;
     // Update controllers with Worker reference (read from the CoreApiAssembly Result).
     core.debugStateController().setKnowledgeServer(ks);
     core.inferenceHandlers().setKnowledgeServer(ks);
@@ -952,8 +974,13 @@ public class LocalApiServer {
     // through so LocalApiServer can wire the REST + SSE transports).
     // Tempdoc 583 Stage 2: package-private (ConversationApiAssembly reads it for the MCP surface).
     io.justsearch.ui.runtime.RuntimeManifestPublisher runtimeManifestPublisher;
-    Runnable upgradeShutdownAction = () -> {};
+    UpgradeShutdownAction upgradeShutdownAction = (preparationId, receiptNonce) -> {};
     io.justsearch.app.api.OperationLeaseService operationLeaseService;
+    Path upgradeDataDir;
+    Supplier<String> upgradeRunningVersion =
+        () -> System.getProperty("justsearch.app.version", "");
+    java.util.function.BooleanSupplier upgradeHeadReady;
+    java.util.function.BooleanSupplier upgradeWorkerReady;
 
     Builder(io.justsearch.app.services.settings.UiSettingsStore settingsStore, Path indexBasePath) {
       this.settingsStore = settingsStore;
@@ -1003,7 +1030,29 @@ public class LocalApiServer {
     }
 
     public Builder upgradeShutdownAction(Runnable action) {
-      this.upgradeShutdownAction = action == null ? () -> {} : action;
+      this.upgradeShutdownAction =
+          action == null
+              ? (preparationId, receiptNonce) -> {}
+              : (preparationId, receiptNonce) -> action.run();
+      return this;
+    }
+
+    public Builder upgradeShutdownAction(UpgradeShutdownAction action) {
+      this.upgradeShutdownAction =
+          action == null ? (preparationId, receiptNonce) -> {} : action;
+      return this;
+    }
+
+    public Builder upgradeReconciliation(
+        Path dataDir,
+        Supplier<String> runningVersion,
+        java.util.function.BooleanSupplier headReady,
+        java.util.function.BooleanSupplier workerReady) {
+      this.upgradeDataDir = dataDir;
+      this.upgradeRunningVersion =
+          runningVersion == null ? () -> System.getProperty("justsearch.app.version", "") : runningVersion;
+      this.upgradeHeadReady = headReady;
+      this.upgradeWorkerReady = workerReady;
       return this;
     }
 

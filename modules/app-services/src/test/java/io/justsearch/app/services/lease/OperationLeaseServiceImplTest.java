@@ -224,6 +224,63 @@ final class OperationLeaseServiceImplTest {
     admitted.close();
   }
 
+  @Test
+  void cancellationRequestRunsOutsideLockAndReleaseAcknowledgesIt() {
+    var svc = new OperationLeaseServiceImpl((Path) null);
+    var handle = new java.util.concurrent.atomic.AtomicReference<OperationLeaseHandle>();
+    var callbackObservedUnlockedService = new java.util.concurrent.atomic.AtomicBoolean();
+    OperationLeaseHandle active =
+        svc.register(
+            "agent.answer",
+            OpCriticality.INTERRUPTIBLE,
+            60,
+            Map.of(),
+            () -> {
+              try {
+                var future =
+                    java.util.concurrent.CompletableFuture.supplyAsync(
+                        () -> svc.snapshot().admissionFrozen());
+                callbackObservedUnlockedService.set(
+                    future.get(1, java.util.concurrent.TimeUnit.SECONDS));
+              } catch (Exception ignored) {
+                callbackObservedUnlockedService.set(false);
+              }
+              handle.get().release(OpLeaseOutcome.CANCELLED);
+            });
+    handle.set(active);
+
+    var frozen = svc.freezeAdmission("application upgrade");
+    var afterRequest = svc.requestCancellation(frozen.preparationId());
+
+    assertTrue(callbackObservedUnlockedService.get());
+    assertEquals(0, afterRequest.activeLeases().size());
+    assertEquals(List.of(active.opId()), afterRequest.cancellationRequestedOpIds());
+
+    svc.requestCancellation(frozen.preparationId());
+    svc.releaseAdmission(frozen.preparationId());
+    assertEquals(List.of(), svc.snapshot().cancellationRequestedOpIds());
+  }
+
+  @Test
+  void mustCompleteOwnerNeverReceivesCancellationRequest() {
+    var svc = new OperationLeaseServiceImpl((Path) null);
+    var requests = new java.util.concurrent.atomic.AtomicInteger();
+    OperationLeaseHandle active =
+        svc.register(
+            "indexing.migration",
+            OpCriticality.MUST_COMPLETE,
+            60,
+            Map.of(),
+            requests::incrementAndGet);
+
+    var frozen = svc.freezeAdmission("application upgrade");
+    var afterRequest = svc.requestCancellation(frozen.preparationId());
+
+    assertEquals(0, requests.get());
+    assertEquals(1, afterRequest.activeLeases().size());
+    active.close();
+  }
+
   /**
    * Concurrency stress: many threads do register → release on the same service. Verifies that
    * the in-process ReentrantLock + atomic tmp+rename writer never produces a torn write and the

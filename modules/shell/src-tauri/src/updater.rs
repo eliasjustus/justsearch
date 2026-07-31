@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -11,12 +13,14 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_updater::UpdaterExt;
 
-use crate::BackendState;
+use crate::{restart_headless_backend, BackendState};
 
 const INTENT_SCHEMA_VERSION: u32 = 1;
+const EVIDENCE_SCHEMA_VERSION: u32 = 1;
 const DESCRIPTOR_SCHEMA_VERSION: u32 = 1;
 const HEAD_TIMEOUT: Duration = Duration::from_secs(15);
 const BACKEND_EXIT_TIMEOUT: Duration = Duration::from_secs(30);
+const BACKEND_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const LOCAL_STORE_REGISTER: &str =
     include_str!("../../../../governance/store-recoverability.v1.json");
 
@@ -28,6 +32,8 @@ struct ReleaseDescriptor {
     version: String,
     channel: String,
     target: String,
+    metadata_key_id: String,
+    metadata_root_policy: String,
     artifact: ReleaseArtifact,
     compatibility: Vec<ReleaseStoreCompatibility>,
 }
@@ -37,16 +43,23 @@ struct ReleaseDescriptor {
 struct ReleaseArtifact {
     url: String,
     sha256: String,
+    size: u64,
     signature: String,
     public_key: String,
 }
 
+/// Target-side compatibility declaration copied from the release's reviewed store register.
+/// `role` and `reconciliationStrategy` prevent a format-number-only check from silently changing
+/// an AUTHORED store into a disposable/derived store (or vice versa).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReleaseStoreCompatibility {
     owner_id: String,
-    current_version: u32,
+    owner: String,
+    role: String,
+    format_version: u32,
     readable_source_versions: Vec<u32>,
+    reconciliation_strategy: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,17 +72,75 @@ struct LocalStoreRegister {
 #[serde(rename_all = "camelCase")]
 struct LocalDurableStore {
     id: String,
+    owner: String,
+    recoverability: String,
     current_version: u32,
+    reconciliation: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum UpgradePhase {
     Prepared,
+    HeadStopped,
+    InstallLaunching,
     InstallLaunched,
     Reconciling,
     Committed,
+    Cancelled,
     RepairRequired,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ShutdownReceipt {
+    schema_version: u32,
+    preparation_id: String,
+    shutdown_nonce: String,
+    shutdown_accepted: bool,
+    admission_frozen: bool,
+    active_lease_count: u64,
+    issued_at_epoch_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HeadShutdownReceipt {
+    schema_version: u32,
+    preparation_id: String,
+    shutdown_nonce: String,
+    head_pid: u64,
+    clean: bool,
+    worker_outcome: String,
+    errors: Vec<String>,
+    completed_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StagedArtifact {
+    path: String,
+    sha256: String,
+    size: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallerLaunchWitness {
+    schema_version: u32,
+    attempt_id: String,
+    process_id: u32,
+    launched_at_epoch_ms: u128,
+    staged_path: String,
+    staged_sha256: String,
+    staged_size: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct OwnerExpectation {
+    owner_id: String,
+    format_version: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -77,7 +148,14 @@ enum UpgradePhase {
 struct UpgradeIntent {
     schema_version: u32,
     phase: UpgradePhase,
+    attempt_id: String,
     preparation_id: String,
+    shutdown_nonce: String,
+    shutdown_receipt: Option<ShutdownReceipt>,
+    head_shutdown_receipt: Option<HeadShutdownReceipt>,
+    staged_artifact: StagedArtifact,
+    launch_witness: Option<InstallerLaunchWitness>,
+    owner_expectations: Vec<OwnerExpectation>,
     source_version: String,
     target_version: String,
     release_sequence: u64,
@@ -100,6 +178,7 @@ pub struct AppUpdateStatus {
     available_version: Option<String>,
     release_sequence: Option<u64>,
     intent_phase: Option<UpgradePhase>,
+    attempt_id: Option<String>,
     error: Option<String>,
 }
 
@@ -120,17 +199,18 @@ impl UpdateCoordinator {
         let path = intent_path(app);
         match read_intent(&path).and_then(|intent| {
             intent
-                .map(|value| reconcile_intent(&path, &current, value))
+                .map(|value| {
+                    reconcile_intent(
+                        &path,
+                        &launch_witness_path(app),
+                        &staging_root(app),
+                        &current,
+                        value,
+                    )
+                })
                 .transpose()
-                .map(Option::flatten)
         }) {
-            Ok(Some(intent)) => {
-                status.state = phase_state(&intent.phase).into();
-                status.available_version = Some(intent.target_version.clone());
-                status.release_sequence = Some(intent.release_sequence);
-                status.error = intent.error.clone();
-                status.intent_phase = Some(intent.phase);
-            }
+            Ok(Some(intent)) => apply_intent_to_status(&mut status, &intent),
             Ok(None) => {}
             Err(error) => {
                 status.state = "repair_required".into();
@@ -144,6 +224,53 @@ impl UpdateCoordinator {
             .lock()
             .expect("update status mutex poisoned")
             .clone()
+    }
+
+    pub async fn reconcile_after_backend_ready(&self, app: AppHandle, backend: Arc<BackendState>) {
+        let path = intent_path(&app);
+        let Some(mut intent) = (match read_intent(&path) {
+            Ok(intent) => intent,
+            Err(error) => {
+                set_state(self, "repair_required", Some(error));
+                return;
+            }
+        }) else {
+            return;
+        };
+        if intent.phase != UpgradePhase::Reconciling {
+            return;
+        }
+
+        let result = async {
+            let head_pid = wait_for_backend_ready(&backend).await?;
+            let request = ReconciliationRequest {
+                schema_version: 1,
+                attempt_id: intent.attempt_id.clone(),
+                shutdown_nonce: intent.shutdown_nonce.clone(),
+                source_version: intent.source_version.clone(),
+                target_version: intent.target_version.clone(),
+                release_sequence: intent.release_sequence,
+                head_pid: u64::from(head_pid),
+                owners: intent.owner_expectations.clone(),
+            };
+            let response: ReconciliationResponse = post_head(
+                &backend,
+                "/api/upgrade/reconcile",
+                Some(serde_json::to_value(&request).map_err(|error| {
+                    format!("Failed to encode reconciliation request: {error}")
+                })?),
+            )
+            .await?;
+            validate_reconciliation_response(&request, &response)?;
+            Ok::<(), String>(())
+        }
+        .await;
+
+        if let Err(error) = apply_reconciliation_outcome(&mut intent, result)
+            .and_then(|_| persist_intent(&app, self, &intent))
+        {
+            set_state(self, "repair_required", Some(error));
+        }
     }
 }
 
@@ -161,15 +288,13 @@ pub async fn check_for_app_update(
     if coordinator.installing.load(Ordering::Acquire) {
         return Err("An update installation is already in progress".into());
     }
-    set_checking(&coordinator);
-    let result = check_release(&app).await;
-    match result {
+    set_state(&coordinator, "checking", None);
+    match check_release(&app).await {
         Ok(Some(descriptor)) => {
-            let mut pending = coordinator
+            *coordinator
                 .pending
                 .lock()
-                .expect("pending update mutex poisoned");
-            *pending = Some(descriptor.clone());
+                .expect("pending update mutex poisoned") = Some(descriptor.clone());
             let mut status = coordinator
                 .status
                 .lock()
@@ -177,6 +302,8 @@ pub async fn check_for_app_update(
             status.state = "available".into();
             status.available_version = Some(descriptor.version.clone());
             status.release_sequence = Some(descriptor.sequence);
+            status.intent_phase = None;
+            status.attempt_id = None;
             status.error = None;
             Ok(status.clone())
         }
@@ -188,16 +315,13 @@ pub async fn check_for_app_update(
             status.state = "up_to_date".into();
             status.available_version = None;
             status.release_sequence = None;
+            status.intent_phase = None;
+            status.attempt_id = None;
             status.error = None;
             Ok(status.clone())
         }
         Err(error) => {
-            let mut status = coordinator
-                .status
-                .lock()
-                .expect("update status mutex poisoned");
-            status.state = "error".into();
-            status.error = Some(error.clone());
+            set_state(&coordinator, "error", Some(error.clone()));
             Err(error)
         }
     }
@@ -218,16 +342,7 @@ pub async fn install_app_update(
         .clone()
         .ok_or_else(|| "No authenticated update is pending; check for updates first".to_string())?;
 
-    let latest_url = latest_url()?;
-    let updater = app
-        .updater_builder()
-        .pubkey(descriptor.artifact.public_key.clone())
-        .endpoints(vec![latest_url
-            .parse()
-            .map_err(|error| format!("Invalid updater endpoint: {error}"))?])
-        .map_err(|error| format!("Updater endpoint rejected: {error}"))?
-        .build()
-        .map_err(|error| format!("Updater initialization failed: {error}"))?;
+    let updater = updater_for(&app, &descriptor)?;
     let update = updater
         .check()
         .await
@@ -240,63 +355,214 @@ pub async fn install_app_update(
         .download(|_, _| {}, || {})
         .await
         .map_err(|error| format!("Update download or signature verification failed: {error}"))?;
-    let digest = format!("{:x}", Sha256::digest(&bytes));
-    if digest != descriptor.artifact.sha256.to_ascii_lowercase() {
-        return Err("Downloaded installer digest does not match release descriptor".into());
+    let digest = sha256_bytes(&bytes);
+    if digest != descriptor.artifact.sha256.to_ascii_lowercase()
+        || bytes.len() as u64 != descriptor.artifact.size
+    {
+        return Err("Downloaded installer bytes do not match release descriptor".into());
+    }
+    if bytes.get(0..2) != Some(b"MZ") {
+        return Err("Authenticated updater artifact is not a Windows NSIS executable".into());
     }
 
+    let attempt_id = uuid::Uuid::new_v4().to_string();
+    let staged = stage_installer(&app, &attempt_id, &bytes, &digest)?;
+    validate_staged_artifact(&staged, &staging_root(&app))?;
+
     let prepared = prepare_head(&backend).await?;
+    validate_prepare_response(&prepared)?;
     if !prepared.ready {
-        let _ = cancel_head(&backend, &prepared.preparation_id).await;
-        return Err("Update is blocked by a non-interruptible operation".into());
+        let _ = cancel_head(&backend, &prepared.preparation_id, &prepared.shutdown_nonce).await;
+        return Err("Update is blocked until active operations drain".into());
     }
-    let intent = UpgradeIntent {
+
+    let mut intent = UpgradeIntent {
         schema_version: INTENT_SCHEMA_VERSION,
         phase: UpgradePhase::Prepared,
+        attempt_id,
         preparation_id: prepared.preparation_id.clone(),
+        shutdown_nonce: prepared.shutdown_nonce.clone(),
+        shutdown_receipt: None,
+        head_shutdown_receipt: None,
+        staged_artifact: staged,
+        launch_witness: None,
+        owner_expectations: descriptor
+            .compatibility
+            .iter()
+            .map(|owner| OwnerExpectation {
+                owner_id: owner.owner_id.clone(),
+                format_version: owner.format_version,
+            })
+            .collect(),
         source_version: app.package_info().version.to_string(),
         target_version: descriptor.version.clone(),
         release_sequence: descriptor.sequence,
         updated_at_epoch_ms: now_epoch_ms(),
         error: None,
     };
-    if let Err(error) = write_json_atomic(&intent_path(&app), &intent) {
-        let _ = cancel_head(&backend, &prepared.preparation_id).await;
-        return Err(error);
+    if let Err(error) = persist_intent(&app, &coordinator, &intent) {
+        let cancel =
+            cancel_head(&backend, &prepared.preparation_id, &prepared.shutdown_nonce).await;
+        return Err(match cancel {
+            Ok(_) => error,
+            Err(cancel_error) => {
+                format!("{error}; Head admission cancellation also failed: {cancel_error}")
+            }
+        });
     }
-    set_intent_status(&coordinator, &intent);
 
-    if let Err(error) = commit_head(&backend, &prepared.preparation_id).await {
-        let _ = cancel_head(&backend, &prepared.preparation_id).await;
+    let expected_head_pid = match backend.child_pid() {
+        Some(pid) => pid,
+        None => {
+            let error = "Head child process witness is unavailable".to_string();
+            let cancel =
+                cancel_head(&backend, &prepared.preparation_id, &prepared.shutdown_nonce).await;
+            let (phase, message) = match cancel {
+                Ok(_) => (UpgradePhase::Cancelled, error),
+                Err(cancel_error) => (
+                    UpgradePhase::RepairRequired,
+                    format!("{error}; admission cancellation failed: {cancel_error}"),
+                ),
+            };
+            transition(&mut intent, phase, Some(message.clone()))?;
+            persist_intent(&app, &coordinator, &intent)?;
+            return Err(message);
+        }
+    };
+    let receipt = match commit_head(&backend, &prepared.preparation_id, &prepared.shutdown_nonce)
+        .await
+    {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            if backend.wait_for_child_exit(Duration::from_millis(250)) {
+                mark_repair_required(
+                    &app,
+                    &coordinator,
+                    intent,
+                    &format!("Head exited without a verifiable shutdown receipt: {error}"),
+                )?;
+            } else {
+                let cancel =
+                    cancel_head(&backend, &prepared.preparation_id, &prepared.shutdown_nonce).await;
+                let (phase, message) = match cancel {
+                    Ok(_) => (
+                        UpgradePhase::Cancelled,
+                        format!("Shutdown handoff was rejected: {error}"),
+                    ),
+                    Err(cancel_error) => (
+                        UpgradePhase::RepairRequired,
+                        format!(
+                            "Shutdown handoff failed and admission cancellation was not acknowledged: {error}; {cancel_error}"
+                        ),
+                    ),
+                };
+                transition(&mut intent, phase, Some(message))?;
+                persist_intent(&app, &coordinator, &intent)?;
+            }
+            return Err(error);
+        }
+    };
+    if let Err(error) =
+        validate_shutdown_receipt(&receipt, &prepared.preparation_id, &prepared.shutdown_nonce)
+    {
+        mark_repair_required(&app, &coordinator, intent, &error)?;
         return Err(error);
     }
+    intent.shutdown_receipt = Some(receipt);
+    persist_intent(&app, &coordinator, &intent)?;
+
     if !backend.wait_for_child_exit(BACKEND_EXIT_TIMEOUT) {
-        let _ = mark_repair_required(&app, &coordinator, intent, "Backend did not exit in time");
-        return Err("Backend did not complete orderly shutdown; installer was not launched".into());
+        mark_repair_required(
+            &app,
+            &coordinator,
+            intent,
+            "Head acknowledged shutdown but did not exit before the handoff deadline",
+        )?;
+        return Err("Head did not complete orderly shutdown; installer was not launched".into());
     }
 
-    let mut launched = intent;
-    launched.phase = UpgradePhase::InstallLaunched;
-    launched.updated_at_epoch_ms = now_epoch_ms();
-    write_json_atomic(&intent_path(&app), &launched)?;
-    set_intent_status(&coordinator, &launched);
-    update.install(bytes).map_err(|error| {
-        let message = format!("Installer launch failed after backend shutdown: {error}");
-        let _ = mark_repair_required(&app, &coordinator, launched, &message);
-        message
-    })
+    let head_receipt: HeadShutdownReceipt = match read_json(&head_shutdown_receipt_path(&app)) {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            mark_repair_required(
+                &app,
+                &coordinator,
+                intent,
+                &format!("Head exited without a readable shutdown receipt: {error}"),
+            )?;
+            return Err(error);
+        }
+    };
+    if let Err(error) = validate_head_shutdown_receipt(
+        &head_receipt,
+        &prepared.preparation_id,
+        &prepared.shutdown_nonce,
+        expected_head_pid,
+    ) {
+        mark_repair_required(&app, &coordinator, intent, &error)?;
+        return Err(error);
+    }
+    intent.head_shutdown_receipt = Some(head_receipt);
+    transition(&mut intent, UpgradePhase::HeadStopped, None)?;
+    persist_intent(&app, &coordinator, &intent)?;
+    transition(&mut intent, UpgradePhase::InstallLaunching, None)?;
+    persist_intent(&app, &coordinator, &intent)?;
+
+    let launch = launch_installer(Path::new(&intent.staged_artifact.path));
+    let (process_id, launched_at_epoch_ms) = match launch {
+        Ok(witness) => witness,
+        Err(error) => {
+            let restart = restart_headless_backend(&app, backend.inner().clone());
+            let (phase, message) = match restart {
+                Ok(()) => (
+                    UpgradePhase::Cancelled,
+                    format!("Installer launch failed; Head was restarted: {error}"),
+                ),
+                Err(restart_error) => (
+                    UpgradePhase::RepairRequired,
+                    format!(
+                        "Installer launch failed and Head restart failed: {error}; {restart_error}"
+                    ),
+                ),
+            };
+            transition(&mut intent, phase, Some(message.clone()))?;
+            persist_intent(&app, &coordinator, &intent)?;
+            return Err(message);
+        }
+    };
+
+    let witness = InstallerLaunchWitness {
+        schema_version: EVIDENCE_SCHEMA_VERSION,
+        attempt_id: intent.attempt_id.clone(),
+        process_id,
+        launched_at_epoch_ms,
+        staged_path: intent.staged_artifact.path.clone(),
+        staged_sha256: intent.staged_artifact.sha256.clone(),
+        staged_size: intent.staged_artifact.size,
+    };
+    write_json_atomic(&launch_witness_path(&app), &witness)?;
+    let persisted_witness: InstallerLaunchWitness = read_json(&launch_witness_path(&app))?;
+    validate_launch_witness(&persisted_witness, &intent, &staging_root(&app))?;
+    intent.launch_witness = Some(persisted_witness);
+    transition(&mut intent, UpgradePhase::InstallLaunched, None)?;
+    persist_intent(&app, &coordinator, &intent)?;
+
+    // `Update::install` is deliberately not used: it exits the process internally and provides no
+    // durable evidence that Windows accepted the installer process. ShellExecuteExW above returns
+    // a live process handle, which is witnessed before the shell asks Tauri to exit.
+    app.exit(0);
+    Ok(())
 }
 
 async fn check_release(app: &AppHandle) -> Result<Option<ReleaseDescriptor>, String> {
     let descriptor_url = descriptor_url()?;
     ensure_https(&descriptor_url)?;
-    let signature_url = format!("{descriptor_url}.sig");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
         .build()
         .map_err(|error| format!("Failed to create release client: {error}"))?;
     let descriptor_bytes = fetch_bytes(&client, &descriptor_url).await?;
-    let signature = fetch_text(&client, &signature_url).await?;
+    let signature = fetch_text(&client, &format!("{descriptor_url}.sig")).await?;
     verify_metadata_signature(&descriptor_bytes, signature.trim())?;
     let descriptor: ReleaseDescriptor = serde_json::from_slice(&descriptor_bytes)
         .map_err(|error| format!("Release descriptor is invalid: {error}"))?;
@@ -306,22 +572,12 @@ async fn check_release(app: &AppHandle) -> Result<Option<ReleaseDescriptor>, Str
     let sequence = read_sequence(&sequence_path)?;
     if descriptor.sequence < sequence.highest_accepted_sequence {
         return Err(format!(
-            "Release sequence {} is older than the accepted sequence {}",
+            "Release sequence {} is older than accepted sequence {}",
             descriptor.sequence, sequence.highest_accepted_sequence
         ));
     }
 
-    let latest = latest_url()?;
-    let updater = app
-        .updater_builder()
-        .pubkey(descriptor.artifact.public_key.clone())
-        .endpoints(vec![latest
-            .parse()
-            .map_err(|error| format!("Invalid updater endpoint: {error}"))?])
-        .map_err(|error| format!("Updater endpoint rejected: {error}"))?
-        .build()
-        .map_err(|error| format!("Updater initialization failed: {error}"))?;
-    let update = updater
+    let update = updater_for(app, &descriptor)?
         .check()
         .await
         .map_err(|error| format!("Updater check failed: {error}"))?;
@@ -337,6 +593,21 @@ async fn check_release(app: &AppHandle) -> Result<Option<ReleaseDescriptor>, Str
         },
     )?;
     Ok(Some(descriptor))
+}
+
+fn updater_for(
+    app: &AppHandle,
+    descriptor: &ReleaseDescriptor,
+) -> Result<tauri_plugin_updater::Updater, String> {
+    let latest = latest_url()?;
+    app.updater_builder()
+        .pubkey(descriptor.artifact.public_key.clone())
+        .endpoints(vec![latest
+            .parse()
+            .map_err(|error| format!("Invalid updater endpoint: {error}"))?])
+        .map_err(|error| format!("Updater endpoint rejected: {error}"))?
+        .build()
+        .map_err(|error| format!("Updater initialization failed: {error}"))
 }
 
 fn require_closed_set(
@@ -358,46 +629,57 @@ fn validate_descriptor(descriptor: &ReleaseDescriptor) -> Result<(), String> {
         || descriptor.target != "windows-x86_64"
         || descriptor.sequence == 0
         || descriptor.version.trim().is_empty()
+        || descriptor.metadata_key_id != metadata_root_key_id()?
+        || descriptor.metadata_root_policy != "OFFLINE_LONG_LIVED_V1"
     {
-        return Err(
-            "Release descriptor schema, channel, target, sequence, or version is invalid".into(),
-        );
+        return Err("Release descriptor identity or metadata key id is invalid".into());
     }
     ensure_https(&descriptor.artifact.url)?;
     if descriptor.artifact.sha256.len() != 64
+        || !descriptor
+            .artifact
+            .sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+        || descriptor.artifact.size == 0
         || descriptor.artifact.signature.trim().is_empty()
         || descriptor.artifact.public_key.trim().is_empty()
     {
         return Err("Release descriptor artifact fields are incomplete".into());
     }
-    validate_store_compatibility(descriptor)?;
-    Ok(())
+    validate_store_compatibility(descriptor)
 }
 
 fn validate_store_compatibility(descriptor: &ReleaseDescriptor) -> Result<(), String> {
     let local: LocalStoreRegister = serde_json::from_str(LOCAL_STORE_REGISTER)
         .map_err(|error| format!("Embedded store compatibility register is invalid: {error}"))?;
-    let mut release_owners = std::collections::HashMap::new();
+    let mut release_owners = HashMap::new();
     for compatibility in &descriptor.compatibility {
         if compatibility.owner_id.trim().is_empty()
+            || compatibility.owner.trim().is_empty()
+            || compatibility.role.trim().is_empty()
+            || compatibility.reconciliation_strategy.trim().is_empty()
             || release_owners
                 .insert(compatibility.owner_id.as_str(), compatibility)
                 .is_some()
         {
             return Err(format!(
-                "Release compatibility owner is missing or duplicated: {}",
+                "Release compatibility entry is missing strategy fields or duplicated: {}",
                 compatibility.owner_id
             ));
         }
         if !compatibility
             .readable_source_versions
-            .contains(&compatibility.current_version)
+            .contains(&compatibility.format_version)
         {
             return Err(format!(
-                "Release compatibility owner {} cannot read its own current version {}",
-                compatibility.owner_id, compatibility.current_version
+                "Release compatibility owner {} cannot read its target format {}",
+                compatibility.owner_id, compatibility.format_version
             ));
         }
+    }
+    if release_owners.len() != local.durable_stores.len() {
+        return Err("Release compatibility table is not a closed set".into());
     }
     for store in local.durable_stores {
         let compatibility = release_owners.get(store.id.as_str()).ok_or_else(|| {
@@ -406,6 +688,15 @@ fn validate_store_compatibility(descriptor: &ReleaseDescriptor) -> Result<(), St
                 store.id
             )
         })?;
+        if compatibility.owner != store.owner
+            || compatibility.role != store.recoverability
+            || compatibility.reconciliation_strategy != store.reconciliation
+        {
+            return Err(format!(
+                "Release changes ownership or recovery strategy for durable store {}",
+                store.id
+            ));
+        }
         if !compatibility
             .readable_source_versions
             .contains(&store.current_version)
@@ -437,8 +728,45 @@ fn verify_metadata_signature(bytes: &[u8], signature: &str) -> Result<(), String
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PrepareResponse {
+    schema_version: u32,
     preparation_id: String,
+    shutdown_nonce: String,
     ready: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReconciliationRequest {
+    schema_version: u32,
+    attempt_id: String,
+    shutdown_nonce: String,
+    source_version: String,
+    target_version: String,
+    release_sequence: u64,
+    head_pid: u64,
+    owners: Vec<OwnerExpectation>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReconciliationResponse {
+    schema_version: u32,
+    attempt_id: String,
+    shutdown_nonce: String,
+    target_version: String,
+    head_pid: u64,
+    ready: bool,
+    head_ready: bool,
+    worker_ready: bool,
+    owners: Vec<OwnerHealth>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OwnerHealth {
+    owner_id: String,
+    format_version: u32,
+    healthy: bool,
 }
 
 async fn prepare_head(backend: &BackendState) -> Result<PrepareResponse, String> {
@@ -448,11 +776,16 @@ async fn prepare_head(backend: &BackendState) -> Result<PrepareResponse, String>
 async fn cancel_head(
     backend: &BackendState,
     preparation_id: &str,
+    shutdown_nonce: &str,
 ) -> Result<serde_json::Value, String> {
     post_head(
         backend,
         "/api/upgrade/cancel",
-        Some(serde_json::json!({ "preparationId": preparation_id })),
+        Some(serde_json::json!({
+            "schemaVersion": 1,
+            "preparationId": preparation_id,
+            "shutdownNonce": shutdown_nonce
+        })),
     )
     .await
 }
@@ -460,13 +793,142 @@ async fn cancel_head(
 async fn commit_head(
     backend: &BackendState,
     preparation_id: &str,
-) -> Result<serde_json::Value, String> {
+    shutdown_nonce: &str,
+) -> Result<ShutdownReceipt, String> {
     post_head(
         backend,
         "/api/upgrade/commit-shutdown",
-        Some(serde_json::json!({ "preparationId": preparation_id })),
+        Some(serde_json::json!({
+            "schemaVersion": 1,
+            "preparationId": preparation_id,
+            "shutdownNonce": shutdown_nonce
+        })),
     )
     .await
+}
+
+fn validate_prepare_response(response: &PrepareResponse) -> Result<(), String> {
+    if response.schema_version != 1
+        || response.preparation_id.trim().is_empty()
+        || response.shutdown_nonce.len() < 32
+    {
+        return Err("Head returned an invalid upgrade preparation capability".into());
+    }
+    Ok(())
+}
+
+fn validate_shutdown_receipt(
+    receipt: &ShutdownReceipt,
+    preparation_id: &str,
+    shutdown_nonce: &str,
+) -> Result<(), String> {
+    if receipt.schema_version != EVIDENCE_SCHEMA_VERSION
+        || receipt.preparation_id != preparation_id
+        || receipt.shutdown_nonce != shutdown_nonce
+        || !receipt.shutdown_accepted
+        || !receipt.admission_frozen
+        || receipt.active_lease_count != 0
+        || receipt.issued_at_epoch_ms == 0
+    {
+        return Err("Head shutdown receipt did not prove the prepared quiescent session".into());
+    }
+    Ok(())
+}
+
+fn validate_head_shutdown_receipt(
+    receipt: &HeadShutdownReceipt,
+    preparation_id: &str,
+    shutdown_nonce: &str,
+    expected_head_pid: u32,
+) -> Result<(), String> {
+    if receipt.schema_version != EVIDENCE_SCHEMA_VERSION
+        || receipt.preparation_id != preparation_id
+        || receipt.shutdown_nonce != shutdown_nonce
+        || receipt.head_pid == 0
+        || receipt.head_pid > u64::from(u32::MAX)
+        || receipt.head_pid != u64::from(expected_head_pid)
+        || !receipt.clean
+        || receipt.worker_outcome != "GRACEFUL"
+        || !receipt.errors.is_empty()
+        || receipt.completed_at.trim().is_empty()
+    {
+        return Err(
+            "Final Head shutdown receipt did not prove clean shutdown of the prepared process"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+async fn wait_for_backend_ready(backend: &BackendState) -> Result<u32, String> {
+    let deadline = std::time::Instant::now() + BACKEND_READY_TIMEOUT;
+    loop {
+        if backend.has_spawn_error() {
+            return Err("Target Head failed during startup".into());
+        }
+        if backend.get_port().is_some() && backend.get_session_token().is_some() {
+            if let Some(pid) = backend.child_pid() {
+                return Ok(pid);
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("Target Head did not become authenticated and ready before timeout".into());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn validate_reconciliation_response(
+    request: &ReconciliationRequest,
+    response: &ReconciliationResponse,
+) -> Result<(), String> {
+    if response.schema_version != 1
+        || response.attempt_id != request.attempt_id
+        || response.shutdown_nonce != request.shutdown_nonce
+        || response.target_version != request.target_version
+        || response.head_pid != request.head_pid
+        || !response.ready
+        || !response.head_ready
+        || !response.worker_ready
+    {
+        return Err("Target Head reconciliation identity/readiness attestation is invalid".into());
+    }
+    let expected: HashMap<_, _> = request
+        .owners
+        .iter()
+        .map(|owner| (owner.owner_id.as_str(), owner.format_version))
+        .collect();
+    if expected.len() != request.owners.len() || response.owners.len() != expected.len() {
+        return Err("Target Head reconciliation owner set is not closed".into());
+    }
+    let mut actual = HashMap::new();
+    for owner in &response.owners {
+        if !owner.healthy
+            || actual
+                .insert(owner.owner_id.as_str(), owner.format_version)
+                .is_some()
+        {
+            return Err("Target Head reported a duplicate or unhealthy durable owner".into());
+        }
+    }
+    if actual != expected {
+        return Err("Target Head durable-owner formats differ from the signed release".into());
+    }
+    Ok(())
+}
+
+fn apply_reconciliation_outcome(
+    intent: &mut UpgradeIntent,
+    outcome: Result<(), String>,
+) -> Result<(), String> {
+    match outcome {
+        Ok(()) => transition(intent, UpgradePhase::Committed, None),
+        Err(error) => transition(
+            intent,
+            UpgradePhase::RepairRequired,
+            Some(format!("Target-side reconciliation failed: {error}")),
+        ),
+    }
 }
 
 async fn post_head<T: for<'de> Deserialize<'de>>(
@@ -510,14 +972,13 @@ async fn post_head<T: for<'de> Deserialize<'de>>(
 }
 
 async fn fetch_bytes(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
-    let response = client
+    client
         .get(url)
         .send()
         .await
         .map_err(|error| format!("Release request failed: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("Release request failed: {error}"))?;
-    response
+        .map_err(|error| format!("Release request failed: {error}"))?
         .bytes()
         .await
         .map(|bytes| bytes.to_vec())
@@ -525,8 +986,8 @@ async fn fetch_bytes(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, Str
 }
 
 async fn fetch_text(client: &reqwest::Client, url: &str) -> Result<String, String> {
-    let bytes = fetch_bytes(client, url).await?;
-    String::from_utf8(bytes).map_err(|error| format!("Release signature is not UTF-8: {error}"))
+    String::from_utf8(fetch_bytes(client, url).await?)
+        .map_err(|error| format!("Release signature is not UTF-8: {error}"))
 }
 
 fn descriptor_url() -> Result<String, String> {
@@ -537,8 +998,7 @@ fn descriptor_url() -> Result<String, String> {
 }
 
 fn latest_url() -> Result<String, String> {
-    let descriptor = descriptor_url()?;
-    descriptor
+    descriptor_url()?
         .strip_suffix("release.v1.json")
         .map(|prefix| format!("{prefix}latest.json"))
         .ok_or_else(|| "Release descriptor URL must end with release.v1.json".into())
@@ -551,7 +1011,21 @@ fn metadata_root_key() -> Result<String, String> {
     )
 }
 
+fn metadata_root_key_id() -> Result<String, String> {
+    pinned_release_value(
+        "JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID",
+        option_env!("JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID"),
+    )
+}
+
 fn pinned_release_value(name: &str, built: Option<&'static str>) -> Result<String, String> {
+    if sandbox_test_mode() {
+        if let Ok(value) = std::env::var(name) {
+            if !value.trim().is_empty() {
+                return Ok(value);
+            }
+        }
+    }
     if let Some(value) = built.filter(|value| !value.trim().is_empty()) {
         return Ok(value.to_owned());
     }
@@ -566,28 +1040,170 @@ fn pinned_release_value(name: &str, built: Option<&'static str>) -> Result<Strin
     Err(format!("{name} was not pinned into this release build"))
 }
 
+fn sandbox_test_mode() -> bool {
+    option_env!("JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE") == Some("1")
+}
+
 fn ensure_https(url: &str) -> Result<(), String> {
-    if url.starts_with("https://") {
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|error| format!("Release endpoint is invalid: {error}"))?;
+    if parsed.scheme() == "https" {
+        Ok(())
+    } else if sandbox_test_mode()
+        && parsed.scheme() == "http"
+        && matches!(parsed.host_str(), Some("127.0.0.1") | Some("localhost"))
+    {
         Ok(())
     } else {
-        Err("Release endpoints must use HTTPS".into())
+        Err("Release endpoints must use HTTPS (except loopback in a sandbox-gated build)".into())
     }
 }
 
-fn intent_path(app: &AppHandle) -> PathBuf {
+fn upgrade_root(app: &AppHandle) -> PathBuf {
     app.path()
         .app_data_dir()
         .expect("app data directory unavailable")
         .join("upgrade")
-        .join("intent.v1.json")
+}
+
+fn intent_path(app: &AppHandle) -> PathBuf {
+    upgrade_root(app).join("intent.v1.json")
 }
 
 fn sequence_path(app: &AppHandle) -> PathBuf {
-    app.path()
-        .app_data_dir()
-        .expect("app data directory unavailable")
-        .join("upgrade")
-        .join("sequence.v1.json")
+    upgrade_root(app).join("sequence.v1.json")
+}
+
+fn launch_witness_path(app: &AppHandle) -> PathBuf {
+    upgrade_root(app).join("installer-launch-witness.v1.json")
+}
+
+fn head_shutdown_receipt_path(app: &AppHandle) -> PathBuf {
+    upgrade_root(app).join("head-shutdown-receipt.v1.json")
+}
+
+fn staging_root(app: &AppHandle) -> PathBuf {
+    upgrade_root(app).join("staged")
+}
+
+fn stage_installer(
+    app: &AppHandle,
+    attempt_id: &str,
+    bytes: &[u8],
+    sha256: &str,
+) -> Result<StagedArtifact, String> {
+    let directory = staging_root(app).join(attempt_id);
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("Failed to create installer staging directory: {error}"))?;
+    let path = directory.join("JustSearch-update-setup.exe");
+    write_bytes_atomic(&path, bytes)?;
+    let staged = StagedArtifact {
+        path: path.to_string_lossy().into_owned(),
+        sha256: sha256.to_ascii_lowercase(),
+        size: bytes.len() as u64,
+    };
+    validate_staged_artifact(&staged, &staging_root(app))?;
+    Ok(staged)
+}
+
+fn validate_staged_artifact(staged: &StagedArtifact, root: &Path) -> Result<(), String> {
+    if staged.sha256.len() != 64 || staged.size == 0 {
+        return Err("Staged installer evidence is incomplete".into());
+    }
+    let root = fs::canonicalize(root)
+        .map_err(|error| format!("Failed to resolve installer staging root: {error}"))?;
+    let path = fs::canonicalize(&staged.path)
+        .map_err(|error| format!("Failed to resolve staged installer: {error}"))?;
+    if !path.starts_with(&root) {
+        return Err("Staged installer escaped the shell-owned staging root".into());
+    }
+    let bytes =
+        fs::read(&path).map_err(|error| format!("Failed to re-read staged installer: {error}"))?;
+    if bytes.len() as u64 != staged.size || sha256_bytes(&bytes) != staged.sha256 {
+        return Err("Staged installer failed post-write size or digest verification".into());
+    }
+    if bytes.get(0..2) != Some(b"MZ") {
+        return Err("Staged installer is not a Windows executable".into());
+    }
+    Ok(())
+}
+
+fn validate_launch_witness(
+    witness: &InstallerLaunchWitness,
+    intent: &UpgradeIntent,
+    staging_root: &Path,
+) -> Result<(), String> {
+    if witness.schema_version != EVIDENCE_SCHEMA_VERSION
+        || witness.attempt_id != intent.attempt_id
+        || witness.process_id == 0
+        || witness.launched_at_epoch_ms == 0
+        || witness.staged_path != intent.staged_artifact.path
+        || witness.staged_sha256 != intent.staged_artifact.sha256
+        || witness.staged_size != intent.staged_artifact.size
+    {
+        return Err("Installer launch witness does not match the durable upgrade intent".into());
+    }
+    validate_staged_artifact(&intent.staged_artifact, staging_root)
+}
+
+#[cfg(windows)]
+fn launch_installer(path: &Path) -> Result<(u32, u128), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::GetProcessId;
+    use windows_sys::Win32::UI::Shell::{
+        ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOW;
+
+    let file: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let verb: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
+    // Match Tauri updater 2.10.1's basicUi NSIS invocation. Basic UI intentionally adds neither
+    // /P nor /S; /UPDATE selects the updater path and /ARGS preserves its expected handoff form.
+    let parameters: Vec<u16> = "/UPDATE /ARGS".encode_utf16().chain(Some(0)).collect();
+    let directory: Vec<u16> = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI,
+        hwnd: std::ptr::null_mut(),
+        lpVerb: verb.as_ptr(),
+        lpFile: file.as_ptr(),
+        lpParameters: parameters.as_ptr(),
+        lpDirectory: directory.as_ptr(),
+        nShow: SW_SHOW,
+        ..Default::default()
+    };
+    if unsafe { ShellExecuteExW(&mut info) } == 0 {
+        return Err(format!(
+            "Windows rejected installer launch: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    if info.hProcess.is_null() {
+        return Err("Windows accepted installer verb without returning a process witness".into());
+    }
+    let process_id = unsafe { GetProcessId(info.hProcess) };
+    unsafe {
+        CloseHandle(info.hProcess);
+    }
+    if process_id == 0 {
+        return Err(format!(
+            "Windows returned an invalid installer process witness: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok((process_id, now_epoch_ms()))
+}
+
+#[cfg(not(windows))]
+fn launch_installer(_path: &Path) -> Result<(u32, u128), String> {
+    Err("Application updater installer launch is Windows-only".into())
 }
 
 fn read_intent(path: &Path) -> Result<Option<UpgradeIntent>, String> {
@@ -606,35 +1222,170 @@ fn read_intent(path: &Path) -> Result<Option<UpgradeIntent>, String> {
 
 fn reconcile_intent(
     path: &Path,
+    witness_path: &Path,
+    staging_root: &Path,
     current_version: &str,
     mut intent: UpgradeIntent,
-) -> Result<Option<UpgradeIntent>, String> {
+) -> Result<UpgradeIntent, String> {
+    validate_intent_evidence(&intent, witness_path, staging_root)?;
     match intent.phase {
-        UpgradePhase::Prepared | UpgradePhase::InstallLaunched
+        UpgradePhase::Prepared | UpgradePhase::HeadStopped
             if intent.source_version == current_version =>
         {
-            fs::remove_file(path)
-                .map_err(|error| format!("Failed to cancel stale upgrade handoff: {error}"))?;
-            return Ok(None);
+            transition(
+                &mut intent,
+                UpgradePhase::Cancelled,
+                Some("Update handoff ended before installer launch".into()),
+            )?;
         }
-        UpgradePhase::Prepared | UpgradePhase::InstallLaunched | UpgradePhase::Reconciling => {
-            intent.updated_at_epoch_ms = now_epoch_ms();
-            if intent.target_version == current_version {
-                intent.phase = UpgradePhase::Reconciling;
-                intent.error =
-                    Some("Installed version is awaiting durable-owner reconciliation".into());
-            } else {
-                intent.phase = UpgradePhase::RepairRequired;
-                intent.error = Some(format!(
-                    "Expected version {} after installer handoff, running {}",
-                    intent.target_version, current_version
-                ));
-            }
-            write_json_atomic(path, &intent)?;
+        UpgradePhase::InstallLaunched if intent.source_version == current_version => {
+            transition(
+                &mut intent,
+                UpgradePhase::Cancelled,
+                Some("Installer exited or was cancelled without changing the app version".into()),
+            )?;
         }
-        UpgradePhase::Committed | UpgradePhase::RepairRequired => {}
+        UpgradePhase::InstallLaunched if intent.target_version == current_version => {
+            transition(
+                &mut intent,
+                UpgradePhase::Reconciling,
+                Some("Installed version is awaiting durable-owner reconciliation".into()),
+            )?;
+        }
+        UpgradePhase::Reconciling if intent.target_version == current_version => {
+            // Version equality is only an observation. Owner health must explicitly advance this
+            // intent to COMMITTED; startup must never convert equality into success.
+        }
+        UpgradePhase::Committed | UpgradePhase::Cancelled | UpgradePhase::RepairRequired => {}
+        _ => {
+            let expected = intent.target_version.clone();
+            let previous_phase = intent.phase.clone();
+            transition(
+                &mut intent,
+                UpgradePhase::RepairRequired,
+                Some(format!(
+                    "Upgrade phase {:?} cannot be reconciled with running version {}; expected {}",
+                    previous_phase, current_version, expected
+                )),
+            )?;
+        }
     }
-    Ok(Some(intent))
+    write_json_atomic(path, &intent)?;
+    Ok(intent)
+}
+
+fn validate_intent_evidence(
+    intent: &UpgradeIntent,
+    witness_path: &Path,
+    staging_root: &Path,
+) -> Result<(), String> {
+    if intent.attempt_id.trim().is_empty()
+        || intent.preparation_id.trim().is_empty()
+        || intent.shutdown_nonce.len() < 32
+        || intent.owner_expectations.is_empty()
+    {
+        return Err("Durable upgrade intent is missing its prepared-session identity".into());
+    }
+    if matches!(intent.phase, UpgradePhase::Cancelled) {
+        return Ok(());
+    }
+    if matches!(intent.phase, UpgradePhase::Committed) {
+        let receipt = intent
+            .shutdown_receipt
+            .as_ref()
+            .ok_or_else(|| "Committed intent is missing its quiescence receipt".to_string())?;
+        validate_shutdown_receipt(receipt, &intent.preparation_id, &intent.shutdown_nonce)?;
+        let final_receipt = intent
+            .head_shutdown_receipt
+            .as_ref()
+            .ok_or_else(|| "Committed intent is missing its final Head receipt".to_string())?;
+        validate_head_shutdown_receipt(
+            final_receipt,
+            &intent.preparation_id,
+            &intent.shutdown_nonce,
+            final_receipt.head_pid as u32,
+        )?;
+        if intent.launch_witness.is_none() {
+            return Err("Committed intent is missing its embedded installer witness".into());
+        }
+        return Ok(());
+    }
+    validate_staged_artifact(&intent.staged_artifact, staging_root)?;
+    if matches!(
+        intent.phase,
+        UpgradePhase::HeadStopped
+            | UpgradePhase::InstallLaunching
+            | UpgradePhase::InstallLaunched
+            | UpgradePhase::Reconciling
+            | UpgradePhase::Committed
+    ) {
+        let receipt = intent
+            .shutdown_receipt
+            .as_ref()
+            .ok_or_else(|| "Upgrade intent is missing its quiescence receipt".to_string())?;
+        validate_shutdown_receipt(receipt, &intent.preparation_id, &intent.shutdown_nonce)?;
+        let final_receipt = intent.head_shutdown_receipt.as_ref().ok_or_else(|| {
+            "Upgrade intent is missing its final Head shutdown receipt".to_string()
+        })?;
+        validate_head_shutdown_receipt(
+            final_receipt,
+            &intent.preparation_id,
+            &intent.shutdown_nonce,
+            final_receipt.head_pid as u32,
+        )?;
+    }
+    if matches!(
+        intent.phase,
+        UpgradePhase::InstallLaunched | UpgradePhase::Reconciling | UpgradePhase::Committed
+    ) {
+        let persisted: InstallerLaunchWitness = read_json(witness_path)?;
+        validate_launch_witness(&persisted, intent, staging_root)?;
+        let embedded = intent
+            .launch_witness
+            .as_ref()
+            .ok_or_else(|| "Upgrade intent is missing its installer launch witness".to_string())?;
+        if serde_json::to_value(embedded).ok() != serde_json::to_value(&persisted).ok() {
+            return Err("Embedded and separately durable installer witnesses differ".into());
+        }
+    }
+    Ok(())
+}
+
+fn transition(
+    intent: &mut UpgradeIntent,
+    next: UpgradePhase,
+    error: Option<String>,
+) -> Result<(), String> {
+    let legal = matches!(
+        (&intent.phase, &next),
+        (UpgradePhase::Prepared, UpgradePhase::HeadStopped)
+            | (UpgradePhase::Prepared, UpgradePhase::Cancelled)
+            | (UpgradePhase::Prepared, UpgradePhase::RepairRequired)
+            | (UpgradePhase::HeadStopped, UpgradePhase::InstallLaunching)
+            | (UpgradePhase::HeadStopped, UpgradePhase::Cancelled)
+            | (UpgradePhase::HeadStopped, UpgradePhase::RepairRequired)
+            | (
+                UpgradePhase::InstallLaunching,
+                UpgradePhase::InstallLaunched
+            )
+            | (UpgradePhase::InstallLaunching, UpgradePhase::Cancelled)
+            | (UpgradePhase::InstallLaunching, UpgradePhase::RepairRequired)
+            | (UpgradePhase::InstallLaunched, UpgradePhase::Reconciling)
+            | (UpgradePhase::InstallLaunched, UpgradePhase::Cancelled)
+            | (UpgradePhase::InstallLaunched, UpgradePhase::RepairRequired)
+            | (UpgradePhase::Reconciling, UpgradePhase::Committed)
+            | (UpgradePhase::Reconciling, UpgradePhase::RepairRequired)
+    );
+    if !legal {
+        return Err(format!(
+            "Illegal durable upgrade transition {:?} -> {:?}",
+            intent.phase, next
+        ));
+    }
+    intent.phase = next;
+    intent.updated_at_epoch_ms = now_epoch_ms();
+    intent.error = error;
+    Ok(())
 }
 
 fn read_sequence(path: &Path) -> Result<SequenceState, String> {
@@ -661,21 +1412,30 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, String> {
         .map_err(|error| format!("Failed to parse {}: {error}", path.display()))
 }
 
-fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), String> {
+fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("Path has no parent: {}", path.display()))?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
-    let temp = path.with_extension("json.tmp");
-    let bytes = serde_json::to_vec_pretty(value)
-        .map_err(|error| format!("Failed to serialize {}: {error}", path.display()))?;
-    fs::write(&temp, bytes)
+    let temp = path.with_extension("tmp");
+    let mut file = fs::File::create(&temp)
+        .map_err(|error| format!("Failed to create {}: {error}", temp.display()))?;
+    file.write_all(bytes)
         .map_err(|error| format!("Failed to write {}: {error}", temp.display()))?;
+    file.sync_all()
+        .map_err(|error| format!("Failed to flush {}: {error}", temp.display()))?;
+    drop(file);
     replace_file(&temp, path).map_err(|error| {
         let _ = fs::remove_file(&temp);
         format!("Failed to replace {}: {error}", path.display())
     })
+}
+
+fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(value)
+        .map_err(|error| format!("Failed to serialize {}: {error}", path.display()))?;
+    write_bytes_atomic(path, &bytes)
 }
 
 #[cfg(not(windows))]
@@ -706,8 +1466,18 @@ fn replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
     }
 }
 
-fn set_checking(coordinator: &UpdateCoordinator) {
-    set_state(coordinator, "checking", None);
+fn sha256_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn persist_intent(
+    app: &AppHandle,
+    coordinator: &UpdateCoordinator,
+    intent: &UpgradeIntent,
+) -> Result<(), String> {
+    write_json_atomic(&intent_path(app), intent)?;
+    set_intent_status(coordinator, intent);
+    Ok(())
 }
 
 fn set_state(coordinator: &UpdateCoordinator, state: &str, error: Option<String>) {
@@ -719,27 +1489,31 @@ fn set_state(coordinator: &UpdateCoordinator, state: &str, error: Option<String>
     status.error = error;
 }
 
+fn apply_intent_to_status(status: &mut AppUpdateStatus, intent: &UpgradeIntent) {
+    status.state = phase_state(&intent.phase).into();
+    status.available_version = Some(intent.target_version.clone());
+    status.release_sequence = Some(intent.release_sequence);
+    status.intent_phase = Some(intent.phase.clone());
+    status.attempt_id = Some(intent.attempt_id.clone());
+    status.error = intent.error.clone();
+}
+
 fn set_intent_status(coordinator: &UpdateCoordinator, intent: &UpgradeIntent) {
     let mut status = coordinator
         .status
         .lock()
         .expect("update status mutex poisoned");
-    status.state = phase_state(&intent.phase).into();
-    status.intent_phase = Some(intent.phase.clone());
-    status.error = intent.error.clone();
+    apply_intent_to_status(&mut status, intent);
 }
 
 fn ensure_no_unresolved_intent(coordinator: &UpdateCoordinator) -> Result<(), String> {
     let status = coordinator.snapshot();
     match status.intent_phase {
-        Some(UpgradePhase::Prepared)
-        | Some(UpgradePhase::InstallLaunched)
-        | Some(UpgradePhase::Reconciling)
-        | Some(UpgradePhase::RepairRequired) => Err(format!(
+        Some(UpgradePhase::Committed) | Some(UpgradePhase::Cancelled) | None => Ok(()),
+        Some(_) => Err(format!(
             "The previous update is unresolved (state {}); repair or reconcile it before continuing",
             status.state
         )),
-        Some(UpgradePhase::Committed) | None => Ok(()),
     }
 }
 
@@ -749,12 +1523,12 @@ fn mark_repair_required(
     mut intent: UpgradeIntent,
     error: &str,
 ) -> Result<(), String> {
-    intent.phase = UpgradePhase::RepairRequired;
-    intent.updated_at_epoch_ms = now_epoch_ms();
-    intent.error = Some(error.into());
-    write_json_atomic(&intent_path(app), &intent)?;
-    set_intent_status(coordinator, &intent);
-    Ok(())
+    transition(
+        &mut intent,
+        UpgradePhase::RepairRequired,
+        Some(error.into()),
+    )?;
+    persist_intent(app, coordinator, &intent)
 }
 
 struct InstallGuard<'a>(&'a AtomicBool);
@@ -776,9 +1550,12 @@ impl Drop for InstallGuard<'_> {
 fn phase_state(phase: &UpgradePhase) -> &'static str {
     match phase {
         UpgradePhase::Prepared => "prepared",
+        UpgradePhase::HeadStopped => "head_stopped",
+        UpgradePhase::InstallLaunching => "install_launching",
         UpgradePhase::InstallLaunched => "install_launched",
         UpgradePhase::Reconciling => "reconciling",
         UpgradePhase::Committed => "committed",
+        UpgradePhase::Cancelled => "cancelled",
         UpgradePhase::RepairRequired => "repair_required",
     }
 }
@@ -796,6 +1573,213 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn durable_phase_names_are_stable() {
+        let phases = [
+            UpgradePhase::Prepared,
+            UpgradePhase::HeadStopped,
+            UpgradePhase::InstallLaunching,
+            UpgradePhase::InstallLaunched,
+            UpgradePhase::Reconciling,
+            UpgradePhase::Committed,
+            UpgradePhase::Cancelled,
+            UpgradePhase::RepairRequired,
+        ];
+        let json = serde_json::to_string(&phases).unwrap();
+        assert_eq!(
+            json,
+            r#"["PREPARED","HEAD_STOPPED","INSTALL_LAUNCHING","INSTALL_LAUNCHED","RECONCILING","COMMITTED","CANCELLED","REPAIR_REQUIRED"]"#
+        );
+    }
+
+    #[test]
+    fn transition_table_rejects_skipping_launch_witness() {
+        let mut intent = test_intent(UpgradePhase::HeadStopped);
+        assert!(transition(&mut intent, UpgradePhase::InstallLaunched, None)
+            .unwrap_err()
+            .contains("Illegal durable upgrade transition"));
+    }
+
+    #[test]
+    fn shutdown_receipt_is_nonce_and_preparation_bound() {
+        let mut receipt = test_receipt();
+        validate_shutdown_receipt(&receipt, "prep-1", &"n".repeat(32)).unwrap();
+        receipt.shutdown_nonce = "x".repeat(32);
+        assert!(validate_shutdown_receipt(&receipt, "prep-1", &"n".repeat(32)).is_err());
+    }
+
+    #[test]
+    fn final_shutdown_receipt_is_nonce_and_process_bound() {
+        let receipt = test_head_receipt();
+        validate_head_shutdown_receipt(&receipt, "prep-1", &"n".repeat(32), 4242).unwrap();
+        assert!(validate_head_shutdown_receipt(&receipt, "prep-1", &"n".repeat(32), 7).is_err());
+    }
+
+    #[test]
+    fn concrete_target_oracle_commits_exact_owner_set() {
+        let request = test_reconciliation_request();
+        let response = test_reconciliation_response();
+        validate_reconciliation_response(&request, &response).unwrap();
+        let mut intent = test_intent(UpgradePhase::Reconciling);
+        apply_reconciliation_outcome(&mut intent, Ok(())).unwrap();
+        assert_eq!(intent.phase, UpgradePhase::Committed);
+    }
+
+    #[test]
+    fn head_unavailable_reconciliation_requires_repair() {
+        let mut intent = test_intent(UpgradePhase::Reconciling);
+        apply_reconciliation_outcome(&mut intent, Err("Target Head is unavailable".into()))
+            .unwrap();
+        assert_eq!(intent.phase, UpgradePhase::RepairRequired);
+        assert!(intent.error.unwrap().contains("unavailable"));
+    }
+
+    #[test]
+    fn target_oracle_rejects_owner_set_mismatch() {
+        let request = test_reconciliation_request();
+        let mut response = test_reconciliation_response();
+        response.owners[0].format_version += 1;
+        assert!(validate_reconciliation_response(&request, &response)
+            .unwrap_err()
+            .contains("differ"));
+    }
+
+    #[test]
+    fn stage_rehash_detects_tampering_and_path_escape() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("staged");
+        let attempt = root.join("attempt");
+        fs::create_dir_all(&attempt).unwrap();
+        let path = attempt.join("installer.exe");
+        fs::write(&path, b"MZsafe").unwrap();
+        let staged = StagedArtifact {
+            path: path.to_string_lossy().into_owned(),
+            sha256: sha256_bytes(b"MZsafe"),
+            size: 6,
+        };
+        validate_staged_artifact(&staged, &root).unwrap();
+        fs::write(&path, b"MZevil").unwrap();
+        assert!(validate_staged_artifact(&staged, &root)
+            .unwrap_err()
+            .contains("post-write"));
+
+        let outside = dir.path().join("outside.exe");
+        fs::write(&outside, b"MZsafe").unwrap();
+        let escaped = StagedArtifact {
+            path: outside.to_string_lossy().into_owned(),
+            ..staged
+        };
+        assert!(validate_staged_artifact(&escaped, &root)
+            .unwrap_err()
+            .contains("escaped"));
+    }
+
+    #[test]
+    fn prepared_source_boot_is_durably_cancelled_not_deleted() {
+        let fixture = evidence_fixture(UpgradePhase::Prepared);
+        let mut intent = fixture.intent;
+        let reconciled = reconcile_intent(
+            &fixture.intent_path,
+            &fixture.witness_path,
+            &fixture.staging_root,
+            "1.0.0",
+            intent.clone(),
+        )
+        .unwrap();
+        intent.phase = UpgradePhase::Cancelled;
+        assert_eq!(reconciled.phase, intent.phase);
+        assert!(fixture.intent_path.exists());
+    }
+
+    #[test]
+    fn target_equality_only_advances_to_reconciling() {
+        let fixture = evidence_fixture(UpgradePhase::InstallLaunched);
+        let reconciled = reconcile_intent(
+            &fixture.intent_path,
+            &fixture.witness_path,
+            &fixture.staging_root,
+            "1.1.0",
+            fixture.intent,
+        )
+        .unwrap();
+        assert_eq!(reconciled.phase, UpgradePhase::Reconciling);
+    }
+
+    #[test]
+    fn install_launching_boot_is_ambiguous_and_requires_repair() {
+        let fixture = evidence_fixture(UpgradePhase::InstallLaunching);
+        let reconciled = reconcile_intent(
+            &fixture.intent_path,
+            &fixture.witness_path,
+            &fixture.staging_root,
+            "1.0.0",
+            fixture.intent,
+        )
+        .unwrap();
+        assert_eq!(reconciled.phase, UpgradePhase::RepairRequired);
+    }
+
+    #[test]
+    fn committed_terminal_state_survives_staged_payload_cleanup() {
+        let fixture = evidence_fixture(UpgradePhase::Committed);
+        fs::remove_file(&fixture.intent.staged_artifact.path).unwrap();
+        fs::remove_file(&fixture.witness_path).unwrap();
+        let reconciled = reconcile_intent(
+            &fixture.intent_path,
+            &fixture.witness_path,
+            &fixture.staging_root,
+            "1.1.0",
+            fixture.intent,
+        )
+        .unwrap();
+        assert_eq!(reconciled.phase, UpgradePhase::Committed);
+    }
+
+    #[test]
+    fn cancelled_terminal_state_allows_future_update_checks() {
+        let coordinator = UpdateCoordinator::default();
+        coordinator.status.lock().unwrap().intent_phase = Some(UpgradePhase::Cancelled);
+        assert!(ensure_no_unresolved_intent(&coordinator).is_ok());
+    }
+
+    #[test]
+    fn witness_must_match_separate_durable_copy() {
+        let fixture = evidence_fixture(UpgradePhase::InstallLaunched);
+        let mut witness: InstallerLaunchWitness = read_json(&fixture.witness_path).unwrap();
+        witness.process_id += 1;
+        write_json_atomic(&fixture.witness_path, &witness).unwrap();
+        assert!(reconcile_intent(
+            &fixture.intent_path,
+            &fixture.witness_path,
+            &fixture.staging_root,
+            "1.1.0",
+            fixture.intent,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn strategy_aware_compatibility_rejects_role_change() {
+        let local: LocalStoreRegister = serde_json::from_str(LOCAL_STORE_REGISTER).unwrap();
+        let compatibility = local
+            .durable_stores
+            .iter()
+            .map(|store| ReleaseStoreCompatibility {
+                owner_id: store.id.clone(),
+                owner: store.owner.clone(),
+                role: store.recoverability.clone(),
+                format_version: store.current_version,
+                readable_source_versions: vec![store.current_version],
+                reconciliation_strategy: store.reconciliation.clone(),
+            })
+            .collect();
+        let mut descriptor = test_descriptor(compatibility);
+        descriptor.compatibility[0].role = "DERIVED".into();
+        assert!(validate_store_compatibility(&descriptor)
+            .unwrap_err()
+            .contains("ownership or recovery strategy"));
+    }
+
+    #[test]
     fn sequence_state_refuses_unknown_schema() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("sequence.v1.json");
@@ -805,104 +1789,151 @@ mod tests {
             .contains("Unsupported upgrade sequence"));
     }
 
-    #[test]
-    fn intent_round_trip_preserves_durable_phase() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("intent.v1.json");
-        let intent = UpgradeIntent {
-            schema_version: 1,
-            phase: UpgradePhase::InstallLaunched,
-            preparation_id: "prep-1".into(),
-            source_version: "1.0.0".into(),
-            target_version: "1.1.0".into(),
-            release_sequence: 3,
-            updated_at_epoch_ms: 10,
-            error: None,
+    struct EvidenceFixture {
+        intent: UpgradeIntent,
+        intent_path: PathBuf,
+        witness_path: PathBuf,
+        staging_root: PathBuf,
+    }
+
+    fn evidence_fixture(phase: UpgradePhase) -> EvidenceFixture {
+        let directory = tempfile::Builder::new()
+            .prefix("justsearch-updater-test")
+            .tempdir()
+            .unwrap()
+            .keep();
+        let staging_root = directory.join("staged");
+        let staged_path = staging_root.join("attempt-1").join("installer.exe");
+        fs::create_dir_all(staged_path.parent().unwrap()).unwrap();
+        fs::write(&staged_path, b"MZfixture").unwrap();
+        let staged = StagedArtifact {
+            path: staged_path.to_string_lossy().into_owned(),
+            sha256: sha256_bytes(b"MZfixture"),
+            size: 9,
         };
-        write_json_atomic(&path, &intent).unwrap();
-        let restored = read_intent(&path).unwrap().unwrap();
-        assert_eq!(restored.phase, UpgradePhase::InstallLaunched);
-        assert_eq!(restored.release_sequence, 3);
-    }
-
-    #[test]
-    fn prepared_intent_on_source_version_is_cancelled() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("intent.v1.json");
-        let intent = test_intent(UpgradePhase::Prepared);
-        write_json_atomic(&path, &intent).unwrap();
-
-        assert!(reconcile_intent(&path, "1.0.0", intent).unwrap().is_none());
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn launched_intent_on_source_version_is_treated_as_cancelled_handoff() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("intent.v1.json");
-        let intent = test_intent(UpgradePhase::InstallLaunched);
-        write_json_atomic(&path, &intent).unwrap();
-
-        assert!(reconcile_intent(&path, "1.0.0", intent).unwrap().is_none());
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn installed_target_remains_reconciling_until_owners_report_healthy() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("intent.v1.json");
-        let intent = test_intent(UpgradePhase::InstallLaunched);
-        write_json_atomic(&path, &intent).unwrap();
-
-        let reconciled = reconcile_intent(&path, "1.1.0", intent).unwrap().unwrap();
-        assert_eq!(reconciled.phase, UpgradePhase::Reconciling);
-        assert!(reconciled.error.unwrap().contains("durable-owner"));
-    }
-
-    #[test]
-    fn unresolved_reconciliation_blocks_another_update_cycle() {
-        let coordinator = UpdateCoordinator::default();
-        {
-            let mut status = coordinator.status.lock().unwrap();
-            status.state = "reconciling".into();
-            status.intent_phase = Some(UpgradePhase::Reconciling);
+        let witness = InstallerLaunchWitness {
+            schema_version: 1,
+            attempt_id: "attempt-1".into(),
+            process_id: 42,
+            launched_at_epoch_ms: 11,
+            staged_path: staged.path.clone(),
+            staged_sha256: staged.sha256.clone(),
+            staged_size: staged.size,
+        };
+        let mut intent = test_intent(phase.clone());
+        intent.staged_artifact = staged;
+        if matches!(
+            phase,
+            UpgradePhase::HeadStopped
+                | UpgradePhase::InstallLaunching
+                | UpgradePhase::InstallLaunched
+                | UpgradePhase::Reconciling
+                | UpgradePhase::Committed
+        ) {
+            intent.shutdown_receipt = Some(test_receipt());
+            intent.head_shutdown_receipt = Some(test_head_receipt());
         }
-
-        assert!(ensure_no_unresolved_intent(&coordinator)
-            .unwrap_err()
-            .contains("previous update is unresolved"));
-    }
-
-    #[test]
-    fn compatibility_rejects_release_that_cannot_read_local_store() {
-        let local: LocalStoreRegister = serde_json::from_str(LOCAL_STORE_REGISTER).unwrap();
-        let compatibility = local
-            .durable_stores
-            .iter()
-            .map(|store| ReleaseStoreCompatibility {
-                owner_id: store.id.clone(),
-                current_version: store.current_version,
-                readable_source_versions: vec![store.current_version],
-            })
-            .collect();
-        let mut descriptor = test_descriptor(compatibility);
-        descriptor.compatibility[0].readable_source_versions.clear();
-
-        assert!(validate_store_compatibility(&descriptor)
-            .unwrap_err()
-            .contains("cannot read its own current version"));
+        if matches!(
+            phase,
+            UpgradePhase::InstallLaunched | UpgradePhase::Reconciling | UpgradePhase::Committed
+        ) {
+            intent.launch_witness = Some(witness.clone());
+        }
+        let intent_path = directory.join("intent.v1.json");
+        let witness_path = directory.join("witness.v1.json");
+        write_json_atomic(&intent_path, &intent).unwrap();
+        write_json_atomic(&witness_path, &witness).unwrap();
+        EvidenceFixture {
+            intent,
+            intent_path,
+            witness_path,
+            staging_root,
+        }
     }
 
     fn test_intent(phase: UpgradePhase) -> UpgradeIntent {
         UpgradeIntent {
             schema_version: 1,
             phase,
+            attempt_id: "attempt-1".into(),
             preparation_id: "prep-1".into(),
+            shutdown_nonce: "n".repeat(32),
+            shutdown_receipt: None,
+            head_shutdown_receipt: None,
+            staged_artifact: StagedArtifact {
+                path: "unused".into(),
+                sha256: "0".repeat(64),
+                size: 1,
+            },
+            launch_witness: None,
+            owner_expectations: vec![OwnerExpectation {
+                owner_id: "preferences".into(),
+                format_version: 1,
+            }],
             source_version: "1.0.0".into(),
             target_version: "1.1.0".into(),
             release_sequence: 3,
             updated_at_epoch_ms: 10,
             error: None,
+        }
+    }
+
+    fn test_receipt() -> ShutdownReceipt {
+        ShutdownReceipt {
+            schema_version: 1,
+            preparation_id: "prep-1".into(),
+            shutdown_nonce: "n".repeat(32),
+            shutdown_accepted: true,
+            admission_frozen: true,
+            active_lease_count: 0,
+            issued_at_epoch_ms: 10,
+        }
+    }
+
+    fn test_head_receipt() -> HeadShutdownReceipt {
+        HeadShutdownReceipt {
+            schema_version: 1,
+            preparation_id: "prep-1".into(),
+            shutdown_nonce: "n".repeat(32),
+            head_pid: 4242,
+            clean: true,
+            worker_outcome: "GRACEFUL".into(),
+            errors: Vec::new(),
+            completed_at: "2026-07-31T00:00:00Z".into(),
+        }
+    }
+
+    fn test_reconciliation_request() -> ReconciliationRequest {
+        ReconciliationRequest {
+            schema_version: 1,
+            attempt_id: "attempt-1".into(),
+            shutdown_nonce: "n".repeat(32),
+            source_version: "1.0.0".into(),
+            target_version: "1.1.0".into(),
+            release_sequence: 3,
+            head_pid: 4242,
+            owners: vec![OwnerExpectation {
+                owner_id: "preferences".into(),
+                format_version: 1,
+            }],
+        }
+    }
+
+    fn test_reconciliation_response() -> ReconciliationResponse {
+        ReconciliationResponse {
+            schema_version: 1,
+            attempt_id: "attempt-1".into(),
+            shutdown_nonce: "n".repeat(32),
+            target_version: "1.1.0".into(),
+            head_pid: 4242,
+            ready: true,
+            head_ready: true,
+            worker_ready: true,
+            owners: vec![OwnerHealth {
+                owner_id: "preferences".into(),
+                format_version: 1,
+                healthy: true,
+            }],
         }
     }
 
@@ -913,9 +1944,12 @@ mod tests {
             version: "1.1.0".into(),
             channel: "stable".into(),
             target: "windows-x86_64".into(),
+            metadata_key_id: "metadata-test".into(),
+            metadata_root_policy: "OFFLINE_LONG_LIVED_V1".into(),
             artifact: ReleaseArtifact {
                 url: "https://updates.example/installer.exe".into(),
                 sha256: "0".repeat(64),
+                size: 1,
                 signature: "signature".into(),
                 public_key: "public-key".into(),
             },

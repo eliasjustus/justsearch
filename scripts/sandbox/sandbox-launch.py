@@ -20,6 +20,7 @@ Usage:
 """
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -28,6 +29,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from urllib.parse import urlparse
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
@@ -589,12 +591,193 @@ def stage_upgrade_installer(share_dir: Path, upgrade_installer: Path) -> tuple[s
     return upgrade_installer.name, digest
 
 
+def _ed25519_raw_public_key(public_key_path: Path) -> str:
+    """Convert an Ed25519 SPKI PEM public key to the raw 32-byte base64 form
+    consumed by the Rust updater. Fail closed on any other key shape."""
+    text = public_key_path.read_text(encoding="utf-8")
+    encoded = "".join(
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.startswith("-----")
+    )
+    try:
+        der = base64.b64decode(encoded, validate=True)
+    except (ValueError, base64.binascii.Error) as exc:
+        sys.exit(f"Updater metadata public key is not valid PEM/base64: {exc}")
+    spki_prefix = bytes.fromhex("302a300506032b6570032100")
+    if len(der) != len(spki_prefix) + 32 or not der.startswith(spki_prefix):
+        sys.exit("Updater metadata public key must be an Ed25519 SPKI PEM key.")
+    return base64.b64encode(der[-32:]).decode("ascii")
+
+
+def stage_in_app_updater_assets(
+    share_dir: Path,
+    installer: Path,
+    release_dir: Path,
+    metadata_public_key_path: Path,
+) -> dict[str, object]:
+    """Verify and stage the authenticated release closed set for an in-app
+    updater Sandbox round.
+
+    Production consumes HTTPS. A Sandbox test candidate compiled with the
+    explicit release test gate consumes this same byte-for-byte set over the
+    loopback-only server staged below.
+    """
+    release_dir = release_dir.resolve()
+    metadata_public_key_path = metadata_public_key_path.resolve()
+    required = [
+        release_dir / "release.v1.json",
+        release_dir / "release.v1.json.sig",
+        release_dir / "latest.json",
+        release_dir / f"{installer.name}.sig",
+        metadata_public_key_path,
+    ]
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        sys.exit("Missing in-app updater release asset(s): " + ", ".join(missing))
+
+    try:
+        descriptor = json.loads(required[0].read_text(encoding="utf-8"))
+        latest = json.loads(required[2].read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.exit(f"Updater release metadata is unreadable: {exc}")
+
+    artifact = descriptor.get("artifact") or {}
+    artifact_url = str(artifact.get("url") or "")
+    parsed_url = urlparse(artifact_url)
+    candidate_hash = _sha256_of(installer)
+    latest_platform = (latest.get("platforms") or {}).get("windows-x86_64") or {}
+    metadata_key_id = str(descriptor.get("metadataKeyId") or "")
+    if (
+        descriptor.get("schemaVersion") != 1
+        or parsed_url.scheme != "http"
+        or parsed_url.hostname not in {"127.0.0.1", "localhost"}
+        or Path(parsed_url.path).name != installer.name
+        or artifact.get("sha256") != candidate_hash
+        or latest.get("version") != descriptor.get("version")
+        or latest_platform.get("url") != artifact_url
+        or latest_platform.get("signature") != artifact.get("signature")
+        or not metadata_key_id
+    ):
+        sys.exit(
+            "Updater release set is not a closed loopback Sandbox set for "
+            "the selected candidate installer."
+        )
+
+    verifier = REPO_ROOT / "scripts" / "release" / "app-release-assets.mjs"
+    verified = subprocess.run(
+        [
+            "node",
+            str(verifier),
+            "verify",
+            "--installer",
+            str(installer),
+            "--artifact-signature",
+            str(release_dir / f"{installer.name}.sig"),
+            "--metadata-public-key",
+            str(metadata_public_key_path),
+            "--release-dir",
+            str(release_dir),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if verified.returncode != 0:
+        detail = (verified.stderr or verified.stdout).strip()
+        sys.exit(f"Authenticated updater release verification failed: {detail}")
+
+    feed_dir = share_dir / "updater-release"
+    feed_dir.mkdir(parents=True, exist_ok=True)
+    for source in required[:4]:
+        shutil.copy2(source, feed_dir / source.name)
+    shutil.copy2(installer, feed_dir / installer.name)
+    for script_name in (
+        "serve-updater-feed.ps1",
+        "start-in-app-update-test.ps1",
+        "collect-updater-evidence.ps1",
+    ):
+        shutil.copy2(SCRIPT_DIR / script_name, share_dir / script_name)
+
+    info: dict[str, object] = {
+        "schemaVersion": 1,
+        "mode": "in-app-update-from-release",
+        "version": descriptor.get("version"),
+        "sequence": descriptor.get("sequence"),
+        "candidateInstaller": installer.name,
+        "candidateSha256": candidate_hash,
+        "descriptorUrl": artifact_url.rsplit("/", 1)[0] + "/release.v1.json",
+        "metadataRootKeyId": metadata_key_id,
+        "metadataRootPublicKey": _ed25519_raw_public_key(metadata_public_key_path),
+        "durablePhases": [
+            "PREPARED",
+            "HEAD_STOPPED",
+            "INSTALL_LAUNCHING",
+            "INSTALL_LAUNCHED",
+            "RECONCILING",
+            "COMMITTED",
+            "CANCELLED",
+            "REPAIR_REQUIRED",
+        ],
+    }
+    (share_dir / "updater-qualification.v1.json").write_text(
+        json.dumps(info, indent=2) + "\n", encoding="utf-8"
+    )
+    (share_dir / "updater-qualification.md").write_text(
+        "\n".join(
+            [
+                "# In-app updater qualification",
+                "",
+                "This lane is valid only when the installed SOURCE build "
+                "contains the updater and was compiled from the previous "
+                "release source with `JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE=1` "
+                "and Tauri updater `dangerousInsecureTransportProtocol=true`. "
+                "Production builds must reject this loopback transport. The "
+                "ordinary `upgrade-from-release` lane separately qualifies the "
+                "exact published previous installer; the loopback lane cannot "
+                "be byte-identical because that production binary rejects "
+                "runtime trust overrides by design.",
+                "",
+                "1. Install the updater-capable previous-source Sandbox build "
+                "and seed retained user state.",
+                "2. Run `powershell -ExecutionPolicy Bypass -File .\\start-in-app-update-test.ps1`.",
+                "3. In Settings, check for the authenticated update and explicitly choose install.",
+                "4. Before any deliberate interruption, and after every restart, run "
+                "`.\\collect-updater-evidence.ps1`. Preserve `evidence\\updater`.",
+                "5. A normal round passes only when the installed version is the target, "
+                "the intent is `COMMITTED`, and seeded state survives.",
+                "",
+                "Recovery oracles:",
+                "- A source-version restart with a pre-launch intent must settle `CANCELLED`.",
+                "- A target-version restart with a witnessed launch must settle `COMMITTED`.",
+                "- An unprovable/invalid launch or unavailable recovery path must settle "
+                "`REPAIR_REQUIRED` and keep the signed staged artifact for diagnosis.",
+                "- `installer-launch-witness.v1.json` must agree with the intent attempt, "
+                "digest, size, staged path, and process id.",
+                "",
+                "The Rust transition/fixture suite deterministically exercises every durable "
+                "phase. This Sandbox lane supplies the real NSIS/Windows recovery oracle; do "
+                "not claim a phase interruption unless its before/after evidence was captured.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    print(
+        "Staged authenticated loopback updater feed "
+        f"(version {info['version']}, sequence {info['sequence']})."
+    )
+    return info
+
+
 def write_validation_mode(
     share_dir: Path,
     installer: Path,
     models_dir: Path | None,
     no_models: bool,
     upgrade_info: tuple[str, str] | None = None,
+    updater_info: dict[str, object] | None = None,
 ):
     """Write the actual launch mode into the mapped folder.
 
@@ -617,7 +800,11 @@ def write_validation_mode(
 
     if upgrade_info:
         prev_name, prev_sha256 = upgrade_info
-        mode = "upgrade-from-release"
+        mode = (
+            "in-app-update-from-release"
+            if updater_info
+            else "upgrade-from-release"
+        )
         details = [
             "Host models mapped: no",
             "JUSTSEARCH_MODELS_DIR: must remain unset",
@@ -633,6 +820,18 @@ def write_validation_mode(
             "3. Proceed with the normal mission -- data survival across the upgrade is itself a "
             "required observation, per ADR-0024 retained user data.",
         ]
+        if updater_info:
+            details.extend(
+                [
+                    "Candidate apply path: authenticated in-app updater over loopback Sandbox feed",
+                    f"Target version: {updater_info.get('version')}",
+                    f"Release sequence: {updater_info.get('sequence')}",
+                    "Start command: powershell -ExecutionPolicy Bypass -File "
+                    ".\\start-in-app-update-test.ps1",
+                    "Evidence command: powershell -ExecutionPolicy Bypass -File "
+                    ".\\collect-updater-evidence.ps1",
+                ]
+            )
     elif no_models:
         mode = "fresh-install"
         details = [
@@ -1002,6 +1201,26 @@ def main():
             "the candidate installer (refuses staging the same file twice)."
         ),
     )
+    parser.add_argument(
+        "--in-app-updater-assets",
+        help=(
+            "Directory containing the candidate's authenticated updater closed "
+            "set (release.v1.json, release.v1.json.sig, latest.json, and "
+            "<installer>.sig). Requires --upgrade-from and "
+            "--metadata-public-key. The descriptor/artifact URLs must target "
+            "loopback HTTP. The installed --upgrade-from SOURCE build must "
+            "contain the updater and be compiled with its Sandbox test gate; "
+            "production builds remain HTTPS-only."
+        ),
+    )
+    parser.add_argument(
+        "--metadata-public-key",
+        help=(
+            "Ed25519 SPKI PEM public key used to verify release.v1.json for an "
+            "--in-app-updater-assets round. This is public trust material, not "
+            "a signing secret."
+        ),
+    )
     args = parser.parse_args()
     if args.no_models and args.models_dir:
         sys.exit("--no-models and --models-dir are mutually exclusive.")
@@ -1011,6 +1230,17 @@ def main():
             "--upgrade-from and --models-dir are mutually exclusive: an "
             "upgrade-from-release round exercises the real download path "
             "(like fresh-install), not the pre-staged-models shortcut."
+        )
+
+    if bool(args.in_app_updater_assets) != bool(args.metadata_public_key):
+        sys.exit(
+            "--in-app-updater-assets and --metadata-public-key must be supplied together."
+        )
+    if args.in_app_updater_assets and not args.upgrade_from:
+        sys.exit(
+            "--in-app-updater-assets requires --upgrade-from: the in-app lane "
+            "must start from an installed updater-capable previous-source "
+            "Sandbox build."
         )
 
     if args.charter and args.no_charter:
@@ -1158,11 +1388,32 @@ def main():
     upgrade_info = None
     if upgrade_installer:
         upgrade_info = stage_upgrade_installer(share_dir, upgrade_installer)
+    updater_info = None
+    if args.in_app_updater_assets:
+        release_dir = Path(args.in_app_updater_assets)
+        if not release_dir.is_absolute():
+            release_dir = REPO_ROOT / release_dir
+        metadata_public_key = Path(args.metadata_public_key)
+        if not metadata_public_key.is_absolute():
+            metadata_public_key = REPO_ROOT / metadata_public_key
+        updater_info = stage_in_app_updater_assets(
+            share_dir,
+            installer,
+            release_dir,
+            metadata_public_key,
+        )
 
     # 4. Stamp actual validation mode, generate the per-candidate coverage brief
     #    (fail-closed on an unclassified shipped surface), stage the capture
     #    harness, then generate .wsb (tempdoc 728).
-    write_validation_mode(share_dir, installer, models_dir, args.no_models, upgrade_info)
+    write_validation_mode(
+        share_dir,
+        installer,
+        models_dir,
+        args.no_models,
+        upgrade_info,
+        updater_info,
+    )
     stage_charter(share_dir, args.charter, args.no_charter)
     stage_coverage_brief(share_dir)
     stage_round_plan(share_dir)

@@ -37,6 +37,9 @@ For the decision rationale (NSIS over MSI/WiX, per-user install, download-on-dem
   - Spawns the Java backend sidecar and captures its port.
   - Provides a Tauri command for the UI to read the backend port (`api_port`).
   - Enforces deterministic single-instance behavior (via `tauri-plugin-single-instance`).
+  - Checks the authenticated application-release feed, coordinates an orderly
+    Head/Worker shutdown, and launches a verified NSIS update only after
+    explicit user consent.
 
 Entry point: `modules/shell/src-tauri/src/lib.rs`
 
@@ -163,6 +166,43 @@ See:
 - UI resolver: `modules/ui-web/src/api/http.ts`
 - Tauri command: `modules/shell/src-tauri/src/lib.rs` (`#[tauri::command] api_port`)
 
+### 4.4 Application update sequence
+
+The application updater is a coordinated replacement of the installed app,
+not a component updater. AI Home models remain outside the NSIS artifact and
+are reused in place.
+
+1. The shell fetches `release.v1.json` and its detached Ed25519 signature from
+   the compile-time-pinned HTTPS release endpoint.
+2. The shell verifies release identity, monotonic sequence, durable-store
+   compatibility, and closed-set agreement with Tauri's `latest.json`.
+3. Tauri verifies the installer signature while downloading. The shell then
+   independently checks byte count, SHA-256, and executable shape.
+4. Head closes mutating admission and reports active operation-lease blockers.
+   Worker stops ingest admission, drains accepted work, and checkpoints its
+   SQLite queue.
+5. Head performs ordered shutdown and atomically writes a nonce-bound
+   `upgrade/head-shutdown-receipt.v1.json`. The shell accepts `HEAD_STOPPED`
+   only after the original child exits and the receipt proves a clean,
+   graceful shutdown.
+6. The shell rehashes the staged installer, launches it with
+   `ShellExecuteExW`, and persists the returned process witness before exiting.
+7. The next shell start reconciles the durable intent. A witnessed launch on
+   the target version becomes `COMMITTED`; pre-launch source state becomes
+   `CANCELLED`; missing or contradictory proof becomes `REPAIR_REQUIRED`.
+
+The frontend never authenticates releases. `appUpdateState.ts` projects
+shell-owned status into Settings and the global update banner. The background
+path checks only; install requires the user to activate the Settings action.
+
+Primary implementation:
+
+- `modules/shell/src-tauri/src/updater.rs`
+- `modules/ui/src/main/java/io/justsearch/ui/api/UpgradeController.java`
+- `modules/ui/src/main/java/io/justsearch/ui/HeadShutdownCoordinator.java`
+- `modules/worker-services/src/main/java/io/justsearch/indexerworker/services/WorkerUpgradeQuiescence.java`
+- `governance/store-recoverability.v1.json`
+
 ## 5. Local API network posture (loopback-only + CORS)
 
 ### 5.1 Loopback-only bind
@@ -236,6 +276,13 @@ Current behavior:
 - Generates a `.wsb` file with **16 GB RAM** allocation that maps `tmp/sandbox/share/` to `Desktop\JustSearchTest` inside the sandbox and (optionally) maps the host `models/` directory to `Desktop\JustSearchModels`.
 - LogonCommand opens an Explorer window at the mapped folder. Nothing else runs automatically — Git, Claude Code, and JustSearch are installed manually by the user inside the sandbox (see `scripts/sandbox/sandbox-CLAUDE.md` for the exact commands).
 - Drop any host-pre-staged installers (e.g. Git for Windows) into `tmp/sandbox/share/tools/` before launch; they appear inside the sandbox at `Desktop\JustSearchTest\tools\`.
+- `--upgrade-from <installer>` stages the exact previous published installer
+  for an installer-over-release arrival test.
+- `--in-app-updater-assets <dir> --metadata-public-key <pem>` adds an
+  authenticated loopback release set and recovery-evidence helpers. This mode
+  also requires an updater-capable `--upgrade-from` source build compiled with
+  `JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE=1`; production binaries reject runtime
+  trust overrides and non-HTTPS endpoints by design.
 
 In addition, `scripts/ci/package-installer-win.ps1` keeps the Sandbox share “fresh” by staging the newest installer under a
 stable alias plus a unique alias:
@@ -261,5 +308,4 @@ The Sandbox is used as a clean, ephemeral environment to validate:
 
 - **Worker config snapshot invalidation:** If `runtime/worker-config-snapshot.json` persists from a previous run with different model paths, the Worker uses stale config on first boot. This can cause GPU session failures and quality regressions. Fix: clean the data directory before a fresh install, or invalidate the snapshot on version change. (374 G26)
 - **`isProd` gate fix:** `resolveWorkerLibDir()` now checks the bundled layout unconditionally (not gated on `isProd`), fixing Worker spawn failures on installed apps where Tauri passes `isProd=false`. (375 G27)
-
 

@@ -660,6 +660,19 @@ public final class AiPackImportService implements io.justsearch.app.api.AiPackIm
         status.bytesDone = loaded.bytesDone;
         status.startedAtEpochMs = loaded.startedAtEpochMs;
         status.updatedAtEpochMs = loaded.updatedAtEpochMs;
+        // No import thread survives a Head restart. The installed-packs manifest and staging
+        // directories, not this progress projection, are the durable repair authorities.
+        if (!status.state.isBlank() && !"idle".equalsIgnoreCase(status.state)) {
+          status.state = "idle";
+          status.phase = "";
+          status.message = "";
+          status.errorCode = "";
+          status.bytesTotal = 0;
+          status.bytesDone = 0;
+          status.startedAtEpochMs = 0;
+          status.updatedAtEpochMs = System.currentTimeMillis();
+          persistStatusBestEffort();
+        }
       }
     } catch (Exception e) {
       log.debug("loadStatusBestEffort failed: {}", e.getMessage());
