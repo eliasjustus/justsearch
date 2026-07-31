@@ -2,10 +2,14 @@ package io.justsearch.app.services.intent;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.agent.api.registry.SourceTier;
 import io.justsearch.app.observability.ledger.ActionEvent;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.ArrayList;
@@ -91,7 +95,7 @@ class DurableGrantStoreTest {
 
   @Test
   @DisplayName("560 §28: durable grants (op + family) persist to disk and reload (survive a restart)")
-  void persistsAndReloads(@TempDir Path dir) {
+  void persistsAndReloads(@TempDir Path dir) throws Exception {
     Path file = dir.resolve("ui").resolve("durable-grants.json");
     DurableGrantStore store = new DurableGrantStore(Clock.systemUTC(), file);
     store.grantAllowAlways("core.x", SourceTier.UNTRUSTED);
@@ -104,5 +108,40 @@ class DurableGrantStoreTest {
         reopened.isAllowed("core.ingest", Optional.of("file-operations"), SourceTier.TRUSTED),
         "family grant survived");
     assertEquals(2, reopened.snapshot().size());
+    assertTrue(Files.readString(file).contains("\"schemaVersion\":1"));
+  }
+
+  @Test
+  void legacyV0StateLoads(@TempDir Path dir) throws Exception {
+    Path file = dir.resolve("durable-grants.json");
+    Files.writeString(
+        file,
+        """
+        {"grants":[{"kind":"OPERATION","target":"core.x","sourceTier":"UNTRUSTED"}]}
+        """);
+    DurableGrantStore store = new DurableGrantStore(Clock.systemUTC(), file);
+    assertTrue(store.isAllowed("core.x", SourceTier.UNTRUSTED));
+  }
+
+  @Test
+  void futureVersionIsRefusedWithoutOverwrite(@TempDir Path dir) throws Exception {
+    Path file = dir.resolve("durable-grants.json");
+    String future = "{\"schemaVersion\":99,\"grants\":[]}";
+    Files.writeString(file, future);
+    assertThrows(
+        UnsupportedStoreVersionException.class,
+        () -> new DurableGrantStore(Clock.systemUTC(), file));
+    assertEquals(future, Files.readString(file));
+  }
+
+  @Test
+  void malformedStateIsRefusedWithoutOverwrite(@TempDir Path dir) throws Exception {
+    Path file = dir.resolve("durable-grants.json");
+    String malformed = "{not-json";
+    Files.writeString(file, malformed);
+    assertThrows(
+        CorruptDurableStoreException.class,
+        () -> new DurableGrantStore(Clock.systemUTC(), file));
+    assertEquals(malformed, Files.readString(file));
   }
 }

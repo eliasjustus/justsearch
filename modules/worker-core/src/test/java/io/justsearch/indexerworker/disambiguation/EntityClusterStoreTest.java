@@ -2,8 +2,10 @@ package io.justsearch.indexerworker.disambiguation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
+import java.sql.DriverManager;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
@@ -47,6 +49,20 @@ class EntityClusterStoreTest {
     void doubleClose() throws Exception {
       store.close();
       store.close(); // should not throw
+    }
+
+    @Test
+    @DisplayName("future database schema is refused")
+    void futureSchemaIsRefused() throws Exception {
+      Path db = tempDir.resolve("entity-clusters.db");
+      store.close();
+      try (var connection = DriverManager.getConnection("jdbc:sqlite:" + db.toAbsolutePath());
+          var statement = connection.createStatement()) {
+        statement.execute("PRAGMA user_version = 2");
+      }
+
+      store = new EntityClusterStore(db);
+      assertThrows(java.sql.SQLException.class, store::open);
     }
   }
 

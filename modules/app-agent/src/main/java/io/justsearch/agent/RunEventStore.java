@@ -4,6 +4,8 @@ package io.justsearch.agent;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import io.justsearch.agent.api.encryption.StoreCipher;
+import io.justsearch.configuration.persistence.AtomicFileWrites;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -183,8 +185,8 @@ public final class RunEventStore {
       }
       return out;
     } catch (Exception e) {
-      LOG.warn("Failed to read events for session {}", sessionId, e);
-      return List.of();
+      throw new CorruptDurableStoreException(
+          "run-events", "Event log is unreadable for session " + sessionId, e);
     }
   }
 
@@ -200,9 +202,8 @@ public final class RunEventStore {
       return;
     }
     try {
-      Files.createDirectories(runDir(sessionId));
       String json = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(meta);
-      Files.writeString(metaPath(sessionId), cipher.seal(json), StandardCharsets.UTF_8);
+      AtomicFileWrites.replaceUtf8(metaPath(sessionId), cipher.seal(json));
     } catch (Exception e) {
       LOG.warn("Failed to write run meta for session {}", sessionId, e);
     }

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.ai.pack;
 
+import io.justsearch.configuration.persistence.AtomicFileWrites;
 import io.justsearch.app.api.AiPackPreflightException;
 import io.justsearch.app.api.AiPackPreflightResult;
 import io.justsearch.app.api.AiPackImportStatus;
@@ -636,8 +637,7 @@ public final class AiPackImportService implements io.justsearch.app.api.AiPackIm
 
   private void persistStatusBestEffort() {
     try {
-      Files.createDirectories(statusPath.getParent());
-      MAPPER.writeValue(statusPath.toFile(), status);
+      AtomicFileWrites.replace(statusPath, MAPPER.writeValueAsBytes(status));
     } catch (Exception e) {
       log.debug("persistStatusBestEffort failed: {}", e.getMessage());
     }

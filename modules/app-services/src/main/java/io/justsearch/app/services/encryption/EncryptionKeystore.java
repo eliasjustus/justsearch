@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.encryption;
 
+import io.justsearch.configuration.persistence.AtomicFileWrites;
+import io.justsearch.configuration.persistence.StoreFormatVersions;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.Objects;
 import java.util.Optional;
 import tools.jackson.databind.ObjectMapper;
@@ -37,19 +37,18 @@ public final class EncryptionKeystore {
     if (!Files.exists(file)) {
       return Optional.empty();
     }
-    return Optional.of(MAPPER.readValue(file.toFile(), KeystoreRecord.class));
+    KeystoreRecord record = MAPPER.readValue(file.toFile(), KeystoreRecord.class);
+    StoreFormatVersions.requireReadable(
+        "encryption-keystore",
+        record.version(),
+        EncryptionEnvelope.VERSION,
+        EncryptionEnvelope.VERSION);
+    return Optional.of(record);
   }
 
   public void save(KeystoreRecord record) {
     try {
-      Files.createDirectories(file.getParent());
-      Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-      MAPPER.writeValue(tmp.toFile(), record);
-      try {
-        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-      } catch (AtomicMoveNotSupportedException e) {
-        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-      }
+      AtomicFileWrites.replace(file, MAPPER.writeValueAsBytes(record));
     } catch (IOException e) {
       throw new UncheckedIOException("failed to write encryption keystore", e);
     }

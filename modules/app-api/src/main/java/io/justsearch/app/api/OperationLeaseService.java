@@ -46,4 +46,16 @@ public interface OperationLeaseService {
       OpCriticality criticality,
       long expectedDurationSec,
       Map<String, Object> metadata);
+
+  /**
+   * Atomically freeze new registrations and return the leases that were active at the boundary.
+   * Repeated calls while frozen return the existing preparation rather than replacing its owner.
+   */
+  OperationLeaseSnapshot freezeAdmission(String reason);
+
+  /** Return the current process-local admission and active-lease state. */
+  OperationLeaseSnapshot snapshot();
+
+  /** Release a barrier only when the caller presents its opaque preparation id. */
+  void releaseAdmission(String preparationId);
 }

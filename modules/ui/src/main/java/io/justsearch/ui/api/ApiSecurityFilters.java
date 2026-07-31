@@ -4,6 +4,7 @@ package io.justsearch.ui.api;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.justsearch.app.services.HeadAssembly;
+import io.justsearch.app.api.OperationLeaseService;
 import java.net.URI;
 import java.util.Locale;
 import java.util.Map;
@@ -44,6 +45,7 @@ final class ApiSecurityFilters {
   private final EventBuffer eventBuffer;
   private final ExecutorService slowRequestExecutor;
   private final HeadAssembly headAssembly;
+  private final OperationLeaseService operationLeases;
 
   // Rate-limit bookkeeping for deny / slow-dump logging.
   private final AtomicLong lastCorsDenyUiReadyAtMs = new AtomicLong(0);
@@ -57,12 +59,14 @@ final class ApiSecurityFilters {
       String sessionToken,
       EventBuffer eventBuffer,
       ExecutorService slowRequestExecutor,
-      HeadAssembly headAssembly) {
+      HeadAssembly headAssembly,
+      OperationLeaseService operationLeases) {
     this.prodMode = prodMode;
     this.sessionToken = sessionToken;
     this.eventBuffer = eventBuffer;
     this.slowRequestExecutor = slowRequestExecutor;
     this.headAssembly = headAssembly;
+    this.operationLeases = operationLeases;
   }
 
   /** Installs the Host-allowlist, CORS, session-token, and capability-gate before-filters on the app. */
@@ -70,7 +74,27 @@ final class ApiSecurityFilters {
     setupHostValidation(app);
     setupCors(app, prodMode);
     setupSessionTokenEnforcement(app);
+    setupOperationAdmission(app);
     setupCapabilityGates(app);
+  }
+
+  private void setupOperationAdmission(Javalin app) {
+    if (operationLeases == null) return;
+    app.before(
+        ctx -> {
+          String method = ctx.method().name().toUpperCase(Locale.ROOT);
+          if ("GET".equals(method) || "OPTIONS".equals(method)) return;
+          if (ctx.path().startsWith("/api/upgrade/")) return;
+          var snapshot = operationLeases.snapshot();
+          if (!snapshot.admissionFrozen()) return;
+          ctx.status(503)
+              .json(
+                  Map.of(
+                      "error", "Application upgrade preparation has frozen mutating operations",
+                      "errorCode", "UPGRADE_PREPARING",
+                      "preparationId", snapshot.preparationId()));
+          throw new io.javalin.http.HttpResponseException(503, "Upgrade preparing");
+        });
   }
 
   /**

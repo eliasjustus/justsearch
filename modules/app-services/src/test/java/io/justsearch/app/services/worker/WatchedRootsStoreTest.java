@@ -2,6 +2,8 @@ package io.justsearch.app.services.worker;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
 import tools.jackson.databind.ObjectMapper;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -72,9 +74,34 @@ final class WatchedRootsStoreTest {
 
     assertTrue(Files.exists(rootsFile));
     String written = Files.readString(rootsFile);
+    assertTrue(written.contains("\"schemaVersion\" : 1"));
     assertTrue(written.contains("\"roots\""));
 
     Map<Path, Instant> loaded = store.loadPersistedRoots();
     assertEquals(ts, loaded.get(root.toAbsolutePath()));
+  }
+
+  @Test
+  @DisplayName("Refuses a future version without changing it")
+  void refusesFutureVersion() throws Exception {
+    Path rootsFile = tempDir.resolve("watched_roots.json");
+    String future = "{\"schemaVersion\":99,\"roots\":[]}";
+    Files.writeString(rootsFile, future);
+
+    WatchedRootsStore store = new WatchedRootsStore(rootsFile, null);
+    assertThrows(UnsupportedStoreVersionException.class, store::loadPersistedRoots);
+    assertEquals(future, Files.readString(rootsFile));
+  }
+
+  @Test
+  @DisplayName("Refuses malformed state without treating it as empty")
+  void refusesMalformedState() throws Exception {
+    Path rootsFile = tempDir.resolve("watched_roots.json");
+    String malformed = "{not-json";
+    Files.writeString(rootsFile, malformed);
+
+    WatchedRootsStore store = new WatchedRootsStore(rootsFile, null);
+    assertThrows(CorruptDurableStoreException.class, store::loadPersistedRootsWithErrors);
+    assertEquals(malformed, Files.readString(rootsFile));
   }
 }

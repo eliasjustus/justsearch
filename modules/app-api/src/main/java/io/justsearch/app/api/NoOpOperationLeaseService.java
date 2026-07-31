@@ -19,6 +19,19 @@ enum NoOpOperationLeaseService implements OperationLeaseService {
     return NoOpHandle.INSTANCE;
   }
 
+  @Override
+  public OperationLeaseSnapshot freezeAdmission(String reason) {
+    return new OperationLeaseSnapshot(false, null, null, java.util.List.of());
+  }
+
+  @Override
+  public OperationLeaseSnapshot snapshot() {
+    return new OperationLeaseSnapshot(false, null, null, java.util.List.of());
+  }
+
+  @Override
+  public void releaseAdmission(String preparationId) {}
+
   private enum NoOpHandle implements OperationLeaseHandle {
     INSTANCE;
 

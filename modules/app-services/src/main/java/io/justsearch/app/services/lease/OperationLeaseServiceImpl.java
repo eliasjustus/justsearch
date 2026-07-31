@@ -3,9 +3,11 @@ package io.justsearch.app.services.lease;
 
 import io.justsearch.app.api.OpCriticality;
 import io.justsearch.app.api.OpLeaseOutcome;
+import io.justsearch.app.api.OperationAdmissionClosedException;
 import io.justsearch.app.api.OperationLease;
 import io.justsearch.app.api.OperationLeaseHandle;
 import io.justsearch.app.api.OperationLeaseService;
+import io.justsearch.app.api.OperationLeaseSnapshot;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -53,6 +55,9 @@ public final class OperationLeaseServiceImpl implements OperationLeaseService {
   private final Path leasesFile;
   private final ReentrantLock lock = new ReentrantLock();
   private final boolean enabled;
+  private final Map<String, OperationLease> activeLeases = new LinkedHashMap<>();
+  private String preparationId;
+  private String preparationReason;
 
   public OperationLeaseServiceImpl() {
     String stateRoot = System.getenv(ENV_STATE_ROOT);
@@ -60,7 +65,7 @@ public final class OperationLeaseServiceImpl implements OperationLeaseService {
       this.enabled = false;
       this.leasesFile = null;
       log.debug(
-          "OperationLeaseService: {} unset; service is no-op (production / non-dev-runner launch).",
+          "OperationLeaseService: {} unset; process-local admission is active without projection.",
           ENV_STATE_ROOT);
     } else {
       this.enabled = true;
@@ -90,9 +95,6 @@ public final class OperationLeaseServiceImpl implements OperationLeaseService {
     if (expectedDurationSec <= 0) {
       throw new IllegalArgumentException("expectedDurationSec must be positive");
     }
-    if (!enabled) {
-      return NoOpHandle.INSTANCE;
-    }
     String opId = UUID.randomUUID().toString();
     Instant now = Instant.now();
     long capSec = Math.max(expectedDurationSec * 2L, 60L);
@@ -114,7 +116,16 @@ public final class OperationLeaseServiceImpl implements OperationLeaseService {
             "head",
             holder,
             safeMeta);
-    rewrite(existing -> appendActive(existing, lease, now));
+    lock.lock();
+    try {
+      if (preparationId != null) {
+        throw new OperationAdmissionClosedException(preparationId, preparationReason);
+      }
+      activeLeases.put(opId, lease);
+      rewrite(existing -> appendActive(existing, lease, now));
+    } finally {
+      lock.unlock();
+    }
     log.info(
         "OperationLease registered: opId={} opClass={} criticality={} expiresAt={}",
         opId, opClass, criticality, expiresAt);
@@ -122,20 +133,103 @@ public final class OperationLeaseServiceImpl implements OperationLeaseService {
   }
 
   private void renew(String opId) {
-    if (!enabled) return;
     Instant now = Instant.now();
-    rewrite(existing -> renewActive(existing, opId, now));
+    lock.lock();
+    try {
+      OperationLease existingLease = activeLeases.get(opId);
+      if (existingLease != null) {
+        Instant minimumExpiry = now.plusSeconds(RENEWAL_EXTENSION_SEC);
+        Instant expiry =
+            existingLease.expiresAt().isBefore(minimumExpiry)
+                ? minimumExpiry
+                : existingLease.expiresAt();
+        activeLeases.put(
+            opId,
+            new OperationLease(
+                existingLease.opId(),
+                existingLease.opClass(),
+                existingLease.criticality(),
+                existingLease.startedAt(),
+                existingLease.expectedDurationSec(),
+                expiry,
+                now,
+                existingLease.originProcess(),
+                existingLease.holder(),
+                existingLease.metadata()));
+      }
+      rewrite(existing -> renewActive(existing, opId, now));
+    } finally {
+      lock.unlock();
+    }
   }
 
   private void release(String opId, OpLeaseOutcome outcome) {
-    if (!enabled) return;
-    rewrite(existing -> removeActive(existing, opId, outcome));
+    lock.lock();
+    try {
+      activeLeases.remove(opId);
+      rewrite(existing -> removeActive(existing, opId, outcome));
+    } finally {
+      lock.unlock();
+    }
     log.info("OperationLease released: opId={} outcome={}", opId, outcome);
+  }
+
+  @Override
+  public OperationLeaseSnapshot freezeAdmission(String reason) {
+    if (reason == null || reason.isBlank()) {
+      throw new IllegalArgumentException("reason must be non-blank");
+    }
+    lock.lock();
+    try {
+      if (preparationId == null) {
+        preparationId = UUID.randomUUID().toString();
+        preparationReason = reason;
+      }
+      return snapshotLocked();
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  @Override
+  public OperationLeaseSnapshot snapshot() {
+    lock.lock();
+    try {
+      return snapshotLocked();
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  @Override
+  public void releaseAdmission(String expectedPreparationId) {
+    lock.lock();
+    try {
+      if (preparationId == null) {
+        return;
+      }
+      if (!preparationId.equals(expectedPreparationId)) {
+        throw new IllegalArgumentException("preparationId does not own the admission barrier");
+      }
+      preparationId = null;
+      preparationReason = null;
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  private OperationLeaseSnapshot snapshotLocked() {
+    return new OperationLeaseSnapshot(
+        preparationId != null,
+        preparationId,
+        preparationReason,
+        List.copyOf(activeLeases.values()));
   }
 
   // ----- File I/O (lock-serialized) -----
 
   private void rewrite(java.util.function.Function<Map<String, Object>, Map<String, Object>> mut) {
+    if (!enabled) return;
     lock.lock();
     try {
       Map<String, Object> existing = readOrEmpty();
@@ -328,26 +422,4 @@ public final class OperationLeaseServiceImpl implements OperationLeaseService {
     }
   }
 
-  private enum NoOpHandle implements OperationLeaseHandle {
-    INSTANCE;
-
-    @Override
-    public String opId() {
-      return "noop";
-    }
-
-    @Override
-    public String opClass() {
-      return "noop";
-    }
-
-    @Override
-    public void renew() {}
-
-    @Override
-    public void release(OpLeaseOutcome outcome) {}
-
-    @Override
-    public void close() {}
-  }
 }

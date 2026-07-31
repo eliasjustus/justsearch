@@ -187,7 +187,9 @@ public class LocalApiServer {
     // Tempdoc 542 Phase 3: op-lease SPI from ServicePhase output (no-op when not running
     // under dev-runner — env var absent).
     io.justsearch.app.api.OperationLeaseService leaseSvc =
-        b.HeadAssembly != null && b.HeadAssembly.serviceOut() != null
+        b.operationLeaseService != null
+            ? b.operationLeaseService
+            : b.HeadAssembly != null && b.HeadAssembly.serviceOut() != null
             ? b.HeadAssembly.serviceOut().operationLeaseService()
             : new io.justsearch.app.services.lease.OperationLeaseServiceImpl();
     this.indexingController =
@@ -211,10 +213,12 @@ public class LocalApiServer {
                 b.HeadAssembly, this.telemetry, b.runtimeManifestPublisher, b.indexBasePath)
             : null;
     MetaApiModule metaApiModule = new MetaApiModule(() -> this.app, () -> this.apiModules);
+    UpgradeApiModule upgradeApiModule =
+        new UpgradeApiModule(leaseSvc, b.upgradeShutdownAction);
     this.apiModules =
         resourceApiModule != null
-            ? java.util.List.of(metaApiModule, resourceApiModule)
-            : java.util.List.of(metaApiModule);
+            ? java.util.List.of(metaApiModule, resourceApiModule, upgradeApiModule)
+            : java.util.List.of(metaApiModule, upgradeApiModule);
     this.HeadAssemblyRef = b.HeadAssembly;
 
     // Tempdoc 583 Stage 1: message catalogs are constructed + bound in MessageCatalogRoutes (setupRoutes).
@@ -279,7 +283,7 @@ public class LocalApiServer {
     this.securityFilters =
         new ApiSecurityFilters(
             this.prodMode, this.sessionToken, this.eventBuffer, this.slowRequestExecutor,
-            this.HeadAssemblyRef);
+            this.HeadAssemblyRef, leaseSvc);
 
     // Bind to explicit port when provided (dev/prod), otherwise pick a free port.
     int bindPort = configuredPort == null ? 0 : configuredPort;
@@ -948,6 +952,8 @@ public class LocalApiServer {
     // through so LocalApiServer can wire the REST + SSE transports).
     // Tempdoc 583 Stage 2: package-private (ConversationApiAssembly reads it for the MCP surface).
     io.justsearch.ui.runtime.RuntimeManifestPublisher runtimeManifestPublisher;
+    Runnable upgradeShutdownAction = () -> {};
+    io.justsearch.app.api.OperationLeaseService operationLeaseService;
 
     Builder(io.justsearch.app.services.settings.UiSettingsStore settingsStore, Path indexBasePath) {
       this.settingsStore = settingsStore;
@@ -993,6 +999,16 @@ public class LocalApiServer {
     public Builder runtimeManifestPublisher(
         io.justsearch.ui.runtime.RuntimeManifestPublisher publisher) {
       this.runtimeManifestPublisher = publisher;
+      return this;
+    }
+
+    public Builder upgradeShutdownAction(Runnable action) {
+      this.upgradeShutdownAction = action == null ? () -> {} : action;
+      return this;
+    }
+
+    Builder operationLeaseService(io.justsearch.app.api.OperationLeaseService service) {
+      this.operationLeaseService = service;
       return this;
     }
 

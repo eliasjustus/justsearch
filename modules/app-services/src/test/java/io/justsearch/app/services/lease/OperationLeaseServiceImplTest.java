@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.app.api.OpCriticality;
 import io.justsearch.app.api.OpLeaseOutcome;
+import io.justsearch.app.api.OperationAdmissionClosedException;
 import io.justsearch.app.api.OperationLeaseHandle;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -177,13 +178,50 @@ final class OperationLeaseServiceImplTest {
   }
 
   @Test
-  void disabledServiceIsNoOp() {
+  void serviceWithoutProjectionStillTracksProcessLocalLeases() {
     var svc = new OperationLeaseServiceImpl((Path) null);
     OperationLeaseHandle h = svc.register("op", OpCriticality.MUST_COMPLETE, 60, null);
     assertNotNull(h);
+    assertEquals(1, svc.snapshot().activeLeases().size());
     h.renew();
     h.release(OpLeaseOutcome.SUCCESS);
+    assertEquals(0, svc.snapshot().activeLeases().size());
     h.close();
+  }
+
+  @Test
+  void freezeClosesTheRegistrationRaceAndSnapshotNamesActiveBlockers() {
+    var svc = new OperationLeaseServiceImpl((Path) null);
+    OperationLeaseHandle active =
+        svc.register("indexing.migration", OpCriticality.MUST_COMPLETE, 60, null);
+
+    var frozen = svc.freezeAdmission("application upgrade");
+    assertTrue(frozen.admissionFrozen());
+    assertNotNull(frozen.preparationId());
+    assertEquals(1, frozen.activeLeases().size());
+    assertEquals("indexing.migration", frozen.activeLeases().get(0).opClass());
+    assertThrows(
+        OperationAdmissionClosedException.class,
+        () -> svc.register("late.write", OpCriticality.MUST_COMPLETE, 60, null));
+
+    active.close();
+    assertEquals(0, svc.snapshot().activeLeases().size());
+  }
+
+  @Test
+  void freezeIsIdempotentAndOnlyItsOwnerCanReleaseIt() {
+    var svc = new OperationLeaseServiceImpl((Path) null);
+    var first = svc.freezeAdmission("application upgrade");
+    var repeated = svc.freezeAdmission("different caller");
+    assertEquals(first.preparationId(), repeated.preparationId());
+    assertEquals("application upgrade", repeated.reason());
+
+    assertThrows(IllegalArgumentException.class, () -> svc.releaseAdmission("wrong"));
+    svc.releaseAdmission(first.preparationId());
+    assertTrue(!svc.snapshot().admissionFrozen());
+    OperationLeaseHandle admitted =
+        svc.register("after.release", OpCriticality.INTERRUPTIBLE, 60, null);
+    admitted.close();
   }
 
   /**

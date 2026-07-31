@@ -1,7 +1,7 @@
 {
-  "version": 1,
-  "tempdoc": 629,
-  "note": "Tempdoc 629 #5 — the governed register for the store-recoverability classification. The Java authority is StoreCatalog; this register mirrors it (the gate enforces PARITY so neither can drift). It is promoted from the #1 descriptor list now that THREE obligations read the class (encryption cipher-selection, encrypted backup/export, export-first-uninstall). The gate also enforces NO-HARDCODE: every storeCipher(...) call in a construction site must read the catalog (StoreCatalog.X.recoverability()), never a bare StoreRecoverability literal — so a new store cannot get a cipher without a catalog entry, which is what makes 'a new unclassified store fails the build' true. Conforms to the readiness-reason-codes / execution-surfaces register+gate pattern; not a parallel governance mechanism.",
+  "version": 2,
+  "tempdoc": 617,
+  "note": "The StoreCatalog mirror remains the cipher-selection authority for its six stores. durableStores is the broader in-place-upgrade compatibility register: every process-owned durable authority names its owner, recovery class, format, write behavior, reconciliation, implementation, and evidence. HARDENING_REQUIRED rows are an explicit tempdoc-617 ratchet; the gate forbids adding an unnamed gap.",
   "catalog": {
     "file": "modules/app-agent-api/src/main/java/io/justsearch/agent/api/encryption/StoreCatalog.java"
   },
@@ -12,6 +12,639 @@
     { "dirName": "feedback", "recoverability": "AUTHORED" },
     { "dirName": "index", "recoverability": "DERIVED" },
     { "dirName": "jobs.db", "recoverability": "DERIVED" }
+  ],
+  "knownCompatibilityGaps": [],
+  "durableStores": [
+    {
+      "id": "ui-settings",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "settings/ui-settings.json",
+      "recoverability": "AUTHORED",
+      "format": "JSON envelope v1 around legacy UiSettings object",
+      "currentVersion": 1,
+      "readableLegacyVersions": [0],
+      "versionAuthority": "modules/app-services/src/main/java/io/justsearch/app/services/settings/UiSettingsStore.java",
+      "futureVersionRefusalTest": "modules/app-services/src/test/java/io/justsearch/app/services/settings/UiSettingsStorePersistenceModeTest.java",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "FAIL_LOUD_AND_PRESERVE",
+      "reconciliation": "READ_V0_OR_V1_AND_WRITE_V1",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/settings/UiSettingsStore.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/settings/UiSettingsStorePersistenceModeTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "durable-grants",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "intent/durable-grants.json",
+      "recoverability": "AUTHORED",
+      "format": "JSON grant envelope v1",
+      "currentVersion": 1,
+      "readableLegacyVersions": [0],
+      "versionAuthority": "modules/app-services/src/main/java/io/justsearch/app/services/intent/DurableGrantStore.java",
+      "futureVersionRefusalTest": "modules/app-services/src/test/java/io/justsearch/app/services/intent/DurableGrantStoreTest.java",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "FAIL_LOUD_AND_PRESERVE",
+      "reconciliation": "READ_V0_OR_V1_AND_WRITE_V1",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/intent/DurableGrantStore.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/intent/DurableGrantStoreTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "plugin-allowlist",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "plugins/allowlist.json",
+      "recoverability": "AUTHORED",
+      "format": "JSON allowlist envelope v1",
+      "currentVersion": 1,
+      "readableLegacyVersions": [0],
+      "versionAuthority": "modules/app-services/src/main/java/io/justsearch/app/services/settings/PluginAllowlistStore.java",
+      "futureVersionRefusalTest": "modules/app-services/src/test/java/io/justsearch/app/services/settings/PluginAllowlistStoreTest.java",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "FAIL_LOUD_AND_PRESERVE",
+      "reconciliation": "READ_V0_ARRAY_OR_V1_ENVELOPE_AND_WRITE_V1",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/settings/PluginAllowlistStore.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/settings/PluginAllowlistStoreTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "feedback-capture-preference",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "feedback-capture.json",
+      "recoverability": "AUTHORED",
+      "format": "JSON preference object v1",
+      "currentVersion": 1,
+      "readableLegacyVersions": [0],
+      "versionAuthority": "modules/app-services/src/main/java/io/justsearch/app/services/feedback/FeedbackCaptureSettings.java",
+      "futureVersionRefusalTest": "modules/app-services/src/test/java/io/justsearch/app/services/feedback/FeedbackCaptureSettingsTest.java",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "FAIL_CLOSED_DISABLED_WRITE_LOCKED",
+      "reconciliation": "READ_V0_OR_V1_AND_REQUIRE_EXPLICIT_REPAIR_ON_ERROR",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/feedback/FeedbackCaptureSettings.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/feedback/FeedbackCaptureSettingsTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "installed-packs",
+      "owner": "HEAD",
+      "root": "AI_HOME",
+      "path": "installed-packs.v1.json",
+      "recoverability": "DERIVED",
+      "format": "JSON envelope v1",
+      "currentVersion": 1,
+      "readableLegacyVersions": [],
+      "versionAuthority": "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/InstalledPacksStore.java",
+      "futureVersionRefusalTest": "modules/app-services/src/test/java/io/justsearch/app/services/ai/pack/InstalledPacksStoreTest.java",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "FAIL_LOUD_AND_PRESERVE",
+      "reconciliation": "RETAIN_INCOMPATIBLE_PROJECTION_DISABLE_AND_REIMPORT_PACKS",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/InstalledPacksStore.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/ai/pack/AiPackImportServiceTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "ai-install-contract",
+      "owner": "HEAD",
+      "root": "AI_HOME",
+      "path": "install-contract.v2.json",
+      "recoverability": "DERIVED",
+      "format": "JSON record v2",
+      "currentVersion": 2,
+      "readableLegacyVersions": [],
+      "versionAuthority": "modules/configuration/src/main/java/io/justsearch/configuration/model/InstallContractIO.java",
+      "futureVersionRefusalTest": "modules/configuration/src/test/java/io/justsearch/configuration/model/InstallContractIOTest.java",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "FAIL_LOUD",
+      "reconciliation": "REBUILD_FROM_VERIFIED_INSTALLED_ASSETS",
+      "status": "READY",
+      "implementationSources": [
+        "modules/configuration/src/main/java/io/justsearch/configuration/model/InstallContractIO.java"
+      ],
+      "tests": [
+        "modules/configuration/src/test/java/io/justsearch/configuration/model/InstallContractIOTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "encryption-keystore",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "encryption/keystore.json",
+      "recoverability": "AUTHORED",
+      "format": "JSON KeystoreRecord v1",
+      "currentVersion": 1,
+      "readableLegacyVersions": [],
+      "versionAuthority": "modules/app-services/src/main/java/io/justsearch/app/services/encryption/KeystoreRecord.java",
+      "futureVersionRefusalTest": "modules/app-services/src/test/java/io/justsearch/app/services/encryption/DataKeyManagerTest.java",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "FAIL_LOUD",
+      "reconciliation": "REQUIRE_USER_UNLOCK_OR_RECOVERY_KEY",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/encryption/EncryptionKeystore.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/encryption/DataKeyManagerTest.java",
+        "modules/app-services/src/test/java/io/justsearch/app/services/encryption/EncryptionEnvelopeTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "user-policy",
+      "owner": "EXTERNAL",
+      "root": "PROGRAM_DATA_OR_DATA_DIR",
+      "path": "policy.v1.json",
+      "recoverability": "AUTHORED",
+      "format": "JSON policy envelope v1",
+      "currentVersion": 1,
+      "readableLegacyVersions": [],
+      "versionAuthority": "modules/app-services/src/main/java/io/justsearch/app/services/policy/UserPolicyWriter.java",
+      "futureVersionRefusalTest": "modules/app-services/src/test/java/io/justsearch/app/services/policy/UserPolicyWriterTest.java",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "FAIL_LOUD",
+      "reconciliation": "PRESERVE_EXTERNAL_AUTHORITY",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/policy/UserPolicyWriter.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/policy/UserPolicyWriterTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "memories",
+      "catalogDirName": "memories",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "memories/",
+      "recoverability": "AUTHORED",
+      "format": "encrypted JSON envelope v1 around legacy record arrays",
+      "currentVersion": 1,
+      "readableLegacyVersions": [0],
+      "versionAuthority": "modules/app-agent/src/main/java/io/justsearch/agent/FileMemoryStore.java",
+      "futureVersionRefusalTest": "modules/app-agent/src/test/java/io/justsearch/agent/FileMemoryStoreTest.java",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "FAIL_LOUD_AND_PRESERVE",
+      "reconciliation": "READ_V0_ARRAY_OR_V1_ENVELOPE_AND_WRITE_V1",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-agent/src/main/java/io/justsearch/agent/FileMemoryStore.java"
+      ],
+      "tests": [
+        "modules/app-agent/src/test/java/io/justsearch/agent/FileMemoryStoreTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "conversations",
+      "catalogDirName": "conversations",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "conversations/",
+      "recoverability": "AUTHORED",
+      "format": "schema-v1 encrypted meta.json plus legacy-compatible append-only messages.jsonl",
+      "currentVersion": 1,
+      "readableLegacyVersions": [0],
+      "versionAuthority": "modules/app-services/src/main/java/io/justsearch/app/services/conversation/FileConversationStore.java",
+      "futureVersionRefusalTest": "modules/app-services/src/test/java/io/justsearch/app/services/conversation/FileConversationStoreTest.java",
+      "writeMode": "MIXED_APPEND_AND_FULL_REWRITE",
+      "atomicity": "ATOMIC_META_REPLACE_AND_APPEND_ONLY_MESSAGES",
+      "corruptionPolicy": "FAIL_LOUD_AND_PRESERVE",
+      "reconciliation": "READ_V0_META_OR_V1_META_AND_PRESERVE_MESSAGE_LINES",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/conversation/FileConversationStore.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/conversation/FileConversationStoreTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "agent-runs",
+      "catalogDirName": "agent-runs",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "agent-runs/",
+      "recoverability": "AUTHORED",
+      "format": "meta/checkpoint JSON v4 plus append-only events",
+      "currentVersion": 4,
+      "readableLegacyVersions": [0, 1, 2, 3],
+      "versionAuthority": "modules/app-agent/src/main/java/io/justsearch/agent/AgentRunStore.java",
+      "futureVersionRefusalTest": "modules/app-agent/src/test/java/io/justsearch/agent/AgentRunStoreSchemaUpcasterTest.java",
+      "writeMode": "MIXED_APPEND_AND_FULL_REWRITE",
+      "atomicity": "ATOMIC_META_REPLACE_AND_SINGLE_APPEND",
+      "corruptionPolicy": "FAIL_LOUD_AND_PRESERVE",
+      "reconciliation": "EXISTING_V0_TO_V4_UPCAST_THEN_ATOMIC_CHECKPOINT",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-agent/src/main/java/io/justsearch/agent/AgentRunStore.java"
+      ],
+      "tests": [
+        "modules/app-agent/src/test/java/io/justsearch/agent/AgentRunStoreTest.java",
+        "modules/app-agent/src/test/java/io/justsearch/agent/AgentRunStoreSchemaUpcasterTest.java"
+      ],
+      "fixtures": [
+        "modules/app-agent/src/test/resources/fixtures/schema-v0",
+        "modules/app-agent/src/test/resources/fixtures/schema-v1"
+      ]
+    },
+    {
+      "id": "run-events",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "agent-runs/*/events.ndjson and meta.json",
+      "recoverability": "AUTHORED",
+      "format": "append-only NDJSON plus JSON metadata",
+      "currentVersion": 0,
+      "readableLegacyVersions": [],
+      "writeMode": "MIXED_APPEND_AND_FULL_REWRITE",
+      "atomicity": "ATOMIC_META_REPLACE_AND_SINGLE_APPEND",
+      "corruptionPolicy": "FAIL_LOUD_AND_PRESERVE",
+      "reconciliation": "PRESERVE_APPEND_LOG_AND_UPCAST_METADATA",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-agent/src/main/java/io/justsearch/agent/RunEventStore.java"
+      ],
+      "tests": [
+        "modules/app-agent/src/test/java/io/justsearch/agent/RunEventStoreTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "file-operation-journal",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "file-operations/",
+      "recoverability": "AUTHORED",
+      "format": "JSON transaction log v1",
+      "currentVersion": 1,
+      "readableLegacyVersions": [0],
+      "versionAuthority": "modules/app-agent/src/main/java/io/justsearch/agent/tools/FileOperationLog.java",
+      "futureVersionRefusalTest": "modules/app-agent/src/test/java/io/justsearch/agent/tools/FileOperationLogTest.java",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "ACTIVE_AND_FUTURE_LOGS_FAIL_LOUD",
+      "reconciliation": "RECOVER_ACTIVE_TRANSACTION_PRESERVE_HISTORY",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-agent/src/main/java/io/justsearch/agent/tools/FileOperationLog.java"
+      ],
+      "tests": [
+        "modules/app-agent/src/test/java/io/justsearch/agent/tools/FileOperationLogTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "feedback-records",
+      "catalogDirName": "feedback",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "feedback/*.ndjson",
+      "recoverability": "AUTHORED",
+      "format": "encrypted append-only NDJSON record envelope v1",
+      "currentVersion": 1,
+      "readableLegacyVersions": [0],
+      "versionAuthority": "modules/app-services/src/main/java/io/justsearch/app/services/feedback/NdjsonAppendStore.java",
+      "futureVersionRefusalTest": "modules/app-services/src/test/java/io/justsearch/app/services/feedback/NdjsonAppendStoreTest.java",
+      "writeMode": "APPEND_ONLY",
+      "atomicity": "SINGLE_APPEND",
+      "corruptionPolicy": "FAIL_LOUD_ON_UNREADABLE_OR_FUTURE_LINE",
+      "reconciliation": "PRESERVE_OLD_LINES_AND_VERSION_NEW_LINES",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/feedback/NdjsonAppendStore.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/feedback/NdjsonAppendStoreTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "gpl-training-triples",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "gpl-training-triples.ndjson",
+      "recoverability": "DERIVED",
+      "format": "append-only NDJSON with documented legacy and extended rows",
+      "currentVersion": 0,
+      "readableLegacyVersions": [],
+      "writeMode": "APPEND_ONLY",
+      "atomicity": "SINGLE_APPEND",
+      "corruptionPolicy": "SKIP_DERIVED_ROW",
+      "reconciliation": "REGENERATE_FROM_SOURCE_DOCUMENTS",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/gpl/GplTrainingTripleStore.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/gpl/GplTrainingTripleStoreTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "watched-roots",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "watched-roots.json",
+      "recoverability": "AUTHORED",
+      "format": "JSON envelope v1 around legacy list or unversioned object",
+      "currentVersion": 1,
+      "readableLegacyVersions": [0],
+      "versionAuthority": "modules/app-services/src/main/java/io/justsearch/app/services/worker/WatchedRootsStore.java",
+      "futureVersionRefusalTest": "modules/app-services/src/test/java/io/justsearch/app/services/worker/WatchedRootsStoreTest.java",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "FAIL_LOUD_AND_PRESERVE",
+      "reconciliation": "MIGRATE_LEGACY_LOCATION_READ_V0_AND_WRITE_V1",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/worker/WatchedRootsStore.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/worker/WatchedRootsStoreTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "worker-config-snapshot",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "runtime/worker-config-snapshot.json",
+      "recoverability": "DERIVED",
+      "format": "JSON configuration map, currently unversioned",
+      "currentVersion": 0,
+      "readableLegacyVersions": [],
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "REGENERATE_BEFORE_CONSUMPTION",
+      "reconciliation": "UNCONDITIONALLY_REGENERATE_BEFORE_WORKER_START",
+      "status": "READY",
+      "implementationSources": [
+        "modules/ui/src/main/java/io/justsearch/ui/HeadlessApp.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfig.java",
+        "modules/configuration/src/main/java/io/justsearch/configuration/resolved/ResolvedConfigBuilder.java"
+      ],
+      "tests": [
+        "modules/configuration/src/test/java/io/justsearch/configuration/resolved/ResolvedConfigBuilderTest.java",
+        "modules/app-services/src/test/java/io/justsearch/app/services/worker/WorkerSpawnerConfigForwardingTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "jobs-db",
+      "catalogDirName": "jobs.db",
+      "owner": "WORKER",
+      "root": "DATA_DIR",
+      "path": "jobs.db",
+      "recoverability": "DERIVED",
+      "format": "SQLite WAL schema v7",
+      "currentVersion": 7,
+      "readableLegacyVersions": [0, 1, 2, 3, 4, 5, 6],
+      "versionAuthority": "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/queue/SqliteSchema.java",
+      "futureVersionRefusalTest": "modules/indexer-worker/src/test/java/io/justsearch/indexerworker/queue/JobQueueMigrationTest.java",
+      "writeMode": "TRANSACTIONAL",
+      "atomicity": "TRANSACTIONAL",
+      "corruptionPolicy": "FAIL_OR_REBUILD_DERIVED_QUEUE",
+      "reconciliation": "RUN_EXISTING_SQLITE_MIGRATIONS_OR_REBUILD",
+      "status": "READY",
+      "implementationSources": [
+        "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/queue/SqliteJobQueue.java",
+        "modules/indexer-worker/src/main/java/io/justsearch/indexerworker/queue/SqlitePathResolutionStore.java"
+      ],
+      "tests": [
+        "modules/indexer-worker/src/test/java/io/justsearch/indexerworker/queue/JobQueueMigrationTest.java",
+        "modules/indexer-worker/src/test/java/io/justsearch/indexerworker/queue/SqlitePathResolutionStoreTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "index-generations",
+      "catalogDirName": "index",
+      "owner": "WORKER",
+      "root": "DATA_DIR",
+      "path": "index/",
+      "recoverability": "DERIVED",
+      "format": "Lucene generations plus state v2 and generation manifest v1",
+      "currentVersion": 2,
+      "readableLegacyVersions": [1],
+      "versionAuthority": "modules/worker-core/src/main/java/io/justsearch/indexerworker/index/IndexGenerationManager.java",
+      "futureVersionRefusalTest": "modules/worker-core/src/test/java/io/justsearch/indexerworker/index/IndexGenerationManagerRestartTest.java",
+      "writeMode": "GENERATION_SWAP",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "RECOVER_PREVIOUS_OR_REBUILD",
+      "reconciliation": "USE_STATE_PREV_THEN_REBUILD_FROM_SOURCE",
+      "status": "READY",
+      "implementationSources": [
+        "modules/worker-core/src/main/java/io/justsearch/indexerworker/index/IndexGenerationManager.java"
+      ],
+      "tests": [
+        "modules/worker-core/src/test/java/io/justsearch/indexerworker/index/IndexGenerationManagerRestartTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "index-migration-progress",
+      "owner": "WORKER",
+      "root": "DATA_DIR",
+      "path": "index/migration-progress.json",
+      "recoverability": "EPHEMERAL",
+      "format": "JSON status v1",
+      "currentVersion": 1,
+      "readableLegacyVersions": [],
+      "versionAuthority": "modules/worker-core/src/main/java/io/justsearch/indexerworker/index/MigrationProgressStore.java",
+      "futureVersionRefusalTest": "modules/worker-core/src/test/java/io/justsearch/indexerworker/index/IndexGenerationManagerRestartTest.java",
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "DELETE_AND_RECOMPUTE",
+      "reconciliation": "REGENERATE_FROM_ACTIVE_MIGRATION",
+      "status": "READY",
+      "implementationSources": [
+        "modules/worker-core/src/main/java/io/justsearch/indexerworker/index/MigrationProgressStore.java"
+      ],
+      "tests": [
+        "modules/worker-core/src/test/java/io/justsearch/indexerworker/index/IndexGenerationManagerRestartTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "entity-clusters",
+      "owner": "WORKER",
+      "root": "DATA_DIR",
+      "path": "entity-clusters.db",
+      "recoverability": "MIXED",
+      "format": "SQLite WAL schema v1",
+      "currentVersion": 1,
+      "readableLegacyVersions": [0],
+      "versionAuthority": "modules/worker-core/src/main/java/io/justsearch/indexerworker/disambiguation/EntityClusterStore.java",
+      "futureVersionRefusalTest": "modules/worker-core/src/test/java/io/justsearch/indexerworker/disambiguation/EntityClusterStoreTest.java",
+      "writeMode": "TRANSACTIONAL",
+      "atomicity": "TRANSACTIONAL",
+      "corruptionPolicy": "REFUSE_FUTURE_SCHEMA_AND_PRESERVE_OVERRIDES",
+      "reconciliation": "PRESERVE_RESERVED_ENTITY_OVERRIDES_AND_REBUILD_MAPPINGS",
+      "status": "READY",
+      "implementationSources": [
+        "modules/worker-core/src/main/java/io/justsearch/indexerworker/disambiguation/EntityClusterStore.java",
+        "modules/worker-core/src/main/java/io/justsearch/indexerworker/disambiguation/EntityClusterSchema.java"
+      ],
+      "tests": [
+        "modules/worker-core/src/test/java/io/justsearch/indexerworker/disambiguation/EntityClusterStoreTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "runtime-activation-status",
+      "owner": "HEAD",
+      "root": "AI_HOME",
+      "path": "ai/runtime-activation-state.json",
+      "recoverability": "DERIVED",
+      "format": "JSON runtime status, currently unversioned",
+      "currentVersion": 0,
+      "readableLegacyVersions": [],
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "DISCARD_UNREADABLE_DERIVED_STATUS_AND_RESCAN",
+      "reconciliation": "RESCAN_INSTALLED_RUNTIME_VARIANTS",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/ai/runtime/RuntimeActivationService.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/ai/runtime/RuntimeActivationServiceTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "pack-import-status",
+      "owner": "HEAD",
+      "root": "AI_HOME",
+      "path": "pack-import-state.json",
+      "recoverability": "DERIVED",
+      "format": "JSON import status, currently unversioned",
+      "currentVersion": 0,
+      "readableLegacyVersions": [],
+      "writeMode": "FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "DISCARD_UNREADABLE_DERIVED_STATUS_AND_RESCAN",
+      "reconciliation": "RESCAN_STAGING_AND_INSTALLED_PACKS",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/AiPackImportService.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/ai/pack/AiPackImportServiceTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "runtime-manifest-history",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "runtime/runtime-manifest.v1.json and runtime/instances/",
+      "recoverability": "EPHEMERAL",
+      "format": "atomic current manifest plus append-only instance history",
+      "currentVersion": 1,
+      "readableLegacyVersions": [],
+      "versionAuthority": "modules/ui/src/main/java/io/justsearch/ui/runtime/RuntimeManifestPublisher.java",
+      "futureVersionRefusalTest": "modules/ui/src/test/java/io/justsearch/ui/runtime/RuntimeManifestPublisherTest.java",
+      "writeMode": "MIXED_APPEND_AND_FULL_REWRITE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "CLASSIFY_UNCLEAN_AND_REGENERATE",
+      "reconciliation": "PUBLISH_CURRENT_INSTANCE_AND_RETAIN_BOUNDED_HISTORY",
+      "status": "READY",
+      "implementationSources": [
+        "modules/ui/src/main/java/io/justsearch/ui/runtime/RuntimeManifestPublisher.java"
+      ],
+      "tests": [
+        "modules/ui/src/test/java/io/justsearch/ui/runtime/RuntimeManifestPublisherTest.java",
+        "modules/ui/src/test/java/io/justsearch/ui/runtime/RuntimeManifestPublisherShutdownClassifyTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "telemetry-rrd",
+      "owner": "HEAD",
+      "root": "DATA_DIR",
+      "path": "telemetry/*.rrd",
+      "recoverability": "DERIVED",
+      "format": "RRD metric files derived from catalog",
+      "currentVersion": 0,
+      "readableLegacyVersions": [],
+      "writeMode": "IN_PLACE",
+      "atomicity": "LIBRARY_MANAGED",
+      "corruptionPolicy": "RECREATE_DERIVED_METRIC",
+      "reconciliation": "RECONCILE_AGAINST_METRIC_CATALOG",
+      "status": "READY",
+      "implementationSources": [
+        "modules/telemetry/src/main/java/io/justsearch/telemetry/RrdMetricStore.java"
+      ],
+      "tests": [
+        "modules/telemetry/src/test/java/io/justsearch/telemetry/RrdMetricStoreReconcileTest.java",
+        "modules/telemetry/src/test/java/io/justsearch/telemetry/RrdMetricStoreCatalogDriftTest.java"
+      ],
+      "fixtures": []
+    },
+    {
+      "id": "ai-assets",
+      "owner": "EXTERNAL",
+      "root": "AI_HOME",
+      "path": "models/ and native-bin/",
+      "recoverability": "MIXED",
+      "format": "immutable downloaded or user-provided model/runtime assets",
+      "currentVersion": 0,
+      "readableLegacyVersions": [],
+      "writeMode": "STAGED_MOVE",
+      "atomicity": "ATOMIC_REPLACE",
+      "corruptionPolicy": "VERIFY_HASH_OR_PRESERVE_USER_ASSET",
+      "reconciliation": "VERIFY_MANIFESTS_AND_NEVER_DELETE_UNKNOWN_USER_ASSETS",
+      "status": "READY",
+      "implementationSources": [
+        "modules/app-services/src/main/java/io/justsearch/app/services/ai/install/AiInstallService.java",
+        "modules/app-services/src/main/java/io/justsearch/app/services/ai/pack/PackInstallOps.java"
+      ],
+      "tests": [
+        "modules/app-services/src/test/java/io/justsearch/app/services/ai/pack/AiPackImportServiceTest.java"
+      ],
+      "fixtures": []
+    }
   ],
   "constructionSites": [
     "modules/app-services/src/main/java/io/justsearch/app/services/HeadAssembly.java",

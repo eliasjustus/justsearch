@@ -3,8 +3,11 @@ package io.justsearch.app.services.settings;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
@@ -21,7 +24,7 @@ final class PluginAllowlistStoreTest {
       "0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff";
 
   @Test
-  void roundTrips_through_disk(@TempDir Path dir) {
+  void roundTrips_through_disk(@TempDir Path dir) throws Exception {
     Path file = dir.resolve("ui").resolve("plugin-allowlist.json");
     PluginAllowlistStore store = new PluginAllowlistStore(PersistenceMode.READ_WRITE, file);
     Set<String> entries = new LinkedHashSet<>();
@@ -35,6 +38,9 @@ final class PluginAllowlistStoreTest {
     assertEquals(2, loaded.size());
     assertTrue(loaded.contains(A));
     assertTrue(loaded.contains(B));
+    String persisted = Files.readString(file);
+    assertTrue(persisted.contains("\"schemaVersion\" : 1"));
+    assertTrue(persisted.contains("\"entries\""));
   }
 
   @Test
@@ -54,10 +60,28 @@ final class PluginAllowlistStoreTest {
   }
 
   @Test
-  void malformed_file_loads_empty(@TempDir Path dir) throws Exception {
+  void malformed_file_fails_loud_without_overwrite(@TempDir Path dir) throws Exception {
     Path file = dir.resolve("plugin-allowlist.json");
-    Files.writeString(file, "{ not a valid json array ");
+    String malformed = "{ not valid json ";
+    Files.writeString(file, malformed);
     PluginAllowlistStore store = new PluginAllowlistStore(PersistenceMode.READ_WRITE, file);
-    assertTrue(store.load().isEmpty());
+    assertThrows(CorruptDurableStoreException.class, store::load);
+    assertEquals(malformed, Files.readString(file));
+  }
+
+  @Test
+  void legacy_array_is_readable(@TempDir Path dir) throws Exception {
+    Path file = dir.resolve("plugin-allowlist.json");
+    Files.writeString(file, "[\"" + A + "\"]");
+    PluginAllowlistStore store = new PluginAllowlistStore(PersistenceMode.READ_WRITE, file);
+    assertEquals(Set.of(A), store.load());
+  }
+
+  @Test
+  void future_version_is_refused(@TempDir Path dir) throws Exception {
+    Path file = dir.resolve("plugin-allowlist.json");
+    Files.writeString(file, "{\"schemaVersion\":99,\"entries\":[]}");
+    PluginAllowlistStore store = new PluginAllowlistStore(PersistenceMode.READ_WRITE, file);
+    assertThrows(UnsupportedStoreVersionException.class, store::load);
   }
 }

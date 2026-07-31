@@ -30,6 +30,7 @@ import {
 } from './truth-table.mjs';
 import { statusToSarifLevel } from '../../lib/truth-table-runner.mjs';
 import { verdictForVacuousScan } from '../../lib/population-floor.mjs';
+import { scanDurableStores } from '../../lib/durable-store-scan.mjs';
 
 const TOOL = { toolName: 'justsearch-operation-surface', toolVersion: '0.1.0' };
 const WALK_EXCLUDES = new Set(['build', 'node_modules', 'dist', '.git', '.gradle', 'tmp']);
@@ -158,26 +159,7 @@ export async function enforceOperationSurface(options) {
  * `Path` parameter (the persists-to-disk signature). In-memory stores (no Path ctor) are excluded,
  * so a bounded ring like OperationHistoryStore never trips this. Returns repo-relative POSIX paths.
  */
-function scanDurableStores(root) {
-  const out = [];
-  for (const abs of walk(resolve(root, 'modules'), (f) => f.endsWith('Store.java'))) {
-    const rel = norm(relative(root, abs));
-    if (!rel.includes('/src/main/java/')) continue;
-    const simple = rel.split('/').pop().replace(/\.java$/, '');
-    const src = readFileSync(abs, 'utf8');
-    // A constructor DECLARATION of this class (not a `new X(` call) whose param list contains a Path.
-    const ctor = new RegExp(`(?<!new\\s)\\b${simple}\\s*\\(([^;{)]*)\\)`, 'g');
-    let m;
-    while ((m = ctor.exec(src)) !== null) {
-      if (/\bPath\b/.test(m[1])) {
-        out.push(rel);
-        break;
-      }
-    }
-  }
-  return out;
-}
-
+// Scanner implementation is shared from scripts/governance/lib/durable-store-scan.mjs.
 function norm(p) {
   return String(p ?? '').replace(/\\/g, '/');
 }

@@ -376,6 +376,7 @@ public class HeadlessApp {
             .gplEvalSnapshotSupplier(headInfra.gplEvalSnapshotSupplier())
             .HeadAssembly(bootstrap)
             .runtimeManifestPublisher(manifestPublisher)
+            .upgradeShutdownAction(() -> System.exit(0))
             .build();
     int port = apiServer.getPort();
 

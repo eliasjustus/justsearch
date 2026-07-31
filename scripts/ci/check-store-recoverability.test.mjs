@@ -1,84 +1,173 @@
-/**
- * Tests for the store-recoverability gate (tempdoc 629 #5): StoreCatalog ↔ register parity + the
- * no-hardcoded-cipher-class invariant.
- *
- * Run: `node scripts/ci/check-store-recoverability.test.mjs` (exits non-zero on failure)
- */
 import assert from 'node:assert/strict';
+
 import {
+  checkDurableStoreRegister,
+  checkParity,
   extractCatalogEntries,
   findHardcodedCipherCalls,
-  checkParity,
 } from './check-store-recoverability.mjs';
 
 let passed = 0;
 const failures = [];
-const ok = (label, cond) => {
-  try {
-    assert.ok(cond, label);
-    passed += 1;
-  } catch (e) {
-    failures.push(e.message);
-  }
-};
 
-// --- extraction ---
+function test(label, assertion) {
+  try {
+    assertion();
+    passed += 1;
+  } catch (error) {
+    failures.push(`${label}: ${error.message}`);
+  }
+}
+
 const SAMPLE_CATALOG = `
   CONVERSATIONS("conversations", StoreRecoverability.AUTHORED, Framing.MIXED),
   INDEX("index", StoreRecoverability.DERIVED, Framing.OPAQUE);
 `;
-ok('extractCatalogEntries pulls dirName + class', () => {
-  const e = extractCatalogEntries(SAMPLE_CATALOG);
-  return (
-    e.length === 2 &&
-    e[0].dirName === 'conversations' &&
-    e[0].recoverability === 'AUTHORED' &&
-    e[1].recoverability === 'DERIVED'
+
+test('extractCatalogEntries pulls constant, directory, and class', () => {
+  assert.deepEqual(extractCatalogEntries(SAMPLE_CATALOG), [
+    { constant: 'CONVERSATIONS', dirName: 'conversations', recoverability: 'AUTHORED' },
+    { constant: 'INDEX', dirName: 'index', recoverability: 'DERIVED' },
+  ]);
+});
+
+test('findHardcodedCipherCalls flags a bare recoverability literal', () => {
+  assert.deepEqual(
+    findHardcodedCipherCalls('var cipher = storeCipher(StoreRecoverability.AUTHORED);'),
+    ['AUTHORED'],
   );
 });
 
-// --- hardcode detection ---
-ok('findHardcodedCipherCalls flags a bare StoreRecoverability literal', () => {
-  const hits = findHardcodedCipherCalls('var c = storeCipher(StoreRecoverability.AUTHORED);');
-  return hits.length === 1 && hits[0] === 'AUTHORED';
-});
-ok('findHardcodedCipherCalls allows the catalog form', () => {
-  return (
-    findHardcodedCipherCalls('storeCipher(StoreCatalog.MEMORIES.recoverability())').length === 0
-  );
-});
-ok('findHardcodedCipherCalls ignores the method definition (== comparison)', () => {
-  return (
-    findHardcodedCipherCalls('return r == StoreRecoverability.AUTHORED ? a : b;').length === 0
+test('findHardcodedCipherCalls accepts StoreCatalog-derived selection', () => {
+  assert.deepEqual(
+    findHardcodedCipherCalls('storeCipher(StoreCatalog.MEMORIES.recoverability())'),
+    [],
   );
 });
 
-// --- parity ---
-const CAT = [
-  { dirName: 'conversations', recoverability: 'AUTHORED' },
-  { dirName: 'index', recoverability: 'DERIVED' },
+const CATALOG = [
+  { constant: 'CONVERSATIONS', dirName: 'conversations', recoverability: 'AUTHORED' },
+  { constant: 'INDEX', dirName: 'index', recoverability: 'DERIVED' },
 ];
-ok('checkParity passes when catalog and register match', () => {
-  return checkParity(CAT, [...CAT]).length === 0;
+
+test('checkParity passes for an exact mirror', () => {
+  assert.deepEqual(
+    checkParity(CATALOG, [
+      { dirName: 'conversations', recoverability: 'AUTHORED' },
+      { dirName: 'index', recoverability: 'DERIVED' },
+    ]),
+    [],
+  );
 });
-ok('checkParity fails when the register is missing a catalog store', () => {
-  return checkParity(CAT, [{ dirName: 'conversations', recoverability: 'AUTHORED' }]).length === 1;
+
+test('checkParity reports missing, drifted, and extra rows', () => {
+  const result = checkParity(CATALOG, [
+    { dirName: 'conversations', recoverability: 'DERIVED' },
+    { dirName: 'ghost', recoverability: 'AUTHORED' },
+  ]);
+  assert.equal(result.length, 3);
+  assert.ok(result.some((failure) => failure.includes('conversations')));
+  assert.ok(result.some((failure) => failure.includes('index')));
+  assert.ok(result.some((failure) => failure.includes('ghost')));
 });
-ok('checkParity fails on a class drift', () => {
-  const reg = [
-    { dirName: 'conversations', recoverability: 'DERIVED' }, // drifted
-    { dirName: 'index', recoverability: 'DERIVED' },
-  ];
-  return checkParity(CAT, reg).some((f) => f.includes('drifted'));
+
+function readyRow(overrides = {}) {
+  return {
+    id: 'conversations',
+    catalogDirName: 'conversations',
+    owner: 'HEAD',
+    root: 'DATA_DIR',
+    path: 'conversations/',
+    recoverability: 'AUTHORED',
+    format: 'JSON envelope v1',
+    currentVersion: 1,
+    readableLegacyVersions: [0],
+    versionAuthority: 'Version.java',
+    futureVersionRefusalTest: 'StoreTest.java',
+    writeMode: 'FULL_REWRITE',
+    atomicity: 'ATOMIC_REPLACE',
+    corruptionPolicy: 'FAIL_LOUD',
+    reconciliation: 'UPCAST_AND_REWRITE',
+    status: 'READY',
+    implementationSources: ['Store.java'],
+    tests: ['StoreTest.java'],
+    fixtures: ['v0.json'],
+    ...overrides,
+  };
+}
+
+function check(rows, options = {}) {
+  return checkDurableStoreRegister({
+    root: '/repo',
+    durableStores: rows,
+    knownCompatibilityGaps: options.gaps ?? [],
+    catalogEntries: options.catalog ?? [CATALOG[0]],
+    discoveredStores: options.discovered ?? ['Store.java'],
+    pathExists: options.pathExists ?? (() => true),
+  });
+}
+
+test('broad register accepts a complete ready row', () => {
+  assert.deepEqual(check([readyRow()]), []);
 });
-ok('checkParity fails on a register row with no catalog entry', () => {
-  const reg = [...CAT, { dirName: 'ghost', recoverability: 'AUTHORED' }];
-  return checkParity(CAT, reg).some((f) => f.includes('ghost'));
+
+test('broad register rejects an uncovered durable Store implementation', () => {
+  const result = check([readyRow()], { discovered: ['Store.java', 'NewStore.java'] });
+  assert.ok(result.some((failure) => failure.includes('NewStore.java')));
+});
+
+test('broad register requires StoreCatalog coverage', () => {
+  const result = check([readyRow({ catalogDirName: undefined })]);
+  assert.ok(result.some((failure) => failure.includes('StoreCatalog.CONVERSATIONS')));
+});
+
+test('READY authored full rewrites must fail loud and write atomically', () => {
+  const result = check([
+    readyRow({ corruptionPolicy: 'SILENT_EMPTY', atomicity: 'DIRECT_REWRITE' }),
+  ]);
+  assert.ok(result.some((failure) => failure.includes('SILENT_EMPTY')));
+  assert.ok(result.some((failure) => failure.includes('must be atomic')));
+});
+
+test('versioned READY rows require a version authority and future-version test', () => {
+  const result = check([
+    readyRow({ versionAuthority: undefined, futureVersionRefusalTest: undefined }),
+  ]);
+  assert.ok(result.some((failure) => failure.includes('versionAuthority')));
+  assert.ok(result.some((failure) => failure.includes('futureVersionRefusalTest')));
+});
+
+test('HARDENING_REQUIRED is accepted only through the explicit gap ratchet', () => {
+  const gap = readyRow({
+    id: 'legacy',
+    catalogDirName: undefined,
+    currentVersion: 0,
+    status: 'HARDENING_REQUIRED',
+    atomicity: 'DIRECT_REWRITE',
+    corruptionPolicy: 'SILENT_EMPTY',
+  });
+  assert.ok(
+    check([gap], { gaps: [], catalog: [], discovered: ['Store.java'] }).some((failure) =>
+      failure.includes('not ratcheted'),
+    ),
+  );
+  assert.deepEqual(
+    check([gap], { gaps: ['legacy'], catalog: [], discovered: ['Store.java'] }),
+    [],
+  );
+});
+
+test('all declared source and evidence paths must resolve', () => {
+  const result = check([readyRow()], {
+    pathExists: (path) => !path.endsWith('v0.json'),
+  });
+  assert.ok(result.some((failure) => failure.includes('v0.json')));
 });
 
 if (failures.length > 0) {
-  console.error(`✗ check-store-recoverability.test FAILED (${failures.length}):`);
-  for (const f of failures) console.error('  - ' + f);
+  console.error(`check-store-recoverability.test FAILED (${failures.length}):`);
+  for (const failure of failures) console.error(`  - ${failure}`);
   process.exit(1);
 }
-console.log(`✓ check-store-recoverability.test OK — ${passed} assertions passed.`);
+
+console.log(`check-store-recoverability.test OK - ${passed} assertions passed.`);

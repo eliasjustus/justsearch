@@ -4,8 +4,12 @@ import io.justsearch.app.api.UiSettings;
 import static io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode.IN_MEMORY;
 import static io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode.READ_WRITE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.DisplayName;
@@ -303,6 +307,45 @@ class UiSettingsStorePersistenceModeTest {
       UiSettings loaded = store.load();
 
       assertEquals(new UiSettings().getMaxTokens(), loaded.getMaxTokens());
+    }
+
+    @Test
+    @DisplayName("READ_WRITE save emits the v1 envelope and reloads it")
+    void readWrite_saveWritesVersionedEnvelope() throws Exception {
+      Path settingsFile = tempDir.resolve("settings.json");
+      UiSettings settings = new UiSettings();
+      settings.setMaxTokens(777);
+
+      new UiSettingsStore(READ_WRITE, settingsFile).save(settings);
+
+      String persisted = Files.readString(settingsFile);
+      assertTrue(persisted.contains("\"schemaVersion\" : 1"));
+      assertTrue(persisted.contains("\"settings\""));
+      assertEquals(777, new UiSettingsStore(READ_WRITE, settingsFile).load().getMaxTokens());
+    }
+
+    @Test
+    @DisplayName("future envelope is refused without changing its bytes")
+    void readWrite_futureVersionIsRefusedWithoutOverwrite() throws Exception {
+      Path settingsFile = tempDir.resolve("settings.json");
+      String future = "{\"schemaVersion\":99,\"settings\":{\"maxTokens\":321}}";
+      Files.writeString(settingsFile, future);
+
+      UiSettingsStore store = new UiSettingsStore(READ_WRITE, settingsFile);
+      assertThrows(UnsupportedStoreVersionException.class, store::load);
+      assertEquals(future, Files.readString(settingsFile));
+    }
+
+    @Test
+    @DisplayName("malformed state is fail-loud and retained")
+    void readWrite_malformedStateIsRetained() throws Exception {
+      Path settingsFile = tempDir.resolve("settings.json");
+      String malformed = "{not-json";
+      Files.writeString(settingsFile, malformed);
+
+      UiSettingsStore store = new UiSettingsStore(READ_WRITE, settingsFile);
+      assertThrows(CorruptDurableStoreException.class, store::load);
+      assertEquals(malformed, Files.readString(settingsFile));
     }
   }
 

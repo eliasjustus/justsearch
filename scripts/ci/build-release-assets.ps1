@@ -30,7 +30,18 @@ param(
 
   # When set, also assert server.json.version + asset URL match the gradle.properties version.
   # Use for a real release cut (after gradle.properties has been bumped); off for smoke builds.
-  [switch]$VerifyReleaseVersion
+  [switch]$VerifyReleaseVersion,
+
+  # Opt in to the authenticated updater asset set. Existing release/smoke callers
+  # continue to stage only the installer, MCPB, and SHA256SUMS.
+  [switch]$AssembleUpdaterAssets,
+
+  [long]$ReleaseSequence = 0,
+  [string]$InstallerUrl,
+  [string]$ArtifactKeyId,
+  [string]$ArtifactPublicKey,
+  [string]$MetadataPrivateKeyPath,
+  [string]$MetadataPublicKeyPath
 )
 
 Set-StrictMode -Version Latest
@@ -42,6 +53,8 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $scriptDir) # scripts/ci -> s
 $packer = Join-Path $repoRoot "scripts\ci\pack-mcpb.mjs"
 $gate = Join-Path $repoRoot "scripts\ci\check-mcpb-consistency.mjs"
 $gradleProps = Join-Path $repoRoot "gradle.properties"
+$releaseAssets = Join-Path $repoRoot "scripts\release\app-release-assets.mjs"
+$compatibilityRegister = Join-Path $repoRoot "governance\store-recoverability.v1.json"
 
 function Get-GradleVersion {
   if (-not (Test-Path -LiteralPath $gradleProps)) { throw "gradle.properties not found at $gradleProps" }
@@ -80,8 +93,60 @@ try {
   & node $packer $bundleDest
   if ($LASTEXITCODE -ne 0) { throw "pack-mcpb.mjs failed (exit=$LASTEXITCODE)" }
 
-  # 4. Generate SHA256SUMS over {installer, bundle} -- basenames, so 'sha256sum -c' works from OutDir.
-  $assets = @($installer.FullName, $bundleDest)
+  # 4. A real release cut also assembles and verifies the authenticated updater asset set.
+  $updaterAssets = @()
+  if ($AssembleUpdaterAssets.IsPresent) {
+    if (-not $VerifyReleaseVersion.IsPresent) {
+      throw "-AssembleUpdaterAssets requires -VerifyReleaseVersion."
+    }
+    $artifactSignature = "$($installer.FullName).sig"
+    foreach ($required in @(
+        @{ Name = "installer signature"; Value = $artifactSignature },
+        @{ Name = "metadata private key"; Value = $MetadataPrivateKeyPath },
+        @{ Name = "metadata public key"; Value = $MetadataPublicKeyPath })) {
+      if ([string]::IsNullOrWhiteSpace($required.Value) -or -not (Test-Path -LiteralPath $required.Value -PathType Leaf)) {
+        throw "Missing $($required.Name): $($required.Value)"
+      }
+    }
+    if ($ReleaseSequence -le 0) { throw "-ReleaseSequence must be positive for a release cut." }
+    foreach ($requiredValue in @(
+        @{ Name = "InstallerUrl"; Value = $InstallerUrl },
+        @{ Name = "ArtifactKeyId"; Value = $ArtifactKeyId },
+        @{ Name = "ArtifactPublicKey"; Value = $ArtifactPublicKey })) {
+      if ([string]::IsNullOrWhiteSpace($requiredValue.Value)) {
+        throw "-$($requiredValue.Name) is required for a release cut."
+      }
+    }
+
+    & node $releaseAssets build `
+      --installer $installer.FullName `
+      --artifact-signature $artifactSignature `
+      --metadata-private-key $MetadataPrivateKeyPath `
+      --compatibility $compatibilityRegister `
+      --out-dir $outDirPath `
+      --version $version `
+      --sequence $ReleaseSequence `
+      --url $InstallerUrl `
+      --artifact-key-id $ArtifactKeyId `
+      --artifact-public-key $ArtifactPublicKey
+    if ($LASTEXITCODE -ne 0) { throw "Authenticated release descriptor assembly failed." }
+
+    & node $releaseAssets verify `
+      --installer $installer.FullName `
+      --artifact-signature $artifactSignature `
+      --metadata-public-key $MetadataPublicKeyPath `
+      --release-dir $outDirPath
+    if ($LASTEXITCODE -ne 0) { throw "Authenticated release asset-set verification failed." }
+
+    $updaterAssets = @(
+      $artifactSignature,
+      (Join-Path $outDirPath "latest.json"),
+      (Join-Path $outDirPath "release.v1.json"),
+      (Join-Path $outDirPath "release.v1.json.sig"))
+  }
+
+  # 5. Generate SHA256SUMS over the closed set -- basenames, so 'sha256sum -c' works from OutDir.
+  $assets = @($installer.FullName, $bundleDest) + $updaterAssets
   $header = @(
     "# SHA-256 checksums for JustSearch release assets.",
     "#",

@@ -25,6 +25,7 @@ import io.justsearch.app.services.worker.WorkerFeatureCache;
 import io.justsearch.configuration.EnvRegistry;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.PlatformPaths;
+import io.justsearch.configuration.persistence.AtomicFileWrites;
 import io.justsearch.app.services.config.ConfigStoreRebuilder;
 import io.justsearch.configuration.RepoRootLocator;
 import io.justsearch.app.api.EnterprisePolicyService;
@@ -1029,8 +1030,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
   private void saveStatusBestEffort() {
     try {
-      Files.createDirectories(statusPath.getParent());
-      MAPPER.writeValue(statusPath.toFile(), status);
+      AtomicFileWrites.replace(statusPath, MAPPER.writeValueAsBytes(status));
     } catch (Exception ignored) {
       // best-effort
     }
