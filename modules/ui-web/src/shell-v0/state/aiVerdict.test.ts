@@ -61,6 +61,58 @@ describe('computeAiEngineVerdict (observed axes only — no local intent)', () =
     expect(v.stability).toEqual({ kind: 'settled' });
   });
 
+  // ── Sandbox round 8: a cancelled multi-GB download. The cancel dialog promises the bytes stay on
+  //    disk and the next install resumes; the Brain surface then said "Not Installed — Install AI
+  //    models to get started" over 1.2 GB of them. `not_installed` is a SETTLED negative, so this was
+  //    not vagueness, it was a confident false claim contradicting the app's own promise. ──
+
+  it('bytes staged on disk → "paused", not a settled "not_installed"', () => {
+    const installStatus: InstallStatus = {
+      state: 'idle',
+      phase: 'idle',
+      installedFully: false,
+      resumableBytes: 1_140_000_000,
+    };
+    const v = computeAiEngineVerdict(input({ installStatus }));
+    expect(v.kind).toBe('paused');
+    expect(v.stability).toEqual({ kind: 'settled' });
+    expect(v.resumableBytes).toBe(1_140_000_000);
+  });
+
+  it('paused is derived from the DISK-probed byte count, not from state:"cancelled"', () => {
+    // The state a restart erases (`cancelled`) with no staged bytes must NOT read as paused...
+    const forgotten: InstallStatus = { state: 'cancelled', phase: 'download', installedFully: false };
+    expect(computeAiEngineVerdict(input({ installStatus: forgotten })).kind).toBe('not_installed');
+    // ...while the state a restart RESTORES (`idle`) with staged bytes must — this is exactly the
+    // returning-user case, and keying on `state` would invert both answers.
+    const restarted: InstallStatus = {
+      state: 'idle',
+      phase: 'idle',
+      installedFully: false,
+      resumableBytes: 512,
+    };
+    expect(computeAiEngineVerdict(input({ installStatus: restarted })).kind).toBe('paused');
+  });
+
+  it('a running install outranks staged bytes (the download is live, not paused)', () => {
+    const installStatus: InstallStatus = {
+      state: 'running',
+      phase: 'download',
+      resumableBytes: 1_140_000_000,
+    };
+    expect(computeAiEngineVerdict(input({ installStatus })).kind).toBe('installing');
+  });
+
+  it('zero staged bytes leaves the honest "not_installed" untouched', () => {
+    const installStatus: InstallStatus = {
+      state: 'idle',
+      phase: 'idle',
+      installedFully: false,
+      resumableBytes: 0,
+    };
+    expect(computeAiEngineVerdict(input({ installStatus })).kind).toBe('not_installed');
+  });
+
   it('install running → "installing", provisional, regardless of other axes', () => {
     const installStatus: InstallStatus = { state: 'running', phase: 'downloading' };
     const v = computeAiEngineVerdict(
@@ -329,6 +381,7 @@ describe('presentAiEngineVerdict (Design pass 3 — the presentation projection)
   // deliberately, not `statusConfig`'s "AI Online"/"AI Offline") for the four kinds it already covered.
   it.each([
     ['not_installed', 'Not Installed', 'neutral'],
+    ['paused', 'Download Paused', 'neutral'],
     ['installing', 'Installing…', 'info'],
     // Critical-review fix (2026-07-01) — 'error', not 'neutral': must agree with the
     // `core.ai-engine.failed` toast's `defaultSeverity: 'error'` (messageClasses.ts).
@@ -342,6 +395,24 @@ describe('presentAiEngineVerdict (Design pass 3 — the presentation projection)
     const p = presentAiEngineVerdict(verdictFor(kind));
     expect(p.headline).toBe(headline);
     expect(p.tone).toBe(tone);
+  });
+
+  it('paused states the retained amount in the body — the pause promise made checkable', () => {
+    const p = presentAiEngineVerdict({
+      kind: 'paused',
+      stability: { kind: 'settled' },
+      installFailure: null,
+      resumableBytes: 1_140_000_000,
+    });
+    expect(p.headline).toBe('Download Paused');
+    expect(p.body).toBe(
+      '1.06 GB already downloaded is kept on disk — resuming continues from there.',
+    );
+  });
+
+  it('paused without a byte count still says the download is paused, never invents a number', () => {
+    const p = presentAiEngineVerdict(verdictFor('paused'));
+    expect(p.body).toBe('An earlier download is paused — resuming continues from where it stopped.');
   });
 
   it('install_failed surfaces the install service error text in the body', () => {

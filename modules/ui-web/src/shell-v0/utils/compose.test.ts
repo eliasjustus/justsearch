@@ -20,7 +20,15 @@ vi.mock('../state/aiStateStore.js', () => ({
   }),
 }));
 
-import { compose, takePendingSelection, setPendingAutoRun, takePendingAutoRun } from './compose.js';
+import {
+  compose,
+  takePendingSelection,
+  setPendingAutoRun,
+  takePendingAutoRun,
+  resolveShape,
+  resolveDispatchShape,
+  wireSelectionKind,
+} from './compose.js';
 import type { SelectionPayload } from '../../api/types/selection.js';
 
 interface CapturedDetail {
@@ -129,6 +137,58 @@ describe('compose()', () => {
     expect(d?.state.query).toBe('Summarize the selection');
     // Pending register holds the typed selection until takePendingSelection().
     expect(takePendingSelection()).toEqual(sel);
+  });
+});
+
+describe('resolveShape — an explicit operation is not overridden by ambient selection', () => {
+  const KINDS = ['none', 'item', 'text-range', 'citation', 'result-set', 'health-condition'] as const;
+
+  it('an explicit extract affordance resolves core.extract for EVERY selection kind', () => {
+    for (const kind of KINDS) {
+      expect(resolveShape('core.ask', kind, 'extract')).toBe('core.extract');
+    }
+  });
+
+  it('an explicit documents affordance resolves core.rag-ask for EVERY selection kind', () => {
+    for (const kind of KINDS) {
+      expect(resolveShape('core.ask', kind, 'documents')).toBe('core.rag-ask');
+    }
+  });
+
+  it('an UNSPECIFIED affordance is still resolved by the selection (the row that was right)', () => {
+    expect(resolveShape('core.ask', 'none', 'none')).toBe('core.free-chat');
+    expect(resolveShape('core.ask', 'none', undefined)).toBe('core.free-chat');
+    for (const kind of KINDS.filter((k) => k !== 'none')) {
+      expect(resolveShape('core.ask', kind, 'none')).toBe('core.rag-ask');
+      expect(resolveShape('core.ask', kind, undefined)).toBe('core.rag-ask');
+    }
+  });
+
+  it('core.summarize is unconditional', () => {
+    expect(resolveShape('core.summarize', 'item', 'extract')).toBe('core.summarize');
+  });
+});
+
+describe('resolveDispatchShape / wireSelectionKind — the ONE chip-and-send computation', () => {
+  it('extract mode dispatches core.extract whether or not something is selected', () => {
+    expect(resolveDispatchShape('extract', 'none')).toBe('core.extract');
+    expect(resolveDispatchShape('extract', 'item')).toBe('core.extract');
+    expect(resolveDispatchShape('extract', 'result-set')).toBe('core.extract');
+  });
+
+  it('the agent affordance is the action plane, not an answer-plane shape', () => {
+    expect(resolveDispatchShape('agent', 'none')).toBe('core.free-chat');
+  });
+
+  it('FE-only item kinds narrow to the wire `item` kind; unknown kinds read as no selection', () => {
+    expect(wireSelectionKind('search-hit')).toBe('item');
+    expect(wireSelectionKind('browse-node')).toBe('item');
+    expect(wireSelectionKind('plugin-item')).toBe('item');
+    expect(wireSelectionKind('text-range')).toBe('text-range');
+    expect(wireSelectionKind('citation')).toBe('citation');
+    expect(wireSelectionKind('result-set')).toBe('result-set');
+    expect(wireSelectionKind(undefined)).toBe('none');
+    expect(wireSelectionKind('health-condition')).toBe('none');
   });
 });
 

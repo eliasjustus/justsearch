@@ -875,6 +875,165 @@ Also green: the branch is current with `origin/main` and the full suite passes g
 first attempt with `cleanTest test` reported success in **8 seconds** with 78 tasks from cache; that
 is not a test run, and it is the third instance of that false green in this work.)
 
+## D12. F4 resolved — and it needed no reserved band at all
+
+**This supersedes §D4 and §D11.a.** Both designed a reserved band; both are dead, and the third
+investigation found the answer was never in the geometry.
+
+### Why every band design fails
+
+- A band derived from `--density-header-pad-y` (§D4) cannot work: surfaces stack a
+  `<jf-surface-tabs>` strip above their header, so chat's header band ends at y=89 and Library's at
+  y=143 (§D11.a). The strip is a **declared pattern with five hosts**, not a Library quirk, and its
+  height is content-derived from a catalog-supplied member count — no token expresses it.
+- A *measured* band cannot work either: Library's "Add Folder" row lives **inside**
+  `.folders-scroll` (`LibrarySurface.ts:154-159`, `overflow-y: auto`), so its position is a function
+  of scroll offset. **No reserved band can clear a control that scrolls.**
+- Relocating the slot fails too: `bottom-right` is already occupied (`Shell.ts:2310`), and at 1040px
+  a right-docked column overlaps the centre-docked composer.
+
+There is also no design-system answer being missed — Fluent UI has "scope Toaster to a region" as an
+open issue, and CSS's would-be primitive (an author-declared inset beside `safe-area-inset-*`) is an
+open issue in the Environment Variables spec.
+
+### What the defect actually is
+
+The lethal combination is **persistence + overlay**, not either alone. `AdvisoryToastHost.ts:332-345`
+already auto-dismisses every toast **except** `REQUIRES_ACK`, which persists deliberately — the
+comment at `:47-48` is explicit that this is "NOT a timeout".
+
+But `REQUIRES_ACK` records **already have a durable home**: they appear in `AdvisoryInboxDrawer`
+(`:349`, mounted at `Shell.ts:2351`) and `AdvisoryRailBadge` already carries an unread indicator. So
+the persistent overlay is redundant with a channel that already exists, and contributes nothing
+except the occlusion. Round 8 watched the same two advisories cover the Library header for six
+minutes across several navigations — that is the redundancy, observed in the wild.
+
+**Fix: time-bound the `REQUIRES_ACK` toast; let the inbox and the rail badge carry persistence.**
+The "don't let the user miss it" requirement is preserved by the badge, which is where it belonged.
+
+### Why this is the right shape and not merely the cheap one
+
+It removes the defect class rather than relocating it. A bounded toast cannot occlude anything
+indefinitely regardless of surface, density, scroll offset, tab strip, or viewport — none of which
+the previous designs could accommodate. It adds no structure, introduces no measurement, and needs
+no new communication channel between sibling shadow trees.
+
+It also fits §D0's invariant, one level up: the toast was **asserting** an unmet obligation
+("act on this") by occupying screen space, when the component whose job is exactly that assertion
+(the rail badge) already existed. The claim was being made by the wrong artifact.
+
+### Honest residual, recorded rather than smoothed
+
+The `.top-right` slot still hosts `jf-provenance-badge` and `jf-plugin-error-overlay`, and its
+`calc(2.5rem + 3rem + 0.5rem)` dock remains calibrated against the chat surface's header — so it
+still does **not** clear a surface that stacks a tab strip. That exposure is much smaller (both are
+small and one is rare) but it is not zero, and the register's `occlusionNote` is updated to say so
+rather than implying the class is closed.
+
+## D13. F1's producer conflation — inferred from source, then measured
+
+§D11.d argued from source that the disk-encryption probe manufactured a `0` from an absent property,
+because PowerShell's `[int]$null` is `0`. That was inference. It has now been **executed**, and the
+mechanism is confirmed exactly:
+
+```
+new script, C:\         -> [2]                 (property present, real value)
+new script, C:\Windows  -> [PROPERTY_ABSENT]   (absence detected)
+OLD unguarded cast, same absent case -> [0]
+```
+
+So the pre-fix one-liner did turn *absence* into a value indistinguishable from a genuine `0`, and
+the new null-guard separates them. This matters for two reasons beyond the fix itself.
+
+**It confirms the test was right to leave alone.** `DiskEncryptionProbeTest`'s
+`undocumentedPkeyValuesStayUnknown` asserts `0 → UNKNOWN`, and that assertion is *true* — it was
+merely being reached by a path that should never have produced `0`. Remapping `0` at the mapper
+would have encoded a guess at the layer that could no longer know why `0` arrived. Fixing the
+producer keeps the assertion honest and adds a new one for absence. This is the concrete instance of
+§D3's point about oracles, resolved the additive way.
+
+**It also closes a gap in the new test.** The shipped test asserts the script *text* contains a
+null-check — which is the same "the oracle is the implementation's own assumption" shape §D3 names.
+Executing the script is the external oracle that text-matching cannot be; both are now in evidence.
+
+**Residual, stated plainly.** Which value Windows Sandbox actually returns is still unknown, and it
+decides whether round 8's specific instance is fixed. If the property is *absent* there, the new
+sentinel routes it to `source: none` and the card reads "Not applicable" — fixed. If Sandbox instead
+returns a genuine PKEY `3` (the OS's own "indeterminate"), the card still reads "needs admin", which
+is defensible for that state but would mean the reported instance persists. **The next round settles
+it**, and if the card still says "needs admin" on the Security surface, the value is `3` and needs
+its own treatment rather than a re-run of this fix.
+
+## I — Implementation record, wave 1 (2026-07-31)
+
+Three fixes implemented in parallel by pinned workers, each required to produce a **bite proof** per
+assertion (break the fix, watch the test fail, restore). Every proof below is an observed failure
+message, not a claim.
+
+### F4 — advisory persistence (§D12)
+
+`ACK_TOAST_DURATION_MS = TOAST_DURATION_MS * 3` (15 s); the duration now dispatches on
+`sourceRenderHint`, and `timeoutId` stays null **only** for the sticky local-ERROR case, whose record
+lives nowhere but the toast. Three pre-existing tests that pinned `timeoutId === null` for
+`REQUIRES_ACK` were inverted — they pinned the old deliberate behaviour, which this change reverses
+on purpose.
+
+Independently verified by the orchestrator rather than taken on report: `dismiss()` calls
+`dropEphemeral` only when `origin === 'local'`, so a stream advisory's record survives the toast
+hiding. The one combination that would have broken this — a *local* `REQUIRES_ACK` — is **not
+producible**: local records are constructed with `sourceRenderHint: 'EPHEMERAL'` hardcoded
+(`AdvisoryStore.ts:436`).
+
+Teardown landed: the `OverlayHost` comment no longer claims to address a toast defect it no longer
+addresses, and the register's `occlusionNote` states the residual (reservation calibrated on the chat
+header band; a tab-strip surface is not cleared).
+
+### F7 / F8
+
+F7 reads `decl.theme?.tokens['accent-tint']` through the existing `isSafeTokenValue` authority, with a
+real fallback for the three theme-less built-ins — deliberately **not** `var(--accent-tint)`, which
+would be the same defect wearing fallback clothing. F8 moved both telemetry rows to the Advanced
+branch and corrected the false `tracesAvailable` doc claim, which the worker found duplicated at a
+second site and swept in both places.
+
+### F1 — see §D13
+
+The frontend rule changed from an *exclusion* (anything not explicitly excluded gets the elevation
+offer) to an *allowlist*. The behavioural consequence worth recording: an unrecognised future state
+now reads "Not applicable" instead of defaulting to a claim about elevation it cannot support.
+
+### F6 — extraction (§D8, and it grew)
+
+All four steps landed, plus both ride-alongs. Two decisions worth recording because they went beyond
+the brief:
+
+- **`rag.citations` was declared, not suppressed.** The injector genuinely emits it and it names the
+  document the extraction came from; suppressing would have shipped structured output with no visible
+  provenance. This required regenerating `scripts/codegen/shapes.fixture.json` and the generated
+  handler — verified independently by the orchestrator: `check-shape-handler-regen` reports
+  "output matches committed files", and the diff is exactly the one new event.
+- **A shape signal had to be introduced.** Making the injector's prompt prefix shape-aware (so an
+  extraction is not told to "Summarize the following selection") required
+  `ConversationContext.shapeId()`, fed from `shape.id().value()`. Reading `body.shapeId` would not
+  work — only `/api/chat/dispatch` carries it; `/api/chat/extract` and `/api/chat/summarize` are
+  static routes.
+
+**Open, and correctly deferred to the orchestrator:** the chain is verified up to but not through a
+live model. What remains is to confirm the assembled prompt actually contains the document text —
+`ai-offline-isnt-a-wall` applies, so this is a live-stack check, not an unavailable tier.
+
+**New fork logged, not fixed:** `UnifiedChatView.currentShapeId():4448` is a *fourth* hand-written
+affordance-to-shape map running parallel to the resolver — the same drift shape §D0 describes, found
+while fixing three of its siblings.
+
+### Orchestration note worth carrying forward
+
+Three workers shared one worktree. Their file sets were disjoint and nothing collided, but **two of
+the three reported the others' in-progress edits as "pre-existing foreign work"**, and one attributed
+a typecheck error to it. Both correctly declined to "fix" what they had not written. The lesson is
+that no single worker's green is trustworthy under concurrency — the authoritative run is the
+orchestrator's, once on the settled tree.
+
 ## D7. Strand B — the qualifying-set gap needs a round, not a design
 
 Verified while designing, so this is settled rather than proposed:

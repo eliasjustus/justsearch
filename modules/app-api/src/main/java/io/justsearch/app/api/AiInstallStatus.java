@@ -37,6 +37,18 @@ public final class AiInstallStatus {
   public long downloadedBytes;
 
   /**
+   * Bytes an interrupted earlier run left staged in {@code .partial} files that a resume will keep.
+   *
+   * <p>Deliberately NOT derived from this object's own {@code state}: {@code state == "cancelled"}
+   * is session-ephemeral (see the class note above) and reads {@code "idle"} again after a restart,
+   * so a UI keyed on it would tell a returning user their multi-GB progress is gone. This field is
+   * recomputed from DISK by {@code InstallPlanner} (which probes the {@code .partial} staging paths)
+   * whenever the plan is re-derived — at boot, on cancellation, and on every plan preview — so it
+   * survives a restart the way the bytes themselves do.
+   */
+  public long resumableBytes;
+
+  /**
    * True only when state == "completed" AND no packages were skipped/failed
    * AND all required runtime config keys were written. Distinguishes
    * "installed cleanly" from "installed with limitations" without breaking

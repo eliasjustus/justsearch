@@ -37,6 +37,24 @@ import { sendDesktopNotification } from '../../../utils/notify.js';
 const TOAST_DURATION_MS = 5000;
 
 /**
+ * Dwell for a {@code REQUIRES_ACK} toast. Longer than {@link TOAST_DURATION_MS} — the advisory is
+ * important enough to be worth reading before it goes — but BOUNDED, because a toast is an overlay:
+ * sandbox round 8 observed two never-expiring REQUIRES_ACK toasts still covering the Library
+ * header's control row ~6 minutes and several surface navigations later, one of them hiding the very
+ * `Add Folder` button the empty state told the user to press.
+ *
+ * Auto-hiding the toast does NOT acknowledge, dismiss or drop the record: `dismiss()` only clears
+ * the store for `origin === 'local'` records, and the inbox drawer renders every non-EPHEMERAL
+ * record (see AdvisoryInboxDrawer's subscribe filter). The advisory keeps its durable home in the
+ * inbox and its unread mark on the rail badge — the overlay was a redundant second channel that
+ * contributed only occlusion.
+ *
+ * 3x the base dwell, derived from the one existing duration rather than introducing an unrelated
+ * magic number.
+ */
+const ACK_TOAST_DURATION_MS = TOAST_DURATION_MS * 3;
+
+/**
  * How many toasts render at once. The OverlayHost `.top-right` slot is an uncapped, unscrolled
  * fixed flex column, so an unbounded `visible` array stacks N toasts downward over whatever the
  * surface puts near the top — round 7 observed toasts sitting over the chat header's New chat /
@@ -44,19 +62,18 @@ const TOAST_DURATION_MS = 5000;
  * (tempdoc 550 thesis III(b)): capped toasts stay in `visible` (their timers, acknowledgement and
  * inbox state are untouched) and are simply summarized by a `+N earlier` row.
  *
- * NOT a timeout: an acknowledge-required advisory still persists until the user acts on it — the
- * round-7 defect was undiscoverable dismissal and unbounded growth, not persistence.
+ * Orthogonal to the per-toast timeout: this bounds how many toasts stack at once, the timeout
+ * bounds how long each one stays. Round 7 was unbounded growth; round 8 was unbounded persistence
+ * (see {@link ACK_TOAST_DURATION_MS}). Both needed their own bound.
  */
 const MAX_VISIBLE_TOASTS = 3;
 
 interface VisibleToast {
   readonly record: AdvisoryRecord;
   /**
-   * Slice 490 Pass-8 follow-up — null when the upstream store's
-   * {@code renderHint} is {@code REQUIRES_ACK}; the toast persists until the
-   * user clicks (which acknowledges + dismisses). For {@code EPHEMERAL} and
-   * {@code PERSISTED} stores, the timeout fires after
-   * {@link TOAST_DURATION_MS}.
+   * Null only for a sticky local ERROR toast (which lives nowhere else — dismissing it destroys
+   * it). Every store-backed toast, {@code REQUIRES_ACK} included, carries a timeout:
+   * {@link ACK_TOAST_DURATION_MS} for {@code REQUIRES_ACK}, {@link TOAST_DURATION_MS} otherwise.
    */
   timeoutId: ReturnType<typeof setTimeout> | null;
 }
@@ -329,20 +346,23 @@ export class AdvisoryToastHost extends JfElement {
   }
 
   private pushToast(record: AdvisoryRecord): void {
-    // Slice 490 substrate-completion (P2.3) — REQUIRES_ACK toasts persist until
-    // clicked (no auto-dismiss); EPHEMERAL + PERSISTED auto-dismiss after
-    // TOAST_DURATION_MS. The dispatch is per-event via record.sourceRenderHint
-    // — multiple advisory classes with different renderHints coexist cleanly.
-    const durationMs = record.toast?.durationMs ?? TOAST_DURATION_MS;
+    // A REQUIRES_ACK toast dwells longer (ACK_TOAST_DURATION_MS) but still auto-hides; it is not a
+    // permanent overlay, because the record's durable channels (inbox drawer + rail badge unread)
+    // outlive the toast. The dispatch is per-event via record.sourceRenderHint — multiple advisory
+    // classes with different renderHints coexist cleanly.
+    const durationMs =
+      record.toast?.durationMs ??
+      (record.sourceRenderHint === 'REQUIRES_ACK'
+        ? ACK_TOAST_DURATION_MS
+        : TOAST_DURATION_MS);
     // Tempdoc 613 §14 — a local ERROR toast is sticky (no auto-dismiss): an error must not silently
     // auto-vanish. Derived from the declared severity, the same way REQUIRES_ACK persists a stream toast.
     const sticky =
       record.origin === 'local' &&
       presentationForSeverity(record.event.severity).sticky;
-    const timeoutId =
-      record.sourceRenderHint === 'REQUIRES_ACK' || sticky
-        ? null
-        : setTimeout(() => this.dismiss(record.key), durationMs);
+    const timeoutId = sticky
+      ? null
+      : setTimeout(() => this.dismiss(record.key), durationMs);
     this.visible = [...this.visible, { record, timeoutId }];
   }
 

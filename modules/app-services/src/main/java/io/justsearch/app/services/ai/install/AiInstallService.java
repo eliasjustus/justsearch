@@ -110,6 +110,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   private final AtomicInteger recomputeAttempts = new AtomicInteger(0);
   private static final int MAX_RECOMPUTE_ATTEMPTS = 3;
 
+  // Bytes an interrupted run left staged in `.partial` files, as last derived FROM DISK by the
+  // planner. Kept off the polling hot path (the plan needs a hardware probe): refreshed at every
+  // point the plan is already being computed — boot recompute, plan preview, install start — plus
+  // explicitly on cancellation, the one moment the number changes without a plan being asked for.
+  private volatile long resumableBytesOnDisk;
+
   public AiInstallService(
       OnlineAiService onlineAi,
       UiSettingsStore settingsStore,
@@ -213,8 +219,31 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     maybeRecomputeInstalledFromDisk();
     synchronized (lock) {
       reapIfStale();
+      status.resumableBytes = resumableBytesOnDisk;
       return status;
     }
+  }
+
+  /**
+   * Re-derives {@link AiInstallStatus#resumableBytes} from disk via the planner. Used where the
+   * staged-byte total changes but no plan is being computed anyway (cancellation); everywhere else
+   * {@link #recordResumableBytes} folds the number off a plan already in hand. Best-effort — a probe
+   * failure leaves the last known value rather than reporting a false zero, which would read as
+   * "your download was discarded".
+   */
+  private void refreshResumableBytesFromDisk() {
+    try {
+      recordResumableBytes(
+          InstallPlanner.plan(
+              getManifest(), buildHardwareProfile(), installIntent(), modelsDir, homeDir));
+    } catch (Exception e) {
+      log.debug("AiInstall resumable-bytes probe skipped (best-effort): {}", e.toString());
+    }
+  }
+
+  /** Folds a freshly-computed plan's staged-byte total into the polled status. */
+  private void recordResumableBytes(InstallPlan plan) {
+    resumableBytesOnDisk = plan.resumableBytes();
   }
 
   @Override
@@ -229,7 +258,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
     // Reuse the PURE planner (no side effects) — tempdoc 381 §F "show the plan before download".
     InstallPlan plan = InstallPlanner.plan(registry, hardware, intent, modelsDir, homeDir);
-    preview.totalDownloadBytes = plan.totalBytes();
+    // What the download will actually COST: complete files are already excluded by the planner, and
+    // `remainingBytes()` also drops the bytes an interrupted run left staged. Stating `totalBytes()`
+    // here charged the user for bytes already on their disk (Sandbox round 8).
+    preview.totalDownloadBytes = plan.remainingBytes();
+    preview.resumableBytes = plan.resumableBytes();
+    recordResumableBytes(plan);
 
     // Bytes still to download, per package id.
     Map<String, Long> downloadByPkg = new HashMap<>();
@@ -295,6 +329,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       InstallPlan plan = InstallPlanner.plan(registry, hardware, installIntent(), modelsDir, homeDir);
       // A successful plan is a DEFINITIVE answer (installed or not) — consume the one-shot now.
       diskRecomputeDone = true;
+      // Same disk-is-the-authority reasoning, applied to the OTHER thing a restart forgets: bytes a
+      // cancelled run left staged. Without this the first post-restart poll reports 0 staged bytes.
+      recordResumableBytes(plan);
       if (applyInstalledFromPlan(plan, registry)) {
         log.info(
             "AiInstall: recomputed installedFully=true from on-disk model presence after restart (tempdoc 562).");
@@ -375,6 +412,10 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
                 runInstallInternal();
               } finally {
                 running.set(false);
+                // Every exit — completed, failed, cancelled — changes what is staged on disk, and a
+                // run that ends is exactly when a surface starts asking again. One re-derivation here
+                // covers all three rather than one per terminal path.
+                refreshResumableBytesFromDisk();
               }
             });
   }
@@ -437,6 +478,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
         plan.skipped().size(),
         plan.alreadyInstalled().size(),
         plan.totalBytes());
+    recordResumableBytes(plan);
 
     // Populate status
     synchronized (lock) {
@@ -481,7 +523,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       updatePackageState(dl.packageId(), "downloading");
 
       Path targetFile = modelsDir.resolve(dl.targetPath());
-      Path partialFile = targetFile.resolveSibling(targetFile.getFileName() + ".partial");
+      Path partialFile = InstallPlanner.partialPathFor(targetFile);
       try {
         Files.createDirectories(targetFile.getParent());
       } catch (IOException e) {
@@ -1176,6 +1218,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
   private void cancelled() {
     updateState("cancelled", status.phase, "Cancelled.");
+    // The surviving byte count is re-derived from disk by startInstall's finally block, which covers
+    // this path and every other terminal one. `state = "cancelled"` itself is session-ephemeral and
+    // gone after a restart; the staged bytes are not, which is why the UI keys on them, not on this.
   }
 
   private void touch() {

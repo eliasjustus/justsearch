@@ -20,7 +20,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { LitElement } from 'lit';
 import './UnifiedChatView.js';
 import type { UnifiedChatView } from './UnifiedChatView.js';
-import { setPendingAutoRun, setPendingForceShape, takePendingAutoRun, takePendingForceShape } from '../utils/compose.js';
+import { setPendingAutoRun, setPendingForceShape, takePendingAutoRun, takePendingForceShape, takePendingSelection } from '../utils/compose.js';
+import { SHAPE_LABELS, type ShapeId } from './unifiedChatRequest.js';
+import { unifiedChatBodyStyles } from './unifiedChatStyles.js';
 // Search Thread Round-2 R2 — namespace import so `compose` can be spied on directly (the shift-held
 // Ask AI staging test asserts the view calls the SAME compose() seam the pre-round-2 behavior used).
 import * as composeModule from '../utils/compose.js';
@@ -40,7 +42,11 @@ import {
   getAgentSessionController,
   __resetAgentSessionStore,
 } from '../state/agentSessionStore.js';
-import { getSelection, __resetSelectionForTest } from '../state/selectionState.js';
+import {
+  getSelection,
+  setSingleSelection,
+  __resetSelectionForTest,
+} from '../state/selectionState.js';
 // Search Thread S6 — the reading-pane wiring tests exercise the REAL (unmocked) inspectorState store
 // (the "open a document for reading" signal every card-open/citation-click flow funnels through) and a
 // mock PluginHostApi (the internal openRetrieveHit/handleCommittedCardOpen call sites route through
@@ -1215,8 +1221,8 @@ describe('UnifiedChatView one-window agent affordance (561 P-B3)', () => {
     await view.updateComplete;
     view.affordance = 'agent';
     // 574 F1 — the wide breakpoint now comes from the shared responsiveState authority; simulate
-    // narrow (< 64rem) by setting the projected field directly.
-    (view as unknown as { wideViewport: boolean }).wideViewport = false;
+    // narrow (< 64rem of SURFACE width, 798) by setting the projected field directly.
+    (view as unknown as { wideZone: boolean }).wideZone = false;
     const ctrl = getAgentSessionController('http://localhost:5173');
     (ctrl as unknown as { answerSources: unknown[] }).answerSources = [
       { parentDocId: 'd1', chunkIndex: 0, path: 'docs/a.md', title: 'Doc A', excerpt: 'x', startLine: 5, endLine: 9, headingText: '' },
@@ -4111,6 +4117,198 @@ describe('Search Thread S6 — the reading pane (DocumentPane mount + open flows
     const lastCall = streamMock.mock.calls[streamMock.mock.calls.length - 1]!;
     const body = lastCall[1] as { docIds?: string[] };
     expect(body.docIds).toContain('/docs/q1.md');
+    view.remove();
+  });
+});
+
+describe('Extraction dispatches the chosen mode, WITH the selected document', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    __resetSelectionForTest();
+    takePendingForceShape();
+    takePendingSelection();
+    vi.mocked(consumeShapeStream).mockImplementation(() => Promise.resolve());
+  });
+
+  afterEach(() => __resetSelectionForTest());
+
+  function selectDocument(): void {
+    setSingleSelection(
+      {
+        kind: 'search-hit',
+        hitId: '/docs/invoice.md',
+        title: 'invoice.md',
+        path: '/docs/invoice.md',
+        capabilities: new Set(['open']),
+      },
+      'core.search-surface',
+    );
+  }
+
+  async function sendInExtractMode(view: UnifiedChatView): Promise<Record<string, unknown>> {
+    view.affordance = 'extract';
+    view.inputDraft = 'pull the totals';
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    expect(composer).not.toBeNull();
+    composer!.dispatchEvent(new CustomEvent('composer-submit'));
+    await view.updateComplete;
+    const streamMock = vi.mocked(consumeShapeStream);
+    expect(streamMock).toHaveBeenCalledTimes(1);
+    return streamMock.mock.calls[0]![1] as Record<string, unknown>;
+  }
+
+  it('sends core.extract even though a document is selected (selection no longer overrides the mode)', async () => {
+    selectDocument();
+    const view = mountView();
+    await view.updateComplete;
+    const body = await sendInExtractMode(view);
+    expect(body.shapeId).toBe('core.extract');
+    expect(body.schema).toBe(view.schemaDraft);
+    view.remove();
+  });
+
+  it('forwards the LIVE selection as body.selection, so the extraction has a document behind it', async () => {
+    selectDocument();
+    const view = mountView();
+    await view.updateComplete;
+    const body = await sendInExtractMode(view);
+    expect(body.selection).toEqual({
+      kind: 'item',
+      itemKind: 'search-hit',
+      itemId: '/docs/invoice.md',
+      label: 'invoice.md',
+    });
+    view.remove();
+  });
+
+  it('the mode chip names the shape that is actually dispatched', async () => {
+    selectDocument();
+    const view = mountView();
+    view.affordance = 'extract';
+    await view.updateComplete;
+    const chipLabel = view.shadowRoot?.querySelector('.shape-indicator')?.textContent?.trim();
+    const body = await sendInExtractMode(view);
+    // The chip used to read "Extraction" while `core.rag-ask` ("Document Q&A") was dispatched.
+    expect(chipLabel).toBe('Extraction');
+    expect(SHAPE_LABELS[body.shapeId as ShapeId]).toBe(chipLabel);
+    view.remove();
+  });
+
+  it('with NO explicit mode, a selected document still resolves the shape — and the chip follows it', async () => {
+    const view = mountView();
+    view.affordance = 'none';
+    await view.updateComplete;
+    expect(view.shadowRoot?.querySelector('.shape-indicator')?.textContent?.trim()).toBe('Chat');
+
+    // Selecting a document changes the shape the next Send will dispatch, so the chip must move
+    // with it. The chip used to resolve with the selection kind hardcoded to 'none' and kept
+    // reading "Chat" while Send dispatched core.rag-ask.
+    selectDocument();
+    await view.updateComplete;
+    const chipLabel = view.shadowRoot?.querySelector('.shape-indicator')?.textContent?.trim();
+
+    view.inputDraft = 'what does this say?';
+    await view.updateComplete;
+    const composer = view.shadowRoot?.querySelector('jf-composer');
+    composer!.dispatchEvent(new CustomEvent('composer-submit'));
+    await view.updateComplete;
+    const body = vi.mocked(consumeShapeStream).mock.calls[0]![1] as Record<string, unknown>;
+    expect(body.shapeId).toBe('core.rag-ask');
+    expect(chipLabel).toBe('Document Q&A');
+    expect(SHAPE_LABELS[body.shapeId as ShapeId]).toBe(chipLabel);
+    view.remove();
+  });
+});
+
+// 798 round 8 — clearing the query with a document preview open pushed the composer and the escalation
+// ladder below the viewport (reproduced twice at 1040x709; recoverable only by navigating away and
+// back). `.landing-collapsed` swaps the conversation zone's `flex: 1; min-height: 0` for `flex: 0 0
+// auto`, which is sound only while the zone is EMPTY — with a `<jf-document-pane>` mounted, its
+// `height: 100%` loses its definite basis, its scroll region stops being bounded, and the document lays
+// out at full height inside a content-sized zone. happy-dom does no layout, so these assert the
+// mechanism: the class that content-sizes the zone, and the declaration it resolves to.
+describe('798 — the landing collapse yields to a mounted reading pane', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    resetInspectorState();
+    searchListener = null;
+  });
+  afterEach(() => resetInspectorState());
+
+  /** The zone element whose flex sizing the collapse class changes. */
+  const zone = (view: UnifiedChatView) =>
+    view.shadowRoot!.querySelector('.conversation-zone') as HTMLElement;
+
+  it('.landing-collapsed is the declaration that content-sizes the zone (the class is load-bearing)', () => {
+    // Precondition for the two tests below: if this rule ever stops removing the zone's flex bound,
+    // asserting on the class name would be asserting on nothing.
+    const rule = /\.conversation-zone\.landing-collapsed\s*\{([^}]*)\}/.exec(
+      unifiedChatBodyStyles.cssText,
+    );
+    expect(rule).not.toBeNull();
+    expect(rule![1]!.replace(/\s+/g, ' ').trim()).toBe('flex: 0 0 auto;');
+  });
+
+  it('keeps the zone bounded when the query is cleared while the reading pane is mounted', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    expect(searchListener).not.toBeNull();
+    searchListener!({ ...SEARCH_EMPTY, query: 'invoice', totalHits: 1 });
+    (view as unknown as { readingDocPath: string | null }).readingDocPath = '/docs/q1.md';
+    await view.updateComplete;
+    expect(view.shadowRoot!.querySelector('jf-document-pane')).not.toBeNull();
+
+    // The reported defect: clear the query (results + query go away, the surface returns to landing).
+    searchListener!({ ...SEARCH_EMPTY });
+    await view.updateComplete;
+
+    // The preview a user opened deliberately survives a query-scoped action...
+    expect(view.shadowRoot!.querySelector('jf-document-pane')).not.toBeNull();
+    // ...and the zone keeps its flex bound, so the pane's `height: 100%` keeps a definite basis and
+    // the composer below it stays on screen.
+    expect(zone(view).classList.contains('landing-collapsed')).toBe(false);
+    expect(view.shadowRoot!.querySelector('jf-composer')).not.toBeNull();
+    view.remove();
+  });
+
+  it('still collapses on a cleared query when no reading pane is mounted (the gate is the pane, not the clear)', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    view.affordance = 'retrieve';
+    searchListener!({ ...SEARCH_EMPTY, query: 'invoice', totalHits: 1 });
+    await view.updateComplete;
+    expect(zone(view).classList.contains('landing-collapsed')).toBe(false);
+
+    searchListener!({ ...SEARCH_EMPTY });
+    await view.updateComplete;
+    // No pane ⇒ the zone really is empty ⇒ 687 R5a's composer centring is still correct.
+    expect(view.shadowRoot!.querySelector('jf-document-pane')).toBeNull();
+    expect(zone(view).classList.contains('landing-collapsed')).toBe(true);
+    view.remove();
+  });
+});
+
+// 798 round 8 — the `@container chat-surface` query container must actually WRAP the zones that query
+// it. A container declared on an element outside the grid's ancestor chain makes every wide-layout
+// rule inert: the surface would silently stick to the narrow single-column stack at every width.
+describe('798 — the wide-layout query container wraps the zones that query it', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+  });
+
+  it('.conversation-zone and the composer both descend from .answer-plane', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    const plane = view.shadowRoot!.querySelector('.answer-plane');
+    expect(plane).not.toBeNull();
+    expect(plane!.querySelector('.conversation-zone')).not.toBeNull();
+    // `.sources-affordance` is conditional on grounded agent sources; the composer that hosts it is not.
+    expect(plane!.querySelector('.composer')).not.toBeNull();
     view.remove();
   });
 });

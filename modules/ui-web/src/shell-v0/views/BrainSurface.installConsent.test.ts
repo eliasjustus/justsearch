@@ -68,8 +68,31 @@ const preview: InstallPlanPreview = {
 
 describe('composeInstallConsent', () => {
   it('states the exact download total from the plan preview, not a hardcoded size', () => {
-    // 10_890_000_000 B formats to "10.14 GB" — the SAME number the progress screen shows.
+    // 10_890_000_000 B formats to "10.14 GB".
+    //
+    // Sandbox round 8 corrected this assertion's rationale (not its value): it used to claim this was
+    // "the SAME number the progress screen shows", which is false whenever a download is being
+    // resumed. `totalDownloadBytes` is now `InstallPlan.remainingBytes()` — what the network will
+    // TRANSFER — while the progress screen counts up to the file-size total, which still includes the
+    // bytes already staged on disk. The two differ by exactly `resumableBytes`, which is why the
+    // dialog now names that amount on its own line instead of leaving the gap unexplained.
     expect(composeInstallConsent(manifest, preview).downloadTotal).toBe('10.14 GB');
+  });
+
+  it('names the bytes a paused download left on disk, separately from what is still to fetch', () => {
+    const resuming = composeInstallConsent(manifest, {
+      ...preview,
+      totalDownloadBytes: 9_750_000_000,
+      resumableBytes: 1_140_000_000,
+    });
+    expect(resuming.downloadTotal).toBe('9.08 GB');
+    expect(resuming.resumedTotal).toBe('1.06 GB');
+  });
+
+  it('claims no resumed bytes when the plan has none (the ordinary first-run case)', () => {
+    expect(composeInstallConsent(manifest, preview).resumedTotal).toBeNull();
+    expect(composeInstallConsent(manifest, { ...preview, resumableBytes: 0 }).resumedTotal).toBeNull();
+    expect(composeInstallConsent(manifest, null).resumedTotal).toBeNull();
   });
 
   it('tracks the preview instead of a fixed string (a different plan gives a different total)', () => {
