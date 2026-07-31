@@ -1,7 +1,7 @@
 ---
 title: "803 — Score the ranking the engine delivers, and re-baseline what that changes"
 type: tempdocs
-status: "HARNESS FIX DONE AND VERIFIED; RE-BASELINE BLOCKED ON AN OWNER DECISION (2026-07-31). The fix scores by delivered rank instead of the engine's stale pre-rerank score. Verified as a PREDICTION, not an inspection: tempdoc 802 computed each corpus's delivered-order score offline from different artifacts before this harness existed, and the re-runs land on all four testable predictions within 0.0001 (enron 0.7992 vs 0.7991, scifact 0.7543 vs 0.7544, miracl-de and miracl-fr exact). Regression tests mutation-checked. The 5-corpus x 4-mode campaign RAN, but the release CANNOT be composed: **miracl-fr-2k is comparable=false, reproducibly** — one document of 5408 fails SPLADE enrichment and the readiness gate requires complete coverage. `--allow-incomparable` is deliberately NOT used. Second open finding: legal-clerc-200 shifted 0.021 between sessions at different commits with an identical corpus signature, cause unidentified — and an earlier explanation in this session (run-to-run nondeterminism) was WRONG and is corrected in place. README and ratchet floors are UNCHANGED; no published number moved."
+status: "HARNESS FIX SHIPPED; RE-BASELINE DELIBERATELY NOT DONE (2026-07-31). The fix scores by delivered rank instead of the engine's stale pre-rerank score, and is verified as a PREDICTION rather than an inspection: tempdoc 802 computed each corpus's delivered-order score offline from separate artifacts before this harness existed, and the re-runs hit all four testable predictions within 0.0001 (enron 0.7992 vs 0.7991, scifact 0.7543 vs 0.7544, miracl-de and miracl-fr exact). Regression tests mutation-checked. DECISION: the README and relevance-ratchet floors are UNCHANGED and no published number moved. Re-baselining today would have swapped a coherent old table for a coherent new one MINUS FRENCH, because miracl-fr cannot produce a certifiable run (see below) — and French backs a stated public claim, so withdrawing it over an unrelated enrichment bug would be worse than leaving the old numbers with the register riders that already flag their basis. The eval-path SPLADE enrichment failure is parked as its own bug, on its own merit: if #339 made it visible rather than caused it, the PUBLISHED French number was computed over an index with a silently-missing SPLADE artifact, which is a data-integrity question independent of any metric. The re-baseline should happen once, cleanly, across all five corpora, after that is fixed."
 created: 2026-07-31
 category: measurement-integrity / search-quality / eval-harness
 related:
@@ -274,3 +274,38 @@ claims/scope call rather than a technical one:
 
 **`--allow-incomparable` remains unused.** It would produce a five-corpus release by overriding the
 only mechanism that noticed the problem.
+
+## Decision and disposition (2026-07-31)
+
+**The harness fix ships alone. The re-baseline does not happen yet.**
+
+Of the three options recorded above, the middle one — publish four corpora and drop French — looked
+viable until its cost was stated plainly: the README's *"Competitive nDCG on German **and French**"*
+would lose its French evidence. That withdraws support for a claim because of an **enrichment bug
+that has nothing to do with whether the claim is true**. Worse than either alternative.
+
+So:
+
+- **Ship the harness fix.** It is independently verified, blocks nothing, and every future eval now
+  measures the ranking the engine actually delivers. Pure gain.
+- **Leave the README and the ratchet floors alone.** Not because the current numbers are fine —
+  `legal-clerc-200` is overstated by roughly 0.04 — but because the alternative available *today* is
+  a table missing a corpus. The overstatement is recorded in the register riders, not hidden.
+- **Park the eval-path SPLADE failure as its own bug.** It deserves investigation on its merit
+  rather than as a release chore, and it may be the most consequential thing this thread surfaced:
+  if #339 made it visible rather than caused it, the **published** French number was computed over
+  an index with a silently-missing SPLADE artifact. That is a data-integrity question that outlives
+  any metric decision.
+
+The re-baseline then happens **once**, cleanly, across all five corpora, when that is fixed — rather
+than twice, badly, with a hole in it.
+
+### What a successor needs
+
+- Everything measured here is in the tables above; the run artifacts are under `tmp/803-rebaseline`,
+  `tmp/803-fr-attempt3` and `tmp/803-variance` (gitignored, so they will not survive a clean).
+- The fr failure is characterised, not fixed: reproducible 3/3 via the eval ingest path, 0/1 via the
+  dev-stack API path, on one document of 5,408. Start from `readiness.py:474` and the difference
+  between those two ingest paths.
+- **Do not reach for `--allow-incomparable`.** It composes a five-corpus release by overriding the
+  only mechanism that noticed the problem.
