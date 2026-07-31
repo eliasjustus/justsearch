@@ -109,6 +109,11 @@ is where the design effort should concentrate — not the manifest plumbing 374 
 
 ## 4. The decisions to make BEFORE designing
 
+> **Four of these decisions no longer describe the shipped system (see §10.10).**
+> D1 was reversed, D7 was resolved implicitly, D4's stated rationale is now false,
+> and D5 shipped in a different form. §4 is retained as dated history — read
+> §10.10 before treating any decision below as current.
+
 These are the load-bearing forks. Each changes the architecture, not just a parameter. Listed
 with what it gates and a recommendation lean (the user decides). **D1–D5 are blocking; D6–D7
 scope the first increment.**
@@ -571,7 +576,7 @@ as read:
 | P0 no durable-owner reconciliation protocol | **closed** — `updater.rs:931` gates `COMMITTED` on a durable-owner format check, `UpgradeReconciliationProbe` backs it |
 | P0 release workflow cannot publish the closed asset set | **closed** — `tauri.updater.conf.json` overlay carries `createUpdaterArtifacts` + `basicUi`, applied at `package-installer-win.ps1:288-298`, signing secrets wired at `build-installer.yml:231` |
 | P0 quiescence coverage incomplete | **partly closed** — see §10.8 |
-| P0 Sandbox lane does not exercise the in-app updater | **open** — §9 items 3-4, needs a human at the keyboard |
+| P0 Sandbox lane does not exercise the in-app updater | **open** — §9 items 3-4; see §10.12 for what is actually reachable |
 | P1 inventory completeness unproven | **closed** — `dd749c1d` |
 | P1 authored stores at version 0 | **not a defect** — the two remaining (`byo-ai-assets`, `user-plugin-payloads`) are `PRESERVE_EXTERNAL` formats the app never parses or rewrites; version-stamping them would be meaningless. Run events are versioned |
 | P1 Tauri exits after `ShellExecuteW` unchecked | **closed** — §7.5's witnessed `ShellExecuteExW` |
@@ -602,3 +607,64 @@ lease reopens the same hole.
 
 Four lines of the cp1252 mojibake described in `agent-lessons.md`
 (`utf8-bulk-edits`) — `Â§7`, `â†'` in the phase vocabulary and §9 item 2.
+
+### 10.10 Decision drift: where §4 no longer describes the system
+
+Found by re-reading §4 against §7. §4 stays as written (append-only dated
+history); this subsection is the correction layer.
+
+| Decision | §4 says | Shipped | Status |
+|---|---|---|---|
+| **D1** mechanism | Tier A is a thin notify + consent-apply layer; `tauri-plugin-updater` is "oriented to the silent Tier B path", adopt it when Tier B unblocks | plugin adopted now, as an authenticated download verifier, with apply hand-rolled | **reversed** — acknowledged in the header note, but §6 listed D1 as an open question *for the user* and no ruling was recorded |
+| **D4** signing | LOCKED DEFERRED; the free Ed25519 update key is "not generated now **since Tier A doesn't use it**" | Tier A depends on Ed25519 end-to-end — descriptor signature, artifact signature, the whole §7.2 closed set | **rationale invalidated.** The decision (no paid Authenticode cert) still holds; its stated reason no longer does, and §9 item 1 now requires the key D4 says is unnecessary |
+| **D5** migration | one uniform rule: "version-stamp every store + refuse-newer-in-older" | a richer taxonomy — AUTHORED→version, DERIVED→rebuild, EXTERNAL→preserve | **different form, better substance.** You do not migrate what you can regenerate. Not a defect; D5's text was simply never updated |
+| **D7** channels | open question for the user; lean "stable + beta at launch" | one descriptor endpoint, monotonic sequence; no channel concept in §7 | **resolved implicitly** to a single channel, and unlike D1 this was never flagged |
+
+The pattern worth naming: §6 reserved D1, D2, D6 and D7 for the user. Three of
+the four were settled by implementation instead. D6 (telemetry) is untouched and
+correctly remains Tier B.
+
+### 10.11 D2's "hard invariant" has no oracle
+
+D2 requires that a monolithic update reuse models in place and never
+re-download them, and says this **"must be an explicit invariant."** §7.1 asserts
+it as fact. Nothing enforces it: no test asserts the installer artifact excludes
+model blobs, and none asserts an upgrade preserves the AI Home tree. The NSIS
+hooks touch only `$COMMONAPPDATA\JustSearch`, so the property is *structurally*
+true today — it is simply unguarded.
+
+This is §3's thesis pointed at the largest single asset the product owns. A
+future change that swept `models/**` during upgrade would destroy ~9 GB of user
+state, and the first signal would be a user report. Per this repo's own tiering,
+a load-bearing must belongs in a gate, not prose.
+
+It is also §10.12 seen from another angle: the one lane that would produce
+evidence for the invariant is the lane that has never run.
+
+### 10.12 Qualification path, corrected
+
+An earlier draft of this section implied the Sandbox lane was blocked mainly on
+a human click. The canonical procedure (`docs/how-to/cut-a-release.md`) is more
+specific, and more of it is reachable than that implied:
+
+1. **Artifacts come from CI.** `gh workflow run build-installer.yml --ref main`
+   then `gh run download` — no tag needed for a validation candidate. Cutting the
+   two updater-capable candidates §9 item 2 requires is therefore an ordinary CI
+   action, not a release event.
+2. **The Sandbox round is host-interactive by design.** The silent-install
+   harness states it plainly: *"the harness needs an interactive GUI session — it
+   cannot be driven headless."* GitHub-hosted runners cannot run Windows Sandbox,
+   so this cannot move into `build-installer.yml`.
+3. **Inside the sandbox, the work is scriptable.** `sandbox-silent-install-test.ps1`
+   already proves the shape: a guest script runs and emits a `PASS`/`FAIL` result
+   JSON. The in-app lane's `start-in-app-update-test.ps1` +
+   `collect-updater-evidence.ps1` can follow it for everything except the consent
+   click — and `generate_wsb`'s `LogonCommand`, which currently just opens
+   Explorer, could launch the lane directly.
+4. **The verifier must not be the implementer.** The release loop requires an
+   *independent* verifier and finalizes only on a zero-finding round. So this step
+   is not merely "blocked on a human" — it is designed to be someone other than
+   whoever wrote the code.
+
+Net: §9 items 1-2 are reachable now; items 3-5 need a GUI host and an
+independent verifier, which is the intended shape rather than an obstacle.
