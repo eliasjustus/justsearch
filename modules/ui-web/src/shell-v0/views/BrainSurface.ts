@@ -59,7 +59,15 @@ import { icon } from '../components/Icon.js';
 // Tempdoc 586 §F-1a — reuse the existing pulse-dots primitive for the first-paint skeleton.
 import '../components/chat/PulseDots.js';
 import { confirmAsync } from '../components/ConfirmDialog.js';
+import { ModalController } from '../primitives/modalController.js';
 import type { PluginHostApi } from '../plugin-api/plugin-types.js';
+// Sandbox round 7 — the install consent dialog names the real packages, licences and terms links
+// from the registry the backend will actually install from, instead of the hardcoded "several GB".
+import {
+  getAiInstallManifest,
+  type AiInstallManifest,
+  type AiInstallModelPackage,
+} from '../../api/domains/packs.js';
 // Tempdoc 564 Phase B (4b): EffectivePolicy is the single generated wire-contract projection.
 import type { EffectivePolicy } from '../../api/generated/schema-types/effective-policy.js';
 
@@ -182,6 +190,77 @@ export function isGpuReadingProvisional(stability: AiStability | undefined): boo
   );
 }
 
+/** One row of the install consent dialog's terms list — a package the install will pull. */
+export interface InstallConsentPackage {
+  id: string;
+  label: string;
+  /** SPDX identifier, or null when the registry declares none. */
+  license: string | null;
+  /** Upstream terms page, or null when the registry declares none. */
+  termsUrl: string | null;
+}
+
+/** Everything the consent dialog states, derived only from data the app already has. */
+export interface InstallConsentContent {
+  /**
+   * Formatted total the install will download, or null when the plan preview has not resolved yet
+   * (`refreshAll()` is fire-and-forget from `connectedCallback`, so the dialog can open first).
+   */
+  downloadTotal: string | null;
+  packages: InstallConsentPackage[];
+  /** True when the manifest has not resolved (or declares no packages) — nothing to show. */
+  termsUnavailable: boolean;
+}
+
+/** Registry tier ids are kebab-case (`retrieval-core`); the manifest serializes the enum constant
+ *  (`RETRIEVAL_CORE`). One normalization so the two can be compared without a wire-shape assumption. */
+function normalizeTierId(tier: string | null | undefined): string | null {
+  if (!tier) return null;
+  return tier.toLowerCase().replace(/_/g, '-');
+}
+
+/**
+ * Sandbox round 7 — composes the "Download AI models?" consent from the registry manifest
+ * (`GET /api/ai/install/manifest`) plus the plan preview (`GET /api/ai/install/plan-preview`),
+ * replacing the hardcoded "several GB" prose and the unshown "you must accept the upstream model
+ * terms".
+ *
+ * Degradation is deliberate and asymmetric: a missing preview yields `downloadTotal: null` (the
+ * caller says the size is still being computed rather than printing a wrong number), while a
+ * package whose tier the active intent excludes is dropped only when the preview says so
+ * explicitly — an unknown tier, an untagged package, or a missing preview all keep the package
+ * listed. Terms are never hidden by a fallback; only over-listed.
+ */
+export function composeInstallConsent(
+  manifest: AiInstallManifest | null | undefined,
+  preview: InstallPlanPreview | null | undefined,
+): InstallConsentContent {
+  const totalBytes = preview?.totalDownloadBytes;
+  const downloadTotal =
+    typeof totalBytes === 'number' && totalBytes > 0 ? formatBytes(totalBytes) : null;
+
+  const excludedTiers = new Set(
+    (preview?.tiers ?? [])
+      .filter((t) => t.includedByIntent === false)
+      .map((t) => normalizeTierId(t.tier))
+      .filter((t): t is string => t !== null),
+  );
+
+  const packages: InstallConsentPackage[] = (manifest?.packages ?? [])
+    .filter((p: AiInstallModelPackage) => {
+      const tier = normalizeTierId(p.tier);
+      return tier === null || !excludedTiers.has(tier);
+    })
+    .map((p: AiInstallModelPackage) => ({
+      id: p.id,
+      label: p.label || p.id,
+      license: p.license ?? null,
+      termsUrl: p.termsUrl ?? null,
+    }));
+
+  return { downloadTotal, packages, termsUnavailable: packages.length === 0 };
+}
+
 /**
  * 574 A3 — map the legacy `.status-dot.<state>` class word onto the `jf-status-dot`
  * atom's (tone, live) projection. The bespoke per-state dot CSS (online glow / starting
@@ -221,6 +300,8 @@ export class BrainSurface extends JfElement {
     inference: { state: true },
     installStatus: { state: true },
     planPreview: { state: true },
+    manifest: { state: true },
+    installConsentOpen: { state: true },
     runtimeStatus: { state: true },
     policy: { state: true },
     packStatus: { state: true },
@@ -254,6 +335,9 @@ export class BrainSurface extends JfElement {
   declare inference: UnifiedAiState['inference'];
   declare installStatus: InstallStatus | null;
   declare planPreview: InstallPlanPreview | null;
+  /** Registry manifest behind the consent dialog's package/licence/terms list. */
+  declare manifest: AiInstallManifest | null;
+  declare installConsentOpen: boolean;
   declare runtimeStatus: AiRuntimeStatus | null;
   declare policy: EffectivePolicy | null;
   declare packStatus: PackImportStatus | null;
@@ -269,6 +353,17 @@ export class BrainSurface extends JfElement {
   declare recentSpans: TraceSpan[];
   declare tracesAvailable: boolean;
 
+  /** 574 §22.G — the full modal contract (native `<dialog>` + scroll-lock + focus-restore) for the
+   *  install consent dialog, composed rather than hand-wired. */
+  private readonly consentModal = new ModalController(this, {
+    dialog: () => this.shadowRoot?.querySelector<HTMLDialogElement>('dialog.consent'),
+    onOpened: () => {
+      requestAnimationFrame(() => {
+        (this.shadowRoot?.querySelector('jf-button.consent-confirm') as HTMLElement | null)?.focus();
+      });
+    },
+  });
+
   private clientRef: OperationClient | null = null;
   private _unifiedAiState: UnifiedAiState | null = null;
   private unsubAi: (() => void) | null = null;
@@ -283,6 +378,8 @@ export class BrainSurface extends JfElement {
     this.inference = null;
     this.installStatus = null;
     this.planPreview = null;
+    this.manifest = null;
+    this.installConsentOpen = false;
     this.runtimeStatus = null;
     this.policy = null;
     this.packStatus = null;
@@ -501,6 +598,72 @@ export class BrainSurface extends JfElement {
       padding: 0.125rem 0.25rem;
       border-radius: 0.25rem;
     }
+    /* Install consent dialog — native <dialog> (browser inert + focus-trap + Top Layer), driven by
+       ModalController so the scroll-lock/focus-restore half cannot be forgotten. */
+    dialog.consent {
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.75rem;
+      max-width: 32rem;
+      width: 100%;
+      padding: 0;
+      background: var(--surface-1);
+      color: var(--text-primary);
+    }
+    dialog.consent::backdrop {
+      background: rgba(0, 0, 0, 0.55);
+    }
+    .consent-card {
+      padding: 1.25rem;
+    }
+    .consent-title {
+      font-size: var(--font-size-md);
+      font-weight: 600;
+      margin: 0 0 0.75rem 0;
+    }
+    .consent-lede {
+      margin: 0 0 0.75rem 0;
+      font-size: var(--font-size-sm);
+      line-height: 1.5;
+      color: var(--text-secondary);
+    }
+    .consent-terms {
+      list-style: none;
+      margin: 0 0 1rem 0;
+      padding: 0;
+      max-height: 15rem;
+      overflow-y: auto;
+      border: 1px solid var(--border-subtle);
+      border-radius: 0.375rem;
+    }
+    .consent-terms li {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      padding: 0.4rem 0.625rem;
+      font-size: var(--font-size-sm);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .consent-terms li:last-child {
+      border-bottom: none;
+    }
+    .consent-pkg {
+      flex: 1;
+      min-width: 0;
+    }
+    .consent-license {
+      font-family: monospace;
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+    }
+    .consent-terms a {
+      color: var(--text-tint);
+      white-space: nowrap;
+    }
+    .consent-actions {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+    }
   `,
   ];
 
@@ -547,6 +710,17 @@ export class BrainSurface extends JfElement {
     this.refreshing = false;
     this.runtimeError = null;
     this.busy = {};
+    // An un-answered consent prompt is transient too: a surface hidden mid-question must not come
+    // back holding a modal (nor leak its scroll-lock).
+    this.installConsentOpen = false;
+  }
+
+  /** 574 §22.G — drive the modal contract from the declarative `installConsentOpen` state. */
+  protected override updated(changed: Map<string, unknown>): void {
+    super.updated(changed);
+    if (!changed.has('installConsentOpen')) return;
+    if (this.installConsentOpen) this.consentModal.open();
+    else this.consentModal.close();
   }
 
   override disconnectedCallback(): void {
@@ -592,11 +766,15 @@ export class BrainSurface extends JfElement {
       // are NOT fetched here; all five come from the shared aiStateStore subscription
       // (connectedCallback), which is always-on and self-healing. Only settings/policy — which have
       // no shared poller and are genuinely one-shot facts — are fetched on mount.
-      const [settings, policy, preview] = await Promise.all([
+      const [settings, policy, preview, manifest] = await Promise.all([
         this.fetchJson<{ ui?: UiSettings; llm?: LlmSettings }>('/api/settings/v2'),
         this.fetchJson<EffectivePolicy>('/api/policy/effective'),
         // Tempdoc 657 — honest per-tier download weight, computed side-effect-free by the planner.
         this.fetchJson<InstallPlanPreview>('/api/ai/install/plan-preview'),
+        // Sandbox round 7 — the registry the install runs from: package labels, SPDX licences and
+        // upstream terms URLs for the consent dialog. Same swallow-and-degrade contract as the rest
+        // of this mount fetch (the dialog states the terms are unavailable rather than inventing them).
+        getAiInstallManifest(this.base()).catch(() => null),
       ]);
       if (settings) {
         this.settings = settings.ui ?? {};
@@ -604,6 +782,7 @@ export class BrainSurface extends JfElement {
       }
       if (policy) this.policy = policy;
       if (preview) this.planPreview = preview;
+      if (manifest) this.manifest = manifest;
     } finally {
       this.refreshing = false;
     }
@@ -768,15 +947,19 @@ export class BrainSurface extends JfElement {
 
   // ---------- Install actions ----------
 
-  private async startInstall(): Promise<void> {
-    const ok = await this.hostConfirm({
-      title: 'Download AI models?',
-      message:
-        'This will download the recommended model files into AI Home. These files can be several GB. You must accept the upstream model terms before downloading.',
-      variant: 'info',
-      confirmLabel: 'I Accept & Download',
-    });
-    if (!ok) return;
+  /**
+   * Sandbox round 7 — the consent is rendered by this surface (see {@link renderInstallConsent})
+   * rather than passed as a `message` string, because it carries the real package list, their SPDX
+   * licences and CLICKABLE upstream terms links. `showConfirmDialog`'s message is `string`-typed all
+   * the way up through the plugin-api host contract, so enriching it would change a capability
+   * interface; `AdvisoryInboxDrawer`'s in-template anchors are the precedent followed here.
+   */
+  private startInstall(): void {
+    this.installConsentOpen = true;
+  }
+
+  private async confirmInstall(): Promise<void> {
+    this.installConsentOpen = false;
     await this.withBusy('install-start', async () => {
       this.runtimeError = null;
       const data = (await this.invokeOp('core.start-ai-install', { acceptTerms: true })) as InstallStatus;
@@ -784,7 +967,22 @@ export class BrainSurface extends JfElement {
     });
   }
 
+  /**
+   * Cancelling used to destroy every downloaded byte, so it (wrongly) needed no gate to be honest.
+   * `DownloadExecutor.cancel()` now SUSPENDS the BITS job instead of removing it and `ResumableFetch`
+   * keeps the `.partial` plus its identity sidecar, so the next install resumes via BITS or an HTTP
+   * `Range` request (integrity-verified either way). The confirmation states that — pause, not discard.
+   */
   private async cancelInstall(): Promise<void> {
+    const ok = await this.hostConfirm({
+      title: 'Pause the download?',
+      message:
+        'Cancelling pauses the download. Everything already downloaded stays on disk and the next install resumes from where it stopped instead of starting over. Files that finished downloading stay installed.',
+      variant: 'warning',
+      confirmLabel: 'Pause download',
+      cancelLabel: 'Keep downloading',
+    });
+    if (!ok) return;
     await this.withBusy('install-cancel', async () => {
       const data = (await this.invokeOp('core.cancel-ai-install', {})) as InstallStatus;
       if (data) this.installStatus = data;
@@ -1202,6 +1400,13 @@ export class BrainSurface extends JfElement {
                   <span>${this.installStatus?.phase?.replace(/_/g, ' ') ?? 'preparing'}</span>
                   <span>${formatBytes(bytesDone)} / ${formatBytes(bytesTotal)}</span>
                 </div>
+                ${this.installStatus?.packages?.some((p) => p.resumed)
+                  ? html`<div
+                      style="margin-top: 0.25rem; font-size: var(--font-size-xs); color: var(--text-secondary)"
+                    >
+                      Resumed from your earlier download — the bytes already on disk were kept.
+                    </div>`
+                  : nothing}
               </div>
             `
           : nothing}
@@ -1729,6 +1934,84 @@ export class BrainSurface extends JfElement {
     );
   }
 
+  // ---------- Render: install consent ----------
+
+  /**
+   * Sandbox round 7 — the consent screen states what the app already knows: the exact total from the
+   * plan preview (the same number the very next screen renders), and every package it will install
+   * with its SPDX licence and a clickable link to the upstream terms the copy asks you to accept.
+   *
+   * Both inputs arrive from the fire-and-forget `refreshAll()`, so either can still be missing when
+   * the dialog opens. Neither gap is papered over with a plausible-looking number or an empty list:
+   * an unresolved preview says the size is still being computed, and an unresolved manifest says the
+   * terms could not be listed (and that continuing still accepts them) rather than implying there
+   * are none.
+   */
+  private renderInstallConsent(): TemplateResult {
+    const consent = composeInstallConsent(this.manifest, this.planPreview);
+    return html`
+      <dialog
+        class="consent"
+        aria-labelledby="install-consent-title"
+        @cancel=${(e: Event) => {
+          e.preventDefault();
+          this.installConsentOpen = false;
+        }}
+        @click=${(e: Event) => {
+          if (e.target === e.currentTarget) this.installConsentOpen = false;
+        }}
+      >
+        <div class="consent-card">
+          <h3 id="install-consent-title" class="consent-title">Download AI models?</h3>
+          <p class="consent-lede">
+            ${consent.downloadTotal
+              ? html`This downloads <strong>${consent.downloadTotal}</strong> of model files into AI
+                  Home.`
+              : html`This downloads the recommended model files into AI Home. The exact size is still
+                  being calculated — it is shown on the progress screen once the download starts.`}
+          </p>
+          <p class="consent-lede">
+            ${consent.termsUnavailable
+              ? 'The upstream model terms could not be listed right now. Downloading still accepts the licence each package is published under; reopen this dialog once the connection is back to read them first.'
+              : 'Each package below is published by its upstream author under the licence shown. Downloading accepts those terms.'}
+          </p>
+          ${consent.termsUnavailable
+            ? nothing
+            : html`
+                <ul class="consent-terms">
+                  ${consent.packages.map(
+                    (p) => html`
+                      <li>
+                        <span class="consent-pkg">${p.label}</span>
+                        <span class="consent-license">${p.license ?? 'licence not declared'}</span>
+                        ${p.termsUrl
+                          ? html`<a href=${p.termsUrl} target="_blank" rel="noopener noreferrer"
+                              >Terms ↗</a
+                            >`
+                          : nothing}
+                      </li>
+                    `,
+                  )}
+                </ul>
+              `}
+          <div class="consent-actions">
+            <jf-button label="Cancel" .onActivate=${() => (this.installConsentOpen = false)}>
+              Cancel
+            </jf-button>
+            <jf-button
+              class="consent-confirm"
+              variant="primary"
+              label="Accept and download"
+              .onActivate=${() => void this.confirmInstall()}
+            >
+              Accept and download
+            </jf-button>
+          </div>
+        </div>
+      </dialog>
+    `;
+  }
+
   // ---------- Render: pack import (Tauri-only advanced) ----------
 
   private renderPackImport(): TemplateResult | typeof nothing {
@@ -2130,6 +2413,7 @@ export class BrainSurface extends JfElement {
               ${this.renderPackImport()}
             `
           : nothing}
+        ${this.renderInstallConsent()}
       </div>
     `;
   }

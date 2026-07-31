@@ -1,0 +1,4 @@
+# config-surface fixture baseline
+yaml_keys 10 2026-07-30
+env_sysprop_pairs 20 2026-07-30
+config_keys 5 2026-07-30

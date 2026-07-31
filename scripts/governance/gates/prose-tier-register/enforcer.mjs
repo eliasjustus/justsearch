@@ -2,7 +2,7 @@
  * prose-tier-register enforcer — tempdoc 530 §Meta-loop.
  *
  * The "fourth gate" the tempdoc names as the closure piece. Enforces:
- *   1. `.claude/rules/tier-register.md` parses correctly (every row has a tier).
+ *   1. `docs/reference/contributing/tier-register.md` parses correctly (every row has a tier).
  *   2. Every row tagged with tier `gate` references an existing gate id in
  *      `governance/registry.v1.json`.
  *   3. Tier-changes vs the baseline ref require a declared changeset

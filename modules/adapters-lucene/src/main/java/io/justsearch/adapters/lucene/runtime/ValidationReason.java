@@ -14,6 +14,11 @@ public enum ValidationReason {
   MISSING_UID_FIELD("missing_uid_field"),
   VECTOR_NOT_NUMERIC("vector_not_numeric"),
   VECTOR_DIMENSION_MISMATCH("vector_dimension_mismatch"),
+  /**
+   * A write set {@code <stage>_status = COMPLETED} without carrying that status's witnessing
+   * artifact field (tempdoc 798). See {@link StatusArtifactContract}.
+   */
+  STATUS_WITHOUT_ARTIFACT("status_without_artifact"),
   UNKNOWN("unknown");
 
   private static final Map<String, ValidationReason> BY_WIRE;

@@ -257,7 +257,8 @@ class RmwFieldPreservationTest {
           assertEquals(0.0, presence.coveragePercent(), 1e-9);
           assertFalse(presence.isReady(95.0), "readiness must fail closed on a dead chunk leg");
         },
-        this::createRuntimeWithChunkVector);
+        this::createRuntimeWithChunkVector,
+        ValidationMode.WARN);
   }
 
   /**
@@ -292,7 +293,8 @@ class RmwFieldPreservationTest {
           assertEquals(0, counts.completed(), "status must no longer read COMPLETED");
           assertEquals(1, counts.pending(), "status downgraded to PENDING for re-embed (tempdoc 717)");
         },
-        this::createRuntimeWithChunkVector);
+        this::createRuntimeWithChunkVector,
+        ValidationMode.WARN);
   }
 
   /**
@@ -324,7 +326,8 @@ class RmwFieldPreservationTest {
           assertEquals(0, counts.completed(), "parent status must no longer read COMPLETED");
           assertEquals(1, counts.pending(), "parent status downgraded to PENDING for re-embed");
         },
-        this::createRuntimeWithVectorAndSplade);
+        this::createRuntimeWithVectorAndSplade,
+        ValidationMode.WARN);
   }
 
   /**
@@ -499,6 +502,11 @@ class RmwFieldPreservationTest {
     doc.put(SchemaFields.PATH, "test/" + id + ".txt");
     doc.put(SchemaFields.CONTENT, "content for " + id);
     doc.put(SchemaFields.SPLADE_STATUS, spladeStatus);
+    if (SchemaFields.SPLADE_STATUS_COMPLETED.equals(spladeStatus)) {
+      // The write-time contract (tempdoc 798) rejects a COMPLETED status with no witnessing
+      // artifact — a COMPLETED-but-SPLADE-less seed is exactly the lie it exists to stop.
+      doc.put(SchemaFields.SPLADE, Map.of("alpha", 2.0f, "beta", 1.0f));
+    }
     if (vec != null) doc.put(SchemaFields.VECTOR, vec);
     runtime.indexingCoordinator().indexSingle(new IndexDocument(doc));
     commit(runtime);
@@ -554,13 +562,29 @@ class RmwFieldPreservationTest {
 
   private void withConfig(RuntimeConsumer body, java.util.function.Supplier<RunningRuntime> factory)
       throws Exception {
+    withConfig(body, factory, ValidationMode.FAIL);
+  }
+
+  /**
+   * WARN-mode variant. The tests below that seed an F-032 "status lies" document (a COMPLETED
+   * status with no artifact) need it: the write-time contract (tempdoc 798) rejects that shape at
+   * the front door in FAIL mode, and the RMW self-heal these tests exercise is precisely the
+   * backstop for such state — which reaches disk from a pre-798 index, or from a WARN-mode
+   * deployment. WARN mode is how the test reproduces that on-disk state; it does not weaken the
+   * contract, whose FAIL behaviour is asserted in {@link StatusArtifactContractTest}.
+   */
+  private void withConfig(
+      RuntimeConsumer body,
+      java.util.function.Supplier<RunningRuntime> factory,
+      ValidationMode validationMode)
+      throws Exception {
     String prev = System.getProperty("justsearch.config");
     Path base = null;
     Path cfg = null;
     RunningRuntime runtime = null;
     try {
       base = Files.createTempDirectory("justsearch-rmw-preserve-");
-      cfg = writeTestConfig(base);
+      cfg = writeTestConfig(base, validationMode);
       System.setProperty("justsearch.config", cfg.toString());
       runtime = factory.get();
       body.accept(runtime);
@@ -570,13 +594,16 @@ class RmwFieldPreservationTest {
     }
   }
 
-  private Path writeTestConfig(Path base) throws Exception {
+  private Path writeTestConfig(Path base, ValidationMode validationMode) throws Exception {
     String yaml =
         "app:\n  data_dir: "
             + base.toString().replace("\\", "\\\\")
             + "\n"
             + "index:\n  collections:\n    - name: rmwpreservetest\n      roots: ['ignored']\n"
-            + "  vector:\n    dimension: 4\n";
+            + "  vector:\n    dimension: 4\n"
+            + "  validation:\n    mode: "
+            + (validationMode == ValidationMode.WARN ? "warn" : "fail")
+            + "\n";
     Path cfg = Files.createTempFile("justsearch-config-", ".yaml");
     Files.writeString(cfg, yaml);
     return cfg;

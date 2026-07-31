@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from 'vitest';
 import { trackTemplate, composeGridStyles, type ZoneDecl } from './compositionLayout.js';
+import { CONVERSATION_ZONES } from '../views/unifiedChatRequest.js';
 
-// The agent-window zone-set (mirrors CONVERSATION_ZONES in UnifiedChatView — the §13.9 re-zone:
+// A generator FIXTURE modelled on the agent-window zone-set (the §13.9 re-zone:
 // the reading column FLANKED by a content-sized spine gutter (col 2) + rail (col 4) that COLLAPSE when
 // unmounted, with CAPPED outer margins so the group sits fuller-width).
 const ZONES: readonly ZoneDecl[] = [
@@ -50,5 +51,58 @@ describe('compositionLayout — §13 Pillar B generator', () => {
     // remains. (Wide-mode empty-zone collapse is a property of the content-sized tracks — asserted live.)
     const narrowZoneCount = trackTemplate(ZONES, 'narrow').split(' minmax').length;
     expect(narrowZoneCount).toBe(1);
+  });
+});
+
+/** The declared MINIMUM of a track sizing function (`minmax(<min>, …)`, else the track itself). */
+function trackMinimum(track: string): string {
+  const m = /^minmax\(\s*([^,]+),/.exec(track);
+  return (m?.[1] ?? track).trim();
+}
+
+/** A track minimum expressed in rem; `0` (and any non-rem minimum) reads as 0rem. */
+function trackMinimumRem(track: string): number {
+  const m = /^([\d.]+)rem$/.exec(trackMinimum(track));
+  return m ? Number(m[1]) : 0;
+}
+
+// Sandbox round 7 — with the document preview open at a viewport just over the wide breakpoint the
+// reading column collapsed to ~one word per line while both flanking zones held full width. Asserted
+// against the REAL CONVERSATION_ZONES (not the fixture above) because the defect WAS the declaration.
+describe('CONVERSATION_ZONES — the reading column is floored in its own grid track', () => {
+  const zoneFor = (selector: string) =>
+    CONVERSATION_ZONES.find((z) => z.selector === selector);
+
+  it('flanks the reading column with two zones that reserve their own min-width floors', () => {
+    // The precondition that makes the floor load-bearing: if these zones ever stop being declared,
+    // this suite is asserting a floor against nothing and should be revisited rather than trusted.
+    expect(zoneFor('.evidence-rail')).toBeDefined();
+    expect(zoneFor('.document-pane')).toBeDefined();
+  });
+
+  it('declares a NON-ZERO track minimum for .conversation (an item-side min-width cannot substitute)', () => {
+    // Browser-measured (chromium, 1050px viewport, rail + pane mounted): `minmax(0, 50rem)` sized
+    // the track to 102px; moving `min-width: 24rem` onto the ITEM left the track at 102px and
+    // overflowed a 384px item across the rail. Only a track-level floor widens the track itself.
+    const conversation = zoneFor('.conversation');
+    expect(conversation).toBeDefined();
+    expect(trackMinimum(conversation!.track)).not.toBe('0');
+    expect(trackMinimumRem(conversation!.track)).toBeGreaterThanOrEqual(24);
+  });
+
+  it("keeps the reading column's floor no smaller than the document-pane's (primary is not the first to yield)", () => {
+    // The pane's own floor is `min-width: 24rem` (unifiedChatStyles.ts, wide breakpoint); the
+    // reading column must not be declared narrower than the secondary surface crowding it.
+    expect(trackMinimumRem(zoneFor('.conversation')!.track)).toBeGreaterThanOrEqual(24);
+  });
+
+  it('changes only the floor — the reading measure cap stays 50rem', () => {
+    expect(zoneFor('.conversation')!.track).toBe('minmax(24rem, 50rem)');
+  });
+
+  it('leaves the narrow single-column stack unaffected by the wide-mode floor', () => {
+    // trackTemplate's narrow branch hardcodes `minmax(0, 1fr)` per non-wideOnly zone and ignores
+    // the declared track, so a wide-mode floor is a no-op narrow (verified, not assumed).
+    expect(trackTemplate(CONVERSATION_ZONES, 'narrow')).toBe('minmax(0, 1fr)');
   });
 });

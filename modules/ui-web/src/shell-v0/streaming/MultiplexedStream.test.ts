@@ -490,3 +490,95 @@ describe('MultiplexedStream — late-subscribe reconnect (tempdoc 662 post-imple
     expect(sources).toHaveLength(1); // no reconnect fired post-stop
   });
 });
+
+describe('MultiplexedStream — nudgeReconnect (tempdoc 798 B4 per-channel stall actuator)', () => {
+  beforeEach(() => {
+    __resetOriginContactForTest();
+    __resetLiveChannelBudgetForTest();
+  });
+
+  function multiplexWithRecording(watchdogStaleMs?: number) {
+    const sources: FakeEventSource[] = [];
+    const urls: string[] = [];
+    const mux = new MultiplexedStream({
+      url: 'http://test/api/shell-events/stream',
+      eventSourceFactory: (url) => {
+        const fake = new FakeEventSource(url);
+        sources.push(fake);
+        urls.push(url);
+        return fake as unknown as EventSource;
+      },
+      ...(watchdogStaleMs === undefined ? {} : { watchdogStaleMs }),
+    });
+    return { mux, sources, urls };
+  }
+
+  it('THE FIELD CONDITION — one channel wedged while another keeps flowing: the physical watchdog never fires, so ONLY the nudge reconnects', async () => {
+    // The exact shape of the defect: `surface:indexing-jobs` goes silent while advisory/ledger
+    // frames keep arriving on the SAME physical connection, re-arming EnvelopeStream's
+    // heartbeat-absence watchdog. The transport is provably alive; only one demuxed channel is
+    // dead. Nothing at the transport layer can observe that — which is why the stall detector
+    // needs its own actuator.
+    const { mux, sources } = multiplexWithRecording(40);
+    mux.subscribe('system:test-wedged', () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }), () => {});
+    mux.subscribe('system:test-flowing', () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }), () => {});
+    mux.start();
+    sources[0]!.emitOpen();
+
+    // ~90ms of traffic on the OTHER channel only, at well under the 40ms watchdog window.
+    for (let i = 1; i <= 6; i += 1) {
+      await new Promise((r) => setTimeout(r, 15));
+      sources[sources.length - 1]!.emitFrame(updateFrame('system:test-flowing', i, `tok-flow-${i}`));
+    }
+    // 90ms > 2x the watchdog window, yet no reconnect: the wedged channel is invisible to it.
+    expect(sources).toHaveLength(1);
+
+    // The consumer-owned actuator is the only thing that can re-establish the transport here.
+    expect(mux.nudgeReconnect()).toBe(true);
+    expect(sources).toHaveLength(2);
+    mux.stop();
+  });
+
+  it('the nudge rebuilds the ?since= bundle so every already-flowing channel resumes from its own token', () => {
+    const { mux, sources, urls } = multiplexWithRecording();
+    const seenA: CounterState[] = [];
+    mux.subscribe('system:test-a', () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }), (s) =>
+      seenA.push(s.payload),
+    );
+    mux.subscribe('system:test-b', () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }), () => {});
+    mux.start();
+    sources[0]!.emitOpen();
+    sources[0]!.emitFrame(updateFrame('system:test-a', 1, 'tok-a-1'));
+    sources[0]!.emitFrame(updateFrame('system:test-b', 1, 'tok-b-1'));
+    const seenABeforeNudge = seenA.length;
+
+    mux.nudgeReconnect();
+
+    expect(sources).toHaveLength(2);
+    expect(urls[1]).toBe(
+      'http://test/api/shell-events/stream?since=' + encodeURIComponent('tok-a-1,tok-b-1'),
+    );
+    // The demux entries are owned by MultiplexedStream, not the transport — the reconnect must
+    // not reset, lose, or duplicate an already-accumulated payload.
+    expect(mux.getSnapshot<CounterState>('system:test-a')!.payload.count).toBe(1);
+    expect(mux.getSnapshot<CounterState>('system:test-a')!.resumeToken).toBe('tok-a-1');
+    // Only the transient connection-state flip reaches A's listener; no payload change.
+    expect(seenA[seenA.length - 1]!.count).toBe(1);
+    expect(seenA.length).toBeGreaterThanOrEqual(seenABeforeNudge);
+    mux.stop();
+  });
+
+  it('the nudge is a no-op before start() and after stop() — it never resurrects a closed connection', () => {
+    const { mux, sources } = multiplexWithRecording();
+    mux.subscribe('system:test-a', () => ({ initialState: COUNTER_INITIAL, reducer: counterReducer }), () => {});
+
+    expect(mux.nudgeReconnect()).toBe(false); // never started
+    expect(sources).toHaveLength(0);
+
+    mux.start();
+    sources[0]!.emitOpen();
+    mux.stop();
+    expect(mux.nudgeReconnect()).toBe(false); // intentionally stopped
+    expect(sources).toHaveLength(1);
+  });
+});

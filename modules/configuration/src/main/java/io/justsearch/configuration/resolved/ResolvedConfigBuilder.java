@@ -282,7 +282,6 @@ public final class ResolvedConfigBuilder {
    */
   public ResolvedConfigBuilder contributeYaml(JsonNode root) {
     if (root == null || root.isMissingNode()) return this;
-    contributeYamlWatcher(root);
     contributeYamlOcr(root);
     contributeYamlIndex(root);
     contributeYamlPolicy(root);
@@ -319,10 +318,6 @@ public final class ResolvedConfigBuilder {
     return this;
   }
 
-  private void contributeYamlWatcher(JsonNode root) {
-    putYamlBoolean("index.watcher.overflow.rescan_on_overflow", root,
-        "index.watcher.overflow.rescan_on_overflow");
-  }
 
   private void contributeYamlOcr(JsonNode root) {
     putYamlBoolean("index.ocr.enabled", root, "index.ocr.enabled");
@@ -351,7 +346,6 @@ public final class ResolvedConfigBuilder {
     putYamlInt("index.writer.ram_buffer_mb", root, "index.writer.ram_buffer_mb");
     putYamlInt("index.writer.max_buffered_docs", root, "index.writer.max_buffered_docs");
     putYamlInt("index.queue.max_depth", root, "index.queue.max_depth");
-    putYamlInt("index.commit.debounce_ms", root, "index.commit.debounce_ms");
     putYamlBoolean("index.commit.meta.enabled", root, "index.commit.meta.enabled");
     putYamlInt("index.nrt.target_max_stale_ms", root, "index.nrt.target_max_stale_ms");
     putYamlInt("index.nrt.max_stale_ms", root, "index.nrt.max_stale_ms");
@@ -394,7 +388,6 @@ public final class ResolvedConfigBuilder {
 
   private void contributeYamlRag(JsonNode root) {
     putYaml("rag.retrieve.mode", root, "rag.retrieve.mode");
-    putYamlInt("rag.retrieve.top_k", root, "rag.retrieve.top_k");
     putYamlInt("rag.retrieve.overretrieve_factor", root, "rag.retrieve.overretrieve_factor");
     putYaml("rag.diversify.mode", root, "rag.diversify.mode");
     putYamlDouble("rag.mmr.lambda", root, "rag.mmr.lambda");
@@ -406,8 +399,6 @@ public final class ResolvedConfigBuilder {
   }
 
   private void contributeYamlWorker(JsonNode root) {
-    putYamlInt("worker.limits.max_batch_size", root, "worker.limits.max_batch_size");
-    putYamlLong("worker.limits.max_queue_depth", root, "worker.limits.max_queue_depth");
     putYamlInt("worker.limits.max_content_length", root, "worker.limits.max_content_length");
     putYamlLong("worker.limits.max_file_size", root, "worker.limits.max_file_size");
     // 347: worker limit env/sysprop overrides now handled by EnvRegistry entries.
@@ -896,7 +887,6 @@ public final class ResolvedConfigBuilder {
     ResolvedConfig.Paths paths = buildPaths();
     ResolvedConfig.Ports ports = buildPorts();
     ResolvedConfig.Ai ai = buildAi();
-    ResolvedConfig.Llm llm = buildLlm();
     ResolvedConfig.Agent agent = buildAgent();
     ResolvedConfig.Summary summary = buildSummary();
     ResolvedConfig.Search search = buildSearch();
@@ -917,7 +907,7 @@ public final class ResolvedConfigBuilder {
 
     ResolvedConfig config =
         new ResolvedConfig(
-            paths, ports, ai, llm, agent, summary,
+            paths, ports, ai, agent, summary,
             search, telemetry, policy, ui,
             watcher, ocr, index, rag, hybridSearch, worker,
             collections, workerAi, workerIndexer,
@@ -1262,37 +1252,6 @@ public final class ResolvedConfigBuilder {
         resolveInt("justsearch.citation.scorer.deadline_ms", 2000));
   }
 
-  private ResolvedConfig.Llm buildLlm() {
-    return new ResolvedConfig.Llm(
-        resolveString("justsearch.llm.model_sha256", ""),
-        resolveInt("justsearch.llm.gpu_layers", 0),
-        resolveLong("justsearch.llm.deadline_ms", 0L),
-        resolveInt("justsearch.llm.max_parallel", 1),
-        resolveInt("justsearch.llm.max_sessions", 0),
-        resolveLong("justsearch.llm.session_warmup_ms", 0L),
-        resolveInt("justsearch.llm.queue_capacity", 0),
-        resolveDouble("justsearch.llm.vram_fraction", 0.0),
-        resolveLong("justsearch.llm.vram_projected", 0L),
-        resolveInt("justsearch.llm.max_slots", 0),
-        resolveLong("justsearch.llm.vram_limit_bytes", 0L),
-        resolveBoolean("justsearch.llm.vram_auto_scale", true),
-        resolveLong("justsearch.llm.simulated_latency_ms", 0L),
-        resolveInt("justsearch.llm.threads", 0),
-        resolveInt("justsearch.llm.context_length", 0),
-        resolveInt("justsearch.llm.max_new_tokens", 0),
-        resolveDouble("justsearch.llm.temperature", 0.0),
-        resolveDouble("justsearch.llm.top_p", 0.0),
-        resolveDouble("justsearch.llm.min_p", 0.0),
-        resolveLong("justsearch.llm.rng_seed", 42L),
-        resolveString("justsearch.llm.backend_selector", ""),
-        resolveString("justsearch.llm.backend_supports", ""),
-        resolveInt("justsearch.llm.summary_chunk_tokens", 0),
-        resolveInt("justsearch.llm.summary_chunk_overlap", 0),
-        resolveString("justsearch.llm.template_root", ""),
-        resolveString("justsearch.llm.template_summary", ""),
-        resolveString("justsearch.llm.template_reduce", ""));
-  }
-
   private ResolvedConfig.Agent buildAgent() {
     return new ResolvedConfig.Agent(
         resolveInt("justsearch.agent.search.default_limit", 3),
@@ -1392,8 +1351,7 @@ public final class ResolvedConfigBuilder {
   }
 
   private ResolvedConfig.Watcher buildWatcher() {
-    return new ResolvedConfig.Watcher(
-        resolveNullableBoolean("index.watcher.overflow.rescan_on_overflow"));
+    return new ResolvedConfig.Watcher();
   }
 
   private ResolvedConfig.Ocr buildOcr() {
@@ -1416,7 +1374,6 @@ public final class ResolvedConfigBuilder {
         resolveNullableInt("index.writer.ram_buffer_mb"),
         resolveNullableInt("index.writer.max_buffered_docs"),
         resolveNullableInt("index.queue.max_depth"),
-        resolveNullableInt("index.commit.debounce_ms"),
         resolveBoolean("index.commit.meta.enabled", true),
         resolveNullableInt("index.nrt.target_max_stale_ms"),
         resolveNullableInt("index.nrt.max_stale_ms"),
@@ -1560,7 +1517,6 @@ public final class ResolvedConfigBuilder {
   private ResolvedConfig.Rag buildRag() {
     return new ResolvedConfig.Rag(
         resolveStringLower("rag.retrieve.mode", "auto"),
-        Math.max(1, Math.min(50, resolveInt("rag.retrieve.top_k", 5))),
         Math.max(1, Math.min(10, resolveInt("rag.retrieve.overretrieve_factor", 3))),
         resolveStringLower("rag.diversify.mode", "position"),
         Math.max(0.0, Math.min(1.0, resolveDouble("rag.mmr.lambda", 0.5))),
@@ -1569,7 +1525,7 @@ public final class ResolvedConfigBuilder {
         resolveBoolean("rag.chunk_splade.enabled", false),
         resolveBoolean("rag.union.enabled", true),
         resolveInt("justsearch.rag.top_k", 5),
-        resolveString("justsearch.citation.match_threshold", ""),
+        Math.max(0.0, Math.min(1.0, resolveDouble("justsearch.citation.match_threshold", 0.5))),
         Math.max(1, Math.min(10, resolveInt("rag.max_chunks_per_article", 2))));
   }
 
@@ -1659,8 +1615,6 @@ public final class ResolvedConfigBuilder {
 
   private ResolvedConfig.Worker buildWorker() {
     return new ResolvedConfig.Worker(
-        resolveInt("worker.limits.max_batch_size", 10_000),
-        resolveLong("worker.limits.max_queue_depth", 100_000L),
         resolveInt("worker.limits.max_content_length", 10 * 1024 * 1024),
         resolveLong("worker.limits.max_file_size", 100L * 1024 * 1024));
   }

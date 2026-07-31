@@ -156,6 +156,15 @@ public final class SchemaFields {
   public static final String NER_STATUS = "ner_status";
   public static final String NER_STATUS_PENDING = "PENDING";
   public static final String NER_STATUS_COMPLETED = "COMPLETED";
+
+  /**
+   * NER ran successfully and extracted zero entities. Terminal like {@link #NER_STATUS_COMPLETED}
+   * (no re-queue), but distinguishable, so a document carrying no {@code ENTITY_*} fields is not
+   * indistinguishable from an enriched one. Mirrors the {@link #VDU_STATUS_COMPLETED_EMPTY}
+   * precedent for the same "stage ran fine, produced nothing" case.
+   */
+  public static final String NER_STATUS_COMPLETED_EMPTY = "COMPLETED_EMPTY";
+
   public static final String NER_STATUS_FAILED = "FAILED";
   /** NER retry count for poison pill protection. */
   public static final String NER_RETRY_COUNT = "ner_retry_count";
@@ -168,6 +177,23 @@ public final class SchemaFields {
   public static final String SPLADE_STATUS = "splade_status";
   public static final String SPLADE_STATUS_PENDING = "PENDING";
   public static final String SPLADE_STATUS_COMPLETED = "COMPLETED";
+
+  /**
+   * SPLADE encoded successfully but produced no materialisable weight (an empty map, or one whose
+   * every weight is &lt;= 0 — {@code FieldMapper.addFields} only emits a {@code FeatureField} for a
+   * strictly-positive weight). Terminal like {@link #SPLADE_STATUS_COMPLETED} (no re-queue), but
+   * distinguishable, so a document carrying zero {@code splade} postings is not indistinguishable
+   * from an encoded one. Mirrors the {@link #VDU_STATUS_COMPLETED_EMPTY} / {@link
+   * #NER_STATUS_COMPLETED_EMPTY} precedents for the same "stage ran fine, produced nothing" case.
+   *
+   * <p>Why not {@code COMPLETED}: that token asserts an artifact exists, and the write-time
+   * status/artifact contract (tempdoc 798) rejects the claim. Why not {@code FAILED}: nothing
+   * failed, and FAILED is a poison-pill signal. Being neither COMPLETED nor null also means the RMW
+   * {@code reset-status} lane preserves it instead of resetting to PENDING and zeroing the retry
+   * counter — the livelock cycle a data-less COMPLETED reopens.
+   */
+  public static final String SPLADE_STATUS_COMPLETED_EMPTY = "COMPLETED_EMPTY";
+
   public static final String SPLADE_STATUS_FAILED = "FAILED";
   /** SPLADE retry count for poison pill protection. */
   public static final String SPLADE_RETRY_COUNT = "splade_retry_count";

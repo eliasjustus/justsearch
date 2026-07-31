@@ -34,7 +34,6 @@ import java.util.TreeMap;
  *   <li>{@link Paths} — file system paths (data dir, index path, home, models, SSOT, repo root)
  *   <li>{@link Ports} — network ports (API, AI worker, llama-server)
  *   <li>{@link Ai} — AI/inference feature flags, GPU layers, model paths
- *   <li>{@link Llm} — LLM runtime tuning (sampling, VRAM, templates, deadlines)
  *   <li>{@link Agent} — agent tool configuration (limits, compression)
  *   <li>{@link Summary} — summary pipeline configuration
  *   <li>{@link Search} — search pipeline configuration
@@ -49,7 +48,6 @@ public record ResolvedConfig(
     Paths paths,
     Ports ports,
     Ai ai,
-    Llm llm,
     Agent agent,
     Summary summary,
     Search search,
@@ -73,7 +71,6 @@ public record ResolvedConfig(
     Objects.requireNonNull(paths, "paths");
     Objects.requireNonNull(ports, "ports");
     Objects.requireNonNull(ai, "ai");
-    Objects.requireNonNull(llm, "llm");
     Objects.requireNonNull(agent, "agent");
     Objects.requireNonNull(summary, "summary");
     Objects.requireNonNull(search, "search");
@@ -201,7 +198,13 @@ public record ResolvedConfig(
 
   /**
    * AI and inference feature configuration — model paths, GPU layers, feature flags, and VRAM
-   * thresholds. LLM runtime tuning lives in {@link Llm}.
+   * thresholds.
+   *
+   * <p>This is the record the inference layer actually reads ({@code InferenceConfig},
+   * {@code LlamaServerOps}). A parallel {@code Llm} record once claimed to hold "LLM runtime
+   * tuning" and was consumed by nothing — its ten components resolved, were documented, and were
+   * read by no production code. Retired by tempdoc 799 §R; sampling parameters are set per purpose
+   * in {@code SamplingParams} and per call, not by a global knob.
    */
   public record Ai(
       Path serverExe,
@@ -392,36 +395,6 @@ public record ResolvedConfig(
     }
   }
 
-  /** LLM runtime tuning — sampling, VRAM management, deadlines, templates, remote config. */
-  public record Llm(
-      String modelSha256,
-      int llmGpuLayers,
-      long deadlineMs,
-      int maxParallel,
-      int maxSessions,
-      long sessionWarmupMs,
-      int queueCapacity,
-      double vramFraction,
-      long vramProjected,
-      int maxSlots,
-      long vramLimitBytes,
-      boolean vramAutoScale,
-      long simulatedLatencyMs,
-      int threads,
-      int contextLength,
-      int maxNewTokens,
-      double temperature,
-      double topP,
-      double minP,
-      long rngSeed,
-      String backendSelector,
-      String backendSupports,
-      int summaryChunkTokens,
-      int summaryChunkOverlap,
-      String templateRoot,
-      String templateSummary,
-      String templateReduce) {}
-
   /** Agent tool configuration — search/browse limits, context compression. */
   public record Agent(
       int searchDefaultLimit,
@@ -610,9 +583,12 @@ public record ResolvedConfig(
   /**
    * File-system watcher configuration.
    *
-   * @param overflowRescanOnOverflow whether to rescan on watcher overflow
+   * <p>Its only component, {@code overflowRescanOnOverflow}, was removed by tempdoc 799 §N.2 —
+   * shadowed by the hardcoded {@code force=true} at {@code WorkerMethvinWatcher}, and read by
+   * nothing. The record is retained (empty) rather than deleted so the {@code watcher()} slot on
+   * {@link ResolvedConfig} stays available for the next real watcher knob.
    */
-  public record Watcher(Boolean overflowRescanOnOverflow) {}
+  public record Watcher() {}
 
   /**
    * OCR (optical character recognition) pipeline configuration.
@@ -647,7 +623,6 @@ public record ResolvedConfig(
    * @param writerRamBufferMb RAM buffer size for IndexWriter
    * @param writerMaxBufferedDocs max buffered docs before flush
    * @param writerMaxQueueDepth max writer queue depth
-   * @param commitDebounceMs commit debounce interval in ms
    * @param commitMetadataEnabled whether commit metadata is enabled
    * @param nrtTargetMaxStaleMs NRT target max stale time in ms
    * @param nrtHardMaxStaleMs NRT hard max stale time in ms
@@ -677,7 +652,6 @@ public record ResolvedConfig(
       Integer writerRamBufferMb,
       Integer writerMaxBufferedDocs,
       Integer writerMaxQueueDepth,
-      Integer commitDebounceMs,
       boolean commitMetadataEnabled,
       Integer nrtTargetMaxStaleMs,
       Integer nrtHardMaxStaleMs,
@@ -749,7 +723,6 @@ public record ResolvedConfig(
    * RAG (Retrieval-Augmented Generation) retrieval configuration.
    *
    * @param retrieveMode retrieval mode (bm25, hybrid, auto)
-   * @param retrieveTopK number of chunks to retrieve (YAML-level)
    * @param overretrieveFactor over-retrieval factor
    * @param diversifyMode diversification mode (position, mmr)
    * @param mmrLambda MMR lambda parameter
@@ -761,12 +734,14 @@ public record ResolvedConfig(
    * @param unionEnabled whether the RAG doc-level union leg for chunkless docs is enabled
    *     (tempdoc 749; default true)
    * @param ragTopK env var override for RAG top-k (justsearch.rag.top_k)
-   * @param citationMatchThreshold cosine similarity threshold for citation matching
+   * @param citationMatchThreshold cosine-similarity floor for citation matching, [0,1] (tempdoc
+   *     799 N.2: was typed String and never parsed; the live value was a hardcoded 0.5). This is the
+   *     ONE cutoff shared by the RAG and agent citation paths (tempdoc 565 15.A) — both composition
+   *     roots must read it, or the two paths cite differently.
    * @param maxChunksPerArticle 385: max chunks per parent document in RAG context (diversity cap)
    */
   public record Rag(
       String retrieveMode,
-      int retrieveTopK,
       int overretrieveFactor,
       String diversifyMode,
       double mmrLambda,
@@ -775,7 +750,7 @@ public record ResolvedConfig(
       boolean chunkSpladeEnabled,
       boolean unionEnabled,
       int ragTopK,
-      String citationMatchThreshold,
+      double citationMatchThreshold,
       int maxChunksPerArticle) {}
 
   /**
@@ -858,5 +833,14 @@ public record ResolvedConfig(
    * @param maxContentLength maximum content length in bytes
    * @param maxFileSize maximum file size in bytes
    */
-  public record Worker(int maxBatchSize, long maxQueueDepth, int maxContentLength, long maxFileSize) {}
+  /**
+   * Worker ingest limits.
+   *
+   * <p>{@code maxBatchSize} / {@code maxQueueDepth} were removed by tempdoc 799 §N.2: both were
+   * shadowed by {@code GrpcIngestService}'s hardcoded {@code MAX_BATCH_SIZE} / {@code
+   * MAX_QUEUE_DEPTH}, and gRPC batching is an internal transport concern rather than a user
+   * preference. {@code maxContentLength} / {@code maxFileSize} are retained and wired — those are
+   * genuine user-facing choices about which files to index.
+   */
+  public record Worker(int maxContentLength, long maxFileSize) {}
 }

@@ -343,6 +343,18 @@ final class ApiSecurityFilters {
       return;
     }
 
+    // A long-lived stream is not a slow handler. The after-hook does not run until the connection
+    // CLOSES, so the elapsed wall-clock measures how long the client stayed subscribed — a stream
+    // held open for minutes reports a multi-minute "duration" and trips the dump on every
+    // disconnect. Exempt before the duration check so the dumper is never called.
+    //
+    // Detected from the RESPONSE content-type rather than the `/stream` path convention: the
+    // convention holds for every SSE route today, but the content-type is what actually makes a
+    // response a stream, so this stays correct if a future SSE route is named differently.
+    if (isStreamingResponse(ctx)) {
+      return;
+    }
+
     long durationMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs);
     if (durationMs < SLOW_REQUEST_THRESHOLD_MS) {
       return;
@@ -377,6 +389,28 @@ final class ApiSecurityFilters {
         () ->
             SlowRequestDumper.captureDump(
                 route, method, status, durationMs, SLOW_REQUEST_THRESHOLD_MS, capturedTraceId));
+  }
+
+  /**
+   * Returns true iff the response is a Server-Sent-Events stream, i.e. its content-type is {@code
+   * text/event-stream} (media type only; charset and other parameters are ignored, and the match is
+   * case-insensitive per RFC 9110 §8.3). Javalin sets it for a real {@code EventSource} client and
+   * {@code SseEnvelopeWriter.forceSseHeaders} force-sets it for ad-hoc clients, so it is present on
+   * every stream by the time the after-hook runs. Package-private for {@code
+   * SlowRequestStreamExemptionTest}.
+   */
+  static boolean isStreamingResponse(Context ctx) {
+    return ctx != null && ctx.res() != null && isStreamingContentType(ctx.res().getContentType());
+  }
+
+  /** The media-type half of {@link #isStreamingResponse}, split out so it is directly testable. */
+  static boolean isStreamingContentType(String contentType) {
+    if (contentType == null) {
+      return false;
+    }
+    int semi = contentType.indexOf(';');
+    String mediaType = (semi >= 0 ? contentType.substring(0, semi) : contentType).trim();
+    return mediaType.equalsIgnoreCase("text/event-stream");
   }
 
   /**

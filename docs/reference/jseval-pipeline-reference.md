@@ -180,6 +180,24 @@ lines, so the run's own JSON artifacts are the reliable source.
 > **`--clean` caveat:** `jseval run --clean` does **not** reliably wipe the index /
 > `watched_roots` (observations-logged defect). When a clean state matters between
 > arms, wipe `tmp/headless-eval-data` manually.
+>
+> **Windows console encoding:** Inspect AI's rich display crashes with
+> `UnicodeEncodeError` when stdout is redirected or backgrounded — cp1252 cannot encode
+> its braille spinner. Set `INSPECT_DISPLAY=none PYTHONUTF8=1` for **any** backgrounded
+> `eval_set` / `jseval utility-run` invocation.
+
+### Invoking jseval from a worktree (Windows)
+
+`jseval` is normally pip-installed editable against wherever it was **first** installed,
+so invoking it from a *different* worktree once silently ran the wrong copy. It now
+**fails closed** instead, printing the exact remedy inline:
+
+```text
+PYTHONPATH=<worktree>/scripts/jseval
+```
+
+Follow the printed fix. `JUSTSEARCH_ALLOW_CROSS_CHECKOUT_JSEVAL=1` overrides the guard
+deliberately — use it only when you actually intend to run another checkout's copy.
 
 ### Observability (tempdoc 400 Layer 1/4/5)
 

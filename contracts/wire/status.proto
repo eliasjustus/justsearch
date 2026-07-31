@@ -455,8 +455,11 @@ message GpuStatusView {
 }
 
 // Tempdoc 629 (FLOOR): at-rest protection of the data-dir volume. Coarse on/off fidelity only —
-// disk_encryption ∈ {ENCRYPTED, NOT_ENCRYPTED, ENCRYPTING, UNKNOWN}; quality_known is false when the
-// configuration-quality distinction (TPM-only vs pre-boot PIN) could not be read (needs admin).
+// disk_encryption ∈ {ENCRYPTED, NOT_ENCRYPTED, ENCRYPTING, NOT_APPLICABLE, UNKNOWN}; quality_known is
+// false when the configuration-quality distinction (TPM-only vs pre-boot PIN) could not be read
+// (needs admin). NOT_APPLICABLE (the volume cannot be OS-encrypted at all) is deliberately distinct
+// from UNKNOWN (indeterminate) — only the latter is a case elevation could resolve. This is a `string`
+// rather than a proto enum precisely so the state set can grow without a wire-shape change.
 message AtRestProtectionView {
   optional string disk_encryption = 1 [json_name = "diskEncryption"];
   optional string source = 2 [json_name = "source"];

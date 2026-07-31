@@ -91,33 +91,6 @@ Scope:
 | `JUSTSEARCH_SUMMARY_MAX_TOKENS` | `justsearch.summary.max_tokens` | Int | Max summary estimated tokens before rejection (default `20000`, clamped `>= 1`). |
 | `JUSTSEARCH_SUMMARY_PIPELINE` | `justsearch.summary.pipeline` | String | Summary pipeline id (default `summary_mapreduce_v1` after sanitize). |
 | **LLM runtime tuning** | | | |
-| `JUSTSEARCH_LLM_MODEL_SHA256` | `justsearch.llm.model_sha256` | String | Expected model SHA-256 metadata (default `unknown`). |
-| `JUSTSEARCH_LLM_GPU_LAYERS` | `justsearch.llm.gpu_layers` | Int | LLM GPU layers override. |
-| `JUSTSEARCH_LLM_DEADLINE_MS` | `justsearch.llm.deadline_ms` | Long | LLM request deadline in milliseconds. |
-| `JUSTSEARCH_LLM_MAX_PARALLEL` | `justsearch.llm.max_parallel` | Int | Max concurrent inferences. |
-| `JUSTSEARCH_LLM_MAX_SESSIONS` | `justsearch.llm.max_sessions` | Int | Session pool size override. |
-| `JUSTSEARCH_LLM_SESSION_WARMUP_MS` | `justsearch.llm.session_warmup_ms` | Long | Session warmup delay in milliseconds. |
-| `JUSTSEARCH_LLM_QUEUE_CAPACITY` | `justsearch.llm.queue_capacity` | Int | Inference queue capacity. |
-| `JUSTSEARCH_LLM_VRAM_FRACTION` | `justsearch.llm.vram_fraction` | Double | VRAM fraction hard limit (finite, non-negative). |
-| `JUSTSEARCH_LLM_VRAM_PROJECTED` | `justsearch.llm.vram_projected` | Double | Projected VRAM fraction (finite, non-negative). |
-| `JUSTSEARCH_LLM_MAX_SLOTS` | `justsearch.llm.max_slots` | Int | Max backend slots (clamped `>= 1`). |
-| `JUSTSEARCH_LLM_VRAM_LIMIT_BYTES` | `justsearch.llm.vram_limit_bytes` | Long | Absolute VRAM limit in bytes (clamped `>= 0`). |
-| `JUSTSEARCH_LLM_VRAM_AUTO_SCALE` | `justsearch.llm.vram_auto_scale` | Bool | Enable VRAM autoscale logic. |
-| `JUSTSEARCH_LLM_SIMULATED_LATENCY_MS` | `justsearch.llm.simulated_latency_ms` | Long | Simulated latency for test/dev. |
-| `JUSTSEARCH_LLM_THREADS` | `justsearch.llm.threads` | Int | LLM worker threads override. |
-| `JUSTSEARCH_LLM_CONTEXT_LENGTH` | `justsearch.llm.context_length` | Int | LLM context length. |
-| `JUSTSEARCH_LLM_MAX_NEW_TOKENS` | `justsearch.llm.max_new_tokens` | Int | Max generated tokens per request. |
-| `JUSTSEARCH_LLM_TEMPERATURE` | `justsearch.llm.temperature` | Double | Sampling temperature (finite, non-negative). |
-| `JUSTSEARCH_LLM_TOP_P` | `justsearch.llm.top_p` | Double | Top-p sampling parameter. |
-| `JUSTSEARCH_LLM_MIN_P` | `justsearch.llm.min_p` | Double | Min-p sampling parameter. |
-| `JUSTSEARCH_LLM_TEMPLATE_ROOT` | `justsearch.llm.template_root` | Path | Template root directory (invalid path -> `null`). |
-| `JUSTSEARCH_LLM_TEMPLATE_SUMMARY` | `justsearch.llm.template_summary` | String | Summary map template filename. |
-| `JUSTSEARCH_LLM_TEMPLATE_REDUCE` | `justsearch.llm.template_reduce` | String | Summary reduce template filename. |
-| `JUSTSEARCH_LLM_RNG_SEED` | `justsearch.llm.rng_seed` | Long | RNG seed override. |
-| `JUSTSEARCH_LLM_BACKEND_SELECTOR` | `justsearch.llm.backend_selector` | String | Backend selector profile (`auto` by default). |
-| `JUSTSEARCH_LLM_SUMMARY_CHUNK_TOKENS` | `justsearch.llm.summary_chunk_tokens` | Int | Summary chunk size (clamped `>= 32`). |
-| `JUSTSEARCH_LLM_SUMMARY_CHUNK_OVERLAP` | `justsearch.llm.summary_chunk_overlap` | Int | Summary overlap, bounded to `[0, chunk-1]`. |
-| `JUSTSEARCH_LLM_BACKEND_SUPPORTS` | `justsearch.llm.backend_supports` | CSV List | Backend capability override list (comma-separated). |
 | **Pipeline ids** | | | |
 | **RAG** | | | |
 | `JUSTSEARCH_RAG_TOP_K` | `justsearch.rag.top_k` | Int | Number of chunks to retrieve for RAG context (default 5). |

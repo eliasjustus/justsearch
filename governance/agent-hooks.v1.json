@@ -511,7 +511,7 @@
           },
           {
             "hookId": "governance-hint",
-            "if": "Edit(scripts/ci/npm-audit-ratchet-baseline.v1.json)|Edit(.claude/rules/tier-register.md)|Edit(gates/**)"
+            "if": "Edit(scripts/ci/npm-audit-ratchet-baseline.v1.json)|Edit(docs/reference/contributing/tier-register.md)|Edit(gates/**)"
           }
         ]
       },

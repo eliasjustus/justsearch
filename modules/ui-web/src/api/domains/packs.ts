@@ -25,23 +25,55 @@ export type { AiPackImportStatus } from '../generated/schema-types/ai-pack-impor
 // v1 Simple Mode: AI Install Types
 // ============================================
 
-export interface AiInstallManifestAsset {
-  id: string;
+// The manifest wire shape is the v2 `ModelRegistry` record
+// (`modules/configuration/src/main/java/io/justsearch/configuration/model/ModelRegistry.java`),
+// serialized as-is by `GET /api/ai/install/manifest`. The pre-v2 flat `assets[]` types that used to
+// live here modelled a registry format that no longer exists on the wire.
+
+/** One downloadable model file — a precision/EP variant of a package's model. */
+export interface AiInstallModelVariant {
+  filename: string;
+  /** `ModelPrecision` constant (e.g. `FP32`, `FP16`, `INT8`, `Q4_K_M`). */
+  precision?: string;
+  /** `ExecutionProvider` constant (e.g. `CPU`, `CUDA`) this variant targets. */
+  targetEP?: string;
+  sha256: string;
+  sizeBytes: number;
+  downloadUrl: string;
+}
+
+/** A non-model file a package needs (tokenizer, config, archive) — always downloaded. */
+export interface AiInstallSupportingFile {
   filename: string;
   sha256: string;
   sizeBytes: number;
-  urls: string[];
-  termsUrl?: string;
-  notes?: string;
+  downloadUrl: string;
+  extract?: boolean;
+}
+
+/** One logical model package: its variants, supporting files, and licensing metadata. */
+export interface AiInstallModelPackage {
+  id: string;
   label?: string;
   description?: string;
+  targetDir?: string;
+  variants?: AiInstallModelVariant[];
+  supportingFiles?: AiInstallSupportingFile[];
+  minVramBytes?: number;
+  /** Upstream model/licence page. Nullable in the registry. */
+  termsUrl?: string | null;
+  installRoot?: string | null;
+  /** SPDX identifier for this package's artifacts (e.g. `Apache-2.0`). Nullable. */
+  license?: string | null;
+  /** `CapabilityTier` — serialized as the enum constant (e.g. `RETRIEVAL_CORE`), nullable. */
+  tier?: string | null;
+  requiresCuda?: boolean;
 }
 
 export interface AiInstallManifest {
   schemaVersion: number;
-  registryVersion: string;
   purpose?: string;
-  assets: AiInstallManifestAsset[];
+  packages?: AiInstallModelPackage[];
 }
 
 export interface AiInstallAssetStatus {
