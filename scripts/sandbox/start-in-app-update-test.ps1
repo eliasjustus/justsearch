@@ -9,7 +9,13 @@ dangerousInsecureTransportProtocol=true. Production builds reject this path.
 #>
 param(
     [string]$ShareRoot = $PSScriptRoot,
-    [int]$Port = 8765
+    [int]$Port = 8765,
+    # Drive check -> install with no operator present, so the apply machinery (prepare, freeze,
+    # witnessed shutdown, installer launch, restart reconciliation) can be qualified unattended.
+    # The app honours this only when it was compiled with JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE=1;
+    # a production build ignores it entirely. Consent is a separate claim and stays with the
+    # operator-driven whole-product round.
+    [switch]$Autorun
 )
 
 Set-StrictMode -Version Latest
@@ -42,7 +48,16 @@ $env:JUSTSEARCH_RELEASE_DESCRIPTOR_URL = "http://127.0.0.1:$Port/release.v1.json
 $env:JUSTSEARCH_RELEASE_METADATA_ROOT_PUBLIC_KEY = [string]$config.metadataRootPublicKey
 $env:JUSTSEARCH_RELEASE_METADATA_ROOT_KEY_ID = [string]$config.metadataRootKeyId
 
+if ($Autorun.IsPresent) {
+    $env:JUSTSEARCH_UPDATER_QUALIFICATION_AUTORUN = "1"
+}
+
 Start-Process -FilePath $installedExe
 Write-Host "Updater feed: $env:JUSTSEARCH_RELEASE_DESCRIPTOR_URL"
 Write-Host "Feed server PID: $($server.Id)"
 Write-Host "Launched: $installedExe"
+if ($Autorun.IsPresent) {
+    Write-Host "Autorun requested: the app will check and apply without operator input."
+    Write-Host "Verdict lands in the app data dir as upgrade\qualification-result.v1.json;"
+    Write-Host "run .\collect-updater-evidence.ps1 after the target build restarts."
+}

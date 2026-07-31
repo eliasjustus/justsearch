@@ -739,14 +739,25 @@ def stage_in_app_updater_assets(
                 "be byte-identical because that production binary rejects "
                 "runtime trust overrides by design.",
                 "",
+                "This lane proves the APPLY MACHINERY. That the user is asked before "
+                "anything is applied is a separate claim, and it is covered by the "
+                "operator-driven whole-product round, not here. Run both.",
+                "",
                 "1. Install the updater-capable previous-source Sandbox build "
                 "and seed retained user state.",
-                "2. Run `powershell -ExecutionPolicy Bypass -File .\\start-in-app-update-test.ps1`.",
-                "3. In Settings, check for the authenticated update and explicitly choose install.",
+                "2. Run `powershell -ExecutionPolicy Bypass -File .\\start-in-app-update-test.ps1`, "
+                "adding `-Autorun` to drive check and install with no operator input. The app "
+                "honours `-Autorun` only when compiled with the qualification gate; a production "
+                "build ignores it.",
+                "3. Without `-Autorun`: in Settings, check for the authenticated update and "
+                "explicitly choose install. This is the consent path.",
                 "4. Before any deliberate interruption, and after every restart, run "
                 "`.\\collect-updater-evidence.ps1`. Preserve `evidence\\updater`.",
                 "5. A normal round passes only when the installed version is the target, "
-                "the intent is `COMMITTED`, and seeded state survives.",
+                "the intent is `COMMITTED`, and seeded state survives. With `-Autorun`, "
+                "`updater-state.json` carries `autorunVerdict` directly — but it is written by "
+                "the SECOND boot, because a successful apply exits the process that started it. "
+                "A missing verdict after one boot means the handoff did not complete.",
                 "",
                 "Recovery oracles:",
                 "- A source-version restart with a pre-launch intent must settle `CANCELLED`.",
