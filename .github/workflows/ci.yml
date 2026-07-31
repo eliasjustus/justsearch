@@ -34,6 +34,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # The config-surface gate (added below, tempdoc 799) resolves a baseline ref to detect a
+          # relaxed pin, so it needs real history. The kernel fails CLOSED on a shallow clone
+          # rather than reporting a false green — correct, but it means this job cannot run on the
+          # default depth-1 checkout.
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v6
