@@ -668,3 +668,81 @@ specific, and more of it is reachable than that implied:
 
 Net: §9 items 1-2 are reachable now; items 3-5 need a GUI host and an
 independent verifier, which is the intended shape rather than an obstacle.
+
+### 10.13 Closing the two fit-review gaps
+
+The fit review (§10.10-10.12) named two things as the real gap: D2's invariant
+had no oracle, and the N->N+1 machinery could not run without a human. Both are
+now closed as far as they can be without a GUI host.
+
+**D2 now has a gate.** `check-update-preserves-models.mjs` asserts the bundle
+declares no models tree or weight files, that `bundleSidecarResources` stages no
+weights, and that no NSIS hook uses recursive `RMDir /r` or deletes under a
+user-data root. Both halves already held; this locks them in. A renamed sidecar
+task fails the gate rather than passing vacuously. It is a gate on the
+*declared* surface — the Sandbox round is still what proves a built installer.
+
+**And the runtime half was still racy.** Gating the declaration led to sweeping
+the off-request writers again, which found the one that matters most:
+`AiInstallService.startInstall` spawns a virtual thread that downloads and
+promotes ~9 GB into AI Home, including `moveAtomicBestEffort` renaming
+`.partial` files into place. No lease. Prepare reported no blocker and the
+installer could launch mid-download — the same invariant, unguarded at runtime.
+This is the primary model-acquisition path; the pack import fixed earlier is
+only the offline sideload of the same assets.
+
+Agent runs stream inside their request and are covered by the request-scoped
+lease; the remaining durable stores are passive and write on their caller's
+thread. A future writer that moves off-request owes a lease.
+
+**The machinery can now be qualified unattended.** `install_app_update` is a
+thin delegate to `run_install_now`, and the lane calls that same function — a
+round exercising a parallel path would prove nothing about the shipped one.
+`maybe_autorun_qualification` is double-gated (compile-time `option_env!` plus a
+runtime opt-in) and spans two boots by construction, because a successful apply
+exits the process that started it. `-Autorun` on the lane script, and the
+verdict surfaces as `autorunVerdict` in the collected evidence.
+
+This does **not** retire the consent round. "The user is asked before anything
+is applied" and "the apply machinery is correct" fail independently; the lane
+covers the second, the operator-driven whole-product round covers the first.
+
+**Evidence collection had a hole of its own:** `collect-updater-evidence.ps1`
+never gathered `head-shutdown-receipt.v1.json`, though §9 item 5 requires
+retaining it and it is the artifact proving Head stopped cleanly rather than
+being killed. Every prior capture would have been missing it.
+
+**CI can now build a qualification candidate** (`sandboxTestMode` +
+`candidateVersion` dispatch inputs), with a guard that refuses the combination on
+a `v*` tag: a published binary honouring runtime trust overrides would hand the
+update channel to anything that can set an environment variable. No key material
+passes through CI — in test mode the runtime env supplies the trust root, so the
+closed set is assembled host-side with test keys.
+
+### 10.14 Refute-first self-review
+
+Reviewer and implementer are the same agent here, which the release loop
+explicitly disallows for closure — this is the weaker substitute, and the
+independent round is still owed. Recording the negative results, since a failed
+refutation is evidence too:
+
+- **"The leases are inert in production."** `OperationLeaseServiceImpl` is
+  disabled when `JUSTSEARCH_DEV_RUNNER_STATE_ROOT` is unset, which is the
+  production case — this would have made every lease added in this session a
+  no-op in the shipped app. It does not: `enabled` gates only the file I/O in
+  `rewrite`. `register()` always populates the in-memory `activeLeases` and
+  `snapshotLocked()` reads that map.
+- **"Some path reaches `HEAD_STOPPED` without recording `head_pid`",** which
+  would make §10.2's check fail closed on a legitimate upgrade. There is exactly
+  one production transition into `HeadStopped` (`updater.rs:524`), `head_pid` is
+  set on the line before, and the transition table admits only
+  `Prepared -> HeadStopped`.
+- **One finding stood up:** the model-install lease had no cancellation
+  callback, so a consented update would sit behind a multi-hour download instead
+  of asking it to stop. Fixed in `c301c94e`.
+
+A separate correction from this stretch: a `build.rs` `rerun-if-env-changed`
+guard was added on the theory that cargo would reuse a cached object pinned to a
+stale trust root, then reverted — probing showed rustc records `option_env!` in
+dep-info and cargo honours it, so the defect does not exist and the guard's
+rationale was wrong.
