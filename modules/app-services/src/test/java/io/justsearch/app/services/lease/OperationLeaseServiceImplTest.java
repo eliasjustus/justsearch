@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.app.api.OpCriticality;
 import io.justsearch.app.api.OpLeaseOutcome;
+import io.justsearch.app.api.OperationAdmissionClosedException;
 import io.justsearch.app.api.OperationLeaseHandle;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -177,13 +178,107 @@ final class OperationLeaseServiceImplTest {
   }
 
   @Test
-  void disabledServiceIsNoOp() {
+  void serviceWithoutProjectionStillTracksProcessLocalLeases() {
     var svc = new OperationLeaseServiceImpl((Path) null);
     OperationLeaseHandle h = svc.register("op", OpCriticality.MUST_COMPLETE, 60, null);
     assertNotNull(h);
+    assertEquals(1, svc.snapshot().activeLeases().size());
     h.renew();
     h.release(OpLeaseOutcome.SUCCESS);
+    assertEquals(0, svc.snapshot().activeLeases().size());
     h.close();
+  }
+
+  @Test
+  void freezeClosesTheRegistrationRaceAndSnapshotNamesActiveBlockers() {
+    var svc = new OperationLeaseServiceImpl((Path) null);
+    OperationLeaseHandle active =
+        svc.register("indexing.migration", OpCriticality.MUST_COMPLETE, 60, null);
+
+    var frozen = svc.freezeAdmission("application upgrade");
+    assertTrue(frozen.admissionFrozen());
+    assertNotNull(frozen.preparationId());
+    assertEquals(1, frozen.activeLeases().size());
+    assertEquals("indexing.migration", frozen.activeLeases().get(0).opClass());
+    assertThrows(
+        OperationAdmissionClosedException.class,
+        () -> svc.register("late.write", OpCriticality.MUST_COMPLETE, 60, null));
+
+    active.close();
+    assertEquals(0, svc.snapshot().activeLeases().size());
+  }
+
+  @Test
+  void freezeIsIdempotentAndOnlyItsOwnerCanReleaseIt() {
+    var svc = new OperationLeaseServiceImpl((Path) null);
+    var first = svc.freezeAdmission("application upgrade");
+    var repeated = svc.freezeAdmission("different caller");
+    assertEquals(first.preparationId(), repeated.preparationId());
+    assertEquals("application upgrade", repeated.reason());
+
+    assertThrows(IllegalArgumentException.class, () -> svc.releaseAdmission("wrong"));
+    svc.releaseAdmission(first.preparationId());
+    assertTrue(!svc.snapshot().admissionFrozen());
+    OperationLeaseHandle admitted =
+        svc.register("after.release", OpCriticality.INTERRUPTIBLE, 60, null);
+    admitted.close();
+  }
+
+  @Test
+  void cancellationRequestRunsOutsideLockAndReleaseAcknowledgesIt() {
+    var svc = new OperationLeaseServiceImpl((Path) null);
+    var handle = new java.util.concurrent.atomic.AtomicReference<OperationLeaseHandle>();
+    var callbackObservedUnlockedService = new java.util.concurrent.atomic.AtomicBoolean();
+    OperationLeaseHandle active =
+        svc.register(
+            "agent.answer",
+            OpCriticality.INTERRUPTIBLE,
+            60,
+            Map.of(),
+            () -> {
+              try {
+                var future =
+                    java.util.concurrent.CompletableFuture.supplyAsync(
+                        () -> svc.snapshot().admissionFrozen());
+                callbackObservedUnlockedService.set(
+                    future.get(1, java.util.concurrent.TimeUnit.SECONDS));
+              } catch (Exception ignored) {
+                callbackObservedUnlockedService.set(false);
+              }
+              handle.get().release(OpLeaseOutcome.CANCELLED);
+            });
+    handle.set(active);
+
+    var frozen = svc.freezeAdmission("application upgrade");
+    var afterRequest = svc.requestCancellation(frozen.preparationId());
+
+    assertTrue(callbackObservedUnlockedService.get());
+    assertEquals(0, afterRequest.activeLeases().size());
+    assertEquals(List.of(active.opId()), afterRequest.cancellationRequestedOpIds());
+
+    svc.requestCancellation(frozen.preparationId());
+    svc.releaseAdmission(frozen.preparationId());
+    assertEquals(List.of(), svc.snapshot().cancellationRequestedOpIds());
+  }
+
+  @Test
+  void mustCompleteOwnerNeverReceivesCancellationRequest() {
+    var svc = new OperationLeaseServiceImpl((Path) null);
+    var requests = new java.util.concurrent.atomic.AtomicInteger();
+    OperationLeaseHandle active =
+        svc.register(
+            "indexing.migration",
+            OpCriticality.MUST_COMPLETE,
+            60,
+            Map.of(),
+            requests::incrementAndGet);
+
+    var frozen = svc.freezeAdmission("application upgrade");
+    var afterRequest = svc.requestCancellation(frozen.preparationId());
+
+    assertEquals(0, requests.get());
+    assertEquals(1, afterRequest.activeLeases().size());
+    active.close();
   }
 
   /**

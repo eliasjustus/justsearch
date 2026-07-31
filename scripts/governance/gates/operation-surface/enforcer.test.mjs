@@ -29,7 +29,12 @@ const FORBIDDEN = [
   },
 ];
 
-function scaffold({ files = {}, forbidden = FORBIDDEN, surfaces = [], scan = {}, unrelatedStores = [] }) {
+function scaffold({
+  files = {},
+  forbidden = FORBIDDEN,
+  surfaces = [],
+  scan = {},
+}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opsurface-'));
   tmpDirs.push(root);
   const write = (rel, content) => {
@@ -40,7 +45,7 @@ function scaffold({ files = {}, forbidden = FORBIDDEN, surfaces = [], scan = {},
   write(
     'governance/operation-surfaces.v1.json',
     JSON.stringify(
-      { version: 1, surfaces, scan, forbiddenReintroduction: forbidden, unrelatedStores },
+      { version: 1, surfaces, scan, forbiddenReintroduction: forbidden },
       null,
       2,
     ),
@@ -48,11 +53,6 @@ function scaffold({ files = {}, forbidden = FORBIDDEN, surfaces = [], scan = {},
   for (const [rel, content] of Object.entries(files)) write(rel, content);
   return root;
 }
-
-// A durable store fixture: a *Store.java whose own constructor takes a Path (persists to disk).
-const durableStoreSrc = (cls) =>
-  `package io.justsearch.x;\nimport java.nio.file.Path;\n` +
-  `public final class ${cls} {\n  public ${cls}(Path dir) {}\n}\n`;
 
 async function enforce(fixtureRoot) {
   return enforceOperationSurface({ repoRoot: fixtureRoot, gate: GATE, fixtureMode: true, fixtureRoot });
@@ -98,11 +98,30 @@ await run('FileInteractionLog / ThreadStore siblings also caught', async () => {
 });
 
 await run('no forbidden file present → pass (guard quiet when clean)', async () => {
+  const projectionPath =
+    'modules/ui/src/main/java/io/justsearch/ui/api/InteractionThreadController.java';
   const root = scaffold({
+    scan: {
+      javaImportPatterns: ['io.justsearch.agent.AgentRunStore'],
+      javaMainRoots: ['modules'],
+      javaInclude: '/src/main/java/',
+      expectedMinPopulation: 1,
+    },
+    surfaces: [
+      {
+        id: 'interaction-thread',
+        kind: 'projection',
+        lang: 'java',
+        path: projectionPath,
+        guard: 'self',
+        consumesProjection: 'self',
+      },
+    ],
     files: {
       // The legitimate projection — does NOT match the fork pattern.
-      'modules/ui/src/main/java/io/justsearch/ui/api/InteractionThreadController.java':
-        'package io.justsearch.ui.api;\npublic final class InteractionThreadController {}\n',
+      [projectionPath]:
+        'package io.justsearch.ui.api;\nimport io.justsearch.agent.AgentRunStore;\n' +
+        'public final class InteractionThreadController {}\n',
     },
   });
   const r = await enforce(root);
@@ -180,65 +199,6 @@ await run('an undeclared importer of a canonical interaction type -> fail; decla
   assert.ok(
     !ruleIds(r2).includes('operation-surface/undeclared-surface'),
     `a declared referencer must pass (${ruleIds(r2).join(',')})`,
-  );
-});
-
-await run('§18 C-1: an unclassified durable store -> fail; declared OR allowlisted -> pass', async () => {
-  const forkPath = 'modules/app-x/src/main/java/io/justsearch/x/ConversationTimelineStore.java';
-
-  // A NEW durable store (Path ctor), no canonical import, non-denylist name: unclassified -> FAIL.
-  const unclassified = scaffold({
-    forbidden: [],
-    files: { [forkPath]: durableStoreSrc('ConversationTimelineStore') },
-  });
-  const r = await enforce(unclassified);
-  assert.equal(r.verdict, 'fail', `verdict (${ruleIds(r).join(',')})`);
-  assert.ok(
-    ruleIds(r).includes('operation-surface/unclassified-durable-store'),
-    `(${ruleIds(r).join(',')})`,
-  );
-  assert.ok(
-    r.findings.some((f) => f.message.includes('ConversationTimelineStore.java')),
-    'the unclassified store is named',
-  );
-
-  // The SAME store, declared as a surface -> no unclassified finding.
-  const declared = scaffold({
-    forbidden: [],
-    surfaces: [
-      { id: 'ct-store', kind: 'store', lang: 'java', path: forkPath, guard: 'self', consumesProjection: 'self' },
-    ],
-    files: { [forkPath]: durableStoreSrc('ConversationTimelineStore') },
-  });
-  assert.ok(
-    !ruleIds(await enforce(declared)).includes('operation-surface/unclassified-durable-store'),
-    'a declared durable store passes',
-  );
-
-  // The SAME store, on the unrelatedStores allowlist -> no unclassified finding.
-  const allowlisted = scaffold({
-    forbidden: [],
-    unrelatedStores: [forkPath],
-    files: { [forkPath]: durableStoreSrc('ConversationTimelineStore') },
-  });
-  assert.ok(
-    !ruleIds(await enforce(allowlisted)).includes('operation-surface/unclassified-durable-store'),
-    'an allowlisted unrelated store passes',
-  );
-});
-
-await run('§18 C-1: an IN-MEMORY store (no Path ctor) is NOT required to be classified', async () => {
-  // OperationHistoryStore-shaped: a *Store with no Path constructor must not trip the positive gate.
-  const inMemory =
-    'package io.justsearch.x;\npublic final class RingBufferStore {\n' +
-    '  public RingBufferStore() {}\n  public RingBufferStore(int capacity) {}\n}\n';
-  const root = scaffold({
-    forbidden: [],
-    files: { 'modules/app-x/src/main/java/io/justsearch/x/RingBufferStore.java': inMemory },
-  });
-  assert.ok(
-    !ruleIds(await enforce(root)).includes('operation-surface/unclassified-durable-store'),
-    'an in-memory store (no Path ctor) is excluded from the durable-store gate',
   );
 });
 

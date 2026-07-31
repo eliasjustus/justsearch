@@ -337,7 +337,8 @@ public class IndexingController {
     try {
       boolean accepted = indexingService().startMigration(reason);
       if (accepted) {
-        // Lease lives in op-leases.json until expiry; covers Worker's async migration window.
+        // Worker persists MIGRATING before acknowledging, then owns the asynchronous lifetime.
+        handle.release(OpLeaseOutcome.SUCCESS);
         ctx.status(202).json(Map.of("status", "migration start requested"));
       } else {
         handle.release(OpLeaseOutcome.FAILURE);

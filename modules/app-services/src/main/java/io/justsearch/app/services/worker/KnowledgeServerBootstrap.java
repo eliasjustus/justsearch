@@ -507,7 +507,13 @@ public final class KnowledgeServerBootstrap implements Closeable {
 
     @Override
     public void close() {
+        closeForUpgrade();
+    }
+
+    /** Ordered close that reports whether Worker process termination required force. */
+    public WorkerSpawner.ShutdownOutcome closeForUpgrade() {
         log.info("Shutting down Knowledge Server integration...");
+        WorkerSpawner.ShutdownOutcome outcome = WorkerSpawner.ShutdownOutcome.GRACEFUL;
 
         if (client != null) {
             try {
@@ -520,9 +526,10 @@ public final class KnowledgeServerBootstrap implements Closeable {
 
         if (spawner != null) {
             try {
-                spawner.close();
+                outcome = spawner.shutdownForUpgrade();
             } catch (Exception e) {
                 log.warn("Error closing spawner", e);
+                outcome = WorkerSpawner.ShutdownOutcome.FAILED;
             }
             spawner = null;
         }
@@ -543,6 +550,7 @@ public final class KnowledgeServerBootstrap implements Closeable {
         workerCapability.transition(CapabilityHealth.OFFLINE, "Worker shut down");
         started.set(false);
         log.info("Knowledge Server integration shutdown complete");
+        return outcome;
     }
 
     /** Version stamp for built-in help files. Bump when help content changes. */

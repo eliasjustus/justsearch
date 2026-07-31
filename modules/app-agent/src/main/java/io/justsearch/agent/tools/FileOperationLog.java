@@ -1,15 +1,16 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.agent.tools;
 
+import io.justsearch.configuration.persistence.AtomicFileWrites;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
 import io.justsearch.telemetry.DiagnosticFileRetention;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -29,6 +30,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class FileOperationLog {
   private static final Logger LOG = LoggerFactory.getLogger(FileOperationLog.class);
+  private static final int CURRENT_SCHEMA_VERSION = 1;
   private static final ObjectMapper MAPPER =
       JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build();
 
@@ -48,6 +50,7 @@ public final class FileOperationLog {
   void startBatch(String batchId, String explanation, List<FileOperation> operations) {
     Map<String, Object> log = new HashMap<>();
     log.put("batchId", batchId);
+    log.put("schemaVersion", CURRENT_SCHEMA_VERSION);
     log.put("timestamp", Instant.now().toString());
     log.put("explanation", explanation);
     log.put(
@@ -136,10 +139,14 @@ public final class FileOperationLog {
       return null;
     }
     try {
-      return MAPPER.readValue(logFile.toFile(), Map.class);
+      Map<String, Object> log = MAPPER.readValue(logFile.toFile(), Map.class);
+      requireReadableVersion(log);
+      return log;
+    } catch (UnsupportedStoreVersionException e) {
+      throw e;
     } catch (Exception e) {
-      LOG.error("Failed to read batch log: {}", batchId, e);
-      return null;
+      throw new CorruptDurableStoreException(
+          "file-operation-journal", "cannot read batch " + batchId, e);
     }
   }
 
@@ -176,7 +183,11 @@ public final class FileOperationLog {
   @SuppressWarnings("unchecked")
   private Map<String, Object> readBatchFile(Path path) {
     try {
-      return MAPPER.readValue(path.toFile(), Map.class);
+      Map<String, Object> log = MAPPER.readValue(path.toFile(), Map.class);
+      requireReadableVersion(log);
+      return log;
+    } catch (UnsupportedStoreVersionException e) {
+      throw e;
     } catch (Exception e) {
       LOG.error("Failed to read batch log file: {}", path, e);
       return null;
@@ -187,6 +198,8 @@ public final class FileOperationLog {
     try {
       Path logFile = logDir.resolve(batchId + ".json");
       atomicWrite(logFile, log);
+    } catch (UnsupportedStoreVersionException e) {
+      throw e;
     } catch (IOException e) {
       LOG.error("Failed to write transaction log for batch {}", batchId, e);
     }
@@ -201,21 +214,28 @@ public final class FileOperationLog {
         return;
       }
       Map<String, Object> log = MAPPER.readValue(logFile.toFile(), Map.class);
+      requireReadableVersion(log);
       updater.accept(log);
       atomicWrite(logFile, log);
-    } catch (IOException e) {
-      LOG.error("Failed to update transaction log for batch {}", batchId, e);
+    } catch (UnsupportedStoreVersionException | CorruptDurableStoreException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new CorruptDurableStoreException(
+          "file-operation-journal", "cannot update batch " + batchId, e);
     }
   }
 
   /** Write JSON to a temp file, then atomic-rename to the target. */
   private void atomicWrite(Path target, Map<String, Object> data) throws IOException {
-    Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
-    MAPPER.writeValue(tmp.toFile(), data);
-    try {
-      Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-    } catch (AtomicMoveNotSupportedException e) {
-      Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
+    AtomicFileWrites.replace(target, MAPPER.writeValueAsBytes(data));
+  }
+
+  private static void requireReadableVersion(Map<String, Object> log) {
+    Object raw = log.get("schemaVersion");
+    int version = raw instanceof Number number ? number.intValue() : 0;
+    if (version > CURRENT_SCHEMA_VERSION) {
+      throw new UnsupportedStoreVersionException(
+          "file-operation-journal", version, CURRENT_SCHEMA_VERSION);
     }
   }
 

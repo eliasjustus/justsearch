@@ -15,6 +15,7 @@ import io.justsearch.app.api.gpl.GplStatusProvider;
 import io.justsearch.app.api.gpl.RerankerService;
 import io.justsearch.app.services.observability.HeadApiMetricCatalog;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
+import io.justsearch.configuration.EnvRegistry;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.telemetry.Telemetry;
 import io.justsearch.ui.api.routes.AiRoutes;
@@ -187,7 +188,9 @@ public class LocalApiServer {
     // Tempdoc 542 Phase 3: op-lease SPI from ServicePhase output (no-op when not running
     // under dev-runner — env var absent).
     io.justsearch.app.api.OperationLeaseService leaseSvc =
-        b.HeadAssembly != null && b.HeadAssembly.serviceOut() != null
+        b.operationLeaseService != null
+            ? b.operationLeaseService
+            : b.HeadAssembly != null && b.HeadAssembly.serviceOut() != null
             ? b.HeadAssembly.serviceOut().operationLeaseService()
             : new io.justsearch.app.services.lease.OperationLeaseServiceImpl();
     this.indexingController =
@@ -211,10 +214,32 @@ public class LocalApiServer {
                 b.HeadAssembly, this.telemetry, b.runtimeManifestPublisher, b.indexBasePath)
             : null;
     MetaApiModule metaApiModule = new MetaApiModule(() -> this.app, () -> this.apiModules);
+    UpgradeApiModule upgradeApiModule =
+        new UpgradeApiModule(
+            leaseSvc,
+            b.upgradeShutdownAction,
+            b.HeadAssembly == null
+                ? null
+                : () -> {
+                  KnowledgeServerBootstrap worker = b.HeadAssembly.currentKnowledgeServer();
+                  return worker == null ? null : worker.client();
+                },
+            b.upgradeDataDir,
+            b.upgradeRunningVersion,
+            b.upgradeHeadReady != null ? b.upgradeHeadReady : () -> b.HeadAssembly != null,
+            b.upgradeWorkerReady != null
+                ? b.upgradeWorkerReady
+                : () -> {
+                  if (b.HeadAssembly == null || !b.HeadAssembly.capabilities().worker().available()) {
+                    return false;
+                  }
+                  KnowledgeServerBootstrap worker = b.HeadAssembly.currentKnowledgeServer();
+                  return worker != null && worker.client() != null;
+                });
     this.apiModules =
         resourceApiModule != null
-            ? java.util.List.of(metaApiModule, resourceApiModule)
-            : java.util.List.of(metaApiModule);
+            ? java.util.List.of(metaApiModule, resourceApiModule, upgradeApiModule)
+            : java.util.List.of(metaApiModule, upgradeApiModule);
     this.HeadAssemblyRef = b.HeadAssembly;
 
     // Tempdoc 583 Stage 1: message catalogs are constructed + bound in MessageCatalogRoutes (setupRoutes).
@@ -279,7 +304,7 @@ public class LocalApiServer {
     this.securityFilters =
         new ApiSecurityFilters(
             this.prodMode, this.sessionToken, this.eventBuffer, this.slowRequestExecutor,
-            this.HeadAssemblyRef);
+            this.HeadAssemblyRef, leaseSvc);
 
     // Bind to explicit port when provided (dev/prod), otherwise pick a free port.
     int bindPort = configuredPort == null ? 0 : configuredPort;
@@ -764,6 +789,10 @@ public class LocalApiServer {
    * @param startError the start error string, or null if startup succeeded
    */
   public void lateBindKnowledgeServer(KnowledgeServerBootstrap ks, String startError) {
+    // The upgrade routes deliberately do NOT cache `ks` here: HeadAssembly.currentKnowledgeServer()
+    // is the single owner of that reference (HeadlessApp calls connectKnowledgeServer immediately
+    // before this method), and a second copy on the composition root would be a fork that can go
+    // stale on Worker reconnect.
     // Update controllers with Worker reference (read from the CoreApiAssembly Result).
     core.debugStateController().setKnowledgeServer(ks);
     core.inferenceHandlers().setKnowledgeServer(ks);
@@ -948,6 +977,13 @@ public class LocalApiServer {
     // through so LocalApiServer can wire the REST + SSE transports).
     // Tempdoc 583 Stage 2: package-private (ConversationApiAssembly reads it for the MCP surface).
     io.justsearch.ui.runtime.RuntimeManifestPublisher runtimeManifestPublisher;
+    UpgradeShutdownAction upgradeShutdownAction = (preparationId, receiptNonce) -> {};
+    io.justsearch.app.api.OperationLeaseService operationLeaseService;
+    Path upgradeDataDir;
+    Supplier<String> upgradeRunningVersion =
+        () -> EnvRegistry.APP_VERSION.get().orElse("");
+    java.util.function.BooleanSupplier upgradeHeadReady;
+    java.util.function.BooleanSupplier upgradeWorkerReady;
 
     Builder(io.justsearch.app.services.settings.UiSettingsStore settingsStore, Path indexBasePath) {
       this.settingsStore = settingsStore;
@@ -993,6 +1029,44 @@ public class LocalApiServer {
     public Builder runtimeManifestPublisher(
         io.justsearch.ui.runtime.RuntimeManifestPublisher publisher) {
       this.runtimeManifestPublisher = publisher;
+      return this;
+    }
+
+    public Builder upgradeShutdownAction(Runnable action) {
+      this.upgradeShutdownAction =
+          action == null
+              ? (preparationId, receiptNonce) -> {}
+              : (preparationId, receiptNonce) -> action.run();
+      return this;
+    }
+
+    public Builder upgradeShutdownAction(UpgradeShutdownAction action) {
+      this.upgradeShutdownAction =
+          action == null ? (preparationId, receiptNonce) -> {} : action;
+      return this;
+    }
+
+    public Builder upgradeReconciliation(
+        Path dataDir,
+        Supplier<String> runningVersion,
+        java.util.function.BooleanSupplier headReady,
+        java.util.function.BooleanSupplier workerReady) {
+      this.upgradeDataDir = dataDir;
+      this.upgradeRunningVersion =
+          runningVersion == null ? () -> EnvRegistry.APP_VERSION.get().orElse("") : runningVersion;
+      this.upgradeHeadReady = headReady;
+      this.upgradeWorkerReady = workerReady;
+      return this;
+    }
+
+    /**
+     * Test seam for the op-lease SPI. Production does not call this: the constructor resolves the
+     * service from {@code HeadAssembly.serviceOut()} (see the tempdoc 542 Phase 3 fallback chain
+     * above), so only tests that build a server without a HeadAssembly inject one directly.
+     */
+    @SuppressWarnings("unused") // UpgradeLifecycleContractTest; see UnreferencedCodeTest.KNOWN_UNREFERENCED
+    Builder operationLeaseService(io.justsearch.app.api.OperationLeaseService service) {
+      this.operationLeaseService = service;
       return this;
     }
 

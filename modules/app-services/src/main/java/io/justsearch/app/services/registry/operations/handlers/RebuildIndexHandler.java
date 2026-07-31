@@ -56,7 +56,7 @@ public final class RebuildIndexHandler implements OperationHandler {
       return OperationResult.failure("Indexing service unavailable");
     }
     // Tempdoc 542 Phase 3: rebuild is MUST_COMPLETE (same shape as bulk-reindex).
-    // Fire-and-forget RPC; lease covers Worker async window via expiry.
+    // Worker-native upgrade quiescence observes the persisted migration state after this RPC.
     OperationLeaseHandle handle = leaseService.register(
         "indexing.rebuild-index",
         OpCriticality.MUST_COMPLETE,
@@ -68,6 +68,7 @@ public final class RebuildIndexHandler implements OperationHandler {
         handle.release(OpLeaseOutcome.FAILURE);
         return OperationResult.failure("Index rebuild could not be started; see worker logs");
       }
+      handle.release(OpLeaseOutcome.SUCCESS);
       return OperationResult.success("Index rebuild (migration) started");
     } catch (RuntimeException e) {
       handle.release(OpLeaseOutcome.FAILURE);

@@ -39,6 +39,7 @@ class FileOperationLogTest {
     assertTrue(Files.exists(logFile), "Log file should be created");
 
     JsonNode json = MAPPER.readTree(logFile.toFile());
+    assertEquals(1, json.get("schemaVersion").asInt());
     assertEquals("batch-1", json.get("batchId").asText());
     assertEquals("Move files", json.get("explanation").asText());
     assertNotNull(json.get("timestamp"));
@@ -230,12 +231,25 @@ class FileOperationLogTest {
   }
 
   @Test
-  void readBatchReturnsNullForCorruptedFile() throws Exception {
+  void readBatchFailsLoudlyForCorruptedFile() throws Exception {
     // Create a corrupted batch file
     Files.createDirectories(logDir);
     Files.writeString(logDir.resolve("broken.json"), "{{invalid}}");
 
-    assertNull(log.readBatch("broken"));
+    assertThrows(
+        io.justsearch.configuration.persistence.CorruptDurableStoreException.class,
+        () -> log.readBatch("broken"));
+  }
+
+  @Test
+  void futureSchemaVersionIsRefusedWithoutOverwrite() throws Exception {
+    Path path = logDir.resolve("future.json");
+    Files.writeString(path, "{\"schemaVersion\":2,\"batchId\":\"future\"}");
+
+    assertThrows(
+        io.justsearch.configuration.persistence.UnsupportedStoreVersionException.class,
+        () -> log.readBatch("future"));
+    assertEquals(2, MAPPER.readTree(path.toFile()).get("schemaVersion").asInt());
   }
 
   // ===== recordSkip tests =====

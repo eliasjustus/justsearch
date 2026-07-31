@@ -46,4 +46,40 @@ public interface OperationLeaseService {
       OpCriticality criticality,
       long expectedDurationSec,
       Map<String, Object> metadata);
+
+  /**
+   * Register an operation with an owner-controlled cancellation request.
+   *
+   * <p>The callback is invoked at most once per preparation, and only for interruptible operations.
+   * Invocation happens outside the registry lock so the owner may acknowledge by releasing its
+   * handle without deadlocking. The callback requests cancellation; it does not acknowledge it.
+   */
+  default OperationLeaseHandle register(
+      String opClass,
+      OpCriticality criticality,
+      long expectedDurationSec,
+      Map<String, Object> metadata,
+      Runnable cancellationRequest) {
+    return register(opClass, criticality, expectedDurationSec, metadata);
+  }
+
+  /**
+   * Atomically freeze new registrations and return the leases that were active at the boundary.
+   * Repeated calls while frozen return the existing preparation rather than replacing its owner.
+   */
+  OperationLeaseSnapshot freezeAdmission(String reason);
+
+  /** Return the current process-local admission and active-lease state. */
+  OperationLeaseSnapshot snapshot();
+
+  /**
+   * Request cancellation from interruptible owners and return the state after callbacks have run.
+   * Must-complete and unsafe owners remain blockers and are never interrupted by this method.
+   */
+  default OperationLeaseSnapshot requestCancellation(String preparationId) {
+    return snapshot();
+  }
+
+  /** Release a barrier only when the caller presents its opaque preparation id. */
+  void releaseAdmission(String preparationId);
 }

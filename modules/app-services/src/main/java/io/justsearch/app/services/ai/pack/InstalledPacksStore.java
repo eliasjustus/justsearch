@@ -1,26 +1,30 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.ai.pack;
 
-import tools.jackson.databind.DeserializationFeature;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
-import tools.jackson.databind.SerializationFeature;
 import io.justsearch.app.api.InstalledPacksRecord;
 import io.justsearch.app.api.InstalledPacksRecord.InstalledPack;
 import io.justsearch.app.api.InstalledPacksRecord.InstalledFile;
+import io.justsearch.configuration.persistence.AtomicFileWrites;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.StoreFormatVersions;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Persists {@code installed-packs.v1.json} under AI Home. */
 public final class InstalledPacksStore {
-  private static final Logger log = LoggerFactory.getLogger(InstalledPacksStore.class);
+  static final int CURRENT_SCHEMA_VERSION = 1;
   private static final ObjectMapper MAPPER =
       JsonMapper.builder()
           .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
@@ -38,23 +42,45 @@ public final class InstalledPacksStore {
       return new InstalledPacksRecord();
     }
     try {
+      JsonNode root = MAPPER.readTree(recordPath.toFile());
+      if (root == null || !root.isObject()) {
+        throw new CorruptDurableStoreException("installed-packs", "expected a JSON object");
+      }
+      JsonNode versionNode = root.get("schemaVersion");
+      if (versionNode == null || !versionNode.isIntegralNumber()) {
+        throw new CorruptDurableStoreException(
+            "installed-packs", "schemaVersion must be an integer");
+      }
+      StoreFormatVersions.requireReadable(
+          "installed-packs",
+          versionNode.asInt(),
+          CURRENT_SCHEMA_VERSION,
+          CURRENT_SCHEMA_VERSION);
       InstalledPacksRecord r = MAPPER.readValue(recordPath.toFile(), InstalledPacksRecord.class);
-      return r == null ? new InstalledPacksRecord() : r;
+      if (r == null || r.packs == null) {
+        throw new CorruptDurableStoreException(
+            "installed-packs", "installed pack list is missing");
+      }
+      return r;
+    } catch (CorruptDurableStoreException
+        | io.justsearch.configuration.persistence.UnsupportedStoreVersionException e) {
+      throw e;
     } catch (Exception e) {
-      log.warn("Failed to read installed packs record (treating as empty): {}", recordPath, e);
-      return new InstalledPacksRecord();
+      throw new CorruptDurableStoreException(
+          "installed-packs", "cannot parse " + recordPath, e);
     }
   }
 
   public void save(InstalledPacksRecord r) {
     if (r == null) return;
     try {
-      Files.createDirectories(recordPath.getParent());
-      r.schemaVersion = 1;
+      r.schemaVersion = CURRENT_SCHEMA_VERSION;
       r.updatedAt = Instant.now().toString();
-      MAPPER.writeValue(recordPath.toFile(), r);
+      AtomicFileWrites.replace(
+          recordPath, MAPPER.writerWithDefaultPrettyPrinter().writeValueAsBytes(r));
     } catch (IOException e) {
-      log.warn("Failed to persist installed packs record: {}", recordPath, e);
+      throw new UncheckedIOException(
+          "Failed to persist installed packs record to " + recordPath, e);
     }
   }
 
@@ -103,6 +129,31 @@ public final class InstalledPacksStore {
 
   public Path recordPath() {
     return recordPath;
+  }
+
+  /**
+   * Reconcile this derived projection for a binary that cannot read it. The incompatible bytes are
+   * retained beside the authority before an empty v1 projection is installed; pack files remain
+   * untouched and can be independently re-imported.
+   */
+  public Path reconcileIncompatibleProjection() {
+    try {
+      load();
+      return null;
+    } catch (CorruptDurableStoreException
+        | io.justsearch.configuration.persistence.UnsupportedStoreVersionException incompatible) {
+      Path retained =
+          recordPath.resolveSibling(
+              recordPath.getFileName() + ".incompatible-" + Instant.now().toEpochMilli());
+      try {
+        Files.copy(recordPath, retained, StandardCopyOption.COPY_ATTRIBUTES);
+        save(new InstalledPacksRecord());
+        return retained;
+      } catch (IOException e) {
+        throw new UncheckedIOException(
+            "Failed to retain and regenerate installed-pack projection " + recordPath, e);
+      }
+    }
   }
 
   private static String safe(String s) {

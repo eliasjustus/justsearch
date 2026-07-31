@@ -1,9 +1,13 @@
 package io.justsearch.agent;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.agent.api.memory.MemoryRecord;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -56,6 +60,39 @@ final class FileMemoryStoreTest {
     var reopened = new FileMemoryStore(tmp);
     assertEquals(1, reopened.whatItKnows().size());
     assertEquals("remembered fact", reopened.whatItKnows().get(0).content());
+  }
+
+  @Test
+  @DisplayName("legacy v0 array remains readable and the next write emits v1")
+  void legacyV0ArrayLoads(@TempDir Path tmp) throws Exception {
+    Files.writeString(
+        tmp.resolve("memory.json"),
+        """
+        [{"id":"m0","kind":"fact","content":"legacy","sourceConversationId":"c",
+          "actor":"primary","createdAt":"2026-01-01T00:00:00Z"}]
+        """);
+    FileMemoryStore store = new FileMemoryStore(tmp);
+    assertEquals("legacy", store.whatItKnows().get(0).content());
+    store.remember(rec("m1", "new", Instant.parse("2026-01-02T00:00:00Z")));
+    assertTrue(Files.readString(tmp.resolve("memory.json")).contains("\"schemaVersion\" : 1"));
+  }
+
+  @Test
+  void futureVersionIsRefusedWithoutOverwrite(@TempDir Path tmp) throws Exception {
+    Path file = tmp.resolve("memory.json");
+    String future = "{\"schemaVersion\":99,\"memories\":[]}";
+    Files.writeString(file, future);
+    assertThrows(UnsupportedStoreVersionException.class, () -> new FileMemoryStore(tmp));
+    assertEquals(future, Files.readString(file));
+  }
+
+  @Test
+  void malformedStateIsRefusedWithoutOverwrite(@TempDir Path tmp) throws Exception {
+    Path file = tmp.resolve("memory.json");
+    String malformed = "{not-json";
+    Files.writeString(file, malformed);
+    assertThrows(CorruptDurableStoreException.class, () -> new FileMemoryStore(tmp));
+    assertEquals(malformed, Files.readString(file));
   }
 
   /** A test DataKeyState with a fixed key whose lock state the test toggles. */

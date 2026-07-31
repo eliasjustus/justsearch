@@ -2,6 +2,10 @@
 package io.justsearch.indexerworker.queue;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -18,6 +22,8 @@ import org.slf4j.LoggerFactory;
  */
 final class SqliteQueueMigrationOps {
   private static final Logger log = LoggerFactory.getLogger(SqliteQueueMigrationOps.class);
+  private static final byte[] SQLITE_HEADER =
+      new byte[] {'S', 'Q', 'L', 'i', 't', 'e', ' ', 'f', 'o', 'r', 'm', 'a', 't', ' ', '3', 0};
 
   private SqliteQueueMigrationOps() {}
 
@@ -25,6 +31,40 @@ final class SqliteQueueMigrationOps {
   @FunctionalInterface
   interface BackupAction {
     void perform() throws SQLException, IOException;
+  }
+
+  /**
+   * Refuses a database written by a newer binary before opening a writable SQLite connection.
+   *
+   * <p>SQLite stores {@code user_version} as a big-endian integer at header offset 60. Reading that
+   * field directly avoids journal-mode and other connection setup writes before compatibility is
+   * established.
+   */
+  static void refuseFutureSchema(Path dbPath) throws SQLException, IOException {
+    ByteBuffer header = ByteBuffer.allocate(64);
+    try (FileChannel channel = FileChannel.open(dbPath, StandardOpenOption.READ)) {
+      while (header.hasRemaining() && channel.read(header) >= 0) {
+        // Continue until the complete fixed-size header is available.
+      }
+    }
+    if (header.position() < header.capacity()) {
+      return;
+    }
+    byte[] bytes = header.array();
+    for (int i = 0; i < SQLITE_HEADER.length; i++) {
+      if (bytes[i] != SQLITE_HEADER[i]) {
+        return;
+      }
+    }
+    int version = header.getInt(60);
+    if (version > SqliteSchema.TARGET_VERSION) {
+      throw new SQLException(
+          "Unsupported jobs database schema version "
+              + version
+              + " (this binary supports through "
+              + SqliteSchema.TARGET_VERSION
+              + ")");
+    }
   }
 
   /**
@@ -61,6 +101,16 @@ final class SqliteQueueMigrationOps {
             "Detected legacy database at effective version {}, setting user_version", current);
         setSchemaVersion(conn, current);
       }
+    }
+
+    // Refuse a database owned by a newer binary before any compatibility DDL can mutate it.
+    if (current > SqliteSchema.TARGET_VERSION) {
+      throw new SQLException(
+          "Unsupported jobs database schema version "
+              + current
+              + " (this binary supports through "
+              + SqliteSchema.TARGET_VERSION
+              + ")");
     }
 
     if (current >= SqliteSchema.TARGET_VERSION) {

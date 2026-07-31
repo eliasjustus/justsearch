@@ -3,7 +3,12 @@ package io.justsearch.ui.api;
 
 import io.javalin.Javalin;
 import io.javalin.http.Context;
+import io.justsearch.app.api.OpCriticality;
+import io.justsearch.app.api.OpLeaseOutcome;
+import io.justsearch.app.api.OperationAdmissionClosedException;
+import io.justsearch.app.api.OperationLeaseHandle;
 import io.justsearch.app.services.HeadAssembly;
+import io.justsearch.app.api.OperationLeaseService;
 import java.net.URI;
 import java.util.Locale;
 import java.util.Map;
@@ -38,12 +43,14 @@ final class ApiSecurityFilters {
   private static final Set<String> TOKEN_REQUIRED_METHODS = Set.of("POST", "PUT", "DELETE");
   private static final long SLOW_REQUEST_THRESHOLD_MS = 3000;
   private static final long SLOW_DUMP_RATE_LIMIT_MS = 30_000;
+  private static final String MUTATION_LEASE_ATTRIBUTE = "__upgrade_mutation_lease__";
 
   private final boolean prodMode;
   private final String sessionToken;
   private final EventBuffer eventBuffer;
   private final ExecutorService slowRequestExecutor;
   private final HeadAssembly headAssembly;
+  private final OperationLeaseService operationLeases;
 
   // Rate-limit bookkeeping for deny / slow-dump logging.
   private final AtomicLong lastCorsDenyUiReadyAtMs = new AtomicLong(0);
@@ -58,11 +65,22 @@ final class ApiSecurityFilters {
       EventBuffer eventBuffer,
       ExecutorService slowRequestExecutor,
       HeadAssembly headAssembly) {
+    this(prodMode, sessionToken, eventBuffer, slowRequestExecutor, headAssembly, null);
+  }
+
+  ApiSecurityFilters(
+      boolean prodMode,
+      String sessionToken,
+      EventBuffer eventBuffer,
+      ExecutorService slowRequestExecutor,
+      HeadAssembly headAssembly,
+      OperationLeaseService operationLeases) {
     this.prodMode = prodMode;
     this.sessionToken = sessionToken;
     this.eventBuffer = eventBuffer;
     this.slowRequestExecutor = slowRequestExecutor;
     this.headAssembly = headAssembly;
+    this.operationLeases = operationLeases;
   }
 
   /** Installs the Host-allowlist, CORS, session-token, and capability-gate before-filters on the app. */
@@ -70,7 +88,43 @@ final class ApiSecurityFilters {
     setupHostValidation(app);
     setupCors(app, prodMode);
     setupSessionTokenEnforcement(app);
+    setupOperationAdmission(app);
     setupCapabilityGates(app);
+  }
+
+  private void setupOperationAdmission(Javalin app) {
+    if (operationLeases == null) return;
+    app.before(
+        ctx -> {
+          String method = ctx.method().name().toUpperCase(Locale.ROOT);
+          if ("GET".equals(method) || "OPTIONS".equals(method)) return;
+          if (ctx.path().startsWith("/api/upgrade/")) return;
+          try {
+            OperationLeaseHandle handle =
+                operationLeases.register(
+                    "api.mutation",
+                    OpCriticality.MUST_COMPLETE,
+                    300,
+                    Map.of("method", method, "path", ctx.path()));
+            ctx.attribute(MUTATION_LEASE_ATTRIBUTE, handle);
+          } catch (OperationAdmissionClosedException e) {
+            ctx.status(503)
+                .json(
+                    Map.of(
+                        "error", "Application upgrade preparation has frozen mutating operations",
+                        "errorCode", "UPGRADE_PREPARING",
+                        "preparationId", e.preparationId()));
+            throw new io.javalin.http.HttpResponseException(503, "Upgrade preparing");
+          }
+        });
+    app.after(
+        ctx -> {
+          OperationLeaseHandle handle = ctx.attribute(MUTATION_LEASE_ATTRIBUTE);
+          if (handle != null) {
+            handle.release(
+                ctx.statusCode() >= 500 ? OpLeaseOutcome.FAILURE : OpLeaseOutcome.SUCCESS);
+          }
+        });
   }
 
   /**
