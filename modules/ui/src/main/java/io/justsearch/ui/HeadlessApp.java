@@ -382,7 +382,7 @@ public class HeadlessApp {
             .upgradeShutdownAction(upgradeShutdownBridge)
             .upgradeReconciliation(
                 resolvedConfig.paths().dataDir(),
-                () -> System.getProperty("justsearch.app.version", ""),
+                () -> EnvRegistry.APP_VERSION.get().orElse(""),
                 () -> true,
                 null)
             .build();

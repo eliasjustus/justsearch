@@ -15,6 +15,7 @@ import io.justsearch.app.api.gpl.GplStatusProvider;
 import io.justsearch.app.api.gpl.RerankerService;
 import io.justsearch.app.services.observability.HeadApiMetricCatalog;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
+import io.justsearch.configuration.EnvRegistry;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.telemetry.Telemetry;
 import io.justsearch.ui.api.routes.AiRoutes;
@@ -100,7 +101,6 @@ public class LocalApiServer {
   // Carve-out: reassigned in lateBindKnowledgeServer (Worker reconnect), so it stays a mutable field
   // seeded from core.knowledgeSearchController() — it cannot live in the immutable Result.
   private volatile KnowledgeSearchController knowledgeSearchController;
-  private volatile KnowledgeServerBootstrap upgradeKnowledgeServer;
   // Tempdoc 419 / T4: shared scan-progress registry (adapter producer -> ScanProgressController),
   // one per process, closed on shutdown.
   private final io.justsearch.app.services.worker.ScanProgressRegistry scanProgressRegistry =
@@ -221,7 +221,7 @@ public class LocalApiServer {
             b.HeadAssembly == null
                 ? null
                 : () -> {
-                  KnowledgeServerBootstrap worker = this.upgradeKnowledgeServer;
+                  KnowledgeServerBootstrap worker = b.HeadAssembly.currentKnowledgeServer();
                   return worker == null ? null : worker.client();
                 },
             b.upgradeDataDir,
@@ -230,11 +230,11 @@ public class LocalApiServer {
             b.upgradeWorkerReady != null
                 ? b.upgradeWorkerReady
                 : () -> {
-                  KnowledgeServerBootstrap worker = this.upgradeKnowledgeServer;
-                  return b.HeadAssembly != null
-                      && b.HeadAssembly.capabilities().worker().available()
-                      && worker != null
-                      && worker.client() != null;
+                  if (b.HeadAssembly == null || !b.HeadAssembly.capabilities().worker().available()) {
+                    return false;
+                  }
+                  KnowledgeServerBootstrap worker = b.HeadAssembly.currentKnowledgeServer();
+                  return worker != null && worker.client() != null;
                 });
     this.apiModules =
         resourceApiModule != null
@@ -789,7 +789,10 @@ public class LocalApiServer {
    * @param startError the start error string, or null if startup succeeded
    */
   public void lateBindKnowledgeServer(KnowledgeServerBootstrap ks, String startError) {
-    this.upgradeKnowledgeServer = ks;
+    // The upgrade routes deliberately do NOT cache `ks` here: HeadAssembly.currentKnowledgeServer()
+    // is the single owner of that reference (HeadlessApp calls connectKnowledgeServer immediately
+    // before this method), and a second copy on the composition root would be a fork that can go
+    // stale on Worker reconnect.
     // Update controllers with Worker reference (read from the CoreApiAssembly Result).
     core.debugStateController().setKnowledgeServer(ks);
     core.inferenceHandlers().setKnowledgeServer(ks);
@@ -978,7 +981,7 @@ public class LocalApiServer {
     io.justsearch.app.api.OperationLeaseService operationLeaseService;
     Path upgradeDataDir;
     Supplier<String> upgradeRunningVersion =
-        () -> System.getProperty("justsearch.app.version", "");
+        () -> EnvRegistry.APP_VERSION.get().orElse("");
     java.util.function.BooleanSupplier upgradeHeadReady;
     java.util.function.BooleanSupplier upgradeWorkerReady;
 
@@ -1050,12 +1053,18 @@ public class LocalApiServer {
         java.util.function.BooleanSupplier workerReady) {
       this.upgradeDataDir = dataDir;
       this.upgradeRunningVersion =
-          runningVersion == null ? () -> System.getProperty("justsearch.app.version", "") : runningVersion;
+          runningVersion == null ? () -> EnvRegistry.APP_VERSION.get().orElse("") : runningVersion;
       this.upgradeHeadReady = headReady;
       this.upgradeWorkerReady = workerReady;
       return this;
     }
 
+    /**
+     * Test seam for the op-lease SPI. Production does not call this: the constructor resolves the
+     * service from {@code HeadAssembly.serviceOut()} (see the tempdoc 542 Phase 3 fallback chain
+     * above), so only tests that build a server without a HeadAssembly inject one directly.
+     */
+    @SuppressWarnings("unused") // UpgradeLifecycleContractTest; see UnreferencedCodeTest.KNOWN_UNREFERENCED
     Builder operationLeaseService(io.justsearch.app.api.OperationLeaseService service) {
       this.operationLeaseService = service;
       return this;

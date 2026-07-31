@@ -1085,37 +1085,61 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return migrationOps.runIndexGc(keepLatest, pruneMarkedOnly);
     }
 
-    public io.justsearch.ipc.UpgradeQuiescenceResponse prepareUpgrade(String preparationId) {
-        var request =
-                io.justsearch.ipc.UpgradeQuiescenceRequest.newBuilder()
-                        .setPreparationId(preparationId)
-                        .build();
-        return executeIngestRpc(
-                "prepareUpgrade",
-                RpcDeadlineCategory.STANDARD,
-                stub -> stub.prepareUpgrade(request));
+    /**
+     * Projects the Worker's gRPC quiescence message onto the app-api contract record.
+     *
+     * <p>The mapping lives here, at the single gRPC boundary, so the generated proto type never
+     * reaches {@code ui.api} — see {@code UiApiGuardrailsTest} and {@link
+     * io.justsearch.app.api.WorkerQuiescenceSnapshot}.
+     */
+    private static io.justsearch.app.api.WorkerQuiescenceSnapshot toSnapshot(
+            io.justsearch.ipc.UpgradeQuiescenceResponse response) {
+        if (response == null) {
+            return null;
+        }
+        return new io.justsearch.app.api.WorkerQuiescenceSnapshot(
+                response.getPreparationId(),
+                response.getReady(),
+                response.getLoopQuiesced(),
+                response.getQueueCheckpointed(),
+                response.getMigrationState(),
+                response.getBlockersList());
     }
 
-    public io.justsearch.ipc.UpgradeQuiescenceResponse upgradeStatus(String preparationId) {
+    public io.justsearch.app.api.WorkerQuiescenceSnapshot prepareUpgrade(String preparationId) {
         var request =
                 io.justsearch.ipc.UpgradeQuiescenceRequest.newBuilder()
                         .setPreparationId(preparationId)
                         .build();
-        return executeIngestRpc(
-                "upgradeStatus",
-                RpcDeadlineCategory.STANDARD,
-                stub -> stub.upgradeStatus(request));
+        return toSnapshot(
+                executeIngestRpc(
+                        "prepareUpgrade",
+                        RpcDeadlineCategory.STANDARD,
+                        stub -> stub.prepareUpgrade(request)));
     }
 
-    public io.justsearch.ipc.UpgradeQuiescenceResponse cancelUpgrade(String preparationId) {
+    public io.justsearch.app.api.WorkerQuiescenceSnapshot upgradeStatus(String preparationId) {
         var request =
                 io.justsearch.ipc.UpgradeQuiescenceRequest.newBuilder()
                         .setPreparationId(preparationId)
                         .build();
-        return executeIngestRpc(
-                "cancelUpgrade",
-                RpcDeadlineCategory.STANDARD,
-                stub -> stub.cancelUpgrade(request));
+        return toSnapshot(
+                executeIngestRpc(
+                        "upgradeStatus",
+                        RpcDeadlineCategory.STANDARD,
+                        stub -> stub.upgradeStatus(request)));
+    }
+
+    public io.justsearch.app.api.WorkerQuiescenceSnapshot cancelUpgrade(String preparationId) {
+        var request =
+                io.justsearch.ipc.UpgradeQuiescenceRequest.newBuilder()
+                        .setPreparationId(preparationId)
+                        .build();
+        return toSnapshot(
+                executeIngestRpc(
+                        "cancelUpgrade",
+                        RpcDeadlineCategory.STANDARD,
+                        stub -> stub.cancelUpgrade(request)));
     }
 
     @Override

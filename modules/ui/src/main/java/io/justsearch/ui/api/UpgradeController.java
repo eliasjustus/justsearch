@@ -207,15 +207,15 @@ final class UpgradeController {
   }
 
   private static Map<String, Object> workerMap(
-      io.justsearch.ipc.UpgradeQuiescenceResponse worker) {
+      io.justsearch.app.api.WorkerQuiescenceSnapshot worker) {
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("required", true);
-    result.put("preparationId", worker.getPreparationId());
-    result.put("ready", worker.getReady());
-    result.put("loopQuiesced", worker.getLoopQuiesced());
-    result.put("queueCheckpointed", worker.getQueueCheckpointed());
-    result.put("migrationState", worker.getMigrationState());
-    result.put("blockers", worker.getBlockersList());
+    result.put("preparationId", worker.preparationId());
+    result.put("ready", worker.ready());
+    result.put("loopQuiesced", worker.loopQuiesced());
+    result.put("queueCheckpointed", worker.queueCheckpointed());
+    result.put("migrationState", worker.migrationState());
+    result.put("blockers", worker.blockers());
     return result;
   }
 
