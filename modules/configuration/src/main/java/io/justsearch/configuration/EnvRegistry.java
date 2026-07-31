@@ -1167,7 +1167,16 @@ public enum EnvRegistry {
      * RuleRunnerBuilder helper to satisfy the checkNoDirectJustsearchSysProp build gate
      * after the rule-engine wiring was lifted into a phase-helper class.
      */
-    RULE_TICK_MS("justsearch.rule.tick.ms", "JUSTSEARCH_RULE_TICK_MS");
+    RULE_TICK_MS("justsearch.rule.tick.ms", "JUSTSEARCH_RULE_TICK_MS"),
+    /**
+     * Running application version, injected by the desktop shell. Read by the upgrade surfaces
+     * (LocalApiServer's upgrade reconciliation wiring and HeadlessApp's assembly) to decide whether
+     * a durable update intent describes the source build or the target build — the distinction that
+     * keeps restart reconciliation from treating a version match as proof of a successful install.
+     * Tempdoc 617: promoted from raw System.getProperty to satisfy the
+     * checkNoDirectJustsearchSysProp build gate.
+     */
+    APP_VERSION("justsearch.app.version", "JUSTSEARCH_APP_VERSION");
 
     // YAML-only keys moved to ConfigKey.java (tempdoc 347 D1).
 

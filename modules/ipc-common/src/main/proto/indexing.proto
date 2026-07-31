@@ -1083,6 +1083,19 @@ message MigrationRollbackResponse {
   bool restart_scheduled = 5;
 }
 
+message UpgradeQuiescenceRequest {
+  string preparation_id = 1;
+}
+
+message UpgradeQuiescenceResponse {
+  string preparation_id = 1;
+  bool ready = 2;
+  bool loop_quiesced = 3;
+  bool queue_checkpointed = 4;
+  string migration_state = 5;
+  repeated string blockers = 6;
+}
+
 // --- Path update messages (Phase 4: agent file operations) ---
 
 message PathMapping {
@@ -1140,6 +1153,9 @@ service IngestService {
   rpc ResumeMigration(MigrationResumeRequest) returns (MigrationResumeResponse);
   rpc RunIndexGc(IndexGcRequest) returns (IndexGcResponse);
   rpc RollbackMigration(MigrationRollbackRequest) returns (MigrationRollbackResponse);
+  rpc PrepareUpgrade(UpgradeQuiescenceRequest) returns (UpgradeQuiescenceResponse);
+  rpc UpgradeStatus(UpgradeQuiescenceRequest) returns (UpgradeQuiescenceResponse);
+  rpc CancelUpgrade(UpgradeQuiescenceRequest) returns (UpgradeQuiescenceResponse);
 
   // NOT idempotent: updates document paths (DOC_ID, PATH, FILENAME) and chunk PARENT_DOC_ID.
   // Used by agent file operations tool after MOVE/RENAME to keep index consistent.

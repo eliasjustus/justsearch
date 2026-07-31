@@ -1857,7 +1857,19 @@ above)*
 - **Answer:** `full` mode (includes CE) scores 0.810 vs `bm25_splade` (excludes CE) at 0.830 — CE degrades ranking by ~2%.
 - **Evidence:** tempdoc 309 §42, §43 (confirmed with both MiniLM and GTE-ModernBERT). **343 Phase D:** CE-on vs CE-off isolation with multilingual stack confirms CE hurts EnronQA by 3-5% across all modes (lexical 0.827→0.799, full 0.822→0.777). CE helps SciFact (+3.2%) and MIRACL/de (+4.8%).
 - **Conditions/caveats:** EnronQA only. CE helps on academic/multilingual. Confirms FW-001: corpus-adaptive CE gating needed.
-- **Corroborated from a previously invisible channel (2026-07-31, 800):** The harness discards the CE's ordering (see F-001's caveat), so every number above reflects the CE's *selection* only. Re-scoring the 781-certification artifacts by delivered order isolates the missing term: Enron −0.0586/−0.0463/−0.0102/+0.0176 (3 of 4 **harmful**), CLERC legal +0.0037/+0.0199/+0.0363/+0.0382 (4 of 4 **helpful**). Same shape as this finding, on an independent corpus pair. Because the omitted term points the same way as the reported one, the register **understates** both the harm on email and the benefit on legal. Strengthens F-002/F-008 and FW-001.
+- **~~Corroborated from a previously invisible channel~~ — RETRACTED the same day (2026-07-31, 802).** The retracted claim was: re-scoring the *781-certification* artifacts isolates the CE's discarded ordering term, giving Enron 3 of 4 **harmful** and CLERC legal 4 of 4 **helpful**, "same shape as this finding", so the register understates both. **Measurement on the actually-published corpora reverses both signs**, so it corroborates nothing and is withdrawn. It is shown struck through rather than deleted because it was live on `main` for a few hours and someone may have read it.
+- **What is measured (2026-07-31, 802).** All five corpora in `release.v1.json` were re-run at current `main` config and scored both ways **with ir_measures**. The CE's ordering term:
+
+  | corpus | ordering delta | direction |
+  |---|---:|---|
+  | `mixed/enron-qa` (this finding's corpus) | **+0.0184** | CE **helps** |
+  | `mixed/legal-clerc-200` | **−0.0418** | CE **hurts** |
+  | `beir/scifact` | −0.0061 | CE hurts slightly |
+  | `mixed/miracl-de-2k` | −0.0026 | ~neutral |
+  | `mixed/miracl-fr-2k` | +0.0128 | CE helps |
+
+  The retracted rider's error was corpus identity: `mixed/en-email-enron-raw-*` and `mixed/en-legal-clerc-*` are certification corpora with synthesized queries, **not** the published `mixed/enron-qa` and `mixed/legal-clerc-200`. Shared names, different benchmarks, opposite behaviour.
+- **Bearing on this finding.** On EnronQA the CE's *ordering* contribution is **positive (+0.0184)**, which does not support "CE actively hurts on personal email" and is mild evidence against it. It does not refute F-002 outright: F-002's evidence compares `full` vs `bm25_splade`, which differ in the dense leg as well as the CE, and covers CE *selection* plus ordering rather than ordering alone. Treat the direction on email as **open**, not settled. Full measurement and method: tempdoc 802.
 
 ### F-003: BM25 dominates on entity-heavy personal content
 
@@ -1882,7 +1894,7 @@ above)*
 - **Answer:** GTE-ModernBERT (149M, 8192 tokens) produces identical nDCG@10 to MiniLM-L6-v2 (22.7M, 512 tokens) on ALL tested corpora: SciFact (-0.1%), CourtListener (-0.4%), MIRACL/de (+0.1%), EnronQA (-0.3%). All within noise.
 - **Evidence:** tempdoc 309 §41 (SciFact, CL-200, MIRACL/de), §43 (EnronQA)
 - **Conditions/caveats:** Generalizes F-001 beyond email. Root cause: BGE-M3 produces strong enough top-K rankings that CE reranking is marginal — the `bm25_splade` → `full` gap is only 1-4%, which is the maximum possible CE contribution regardless of CE model quality.
-- **⚠ Measurement caveat (2026-07-31, 800):** Inherits F-001's caveat, and more strongly — this finding generalizes "zero difference" across *all* corpora, which is the signature an apparatus produces when the CE's ordering channel is discarded on every corpus alike. The stated root cause (retrieval is strong enough to make CE marginal) is not established by these numbers: they cannot see the CE's ordering contribution at all. Independently, the 781 re-scoring shows that contribution is up to ±0.06 nDCG@10 — not marginal. Treat as *unmeasured* pending a corrected re-run; tempdoc 800.
+- **⚠ Measurement caveat (2026-07-31, 800):** Inherits F-001's caveat, and more strongly — this finding generalizes "zero difference" across *all* corpora, which is the signature an apparatus produces when the CE's ordering channel is discarded on every corpus alike. The stated root cause (retrieval is strong enough to make CE marginal) is not established by these numbers: they cannot see the CE's ordering contribution at all. Independently, measurement on the **published** corpora (tempdoc 802, ir_measures, all five re-run) puts that contribution at **−0.0418 to +0.0184 nDCG@10** — larger than the 1–4% `bm25_splade`→`full` gap this finding cites as the CE's maximum possible contribution, and therefore not marginal. Treat as *unmeasured* pending a corrected re-run; tempdocs 800, 802. (An earlier version of this rider cited the 781-certification cells at ±0.06; those are certification corpora, not the published ones — the published figures above supersede them.)
 
 ### F-007: Cross-language noise is minimal in mixed multilingual corpus
 
@@ -1895,7 +1907,9 @@ above)*
 - **Answer:** Per-query analysis across 4 corpora shows CE helps 183/305 queries on German (+0.086 net nDCG), 55/300 on SciFact (+0.031), but hurts 45/300 on EnronQA (-0.020). On email, CE demotes the relevant doc in 28 cases and pushes it out of top-10 entirely in 7 cases.
 - **Evidence:** tempdoc 309 §42 (per-query failure analysis on existing artifacts)
 - **Conditions/caveats:** MIRACL/de's CE "help" is likely the dense leg (active in `full` but not `bm25_splade`), not CE itself — Phase 7 CE ablation showed zero CE effect on German. Strongest evidence for corpus-adaptive CE gating.
-- **Corroborated (2026-07-31, 800):** See F-002's rider — the 781-certification re-scoring reproduces this finding's corpus split (email harmful, legal helpful) on the CE-ordering channel the original per-query analysis could not observe. Note the caveat also cuts the other way for the *caveat itself*: "Phase 7 CE ablation showed zero CE effect on German" is an F-001-class zero and carries the same measurement doubt.
+- **~~Corroborated~~ — RETRACTED the same day (2026-07-31, 802).** The retracted claim was that the 781-certification re-scoring reproduced this finding's corpus split (email harmful, legal helpful) on the CE-ordering channel. Measurement on the **published** corpora reverses both signs — `mixed/enron-qa` **+0.0184** (helps) and `mixed/legal-clerc-200` **−0.0418** (hurts) — so it reproduced nothing. See F-002's rider for the table and the corpus-identity error behind it.
+- **Where this finding now stands (2026-07-31, 802).** Its *headline* — CE impact is corpus-dependent — is **strengthened**, and by a wider margin than originally claimed: the measured ordering term spans −0.0418 to +0.0184 across five corpora with no consistent sign. What is **not** supported is the specific mapping "helps academic/multilingual, hurts email", which the measurement inverts on email (helps) and on legal (hurts); `miracl-de` is ~neutral (−0.0026) while `miracl-fr` helps (+0.0128), so "multilingual" does not behave as one class either. Corpus-adaptive CE gating (FW-001) remains well motivated; the per-corpus *directions* it would need are not the ones recorded here.
+- The pre-existing caveat also cuts the other way for the *caveat itself*: "Phase 7 CE ablation showed zero CE effect on German" is an F-001-class zero and carries the same measurement doubt.
 
 ### F-009: Extraction noise is the single largest quality bottleneck
 

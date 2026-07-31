@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.configuration.resolved;
 
+import io.justsearch.configuration.persistence.AtomicFileWrites;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
@@ -139,8 +140,7 @@ public record ResolvedConfig(
     putPath(snapshot, "justsearch.rerank.chunks.model_path", ai.reranker().chunks().modelPath());
     putPath(snapshot, "justsearch.citation.scorer.model_path", ai.citationScorer().modelPath());
     try {
-      Files.createDirectories(snapshotPath.getParent());
-      SNAPSHOT_MAPPER.writeValue(snapshotPath.toFile(), snapshot);
+      AtomicFileWrites.replace(snapshotPath, SNAPSHOT_MAPPER.writeValueAsBytes(snapshot));
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to write worker config snapshot", e);
     }

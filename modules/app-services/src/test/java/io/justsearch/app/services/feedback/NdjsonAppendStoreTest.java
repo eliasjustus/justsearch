@@ -2,8 +2,10 @@ package io.justsearch.app.services.feedback;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -65,5 +67,27 @@ class NdjsonAppendStoreTest {
     assertEquals(
         0,
         new NdjsonAppendStore<>(dir.resolve("x.ndjson"), FeatureSnapshot.class).readAll().size());
+  }
+
+  @Test
+  void legacyUnversionedRecordRemainsReadable(@TempDir Path dir) throws IOException {
+    Path path = dir.resolve("feature-snapshots.ndjson");
+    Files.writeString(
+        path,
+        "{\"interactionId\":\"iid-legacy\",\"query\":\"q\",\"occurredAtMs\":1,\"hits\":[]}\n");
+
+    var store = new NdjsonAppendStore<>(path, FeatureSnapshot.class);
+    assertEquals("iid-legacy", store.readAll().getFirst().interactionId());
+  }
+
+  @Test
+  void futureRecordVersionIsRefused(@TempDir Path dir) throws IOException {
+    Path path = dir.resolve("feature-snapshots.ndjson");
+    Files.writeString(path, "{\"schemaVersion\":2,\"record\":{}}\n");
+    var store = new NdjsonAppendStore<>(path, FeatureSnapshot.class);
+
+    assertThrows(
+        io.justsearch.configuration.persistence.UnsupportedStoreVersionException.class,
+        store::readAll);
   }
 }

@@ -66,6 +66,8 @@ import '../components/RetrospectivePanel.js';
 import '../components/FailedJobsDrawer.js';
 import '../components/SourcesPane.js';
 import '../components/ContextInspectorPane.js';
+import '../components/AppUpdateBanner.js';
+import { startAppUpdateMonitor } from '../state/appUpdateState.js';
 import type { AgentActivityPanel } from '../components/AgentActivityPanel.js';
 // §25.β3 — elicit chrome surface (modal form host for Action handlers
 // asking the user mid-invocation questions).
@@ -440,6 +442,7 @@ export class Shell extends JfElement {
   private evalContextScopeBumpUnsub: (() => void) | null = null;
   // §32 #1 — indexing-jobs → Task tray bridge teardown handle.
   private indexingJobsBridgeStop: (() => void) | null = null;
+  private appUpdateMonitorStop: (() => void) | null = null;
   // Tempdoc 655 — pending-authorization (out-of-band gate, e.g. MCP) bridge teardown handle.
   private pendingAuthorizationBridgeStop: (() => void) | null = null;
   private effectIngestStop: (() => void) | null = null;
@@ -566,9 +569,10 @@ export class Shell extends JfElement {
     :host {
       display: grid;
       grid-template-columns: 3.25rem 1fr;
-      grid-template-rows: 2.5rem 1fr 1.75rem;
+      grid-template-rows: 2.5rem auto 1fr 1.75rem;
       grid-template-areas:
         'topbar topbar'
+        'update update'
         'rail   stage'
         'rail   status';
       width: 100vw;
@@ -715,6 +719,7 @@ export class Shell extends JfElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.appUpdateMonitorStop = startAppUpdateMonitor();
     // Tempdoc 629 (#10): start the app-wide auto-lock idle watcher. The fetch is resolved lazily so it
     // works once hostApi_ is bound during mount; until then the tick's fetch rejects and is a no-op.
     this.autoLock_ = startAutoLock((p, i) =>
@@ -1642,6 +1647,8 @@ export class Shell extends JfElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.appUpdateMonitorStop?.();
+    this.appUpdateMonitorStop = null;
     this.autoLock_?.stop();
     this.autoLock_ = null;
     this.removeEventListener('navigate-with-context', this.onNavigateWithContext);
@@ -2250,6 +2257,7 @@ export class Shell extends JfElement {
               : 'Copy URL'}
         </button>
       </div>
+      <jf-app-update-banner hidden></jf-app-update-banner>
       ${this.isRailVisible() ? html`<jf-rail
         role=${placementToLandmarkRole('RAIL')}
         aria-label="Surfaces"

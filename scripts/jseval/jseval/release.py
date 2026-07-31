@@ -315,6 +315,7 @@ def compose(
     require_comparable: bool = True,
     leak_by_dataset: dict | None = None,
     union_recall_by_dataset: dict | None = None,
+    run_sources: list[dict] | None = None,
 ) -> dict:
     """Compose cohort-identical run summaries into one benchmark release.
 
@@ -335,12 +336,35 @@ def compose(
         which has the run dirs; recall-survival sibling of ``leak_by_dataset``, tempdoc 701).
         When non-empty, written as the release's ``union_recall`` section so
         union-recall-gate's ``current_release`` pointer can project floors from it.
+    :param run_sources: optional list PARALLEL to ``run_summaries`` — one
+        ``{"run_dir": str, "summary_sha256": str}`` per run, supplied by the compose CLI
+        (only it knows the run dirs). Recorded verbatim as the release's ``sources``
+        section, with this function supplying the canonical dataset slug so the CLI and
+        the composer cannot disagree about naming.
+
+        Why this exists (tempdoc 802): a release used to record its *config* provenance
+        (git sha, cohort key, hardware, model fingerprints) but nothing pointing at the
+        ARTIFACTS it was projected from. When the run directories were later cleaned up,
+        the published numbers became impossible to re-score or re-derive — discovered on
+        `715-rebaseline-2026-07-16`, whose runs no longer exist anywhere on disk. The
+        ``summary_sha256`` is the durable half: paths rot, but it still answers "is this
+        candidate directory the one this release was built from?".
     :raises ComposeError: if the runs don't all share one ``config_cohort_key``,
+        or ``run_sources`` is present but not the same length as ``run_summaries``,
         or (when ``require_comparable``) a default-mode run isn't ``comparable``.
     :returns: the release document (``release.v1`` schema).
     """
     if not run_summaries:
         raise ComposeError("no run summaries provided")
+
+    # Fail CLOSED on a mismatched sources list rather than recording provenance that points
+    # at the wrong run — a silently misaligned pointer is worse than none, because it looks
+    # authoritative (tempdoc 802; the class 742 names).
+    if run_sources is not None and len(run_sources) != len(run_summaries):
+        raise ComposeError(
+            f"run_sources has {len(run_sources)} entries but there are "
+            f"{len(run_summaries)} run summaries; they must be parallel",
+        )
 
     # 1. All members must share one config-cohort key (the equivalence class).
     keyed: list[tuple[str, dict]] = []
@@ -431,6 +455,17 @@ def compose(
         if isinstance(rate, (int, float))
     }
 
+    # Artifact provenance: which runs this projection was built from (tempdoc 802). One entry
+    # per member, in `run_summaries` order, so a corpus contributing several runs stays legible.
+    sources_section = [
+        {
+            "dataset": canonical_dataset_slug(s.get("dataset")),
+            "run_dir": src.get("run_dir"),
+            "summary_sha256": src.get("summary_sha256"),
+        }
+        for s, src in zip(run_summaries, run_sources or [])
+    ]
+
     return {
         "schema": RELEASE_SCHEMA,
         "schema_version": RELEASE_SCHEMA_VERSION,
@@ -440,6 +475,7 @@ def compose(
         "cohort": cohort,
         "measured": measured,
         "ablations": ablations,
+        **({"sources": sources_section} if sources_section else {}),
         **({"leak": leak_section} if leak_section else {}),
         **({"union_recall": union_recall_section} if union_recall_section else {}),
         "external_baselines": external_baselines or {},

@@ -16,7 +16,8 @@ Five staged files govern this round. Read them before launching JustSearch:
    is the authority for *what to cover*; it cannot silently omit a newly-shipped
    surface. If a surface is on it and you cannot reach it, that is a finding.
 2. **`validation-mode.md`** — the model mode for this instance (`fresh-install`
-   vs `pre-staged-models` vs `upgrade-from-release`). Overrides any static
+   vs `pre-staged-models` vs `upgrade-from-release` vs
+   `in-app-update-from-release`). Overrides any static
    wording about host models.
    **Round-mode policy:** a release's FIRST round and its FINAL qualifying round
    MUST run `fresh-install` (the only mode that covers the real download path);
@@ -27,6 +28,11 @@ Five staged files govern this round. Read them before launching JustSearch:
    over it) — real users arrive from the previous version, not only from a clean
    machine, and the strongest defect repro this harness ever produced came from a
    non-fresh arrival state (tempdoc 734 A.1, round 2). Tempdoc 750 Part C.
+   For `in-app-update-from-release`, also follow
+   `updater-qualification.md`: the installed source is a previous-source
+   Sandbox build with the updater test gate, the target is served from the
+   authenticated loopback closed set, and `collect-updater-evidence.ps1`
+   captures the durable recovery oracle before interruption and after restart.
 3. **`charter.md`** — this round's pre-registration (SBTM's *charter*, adapted —
    see *Retrospective / debrief* below): what the round is FOR, each open
    blocker's needs-round vs. needs-dig classification, the chosen mode and why,
