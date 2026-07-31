@@ -131,7 +131,17 @@ export function buildRequestBody(
 export const CONVERSATION_ZONES: readonly ZoneDecl[] = [
   { track: 'minmax(0, 8rem)', wideOnly: true },
   { selector: '.run-spine', track: 'auto', col: 2, wideOnly: true },
-  { selector: '.conversation', track: 'minmax(0, 50rem)', col: 3 },
+  // The reading column's floor lives in the TRACK, not in `.conversation`'s own CSS: an explicit
+  // `minmax(0, …)` pins the track minimum at 0, which SUPPRESSES the item's automatic minimum
+  // contribution — so an item-side `min-width` makes the item overflow its (still-0-floored) track
+  // and overlap the rail instead of widening it. Measured at a 1050px viewport with rail +
+  // document-pane mounted: `minmax(0, 50rem)` sized the track to 102px (~one word per line) while
+  // the rail (240px) and pane (384px) held their own `min-width` floors; adding `min-width: 24rem`
+  // to the item left the track at 102px and rendered a 384px item straddling the rail. A `24rem`
+  // track floor (the document-pane's own 24-28rem convention) sizes the track to 384px instead.
+  // Trade-off, stated plainly: below ~70rem the three floors + gaps no longer fit, so the zone
+  // overflows its container by a small amount rather than starving the primary reading column.
+  { selector: '.conversation', track: 'minmax(24rem, 50rem)', col: 3 },
   { selector: '.evidence-rail', track: 'fit-content(20rem)', col: 4, wideOnly: true },
   { selector: '.document-pane', track: 'fit-content(28rem)', col: 5, wideOnly: true },
   { track: 'minmax(0, 8rem)', wideOnly: true },

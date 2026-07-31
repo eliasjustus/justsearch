@@ -34,6 +34,9 @@ export interface InstallStatus {
     skipReason?: string;
     bytesDownloaded?: number;
     bytesTotal?: number;
+    /** True when this package continued an earlier (e.g. cancelled) run's bytes instead of
+     *  restarting from zero — `AiInstallStatus.PackageStatus.resumed`. */
+    resumed?: boolean;
   }>;
   downloadedBytes?: number;
   totalBytes?: number;

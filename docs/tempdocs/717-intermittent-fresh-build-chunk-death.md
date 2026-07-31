@@ -291,6 +291,16 @@ attacks a *root smell* (status born for work that won't run) rather than a sympt
 the chunk-splade-ON path and VDU/migration chunk-creation paths correct.
 
 ### TH-5. Candidate solution directions (menu, with tradeoffs — not yet chosen)
+
+> **SUPERSEDED 2026-07-30 by tempdoc 798.** This menu is closed. Option 3 ("contract fix at the
+> write boundary") was the one built: `StatusArtifactContract` now rejects, at both write lanes,
+> any write setting `<stage>_status=COMPLETED` without its witnessing artifact — the mapping
+> derived by inverting the `rmwPolicy` declarations this tempdoc introduced. The trigger 717
+> named ("recognize the principle, defer the structure until a real need exists", Decision 1)
+> fired as a release blocker: Sandbox round 7 found the worker livelocked, ingest permanently
+> dead, because a manufactured COMPLETED and the `preserve-reread-or-reset` reset lane fought
+> forever inside an unbounded backfill loop. Options 1/2/4/5 are decided, not open. Read them as
+> dated history; 798 §D is current.
 1. **Presence-truthful readiness gate** (count actual `chunk_vector` KNN fields). Truthful; O(n)
    over vectors, so decouple it from the frequent `/api/status` poll (run once at quiescence) and
    guard the short-doc/no-vector-field case so it can't hang (cf. the pre-394 disabled-stage hang).

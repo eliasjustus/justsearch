@@ -11,18 +11,30 @@ date: 2026-04-06
 ## Status
 Accepted
 
-> **Update (2026-07-02, tempdoc 657) — what "download-on-demand" covers today.**
-> Decision #2 below ("Models downloaded post-install") has since narrowed. The NSIS
-> bundle now **includes** the ONNX search-runtime models (embedding, SPLADE, reranker,
-> NER, citation ≈ 3.5 GB) plus the CPU llama-server, staged by `stageOnnxModels`
-> (`includeOnnxModels` defaults to `true`, `modules/ui/build.gradle.kts`). So a fresh
-> install does full hybrid neural **retrieval** offline with no post-install download.
-> Only the **GGUF chat pack** (chat ≈ 5.5 GB + vision projector ≈ 918 MB) and the
-> **CUDA runtime** DLLs remain download-on-demand via "Install AI" (VRAM-gated). The
-> "~748 MB installer / no models bundled / all ~8.5 GB post-install" figures below
-> describe the original design, not the current build. Tempdoc 657 adds an
-> install-intent axis and a per-tier weight breakdown so this retrieval-vs-LLM split is
-> explicit to users.
+> **Retraction (2026-07-30, sandbox round 7) — the 2026-07-02 "models are bundled now"
+> update was never true of any built installer, and is withdrawn.**
+> That update read `includeOnnxModels`' Gradle *default* (`true`,
+> `modules/ui/build.gradle.kts`) as a description of the shipped artifact. It is not one:
+> the only workflow that builds an installer, `.github/workflows/build-installer.yml`,
+> has set `ORG_GRADLE_PROJECT_skipOnnxModels: "true"` unconditionally since the initial
+> public commit (2026-06-25) — i.e. *before* the update was written, and with no
+> input/branch that turns it off. Round 7 measured a clean install of the shipped
+> installer and found zero `.onnx` bytes on disk; all seven model packages (10.14 GB)
+> download on demand.
+>
+> **Decision #2 below stands unamended: no models are bundled.** The property default
+> describes a configuration that cannot produce a shippable installer at all — bundling
+> the ONNX set (~3.5 GB) would blow the ~2 GB 32-bit NSIS limit this ADR's own Context
+> section cites as the reason models are *not* bundled, so a local
+> `-PskipOnnxModels=false` build is an unbuildable configuration, not an alternative
+> shipping mode. Read the CI workflow, never the Gradle default, for what ships.
+>
+> What tempdoc 657 does contribute and keep: the install-intent axis and the per-tier
+> weight breakdown, which make the retrieval-vs-LLM download split explicit to users —
+> retrieval-tier ONNX models first, then the GGUF chat pack (chat ≈ 5.5 GB + vision
+> projector ≈ 918 MB) and the CUDA runtime DLLs, all VRAM-gated through "Install AI".
+> The "~748 MB installer / all models post-install" figures below are the design *and*
+> the built behaviour.
 
 ## Context
 
