@@ -5,11 +5,7 @@ import io.justsearch.app.api.AiPackImportStatus;
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.justsearch.app.api.OnlineAiService;
-import io.justsearch.app.api.OpCriticality;
-import io.justsearch.app.api.OpLeaseOutcome;
-import io.justsearch.app.api.OperationLeaseHandle;
-import io.justsearch.app.api.OperationLeaseService;
-import io.justsearch.app.api.OperationLeaseSnapshot;
+import io.justsearch.app.services.lease.RecordingOperationLeaseService;
 import io.justsearch.app.services.policy.EnterprisePolicyServiceImpl;
 import io.justsearch.app.services.settings.UiSettingsStore;
 import java.io.BufferedOutputStream;
@@ -18,15 +14,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.AfterEach;
@@ -661,8 +653,7 @@ class AiPackImportServiceTest {
   void packImportHoldsAnOperationLeaseForTheImportThreadLifetime() throws Exception {
     setHome(tmp);
 
-    List<String> events = Collections.synchronizedList(new ArrayList<>());
-    AtomicReference<String> releaseThread = new AtomicReference<>();
+    RecordingOperationLeaseService leases = new RecordingOperationLeaseService();
 
     AiPackImportService service =
         new AiPackImportService(
@@ -671,8 +662,7 @@ class AiPackImportServiceTest {
             null,
             new EnterprisePolicyServiceImpl(),
             new PackAllowlistService(Set.of()));
-    service.setOperationLeaseService(
-        recordingLeases(events, releaseThread, Thread.currentThread().getName()));
+    service.setOperationLeaseService(leases);
 
     // Any pack path is fine: the lease contract must hold whether the import succeeds or fails.
     Path pack = tmp.resolve("nonexistent-pack.zip");
@@ -680,74 +670,21 @@ class AiPackImportServiceTest {
 
     assertEquals(
         List.of("register:ai.pack-import"),
-        List.copyOf(events),
+        leases.events(),
         "lease must be registered before startImport returns, not inside the import thread");
 
     awaitDone(service);
     service.awaitThreadCompletion(5_000);
 
-    assertEquals(2, events.size(), "lease must be released exactly once: " + events);
-    assertTrue(events.get(1).startsWith("release:"), "second event must be the release: " + events);
+    assertEquals(2, leases.events().size(), "lease must be released exactly once: " + leases.events());
+    assertTrue(
+        leases.events().get(1).startsWith("release:"),
+        "second event must be the release: " + leases.events());
     assertNotEquals(
         Thread.currentThread().getName(),
-        releaseThread.get(),
+        leases.releaseThread(),
         "lease must be released by the import thread, not the caller — releasing on the caller "
             + "would end the lease while the background write is still in flight");
   }
 
-  private static OperationLeaseService recordingLeases(
-      List<String> events, AtomicReference<String> releaseThread, String callerThread) {
-    return new OperationLeaseService() {
-      @Override
-      public OperationLeaseHandle register(
-          String opClass,
-          OpCriticality criticality,
-          long expectedDurationSec,
-          Map<String, Object> md) {
-        events.add("register:" + opClass);
-        return new OperationLeaseHandle() {
-          private final AtomicBoolean released = new AtomicBoolean(false);
-
-          @Override
-          public String opId() {
-            return "test-op";
-          }
-
-          @Override
-          public String opClass() {
-            return opClass;
-          }
-
-          @Override
-          public void renew() {}
-
-          @Override
-          public void release(OpLeaseOutcome outcome) {
-            if (released.compareAndSet(false, true)) {
-              events.add("release:" + outcome);
-              releaseThread.set(Thread.currentThread().getName());
-            }
-          }
-
-          @Override
-          public void close() {
-            release(OpLeaseOutcome.SUCCESS);
-          }
-        };
-      }
-
-      @Override
-      public OperationLeaseSnapshot freezeAdmission(String reason) {
-        return snapshot();
-      }
-
-      @Override
-      public OperationLeaseSnapshot snapshot() {
-        return new OperationLeaseSnapshot(false, "", "", List.of());
-      }
-
-      @Override
-      public void releaseAdmission(String preparationId) {}
-    };
-  }
 }
