@@ -69,6 +69,15 @@ CSS_COMPOSER_TEXTAREA = 'jf-composer textarea'
 # thread (UnifiedChatView.ts:5189 `this.thread = [...]`).
 CSS_DEGRADATION_BANNER_COLLAPSED = '.degradation-banner-collapsed'
 CSS_MESSAGE_USER = '.message.user'
+# Sandbox round 7 — the four elements whose RELATIONS the `chat-occlusion` step measures:
+# the reading column starved by the pane beside it, and the toast stack growing over the
+# chat header's control row. `.conversation` / `.document-pane` are UnifiedChatView zones
+# (unifiedChatStyles.ts); `.toast` is AdvisoryToastHost's wrapper; `.header` is the
+# New chat / Export / Activity control row (UnifiedChatView.ts renderAnswerPlane).
+CSS_CONVERSATION_COLUMN = '.conversation'
+CSS_DOCUMENT_PANE = '.document-pane'
+CSS_TOAST = '.toast'
+CSS_CHAT_HEADER = '.header'
 
 @dataclass(frozen=True)
 class Selector:

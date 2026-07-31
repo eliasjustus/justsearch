@@ -7,7 +7,10 @@
  * SEVERITY so a cosmetic degradation is calm + accurate (§10.3).
  */
 import { describe, it, expect } from 'vitest';
-import { readinessNotice, severityForCodes } from './readinessNotice.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { readinessNotice, reasonFor, severityForCodes } from './readinessNotice.js';
 import type { SystemHealthVerdict } from './verdict.js';
 
 const degraded = (
@@ -104,5 +107,56 @@ describe('readinessNotice (595 §4.2) — projects the ONE verdict into the sear
     expect(n!.causes).toEqual(['Semantic search is unavailable right now — showing keyword results.']);
     // No false one-click rebuild remedy (the model isn't loaded) → the always-actionable Open Health ref.
     expect(n!.remedy).toEqual({ kind: 'navigate', target: 'core.health-surface', label: 'Open Health' });
+  });
+});
+
+/**
+ * Sandbox round 7 — the FIRST test in this suite (and in `shell-v0`) that asserts a remedy's
+ * `navigate` target against the surface that actually OWNS the capability, rather than against a
+ * hardcoded expected id. That distinction is the whole point: `conversations.locked` pointed at
+ * `core.settings-surface` for as long as it existed, because tempdoc 629 moved `unlockEncryption()`
+ * out of Settings into the Security surface and nothing anywhere re-checked the remedy against it.
+ * An id-vs-id assertion would have been updated to match the wrong id and stayed green forever.
+ *
+ * So the expectation is DERIVED from source: find the module that defines the unlock control, read
+ * the custom-element tag it registers, and resolve that tag back to its surface id through
+ * CorePlugin's registration table. The remedy must land on that id.
+ */
+describe('remedy targets resolve to the surface that owns the capability', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const read = (rel: string) => readFileSync(resolve(here, rel), 'utf8');
+
+  /** The surface id whose `mountTag` is `tag`, per CorePlugin's registration table. */
+  function surfaceIdForMountTag(corePluginSrc: string, tag: string): string | null {
+    // Registration blocks are `{ id: 'core.x-surface', mountTag: 'jf-x-surface', ... }`; scan for
+    // the id that precedes the given mountTag within the same block.
+    const re = /id:\s*'(core\.[^']+)'(?:(?!id:\s*')[\s\S])*?mountTag:\s*'([^']+)'/g;
+    for (const m of corePluginSrc.matchAll(re)) {
+      if (m[2] === tag) return m[1]!;
+    }
+    return null;
+  }
+
+  it('conversations.locked → the surface that defines unlockEncryption(), not Settings', () => {
+    const securitySrc = read('../views/SecuritySurface.ts');
+    const settingsSrc = read('../views/SettingsSurface.ts');
+    const corePluginSrc = read('../plugin-api/CorePlugin.ts');
+
+    // 1. Establish the capability owner from source, not from memory.
+    expect(securitySrc).toMatch(/unlockEncryption\s*\(/);
+    expect(settingsSrc).not.toMatch(/unlockEncryption\s*\(/);
+
+    // 2. Resolve that module's registered element tag to its surface id.
+    const tagMatch = /customElements\.define\('([^']+)',\s*SecuritySurface\)/.exec(securitySrc);
+    expect(tagMatch, 'SecuritySurface must register a custom element').not.toBeNull();
+    const ownerSurfaceId = surfaceIdForMountTag(corePluginSrc, tagMatch![1]!);
+    expect(ownerSurfaceId, `no CorePlugin surface mounts <${tagMatch![1]}>`).not.toBeNull();
+
+    // 3. The remedy the locked-chat affordance offers must navigate THERE.
+    expect(reasonFor('conversations.locked').remedy).toEqual({
+      kind: 'navigate',
+      target: ownerSurfaceId,
+      label: 'Unlock in Security',
+    });
   });
 });

@@ -484,12 +484,6 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       Path partialFile = targetFile.resolveSibling(targetFile.getFileName() + ".partial");
       try {
         Files.createDirectories(targetFile.getParent());
-        Files.deleteIfExists(partialFile);
-        // Tempdoc 374 sandbox round 4 issue G: BITS leaves BIT*.tmp scratch
-        // files when its download fails. The .partial cleanup above only
-        // catches our own naming; orphaned BITS tmps would otherwise
-        // accumulate across retries (~hundreds of MB on slow connections).
-        cleanupBitsTmpFiles(targetFile.getParent());
       } catch (IOException e) {
         failPackage(dl.packageId(), "Failed to prepare download directory: " + e.getMessage());
         continue;
@@ -497,10 +491,15 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
       final long progressBase = downloadedSoFar;
       final long packageBaseBytes = packageCompletedBytes.getOrDefault(dl.packageId(), 0L);
-      boolean downloaded =
-          downloadExecutor.download(
-              dl.url(),
-              partialFile,
+      // A cancelled multi-GB install used to delete its .partial here and start over from zero.
+      // ResumableFetch decides instead whether the bytes on disk provably belong to THIS download
+      // (sidecar identity) and resumes them — always followed by the same SHA-256 verification a
+      // fresh download gets, with a discard-and-restart-once on mismatch.
+      ResumableFetch.Outcome outcome =
+          ResumableFetch.fetch(
+              new ResumableFetch.Request(
+                  partialFile, dl.url(), dl.sizeBytes(), dl.sha256(), dl.targetPath()),
+              downloadExecutor,
               (bytes, total) -> {
                 synchronized (lock) {
                   status.downloadedBytes = progressBase + bytes;
@@ -510,23 +509,27 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
                   updatePackageProgress(dl.packageId(), packageBaseBytes + bytes, 0);
                   touch();
                 }
-              });
+              },
+              cancelFlag::get,
+              // Tempdoc 374 sandbox round 4 issue G: BITS leaves BIT*.tmp scratch files when its
+              // download fails; they would otherwise accumulate across retries. Only on a fresh
+              // start — a suspended BITS job we are about to resume still owns its scratch file.
+              () -> cleanupBitsTmpFiles(targetFile.getParent()),
+              () -> updatePackageState(dl.packageId(), "verifying"));
 
-      if (!downloaded) {
-        if (cancelFlag.get()) {
+      // Project the resume verdict onto the package so the UI can say the earlier progress was
+      // kept. Sticky across a multi-file package: one resumed file makes the package resumed.
+      if (outcome.firstAction() == DownloadResume.Action.RESUME_RANGE
+          || outcome.firstAction() == DownloadResume.Action.RESUME_BITS) {
+        markPackageResumed(dl.packageId());
+      }
+
+      if (!outcome.ok()) {
+        if (outcome.cancelled() || cancelFlag.get()) {
           cancelled();
           return;
         }
-        failPackage(dl.packageId(), "Download failed for " + dl.targetPath());
-        continue;
-      }
-
-      // Verify
-      updatePackageState(dl.packageId(), "verifying");
-      try {
-        DownloadExecutor.verify(partialFile, dl.sizeBytes(), dl.sha256());
-      } catch (Exception e) {
-        failPackage(dl.packageId(), "Verification failed: " + e.getMessage());
+        failPackage(dl.packageId(), outcome.error());
         continue;
       }
 
@@ -1233,6 +1236,17 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           return;
         }
         ps.state = state;
+      }
+      touch();
+    }
+  }
+
+  /** Records that this package continued an earlier run's bytes instead of restarting from zero. */
+  private void markPackageResumed(String packageId) {
+    synchronized (lock) {
+      var ps = findPackageStatus(packageId);
+      if (ps != null) {
+        ps.resumed = true;
       }
       touch();
     }
