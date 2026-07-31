@@ -183,7 +183,11 @@ def test_retrieve_basic(MockClient):
     assert len(scored) == 2
     assert scored[0].query_id == "q1"
     assert scored[0].doc_id == "d1"
-    assert scored[0].score == 1.5
+    # Tempdoc 803: was `== 1.5`, the engine's own `hit["score"]`. That assertion was a faithful
+    # description of the defect: the engine's score is the PRE-RERANK fusion score, so scoring
+    # by it made ir_measures sort the delivered list back into fusion order. Score is now
+    # derived from delivered rank (len(hits) - idx), which is what the engine actually returned.
+    assert scored[0].score == 2.0
     assert len(raw) == 1
 
 
@@ -206,3 +210,70 @@ def test_retrieve_allow_errors(MockClient):
     assert len(scored) == 0
     assert len(raw) == 1
     assert "error" in raw[0]
+
+
+# ---------------------------------------------------------------------------
+# Tempdoc 803: the metric must evaluate the DELIVERED ranking
+# ---------------------------------------------------------------------------
+
+@patch("jseval.retriever.httpx.Client")
+def test_retrieve_scores_by_delivered_rank_not_engine_score(MockClient):
+    """The regression test for the defect 800/802 measured.
+
+    The engine returns results already in cross-encoder order but leaves each hit's `score`
+    at its PRE-RERANK fusion value — so the delivered order and the score order disagree.
+    This response is built to make that disagreement total: delivered order is d1, d2, d3
+    while the engine scores rank them d3, d2, d1. Scoring by `hit["score"]` (the old
+    behaviour) would make ir_measures evaluate the exact reverse of what shipped.
+    """
+    mock_client = MagicMock()
+    MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+    MockClient.return_value.__exit__ = MagicMock(return_value=False)
+
+    mock_client.post.return_value = _mock_search_response([
+        {"id": "d1.txt", "score": 0.1, "fields": {"filename": "d1.txt"}},
+        {"id": "d2.txt", "score": 0.5, "fields": {"filename": "d2.txt"}},
+        {"id": "d3.txt", "score": 0.9, "fields": {"filename": "d3.txt"}},
+    ])
+
+    scored, _ = retrieve({"q1": "test"}, "http://localhost:8080", mode="hybrid")
+
+    # Sorting by the recorded score must reproduce the DELIVERED order, not the engine's.
+    by_score = [sd.doc_id for sd in sorted(scored, key=lambda s: -s.score)]
+    assert by_score == ["d1", "d2", "d3"]
+
+    # Strictly decreasing: ties would let a sort break the delivered order arbitrarily,
+    # which is how the helper in tempdoc 802 disagreed with ir_measures on absolute values.
+    scores = [sd.score for sd in scored]
+    assert scores == sorted(scores, reverse=True)
+    assert len(set(scores)) == len(scores)
+
+    # And the recorded score must NOT be the engine's — the thing that made this invisible.
+    assert scores != [0.1, 0.5, 0.9]
+
+
+@patch("jseval.retriever.httpx.Client")
+def test_retrieve_rank_scores_survive_unresolvable_hit(MockClient):
+    """A skipped hit leaves a gap in the rank scores; order must still be exact.
+
+    Only the ORDER carries meaning, so a gap is harmless — but the remaining docs must stay
+    strictly decreasing, or the skip would silently corrupt the ranking it was meant to drop.
+    """
+    mock_client = MagicMock()
+    MockClient.return_value.__enter__ = MagicMock(return_value=mock_client)
+    MockClient.return_value.__exit__ = MagicMock(return_value=False)
+
+    mock_client.post.return_value = _mock_search_response([
+        {"id": "d1.txt", "score": 0.1, "fields": {"filename": "d1.txt"}},
+        {"id": "", "score": 0.5, "fields": {}},                       # unresolvable → skipped
+        {"id": "d3.txt", "score": 0.9, "fields": {"filename": "d3.txt"}},
+    ])
+
+    scored, raw = retrieve(
+        {"q1": "test"}, "http://localhost:8080", mode="hybrid", allow_errors=True,
+    )
+
+    assert [sd.doc_id for sd in scored] == ["d1", "d3"]
+    assert [sd.doc_id for sd in sorted(scored, key=lambda s: -s.score)] == ["d1", "d3"]
+    assert scored[0].score > scored[1].score
+    assert raw[0]["identity_resolution_errors"] == 1
