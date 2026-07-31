@@ -169,7 +169,7 @@ it.
 | Gate id | Baseline | Source | Auto-rebalance |
 |---|---|---|---|
 | `npm-audit` | `scripts/ci/npm-audit-ratchet-baseline.v1.json` | `tmp/npm-audit-report.json` | yes (writes lower counts) |
-| `prose-tier-register` | `.claude/rules/tier-register.md` | the register itself + `governance/registry.v1.json` | no (meta-gate; tier changes require a declared changeset) |
+| `prose-tier-register` | `docs/reference/contributing/tier-register.md` | the register itself + `governance/registry.v1.json` | no (meta-gate; tier changes require a declared changeset) |
 | `consumer-drift` | `gates/consumer-drift/slots.json` | per-slot `includeGlobs` (production callsites) | no (a populated slot's floor is raised by adding consumers, not by editing the baseline) |
 | `ssot-catalog-sync` | `gates/ssot-catalog-sync/mirrors.json` | the declared root↔classpath catalog file pairs | no (the invariant is "copies match"; fix by syncing, not editing a baseline) |
 | `test-efficacy` | `gates/test-efficacy/strength-baseline.v1.json` | `tmp/pit-strength-report.v1.json` (produced by `scripts/ci/report-pit-strength.mjs --run`) | yes (raises `minStrength`, lowers `maxNoCoverage`) |
@@ -247,7 +247,7 @@ Gates that don't conform fail-fast before they run.
   semantically distinct.
 - **It does not enforce the meta-loop** (every prose rule named in
   `CLAUDE.md` / `.claude/rules/` is tagged with its enforcement tier).
-  That data is seeded at `.claude/rules/tier-register.md`; the gate that
+  That data is seeded at `docs/reference/contributing/tier-register.md`; the gate that
   validates it is a follow-up slice per tempdoc 530.
 - **It is not a substitute for human-judgment audits** (527-style
   substrate-consumer audits). The kernel catches *recurring gross failures*;
@@ -285,5 +285,5 @@ a row with a met flip condition should be flipped or its condition honestly revi
 - tempdoc 530 (class-size ratchet automation) — design tempdoc
 - Current gate registry entries describe the active enforcement surfaces.
 - `scripts/governance/gates/wire/` — the wire-Category gate (formerly `scripts/contract-governance/`, retired Pass-7 Phase F)
-- `.claude/rules/tier-register.md` — prose-rule enforcement-tier register
+- `docs/reference/contributing/tier-register.md` — prose-rule enforcement-tier register
 - tempdoc 683 — the hardening batch that introduced the softness portfolio

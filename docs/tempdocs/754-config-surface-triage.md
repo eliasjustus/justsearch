@@ -1,6 +1,6 @@
 ---
 title: "Config-surface classification pass — 70 inert ResolvedConfig components"
-status: "IMPLEMENTED, PR-ready 2026-07-17 on feat/754-config-surface-triage — classification COMPLETE (70/70); deletion COMPLETE, all 8 batches landed, 31/31 safe-delete components drained; full ./gradlew.bat test GREEN at every batch (batches 7-8 executed by the orchestrator per the rule-inversion reservation). Remaining out of scope by owner decision: the 28 shadowed/duplicate knobs (logged as bugs, product call), no regrowth gate. GJF settled separately in tempdoc 729."
+status: "IMPLEMENTED, PR-ready 2026-07-17 on feat/754-config-surface-triage — classification COMPLETE (70/70); deletion COMPLETE, all 8 batches landed, 31/31 safe-delete components drained; full ./gradlew.bat test GREEN at every batch (batches 7-8 executed by the orchestrator per the rule-inversion reservation). Remaining out of scope by owner decision: the 28 shadowed/duplicate knobs (logged as bugs, product call), no regrowth gate. SUPERSEDED 2026-07-31 by tempdoc 799: the regrowth gate now exists (`config-surface`, CI-wired), and the 28 were dispositioned — 22 withdrawn, 4 wired, plus the dead `ResolvedConfig.Llm` record retired. This status line is left intact as dated history; the pointer is the correction. GJF settled separately in tempdoc 729."
 created: 2026-07-15
 author: agent session 1b3050fb (Opus 4.8) — orchestration/judgment; classification delegated to sonnet
 category: config / dead-code / docs-truth

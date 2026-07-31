@@ -163,3 +163,15 @@ Preparing a paid + GPU certification run, an agent compared a fresh pilot measur
 ## 24. `delegated-wait` — session 2026-07-21
 
 A large MIRACL dataset fetch was handed to a subagent, which supervised it by polling in a loop. The agent produced four completion notifications, each reporting essentially a byte count, at roughly 240k tokens apiece — approaching a million tokens for no output beyond "still downloading". Meanwhile the download itself ran as a detached OS process that required no supervision at all: the wait was external, the progress was already durable on disk, and a single `ls -l` at the end would have carried the same information. The cost was structural, not a mistake in the brief — any agent asked to watch a long external operation will spend context proportional to how long it watches. **Principle**: launch long external work detached and check back with one command; delegate *decisions*, not waits — if the only thing a subagent will do is wait, there is nothing to delegate.
+
+## 25. `parked-subagent` — five instances, 2026-07-21/22
+
+Distinct from `delegated-wait` (#24), which is about the *cost* of watching: this is about the campaign *stopping*. Subagents park mid-campaign to "wait for a monitor/event" and stall silently — a stopped agent receives no events, so nothing resumes it and the campaign halts until the orchestrator notices. Nothing errors; the work simply stops. **Working remedy**: the brief mandates synchronous end-to-end execution with bounded in-turn condition-polls, and the orchestrator resumes any parked worker with that correction. Structural fix candidate: a standing line in the `subagent-guide` baseline brief.
+
+## 26. `probe-reports-own-leak` — 2026-07-22
+
+A title-prepend A/B declared SIGNAL on an arm that was prepending a gold-only title field — i.e. the answer key. The parallel probe, which carried pre-registered validity checks, caught the identical leak and discarded the arm. The difference was not skill or model but whether the validity rules existed *before* the numbers did. **Principle**: a measurement brief carries validity/leak checks for the probe itself, decided before results are seen — otherwise a probe can report its own contamination as a win, and the more favourable the result, the less likely anyone looks.
+
+## 27. `chrome-tab-exhaustion` — live UI validation
+
+Too many open tabs hang the claude-in-chrome extension during live UI validation; a restart clears it. There is no Chrome-process restart tool, and killing `chrome.exe` would destroy the user's entire browser session, so avoid both. **Recovery**: drain the MCP tab group instead — close its tabs with `tabs_close_mcp` one at a time (parallel closes race; verified, they leave the group in an inconsistent state), then recreate a clean group with `tabs_context_mcp { createIfEmpty: true }`.
