@@ -522,6 +522,15 @@ that can run unattended.
 
 ### 10.6 Publication shape
 
+> **Corrected (2026-07-31, later).** This section said the 617 delta was
+> entangled with 760/772 and could not be published cleanly. That was wrong, and
+> wrong for an instructive reason: it was inferred from `git log --grep`, i.e.
+> ancestry — the exact signal `squash-merge-verify-content-not-ancestry` says is
+> invalidated by squash merges. Checked by content instead, **both 760 and 772
+> have landed on `origin/main`**, and all four "shared" files show only 617
+> changes against it. See §10.15. The paragraphs below are retained as the dated
+> (mistaken) reading.
+
 Do not publish this branch as-is. It is 127 commits ahead of `origin/main` and
 carries merged `worktree-772-installer-payload`, `worktree-760-codesigntool-ci`,
 plus 792/799 commits — work owned by other worktrees that will publish it
@@ -746,3 +755,35 @@ guard was added on the theory that cargo would reuse a cached object pinned to a
 stale trust root, then reverted — probing showed rustc records `option_env!` in
 dep-info and cargo honours it, so the defect does not exist and the guard's
 rationale was wrong.
+
+### 10.15 Publication is not blocked (correcting §10.6)
+
+Re-checked by content rather than ancestry.
+
+**Both sibling branches have landed.** `origin/main` carries 760's CodeSignTool
+bootstrap (`5d12840d`) and 772's payload work — probing
+`modules/ui/build.gradle.kts` on `origin/main` finds `cuda-runtime`,
+`stageTrimmedOnnxRuntimeGpu` and the `onnxruntime_gpu-*.jar` exclude already
+present. §10.6 concluded otherwise from `git log --grep="772"` finding no
+`feat(772)` commit, which is precisely what squash-merging destroys.
+
+**The four "shared" files are not shared any more.** Against `origin/main`:
+
+| File | What this branch still changes |
+|---|---|
+| `.github/workflows/build-installer.yml` | only `sandboxTestMode` / `candidateVersion` / updater — no CodeSignTool or payload additions remain |
+| `modules/ui/build.gradle.kts` | only bundling `store-recoverability.v1.json` into resources |
+| `modules/shell/src-tauri/tauri.conf.json` | blank-line removal plus the updater block that moved to the release overlay |
+| `docs/how-to/cut-a-release.md` | only the authenticated-updater asset set and trust-input steps |
+
+**The delta is one coherent PR:** 129 files, ~11.8k insertions, all 617. The
+only foreign content is two `docs/observations.d/*.md` shards belonging to other
+sessions; those ride along by design and are reconciled by the periodic fold.
+
+**The 772 worktree is stale, not active.** Clean tree, last commit 9 days ago,
+71 ahead / 70 behind `origin/main`, and the only files touched recently are
+`tmp/agent-telemetry/*`. Its work is merged, so it is a cleanup candidate
+(`node scripts/dev/remove-worktree.cjs`), not a coordination dependency.
+
+What actually gates publication is therefore **only** the independent review and
+the qualification round — not sibling-branch entanglement.
