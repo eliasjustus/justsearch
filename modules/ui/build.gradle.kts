@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.gradle.internal.os.OperatingSystem
 import org.gradle.jvm.application.tasks.CreateStartScripts
 import org.gradle.api.tasks.Exec
+import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.api.tasks.testing.Test
 import org.gradle.testing.jacoco.tasks.JacocoCoverageVerification
 import org.gradle.testing.jacoco.tasks.JacocoReport
@@ -225,13 +226,16 @@ val copyWebResources by tasks.registering(Sync::class) {
   into(uiWebResourcesDir)
 }
 
-tasks.named("processResources") {
+tasks.named<ProcessResources>("processResources") {
   if (!skipWebBuild) {
   dependsOn(copyWebResources)
   } else {
     logger.lifecycle("Skipping ui-web build/copy (skipWebBuild=true).")
   }
   dependsOn(tasks.named("syncSsotSchemas"))
+  from(rootProject.file("governance/store-recoverability.v1.json")) {
+    into("governance")
+  }
 }
 
 // Slice 3a.1.9 §A.6a: SchemaController serves classpath copies of SSOT/schemas/*.v1.json.

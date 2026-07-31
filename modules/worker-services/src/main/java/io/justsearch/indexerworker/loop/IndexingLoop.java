@@ -961,6 +961,41 @@ public class IndexingLoop implements Closeable {
   }
 
   /**
+   * Stop intake processing at a batch boundary and wait for the loop's existing shutdown commit.
+   * Unlike {@link #close()}, this preserves owned services and can be reversed by
+   * {@link #resumeAfterUpgradePreparation()}.
+   */
+  public synchronized boolean quiesceForUpgrade(long timeoutMs) {
+    if (!isRunning()) {
+      return true;
+    }
+    running.set(false);
+    Thread thread = loopThread;
+    if (thread != null) {
+      try {
+        thread.join(Math.max(1L, timeoutMs));
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return false;
+      }
+      if (thread.isAlive()) {
+        // Preparation is reversible. Let the current loop continue when its in-flight batch
+        // returns rather than leaving the Worker half-stopped.
+        running.set(true);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** Resume a loop stopped by {@link #quiesceForUpgrade(long)}. Idempotent. */
+  public synchronized void resumeAfterUpgradePreparation() {
+    if (!isRunning()) {
+      start();
+    }
+  }
+
+  /**
    * Returns the current state of the indexing loop as a wire-stable string
    * ({@code "IDLE"} / {@code "RUNNING"} / {@code "PAUSED"}, produced via {@link Enum#name()}).
    *

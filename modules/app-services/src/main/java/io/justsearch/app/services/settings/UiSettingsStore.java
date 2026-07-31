@@ -4,17 +4,20 @@ package io.justsearch.app.services.settings;
 import io.justsearch.app.api.UiSettings;
 import io.justsearch.configuration.EnvRegistry;
 import io.justsearch.configuration.PlatformPaths;
+import io.justsearch.configuration.persistence.AtomicFileWrites;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.StoreFormatVersions;
 import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.SerializationFeature;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
 import java.util.Objects;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Loads and saves UI settings to {@code $JUSTSEARCH_HOME/ui/settings.json} (or
@@ -22,7 +25,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class UiSettingsStore {
 
-  private static final Logger log = LoggerFactory.getLogger(UiSettingsStore.class);
+  static final int CURRENT_SCHEMA_VERSION = 1;
   private static final ObjectMapper MAPPER =
       JsonMapper.builder()
           .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
@@ -49,10 +52,34 @@ public final class UiSettingsStore {
       return new UiSettings();
     }
     try {
-      return MAPPER.readValue(settingsFile.toFile(), UiSettings.class);
+      JsonNode root = MAPPER.readTree(settingsFile.toFile());
+      if (root == null || !root.isObject()) {
+        throw new CorruptDurableStoreException("ui-settings", "expected a JSON object");
+      }
+      boolean envelope = root.has("settings");
+      JsonNode versionNode = envelope ? root.get("schemaVersion") : null;
+      if (envelope && (versionNode == null || !versionNode.isIntegralNumber())) {
+        throw new CorruptDurableStoreException(
+            "ui-settings", "versioned envelope requires an integer schemaVersion");
+      }
+      Integer observedVersion =
+          versionNode == null || versionNode.isNull() ? null : versionNode.asInt();
+      StoreFormatVersions.requireReadable(
+          "ui-settings", observedVersion, CURRENT_SCHEMA_VERSION, 0, 0);
+      UiSettings settings =
+          !envelope
+              ? MAPPER.treeToValue(root, UiSettings.class)
+              : MAPPER.treeToValue(root.get("settings"), UiSettings.class);
+      if (settings == null) {
+        throw new CorruptDurableStoreException("ui-settings", "settings payload is missing");
+      }
+      return settings;
+    } catch (CorruptDurableStoreException
+        | io.justsearch.configuration.persistence.UnsupportedStoreVersionException e) {
+      throw e;
     } catch (Exception e) {
-      log.warn("Failed to read UI settings (falling back to defaults)", e);
-      return new UiSettings();
+      throw new CorruptDurableStoreException(
+          "ui-settings", "cannot parse " + settingsFile, e);
     }
   }
 
@@ -61,13 +88,18 @@ public final class UiSettingsStore {
       return;
     }
     try {
-      Files.createDirectories(settingsFile.getParent());
       settings.getWindow().stampLastShown();
-      MAPPER.writeValue(settingsFile.toFile(), settings);
+      byte[] bytes =
+          MAPPER
+              .writerWithDefaultPrettyPrinter()
+              .writeValueAsBytes(new PersistedSettings(CURRENT_SCHEMA_VERSION, settings));
+      AtomicFileWrites.replace(settingsFile, bytes);
     } catch (IOException e) {
-      log.warn("Failed to persist UI settings", e);
+      throw new UncheckedIOException("Failed to persist UI settings to " + settingsFile, e);
     }
   }
+
+  private record PersistedSettings(int schemaVersion, UiSettings settings) {}
 
   private static Path resolveSettingsFile() {
     // Tempdoc 519 §9 Block B3.0.d: moved from io.justsearch.ui.settings to app-services.

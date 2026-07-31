@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 package io.justsearch.app.services.ai.pack;
 
+import io.justsearch.configuration.persistence.AtomicFileWrites;
 import io.justsearch.app.api.AiPackPreflightException;
 import io.justsearch.app.api.AiPackPreflightResult;
 import io.justsearch.app.api.AiPackImportStatus;
@@ -11,6 +12,10 @@ import tools.jackson.databind.SerializationFeature;
 import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
+import io.justsearch.app.api.OpCriticality;
+import io.justsearch.app.api.OpLeaseOutcome;
+import io.justsearch.app.api.OperationLeaseHandle;
+import io.justsearch.app.api.OperationLeaseService;
 import io.justsearch.app.services.worker.KnowledgeServerBootstrap;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.PlatformPaths;
@@ -76,6 +81,23 @@ public final class AiPackImportService implements io.justsearch.app.api.AiPackIm
   private final AtomicBoolean running = new AtomicBoolean(false);
   private final AiPackImportStatus status = new AiPackImportStatus();
   private volatile Thread importThread;
+
+  /**
+   * Op-lease SPI (tempdoc 617). A pack import writes multi-GB assets into the managed/BYO AI
+   * stores on a background thread that outlives its HTTP request, so the request-scoped mutation
+   * lease in {@code ApiSecurityFilters} has already been released while the write is still running.
+   * Without a lease of its own, {@code POST /api/upgrade/prepare} sees no blocker and the installer
+   * can launch mid-write. Defaults to no-op so existing constructors and tests are unaffected.
+   */
+  private volatile OperationLeaseService operationLeases = OperationLeaseService.noOp();
+
+  /**
+   * Late-binds the op-lease SPI. Set by {@code ServicePhase}, which creates the lease service after
+   * this service is constructed.
+   */
+  public void setOperationLeaseService(OperationLeaseService leases) {
+    this.operationLeases = leases == null ? OperationLeaseService.noOp() : leases;
+  }
 
   public AiPackImportService(
       OnlineAiService onlineAi,
@@ -150,19 +172,38 @@ public final class AiPackImportService implements io.justsearch.app.api.AiPackIm
       running.set(true);
       updateState("running", "preflight", "Starting AI Pack import…", null);
     }
+    // Register on the CALLING thread, before start(): registering inside the thread leaves a
+    // window in which upgrade prepare observes no blocker while the import is about to write.
+    // Same race-window closure as BulkReindexHandler.
+    OperationLeaseHandle lease =
+        operationLeases.register(
+            "ai.pack-import",
+            OpCriticality.INTERRUPTIBLE_WITH_LOSS,
+            3600L,
+            Map.of("source", "ai.pack-import", "packPath", packPath.toString()));
     Thread t =
         new Thread(
             () -> {
+              boolean ok = false;
               try {
                 runImport(packPath, allowDowngrade);
+                ok = true;
               } finally {
                 running.set(false);
+                lease.release(ok ? OpLeaseOutcome.SUCCESS : OpLeaseOutcome.FAILURE);
               }
             },
             "ai-pack-import");
     t.setDaemon(true);
     this.importThread = t;
-    t.start();
+    try {
+      t.start();
+    } catch (RuntimeException e) {
+      // The thread never ran, so its finally block will not release the lease.
+      running.set(false);
+      lease.release(OpLeaseOutcome.FAILURE);
+      throw e;
+    }
   }
 
   /**
@@ -636,8 +677,7 @@ public final class AiPackImportService implements io.justsearch.app.api.AiPackIm
 
   private void persistStatusBestEffort() {
     try {
-      Files.createDirectories(statusPath.getParent());
-      MAPPER.writeValue(statusPath.toFile(), status);
+      AtomicFileWrites.replace(statusPath, MAPPER.writeValueAsBytes(status));
     } catch (Exception e) {
       log.debug("persistStatusBestEffort failed: {}", e.getMessage());
     }
@@ -660,6 +700,19 @@ public final class AiPackImportService implements io.justsearch.app.api.AiPackIm
         status.bytesDone = loaded.bytesDone;
         status.startedAtEpochMs = loaded.startedAtEpochMs;
         status.updatedAtEpochMs = loaded.updatedAtEpochMs;
+        // No import thread survives a Head restart. The installed-packs manifest and staging
+        // directories, not this progress projection, are the durable repair authorities.
+        if (!status.state.isBlank() && !"idle".equalsIgnoreCase(status.state)) {
+          status.state = "idle";
+          status.phase = "";
+          status.message = "";
+          status.errorCode = "";
+          status.bytesTotal = 0;
+          status.bytesDone = 0;
+          status.startedAtEpochMs = 0;
+          status.updatedAtEpochMs = System.currentTimeMillis();
+          persistStatusBestEffort();
+        }
       }
     } catch (Exception e) {
       log.debug("loadStatusBestEffort failed: {}", e.getMessage());

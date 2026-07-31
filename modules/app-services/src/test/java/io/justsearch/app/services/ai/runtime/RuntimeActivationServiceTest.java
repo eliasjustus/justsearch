@@ -54,6 +54,33 @@ class RuntimeActivationServiceTest {
   }
 
   @Test
+  void stalePersistedActivationStatusResetsToIdleOnStartup() throws Exception {
+    setHome(tmp);
+    Files.createDirectories(tmp.resolve("ai"));
+    Files.writeString(
+        tmp.resolve("ai/runtime-activation-state.json"),
+        """
+        {"state":"running","phase":"self_test","message":"stale","errorCode":"",
+         "selfTestPort":12345,"startedAtEpochMs":1,"updatedAtEpochMs":2}
+        """);
+
+    RuntimeActivationService service =
+        new RuntimeActivationService(
+            OnlineAiService.unavailable(),
+            new UiSettingsStore(UiSettingsStore.PersistenceMode.READ_WRITE),
+            null,
+            new EnterprisePolicyServiceImpl());
+
+    AiRuntimeActivationStatus status = service.getActivationStatus();
+    assertEquals("idle", status.state);
+    assertEquals("", status.phase);
+    assertEquals(0L, status.selfTestPort);
+    assertFalse(
+        Files.readString(tmp.resolve("ai/runtime-activation-state.json"))
+            .contains("\"state\" : \"running\""));
+  }
+
+  @Test
   void activationBlockedWhenGpuDisabledByPolicy() throws Exception {
     setHome(tmp);
 

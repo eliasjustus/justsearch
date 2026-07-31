@@ -635,7 +635,7 @@ class AgentRunStoreTest {
   }
 
   @Test
-  void listSessions_skipsCorruptMeta() throws Exception {
+  void listSessions_failsLoudlyForCorruptAuthoredMeta() throws Exception {
     var rootDir = tempDir.resolve("agent-runs");
     var store = new AgentRunStore(rootDir);
     var request =
@@ -647,9 +647,9 @@ class AgentRunStoreTest {
     Files.createDirectories(corruptDir);
     Files.writeString(corruptDir.resolve("meta.json"), "{ this is not valid json");
 
-    var sessions = store.listSessions(10);
-    assertEquals(1, sessions.size(), "Corrupt session must be filtered out, not surfaced");
-    assertEquals("good_session", sessions.get(0).get("sessionId"));
+    assertThrows(
+        io.justsearch.configuration.persistence.CorruptDurableStoreException.class,
+        () -> store.listSessions(10));
   }
 
   @Test

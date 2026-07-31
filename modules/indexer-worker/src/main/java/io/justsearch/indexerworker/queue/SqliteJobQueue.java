@@ -156,6 +156,9 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
 
       // Capture whether DB existed BEFORE opening (JDBC will create empty file if missing)
       existedBeforeOpen = Files.exists(dbPath) && Files.size(dbPath) > 0;
+      if (existedBeforeOpen) {
+        SqliteQueueMigrationOps.refuseFutureSchema(dbPath);
+      }
 
       String jdbcUrl = "jdbc:sqlite:" + dbPath.toAbsolutePath();
       connection = DriverManager.getConnection(jdbcUrl);
@@ -1908,5 +1911,29 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
         lastQuickCheckOk,
         lastBackupAtMs,
         lastDbErrorAtMs);
+  }
+
+  @Override
+  public boolean checkpointForUpgrade() {
+    lock.lock();
+    try {
+      ensureOpen();
+      try (Statement statement = connection.createStatement();
+          ResultSet result = statement.executeQuery("PRAGMA wal_checkpoint(FULL)")) {
+        // SQLite returns (busy, log, checkpointed). A non-zero busy count means a writer still
+        // owns frames and the upgrade must wait rather than pretending the queue is closed over.
+        boolean complete = result.next() && result.getInt(1) == 0;
+        if (!complete) {
+          log.warn("Upgrade WAL checkpoint could not drain all frames");
+        }
+        return complete;
+      }
+    } catch (SQLException e) {
+      recordDbError();
+      log.warn("Upgrade WAL checkpoint failed: {}", e.getMessage());
+      return false;
+    } finally {
+      lock.unlock();
+    }
   }
 }

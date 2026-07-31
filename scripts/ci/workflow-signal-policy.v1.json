@@ -21,6 +21,7 @@
         "Unit tests (search-worker)",
         "Unit tests (platform-contracts)",
         "Windows-native tests",
+        "Shell crate tests (Rust)",
         "Secret scan"
       ]
     },

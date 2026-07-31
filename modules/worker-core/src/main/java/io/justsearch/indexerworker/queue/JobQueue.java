@@ -514,6 +514,16 @@ public interface JobQueue extends Closeable {
   }
 
   /**
+   * Flush durable queue state before an application upgrade handoff.
+   *
+   * <p>Implementations that do not use a write-ahead log may return {@code true}. A false result
+   * blocks the handoff.
+   */
+  default boolean checkpointForUpgrade() {
+    return true;
+  }
+
+  /**
    * Slice 445: optional change-feed for the indexing-jobs collection. Backs the
    * {@code core.indexing-jobs} TABULAR Resource via SSE_STREAM. Implementations
    * that can't expose per-row mutations (e.g., in-memory test queues) return

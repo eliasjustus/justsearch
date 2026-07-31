@@ -2,16 +2,19 @@
 package io.justsearch.app.services.settings;
 
 import io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode;
+import io.justsearch.configuration.persistence.AtomicFileWrites;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.StoreFormatVersions;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Objects;
 import java.util.Set;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
@@ -30,7 +33,7 @@ import tools.jackson.databind.json.JsonMapper;
  */
 public final class PluginAllowlistStore {
 
-  private static final Logger log = LoggerFactory.getLogger(PluginAllowlistStore.class);
+  static final int CURRENT_SCHEMA_VERSION = 1;
   private static final ObjectMapper MAPPER =
       JsonMapper.builder()
           .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
@@ -51,26 +54,55 @@ public final class PluginAllowlistStore {
       return new LinkedHashSet<>();
     }
     try {
-      String[] entries = MAPPER.readValue(file.toFile(), String[].class);
-      return entries == null ? new LinkedHashSet<>() : new LinkedHashSet<>(Arrays.asList(entries));
+      JsonNode root = MAPPER.readTree(file.toFile());
+      if (root == null) {
+        throw new CorruptDurableStoreException("plugin-allowlist", "JSON document is empty");
+      }
+      if (root.isArray()) {
+        String[] entries = MAPPER.treeToValue(root, String[].class);
+        return entries == null ? new LinkedHashSet<>() : new LinkedHashSet<>(Arrays.asList(entries));
+      }
+      if (!root.isObject()) {
+        throw new CorruptDurableStoreException(
+            "plugin-allowlist", "expected a legacy array or versioned object");
+      }
+      JsonNode versionNode = root.get("schemaVersion");
+      Integer observedVersion =
+          versionNode == null || versionNode.isNull() ? null : versionNode.asInt();
+      StoreFormatVersions.requireReadable(
+          "plugin-allowlist", observedVersion, CURRENT_SCHEMA_VERSION, 0, 0);
+      PersistedAllowlist persisted = MAPPER.treeToValue(root, PersistedAllowlist.class);
+      return persisted.entries() == null
+          ? new LinkedHashSet<>()
+          : new LinkedHashSet<>(persisted.entries());
+    } catch (CorruptDurableStoreException
+        | io.justsearch.configuration.persistence.UnsupportedStoreVersionException e) {
+      throw e;
     } catch (Exception e) {
-      log.warn("Failed to read plugin allowlist (starting empty)", e);
-      return new LinkedHashSet<>();
+      throw new CorruptDurableStoreException(
+          "plugin-allowlist", "cannot parse " + file, e);
     }
   }
 
-  /** Persists the allowlist. No-op in IN_MEMORY mode. Best-effort: a write failure is logged, not thrown. */
+  /** Persists the allowlist atomically. No-op in IN_MEMORY mode. */
   public void save(Set<String> entries) {
     if (mode == PersistenceMode.IN_MEMORY) {
       return;
     }
     try {
-      Files.createDirectories(file.getParent());
-      MAPPER.writeValue(file.toFile(), entries == null ? Set.of() : entries);
+      byte[] bytes =
+          MAPPER
+              .writerWithDefaultPrettyPrinter()
+              .writeValueAsBytes(
+                  new PersistedAllowlist(
+                      CURRENT_SCHEMA_VERSION, entries == null ? Set.of() : entries));
+      AtomicFileWrites.replace(file, bytes);
     } catch (IOException e) {
-      log.warn("Failed to persist plugin allowlist", e);
+      throw new UncheckedIOException("Failed to persist plugin allowlist to " + file, e);
     }
   }
+
+  private record PersistedAllowlist(int schemaVersion, Set<String> entries) {}
 
   public Path path() {
     return file;
