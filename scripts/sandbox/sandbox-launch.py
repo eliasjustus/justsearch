@@ -23,10 +23,12 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -572,6 +574,164 @@ def _sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
+# Filenames a build could plausibly drop beside the installer to carry the
+# commit it was built from. None is written today (see write_candidate_provenance's
+# docstring) -- this is the read side of the contract, so the day a build writes
+# one the launcher picks it up without another change.
+_BUILD_METADATA_FILENAMES = (
+    "build-info.json",
+    "build-metadata.json",
+    "build-info.txt",
+    "BUILD_INFO.txt",
+    "commit.txt",
+)
+
+# Keys a build-metadata JSON might use for the commit.
+_COMMIT_JSON_KEYS = (
+    "commit",
+    "sha",
+    "gitsha",
+    "git_sha",
+    "github_sha",
+    "head_sha",
+    "headsha",
+    "revision",
+)
+
+# A full git object id. \b-anchored, so it cannot match a slice of the 64-hex
+# SHA-256 digests that share the installer's directory in SHA256SUMS.
+_GIT_SHA_RE = re.compile(r"\b[0-9a-f]{40}\b", re.IGNORECASE)
+
+
+def _derive_candidate_commit(installer: Path) -> tuple[str | None, str]:
+    """Try to derive the commit the candidate installer was built from, using
+    only what is on disk beside it.
+
+    Returns (commit_or_None, note). The note always explains where the value
+    came from, or why there is none -- an undeterminable commit is recorded as
+    undeterminable, never guessed. Deriving it from the host checkout's HEAD
+    would be a fabrication: the candidate is normally downloaded from a CI run
+    and has no relationship to whatever the host happens to have checked out."""
+    parent = installer.parent
+    for name in _BUILD_METADATA_FILENAMES:
+        candidate = parent / name
+        if not candidate.is_file():
+            continue
+        try:
+            raw = candidate.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            return None, f"{name} exists beside the installer but is unreadable ({e})"
+
+        if candidate.suffix.lower() == ".json":
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError as e:
+                return None, f"{name} exists beside the installer but is not valid JSON ({e})"
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    if key.lower() in _COMMIT_JSON_KEYS and isinstance(value, str) and value.strip():
+                        return value.strip(), f"read from {name} (key '{key}') beside the installer"
+            return None, f"{name} beside the installer carries no recognised commit key"
+
+        match = _GIT_SHA_RE.search(raw)
+        if match:
+            return match.group(0), f"read from {name} beside the installer"
+        return None, f"{name} beside the installer contains no 40-hex commit id"
+
+    return None, (
+        "no build-metadata file ("
+        + ", ".join(_BUILD_METADATA_FILENAMES)
+        + ") accompanies the installer, and SHA256SUMS records digests only. "
+        "The candidate is normally downloaded from a CI run, so the host "
+        "checkout's HEAD is unrelated to it and is deliberately NOT used as a "
+        "substitute. Remedy: have the build workflow write the commit into a "
+        "metadata file beside the installer artifact"
+    )
+
+
+def _checksum_manifest_agreement(installer: Path, digest: str) -> str:
+    """Report whether the installer's digest agrees with a SHA256SUMS manifest
+    staged beside it, if one is there. Read-only and non-fatal: this records
+    provenance, it does not gate the launch."""
+    manifest = installer.parent / "SHA256SUMS"
+    if not manifest.is_file():
+        return "no SHA256SUMS manifest beside the installer"
+    try:
+        lines = manifest.read_text(encoding="utf-8").splitlines()
+    except OSError as e:
+        return f"SHA256SUMS beside the installer is unreadable ({e})"
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split()
+        if len(parts) < 2:
+            continue
+        recorded, name = parts[0], parts[-1]
+        if Path(name).name == installer.name:
+            if recorded.lower() == digest.lower():
+                return "matches the SHA256SUMS entry beside the installer"
+            return (
+                f"MISMATCH -- SHA256SUMS beside the installer records {recorded} "
+                f"for this filename"
+            )
+    return f"SHA256SUMS beside the installer has no entry for {installer.name}"
+
+
+def write_candidate_provenance(share_dir: Path, installer: Path) -> Path:
+    """Record what this round is actually validating into
+    <share>/candidate-provenance.md.
+
+    Round 8 recorded no candidate commit hash -- no PR, branch, CI-run or
+    artifact URL was reachable from inside the sandbox -- so settling whether a
+    specific fix was present in the validated candidate later required matching
+    a CI run's head SHA against a merge commit by hand. Everything derivable at
+    staging time is on the host; nothing was writing it down.
+
+    Commit derivation is best-effort and honest: when no build metadata
+    accompanies the installer, the file says so in as many words rather than
+    substituting a plausible-looking value."""
+    digest = _sha256_of(installer)
+    stat = installer.stat()
+    modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(timespec="seconds")
+    commit, commit_note = _derive_candidate_commit(installer)
+    checksum_note = _checksum_manifest_agreement(installer, digest)
+
+    commit_line = (
+        f"- Candidate commit: {commit} ({commit_note})"
+        if commit
+        else f"- Candidate commit: NOT DETERMINABLE -- {commit_note}"
+    )
+
+    text = [
+        "# Candidate Provenance",
+        "",
+        "Generated by `scripts/sandbox/sandbox-launch.py` at staging time, from",
+        "what is on the host's disk. It answers \"what exactly was in this build?\"",
+        "from the round's own evidence, instead of host-side archaeology after the",
+        "fact (tempdoc 734 Part B8, round-8 retrospective).",
+        "",
+        f"- Installer: {installer.name}",
+        f"- SHA-256: {digest}",
+        f"- Size: {stat.st_size} bytes",
+        f"- Modified (host, UTC): {modified}",
+        f"- Host source path: {installer}",
+        f"- Checksum manifest: {checksum_note}",
+        commit_line,
+        "",
+        "Quote this block in the round's final validation summary, so the archived",
+        "evidence identifies the build it came from.",
+        "",
+    ]
+    path = share_dir / "candidate-provenance.md"
+    path.write_text("\n".join(text), encoding="utf-8")
+    print(
+        f"Staged candidate-provenance.md (sha256 {digest}, commit "
+        f"{commit if commit else 'not determinable'})"
+    )
+    return path
+
+
 def stage_upgrade_installer(share_dir: Path, upgrade_installer: Path) -> tuple[str, str]:
     """Stage the previous release's installer into share/previous-release/
     (tempdoc 750 Part C), next to the candidate under share root, and return
@@ -702,6 +862,178 @@ def _read_resolved_mode(share_dir: Path) -> tuple[str, str]:
             meaning = stripped[2:].strip()
             break
     return mode, meaning
+
+
+CONVERGENCE_TEMPDOC_SUFFIX = "-sandbox-convergence.md"
+
+# A charter names its round in a Markdown heading, e.g. "# Round 8 charter --
+# v0.2.x candidate, post-798". Anchored at the heading start so a body
+# sentence mentioning an earlier round ("in round 7 it did not") can never be
+# mistaken for the round being launched.
+_CHARTER_ROUND_RE = re.compile(r"^#+\s*round\s+(\d+)\b", re.IGNORECASE)
+
+# The convergence tempdoc records each round under its own section heading,
+# e.g. "## Round 7 (fresh-install, first post-772 payload) -- DO-NOT-QUALIFY".
+# Anchored the same way, so "## Part A -- Round convergence record" and
+# "## Part B8 -- ... (round 8, ...)" are not counted as round records.
+_TEMPDOC_ROUND_RE = re.compile(r"^#{2,6}\s*round\s+(\d+)\b", re.IGNORECASE)
+
+# A pre-registration section describes a round that has NOT run yet, so it is
+# not a recorded round -- counting it would let the guard pass on exactly the
+# document state it exists to catch.
+_TEMPDOC_NOT_A_RECORD_MARKERS = ("pre-registration", "not yet run")
+
+
+def find_convergence_tempdoc(tempdocs_dir: Path) -> Path:
+    """Locate the release line's convergence tempdoc
+    (docs/tempdocs/NNN-<version>-sandbox-convergence.md).
+
+    FAILS CLOSED when none exists: the guard's whole point is that a document
+    which cannot perform its function must not be staged silently. When
+    several exist (one per release line), the highest-numbered one is the
+    current release's record -- the same "highest number is newest" rule the
+    project's tempdoc convention already uses."""
+    matches = sorted(tempdocs_dir.glob("*" + CONVERGENCE_TEMPDOC_SUFFIX))
+    if not matches:
+        sys.exit(
+            f"No convergence tempdoc found in {tempdocs_dir} (expected a file "
+            f"named NNN-<version>{CONVERGENCE_TEMPDOC_SUFFIX}). The staged "
+            "sandbox instructions require the round to read it to learn which "
+            "prior findings it exists to re-confirm; staging without one hands "
+            "the round an authority file that does not exist. Remedy: create "
+            "the release's convergence tempdoc, or launch with --no-charter if "
+            "this is a non-qualifying launch."
+        )
+
+    def _number(p: Path) -> int:
+        head = p.name.split("-", 1)[0]
+        return int(head) if head.isdigit() else -1
+
+    return max(matches, key=_number)
+
+
+def parse_charter_round(charter_path: Path) -> int:
+    """Return the round number the charter declares.
+
+    FAILS CLOSED when no heading names a round. A guard that cannot read its
+    own input must not report OK -- that is the exact defect class this check
+    exists to close (tempdoc 734 B8.1)."""
+    text = charter_path.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        match = _CHARTER_ROUND_RE.match(line.strip())
+        if match:
+            return int(match.group(1))
+    sys.exit(
+        f"Cannot determine this round's number from the charter: {charter_path}\n"
+        "No Markdown heading names the round. The charter must declare it in a "
+        "heading, e.g.:\n"
+        "    # Round 9 charter -- v0.2.x candidate\n"
+        "This is required so the launcher can check the convergence tempdoc is "
+        "current for this round (tempdoc 734 B8.1). Fix the charter heading, or "
+        "launch with --no-charter for a non-qualifying round."
+    )
+
+
+def latest_recorded_round(tempdoc_path: Path) -> int:
+    """Return the highest round number RECORDED in the convergence tempdoc.
+
+    Pre-registration sections (a round staged but not yet run) are skipped --
+    they describe intent, not a recorded round.
+
+    FAILS CLOSED when no round section is found at all, for the same reason
+    parse_charter_round() does."""
+    rounds: list[int] = []
+    for line in tempdoc_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        match = _TEMPDOC_ROUND_RE.match(stripped)
+        if not match:
+            continue
+        lowered = stripped.lower()
+        if any(marker in lowered for marker in _TEMPDOC_NOT_A_RECORD_MARKERS):
+            continue
+        rounds.append(int(match.group(1)))
+    if not rounds:
+        sys.exit(
+            f"Cannot determine the latest recorded round from {tempdoc_path}\n"
+            "No '## Round <N> ...' section heading was found. Each round's "
+            "record must live under its own numbered section heading so the "
+            "launcher can check the document is current before staging it "
+            "(tempdoc 734 B8.1). Fix the tempdoc's headings, or launch with "
+            "--no-charter for a non-qualifying round."
+        )
+    return max(rounds)
+
+
+def assert_convergence_tempdoc_current(
+    charter_path: str | None, no_charter: bool, tempdocs_dir: Path | None = None
+):
+    """Refuse to stage when the convergence tempdoc has not recorded every round
+    BEFORE the one the charter declares (tempdoc 734 B8.1).
+
+    The bound is `recorded >= declared - 1`, not `recorded >= declared`: the
+    round being staged has not run yet, so its own section cannot exist. What
+    must exist is every PRIOR round. Round 8's actual defect was a tempdoc at
+    round 6 staging a round-8 charter -- round 7 was missing. Requiring
+    `recorded >= declared` would instead refuse every new round, including the
+    first one staged after this guard shipped.
+
+    Round 8 read a tempdoc that stopped at round 6: it could not perform its
+    documented function ("which prior findings this round exists to re-confirm
+    fixed, and which are still open"), and a round-6 finding was rediscovered
+    from scratch as a result. Updating the tempdoc is a host-side step AFTER a
+    round ends, and the only party positioned to notice the skip is the NEXT
+    round -- a different agent with no baseline, reading the document precisely
+    because it does not already know its contents. So the check belongs here,
+    at staging time, on the host.
+
+    With --no-charter there is no declared round number, so there is nothing to
+    compare against and the check is SKIPPED with an explicit printed notice. A
+    non-qualifying launch does not stage a charter and is not part of the
+    qualifying set, so it neither needs nor can perform this check -- the notice
+    exists so a skipped check is never silent."""
+    if no_charter:
+        print(
+            "Convergence-tempdoc freshness check: SKIPPED (--no-charter -- a "
+            "non-qualifying launch declares no round number to check against)."
+        )
+        return
+
+    path = Path(charter_path)
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    if not path.is_file():
+        sys.exit(f"--charter file not found: {path}")
+
+    if tempdocs_dir is None:
+        tempdocs_dir = REPO_ROOT / "docs" / "tempdocs"
+
+    declared = parse_charter_round(path)
+    tempdoc = find_convergence_tempdoc(tempdocs_dir)
+    recorded = latest_recorded_round(tempdoc)
+
+    if recorded < declared - 1:
+        sys.exit(
+            f"Convergence tempdoc is STALE -- refusing to stage.\n"
+            f"  Charter declares:        round {declared} ({path})\n"
+            f"  Tempdoc last records:    round {recorded} ({tempdoc})\n"
+            "\n"
+            "The staged sandbox instructions require the round to read this "
+            "tempdoc to learn which prior findings it exists to re-confirm "
+            "fixed and which are still open. A tempdoc that stops before this "
+            "round cannot do that, and the round has no baseline to notice it "
+            "with -- round 8 rediscovered a round-6 finding from scratch for "
+            "exactly this reason (tempdoc 734 B8.1).\n"
+            "\n"
+            f"Remedy: record round(s) {recorded + 1}-{declared - 1} in {tempdoc} "
+            "(a '## Round <N> ...' section per round, as "
+            "docs/how-to/cut-a-release.md already requires), then re-run this "
+            "launcher."
+        )
+
+    print(
+        f"Convergence tempdoc current: {tempdoc.name} records round {recorded} "
+        f"(charter declares round {declared}; every prior round is recorded)"
+    )
 
 
 def stage_charter(share_dir: Path, charter_path: str | None, no_charter: bool):
@@ -1029,6 +1361,11 @@ def main():
     if not (REPO_ROOT / "gradlew.bat").exists():
         sys.exit(f"Cannot find repo root from {SCRIPT_DIR}")
 
+    # 0. Refuse to stage a convergence tempdoc that stops before this round
+    #    (tempdoc 734 B8.1). Runs before any staging step so a stale tempdoc
+    #    fails BEFORE the previous round's share dir is cleaned.
+    assert_convergence_tempdoc_current(args.charter, args.no_charter)
+
     # 1. Resolve installer
     installer = find_installer(args.installer)
     print(f"Installer: {installer}")
@@ -1055,6 +1392,11 @@ def main():
 
     shutil.copy2(installer, share_dir / installer.name)
     print(f"Staged installer: {installer.name}")
+
+    # Record the candidate's provenance (filename, SHA-256, size, source path,
+    # checksum-manifest agreement, and the build commit when derivable) so the
+    # round's evidence identifies its own build (tempdoc 734 Part B8).
+    write_candidate_provenance(share_dir, installer)
 
     # Copy environment doc
     shutil.copy2(SCRIPT_DIR / "sandbox-environment.md", share_dir / "sandbox-environment.md")

@@ -17,6 +17,11 @@ folder at `C:\Users\WDAGUtilityAccount\Desktop\JustSearchTest\` with:
   must-touch surface set (derived from what the candidate ships)
 - `validation-mode.md` — generated authority for this instance's model mode
   (`fresh-install` vs `pre-staged-models`)
+- `candidate-provenance.md` — generated record of WHAT was validated: the
+  installer's filename, SHA-256, size, host source path, agreement with any
+  `SHA256SUMS` staged beside it, and the build commit when the build made it
+  derivable. Quote it in the final summary so the archived evidence identifies
+  its own build instead of needing host-side archaeology later
 - `staging-gaps.md` — generated record of assets the host failed to stage this
   round (e.g. a missing SciFact corpus or Node installer); each entry must be
   recorded as a round-level coverage gap, not silently absorbed

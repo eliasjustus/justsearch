@@ -43,7 +43,22 @@ A release **candidate** is qualified before its number is finalized:
    pollution. Every qualifying round is launched with a **charter** (`sandbox-launch.py
    --charter`): the round's purpose and each open blocker's needs-round / needs-dig
    classification, staged for the verifier and read against the round's debrief at finalize
-   (tempdoc 750 Part B). Round modes cover the supported **arrival states**, not only the empty
+   (tempdoc 750 Part B).
+   **Every charter watch item must state what the signal looks like when the build is HEALTHY,
+   not only what it looks like when broken.** A watch item that names only the broken signature
+   hands the round a symptom, and symptoms are shared by working code; what distinguishes a
+   defect is a *discriminator*. Worked example (round 8, 2026-07-31): the charter said the log
+   line `Combined backfill: docs=N (embed=0,splade=0,chunks=0)` "repeating at high frequency …
+   is the livelock; it must not appear." It appeared **143 times, six of them within 142 ms —
+   and was not the livelock**: the lines carried real progress, the run terminated on its own,
+   enrichment completed, and a 60-second idle window afterwards produced zero new lines. A round
+   following that charter literally would have filed a false HIGH against a working build. The
+   discriminator was never the signature but **non-termination** — the signature still firing
+   while every coverage counter is static and ingest jobs are starved. So write each watch item
+   as a pair: *healthy looks like X (bounded, terminating, counters advancing); the defect is Y
+   (X's signature persisting with no progress)*, and give the round the observation that
+   separates them.
+   Round modes cover the supported **arrival states**, not only the empty
    machine: first and final qualifying rounds run `fresh-install`, and the qualifying set must
    include at least one `upgrade-from-release` round (previous public release installed first,
    candidate installed over it — tempdoc 750 Part C). *What* to cover is not remembered — it is
