@@ -1,7 +1,7 @@
 ---
 title: "Full auto-update (374 G1 deep-dive): decisions before design"
 type: tempdocs
-status: implemented; release qualification pending
+status: implemented and green at unattended tiers; release qualification pending
 created: 2026-06-20
 updated: 2026-07-31
 author: agent analysis (production-readiness pass), filed by agent
@@ -24,7 +24,7 @@ related:
 > JustSearch now uses the plugin as an authenticated download verifier while
 > keeping apply user-consented, coordinating Head/Worker shutdown itself, and
 > launching the verified NSIS installer through a witnessed Windows process.
-> See Â§7 onward for the implemented contract and remaining release gates.
+> See §7 onward for the implemented contract and remaining release gates.
 
 > What this document is. The **decision-scoping** doc for full auto-update — the deep-dive
 > child of tempdoc **374 G1** ("Auto-updater", Tier 3 / GA). 374 deferred G1 with the
@@ -329,8 +329,8 @@ The shell persists:
 
 The phase vocabulary is closed:
 
-`PREPARED â†’ HEAD_STOPPED â†’ INSTALL_LAUNCHING â†’ INSTALL_LAUNCHED â†’
-RECONCILING â†’ COMMITTED`, with terminal `CANCELLED` and
+`PREPARED → HEAD_STOPPED → INSTALL_LAUNCHING → INSTALL_LAUNCHED →
+RECONCILING → COMMITTED`, with terminal `CANCELLED` and
 `REPAIR_REQUIRED`.
 
 Before launch, Shell rehashes the staged artifact. It launches the NSIS updater
@@ -382,6 +382,12 @@ required to qualify the exact published previous installer.
 
 ## 8. Verification evidence
 
+> **Superseded in part by §10 (2026-07-31).** The list below was accurate about
+> what the implementation pass *wrote*, but not about what passed: at handover
+> the branch was RED on `./gradlew.bat build -x test` **and** on
+> `./gradlew.bat test`, with three separate gate violations. §10 records the
+> failures, the fixes, and the first green run.
+
 The focused implementation pass records evidence in source tests and command
 output rather than claiming a GUI round that was not run:
 
@@ -409,7 +415,7 @@ green. Release enablement still requires:
 1. Configure production metadata signing keys, artifact signing key/id,
    monotonic release sequence, and the HTTPS release descriptor endpoint.
 2. Cut two updater-capable candidate versions or an equivalent previous-source
-   Sandbox build plus target so the in-app Nâ†’N+1 lane is executable.
+   Sandbox build plus target so the in-app N→N+1 lane is executable.
 3. Run the exact published installer-over-release lane.
 4. Run the in-app Sandbox lane through normal commit plus at least one captured
    interruption/reconciliation case.
@@ -418,3 +424,119 @@ green. Release enablement still requires:
 
 These are qualification/operations gates. They do not justify weakening
 production trust or adding force-kill behavior to NSIS.
+
+## 10. Takeover pass (2026-07-31)
+
+Handover review of the `codex/617-plan` worktree, then remediation. Verify
+dated claims against `main`.
+
+### 10.1 Recovery point
+
+At handover ~5.1k lines across 65 files were uncommitted, including **17
+untracked** source files (`HeadShutdownCoordinator`, `WorkerUpgradeQuiescence`,
+`UpgradeReconciliationProbe`, `appUpdateState`/`AppUpdateBanner`,
+`persistence-write-scan.mjs`, the sandbox in-app lane). Untracked files are
+invisible to every git recovery path, and this repo has a logged incident of
+exactly that loss (`4d94d034`). Committed unmodified as `d81ba603` before any
+other work.
+
+### 10.2 Defect: reconciliation validated the receipt against itself
+
+`validate_head_shutdown_receipt` takes an `expected_head_pid`. The live
+commit-shutdown path passed a real witness (`backend.child_pid()`,
+`updater.rs:414`), but the **restart/reconcile** path passed
+`final_receipt.head_pid` — the receipt's own field — so the PID clause compared
+the receipt against itself and could not fail. That is the one path where the
+live witness is gone.
+
+Fixed in `04866f8f`: `UpgradeIntent` now records `head_pid` at commit-shutdown,
+persisted independently, and reconciliation validates against it; missing or
+out-of-range fails closed to `REPAIR_REQUIRED`. Additive optional field within
+intent v1 (absent reads as `None`, older readers ignore it) — no schema bump,
+`check-store-recoverability` green.
+
+**Falsified, not assumed.** `head_receipt_must_match_independently_recorded_pid`
+was run against the pre-fix code and *failed* (the forged receipt was accepted),
+then passed against the fix. This mirrors the launch witness's existing
+`witness_must_match_separate_durable_copy` property.
+
+§7.4's claim that the shell validates the receipt's "original PID" is now true
+on both paths; before this fix it was true only on the live path.
+
+### 10.3 The Rust crate ran in no lane
+
+No workflow invoked `cargo test`, `clippy`, or `check` — the only `cargo`
+reference in `ci.yml` is a license dump. So the 39 unit tests behind the whole
+updater state machine ran once on an author's machine, were cited in §8, and
+were never re-run. That is the structural reason 10.2 could survive review.
+
+`83c40ebb` adds a blocking **Shell crate tests (Rust)** lane (windows-latest,
+registered in `workflow-signal-policy.v1.json`). It stages a gitignored
+placeholder because `tauri_build` hard-fails when the
+`resources/headless/**/*` bundle glob matches nothing, and the real payload is
+a multi-minute jlink image; packaging is unaffected, since `build-installer.yml`
+stages the real bundle. Verified locally with the exact lane command; **not yet
+observed on a hosted runner.**
+
+### 10.4 The branch was red — three gate violations
+
+Fixed in `f560e017`, each at its root:
+
+| Gate | Violation | Fix |
+|---|---|---|
+| `checkNoDirectJustsearchSysProp` | new `justsearch.app.version` read directly (3 sites) | registered `EnvRegistry.APP_VERSION` per the documented promotion pattern |
+| `UiApiGuardrailsTest` | `UpgradeController` consumed the raw gRPC `UpgradeQuiescenceResponse` (7 violations) — ipc proto types inside `ui.api` | added app-api `WorkerQuiescenceSnapshot`; projection moved into `RemoteKnowledgeClient`, so the generated type stops at the gRPC boundary |
+| `LocalApiServerThinComposerTest` | composition root regrew to 31 fields (ceiling 30) | `upgradeKnowledgeServer` duplicated state `HeadAssembly.currentKnowledgeServer()` already owns; removed rather than bumping the ceiling |
+
+The third is worth naming: `HeadlessApp:433-434` calls `connectKnowledgeServer`
+immediately before `lateBindKnowledgeServer`, so the root's copy was redundant
+**and** could go stale on Worker reconnect. The guardrail was pointing at a real
+fork, not just a counter.
+
+`UnreferencedCodeTest` also flagged `LocalApiServer.Builder.operationLeaseService`
+as dead. Investigated before waiving: production resolves the lease service via
+`HeadAssembly.serviceOut()` with a real `OperationLeaseServiceImpl` fallback
+(`LocalApiServer:191-196`), so §7.4's op-lease blocker reporting **is** wired,
+not inert. It is a genuine test-only seam and went in the file's documented
+allowlist category.
+
+### 10.5 Verification state after this pass
+
+| Tier | Result |
+|---|---|
+| `./gradlew.bat build -x test` | green (was RED) |
+| `./gradlew.bat test` (full suite) | green (was RED) |
+| ui-web `typecheck` + unit | green — 373 files, 3826 tests |
+| `cargo test --lib --locked` | green — 39 tests |
+| `check-store-recoverability`, `check-workflow-triggers` | green |
+| Live/GUI Sandbox tiers | **still unrun** — see §9 |
+
+§9 is unchanged and still gates release. Nothing in this pass moved the feature
+closer to being *proven*; it moved it to being *honestly green* at the tiers
+that can run unattended.
+
+### 10.6 Publication shape
+
+Do not publish this branch as-is. It is 127 commits ahead of `origin/main` and
+carries merged `worktree-772-installer-payload`, `worktree-760-codesigntool-ci`,
+plus 792/799 commits — work owned by other worktrees that will publish it
+themselves. The publishable surface here is the 617 delta only.
+
+That delta is 117 files and is **not** cleanly disjoint: it shares four files
+with the 760/772 work, all edited by both sides.
+
+| Shared file | 617 hunks | 760/772 hunks |
+|---|---|---|
+| `.github/workflows/build-installer.yml` | 4 | 1 |
+| `docs/how-to/cut-a-release.md` | 2 | 2 |
+| `modules/shell/src-tauri/tauri.conf.json` | 4 | 2 |
+| `modules/ui/build.gradle.kts` | 2 | 5 |
+
+Whoever publishes should expect to reconcile those four by hand, and should
+verify by content, not ancestry (`squash-merge-verify-content-not-ancestry`) —
+the sibling work may already have landed under a differently-titled squash.
+
+### 10.7 Also fixed
+
+Four lines of the cp1252 mojibake described in `agent-lessons.md`
+(`utf8-bulk-edits`) — `Â§7`, `â†'` in the phase vocabulary and §9 item 2.
