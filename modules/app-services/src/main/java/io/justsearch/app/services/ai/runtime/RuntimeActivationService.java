@@ -14,6 +14,10 @@ import io.justsearch.gpu.GpuCapabilitiesService;
 import io.justsearch.gpu.VramFlagsUtil;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
+import io.justsearch.app.api.OpCriticality;
+import io.justsearch.app.api.OpLeaseOutcome;
+import io.justsearch.app.api.OperationLeaseHandle;
+import io.justsearch.app.api.OperationLeaseService;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
 import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import io.justsearch.app.services.lifecycle.InferenceCapability;
@@ -127,6 +131,58 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
   private final Object lock = new Object();
   private final AtomicBoolean running = new AtomicBoolean(false);
+
+  /**
+   * Op-lease SPI (tempdoc 617). Activation/deactivation rewrite the GPU runtime under
+   * {@code native-bin/**} and the activation status projection on background threads that outlive
+   * their HTTP request, so the request-scoped mutation lease is already released while the write
+   * runs. Without a lease of its own, upgrade prepare sees no blocker and the installer can launch
+   * mid-swap. Defaults to no-op so existing constructors and tests are unaffected.
+   */
+  private volatile OperationLeaseService operationLeases = OperationLeaseService.noOp();
+
+  /**
+   * Late-binds the op-lease SPI. Set by {@code ServicePhase}, which creates the lease service after
+   * this service is constructed.
+   */
+  public void setOperationLeaseService(OperationLeaseService leases) {
+    this.operationLeases = leases == null ? OperationLeaseService.noOp() : leases;
+  }
+
+  /**
+   * Starts a daemon thread that holds an op-lease for its entire lifetime.
+   *
+   * <p>The lease is registered on the CALLING thread, before {@code start()}: registering inside
+   * the thread leaves a window in which upgrade prepare observes no blocker while the work is about
+   * to write. Same race-window closure as {@code BulkReindexHandler}.
+   */
+  private void startLeasedThread(String opClass, String threadName, Runnable body) {
+    OperationLeaseHandle lease =
+        operationLeases.register(
+            opClass, OpCriticality.INTERRUPTIBLE_WITH_LOSS, 600L, Map.of("source", opClass));
+    Thread t =
+        new Thread(
+            () -> {
+              boolean ok = false;
+              try {
+                body.run();
+                ok = true;
+              } finally {
+                running.set(false);
+                lease.release(ok ? OpLeaseOutcome.SUCCESS : OpLeaseOutcome.FAILURE);
+              }
+            },
+            threadName);
+    t.setDaemon(true);
+    try {
+      t.start();
+    } catch (RuntimeException e) {
+      // The thread never ran, so its finally block will not release the lease.
+      running.set(false);
+      lease.release(OpLeaseOutcome.FAILURE);
+      throw e;
+    }
+  }
   private final AiRuntimeActivationStatus status = new AiRuntimeActivationStatus();
 
   // Tempdoc 727 F-3: dedup for the "leftover variant directory" WARN below — listInstalledVariants()
@@ -399,18 +455,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       status.selfTestPort = null;
       touch();
     }
-    Thread t =
-        new Thread(
-            () -> {
-              try {
-                runActivate(v);
-              } finally {
-                running.set(false);
-              }
-            },
-            "ai-runtime-activate");
-    t.setDaemon(true);
-    t.start();
+    startLeasedThread("ai.runtime-activate", "ai-runtime-activate", () -> runActivate(v));
   }
 
   public void startDeactivate() {
@@ -425,18 +470,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       status.result = "";
       touch();
     }
-    Thread t =
-        new Thread(
-            () -> {
-              try {
-                runDeactivate();
-              } finally {
-                running.set(false);
-              }
-            },
-            "ai-runtime-deactivate");
-    t.setDaemon(true);
-    t.start();
+    startLeasedThread("ai.runtime-deactivate", "ai-runtime-deactivate", this::runDeactivate);
   }
 
   // -------------------- Implementation --------------------
