@@ -1,7 +1,7 @@
 ---
 title: "800 — The eval harness scores a different ranking than the engine delivers"
 type: tempdocs
-status: "VERIFIED DEFECT, no fix applied (2026-07-31). The mechanism is confirmed end-to-end at file:line on both sides. NOT fixed here because the correction moves published numbers: the public README's nDCG@10 table, the relevance-ratchet floors, and ~81 nDCG references in the search-quality register all derive from this metric. That is a claims-integrity decision for the owner, not a code change to make unilaterally. Surfaced from tempdoc 799's structural-health pass."
+status: "VERIFIED DEFECT + MEASURED, no fix applied (2026-07-31). The A/B is run: on all 8 hybrid cells the delivered top-10 differs from the measured top-10 for 100% of queries, delta up to ±0.06 nDCG@10 and BIDIRECTIONAL (enron worse delivered, legal better) — so no paper correction is possible and a re-run is the only route. lexical/splade/vector show exactly 0.0000, the control that confirms the mechanism. The mechanism is confirmed end-to-end at file:line on both sides. NOT fixed here because the correction moves published numbers: the public README's nDCG@10 table, the relevance-ratchet floors, and ~81 nDCG references in the search-quality register all derive from this metric. That is a claims-integrity decision for the owner, not a code change to make unilaterally. Surfaced from tempdoc 799's structural-health pass."
 created: 2026-07-31
 category: measurement-integrity / search-quality / eval-harness
 related:
@@ -99,6 +99,68 @@ An A/B on one existing run directory: score it both ways (current `hit["score"]`
 rank) and report the nDCG@10 delta per corpus. That is offline, costs nothing, needs no model,
 and converts "the numbers may be wrong" into "here is exactly how wrong, per corpus" — which is
 the input the re-baseline decision actually needs.
+
+## Measured — the A/B has been run (2026-07-31)
+
+The "suggested first step" below was executed. It is offline, needs no model or backend, and is
+committed as `scripts/jseval/metric_order_ab.mjs` so the re-baseline decision rests on a repeatable
+measurement rather than on this document's reasoning.
+
+**Method.** For each existing run cell, score the same result set two ways:
+*measured* = the `*_run.trec` file sorted by score descending (what `ir_measures` does), *delivered*
+= `predictedDocIds` from `*_per_query.json`, which `artifacts.py` builds from `scored_docs` in
+append order, i.e. the order the API returned.
+
+**Validity check, run before believing any of it:** the two orderings must cover the *same document
+set*, or the comparison is a set difference masquerading as a ranking delta. Verified per query —
+**50/50 identical sets, identical lengths, zero mismatches**. It is a pure reorder.
+
+**Corpus:** the 781 certification cells (8 cells × 4 modes = 32, n=50 queries each).
+
+### Result
+
+| cell | measured | delivered | delta | top-10 order differs | top-1 differs |
+|---|---:|---:|---:|---:|---:|
+| enron-raw-10k-short-natural | 0.5216 | 0.4753 | **−0.0463** | 50/50 | 37 |
+| enron-raw-10k-verbose | 0.4687 | 0.4585 | −0.0102 | 50/50 | 28 |
+| enron-raw-1k-short-natural | 0.6418 | 0.5832 | **−0.0586** | 50/50 | 34 |
+| enron-raw-1k-verbose | 0.6602 | 0.6778 | +0.0176 | 50/50 | 34 |
+| legal-clerc-10k-short-natural | 0.1015 | 0.1053 | +0.0037 | 50/50 | 40 |
+| legal-clerc-10k-verbose | 0.1262 | 0.1625 | **+0.0363** | 50/50 | 40 |
+| legal-clerc-1k-short-natural | 0.2305 | 0.2504 | +0.0199 | 50/50 | 41 |
+| legal-clerc-1k-verbose | 0.3143 | 0.3525 | **+0.0382** | 50/50 | 41 |
+
+**`lexical`, `splade` and `vector` show delta 0.0000 and 0 differing queries on every cell.** That
+is the control, and it is a clean one: cross-encoder reranking runs only on the hybrid path, and
+only the hybrid path moves. The mechanism is confirmed by which cells *don't* change as much as by
+which do.
+
+### What the numbers say
+
+1. **The defect is real and total in scope.** On every hybrid cell, the delivered top-10 differs
+   from the measured top-10 for **all 50 queries** — 100%. Top-1 differs on 28–41 of 50. The
+   reported number has never been describing the ranking a user receives.
+2. **The direction is corpus-dependent, not systematic.** §"What is NOT claimed" above declined to
+   guess whether the engine was better or worse than reported; the data justifies that caution.
+   Enron cells mostly score **worse** delivered (down to −0.0586); legal cells score **better**
+   (up to +0.0382). There is no single correction factor, so no number can be adjusted on paper —
+   a re-run is the only way.
+3. **On legal, the harness has been understating the engine.** Delivered beats measured on all four
+   legal cells, i.e. the cross-encoder is helping more than the metric credits it for.
+4. **Magnitude is decision-relevant.** ±0.06 nDCG@10 is large next to the differences several
+   register findings turn on.
+5. **A note on the register's CE findings.** F-001/F-002 hold that CE hurts on personal email; the
+   enron cells here move in that direction under the corrected ordering. Those conclusions may well
+   survive — but they were reached from the wrong ordering, so they are currently right-by-luck
+   rather than right-by-evidence, and need recomputing before being leant on again.
+
+### What this does not settle
+
+The 781 cells are a certification corpus, not the published release cohort. The README table and
+the relevance-ratchet floors project from `release.v1.json`, a different run. The delta there is
+**unmeasured** — but this establishes that the delta is real, non-zero, bidirectional, and of a size
+worth a re-run. Running the same script over the release cohort's run directory is the next step,
+and costs nothing.
 
 ## Provenance
 
