@@ -2,6 +2,24 @@ name: Build Installer
 
 on:
   workflow_dispatch:  # Manual trigger
+    inputs:
+      sandboxTestMode:
+        description: >-
+          Build a Sandbox QUALIFICATION candidate: compiles the shell with
+          JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE=1, which permits loopback HTTP feeds and
+          runtime trust-root overrides (updater.rs pinned_release_value / ensure_https).
+          Required for the in-app N->N+1 lane, because a production binary rejects those
+          overrides by design (tempdoc 617 §7.7). NEVER for a published release - the
+          guard step below refuses it on a v* tag ref.
+        type: boolean
+        default: false
+      candidateVersion:
+        description: >-
+          Override the built version (e.g. 0.2.1-qual.1) so two candidates can be produced
+          for the N->N+1 lane. Only honoured together with sandboxTestMode; a release cut
+          takes its version from gradle.properties as before.
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -23,6 +41,31 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      # A qualification candidate trusts loopback feeds and lets runtime env replace the pinned
+      # metadata root. Shipping that to users would hand the update channel to anything able to
+      # set an environment variable, so the two must never coincide. Fail before the build, not
+      # after an artifact exists.
+      - name: Refuse a qualification build on a release tag
+        if: inputs.sandboxTestMode
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            throw "sandboxTestMode was requested on $env:GITHUB_REF. A Sandbox qualification build accepts loopback feeds and runtime trust-root overrides and must never be published. Dispatch it against a branch ref."
+          }
+          Write-Host "Qualification build (loopback + runtime trust overrides enabled). Not publishable."
+
+      - name: Apply candidate version
+        if: inputs.sandboxTestMode && inputs.candidateVersion != ''
+        shell: pwsh
+        run: |
+          $v = '${{ inputs.candidateVersion }}'
+          $path = 'gradle.properties'
+          $raw = Get-Content -Raw -LiteralPath $path
+          if ($raw -notmatch '(?m)^version=') { throw "No version= line in $path" }
+          ($raw -replace '(?m)^version=.*$', "version=$v") |
+            Set-Content -LiteralPath $path -Encoding utf8 -NoNewline
+          Write-Host "Candidate version set to $v"
 
       - name: Setup Rust (MSVC)
         uses: dtolnay/rust-toolchain@stable
@@ -228,6 +271,9 @@ jobs:
           JUSTSEARCH_CODESIGN_TIMESTAMP_URL: ${{ secrets.JUSTSEARCH_CODESIGN_TIMESTAMP_URL }}
           JUSTSEARCH_CODESIGN_THUMBPRINT: ${{ secrets.JUSTSEARCH_CODESIGN_THUMBPRINT }}
           JUSTSEARCH_CODESIGN_COMMAND: ${{ secrets.JUSTSEARCH_CODESIGN_COMMAND }}
+          # Compile-time gate read by updater.rs `sandbox_test_mode()` (option_env!). Empty on a
+          # normal build, so the production trust pins stay non-overridable.
+          JUSTSEARCH_RELEASE_SANDBOX_TEST_MODE: ${{ inputs.sandboxTestMode && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.JUSTSEARCH_TAURI_UPDATER_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.JUSTSEARCH_TAURI_UPDATER_PRIVATE_KEY_PASSWORD }}
           JUSTSEARCH_RELEASE_DESCRIPTOR_URL: ${{ vars.JUSTSEARCH_RELEASE_DESCRIPTOR_URL }}
