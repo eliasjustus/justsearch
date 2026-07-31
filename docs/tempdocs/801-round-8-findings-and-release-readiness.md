@@ -737,6 +737,144 @@ oracle that agrees with the hypothesis by construction. Here the hypothesis was 
 differ"* and the fingerprint was read as evidence *against* the alternative — while being
 structurally incapable of distinguishing them.
 
+## D11. Derisking pass (2026-07-31) — measured, and it corrects §D4 again
+
+A derisking pass ran before implementation. Four of its results change the design; they are recorded
+here because the design was wrong without them.
+
+### D11.a §D4's token is insufficient — the reserved band is structure-variable, not just density-variable
+
+Measured live on the Library surface (the surface where F4 actually reproduced):
+
+| Surface | `.header` y | `.header` h | header band ends |
+|---|---|---|---|
+| unified chat | 56 | 33 | **89** |
+| library | 89 | 54 | **143** |
+
+The shipped dock reserves `calc(2.5rem + 3rem + 0.5rem)` = **96px**. On Library the header band ends
+at **143px**, so the post-fix dock still lands *inside* it. That is why F4 reproduced on Library
+after the fix shipped.
+
+The cause is not the header's own height. Chat's header starts at y=56; Library's starts at
+**y=89** because Library stacks an extra chrome row (the Folders/Browse tab strip, visible in round
+8's `28-library-surface.png`) between the topbar and its header. **So a token derived from
+`--density-header-pad-y` — §D4's design — would still be wrong for Library**, because the quantity
+that must be reserved is everything stacked above the surface's content, which no static
+header-padding token can know.
+
+Also measured: `--density-header-pad-y` is `16px` and chat's header is `33px` (2×16 + 1px border),
+i.e. the header's *own* content contributes nothing to its height on that surface. The 48px the
+dock assumes over-reserves on chat and under-reserves on Library — one constant cannot be right for
+both.
+
+**Consequence for the design:** §D4's "publish a derived token" is still the right *shape* (derive,
+don't guess) but the wrong *quantity*. What must be published is the bottom of the surface's chrome
+stack, not the header's padding. Whether that is expressible statically is now an open question,
+and it moves `ResizeObserver` — rejected in §D4.b on the single-writer objection — back onto the
+table as possibly the only correct mechanism. This must be settled before implementation, not
+during.
+
+### D11.b The measurement nearly repeated the stale-ref error, and the guard is worth recording
+
+The first browser reading showed the overlay slot docked at **48px**, contradicting the source. The
+dev stack had been launched from the **main checkout**, which was 10 commits behind `origin/main`
+and still carried the pre-fix `calc(2.5rem + 0.5rem)`. My worktree carries the shipped
+`calc(2.5rem + 3rem + 0.5rem)`. Had that reading been taken at face value it would have "proved"
+the fix never shipped.
+
+This is the same failure as the collision check earlier the same day (comparing against a stale
+local `main`) and the same shape as §D10's fingerprint: **a measurement read from a proxy for the
+subject.** For live UI measurement the guard is explicit — launch the stack with `distFrom` set to
+the worktree under test, or verify a known-changed line in the served source before trusting any
+geometry.
+
+The Library header geometry above is retained as valid because it is a property of that surface's
+own chrome stack, which neither the dock change nor the conversation-track change touches — and it
+is corroborated by round 8's own screenshot, taken against a candidate that *did* contain the fix.
+
+### D11.c F3 — the head-side cache does not drift; suspicion moves to the frontend substrate
+
+Reproduced on a live stack: 807 documents ingested, then the SSE snapshot and `/api/status` captured
+at the same instant, before and after drain.
+
+| moment | `worker.core.pendingJobs` | SSE snapshot rows | non-DONE rows |
+|---|---|---|---|
+| mid-ingest | 807 | 812 (807 PENDING + 5 DONE) | 807 |
+| after drain | 0 | 812 (all DONE) | **0** |
+
+The head-side mirror (`RemoteIndexingJobsBridge.cached`) tracked a full ingest-to-drain cycle with
+no drift, and agreed with the count at both instants. Since the frontend substrate maps `DONE →
+null`, a correct consumer of that snapshot would show zero queued.
+
+**Honest limit: this does not reproduce round 8's drift, it narrows it.** A healthy run cannot
+distinguish "the head cache never drifts" from "it drifts only under a stalled feed" — and a
+stalled feed is exactly the condition not reproduced. What it does establish is that the head cache
+handles the ordinary path correctly, which moves the frontend substrate (the feed-stall path that
+tempdoc 798 B4's reconnect actuator addresses, documented by
+`indexingJobsBridge.feedstall.test.ts`) to the front of the queue as the suspect.
+
+### D11.d F1 — the honest fix needs no backend change, and the test does not need touching
+
+Costing both branches settled two things that were open in §D0's table.
+
+**The wire already carries the distinction the card needs.** `source === 'shell-property'` with
+`confidence === 'LOW'` uniquely means *the probe ran, exited 0, and returned a value the OS calls
+indeterminate*; `source === 'none'` means *the probe produced no answer at all*. Both are already in
+`StatusSnapshot` and already in scope in `renderAtRestCard`. So stopping the false "needs admin"
+claim is **frontend-only** — no proto, no schema regeneration, no `--gate wire`.
+
+**Detecting elevation is cheap but does not close the finding.** An FFM advapi32 probe is precedented
+in-repo (`WindowsPowerStatus.java:91-95` calls kernel32 through `Linker` with no external
+dependency, and `--enable-native-access` is already configured), and would be structurally simpler
+than the existing `WindowsJobObject`. But `qualityKnown` means *"we read the TPM-vs-PIN
+distinction"*, not *"we are elevated"* — so setting it from an elevation check would render
+"Configuration: Known" while knowing nothing. Elevation would need its own wire field, and the card
+would *still* need the honest wording. Branch 1 without Branch 2 leaves the card mute in the exact
+reported scenario.
+
+**The `0 → UNKNOWN` test does not need to change, and changing it at the mapper would be the
+weakening move.** The conflation is a *producer* bug: the PowerShell one-liner casts
+unconditionally, and `[int]$null` is `0`, so a missing property and a genuine `0` are
+indistinguishable by the time `mapPkeyValue` sees them — the information is destroyed at the script,
+not at the switch. Remapping `0` at the mapper would encode a guess at the layer that can no longer
+know. Making absence distinguishable in the script is additive, keeps the existing assertion true,
+and adds a new test for the absence case. This resolves the concern §D3 raised without touching a
+green assertion.
+
+### D11.e F6 is worse than §D8 assumed — the routing change alone would produce confabulation
+
+§D8 said letting extraction win could trade a wrong-mode failure for a no-document failure. The
+real exposure is worse. Today's extract request body is `{shapeId, prompt, schema, conversationId,
+context?}` — `unifiedChatRequest.ts:86-89` drops `docIds` for extract, and `body.selection` comes
+from a one-shot compose register that the reported flow never writes. `ExtractShape` declares
+`[ExternalContextInjector, core.user-prompt]`, and `ExternalContextInjector` reads only
+`body.context` — **prior chat turns**, never a document.
+
+Meanwhile the schema *is* honoured: the engine promotes it to a `response_format` sampling
+constraint. So routing to extract today would return **schema-conforming JSON confabulated from the
+prompt and chat history, with no document behind it** — a quiet wrong answer replacing a visible
+wrong mode. That is strictly worse for a product whose claim is grounded retrieval.
+
+The fix needs both sides of the wire (declare a document-bearing injector *and* populate a document
+field), plus two ride-alongs that must land in the same change: `SelectionContextInjector`'s
+`text-range` arm hardcodes a *"Summarize the following selection"* prefix, and its `rag.citations`
+emissions fall outside `ExtractShape`'s declared `EVENT_SCHEMA`. Also corrected: the
+`selectionPolicy=OPTIONAL` comment at `unifiedChatRequest.ts:100` is **stale** — no such concept
+exists in Java; opting in is simply listing the injector id.
+
+### D11.f Confirmed available at zero cost
+
+The `upgrade-from-release` round stages end-to-end: previous-release installer verified and staged
+with its SHA-256, `validation-mode.md` set to `upgrade-from-release`, coverage brief generated (22
+cohorts, 16 surfaces, 5 shapes), 26 must-touch items, `.wsb` written. It also confirms §D7's open
+question — the generated must-touch set is the *same* as a fresh round's, so nothing enumerates what
+must survive a version upgrade.
+
+Also green: the branch is current with `origin/main` and the full suite passes genuinely — 190 of
+190 tasks executed with the build cache disabled, 33 test tasks, `BUILD SUCCESSFUL in 4m 35s`. (A
+first attempt with `cleanTest test` reported success in **8 seconds** with 78 tasks from cache; that
+is not a test run, and it is the third instance of that false green in this work.)
+
 ## D7. Strand B — the qualifying-set gap needs a round, not a design
 
 Verified while designing, so this is settled rather than proposed:
