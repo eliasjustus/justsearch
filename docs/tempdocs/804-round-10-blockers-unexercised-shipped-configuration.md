@@ -324,3 +324,21 @@ strip manifests.
   unchanged.
 - **U8**: no open PRs touch the campaign's files; implementation branches fresh from
   `origin/main` (`b3dfe0db`).
+
+### D6 — B7 resolved: the empty 400 bodies were almost certainly a measurement artifact (2026-08-04)
+
+Three tiers of evidence converge. (1) Dev-mode live probes of all three endpoints return full
+`ApiErrorHandler` JSON bodies. (2) A genuinely prod-armed in-process boot (B4.2's harness — the
+companion test proves 401 enforcement was live in the same filter chain) returns
+`status=400 body={"error":"Missing variantId","errorCode":"VARIANT_ID_REQUIRED",...}` —
+non-empty, well-formed. (3) Independently, the W5 harness work root-caused a PowerShell 5.1
+client trap: on a non-2xx response, PS drains the error body into `$_.ErrorDetails.Message`,
+leaving `GetResponseStream()` EMPTY — a client reading the stream measures "zero-length body"
+on a response that carried one. Rounds 9 and 10 both measured through PS 5.1. The bodies have
+existed since v0.1.0 (§D4); no server-side strip is reachable at any tier we can boot.
+
+Disposition: NO product fix. The harness fix ships (collect-evidence's `Invoke-ApiRequest`
+reads `ErrorDetails` first), the staged docs now name the trap, and the packaged lane's
+`Send-JsonPost` (raw HttpClient, immune to the trap) asserts on real bodies — if a packaged-
+only strip does exist after all, that lane is the tripwire that catches it. Round-9 F3 /
+round-10 F6 close as measurement-artifact-with-tripwire rather than defect-fixed.
