@@ -419,3 +419,41 @@ pre-existing baseline; sandbox pytest 268; governance gates green except the fou
 ui-web reds listed in `expected-state.v1.json` + two proven-pre-existing check failures).
 Orchestrator's combined-tree forced suite + ui-shot fixtures + live browser pass recorded below
 when complete.
+
+## §V Cross-cutting verification ledger (2026-08-04, orchestrator)
+
+1. **Full forced suite** — `./gradlew.bat test --rerun-tasks --no-build-cache` on the combined
+   tree: **BUILD SUCCESSFUL in 4m 31s** (asserted on output text, run bare). First attempt
+   failed on `installWebDependencies` (npm NTSTATUS 0xFFFFF030) — a stray worktree Vite
+   process held `node_modules`; killed (own PID, CommandLine-verified), retry green.
+2. **ui-web combined tree** — typecheck clean; **377 files / 3905 tests** green (W8's final
+   run); `npx eslint src`: **0 fetch-rule errors, exactly the 23 pre-existing baseline**.
+3. **Stale-dist trap caught live**: the dev runner served `build/install/ui/lib/` from Jul 31
+   while `build/libs/` was fresh — the first mode-response probe returned the OLD shape;
+   `installDist` refresh + restart, then **B6 verified in situ**:
+   `{"state":"recorded","success":true,"mode":"offline","requested":"indexing"}`.
+4. **Live browser pass** (dev stack from THIS worktree, clean data dir, Vite-served source):
+   - **F14** ✓ — Ask click yields tooltip + toast "The local AI model is offline" (sibling
+     treatment; silent no-op gone).
+   - **F10** ✓ — palette query `install ai` surfaces Repair/Start/Cancel AI Install above the
+     raw-search intent (round 10's exact failing query).
+   - **F8** ✓ — indexed-folder row renders `how-to · default · 16 files · indexed just now`,
+     no digest.
+   - **Activity** ✓ — timeline renders live operation rows with outcomes.
+   - **Enrichment transition** ✓ — `chunk_embedding.not_ready` cleared at 100% coverage;
+     `chunkEmbeddingReady: true`; no reindex headline at any point.
+   - **Search e2e** ✓ — "21 results · 20 matched exactly · 0.37s · meaning + words" through
+     the converted `searchState` path (hybrid serving; dev-mode null-token pass-through fine).
+   - **W8 residual found by this pass and fixed same-session**: post-enrichment the banner
+     still claimed "Showing keyword results" from `inference.offline`'s warn severity while
+     the results header simultaneously said "meaning + words". After W8: **"2 causes — AI
+     features unavailable."** verified live on reload. (Deviation accepted: positive-cause
+     classification on BOTH sides + unknown-conservative — a denylist-only rule would have
+     re-created the class for OCR-only degradations.)
+5. **Not browser-provable here** (recorded honestly): token attachment under enforcement —
+   dev runs prod=false, so that chain's proof lives in the unit tier (header-attach tests),
+   the B4.2 integration boot (401 без header / 400-with-body via same filter chain), and the
+   B4.3 packaged lane at next installer build. The webview-under-prod full path remains
+   sandbox round 11's check (registered as the `webview-performs-one-search` must-watch).
+6. Registers: no search-analysis or inference-runtime obligations touched (confirmed — no
+   analyzer/fusion/encoder changes in the campaign).
