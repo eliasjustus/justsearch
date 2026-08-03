@@ -142,14 +142,29 @@ so an untouched required surface fails the round rather than being forgotten.
 JustSearch serves a production **MCP endpoint** at `POST /mcp` (loopback), the
 "private retrieval backend for agents" the README advertises. This is a *product*
 surface, distinct from the developer MCP dev-tools that are absent in the sandbox.
-Verify a real external MCP client can reach it on a clean install using the
-official MCP Inspector CLI (MIT, run via `npx`, nothing to vendor):
+**The documented Inspector CLI reachability check now FAILS on this build** (round
+10, tempdoc 734/804): the packaged candidate boots `prod=true` (see *Key API
+endpoints* below), `POST /mcp` enforces the session token like every other
+mutating route, and a plain `npx @modelcontextprotocol/inspector --cli
+"http://127.0.0.1:<port>/mcp" --transport http --method tools/list` 401s with no
+`WWW-Authenticate` header — the Inspector CLI infers OAuth from the bare 401 and
+demands an interactive TTY it cannot get in a round. **Verify reachability with a
+raw `POST /mcp` JSON-RPC `tools/list` call carrying the session token instead**
+(fetch it from `GET /api/mcp/token` — see *Key API endpoints* below for the
+token-fetch pattern):
 
 ```powershell
-npx @modelcontextprotocol/inspector --cli "http://127.0.0.1:<port>/mcp" --transport http --method tools/list
+$port = (Get-Content "$env:APPDATA\io.justsearch.shell\runtime\manifest.json" | ConvertFrom-Json).head.apiPort
+$token = (Invoke-RestMethod -UseBasicParsing "http://127.0.0.1:$port/api/mcp/token").token
+Invoke-RestMethod -UseBasicParsing -Method Post -Uri "http://127.0.0.1:$port/mcp" `
+  -Headers @{ "X-JustSearch-Session" = $token } -ContentType "application/json" `
+  -Body '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-Expect the tool set to come back. If `npx`/node is not installed, record that MCP
+Expect the tool set to come back. If you must use the Inspector CLI itself, it has
+no flag for a custom auth header on this build, so it is not currently a working
+substitute — record the limitation and use the raw-POST workaround above. If
+`node` is not installed at all (for the mutating-tool step below), record that MCP
 was not exercised and why (a gap to close), rather than skipping silently.
 Protocol conformance itself is owned by a host integration test; the Sandbox's
 unique job is proving clean-install reachability and discoverability.
@@ -432,7 +447,26 @@ request shapes against a server that was telling it exactly what was wrong
 the whole time. Wrap mutating calls in `try/catch` and print the body on
 failure before concluding the endpoint is broken.
 
-Key API endpoints (no auth needed, `prod=false`):
+**The packaged candidate boots `prod=true` — every mutating call needs the session
+token.** This is NOT the dev stack: a Sandbox candidate is the SHIPPED package,
+and `ApiSecurityFilters` enforces the session token on every `POST`/`PUT`/`DELETE`
+globally, with no path exemption (it applies to `/mcp` too). `GET`/`OPTIONS` need
+no token. Fetch the token once from `GET /api/mcp/token` (itself unauthenticated by
+design — the desktop UI/shipped MCPB bridge use exactly this pattern) and attach it
+as the `X-JustSearch-Session` header on every mutating call; omit it and you get a
+`401` with `{"error":"Missing or invalid session token","errorCode":"UI_TOKEN_REQUIRED"}`,
+not the endpoint's normal response. Worked example:
+
+```powershell
+$port = (Get-Content "$env:APPDATA\io.justsearch.shell\runtime\manifest.json" | ConvertFrom-Json).head.apiPort
+$token = (Invoke-RestMethod -UseBasicParsing "http://127.0.0.1:$port/api/mcp/token").token
+$headers = @{ "X-JustSearch-Session" = $token }
+Invoke-RestMethod -UseBasicParsing -Method Post -Uri "http://127.0.0.1:$port/api/knowledge/search" `
+  -Headers $headers -ContentType "application/json" -Body '{"query":"test","limit":5}'
+```
+
+Key API endpoints (`GET` needs no token; every other method needs the
+`X-JustSearch-Session` header above):
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -441,13 +475,14 @@ Key API endpoints (no auth needed, `prod=false`):
 | `/api/knowledge/search` | POST | Search (`{"query":"...","limit":5}`) |
 | `/api/knowledge/ingest` | POST | Ingest (`{"paths":["..."]}` — directory inputs return `scanId`) |
 | `/api/knowledge/status` | GET | Index/enrichment progress |
+| `/api/indexing/roots` | POST | Add a folder to the library (`{"path":"...","collection"?:"..."}` — `path` must be an existing directory; 400 names the offending field) |
 | `/api/chat/ask` | POST | RAG Q&A (`{"question":"..."}` — NOT `query`). **Response is an SSE stream, not JSON** — see below. |
 | `/api/ai/install/start` | POST | Start model download (`{"acceptTerms":true}`) |
 | `/api/ai/install/status` | GET | Download progress. Top-level `state: "completed"` does NOT mean all packages installed; check `installedFully: true` and per-package `state`. |
 | `/api/ai/runtime/status` | GET | Per-feature runtime status (NVML VRAM, ONNX `modelActive` flags) |
 | `/api/inference/status` | GET | LLM runtime state |
-| `POST /mcp` | POST | **Production MCP endpoint** (Streamable HTTP) — the agent-facing retrieval backend. Verify via the Inspector CLI, not raw curl. |
-| `/api/mcp/token` | GET | MCP session-token issuance |
+| `POST /mcp` | POST | **Production MCP endpoint** (Streamable HTTP) — the agent-facing retrieval backend. Needs the session token like any other POST; see *The `/mcp` product endpoint* above for the current verification procedure. |
+| `/api/mcp/token` | GET | Session-token issuance (unauthenticated by design — this is how a legitimate client gets the token in the first place) |
 
 Full body shapes for every endpoint live in `docs/reference/api-contract-map.md` (staged under `docs/`).
 
@@ -481,6 +516,19 @@ depth (PENDING+PROCESSING) despite its name. `worker.migration.pendingJobsCount`
 PROCESSING — always check its sibling `processingJobsCount` (same payload, also in
 `/api/debug/state`) before concluding the queue is idle.
 
+**A 401 renders as zero results in any client that doesn't check status.** The
+packaged candidate boots `prod=true` (see *Key API endpoints* above); a `POST`
+issued without the `X-JustSearch-Session` header 401s, and a client that only
+inspects the parsed response shape — not the HTTP status code — sees
+`{"error":"...","errorCode":"UI_TOKEN_REQUIRED"}` shaped exactly like an empty
+result set. Round 10 nearly filed a catastrophic false HIGH finding ("the
+upgrade emptied the index") for exactly this reason: a post-upgrade oracle run
+read `hits: 0` on every query purely because its POSTs were 401ing, and only
+the visible `UI_TOKEN_REQUIRED` error body caught it before the round wrote
+the finding. Before concluding an index is empty or a search found nothing,
+check the HTTP status code and error body first — never trust an empty-looking
+result shape on its own.
+
 **Absence of signal is not evidence of absence.** A wrong field name, a genuine
 negative result, a silent no-op click, and a surface that never backfills all
 render as "empty" — and they are indistinguishable from each other until you
@@ -488,9 +536,44 @@ check which one you're looking at. Before filing any negative finding ("X not
 indexed", "Y not shown", "Z never fired"), confirm you are reading the right
 field/endpoint/surface at all — ideally by first proving the positive control
 works (a query you know should return hits, a WARN you know already fired).
-The three traps above (hidden error bodies, the SSE-vs-JSON mismatch, `id` vs
-`path`) are concrete instances of this; treat it as the general case, not just
-those three.
+The four traps above (hidden error bodies, the SSE-vs-JSON mismatch, `id` vs
+`path`, and a 401 rendering as zero results) are concrete instances of this;
+treat it as the general case, not just those four.
+
+## Named diagnostic techniques
+
+### Renamed-aside data dir
+
+Used twice (round 9 and round 10, tempdoc 734) to reclassify a blocker as
+**build-level** (reproduces on a pristine install, nothing to do with the
+upgrade) vs **upgrade-specific** (only reproduces against carried-over user
+state): stop all four processes (see *Restart cycles* above — the Tauri shell,
+Head `javaw.exe`, Worker `java.exe`, and `llama-server.exe` if active), rename
+`%APPDATA%\io.justsearch.shell` aside (e.g. to `io.justsearch.shell.bak` —
+rename, do not delete, so the original round's data is recoverable), relaunch
+the candidate against the now-pristine (non-existent) data dir, and re-test the
+failing behaviour. If it still reproduces against a fresh data dir, the defect
+is build-level, not an upgrade artifact — restore the renamed-aside directory
+afterwards to resume the original round on its real data. This is what turned
+round 10's F7 ("upgrade defect?") into "shipped-UI blocker, reproduced on a
+pristine data dir" — that round's single highest-value diagnostic act.
+
+### Verify-the-active-surface-before-clicking (GUI capture)
+
+The DEFAULT loop for every GUI action, not an occasional precaution: **capture**
+a fresh screenshot → **crop** the tab-strip/header region (`crop.ps1`, see
+`gui/README.md`) so you can read which surface is actually active without
+burning context on the full image → **confirm** the active surface matches
+what you expect → **click**. Pixel-coordinate automation has no notion of "did
+my click land on the surface I think is showing," and a screenshot taken even
+one step earlier can be stale by the time the click fires — round 10 lost four
+captures to exactly this coordinate drift (a click landed on the wrong tab
+because the active surface had moved since the last capture). Do not click from
+a screenshot older than the immediately-preceding capture, and do not treat a
+zero exit code as proof the click landed on the intended surface — confirm from
+the crop, then re-capture afterward to verify the action registered (`click.ps1`
+already fails closed on a foreground-focus mismatch; `Assert-AppSurface` in
+`gui/README.md` is the API-side confirmation for the same problem).
 
 ## Convergence — every finding gets a regression home
 

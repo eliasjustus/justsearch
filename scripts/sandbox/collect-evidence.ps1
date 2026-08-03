@@ -12,7 +12,15 @@
       1. Discover the backend's API port (canonical: runtime manifest;
          fallback: listening-socket scan).
       2. Hit a fixed API sanity ladder and save each raw response body.
+      2.5. Fetch the session token (GET /api/mcp/token) and exercise the
+         MUTATING surface with it (POST /api/knowledge/search). A 401 here is
+         reported as a LOUD FAILURE, not a quietly recorded status: the
+         all-GET ladder above scored 6/6 in round 10 while every non-GET
+         request the product makes was 401-dead.
       3. Exercise the /mcp endpoint via the official MCP Inspector CLI (npx).
+      3.1. Raw POST /mcp reachability probe carrying the session header the
+         Inspector CLI cannot send -- run whenever the inspector path did not
+         succeed, so a harness limitation is never mistaken for a dead /mcp.
       4. Write a plain-text summary of what was captured.
 
     Windows PowerShell 5.1 compatible. Runs unattended -- no interactive
@@ -62,6 +70,85 @@ function Write-Utf8NoBom {
     process {
         $utf8NoBom = New-Object System.Text.UTF8Encoding $false
         [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
+    }
+}
+
+function Invoke-ApiRequest {
+    # Windows PowerShell 5.1's Invoke-WebRequest THROWS on any non-2xx, so a
+    # 401 -- the exact status this harness now has to be able to SEE (round 10:
+    # the whole mutating surface answered 401 while the all-GET ladder scored
+    # 6/6) -- arrives as an exception, not as a response. This normalises both
+    # paths into one { StatusCode; Body; Ok; Error } shape so callers assert on
+    # a status code instead of catching and hoping.
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [string]$Method = "GET",
+        [string]$Body,
+        [hashtable]$Headers,
+        [int]$TimeoutSec = 30
+    )
+    $statusCode = $null
+    $responseBody = ""
+    $errorMessage = ""
+    try {
+        $requestParams = @{
+            Uri             = $Url
+            Method          = $Method
+            UseBasicParsing = $true
+            TimeoutSec      = $TimeoutSec
+            ErrorAction     = "Stop"
+        }
+        if ($Headers -ne $null) {
+            $requestParams["Headers"] = $Headers
+        }
+        if ($PSBoundParameters.ContainsKey("Body")) {
+            $requestParams["Body"] = $Body
+            $requestParams["ContentType"] = "application/json"
+        }
+        $response = Invoke-WebRequest @requestParams
+        $statusCode = [int]$response.StatusCode
+        $responseBody = $response.Content
+    }
+    catch {
+        $errorMessage = $_.Exception.Message
+        # PS 5.1 drains the error response body into $_.ErrorDetails.Message, so
+        # GetResponseStream() on the same response comes back EMPTY (verified
+        # live against a 401 here). Read ErrorDetails first; keep the stream read
+        # as the fallback for the cases where it is not populated.
+        if (($_.ErrorDetails -ne $null) -and (-not [string]::IsNullOrEmpty($_.ErrorDetails.Message))) {
+            $responseBody = $_.ErrorDetails.Message
+        }
+        if ($_.Exception.Response -ne $null) {
+            try {
+                $statusCode = [int]$_.Exception.Response.StatusCode
+            }
+            catch {
+                $statusCode = $null
+            }
+            if ([string]::IsNullOrEmpty($responseBody)) {
+                try {
+                    $stream = $_.Exception.Response.GetResponseStream()
+                    if ($stream -ne $null) {
+                        $reader = New-Object System.IO.StreamReader($stream)
+                        $responseBody = $reader.ReadToEnd()
+                        $reader.Close()
+                    }
+                }
+                catch {
+                    $responseBody = ""
+                }
+            }
+        }
+    }
+    $isOk = $false
+    if ($statusCode -ne $null) {
+        $isOk = ($statusCode -ge 200) -and ($statusCode -lt 300)
+    }
+    return New-Object PSObject -Property @{
+        StatusCode = $statusCode
+        Body       = $responseBody
+        Ok         = $isOk
+        Error      = $errorMessage
     }
 }
 
@@ -322,6 +409,7 @@ foreach ($apiPath in $ladderPaths) {
         $body | Write-Utf8NoBom -Path $outFile
         $ok = ($statusCode -ge 200) -and ($statusCode -lt 300)
         $ladderResults += New-Object PSObject -Property @{
+            Method     = "GET"
             Path       = $apiPath
             StatusCode = $statusCode
             Ok         = $ok
@@ -366,6 +454,7 @@ foreach ($apiPath in $ladderPaths) {
         ($errorRecord | ConvertTo-Json -Depth 5) | Write-Utf8NoBom -Path $outFile
 
         $ladderResults += New-Object PSObject -Property @{
+            Method     = "GET"
             Path       = $apiPath
             StatusCode = $statusCode
             Ok         = $false
@@ -373,6 +462,105 @@ foreach ($apiPath in $ladderPaths) {
         }
         Write-Log "  -> ERROR ($exceptionMessage) recorded to $fileName"
     }
+}
+
+# ---------------------------------------------------------------------------
+# Step 2.5: session token + the MUTATING-surface rung (round-10 finding F7/H1)
+# ---------------------------------------------------------------------------
+# Round 10 scored the ladder above 6/6 green while every non-GET request the
+# product makes answered 401: in prod mode the head arms session-token
+# enforcement on POST/PUT/DELETE, and an all-GET ladder is structurally unable
+# to see that. One POST rung closes the hole -- and a 401 on it must FAIL
+# LOUDLY, because silently recording it is exactly the green that shipped a
+# product whose entire mutating surface was dead.
+
+$sessionToken = ""
+$sessionTokenNote = ""
+$tokenResult = Invoke-ApiRequest -Url "$base/api/mcp/token"
+if ($tokenResult.Ok) {
+    try {
+        $sessionToken = [string](($tokenResult.Body | ConvertFrom-Json).token)
+    }
+    catch {
+        $sessionToken = ""
+        $sessionTokenNote = "GET /api/mcp/token returned 200 but unparsable JSON ($($_.Exception.Message))"
+    }
+    if ($sessionTokenNote -eq "") {
+        if ([string]::IsNullOrWhiteSpace($sessionToken)) {
+            $sessionToken = ""
+            $sessionTokenNote = "GET /api/mcp/token returned an EMPTY token -- session-token enforcement is off (dev mode). A 200 on the POST rung below therefore proves reachability, NOT that the token chain works."
+        }
+        else {
+            $sessionTokenNote = "GET /api/mcp/token returned a token of length $($sessionToken.Length) (value deliberately NOT written to evidence)."
+        }
+    }
+}
+else {
+    $statusText = "no response"
+    if ($tokenResult.StatusCode -ne $null) {
+        $statusText = "HTTP $($tokenResult.StatusCode)"
+    }
+    $sessionTokenNote = "GET /api/mcp/token FAILED ($statusText; $($tokenResult.Error)) -- the POST rung below runs WITHOUT a session header, so a 401 there cannot distinguish 'enforcement armed' from 'token endpoint broken'."
+}
+Write-Log $sessionTokenNote
+# Presence/length only -- the token itself is a credential and must never land
+# in an archived evidence directory.
+$sessionTokenNote | Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "session-token-probe.txt")
+
+$mutatingPath = "/api/knowledge/search"
+$mutatingUrl = "$base$mutatingPath"
+$mutatingFileName = "api-post-" + (Get-SanitizedFileName -ApiPath $mutatingPath) + ".json"
+$mutatingOutFile = Join-Path -Path $EvidenceDir -ChildPath $mutatingFileName
+$mutatingRequestBody = '{"query":"sanity","limit":1}'
+$mutatingHeaders = $null
+if ($sessionToken -ne "") {
+    $mutatingHeaders = @{ "X-JustSearch-Session" = $sessionToken }
+}
+Write-Log "POST $mutatingUrl (session header: $(if ($sessionToken -ne '') { 'sent' } else { 'NOT sent' }))"
+$mutatingResult = Invoke-ApiRequest -Url $mutatingUrl -Method "POST" -Body $mutatingRequestBody -Headers $mutatingHeaders
+
+$mutatingFailReason = ""
+if ($mutatingResult.Ok) {
+    $mutatingResult.Body | Write-Utf8NoBom -Path $mutatingOutFile
+    Write-Log "  -> $($mutatingResult.StatusCode) saved to $mutatingFileName"
+}
+else {
+    $mutatingRecord = New-Object PSObject -Property @{
+        method       = "POST"
+        path         = $mutatingPath
+        url          = $mutatingUrl
+        requestBody  = $mutatingRequestBody
+        sessionHeaderSent = ($sessionToken -ne "")
+        statusCode   = $mutatingResult.StatusCode
+        exception    = $mutatingResult.Error
+        responseBody = $mutatingResult.Body
+    }
+    ($mutatingRecord | ConvertTo-Json -Depth 5) | Write-Utf8NoBom -Path $mutatingOutFile
+
+    if ($mutatingResult.StatusCode -eq 401) {
+        $mutatingFailReason = "FAIL: POST $mutatingPath returned 401 UNAUTHORIZED" +
+            "$(if ($sessionToken -ne '') { ' EVEN WITH the session token from GET /api/mcp/token' } else { ' and no session token could be obtained' })" +
+            " -- the product's entire mutating surface (search, ingest, chat) is unusable in this round. " +
+            "Every GET rung above can still be green while this is true; that combination is the round-10 " +
+            "false-green (finding F7). Do NOT read this round's ladder as a pass. Details: $mutatingFileName. $sessionTokenNote"
+    }
+    else {
+        $statusText = "no response"
+        if ($mutatingResult.StatusCode -ne $null) {
+            $statusText = "HTTP $($mutatingResult.StatusCode)"
+        }
+        $mutatingFailReason = "FAIL: POST $mutatingPath did not succeed ($statusText; $($mutatingResult.Error)) -- " +
+            "the mutating surface was NOT proven to work this round. Details: $mutatingFileName."
+    }
+    Write-Log $mutatingFailReason
+}
+
+$ladderResults += New-Object PSObject -Property @{
+    Method     = "POST"
+    Path       = $mutatingPath
+    StatusCode = $mutatingResult.StatusCode
+    Ok         = $mutatingResult.Ok
+    File       = $mutatingFileName
 }
 
 # ---------------------------------------------------------------------------
@@ -384,6 +572,12 @@ $mcpRan = $false
 $mcpExitCode = $null
 $mcpToolNames = @()
 $mcpNote = ""
+# The npx Inspector CLI has no way to attach an X-JustSearch-Session header, so
+# once the head arms session-token enforcement the inspector path is blocked by
+# construction (round-10 retrospective item 4). Record that explicitly rather
+# than as a generic "MCP failed", and fall back to the raw probe in Step 3.1.
+$mcpBlockedBySession = $false
+$mcpInspectorOutput = ""
 $mcpOutFile = Join-Path -Path $EvidenceDir -ChildPath "mcp-tools-list.json"
 
 $npxCommand = Get-Command "npx" -ErrorAction SilentlyContinue
@@ -511,6 +705,29 @@ else {
             }
         }
 
+        $mcpInspectorOutput = "$stdoutContent`r`n$stderrContent"
+        if (-not $mcpSuccess) {
+            # A 401 does not necessarily SAY "401": Inspector 2.x reacts to an
+            # unauthorized response by starting an interactive OAuth flow and
+            # dying with {"error":{"code":"auth_required", ... requires a TTY}}
+            # (reproduced live against a 401-returning endpoint). Match both the
+            # bare-401 and the OAuth-fallout shapes, or this branch never fires
+            # for the exact case it exists to name.
+            $blockedPatterns = @('\b401\b', 'Unauthorized', 'auth_required', 'Interactive OAuth', 'stored-auth-only')
+            foreach ($pattern in $blockedPatterns) {
+                if ($mcpInspectorOutput -match $pattern) {
+                    $mcpBlockedBySession = $true
+                }
+            }
+            if ($mcpBlockedBySession) {
+                $mcpNote = "MCP requires session token; inspector path blocked -- the npx Inspector CLI (--cli) " +
+                    "cannot attach the X-JustSearch-Session header the head demands in prod mode, so its failure " +
+                    "(a bare 401, or Inspector 2.x's 'auth_required'/interactive-OAuth fallout from one) is a " +
+                    "HARNESS limitation, not evidence that /mcp is broken. Reachability is probed directly in Step 3.1."
+                Write-Log $mcpNote
+            }
+        }
+
         if ($mcpSuccess -and $mcpExitCode -ne 0) {
             $mcpNote = "Note: process exited nonzero (exit code $mcpExitCode) AFTER returning valid tools/list JSON on stdout -- this is the known-benign Node teardown crash on Windows (libuv assertion '!(handle->flags & UV_HANDLE_CLOSING)', exit 0xC0000409), not a real failure. Judged SUCCESS from stdout content, per the 734 follow-up fix."
             Write-Log $mcpNote
@@ -552,6 +769,64 @@ else {
         $note | Write-Utf8NoBom -Path $mcpOutFile
         $mcpRan = $false
     }
+}
+
+# ---------------------------------------------------------------------------
+# Step 3.1: raw POST /mcp reachability probe (round-10 retrospective item 4)
+# ---------------------------------------------------------------------------
+# When the Inspector CLI could not speak to /mcp -- whether because it is
+# blocked by session-token enforcement (the header it cannot send) or because
+# npx was unavailable -- the round still needs to know whether /mcp is REACHABLE
+# and whether the token opens it. This raw JSON-RPC `initialize` POST carries
+# the X-JustSearch-Session header the inspector cannot, so a 401 here (unlike
+# the inspector's) is a real product finding, not a harness limitation.
+
+$mcpProbeStatus = $null
+$mcpProbeRan = $false
+$mcpProbeNote = ""
+$mcpProbeFile = Join-Path -Path $EvidenceDir -ChildPath "mcp-raw-probe.txt"
+
+if (-not $mcpRan) {
+    $mcpProbeRan = $true
+    $mcpProbeHeaders = @{ "Accept" = "application/json, text/event-stream" }
+    if ($sessionToken -ne "") {
+        $mcpProbeHeaders["X-JustSearch-Session"] = $sessionToken
+    }
+    $mcpProbeBody = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"collect-evidence","version":"1.0"}}}'
+    Write-Log "Raw POST $mcpUrl (initialize; session header: $(if ($sessionToken -ne '') { 'sent' } else { 'NOT sent' }))"
+    $mcpProbeResult = Invoke-ApiRequest -Url $mcpUrl -Method "POST" -Body $mcpProbeBody -Headers $mcpProbeHeaders -TimeoutSec 20
+    $mcpProbeStatus = $mcpProbeResult.StatusCode
+
+    if ($mcpProbeResult.Ok) {
+        $mcpProbeNote = "REACHABLE: raw POST /mcp initialize returned $($mcpProbeResult.StatusCode) with the session header attached."
+    }
+    elseif ($mcpProbeResult.StatusCode -eq 401) {
+        $mcpProbeNote = "FAIL: raw POST /mcp initialize returned 401 EVEN WITH the session header" +
+            "$(if ($sessionToken -eq '') { ' (no token could be obtained, so the header was absent)' } else { '' })" +
+            " -- /mcp is not usable this round. $sessionTokenNote"
+    }
+    else {
+        $statusText = "no response"
+        if ($mcpProbeResult.StatusCode -ne $null) {
+            $statusText = "HTTP $($mcpProbeResult.StatusCode)"
+        }
+        $mcpProbeNote = "FAIL: raw POST /mcp initialize did not succeed ($statusText; $($mcpProbeResult.Error))."
+    }
+    Write-Log $mcpProbeNote
+
+    $probeLines = @(
+        $mcpProbeNote,
+        "",
+        "url: $mcpUrl",
+        "method: POST (jsonrpc initialize)",
+        "session header sent: $($sessionToken -ne '')",
+        "inspector blocked by session enforcement: $mcpBlockedBySession",
+        "status code: $(if ($mcpProbeStatus -eq $null) { 'none' } else { $mcpProbeStatus })",
+        "exception: $($mcpProbeResult.Error)",
+        "--- response body ---",
+        $mcpProbeResult.Body
+    )
+    ($probeLines -join "`r`n") | Write-Utf8NoBom -Path $mcpProbeFile
 }
 
 # ---------------------------------------------------------------------------
@@ -710,6 +985,12 @@ else {
     try {
         $goldenRaw = Get-Content -LiteralPath $goldenQueriesPath -Raw -ErrorAction Stop
         $goldenDoc = $goldenRaw | ConvertFrom-Json -ErrorAction Stop
+        # Same mutating surface as the Step-2.5 rung: without the session header
+        # every golden capture below is a 401 recorded as a per-query "error".
+        $goldenHeaders = @{}
+        if ($sessionToken -ne "") {
+            $goldenHeaders["X-JustSearch-Session"] = $sessionToken
+        }
         $goldenQueries = @($goldenDoc.queries)
         Write-Log "Loaded $($goldenQueries.Count) golden quer$(if ($goldenQueries.Count -eq 1) {'y'} else {'ies'}) from $goldenQueriesPath"
 
@@ -722,7 +1003,7 @@ else {
 
             try {
                 $response = Invoke-WebRequest -Uri $searchUrl -Method Post -Body $requestBody `
-                    -ContentType "application/json" -UseBasicParsing -ErrorAction Stop
+                    -ContentType "application/json" -Headers $goldenHeaders -UseBasicParsing -ErrorAction Stop
                 $response.Content | Write-Utf8NoBom -Path $outFile
                 $goldenCapturedCount++
                 Write-Log "  golden $qid -> captured to golden/$qid.json"
@@ -746,7 +1027,7 @@ else {
 
                 try {
                     $legResponse = Invoke-WebRequest -Uri $searchUrl -Method Post -Body $legRequestBody `
-                        -ContentType "application/json" -UseBasicParsing -ErrorAction Stop
+                        -ContentType "application/json" -Headers $goldenHeaders -UseBasicParsing -ErrorAction Stop
                     $legResponse.Content | Write-Utf8NoBom -Path $legOutFile
                     $goldenLegCapturedCount++
                     Write-Log "  golden $qid ($legMode) -> captured to golden/$qid.$legMode.json"
@@ -796,9 +1077,22 @@ $summaryLines += "API sanity ladder:"
 foreach ($result in $ladderResults) {
     $statusText = if ($result.StatusCode -eq $null) { "ERROR" } else { $result.StatusCode }
     $okText = if ($result.Ok) { "2xx" } else { "error/non-2xx" }
-    $summaryLines += ("  {0,-30} -> {1} ({2}) [{3}]" -f $result.Path, $statusText, $okText, $result.File)
+    $summaryLines += ("  {0,-5} {1,-30} -> {2} ({3}) [{4}]" -f $result.Method, $result.Path, $statusText, $okText, $result.File)
 }
 $summaryLines += ""
+$summaryLines += "Session token: $sessionTokenNote"
+if ($mutatingFailReason -ne "") {
+    $summaryLines += ""
+    $summaryLines += "!!! MUTATING-SURFACE RUNG FAILED !!!"
+    $summaryLines += $mutatingFailReason
+}
+else {
+    $summaryLines += "Mutating-surface rung: OK -- POST $mutatingPath returned $($mutatingResult.StatusCode) (the ladder above is not GET-only)."
+}
+$summaryLines += ""
+if ($mcpBlockedBySession) {
+    $summaryLines += "MCP requires session token; inspector path blocked (npx Inspector CLI cannot send X-JustSearch-Session) -- see the raw probe below, not the inspector result, for whether /mcp is reachable."
+}
 if ($mcpRan) {
     $toolNamesSummary = if ($mcpToolNames.Count -gt 0) { ($mcpToolNames -join ", ") } else { "(none)" }
     $summaryLines += "MCP Inspector CLI: SUCCESS (exit code $mcpExitCode; judged from stdout, not exit code; tools: $toolNamesSummary) -> $(Split-Path -Leaf $mcpOutFile)"
@@ -809,6 +1103,9 @@ if ($mcpRan) {
 else {
     $exitText = if ($mcpExitCode -eq $null) { "not run" } else { "exit code $mcpExitCode" }
     $summaryLines += "MCP Inspector CLI: FAILED/NOT RUN ($exitText; gap recorded) -> $(Split-Path -Leaf $mcpOutFile)"
+}
+if ($mcpProbeRan) {
+    $summaryLines += "MCP raw POST /mcp probe: $mcpProbeNote -> $(Split-Path -Leaf $mcpProbeFile)"
 }
 $summaryLines += ""
 if ($tracesCopied) {
@@ -830,6 +1127,17 @@ else {
 
 $okCount = ($ladderResults | Where-Object { $_.Ok }).Count
 $totalCount = $ladderResults.Count
-Write-Host "[collect-evidence] Done. Port=$port Ladder=$okCount/$totalCount 2xx MCP-ran=$mcpRan Golden=$goldenCapturedCount/$($goldenCapturedCount + $goldenFailedCount) EvidenceDir=$EvidenceDir"
+$mutatingVerdict = "OK"
+if ($mutatingFailReason -ne "") {
+    $mutatingVerdict = "FAIL"
+}
+Write-Host "[collect-evidence] Done. Port=$port Ladder=$okCount/$totalCount 2xx MutatingSurface=$mutatingVerdict MCP-ran=$mcpRan Golden=$goldenCapturedCount/$($goldenCapturedCount + $goldenFailedCount) EvidenceDir=$EvidenceDir"
+if ($mutatingFailReason -ne "") {
+    # Loud on the console too: the round-10 reader took the one-line Done
+    # summary at face value. This deliberately does NOT change the exit code --
+    # collect-evidence is capture-only by contract (judgment is host-side) --
+    # but the failure can no longer hide inside a green-looking ladder count.
+    Write-Host "[collect-evidence] $mutatingFailReason"
+}
 
 exit 0
