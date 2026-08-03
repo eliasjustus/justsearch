@@ -360,6 +360,67 @@ export function isReindexCause(code: string): boolean {
   return REINDEX_CAUSE_CODES.has(code);
 }
 
+/**
+ * Tempdoc 804 §B5 (live round-11 finding) — the reason codes that mean the RETRIEVAL pipeline
+ * itself fell back (or cannot be asserted live). Same shape as REINDEX_CAUSE_CODES above: the ONE
+ * place that knows which causes justify the "showing keyword results" consequence, so the impairing
+ * banner stops deriving that claim from SEVERITY alone. Observed defect: on a fully-enriched index
+ * with only `lambdamart.not_configured` (info) + `inference.offline` (warn), the verdict is warn and
+ * the banner read "Semantic search degraded / Showing keyword results" while dense retrieval AND the
+ * cross-encoder were provably live — an AI-features cause worded as a retrieval fallback.
+ *
+ * The three REINDEX_CAUSE_CODES are retrieval-impairing too, but can never reach the branch this set
+ * guards (the reindex branch returns first), so they are not restated here.
+ */
+const RETRIEVAL_IMPAIRING_CODES: ReadonlySet<string> = new Set([
+  // The dense leg is positively known not to serve (StatusLifecycleHandler.denseUnavailableReason).
+  'index.dense_unavailable',
+  // The embedder is down ⇒ query embeddings unavailable ⇒ AUTO degrades to keyword.
+  'worker.health.embedding_not_ready',
+  // The embedder could not be probed: we do NOT know both legs are live, and the reassuring wording
+  // requires positive knowledge (same doctrine as severityForCodes' unknown ⇒ warn default).
+  'worker.health.embedding_probe_missing',
+  // Passage vectors absent / partial ⇒ passage-level dense retrieval is not fully serving.
+  'chunk_embedding.not_ready',
+  'chunk_embedding.in_progress',
+  // The index is being rebuilt from source: results are temporarily incomplete on both legs.
+  'index.rebuilding',
+  // The knowledge server is not serving (or not serving yet): retrieval as a whole is impaired, so
+  // the "search is fully working" claim would be flatly false.
+  'worker.starting',
+  'worker.recovering',
+  'worker.spawn.failed',
+  'worker.restart_exhausted',
+]);
+
+/**
+ * True when {@code code} means retrieval itself is impaired. An UNKNOWN code counts as impairing:
+ * the calm "search is fully working" wording is an assertion, and we never assert full retrieval
+ * health from a code we cannot classify (mirrors `severityForCodes`, which refuses to downgrade an
+ * unrecognized degradation to `info`).
+ */
+function isRetrievalImpairing(code: string): boolean {
+  if (RETRIEVAL_IMPAIRING_CODES.has(code)) return true;
+  return !CAUSE_ROWS.some((row) => row.code === code);
+}
+
+/**
+ * The codes that mean the local AI model is not available, so chat/answer features are off while
+ * retrieval is untouched. Positive gate (not merely "no retrieval cause"): several non-retrieval
+ * causes are also non-AI (`ocr.*`, `worker.throughput_*`, `conversations.locked`), and wording those
+ * as "AI features unavailable" would repeat the very defect this fixes in the other direction.
+ * Excluded on purpose: `inference.starting` (transient, owned by the calm `info` branch),
+ * `inference.policy_*` (policy-disabled never "comes online"), `vdu.ai_offline` (document
+ * understanding, not chat).
+ */
+const AI_MODEL_UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
+  'inference.offline',
+  'inference.model_not_configured',
+  'inference.model_not_found',
+  'inference.runtime_not_installed',
+  'inference.activation_failed',
+]);
+
 const SEVERITY_RANK: Record<ReasonSeverity, number> = { info: 0, warn: 1, error: 2 };
 
 /**
@@ -442,6 +503,20 @@ export function readinessNotice(verdict: SystemHealthVerdict): ReadinessNoticeVi
     return {
       headline: 'Reduced search capability.',
       body: 'An optional capability is unavailable; results are still fully semantic.',
+      causes: wordCauses(codes),
+      remedy: pickRemedy(codes),
+    };
+  }
+  // Tempdoc 804 §B5 (round-11 live finding) — an impairing degradation is not automatically a
+  // RETRIEVAL degradation. Select the consequence by cause CLASS, the way the reindex branch above
+  // already does: only a retrieval-impairing cause licenses "showing keyword results", and only a
+  // positively-known AI-model cause licenses the calm AI-features wording. Anything else (an
+  // unclassified code, or a non-retrieval non-AI cause like `ocr.disabled`) keeps the conservative
+  // impairing wording below rather than acquiring a new claim we cannot back.
+  if (!codes.some(isRetrievalImpairing) && codes.some((c) => AI_MODEL_UNAVAILABLE_CODES.has(c))) {
+    return {
+      headline: 'AI features unavailable.',
+      body: 'Search is fully working — both semantic and keyword retrieval are active. Chat and answer features are unavailable until the AI model is online.',
       causes: wordCauses(codes),
       remedy: pickRemedy(codes),
     };

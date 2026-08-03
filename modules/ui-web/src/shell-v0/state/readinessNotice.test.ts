@@ -147,6 +147,53 @@ describe('readinessNotice (595 §4.2) — projects the ONE verdict into the sear
     expect(n!.causes.join(' ')).not.toContain('index format is out of date');
   });
 
+  // ===== Tempdoc 804 §B5 (live round 11) — an impairing verdict is not automatically a RETRIEVAL
+  // degradation: the body is selected by cause CLASS, never by severity alone. =====
+
+  it('804 §B5: inference.offline ALONE words as AI-features-off — never "keyword results"', () => {
+    const n = readinessNotice(degraded('warn', ['inference.offline']));
+    expect(n!.headline).toBe('AI features unavailable.');
+    // The round-11 defect verbatim: dense retrieval + the cross-encoder were live under this claim.
+    // (The honest body does name keyword retrieval — as ACTIVE; what must be gone is the fallback
+    // claim "Showing keyword results", i.e. keyword INSTEAD of semantic.)
+    expect(n!.body).not.toContain('keyword results');
+    expect(n!.body).not.toContain('Showing keyword');
+    expect(n!.headline).not.toContain('Semantic search degraded');
+    expect(n!.body).toContain('Search is fully working');
+    expect(n!.body).toContain('semantic and keyword retrieval are active');
+    expect(n!.causes).toEqual(['The local AI model is offline']);
+    // Causes + remedy behave exactly as the impairing branch always did.
+    expect(n!.remedy).toEqual({ kind: 'operation', operationId: 'core.reload-inference' });
+  });
+
+  it('804 §B5: the live-observed pair (inference.offline + lambdamart) words as AI-features-off', () => {
+    const n = readinessNotice(degraded('warn', ['lambdamart.not_configured', 'inference.offline']));
+    expect(n!.headline).toBe('AI features unavailable.');
+    expect(n!.body).not.toContain('keyword results');
+    expect(n!.causes).toEqual([
+      'Learned re-ranking (LambdaMART) is not configured',
+      'The local AI model is offline',
+    ]);
+    expect(n!.remedy).toEqual({ kind: 'operation', operationId: 'core.reload-inference' });
+  });
+
+  it('804 §B5: a RETRIEVAL-impairing cause alongside the AI cause keeps the "keyword results" wording', () => {
+    const n = readinessNotice(
+      degraded('warn', ['worker.health.embedding_not_ready', 'inference.offline']),
+    );
+    expect(n!.headline).toBe('Semantic search degraded.');
+    expect(n!.body).toContain('Showing keyword results');
+    expect(n!.body).not.toContain('Search is fully working');
+  });
+
+  it('804 §B5: an UNCLASSIFIED code never acquires the reassuring "fully working" claim', () => {
+    // The calm wording is an assertion about retrieval health; a code we cannot classify is not
+    // evidence for it (same doctrine as severityForCodes' unknown ⇒ warn default).
+    const n = readinessNotice(degraded('warn', ['inference.offline', 'some.future.code']));
+    expect(n!.headline).toBe('Semantic search degraded.');
+    expect(n!.body).not.toContain('Search is fully working');
+  });
+
   it('an unknown code words generically and falls back to Open Health — never silence', () => {
     const n = readinessNotice(degraded('warn', ['some.future.code']));
     expect(n!.causes).toEqual(['Degraded: some.future.code']);
