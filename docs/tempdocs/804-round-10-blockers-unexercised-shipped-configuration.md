@@ -342,3 +342,80 @@ reads `ErrorDetails` first), the staged docs now name the trap, and the packaged
 `Send-JsonPost` (raw HttpClient, immune to the trap) asserts on real bodies — if a packaged-
 only strip does exist after all, that lane is the tripwire that catches it. Round-9 F3 /
 round-10 F6 close as measurement-artifact-with-tripwire rather than defect-fixed.
+
+## §I Implementation record (2026-08-04)
+
+Seven worker bundles, all landed and orchestrator-reviewed; commits `1125b5f1` (backend core),
+`ebace6c5` (token seam + sweep), `3349a16e` (harness/coverage), `46efaf24` (banner/truthfulness),
+`289fd6f4` (six findings), plus `fd39579d` (§D6). Every new test bite-proven (break → observed
+failure → restore), failure lines recorded in the worker reports.
+
+- **B1/B2/B6/B4.2** — as designed, plus two worker-discovered necessities: the contract-resolved
+  model path is written back into settings on successful activation (the engine starts from
+  `settings.getLlmModelPath()`, so a fallback that didn't heal the setting would activate an
+  engine with no model), and `LocalApiIntegrationTestBase` now builds its store via
+  `resolveMode()` instead of a hardcoded READ_WRITE (the harness would otherwise bypass the very
+  axis B1 fixes). B6 chose a `state: recorded|converged` vocabulary over an `applied` boolean
+  (room for `deferred`; two spellings of one fact is a fork). Layering proven in the bites: with
+  B1 reverted, B4.2(a) still passes via B2; with B2 disabled, (b)/(c) still pass via B1.
+- **B3** — resolver null-poisoning fixed with single-flight; `authorizedFetch` seam; both
+  covering seams + all 47 direct sites converted (W2 absorbed part of the sweep; W3 finished
+  it); eslint fetch rules at error in BOTH forms (identifier + member-access — the flat-config
+  replace-not-merge trap was bite-proven); i18n catalogs keep a justified file-level disable
+  (dependency-free foundational modules, GET-only). Two stream duplicates stayed on
+  `authorizedFetch` rather than `consumeShapeStream` — deliberate: audience header + best-effort
+  semantics + `check-live-channels`' declared reader pattern.
+- **B5 + ride-alongs** — the advisory branch renders only when no degrading cause exists AND the
+  verdict is all-info (double guard, cannot over-claim); the reindex headline scopes its causes
+  to `wordCauses(codes.filter(isReindexCause))`. Worker-caught coherence follow-on:
+  `BrainSurface.renderCompatibilityCallouts` filtered by `isReindexCause` and would have
+  REGRESSED to a generic "restore full search" over-claim once schema left the set — now
+  includes the exported `INDEX_SCHEMA_MISMATCH` constant. Known residual (recorded, not fixed):
+  the Brain callout still styles the advisory state warning-toned with an x-circle. Emitter:
+  `chunk_embedding.not_ready` suppressed only when `chunkDocCount == 0 && indexedDocuments == 0`
+  (both conjuncts load-bearing: indexed-docs-with-zero-chunks stays not_ready; chunks-without-
+  parents is an inconsistency that must not be hidden). Banner behavior change to know at
+  review: under a reindex headline, non-reindex secondary causes are now omitted from the
+  banner entirely (they remain on Health/CapabilityMap).
+- **B7** — closed as measurement artifact (§D6).
+- **B8/F2** — `pendingRegistryAdditions` on the status payload; `installedFully` stays true when
+  the only missing artifacts postdate the contract; cleared after any install run.
+- **F8** — root cause was deeper than the label: the substrate wire is hash-only by design
+  (ADR-0028); the hash RENDERED because `resolvePathLazy` memoized a FAILED resolution as a
+  permanent null — one F7-class 401 poisoned every row for the session. Fixed both: errors stay
+  retryable, and `folderRowLabel()` renders basename/title-path with an honest
+  "Folder (path unavailable)" fallback that never shows a bare digest.
+- **F9** — design intent confirmed (rows are projected + burst-collapsed, tempdoc 550 III(b)):
+  the surface now seeds from `GET /api/action-ledger` (the same `ActionLedgerProjection` the
+  stream snapshot serializes — a second read, not a second authority); live rows win; a failed
+  read renders "Activity unavailable" instead of a confident empty claim.
+- **F10** — multi-token palette queries: whitespace-split, every token a subsequence with
+  word-start bonus; single-token path untouched. Faithful-revert bite reproduced the round's
+  exact symptom.
+- **F12** — claim separation: `serverInfo.version` = build version (`EnvRegistry.APP_VERSION`);
+  the tool-surface version (tempdoc 654's deliberate value) moved to
+  `serverInfo._meta["io.justsearch/toolSurfaceVersion"]`; fingerprints swept across three docs
+  + the contract test. The shipped MCPB bridge proxies the backend's initialize, so one fix
+  covers the round's observation.
+- **F13 — closed as ALREADY FIXED, brief refused on evidence** (the correct refusal): the
+  NDJSON escaping + the exact regression test 804 §B9 asked for landed in `0c1acd32`
+  (2026-07-15, in the candidate); the round's 127 broken lines all sit in a pre-upgrade
+  v0.1.0 time window inside a data-dir file that survived the upgrade. The briefed 256-char
+  truncation was ALSO refused: content is already bounded at 1024×16 by the governed
+  search-execution-spans contract, and measurement shows document content is 1.6% of the file —
+  the finding's size premise was wrong. No change shipped; any bound change needs a contract
+  amendment slice.
+- **F14** — Ask rung is a `jf-control` with `unavailableBecause('The local AI model is
+  offline')` (sibling wording verbatim); the test asserts the reason is reachable, not inert.
+
+Open items out of this campaign (logged as observations, not scope): `packaging/mcpb/manifest.json`
+stuck at 0.1.0 (sync-version.ps1 never syncs it; fixing re-packs the bundle → separate change);
+no ui-shot step covers the Activity surface; two empty 1-byte `EffectiveConfig*IntegrationTest`
+files; Brain callout styling residual above.
+
+Verification status at recording time: per-bundle suites all green in worker runs (full gradle
+suite green in W1's and W7's runs; ui-web 377 files / 3901 tests; eslint 0 fetch errors / 23
+pre-existing baseline; sandbox pytest 268; governance gates green except the four pre-existing
+ui-web reds listed in `expected-state.v1.json` + two proven-pre-existing check failures).
+Orchestrator's combined-tree forced suite + ui-shot fixtures + live browser pass recorded below
+when complete.
