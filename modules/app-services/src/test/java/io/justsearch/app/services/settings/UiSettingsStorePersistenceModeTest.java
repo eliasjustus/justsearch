@@ -97,9 +97,9 @@ class UiSettingsStorePersistenceModeTest {
     @Test
     @DisplayName("Invalid mode value falls through to next check")
     void parseModeInvalid_fallsThrough() {
-      // Invalid mode should fall through; with prod=true, resolves to IN_MEMORY
+      // Invalid mode should fall through; with readOnly=true, resolves to IN_MEMORY
       try (var ignored =
-          new SysProps().clearAll().set(MODE_PROP, "invalid").set(PROD_PROP, "true")) {
+          new SysProps().clearAll().set(MODE_PROP, "invalid").set(READONLY_PROP, "true")) {
         assertEquals(IN_MEMORY, PersistenceMode.resolveMode());
       }
     }
@@ -107,8 +107,9 @@ class UiSettingsStorePersistenceModeTest {
     @Test
     @DisplayName("Blank mode value falls through to next check")
     void parseModeBlank_fallsThrough() {
-      // Blank mode should fall through; with prod=true, resolves to IN_MEMORY
-      try (var ignored = new SysProps().clearAll().set(MODE_PROP, "   ").set(PROD_PROP, "true")) {
+      // Blank mode should fall through; with readOnly=true, resolves to IN_MEMORY
+      try (var ignored =
+          new SysProps().clearAll().set(MODE_PROP, "   ").set(READONLY_PROP, "true")) {
         assertEquals(IN_MEMORY, PersistenceMode.resolveMode());
       }
     }
@@ -153,12 +154,11 @@ class UiSettingsStorePersistenceModeTest {
     }
 
     @Test
-    @DisplayName("justsearch.ui.settings.readOnly=false falls through to next check")
+    @DisplayName("justsearch.ui.settings.readOnly=false falls through to the default, even in prod")
     void readOnlyFalse_fallsThrough() {
-      // readOnly=false should fall through; with prod=true, resolves to IN_MEMORY
       try (var ignored =
           new SysProps().clearAll().set(READONLY_PROP, "false").set(PROD_PROP, "true")) {
-        assertEquals(IN_MEMORY, PersistenceMode.resolveMode());
+        assertEquals(READ_WRITE, PersistenceMode.resolveMode());
       }
     }
 
@@ -172,14 +172,15 @@ class UiSettingsStorePersistenceModeTest {
   }
 
   @Nested
-  @DisplayName("Prod mode (third priority)")
+  @DisplayName("Prod mode is not a persistence axis (tempdoc 804 §B1)")
   class ProdMode {
 
     @Test
-    @DisplayName("justsearch.prod=true defaults to IN_MEMORY")
-    void prodMode_defaultsToInMemory() {
+    @DisplayName("justsearch.prod=true with no explicit mode returns READ_WRITE")
+    void prodMode_doesNotImplyInMemory() {
+      // The shipped desktop app boots with justsearch.prod=true; settings must still persist.
       try (var ignored = new SysProps().clearAll().set(PROD_PROP, "true")) {
-        assertEquals(IN_MEMORY, PersistenceMode.resolveMode());
+        assertEquals(READ_WRITE, PersistenceMode.resolveMode());
       }
     }
 
@@ -232,10 +233,8 @@ class UiSettingsStorePersistenceModeTest {
     }
 
     @Test
-    @DisplayName("readOnly flag beats prod mode (both yield IN_MEMORY, confirms order)")
-    void priorityOrder_readOnlyBeatsProd() {
-      // Both result in IN_MEMORY, but this tests the priority by having prod=false
-      // would yield READ_WRITE if readOnly wasn't checked first
+    @DisplayName("readOnly flag beats the default regardless of prod mode")
+    void priorityOrder_readOnlyBeatsDefault() {
       try (var ignored =
           new SysProps().clearAll().set(READONLY_PROP, "true").set(PROD_PROP, "false")) {
         assertEquals(IN_MEMORY, PersistenceMode.resolveMode());
@@ -243,10 +242,10 @@ class UiSettingsStorePersistenceModeTest {
     }
 
     @Test
-    @DisplayName("Prod mode beats default")
-    void priorityOrder_prodBeatsDefault() {
+    @DisplayName("Prod mode does not beat the default")
+    void priorityOrder_prodDoesNotBeatDefault() {
       try (var ignored = new SysProps().clearAll().set(PROD_PROP, "true")) {
-        assertEquals(IN_MEMORY, PersistenceMode.resolveMode());
+        assertEquals(READ_WRITE, PersistenceMode.resolveMode());
       }
     }
   }

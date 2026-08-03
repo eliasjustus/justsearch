@@ -27,6 +27,8 @@ import io.justsearch.app.services.runtimestate.RuntimeStatus;
 import io.justsearch.app.services.worker.OnnxModelStatus;
 import io.justsearch.app.services.worker.WorkerFeatureCache;
 import io.justsearch.configuration.EnvRegistry;
+import io.justsearch.configuration.model.InstallContract;
+import io.justsearch.configuration.model.InstallContractIO;
 import io.justsearch.configuration.resolved.ConfigStore;
 import io.justsearch.configuration.PlatformPaths;
 import io.justsearch.configuration.persistence.AtomicFileWrites;
@@ -77,6 +79,13 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
 
   private static final String STATUS_FILE = "runtime-activation-state.json";
+
+  /**
+   * Model-registry package id of the chat (GGUF) model — the key {@code AiInstallService} writes
+   * into the install contract's {@code models} map and the same id its {@code applySettings} looks
+   * up ({@code registry.findPackage("chat")}).
+   */
+  private static final String CHAT_PACKAGE_ID = "chat";
 
   // Mirror SettingsController behavior for server exe sysprop ownership.
   private static final String SERVER_EXE_SYS_PROP = "justsearch.server.exe";
@@ -536,8 +545,16 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
     UiSettings current = settingsStore.load();
     String modelPath = current.getLlmModelPath();
+    boolean modelPathFromContract = false;
     if (modelPath == null || modelPath.isBlank()) {
-      fail("MODEL_PATH_REQUIRED", "No chat model configured. Import a models pack first.", null);
+      modelPath = resolveChatModelFromInstallContract();
+      modelPathFromContract = modelPath != null && !modelPath.isBlank();
+    }
+    if (modelPath == null || modelPath.isBlank()) {
+      fail(
+          "MODEL_PATH_REQUIRED",
+          "No chat model configured. Run Install AI to download one, or import a models pack.",
+          null);
       return;
     }
     Path model = Path.of(modelPath.trim());
@@ -585,6 +602,12 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       next.setServerExecutablePath(exe.toAbsolutePath().toString());
       if (next.getGpuLayers() <= 0) {
         next.setGpuLayers(99);
+      }
+      // The engine is started from settings (applyRuntimeOverridesBestEffort reads
+      // next.getLlmModelPath()), so a model path recovered from the install contract has to land in
+      // settings or the activation would bring the engine up with no model.
+      if (modelPathFromContract) {
+        next.setLlmModelPath(model.toAbsolutePath().toString());
       }
       settingsStore.save(next);
 
@@ -1249,6 +1272,56 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
 
   private static Path resolveAiHome() {
     return PlatformPaths.resolveAiHome();
+  }
+
+  /**
+   * Tempdoc 804 §B2: second link of the chat-model resolution chain — the install contract, the
+   * durable record of what Install AI actually placed on disk. User settings stay first (an
+   * explicit choice wins); this is the fallback for a settings file that was never written, was
+   * reset, or was discarded by a session-only persistence mode.
+   *
+   * <p>Mirrors the Worker's contract-first resolution ({@code KnowledgeServer#initDeferredModels} /
+   * {@code resolveModelsDir}) rather than inventing a second resolution rule — which is exactly why
+   * the Worker's ONNX features survived an upgrade that left chat dead.
+   *
+   * @return the absolute chat-model path recorded by install, or null when no contract exists, the
+   *     contract has no (non-skipped) chat entry, or the contract cannot be read. Existence of the
+   *     file is NOT checked here — {@code MODEL_NOT_FOUND} on the resolved path is the more useful
+   *     failure than a generic "not configured", and it stays the one existence check.
+   */
+  private String resolveChatModelFromInstallContract() {
+    try {
+      InstallContract contract = InstallContractIO.read(aiHome);
+      if (contract == null) {
+        return null;
+      }
+      Path models = resolveContractModelsDir(contract);
+      if (models == null) {
+        return null;
+      }
+      Path chat = contract.resolveModelPath(CHAT_PACKAGE_ID, models);
+      if (chat == null) {
+        return null;
+      }
+      log.info("No chat model in settings; resolved {} from the install contract", chat);
+      return chat.toAbsolutePath().toString();
+    } catch (Exception e) {
+      log.warn("Failed to read the install contract for chat-model fallback", e);
+      return null;
+    }
+  }
+
+  /** Contract-recorded models dir → resolved config → {@code aiHome/models} (Worker precedence). */
+  private Path resolveContractModelsDir(InstallContract contract) {
+    if (contract != null && contract.modelsDir() != null) {
+      return contract.modelsDir();
+    }
+    ConfigStore cs = ConfigStore.globalOrNull();
+    Path configured = cs != null ? cs.get().paths().modelsDir() : null;
+    if (configured != null) {
+      return configured;
+    }
+    return aiHome == null ? null : aiHome.resolve("models");
   }
 
   /**
