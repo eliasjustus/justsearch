@@ -54,7 +54,7 @@ import { unavailableBecause, AVAILABLE } from '../state/availability.js';
 // Tempdoc 613 — coherence: the compat callout words its cause from the ONE canonical reindex
 // vocabulary (the same `reasonFor`/CAUSE_ROWS the Chat degradation banner + 595 verdict use),
 // so the same condition cannot be worded differently across surfaces.
-import { isReindexCause, reasonFor } from '../state/readinessNotice.js';
+import { INDEX_SCHEMA_MISMATCH, isReindexCause, reasonFor } from '../state/readinessNotice.js';
 import { formatStartupEstimate, humanizeSeconds, elapsedSecondsSince } from '../state/startupEstimate.js';
 import { isAiInstallLive } from '../substrates/ai/aiInstallLiveness.js';
 import { icon } from '../components/Icon.js';
@@ -1728,8 +1728,16 @@ export class BrainSurface extends JfElement {
     // backend derived them onto `retrieval.reasonCodes`), so there is NO FE compatState→code remap to
     // drift. The legacy/mismatch distinction, fingerprint hashes, and schema reason stay as
     // config-altitude technical DETAIL beneath the canonical lead.
+    // Tempdoc 804 §D1: `index.schema_mismatch` left the degrading REINDEX_CAUSE_CODES bucket (it is
+    // advisory — zero query-path consumers), but this callout still renders for a schema INCOMPATIBLE
+    // state, so it must keep projecting that code's canonical wording rather than falling through to
+    // the generic "Rebuild the index to restore full search." lead, which would over-claim here.
     const reindexCauses = [
-      ...new Set((this._unifiedAiState?.verdict?.reasons ?? []).filter(isReindexCause)),
+      ...new Set(
+        (this._unifiedAiState?.verdict?.reasons ?? []).filter(
+          (code: string) => isReindexCause(code) || code === INDEX_SCHEMA_MISMATCH,
+        ),
+      ),
     ];
     const canonicalWordings = reindexCauses.map((code) => reasonFor(code).wording);
     return html`

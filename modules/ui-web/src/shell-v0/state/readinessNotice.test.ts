@@ -56,9 +56,15 @@ describe('readinessNotice (595 §4.2) — projects the ONE verdict into the sear
   });
 
   it('600 PART X: gpu.saturated words calmly (no raw code) — the secondary-cause leak is closed', () => {
-    const n = readinessNotice(degraded('info', ['index.blocked_legacy', 'gpu.saturated']));
+    const n = readinessNotice(degraded('info', ['gpu.saturated']));
     expect(n!.causes).toContain('The GPU is busy; results may be slower');
     expect(n!.causes.join(' ')).not.toContain('Degraded: gpu.saturated'); // never the raw code
+    // 804 §B5 amended the SECOND half of this case: alongside a reindex cause the banner now scopes
+    // its list to causes a rebuild clears, so a secondary cause is OMITTED rather than mis-filed
+    // under the Force-Rebuild remedy. PART X's guarantee — the user never sees a raw code — holds
+    // either way, which is what this assertion pins.
+    const alongsideReindex = readinessNotice(degraded('warn', ['index.blocked_legacy', 'gpu.saturated']));
+    expect(alongsideReindex!.causes.join(' ')).not.toContain('Degraded: gpu.saturated');
   });
 
   it('an IMPAIRING degradation (severity warn) keeps the "Semantic search degraded / keyword results" wording', () => {
@@ -80,6 +86,65 @@ describe('readinessNotice (595 §4.2) — projects the ONE verdict into the sear
     expect(n!.causes).toEqual([
       'The index was built before semantic search was available — rebuild it to enable meaning-based results.',
     ]);
+  });
+
+  // ===== Tempdoc 804 §D1 (sandbox round 10 F1) — the advisory schema state is NOT a degradation =====
+
+  it('804 §D1: index.schema_mismatch ALONE is info + honest — never "keyword-only" / "degraded", rebuild remedy kept', () => {
+    // The severity is the produce-side half of the fix: the code must rank `info`, otherwise the
+    // verdict is degraded-warn and the banner takes the impairing branch no matter what it says.
+    expect(severityForCodes(['index.schema_mismatch'])).toBe('info');
+
+    const n = readinessNotice(degraded('info', ['index.schema_mismatch']));
+    expect(n!.headline).toBe('Index format is out of date.');
+    // Round 10's defect verbatim: dense retrieval was provably live under both these claims.
+    expect(n!.body).not.toContain('keyword-only');
+    expect(n!.body).not.toContain('degraded');
+    expect(n!.headline).not.toContain('Reindex required');
+    expect(n!.body).toContain('Search is fully working');
+    expect(n!.body).toContain('semantic and keyword retrieval are active');
+    // A rebuild IS what adopts the newer index format, so the remedy stays actionable.
+    expect(n!.remedy).toEqual({ kind: 'operation', operationId: 'core.rebuild-index' });
+    // The headline+body already ARE the cause; no bullet that restates them.
+    expect(n!.causes).toEqual([]);
+  });
+
+  it('804 §D1: the advisory notice still lists OTHER info causes (fresh install: schema + LambdaMART)', () => {
+    const n = readinessNotice(degraded('info', ['index.schema_mismatch', 'lambdamart.not_configured']));
+    expect(n!.headline).toBe('Index format is out of date.');
+    expect(n!.causes).toEqual(['Learned re-ranking (LambdaMART) is not configured']);
+  });
+
+  it('804 §D1: a DEGRADING reindex cause keeps the unchanged "Reindex required / keyword-only" wording', () => {
+    const n = readinessNotice(degraded('warn', ['index.embedding_mismatch']));
+    expect(n!.headline).toBe('Reindex required.');
+    expect(n!.body).toBe(
+      'Semantic search is degraded until the index is rebuilt — results may be keyword-only.',
+    );
+    expect(n!.causes).toEqual([
+      'The embedding model changed — rebuild the index to restore semantic search.',
+    ]);
+    expect(n!.remedy).toEqual({ kind: 'operation', operationId: 'core.rebuild-index' });
+  });
+
+  it('804 §B5: the reindex branch scopes its cause list to REINDEX causes only (no rebuild-proof causes)', () => {
+    const n = readinessNotice(
+      degraded('warn', [
+        'index.embedding_mismatch',
+        'index.schema_mismatch',
+        'lambdamart.not_configured',
+        'inference.offline',
+      ]),
+    );
+    expect(n!.headline).toBe('Reindex required.');
+    // Only the cause a rebuild actually clears is listed under the one Force-Rebuild remedy. The
+    // advisory schema code and the two rebuild-proof causes are NOT presented as reindex causes.
+    expect(n!.causes).toEqual([
+      'The embedding model changed — rebuild the index to restore semantic search.',
+    ]);
+    expect(n!.causes.join(' ')).not.toContain('LambdaMART');
+    expect(n!.causes.join(' ')).not.toContain('local AI model is offline');
+    expect(n!.causes.join(' ')).not.toContain('index format is out of date');
   });
 
   it('an unknown code words generically and falls back to Open Health — never silence', () => {
