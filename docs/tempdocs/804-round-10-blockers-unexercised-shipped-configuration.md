@@ -452,7 +452,7 @@ when complete.
      re-created the class for OCR-only degradations.)
 5. **Not browser-provable here** (recorded honestly): token attachment under enforcement —
    dev runs prod=false, so that chain's proof lives in the unit tier (header-attach tests),
-   the B4.2 integration boot (401 без header / 400-with-body via same filter chain), and the
+   the B4.2 integration boot (401 without header / 400-with-body via same filter chain), and the
    B4.3 packaged lane at next installer build. The webview-under-prod full path remains
    sandbox round 11's check (registered as the `webview-performs-one-search` must-watch).
 6. Registers: no search-analysis or inference-runtime obligations touched (confirmed — no
