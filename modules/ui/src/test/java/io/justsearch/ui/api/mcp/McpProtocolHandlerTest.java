@@ -83,10 +83,20 @@ class McpProtocolHandlerTest {
     assertEquals(McpContractVersions.PROTOCOL_VERSION, result.get("protocolVersion"));
     @SuppressWarnings("unchecked")
     Map<String, Object> serverInfo = (Map<String, Object>) result.get("serverInfo");
+    // Tempdoc 804 §B9 (round-10 F12): serverInfo.version is the SERVER IMPLEMENTATION's version —
+    // this build — computed from the one build-version source, never a literal and never the
+    // tool-surface version (which reported 0.5.0 on a 0.2.0 build). The curated tool-surface
+    // version keeps its own namespaced `_meta` slot, so nothing became unreachable.
+    assertEquals(
+        McpProtocolHandler.buildVersion(),
+        serverInfo.get("version"),
+        "serverInfo.version binds to the build version source, not a literal");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> serverMeta = (Map<String, Object>) serverInfo.get("_meta");
     assertEquals(
         McpContractVersions.TOOL_SURFACE_VERSION,
-        serverInfo.get("version"),
-        "serverInfo.version is the MCP-native slot for the curated tool-surface version");
+        serverMeta.get("io.justsearch/toolSurfaceVersion"),
+        "the curated tool-surface version stays reported, under its own name");
     @SuppressWarnings("unchecked")
     Map<String, Object> caps = (Map<String, Object>) result.get("capabilities");
     assertNotNull(caps.get("tools"));
@@ -116,6 +126,49 @@ class McpProtocolHandlerTest {
     assertTrue(
         instr.toLowerCase().contains("prefer"),
         "instructions must be comparative (when to prefer the index), not a bare feature list");
+  }
+
+  /**
+   * Tempdoc 804 §B9 (round-10 F12) — the CONTRACT: {@code serverInfo.version} tracks the build
+   * version source, so it cannot report a version this build does not have. Drives the real source
+   * ({@code -Djustsearch.app.version}, what the packaged shell passes) rather than asserting the
+   * helper against itself.
+   */
+  @Test
+  void initialize_serverInfoVersion_tracksTheBuildVersionSource() throws Exception {
+    String previous = System.getProperty("justsearch.app.version");
+    System.setProperty("justsearch.app.version", "9.9.9-contract-probe");
+    try {
+      Context ctx = mock(Context.class);
+      when(ctx.header("Mcp-Session-Id")).thenReturn(null);
+      when(ctx.body())
+          .thenReturn("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+      ArgumentCaptor<String> resultCaptor = ArgumentCaptor.forClass(String.class);
+      when(ctx.result(resultCaptor.capture())).thenReturn(ctx);
+      when(ctx.contentType(anyString())).thenReturn(ctx);
+
+      handler.handlePost(ctx);
+
+      @SuppressWarnings("unchecked")
+      Map<String, Object> response = MAPPER.readValue(resultCaptor.getValue(), Map.class);
+      @SuppressWarnings("unchecked")
+      Map<String, Object> result = (Map<String, Object>) response.get("result");
+      @SuppressWarnings("unchecked")
+      Map<String, Object> serverInfo = (Map<String, Object>) result.get("serverInfo");
+      assertEquals(
+          "9.9.9-contract-probe",
+          serverInfo.get("version"),
+          "serverInfo.version must be the build version, not the tool-surface version or a literal");
+      assertFalse(
+          McpContractVersions.TOOL_SURFACE_VERSION.equals(serverInfo.get("version")),
+          "the tool-surface version must no longer masquerade as the server version");
+    } finally {
+      if (previous == null) {
+        System.clearProperty("justsearch.app.version");
+      } else {
+        System.setProperty("justsearch.app.version", previous);
+      }
+    }
   }
 
   @Test

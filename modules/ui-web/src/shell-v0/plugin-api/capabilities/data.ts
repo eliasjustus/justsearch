@@ -8,6 +8,7 @@
  * is selected by tier, no runtime if(tier) in any method body.
  */
 
+import { authorizedFetch } from '../../api/authorizedFetch.js';
 import { OperationClient } from '../../operations/OperationClient.js';
 import { subscribePooled } from '../../streaming/EnvelopeStreamPool.js';
 import type {
@@ -45,7 +46,9 @@ async function performFetch(apiBase: string, path: string, init?: HostFetchInit)
     };
   }
   if (init?.signal) fetchInit.signal = init.signal;
-  return globalThis.fetch(url, fetchInit);
+  // 804 B3: the covering seam for every surface's `doFetch` — mutating calls
+  // carry the session token the packaged (prod=true) backend requires.
+  return authorizedFetch(url, fetchInit);
 }
 
 export function createDataApi(tier: PluginTrustTier, apiBase: string): PluginData {

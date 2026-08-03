@@ -15,7 +15,12 @@
 
 import { html, css, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
-import { openActionLedgerStream, type UnifiedActionEntry } from '../operations/ActionLedgerClient.js';
+import {
+  ActionLedgerClient,
+  openActionLedgerStream,
+  projectBackend,
+  type UnifiedActionEntry,
+} from '../operations/ActionLedgerClient.js';
 import type { MultiplexedStream } from '../streaming/MultiplexedStream.js';
 import { getSharedShellEventsMultiplex } from '../streaming/shellEventsMultiplexInstance.js';
 import { collapseBursts } from '../projections/boundedProjection.js';
@@ -63,6 +68,9 @@ export class ActionLedgerView extends JfElement {
     // tempdoc 612 §UX — the seen-cursor snapshot, mirrored into reactive state so the feed re-renders its
     // "new since you looked" marks when any recall surface (incl. the AI digest) advances the one cursor.
     seenCursor: { state: true },
+    // tempdoc 804 §B9 (F9) — did the ledger READ fail? "No activity yet" is a claim about the
+    // ledger, so it may only be made when the ledger was actually read.
+    ledgerUnreadable: { state: true },
   } as const;
 
   declare apiBase: string;
@@ -72,12 +80,17 @@ export class ActionLedgerView extends JfElement {
   declare filterOutcomes: string[];
   declare showRoutine: boolean;
   declare seenCursor: string;
+  declare ledgerUnreadable: boolean;
 
   /** Injected only by tests; production uses the real EventSource via openActionLedgerStream. */
   eventSourceFactory?: (url: string) => EventSource;
+  /** Injected only by tests; production uses `authorizedFetch` via {@link ActionLedgerClient}. */
+  ledgerFetch?: typeof fetch;
 
   private stopStream: (() => void) | null = null;
   private stopSeenSub: (() => void) | null = null;
+  /** tempdoc 804 §B9 (F9) — true once the live stream has delivered rows (the seed then stands down). */
+  private streamDeliveredRows = false;
 
   constructor() {
     super();
@@ -87,6 +100,7 @@ export class ActionLedgerView extends JfElement {
     this.filterOutcomes = [];
     this.showRoutine = false;
     this.seenCursor = getSeenCursor();
+    this.ledgerUnreadable = false;
   }
 
   /** A foreground row the user has not yet seen (newer than the one shared seen-cursor). Routine rows
@@ -176,10 +190,16 @@ export class ActionLedgerView extends JfElement {
       ...(multiplex ? { multiplex } : {}),
       ...(this.eventSourceFactory ? { eventSourceFactory: this.eventSourceFactory } : {}),
       onActivity: (rows) => {
+        // tempdoc 804 §B9 (F9) — a lifecycle frame that carries no rows (connected / heartbeat,
+        // and every frame before the snapshot arrives) must not erase what the snapshot read
+        // already established. The ledger is an append-only ring: it never shrinks to empty.
+        if (rows.length === 0 && this.entries.length > 0) return;
+        this.streamDeliveredRows = this.streamDeliveredRows || rows.length > 0;
         this.entries = rows;
         this.requestUpdate();
       },
     });
+    void this.seedFromLedgerSnapshot();
     // tempdoc 612 §UX — mirror the one shared seen-cursor into reactive state, so the "new" marks
     // re-fold whenever the cursor advances (here, or from the AI digest's "mark as seen" — one boundary).
     this.seenCursor = getSeenCursor();
@@ -194,6 +214,34 @@ export class ActionLedgerView extends JfElement {
     this.stopStream = null;
     this.stopSeenSub?.();
     this.stopSeenSub = null;
+    this.streamDeliveredRows = false;
+  }
+
+  /**
+   * Tempdoc 804 §B9 (round-10 F9) — read the ledger the surface claims to audit.
+   *
+   * The round found this view rendering "No activity yet." while `GET /api/action-ledger` held 405
+   * entries: the live stream was the ONLY source, so any frame the socket did not deliver rendered
+   * as a confident, false "nothing happened". The snapshot GET is the SAME projection as the
+   * stream's snapshot frame (`ActionLedgerController` serializes both through
+   * `ActionLedgerProjection`), so this is a second READ of one record, not a second authority —
+   * and it only fills the gap: live rows always win, and the seed never overwrites them.
+   */
+  private async seedFromLedgerSnapshot(): Promise<void> {
+    const client = new ActionLedgerClient({
+      apiBase: this.apiBase,
+      ...(this.ledgerFetch ? { fetchImpl: this.ledgerFetch } : {}),
+    });
+    try {
+      const backend = await client.fetchBackendLedger();
+      this.ledgerUnreadable = false;
+      if (this.streamDeliveredRows || this.entries.length > 0 || backend.length === 0) return;
+      this.entries = backend.map(projectBackend);
+      this.requestUpdate();
+    } catch {
+      // The ledger could not be read at all — say that, rather than claiming it is empty.
+      this.ledgerUnreadable = this.entries.length === 0 && !this.streamDeliveredRows;
+    }
   }
 
   /** tempdoc 612 §UX — advance the one shared seen-cursor to the newest foreground row (the standard
@@ -308,7 +356,13 @@ export class ActionLedgerView extends JfElement {
 
   override render(): TemplateResult {
     if (this.entries.length === 0) {
-      return html`<div class="empty" data-testid="ledger-empty">No activity yet.</div>`;
+      // tempdoc 804 §B9 (F9) — "No activity yet" is a claim ABOUT the ledger, so it is only made
+      // when the ledger was read. An unreadable ledger is an unknown, not an empty one.
+      return this.ledgerUnreadable
+        ? html`<div class="empty" data-testid="ledger-unreadable">
+            Activity unavailable — the action ledger could not be read.
+          </div>`
+        : html`<div class="empty" data-testid="ledger-empty">No activity yet.</div>`;
     }
     const filters = this.renderFilters();
     // tempdoc 558 §E1 — facet the stream client-side before the existing ordering + burst projection.

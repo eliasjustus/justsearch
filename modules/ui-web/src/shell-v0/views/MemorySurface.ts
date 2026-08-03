@@ -23,6 +23,7 @@ import { html, css, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
 import '../components/Button.js';
 import { surfaceScrollLayoutStyles } from '../primitives/surfaceLayout.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 
 interface MemoryItem {
   readonly id: string;
@@ -69,7 +70,7 @@ export class MemorySurface extends JfElement {
 
   private async loadMemories(): Promise<void> {
     try {
-      const r = await fetch(`${this.base()}/api/memory`);
+      const r = await authorizedFetch(`${this.base()}/api/memory`);
       if (!r.ok) return;
       const j = (await r.json()) as { memories?: MemoryItem[] };
       this.memories = Array.isArray(j.memories) ? j.memories : [];
@@ -83,7 +84,7 @@ export class MemorySurface extends JfElement {
     if (!content || this.busy) return;
     this.busy = true;
     try {
-      await fetch(`${this.base()}/api/memory`, {
+      await authorizedFetch(`${this.base()}/api/memory`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content, kind: 'fact' }),
@@ -99,7 +100,7 @@ export class MemorySurface extends JfElement {
 
   private async forget(id: string): Promise<void> {
     try {
-      await fetch(`${this.base()}/api/memory/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      await authorizedFetch(`${this.base()}/api/memory/${encodeURIComponent(id)}`, { method: 'DELETE' });
       await this.loadMemories();
     } catch {
       /* offline */

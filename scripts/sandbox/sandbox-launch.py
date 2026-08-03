@@ -1296,10 +1296,25 @@ def stage_coverage_brief(share_dir: Path):
     surface not yet classified in the register, the generator exits non-zero and
     we abort staging rather than validate against a silently-incomplete brief —
     that is the whole point (a new surface can no longer be forgotten).
+
+    Sandbox rounds 9+10 (tempdoc 734/804 B10): this is the one place that both
+    stages coverage-manifest.json AND already knows the round's resolved
+    validation mode (write_validation_mode() ran earlier in main() and wrote
+    validation-mode.md; _read_resolved_mode() reads it back, the same way
+    stage_charter() already does for its trailer). Passing that mode to
+    gen_coverage_brief.py via --mode is what makes an item's OPTIONAL 'modes'
+    field (governance/sandbox-coverage.v1.json) actually take effect: an
+    upgrade-survival mustWatch item scoped to 'upgrade-from-release' is staged
+    into coverage-manifest.json/coverage-brief.md ONLY on an upgrade round,
+    not as noise in every fresh-install round's brief.
     """
     gen = SCRIPT_DIR / "gen_coverage_brief.py"
+    mode, _meaning = _read_resolved_mode(share_dir)
+    cmd = [sys.executable, str(gen), "--out-dir", str(share_dir)]
+    if mode and mode != "unknown":
+        cmd.extend(["--mode", mode])
     result = subprocess.run(
-        [sys.executable, str(gen), "--out-dir", str(share_dir)],
+        cmd,
         capture_output=True,
         text=True,
     )
@@ -1310,7 +1325,7 @@ def stage_coverage_brief(share_dir: Path):
             "Coverage-brief generation FAILED (a shipped surface is unclassified in "
             "governance/sandbox-coverage.v1.json). Classify it there before validating."
         )
-    print("Staged coverage-brief.md + coverage-manifest.json")
+    print(f"Staged coverage-brief.md + coverage-manifest.json (mode={mode!r})")
 
 
 def stage_round_plan(share_dir: Path):

@@ -21,6 +21,7 @@ import { activateOnKey } from '../utils/keyboardHandler.js';
 import '../components/SurfaceTabs.js';
 import type { SurfaceTabItem } from '../components/SurfaceTabs.js';
 import { getSurface } from '../../api/registry/SurfaceCatalogClient.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import { present } from '../display/present.js';
 import { formatBytes } from '../display/format.js';
 import { projectFact } from '../display/facts.js';
@@ -53,7 +54,7 @@ import { unavailableBecause, AVAILABLE } from '../state/availability.js';
 // Tempdoc 613 — coherence: the compat callout words its cause from the ONE canonical reindex
 // vocabulary (the same `reasonFor`/CAUSE_ROWS the Chat degradation banner + 595 verdict use),
 // so the same condition cannot be worded differently across surfaces.
-import { isReindexCause, reasonFor } from '../state/readinessNotice.js';
+import { INDEX_SCHEMA_MISMATCH, isReindexCause, reasonFor } from '../state/readinessNotice.js';
 import { formatStartupEstimate, humanizeSeconds, elapsedSecondsSince } from '../state/startupEstimate.js';
 import { isAiInstallLive } from '../substrates/ai/aiInstallLiveness.js';
 import { icon } from '../components/Icon.js';
@@ -765,7 +766,7 @@ export class BrainSurface extends JfElement {
 
   private async fetchJson<T>(path: string, init?: RequestInit): Promise<T | null> {
     try {
-      const res = await fetch(this.base() + path, init);
+      const res = await authorizedFetch(this.base() + path, init);
       if (!res.ok) return null;
       return (await res.json()) as T;
     } catch {
@@ -952,7 +953,7 @@ export class BrainSurface extends JfElement {
   private async setMode(mode: 'simple' | 'advanced'): Promise<void> {
     await this.withBusy('mode', async () => {
       this.settings = { ...this.settings, mode };
-      await fetch(this.base() + '/api/settings/v2', {
+      await authorizedFetch(this.base() + '/api/settings/v2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ui: { mode } }),
@@ -1118,7 +1119,7 @@ export class BrainSurface extends JfElement {
 
   private async patchLlm(updates: Partial<LlmSettings>): Promise<void> {
     this.llm = { ...this.llm, ...updates };
-    await fetch(this.base() + '/api/settings/v2', {
+    await authorizedFetch(this.base() + '/api/settings/v2', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ llm: updates }),
@@ -1727,8 +1728,16 @@ export class BrainSurface extends JfElement {
     // backend derived them onto `retrieval.reasonCodes`), so there is NO FE compatState→code remap to
     // drift. The legacy/mismatch distinction, fingerprint hashes, and schema reason stay as
     // config-altitude technical DETAIL beneath the canonical lead.
+    // Tempdoc 804 §D1: `index.schema_mismatch` left the degrading REINDEX_CAUSE_CODES bucket (it is
+    // advisory — zero query-path consumers), but this callout still renders for a schema INCOMPATIBLE
+    // state, so it must keep projecting that code's canonical wording rather than falling through to
+    // the generic "Rebuild the index to restore full search." lead, which would over-claim here.
     const reindexCauses = [
-      ...new Set((this._unifiedAiState?.verdict?.reasons ?? []).filter(isReindexCause)),
+      ...new Set(
+        (this._unifiedAiState?.verdict?.reasons ?? []).filter(
+          (code: string) => isReindexCause(code) || code === INDEX_SCHEMA_MISMATCH,
+        ),
+      ),
     ];
     const canonicalWordings = reindexCauses.map((code) => reasonFor(code).wording);
     return html`
@@ -2135,6 +2144,15 @@ export class BrainSurface extends JfElement {
             : nothing}
           ${this.installStatus?.installedFully !== undefined
             ? html` · installedFully: <code>${String(this.installStatus.installedFully)}</code>`
+            : nothing}
+          ${/* Tempdoc 804 §B8 — a newer version's added artifacts are their own state ("extra AI
+                components are available"), not a retroactive un-install of a complete one. */ ''}
+          ${this.installStatus?.pendingRegistryAdditions?.length
+            ? html`<div data-testid="install-pending-registry-additions">
+                New AI components are available since this install:
+                <code>${this.installStatus.pendingRegistryAdditions.join(', ')}</code> — run Install
+                to add them.
+              </div>`
             : nothing}
         </div>
         <div class="row">

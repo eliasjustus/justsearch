@@ -164,9 +164,59 @@ function Send-AppText {
   }
 }
 
+function Save-PngChecked {
+  # FAIL-LOUD PNG writer shared by every capture entry point.
+  #
+  # Sandbox round 10 finding H1 (second round reporting it): a capture whose
+  # $bmp.Save() failed -- missing parent directory, unwritable path -- printed
+  # its "saved: <path>" line anyway and the wrapper still exited 0, so the
+  # harness reported evidence it had never produced. Three defences, in order:
+  #   1. create the parent directory if missing (the common cause);
+  #   2. Save inside try/catch that disposes AND rethrows (never swallows);
+  #   3. assert the file actually exists afterwards and throw if it does not
+  #      -- only then print "saved:", with the byte size read AFTER the assert.
+  # The "saved:" line is Write-Host (host stream, not capturable), so a caller
+  # can never treat it as evidence; existence + a nonzero process exit code
+  # are the only honest signals, which is what this enforces.
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)][System.Drawing.Bitmap]$Bitmap,
+    [Parameter(Mandatory = $true)][string]$ResolvedOut,
+    [System.Drawing.Graphics[]]$Graphics = @()
+  )
+  try {
+    $parent = [System.IO.Path]::GetDirectoryName($ResolvedOut)
+    if ($parent -and -not (Test-Path -LiteralPath $parent -PathType Container)) {
+      if (Test-Path -LiteralPath $parent) {
+        throw "parent path '$parent' exists but is not a directory"
+      }
+      New-Item -ItemType Directory -Path $parent -Force -ErrorAction Stop | Out-Null
+    }
+    $Bitmap.Save($ResolvedOut, [System.Drawing.Imaging.ImageFormat]::Png)
+  }
+  catch {
+    throw "CAPTURE FAILED: could not save '$ResolvedOut': $($_.Exception.Message)"
+  }
+  finally {
+    foreach ($gfx in $Graphics) {
+      if ($gfx) {
+        $gfx.Dispose()
+      }
+    }
+    $Bitmap.Dispose()
+  }
+  if (-not (Test-Path -LiteralPath $ResolvedOut -PathType Leaf)) {
+    throw "CAPTURE FAILED: '$ResolvedOut' does not exist after Save() reported no error -- the capture produced NO evidence."
+  }
+  $bytes = (Get-Item -LiteralPath $ResolvedOut).Length
+  Write-Host "saved: $ResolvedOut ($bytes bytes)"
+  return $ResolvedOut
+}
+
 function Save-AppShot {
   # Captures the window described by $Handle's current rect and saves it as
-  # a PNG at an absolute, resolved path (Resolve-AppPath).
+  # a PNG at an absolute, resolved path (Resolve-AppPath). Throws (does not
+  # return quietly) if the capture cannot be produced -- see Save-PngChecked.
   [CmdletBinding()]
   param(
     [Parameter(Mandatory = $true)][IntPtr]$Handle,
@@ -177,22 +227,20 @@ function Save-AppShot {
   $w = $r.Right - $r.Left
   $ht = $r.Bottom - $r.Top
   if ($w -le 0 -or $ht -le 0) {
-    Write-Host "BAD RECT"
-    return $null
+    # Same false-success class as a failed Save: returning $null here left
+    # callers ([void](Save-AppShot ...)) exiting 0 with no PNG on disk.
+    throw "CAPTURE FAILED: BAD RECT for hwnd $Handle ($($w)x$($ht)) -- no capture written to '$resolvedOut'."
   }
   $bmp = New-Object System.Drawing.Bitmap($w, $ht)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
   $g.CopyFromScreen((New-Object System.Drawing.Point($r.Left, $r.Top)), [System.Drawing.Point]::Empty, (New-Object System.Drawing.Size($w, $ht)))
-  $bmp.Save($resolvedOut, [System.Drawing.Imaging.ImageFormat]::Png)
-  $g.Dispose()
-  $bmp.Dispose()
-  Write-Host "saved: $resolvedOut ($((Get-Item -LiteralPath $resolvedOut).Length) bytes)"
-  return $resolvedOut
+  return (Save-PngChecked -Bitmap $bmp -ResolvedOut $resolvedOut -Graphics @($g))
 }
 
 function Save-DesktopShot {
   # Full-desktop capture (CopyFromScreen over the primary screen bounds).
   # Used by snap.ps1 for the Step-0 capability probe / whole-screen evidence.
+  # Throws if the capture cannot be produced -- see Save-PngChecked.
   [CmdletBinding()]
   param([Parameter(Mandatory = $true)][string]$Out)
   $resolvedOut = Resolve-AppPath -Path $Out
@@ -200,11 +248,7 @@ function Save-DesktopShot {
   $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
   $gfx = [System.Drawing.Graphics]::FromImage($bmp)
   $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-  $bmp.Save($resolvedOut, [System.Drawing.Imaging.ImageFormat]::Png)
-  $gfx.Dispose()
-  $bmp.Dispose()
-  Write-Host "saved: $resolvedOut ($((Get-Item -LiteralPath $resolvedOut).Length) bytes)"
-  return $resolvedOut
+  return (Save-PngChecked -Bitmap $bmp -ResolvedOut $resolvedOut -Graphics @($gfx))
 }
 
 function Save-AppShotRegion {
@@ -242,12 +286,10 @@ function Save-AppShotRegion {
   $g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
   $g2.DrawImage($crop, 0, 0, ($W * $Scale), ($H * $Scale))
   $g2.Dispose()
-  $big.Save($resolvedOut, [System.Drawing.Imaging.ImageFormat]::Png)
   $src.Dispose()
   $crop.Dispose()
-  $big.Dispose()
-  Write-Host "saved: $resolvedOut ($($W * $Scale)x$($H * $Scale))"
-  return $resolvedOut
+  Write-Host "cropped region: $($W * $Scale)x$($H * $Scale)"
+  return (Save-PngChecked -Bitmap $big -ResolvedOut $resolvedOut)
 }
 
 function Get-AppApiPort {

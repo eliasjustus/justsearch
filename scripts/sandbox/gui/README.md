@@ -26,6 +26,17 @@ coordinates off the image, act with `click.ps1` / `SendKeys`, then
 re-capture to confirm the action registered. This is functionally what a
 computer-use tool does, assembled from parts native to Windows.
 
+**A capture that fails exits non-zero.** Every capture entry point
+(`Save-DesktopShot` / `Save-AppShot` / `Save-AppShotRegion`) creates the
+output's parent directory if missing, and then THROWS if the PNG is not on
+disk afterwards -- so `snap.ps1` / `win-capture.ps1` / `click.ps1` exit
+non-zero instead of printing a `saved:` line for a file that was never
+written (sandbox round 10, finding H1: a whole round's screenshot evidence
+was reported as captured and did not exist). Judge a capture by the process
+exit code and `Test-Path`, never by the `saved:` line -- it is `Write-Host`
+output, invisible to a caller that redirects stdout. Regression test:
+`scripts/sandbox/test_gui_capture_failure.py`.
+
 **Crop before you read.** A full-window screenshot easily runs to hundreds
 of KB and burns a large chunk of an agent's context just to check one small
 area (a button label, a status line). If you already know the region you

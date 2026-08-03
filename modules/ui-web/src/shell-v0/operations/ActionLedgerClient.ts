@@ -22,6 +22,7 @@ import {
   type JournalEntry,
   type EffectOriginator,
 } from '../substrates/effects/index.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import { EnvelopeStream, type EnvelopeStreamSnapshot } from '../streaming/EnvelopeStream.js';
 import type { MultiplexedStream } from '../streaming/MultiplexedStream.js';
 import { SHELL_EVENT_STREAM_IDS } from '../streaming/shellEventStreamIds.js';
@@ -118,7 +119,7 @@ export class ActionLedgerClient {
 
   constructor(config: ActionLedgerClientConfig = {}) {
     this.apiBase = (config.apiBase ?? '').replace(/\/$/, '');
-    this.fetchImpl = config.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.fetchImpl = config.fetchImpl ?? authorizedFetch;
   }
 
   /** Fetch the backend unified ledger (operations + navigations), oldest-first. */
@@ -430,9 +431,7 @@ export function openActionLedgerStream(
  */
 export function startEffectIngest(config: { apiBase?: string; fetchImpl?: typeof fetch }): () => void {
   const base = (config.apiBase ?? '').replace(/\/$/, '');
-  const fetchImpl =
-    config.fetchImpl ??
-    (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined);
+  const fetchImpl = config.fetchImpl ?? ('fetch' in globalThis ? authorizedFetch : undefined);
   let lastId = 0;
   const flush = (): void => {
     if (!fetchImpl) return; // no fetch available (e.g. a non-browser test env) — nothing to ingest.

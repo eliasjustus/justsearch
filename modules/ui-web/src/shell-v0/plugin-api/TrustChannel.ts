@@ -32,6 +32,7 @@
  *   - The verdict is structurally a value-type (TrustVerdict).
  */
 
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import type { PluginTrustTier } from './PluginRegistry.js';
 
 /**
@@ -127,12 +128,13 @@ export class RemoteTrustChannel implements TrustChannel {
 
   constructor(
     private readonly apiBase: string,
-    // Direct fetch is acceptable here: the plugin verification
-    // endpoint is stateless POST with no session/CSRF coupling.
-    // The `request()` helper would add token handling we don't
-    // want for trust verification.
-    // eslint-disable-next-line no-restricted-globals
-    fetchImpl: typeof fetch = fetch,
+    // 804 B3: this used to default to bare `fetch` on the claim that the
+    // verification endpoint has "no session coupling" — false in the shipped
+    // app: `POST /api/plugins/verify` is a POST, and the packaged backend
+    // (prod=true) enforces the session token on every POST regardless of path,
+    // so every verify 401'd and every plugin was forced UNTRUSTED. The default
+    // is now the authorized seam; explicit injection still wins for tests.
+    fetchImpl: typeof fetch = authorizedFetch,
   ) {
     // Bind the receiver to the global realm. A native `fetch` stored as an instance field and then
     // called as `this.fetchImpl(...)` is invoked with `this` = this RemoteTrustChannel, which the

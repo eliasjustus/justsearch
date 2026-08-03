@@ -284,11 +284,20 @@ const CAUSE_ROWS: ReadonlyArray<{
     remedy: { kind: 'operation', operationId: 'core.rebuild-index' },
     severity: 'warn',
   },
+  // Tempdoc 804 §D1 — ADVISORY, not degrading, and therefore NOT in REINDEX_CAUSE_CODES below.
+  // `index_schema_fp` is a content hash of the canonical `SSOT/catalogs/fields.v1.json`
+  // (SsotCommitMetadataSource.java:81-93, compared at IndexStatusOps.java:995) and has ZERO
+  // query-path consumers: the dense leg is gated by the EMBEDDING fingerprint
+  // (SearchPlanner.java:87 via allowQueryEmbeddings()), never by this one. Sandbox round 10
+  // reproduced the consequence of getting this wrong — `schema_mismatch` true while dense retrieval
+  // was provably live, under a red "results may be keyword-only" banner. A rebuild picks up newer
+  // index features; it does not restore anything that is broken ⇒ `info`, rebuild remedy retained.
   {
     code: 'index.schema_mismatch',
-    wording: 'The index format changed — rebuild the index to restore full search.',
+    wording:
+      'The index format is out of date — search is fully working; rebuilding picks up newer index features.',
     remedy: { kind: 'operation', operationId: 'core.rebuild-index' },
-    severity: 'warn',
+    severity: 'info',
   },
   // Tempdoc 628 Stage C — the index was detected corrupt and is being automatically rebuilt from your
   // files. No one-click rebuild remedy: it's already rebuilding, so the honest affordance is to watch
@@ -326,18 +335,91 @@ const CAUSE_ROWS: ReadonlyArray<{
  * The ONE place that knows which codes carry the "Reindex required" headline, so the 595 verdict
  * (`verdictHeadline`/`verdictBody`) and this banner cannot disagree. Replaces the old synthetic
  * `reindex-required` token that was minted from a boolean (tempdoc 600 PART III §16).
+ *
+ * Tempdoc 804 §D1 — this is the DEGRADING bucket: every member genuinely gates the dense leg
+ * (embedding fingerprint / no fingerprint at all), so the "results may be keyword-only" consequence
+ * is true of all of them. `index.schema_mismatch` was removed from this set: it is advisory (see its
+ * CAUSE_ROWS row) and lumping it here made the banner assert a degradation that measurably was not
+ * happening.
  */
 const REINDEX_CAUSE_CODES: ReadonlySet<string> = new Set([
   'index.blocked_legacy',
   'index.embedding_legacy',
-  'index.schema_mismatch',
   'index.embedding_mismatch',
 ]);
+
+/**
+ * The advisory index-format code (804 §D1): the stored catalog fingerprint differs from the current
+ * one, with no query-path consequence. Named here so surfaces that already headline the rebuild
+ * story do not have to string-match it (the round-2 "dedup by code, not wording" ruling).
+ */
+export const INDEX_SCHEMA_MISMATCH = 'index.schema_mismatch';
 
 /** True when {@code code} is an embedding/schema compat cause that a rebuild fixes. */
 export function isReindexCause(code: string): boolean {
   return REINDEX_CAUSE_CODES.has(code);
 }
+
+/**
+ * Tempdoc 804 §B5 (live round-11 finding) — the reason codes that mean the RETRIEVAL pipeline
+ * itself fell back (or cannot be asserted live). Same shape as REINDEX_CAUSE_CODES above: the ONE
+ * place that knows which causes justify the "showing keyword results" consequence, so the impairing
+ * banner stops deriving that claim from SEVERITY alone. Observed defect: on a fully-enriched index
+ * with only `lambdamart.not_configured` (info) + `inference.offline` (warn), the verdict is warn and
+ * the banner read "Semantic search degraded / Showing keyword results" while dense retrieval AND the
+ * cross-encoder were provably live — an AI-features cause worded as a retrieval fallback.
+ *
+ * The three REINDEX_CAUSE_CODES are retrieval-impairing too, but can never reach the branch this set
+ * guards (the reindex branch returns first), so they are not restated here.
+ */
+const RETRIEVAL_IMPAIRING_CODES: ReadonlySet<string> = new Set([
+  // The dense leg is positively known not to serve (StatusLifecycleHandler.denseUnavailableReason).
+  'index.dense_unavailable',
+  // The embedder is down ⇒ query embeddings unavailable ⇒ AUTO degrades to keyword.
+  'worker.health.embedding_not_ready',
+  // The embedder could not be probed: we do NOT know both legs are live, and the reassuring wording
+  // requires positive knowledge (same doctrine as severityForCodes' unknown ⇒ warn default).
+  'worker.health.embedding_probe_missing',
+  // Passage vectors absent / partial ⇒ passage-level dense retrieval is not fully serving.
+  'chunk_embedding.not_ready',
+  'chunk_embedding.in_progress',
+  // The index is being rebuilt from source: results are temporarily incomplete on both legs.
+  'index.rebuilding',
+  // The knowledge server is not serving (or not serving yet): retrieval as a whole is impaired, so
+  // the "search is fully working" claim would be flatly false.
+  'worker.starting',
+  'worker.recovering',
+  'worker.spawn.failed',
+  'worker.restart_exhausted',
+]);
+
+/**
+ * True when {@code code} means retrieval itself is impaired. An UNKNOWN code counts as impairing:
+ * the calm "search is fully working" wording is an assertion, and we never assert full retrieval
+ * health from a code we cannot classify (mirrors `severityForCodes`, which refuses to downgrade an
+ * unrecognized degradation to `info`).
+ */
+function isRetrievalImpairing(code: string): boolean {
+  if (RETRIEVAL_IMPAIRING_CODES.has(code)) return true;
+  return !CAUSE_ROWS.some((row) => row.code === code);
+}
+
+/**
+ * The codes that mean the local AI model is not available, so chat/answer features are off while
+ * retrieval is untouched. Positive gate (not merely "no retrieval cause"): several non-retrieval
+ * causes are also non-AI (`ocr.*`, `worker.throughput_*`, `conversations.locked`), and wording those
+ * as "AI features unavailable" would repeat the very defect this fixes in the other direction.
+ * Excluded on purpose: `inference.starting` (transient, owned by the calm `info` branch),
+ * `inference.policy_*` (policy-disabled never "comes online"), `vdu.ai_offline` (document
+ * understanding, not chat).
+ */
+const AI_MODEL_UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
+  'inference.offline',
+  'inference.model_not_configured',
+  'inference.model_not_found',
+  'inference.runtime_not_installed',
+  'inference.activation_failed',
+]);
 
 const SEVERITY_RANK: Record<ReasonSeverity, number> = { info: 0, warn: 1, error: 2 };
 
@@ -389,21 +471,52 @@ export function readinessNotice(verdict: SystemHealthVerdict): ReadinessNoticeVi
   // embedding/schema compat codes), not a synthetic boolean-derived token — so the `causes` slot
   // names the SPECIFIC cause instead of being empty.
   const codes = verdict.reasons;
-  const reindexRequired = codes.some(isReindexCause);
-  if (reindexRequired) {
+  // Tempdoc 804 §B5/§D1 — cause-list SCOPING: the rebuild headline lists only the causes a rebuild
+  // clears. Before, every verdict reason was rendered under the one Force-Rebuild remedy, so causes
+  // a rebuild cannot fix (`lambdamart.not_configured`, `inference.offline`) read as reindex causes.
+  // Non-reindex codes keep their own rows and remedies via the paths below (this branch is only
+  // reached when a genuinely degrading reindex cause is present).
+  const reindexCauses = codes.filter(isReindexCause);
+  if (reindexCauses.length > 0) {
     return {
       headline: 'Reindex required.',
       body: 'Semantic search is degraded until the index is rebuilt — results may be keyword-only.',
-      causes: wordCauses(codes),
+      causes: wordCauses(reindexCauses),
       remedy: { kind: 'operation', operationId: 'core.rebuild-index' },
     };
   }
   if (verdict.severity === 'info') {
+    // Tempdoc 804 §D1 — the ADVISORY index-format state. Reached only when no degrading cause is
+    // present (the reindex branch above and the `info` severity together guarantee that), so the
+    // banner can state the measured truth: retrieval is intact on both legs. The rebuild remedy
+    // stays — a rebuild is what adopts the newer index format.
+    if (codes.includes(INDEX_SCHEMA_MISMATCH)) {
+      return {
+        headline: 'Index format is out of date.',
+        body: 'Search is fully working — both semantic and keyword retrieval are active. Rebuilding will pick up newer index features.',
+        causes: wordCauses(codes.filter((c) => c !== INDEX_SCHEMA_MISMATCH)),
+        remedy: { kind: 'operation', operationId: 'core.rebuild-index' },
+      };
+    }
     // §10.3 — cosmetic/optional degradation: search still serves fully; say so
     // accurately and calmly (consistent with the Health header's "Reduced capability").
     return {
       headline: 'Reduced search capability.',
       body: 'An optional capability is unavailable; results are still fully semantic.',
+      causes: wordCauses(codes),
+      remedy: pickRemedy(codes),
+    };
+  }
+  // Tempdoc 804 §B5 (round-11 live finding) — an impairing degradation is not automatically a
+  // RETRIEVAL degradation. Select the consequence by cause CLASS, the way the reindex branch above
+  // already does: only a retrieval-impairing cause licenses "showing keyword results", and only a
+  // positively-known AI-model cause licenses the calm AI-features wording. Anything else (an
+  // unclassified code, or a non-retrieval non-AI cause like `ocr.disabled`) keeps the conservative
+  // impairing wording below rather than acquiring a new claim we cannot back.
+  if (!codes.some(isRetrievalImpairing) && codes.some((c) => AI_MODEL_UNAVAILABLE_CODES.has(c))) {
+    return {
+      headline: 'AI features unavailable.',
+      body: 'Search is fully working — both semantic and keyword retrieval are active. Chat and answer features are unavailable until the AI model is online.',
       causes: wordCauses(codes),
       remedy: pickRemedy(codes),
     };

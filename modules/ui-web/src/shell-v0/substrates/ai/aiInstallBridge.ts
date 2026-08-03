@@ -14,6 +14,7 @@
  */
 
 import { isAiInstallLive } from './aiInstallLiveness.js';
+import { authorizedFetch } from '../../api/authorizedFetch.js';
 
 export interface InstallLiveStatus {
   /** 'idle' | 'running' | 'succeeded' | 'failed' (the backend AiInstallStatus.state). */
@@ -76,7 +77,7 @@ export function installStatusUrl(base: string): string {
 
 async function poll(): Promise<void> {
   try {
-    const r = await fetch(installStatusUrl(apiBase));
+    const r = await authorizedFetch(installStatusUrl(apiBase));
     if (!r.ok) return;
     const raw = (await r.json()) as { state?: string; message?: string; updatedAtEpochMs?: number };
     current = projectInstallStatus(raw);

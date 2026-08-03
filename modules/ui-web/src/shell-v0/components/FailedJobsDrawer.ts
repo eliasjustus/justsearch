@@ -23,6 +23,7 @@ import {
   subscribeFailedJobs,
 } from '../state/failedJobsDrawer.js';
 import { resolvePathLazy } from '../hooks/resolvePathLazy.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import { getOperationClient } from '../operations/OperationClient.js';
 import type { PluginHostApi } from '../plugin-api/plugin-types.js';
 
@@ -130,7 +131,7 @@ export class FailedJobsDrawer extends JfElement {
 
   private doFetch(path: string): Promise<Response> {
     if (this.host_?.data?.fetch) return this.host_.data.fetch(path);
-    return fetch((this.apiBase || '') + path);
+    return authorizedFetch((this.apiBase || '') + path);
   }
 
   /**

@@ -157,6 +157,27 @@ function Send-Options {
   }
 }
 
+function Send-JsonPost {
+  # POSTs a JSON body and returns the status/body WITHOUT throwing on non-2xx
+  # (same HttpClient shape as Get-HttpBody/Send-Options). A 401 has to be
+  # ASSERTABLE here -- Invoke-WebRequest's throw-on-non-2xx would turn the
+  # token-enforcement assertions into catch-and-hope.
+  param(
+    [Parameter(Mandatory = $true)][System.Net.Http.HttpClient]$Client,
+    [Parameter(Mandatory = $true)][string]$Uri,
+    [Parameter(Mandatory = $true)][string]$Json,
+    [string]$SessionToken
+  )
+  $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Post, $Uri)
+  $req.Content = New-Object System.Net.Http.StringContent($Json, [System.Text.Encoding]::UTF8, "application/json")
+  if (-not [string]::IsNullOrEmpty($SessionToken)) {
+    $null = $req.Headers.TryAddWithoutValidation("X-JustSearch-Session", $SessionToken)
+  }
+  $resp = $Client.SendAsync($req).Result
+  $body = $resp.Content.ReadAsStringAsync().Result
+  return [pscustomobject]@{ StatusCode = [int]$resp.StatusCode; Body = $body; Headers = $resp.Headers }
+}
+
 function Get-HeaderValuesOrEmpty {
   param(
     [Parameter(Mandatory = $true)]$Headers,
@@ -542,7 +563,50 @@ try {
     Assert ($acaos.Count -eq 0) ("Expected no Access-Control-Allow-Origin header for blocked origin $blockedOrigin, got: " + ($acaos -join ", "))
   }
 
-  Write-Host "PASS: NSIS installer payload boots and backend readiness checks passed."
+  # ---------------------------------------------------------------------------
+  # 6) Session-token enforcement on the MUTATING surface (tempdoc 804 §B4.3)
+  # ---------------------------------------------------------------------------
+  # Sandbox round 10's F7 class: every readiness/CORS check above is a GET, so a
+  # payload whose entire non-GET surface answers 401 still scored green. The
+  # installed payload boots with -Djustsearch.prod=true, so HeadlessApp
+  # generates a session token and ApiSecurityFilters.setupSessionTokenEnforcement
+  # arms 401-on-missing/invalid for POST/PUT/DELETE. Assert all three legs --
+  # the deny, the allow, AND the wrong-token deny. Without the third leg a 200
+  # in (b) could equally mean enforcement was never armed at all.
+  $searchUri = "http://127.0.0.1:$port/api/knowledge/search"
+  $searchBody = '{"query":"test","limit":1}'
+
+  # (a) No session header -> 401 (enforcement is really armed).
+  $searchNoToken = Send-JsonPost -Client $client -Uri $searchUri -Json $searchBody
+  Add-Content -LiteralPath $evidenceFile -Value ("INFO: POST /api/knowledge/search without session header -> " + $searchNoToken.StatusCode)
+  Assert ($searchNoToken.StatusCode -eq 401) ("Expected POST /api/knowledge/search WITHOUT a session token to be rejected with 401 in prod mode, got $($searchNoToken.StatusCode). Body=$($searchNoToken.Body)")
+
+  # (b) GET /api/mcp/token, then POST with that token -> 200 (server half of the chain works).
+  $tokenResp = Get-HttpBody -Client $client -Uri ("http://127.0.0.1:$port/api/mcp/token")
+  Assert ($tokenResp.StatusCode -eq 200) "Expected GET /api/mcp/token to return 200, got $($tokenResp.StatusCode). Body=$($tokenResp.Body)"
+  $sessionToken = $null
+  try {
+    $sessionToken = [string]($tokenResp.Body | ConvertFrom-Json).token
+  } catch {
+    throw "GET /api/mcp/token returned unparsable JSON: $($tokenResp.Body)"
+  }
+  Assert (-not [string]::IsNullOrWhiteSpace($sessionToken)) ("Expected GET /api/mcp/token to carry a non-empty token in prod mode (empty means token enforcement is DISABLED). Body=" + $tokenResp.Body)
+  Add-Content -LiteralPath $evidenceFile -Value ("INFO: GET /api/mcp/token returned a token of length " + $sessionToken.Length)
+
+  $searchWithToken = Send-JsonPost -Client $client -Uri $searchUri -Json $searchBody -SessionToken $sessionToken
+  Add-Content -LiteralPath $evidenceFile -Value ("INFO: POST /api/knowledge/search with the real session token -> " + $searchWithToken.StatusCode)
+  Assert ($searchWithToken.StatusCode -eq 200) ("Expected POST /api/knowledge/search WITH the session token from /api/mcp/token to return 200, got $($searchWithToken.StatusCode). Body=$($searchWithToken.Body)")
+
+  # (c) Deliberately wrong token -> 401 (proves (b)'s 200 came from the RIGHT token, not from enforcement being off).
+  $wrongToken = "not-the-session-token-0000000000000000000000"
+  Assert ($wrongToken -ne $sessionToken) "Wrong-token fixture collided with the real session token -- pick a different fixture."
+  $searchWrongToken = Send-JsonPost -Client $client -Uri $searchUri -Json $searchBody -SessionToken $wrongToken
+  Add-Content -LiteralPath $evidenceFile -Value ("INFO: POST /api/knowledge/search with a deliberately wrong session token -> " + $searchWrongToken.StatusCode)
+  Assert ($searchWrongToken.StatusCode -eq 401) ("Expected POST /api/knowledge/search with a WRONG session token to be rejected with 401, got $($searchWrongToken.StatusCode) -- the 200 above did not depend on the token, i.e. enforcement is not armed. Body=$($searchWrongToken.Body)")
+
+  Add-Content -LiteralPath $evidenceFile -Value "INFO: Session-token enforcement verified on the mutating surface (401 no-token / 200 right-token / 401 wrong-token)."
+
+  Write-Host "PASS: NSIS installer payload boots, backend readiness checks passed, and session-token enforcement holds on the mutating surface."
 
 } catch {
   $mainError = $_

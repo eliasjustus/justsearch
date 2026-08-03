@@ -40,19 +40,20 @@ public interface BrainRuntimeService {
   String reloadInference() throws Exception;
 
   /**
-   * Switch the inference mode (online/indexing). Validates the mode string
-   * (must be {@code "online"} or {@code "indexing"} — case-insensitive),
-   * checks enterprise policy for online mode, and delegates to
-   * {@link OnlineAiService#switchToOnlineMode()} or
-   * {@link OnlineAiService#switchToIndexingMode()}.
+   * Record a chat-enabled intent expressed in the legacy mode vocabulary. Validates the mode
+   * string (must be {@code "online"} or {@code "indexing"} — case-insensitive) and writes the
+   * intent through the ONE runtime authority (spec write + reconciler nudge); the engine
+   * transition itself is the reconciler's business (tempdoc 737 §12b).
+   *
+   * <p>The write is asynchronous by construction, so the answer is an outcome, not a claim that
+   * the target state has been reached (tempdoc 804 §B6).
    *
    * @param mode {@code "online"} or {@code "indexing"} (case-insensitive)
-   * @return the post-switch current mode
+   * @return the requested mode, the live mode at return time, and whether they already agree
    * @throws IllegalArgumentException for an invalid mode string
-   * @throws Exception on transition failure (policy denied, insufficient
-   *     VRAM, invalid config)
+   * @throws Exception when the intent cannot be recorded (runtime authority unavailable)
    */
-  String switchInferenceMode(String mode) throws Exception;
+  ModeTransitionOutcome switchInferenceMode(String mode) throws Exception;
 
   /**
    * Trigger background offline processing (VDU + embeddings catch-up). Runs

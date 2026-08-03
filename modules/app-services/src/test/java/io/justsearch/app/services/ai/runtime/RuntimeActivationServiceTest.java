@@ -4,7 +4,9 @@ import io.justsearch.app.api.AiRuntimeStatusResponse;
 import io.justsearch.app.api.AiRuntimeActivationStatus;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import ch.qos.logback.classic.Level;
@@ -22,6 +24,10 @@ import io.justsearch.app.services.ai.runtime.RuntimeActivationService;
 import io.justsearch.app.api.EnterprisePolicyService;
 import io.justsearch.app.services.policy.EnterprisePolicyServiceImpl;
 import io.justsearch.app.services.settings.UiSettingsStore;
+import io.justsearch.configuration.model.DownloadProfile;
+import io.justsearch.configuration.model.HardwareProfile;
+import io.justsearch.configuration.model.InstallContract;
+import io.justsearch.configuration.model.InstallContractIO;
 import io.justsearch.configuration.model.ModelRegistry;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -334,6 +340,141 @@ class RuntimeActivationServiceTest {
         "genuine leftover must warn exactly once across repeated polls, not once per poll");
   }
 
+  // --------------- Tempdoc 804 §B2: chat-model resolution chain ---------------
+
+  /**
+   * Round 10's F3 shape: settings hold no {@code llmModelPath} (the shipped prod build discarded
+   * every settings write) while the install contract still records exactly which chat model Install
+   * AI placed on disk. Activation must resolve through the contract and get PAST the model-path
+   * check — the later failure (a dummy exe cannot self-test) is expected and irrelevant here.
+   */
+  @Test
+  void blankSettingsResolvesChatModelFromInstallContract() throws Exception {
+    setHome(tmp);
+    createVariantExe("cuda12");
+    Path chatModel = seedContract("model.gguf", true);
+    assertTrue(Files.isRegularFile(chatModel));
+
+    RuntimeActivationService svc = createServiceWithSettingsFile();
+    svc.startActivate("cuda12");
+    AiRuntimeActivationStatus st = awaitDone(svc, 60_000);
+
+    assertNotEquals(
+        "MODEL_PATH_REQUIRED",
+        st.errorCode,
+        "install contract records a chat model — activation must not claim none is configured: " + st.message);
+    // Precision: reaching the GPU self-test is only possible AFTER both the model-path check and
+    // the MODEL_NOT_FOUND existence check, so a blank result would mean the test passed for the
+    // wrong reason (e.g. an earlier variant/policy failure) rather than because the fallback fired.
+    assertFalse(
+        st.result == null || st.result.isBlank(),
+        "activation must reach the GPU self-test (state=" + st.state + ", errorCode=" + st.errorCode + ")");
+  }
+
+  /**
+   * Settings win: an explicit user choice is not overridden by the contract fallback. The contract
+   * deliberately names a file that does NOT exist, so an inverted precedence would surface as
+   * {@code MODEL_NOT_FOUND} instead of silently passing.
+   */
+  @Test
+  void settingsModelPathWinsOverInstallContract() throws Exception {
+    setHome(tmp);
+    createVariantExe("cuda12");
+    seedContract("ghost.gguf", false);
+
+    Path chosen = tmp.resolve("chosen.gguf");
+    Files.writeString(chosen, "user-chosen-model", StandardCharsets.UTF_8);
+    Path settingsFile = tmp.resolve("settings.json");
+    UiSettingsStore store =
+        new UiSettingsStore(UiSettingsStore.PersistenceMode.READ_WRITE, settingsFile);
+    io.justsearch.app.api.UiSettings s = store.load();
+    s.setLlmModelPath(chosen.toAbsolutePath().toString());
+    store.save(s);
+
+    RuntimeActivationService svc =
+        new RuntimeActivationService(
+            OnlineAiService.unavailable(), store, null, new EnterprisePolicyServiceImpl());
+    svc.startActivate("cuda12");
+    AiRuntimeActivationStatus st = awaitDone(svc, 60_000);
+
+    assertNotEquals(
+        "MODEL_NOT_FOUND",
+        st.errorCode,
+        "settings named an existing model — the contract's (missing) file must not be used: " + st.message);
+    assertFalse(
+        st.result == null || st.result.isBlank(),
+        "activation must reach the GPU self-test with the settings-provided model");
+    assertEquals(
+        chosen.toAbsolutePath().toString(),
+        store.load().getLlmModelPath(),
+        "the user's explicit model path must survive activation untouched");
+  }
+
+  /**
+   * Neither settings nor contract: the failure must name a remedy that exists. "Import a models
+   * pack first" described a dependency the product does not have (tempdoc 804 §B2).
+   */
+  @Test
+  void noSettingsAndNoContractFailsWithInstallAiRemedy() throws Exception {
+    setHome(tmp);
+    createVariantExe("cuda12");
+
+    RuntimeActivationService svc = createServiceWithSettingsFile();
+    svc.startActivate("cuda12");
+    AiRuntimeActivationStatus st = awaitDone(svc, 30_000);
+
+    assertEquals("failed", st.state);
+    assertEquals("MODEL_PATH_REQUIRED", st.errorCode);
+    assertEquals(
+        "No chat model configured. Run Install AI to download one, or import a models pack.",
+        st.message);
+  }
+
+  private RuntimeActivationService createServiceWithSettingsFile() {
+    return new RuntimeActivationService(
+        OnlineAiService.unavailable(),
+        new UiSettingsStore(UiSettingsStore.PersistenceMode.READ_WRITE, tmp.resolve("settings.json")),
+        null,
+        new EnterprisePolicyServiceImpl());
+  }
+
+  private Path createVariantExe(String variantId) throws Exception {
+    Path variantDir = createEmptyVariantDir(variantId);
+    Path exe = variantDir.resolve("llama-server.exe");
+    Files.writeString(exe, "not-a-real-exe", StandardCharsets.UTF_8);
+    return exe;
+  }
+
+  /**
+   * Seeds the v0.1.0-shaped state: a populated install contract naming the chat model, and (when
+   * {@code createFile}) the model file itself under the contract-recorded models dir. Written
+   * through {@link InstallContractIO} — the same writer {@code AiInstallService} uses.
+   */
+  private Path seedContract(String filename, boolean createFile) throws Exception {
+    Path modelsDir = tmp.resolve("models");
+    Path chatDir = modelsDir.resolve("chat");
+    Files.createDirectories(chatDir);
+    Path modelFile = chatDir.resolve(filename);
+    if (createFile) {
+      Files.writeString(modelFile, "gguf-bytes", StandardCharsets.UTF_8);
+    }
+
+    InstallContract contract =
+        new InstallContract(
+            2,
+            System.currentTimeMillis(),
+            HardwareProfile.cpuOnly(),
+            DownloadProfile.GPU_FULL,
+            Map.of(
+                "chat",
+                new InstallContract.InstalledModel(
+                    "chat", filename, null, null, "chat", "sha", List.of(filename), false, null)),
+            modelsDir.toAbsolutePath(),
+            null);
+    InstallContractIO.write(contract, tmp);
+    return modelFile;
+  }
+
   private Path createEmptyVariantDir(String variantId) throws Exception {
     Path variantsRoot = tmp.resolve("native-bin").resolve("llama-server").resolve("variants");
     Path variantDir = variantsRoot.resolve(variantId);
@@ -431,7 +572,12 @@ class RuntimeActivationServiceTest {
   }
 
   private static AiRuntimeActivationStatus awaitDone(RuntimeActivationService svc) throws Exception {
-    long deadline = System.currentTimeMillis() + 5_000;
+    return awaitDone(svc, 5_000);
+  }
+
+  private static AiRuntimeActivationStatus awaitDone(RuntimeActivationService svc, long timeoutMs)
+      throws Exception {
+    long deadline = System.currentTimeMillis() + timeoutMs;
     while (System.currentTimeMillis() < deadline) {
       AiRuntimeActivationStatus st = svc.getActivationStatus();
       if (!"running".equalsIgnoreCase(st.state)) {

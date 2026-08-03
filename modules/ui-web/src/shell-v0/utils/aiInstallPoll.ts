@@ -16,10 +16,18 @@
  * `null`) and simply tries again on the next tick — "stuck forever" becomes structurally impossible.
  */
 
+import { authorizedFetch } from '../api/authorizedFetch.js';
+
 export interface InstallStatus {
   state: string;
   phase: string;
   installedFully?: boolean;
+  /**
+   * Tempdoc 804 §B8 — package ids the CURRENT registry declares that the contract which recorded
+   * this installation never covered (a newer version's added artifact). A distinct state from
+   * "not installed": `installedFully` stays true and these are the extras on offer.
+   */
+  pendingRegistryAdditions?: string[];
   message?: string;
   errorCode?: string;
   lastError?: string;
@@ -122,7 +130,7 @@ const INTERVAL_MS = 1000;
 
 async function fetchJson<T>(path: string): Promise<T | null> {
   try {
-    const res = await fetch((apiBase || '') + path);
+    const res = await authorizedFetch((apiBase || '') + path);
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {

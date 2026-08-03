@@ -20,6 +20,7 @@ import {
   subscribeAgentSession,
 } from '../state/agentSessionStore.js';
 import { isSourcesOpen, setSourcesOpen, subscribeSources } from '../state/sourcesDrawer.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import {
   getSelectedSource,
   setSelectedSource,
@@ -153,7 +154,7 @@ export class SourcesPane extends JfElement {
   private recordCitationClick(parentDocId: string): void {
     const interactionId = getConversationListState().activeId;
     if (!interactionId || !parentDocId) return;
-    void fetch(`${this.apiBase || ''}/api/knowledge/disposition`, {
+    void authorizedFetch(`${this.apiBase || ''}/api/knowledge/disposition`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

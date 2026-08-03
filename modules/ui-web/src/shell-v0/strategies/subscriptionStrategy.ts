@@ -35,6 +35,7 @@
 // of the SSE-subscription routing, parallel to the renderer registry).
 import type { Resource, Category, SubscriptionMode } from '../../api/types/registry.js';
 import type { EnvelopeReducer } from '../streaming/EnvelopeStream.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 
 /** Common envelope: every strategy's state carries the seq cursor + a typed payload. */
 export interface StrategyState<T> {
@@ -207,7 +208,7 @@ function tabularOneShotStrategy<T extends Record<string, unknown>>(
     fetchSnapshot: async (baseUrl: string) => {
       const url = (baseUrl || '') + endpoint;
       try {
-        const response = await fetch(url);
+        const response = await authorizedFetch(url);
         if (!response.ok) {
           return { catalogVersion: 0, data: { items: new Map(), primaryKey } };
         }

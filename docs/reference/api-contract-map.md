@@ -379,7 +379,7 @@ Source: slices 491 (substrate), 496 (FreeChat + Extract), 497 (dynamic dispatch)
 
 **Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/mcp/McpToolSurface.java`
 
-**Transport:** Streamable HTTP at `POST /mcp` on the existing Javalin server (loopback-only). Protocol version `2025-11-25` (single-sourced in `io.justsearch.app.api.mcp.McpContractVersions`). No separate process. The `/mcp` endpoint + curated tool set is one of the three **Runtime Contract** public surfaces (tempdoc 654); `serverInfo.version` carries the SemVer tool-surface version — see [Runtime Contract](runtime-contract.md).
+**Transport:** Streamable HTTP at `POST /mcp` on the existing Javalin server (loopback-only). Protocol version `2025-11-25` (single-sourced in `io.justsearch.app.api.mcp.McpContractVersions`). No separate process. The `/mcp` endpoint + curated tool set is one of the three **Runtime Contract** public surfaces (tempdoc 654); `serverInfo.version` carries the BUILD version and `serverInfo._meta["io.justsearch/toolSurfaceVersion"]` the SemVer tool-surface version — see [Runtime Contract](runtime-contract.md).
 
 6-tool curated surface (tempdoc 500, adapted from eval-validated 4-tool TS server in tempdoc 366):
 
@@ -570,6 +570,27 @@ Coverage invariant: `HealthEventEmitCoverageTest` (in `modules/app-services` tes
 
 - Request body: `folderPath` (required), `limit` (optional), `projection[]` (optional)
 - Response: `files[]` (`docId`, `fields` map), `totalCount`, `tookMs`
+
+### Watched Roots API
+
+**Source of truth:** `modules/ui/src/main/java/io/justsearch/ui/api/IndexingController.java` (`handleListRoots`, `handleAddRoot` at IndexingController.java:156-175, `handleRemoveRoot`) + `modules/ui/src/main/java/io/justsearch/ui/api/routes/IndexingRoutes.java` (route registration)
+
+`GET /api/indexing/roots` lists the Library's watched roots.
+
+- Query parameter: `counts=true` -- includes a per-root bounded file count (capped scan, `-1` if the count itself failed).
+- Response: `{"roots": [{collection, path, fileCount, lastIndexed?}]}` -- `collection` defaults to `"default"` when the root was added without one; `lastIndexed` is omitted (not empty-string) when the root has never completed a scan.
+
+`POST /api/indexing/roots` adds a folder to the Library.
+
+- Request body: `{"path": string, "collection"?: string}` -- `path` is required and must resolve (after `Path.of(path).toAbsolutePath().normalize()`) to an **existing directory**; `collection` is optional and defaults to `"default"` when omitted.
+- **400** when `path` is missing/blank: `{"error": "path is required", "errorCode": "INVALID_REQUEST", ...}`.
+- **400** when `path` does not exist or is not a directory: `{"error": "Path does not exist or is not a directory: <resolved path>", "errorCode": "INVALID_PATH", ...}`.
+- Response (success): `{"status": "ok"}` (200). The root is registered and indexing begins asynchronously -- this call does not itself return a `scanId`; watch `/api/knowledge/status` or the per-root `fileCount` above for progress.
+
+`DELETE /api/indexing/roots` removes a watched root and its indexed documents.
+
+- Request body: `{"path": string, "collection"?: string}` -- same shape and the same **400** `path is required` (`INVALID_REQUEST`) validation as the POST above; no directory-existence check (the root may already be gone from disk).
+- Response: `{"status": "ok", "deletedJobs": <count>}` (200) -- `deletedJobs` is the number of queued/failed jobs purged for the removed root.
 
 ### Indexing Excludes API
 

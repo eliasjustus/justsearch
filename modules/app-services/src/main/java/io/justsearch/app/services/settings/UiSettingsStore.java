@@ -139,18 +139,18 @@ public final class UiSettingsStore {
     }
 
     /**
-     * Resolve persistence mode from overrides, read-only flags, or prod mode.
+     * Resolve persistence mode from its own explicit configuration.
      *
      * <p>Resolution order:
      * <ol>
      *   <li>Explicit override via {@code justsearch.ui.settings.mode} sysprop/env
      *   <li>Read-only flags ({@code justsearch.ui.settings.readOnly})
-     *   <li>Prod mode ({@code justsearch.prod=true}) defaults to IN_MEMORY for isolation
      *   <li>Default: READ_WRITE
      * </ol>
      *
-     * <p>The prod mode default prevents production/CI verification from being contaminated
-     * by user-profile settings (e.g., dev index paths in settings.json).
+     * <p>Persistence is its own axis: {@code justsearch.prod} governs the loopback trust
+     * boundary only and implies nothing here. Verification harnesses that want isolation pass
+     * the explicit override themselves (tempdoc 804 §B1).
      */
     public static PersistenceMode resolveMode() {
       String override = EnvRegistry.UI_SETTINGS_MODE.get().orElse(null);
@@ -162,12 +162,6 @@ public final class UiSettingsStore {
       boolean readOnly =
           EnvRegistry.UI_SETTINGS_READONLY.get().map(s -> Boolean.parseBoolean(s.trim())).orElse(false);
       if (readOnly) {
-        return IN_MEMORY;
-      }
-      // Prod mode defaults to IN_MEMORY to prevent settings contamination during verification
-      boolean prodMode =
-          EnvRegistry.PROD_MODE.get().map(s -> Boolean.parseBoolean(s.trim())).orElse(false);
-      if (prodMode) {
         return IN_MEMORY;
       }
       return READ_WRITE;

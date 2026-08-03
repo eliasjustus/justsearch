@@ -26,9 +26,15 @@ source — it invents no version except the umbrella).
 | `mcpProtocolVersion` | MCP spec version this build speaks | `McpContractVersions.PROTOCOL_VERSION` |
 | `mcpToolSurfaceVersion` | JustSearch's own curated-tool-surface version | `McpContractVersions.TOOL_SURFACE_VERSION` |
 
-The MCP `initialize` response reports `protocolVersion` and
-`serverInfo.version` from the **same** `McpContractVersions` constants, so the
-manifest and the MCP handshake cannot desync.
+The MCP `initialize` response reports `protocolVersion` from the **same**
+`McpContractVersions` constant as the manifest, so the manifest and the MCP
+handshake cannot desync. `serverInfo.version` is a different claim — the version
+of the server *implementation*, i.e. the build — so it binds to the build-version
+source (`EnvRegistry.APP_VERSION`, set by the packaged shell from the Tauri package
+version), and the curated tool-surface version rides
+`serverInfo._meta["io.justsearch/toolSurfaceVersion"]` alongside it. Reporting the
+tool-surface version *as* the server version showed `0.5.0` on a `0.2.0` build
+(sandbox round 10, F12).
 
 ## Compatibility matrix
 

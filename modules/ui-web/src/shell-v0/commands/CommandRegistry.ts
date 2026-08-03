@@ -248,9 +248,57 @@ export interface ScoredCommand {
   matches: number[];
 }
 
+/**
+ * Tempdoc 804 §B9 (round-10 F10) — multi-word queries.
+ *
+ * The single-run scorer below walks the target once, in order, INCLUDING the query's spaces — so
+ * `install ai` could never match "Start AI Install" (after consuming `install` at the end of the
+ * label there is no trailing space left to match), while `repair` matched "Repair AI Install" fine.
+ * The palette therefore missed the flagship first-run action under the most natural phrasing.
+ *
+ * A whitespace-separated query is now scored token-wise: EVERY token must match the label as a
+ * subsequence, order-independent across tokens. A token that lands on a word start earns the same
+ * word-boundary bonus a leading match earns, so a label whose words the query names ranks above one
+ * that merely contains the letters. Single-token queries take the original path unchanged.
+ */
+const WORD_BOUNDARY_BONUS = 5;
+
+/** Bonus when `token` occurs contiguously at a word start in `target` (the "you named this word" case). */
+function wordPrefixBonus(tokenLower: string, targetLower: string): number {
+  let from = 0;
+  for (;;) {
+    const at = targetLower.indexOf(tokenLower, from);
+    if (at === -1) return 0;
+    const prev = at > 0 ? targetLower[at - 1]! : '';
+    if (at === 0 || prev === ' ' || prev === '-' || prev === '_' || prev === '.') {
+      return WORD_BOUNDARY_BONUS * 2;
+    }
+    from = at + 1;
+  }
+}
+
 export function fuzzyScore(query: string, target: string): { score: number; matches: number[] } | null {
   if (query.length === 0) return { score: 0, matches: [] };
 
+  const tokens = query.trim().split(/\s+/).filter((t) => t.length > 0);
+  if (tokens.length > 1) {
+    const targetLower = target.toLowerCase();
+    const matched = new Set<number>();
+    let total = 0;
+    for (const token of tokens) {
+      const result = scoreSingleRun(token, target);
+      if (!result) return null; // every token must be present
+      total += result.score + wordPrefixBonus(token.toLowerCase(), targetLower);
+      for (const m of result.matches) matched.add(m);
+    }
+    return { score: total, matches: [...matched].sort((a, b) => a - b) };
+  }
+
+  return scoreSingleRun(tokens[0] ?? query, target);
+}
+
+/** The original single-run subsequence scorer — one ordered walk of the target. */
+function scoreSingleRun(query: string, target: string): { score: number; matches: number[] } | null {
   const queryLower = query.toLowerCase();
   const targetLower = target.toLowerCase();
   const matches: number[] = [];

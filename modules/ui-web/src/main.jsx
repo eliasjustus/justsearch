@@ -69,6 +69,7 @@ import './i18n'
 // <jf-stage>) at module load.
 import './shell-v0/index.ts'
 import { appLog } from './utils/logger.ts'
+import { authorizedFetch } from './shell-v0/api/authorizedFetch.ts'
 
 // Global unhandled error capture — log-only, no UI notification
 window.addEventListener('unhandledrejection', (event) => {
@@ -189,7 +190,7 @@ async function bootstrap() {
     // requirements. Best-effort: if /infra/capabilities is unavailable
     // the registry falls back to the legacy single-Category check.
     try {
-      const res = await fetch(`${apiBase}/infra/capabilities`)
+      const res = await authorizedFetch(`${apiBase}/infra/capabilities`)
       if (res.ok) {
         const view = await res.json()
         const versions = view?.serverCapabilities?.contractVersions
@@ -359,7 +360,7 @@ async function bootstrap() {
     setVirtualOperationPublisher(async () => {
       try {
         const tools = serializeVirtualOperationsForAgent()
-        await fetch(`${apiBase}/api/chat/agent/virtual-operations`, {
+        await authorizedFetch(`${apiBase}/api/chat/agent/virtual-operations`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tools }),
