@@ -67,6 +67,33 @@ const listResponseSchema = z
   })
   .loose();
 
+/**
+ * Tempdoc 804 §B9 (round-10 F8) — how a watched-folder row NAMES itself.
+ *
+ * The row used to render `[b5ec60937d1a…]` — the raw path hash — whenever the lazy resolver had
+ * not answered, next to a Remove button: the only offered action on an unidentifiable row was the
+ * destructive one. The wire is hash-only by construction (ADR-0028 + `LibraryResolveHashOnlyCallerPin`
+ * keep raw paths off it), so the fix is not "put the path on the wire": it is that an UNRESOLVED row
+ * says so in words, and a resolved one shows its folder name with the full path on hover.
+ *
+ * Returns the visible `label` and the `title` (hover/assistive text). The hash stays the row's
+ * identity for Remove/failed-jobs intents — it is just never the user-visible name.
+ */
+export function folderRowLabel(
+  pathHash: string,
+  resolvedPath: string | undefined,
+): { label: string; title: string } {
+  if (resolvedPath && resolvedPath.length > 0) {
+    const name = resolvedPath.split(/[\\/]/).filter((s) => s.length > 0).pop() ?? resolvedPath;
+    return { label: name, title: resolvedPath };
+  }
+  return {
+    label: 'Folder (path unavailable)',
+    // The short hash is diagnostic detail, not the name — reachable on hover, never the label.
+    title: pathHash ? `Path could not be resolved (id ${pathHash.slice(0, 12)}…)` : 'Path could not be resolved',
+  };
+}
+
 const RESOURCE_ID = 'core.indexed-roots';
 const ENDPOINT = '/api/indexing-roots/substrate';
 const OP_ADD = 'core.add-watched-root';
@@ -441,7 +468,8 @@ export class LibrarySurface extends JfElement {
       });
       return {
         pathHash,
-        displayPath: this.resolvedPaths[pathHash] ?? `[${pathHash.slice(0, 12)}…]`,
+        // Tempdoc 804 §B9 (F8) — never the raw hash as the row's name (see folderRowLabel).
+        displayPath: folderRowLabel(pathHash, this.resolvedPaths[pathHash]).label,
         status: fs.glyph,
         metaText: fs.metaText,
         walkError: undefined,
@@ -722,7 +750,12 @@ export class LibrarySurface extends JfElement {
 
   private renderCard(root: IndexedRootView): TemplateResult {
     const pathHash = root.pathHash ?? '';
-    const displayPath = this.resolvedPaths[pathHash] ?? `[${pathHash.slice(0, 12)}…]`;
+    // Tempdoc 804 §B9 (F8) — the row's NAME is its folder name (full path on hover), or an honest
+    // "path unavailable"; never the raw hash beside a Remove button.
+    const { label: displayPath, title: displayTitle } = folderRowLabel(
+      pathHash,
+      this.resolvedPaths[pathHash],
+    );
     // Tempdoc 599 §9.1 — glyph + meta line project from the single folderStatus seam, so the row
     // reports a truthful state (✓ only on job drain) and a live "Indexing · N remaining" count-down.
     const status = folderStatus(root, {
@@ -737,7 +770,12 @@ export class LibrarySurface extends JfElement {
         <span class="card-icon">${icon({ name: 'folder', size: 24 })}</span>
         <div class="card-info">
           <div class="card-path">
-            ${this.renderStatusIcon(status.glyph)}<span>${displayPath}</span>
+            ${this.renderStatusIcon(status.glyph)}<span
+              class="folder-name"
+              title=${displayTitle}
+              data-testid="library-folder-name"
+              >${displayPath}</span
+            >
           </div>
           <div class="card-meta">
             ${status.metaText}${status.failed > 0

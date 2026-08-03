@@ -167,4 +167,55 @@ describe('CommandPaletteProjection (§21.C)', () => {
     // via resolveActionIdFromCommandId.
     expect(hits.some((h) => h.entry.origin === 'action')).toBe(true);
   });
+
+  // Tempdoc 804 §B9 (round-10 F10) — the palette matched leading tokens only: `repair` found
+  // "Repair AI Install", but `install ai` (the most natural phrasing for the flagship first-run
+  // action) returned NO action at all, only the raw-search intent. The query's space could never
+  // be matched after consuming `install` at the end of the label.
+  describe('multi-word queries match non-leading tokens (F10)', () => {
+    const registerAiInstallActions = (): void => {
+      registerAction({
+        id: 'core.action.shell.go-to-brain-install',
+        title: 'Start AI Install',
+        provenance: CORE_PROVENANCE,
+        handler: () => ({ kind: 'noop' as const }),
+      });
+      registerAction({
+        id: 'core.action.shell.go-to-brain-repair',
+        title: 'Repair AI Install',
+        provenance: CORE_PROVENANCE,
+        handler: () => ({ kind: 'noop' as const }),
+      });
+    };
+
+    it('ranks the AI-install actions above the raw-search intent for "install ai"', () => {
+      registerAiInstallActions();
+      const results = searchPaletteEntries('install ai');
+
+      const labels = results.map((r) => r.entry.label);
+      expect(labels).toContain('Start AI Install');
+      expect(labels).toContain('Repair AI Install');
+
+      const searchIntentIdx = results.findIndex((r) => r.entry.origin === 'intent');
+      expect(searchIntentIdx).toBeGreaterThan(-1);
+      expect(results.findIndex((r) => r.entry.label === 'Start AI Install')).toBeLessThan(
+        searchIntentIdx,
+      );
+      expect(results.findIndex((r) => r.entry.label === 'Repair AI Install')).toBeLessThan(
+        searchIntentIdx,
+      );
+    });
+
+    it('still matches the single-token query "repair" (no regression)', () => {
+      registerAiInstallActions();
+      const results = searchPaletteEntries('repair');
+      expect(results.map((r) => r.entry.label)).toContain('Repair AI Install');
+    });
+
+    it('requires EVERY token to be present (a token the label lacks still misses)', () => {
+      registerAiInstallActions();
+      const results = searchPaletteEntries('install zzz');
+      expect(results.map((r) => r.entry.label)).not.toContain('Start AI Install');
+    });
+  });
 });

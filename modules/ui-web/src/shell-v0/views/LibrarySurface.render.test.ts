@@ -12,7 +12,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import './LibrarySurface.js';
-import type { LibrarySurface } from './LibrarySurface.js';
+import { folderRowLabel, type LibrarySurface } from './LibrarySurface.js';
 import type { PluginHostApi } from '../plugin-api/plugin-types.js';
 import {
   __resetAiStateForTest,
@@ -98,6 +98,74 @@ describe('LibrarySurface — transition-aware empty state (595 §4.3)', () => {
       const text = el.shadowRoot?.textContent ?? '';
       expect(text).toContain('No watched folders');
       expect(text).not.toContain('Rebuilding index');
+    } finally {
+      el.remove();
+    }
+  });
+});
+
+/**
+ * Tempdoc 804 §B9 (round-10 F8) — the INDEXED FOLDERS rows rendered `[b5ec60937d1a…]`, an opaque
+ * path hash, beside a Remove button: the only action offered on a row the user cannot identify was
+ * the destructive one. A row never names itself with a bare hex id.
+ */
+describe('LibrarySurface — a folder row never names itself with a hash (804 F8)', () => {
+  const HASH = 'b5ec60937d1af0c2e4d9aa1177ce33bd';
+  const BARE_HEX_ID = /\b[0-9a-f]{12,}\b/;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    __resetAiStateForTest();
+  });
+  afterEach(() => __resetAiStateForTest());
+
+  it('renders the folder name with the full path on hover once the hash resolves', () => {
+    const { label, title } = folderRowLabel(HASH, 'C:\\Users\\me\\Documents\\seed-corpus');
+    expect(label).toBe('seed-corpus');
+    expect(label).not.toMatch(BARE_HEX_ID);
+    expect(title).toBe('C:\\Users\\me\\Documents\\seed-corpus');
+  });
+
+  it('says so in words when the path is unresolved — the hash is never the label', () => {
+    const { label, title } = folderRowLabel(HASH, undefined);
+    expect(label).not.toMatch(BARE_HEX_ID);
+    expect(label).toContain('unavailable');
+    // The id stays reachable as diagnostic detail on hover, not as the row's name.
+    expect(title).toContain(HASH.slice(0, 12));
+  });
+
+  it('renders the resolved name in the card DOM (not the hash)', async () => {
+    const el = document.createElement('jf-library-surface') as LibrarySurface;
+    // The card renderer projects its meta line through host utilities (folderStatus), so this test
+    // needs the fuller host the empty-state tests never reach.
+    el.host_ = {
+      platform: { capabilities: new Set<string>() },
+      data: { fetch: async () => ({ ok: false, status: 503 }) as unknown as Response },
+      utilities: { formatRelativeTime: () => 'just now' },
+    } as unknown as PluginHostApi;
+    document.body.appendChild(el);
+    await el.updateComplete;
+    try {
+      el.roots = [
+        {
+          pathHash: HASH,
+          collection: 'default',
+          fileCount: 400,
+          lastIndexedIsoTime: '',
+          status: 'indexed',
+        },
+      ];
+      el.resolvedPaths = { [HASH]: '/home/me/Documents/seed-corpus' };
+      el.requestUpdate();
+      await el.updateComplete;
+
+      const name = el.shadowRoot?.querySelector('[data-testid="library-folder-name"]');
+      expect(name).not.toBeNull();
+      expect(name?.textContent?.trim()).toBe('seed-corpus');
+      expect(name?.getAttribute('title')).toBe('/home/me/Documents/seed-corpus');
+      // The row still carries a Remove action — it just now names what it would remove.
+      expect(el.shadowRoot?.textContent ?? '').toContain('Remove');
+      expect(name?.textContent ?? '').not.toMatch(BARE_HEX_ID);
     } finally {
       el.remove();
     }

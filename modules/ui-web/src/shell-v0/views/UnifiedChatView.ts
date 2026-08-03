@@ -2507,7 +2507,23 @@ export class UnifiedChatView extends JfElement {
         ${this.isLanding()
           ? html`<div class="escalation-strip">
               <div>Search instantly · no AI</div>
-              <div>Ask — answers with citations</div>
+              ${/* Tempdoc 804 §B9 (round-10 F14) — Ask was the ONE escalation rung that failed
+                    silently offline: a plain <div>, so clicking it changed nothing and said nothing
+                    while its siblings (Delegate, Extract) both named the reason. It is the same kind
+                    of affordance as Delegate, so it is the same kind of control: availability-gated
+                    by the one operability authority, with the sibling wording. */ ''}
+              <jf-control
+                class="escalation-ask"
+                data-testid="escalation-ask"
+                label="Ask a question and get an answer with citations"
+                .availability=${this.aiState?.capabilities?.chat
+                  ? undefined
+                  : unavailableBecause('The local AI model is offline')}
+                .onActivate=${() => {
+                  this.affordance = 'documents';
+                }}
+                >Ask — answers with citations</jf-control
+              >
               ${/* S8 live finding — the tab row's death orphaned agent-mode entry (the palette
                     only carries diagnostics); until delegation folds into ask-turns entirely, the
                     strip's Delegate line IS the entry (explicit pin, availability-gated). */ ''}

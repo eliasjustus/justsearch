@@ -58,13 +58,34 @@ function updateFrame(row: unknown, seq: number): unknown {
 let host: ActionLedgerView;
 let es: FakeEventSource | undefined;
 
+/**
+ * A stub for the snapshot READ the view now also performs (tempdoc 804 §B9 / F9: the live stream
+ * used to be the only source, so a frame the socket never delivered rendered as a false "No
+ * activity yet" over a full ledger). Tests that care about the stream keep an EMPTY ledger here, so
+ * the seed cannot influence what they assert.
+ */
+function ledgerFetchReturning(entries: unknown[]): typeof fetch {
+  return (async () =>
+    ({
+      ok: true,
+      status: 200,
+      json: async () => ({ entries }),
+    }) as unknown as Response) as unknown as typeof fetch;
+}
+
+/** Let the async snapshot READ (fetch → json → state) settle before asserting. */
+async function flushMicrotasks(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 /** Create + mount a <jf-action-ledger> wired to a fresh FakeEventSource. */
-function mount(): FakeEventSource {
+function mount(ledgerEntries: unknown[] = []): FakeEventSource {
   host = document.createElement('jf-action-ledger') as ActionLedgerView;
   host.eventSourceFactory = (url: string) => {
     es = new FakeEventSource(url);
     return es as unknown as EventSource;
   };
+  host.ledgerFetch = ledgerFetchReturning(ledgerEntries);
   document.body.appendChild(host);
   return es!;
 }
@@ -446,6 +467,86 @@ describe('<jf-action-ledger> (tempdoc 550 C1 / thesis II — live read-view)', (
       // the cursor advanced to the newest FOREGROUND row (the agent op at :03, not the routine nav at :09)
       expect(getSeenCursor()).toBe('2026-05-26T00:00:03.000Z');
       expect(host.shadowRoot!.querySelectorAll('[data-testid="ledger-new-dot"]').length).toBe(0);
+    });
+  });
+
+  /**
+   * Tempdoc 804 §B9 (round-10 F9): the Activity surface rendered "No activity yet." while
+   * `GET /api/action-ledger` held 405 entries. The live stream was the only source, so a snapshot
+   * frame the socket never delivered rendered as a confident, false "nothing happened".
+   */
+  describe('the empty state is computed from the ledger it claims to describe (804 F9)', () => {
+    const indexRows = [
+      {
+        id: 'index:1',
+        kind: 'index',
+        occurredAt: '2026-05-26T00:00:01.000Z',
+        originator: 'system',
+        collection: 'default',
+        state: 'DONE',
+      },
+      {
+        id: 'index:2',
+        kind: 'index',
+        occurredAt: '2026-05-26T00:00:02.000Z',
+        originator: 'system',
+        collection: 'default',
+        state: 'DONE',
+      },
+    ];
+
+    it('renders rows from the ledger snapshot when the live stream delivers nothing', async () => {
+      mount(indexRows); // stream mounted, but NO frame is ever emitted
+      await host.updateComplete;
+      await flushMicrotasks(); // let the snapshot read settle
+      await host.updateComplete;
+
+      expect(host.shadowRoot!.querySelector('[data-testid="ledger-empty"]')).toBeNull();
+      // Adjacent same-collection index rows collapse into one burst summary (550 III(b)).
+      const rendered = host.shadowRoot!.querySelectorAll(
+        '[data-testid="ledger-row"], [data-testid="ledger-burst"]',
+      );
+      expect(rendered.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('live stream rows win over the snapshot seed (one authority, two reads)', async () => {
+      const src = mount(indexRows);
+      src.emitFrame(
+        snapshotFrame([
+          {
+            id: 'op:1',
+            kind: 'operation',
+            operationId: 'core.a',
+            occurredAt: '2026-05-26T00:00:05.000Z',
+            originator: 'agent',
+          },
+        ]),
+      );
+      await host.updateComplete;
+      await flushMicrotasks();
+      await host.updateComplete;
+
+      const rows = host.shadowRoot!.querySelectorAll('[data-testid="ledger-row"]');
+      expect(rows.length).toBe(1);
+      expect(host.shadowRoot!.querySelector('[data-testid="ledger-burst"]')).toBeNull();
+    });
+
+    it('says the ledger is unreadable rather than claiming it is empty', async () => {
+      host = document.createElement('jf-action-ledger') as ActionLedgerView;
+      host.eventSourceFactory = (url: string) => {
+        es = new FakeEventSource(url);
+        return es as unknown as EventSource;
+      };
+      host.ledgerFetch = (async () => {
+        throw new Error('connection refused');
+      }) as unknown as typeof fetch;
+      document.body.appendChild(host);
+      await host.updateComplete;
+      await flushMicrotasks();
+      await host.updateComplete;
+
+      expect(host.shadowRoot!.querySelector('[data-testid="ledger-empty"]')).toBeNull();
+      expect(host.shadowRoot!.querySelector('[data-testid="ledger-unreadable"]')).not.toBeNull();
     });
   });
 });

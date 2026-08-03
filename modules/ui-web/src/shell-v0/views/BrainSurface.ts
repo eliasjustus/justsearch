@@ -2145,6 +2145,15 @@ export class BrainSurface extends JfElement {
           ${this.installStatus?.installedFully !== undefined
             ? html` · installedFully: <code>${String(this.installStatus.installedFully)}</code>`
             : nothing}
+          ${/* Tempdoc 804 §B8 — a newer version's added artifacts are their own state ("extra AI
+                components are available"), not a retroactive un-install of a complete one. */ ''}
+          ${this.installStatus?.pendingRegistryAdditions?.length
+            ? html`<div data-testid="install-pending-registry-additions">
+                New AI components are available since this install:
+                <code>${this.installStatus.pendingRegistryAdditions.join(', ')}</code> — run Install
+                to add them.
+              </div>`
+            : nothing}
         </div>
         <div class="row">
           <jf-button

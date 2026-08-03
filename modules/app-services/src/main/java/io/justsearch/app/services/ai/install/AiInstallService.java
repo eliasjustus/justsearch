@@ -378,10 +378,40 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
    * empty-registry case; the former is the profile-aware "chat model + required encoders present" check, not
    * the bundled runtime exe alone). When so, set {@code installedFully} — re-checking under the lock that no
    * real install run has taken over since the caller's guard. Returns whether it flipped the status.
+   *
+   * <p>Tempdoc 804 §B8 (round-10 F2) — the plan alone is a claim about the CURRENT registry, not about the
+   * installation. A newer app version that adds a package made every completed installation read "Not
+   * Installed" with an empty package list. So when downloads remain, completeness is measured against the
+   * {@link InstallContract} that recorded the install: a remaining download for a package the contract
+   * covered is a genuine gap (still "Not Installed"); one for a package the contract never covered is a
+   * newly-registered artifact, reported as {@link AiInstallStatus#pendingRegistryAdditions}.
    */
   boolean applyInstalledFromPlan(InstallPlan plan, ModelRegistry registry) {
-    boolean fullyOnDisk = plan.downloads().isEmpty() && !plan.alreadyInstalled().isEmpty();
-    if (!fullyOnDisk) {
+    return applyInstalledFromPlan(plan, registry, readInstallContractBestEffort());
+  }
+
+  /** Contract-injecting overload — the seam the B8 regression test drives (no on-disk contract staging). */
+  boolean applyInstalledFromPlan(InstallPlan plan, ModelRegistry registry, InstallContract contract) {
+    List<String> pendingAdditions = new ArrayList<>();
+    boolean contractSatisfied;
+    if (plan.downloads().isEmpty()) {
+      contractSatisfied = !plan.alreadyInstalled().isEmpty();
+    } else if (contract != null && !contract.models().isEmpty()) {
+      boolean contractedPackageMissing = false;
+      for (var dl : plan.downloads()) {
+        if (contract.models().containsKey(dl.packageId())) {
+          contractedPackageMissing = true; // the contract claims it; it is not on disk → a real gap.
+        } else if (!pendingAdditions.contains(dl.packageId())) {
+          pendingAdditions.add(dl.packageId());
+        }
+      }
+      contractSatisfied = !contractedPackageMissing && !plan.alreadyInstalled().isEmpty();
+    } else {
+      // No contract to measure against (fresh machine, or a pre-contract install) — the plan is the
+      // only authority, and it says work remains.
+      contractSatisfied = false;
+    }
+    if (!contractSatisfied) {
       return false; // genuinely not (fully) installed — leave the honest "Not Installed".
     }
     synchronized (lock) {
@@ -390,10 +420,26 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       }
       status.packages.clear();
       populateStatusPackages(plan, registry);
+      status.pendingRegistryAdditions.clear();
+      status.pendingRegistryAdditions.addAll(pendingAdditions);
       status.installedFully = true;
       touch();
     }
     return true;
+  }
+
+  /**
+   * The install contract recorded by the run that installed this machine, or null when absent or
+   * unreadable. Best-effort by design: a missing/corrupt contract must degrade to "the plan is the only
+   * authority", never fail a status read.
+   */
+  private InstallContract readInstallContractBestEffort() {
+    try {
+      return InstallContractIO.read(homeDir);
+    } catch (Exception e) {
+      log.debug("AiInstall: install contract unreadable (best-effort): {}", e.toString());
+      return null;
+    }
   }
 
   /**
@@ -747,6 +793,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     }
     synchronized (lock) {
       status.installedFully = fullyInstalled;
+      // Tempdoc 804 §B8 — a run just planned against the CURRENT registry, so nothing is a pending
+      // registry addition any more (the signal only describes a contract older than the registry).
+      status.pendingRegistryAdditions.clear();
       touch();
     }
   }

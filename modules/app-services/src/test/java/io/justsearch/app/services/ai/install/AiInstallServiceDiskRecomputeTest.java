@@ -6,11 +6,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.app.api.AiInstallStatus;
 import io.justsearch.configuration.model.DownloadProfile;
+import io.justsearch.configuration.model.InstallContract;
 import io.justsearch.configuration.model.InstallPlan;
 import io.justsearch.configuration.model.ModelRegistry;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -110,5 +112,73 @@ final class AiInstallServiceDiskRecomputeTest {
 
     assertFalse(flipped, "a plan with remaining downloads must NOT claim installed");
     assertFalse(statusOf(svc).installedFully, "installedFully stays false — the honest 'Not Installed'");
+  }
+
+  // ── Tempdoc 804 §B8 (round-10 F2): completeness is a claim about the CONTRACT that installed this
+  //    machine, not about the current registry. A newer app version that REGISTERS a package must not
+  //    retroactively un-install a complete installation. ──
+
+  private static InstallContract contractCovering(String... packageIds) {
+    var models = new java.util.LinkedHashMap<String, InstallContract.InstalledModel>();
+    for (String id : packageIds) {
+      models.put(
+          id,
+          new InstallContract.InstalledModel(
+              id, "model.bin", null, null, id, "sha", List.of("model.bin"), false, null));
+    }
+    return new InstallContract(2, 1L, null, DownloadProfile.values()[0], Map.copyOf(models));
+  }
+
+  @Test
+  void applyInstalledFromPlan_staysInstalled_whenOnlyANewlyRegisteredArtifactIsMissing()
+      throws Exception {
+    AiInstallService svc = new AiInstallService(null, null, null, null, tmp);
+    // The exact round-10 shape: a completed install (contract covers embedding + chat), and the NEW
+    // version's registry adds one cuda-runtime package the contract never covered.
+    InstallPlan plan =
+        new InstallPlan(
+            DownloadProfile.values()[0],
+            List.of(
+                new InstallPlan.PlannedDownload(
+                    "cuda-runtime", "https://example/cuda12.zip", "runtime/cuda12.zip", "sha", 167L, false)),
+            List.of(),
+            167L,
+            List.of("embedding", "chat"));
+
+    boolean flipped = svc.applyInstalledFromPlan(plan, MINIMAL_REGISTRY, contractCovering("embedding", "chat"));
+
+    assertTrue(flipped, "a registry ADDITION must not un-install a contract-satisfied installation");
+    AiInstallStatus after = statusOf(svc);
+    assertTrue(after.installedFully, "installedFully is measured against the contract that installed it");
+    assertEquals(
+        List.of("cuda-runtime"),
+        after.pendingRegistryAdditions,
+        "the newly-registered artifact surfaces as its own state, not as retroactive non-installation");
+    assertFalse(after.packages.isEmpty(), "packages[] is populated — the round saw it empty");
+  }
+
+  @Test
+  void applyInstalledFromPlan_staysNotInstalled_whenAContractedPackageIsMissing() throws Exception {
+    AiInstallService svc = new AiInstallService(null, null, null, null, tmp);
+    // A genuinely incomplete install: the contract CLAIMS chat, but the planner still wants to
+    // download it (the file is gone) — that is a real gap, not a registry addition.
+    InstallPlan plan =
+        new InstallPlan(
+            DownloadProfile.values()[0],
+            List.of(
+                new InstallPlan.PlannedDownload(
+                    "chat", "https://example/model.gguf", "chat/model.gguf", "sha", 100L, true)),
+            List.of(),
+            100L,
+            List.of("embedding"));
+
+    boolean flipped = svc.applyInstalledFromPlan(plan, MINIMAL_REGISTRY, contractCovering("embedding", "chat"));
+
+    assertFalse(flipped, "a package the CONTRACT covered and disk lacks is a genuine gap");
+    AiInstallStatus after = statusOf(svc);
+    assertFalse(after.installedFully, "installedFully stays false — the honest 'Not Installed'");
+    assertTrue(
+        after.pendingRegistryAdditions.isEmpty(),
+        "an incomplete install reports no pending registry additions (it is not the additions case)");
   }
 }

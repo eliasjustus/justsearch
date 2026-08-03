@@ -22,6 +22,12 @@ export interface InstallStatus {
   state: string;
   phase: string;
   installedFully?: boolean;
+  /**
+   * Tempdoc 804 §B8 — package ids the CURRENT registry declares that the contract which recorded
+   * this installation never covered (a newer version's added artifact). A distinct state from
+   * "not installed": `installedFully` stays true and these are the extras on offer.
+   */
+  pendingRegistryAdditions?: string[];
   message?: string;
   errorCode?: string;
   lastError?: string;

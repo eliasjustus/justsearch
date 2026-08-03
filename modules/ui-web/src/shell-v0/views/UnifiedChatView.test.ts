@@ -3886,6 +3886,40 @@ describe('Search Thread Round-2 R4 — bar re-skin (jf-control compositions)', (
     await view.updateComplete;
     expect(view.affordance).toBe('agent');
   });
+
+  // Tempdoc 804 §B9 (round-10 F14): Ask was the ONE escalation rung that failed SILENTLY with AI
+  // offline — a plain <div>, so a click produced no mode change, no reason, and no disabled styling,
+  // while Delegate showed tooltip+toast and Extract greyed to "AI Offline". Same affordance class →
+  // same availability gate, same wording.
+  it('escalation-ask (jf-control) is availability-gated with the sibling reason: blocked offline, operable when AI is up', async () => {
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { aiState: unknown }).aiState = {
+      ...AI_STATE_READY,
+      capabilities: { ...AI_STATE_READY.capabilities, chat: false },
+    };
+    view.requestUpdate();
+    await view.updateComplete;
+
+    const ask = view.shadowRoot?.querySelector('[data-testid="escalation-ask"]') as HTMLElement & {
+      availability?: { kind: string; reason?: string };
+    };
+    expect(ask).not.toBeNull();
+    expect(ask.tagName.toLowerCase()).toBe('jf-control');
+    // The reason is REACHABLE, not just absent-behaviour — and worded like its siblings.
+    expect(ask.availability?.kind).toBe('unavailable');
+    expect(ask.availability?.reason).toBe('The local AI model is offline');
+    await clickJfControl(ask);
+    await view.updateComplete;
+    expect(view.affordance).not.toBe('documents'); // blocked — offline, and it SAYS so
+
+    (view as unknown as { aiState: unknown }).aiState = AI_STATE_READY; // chat: true
+    view.requestUpdate();
+    await view.updateComplete;
+    await clickJfControl(view.shadowRoot?.querySelector('[data-testid="escalation-ask"]'));
+    await view.updateComplete;
+    expect(view.affordance).toBe('documents');
+  });
 });
 
 // Search Thread S6 (the Reading Stage) — the reading pane (`<jf-document-pane>`), mounted as the

@@ -59,6 +59,19 @@ public final class AiInstallStatus {
    */
   public boolean installedFully;
 
+  /**
+   * Package ids the CURRENT registry declares but the install contract that recorded this
+   * installation never covered — i.e. artifacts a NEWER app version added after the user installed
+   * (tempdoc 804 §B8, round-10 F2: one new cuda-runtime package made a complete 16 GB installation
+   * read {@code installedFully: false, packages: []} until a full re-run).
+   *
+   * <p>Completeness is a claim about the contract that installed it, so a registry addition is a
+   * distinct state — "extra AI components are available" — not retroactive non-installation.
+   * Empty whenever the plan has nothing left to download (the ordinary complete install) and after
+   * any install run terminates.
+   */
+  public final List<String> pendingRegistryAdditions = new ArrayList<>();
+
   // Per-package progress
   public final List<PackageStatus> packages = new ArrayList<>();
 
