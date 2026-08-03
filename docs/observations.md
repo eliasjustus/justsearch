@@ -98,9 +98,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] FE search result mapping has no defensive handling for a raw `chunk:`-prefixed hit id: `path = fields.path ?? r.id` silently renders "chunk:uuid…" as the filename if chunk-merge is skipped (pure-dense result sets). Hard to diagnose if chunk-merge ever regresses. — `modules/ui-web/src/shell-v0/state/searchState.ts:492` (2026-06-17)
 
 ### obs:ui-check — ui-shot color_scheme="light" steps render the dark app theme (persisted theme wins over prefers-colo
-`kind: defect` `anchor: scripts/jseval/jseval/ui_check.py` `seen: 2` `first: 2026-06-12` `last: 2026-06-19`
+`kind: defect` `anchor: scripts/jseval/jseval/ui_check.py` `seen: 3` `first: 2026-06-12` `last: 2026-08-03`
 - [ ] ui-shot color_scheme="light" steps render the dark app theme (persisted theme wins over prefers-color-scheme) — light-theme shots don't validate light tokens visually — `scripts/jseval/jseval/ui_check.py` (2026-06-12)
 - [ ] ui-shot/ui-check chat steps target the retired React inspector (search-input, inspector-pane, context-state pills) or a broken ?shell-demo bypass — none render the live shell-v0 UnifiedChatView, so the main chat surface has no visual-verification coverage — `scripts/jseval/jseval/ui_check.py` (2026-06-19)
+- [ ] No ui-shot step covers the Activity/AUDIT surface (jf-activity-surface) — the round-10 F9 regression home asks for a ui-shot with a non-empty ledger, but the step registry's isolated views list has no activity entry — `scripts/jseval/jseval/ui_check.py:906` (2026-08-03)
 
 ### obs:utility-comparison — Pre-existing (unrelated to tempdoc 624 utility_comparison.py work): tests/test_agent_retrieval_eval.
 `kind: environment?` `anchor: utility_comparison.py` `seen: 5` `first: 2026-07-02` `last: 2026-07-21`
@@ -969,9 +970,10 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Backend-death root cause substantially resolved: deaths coincide with other sessions' lease takeovers (30s lease not renewed during long-running probes/campaigns that make no MCP dev-tool calls; observed live — session f3e41644 reclaimed mid-probe, stale_reclaim written by ITS runner). Issue 6 reframes from product crash to contention semantics; candidate fix: lease renewal heartbeat during utility-run/long ops — `scripts/dev/dev-runner.cjs lease model` (2026-07-14)
 
 ### obs:check-tempdoc-numbers — check-tempdoc-numbers has a blind spot: it only reports a number claimed by 2+ IN-FLIGHT worktrees,
-`kind: defect?` `anchor: scripts/ci/check-tempdoc-numbers.mjs` `seen: 2` `first: 2026-07-15` `last: 2026-07-17`
+`kind: defect?` `anchor: scripts/ci/check-tempdoc-numbers.mjs` `seen: 3` `first: 2026-07-15` `last: 2026-07-31`
 - [ ] check-tempdoc-numbers has a blind spot: it only reports a number claimed by 2+ IN-FLIGHT worktrees, excluding any basename already on origin (`newBasenames` filter). So an in-flight tempdoc colliding with one already merged to main passes green — reproduced live: branch worktree-ui-audit-density-review's 696-simple-detailed-disclosure vs main's 696-dev-tooling-jdk-resolution went undetected while the check flagged an unrelated 720 collision in the same run — `scripts/ci/check-tempdoc-numbers.mjs:117` (2026-07-15)
 - [ ] check-tempdoc-numbers reports two pre-existing cross-worktree number collisions (#720: memory-injector-plan vs p1a-context-prepend-plan; #729: gjf-removal vs the stale pre-rename copy of 734 in worktree sandbox-validation) — the affected sessions may not know until their own merge-time run — `scripts/ci/check-tempdoc-numbers.mjs` (2026-07-17)
+- [ ] check-tempdoc-numbers treats a gate changeset as claiming a tempdoc number, so a changeset named after the tempdoc that justifies it collides with that tempdoc. Hit twice today in different worktrees (#801 in 798-remaining, #803 here); the natural naming convention — name the changeset after its tempdoc — is exactly what trips it. Workaround is a non-numeric changeset filename — `scripts/ci/check-tempdoc-numbers.mjs` (tempdoc 803) (2026-07-31)
 
 ### obs:expected-state-v1 — Possible stale expected-state entry: [ui-web-typecheck-ts5101] declares ui-web `npm run typecheck` R
 `kind: environment?` `anchor: expected-state.v1.json` `seen: 2` `first: 2026-07-15` `last: 2026-07-30`
@@ -1151,8 +1153,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Security & Privacy surface renders STALE encryption state on initial load of a reused tab: the Conversations summary row + Chat Encryption panel showed 'Encrypted (passphrase) · locked' while GET /api/conversations/encryption returned {"state":"not_configured"}; only a hard reload reconciled it. Distinct from the poll-driven lock propagation (tempdoc 734 G.5, fixed 68e1507c) — this is the INITIAL-LOAD path disagreeing with the API, i.e. a third authority for one fact after the two already found (statusConfig fork in BrainSurface, DATA PROTECTION row staleness). Found during live verification 2026-07-15. — `modules/ui-web/src/shell-v0/views/SecuritySurface.ts` (2026-07-15)
 
 ### obs:check-golden-parity — Golden-parity rebuild-variance CALIBRATED (n=3 clean scifact rebuilds, dev GPU-FP16, same corpus/cod
-`kind: environment?` `anchor: scripts/sandbox/check_golden_parity.py` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
+`kind: environment?` `anchor: scripts/sandbox/check_golden_parity.py` `seen: 2` `first: 2026-07-15` `last: 2026-07-30`
 - [ ] Golden-parity rebuild-variance CALIBRATED (n=3 clean scifact rebuilds, dev GPU-FP16, same corpus/code/model, 30 query-observations, 2026-07-15). Pure build-to-build variance: overlap min=9 max=10 mean=9.87, never <9; top-1 mismatches 0/30; only q02 and q06 ever move, by exactly 1 doc; q08 is 10/10 across every pair. embeddingFingerprint + docCount (5184) identical across A/B/C. CONCLUSION: a sandbox round's 8/10 with q06/q08 below the 7-overlap bar is OUTSIDE the rebuild envelope by a wide margin — it is a REAL signal about the installed build, NOT the HNSW-tail noise four rounds (734 deferred item; sandbox-CLAUDE.md ~254-265) assumed. MIN_OVERLAP=7 is too LENIENT vs the measured floor of 9, not too strict. Does NOT establish the CAUSE — most likely CPU-FP32 (sandbox, CPU-only) vs GPU-FP16 (check_golden_parity docstring flags this), a hypothesis for a human. Full data: scratchpad/parity-calibration (ephemeral). — `scripts/sandbox/check_golden_parity.py:64` (2026-07-15)
+- [ ] 750/734 finding-5 harness gaps (opus dossier 2026-07-30): (1) v2 golden-parity baseline never committed — check_golden_parity.py silently degrades to overlap-only (PARITY_UNCALIBRATED_POPULATION); (2) no reranker identity/EP fingerprint check despite CE solely ordering the top-10 — `check_golden_parity.py:276`; (3) golden parity has no row in governance/sandbox-coverage.v1.json; (4) dead config keys written-never-read `ResolvedConfigBuilder.java:505-508` (search.rerank.enabled, search.hybrid.ann_k/bm25_k), workers.ai.* and index.pipeline.profile zero consumers; (5) 750 frontmatter contradicts its own Implementation section. (2026-07-30)
 
 ### obs:brainsurface — MERGE-ORDER CONSTRAINT (release 0.2.0): PR #184 (worktree-release-asset-set) must merge to main BEFO
 `kind: defect?` `anchor: modules/ui-web/src/shell-v0/views/BrainSurface.ts` `seen: 1` `first: 2026-07-15` `last: 2026-07-15`
@@ -1614,8 +1617,9 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 - [ ] Setting llm.modelPath via POST /api/settings/v2 silently disables the VDU vision tier: usingLlmModelOverride && !MMPROJ_MODEL.isSet() nulls mmprojPath, so VDU blocks on vdu.missing_mmproj with no user-facing explanation — `modules/app-inference/src/main/java/io/justsearch/app/inference/InferenceConfig.java:159-170` (2026-07-29)
 
 ### obs:api-contract-map — POST /api/knowledge/search doc_ids scoping does not restrict the result set (measured: 2 doc_ids ret
-`kind: defect?` `anchor: docs/reference/api-contract-map.md` `seen: 1` `first: 2026-07-29` `last: 2026-07-29`
+`kind: defect?` `anchor: docs/reference/api-contract-map.md` `seen: 2` `first: 2026-07-29` `last: 2026-08-03`
 - [ ] POST /api/knowledge/search doc_ids scoping does not restrict the result set (measured: 2 doc_ids returned 20 unrelated docs, totalHits 78), contradicting the contract's 'TermInSetQuery on PATH — scopes search to specific documents' — `docs/reference/api-contract-map.md:424` (2026-07-29)
+- [ ] Pre-existing mojibake in docs/reference/api-contract-map.md: literal bytes "â€”" (double-encoded em-dash) appear in the Indexing Excludes API section instead of a proper em-dash — `docs/reference/api-contract-map.md:581,591` (2026-08-03)
 
 ### obs:chunk-completeness — chunk_completeness guard is blind on a `raw_files` corpus — it computes `expected` from corpus.jsonl
 `kind: defect?` `anchor: scripts/jseval/jseval/chunk_completeness.py` `seen: 1` `first: 2026-07-29` `last: 2026-07-29`
@@ -1637,7 +1641,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-28` `last: 2026-07-28`
 - [ ] Hard Invariant #1 enforcement claim vs lockfile fact: tier-register row 1 states 'Lucene types are not on Head's classpath', but lucene-core:10.4.0 is on modules/ui's compileClasspath AND runtimeClasspath — `modules/ui/gradle.lockfile`. ArchUnit may still forbid Head *imports* (the real invariant), but the register's stated mechanism is inaccurate as written. Found during tempdoc 792 R6 derisking. (2026-07-28)
 
-### obs:check-tempdoc-status-staleness — 787 status flipped to MERGED-with-retained-bracket is still flagged STALE by the staleness linter — 
+### obs:check-tempdoc-status-staleness — 787 status flipped to MERGED-with-retained-bracket is still flagged STALE by the staleness linter —
 `kind: defect?` `anchor: scripts/ci/check-tempdoc-status-staleness.mjs` `seen: 1` `first: 2026-07-29` `last: 2026-07-29`
 - [ ] 787 status flipped to MERGED-with-retained-bracket is still flagged STALE by the staleness linter — FP class (a) (bracket text not excluded from marker scan) is still unfixed, so the convention the linter's own report recommends produces a new FP each time it is applied — `scripts/ci/check-tempdoc-status-staleness.mjs:37` (2026-07-29)
 
@@ -1653,7 +1657,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
 - [ ] Installer itemization (772 §I) shows lucene-core/lucene-analysis-common on the HEAD shipped classpath (lib/, not lib/worker/) — modules/ui/build.gradle.kts:46 depends on adapters-lucene, :124-125 runtimeOnly lucene — tier-register row 1's justification wording ('Lucene types are not on Head's classpath') doesn't match the shipped artifact; reconcile wording vs reality (the ArchUnit test presumably checks something narrower) (2026-07-22)
 
-### obs:unanchored-general-96 — justsearch-releases THIRD_PARTY_NOTICES.txt has no NVIDIA entry for the CUDA/cuDNN redistributables 
+### obs:unanchored-general-96 — justsearch-releases THIRD_PARTY_NOTICES.txt has no NVIDIA entry for the CUDA/cuDNN redistributables
 `kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-22` `last: 2026-07-22`
 - [ ] justsearch-releases THIRD_PARTY_NOTICES.txt has no NVIDIA entry for the CUDA/cuDNN redistributables in ort-cuda-runtime-12.4.zip / cudnn-9-runtime-12.4.zip (NVIDIA redistributable-list EULA terms) — pre-existing gap noticed while adding the ONNX Runtime MIT notice (772 §J) (2026-07-22)
 
@@ -1661,7 +1665,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: .Codex/rules/tier-register.md` `seen: 1` `first: 2026-07-30` `last: 2026-07-30`
 - [ ] Ported skill copy has a bad find-replace: `.agents/skills/governance/SKILL.md` says `.Codex/rules/tier-register.md` (lines 2, 81, 85) — no such path exists; the real register is `.claude/rules/tier-register.md`. A Codex-targeted agent following this skill would look in a nonexistent directory — `.agents/skills/governance/SKILL.md:85` (2026-07-30)
 
-### obs:release-v1-schema — release.v1.schema.json lags compose(): `union_recall` has been emitted since tempdoc 701 but is not 
+### obs:release-v1-schema — release.v1.schema.json lags compose(): `union_recall` has been emitted since tempdoc 701 but is not
 `kind: defect?` `anchor: scripts/jseval/release.v1.schema.json` `seen: 1` `first: 2026-07-31` `last: 2026-07-31`
 - [ ] release.v1.schema.json lags compose(): `union_recall` has been emitted since tempdoc 701 but is not declared as a schema property (additionalProperties:true hides it) — `scripts/jseval/release.v1.schema.json` (tempdoc 802) (2026-07-31)
 
@@ -1717,7 +1721,7 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 `kind: defect?` `anchor: modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/FieldMapper.java` `seen: 1` `first: 2026-07-30` `last: 2026-07-30`
 - [ ] FieldMapper.addFields 'splade' case does an unchecked cast to Map<String,Float> and would ClassCastException on a non-Map value instead of failing validation — `modules/adapters-lucene/src/main/java/io/justsearch/adapters/lucene/runtime/FieldMapper.java:431` (2026-07-30)
 
-### obs:spladebackfillops — SpladeBackfillOps/CombinedEnrichmentBackfillOps put encodeBatch elements into the SPLADE update map 
+### obs:spladebackfillops — SpladeBackfillOps/CombinedEnrichmentBackfillOps put encodeBatch elements into the SPLADE update map
 `kind: defect?` `anchor: modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/SpladeBackfillOps.java` `seen: 1` `first: 2026-07-30` `last: 2026-07-30`
 - [ ] SpladeBackfillOps/CombinedEnrichmentBackfillOps put encodeBatch elements into the SPLADE update map with no per-element null guard — same class as the 798-F5 BgeM3 fix, which now omits the key when null — `modules/worker-services/src/main/java/io/justsearch/indexerworker/loop/ops/SpladeBackfillOps.java:198` (2026-07-30)
 
@@ -1745,6 +1749,63 @@ accept a `proposed-retire` at triage. Deletion is always a human act; automation
 ### obs:selectioncontextinjectortest — Pre-existing worktree changes (ConversationContext.java, ExtractShape.java, SelectionContextInjector
 `kind: environment?` `anchor: modules/app-services/src/test/java/io/justsearch/app/services/conversation/spi/SelectionContextInjectorTest.java` `seen: 1` `first: 2026-07-31` `last: 2026-07-31`
 - [ ] Pre-existing worktree changes (ConversationContext.java, ExtractShape.java, SelectionContextInjector.java, EngineConversationContext.java) fail app-services tests SelectionContextInjectorTest and ConversationShapeFixtureGenTest — unrelated to 798 atRestCard/DiskEncryptionProbe work, not investigated/fixed — `modules/app-services/src/test/java/io/justsearch/app/services/conversation/spi/SelectionContextInjectorTest.java:53` (2026-07-31)
+
+### obs:unanchored-general-98 — mixed/legal-clerc-200 retrieval changed SYSTEMATICALLY between two sessions at different commits, sa
+`kind: defect?` `anchor: none` `seen: 1`
+- [ ] mixed/legal-clerc-200 retrieval changed SYSTEMATICALLY between two sessions at different commits, same corpus signature (`90d4300d…`, 198 docs): 802-session runs (git f3f6909e) vs 803-session runs (git 40841ad9) agree on only 6-7/200 top-10 doc SETS (Jaccard 0.54), while the three 803 runs agree with EACH OTHER at Jaccard 0.964-0.977 and cluster at nDCG 0.5783/0.5811/0.5800. So this is NOT run-to-run nondeterminism (an earlier version of this note said it was, from a 2-run comparison that confounded session with commit) — something between those commits moved legal retrieval a lot while enron/scifact/miracl reproduced to 0.0001 across the same gap. Cause unidentified; #350 is the large change in that window but is app-update work with no obvious retrieval path — `datasets/mixed/legal-clerc-200` (tempdoc 803)
+
+### obs:readiness — jseval `--pipeline` does not always guarantee SPLADE readiness: a miracl-fr-2k run at the same commi
+`kind: environment?` `anchor: scripts/jseval/jseval/readiness.py` `seen: 2` `first: 2026-07-31` `last: 2026-07-31`
+- [ ] jseval `--pipeline` does not always guarantee SPLADE readiness: a miracl-fr-2k run at the same commit returned `comparable=false / readiness_failed: splade_requested_but_splade_features_not_ready` on all four modes, while an earlier run of the same corpus was comparable=true. Flaky readiness gate — a run that reaches eval with incomplete enrichment silently produces incomparable numbers — `scripts/jseval/jseval/readiness.py` (tempdoc 803) (2026-07-31)
+- [ ] miracl-fr-2k SPLADE enrichment fails on exactly 1 doc of 5408 via the EVAL ingest path (runHeadlessEval + syncDirectory) — reproduced 3/3 — but 0 failures ingesting the identical corpus through the dev-stack API path. Not corpus content, not the gate. One FAILED doc trips readiness.py's zero-tolerance `spladeFailedCount > 0` clause at 99.98% coverage (dense by contrast allows 0.1% missing). Likely surfaced rather than caused by #339 — `scripts/jseval/jseval/readiness.py:474` (tempdoc 803) (2026-07-31)
+
+### obs:unanchored-general-99 — A clean dev stack indexes 5 documents before any user ingest — the built-in help files under SSOT/do
+`kind: defect?` `anchor: none` `seen: 1` `first: 2026-07-31` `last: 2026-07-31`
+- [ ] A clean dev stack indexes 5 documents before any user ingest — the built-in help files under SSOT/docs/help/. Harmless in normal use, but it silently contaminates any corpus-eval run driven through the dev-stack ingest path (e.g. 5 English help docs inside a French MIRACL corpus), so that path cannot produce a release-grade measurement — `modules/ui-web/.dev-data` (tempdoc 803) (2026-07-31)
+
+### obs:unanchored-flake-6 — Integration tier test 'Consent Capsule Recovery E2E (tempdoc 550 Slice A1) > initializationError' is
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-31` `last: 2026-07-31`
+- [ ] Integration tier test 'Consent Capsule Recovery E2E (tempdoc 550 Slice A1) > initializationError' is FLAKY on the Windows CI runner: failed on PR #354 run 30647641329, passed on re-run 30648104856 with the same branch content, and passed on main at the same base. initializationError = class setup failure, consistent with port/resource contention rather than a logic break — `modules/system-tests` (tempdoc 803) (2026-07-31)
+
+### obs:threat-model — threat-model.md has zero mention of the in-app updater: 617 added network egress (release-descriptor
+`kind: defect?` `anchor: docs/reference/security/threat-model.md` `seen: 1` `first: 2026-07-31` `last: 2026-07-31`
+- [ ] threat-model.md has zero mention of the in-app updater: 617 added network egress (release-descriptor fetch + artifact download) to a 'nothing leaves your machine' product without reconciling the threat model — surfaced by the consult hint while fixing F1; needs 617-owner reconciliation — `docs/reference/security/threat-model.md` (2026-07-31)
+
+### obs:autolock — startAutoLock() has no production caller — only autoLock.test.ts; the idle-lock POST /api/conversati
+`kind: defect?` `anchor: modules/ui-web/src/shell-v0/utils/autoLock.ts` `seen: 1` `first: 2026-07-31` `last: 2026-07-31`
+- [ ] startAutoLock() has no production caller — only autoLock.test.ts; the idle-lock POST /api/conversations/encryption/lock never fires in the shipped shell — `modules/ui-web/src/shell-v0/utils/autoLock.ts:38` (2026-07-31)
+
+### obs:unanchored-error-14 — collect-evidence.ps1's GET-ladder error path reads `$_.Exception.Response.GetResponseStream()`, whic
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-08-03` `last: 2026-08-03`
+- [ ] collect-evidence.ps1's GET-ladder error path reads `$_.Exception.Response.GetResponseStream()`, which PS 5.1 has already drained into `$_.ErrorDetails.Message` -- so error bodies for failed GET rungs are recorded as empty (fixed only in the new Invoke-ApiRequest helper) -- `scripts/sandbox/collect-evidence.ps1:412` (2026-08-03)
+
+### obs:effectiveconfigintegrationtest — EffectiveConfigIntegrationTest.java and EffectiveConfigRuntimeIntegrationTest.java are 1-byte empty 
+`kind: defect?` `anchor: modules/ui/src/integrationTest/java/io/justsearch/ui/api/EffectiveConfigIntegrationTest.java` `seen: 1` `first: 2026-08-03` `last: 2026-08-03`
+- [ ] EffectiveConfigIntegrationTest.java and EffectiveConfigRuntimeIntegrationTest.java are 1-byte empty files — dead stubs that silently contribute zero coverage — `modules/ui/src/integrationTest/java/io/justsearch/ui/api/EffectiveConfigIntegrationTest.java:1` (2026-08-03)
+
+### obs:fields-v1 — index_schema_fp is a content hash of fields.v1.json, so annotation-only catalog edits flip schema_mi
+`kind: follow-up?` `anchor: fields.v1.json` `seen: 1` `first: 2026-08-03` `last: 2026-08-03`
+- [ ] index_schema_fp is a content hash of fields.v1.json, so annotation-only catalog edits flip schema_mismatch with zero physical consequence; a physical-schema fingerprint (or per-field consequence classes) would make the advisory truthful — docs corrected to reality in 804 W4, enforcement decision deferred — `adapters-lucene SsotCommitMetadataSource.java:81` (2026-08-03)
+
+### obs:manifest — packaging/mcpb/manifest.json version is stuck at 0.1.0 while the release + server.json are 0.2.0 — s
+`kind: defect?` `anchor: packaging/mcpb/manifest.json` `seen: 1` `first: 2026-08-03` `last: 2026-08-03`
+- [ ] packaging/mcpb/manifest.json version is stuck at 0.1.0 while the release + server.json are 0.2.0 — sync-version.ps1 syncs tauri.conf.json/package.json/Cargo.toml/server.json but never the MCPB bundle manifest (same version-truth class as round-10 F12) — `packaging/mcpb/manifest.json:6` (2026-08-03)
+
+### obs:golden-parity-v2-dev — finding-5 measurement result (session e4497288, 2026-07-30): dev-vs-dev golden parity is BIT-IDENTIC
+`kind: environment?` `anchor: golden-parity-v2-dev.json` `seen: 1` `first: 2026-07-30` `last: 2026-07-30`
+- [ ] finding-5 measurement result (session e4497288, 2026-07-30): dev-vs-dev golden parity is BIT-IDENTICAL (dense delta 0.000e+00, identical order, 2 runs same stack) while dev-vs-sandbox shows 1.7e-2..6.8e-2 on all 10 queries vs a 2.0e-4 envelope. All 3 failures are kind:semantic; all 6 keyword pass. 'golden #1 in top-3' passes on ALL 10 including the 3 failures. Baseline calibration block itself states overlap floors were sampled only on the same-machine population. Fresh v2 baseline at tmp/finding5/golden-parity-v2-dev.json (uncommitted). (2026-07-30)
+
+### obs:check-public-agent-utility — check-public-agent-utility.mjs fails locally with 'No module named click' (python env lacks jseval d
+`kind: defect?` `anchor: scripts/ci/check-public-agent-utility.mjs` `seen: 1` `first: 2026-07-30` `last: 2026-07-30`
+- [ ] check-public-agent-utility.mjs fails locally with 'No module named click' (python env lacks jseval deps) — the offline-replay delegation makes the gate unrunnable on a dev box without the jseval venv; PYTHONPATH remedy doesn't help since deps are missing, not the module path — `scripts/ci/check-public-agent-utility.mjs` (2026-07-30)
+
+### obs:field-catalog-schema — fields.v1.json schema permits 4 per-field keys that NO consumer reads: unique, facet, indexOptions, 
+`kind: defect?` `anchor: SSOT/schemas/indexing/field-catalog.schema.json` `seen: 1` `first: 2026-07-30` `last: 2026-07-30`
+- [ ] fields.v1.json schema permits 4 per-field keys that NO consumer reads: unique, facet, indexOptions, omitNorms — both parse paths (FieldCatalogDef @JsonCreator and FieldMapper.loadCatalogTree) drop them silently; also two independent parse paths exist for the same catalog, so a new key must be threaded through BOTH — `SSOT/schemas/indexing/field-catalog.schema.json:21-51` (2026-07-30)
+
+### obs:unanchored-flake-7 — FLAKE in the newly-wired integration CI lane (2026-07-31): 'Indexing -> action-ledger projection coh
+`kind: environment?` `anchor: none` `seen: 1` `first: 2026-07-31` `last: 2026-07-31`
+- [ ] FLAKE in the newly-wired integration CI lane (2026-07-31): 'Indexing -> action-ledger projection coherence (tempdoc 550 Thesis III) > initializationError' FAILED then PASSED on retry within the same run (job 91035561746) — IsolatedBackendFixture spawn is timing-sensitive under CI load. Lane is advisory (continue-on-error) so it did not block, but a flaky fixture spawn will erode trust in the lane that was just added to stop the tier rotting. Tier is otherwise 80 tests / 1 failed / 42 skipped, down from 5 hard failures pre-#339/#342. (2026-07-31)
 
 ## Parked
 
