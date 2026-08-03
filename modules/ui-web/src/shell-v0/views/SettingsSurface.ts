@@ -20,6 +20,7 @@
 
 import { html, css, nothing, type TemplateResult, type PropertyValues } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 // Tempdoc 511 §511-followup-B: reset-settings now routes through
 // `<jf-operation>` → ActionButton → OperationClient internally; the
 // surface no longer needs a direct OperationClient handle. Tauri-only
@@ -853,7 +854,7 @@ export class SettingsSurface extends JfElement {
   /** Tempdoc 778 — load the default-on local feedback-capture flag + privacy note. */
   private async loadFeedbackCapture(): Promise<void> {
     try {
-      const res = await fetch(`${this.apiBase || ''}/api/feedback/capture`);
+      const res = await authorizedFetch(`${this.apiBase || ''}/api/feedback/capture`);
       if (!res.ok) return;
       const data = (await res.json()) as { enabled?: boolean; privacyNote?: string };
       this.feedbackCaptureEnabled = data.enabled !== false;
@@ -869,7 +870,7 @@ export class SettingsSurface extends JfElement {
     const next = !this.feedbackCaptureEnabled;
     this.feedbackCaptureEnabled = next;
     try {
-      const res = await fetch(`${this.apiBase || ''}/api/feedback/capture`, {
+      const res = await authorizedFetch(`${this.apiBase || ''}/api/feedback/capture`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: next }),

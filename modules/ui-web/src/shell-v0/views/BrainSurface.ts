@@ -21,6 +21,7 @@ import { activateOnKey } from '../utils/keyboardHandler.js';
 import '../components/SurfaceTabs.js';
 import type { SurfaceTabItem } from '../components/SurfaceTabs.js';
 import { getSurface } from '../../api/registry/SurfaceCatalogClient.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import { present } from '../display/present.js';
 import { formatBytes } from '../display/format.js';
 import { projectFact } from '../display/facts.js';
@@ -765,7 +766,7 @@ export class BrainSurface extends JfElement {
 
   private async fetchJson<T>(path: string, init?: RequestInit): Promise<T | null> {
     try {
-      const res = await fetch(this.base() + path, init);
+      const res = await authorizedFetch(this.base() + path, init);
       if (!res.ok) return null;
       return (await res.json()) as T;
     } catch {
@@ -952,7 +953,7 @@ export class BrainSurface extends JfElement {
   private async setMode(mode: 'simple' | 'advanced'): Promise<void> {
     await this.withBusy('mode', async () => {
       this.settings = { ...this.settings, mode };
-      await fetch(this.base() + '/api/settings/v2', {
+      await authorizedFetch(this.base() + '/api/settings/v2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ui: { mode } }),
@@ -1118,7 +1119,7 @@ export class BrainSurface extends JfElement {
 
   private async patchLlm(updates: Partial<LlmSettings>): Promise<void> {
     this.llm = { ...this.llm, ...updates };
-    await fetch(this.base() + '/api/settings/v2', {
+    await authorizedFetch(this.base() + '/api/settings/v2', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ llm: updates }),

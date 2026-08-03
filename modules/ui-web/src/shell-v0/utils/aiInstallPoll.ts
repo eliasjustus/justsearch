@@ -16,6 +16,8 @@
  * `null`) and simply tries again on the next tick — "stuck forever" becomes structurally impossible.
  */
 
+import { authorizedFetch } from '../api/authorizedFetch.js';
+
 export interface InstallStatus {
   state: string;
   phase: string;
@@ -122,7 +124,7 @@ const INTERVAL_MS = 1000;
 
 async function fetchJson<T>(path: string): Promise<T | null> {
   try {
-    const res = await fetch((apiBase || '') + path);
+    const res = await authorizedFetch((apiBase || '') + path);
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {

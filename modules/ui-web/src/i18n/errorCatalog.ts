@@ -27,6 +27,13 @@
  * mount on a backend round-trip (per tempdoc 434 design commitment §4).
  */
 
+// This module is deliberately import-free (foundational i18n layer; shell-v0 imports FROM
+// it, per the FSD-style boundary in eslint.config.js — see the 9 shell-v0 consumers).
+// Importing `authorizedFetch` from shell-v0/api would invert that dependency direction.
+// The catalog fetch below is a GET (TOKEN_FREE_METHODS in authorizedFetch.ts exempts GET
+// from session-token attachment), so the two are behaviorally identical here regardless.
+/* eslint-disable no-restricted-globals -- see note above; GET-only boot fetch, no token needed */
+
 /** Module-level catalog cache. Populated by `bootErrorCatalog`; empty until then. */
 let catalog: Record<string, string> = {};
 let bootAttempted = false;

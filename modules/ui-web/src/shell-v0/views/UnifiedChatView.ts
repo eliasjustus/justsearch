@@ -16,6 +16,7 @@
 
 import { html, nothing, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 // Tempdoc 621 Phase 1 — the chat window's body styles, extracted to keep this file readable.
 import { unifiedChatBodyStyles } from './unifiedChatStyles.js';
 import {
@@ -3789,7 +3790,7 @@ export class UnifiedChatView extends JfElement {
    *  snapshot already rendered and stays correct either way). */
   private async postSearchEvent(committed: CommittedSearch): Promise<void> {
     try {
-      const res = await fetch(
+      const res = await authorizedFetch(
         `${this.apiBase || ''}/api/thread/${encodeURIComponent(this.sessionId)}/events`,
         {
           method: 'POST',

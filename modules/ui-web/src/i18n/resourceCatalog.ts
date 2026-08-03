@@ -36,6 +36,14 @@
  * `installedTranslationKeys: string[]` array per plugin to support
  * removal-by-key-list. Removal is now a single namespace delete.
  */
+
+// This module is deliberately import-free (foundational i18n layer; shell-v0 imports FROM
+// it, per the FSD-style boundary in eslint.config.js — see the 9 shell-v0 consumers).
+// Importing `authorizedFetch` from shell-v0/api would invert that dependency direction.
+// Both catalog fetches below are GETs (TOKEN_FREE_METHODS in authorizedFetch.ts exempts GET
+// from session-token attachment), so the two are behaviorally identical here regardless.
+/* eslint-disable no-restricted-globals -- see note above; GET-only boot fetches, no token needed */
+
 let coreCatalog: Record<string, string> = {};
 const pluginCatalogs = new Map<string, Record<string, string>>();
 let bootAttempted = false;

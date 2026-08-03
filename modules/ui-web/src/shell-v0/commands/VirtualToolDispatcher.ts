@@ -20,6 +20,7 @@
  * result immediately so the agent doesn't hang on the 30s timeout.
  */
 
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import { resolveAgentToolCall } from './VirtualOperationCatalog.js';
 import { invokeCommandWithResult } from './CommandRegistry.js';
 
@@ -45,7 +46,7 @@ export async function dispatchVirtualToolCall(
   event: VirtualToolCallEvent,
   deps: DispatcherDeps,
 ): Promise<{ ok: boolean; output?: string; error?: string }> {
-  const f = deps.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  const f = deps.fetchImpl ?? authorizedFetch;
   const commandId = resolveAgentToolCall(event.wireName);
   let result: { ok: boolean; output?: string; error?: string };
   if (commandId === null) {

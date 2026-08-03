@@ -156,6 +156,9 @@ export const SESSION_TOKEN_HEADER = 'X-JustSearch-Session';
 // Cached session token (resolved once from Tauri, then reused).
 let cachedSessionToken: string | null = null;
 let sessionTokenResolved = false;
+// In-flight resolution, shared by concurrent callers so a retryable null
+// (Tauri runtime, token not ready yet) cannot stampede `invoke('session_token')`.
+let sessionTokenInFlight: Promise<string | null> | null = null;
 
 // ==================== Tauri Integration ====================
 
@@ -184,7 +187,14 @@ async function resolvePortFromTauri(): Promise<number | null> {
 /**
  * Resolves the session token from Tauri (prod mode only).
  * Returns null if not in Tauri runtime or no token is available.
- * The result is cached to avoid repeated invocations.
+ *
+ * Caching rule (tempdoc 804 D3): the resolution is marked final ONLY when it
+ * cannot improve — a genuinely non-Tauri runtime (no token will ever exist) or
+ * a token actually obtained. A null FROM a Tauri runtime is transient: the
+ * shell's `session_token` command waits at most ~10s, so a slow cold start
+ * yields null while the real token arrives moments later. Caching that null
+ * permanently would 401 every mutating call for the app's lifetime with no
+ * recovery, so it stays unresolved and the next caller retries.
  */
 export async function resolveSessionTokenFromTauri(): Promise<string | null> {
   // Return cached value if already resolved
@@ -199,19 +209,31 @@ export async function resolveSessionTokenFromTauri(): Promise<string | null> {
     return null;
   }
 
-  try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    const token = await invoke('session_token');
-    cachedSessionToken = normalizeNonBlankString(token);
-    sessionTokenResolved = true;
-    return cachedSessionToken;
-  } catch (err) {
-    // Best-effort: token may not be available in dev mode
-    console.debug('tauri session_token invoke failed (expected in dev mode)', err);
-    sessionTokenResolved = true;
-    cachedSessionToken = null;
-    return null;
+  // Single-flight: concurrent callers on the retryable path share one invoke.
+  if (sessionTokenInFlight) {
+    return sessionTokenInFlight;
   }
+
+  sessionTokenInFlight = (async (): Promise<string | null> => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const token = await invoke('session_token');
+      const normalized = normalizeNonBlankString(token);
+      if (normalized !== null) {
+        cachedSessionToken = normalized;
+        sessionTokenResolved = true;
+      }
+      return normalized;
+    } catch (err) {
+      // Best-effort: token may not be available yet (or at all) — retryable.
+      console.debug('tauri session_token invoke failed (expected in dev mode)', err);
+      return null;
+    } finally {
+      sessionTokenInFlight = null;
+    }
+  })();
+
+  return sessionTokenInFlight;
 }
 
 /**

@@ -18,6 +18,7 @@ import { html, css, type TemplateResult } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
 import { surfaceScrollLayoutStyles } from '../primitives/surfaceLayout.js';
 import { apiPath } from '../../api/generated/apiRoutes.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 
 interface RouteEntry {
   method: string;
@@ -67,7 +68,7 @@ export class ApiExplorerView extends JfElement {
     this.load = { kind: 'loading' };
     this.requestUpdate();
     try {
-      const res = await fetch(`${this.apiBase}${apiPath('GET /api/meta/routes')}`, {
+      const res = await authorizedFetch(`${this.apiBase}${apiPath('GET /api/meta/routes')}`, {
         headers: { accept: 'application/json' },
       });
       if (res.status === 404) {
@@ -95,7 +96,7 @@ export class ApiExplorerView extends JfElement {
    * still renders; only the live availability badges are suppressed. */
   private async fetchCapabilities(): Promise<void> {
     try {
-      const res = await fetch(`${this.apiBase}${apiPath('GET /api/status')}`, { headers: { accept: 'application/json' } });
+      const res = await authorizedFetch(`${this.apiBase}${apiPath('GET /api/status')}`, { headers: { accept: 'application/json' } });
       if (!res.ok) return;
       const s = (await res.json()) as {
         aiReady?: boolean;
