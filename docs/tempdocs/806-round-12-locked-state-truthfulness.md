@@ -310,3 +310,19 @@ partial implementation from round 7's B6 #8, so implementation checks before bui
 **Confidence: 8.5/10** for the blocker (mechanism fully established at source, conformance target
 live, tests additive), 6/10 for the Settings item (mechanism unknown by design), 9/10 for the
 harness batch (mechanical).
+
+**C8 — takeover correction (2026-08-04, post-plan critical review): A.2's mechanism prose is
+wrong for the UI flow; the defect stands, the fix semantics tighten.** While locked, `byId` is
+EMPTY (`onKeyLocked()` cleared it, or the constructor load was skipped), so a user-initiated
+Forget cannot reach the persist-throws path A.2 narrates — that path needs the cache to contain
+something while locked, which only phantoms do. The real route for the forget-returns defect is
+the **silent no-op**: `forget(id)` misses the empty cache (`byId.remove(id) != null` is false),
+`persist()` is never called, no exception is thrown, and the controller answers **success**
+while the record sits untouched on disk and returns on unlock. Same user-facing lie, different
+internal route — and it means a rollback-only fix would leave the no-op path answering 200.
+**Corrected store semantics: all three mutators fail loud AT ENTRY while locked** (check the
+cipher first, throw before touching the cache, regardless of cache contents) — while locked the
+store cannot know what the disk holds, so any mutation outcome it reported would be a guess.
+Gate-at-entry also collapses the rollback question (no mutation happens to need rolling back;
+`persist()`'s own guard stays as defense in depth). The controller's 409 then covers both
+today's observable wrong answers: the phantom-mutation 500 and the silent no-op 200.
