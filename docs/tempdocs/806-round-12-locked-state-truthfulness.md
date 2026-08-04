@@ -1,6 +1,6 @@
 ---
 title: Round-12 fix campaign — locked-state truthfulness, and the unreadable-is-not-empty invariant
-status: "theorized + designed 2026-08-04 (Parts A/B); derisk Part C; plan pending. Scope: R12-F3 (HIGH, blocks 0.2.0 qualification) + the round-12 minor findings + the ranked sandbox-harness backlog from the round-12 session retro."
+status: "IMPLEMENTED 2026-08-05 (Part D) — all three bundles landed and accepted (W1 blocker with gate-at-entry semantics + the 423/STORE_LOCKED conformance; W2 eight minor findings incl. a fourth instance of the defect class at the RAG boundary; W3 harness batch incl. the two false-verdict preventers). Forced suite 186/186 green; live API + browser proof of the blocker complete. Awaiting: PR authorization; then the final fresh-install qualifying round (owes golden parity, Run-Offline-Processing exercise, uninstall/warm-reinstall, and the installer-version pixel check)"
 created: 2026-08-04
 updated: 2026-08-04
 ---
@@ -374,3 +374,41 @@ against the shared-stash rule — and self-reported it; the orchestrator verifie
 afterward (a foreign session's entry survived untouched, all three bundles' files intact).
 No damage; the brief-template lesson (name the stash rule explicitly in no-git briefs) is
 logged as an observation.
+
+**W2 (minor findings) — ACCEPTED.** All eight items, three brief corrections (each verified by
+the orchestrator): embed/splade CANNOT source from the worker model cache (`WorkerModelDiscovery`
+enumerates only reranker+citation), so both intent and observation come from the one
+`EncoderRuntimeExplainer` authority with an honest `unknown` tri-state and no wire-schema change;
+the Health contradiction's wrong half was the LABEL (`computeStatusLabel` lacked the `degraded`
+arm its own doc comment claimed — both now share `verdictOwnsStatus()`); and there was NO
+UI-side ask timeout at all — the real budget was a gRPC deadline category error
+(`retrieveContext` billed as CONTENT_FETCH 10s while reranking inside the Worker; now RERANK,
+effective ceiling 20s). W2 also found the campaign's defect class a FOURTH time: an unscoped ask
+whose retrieval never completed answered `NO_CONTENT` — "No matching documents found in the
+index" — a confident corpus claim from a call that did not run; `RetrievalAttempt` now separates
+ran-and-found-nothing from never-completed (`RETRIEVAL_TIMEOUT`/`RETRIEVAL_FAILED`, TRANSIENT).
+Settings mechanism fully established (declared-body region with schema controls whose
+`APPEARANCE_FLOW` write-edges did not exist — `vimMode` rendered ON off the optimistic local
+copy and never wrote; five edges added plus an invariant test that every declared schema
+property must have a writing edge); toast auto-hide (20s, never touches the seen-cursor;
+round 7's fix was geometric only, confirmed at tempdoc 798:974); repairNeeded makes Repair
+primary in Advanced; installer version via `bundle.copyright` → `BrandingText` (the one
+non-fork NSIS lever, source-verified against the tauri template — pixel-verification owed to
+the next CI installer build); RunEventStore scoped honestly to a comment upgrade naming 806 C5
+(the 423 conformance there changes what a locked chat thread renders and needs its own live
+verification — logged). 11 bite proofs; suites green (3955 ui-web).
+
+### Cross-cutting verification (2026-08-05)
+
+Forced full suite `test --rerun-tasks --no-build-cache`: **BUILD SUCCESSFUL in 4m42s, 186/186
+executed, zero failures** (all three bundles present). **Live blocker proof against the dev
+stack served from this worktree** (stale-dist check first — `locked` field present): GET while
+locked answers `{"memories":[],"locked":true}`; POST while locked **423 + STORE_LOCKED** with
+the honest message (was a 500 rendering as success); DELETE while locked **423 typed** (was the
+silent `{"ok":true}` no-op — the C8 headline defect, now refused honestly); after unlock the
+fact is intact and listed. Browser: the Memory tab while locked renders **"What the AI has
+learned is encrypted and locked"** + "Unlock to see what the AI has learned" + an
+**Unlock in Security** affordance + the input disabled with "Unlock memory to teach it a new
+fact" — the "No learned memory yet." lie is gone. Also observed live: Search Quality Features
+**4/4 active** (W2 item 1) and the status bar reading **"Service degraded"** where it previously
+said "Online" beside a warning dot (W2 item 3).
