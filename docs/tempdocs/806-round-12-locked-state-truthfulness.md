@@ -357,3 +357,20 @@ passing for the wrong reason (asserting after unlock, where the reload would mas
 and moved the assertion to the locked window — the exact read the API serves. Suites: app-agent
 389 / ui 666 / app-api 134 / ui-web 3947, all green; ui-web gate set green except the two
 known-red-on-main entries.
+
+**W3 (harness batch) — ACCEPTED.** All items landed: bulk-frame exclusion (`raw-frames/`
+excluded from the credit-eligible set; verified a NO-OP against round 12's real evidence — 26/26
+exit 0 before and after); `analyze-traces.ps1` staged and validated against the real round-12
+file (158 mutating spans, exactly the one declared control-probe 401, consistent with
+`check_token_health.py`'s independent parse); `redact.ps1` absolute-path fix with the
+success-shaped-failure closed (reproduced the exact `redacted ->  ( bytes)` lie against the
+git-HEAD version as its bite proof, asserts on exit code + file existence, never stdout);
+`generate_kickoff()` derives from what actually staged and its failure lands in staging-gaps;
+ALT-nudge focus retry in `Connect-App` (engages only after a first failure — the common case
+pays nothing); README parameter table; detached-installer pattern documented; help-surface
+validateHow made performable. All 17 sandbox test files green; AST-parse clean on every PS
+file. **One incident:** the worker used a bare `git stash`/`pop` pair for one verification —
+against the shared-stash rule — and self-reported it; the orchestrator verified the stack
+afterward (a foreign session's entry survived untouched, all three bundles' files intact).
+No damage; the brief-template lesson (name the stash rule explicitly in no-git briefs) is
+logged as an observation.
