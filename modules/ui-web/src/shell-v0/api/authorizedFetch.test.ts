@@ -244,4 +244,101 @@ describe('session-token resolver caching (804 D3 hazard)', () => {
 
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
+
+  it('invalidateSessionToken clears the cache so the next resolve re-invokes', async () => {
+    // Tempdoc 805 G.1 — the token is a per-boot fact. Without this the binding latches for the
+    // app's lifetime (R11-F2).
+    mocks.isTauriRuntime.mockReturnValue(true);
+    mocks.invoke.mockResolvedValueOnce('tok-boot-1').mockResolvedValueOnce('tok-boot-2');
+
+    const { resolveSessionTokenFromTauri, getSessionToken, invalidateSessionToken } = await import(
+      '../../api/http.js'
+    );
+
+    expect(await resolveSessionTokenFromTauri()).toBe('tok-boot-1');
+    expect(await resolveSessionTokenFromTauri()).toBe('tok-boot-1');
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+
+    invalidateSessionToken();
+    expect(getSessionToken()).toBeNull();
+
+    expect(await resolveSessionTokenFromTauri()).toBe('tok-boot-2');
+    expect(getSessionToken()).toBe('tok-boot-2');
+    expect(mocks.invoke).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('one-shot 401 heal (805 G.1 — a restart the shell has not announced yet)', () => {
+  function unauthorized(errorCode = 'UI_TOKEN_REQUIRED'): Response {
+    return new Response(JSON.stringify({ errorCode, message: 'nope' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  it('re-resolves and retries exactly once, then returns the second 401', async () => {
+    mocks.isTauriRuntime.mockReturnValue(true);
+    mocks.invoke.mockResolvedValueOnce('tok-dead').mockResolvedValueOnce('tok-live');
+    fetchSpy.mockResolvedValueOnce(unauthorized()).mockResolvedValueOnce(unauthorized());
+
+    const { authorizedFetch } = await import('./authorizedFetch.js');
+    const res = await authorizedFetch(`${apiBase}/api/x`, { method: 'POST', body: '{}' });
+
+    expect(res.status).toBe(401);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(mocks.invoke).toHaveBeenCalledTimes(2);
+    expect(headerOf(fetchSpy.mock.calls[0])).toBe('tok-dead');
+    expect(headerOf(fetchSpy.mock.calls[1])).toBe('tok-live');
+  });
+
+  it('heals a single stale-token 401 and returns the retry response', async () => {
+    mocks.isTauriRuntime.mockReturnValue(true);
+    mocks.invoke.mockResolvedValueOnce('tok-dead').mockResolvedValueOnce('tok-live');
+    fetchSpy.mockResolvedValueOnce(unauthorized()).mockResolvedValueOnce(ok());
+
+    const { authorizedFetch } = await import('./authorizedFetch.js');
+    const res = await authorizedFetch(`${apiBase}/api/x`, { method: 'POST', body: '{}' });
+
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(headerOf(fetchSpy.mock.calls[1])).toBe('tok-live');
+  });
+
+  it('does NOT retry a 401 carrying a different errorCode', async () => {
+    mocks.isTauriRuntime.mockReturnValue(true);
+    mocks.invoke.mockResolvedValue('tok-abc');
+    fetchSpy.mockResolvedValueOnce(unauthorized('AUTH_FORBIDDEN'));
+
+    const { authorizedFetch } = await import('./authorizedFetch.js');
+    const res = await authorizedFetch(`${apiBase}/api/x`, { method: 'POST' });
+
+    expect(res.status).toBe(401);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT retry a non-401 response', async () => {
+    mocks.isTauriRuntime.mockReturnValue(true);
+    mocks.invoke.mockResolvedValue('tok-abc');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ errorCode: 'UI_TOKEN_REQUIRED' }), { status: 500 }),
+    );
+
+    const { authorizedFetch } = await import('./authorizedFetch.js');
+    const res = await authorizedFetch(`${apiBase}/api/x`, { method: 'POST' });
+
+    expect(res.status).toBe(500);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a probed response body readable by the caller', async () => {
+    mocks.isTauriRuntime.mockReturnValue(true);
+    mocks.invoke.mockResolvedValue('tok-abc');
+    fetchSpy.mockResolvedValueOnce(unauthorized('AUTH_FORBIDDEN'));
+
+    const { authorizedFetch } = await import('./authorizedFetch.js');
+    const res = await authorizedFetch(`${apiBase}/api/x`, { method: 'POST' });
+
+    // The rejection probe reads a CLONE, so the caller's body is still unconsumed.
+    await expect(res.json()).resolves.toMatchObject({ errorCode: 'AUTH_FORBIDDEN' });
+  });
 });

@@ -39,7 +39,14 @@
  */
 import type { AiState } from './aiStateStore.js';
 import { isKnown } from './known.js';
-import { reasonFor, type NoticeRemedy } from './readinessNotice.js';
+import {
+  classifyConsequence,
+  reasonFor,
+  KEYWORD_FALLBACK_CAVEAT,
+  PASSAGE_REDUCED_CAVEAT,
+  OPTIONAL_CAPABILITY_CAVEAT,
+  type NoticeRemedy,
+} from './readinessNotice.js';
 import { formatStartupEstimate } from './startupEstimate.js';
 
 export type { NoticeRemedy };
@@ -129,16 +136,26 @@ export function projectAvailability(
     // but retrieval ranking is degraded (e.g. an optional re-ranker is off). We DEGRADE, never block —
     // CONSUMING the ONE 595 verdict (`computeVerdict` emits `kind:'degraded'` exactly for retrieval
     // degradation), NOT re-deriving it from `readiness.retrieval` (that would fork the verdict authority,
-    // the §4.2 single-derivation rule the `verdict-derivation` gate enforces). The verdict's severity
-    // calibrates tone: `info` (optional/cosmetic) words calmly; `warn`/`error` words the keyword fallback.
+    // the §4.2 single-derivation rule the `verdict-derivation` gate enforces).
+    //
+    // Tempdoc 805 §G.2 — the CAVEAT is licensed by the one consequence classifier, not by the
+    // verdict's SEVERITY: round 11 measured a warn verdict whose only retrieval cause was a passage
+    // gap, and this projection (like the banner) claimed a keyword fallback over a trace showing dense
+    // retrieval + reranking executing. Severity says how loud, never what happened. The wordings are
+    // IMPORTED (not re-authored here) so the claim exists in exactly one module.
     const verdict = s.verdict;
     if (verdict !== undefined && verdict.kind === 'degraded') {
-      const calm = verdict.severity === 'info';
+      const consequence = classifyConsequence(verdict.reasons);
       return {
         kind: 'degraded',
-        caveat: calm
-          ? 'An optional ranking model is unavailable — results are complete, ranking may be simpler'
-          : 'Showing keyword-ranked results — semantic ranking is degraded',
+        caveat:
+          consequence === 'passage-reduced'
+            ? PASSAGE_REDUCED_CAVEAT
+            : consequence === 'ai-unavailable' || consequence === 'cosmetic'
+              ? OPTIONAL_CAPABILITY_CAVEAT
+              : // `retrieval-impaired` and the conservative `unknown` (an unclassifiable code is not
+                // evidence that retrieval is fine — the classifier's own doctrine).
+                KEYWORD_FALLBACK_CAVEAT,
       };
     }
   }

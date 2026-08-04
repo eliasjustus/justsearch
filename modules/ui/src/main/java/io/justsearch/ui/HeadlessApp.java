@@ -342,7 +342,8 @@ public class HeadlessApp {
       io.justsearch.app.services.settings.UiSettingsStore settingsStore,
       RuntimeManifestPublisher manifestPublisher,
       io.justsearch.app.services.lifecycle.WorkerCapability sharedWorkerCapability,
-      io.justsearch.ui.api.UpgradeShutdownBridge upgradeShutdownBridge)
+      io.justsearch.ui.api.UpgradeShutdownBridge upgradeShutdownBridge,
+      io.justsearch.ui.api.LifecycleShutdownBridge lifecycleShutdownBridge)
       throws Exception {
     Telemetry telemetry = infraPhase.telemetry();
     ResolvedConfig resolvedConfig = infraPhase.config().resolvedConfig();
@@ -380,6 +381,7 @@ public class HeadlessApp {
             .HeadAssembly(bootstrap)
             .runtimeManifestPublisher(manifestPublisher)
             .upgradeShutdownAction(upgradeShutdownBridge)
+            .lifecycleShutdownAction(lifecycleShutdownBridge)
             .upgradeReconciliation(
                 resolvedConfig.paths().dataDir(),
                 () -> EnvRegistry.APP_VERSION.get().orElse(""),
@@ -619,6 +621,8 @@ public class HeadlessApp {
     CountDownLatch latch = new CountDownLatch(1);
     io.justsearch.ui.api.UpgradeShutdownBridge upgradeShutdownBridge =
         new io.justsearch.ui.api.UpgradeShutdownBridge();
+    io.justsearch.ui.api.LifecycleShutdownBridge lifecycleShutdownBridge =
+        new io.justsearch.ui.api.LifecycleShutdownBridge();
 
     try {
       // Phase 0: resolve config (tempdoc 502 §3.3)
@@ -683,7 +687,8 @@ public class HeadlessApp {
               settingsStore,
               manifestPublisher,
               sharedWorkerCapability,
-              upgradeShutdownBridge);
+              upgradeShutdownBridge,
+              lifecycleShutdownBridge);
       bootstrap = apiPhase.bootstrap();
       apiServer = apiPhase.apiServer();
 
@@ -774,6 +779,9 @@ public class HeadlessApp {
                       appInstanceLockRef),
               System::exit);
       upgradeShutdownBridge.install(shutdownCoordinator);
+      // Tempdoc 805 G.1: the same coordinator answers the shell's normal-quit request — one
+      // ordered-shutdown routine, two callers.
+      lifecycleShutdownBridge.install(shutdownCoordinator::shutdownAndExit);
 
       Runtime.getRuntime()
           .addShutdownHook(

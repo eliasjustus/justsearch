@@ -153,12 +153,46 @@ export function createApiError(
 /** Header name for the desktop session token (must match backend). */
 export const SESSION_TOKEN_HEADER = 'X-JustSearch-Session';
 
-// Cached session token (resolved once from Tauri, then reused).
-let cachedSessionToken: string | null = null;
-let sessionTokenResolved = false;
-// In-flight resolution, shared by concurrent callers so a retryable null
-// (Tauri runtime, token not ready yet) cannot stampede `invoke('session_token')`.
-let sessionTokenInFlight: Promise<string | null> | null = null;
+/**
+ * The webview's half of the backend binding (tempdoc 805 G.1).
+ *
+ * The session token is a per-BOOT fact of one Head incarnation, not a constant of the app's
+ * lifetime. Holding it in three independent module variables made "forget it" a three-assignment
+ * operation nobody performed, so a backend restart left every mutating call 401-ing forever
+ * (R11-F2). One object, one `invalidate()`.
+ *
+ * `resolved` marks the resolution FINAL — see `resolveSessionTokenFromTauri` for when that is
+ * legitimate. `inFlight` is shared by concurrent callers so a retryable null cannot stampede
+ * `invoke('session_token')`.
+ */
+interface SessionTokenBinding {
+  token: string | null;
+  resolved: boolean;
+  inFlight: Promise<string | null> | null;
+  /** Bumped by every invalidation, so a resolution in flight across one knows it is obsolete. */
+  generation: number;
+}
+
+const sessionBinding: SessionTokenBinding = {
+  token: null,
+  resolved: false,
+  inFlight: null,
+  generation: 0,
+};
+
+/**
+ * Drop the cached token so the next resolve re-invokes the shell (tempdoc 805 G.1).
+ *
+ * Called when the shell announces a backend restart, and when the backend answers a mutating call
+ * with `UI_TOKEN_REQUIRED` — the two ways the webview learns its binding died. An in-flight
+ * resolution is abandoned rather than awaited: it is resolving against the DEAD instance.
+ */
+export function invalidateSessionToken(): void {
+  sessionBinding.token = null;
+  sessionBinding.resolved = false;
+  sessionBinding.inFlight = null;
+  sessionBinding.generation += 1;
+}
 
 // ==================== Tauri Integration ====================
 
@@ -198,30 +232,33 @@ async function resolvePortFromTauri(): Promise<number | null> {
  */
 export async function resolveSessionTokenFromTauri(): Promise<string | null> {
   // Return cached value if already resolved
-  if (sessionTokenResolved) {
-    return cachedSessionToken;
+  if (sessionBinding.resolved) {
+    return sessionBinding.token;
   }
 
   // Avoid calling into Tauri APIs in browser mode
   if (!isProbablyTauriRuntime()) {
-    sessionTokenResolved = true;
-    cachedSessionToken = null;
+    sessionBinding.resolved = true;
+    sessionBinding.token = null;
     return null;
   }
 
   // Single-flight: concurrent callers on the retryable path share one invoke.
-  if (sessionTokenInFlight) {
-    return sessionTokenInFlight;
+  if (sessionBinding.inFlight) {
+    return sessionBinding.inFlight;
   }
 
-  sessionTokenInFlight = (async (): Promise<string | null> => {
+  const generation = sessionBinding.generation;
+  const pending = (async (): Promise<string | null> => {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const token = await invoke('session_token');
       const normalized = normalizeNonBlankString(token);
-      if (normalized !== null) {
-        cachedSessionToken = normalized;
-        sessionTokenResolved = true;
+      // An invalidate() mid-flight bumped the generation: this answer describes the DEAD
+      // instance, so it is returned to the caller that asked but never cached.
+      if (normalized !== null && sessionBinding.generation === generation) {
+        sessionBinding.token = normalized;
+        sessionBinding.resolved = true;
       }
       return normalized;
     } catch (err) {
@@ -229,11 +266,13 @@ export async function resolveSessionTokenFromTauri(): Promise<string | null> {
       console.debug('tauri session_token invoke failed (expected in dev mode)', err);
       return null;
     } finally {
-      sessionTokenInFlight = null;
+      // Only clear our own slot — an invalidation already replaced it otherwise.
+      if (sessionBinding.generation === generation) sessionBinding.inFlight = null;
     }
   })();
+  sessionBinding.inFlight = pending;
 
-  return sessionTokenInFlight;
+  return pending;
 }
 
 /**
@@ -242,7 +281,7 @@ export async function resolveSessionTokenFromTauri(): Promise<string | null> {
  * Call resolveSessionTokenFromTauri() first to ensure the token is resolved.
  */
 export function getSessionToken(): string | null {
-  return cachedSessionToken;
+  return sessionBinding.token;
 }
 
 export async function resolveSmokeRunId(): Promise<string | null> {
@@ -289,8 +328,8 @@ export async function request<T>(
 
   // For non-GET requests, ensure the session token is resolved before proceeding.
   // This makes token correctness a property of the helper, not each callsite.
-  let tokenForRequest = cachedSessionToken;
-  if (method !== 'GET' && !sessionTokenResolved) {
+  let tokenForRequest = sessionBinding.token;
+  if (method !== 'GET' && !sessionBinding.resolved) {
     tokenForRequest = await resolveSessionTokenFromTauri();
   }
 

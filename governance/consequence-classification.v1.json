@@ -1,0 +1,24 @@
+{
+  "kind": "consequence-classification.v1",
+  "note": "Tempdoc 805 §G.2 — degradation-consequence coherence. A surface that CLAIMS what a degradation did to search (\"showing keyword results\", \"keyword-ranked results\") must derive that claim from the ONE classifier `classifyConsequence` (state/readinessNotice.ts) and word it from that module's exported caveat constants — never re-derive it from `verdict.severity` and re-author the wording locally. That re-derivation is the fork-class round 11 measured in TWO copies at once: the search banner and `availability.ts`'s affordance caveat both claimed a keyword fallback while the build's own search trace showed dense retrieval AND the cross-encoder executing (the true state was a PASSAGE-leg gap only). This gate (scripts/ci/check-consequence-classification.mjs) enforces both halves: (a) CLAIM CONTAINMENT — the keyword-fallback claim phrases appear in no file under `scanRoot` except the authority module, with a narrow allowlist for the trace-outcome line (searchTraceExplain describes the TRACE's own recorded outcome, not a derived claim) and for test files (which assert the claim's presence/absence); (b) POSITIVE COVERAGE — every registered consumer surface imports the classifier or the caveat constants, so a registered consumer cannot silently drop back to a private derivation. Honest limit (like capability-availability / verdict-derivation): the coverage half guards the REGISTERED consumers' seam, not a brand-new unregistered claim surface (that is a discovery-step register row); the containment half is literal-phrase matching, so a semantically-equivalent re-wording (\"only word matches\") passes — free-text wording judgment stays prose-tier.",
+  "authority": {
+    "file": "modules/ui-web/src/shell-v0/state/readinessNotice.ts",
+    "symbol": "classifyConsequence",
+    "caveatExports": [
+      "KEYWORD_FALLBACK_CAVEAT",
+      "PASSAGE_REDUCED_CAVEAT",
+      "OPTIONAL_CAPABILITY_CAVEAT"
+    ]
+  },
+  "scanRoot": "modules/ui-web/src",
+  "claimPhrases": ["keyword results", "keyword-ranked results"],
+  "allow": {
+    "files": [
+      "modules/ui-web/src/shell-v0/aggregate-substrate/strategies/searchTraceExplain.ts"
+    ],
+    "whyFiles": "searchTraceExplain's `TIMEOUT: 'AI expansion timed out — keyword results only'` reports the TRACE's own recorded outcome for a stage that actually happened — it is a reading of measured execution, not a claim derived from reason codes, so it is not the fork-class this gate closes.",
+    "testFiles": true,
+    "whyTestFiles": "`*.test.ts` files assert the claim's presence on the impairing branch and its ABSENCE on the passage/AI branches — the precision tests are the reason the phrase must appear in them."
+  },
+  "consumers": ["modules/ui-web/src/shell-v0/state/availability.ts"]
+}

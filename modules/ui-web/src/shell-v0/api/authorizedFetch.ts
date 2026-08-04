@@ -18,11 +18,15 @@
 import {
   SESSION_TOKEN_HEADER,
   getSessionToken,
+  invalidateSessionToken,
   resolveSessionTokenFromTauri,
 } from '../../api/http.js';
 
 /** Methods the backend exempts from token enforcement (ApiSecurityFilters). */
 const TOKEN_FREE_METHODS = new Set(['GET', 'HEAD']);
+
+/** The backend's error code for "this request needs a session token it did not carry". */
+const TOKEN_REQUIRED_CODE = 'UI_TOKEN_REQUIRED';
 
 /**
  * The one sanctioned reference to the raw global — this seam's exit. Resolved per
@@ -78,6 +82,23 @@ export async function authorizedFetch(
     return globalFetch(input, init);
   }
 
+  // A Request body is single-use, so the retry needs its own copy taken BEFORE the first send.
+  const retryInput =
+    typeof Request !== 'undefined' && input instanceof Request ? input.clone() : input;
+
+  const response = await sendWithToken(input, init);
+  if (!(await isStaleTokenRejection(response))) {
+    return response;
+  }
+
+  // Tempdoc 805 G.1: the backend says this token is not the live one — the binding died under us
+  // (a restart the shell's event has not delivered yet). Drop it, re-resolve, retry EXACTLY once;
+  // a second rejection is the answer, not a loop.
+  invalidateSessionToken();
+  return sendWithToken(retryInput, init);
+}
+
+async function sendWithToken(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   // Ordering matters: resolve BEFORE building headers, so a request issued
   // during cold start blocks on the token instead of racing past it.
   await resolveSessionTokenFromTauri();
@@ -94,4 +115,20 @@ export async function authorizedFetch(
   }
 
   return globalFetch(input, { ...init, headers: withToken(callerHeaders, token) });
+}
+
+/**
+ * True only for a 401 whose body names {@link TOKEN_REQUIRED_CODE}. Every other 401 (and every
+ * other status) is the caller's answer — re-resolving would not change it.
+ *
+ * Reads a CLONE so the caller still gets an unconsumed body.
+ */
+async function isStaleTokenRejection(response: Response): Promise<boolean> {
+  if (response.status !== 401) return false;
+  try {
+    const body = (await response.clone().json()) as { errorCode?: unknown };
+    return body?.errorCode === TOKEN_REQUIRED_CODE;
+  } catch {
+    return false; // unparseable body — not a claim we can act on
+  }
 }

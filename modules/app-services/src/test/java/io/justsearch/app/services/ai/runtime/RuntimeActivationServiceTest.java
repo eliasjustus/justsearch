@@ -262,6 +262,110 @@ class RuntimeActivationServiceTest {
         null, null, cache);
   }
 
+  // --------------- Observed execution provider (tempdoc 805 G.3, round-11 F3) ---------------
+
+  /** The Worker's ONNX discovery said "found + session active" for both features. */
+  private static final WorkerFeatureCache DISCOVERED_AND_ACTIVE =
+      () ->
+          List.of(
+              new OnnxModelStatus("reranker", true, "C:\\models\\reranker", true, true),
+              new OnnxModelStatus("citation-scorer", true, "C:\\models\\citation", true, true));
+
+  private static io.justsearch.app.api.inference.EncoderRuntimeView cudaFallbackView() {
+    // Exactly OrtCudaStatus.missingDlls' shape as WorkerStatusMapper maps it: configured + attempted
+    // + unavailable, with the missing native names. Derived through the explainer so the test drives
+    // the SAME derivation production uses, not a hand-built view.
+    return io.justsearch.app.services.observability.EncoderRuntimeExplainer.explain(
+        io.justsearch.ort.EncoderRole.RERANKER,
+        new io.justsearch.app.api.status.OrtCudaView(
+            true,
+            true,
+            false,
+            "cuda12",
+            "C:\\native-bin\\ort",
+            "ORT CUDA native pack incomplete",
+            List.of("onnxruntime_providers_cuda.dll")),
+        Map.of("variant", Map.of("executionProvider", "CUDA")));
+  }
+
+  @Test
+  void onnxFeatureReportsGpuFallback_whenTheOrtSessionRanOnCpu() {
+    setHome(tmp);
+    RuntimeActivationService svc = createServiceWithCache(DISCOVERED_AND_ACTIVE);
+    svc.setEncoderRuntimeCache(
+        () -> Map.of(io.justsearch.ort.EncoderRole.RERANKER, cudaFallbackView()));
+
+    AiRuntimeStatusResponse.OnnxFeatureStatus reranker = svc.getStatus().onnxFeatures().get(0);
+
+    // The round-11 lie: these two say "all good" for a CPU-fallback session — unchanged, because
+    // they are honest about INTENT. The observed axis is what was missing.
+    assertEquals("active", reranker.status(), "discovery-derived intent is unchanged (additive fields)");
+    assertTrue(reranker.modelActive(), "a session DOES exist — that was never the wrong part");
+
+    assertEquals("cpu", reranker.executionProvider(), "the session actually runs on CPU");
+    assertTrue(reranker.gpuFallback(), "GPU was configured and did not happen — the round-11 defect");
+    assertTrue(
+        reranker.fallbackReason().contains("onnxruntime_providers_cuda.dll"),
+        "the reason names the missing native, not just 'GPU unavailable': " + reranker.fallbackReason());
+  }
+
+  @Test
+  void onnxFeatureReportsCuda_whenTheOrtSessionIsOnGpu() {
+    setHome(tmp);
+    RuntimeActivationService svc = createServiceWithCache(DISCOVERED_AND_ACTIVE);
+    svc.setEncoderRuntimeCache(
+        () ->
+            Map.of(
+                io.justsearch.ort.EncoderRole.RERANKER,
+                io.justsearch.app.services.observability.EncoderRuntimeExplainer.explain(
+                    io.justsearch.ort.EncoderRole.RERANKER,
+                    new io.justsearch.app.api.status.OrtCudaView(
+                        true, true, true, "cuda12", "C:\\native-bin\\ort", "", List.of()),
+                    Map.of("variant", Map.of("executionProvider", "CUDA")))));
+
+    AiRuntimeStatusResponse.OnnxFeatureStatus reranker = svc.getStatus().onnxFeatures().get(0);
+
+    assertEquals("cuda", reranker.executionProvider());
+    assertFalse(reranker.gpuFallback(), "a GPU session is not a fallback");
+    assertNull(reranker.fallbackReason());
+  }
+
+  @Test
+  void onnxFeatureReportsUnknownEp_whenTheWorkerHasNotAnswered() {
+    setHome(tmp);
+    RuntimeActivationService svc = createServiceWithCache(DISCOVERED_AND_ACTIVE);
+
+    AiRuntimeStatusResponse.OnnxFeatureStatus reranker = svc.getStatus().onnxFeatures().get(0);
+
+    assertEquals(
+        "unknown",
+        reranker.executionProvider(),
+        "no observation degrades to unknown — never to a positive 'cuda' claim");
+    assertFalse(reranker.gpuFallback());
+  }
+
+  @Test
+  void cpuByDesignIsNotAFallback() {
+    setHome(tmp);
+    RuntimeActivationService svc = createServiceWithCache(DISCOVERED_AND_ACTIVE);
+    // citation-scorer is CPU-only by design (EncoderRole.isCpuOnly) — the policy says CPU, so
+    // running on CPU is the intent being met, not a degradation.
+    svc.setEncoderRuntimeCache(
+        () ->
+            Map.of(
+                io.justsearch.ort.EncoderRole.CITATION,
+                io.justsearch.app.services.observability.EncoderRuntimeExplainer.explain(
+                    io.justsearch.ort.EncoderRole.CITATION,
+                    io.justsearch.app.api.status.OrtCudaView.notConfigured(),
+                    Map.of("variant", Map.of("executionProvider", "CPU")))));
+
+    AiRuntimeStatusResponse.OnnxFeatureStatus citation = svc.getStatus().onnxFeatures().get(1);
+
+    assertEquals("cpu", citation.executionProvider());
+    assertFalse(citation.gpuFallback(), "CPU by design must never read as a GPU fallback");
+    assertNull(citation.fallbackReason());
+  }
+
   // --------------- Tempdoc 727 F-3: leftover-variant WARN false positive ---------------
 
   /**

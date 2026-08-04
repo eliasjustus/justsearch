@@ -3458,10 +3458,22 @@ describe('Search Thread S4-final — commit-on-consequence + query trail', () =>
     globalThis.fetch = originalFetch;
   });
 
-  /** Push a fabricated refined-pass snapshot with 2 results through the mocked search store. */
-  function pushSearch(view: UnifiedChatView, query: string): void {
+  /**
+   * Push a fabricated refined-pass snapshot with 2 results through the mocked search store.
+   *
+   * Tempdoc 805 §G.2 — `passStage` is now part of what makes this a REFINED-pass fixture (it was
+   * omitted before, when the frozen card took any trace it found, or defaulted to 'TEXT'). Pass
+   * `'quick'` to fabricate the quick window instead: that pass genuinely runs `mode: 'text'`
+   * (searchState.buildSearchIntent), so its identity must never be frozen as the search's own.
+   */
+  function pushSearch(
+    view: UnifiedChatView,
+    query: string,
+    opts: { passStage?: 'quick' | 'refined'; effectiveMode?: string | null } = {},
+  ): void {
     view.affordance = 'retrieve';
     expect(searchListener).not.toBeNull();
+    const mode = opts.effectiveMode === undefined ? 'HYBRID' : opts.effectiveMode;
     searchListener!({
       query,
       results: [
@@ -3473,7 +3485,8 @@ describe('Search Thread S4-final — commit-on-consequence + query trail', () =>
       isSearching: false,
       processingTimeMs: 12,
       error: null,
-      searchTrace: { effectiveMode: 'HYBRID' },
+      passStage: opts.passStage ?? 'refined',
+      searchTrace: mode === null ? null : { effectiveMode: mode },
     });
   }
 
@@ -3530,6 +3543,90 @@ describe('Search Thread S4-final — commit-on-consequence + query trail', () =>
       resultCount: 2,
       docIds: ['/docs/q1.md', '/src/helper.ts'],
     });
+    view.remove();
+  });
+
+  // ===== Tempdoc 805 §G.2 / derisk U5 — the frozen card's retrieval-mode IDENTITY. The quick pass
+  // genuinely runs `mode: 'text'` (searchState.buildSearchIntent:330-332), so a commit landing inside
+  // the quick window froze "Keyword" as the search's identity — round 11 saw that on a hybrid search —
+  // and the removed `?? 'TEXT'` default asserted the same from a MISSING trace. =====
+
+  it("805 §G.2: a commit during the QUICK window freezes mode 'UNKNOWN' and renders NO mode label", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-q' }) });
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { sessionId: string }).sessionId = 'uc-commit-quick';
+    // The quick pass' own honest trace: it really did run TEXT — but it is not the search's identity.
+    pushSearch(view, 'invoice audit', { passStage: 'quick', effectiveMode: 'TEXT' });
+    await view.updateComplete;
+
+    view.shadowRoot
+      ?.querySelector('jf-results-card:not([variant])')!
+      .dispatchEvent(new CustomEvent('card-open', { detail: { id: 'h1' }, bubbles: true, composed: true }));
+    await view.updateComplete;
+
+    const committed = (view as unknown as { committedSearches: Array<Record<string, unknown>> })
+      .committedSearches;
+    expect(committed.length).toBe(1);
+    expect(committed[0]!.mode).toBe('UNKNOWN');
+    expect(committed[0]!.mode).not.toBe('TEXT');
+
+    // The frozen card renders the provenance header WITHOUT a mode segment — and without a dangling
+    // separator where the label used to be.
+    const snapshotCard = view.shadowRoot?.querySelector('jf-results-card[variant="snapshot"]');
+    await (snapshotCard as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    const header = snapshotCard!.shadowRoot?.querySelector('[data-testid="card-provenance"]');
+    const text = header?.textContent ?? '';
+    expect(text).toContain('invoice audit');
+    expect(text).not.toContain('Keyword');
+    expect(text).not.toContain('exact-word search');
+    expect(text).not.toContain('UNKNOWN');
+    expect(text.replace(/\s+/g, ' ')).not.toContain('· ·');
+    view.remove();
+  });
+
+  it("805 §G.2: a MISSING trace on the refined pass also freezes 'UNKNOWN' (no `?? 'TEXT'` default)", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-n' }) });
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { sessionId: string }).sessionId = 'uc-commit-notrace';
+    pushSearch(view, 'invoice audit', { passStage: 'refined', effectiveMode: null });
+    await view.updateComplete;
+
+    view.shadowRoot
+      ?.querySelector('jf-results-card:not([variant])')!
+      .dispatchEvent(new CustomEvent('card-open', { detail: { id: 'h1' }, bubbles: true, composed: true }));
+    await view.updateComplete;
+
+    const committed = (view as unknown as { committedSearches: Array<Record<string, unknown>> })
+      .committedSearches;
+    expect(committed[0]!.mode).toBe('UNKNOWN');
+    view.remove();
+  });
+
+  it('805 §G.2: a commit AFTER the refined pass keeps the real mode + renders its label', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'evt-r' }) });
+    const view = mountView();
+    await view.updateComplete;
+    (view as unknown as { sessionId: string }).sessionId = 'uc-commit-refined';
+    pushSearch(view, 'invoice audit', { passStage: 'refined', effectiveMode: 'HYBRID' });
+    await view.updateComplete;
+
+    view.shadowRoot
+      ?.querySelector('jf-results-card:not([variant])')!
+      .dispatchEvent(new CustomEvent('card-open', { detail: { id: 'h1' }, bubbles: true, composed: true }));
+    await view.updateComplete;
+
+    const committed = (view as unknown as { committedSearches: Array<Record<string, unknown>> })
+      .committedSearches;
+    expect(committed[0]!.mode).toBe('HYBRID');
+
+    const snapshotCard = view.shadowRoot?.querySelector('jf-results-card[variant="snapshot"]');
+    await (snapshotCard as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+    const text =
+      snapshotCard!.shadowRoot?.querySelector('[data-testid="card-provenance"]')?.textContent ?? '';
+    // Simple mode is the default (tempdoc 738 C2) → the plain label.
+    expect(text).toContain('meaning + words');
     view.remove();
   });
 

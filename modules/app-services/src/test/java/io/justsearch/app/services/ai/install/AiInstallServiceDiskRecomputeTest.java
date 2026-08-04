@@ -118,13 +118,25 @@ final class AiInstallServiceDiskRecomputeTest {
   //    machine, not about the current registry. A newer app version that REGISTERS a package must not
   //    retroactively un-install a complete installation. ──
 
+  /**
+   * A contract covering the given packages, each claiming ONE file named {@code <id>.bin}.
+   *
+   * <p>Tempdoc 805 G.3 re-pin: completeness is now measured per FILE, not per package, so this
+   * fixture names a distinct file per package and the tests below plan downloads whose target path
+   * ends in that same filename when they mean "the contracted file is gone". Pre-805 the fixture
+   * claimed {@code model.bin} for every package while the real-gap test planned {@code
+   * chat/model.gguf} — under package-level matching that was still a "contracted gap", under
+   * file-level matching it would silently have become a registry addition. The assertions'
+   * INTENT is unchanged; only the fixture is made consistent with the finer granularity.
+   */
   private static InstallContract contractCovering(String... packageIds) {
     var models = new java.util.LinkedHashMap<String, InstallContract.InstalledModel>();
     for (String id : packageIds) {
+      String file = id + ".bin";
       models.put(
           id,
           new InstallContract.InstalledModel(
-              id, "model.bin", null, null, id, "sha", List.of("model.bin"), false, null));
+              id, file, null, null, id, "sha", List.of(file), false, null));
     }
     return new InstallContract(2, 1L, null, DownloadProfile.values()[0], Map.copyOf(models));
   }
@@ -160,25 +172,71 @@ final class AiInstallServiceDiskRecomputeTest {
   @Test
   void applyInstalledFromPlan_staysNotInstalled_whenAContractedPackageIsMissing() throws Exception {
     AiInstallService svc = new AiInstallService(null, null, null, null, tmp);
-    // A genuinely incomplete install: the contract CLAIMS chat, but the planner still wants to
-    // download it (the file is gone) — that is a real gap, not a registry addition.
+    // A genuinely incomplete install: the contract CLAIMS chat's file, but the planner still wants
+    // to download it (the file is gone) — that is a real gap, not a registry addition.
     InstallPlan plan =
         new InstallPlan(
             DownloadProfile.values()[0],
             List.of(
                 new InstallPlan.PlannedDownload(
-                    "chat", "https://example/model.gguf", "chat/model.gguf", "sha", 100L, true)),
+                    "chat", "https://example/chat.bin", "chat/chat.bin", "sha", 100L, true)),
             List.of(),
             100L,
             List.of("embedding"));
 
     boolean flipped = svc.applyInstalledFromPlan(plan, MINIMAL_REGISTRY, contractCovering("embedding", "chat"));
 
-    assertFalse(flipped, "a package the CONTRACT covered and disk lacks is a genuine gap");
+    assertFalse(flipped, "a file the CONTRACT covered and disk lacks is a genuine gap");
     AiInstallStatus after = statusOf(svc);
     assertFalse(after.installedFully, "installedFully stays false — the honest 'Not Installed'");
     assertTrue(
         after.pendingRegistryAdditions.isEmpty(),
         "an incomplete install reports no pending registry additions (it is not the additions case)");
+    assertTrue(after.repairNeeded, "tempdoc 805 G.3 — a missing required file warrants repair");
+  }
+
+  // ── Tempdoc 805 G.3 (round-11 F3/F4): the consequence signal. `installedFully` answers "was the
+  //    recorded install complete?"; `repairNeeded` answers "is a required file missing NOW?" —
+  //    round 11 had the second true while the first was (correctly) also true, and nothing said so. ──
+
+  @Test
+  void applyInstalledFromPlan_setsRepairNeeded_whenARegistryAdditionIsMissing() throws Exception {
+    AiInstallService svc = new AiInstallService(null, null, null, null, tmp);
+    InstallPlan plan =
+        new InstallPlan(
+            DownloadProfile.values()[0],
+            List.of(
+                new InstallPlan.PlannedDownload(
+                    "cuda-runtime",
+                    "https://example/ort-native-cuda12-v1.24.3.zip",
+                    "runtime/ort-native-cuda12-v1.24.3.zip",
+                    "sha",
+                    167L,
+                    false)),
+            List.of(),
+            167L,
+            List.of("embedding", "chat"));
+
+    boolean flipped = svc.applyInstalledFromPlan(plan, MINIMAL_REGISTRY, contractCovering("embedding", "chat"));
+
+    assertTrue(flipped, "an addition does not un-install a contract-satisfied installation (804 §B8)");
+    AiInstallStatus after = statusOf(svc);
+    assertTrue(after.installedFully, "the recorded install is complete on its own terms");
+    assertTrue(
+        after.repairNeeded,
+        "…and the missing file still has a consequence the UI must be able to route to Repair");
+  }
+
+  @Test
+  void applyInstalledFromPlan_clearsRepairNeeded_whenNothingIsMissing() throws Exception {
+    AiInstallService svc = new AiInstallService(null, null, null, null, tmp);
+    AiInstallStatus status = statusOf(svc);
+    status.repairNeeded = true; // e.g. a prior recompute round
+
+    svc.applyInstalledFromPlan(
+        new InstallPlan(DownloadProfile.values()[0], List.of(), List.of(), 0L, List.of("embedding")),
+        MINIMAL_REGISTRY);
+
+    assertFalse(statusOf(svc).repairNeeded, "a complete disk state must retract the repair advisory");
   }
 }

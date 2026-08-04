@@ -58,6 +58,10 @@
     "extraction-fallback-budget": {
       "minStrength": 100,
       "maxNoCoverage": 0
+    },
+    "install-completeness": {
+      "minStrength": 100,
+      "maxNoCoverage": 0
     }
   }
 }

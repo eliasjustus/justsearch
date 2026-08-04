@@ -58,6 +58,15 @@ A release **candidate** is qualified before its number is finalized:
    as a pair: *healthy looks like X (bounded, terminating, counters advancing); the defect is Y
    (X's signature persisting with no progress)*, and give the round the observation that
    separates them.
+   **A BROKEN criterion must name the defect *class*, not one instance of it.** Round 11
+   (tempdoc 734 round-11 section): the charter's BROKEN criterion was scoped to search ("any
+   bare HTTP 401 on search"). Search passed cleanly, so read literally the criterion was
+   satisfied -- but the actual class it existed to catch (round-10's F7: *any shipped-UI control
+   whose mutating call 401s*) had resurfaced on a different control (chat-encryption
+   unlock/lock), and a round following the charter's letter rather than its intent could have
+   reported the item a clean pass and moved on. Name the class the criterion is really standing
+   in for ("any shipped-UI control whose mutating call 401s", not "401 on search") so a round
+   generalizes past the one instance that happened to be tested last time.
    Round modes cover the supported **arrival states**, not only the empty
    machine: first and final qualifying rounds run `fresh-install`, and the qualifying set must
    include at least one `upgrade-from-release` round (previous public release installed first,
@@ -324,6 +333,17 @@ speed). When bumping the ORT version, all of the following must move together:
 
 - [ ] The **onnxruntime jar** version (Gradle dependency).
 - [ ] The re-built **`ort-native-cuda12-v<ver>.zip`** pack asset (uploaded to `justsearch-releases`).
+      **Before pinning its sha, assert its contents:**
+      ```bash
+      node scripts/release/check-ort-native-asset.mjs <path-to>/ort-native-cuda12-v<ver>.zip
+      ```
+      It fails (exit 1) listing any of `OrtCudaHelper.ORT_NATIVE_DLL_SET` the archive lacks —
+      `onnxruntime.dll`, `onnxruntime4j_jni.dll`, `onnxruntime_providers_shared.dll`,
+      `onnxruntime_providers_cuda.dll` — read from the Java authority, not a second list. A pack
+      missing one does **not** fail loudly at runtime: ORT falls back to CPU and every ONNX encoder
+      runs at CPU speed while the status surfaces still report a GPU variant (tempdoc 734 R11-F3).
+      The registry pin then makes the verified bytes the only accepted bytes, so this is the one
+      moment the contents can be wrong.
 - [ ] The **registry entry** — `filename` / `sha256` / `sizeBytes` for that asset — in **BOTH**
       copies of `model-registry.v2.json` (`modules/ui/src/main/resources/ai/` and
       `modules/configuration/src/test/resources/ai/`).

@@ -236,10 +236,14 @@ public class LocalApiServer {
                   KnowledgeServerBootstrap worker = b.HeadAssembly.currentKnowledgeServer();
                   return worker != null && worker.client() != null;
                 });
+    // Tempdoc 805 G.1: the normal-quit leg — the shell asks Head to run the SAME ordered shutdown
+    // the upgrade path drives, without the upgrade bookkeeping.
+    LifecycleApiModule lifecycleApiModule = new LifecycleApiModule(b.lifecycleShutdownAction);
     this.apiModules =
         resourceApiModule != null
-            ? java.util.List.of(metaApiModule, resourceApiModule, upgradeApiModule)
-            : java.util.List.of(metaApiModule, upgradeApiModule);
+            ? java.util.List.of(
+                metaApiModule, resourceApiModule, upgradeApiModule, lifecycleApiModule)
+            : java.util.List.of(metaApiModule, upgradeApiModule, lifecycleApiModule);
     this.HeadAssemblyRef = b.HeadAssembly;
 
     // Tempdoc 583 Stage 1: message catalogs are constructed + bound in MessageCatalogRoutes (setupRoutes).
@@ -978,6 +982,8 @@ public class LocalApiServer {
     // Tempdoc 583 Stage 2: package-private (ConversationApiAssembly reads it for the MCP surface).
     io.justsearch.ui.runtime.RuntimeManifestPublisher runtimeManifestPublisher;
     UpgradeShutdownAction upgradeShutdownAction = (preparationId, receiptNonce) -> {};
+    /** Tempdoc 805 G.1: the normal-quit ordered shutdown (POST /api/lifecycle/shutdown). */
+    Runnable lifecycleShutdownAction = () -> {};
     io.justsearch.app.api.OperationLeaseService operationLeaseService;
     Path upgradeDataDir;
     Supplier<String> upgradeRunningVersion =
@@ -1043,6 +1049,12 @@ public class LocalApiServer {
     public Builder upgradeShutdownAction(UpgradeShutdownAction action) {
       this.upgradeShutdownAction =
           action == null ? (preparationId, receiptNonce) -> {} : action;
+      return this;
+    }
+
+    /** Tempdoc 805 G.1: the action POST /api/lifecycle/shutdown runs (Head's ordered close). */
+    public Builder lifecycleShutdownAction(Runnable action) {
+      this.lifecycleShutdownAction = action == null ? () -> {} : action;
       return this;
     }
 

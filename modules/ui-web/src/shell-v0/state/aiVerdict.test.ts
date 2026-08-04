@@ -179,7 +179,9 @@ describe('computeAiEngineVerdict (observed axes only — no local intent)', () =
 
   it('installed via onnxFeatures.modelActive (runtimeStatus-derived), mode transitioning → "starting", cause "starting"', () => {
     const runtimeStatus: AiRuntimeStatus = {
-      onnxFeatures: [{ feature: 'llm', modelActive: true }],
+      // `id` (not `feature`) is the real wire field — AiRuntimeStatusResponse.OnnxFeatureStatus.
+      // The FE type carried a phantom `feature`/`modelDescription` pair until tempdoc 805 G.3.
+      onnxFeatures: [{ id: 'llm', modelActive: true }],
     };
     const v = computeAiEngineVerdict(
       input({ runtimeStatus, runtime: runtime({ mode: 'transitioning' }) }),

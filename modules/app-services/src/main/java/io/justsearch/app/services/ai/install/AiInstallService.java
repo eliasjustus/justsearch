@@ -392,26 +392,18 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
   /** Contract-injecting overload — the seam the B8 regression test drives (no on-disk contract staging). */
   boolean applyInstalledFromPlan(InstallPlan plan, ModelRegistry registry, InstallContract contract) {
-    List<String> pendingAdditions = new ArrayList<>();
-    boolean contractSatisfied;
-    if (plan.downloads().isEmpty()) {
-      contractSatisfied = !plan.alreadyInstalled().isEmpty();
-    } else if (contract != null && !contract.models().isEmpty()) {
-      boolean contractedPackageMissing = false;
-      for (var dl : plan.downloads()) {
-        if (contract.models().containsKey(dl.packageId())) {
-          contractedPackageMissing = true; // the contract claims it; it is not on disk → a real gap.
-        } else if (!pendingAdditions.contains(dl.packageId())) {
-          pendingAdditions.add(dl.packageId());
-        }
+    // Tempdoc 805 G.3 — the decision moved into InstallCompleteness, at FILE granularity and aware of
+    // the contract's entry kind (a skipped entry claims no files). The package-level `containsKey`
+    // this replaces called round 11's skipped cuda-runtime entry a contracted gap.
+    InstallCompleteness completeness = InstallCompleteness.compute(plan, contract);
+    // repairNeeded is set even when the completeness claim is unchanged — it answers a different
+    // question ("is a required file missing?") and must reach the UI on every recompute.
+    synchronized (lock) {
+      if (!running.get() && "idle".equals(status.state)) {
+        status.repairNeeded = completeness.repairNeeded();
       }
-      contractSatisfied = !contractedPackageMissing && !plan.alreadyInstalled().isEmpty();
-    } else {
-      // No contract to measure against (fresh machine, or a pre-contract install) — the plan is the
-      // only authority, and it says work remains.
-      contractSatisfied = false;
     }
-    if (!contractSatisfied) {
+    if (!completeness.installedFully()) {
       return false; // genuinely not (fully) installed — leave the honest "Not Installed".
     }
     synchronized (lock) {
@@ -421,7 +413,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       status.packages.clear();
       populateStatusPackages(plan, registry);
       status.pendingRegistryAdditions.clear();
-      status.pendingRegistryAdditions.addAll(pendingAdditions);
+      status.pendingRegistryAdditions.addAll(completeness.pendingRegistryAdditions());
       status.installedFully = true;
       touch();
     }
@@ -796,6 +788,10 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       // Tempdoc 804 §B8 — a run just planned against the CURRENT registry, so nothing is a pending
       // registry addition any more (the signal only describes a contract older than the registry).
       status.pendingRegistryAdditions.clear();
+      // Tempdoc 805 G.3 — a run against the current registry leaves a required file missing only
+      // where a package FAILED; a hardware/policy skip is not a repairable gap (the file was never
+      // required on this machine).
+      status.repairNeeded = failedCount > 0;
       touch();
     }
   }
@@ -897,7 +893,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   // Contract generation
   // ---------------------------------------------------------------------------
 
-  private InstallContract buildContract(
+  /**
+   * Package-private (not private) for the same reason as {@link #applyInstalledFromPlan}: the
+   * entry-kind decision this makes is what {@link InstallCompleteness} later reads as install
+   * history, so it needs a regression test that does not stage real downloads (tempdoc 805 G.3).
+   */
+  InstallContract buildContract(
       InstallPlan plan, ModelRegistry registry, HardwareProfile hardware) {
     Map<String, InstallContract.InstalledModel> models = new LinkedHashMap<>();
 
@@ -917,14 +918,21 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       }
 
       ModelVariant variant = pkg.selectVariant(plan.profile());
-      if (variant == null) {
+      if (variant == null && pkg.supportingFiles().isEmpty()) {
+        // Nothing to record: no variant AND no supporting files.
         models.put(pkg.id(), InstallContract.InstalledModel.skipped(pkg.id(), "No variant"));
         continue;
       }
 
-      // Collect installed files
+      // Collect installed files. Tempdoc 805 G.3 (derisk U3, refinement 3): a VARIANTLESS package
+      // whose supporting files this run installed is recorded as installed-WITH-FILES, not
+      // skipped("No variant"). `ModelPackage.selectVariant` returns null for `variants: []`, which
+      // is exactly cuda-runtime — the package whose new supporting file round 11 lost — so the
+      // contract carried no per-file authority for the one package class that needed it.
       List<String> installedFiles = new ArrayList<>();
-      installedFiles.add(variant.filename());
+      if (variant != null) {
+        installedFiles.add(variant.filename());
+      }
       for (var sf : pkg.supportingFiles()) {
         installedFiles.add(sf.filename());
       }
@@ -933,11 +941,11 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           pkg.id(),
           new InstallContract.InstalledModel(
               pkg.id(),
-              variant.filename(),
-              variant.precision(),
-              variant.targetEP(),
+              variant == null ? null : variant.filename(),
+              variant == null ? null : variant.precision(),
+              variant == null ? null : variant.targetEP(),
               pkg.targetDir(),
-              variant.sha256(),
+              variant == null ? null : variant.sha256(),
               installedFiles,
               false,
               null));

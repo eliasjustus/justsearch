@@ -302,6 +302,60 @@ foreach ($line in $installStateLines) {
     Write-Utf8NoBom -Path (Join-Path -Path $EvidenceDir -ChildPath "elevation-check.txt")
 
 # ---------------------------------------------------------------------------
+# Step 0.5: snap-fail-loud precondition (round-11 charter item 8, tempdoc 805
+# item 7)
+# ---------------------------------------------------------------------------
+# Round 11's retrospective: "charter item 8 asked me to verify that snap.ps1
+# now fails loud on an unsavable path ... it should not have been mine to
+# remember" -- a 3-line check that belongs in this Step 0, running every
+# round automatically, not competing for a round's attention with product
+# testing. It is also a direct instance of the class charter item 8 guards
+# against: round 11's OWN capture wrapper called Save-DesktopShot with the
+# wrong parameter name, every capture threw, was swallowed by a try/catch,
+# and the script printed "captures: 209" for zero files actually written --
+# judge a capture by Test-Path/exit code, never a printed line, including
+# your own. This precondition proves gui\snap.ps1 (the shared, staged
+# capture entry point) still fails LOUD -- non-zero exit, no "saved:" line
+# -- when it cannot write its output, before any real evidence capture
+# begins. Fast (<5s: one desktop capture attempt, no product interaction)
+# and cleans up its own temp artifacts.
+$snapScript = Join-Path -Path $PSScriptRoot -ChildPath "gui\snap.ps1"
+if (Test-Path -LiteralPath $snapScript) {
+    $precheckParent = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath ("snap-precheck-" + [Guid]::NewGuid().ToString("N"))
+    try {
+        # Deliberately unsavable path: $precheckParent is a PLAIN FILE, so no
+        # directory can ever be created under it and the PNG save must fail
+        # -- exactly the "parent path exists but is not a directory" case
+        # Save-PngChecked (JustSearchGui.psm1) detects and throws on.
+        New-Item -ItemType File -Path $precheckParent -Force | Out-Null
+        $badOut = Join-Path -Path $precheckParent -ChildPath "unreachable.png"
+
+        # Run as a SEPARATE process (not `&` in this session): snap.ps1 calls
+        # `exit 1` on failure, which would terminate this collector's own
+        # PowerShell host if invoked in-process instead of just the sub-script.
+        $snapOutput = & powershell.exe -NoProfile -File $snapScript -Out $badOut 2>&1
+        $snapExit = $LASTEXITCODE
+
+        if ($snapExit -eq 0) {
+            throw ("PRECONDITION FAILED: gui\snap.ps1 against a deliberately unsavable path " +
+                "($badOut, parent is a FILE) exited 0 (SILENT FAILURE) instead of a non-zero exit " +
+                "code with no PNG written. A capture script that can fail silently can report " +
+                "evidence that was never produced -- refusing to proceed with evidence collection " +
+                "until snap.ps1 fails loud again. Captured output: $($snapOutput -join ' | ')")
+        }
+        Write-Log "Precondition OK: gui\snap.ps1 fails loud (exit $snapExit) against an unsavable path."
+    }
+    finally {
+        # Clean up regardless of outcome -- including the badOut PNG, in the
+        # (should-be-impossible) case the precondition itself did not fail.
+        Remove-Item -LiteralPath $precheckParent -Force -ErrorAction SilentlyContinue
+    }
+}
+else {
+    Write-Log "WARNING: gui\snap.ps1 not found at $snapScript -- skipping snap-fail-loud precondition check."
+}
+
+# ---------------------------------------------------------------------------
 # Step 1: Port discovery (canonical: runtime manifest.json; tempdoc 501)
 # ---------------------------------------------------------------------------
 

@@ -40,6 +40,9 @@ export interface AiRuntimeStatusResponse {
     variantId?: string | null;
   })[] | null;
   onnxFeatures?: ({
+    executionProvider?: string | null;
+    fallbackReason?: string | null;
+    gpuFallback?: boolean;
     id?: string | null;
     label?: string | null;
     modelActive?: boolean;
@@ -78,6 +81,9 @@ export const aiRuntimeStatusResponseSchema = z.strictObject({
     "variantId": z.string().nullable().optional(),
   })).nullable().optional(),
   "onnxFeatures": z.array(z.strictObject({
+    "executionProvider": z.string().nullable().optional(),
+    "fallbackReason": z.string().nullable().optional(),
+    "gpuFallback": z.boolean().optional(),
     "id": z.string().nullable().optional(),
     "label": z.string().nullable().optional(),
     "modelActive": z.boolean().optional(),

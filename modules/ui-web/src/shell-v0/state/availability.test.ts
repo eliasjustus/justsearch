@@ -7,6 +7,11 @@
  */
 import { describe, expect, it } from 'vitest';
 import { projectAvailability, unavailableBecause, type Availability } from './availability.js';
+import {
+  KEYWORD_FALLBACK_CAVEAT,
+  OPTIONAL_CAPABILITY_CAVEAT,
+  PASSAGE_REDUCED_CAVEAT,
+} from './readinessNotice.js';
 import type { AiState } from './aiStateStore.js';
 import { known, UNKNOWN } from './known.js';
 
@@ -19,6 +24,12 @@ function aiState(opts: {
   pendingJobs?: number;
   /** When set, builds a degraded verdict with this severity (the ONE authority projectAvailability reads). */
   degradedSeverity?: 'info' | 'warn';
+  /**
+   * Tempdoc 805 §G.2 — the degraded verdict's REASON CODES. The caveat is now classifier-derived, so
+   * a fixture must carry the codes that actually produced the severity (a degraded verdict always
+   * does); an empty list is the deliberately-conservative `unknown` class.
+   */
+  reasons?: string[];
   /** Tempdoc 601 — the last successful startup duration the model-load estimate reads (-1 ⇒ unknown). */
   lastStartupMs?: number;
 }): AiState {
@@ -26,7 +37,7 @@ function aiState(opts: {
   const verdict =
     opts.degradedSeverity === undefined
       ? { kind: 'operational', severity: 'ok', reasons: [] }
-      : { kind: 'degraded', severity: opts.degradedSeverity, reasons: [] };
+      : { kind: 'degraded', severity: opts.degradedSeverity, reasons: opts.reasons ?? [] };
   return {
     phase: opts.phase ?? 'connected',
     capabilities: { chat: opts.chat ?? true, rag: false, extract: false, embedding: false },
@@ -122,23 +133,60 @@ describe('projectAvailability (tempdoc 596)', () => {
     expect(projectAvailability('documents', aiState({ chat: true, docs: 5 })).kind).toBe('available');
   });
 
-  it('documents usable but verdict degraded (cosmetic/info) → degraded caveat, still operable', () => {
-    // chat up, docs present, the ONE verdict is degraded at info severity (optional re-ranker off).
+  it('documents usable but verdict degraded (cosmetic) → calm caveat, still operable', () => {
+    // chat up, docs present, the ONE verdict is degraded because an optional re-ranker is off.
+    // RE-PINNED, tempdoc 805 §G.2: the fixture now carries the REASON CODE that produced the info
+    // severity, because the caveat is derived from the cause class, not from severity.
     const a = projectAvailability(
       'documents',
-      aiState({ chat: true, docs: 5, degradedSeverity: 'info' }),
+      aiState({ chat: true, docs: 5, degradedSeverity: 'info', reasons: ['lambdamart.not_configured'] }),
     );
     expect(a.kind).toBe('degraded');
+    expect(a.kind === 'degraded' && a.caveat).toBe(OPTIONAL_CAPABILITY_CAVEAT);
     expect(a.kind === 'degraded' && /optional|ranking|simpler/i.test(a.caveat)).toBe(true);
   });
 
-  it('documents with verdict degraded at warn → caveat words the keyword fallback', () => {
+  it('805 §G.2: a RETRIEVAL-impairing cause → the keyword-fallback caveat (imported, not re-authored)', () => {
     const a = projectAvailability(
       'documents',
-      aiState({ chat: true, docs: 5, degradedSeverity: 'warn' }),
+      aiState({ chat: true, docs: 5, degradedSeverity: 'warn', reasons: ['index.dense_unavailable'] }),
     );
     expect(a.kind).toBe('degraded');
-    expect(a.kind === 'degraded' && /keyword|degraded/i.test(a.caveat)).toBe(true);
+    expect(a.kind === 'degraded' && a.caveat).toBe(KEYWORD_FALLBACK_CAVEAT);
+  });
+
+  it('805 §G.2: a PASSAGE-only gap → the passage caveat, never the keyword-fallback claim', () => {
+    // Round 11's live state: warn severity, but the trace showed dense retrieval + the cross-encoder
+    // executing. Severity is why this projection used to claim a keyword fallback here.
+    const a = projectAvailability(
+      'documents',
+      aiState({
+        chat: true,
+        docs: 5,
+        degradedSeverity: 'warn',
+        reasons: ['chunk_embedding.not_ready', 'lambdamart.not_configured'],
+      }),
+    );
+    expect(a.kind).toBe('degraded');
+    expect(a.kind === 'degraded' && a.caveat).toBe(PASSAGE_REDUCED_CAVEAT);
+    expect(a.kind === 'degraded' && a.caveat.toLowerCase()).not.toContain('keyword');
+  });
+
+  it('805 §G.2: an AI-model cause → the calm caveat (retrieval is untouched)', () => {
+    const a = projectAvailability(
+      'documents',
+      aiState({ chat: true, docs: 5, degradedSeverity: 'warn', reasons: ['inference.offline'] }),
+    );
+    expect(a.kind).toBe('degraded');
+    expect(a.kind === 'degraded' && a.caveat).toBe(OPTIONAL_CAPABILITY_CAVEAT);
+  });
+
+  it('805 §G.2: an UNCLASSIFIED cause stays conservative (the keyword-fallback caveat)', () => {
+    const a = projectAvailability(
+      'documents',
+      aiState({ chat: true, docs: 5, degradedSeverity: 'warn', reasons: ['some.future.code'] }),
+    );
+    expect(a.kind === 'degraded' && a.caveat).toBe(KEYWORD_FALLBACK_CAVEAT);
   });
 
   it('documents with an operational verdict → available (no caveat)', () => {

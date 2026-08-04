@@ -14,10 +14,10 @@ alongside `collect-evidence.ps1`.
 | Script | Purpose |
 |---|---|
 | `JustSearchGui.psm1` | Shared module — P/Invoke boilerplate, window connect/click/capture, and the assert-then-act primitive. The other scripts are thin wrappers over this; import it directly if you're scripting something ad hoc (`Import-Module (Join-Path $PSScriptRoot "JustSearchGui.psm1") -Force`). |
-| `snap.ps1` | Full-desktop capture (`CopyFromScreen`). Use for the Step-0 capability probe and whole-screen evidence. |
+| `snap.ps1` | Full-desktop capture (`CopyFromScreen`). Use for the Step-0 capability probe and whole-screen evidence. Prints the PHYSICAL-pixel dimensions actually written (read back from the saved PNG), not `Screen.PrimaryScreen.Bounds`, which can be DPI-scaled and mismatch what got saved. |
 | `win-capture.ps1` | Locate + focus + capture ONE window by process name (`GetWindowRect` + `SetForegroundWindow`). Optional `-Keys` sends keystrokes before capturing. |
-| `click.ps1` | Click at window-relative coordinates in a target window, then capture. Fails closed (exits 1, no click sent) if the window did not actually take foreground focus. |
-| `crop.ps1` | Crop + magnify a region of an existing PNG (for illegible small text). |
+| `click.ps1` | Click at window-relative coordinates in a target window, then capture. Fails closed (exits 1, no click sent) if the window did not actually take foreground focus; `NO WINDOW` failures echo the actual `-ProcName` value searched for, not a hardcoded default. |
+| `crop.ps1` | Crop + magnify a region of an existing PNG (for illegible small text). Parameters are `-X -Y -W -H`, not `-Width`/`-Height` -- passing the wrong flag names fails loud instead of silently cropping the 100x100 default. |
 | `gui-approve.ps1` | **EXAMPLE**, not a generic tool — see below. |
 
 The observe -> locate -> act -> observe loop: capture a PNG with `snap.ps1`
@@ -94,7 +94,13 @@ tested-negative list below) — every click is a raw pixel coordinate.
 Mitigations:
 
 - **Fix the window size** at the start of a round for determinism across
-  screenshots.
+  screenshots, via `Set-AppWindowRect` in `JustSearchGui.psm1`
+  (`Set-AppWindowRect -Handle $conn.Handle -X 0 -Y 0 -Width 1600 -Height 900`
+  -- physical pixels, no DPI conversion). It restores the window before
+  calling `MoveWindow` and reads the rect back afterward, throwing if the
+  result does not match what was requested -- round 11 had no primitive for
+  this at all and its first hand-written attempt corrupted the window's
+  restored geometry to 1520x32767 (tempdoc 805 item 6).
 - **Re-locate from a fresh screenshot every time**, not from memory or a
   prior round's coordinates. A coordinate that worked yesterday may not work
   today (theme, DPI, window position, dialog content length can all shift

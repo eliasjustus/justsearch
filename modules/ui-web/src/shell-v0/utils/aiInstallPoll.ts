@@ -28,6 +28,12 @@ export interface InstallStatus {
    * "not installed": `installedFully` stays true and these are the extras on offer.
    */
   pendingRegistryAdditions?: string[];
+  /**
+   * Tempdoc 805 G.3 — ANY file the current registry requires for this profile is missing from disk,
+   * whether or not the install contract claimed it. Distinct from `installedFully` (a claim about
+   * install history): round 11's machine had `installedFully` true and an unusable GPU at once.
+   */
+  repairNeeded?: boolean;
   message?: string;
   errorCode?: string;
   lastError?: string;
@@ -95,10 +101,30 @@ export interface AiRuntimeStatus {
     available?: boolean;
     reason?: string;
   }>;
+  /**
+   * Per-ONNX-feature status from `AiRuntimeStatusResponse.OnnxFeatureStatus`.
+   *
+   * The first fields are the INTENT axis (what the Head configured, what the Worker discovered);
+   * `executionProvider`/`gpuFallback`/`fallbackReason` are the OBSERVED axis added by tempdoc 805
+   * G.3 — round 11 shipped `status:'active'`, `modelActive:true` for sessions that had silently
+   * fallen back from CUDA to CPU, and no field could say so.
+   *
+   * Field names were `feature`/`modelDescription` here before 805; neither has ever existed on the
+   * wire (the record emits `id`/`label`), so the Advanced feature rows rendered a blank name.
+   */
   onnxFeatures?: Array<{
-    feature: string;
+    id?: string;
+    label?: string;
+    status?: string;
+    reason?: string;
+    modelPath?: string | null;
     modelActive?: boolean;
-    modelDescription?: string;
+    /** Observed: `'cuda' | 'cpu' | 'none' | 'unknown'` — what the ORT session actually runs on. */
+    executionProvider?: string;
+    /** Observed: GPU was configured but the session runs on CPU. */
+    gpuFallback?: boolean;
+    /** Observed: concrete reason for the fallback (probe failure, missing CUDA natives). */
+    fallbackReason?: string | null;
   }>;
 }
 
