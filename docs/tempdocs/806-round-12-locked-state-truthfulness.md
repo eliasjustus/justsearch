@@ -326,3 +326,34 @@ store cannot know what the disk holds, so any mutation outcome it reported would
 Gate-at-entry also collapses the rollback question (no mutation happens to need rolling back;
 `persist()`'s own guard stays as defense in depth). The controller's 409 then covers both
 today's observable wrong answers: the phantom-mutation 500 and the silent no-op 200.
+
+---
+
+## Part D — Implementation record (2026-08-04, running)
+
+**W1 (blocker) — ACCEPTED, with one design correction absorbed.** The design's `409` (B.1,
+derisk C7) cited the wrong precedent: `ConversationBackupController`'s 409s are a
+*precondition-check* convention, while the live `KeyLockedException` mapping is **423 Locked** —
+established by tempdoc 629 at `LocalApiServer.java:443-447` ("surfaces as 423 Locked (NOT a
+500), so the frontend projects an unlock affordance") and already consumed by
+`conversationListStore.ts:318`; `DELETE /api/memory/{id}` even answered 423 today via the
+global handler. Verified at both ends by the orchestrator. A 409 would have forked the wire for
+one condition across two stores — the drift class this campaign closes — so W1 shipped 423 with
+a typed `STORE_LOCKED` errorCode added to the 629 global handler, making the locked answer
+machine-readable wherever raised. The C8 gate-at-entry semantics were implemented in full (the
+worker reached the same conclusion independently before the correction arrived — convergent
+evidence the semantics are right). Reason-code decision: a new `memory.locked` row ("What the
+AI has learned is encrypted and locked") rather than reusing `conversations.locked`, because
+the row's payload is wording and the chat sentence on the Memory surface would be a true
+sentence about the wrong store; the shared remedy (Unlock in Security) is what encodes
+one-key-one-unlock. `conversations.locked` gained a SCOPE note in the same change.
+
+W1 also surfaced two defects the design missed: **`clear()` while locked was the worst of the
+three** (cache empty → `if (!byId.isEmpty())` short-circuits → "Forget everything" returned
+success having done nothing), and `handleForget` had NO error handling at all (untyped escapes,
+never a 500 — the design's "500" claim for the phantom path was wrong; it was an uncaught 423).
+Both fixed and bite-proven. 11 bite proofs total; the worker also caught one of its own tests
+passing for the wrong reason (asserting after unlock, where the reload would mask the phantom)
+and moved the assertion to the locked window — the exact read the API serves. Suites: app-agent
+389 / ui 666 / app-api 134 / ui-web 3947, all green; ui-web gate set green except the two
+known-red-on-main entries.
