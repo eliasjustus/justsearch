@@ -826,9 +826,9 @@ try {
       $installStatusResp = Get-HttpBody -Client $client -Uri ("http://127.0.0.1:$upgradePort/api/ai/install/status")
       Assert ($installStatusResp.StatusCode -eq 200) "Upgrade-arrival leg FAILED: GET /api/ai/install/status returned $($installStatusResp.StatusCode), expected 200. Body=$($installStatusResp.Body)"
       $installStatusJson = $installStatusResp.Body | ConvertFrom-Json
-      Assert ($installStatusJson.PSObject.Properties['installedFully']) "Upgrade-arrival leg FAILED: /api/ai/install/status is missing 'installedFully'. Body=$($installStatusResp.Body)"
-      Assert ($installStatusJson.PSObject.Properties['pendingRegistryAdditions']) "Upgrade-arrival leg FAILED: /api/ai/install/status is missing 'pendingRegistryAdditions'. Body=$($installStatusResp.Body)"
-      Assert ($installStatusJson.PSObject.Properties['repairNeeded']) "Upgrade-arrival leg FAILED: /api/ai/install/status is missing 'repairNeeded' -- tempdoc 805 W-TRUTH's repair-needed consequence has not landed yet, so this leg must stay behind -IncludeUpgradeArrival until it does. Body=$($installStatusResp.Body)"
+      Assert ($null -ne $installStatusJson.PSObject.Properties['installedFully']) "Upgrade-arrival leg FAILED: /api/ai/install/status is missing 'installedFully'. Body=$($installStatusResp.Body)"
+      Assert ($null -ne $installStatusJson.PSObject.Properties['pendingRegistryAdditions']) "Upgrade-arrival leg FAILED: /api/ai/install/status is missing 'pendingRegistryAdditions'. Body=$($installStatusResp.Body)"
+      Assert ($null -ne $installStatusJson.PSObject.Properties['repairNeeded']) "Upgrade-arrival leg FAILED: /api/ai/install/status is missing 'repairNeeded' -- tempdoc 805 W-TRUTH's repair-needed consequence has not landed yet, so this leg must stay behind -IncludeUpgradeArrival until it does. Body=$($installStatusResp.Body)"
       Add-Content -LiteralPath $evidenceFile -Value "INFO: Upgrade-arrival leg -- /api/ai/install/status carries installedFully/pendingRegistryAdditions/repairNeeded."
 
       # (3) Activation must not regress to MODEL_PATH_REQUIRED -- the fixture contract covers

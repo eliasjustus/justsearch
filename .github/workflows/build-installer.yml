@@ -470,7 +470,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Verified release could not be published; it remains draft." }
 
   installer_verify:
-    name: Verify installer (packaged, report-only)
+    name: Verify installer (packaged)
     needs: build-windows-installer
     runs-on: windows-latest
     timeout-minutes: 30
@@ -498,17 +498,15 @@ jobs:
           name: windows-installer
           path: dist/installer
 
-      # tempdoc 805 Part G.4 -- the packaged verify lane (proven working via three local runs,
-      # tempdoc 805 Part G.4) ran in NO CI workflow before this job. First run report-only to
-      # establish runner fitness (wall-time/RAM; the residual tempdoc 805 Part H U9 flagged),
-      # then flip continue-on-error off once a green baseline exists. Runs the fresh + restart
-      # legs; NOT -IncludeUpgradeArrival yet -- that leg asserts an install-status field
-      # (repairNeeded) a separate in-flight bundle (W-TRUTH) adds and must stay dormant until it
-      # lands (see the switch's doc comment in the script).
-      - name: Run packaged verify lane (report-only)
-        continue-on-error: true
+      # tempdoc 805 Part G.4 -- the packaged verify lane. BLOCKING since 2026-08-04: the
+      # report-only baseline ran green twice (runs 30916527477 product legs / 30918470316 fully,
+      # incl. EvidenceBundle after PR #363), and all THREE legs -- fresh, restart, and
+      # upgrade-arrival -- passed locally against the run-30918470316 artifact. The
+      # upgrade-arrival leg's repairNeeded assertions target fields that shipped with the 805
+      # campaign (PR #362), so the leg runs here permanently.
+      - name: Run packaged verify lane
         shell: pwsh
         run: |
           $setup = Get-ChildItem -Path dist/installer -Filter "*-setup.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $setup) { throw "No *-setup.exe found in dist/installer after artifact download." }
-          ./scripts/ci/verify-installer-nsis-win.ps1 -SetupExePath $setup.FullName
+          ./scripts/ci/verify-installer-nsis-win.ps1 -SetupExePath $setup.FullName -IncludeUpgradeArrival
