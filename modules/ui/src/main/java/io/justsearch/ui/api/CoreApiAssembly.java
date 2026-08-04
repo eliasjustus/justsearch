@@ -378,17 +378,28 @@ final class CoreApiAssembly {
       return null;
     });
     // §31 Phase 4: helpers + wrapper services read from bootstrap (single instance per process).
-    RuntimeActivationService runtimeActivationHelper =
-        b.HeadAssembly != null && b.HeadAssembly.serviceOut() != null
-            ? b.HeadAssembly.serviceOut().runtimeActivationHelper()
-            : new RuntimeActivationService(
-                onlineAi,
-                b.settingsStore,
-                gpuCapabilitiesService,
-                enterprisePolicyService,
-                b.workerFeatureCache,
-                resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability),
-                aiInstallHelper);
+    RuntimeActivationService runtimeActivationHelper;
+    if (b.HeadAssembly != null && b.HeadAssembly.serviceOut() != null) {
+      // Bootstrap-owned instance: ServicePhase already late-bound its observed-EP cache.
+      runtimeActivationHelper = b.HeadAssembly.serviceOut().runtimeActivationHelper();
+    } else {
+      runtimeActivationHelper =
+          new RuntimeActivationService(
+              onlineAi,
+              b.settingsStore,
+              gpuCapabilitiesService,
+              enterprisePolicyService,
+              b.workerFeatureCache,
+              resolveInferenceCapability(b.HeadAssembly, b.inferenceCapability),
+              aiInstallHelper);
+      if (b.knowledgeServer != null) {
+        // Tempdoc 805 G.3: observed ONNX execution provider beside the intent fields on
+        // /api/ai/runtime/status, from the same explainer that backs /api/inference/encoders.
+        runtimeActivationHelper.setEncoderRuntimeCache(
+            new io.justsearch.app.services.observability.WorkerEncoderRuntimeCache(
+                b.knowledgeServer::client));
+      }
+    }
     AiRuntimeController aiRuntimeController =
         new AiRuntimeController(runtimeActivationHelper, telemetry);
     // Tempdoc 656 Task 4: read-only reconciliation of the model registry against on-disk

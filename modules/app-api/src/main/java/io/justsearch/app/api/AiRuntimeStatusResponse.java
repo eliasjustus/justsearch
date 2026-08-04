@@ -29,13 +29,29 @@ public record AiRuntimeStatusResponse(
       Long vramFreeBytes
   ) {}
 
-  /** Status of an ONNX cross-encoder feature (reranker or citation scorer). */
+  /**
+   * Status of an ONNX cross-encoder feature (reranker or citation scorer).
+   *
+   * <p>The first six components are the INTENT axis: what the Head configured and what the Worker
+   * discovered on disk. Tempdoc 805 G.3 (round-11 F3) adds the OBSERVED axis beside it — the
+   * execution provider the ORT session actually runs on. Both are needed because {@code status:
+   * "active"} plus {@code modelActive: true} was reported verbatim for a session that had silently
+   * fallen back from CUDA to CPU (the CUDA natives were missing after an upgrade): a session exists,
+   * so the intent fields were not lying — they simply could not express the outcome.
+   *
+   * <p>The observed fields project {@code EncoderRuntimeExplainer}'s derivation (policy snapshot ×
+   * OrtCuda probe), the same authority behind {@code GET /api/inference/encoders}.
+   */
   public record OnnxFeatureStatus(
       String id,           // "reranker" | "citation_scorer"
       String label,        // "Search reranking" | "Citation scoring"
       String status,       // "active" | "inactive"
       String reason,       // "auto_discovered" | "explicit_path" | "not_found" | "disabled"
       String modelPath,    // nullable — resolved path for debugging
-      boolean modelActive  // true if ORT session is loaded and serving (canonical source of truth)
+      boolean modelActive, // true if ORT session is loaded and serving (canonical source of truth)
+      // ---- observed (tempdoc 805 G.3) ----
+      String executionProvider, // "cuda" | "cpu" | "none" | "unknown" — what the session RUNS on
+      boolean gpuFallback,      // true when GPU was configured but the session runs on CPU
+      String fallbackReason     // nullable — concrete reason when gpuFallback (probe failure, missing DLLs)
   ) {}
 }

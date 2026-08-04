@@ -21,6 +21,9 @@ import io.justsearch.app.api.OperationLeaseService;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
 import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import io.justsearch.app.services.lifecycle.InferenceCapability;
+import io.justsearch.app.services.observability.EncoderRuntimeCache;
+import io.justsearch.app.services.observability.EncoderRuntimeExplainer;
+import io.justsearch.ort.EncoderRole;
 import io.justsearch.app.services.runtimestate.RuntimeReconciler;
 import io.justsearch.app.services.runtimestate.RuntimeSpecStore;
 import io.justsearch.app.services.runtimestate.RuntimeStatus;
@@ -149,6 +152,18 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
    * mid-swap. Defaults to no-op so existing constructors and tests are unaffected.
    */
   private volatile OperationLeaseService operationLeases = OperationLeaseService.noOp();
+
+  /**
+   * Observed per-encoder runtime state (tempdoc 805 G.3). Late-bound like {@link #operationLeases}
+   * because it reads through the Worker RPC client, which is null at bootstrap. Null = "no observed
+   * data", which reports as {@code executionProvider: "unknown"} — never as a positive claim.
+   */
+  private volatile EncoderRuntimeCache encoderRuntimeCache;
+
+  /** Late-binds the observed per-encoder runtime view used by {@link #getStatus()}. */
+  public void setEncoderRuntimeCache(EncoderRuntimeCache cache) {
+    this.encoderRuntimeCache = cache;
+  }
 
   /**
    * Late-binds the op-lease SPI. Set by {@code ServicePhase}, which creates the lease service after
@@ -366,7 +381,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
             EnvRegistry.RERANK_ENABLED.sysProp(),
             EnvRegistry.RERANK_MODEL_PATH.envVar(),
             EnvRegistry.RERANK_MODEL_PATH.sysProp(),
-            "reranker"),
+            EncoderRole.RERANKER),
         resolveOneOnnxFeature(
             "citation_scorer",
             "Citation scoring",
@@ -374,7 +389,7 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
             EnvRegistry.CITATION_SCORER_ENABLED.sysProp(),
             EnvRegistry.CITATION_SCORER_MODEL_PATH.envVar(),
             EnvRegistry.CITATION_SCORER_MODEL_PATH.sysProp(),
-            "citation-scorer"));
+            EncoderRole.CITATION));
   }
 
   private AiRuntimeStatusResponse.OnnxFeatureStatus resolveOneOnnxFeature(
@@ -384,38 +399,80 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
       String enabledProp,
       String pathEnv,
       String pathProp,
-      String modelName) {
+      EncoderRole role) {
+    // The Worker's model name for this feature IS the registry package id carried by the role —
+    // one identity, not a second hardcoded pair (EncoderRole.packageId).
+    String modelName = role.packageId();
     // Look up runtime session state from Worker's health check cache (368 RC3).
     // This is the canonical source of truth for "is this model actually working."
     boolean sessionActive = resolveSessionActive(modelName);
+    // Tempdoc 805 G.3: what the ORT session actually runs on. `sessionActive` is TRUE for a
+    // CPU-fallback session, so it cannot express the round-11 outcome by itself.
+    EncoderRuntimeExplainer.ObservedExecutionProvider observed = resolveObservedEp(role);
 
     // 1. Check if explicitly disabled (Head-owned: uses Head-side env vars)
     String enabledStr = resolveEnvOrProp(enabledEnv, enabledProp);
     if ("false".equalsIgnoreCase(enabledStr)) {
-      return new AiRuntimeStatusResponse.OnnxFeatureStatus(
-          id, label, "inactive", "disabled", null, sessionActive);
+      return onnxFeature(id, label, "inactive", "disabled", null, sessionActive, observed);
     }
 
     // 2. Explicit model path (Head-owned: uses Head-side env vars)
     String explicitPath = resolveEnvOrProp(pathEnv, pathProp);
     if (explicitPath != null && !explicitPath.isBlank()) {
-      return new AiRuntimeStatusResponse.OnnxFeatureStatus(
-          id, label, "active", "explicit_path", explicitPath, sessionActive);
+      return onnxFeature(id, label, "active", "explicit_path", explicitPath, sessionActive, observed);
     }
 
     // 3. Worker-reported discovery (includes both auto-discovery and explicit-path results)
     if (workerFeatureCache != null) {
       for (OnnxModelStatus status : workerFeatureCache.getOnnxModels()) {
         if (modelName.equals(status.modelName()) && status.found()) {
-          return new AiRuntimeStatusResponse.OnnxFeatureStatus(
-              id, label, "active", "auto_discovered", status.path(), sessionActive);
+          return onnxFeature(
+              id, label, "active", "auto_discovered", status.path(), sessionActive, observed);
         }
       }
     }
 
     // 4. Not found
+    return onnxFeature(id, label, "inactive", "not_found", null, sessionActive, observed);
+  }
+
+  private static AiRuntimeStatusResponse.OnnxFeatureStatus onnxFeature(
+      String id,
+      String label,
+      String status,
+      String reason,
+      String modelPath,
+      boolean sessionActive,
+      EncoderRuntimeExplainer.ObservedExecutionProvider observed) {
     return new AiRuntimeStatusResponse.OnnxFeatureStatus(
-        id, label, "inactive", "not_found", null, sessionActive);
+        id,
+        label,
+        status,
+        reason,
+        modelPath,
+        sessionActive,
+        observed.executionProvider(),
+        observed.gpuFallback(),
+        observed.fallbackReason());
+  }
+
+  /**
+   * The observed execution provider for one encoder role, projected from {@link
+   * EncoderRuntimeExplainer} — the same policy-snapshot × OrtCuda-probe derivation that backs {@code
+   * GET /api/inference/encoders}. Degrades to {@code unknown} (never to a positive claim) when the
+   * Worker has not answered yet.
+   */
+  private EncoderRuntimeExplainer.ObservedExecutionProvider resolveObservedEp(EncoderRole role) {
+    EncoderRuntimeCache cache = this.encoderRuntimeCache;
+    if (cache == null) {
+      return EncoderRuntimeExplainer.ObservedExecutionProvider.unknown();
+    }
+    try {
+      return EncoderRuntimeExplainer.observed(cache.encoderRuntime().get(role));
+    } catch (RuntimeException e) {
+      log.debug("Observed EP resolve failed for {} (best-effort): {}", role, e.toString());
+      return EncoderRuntimeExplainer.ObservedExecutionProvider.unknown();
+    }
   }
 
   /** Returns true if the Worker reports an active ORT session for this model. */

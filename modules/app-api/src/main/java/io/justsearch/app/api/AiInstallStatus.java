@@ -72,6 +72,20 @@ public final class AiInstallStatus {
    */
   public final List<String> pendingRegistryAdditions = new ArrayList<>();
 
+  /**
+   * True when ANY file the current registry requires for the selected profile is missing from disk
+   * — deliberately independent of whether the install contract claimed it (tempdoc 805 G.3 W-TRUTH,
+   * derisk U3 amendment).
+   *
+   * <p>Round 11's upgraded machine is why the two axes are separate: the ORT CUDA natives PR #276
+   * added were a registry addition (so {@code installedFully} stays truthfully true and {@code
+   * pendingRegistryAdditions} names the package), yet their absence had a real consequence — every
+   * ONNX encoder silently ran on CPU. Completeness is a claim about history; this is a claim about
+   * consequence, and the UI routes it to the existing Repair flow (which collects terms acceptance —
+   * no auto-download).
+   */
+  public boolean repairNeeded;
+
   // Per-package progress
   public final List<PackageStatus> packages = new ArrayList<>();
 

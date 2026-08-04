@@ -398,25 +398,52 @@ def stage_golden_parity(share_dir: Path) -> str | None:
     )
 
 
-def check_node_installer_staged(tools_cache: Path) -> str | None:
-    """Check whether a Node.js Windows installer is present in the host tools
-    cache. `collect-evidence.ps1`'s in-sandbox MCP Inspector check needs `npx`
-    (Node) on PATH; if nothing is staged, that check silently depends on a
-    mid-session internet download instead of a reproducible staged asset.
+# Assets the staged docs tell a round to use from tools\ -- kept here as one
+# declared list so staging can diff against reality instead of assuming.
+# Round 11 (tempdoc 734/805) found staging-gaps.md said "None -- all
+# documented assets staged" while tools\Git-Setup.exe was silently absent:
+# nothing had ever checked for it. Add an entry here whenever a doc
+# (sandbox-CLAUDE.md, sandbox-environment.md) tells a round to run something
+# out of tools\.
+DOCUMENTED_TOOLS_ASSETS = [
+    {
+        "label": "Git for Windows",
+        "patterns": ["Git-Setup.exe", "Git-*.exe"],
+        "doc": "sandbox-CLAUDE.md Setup step 1 ('tools\\Git-Setup.exe /VERYSILENT ...'); sandbox-environment.md",
+        "consequence": "the round cannot run the documented Git-Setup.exe step and must fall back to an internet download it was told was pre-staged",
+    },
+    {
+        "label": "Node.js Windows installer",
+        "patterns": ["node*.msi", "node*.exe"],
+        "doc": "sandbox-CLAUDE.md 'What's NOT available' / collect-evidence.ps1's in-sandbox MCP Inspector check (needs npx on PATH)",
+        "consequence": "the MCP Inspector reachability check has no staged Node runtime and depends on a mid-session internet download instead of a reproducible staged asset",
+    },
+]
 
-    Returns a staging-gap message if no installer is found, or None if one is
-    already present."""
-    if tools_cache.is_dir():
-        found = list(tools_cache.glob("node*.msi")) + list(tools_cache.glob("node*.exe"))
+
+def check_documented_tools_staged(tools_dst: Path) -> list[str]:
+    """Diff the tools\\ assets the staged docs tell a round to use
+    (DOCUMENTED_TOOLS_ASSETS) against what actually landed in tools_dst
+    (the STAGED share dir, post-copy) -- not the host-side cache, and not an
+    assumption that copying succeeded.
+
+    Returns one gap message per documented asset whose glob pattern(s) match
+    nothing under tools_dst, so staging-gaps.md names each missing asset
+    explicitly instead of defaulting to "None -- all documented assets
+    staged" while something the docs promised is actually absent (round 11's
+    Git-Setup.exe miss)."""
+    gaps: list[str] = []
+    for tool in DOCUMENTED_TOOLS_ASSETS:
+        found = any(list(tools_dst.glob(pattern)) for pattern in tool["patterns"])
         if found:
-            return None
-    return (
-        f"No Node.js installer found in {tools_cache} — the in-sandbox MCP "
-        "Inspector check (npx @modelcontextprotocol/inspector) has no staged "
-        "Node runtime, so it depends on a mid-session download instead of a "
-        "reproducible staged asset. Remedy: drop a Node LTS Windows installer "
-        "(e.g. node-v*-x64.msi) into that directory before launching."
-    )
+            continue
+        gaps.append(
+            f"{tool['label']} not staged in tools\\ (expected a file matching one of: "
+            f"{', '.join(tool['patterns'])}) -- documented at {tool['doc']}. "
+            f"Consequence: {tool['consequence']}. Remedy: drop the installer into "
+            "tools-cache/ on the host before launching, then re-run sandbox-launch.py."
+        )
+    return gaps
 
 
 def write_staging_gaps(share_dir: Path, gaps: list[str]):
@@ -1370,6 +1397,32 @@ def stage_evidence_harness(share_dir: Path):
         print("Staged collect-evidence.ps1")
 
 
+def stage_round_scripts(share_dir: Path):
+    """Copy the small round-utility scripts every round otherwise rewrites
+    from scratch (tempdoc 805 Part E / G.5, round-11 retrospective item 2):
+
+    - chat-ask.ps1 -- consumes POST /api/chat/ask as SSE (not JSON).
+    - oracle.ps1 -- fixed-query-set before/after search oracle, the core
+      instrument of upgrade-from-release rounds.
+    - redact.ps1 -- blacks out a region of a PNG so a secret-bearing
+      surface (e.g. the recovery-key ceremony) can be captured without
+      leaking the secret value into evidence.
+
+    All three were written fresh inside round 11's sandbox with no staged
+    equivalent; each is now reviewed and generalized (port discovered from
+    the runtime manifest, paths taken as parameters -- no round-specific
+    hardcoding) and staged unconditionally next to collect-evidence.ps1."""
+    count = 0
+    for script_name in ("chat-ask.ps1", "oracle.ps1", "redact.ps1"):
+        src = SCRIPT_DIR / script_name
+        if src.exists():
+            shutil.copy2(src, share_dir / script_name)
+            count += 1
+        else:
+            print(f"WARNING: {script_name} not found at {src} -- round-scripts staging incomplete")
+    print(f"Staged round scripts ({count} files -- chat-ask.ps1, oracle.ps1, redact.ps1)")
+
+
 def stage_gui_harness(share_dir: Path):
     """Copy the native PowerShell GUI capture/input harness (tempdoc
     727-followup). This is the resolved-negative-on-Chrome, working-native
@@ -1707,9 +1760,7 @@ def main():
         if staged:
             print(f"Staged tools/ from tools-cache ({staged} files)")
 
-    node_gap = check_node_installer_staged(tools_cache)
-    if node_gap:
-        gaps.append(node_gap)
+    gaps.extend(check_documented_tools_staged(tools_dst))
 
     # 3. Resolve models dir. Never map a weightless directory: a worktree's
     # own models/ holds only tracked config/tokenizer JSON (~42 MB) — the
@@ -1786,6 +1837,7 @@ def main():
     stage_coverage_brief(share_dir)
     stage_round_plan(share_dir)
     stage_evidence_harness(share_dir)
+    stage_round_scripts(share_dir)
     stage_gui_harness(share_dir)
     stage_mcp_client_harness(share_dir)
     wsb_path = stage_dir / "JustSearch-Validation.wsb"

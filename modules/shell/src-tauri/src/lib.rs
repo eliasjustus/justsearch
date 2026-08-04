@@ -1,9 +1,13 @@
+mod binding;
 mod platform_paths;
 mod updater;
 
-use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use binding::{apply_manifest_observation, read_manifest_if_present, Binding, ManifestFields};
+
+use std::fs::OpenOptions;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{Ipv4Addr, SocketAddr, TcpStream};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -42,19 +46,12 @@ struct JustSearchPaths {
 
 #[derive(Default)]
 struct BackendState {
-    port: Mutex<Option<u16>>,
+    binding: Mutex<Binding>,
     port_ready: Arc<Notify>,
-    session_token: Mutex<Option<String>>,
     session_token_ready: Arc<Notify>,
     child: Mutex<Option<Child>>,
     spawn_error: Mutex<Option<String>>,
     killed: Mutex<bool>,
-    /// Tempdoc 637 #1: the backend's last-seen per-boot `instanceId` (a fresh UUID minted on
-    /// every Head start). A change means the backend RESTARTED — almost always on a new ephemeral
-    /// port — so the shell must override the cached port and tell the webview to re-resolve, else
-    /// it strands the FE on a dead port (the silent-staleness #1 masquerade; in production there
-    /// is no Vite proxy to mask it).
-    instance_id: Mutex<Option<String>>,
     /// Single-use token for confirming destructive operations (factory reset).
     delete_token: Mutex<Option<String>>,
     /// Tempdoc 501 Phase 17: the tray icon's registered id. The manifest watcher
@@ -77,80 +74,50 @@ static TRAY_CONTEXT: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock
 impl BackendState {
     /// Clear per-process discovery state before starting a replacement Head in the same shell.
     /// The updater uses this only after `wait_for_child_exit` has observed the old child exit.
+    ///
+    /// Tempdoc 805 G.1: replacement with an empty record — the same move a new instance makes,
+    /// with nothing observed yet.
     fn reset_for_restart(&self) -> Result<(), String> {
         if self.child.lock().expect("child mutex poisoned").is_some() {
             return Err("Cannot reset backend state while Head is still running".into());
         }
-        *self.port.lock().expect("port mutex poisoned") = None;
-        *self
-            .session_token
-            .lock()
-            .expect("session_token mutex poisoned") = None;
+        *self.binding.lock().expect("binding mutex poisoned") = Binding::default();
         *self.spawn_error.lock().expect("spawn_error mutex poisoned") = None;
-        *self.instance_id.lock().expect("instance_id mutex poisoned") = None;
         *self.killed.lock().expect("killed mutex poisoned") = false;
         Ok(())
     }
 
-    fn set_port(&self, port: u16) {
-        {
-            let mut guard = self.port.lock().expect("port mutex poisoned");
-            if guard.is_some() {
-                return;
-            }
-            *guard = Some(port);
-        }
-        self.port_ready.notify_waiters();
+    fn binding_snapshot(&self) -> Binding {
+        self.binding.lock().expect("binding mutex poisoned").clone()
     }
 
     fn get_port(&self) -> Option<u16> {
-        *self.port.lock().expect("port mutex poisoned")
-    }
-
-    /// Tempdoc 637 #1: record the backend's per-boot `instanceId`; return true iff it CHANGED from
-    /// a previously-seen id (the backend process restarted — a new incarnation). The first
-    /// observation (None -> Some) is establishment, NOT a restart, so it returns false.
-    fn note_instance_and_detect_restart(&self, new_id: &str) -> bool {
-        let mut guard = self.instance_id.lock().expect("instance_id mutex poisoned");
-        match guard.as_deref() {
-            Some(prev) if prev == new_id => false,
-            Some(_) => {
-                *guard = Some(new_id.to_string());
-                true
-            }
-            None => {
-                *guard = Some(new_id.to_string());
-                false
-            }
-        }
-    }
-
-    /// Tempdoc 637 #1: a restart lands on a fresh ephemeral port. `set_port` is first-write-wins (a
-    /// startup race guard), so a restart must override the cached port explicitly.
-    fn force_set_port(&self, port: u16) {
-        *self.port.lock().expect("port mutex poisoned") = Some(port);
-        self.port_ready.notify_waiters();
-    }
-
-    fn set_session_token(&self, token: String) {
-        {
-            let mut guard = self
-                .session_token
-                .lock()
-                .expect("session_token mutex poisoned");
-            if guard.is_some() {
-                return;
-            }
-            *guard = Some(token);
-        }
-        self.session_token_ready.notify_waiters();
+        self.binding.lock().expect("binding mutex poisoned").port
     }
 
     fn get_session_token(&self) -> Option<String> {
-        self.session_token
+        self.binding
             .lock()
-            .expect("session_token mutex poisoned")
+            .expect("binding mutex poisoned")
+            .token
             .clone()
+    }
+
+    /// Tempdoc 805 G.1: apply a manifest observation under the provenance rule (`binding.rs`),
+    /// then fire the notifies for whatever became available. Returns true iff the binding was
+    /// replaced because a different instance succeeded a known one — the caller's restart signal.
+    fn observe_manifest(&self, manifest: &ManifestFields, child_pid: Option<u32>) -> bool {
+        let change = {
+            let mut guard = self.binding.lock().expect("binding mutex poisoned");
+            apply_manifest_observation(&mut guard, manifest, child_pid)
+        };
+        if change.port_available {
+            self.port_ready.notify_waiters();
+        }
+        if change.token_available {
+            self.session_token_ready.notify_waiters();
+        }
+        change.restarted
     }
 
     fn has_spawn_error(&self) -> bool {
@@ -170,6 +137,22 @@ impl BackendState {
             *killed = true;
         }
 
+        // Tempdoc 805 G.1: normal termination traverses Head's ordered shutdown; force-kill is the
+        // fallback, not the design. The ordered close deletes the runtime manifest, so a clean quit
+        // stops leaving the residue that strands the next boot's binding. `taskkill /T` without /F
+        // posts WM_CLOSE, which a windowless `javaw` never receives — that step (and its 2s sleep)
+        // never ran a JVM shutdown hook, so it is gone.
+        if self.child.lock().expect("child mutex poisoned").is_some() {
+            let binding = self.binding_snapshot();
+            if let (Some(port), Some(token)) = (binding.port, binding.token) {
+                if request_head_shutdown(port, &token)
+                    && self.wait_for_child_exit(Duration::from_secs(8))
+                {
+                    return;
+                }
+            }
+        }
+
         let mut guard = self.child.lock().expect("child mutex poisoned");
         let mut child = match guard.take() {
             Some(c) => c,
@@ -179,17 +162,6 @@ impl BackendState {
         #[cfg(windows)]
         {
             let pid = child.id();
-
-            // Step 1: Graceful termination (allows JVM shutdown hooks to run)
-            let _ = Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .status();
-
-            // Step 2: Wait for graceful shutdown
-            std::thread::sleep(std::time::Duration::from_secs(2));
-
-            // Step 3: Force kill if still alive
             let _ = Command::new("taskkill")
                 .args(["/PID", &pid.to_string(), "/T", "/F"])
                 .creation_flags(CREATE_NO_WINDOW)
@@ -241,6 +213,49 @@ impl Drop for BackendState {
         // Best-effort cleanup on app shutdown.
         self.kill_child();
     }
+}
+
+/// Tempdoc 805 G.1: ask Head to run its own ordered shutdown (`POST /api/lifecycle/shutdown`).
+/// Returns true iff Head acknowledged with 2xx; every other outcome falls through to force-kill.
+///
+/// Hand-rolled loopback HTTP rather than the `reqwest` client the updater uses: this runs on the
+/// synchronous quit path (including `Drop`, and `RunEvent::Exit` while the tokio runtime is
+/// winding down), where an async client has no runtime to block on.
+fn request_head_shutdown(port: u16, token: &str) -> bool {
+    if token.contains(['\r', '\n']) {
+        return false; // a token carrying CRLF would splice headers — never send it
+    }
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_secs(2)) else {
+        return false;
+    };
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let request = format!(
+        "POST /api/lifecycle/shutdown HTTP/1.1\r\n\
+         Host: 127.0.0.1:{port}\r\n\
+         X-JustSearch-Session: {token}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: 2\r\n\
+         Connection: close\r\n\r\n{{}}"
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let _ = stream.flush();
+    let mut response = Vec::new();
+    let mut chunk = [0u8; 256];
+    while response.len() < 64 {
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => response.extend_from_slice(&chunk[..n]),
+        }
+    }
+    let status_line = String::from_utf8_lossy(&response);
+    let Some(code) = status_line.split_whitespace().nth(1) else {
+        return false;
+    };
+    code.starts_with('2')
 }
 
 /// Recursively copy a directory tree from src to dest.
@@ -813,18 +828,6 @@ fn spawn_headless_backend<R: tauri::Runtime>(
 
     let mut child = cmd.spawn().map_err(|e| format!("spawn java failed: {e}"))?;
 
-    // Tempdoc 501 Phase 7: manifest-watcher thread reads
-    // <dataDir>/runtime/manifest.json — the producer's self-published runtime
-    // identity — and signals port + session token without depending on stdout
-    // parsing. Stdout parse stays as a backup until Phase 8 fully deprecates
-    // it. Whichever fires first wins (set_port / set_session_token are
-    // idempotent — the second call returns immediately).
-    {
-        let state_clone = state.clone();
-        let manifest_path = app_data_dir.join("runtime").join("manifest.json");
-        thread::spawn(move || watch_manifest(state_clone, manifest_path));
-    }
-
     // Drain stdout/stderr to avoid pipe backpressure.
     if let Some(stdout) = child.stdout.take() {
         let state_clone = state.clone();
@@ -849,9 +852,8 @@ fn spawn_headless_backend<R: tauri::Runtime>(
                 // Tempdoc 501 Phase 8: the JUSTSEARCH_API_PORT= and
                 // JUSTSEARCH_SESSION_TOKEN= stdout lines stay in the log for
                 // human observation but the consumer-side parse is gone —
-                // watch_manifest() is the canonical discovery path. set_port /
-                // set_session_token are idempotent, so race-cases between
-                // stdout and manifest fall to whichever fires first.
+                // watch_manifest() is the ONLY discovery path, and tempdoc 805
+                // G.1 made the binding it feeds instance-keyed.
                 if let Ok(mut f) = log_clone.lock() {
                     let _ = writeln!(f, "{line}");
                 }
@@ -894,6 +896,19 @@ fn spawn_headless_backend<R: tauri::Runtime>(
         *guard = Some(child);
     }
 
+    // Tempdoc 501 Phase 7: manifest-watcher thread reads <dataDir>/runtime/manifest.json — the
+    // producer's self-published runtime identity — and feeds the binding.
+    //
+    // Tempdoc 805 G.1: started AFTER the child is recorded, so the provenance rule can compare the
+    // manifest's `pid` against our live child from the very first poll. Started earlier, the first
+    // polls ran with an unknown child pid and could adopt a previous boot's residue as the
+    // establishing observation.
+    {
+        let state_clone = state.clone();
+        let manifest_path = app_data_dir.join("runtime").join("manifest.json");
+        thread::spawn(move || watch_manifest(state_clone, manifest_path));
+    }
+
     Ok(())
 }
 
@@ -924,8 +939,8 @@ pub(crate) fn restart_headless_backend(
 /// Polls every 100ms for up to 60s. Exits when:
 ///   * port and token (if any) are both set on state, OR
 ///   * the spawned child reports a spawn error, OR
-///   * the deadline elapses (the manifest never appeared — stdout fallback
-///     may still fire).
+///   * the deadline elapses (the manifest never appeared — nothing else can
+///     supply the binding; tempdoc 501 Phase 8 removed the stdout parse).
 ///
 /// We poll rather than use OS file-watch APIs because (a) Tauri is currently
 /// tokio-rt-multi-thread without a notify dep, (b) the manifest write is a
@@ -948,26 +963,13 @@ fn watch_manifest(state: Arc<BackendState>, manifest_path: PathBuf) {
             fast_phase = false;
         }
         if let Some(manifest) = read_manifest_if_present(&manifest_path) {
-            if let Some(port) = manifest.api_port {
-                state.set_port(port);
-            }
-            if let Some(token) = manifest.session_token {
-                if !token.is_empty() {
-                    state.set_session_token(token);
-                }
-            }
-            // Tempdoc 637 #1: self-heal the FE→backend binding on a backend restart. A changed
-            // per-boot instanceId means a new Head incarnation (almost always a new ephemeral
-            // port); override the first-write-wins cached port and emit a restart event so the
-            // webview re-resolves its binding instead of silently failing against a dead port.
-            if let Some(new_id) = manifest.instance_id.as_deref() {
-                if state.note_instance_and_detect_restart(new_id) {
-                    if let Some(port) = manifest.api_port {
-                        state.force_set_port(port);
-                    }
-                    if let Some(app) = TRAY_CONTEXT.get() {
-                        let _ = app.emit("justsearch://backend-restart", manifest.api_port);
-                    }
+            // Tempdoc 805 G.1: one provenance-checked application. A new instanceId replaces the
+            // whole binding (port AND token are per-boot facts of one incarnation) and emits the
+            // restart event so the webview re-resolves instead of failing silently against a dead
+            // port with the previous boot's token.
+            if state.observe_manifest(&manifest, state.child_pid()) {
+                if let Some(app) = TRAY_CONTEXT.get() {
+                    let _ = app.emit("justsearch://backend-restart", manifest.api_port);
                 }
             }
             // Tempdoc 501 Phase 17: drive the tray tooltip from the manifest's lifecycle
@@ -1011,41 +1013,6 @@ fn update_tray_tooltip(state: &BackendState, tooltip: &str) {
     if let Some(tray) = app.tray_by_id(&id) {
         let _ = tray.set_tooltip(Some(tooltip));
     }
-}
-
-#[derive(Default)]
-struct ManifestFields {
-    api_port: Option<u16>,
-    session_token: Option<String>,
-    /// Tempdoc 501 Phase 17: top-level `lifecycle` field used to drive the tray tooltip.
-    lifecycle: Option<String>,
-    /// Tempdoc 637 #1: top-level per-boot `instanceId` — its change signals a backend restart.
-    instance_id: Option<String>,
-}
-
-fn read_manifest_if_present(path: &Path) -> Option<ManifestFields> {
-    let content = fs::read_to_string(path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let head = v.get("head")?;
-    let mut out = ManifestFields::default();
-    if let Some(port) = head.get("apiPort").and_then(|p| p.as_u64()) {
-        if port > 0 && port <= u16::MAX as u64 {
-            out.api_port = Some(port as u16);
-        }
-    }
-    if let Some(t) = head.get("sessionToken").and_then(|s| s.as_str()) {
-        out.session_token = Some(t.to_string());
-    }
-    if let Some(l) = v.get("lifecycle").and_then(|s| s.as_str()) {
-        out.lifecycle = Some(l.to_string());
-    }
-    // Tempdoc 637 #1: top-level per-boot instanceId (sibling of `lifecycle`, not under `head`).
-    if let Some(id) = v.get("instanceId").and_then(|s| s.as_str()) {
-        if !id.is_empty() {
-            out.instance_id = Some(id.to_string());
-        }
-    }
-    Some(out)
 }
 
 #[tauri::command]
@@ -1634,56 +1601,186 @@ mod tests {
         assert_eq!(m.api_port, Some(40404));
     }
 
+    fn manifest_of(
+        instance_id: Option<&str>,
+        port: Option<u16>,
+        token: Option<&str>,
+        pid: Option<u32>,
+    ) -> ManifestFields {
+        ManifestFields {
+            api_port: port,
+            session_token: token.map(str::to_string),
+            lifecycle: None,
+            instance_id: instance_id.map(str::to_string),
+            pid,
+        }
+    }
+
     #[test]
     fn test_detect_restart_on_instance_id_change() {
-        // Tempdoc 637 #1: first observation establishes (not a restart); an unchanged id is not a
-        // restart; a changed id IS a restart (a new Head incarnation on a new port).
+        // Tempdoc 637 #1 / 805 G.1: first observation establishes (not a restart); an unchanged id
+        // is not a restart; a changed id IS a restart (a new Head incarnation on a new port).
         let state = BackendState::default();
         assert!(
-            !state.note_instance_and_detect_restart("id-1"),
+            !state.observe_manifest(&manifest_of(Some("id-1"), Some(1111), None, None), None),
             "first observation is establishment, not a restart"
         );
         assert!(
-            !state.note_instance_and_detect_restart("id-1"),
+            !state.observe_manifest(&manifest_of(Some("id-1"), Some(1111), None, None), None),
             "unchanged id is not a restart"
         );
         assert!(
-            state.note_instance_and_detect_restart("id-2"),
+            state.observe_manifest(&manifest_of(Some("id-2"), Some(2222), None, None), None),
             "changed id is a restart"
         );
         assert!(
-            !state.note_instance_and_detect_restart("id-2"),
+            !state.observe_manifest(&manifest_of(Some("id-2"), Some(2222), None, None), None),
             "stabilized at the new id"
         );
     }
 
     #[test]
-    fn test_force_set_port_overrides_first_write_wins() {
-        // Tempdoc 637 #1: set_port is first-write-wins (a startup race guard); a restart lands on a
-        // new port and must override the cached one, else the webview is stranded on a dead port.
+    fn binding_fills_gaps_within_one_instance() {
+        // Tempdoc 805 G.1: within one instance an observation may only FILL what is missing —
+        // never overwrite. This is the correct half of the old first-write-wins policy.
         let state = BackendState::default();
-        state.set_port(11111);
-        state.set_port(22222); // ignored — first-write-wins
+        state.observe_manifest(&manifest_of(Some("id-1"), Some(11111), None, None), None);
         assert_eq!(state.get_port(), Some(11111));
-        state.force_set_port(33333); // restart override
-        assert_eq!(state.get_port(), Some(33333));
+        assert_eq!(state.get_session_token(), None);
+
+        state.observe_manifest(
+            &manifest_of(Some("id-1"), Some(22222), Some("tok-1"), None),
+            None,
+        );
+        assert_eq!(
+            state.get_port(),
+            Some(11111),
+            "port must not be overwritten within one instance"
+        );
+        assert_eq!(
+            state.get_session_token().as_deref(),
+            Some("tok-1"),
+            "the missing token is filled"
+        );
+    }
+
+    #[test]
+    fn binding_replacement_on_new_instance_replaces_port_and_token_together() {
+        // Tempdoc 805 G.1 (R11-F2): port and token are per-boot facts of ONE incarnation. The old
+        // per-field policies could keep a previous boot's token beside a new boot's port, which
+        // 401s every mutating call for the app's lifetime.
+        let state = BackendState::default();
+        state.observe_manifest(
+            &manifest_of(Some("id-1"), Some(11111), Some("tok-old"), None),
+            None,
+        );
+        assert!(state.observe_manifest(
+            &manifest_of(Some("id-2"), Some(22222), Some("tok-new"), None),
+            None,
+        ));
+        assert_eq!(
+            state.binding_snapshot(),
+            Binding {
+                instance_id: Some("id-2".into()),
+                port: Some(22222),
+                token: Some("tok-new".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn manifest_with_mismatched_pid_is_ignored_when_a_child_pid_is_known() {
+        // Tempdoc 805 G.1: when the shell spawned the child, a manifest naming a different pid was
+        // written by another process — crash residue, not our backend.
+        let state = BackendState::default();
+        state.observe_manifest(
+            &manifest_of(Some("id-1"), Some(11111), Some("tok-1"), Some(4242)),
+            Some(4242),
+        );
+
+        assert!(!state.observe_manifest(
+            &manifest_of(
+                Some("id-residue"),
+                Some(9999),
+                Some("tok-residue"),
+                Some(1717)
+            ),
+            Some(4242),
+        ));
+        assert_eq!(
+            state.binding_snapshot(),
+            Binding {
+                instance_id: Some("id-1".into()),
+                port: Some(11111),
+                token: Some("tok-1".into()),
+            },
+            "a pid-mismatched manifest must not touch the binding"
+        );
+    }
+
+    #[test]
+    fn manifest_without_instance_id_is_ignored() {
+        // Tempdoc 805 U8: every v0.1.0+ manifest carries instanceId, so its absence is residue
+        // from something else. Defensive, and it keeps an unattributable observation out.
+        let state = BackendState::default();
+        assert!(!state.observe_manifest(&manifest_of(None, Some(11111), Some("t"), None), None));
+        assert_eq!(state.binding_snapshot(), Binding::default());
+    }
+
+    #[test]
+    fn stale_manifest_reannouncing_the_old_instance_replaces_nothing_silently() {
+        // Tempdoc 805 G.1 / R11-F2: after id-2 was observed, a re-read of a stale id-1 manifest
+        // (same file, previous boot's contents) must not resurrect the dead token. It IS a
+        // different instanceId, so the record is replaced wholesale — never merged, which is what
+        // produced "new port + previous boot's token".
+        let state = BackendState::default();
+        state.observe_manifest(
+            &manifest_of(Some("id-1"), Some(11111), Some("tok-old"), None),
+            None,
+        );
+        state.observe_manifest(
+            &manifest_of(Some("id-2"), Some(22222), Some("tok-new"), None),
+            None,
+        );
+        // Same shell, live child: the stale manifest's pid cannot match the live child, so it is
+        // rejected outright and the live binding survives untouched.
+        assert!(!state.observe_manifest(
+            &manifest_of(Some("id-1"), Some(11111), Some("tok-old"), Some(1717)),
+            Some(4242),
+        ));
+        assert_eq!(state.get_session_token().as_deref(), Some("tok-new"));
+        assert_eq!(state.get_port(), Some(22222));
+    }
+
+    #[test]
+    fn test_read_manifest_parses_top_level_pid() {
+        // Tempdoc 805 G.1: the pid the provenance rule keys on is a TOP-LEVEL manifest field.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        fs::write(
+            &path,
+            r#"{"instanceId":"abc-123","pid":4242,"lifecycle":"READY","head":{"apiPort":40404,"sessionToken":"t"}}"#,
+        )
+        .unwrap();
+        let m = read_manifest_if_present(&path).expect("manifest parses");
+        assert_eq!(m.pid, Some(4242));
     }
 
     #[test]
     fn backend_reset_clears_process_scoped_discovery_for_updater_restart() {
+        // Tempdoc 805 G.1: the updater's reset is binding replacement with an empty record.
         let state = BackendState::default();
-        state.set_port(11111);
-        state.set_session_token("old-token".into());
+        state.observe_manifest(
+            &manifest_of(Some("old-instance"), Some(11111), Some("old-token"), None),
+            None,
+        );
         *state.spawn_error.lock().unwrap() = Some("old failure".into());
-        *state.instance_id.lock().unwrap() = Some("old-instance".into());
         *state.killed.lock().unwrap() = true;
 
         state.reset_for_restart().unwrap();
 
-        assert_eq!(state.get_port(), None);
-        assert_eq!(state.get_session_token(), None);
+        assert_eq!(state.binding_snapshot(), Binding::default());
         assert!(!state.has_spawn_error());
-        assert_eq!(*state.instance_id.lock().unwrap(), None);
         assert!(!*state.killed.lock().unwrap());
     }
 

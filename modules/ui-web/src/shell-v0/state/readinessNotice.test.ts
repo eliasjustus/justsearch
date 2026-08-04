@@ -10,7 +10,15 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { readinessNotice, reasonFor, severityForCodes } from './readinessNotice.js';
+import {
+  classifyConsequence,
+  readinessNotice,
+  reasonFor,
+  severityForCodes,
+  KEYWORD_FALLBACK_CAVEAT,
+  PASSAGE_REDUCED_CAVEAT,
+  OPTIONAL_CAPABILITY_CAVEAT,
+} from './readinessNotice.js';
 import type { SystemHealthVerdict } from './verdict.js';
 
 const degraded = (
@@ -170,10 +178,13 @@ describe('readinessNotice (595 §4.2) — projects the ONE verdict into the sear
     const n = readinessNotice(degraded('warn', ['lambdamart.not_configured', 'inference.offline']));
     expect(n!.headline).toBe('AI features unavailable.');
     expect(n!.body).not.toContain('keyword results');
-    expect(n!.causes).toEqual([
-      'Learned re-ranking (LambdaMART) is not configured',
-      'The local AI model is offline',
-    ]);
+    // RE-PINNED, tempdoc 805 §G.2: the AI branch now SCOPES its cause list to AI codes, the same way
+    // the reindex branch scopes to rebuild-clearable causes (804 §B5). Pre-805 the LambdaMART row was
+    // listed here too — under the "Chat and answer features are unavailable" consequence and the
+    // reload-inference remedy, neither of which it belongs to. It keeps its own calm branch when it is
+    // the whole story (see the §10.3 cosmetic test above).
+    expect(n!.causes).toEqual(['The local AI model is offline']);
+    expect(n!.causes.join(' ')).not.toContain('LambdaMART');
     expect(n!.remedy).toEqual({ kind: 'operation', operationId: 'core.reload-inference' });
   });
 
@@ -204,6 +215,78 @@ describe('readinessNotice (595 §4.2) — projects the ONE verdict into the sear
     });
   });
 
+  // ===== Tempdoc 805 §G.2 (live round 11) — the PASSAGE class. Round 11's banner claimed "Showing
+  // keyword results" while the build's own search trace showed dense retrieval AND the cross-encoder
+  // executing: the only thing actually reduced was the PASSAGE leg (chunk vectors absent). =====
+
+  it('805 §G.2: the round-11 pair (chunk_embedding.not_ready + lambdamart) takes the PASSAGE branch', () => {
+    // The exact live codes + their derived verdict severity (chunk_embedding.not_ready has no row
+    // severity ⇒ warn; lambdamart is info) — so this is the impairing-severity path, and only the
+    // cause CLASS keeps it off the keyword-fallback claim.
+    expect(severityForCodes(['chunk_embedding.not_ready', 'lambdamart.not_configured'])).toBe('warn');
+
+    const n = readinessNotice(degraded('warn', ['chunk_embedding.not_ready', 'lambdamart.not_configured']));
+    expect(n!.headline).toBe('Semantic search partially degraded.');
+    // The round-11 defect verbatim: this claim was false against the trace.
+    expect(n!.body).not.toContain('keyword results');
+    expect(n!.body).not.toContain('Showing keyword');
+    expect(n!.headline).not.toBe('Semantic search degraded.');
+    // The measured truth: the passage leg is reduced, document-level semantic ranking still serves.
+    expect(n!.body).toContain('Passage-level precision is reduced');
+    expect(n!.body).toContain('still ranked semantically');
+    // Cause SCOPING: only the passage cause is presented under the passage consequence.
+    expect(n!.causes).toEqual(['Passage embeddings are not ready']);
+    expect(n!.causes.join(' ')).not.toContain('LambdaMART');
+    // The remedy is the one that actually computes passage embeddings (CAUSE_ROWS' chunk rows).
+    expect(n!.remedy).toEqual({ kind: 'operation', operationId: 'core.trigger-offline-processing' });
+  });
+
+  it('805 §G.2: chunk_embedding.in_progress is the passage class too (no remedy ⇒ Open Health)', () => {
+    // `in_progress` is severity `info`, so it reaches this branch only alongside a warn-severity
+    // cause — paired here with `ocr.disabled` (warn, recognized, non-retrieval) so the fixture's
+    // severity is the one `severityForCodes` would actually derive, not an invented one.
+    const codes = ['chunk_embedding.in_progress', 'ocr.disabled'];
+    expect(severityForCodes(codes)).toBe('warn');
+
+    const n = readinessNotice(degraded('warn', codes));
+    expect(n!.headline).toBe('Semantic search partially degraded.');
+    expect(n!.body).not.toContain('keyword results');
+    // Cause SCOPING: the OCR cause is not filed under the passage consequence.
+    expect(n!.causes).toEqual(['Passage embeddings are still being computed']);
+    // In-progress carries no remedy row ⇒ the always-actionable Open Health reference (and the
+    // scoping means it does NOT inherit some other cause's remedy either).
+    expect(n!.remedy).toEqual({ kind: 'navigate', target: 'core.health-surface', label: 'Open Health' });
+  });
+
+  it('805 §G.2: a real retrieval block ALONGSIDE the passage gap outranks it (keyword wording returns)', () => {
+    const n = readinessNotice(degraded('warn', ['chunk_embedding.not_ready', 'index.dense_unavailable']));
+    expect(n!.headline).toBe('Semantic search degraded.');
+    expect(n!.body).toContain('Showing keyword results');
+    // Impairing-branch scoping: the passage cause is not filed under the retrieval-fallback claim.
+    expect(n!.causes).toEqual(['Semantic search is unavailable right now — showing keyword results.']);
+  });
+
+  it('805 §G.2: an UNCLASSIFIED code alongside the passage gap stays conservative (never the calmer claim)', () => {
+    const n = readinessNotice(degraded('warn', ['chunk_embedding.not_ready', 'some.future.code']));
+    expect(n!.headline).toBe('Semantic search degraded.');
+    expect(n!.causes).toEqual(['Degraded: some.future.code']);
+  });
+
+  it('805 §G.2: a passage gap alongside an AI cause words as PASSAGE (passage outranks ai-unavailable)', () => {
+    const n = readinessNotice(degraded('warn', ['chunk_embedding.not_ready', 'inference.offline']));
+    expect(n!.headline).toBe('Semantic search partially degraded.');
+    // The AI branch's "Search is fully working" would over-claim while passage vectors are missing.
+    expect(n!.body).not.toContain('Search is fully working');
+    expect(n!.causes).toEqual(['Passage embeddings are not ready']);
+  });
+
+  it('804 §B5 + 805 §G.2: the AI branch scopes its cause list to AI codes only', () => {
+    const n = readinessNotice(degraded('warn', ['ocr.disabled', 'inference.offline']));
+    expect(n!.headline).toBe('AI features unavailable.');
+    expect(n!.causes).toEqual(['The local AI model is offline']);
+    expect(n!.causes.join(' ')).not.toContain('OCR');
+  });
+
   it('598 reopen (B-3): index.dense_unavailable is severity warn (can never render "fully semantic") and words as capability-OFF', () => {
     // Produce→verdict severity: a dense-block a rebuild does NOT fix (no embedding model / embedder
     // down on a COMPATIBLE index) must be `warn`, so the verdict is degraded-warn and the banner can
@@ -219,6 +302,79 @@ describe('readinessNotice (595 §4.2) — projects the ONE verdict into the sear
     expect(n!.causes).toEqual(['Semantic search is unavailable right now — showing keyword results.']);
     // No false one-click rebuild remedy (the model isn't loaded) → the always-actionable Open Health ref.
     expect(n!.remedy).toEqual({ kind: 'navigate', target: 'core.health-surface', label: 'Open Health' });
+  });
+});
+
+/**
+ * Tempdoc 805 §G.2 — the ONE consequence classifier every degradation claim consumes (this module's
+ * banner, availability.ts's affordance caveat). Round 11 found the keyword-fallback claim re-derived
+ * from SEVERITY in two modules at once, both contradicting the same search trace.
+ */
+describe('classifyConsequence (805 §G.2)', () => {
+  it('retrieval-impaired: a positively-known dense block', () => {
+    expect(classifyConsequence(['index.dense_unavailable'])).toBe('retrieval-impaired');
+    expect(classifyConsequence(['worker.health.embedding_not_ready'])).toBe('retrieval-impaired');
+    expect(classifyConsequence(['worker.health.embedding_probe_missing'])).toBe('retrieval-impaired');
+    expect(classifyConsequence(['index.rebuilding'])).toBe('retrieval-impaired');
+    expect(classifyConsequence(['worker.spawn.failed'])).toBe('retrieval-impaired');
+    // The reindex causes are retrieval-impairing too (the banner returns earlier for them, but the
+    // classifier is consumed by other surfaces that have no reindex branch).
+    expect(classifyConsequence(['index.embedding_mismatch'])).toBe('retrieval-impaired');
+  });
+
+  it('passage-reduced: the chunk-embedding codes, which are NOT a keyword fallback', () => {
+    // The membership move this workstream exists for: pre-805 both codes sat in
+    // RETRIEVAL_IMPAIRING_CODES, which is how a passage-vector gap licensed "Showing keyword results"
+    // over a trace with dense retrieval + the cross-encoder live (round 11, tempdoc 734 R11-F1).
+    expect(classifyConsequence(['chunk_embedding.not_ready'])).toBe('passage-reduced');
+    expect(classifyConsequence(['chunk_embedding.in_progress'])).toBe('passage-reduced');
+  });
+
+  it('ai-unavailable: the AI-model codes, retrieval untouched', () => {
+    expect(classifyConsequence(['inference.offline'])).toBe('ai-unavailable');
+    expect(classifyConsequence(['inference.model_not_configured'])).toBe('ai-unavailable');
+    expect(classifyConsequence(['inference.activation_failed'])).toBe('ai-unavailable');
+  });
+
+  it('cosmetic: a recognized cause that touches neither retrieval nor the AI model', () => {
+    expect(classifyConsequence(['lambdamart.not_configured'])).toBe('cosmetic');
+    expect(classifyConsequence(['gpu.saturated', 'index.schema_mismatch'])).toBe('cosmetic');
+    expect(classifyConsequence(['ocr.disabled'])).toBe('cosmetic');
+  });
+
+  it('unknown: an unrecognized code, and an EMPTY list, are never evidence of health', () => {
+    expect(classifyConsequence(['some.future.code'])).toBe('unknown');
+    // Empty ⇒ unknown, mirroring severityForCodes' empty ⇒ warn: no codes is not a calm claim.
+    expect(classifyConsequence([])).toBe('unknown');
+  });
+
+  it('precedence: retrieval-impaired > unknown > passage-reduced > ai-unavailable > cosmetic', () => {
+    // Top: a positively-known retrieval block wins over every other class present.
+    expect(
+      classifyConsequence([
+        'lambdamart.not_configured',
+        'inference.offline',
+        'chunk_embedding.not_ready',
+        'some.future.code',
+        'index.dense_unavailable',
+      ]),
+    ).toBe('retrieval-impaired');
+    // An unrecognized code outranks the three CALMER classes — it cannot license a claim we can't back.
+    expect(classifyConsequence(['chunk_embedding.not_ready', 'some.future.code'])).toBe('unknown');
+    expect(classifyConsequence(['inference.offline', 'some.future.code'])).toBe('unknown');
+    expect(classifyConsequence(['lambdamart.not_configured', 'some.future.code'])).toBe('unknown');
+    // Then passage over AI, and AI over cosmetic.
+    expect(classifyConsequence(['inference.offline', 'chunk_embedding.in_progress'])).toBe('passage-reduced');
+    expect(classifyConsequence(['lambdamart.not_configured', 'inference.offline'])).toBe('ai-unavailable');
+  });
+
+  it('the exported caveats carry the claim wording so no second module re-authors it', () => {
+    // The gate (scripts/ci/check-consequence-classification.mjs) enforces the containment; this pins
+    // that the caveats say what their class licenses.
+    expect(KEYWORD_FALLBACK_CAVEAT).toContain('keyword-ranked results');
+    expect(PASSAGE_REDUCED_CAVEAT).not.toContain('keyword');
+    expect(PASSAGE_REDUCED_CAVEAT).toContain('still ranked semantically');
+    expect(OPTIONAL_CAPABILITY_CAVEAT).not.toContain('keyword');
   });
 });
 

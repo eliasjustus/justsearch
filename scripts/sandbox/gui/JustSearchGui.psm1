@@ -23,6 +23,7 @@ namespace JustSearchGui {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int width, int height, bool repaint);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, IntPtr e);
@@ -84,6 +85,47 @@ function Get-AppWindowRect {
   param([Parameter(Mandatory = $true)][IntPtr]$Handle)
   $r = New-Object JustSearchGui.RECT
   [void][JustSearchGui.Native]::GetWindowRect($Handle, [ref]$r)
+  return $r
+}
+
+function Set-AppWindowRect {
+  # Moves/resizes the window at $Handle to an explicit rect via the Win32
+  # MoveWindow API, in PHYSICAL pixels (same coordinate space as
+  # GetWindowRect / Save-AppShot -- no DPI conversion here, keep it simple).
+  #
+  # README.md prescribes "Fix the window size at the start of a round for
+  # determinism" but JustSearchGui.psm1 had no move/resize primitive -- round
+  # 11 (tempdoc 805 item 6) had to write one from scratch, and its first
+  # attempt called MoveWindow while the window was still maximized, which
+  # corrupted the window's RESTORED geometry to 1520x32767; that bad geometry
+  # then silently reappeared every time Connect-App's SW_RESTORE ran
+  # afterward. This function restores the window BEFORE calling MoveWindow
+  # (the same SW_RESTORE Connect-App uses), then reads the rect back and
+  # THROWS if it does not match what was requested -- never a silent partial
+  # resize a caller could mistake for success.
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)][IntPtr]$Handle,
+    [Parameter(Mandatory = $true)][int]$X,
+    [Parameter(Mandatory = $true)][int]$Y,
+    [Parameter(Mandatory = $true)][int]$Width,
+    [Parameter(Mandatory = $true)][int]$Height,
+    [int]$SettleDelayMs = 200
+  )
+  [void][JustSearchGui.Native]::ShowWindow($Handle, [JustSearchGui.Native]::SW_RESTORE)
+  Start-Sleep -Milliseconds $SettleDelayMs
+  $ok = [JustSearchGui.Native]::MoveWindow($Handle, $X, $Y, $Width, $Height, $true)
+  if (-not $ok) {
+    throw "Set-AppWindowRect: MoveWindow failed for hwnd $Handle (requested $X,$Y ${Width}x${Height})"
+  }
+  Start-Sleep -Milliseconds $SettleDelayMs
+  $r = Get-AppWindowRect -Handle $Handle
+  $actualW = $r.Right - $r.Left
+  $actualH = $r.Bottom - $r.Top
+  if ($r.Left -ne $X -or $r.Top -ne $Y -or $actualW -ne $Width -or $actualH -ne $Height) {
+    throw "Set-AppWindowRect: post-move rect ($($r.Left),$($r.Top) ${actualW}x${actualH}) does not match requested ($X,$Y ${Width}x${Height}) -- window may be maximized/snapped/minimized or under DPI virtualization; verify manually before trusting subsequent window-relative coordinates."
+  }
+  Write-Host "Set-AppWindowRect: OK -- hwnd $Handle now at $X,$Y ${Width}x${Height} (physical pixels)"
   return $r
 }
 
@@ -400,6 +442,7 @@ Export-ModuleMember -Function `
   Resolve-AppPath, `
   Connect-App, `
   Get-AppWindowRect, `
+  Set-AppWindowRect, `
   Invoke-AppClick, `
   Send-AppKeys, `
   Send-AppText, `

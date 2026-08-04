@@ -282,6 +282,18 @@ Two staged tools make rounds repeatable and make coverage fail closed:
   claims a surface; it cannot prove the PIXELS show it, so a reader pass over
   every credited screenshot is a required, separately fail-closed gate, not an
   optional judgment call.
+- **Token health (host-side, tempdoc 805 Part G.4)** -- the same `traces.ndjson`
+  is also checked for round 11's discriminator: any POST/PUT/DELETE span
+  answered 401 in under 5ms is the auth-filter-rejection fingerprint (a
+  missing/stale session token reaching the webview), promoted from prose to a
+  mechanical, fail-closed gate:
+  ```
+  python scripts/sandbox/check_token_health.py tmp/sandbox/share/evidence/traces.ndjson
+  ```
+  Allowlisted: a fast 401 on `/mcp` immediately followed (within 60s) by a 200
+  on `/mcp` -- an external MCP client probing once without a token and then
+  retrying with one is expected, not a defect. A blocking finding here means a
+  webview call fired without (or with a stale) session token during the round.
 
 ### Search parity (golden queries)
 

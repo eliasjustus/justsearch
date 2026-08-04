@@ -119,14 +119,23 @@ export interface SearchProvenance {
 /** How long the terminal "refined ✓" stamp stays before decaying to the mode text. */
 const REFINED_STAMP_MS = 4000;
 
-/** Search Thread S1/S4-final — the retrieval-mode label, shared by the live meta line
- *  ({@link ResultsCard.renderRetrievalMode}) and the frozen-card provenance header. */
+/**
+ * Search Thread S1/S4-final — the retrieval-mode label, shared by the live meta line
+ * ({@link ResultsCard.renderRetrievalMode}) and the frozen-card provenance header.
+ *
+ * Tempdoc 805 §G.2 — `'UNKNOWN'` (a commit whose refined-pass trace was not yet available) is
+ * labelled NOTHING, exactly like any unrecognized mode: the absence of a label is honest, whereas
+ * every label here is a positive claim about how the search ran.
+ */
 function retrievalModeLabel(mode: string | null | undefined): string | null {
+  if (mode === 'UNKNOWN') return null;
   return mode === 'HYBRID' ? 'Semantic + keyword' : mode === 'VECTOR' ? 'Semantic' : mode === 'TEXT' ? 'Keyword' : null;
 }
 
-/** Tempdoc 738 (C2) — the plain-language retrieval-mode label shown in Simple mode. */
+/** Tempdoc 738 (C2) — the plain-language retrieval-mode label shown in Simple mode.
+ *  805 §G.2: `'UNKNOWN'` labels nothing (see {@link retrievalModeLabel}). */
 function plainRetrievalModeLabel(mode: string | null | undefined): string | null {
+  if (mode === 'UNKNOWN') return null;
   return mode === 'HYBRID'
     ? 'meaning + words'
     : mode === 'VECTOR'

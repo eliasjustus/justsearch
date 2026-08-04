@@ -137,22 +137,20 @@ async function bootstrap() {
     // after a successful background re-fetch.
   }
 
-  // Tempdoc 637 #1 — production self-heal for a dead FE→backend binding. When the desktop shell
-  // detects the backend restarted (a new per-boot instanceId ⇒ a new ephemeral port), the webview's
-  // cached absolute binding is dead. The shell has already overridden its own cached port, so a full
-  // reload re-runs boot → resolveApiEndpoint() re-invokes `api_port` and re-binds to the live
-  // backend. Tauri-only: in the Vite dev server the proxy re-resolves per request (so no reload is
-  // needed, and a reload loop must be avoided). The Rust side emits only on an instanceId CHANGE,
-  // never on initial boot, so this fires at most once per real restart.
+  // Tempdoc 637 #1 / 805 G.1 — production self-heal for a dead FE→backend binding. When the desktop
+  // shell detects the backend restarted (a new per-boot instanceId ⇒ a new ephemeral port AND a new
+  // session token), the webview's cached binding is dead. The bridge invalidates the cached session
+  // token first, then a full reload re-runs boot → resolveApiEndpoint() re-invokes `api_port` and
+  // re-binds to the live backend. Tauri-only: in the Vite dev server the proxy re-resolves per
+  // request (so no reload is needed, and a reload loop must be avoided). The Rust side emits only
+  // when the binding is REPLACED by a new instance, never on initial boot, so this fires at most
+  // once per real restart.
   try {
-    const { isTauriRuntime } = await import('./utils/tauriRuntime.ts')
-    if (isTauriRuntime()) {
-      const { listen } = await import('@tauri-apps/api/event')
-      await listen('justsearch://backend-restart', () => {
-        appLog.warn('Backend restarted on a new instance — reloading to re-bind to the live backend')
-        window.location.reload()
-      })
-    }
+    const { installBackendRestartBridge } = await import('./api/backendRestart.ts')
+    await installBackendRestartBridge(() => {
+      appLog.warn('Backend restarted on a new instance — reloading to re-bind to the live backend')
+      window.location.reload()
+    })
   } catch {
     // Event API unavailable (not running under Tauri) — the self-heal is simply not wired.
   }

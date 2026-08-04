@@ -246,11 +246,8 @@ jobs:
         # Models and GPU variants land on user machines via the "Install AI"
         # flow, not the base installer.
         #
-        # -SkipVerify: installer_verify runs verify-installer-nsis-win.ps1,
-        # which requires capture-evidence-bundle.mjs + determinism-budget
-        # tooling + a running backend — machinery designed for a more mature
-        # CI context. For manually dispatched alpha releases, "the installer
-        # built" is signal enough; verify can run separately.
+        # -SkipVerify: verification runs as its own job (installer_verify, below) against the
+        # uploaded artifact, not inline here.
         #
         # -AssembleReleaseAssets: stage the full release asset set into
         # dist/installer — installer + SHA256SUMS + the committed
@@ -471,3 +468,47 @@ jobs:
           }
           gh @publishArgs
           if ($LASTEXITCODE -ne 0) { throw "Verified release could not be published; it remains draft." }
+
+  installer_verify:
+    name: Verify installer (packaged, report-only)
+    needs: build-windows-installer
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # The verify script auto-enables EvidenceBundle capture whenever $env:CI is set (which
+      # GitHub Actions always sets) -- its validator (scripts/evidence/validate-evidencebundle-v1.mjs)
+      # imports ajv/ajv-formats from the ROOT package.json, so this job needs a root `npm ci`
+      # even though it never touches modules/ui-web or modules/shell directly.
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Download installer artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: windows-installer
+          path: dist/installer
+
+      # tempdoc 805 Part G.4 -- the packaged verify lane (proven working via three local runs,
+      # tempdoc 805 Part G.4) ran in NO CI workflow before this job. First run report-only to
+      # establish runner fitness (wall-time/RAM; the residual tempdoc 805 Part H U9 flagged),
+      # then flip continue-on-error off once a green baseline exists. Runs the fresh + restart
+      # legs; NOT -IncludeUpgradeArrival yet -- that leg asserts an install-status field
+      # (repairNeeded) a separate in-flight bundle (W-TRUTH) adds and must stay dormant until it
+      # lands (see the switch's doc comment in the script).
+      - name: Run packaged verify lane (report-only)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem -Path dist/installer -Filter "*-setup.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $setup) { throw "No *-setup.exe found in dist/installer after artifact download." }
+          ./scripts/ci/verify-installer-nsis-win.ps1 -SetupExePath $setup.FullName

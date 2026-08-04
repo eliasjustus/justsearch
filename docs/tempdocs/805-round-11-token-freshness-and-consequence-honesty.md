@@ -1,6 +1,6 @@
 ---
 title: Round-11 fix campaign — token freshness, consequence-class honesty, and the class-eliminating refactors
-status: "DESIGNED 2026-08-04 (Part G) — five workstreams: W-BINDING (shell instance-keyed {instanceId,port,token} binding with provenance rule + orderly-shutdown quit leg sharing 617 ordered-shutdown routine + webview binding with backend-restart invalidation and one-shot 401 heal), W-CONSEQUENCE (exported consequence classifier with new passage-reduced class, availability.ts consumes it, verdict-derivation gate extended, frozen-card unknown-mode fix), W-TRUTH (observed EP fields beside intent in runtime status per the B6 requested/converged shape; file-granularity install completeness module; repair-needed consequence; ort-native asset content check at publish), W-MATRIX (verify lane wired into build-installer.yml with fresh/restart/upgrade-arrival legs; sub-ms-401 trace assertion), W-HARNESS (Part E batch). Out of scope: rung reachability (own campaign), artifact-truthful status (parked), 617 protocol changes. Orphans named per workstream in G.1-G.5. Implementation not started. DERISKED 2026-08-04 (Part H): 10 uncertainties probed, 8 CONFIRMED (shutdownNormally + bridge already exist; OrtCudaStatus pre-models the EP failure states; derivation-gate family + availability.ts already governed; cargo test in CI; tauri event pattern exists; v0.1.0 manifests carry instanceId), 2 AMENDED: U3 - contract records variantless packages as skipped(No variant) with no files in BOTH versions, so the diff module needs entry-kind awareness and repair-needed keys on required-and-missing independent of contractedness; U5 - the quick pass IS mode:text by design, so the frozen-card identity must come from the refined pass or render unknown. Overall confidence 8/10"
+status: "IMPLEMENTED 2026-08-04 (Part I) — all five workstreams landed via five pinned workers (W1/W2/W3 opus, W4/W5 sonnet), every new test bite-proven, forced full suite green (190/190 uncached), 3942 ui-web tests green, verify lane fresh+restart legs PASS end-to-end against a real installer, live browser validation of the banner/frozen-card/repair-advisory/observed-EP surfaces. Awaiting: CI confirmation (cargo test, report-only installer_verify then flip blocking + activate upgrade-arrival leg), PR (not yet authorized), round 12 with a restart-leg charter, final fresh-install qualifying round (owes golden parity). Design: Part G; derisk: Part H; cross-round analysis: Part F; record: Part I"
 created: 2026-08-04
 updated: 2026-08-04
 ---
@@ -38,8 +38,10 @@ layer caches its **first** observation forever:
   `taskkill` without `/F` typically fails against a windowless `javaw`, so the JVM shutdown hook
   that deletes the manifest rarely runs; the round's previous Head log ends with zero shutdown
   markers).
-- The webview caches the resolved token permanently; nothing subscribes to the
-  `justsearch://backend-restart` event the shell already emits, and no 401 invalidates the cache.
+- The webview caches the resolved token permanently; the one `backend-restart` subscriber
+  (`main.jsx:151`, a tempdoc-637 full-page reload — a later re-check corrected Part F/G's
+  "no subscriber" claim, which came from a grep filtered to `*.ts`) re-resolves from the same
+  latched Rust state, and no 401 invalidates the cache.
 
 The hidden assumption the defect exposes: **each layer assumed its first observation was fresh,
 when freshness is actually a property of the process *instance* the fact belongs to.** Naming
@@ -605,8 +607,9 @@ shutdown routine.
 extends 595's single-verdict-authority + `verdict-derivation` gate pattern — the strongest
 empirical pattern in the round history (axes with an authority stopped producing findings).
 The EP-status split conforms to 804 §B6's requested/converged shape. The binding rewrite
-finally gives 637's `backend-restart` event its first consumer instead of inventing a new
-signal. The install-completeness module applies 553's projection-vs-fork discipline inside one
+reuses 637's `backend-restart` event as the invalidation signal instead of inventing a new
+one (implementation found the event already had a page-reload subscriber in `main.jsx` —
+the rewrite replaces it with invalidate-then-reload rather than stacking a second listener). The install-completeness module applies 553's projection-vs-fork discipline inside one
 subsystem. The shutdown leg reuses 617's ordered-shutdown routine — one routine, two callers —
 rather than a second shutdown path.
 
@@ -640,6 +643,11 @@ construction-order and package-visibility question) and call it from `kill_child
 force-kill fallback. No extraction work.
 
 **U2 [was HIGH] — CONFIRMED; the modeling already exists, only the plumbing is missing.**
+*SUPERSEDED IN PART during implementation (W3): no proto change was needed at all — the
+per-encoder observed state already crosses Worker→Head as `StatusResponse.gpu.*OrtCuda` →
+`WorkerStatusMapper.mapOrtCudaProbe` → `OrtCudaView` (`RemoteKnowledgeClient.java:1309+`), and
+the fix conformed to the `EncoderRuntimeExplainer` authority instead of extending the health
+proto. The paragraph below records the derisk-time understanding.*
 `OrtCudaStatus` already models round 11's exact failure modes as named states —
 `missingDlls(variantId, path, missing)` and `providerFailed(variantId, path, reason)`
 (`OrtCudaStatus.java:89,104`). The Worker→Head health proto already carries per-model observed
@@ -715,3 +723,152 @@ runner-fitness residual); W-HARNESS **9** (mechanical). Overall: **8/10** — th
 unknowns that could have invalidated the design (U1, U2) both resolved as
 already-built-just-unplumbed, and the two surprises (U3, U5) were absorbed as amendments
 rather than redesigns.
+
+---
+
+## Part I — Implementation record (2026-08-04, running)
+
+Five worker bundles per the approved plan; wave 1 = W1/W2/W4/W5 in parallel (W1 sole Gradle
+owner), wave 2 = W3. Every bundle left changes uncommitted for orchestrator review; every new
+test carries a recorded bite proof (break → fail → restore → pass). This section records
+acceptance verdicts and the deltas between plan and reality.
+
+### W1 — shell binding + orderly quit (ACCEPTED)
+
+Landed as designed with the binding rule extracted into a new pure `binding.rs` module —
+worker-initiated deviation, accepted because the local `cargo test` tier is blocked by Smart
+App Control on this machine (documented pitfall) and a pure-std module runs under a bare
+`rustc --test` harness: the provenance rule got 7 real tests + 5 bite proofs locally
+(including a deliberate re-introduction of the literal R11-F2 latch — `binding.token.or(token)`
+— which the replacement test caught). Java: `POST /api/lifecycle/shutdown` via a new
+`LifecycleApiModule` + `LifecycleShutdownBridge`, wired to a new
+`HeadShutdownCoordinator.shutdownAndExit()` — a worker CORRECTION to Part G.1, which named
+`shutdownNormally()`: that routine alone never exits the JVM (HeadlessApp blocks on a latch),
+so the shell's bounded wait would always have timed out into force-kill; `shutdownAndExit()`
+reuses `shutdownNormally()` + the existing exit CAS. Webview: one `sessionBinding` object,
+`invalidateSessionToken()`, one-shot 401 heal in `authorizedFetch`, and the `backend-restart`
+bridge REPLACING a pre-existing listener (see corrections below). 662 `:modules:ui` tests, 3933
+FE tests, 13 bite proofs total. Residual: the lib.rs lock/notify wiring's tests execute only in
+CI (`cargo test --lib --locked`, ci.yml:481) — watch the first CI run.
+
+**Two Part-G/H claims corrected by implementation, verified at source by the orchestrator:**
+(1) the consumer-side stdout parse no longer exists (tempdoc 501 Phase 8 deleted it; the
+`JUSTSEARCH_SESSION_TOKEN=` handling at lib.rs:844 is only a redaction guard) — the manifest is
+the sole observation channel, so the binding rule's stdout arm would have been dead code and
+was not built; (2) `main.jsx:151` already subscribed to `backend-restart` (tempdoc 637
+full-page reload) — the earlier "no subscriber" claim came from a grep filtered to `*.ts`,
+missing the `.jsx` file; immaterial to the root cause (the reload re-resolved from the latched
+Rust state) but corrected in 734's round-11 record and this document's Part A/G.
+
+### W2 — consequence classifier + gate (ACCEPTED)
+
+As designed: `classifyConsequence` with precedence impaired > unknown > passage > ai >
+cosmetic (empty list = unknown — every other class is a calmer claim), `chunk_embedding.*`
+moved to `PASSAGE_REDUCED_CODES`, the three caveat literals exported from `readinessNotice`
+and imported by `availability.ts`, per-class cause/remedy scoping, the frozen-card mode
+recorded only from a refined-pass snapshot (else `'UNKNOWN'`, which renders no label), and the
+new `consequence-classification` register + check wired into the ui-web gate recipe. 3924 FE
+tests green; 5 bite proofs including both gate halves. Notable finding: the sibling
+`check-capability-availability` gate is wired ONLY via the consult-recipe (not the governance
+runner) — the new gate replicates exactly that, no more. Two recorded judgment calls: the
+impairing branch keeps its own causes when no impairing code is present (empty-cause list
+would be worse), and `chunk_embedding.in_progress` alone (severity info) still takes the calm
+info branch — pre-existing behavior, logged to the observations inbox rather than silently
+changed. `searchTraceExplain.ts`'s "keyword results only" line is allowlisted by path: it
+reports the trace's own recorded outcome, not a derived claim.
+
+### W4 — verification matrix (ACCEPTED)
+
+Restart leg live by default (`-SkipRestartLeg` to skip): instanceId-change assertion + fresh
+token 200 + replayed old token 401 — the R11-F2 catcher at the payload tier. Upgrade-arrival
+leg landed DORMANT behind `-IncludeUpgradeArrival` with the v0.1.0-shaped fixture
+(`scripts/ci/fixtures/upgrade-arrival-v010/`), to be activated in the cross-cutting phase once
+W3's `repairNeeded` exists. CI: `installer_verify` job in build-installer.yml (report-only
+first run), stale `-SkipVerify` rationale deleted; the worker caught that the lane's
+evidence-bundle validator needs `npm ci` on the runner and added it. `check_token_health.py`:
+sub-5ms mutating-401 detector with the `/mcp` probe-pair allowlist — **against round 11's real
+trace it reports 68 violations (exit 1)**, the mechanical confirmation of R11-F2's full scope;
+healthy fixture passes; 17 unit tests auto-discovered by ci.yml's sandbox test step. The
+worker also fixed a leak its own refactor introduced (orphaned java.exe on port-timeout throw)
+— caught in its own review pass.
+
+### W5 — harness batch (ACCEPTED)
+
+All ten items: the false `prod=false` environment claim corrected; the refuted MANDATORY
+`execute:true` MCP claim rewritten (either path works, with round-11's GUI-dispatch evidence);
+Memory-surface reach corrected; staging-gaps generator now diffs documented-vs-staged (with
+new unit tests); `chat-ask.ps1`/`oracle.ps1`/`redact.ps1` adopted from round 11's in-sandbox
+scripts (already manifest-driven; headers added) and wired into the launcher's staging list;
+`Set-AppWindowRect` + the three GUI paper cuts fixed (the `crop.ps1` fix required empirical
+work — PowerShell `-File` silently drops unrecognized named parameters, detected via `$args`);
+snap-fail-loud became `collect-evidence.ps1` Step 0.5 with a real bite proof; the two new
+coverage entries registered; the charter-class rule added to `cut-a-release.md`. The worker
+caught and fixed its own em-dash slips via a final non-ASCII diff scan.
+
+### W3 — EP truth + install completeness (ACCEPTED, wave 2; resumed once after a transient API error)
+
+Landed with the derisk-corrected scope: **no proto change** — observed EP conforms to the
+`EncoderRuntimeExplainer` authority (tempdoc 422), whose policy-x-probe correlation moved into
+an `explainAll` method now consumed by BOTH `/api/inference/encoders` and the runtime status
+(the controller's private copy deleted — no fork). New Head-side seam:
+`EncoderRuntimeCache`/`WorkerEncoderRuntimeCache` (2 s TTL, last-known-good).
+`OnnxFeatureStatus` gains additive `executionProvider`/`gpuFallback`/`fallbackReason`;
+`gpuFallback` is policy-aware (a CPU-by-design feature like the citation scorer never reads as
+a fallback). `InstallCompleteness` (pure, entry-kind aware per derisk U3) replaces the
+package-level `containsKey`; `repairNeeded` keys on required-and-missing independent of
+contractedness; `buildContract` forward-fixed for variantless packages; the ort-native asset
+content check parses its DLL set from `OrtCudaHelper` (no second list). Registered
+`install-completeness` as a logic seam with a PIT-measured 100% strength floor (worker
+initiative, accepted). Schema regen: response schema + generated Zod (strict-object — regen was
+mandatory). 10 bite proofs; one attempted bite honestly reported as non-biting and replaced
+with a test that pins the entry-kind rule independently. **Self-caught defect in its own
+critical pass:** a `Long.MIN_VALUE` TTL sentinel overflowed so the cache never fetched —
+observed EP would have been permanently "unknown" (the exact silent-wrong-value class this
+campaign closes); fixed with an explicit first-fetch flag + injectable clock + 3 tests. Also
+fixed a pre-existing FE wire drift: the `onnxFeatures` TS type declared `feature`/
+`modelDescription` fields that never existed on the wire (Advanced rows rendered blank names).
+
+### Cross-cutting verification (orchestrator, 2026-08-04)
+
+1. `spotlessApply` clean; `build -x test` BUILD SUCCESSFUL.
+2. **Forced full suite** `test --rerun-tasks --no-build-cache`: **BUILD SUCCESSFUL in 4m 45s,
+   190/190 tasks executed** (no cache).
+3. ui-web: typecheck clean; **3,942 tests / 379 files green** (W3's final run, all bundles
+   present); gate set green except the two known-red-on-main entries (foreign files, confirmed
+   by the expected-state hook).
+4. `--gate wire`: pass (W3 run). New consequence gate + sibling shell-v0 gates green (W2 run).
+5. `cargo test --lib` locally blocked by Smart App Control (documented pitfall) — the binding
+   rule has 7 tests + 5 bite proofs via a standalone `rustc --test` harness over the verbatim
+   `binding.rs`; the lib.rs wiring tests run in CI (`ci.yml:481`). **Watch the first CI run.**
+6. **Verify lane run end-to-end** against the round-11 CI-built installer: fresh leg PASS,
+   **new restart leg PASS** ("manifest instanceId changed across restart, fresh token accepted,
+   stale pre-restart token rejected") — the leg's mechanics proven on a real payload. The
+   payload predates this campaign, which is exactly why it can prove the leg: the Head-side
+   token semantics are unchanged; the SHELL-side fix is covered by the Rust tests and by round
+   12. Upgrade-arrival leg stays dormant until a post-campaign installer exists (CI).
+7. **Browser validation** (dev stack served from THIS worktree's dist; the stale-dist trap
+   fired once — `build -x test` does not refresh `installDist` — caught by the
+   changed-line-serves-first check and fixed with an explicit `installDist` + restart):
+   - Banner: "1 cause — AI features unavailable." live (AI-offline dev state; the classifier's
+     AI branch, not a keyword claim).
+   - Frozen card: committed hybrid search renders "meaning + words" (refined-pass identity) —
+     the surface round 11 caught claiming "Keyword".
+   - Brain Simple: "Installed — repair available / A required component is missing — use
+     Repair in Advanced." live (the dev data dir genuinely has `repairNeeded: true`).
+   - Brain Advanced: "Search reranking CUDA" / "Citation scoring CPU" — observed EP labels
+     live, CPU-by-design not flagged.
+   - Honest tier split for the rest: passage-reduced banner wording, commit-during-quick
+     UNKNOWN, and the gpuFallback warning render are not reproducible against a healthy dev
+     stack (they need degraded states / sub-second timing) — covered at the unit tier with
+     bite proofs, per green-masked-destructive stated plainly rather than claimed as
+     browser-proven.
+8. Registers: inference-runtime register gained **D-009** (observed EP + install truth axes +
+   asset guarantee); search-quality register checked — no update needed (wording/status
+   surfaces only, no analysis change).
+
+### Remaining before this campaign can close (tracked)
+
+- CI must confirm: `cargo test --lib --locked` (shell), the report-only `installer_verify` job
+  on a fresh build, then flip it to blocking and activate `-IncludeUpgradeArrival`.
+- Round 12 (upgrade-from-release, WITH a restart leg in its charter) re-verifies R11-F2/F1/F3
+  on the packaged product; the final fresh-install qualifying round owes golden parity.

@@ -192,6 +192,41 @@ export function isGpuReadingProvisional(stability: AiStability | undefined): boo
   );
 }
 
+/** The ONNX-feature shape this surface renders (a row of `AiRuntimeStatus.onnxFeatures`). */
+type OnnxFeatureRow = NonNullable<AiRuntimeStatus['onnxFeatures']>[number];
+
+/**
+ * The observed execution provider for one ONNX feature, as one short right-hand label (tempdoc 805
+ * G.3). Renders what the ORT session ACTUALLY runs on beside the intent-derived row, because
+ * `status:'active'` + `modelActive:true` were both true on round 11's machine while every encoder
+ * had silently fallen back to CPU.
+ *
+ * Unknown renders as the pre-805 intent wording — an absent observation is never a claim.
+ */
+export function observedEpLabel(f: OnnxFeatureRow): string {
+  const ep = f.executionProvider;
+  if (f.gpuFallback) {
+    return f.fallbackReason ? `CPU (fallback: ${f.fallbackReason})` : 'CPU (GPU fallback)';
+  }
+  if (ep === 'cuda') return 'CUDA';
+  if (ep === 'cpu') return 'CPU';
+  return f.modelActive ? 'active' : 'inactive';
+}
+
+/**
+ * Whether the Brain SIMPLE view owes the user a repair hint: an ONNX feature is observably running
+ * on CPU after a GPU was configured AND the install status says a required file is missing. Both
+ * halves are required — a fallback with nothing missing is not repairable by downloading, and a
+ * missing file with no observed consequence is already covered by the pending-additions surface.
+ */
+export function shouldHintRepairForGpuFallback(
+  runtimeStatus: AiRuntimeStatus | null,
+  installStatus: InstallStatus | null,
+): boolean {
+  const anyFallback = runtimeStatus?.onnxFeatures?.some((f) => f.gpuFallback === true) ?? false;
+  return anyFallback && installStatus?.repairNeeded === true;
+}
+
 /** One row of the install consent dialog's terms list — a package the install will pull. */
 export interface InstallConsentPackage {
   id: string;
@@ -1257,8 +1292,20 @@ export class BrainSurface extends JfElement {
       },
       offline: {
         dot: 'offline',
-        label: this.installStatus?.installedFully === false ? 'Installed with limitations' : 'AI Offline',
-        sub: 'Start AI to enable chat and summaries.',
+        // Tempdoc 805 G.3: `repairNeeded` is a claim about DISK (a required file is missing), while
+        // `installedFully` is a claim about install HISTORY — round 11 had the first true and the
+        // second (correctly) also true, and the label said neither. When something is genuinely
+        // missing, name the action; "Installed with limitations" alone tells a user nothing to do.
+        label:
+          this.installStatus?.repairNeeded === true
+            ? 'Installed — repair available'
+            : this.installStatus?.installedFully === false
+              ? 'Installed with limitations'
+              : 'AI Offline',
+        sub:
+          this.installStatus?.repairNeeded === true
+            ? 'A required component is missing — use Repair in Advanced.'
+            : 'Start AI to enable chat and summaries.',
       },
       starting: {
         dot: 'starting',
@@ -1503,6 +1550,15 @@ export class BrainSurface extends JfElement {
         ${aiVerdict.kind === 'install_failed' && aiVerdict.installFailure
           ? html`<jf-error-alert tone="error" style="margin-top: 0.75rem"
               >Install failed: ${aiVerdict.installFailure}</jf-error-alert
+            >`
+          : nothing}
+        ${shouldHintRepairForGpuFallback(this.runtimeStatus, this.installStatus)
+          ? html`<jf-error-alert
+              tone="warning"
+              data-testid="brain-gpu-fallback-hint"
+              style="margin-top: 0.75rem"
+              >Search features are running on CPU: a GPU component is missing from disk. Use Repair
+              in Advanced to download it.</jf-error-alert
             >`
           : nothing}
       </div>
@@ -1894,13 +1950,13 @@ export class BrainSurface extends JfElement {
                   <div class="data-row">
                     <span>
                       <jf-status-dot
-                        tone=${f.modelActive ? 'success' : 'neutral'}
+                        tone=${f.gpuFallback ? 'warning' : f.modelActive ? 'success' : 'neutral'}
                         style="margin-right: 0.5rem; vertical-align: middle"
                       ></jf-status-dot>
-                      ${f.feature}
+                      ${f.label ?? f.id ?? 'feature'}
                     </span>
                     <span style="color: var(--text-secondary); font-family: monospace; font-size: var(--font-size-xs)"
-                      >${f.modelDescription ?? (f.modelActive ? 'active' : 'inactive')}</span
+                      >${observedEpLabel(f)}</span
                     >
                   </div>
                 `,

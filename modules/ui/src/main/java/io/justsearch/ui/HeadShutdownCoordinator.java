@@ -53,6 +53,19 @@ final class HeadShutdownCoordinator implements UpgradeShutdownAction {
     }
   }
 
+  /**
+   * Tempdoc 805 G.1 — the normal-quit entry point (POST /api/lifecycle/shutdown). Same ordered
+   * close, same single-exit guard as the upgrade path; no preparation id, no nonce, no receipt.
+   * Exits the JVM, because the caller (the shell) is waiting on child exit before force-killing.
+   */
+  void shutdownAndExit() {
+    if (!exitRequested.compareAndSet(false, true)) {
+      return;
+    }
+    ShutdownResult shutdown = shutdownNormally();
+    exit.accept(shutdown.clean() ? 0 : 1);
+  }
+
   @Override
   public void shutdown(String preparationId, String shutdownNonce) {
     if (!exitRequested.compareAndSet(false, true)) {

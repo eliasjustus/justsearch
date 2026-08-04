@@ -3773,7 +3773,14 @@ export class UnifiedChatView extends JfElement {
     const s = this.searchSnapshot;
     const query = (s?.query ?? '').trim();
     if (!s || !query || s.results.length === 0) return;
-    const mode = (s.searchTrace as SearchTrace | null | undefined)?.effectiveMode ?? 'TEXT';
+    // Tempdoc 805 §G.2/U5 — the frozen card's retrieval-mode identity may only come from the REFINED
+    // pass of this query. The quick pass genuinely runs `mode: 'text'` (searchState.buildSearchIntent
+    // pins it), so a commit landing inside the quick window used to freeze "Keyword" as the search's
+    // identity — round 11 saw exactly that on a hybrid search — and the removed `?? 'TEXT'` default
+    // asserted the same thing from a MISSING trace. Unknown now renders as nothing (ResultsCard's
+    // mode labels return null), never as a positive claim.
+    const trace = s.searchTrace as SearchTrace | null | undefined;
+    const mode = s.passStage === 'refined' && trace?.effectiveMode ? trace.effectiveMode : 'UNKNOWN';
     const committed: CommittedSearch = {
       id: makeCommittedSearchId(),
       query,

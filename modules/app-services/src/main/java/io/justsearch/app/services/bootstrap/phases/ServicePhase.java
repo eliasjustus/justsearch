@@ -293,6 +293,12 @@ public final class ServicePhase {
             // window in an ACTIVATION procedure and nudges specChanged (null in the no-inference
             // branch).
             runtimeReconciler);
+    // Tempdoc 805 G.3: observed ONNX execution provider beside the intent fields on
+    // /api/ai/runtime/status. Same live-supplier shape as workerFeatureCache above — the RPC client
+    // is null at bootstrap, so it must not be captured by value.
+    runtimeActivationHelper.setEncoderRuntimeCache(
+        new io.justsearch.app.services.observability.WorkerEncoderRuntimeCache(
+            in.knowledgeClientSupplier()));
 
     // §31 Phase 3: 7 controller-services constructed here.
     // SettingsService: callable wraps the late-bound resetFn (set by LocalApiServer after

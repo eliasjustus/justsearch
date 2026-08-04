@@ -9,7 +9,16 @@ Import-Module (Join-Path $PSScriptRoot "JustSearchGui.psm1") -Force
 
 $conn = Connect-App -ProcName $ProcName -FocusDelayMs 600
 if (-not $conn) {
-  Write-Output "NO WINDOW"
+  # Round 11 (tempdoc 805 item 6): this used to print a bare "NO WINDOW" with
+  # no process name, so a round that passed a misspelled/wrong -ProcName (the
+  # README documents -ProcName, but the durable rule list and instinct both
+  # led one round to -Process, which binds anyway via PowerShell's
+  # unambiguous-prefix matching -- masking the error until a name that
+  # doesn't resolve at all is passed) read the failure as "the installer
+  # window is unfindable" instead of "I passed the wrong process name".
+  # Echo the ACTUAL $ProcName value that was searched for, not a hardcoded
+  # default, so the failure is self-diagnosing.
+  Write-Output "NO WINDOW: no top-level window found for process name '$ProcName'"
   exit 1
 }
 
