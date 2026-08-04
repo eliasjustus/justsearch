@@ -2,8 +2,10 @@
 package io.justsearch.ui.api;
 
 import io.javalin.http.Context;
+import io.justsearch.agent.api.encryption.KeyLockedException;
 import io.justsearch.agent.api.memory.MemoryRecord;
 import io.justsearch.agent.api.memory.MemoryStore;
+import io.justsearch.app.api.ApiErrorCode;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -28,6 +30,14 @@ public final class MemoryController {
   private static final Logger LOG = LoggerFactory.getLogger(MemoryController.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
+  /**
+   * Tempdoc 806 W1 — HTTP 423 Locked is this codebase's answer for "an AUTHORED store's data key is
+   * locked": the tempdoc-629 global {@code KeyLockedException} mapping ({@code LocalApiServer}) emits it
+   * and the shell already reads it ({@code conversationListStore.ts} → the locked-chat affordance).
+   * Memory conforms rather than minting a second status for the same condition.
+   */
+  private static final int LOCKED_STATUS = 423;
+
   private final MemoryStore memoryStore;
 
   public MemoryController(MemoryStore memoryStore) {
@@ -43,6 +53,11 @@ public final class MemoryController {
       }
       Map<String, Object> payload = new LinkedHashMap<>();
       payload.put("memories", rows);
+      // Tempdoc 806 W1 — "cannot read" is not "nothing learned". While the store is sealed + locked
+      // `memories` is empty because the plaintext was dropped from RAM, not because nothing was ever
+      // learned. Carrying the flag on the wire lets EVERY client (the shell and /mcp alike) tell the
+      // two apart instead of rendering the unreadable state as a positive claim.
+      payload.put("locked", memoryStore.isLocked());
       ctx.contentType("application/json").result(MAPPER.writeValueAsBytes(payload));
     } catch (Exception e) {
       LOG.error("Failed to list memory", e);
@@ -74,6 +89,8 @@ public final class MemoryController {
               Instant.now());
       memoryStore.remember(rec);
       ctx.json(Map.of("ok", true, "id", rec.id()));
+    } catch (KeyLockedException locked) {
+      respondLocked(ctx);
     } catch (Exception e) {
       LOG.error("Failed to record memory", e);
       ctx.status(500).json(Map.of("error", "Failed to record memory"));
@@ -82,8 +99,31 @@ public final class MemoryController {
 
   /** {@code DELETE /api/memory/{id}} — user control: forget one item. */
   public void handleForget(Context ctx) {
-    memoryStore.forget(ctx.pathParam("id"));
-    ctx.json(Map.of("ok", true));
+    try {
+      memoryStore.forget(ctx.pathParam("id"));
+      ctx.json(Map.of("ok", true));
+    } catch (KeyLockedException locked) {
+      respondLocked(ctx);
+    } catch (Exception e) {
+      LOG.error("Failed to forget memory", e);
+      ctx.status(500).json(Map.of("error", "Failed to forget memory"));
+    }
+  }
+
+  /**
+   * Tempdoc 806 W1 — the locked answer, typed. Before this, a locked mutation was indistinguishable
+   * from a disk failure ({@code 500 "Failed to record memory"}) or, worse, reported success: a locked
+   * {@code forget} missed the emptied cache, never persisted, and returned {@code ok:true} while the
+   * record survived on disk and reappeared on unlock. A client cannot act on either; it can act on
+   * this.
+   */
+  private static void respondLocked(Context ctx) {
+    Map<String, Object> body =
+        ApiErrorHandler.toResponse(
+            ApiErrorCode.STORE_LOCKED,
+            "Memory is encrypted and locked - unlock it to change what the AI has learned.");
+    body.put("locked", true);
+    ctx.status(LOCKED_STATUS).json(body);
   }
 
   private static Map<String, Object> toWire(MemoryRecord r) {

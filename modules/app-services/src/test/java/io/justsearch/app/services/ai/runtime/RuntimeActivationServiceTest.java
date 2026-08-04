@@ -170,7 +170,9 @@ class RuntimeActivationServiceTest {
     RuntimeActivationService svc = createServiceWithCache(cache);
     List<AiRuntimeStatusResponse.OnnxFeatureStatus> features = svc.getStatus().onnxFeatures();
 
-    assertEquals(2, features.size());
+    // reranker, citation_scorer (discovery-derived) + embed, splade (tempdoc 806 B.2 — policy-
+    // snapshot-derived, so they are present even though WorkerModelDiscovery never enumerates them).
+    assertEquals(4, features.size());
     assertEquals("active", features.get(0).status());
     assertEquals("auto_discovered", features.get(0).reason());
     assertEquals("C:\\models\\reranker", features.get(0).modelPath());
@@ -364,6 +366,104 @@ class RuntimeActivationServiceTest {
     assertEquals("cpu", citation.executionProvider());
     assertFalse(citation.gpuFallback(), "CPU by design must never read as a GPU fallback");
     assertNull(citation.fallbackReason());
+  }
+
+  // ------- Observed EP for the always-on Worker encoders (tempdoc 806 B.2, round-12) -------
+
+  private static io.justsearch.app.api.inference.EncoderRuntimeView fallbackViewFor(
+      io.justsearch.ort.EncoderRole role) {
+    return io.justsearch.app.services.observability.EncoderRuntimeExplainer.explain(
+        role,
+        new io.justsearch.app.api.status.OrtCudaView(
+            true,
+            true,
+            false,
+            "cuda12",
+            "C:\\native-bin\\ort",
+            "ORT CUDA native pack incomplete",
+            List.of("onnxruntime_providers_cuda.dll")),
+        Map.of("variant", Map.of("executionProvider", "CUDA")));
+  }
+
+  private static AiRuntimeStatusResponse.OnnxFeatureStatus row(
+      List<AiRuntimeStatusResponse.OnnxFeatureStatus> features, String id) {
+    return features.stream()
+        .filter(f -> id.equals(f.id()))
+        .findFirst()
+        .orElseGet(() -> fail("no onnxFeatures row with id=" + id + " in " + features));
+  }
+
+  /**
+   * Round 11's fallback hit embed and SPLADE too; round 12 could not assert it over the API because
+   * {@code onnxFeatures} carried only the two Head-configured cross-encoders.
+   */
+  @Test
+  void embedAndSpladeCarryObservedEpFromTheSameExplainerAuthority() {
+    setHome(tmp);
+    RuntimeActivationService svc = createServiceWithCache(DISCOVERED_AND_ACTIVE);
+    svc.setEncoderRuntimeCache(
+        () ->
+            Map.of(
+                io.justsearch.ort.EncoderRole.EMBEDDING,
+                fallbackViewFor(io.justsearch.ort.EncoderRole.EMBEDDING),
+                io.justsearch.ort.EncoderRole.SPLADE,
+                fallbackViewFor(io.justsearch.ort.EncoderRole.SPLADE)));
+
+    List<AiRuntimeStatusResponse.OnnxFeatureStatus> features = svc.getStatus().onnxFeatures();
+
+    for (String id : List.of("embed", "splade")) {
+      AiRuntimeStatusResponse.OnnxFeatureStatus f = row(features, id);
+      assertEquals("active", f.status(), id + " is named by the policy snapshot");
+      assertEquals("worker_policy_snapshot", f.reason(), id + " intent source");
+      assertTrue(f.modelActive(), id + " has a live session");
+      assertEquals("cpu", f.executionProvider(), id + " actually runs on CPU");
+      assertTrue(f.gpuFallback(), id + " was configured for CUDA and did not get it");
+      assertTrue(
+          f.fallbackReason().contains("onnxruntime_providers_cuda.dll"),
+          id + " reason names the missing native: " + f.fallbackReason());
+    }
+  }
+
+  @Test
+  void embedAndSpladeReportUnknownRatherThanInactiveBeforeTheWorkerAnswers() {
+    setHome(tmp);
+    RuntimeActivationService svc = createServiceWithCache(DISCOVERED_AND_ACTIVE);
+
+    List<AiRuntimeStatusResponse.OnnxFeatureStatus> features = svc.getStatus().onnxFeatures();
+
+    for (String id : List.of("embed", "splade")) {
+      AiRuntimeStatusResponse.OnnxFeatureStatus f = row(features, id);
+      assertEquals(
+          "unknown",
+          f.status(),
+          id + ": no policy snapshot is not evidence the encoder is inactive");
+      assertEquals("worker_not_answered", f.reason());
+      assertFalse(f.modelActive(), id + " must not claim a session it cannot see");
+      assertEquals("unknown", f.executionProvider());
+      assertFalse(f.gpuFallback());
+    }
+  }
+
+  @Test
+  void embedAndSpladeReportInactiveWhenThePolicySnapshotSaysNotConfigured() {
+    setHome(tmp);
+    RuntimeActivationService svc = createServiceWithCache(DISCOVERED_AND_ACTIVE);
+    svc.setEncoderRuntimeCache(
+        () ->
+            Map.of(
+                io.justsearch.ort.EncoderRole.SPLADE,
+                io.justsearch.app.services.observability.EncoderRuntimeExplainer.explain(
+                    io.justsearch.ort.EncoderRole.SPLADE,
+                    io.justsearch.app.api.status.OrtCudaView.notConfigured(),
+                    null)));
+
+    AiRuntimeStatusResponse.OnnxFeatureStatus splade = row(svc.getStatus().onnxFeatures(), "splade");
+
+    assertEquals("inactive", splade.status(), "the snapshot answered: not part of this config");
+    assertEquals("not_configured", splade.reason());
+    assertFalse(splade.modelActive());
+    assertEquals("none", splade.executionProvider(), "not-configured is 'none', not 'unknown'");
+    assertFalse(splade.gpuFallback());
   }
 
   // --------------- Tempdoc 727 F-3: leftover-variant WARN false positive ---------------

@@ -30,7 +30,9 @@ public record AiRuntimeStatusResponse(
   ) {}
 
   /**
-   * Status of an ONNX cross-encoder feature (reranker or citation scorer).
+   * Status of one ONNX encoder: the two cross-encoders the Head configures (reranker, citation
+   * scorer) plus the two always-on Worker encoders (embedding, SPLADE) added by tempdoc 806 B.2 —
+   * they fell back to CPU in round 11 alongside the reranker and the list could not say so.
    *
    * <p>The first six components are the INTENT axis: what the Head configured and what the Worker
    * discovered on disk. Tempdoc 805 G.3 (round-11 F3) adds the OBSERVED axis beside it — the
@@ -43,10 +45,11 @@ public record AiRuntimeStatusResponse(
    * OrtCuda probe), the same authority behind {@code GET /api/inference/encoders}.
    */
   public record OnnxFeatureStatus(
-      String id,           // "reranker" | "citation_scorer"
-      String label,        // "Search reranking" | "Citation scoring"
-      String status,       // "active" | "inactive"
+      String id,           // "reranker" | "citation_scorer" | "embed" | "splade"
+      String label,        // "Search reranking" | "Citation scoring" | "Semantic embedding" | ...
+      String status,       // "active" | "inactive" | "unknown" (Worker has not answered yet)
       String reason,       // "auto_discovered" | "explicit_path" | "not_found" | "disabled"
+                           // | "worker_policy_snapshot" | "not_configured" | "worker_not_answered"
       String modelPath,    // nullable — resolved path for debugging
       boolean modelActive, // true if ORT session is loaded and serving (canonical source of truth)
       // ---- observed (tempdoc 805 G.3) ----

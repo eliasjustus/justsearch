@@ -446,6 +446,28 @@ function computeRuntime(): AiRuntime {
   };
 }
 
+/**
+ * Tempdoc 806 B.2 (round-12 finding) — the ONE predicate for "does the system verdict own the status
+ * readout, or does the AI-engine verdict?". `computeStatusLabel` and `computeStatusTone` MUST agree
+ * here, because they are rendered as a SINGLE indicator: the liveness dot and the words beside it
+ * (`LivenessReadout`, `core.retrieval` on the Health Connection card) and the status-bar pill.
+ *
+ * Round 12 photographed them disagreeing — a danger-red dot beside the word "Online" — because
+ * `degraded` was listed in the tone branch (tempdoc 649) and never added to the label branch, so the
+ * dot reported the system verdict while the text beside it reported the AI engine. The label was the
+ * wrong half: `computeStatusLabel`'s own doc comment already claims "the bar can no longer say
+ * 'Online' while Health says 'Service degraded'" — the Health badge projects `verdictHeadline` for
+ * every kind, including `degraded`, and the bar did not.
+ */
+function verdictOwnsStatus(verdict: SystemHealthVerdict): boolean {
+  return (
+    verdict.kind === 'connecting' ||
+    verdict.kind === 'unreachable' ||
+    verdict.kind === 'transitioning' ||
+    verdict.kind === 'degraded'
+  );
+}
+
 function computeStatusLabel(
   verdict: SystemHealthVerdict,
   runtime: AiRuntime,
@@ -472,11 +494,9 @@ function computeStatusLabel(
   // while connecting/reconnecting/transitioning). Backend-connectivity problems
   // outrank AI-install state — nothing AI-related is actionable if the backend
   // itself is unreachable, so this check stays first, unchanged (Design pass 3 §V).
-  if (
-    verdict.kind === 'connecting' ||
-    verdict.kind === 'unreachable' ||
-    verdict.kind === 'transitioning'
-  ) {
+  // Tempdoc 806 B.2: `degraded` joined this set via `verdictOwnsStatus` — the tone branch already had
+  // it, so the pair rendered a warning/danger dot next to the AI engine's "Online".
+  if (verdictOwnsStatus(verdict)) {
     return verdictHeadline(verdict);
   }
   // Design pass 3 — the AI-specific label now comes from the ONE AI-engine presentation
@@ -593,12 +613,7 @@ function computeStatusTone(
 ): NoticeTone {
   // Verdict-driven kinds (mirror computeStatusLabel's verdictHeadline branch): tone from the ONE
   // verdict-tone authority — calm `busy` → info, `warn` → warning, `unreachable` (error) → error.
-  if (
-    verdict.kind === 'connecting' ||
-    verdict.kind === 'unreachable' ||
-    verdict.kind === 'transitioning' ||
-    verdict.kind === 'degraded'
-  ) {
+  if (verdictOwnsStatus(verdict)) {
     return verdictTone(verdict.severity);
   }
   // Design pass 3 — the AI-specific tone now comes from the ONE AI-engine presentation projection

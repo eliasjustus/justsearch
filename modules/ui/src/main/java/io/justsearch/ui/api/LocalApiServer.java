@@ -442,9 +442,21 @@ public class LocalApiServer {
 
     // Tempdoc 629 (LAYER): a read/write against an AUTHORED store while the data key is locked
     // surfaces as 423 Locked (NOT a 500), so the frontend projects an unlock affordance.
+    // Tempdoc 806 W1: the same answer now carries the typed `errorCode`, so a locked response is
+    // machine-readable wherever it is raised (this fallback or a controller's own arm) and the two
+    // cannot drift into different shapes for one condition.
     app.exception(
         io.justsearch.agent.api.encryption.KeyLockedException.class,
-        (e, ctx) -> ctx.status(423).json(java.util.Map.of("error", "locked", "locked", true)));
+        (e, ctx) ->
+            ctx.status(423)
+                .json(
+                    java.util.Map.of(
+                        "error",
+                        "locked",
+                        "locked",
+                        true,
+                        "errorCode",
+                        ApiErrorCode.STORE_LOCKED.name())));
 
     // Global fallback: catch any unhandled exception that slips past per-controller try-catch blocks.
     // This ensures all error responses use the standardized ApiErrorHandler shape instead of Javalin's default.

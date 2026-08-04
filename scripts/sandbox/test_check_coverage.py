@@ -21,6 +21,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from check_coverage import (  # noqa: E402
+    BULK_FRAMES_DIRNAME,
     EVIDENCE_REVIEW_FILENAME,
     MIN_SCREENSHOT_BYTES,
     RETROSPECTIVE_FILENAME,
@@ -32,6 +33,7 @@ from check_coverage import (  # noqa: E402
     check_retrospective,
     emit_evidence_timeline,
     find_duplicate_token_collisions,
+    is_bulk_frame,
     main,
     required_evidence_tokens,
 )
@@ -763,6 +765,147 @@ class SizeFloorBiteTests(unittest.TestCase):
                 "--evidence-dir", str(evidence),
             ])
             self.assertEqual(rc, 0)
+
+
+class BulkFrameExclusionTests(unittest.TestCase):
+    """A5 / tempdoc 806 W3 item 1: a periodic capture driver's bulk frames
+    (round 12: ~947 near-identical images from a ~1.5s-interval installer
+    watcher) must not (a) require individual reader review in
+    evidence-review.v1.json's 'examined' list, or (b) silently satisfy a
+    mustTouch surface/shape token by filename alone. Proves both directions
+    via main() end-to-end, isolating BULK_FRAMES_DIRNAME as the cause with a
+    same-filename top-level control (SizeFloorBiteTests' pairing pattern) --
+    without the bulk-dir convention the exact same fixture must fail closed.
+    """
+
+    def _manifest_path(self, tmp: Path) -> Path:
+        manifest = {
+            "version": 1,
+            "mustTouch": [
+                {
+                    "kind": "surface", "id": "core.security-surface", "tier": "sandbox",
+                    "validateHow": "security", "evidenceToken": "security",
+                },
+            ],
+            "coveredElsewhere": [],
+            "exempt": [],
+        }
+        path = tmp / "coverage-manifest.json"
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        return path
+
+    def _image_bytes(self) -> bytes:
+        return b"\x89PNG-real-capture" + b"\x00" * MIN_SCREENSHOT_BYTES
+
+    def _base_evidence_dir(self, tmp: Path) -> Path:
+        evidence = tmp / "evidence"
+        evidence.mkdir()
+        (evidence / RETROSPECTIVE_FILENAME).write_text(SUBSTANTIAL_RETROSPECTIVE, encoding="utf-8")
+        return evidence
+
+    def test_bulk_frames_excluded_from_required_examined_list(self):
+        """Bulk frames need not be opened/listed by the reader -- only the
+        genuine top-level capture does -- and the round still passes."""
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._base_evidence_dir(tmp)
+            bulk_dir = evidence / BULK_FRAMES_DIRNAME
+            bulk_dir.mkdir()
+            (bulk_dir / "seq-0001.png").write_bytes(self._image_bytes())
+            (bulk_dir / "seq-0002.png").write_bytes(self._image_bytes())
+            (evidence / "01-security-panel.png").write_bytes(self._image_bytes())
+            review = {
+                "version": 1,
+                "examined": ["01-security-panel.png"],  # bulk frames deliberately absent
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 0)
+
+    def test_control_same_frames_at_top_level_must_be_examined(self):
+        """Precision guard: WITHOUT the bulk-dir convention (identical files,
+        same names, top level), omitting them from 'examined' fails closed --
+        proving the pass above is because of the bulk-dir exclusion, not
+        merely because the fixture is otherwise lenient."""
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._base_evidence_dir(tmp)
+            (evidence / "seq-0001.png").write_bytes(self._image_bytes())
+            (evidence / "01-security-panel.png").write_bytes(self._image_bytes())
+            review = {
+                "version": 1,
+                "examined": ["01-security-panel.png"],  # seq-0001.png NOT listed
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 1)
+
+    def test_bulk_frame_cannot_satisfy_mustTouch_token(self):
+        """A mustTouch token whose ONLY matching filename lives under the
+        bulk-frames directory must remain UNCOVERED -- a bulk driver cannot
+        accidentally (or deliberately) manufacture coverage credit.
+
+        Isolation: the bulk file's relpath is listed in 'examined' anyway
+        (harmless whether or not it's required) so a failure here can only
+        come from the coverage gate, not incidentally from the evidence-
+        review gate also failing for the same underlying reason -- otherwise
+        a broken exclusion could still yield rc=1 for the WRONG reason and
+        this test would not actually bite.
+        """
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._base_evidence_dir(tmp)
+            bulk_dir = evidence / BULK_FRAMES_DIRNAME
+            bulk_dir.mkdir()
+            (bulk_dir / "01-security-panel.png").write_bytes(self._image_bytes())
+            review = {
+                "version": 1,
+                "examined": [f"{BULK_FRAMES_DIRNAME}/01-security-panel.png"],
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 1)
+
+    def test_control_same_filename_at_top_level_satisfies_the_token(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            evidence = self._base_evidence_dir(tmp)
+            (evidence / "01-security-panel.png").write_bytes(self._image_bytes())
+            review = {
+                "version": 1,
+                "examined": ["01-security-panel.png"],
+                "mismatches": [],
+                "uncertain": [],
+            }
+            (evidence / EVIDENCE_REVIEW_FILENAME).write_text(json.dumps(review), encoding="utf-8")
+            rc = main([
+                "--manifest", str(self._manifest_path(tmp)),
+                "--evidence-dir", str(evidence),
+            ])
+            self.assertEqual(rc, 0)
+
+    def test_is_bulk_frame_helper(self):
+        self.assertTrue(is_bulk_frame(f"{BULK_FRAMES_DIRNAME}/seq-0001.png"))
+        self.assertFalse(is_bulk_frame("seq-0001.png"))
+        self.assertFalse(is_bulk_frame("findings/f1.md"))
+        # Only a DIRECT child of the evidence dir counts -- a nested
+        # coincidental name deeper in the tree is not the convention.
+        self.assertFalse(is_bulk_frame(f"other/{BULK_FRAMES_DIRNAME}/seq-0001.png"))
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@
   "feDerived": [
     { "code": "no_documents", "why": "Tempdoc 596 §17 — FE-only control-availability code; not emitted by the readiness producer" },
     { "code": "conversations.locked", "why": "Tempdoc 629 #3 — FE-only: the locked-chat affordance words itself from CAUSE_ROWS; the backend never emits it as a readiness reason" },
-    { "code": "binding.unreachable", "why": "Tempdoc 637 #1 — FE-only: the FE detects a dead/replaced FE→backend binding (passive staleness → verdict 'unreachable') and words it from CAUSE_ROWS; the backend cannot emit it (it is unreachable by definition)" }
+    { "code": "binding.unreachable", "why": "Tempdoc 637 #1 — FE-only: the FE detects a dead/replaced FE→backend binding (passive staleness → verdict 'unreachable') and words it from CAUSE_ROWS; the backend cannot emit it (it is unreachable by definition)" },
+    { "code": "memory.locked", "why": "Tempdoc 806 W1 — FE-only sibling of conversations.locked: the learned-memory store is encrypted + locked (GET /api/memory answers locked:true; mutations 423). The Memory surface words its locked state from CAUSE_ROWS; the backend never emits it as a readiness reason" }
   ]
 }

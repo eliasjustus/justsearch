@@ -57,10 +57,24 @@ function Connect-App {
   # the exact "NO WINDOW" message/exit code, so wrapper output stays
   # unchanged). Returns a PSCustomObject with .Process/.Handle/.Foreground/
   # .Focused otherwise; .Focused is what Invoke-AppClick gates on.
+  #
+  # ALT-nudge focus retry (round 12, tempdoc 806 W3 item 5 / retrospective
+  # A3): Windows refuses SetForegroundWindow from a background process when
+  # the desktop shell ("Program Manager") currently holds foreground -- this
+  # made SetForegroundWindow return $true while NOT actually moving focus,
+  # for five consecutive attempts in round 12 (~20 minutes lost, plus two
+  # captures that recorded a pre-click state under a post-click name).
+  # WScript.Shell.AppActivate and minimize/restore did not help; a raw ALT
+  # keypress immediately before the retry did -- it satisfies the Win32
+  # foreground-lock rule ("the calling thread must have received the last
+  # input event") that SetForegroundWindow silently enforces. Only engages
+  # when the first attempt fails, so the common case (focus succeeds
+  # immediately) pays no extra delay.
   [CmdletBinding()]
   param(
     [string]$ProcName = "JustSearch",
-    [int]$FocusDelayMs = 700
+    [int]$FocusDelayMs = 700,
+    [int]$MaxFocusAttempts = 4
   )
   $p = Get-Process -Name $ProcName -ErrorAction SilentlyContinue |
     Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
@@ -72,6 +86,17 @@ function Connect-App {
   [void][JustSearchGui.Native]::SetForegroundWindow($h)
   Start-Sleep -Milliseconds $FocusDelayMs
   $fg = [JustSearchGui.Native]::GetForegroundWindow()
+
+  $attempt = 1
+  while ($fg -ne $h -and $attempt -lt $MaxFocusAttempts) {
+    [System.Windows.Forms.SendKeys]::SendWait("%")
+    Start-Sleep -Milliseconds 400
+    [void][JustSearchGui.Native]::SetForegroundWindow($h)
+    Start-Sleep -Milliseconds $FocusDelayMs
+    $fg = [JustSearchGui.Native]::GetForegroundWindow()
+    $attempt++
+  }
+
   [PSCustomObject]@{
     Process    = $p
     Handle     = $h

@@ -35,6 +35,8 @@ _spec.loader.exec_module(sandbox_launch)  # type: ignore[union-attr]
 check_documented_tools_staged = sandbox_launch.check_documented_tools_staged
 write_staging_gaps = sandbox_launch.write_staging_gaps
 DOCUMENTED_TOOLS_ASSETS = sandbox_launch.DOCUMENTED_TOOLS_ASSETS
+generate_kickoff = sandbox_launch.generate_kickoff
+KICKOFF_FILENAME = sandbox_launch.KICKOFF_FILENAME
 
 
 class DocumentedToolsDiffTests(unittest.TestCase):
@@ -128,6 +130,131 @@ class StagingGapsFileIntegrationTests(unittest.TestCase):
 
             text = (share_dir / "staging-gaps.md").read_text(encoding="utf-8")
             self.assertIn("all documented assets staged.", text)
+
+
+class KickoffGenerationTests(unittest.TestCase):
+    """Round 12 was launched with the instruction '/start also read
+    KICKOFF.md' and no such file existed anywhere in the mapped folder
+    (tempdoc 806 W3 item 4, session-analysis-round12.md B2). generate_kickoff()
+    replaces "nobody ever staged it" with a normal staging step whose claims
+    are derived from what actually landed in share_dir, and whose own
+    absence becomes a declared staging gap -- the same discipline B2 already
+    established for tools\\ assets, applied to this file."""
+
+    def _share_dir(self, tmp: Path) -> Path:
+        share_dir = tmp / "share"
+        share_dir.mkdir()
+        return share_dir
+
+    def test_writes_kickoff_with_mode_from_validation_mode_md(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            share_dir = self._share_dir(tmp)
+            (share_dir / "validation-mode.md").write_text(
+                "# Sandbox Validation Mode\n\n- Mode: fresh-install\n- Installer: x.exe\n",
+                encoding="utf-8",
+            )
+            tools_dst = share_dir / "tools"
+            tools_dst.mkdir()
+
+            gap = generate_kickoff(share_dir, "JustSearch_0.2.0_x64-setup.exe", tools_dst)
+
+            self.assertIsNone(gap)
+            kickoff_path = share_dir / KICKOFF_FILENAME
+            self.assertTrue(kickoff_path.is_file())
+            text = kickoff_path.read_text(encoding="utf-8")
+            self.assertIn("fresh-install", text)
+            self.assertIn("JustSearch_0.2.0_x64-setup.exe", text)
+
+    def test_authority_docs_present_are_checked_absent_are_not(self):
+        """Derived from reality, not a hardcoded list: a doc actually staged
+        gets a checked box, one that wasn't (e.g. --no-charter's charter.md)
+        gets an unchecked one -- never a blanket assumption either way."""
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            share_dir = self._share_dir(tmp)
+            (share_dir / "coverage-brief.md").write_text("brief", encoding="utf-8")
+            (share_dir / "sandbox-environment.md").write_text("env", encoding="utf-8")
+            # validation-mode.md, charter.md, staging-gaps.md deliberately absent.
+            tools_dst = share_dir / "tools"
+            tools_dst.mkdir()
+
+            gap = generate_kickoff(share_dir, "x.exe", tools_dst)
+            self.assertIsNone(gap)
+
+            text = (share_dir / KICKOFF_FILENAME).read_text(encoding="utf-8")
+            self.assertIn("[x] `coverage-brief.md`", text)
+            self.assertIn("[x] `sandbox-environment.md`", text)
+            self.assertIn("[ ] `charter.md`", text)
+            self.assertIn("[ ] `validation-mode.md`", text)
+            self.assertIn("[ ] `staging-gaps.md`", text)
+
+    def test_git_setup_staged_changes_the_setup_instruction(self):
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            share_dir = self._share_dir(tmp)
+            tools_dst = share_dir / "tools"
+            tools_dst.mkdir()
+            (tools_dst / "Git-Setup.exe").write_bytes(b"fake installer bytes")
+
+            generate_kickoff(share_dir, "x.exe", tools_dst)
+
+            text = (share_dir / KICKOFF_FILENAME).read_text(encoding="utf-8")
+            self.assertIn("Git-Setup.exe", text)
+            self.assertNotIn("no Git installer is staged", text)
+
+    def test_git_not_staged_notes_the_fallback(self):
+        """Precision guard, inverted: with no Git installer staged, KICKOFF.md
+        must say so and point at the fallback, not silently claim step 1 as
+        if it were staged."""
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            share_dir = self._share_dir(tmp)
+            tools_dst = share_dir / "tools"
+            tools_dst.mkdir()
+
+            generate_kickoff(share_dir, "x.exe", tools_dst)
+
+            text = (share_dir / KICKOFF_FILENAME).read_text(encoding="utf-8")
+            self.assertIn("no Git installer is staged", text)
+
+    def test_missing_share_dir_returns_a_gap_not_a_crash(self):
+        """The declared-gap requirement: if KICKOFF.md cannot be written (or
+        is missing right after), generate_kickoff() must return a gap
+        message for the caller's gaps list, not raise or silently succeed --
+        the exact failure class B2 already closed for tools\\ assets."""
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            share_dir = tmp / "does-not-exist"  # never created
+            tools_dst = share_dir / "tools"
+
+            gap = generate_kickoff(share_dir, "x.exe", tools_dst)
+
+            self.assertIsNotNone(gap)
+            self.assertIn(KICKOFF_FILENAME, gap)
+            self.assertFalse((share_dir / KICKOFF_FILENAME).exists())
+
+    def test_kickoff_gap_reaches_staging_gaps_md(self):
+        """End-to-end: a KICKOFF.md generation failure must land in the same
+        staging-gaps.md every other missing asset is recorded in -- proving
+        the two mechanisms are actually wired together, not just both
+        individually correct."""
+        with tempfile.TemporaryDirectory() as tmp_str:
+            tmp = Path(tmp_str)
+            broken_share_dir = tmp / "unwritable-share"  # not created yet -> write fails
+            tools_dst = broken_share_dir / "tools"
+
+            gap = generate_kickoff(broken_share_dir, "x.exe", tools_dst)
+            self.assertIsNotNone(gap)
+
+            # write_staging_gaps needs an existing share_dir to write into --
+            # in main()'s real ordering share_dir always exists by this
+            # point (only KICKOFF.md's own write failed above).
+            broken_share_dir.mkdir()
+            write_staging_gaps(broken_share_dir, [gap])
+
+            text = (broken_share_dir / "staging-gaps.md").read_text(encoding="utf-8")
+            self.assertIn(KICKOFF_FILENAME, text)
 
 
 if __name__ == "__main__":
