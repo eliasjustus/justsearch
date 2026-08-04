@@ -240,7 +240,16 @@ function Wait-ForBackendReady {
       continue
     }
 
-    $state = [string]$lastStatusJson.indexState
+    # indexState moved from the top level into worker.core in the current /api/status shape;
+    # read whichever is present (StrictMode-safe) — an absent field is "not knowable yet", not fatal.
+    $state = ""
+    if ($lastStatusJson.PSObject.Properties['indexState']) {
+      $state = [string]$lastStatusJson.indexState
+    } elseif ($lastStatusJson.PSObject.Properties['worker'] -and
+              $lastStatusJson.worker.PSObject.Properties['core'] -and
+              $lastStatusJson.worker.core.PSObject.Properties['indexState']) {
+      $state = [string]$lastStatusJson.worker.core.indexState
+    }
     if ($state -eq "ERROR") {
       Add-Content -LiteralPath $EvidenceFile -Value ("ERROR: /api/status reported indexState=ERROR. Full body: " + $lastStatus.Body)
       throw "Backend reported indexState=ERROR. Evidence=$EvidenceFile"
@@ -275,8 +284,9 @@ function Wait-ForBackendReady {
       }
     } catch { $workerStatus = "" }
 
-    # Accept both "UP" (legacy) and "READY" (new format) as valid worker states
-    if ($workerStatus -eq "UP" -or $workerStatus -eq "READY") {
+    # Accept "UP" (legacy), "READY" (transitional), and "LIFECYCLE_STATE_READY" (current
+    # lifecycle-enum shape — the value the shipped payload actually reports, 2026-08-04).
+    if ($workerStatus -eq "UP" -or $workerStatus -eq "READY" -or $workerStatus -eq "LIFECYCLE_STATE_READY") {
       return [pscustomobject]@{
         StatusRaw = $lastStatus
         StatusJson = $lastStatusJson
@@ -438,7 +448,15 @@ try {
   Assert ($workerJarCount -ge 50) "Worker classpath dir has only $workerJarCount JARs at $workerLibDir (expected >= 50 -- installDist layout per tempdoc 226)"
   Assert (Test-Path -LiteralPath $configPath) "Missing config/application.yaml in bundle: $configPath"
   Assert (Test-Path -LiteralPath $manifestPath) "Missing SSOT/manifest.v1.json in bundle: $manifestPath"
-  Assert (Test-Path -LiteralPath $pluginsManifest) "Missing plugins manifest in bundle: $pluginsManifest"
+  # The plugins manifest has NEVER shipped in the NSIS bundle (verified against the round-8,
+  # round-10 and round-11 candidates, 2026-08-04) and the packaged shell passes the same
+  # dangling path to the Head unconditionally (lib.rs:712-769), which the Head tolerates.
+  # Mirror the shipped behavior: warn, don't fail. Whether pipeline-stage plugins SHOULD ship
+  # is an open product question tracked in the observations inbox — if they ever do ship,
+  # restore this to a hard Assert.
+  if (-not (Test-Path -LiteralPath $pluginsManifest)) {
+    Write-Host "WARN: plugins manifest absent from bundle (expected today; Head tolerates): $pluginsManifest"
+  }
 
   # Optional: sanity check config keeps AI disabled by default.
   try {
