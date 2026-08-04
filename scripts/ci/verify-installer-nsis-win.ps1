@@ -902,10 +902,11 @@ try {
         $captureArgs += "--include=$EvidenceInclude"
       }
 
-      if ($enforceDet) {
-        $captureArgs += "--enforce-determinism=true"
-      }
-
+      # NOTE: capture-evidence-bundle.mjs has no --enforce-determinism/--merge-determinism
+      # options (passing either makes it print usage and exit 1 -- caught by the first CI run
+      # of the installer_verify lane, 2026-08-04). Determinism enforcement happens via the
+      # separate validate-determinism-budget-v1.mjs step below, gated by $enforceDet; the
+      # harness determinism snapshot rides along as a plain attachment.
       foreach ($p in @($evidenceFile, $headlessStdout, $headlessStderr)) {
         if ($p -and (Test-Path -LiteralPath $p)) {
           $captureArgs += "--attach-file=$p"
@@ -913,7 +914,6 @@ try {
       }
       if ($detFile -and (Test-Path -LiteralPath $detFile)) {
         $captureArgs += "--attach-file=$detFile"
-        $captureArgs += "--merge-determinism=$detFile"
       }
 
       if ($mainError) {
@@ -925,7 +925,10 @@ try {
       Add-Content -LiteralPath $evidenceFile -Value ("INFO: Capturing EvidenceBundle v1 (scenario=$EvidenceScenario) ...")
       $bundlePathRaw = & node @captureArgs
       $capExit = $LASTEXITCODE
-      $bundlePath = ([string]$bundlePathRaw).Trim()
+      # stdout may carry more than one line (node warnings precede the path); the bundle path
+      # is the last non-empty line. @() guards the single-line (non-array) case.
+      $bundlePath = [string](@($bundlePathRaw) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Last 1)
+      $bundlePath = $bundlePath.Trim()
       Add-Content -LiteralPath $evidenceFile -Value ("INFO: EvidenceBundle dir: " + $bundlePath)
       if ([string]::IsNullOrWhiteSpace($bundlePath)) {
         throw "EvidenceBundle capture produced no bundle path (exit=$capExit)."
