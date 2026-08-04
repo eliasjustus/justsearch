@@ -256,12 +256,28 @@ const CAUSE_ROWS: ReadonlyArray<{
   // Tempdoc 629 (#3) — FE-derived: the conversation store is encrypted + locked (history 423'd). The
   // backend never emits this readiness code; it lives here so the locked-chat affordance speaks the ONE
   // CAUSE_ROWS vocabulary instead of hardcoding its wording (the honesty-as-typed-guarantee for the gate).
+  //
+  // SCOPE (tempdoc 806 W1): this row words the CHAT store only. Every AUTHORED store locks together on
+  // ONE data key, but the wording names WHICH data is unreadable, so a second locked store gets its own
+  // row rather than reusing this one — a Memory surface saying "Your chat history is encrypted and
+  // locked" would be a true statement about the wrong store. Sibling: `memory.locked` below (same
+  // remedy: one key, one unlock).
   {
     code: 'conversations.locked',
     wording: 'Your chat history is encrypted and locked',
     // The remedy must point at the surface that OWNS the unlock capability: `unlockEncryption()`
     // lives on SecuritySurface (`core.security-surface`, CorePlugin.ts), NOT on Settings — 629 moved
     // the encryption control out of Settings and this remedy was left behind pointing one hop short.
+    remedy: { kind: 'navigate', target: 'core.security-surface', label: 'Unlock in Security' },
+    severity: 'warn',
+  },
+  // Tempdoc 806 W1 — FE-derived sibling of `conversations.locked`: the learned-memory store is
+  // encrypted + locked (`GET /api/memory` answers `locked: true`, and every mutation 423s). Same key,
+  // same remedy, different data — so the Memory surface renders a locked state instead of "No learned
+  // memory yet.", which claimed the AI had learned nothing when it simply could not read.
+  {
+    code: 'memory.locked',
+    wording: 'What the AI has learned is encrypted and locked',
     remedy: { kind: 'navigate', target: 'core.security-surface', label: 'Unlock in Security' },
     severity: 'warn',
   },

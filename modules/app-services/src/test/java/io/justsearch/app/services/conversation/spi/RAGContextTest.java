@@ -227,6 +227,66 @@ final class RAGContextTest {
     assertEquals("NO_CONTENT", r.terminalError().get().payload().get("errorCode"));
   }
 
+  // --- Tempdoc 806 B.2 (round-12): an unscoped ask whose retrieval never COMPLETED used to answer
+  // "No matching documents found in the index" — a confident claim about the corpus produced by a
+  // call that did not run. Round 12 hit it on a cold reranker; the same question answered in ~9.5s
+  // on retry, so the corpus claim was false.
+
+  @Test
+  @DisplayName("806: unscoped ask + retrieval TIMEOUT → RETRIEVAL_TIMEOUT, never NO_CONTENT")
+  void openRetrievalTimeoutIsNotAClaimAboutTheCorpus() {
+    var docs = new FailingRetrieveDocs(new java.util.concurrent.TimeoutException("budget"));
+    var injector = new RAGContext(docs);
+
+    InjectorResult r = injector.inject(stubCtx(Map.of("question", "what?")));
+
+    assertTrue(r.terminalError().isPresent());
+    Map<String, Object> payload = r.terminalError().get().payload();
+    assertEquals("RETRIEVAL_TIMEOUT", payload.get("errorCode"));
+    String message = String.valueOf(payload.get("error"));
+    assertFalse(
+        message.contains("No matching documents"),
+        "an unfinished retrieval must not report on the corpus: " + message);
+    assertTrue(
+        message.contains("not a result about your documents"),
+        "the copy must disclaim the corpus reading: " + message);
+  }
+
+  @Test
+  @DisplayName("806: a gRPC DEADLINE_EXCEEDED underneath is recognised as a timeout, not a plain failure")
+  void grpcDeadlineIsRecognisedAsTimeout() {
+    var docs =
+        new FailingRetrieveDocs(
+            new RuntimeException("DEADLINE_EXCEEDED: deadline exceeded after 9.999s"));
+    var injector = new RAGContext(docs);
+
+    InjectorResult r = injector.inject(stubCtx(Map.of("question", "what?")));
+
+    assertEquals("RETRIEVAL_TIMEOUT", r.terminalError().get().payload().get("errorCode"));
+  }
+
+  @Test
+  @DisplayName("806: a non-timeout retrieval failure is RETRIEVAL_FAILED, still not a corpus claim")
+  void openRetrievalFailureIsNotAClaimAboutTheCorpus() {
+    var docs = new FailingRetrieveDocs(new IllegalStateException("worker down"));
+    var injector = new RAGContext(docs);
+
+    InjectorResult r = injector.inject(stubCtx(Map.of("question", "what?")));
+
+    assertEquals("RETRIEVAL_FAILED", r.terminalError().get().payload().get("errorCode"));
+  }
+
+  @Test
+  @DisplayName("806: a retrieval that RAN and found nothing still says NO_CONTENT (unchanged)")
+  void openRetrievalThatRanAndFoundNothingKeepsTheCorpusClaim() {
+    var docs = new TrackingDocs(); // completes with an empty ContextResult
+    var injector = new RAGContext(docs);
+
+    InjectorResult r = injector.inject(stubCtx(Map.of("question", "what?")));
+
+    assertEquals("NO_CONTENT", r.terminalError().get().payload().get("errorCode"));
+  }
+
   @Test
   @DisplayName("RetrieveContextWithMeta throwing falls through to batch fetch")
   void retrievalExceptionFallsBackToBatch() {
@@ -360,6 +420,31 @@ final class RAGContextTest {
       retrieveCalls++;
       lastTopK = topK;
       return CompletableFuture.completedFuture(retrieveResult);
+    }
+  }
+
+  /** Tempdoc 806 B.2 — retrieval that fails with a caller-chosen cause; no batch content at all. */
+  private static final class FailingRetrieveDocs implements DocumentService {
+    private final Throwable cause;
+
+    FailingRetrieveDocs(Throwable cause) {
+      this.cause = cause;
+    }
+
+    @Override
+    public CompletionStage<DocumentRecord> fetch(String docId) {
+      return CompletableFuture.completedFuture(null);
+    }
+
+    @Override
+    public CompletionStage<Map<String, DocumentRecord>> fetchBatch(List<String> docIds) {
+      return CompletableFuture.completedFuture(Map.of());
+    }
+
+    @Override
+    public CompletionStage<ContextResult> retrieveContextWithMeta(
+        String question, Set<String> docIds, int topK, int maxContextTokens) {
+      return CompletableFuture.failedFuture(cause);
     }
   }
 

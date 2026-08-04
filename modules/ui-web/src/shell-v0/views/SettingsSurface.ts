@@ -906,6 +906,16 @@ export class SettingsSurface extends JfElement {
     if (updates.mode !== undefined) {
       m.send(updates.mode === 'advanced' ? 'MODE_ADVANCED' : 'MODE_SIMPLE');
     }
+    // Tempdoc 806 B.2 (round-12) — the declared Interface region also offers `vimMode` and
+    // `defaultAction`. Without these two branches the edit reached line 897's local `this.ui` and
+    // stopped there: the statechart's `save-settings` effect is the only persistence, so the toggle
+    // rendered ON off the optimistic local copy while the backend's value never changed.
+    if (updates.vimMode !== undefined) {
+      m.send(updates.vimMode ? 'VIM_ON' : 'VIM_OFF');
+    }
+    if (updates.defaultAction !== undefined) {
+      m.send(`DEFAULT_ACTION_${String(updates.defaultAction).toUpperCase()}`);
+    }
   }
 
   private async toggleAutostart(): Promise<void> {

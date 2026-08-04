@@ -41,6 +41,27 @@ from typing import Iterable
 # surface/shape matching considers only image files.
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
+# Bulk-frame exclusion (round-12 retrospective A5 / tempdoc 806 W3 item 1): a
+# periodic capture driver (e.g. one screenshot every ~1.5s to watch a long
+# install/upgrade) can produce hundreds of near-identical frames. Every one
+# clears MIN_SCREENSHOT_BYTES, so without this exclusion each becomes
+# "credit-eligible" and evidence-review.v1.json's reader gate (see
+# check_evidence_review below) must enumerate every single one -- making the
+# mandatory reader pass impossible by construction (sandbox-CLAUDE.md states
+# ~90 images is one agent's practical review budget; round 12 hit 947).
+#
+# Convention: a round's periodic/bulk capture driver writes into a
+# subdirectory of the evidence dir named BULK_FRAMES_DIRNAME (documented in
+# sandbox-CLAUDE.md's "Evidence review" section). Files under it are still
+# collected by load_evidence_files (present as evidence, inspectable, not
+# deleted) but excluded from the credit-eligible screenshot set: they cannot
+# satisfy a mustTouch surface/shape token, and evidence-review.v1.json is not
+# required to enumerate them individually. A round that wants a bulk frame to
+# actually evidence a requirement must promote/copy that one frame to the top
+# level (or another non-bulk directory) with a real name -- exactly like any
+# other screenshot.
+BULK_FRAMES_DIRNAME = "raw-frames"
+
 
 # --------------------------------------------------------------------------
 # Round retrospective check (D1): a required PROCESS deliverable, not a
@@ -585,7 +606,15 @@ MIN_SCREENSHOT_BYTES = 16384
 
 
 def load_evidence_files(path: str | None) -> dict[str, int]:
-    """Collect {lowercased evidence filename: size in bytes} in `path`.
+    """Collect {lowercased evidence relative-path: size in bytes} in `path`,
+    recursively.
+
+    Keys are relative to `path` with forward-slash separators regardless of
+    platform, so a top-level file's key is unchanged from before this walked
+    subdirectories (e.g. "42-recovery-key.png"), and a nested file's key
+    carries its subdirectory prefix (e.g. "raw-frames/seq-0001.png") -- see
+    BULK_FRAMES_DIRNAME above for the one convention that currently reads
+    that prefix.
 
     A missing directory yields an empty dict plus a warning.
     """
@@ -599,12 +628,30 @@ def load_evidence_files(path: str | None) -> dict[str, int]:
         print(f"WARNING: evidence dir not found: {path!r} (treating as empty).", file=sys.stderr)
         return files
 
-    for entry in os.listdir(path):
-        full = os.path.join(path, entry)
-        if os.path.isfile(full):
-            files[entry.lower()] = os.path.getsize(full)
+    for root, _dirs, filenames in os.walk(path):
+        rel_root = os.path.relpath(root, path)
+        for entry in filenames:
+            full = os.path.join(root, entry)
+            if rel_root == ".":
+                rel = entry
+            else:
+                rel = f"{rel_root.replace(os.sep, '/')}/{entry}"
+            files[rel.lower()] = os.path.getsize(full)
 
     return files
+
+
+def is_bulk_frame(evidence_relpath: str) -> bool:
+    """True if `evidence_relpath` (a load_evidence_files key: lowercased,
+    forward-slash-separated, relative to the evidence dir) lives under the
+    designated bulk-frames convention directory.
+
+    Only the FIRST path component is checked -- BULK_FRAMES_DIRNAME must be a
+    direct child of the evidence dir, matching the documented convention in
+    sandbox-CLAUDE.md. A top-level file (no "/") is never a bulk frame.
+    """
+    parts = evidence_relpath.split("/", 1)
+    return len(parts) > 1 and parts[0] == BULK_FRAMES_DIRNAME
 
 
 # --------------------------------------------------------------------------
@@ -961,6 +1008,21 @@ def main(argv: list[str] | None = None) -> int:
     all_screenshots = {
         f for f in evidence_files if os.path.splitext(f)[1].lower() in IMAGE_EXTS
     }
+    # Bulk-frame exclusion (A5 / tempdoc 806 W3 item 1): frames under the
+    # BULK_FRAMES_DIRNAME convention remain present as evidence but are never
+    # credit-eligible -- see the constant's docstring above. Excluded BEFORE
+    # the size floor below so the printed undersized-count doesn't include
+    # frames that were never going to be eligible either way.
+    bulk_frames = {f for f in all_screenshots if is_bulk_frame(f)}
+    all_screenshots = all_screenshots - bulk_frames
+    if bulk_frames:
+        print(
+            f"INFO: {len(bulk_frames)} screenshot(s) under '{BULK_FRAMES_DIRNAME}/' are "
+            "excluded from the credit-eligible set (bulk/periodic capture-driver "
+            "convention) -- present as evidence, not required in evidence-review.v1.json's "
+            "'examined' list, and cannot satisfy a mustTouch surface/shape token.",
+            file=sys.stderr,
+        )
     # F-729-2: drop screenshots under the size floor before they can match a
     # surface/shape token — a blank, occluded, or near-blank capture must not
     # silently credit coverage. See MIN_SCREENSHOT_BYTES for calibration.

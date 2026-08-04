@@ -65,18 +65,60 @@ public final class FileMemoryStore implements MemoryStore {
     byId.clear();
   }
 
+  /**
+   * Tempdoc 806 W1 — TRUE while this store is sealed and its key is locked. In that state the cache is
+   * empty by construction ({@link #onKeyLocked()} / the skipped constructor load) and the file cannot be
+   * decrypted, so {@link #whatItKnows()}'s empty list means "cannot read", NOT "nothing learned". Readers
+   * MUST project the two differently — an unreadable state answered as an empty one is a false factual
+   * claim about what the system knows (the R12-F3 defect).
+   */
+  @Override
+  public synchronized boolean isLocked() {
+    return cipher.enabled() && cipher.locked();
+  }
+
+  /**
+   * Tempdoc 806 W1 — every mutation fails loud BEFORE touching the cache while locked. While locked the
+   * cache is empty and the disk is unreadable, so the store cannot know what it holds: any outcome it
+   * reported would be a guess. Concretely, without this gate a {@code forget} of an id the cache cannot
+   * see returns silently (cache miss ⇒ no persist ⇒ no error) while the record survives on disk and
+   * reappears on unlock — a privacy control that appears to work and does not.
+   */
+  private void requireUnlocked() {
+    if (isLocked()) {
+      throw new io.justsearch.agent.api.encryption.KeyLockedException();
+    }
+  }
+
+  /**
+   * Tempdoc 806 W1 — no observable write without a durable write. If {@link #persist()} fails, the cache
+   * is restored to {@code snapshot} before the failure propagates, so a caller can never read back a
+   * record that never reached disk (nor miss one that was never removed from it).
+   */
+  private void persistOrRollback(Map<String, MemoryRecord> snapshot) {
+    try {
+      persist();
+    } catch (RuntimeException e) {
+      byId.clear();
+      byId.putAll(snapshot);
+      throw e;
+    }
+  }
+
   @Override
   public synchronized void remember(MemoryRecord record) {
     if (record == null) {
       return;
     }
+    requireUnlocked();
+    Map<String, MemoryRecord> snapshot = new LinkedHashMap<>(byId);
     byId.put(record.id(), record);
-    persist();
+    persistOrRollback(snapshot);
   }
 
   @Override
   public synchronized List<MemoryRecord> whatItKnows() {
-    // Newest first — the inspectable projection.
+    // Newest first — the inspectable projection. Empty while locked; pair it with isLocked().
     List<MemoryRecord> out = new ArrayList<>(byId.values());
     out.sort((a, b) -> b.createdAt().compareTo(a.createdAt()));
     return List.copyOf(out);
@@ -84,17 +126,27 @@ public final class FileMemoryStore implements MemoryStore {
 
   @Override
   public synchronized void forget(String id) {
-    if (id != null && byId.remove(id) != null) {
-      persist();
+    if (id == null) {
+      return;
     }
+    requireUnlocked();
+    if (!byId.containsKey(id)) {
+      return;
+    }
+    Map<String, MemoryRecord> snapshot = new LinkedHashMap<>(byId);
+    byId.remove(id);
+    persistOrRollback(snapshot);
   }
 
   @Override
   public synchronized void clear() {
-    if (!byId.isEmpty()) {
-      byId.clear();
-      persist();
+    requireUnlocked();
+    if (byId.isEmpty()) {
+      return;
     }
+    Map<String, MemoryRecord> snapshot = new LinkedHashMap<>(byId);
+    byId.clear();
+    persistOrRollback(snapshot);
   }
 
   private void load() {

@@ -210,6 +210,9 @@ export function observedEpLabel(f: OnnxFeatureRow): string {
   }
   if (ep === 'cuda') return 'CUDA';
   if (ep === 'cpu') return 'CPU';
+  // Tempdoc 806 B.2: the Worker-owned encoder rows (embed, splade) can be status:'unknown' before
+  // the policy snapshot lands. "inactive" would be a confident negative about a state we cannot see.
+  if (f.status === 'unknown') return 'unknown';
   return f.modelActive ? 'active' : 'inactive';
 }
 
@@ -2191,9 +2194,23 @@ export class BrainSurface extends JfElement {
     // directly (the ai-verdict-derivation gate). Also picks up the instant `busy['install-start']`
     // feedback the Simple panel already gets, closing the same gap here.
     const installing = this.deriveAiEngineVerdict().kind === 'installing';
+    // Tempdoc 806 B.2 (round-12): ONE condition, ONE named remedy. The SIMPLE panel points at this
+    // panel by name for `repairNeeded` ("A required component is missing — use Repair in Advanced",
+    // :1310) while this panel offered Install as the primary CTA for the same condition — the user
+    // was sent here for Repair and shown Install. When a required file is missing on disk, Repair is
+    // the primary affordance here too; Install stays available (it is a superset), just not primary.
+    const repairNeeded = this.installStatus?.repairNeeded === true;
     return html`
       <div class="section">
         <h3>${icon({ name: 'hard-drive', size: 12 })} AI install</h3>
+        ${repairNeeded
+          ? html`<div
+              data-testid="install-repair-needed"
+              style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: 0.5rem"
+            >
+              A required component is missing — use Repair.
+            </div>`
+          : nothing}
         <div style="font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: 0.5rem">
           State: <code>${this.installStatus?.state ?? 'idle'}</code>${this.installStatus?.phase
             ? html` · phase: <code>${this.installStatus.phase}</code>`
@@ -2213,7 +2230,7 @@ export class BrainSurface extends JfElement {
         </div>
         <div class="row">
           <jf-button
-            variant="primary"
+            variant=${repairNeeded ? 'secondary' : 'primary'}
             label="Install"
             .availability=${installing
               ? unavailableBecause('Already installing.')
@@ -2234,6 +2251,7 @@ export class BrainSurface extends JfElement {
             Cancel
           </jf-button>
           <jf-button
+            variant=${repairNeeded ? 'primary' : 'secondary'}
             label="Repair"
             .availability=${installing
               ? unavailableBecause('Already installing.')

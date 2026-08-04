@@ -117,6 +117,19 @@ $cargoToml = Join-Path $root "modules\\shell\\src-tauri\\Cargo.toml"
 $changed = $false
 $changed = (Update-FileRegex -Path $tauriConf -Label "tauri.conf.json" -Pattern '\"version\"\s*:\s*\"[^\"]+\"' -Replacement ('"version": "' + $version + '"') -DryRun:$WhatIf) -or $changed
 $changed = (Update-FileRegex -Path $shellPkg -Label "modules/shell/package.json" -Pattern '\"version\"\s*:\s*\"[^\"]+\"' -Replacement ('"version": "' + $version + '"') -DryRun:$WhatIf) -or $changed
+
+# Tempdoc 806 B.2 (round-12, third round to report it): the NSIS wizard named no version on any
+# page. Tauri's generated installer.nsi renders `bundle.copyright` as `BrandingText` -- the strip
+# at the bottom of EVERY wizard page -- so this is the one place the version can reach the visible
+# installer without forking a Tauri-generated asset. (`bundle.windows.nsis.installerHooks`, the one
+# installer file this repo owns, is `!include`d BEFORE `!define VERSION`, so it cannot name the
+# version at all.) Derived here from the SAME canonical gradle version as everything above, so the
+# branding line cannot drift into claiming a version the build is not.
+$tauriConfRaw = Get-Content -LiteralPath $tauriConf -Raw -Encoding UTF8
+if ($tauriConfRaw -notmatch '\"copyright\"\s*:\s*\"') {
+  Fail "tauri.conf.json has no bundle.copyright field. It carries the installer branding line (the only visible surface that names the version); add it rather than dropping the version from the wizard."
+}
+$changed = (Update-FileRegex -Path $tauriConf -Label "tauri.conf.json (installer branding line)" -Pattern '\"copyright\"\s*:\s*\"[^\"]*\"' -Replacement ('"copyright": "JustSearch ' + $version + ' - Copyright (c) JustSearch"') -DryRun:$WhatIf) -or $changed
 $changed = (Update-FileRegex -Path $cargoToml -Label "Cargo.toml" -Pattern '^(\s*version\s*=\s*\")[^\"]+(\"\s*)$' -Replacement ('${1}' + $version + '${2}') -DryRun:$WhatIf) -or $changed
 
 # MCPB registry metadata: version + release-asset URL are projections of the gradle version

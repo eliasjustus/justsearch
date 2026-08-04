@@ -294,6 +294,37 @@ Two staged tools make rounds repeatable and make coverage fail closed:
   on `/mcp` -- an external MCP client probing once without a token and then
   retrying with one is expected, not a defect. A blocking finding here means a
   webview call fired without (or with a stale) session token during the round.
+- **`traces.ndjson` cannot be parsed line-by-line as JSON — two traps, both
+  already hit once (round 12, tempdoc 806 W3 item 2).** (1) The HTTP
+  attribute container in each span is **`attrs`**, not `attributes`. (2)
+  Span `attrs` embed document excerpts containing **CRLFs**, so a "line" of
+  the NDJSON is often not a complete JSON document -- `Get-Content |
+  ConvertFrom-Json` throws on many lines. Round 12's first in-round self-check
+  reported **"mutating spans: 0; of those 401: 0"** from exactly this bug --
+  a **false clean pass** on the token-health discriminator above, caught only
+  because the round applied *"absence of signal is not evidence of
+  absence"* and re-derived the field names before trusting the answer. The
+  working method is **regex over raw text, never JSON parsing**:
+  ```powershell
+  # discover the real attribute keys first
+  Select-String -Path $tr -Pattern '"(http\.[a-z_.]+)"' -AllMatches |
+    ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value } |
+    Group-Object | Sort-Object Count -Descending
+  # then the token-health discriminator
+  $hits = Select-String -Path $tr -Pattern '"http\.method":"(POST|PUT|DELETE)"' -AllMatches
+  $hits | Where-Object { $_.Line -match '"http\.status_code":"?401' }
+  ```
+  This is already staged as **`analyze-traces.ps1`** (next to `oracle.ps1` /
+  `chat-ask.ps1` / `redact.ps1`) -- run it against a live round's traces
+  file before trusting a manual re-derivation:
+  ```powershell
+  .\analyze-traces.ps1 -TracesPath "$env:APPDATA\io.justsearch.shell\telemetry\traces.ndjson"
+  ```
+  It prints the discovered `http.*` attribute keys with counts, the
+  mutating-span count, and any mutating span answered 401 -- the same
+  numbers `check_token_health.py` asserts on host-side at finalize, so a
+  round can catch a real blocker (or confirm a clean build) itself instead
+  of waiting for the host-side re-run.
 
 ### Search parity (golden queries)
 
@@ -389,6 +420,18 @@ sub-floor overlap is still expected of the round.
    already elevated (`collect-evidence.ps1` self-checks this at Step 0 and
    writes `evidence/elevation-check.txt`), say so in the round's summary —
    an elevation prompt was structurally impossible to observe this round.
+   **Launch the installer DETACHED, never with `-Wait` (round 12, tempdoc 806
+   W3 item 5).** The candidate installer is interactive and parks on a wizard
+   page — `Start-Process -FilePath ... -Wait` blocks until the process exits,
+   which never happens until you click through it, and the tool call's own
+   10-minute timeout then kills the whole process tree (round 12 lost ~12
+   minutes this way; the machine stayed cleanly at the prior version, but the
+   round still had to redo the launch). Launch detached and drive the wizard
+   from separate calls, one page per tool call:
+   ```powershell
+   $p = Start-Process -FilePath ".\JustSearch_0.2.0_x64-setup.exe" -PassThru   # NO -Wait
+   # then: capture -> crop -> read -> click.ps1, one wizard page per tool call
+   ```
 2. **First app launch** — does `%LOCALAPPDATA%\JustSearch\JustSearch.exe` start
    and render? Save `evidence/NN-first-paint.png`.
 3. **Backend health** — read the runtime manifest, then save raw `/api/health`,
@@ -660,6 +703,26 @@ single pass. On a round with more evidence than that, shard the review across
 multiple passes/agents and **reconcile into one `evidence-review.v1.json`**
 before finalize (union the `examined` lists, concatenate `mismatches` and
 `uncertain`) — do not finalize on an unreconciled partial shard.
+
+**Bulk/periodic capture frames go in `evidence/raw-frames/`, not the evidence
+root (round 12, tempdoc 806 W3 item 1).** A driver that watches a long
+install/upgrade by saving a screenshot every ~1.5s can produce hundreds of
+near-identical frames in a single run (round 12: 947) — every one clears the
+size floor, so at the evidence root each one becomes credit-eligible and this
+required reader pass would have to open all of them, which is structurally
+impossible against the ~90-image budget above. Write periodic/bulk frames
+into a subdirectory literally named `raw-frames/` (direct child of
+`evidence/`) instead: `check_coverage.py` still counts them as present
+evidence (nothing is hidden or deleted) but excludes them from the
+credit-eligible set — they are NOT required in `examined`, and they can NOT
+by themselves satisfy a `mustTouch` surface/shape token. If one particular
+bulk frame turns out to genuinely evidence a requirement (e.g. it caught the
+one moment a dialog appeared), copy or rename that ONE frame out to the
+evidence root with a real, claim-bearing name — it is then a normal
+screenshot, credit-eligible and required in `examined` like any other.
+De-duplicating at capture time (only write on visible change, not on a fixed
+interval) is the better fix when a driver can do it; `raw-frames/` is the
+fallback for drivers that can't or didn't.
 
 `evidence/evidence-review.v1.json` is checked at finalize (see *Coverage &
 evidence* above) and the round **fails closed** if it is missing, malformed,

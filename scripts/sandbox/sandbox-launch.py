@@ -1399,7 +1399,8 @@ def stage_evidence_harness(share_dir: Path):
 
 def stage_round_scripts(share_dir: Path):
     """Copy the small round-utility scripts every round otherwise rewrites
-    from scratch (tempdoc 805 Part E / G.5, round-11 retrospective item 2):
+    from scratch (tempdoc 805 Part E / G.5, round-11 retrospective item 2;
+    tempdoc 806 W3 item 2 adds analyze-traces.ps1):
 
     - chat-ask.ps1 -- consumes POST /api/chat/ask as SSE (not JSON).
     - oracle.ps1 -- fixed-query-set before/after search oracle, the core
@@ -1407,20 +1408,31 @@ def stage_round_scripts(share_dir: Path):
     - redact.ps1 -- blacks out a region of a PNG so a secret-bearing
       surface (e.g. the recovery-key ceremony) can be captured without
       leaking the secret value into evidence.
+    - analyze-traces.ps1 -- prints the discovered http.* attribute keys,
+      the mutating-span count, and any mutating span answered 401 (the
+      token-health discriminator), via regex over raw text rather than
+      line-JSON parsing -- round 12's own first self-check reported a false
+      "mutating spans: 0" because `attrs` (the real key) is not
+      `attributes`, and CRLF-embedded excerpt text breaks
+      Get-Content | ConvertFrom-Json on many lines.
 
-    All three were written fresh inside round 11's sandbox with no staged
+    All four were written fresh inside a round's sandbox with no staged
     equivalent; each is now reviewed and generalized (port discovered from
-    the runtime manifest, paths taken as parameters -- no round-specific
-    hardcoding) and staged unconditionally next to collect-evidence.ps1."""
+    the runtime manifest where applicable, paths taken as parameters -- no
+    round-specific hardcoding) and staged unconditionally next to
+    collect-evidence.ps1."""
     count = 0
-    for script_name in ("chat-ask.ps1", "oracle.ps1", "redact.ps1"):
+    for script_name in ("chat-ask.ps1", "oracle.ps1", "redact.ps1", "analyze-traces.ps1"):
         src = SCRIPT_DIR / script_name
         if src.exists():
             shutil.copy2(src, share_dir / script_name)
             count += 1
         else:
             print(f"WARNING: {script_name} not found at {src} -- round-scripts staging incomplete")
-    print(f"Staged round scripts ({count} files -- chat-ask.ps1, oracle.ps1, redact.ps1)")
+    print(
+        f"Staged round scripts ({count} files -- chat-ask.ps1, oracle.ps1, redact.ps1, "
+        "analyze-traces.ps1)"
+    )
 
 
 def stage_gui_harness(share_dir: Path):
@@ -1482,6 +1494,136 @@ def stage_mcp_client_harness(share_dir: Path):
         count += 1
 
     print(f"Staged mcp-client/ ({count} files — real MCPB stdio bridge + TYPED_CONFIRM driver)")
+
+
+KICKOFF_FILENAME = "KICKOFF.md"
+
+# The per-round authority files sandbox-CLAUDE.md's own "Read these first"
+# section names, in the order it lists them -- kept here as one declared
+# list (label, filename, one-line purpose) so KICKOFF.md's file-status table
+# is generated from checking what's ACTUALLY present in share_dir, not typed
+# out by hand each time this function is touched.
+KICKOFF_AUTHORITY_DOCS: list[tuple[str, str]] = [
+    ("coverage-brief.md", "surfaces this round must exercise (generated per-candidate)"),
+    ("validation-mode.md", "the model mode for this instance -- overrides static model wording"),
+    ("charter.md", "this round's pre-registration: purpose, blocker classification, expectations"),
+    ("sandbox-environment.md", "directory layout, what is staged, environment characteristics"),
+    ("staging-gaps.md", "assets the host failed to stage this round -- each a required coverage gap"),
+]
+
+
+def generate_kickoff(share_dir: Path, installer_name: str, tools_dst: Path) -> str | None:
+    """Generate KICKOFF.md into the share dir (tempdoc 806 W3 item 4).
+
+    Round 12 was launched with the instruction "/start also read
+    KICKOFF.md" and no such file existed anywhere in the mapped folder --
+    an orchestrator error the harness should make structurally impossible,
+    not merely avoidable by remembering to stage one by hand. This
+    generates it as a normal staging step, deriving every claim it makes
+    from what actually landed in share_dir (file existence checks, the
+    already-resolved validation mode, the DOCUMENTED_TOOLS_ASSETS Git
+    check) rather than a hardcoded list that can drift from reality the
+    same way the never-staged file itself did.
+
+    Returns a gap message (for the caller's `gaps` list -- see
+    write_staging_gaps) if KICKOFF.md could not be written or is missing
+    immediately after this function returns, else None. This makes a
+    regression in THIS function (or its call site being dropped, exactly
+    what happened to the file it replaces) a declared, visible round-level
+    gap instead of a silent absence -- the same failure mode B2 already
+    closed for tools\\ assets, applied to this file.
+    """
+    mode, meaning = _read_resolved_mode(share_dir)
+
+    git_staged = any(
+        list(tools_dst.glob(pattern))
+        for tool in DOCUMENTED_TOOLS_ASSETS
+        if tool["label"] == "Git for Windows"
+        for pattern in tool["patterns"]
+    )
+    git_step = (
+        r"run `tools\Git-Setup.exe /VERYSILENT /NORESTART /NOCANCEL /SP-`"
+        if git_staged
+        else "no Git installer is staged in tools\\ this run -- see staging-gaps.md and "
+        "CLAUDE.md's Setup step 1 for the fallback (download Git for Windows)"
+    )
+
+    doc_lines = []
+    for filename, purpose in KICKOFF_AUTHORITY_DOCS:
+        mark = "x" if (share_dir / filename).is_file() else " "
+        doc_lines.append(f"- [{mark}] `{filename}` -- {purpose}")
+
+    convergence_matches = sorted((share_dir / "docs" / "tempdocs").glob("*-sandbox-convergence.md")) if (share_dir / "docs" / "tempdocs").is_dir() else []
+    if len(convergence_matches) == 1:
+        convergence_line = (
+            f"- This candidate's convergence tempdoc: `docs/tempdocs/{convergence_matches[0].name}` "
+            "-- states what THIS round is for and which prior findings it must re-confirm fixed."
+        )
+    elif convergence_matches:
+        names = ", ".join(f"`docs/tempdocs/{p.name}`" for p in convergence_matches)
+        convergence_line = f"- Multiple convergence tempdocs staged ({names}) -- confirm which one names this candidate."
+    else:
+        convergence_line = (
+            "- No `*-sandbox-convergence.md` found under `docs/tempdocs/` -- check that directory "
+            "manually for this candidate's convergence tempdoc."
+        )
+
+    lines = [
+        "# Kickoff",
+        "",
+        f"Generated by `scripts/sandbox/sandbox-launch.py` at staging time from what was "
+        f"ACTUALLY staged into this share directory ({share_dir.name}) -- not a fixed "
+        "template. If this file and the round's other authority docs disagree, the OTHER "
+        "docs win; this file only tells you where to look and in what order.",
+        "",
+        "## 1. Setup",
+        "",
+        f"1. **Git** -- {git_step}",
+        "2. **Claude Code** -- run the install command in `CLAUDE.md`'s \"Setup (manual)\" "
+        "step 2, then run `claude` from this mapped folder. The staged `.claude/settings.json` "
+        "starts Claude Code in bypass-permissions mode automatically.",
+        "3. Read **`CLAUDE.md`** first -- it is this round's entry point and names every "
+        "other authority file below in its own \"Read these first\" section.",
+        "",
+        "## 2. Round mode",
+        "",
+        f"- Mode: `{mode}`",
+        f"- {meaning}" if meaning else "- (see validation-mode.md for detail)",
+        "- Full detail: `validation-mode.md`",
+        "",
+        "## 3. Per-round authority files",
+        "",
+        "Checked box = actually staged this run; read them in this order (matches "
+        "CLAUDE.md's own \"Read these first\"):",
+        "",
+        *doc_lines,
+        "",
+        "## 4. This candidate",
+        "",
+        f"- Installer: `{installer_name}` (mapped folder root)",
+        "- Provenance (filename, SHA-256, commit when derivable): `candidate-provenance.md`",
+        convergence_line,
+        "",
+        "## 5. Staging gaps",
+        "",
+        "See `staging-gaps.md` for the authoritative, checked-against-reality list -- this "
+        "file does not duplicate it.",
+        "",
+    ]
+
+    path = share_dir / KICKOFF_FILENAME
+    try:
+        path.write_text("\n".join(lines), encoding="utf-8")
+    except OSError as exc:
+        print(f"WARNING: {KICKOFF_FILENAME} generation FAILED: {exc}")
+        return f"{KICKOFF_FILENAME} failed to generate ({exc}) -- the round's launch instruction may reference a file that does not exist."
+
+    if not path.is_file():
+        print(f"WARNING: {KICKOFF_FILENAME} was not found at {path} immediately after writing it")
+        return f"{KICKOFF_FILENAME} was not found at {path} immediately after generation -- treat as not staged."
+
+    print(f"Staged {KICKOFF_FILENAME} (mode={mode!r})")
+    return None
 
 
 def generate_wsb(wsb_path: Path, share_dir: Path, memory_mb: int, models_dir: Path | None = None):
@@ -1792,9 +1934,10 @@ def main():
         else:
             print("No models directory with real weights found — models will need to be downloaded in sandbox")
 
-    # Write the collected staging gaps now that staging (short of the
-    # fail-closed coverage-brief step below) is complete.
-    write_staging_gaps(share_dir, gaps)
+    # write_staging_gaps() is deferred to the end of staging (after KICKOFF.md
+    # is generated, tempdoc 806 W3 item 4) so a KICKOFF.md generation failure
+    # is recorded in the SAME declared-gap list/file as every other staging
+    # gap, rather than needing a second gaps file or a late silent append.
 
     # Report share size
     total_bytes = sum(f.stat().st_size for f in share_dir.rglob("*") if f.is_file())
@@ -1840,6 +1983,24 @@ def main():
     stage_round_scripts(share_dir)
     stage_gui_harness(share_dir)
     stage_mcp_client_harness(share_dir)
+
+    # Generate KICKOFF.md now that every other authority file/tool it
+    # references has had its chance to be staged (tempdoc 806 W3 item 4).
+    # Any generation failure -- or the file simply not existing right after
+    # this call -- becomes a declared gap in the SAME staging-gaps.md every
+    # other missing asset is recorded in, instead of a silent absence.
+    try:
+        kickoff_gap = generate_kickoff(share_dir, installer.name, tools_dst)
+    except Exception as exc:  # noqa: BLE001 -- staging must not crash on this
+        print(f"WARNING: {KICKOFF_FILENAME} generation raised {exc!r}")
+        kickoff_gap = f"{KICKOFF_FILENAME} generation raised an exception ({exc}) -- not staged."
+    if kickoff_gap:
+        gaps.append(kickoff_gap)
+
+    # Now that staging (short of the fail-closed coverage-brief step above)
+    # is complete, write the collected staging gaps -- KICKOFF.md included.
+    write_staging_gaps(share_dir, gaps)
+
     wsb_path = stage_dir / "JustSearch-Validation.wsb"
     generate_wsb(wsb_path, share_dir, args.memory, models_dir)
     print(f"Sandbox RAM: {args.memory} MB")

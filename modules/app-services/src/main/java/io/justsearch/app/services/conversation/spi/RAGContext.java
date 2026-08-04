@@ -151,12 +151,13 @@ public final class RAGContext implements ContextInjector {
 
     // Try chunked RAG retrieval. When docIds is empty, use open-retrieval
     // (BM25 pre-search discovers relevant documents from the full index).
-    ContextResult retrieval;
+    RetrievalAttempt attempt;
     if (docIds.isEmpty()) {
-      retrieval = tryOpenRetrieval(question, topK, excludedSourceIds);
+      attempt = tryOpenRetrieval(question, topK, excludedSourceIds);
     } else {
-      retrieval = tryRetrieveContext(question, docIdSet, topK, excludedSourceIds);
+      attempt = tryRetrieveContext(question, docIdSet, topK, excludedSourceIds);
     }
+    ContextResult retrieval = attempt.result();
     String context = retrieval == null ? null : retrieval.context();
     int chunksUsed = retrieval == null ? 0 : retrieval.chunksUsed();
     int chunksFound = retrieval == null ? 0 : retrieval.chunksFound();
@@ -193,6 +194,25 @@ public final class RAGContext implements ContextInjector {
         return InjectorResult.terminalError(new SseEvent("error", err));
       }
       if (docIds.isEmpty()) {
+        // Tempdoc 806 B.2 (round-12): an unscoped ask whose retrieval never COMPLETED used to answer
+        // "No matching documents found in the index" — a confident negative claim about the corpus
+        // derived from a call that failed to run. Round 12 saw exactly this on a cold reranker while
+        // the same question answered in ~9.5s on retry. An attempt that did not finish reports itself
+        // as unfinished; only a retrieval that ran and found nothing may claim nothing is there.
+        if (attempt.timedOut()) {
+          return InjectorResult.terminalError(
+              errorEvent(
+                  "Still working on it - the search engine did not answer in time. This is not a"
+                      + " result about your documents; ask again in a moment.",
+                  "RETRIEVAL_TIMEOUT"));
+        }
+        if (attempt.failed()) {
+          return InjectorResult.terminalError(
+              errorEvent(
+                  "Retrieval could not run, so nothing was searched. This is not a result about"
+                      + " your documents.",
+                  "RETRIEVAL_FAILED"));
+        }
         Map<String, Object> err =
             errorPayload("No matching documents found in the index", "NO_CONTENT");
         return InjectorResult.terminalError(new SseEvent("error", err));
@@ -253,36 +273,71 @@ public final class RAGContext implements ContextInjector {
     return InjectorResult.of(List.of(message), events);
   }
 
-  private ContextResult tryRetrieveContext(
+  /**
+   * Tempdoc 806 B.2 — the outcome of ONE retrieval attempt, keeping "ran and returned nothing" apart
+   * from "never completed". Collapsing the two into a bare {@code null} is what let an unfinished call
+   * be reported to the user as a fact about their corpus.
+   *
+   * @param result the retrieval result, or {@code null} when the attempt did not complete
+   * @param timedOut the attempt exceeded its budget (this instance's timeout, or the Worker RPC deadline)
+   * @param failed the attempt did not complete for any reason, timeout included
+   */
+  private record RetrievalAttempt(ContextResult result, boolean timedOut, boolean failed) {
+    static RetrievalAttempt ok(ContextResult result) {
+      return new RetrievalAttempt(result, false, false);
+    }
+
+    static RetrievalAttempt from(Exception e) {
+      return new RetrievalAttempt(null, isDeadline(e), true);
+    }
+  }
+
+  /** True when a throwable (or any cause) is a local budget expiry or a gRPC DEADLINE_EXCEEDED. */
+  private static boolean isDeadline(Throwable t) {
+    for (Throwable c = t; c != null; c = c.getCause()) {
+      if (c instanceof java.util.concurrent.TimeoutException) {
+        return true;
+      }
+      String message = c.getMessage();
+      if (message != null && message.contains("DEADLINE_EXCEEDED")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private RetrievalAttempt tryRetrieveContext(
       String question, Set<String> docIdSet, int topK, List<String> excludedSourceIds) {
     try {
       // Tempdoc 610 §J.3 — go through the rich params path so the hidden-source exclusion threads to
       // the Worker. maxContextTokens=0 preserves the scoped path's char-budget behavior.
       RetrieveContextParams params =
           RetrieveContextParams.of(question, topK, 0, docIdSet, excludedSourceIds);
-      return documents
-          .retrieveContext(params)
-          .toCompletableFuture()
-          .get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+      return RetrievalAttempt.ok(
+          documents
+              .retrieveContext(params)
+              .toCompletableFuture()
+              .get(timeout.toMillis(), TimeUnit.MILLISECONDS));
     } catch (Exception e) {
       LOG.warn("RAGContext: scoped retrieveContext failed; will fall back to batch fetch", e);
-      return null;
+      return RetrievalAttempt.from(e);
     }
   }
 
-  private ContextResult tryOpenRetrieval(
+  private RetrievalAttempt tryOpenRetrieval(
       String question, int topK, List<String> excludedSourceIds) {
     try {
       int budgetTokens = TokenEstimation.computeSafeInputBudgetTokens(8192, 1024);
       RetrieveContextParams params =
           RetrieveContextParams.of(question, topK, budgetTokens, Set.of(), excludedSourceIds);
-      return documents
-          .retrieveContext(params)
-          .toCompletableFuture()
-          .get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+      return RetrievalAttempt.ok(
+          documents
+              .retrieveContext(params)
+              .toCompletableFuture()
+              .get(timeout.toMillis(), TimeUnit.MILLISECONDS));
     } catch (Exception e) {
       LOG.warn("RAGContext: open-retrieval failed (no docIds, pre-search path)", e);
-      return null;
+      return RetrievalAttempt.from(e);
     }
   }
 

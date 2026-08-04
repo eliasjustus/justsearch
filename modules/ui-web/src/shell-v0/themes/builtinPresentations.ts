@@ -200,6 +200,38 @@ export const APPEARANCE_FLOW: InteractionStatechart = {
             { kind: 'save-settings', settings: { ui: { mode: 'advanced' } } },
           ],
         },
+        // Tempdoc 806 B.2 (round-12): SETTINGS_INTERFACE_SCHEMA declares `vimMode` and
+        // `defaultAction` controls, but this flow had edges only for theme/highContrast/mode — and
+        // the statechart's `save-settings` effect is the ONLY thing that persists. So both controls
+        // were write-nops: `SettingsSurface.patch()` updated its local `this.ui` copy, the toggle
+        // rendered ON from that copy, and `ui.vimMode` stayed false on the backend. Round 12 saw
+        // exactly that and correctly cleared the write path via the High-contrast control, which
+        // has an edge here. `defaultAction` is the same defect, unreported.
+        {
+          on: 'VIM_ON',
+          target: 'active',
+          effects: [{ kind: 'save-settings', settings: { ui: { vimMode: true } } }],
+        },
+        {
+          on: 'VIM_OFF',
+          target: 'active',
+          effects: [{ kind: 'save-settings', settings: { ui: { vimMode: false } } }],
+        },
+        {
+          on: 'DEFAULT_ACTION_OPEN',
+          target: 'active',
+          effects: [{ kind: 'save-settings', settings: { ui: { defaultAction: 'open' } } }],
+        },
+        {
+          on: 'DEFAULT_ACTION_REVEAL',
+          target: 'active',
+          effects: [{ kind: 'save-settings', settings: { ui: { defaultAction: 'reveal' } } }],
+        },
+        {
+          on: 'DEFAULT_ACTION_PREVIEW',
+          target: 'active',
+          effects: [{ kind: 'save-settings', settings: { ui: { defaultAction: 'preview' } } }],
+        },
       ],
     },
   ],

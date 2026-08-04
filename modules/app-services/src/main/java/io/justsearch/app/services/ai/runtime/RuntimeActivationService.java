@@ -18,6 +18,7 @@ import io.justsearch.app.api.OpCriticality;
 import io.justsearch.app.api.OpLeaseOutcome;
 import io.justsearch.app.api.OperationLeaseHandle;
 import io.justsearch.app.api.OperationLeaseService;
+import io.justsearch.app.api.inference.EncoderRuntimeView;
 import io.justsearch.app.api.lifecycle.CapabilityHealth;
 import io.justsearch.app.api.lifecycle.LifecycleReasonCode;
 import io.justsearch.app.services.lifecycle.InferenceCapability;
@@ -389,7 +390,39 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
             EnvRegistry.CITATION_SCORER_ENABLED.sysProp(),
             EnvRegistry.CITATION_SCORER_MODEL_PATH.envVar(),
             EnvRegistry.CITATION_SCORER_MODEL_PATH.sysProp(),
-            EncoderRole.CITATION));
+            EncoderRole.CITATION),
+        resolveWorkerEncoderFeature("embed", "Semantic embedding", EncoderRole.EMBEDDING),
+        resolveWorkerEncoderFeature("splade", "Sparse expansion (SPLADE)", EncoderRole.SPLADE));
+  }
+
+  /**
+   * Tempdoc 806 B.2: the observed-EP row for a Worker-owned always-on encoder (embedding, SPLADE).
+   *
+   * <p>These two fell back to CPU in round 11 exactly like the reranker did, but they could not be
+   * reported: {@link #resolveOneOnnxFeature} derives its INTENT axis from two sources neither of
+   * them has. There is no Head-side enabled/path env pair for them (the SPLADE levers in {@code
+   * EnvRegistry} are resolved in the Worker process, not here), and {@code
+   * WorkerModelDiscovery.discoverAll()} enumerates only {@code reranker} and {@code
+   * citation-scorer}, so {@code workerFeatureCache} is structurally blind to them — a
+   * discovery-derived row would report a permanent {@code not_found}.
+   *
+   * <p>So intent and observation come from the SAME authority here: the Worker's policy snapshot as
+   * derived by {@link EncoderRuntimeExplainer}. A role the snapshot names is active in the running
+   * configuration; a role it names as {@code unavailable} is not; no snapshot at all is {@code
+   * unknown} — never a positive claim in either direction.
+   */
+  private AiRuntimeStatusResponse.OnnxFeatureStatus resolveWorkerEncoderFeature(
+      String id, String label, EncoderRole role) {
+    EncoderRuntimeView view = lookupEncoderRuntime(role);
+    EncoderRuntimeExplainer.ObservedExecutionProvider observed =
+        EncoderRuntimeExplainer.observed(view);
+    if (view == null) {
+      return onnxFeature(id, label, "unknown", "worker_not_answered", null, false, observed);
+    }
+    if (EncoderRuntimeExplainer.ACCEL_UNAVAILABLE.equals(view.currentAccelerator())) {
+      return onnxFeature(id, label, "inactive", "not_configured", null, false, observed);
+    }
+    return onnxFeature(id, label, "active", "worker_policy_snapshot", null, true, observed);
   }
 
   private AiRuntimeStatusResponse.OnnxFeatureStatus resolveOneOnnxFeature(
@@ -463,15 +496,20 @@ public final class RuntimeActivationService implements io.justsearch.app.api.Run
    * Worker has not answered yet.
    */
   private EncoderRuntimeExplainer.ObservedExecutionProvider resolveObservedEp(EncoderRole role) {
+    return EncoderRuntimeExplainer.observed(lookupEncoderRuntime(role));
+  }
+
+  /** Last-known runtime view for one role; {@code null} when the Worker has not answered. */
+  private EncoderRuntimeView lookupEncoderRuntime(EncoderRole role) {
     EncoderRuntimeCache cache = this.encoderRuntimeCache;
     if (cache == null) {
-      return EncoderRuntimeExplainer.ObservedExecutionProvider.unknown();
+      return null;
     }
     try {
-      return EncoderRuntimeExplainer.observed(cache.encoderRuntime().get(role));
+      return cache.encoderRuntime().get(role);
     } catch (RuntimeException e) {
       log.debug("Observed EP resolve failed for {} (best-effort): {}", role, e.toString());
-      return EncoderRuntimeExplainer.ObservedExecutionProvider.unknown();
+      return null;
     }
   }
 
