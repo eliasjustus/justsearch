@@ -1,6 +1,6 @@
 ---
-title: Round-11 fix campaign — token freshness across process instances, consequence-class honesty
-status: "theorizing — problem space and solution directions mapped from round 11's evidence (tempdoc 734, R11-F1/F2/F3/F4); Part F adds the cross-round (4-11) root-cause analysis and refactor judgment: rewrite the shell backend-discovery state (instance-keyed binding — the R11-F2 fix done as class elimination), extract install completeness as a pure file-level diff, extend the single-verdict-authority pattern to consequence wording and runtime/EP status, leave the search pipeline alone, and invest in the {dev,prod} x {fresh,restart,upgrade} x {in-process,packaged} verification matrix so the sandbox confirms instead of discovers. Design not settled, no implementation started"
+title: Round-11 fix campaign — token freshness, consequence-class honesty, and the class-eliminating refactors
+status: "DESIGNED 2026-08-04 (Part G) — five workstreams: W-BINDING (shell instance-keyed {instanceId,port,token} binding with provenance rule + orderly-shutdown quit leg sharing 617 ordered-shutdown routine + webview binding with backend-restart invalidation and one-shot 401 heal), W-CONSEQUENCE (exported consequence classifier with new passage-reduced class, availability.ts consumes it, verdict-derivation gate extended, frozen-card unknown-mode fix), W-TRUTH (observed EP fields beside intent in runtime status per the B6 requested/converged shape; file-granularity install completeness module; repair-needed consequence; ort-native asset content check at publish), W-MATRIX (verify lane wired into build-installer.yml with fresh/restart/upgrade-arrival legs; sub-ms-401 trace assertion), W-HARNESS (Part E batch). Out of scope: rung reachability (own campaign), artifact-truthful status (parked), 617 protocol changes. Orphans named per workstream in G.1-G.5. Implementation not started"
 created: 2026-08-04
 updated: 2026-08-04
 ---
@@ -437,3 +437,184 @@ concentration there. And the ranking also stands: the verification matrix remain
 highest-leverage single investment; (a) and the discovery rewrite are one work item in one
 file; (b) rides with the F3/F4 consequence work; (c) is independent and can wait for its own
 campaign if round 12 must ship first.
+
+---
+
+## Part G — Settled design (2026-08-04)
+
+Design pass over the full scope. Each workstream names what it builds, what existing structure
+it extends, and what it **orphans** — orphan removal belongs to this campaign, not a later
+sweep. Kept general; implementation details are the plan's job.
+
+### G.1 W-BINDING — the shell's backend binding, and dying cleanly
+
+**Design.** One atomically-replaced record `{instanceId, port, token}` behind a single lock,
+with a provenance rule instead of per-field policies:
+
+- An observation carries provenance: **own-child stdout** (always the live instance) or
+  **manifest** (trusted only when its `instanceId` matches the current binding *or* announces a
+  new instance — and, when the shell spawned the child, only when `manifest.pid` matches that
+  child; a manifest failing both is stale residue and is ignored).
+- Same instance → fill gaps. New instance → **replace the whole record** and emit the existing
+  `justsearch://backend-restart` event. That single rule subsumes first-write-wins (correct
+  within one instance), the restart override (replacement), and the updater reset (replacement
+  with an empty record).
+
+The webview mirrors the shape one layer up: the module-level token/port caches in `api/http.ts`
+become one binding object that (a) subscribes to `backend-restart` and invalidates, and (b) on
+a `UI_TOKEN_REQUIRED` 401, re-resolves and retries **exactly once**. The Tauri commands
+(`api_port`, `session_token`) read the binding; their bounded-wait behavior is unchanged.
+
+**Dying cleanly.** Normal quit gains an orderly leg: ask Head to run its ordered shutdown, wait
+bounded on child exit, then force-kill as the fallback. Head already has exactly one ordered-
+shutdown routine — the one `POST /api/upgrade/commit-shutdown` (tempdoc 617) drives — so the
+design is **one routine, two callers**: a minimal lifecycle-shutdown entry point (token-guarded,
+loopback) that invokes the same routine without the upgrade bookkeeping (no preparation id, no
+handoff intent). 617's endpoints and semantics are not modified — that protocol is active work
+and stays authoritative for the update path. Clean shutdown deletes the manifest
+(`RuntimeManifestPublisher.close()` already does), so the stale manifest stops being the
+*normal* on-disk state; the binding's provenance rule remains the defense for the crash case.
+
+**Orphans (removed in this campaign):** `set_port`/`set_session_token` first-write-wins and
+`force_set_port` (subsumed — `test_force_set_port_overrides_first_write_wins` is rewritten as a
+binding-replacement test, not deleted); `reset_for_restart`'s per-field clears; the
+taskkill-without-`/F` + 2 s sleep sequence in `kill_child` (it never worked against `javaw` —
+replaced by the orderly leg); `cachedSessionToken`/`sessionTokenResolved`/`sessionTokenInFlight`
+module state in `api/http.ts` (subsumed by the binding object).
+
+**Verification.** Rust unit tests on the binding rule (gap-fill within instance; replacement on
+new instance; stale-manifest rejection by pid and by instanceId); ui-web test for the one-shot
+401 heal; the verify lane's restart leg (G.4) as the packaged-tier proof. The shell tier itself
+(Tauri process) is not CI-drivable — that boundary is covered by the Rust unit tests plus round
+12's charter, and is named honestly rather than papered over.
+
+### G.2 W-CONSEQUENCE — one classifier licenses every degradation claim
+
+**Design.** `readinessNotice.ts` exports a single consequence classifier: given the verdict's
+reason codes, it returns one of `retrieval-impaired` (dense query leg positively cannot serve),
+`passage-reduced` (NEW class — passage vectors absent/partial; document-level dense and
+reranking still serve), `ai-unavailable`, `cosmetic`, or `unknown` (conservative). Membership
+moves: `chunk_embedding.*` from `RETRIEVAL_IMPAIRING_CODES` into the passage class, with
+wording that states the measured truth ("passage-level precision is reduced; results are still
+ranked semantically"). Unknown codes stay conservative, as today.
+
+Both projections consume the classifier: the banner branches on it, and
+`availability.ts`'s docs-affordance caveat derives from it instead of from `verdict.severity`
+— the caveat literal at `availability.ts:141` is the orphan. Cause lists in the impairing and
+AI branches scope to the codes of their own class (the same scoping the reindex branch received
+in 804). Enforcement follows the codebase's proven pattern: the existing `verdict-derivation`
+gate (595 §4.2's single-derivation rule) is extended so the keyword-fallback claim wording may
+appear only in the classifier's module — a re-derivation elsewhere fails the build, which is
+what makes this a class fix rather than the third instance-patch.
+
+The frozen-card default (`?? 'TEXT'` in `commitLiveSearch`) becomes unknown-renders-as-nothing:
+a missing trace yields no retrieval-mode label, never the positive claim "Keyword". Why the
+trace was absent at commit time is answered by live repro during implementation **before** this
+fix is scoped — if a real trace-loss path exists upstream, it is its own item.
+
+**Verification.** Classifier unit tests per class; the banner precision test asserts
+passage-reduced wording never contains the keyword-fallback claim; a trace-vs-banner assertion
+in the ui-shot/RAIL tier (headline claims keyword-only ⟺ trace lacks an executed dense stage).
+
+### G.3 W-TRUTH — observed outcomes in runtime status; install completeness at file granularity
+
+**Design, runtime status.** Each ONNX feature's session-creation outcome (the Worker already
+knows it — it logs the CPU fallback) propagates into `/api/ai/runtime/status` as observed
+fields beside the intent fields: per-feature requested vs. active execution provider and an
+explicit fallback marker. This is 804 §B6's requested/converged split applied to the runtime
+axis; no field changes meaning, the observation is *added* and the UI renders it (Brain
+Advanced shows observed EP; Brain Simple gains a repair hint only when a fallback coincides
+with a repairable install gap). The sandbox must-watch for the EP contradiction is registered
+now and **converts to an API assertion** once these fields ship — its retirement is designed
+in, not left as permanent apparatus.
+
+**Design, install completeness.** A pure decision module computes, per file:
+registry requirement × disk presence × contract membership →
+`satisfied | missing-contracted (real gap) | missing-uncontracted (registry addition)`.
+`AiInstallService` consumes it for `installedFully` and `pendingRegistryAdditions` (file-level,
+fixing the round-11 misclassification where a contracted package's *new* file read as a real
+gap). Consequence is wired, consent-preserving: real gaps surface as a repair-needed signal on
+the install status that Brain renders as an advisory routing to the existing Repair flow
+(which already collects terms acceptance). No auto-download.
+
+**Authorities, stated once:** the registry is current requirement; disk is reality; the
+contract (per-file) is install history; `settings.llmModelPath` is activation input with the
+804 §B2 contract heal. `inference-model-id.txt` (runtime model-state marker) and
+`InstalledPacksStore` (pack-import provenance) are audited during implementation: each consumer
+either names the axis it legitimately owns or its read is swept (retire-with-a-sweep, this
+campaign). The packs *feature* is not in question — only vestigial reads of its store as an
+install authority.
+
+**Asset guarantee.** The `ort-native-cuda12` supporting file is sha-pinned in the registry
+already; what is missing is a content check at the only place contents change — asset
+(re)publish. A release-tooling script asserts the four ORT DLLs are present in the zip before
+the sha is pinned; the registry pin then makes the verified bytes the only accepted bytes.
+
+### G.4 W-MATRIX — the verify lane becomes the discovery tier
+
+**Design.** The packaged verify lane (`verify-installer-nsis-win.ps1`) is wired into
+`build-installer.yml` as a post-build job on the built artifact — the `-SkipVerify` rationale
+comment is stale (the lane is self-contained; proven by three local runs this session) and is
+the orphan. First run report-only to establish runner fitness, then blocking.
+
+Three legs, one script:
+
+1. **Fresh boot** (exists): readiness + token enforcement (401/200/401).
+2. **Restart** (new): kill Head, relaunch the payload against the same data dir, assert the
+   manifest's `instanceId` changed, re-fetch the token, and assert a mutating call succeeds
+   with the new token and 401s with the old one. This is the R11-F2 catcher at the payload
+   tier.
+3. **Upgrade-arrival** (new): boot against a checked-in fixture data dir shaped like the
+   previous release left it (v0.1.0-form contract, retained 5-entry runtime pack marker, no
+   settings file — no real model bytes; the in-process
+   `ProdModeSettingsPersistenceIntegrationTest` already models this shape). Assert the install
+   status reports the repair-needed state and activation resolves via the contract fallback.
+
+The sandbox side gains the mechanical token-health assertion: a check over `traces.ndjson`
+failing on any webview-originated POST span with status 401 and sub-millisecond duration —
+round 11's discriminator, promoted from prose to gate. With these, the sandbox's role shifts
+from discovery to confirmation; the matrix cells {prod × restart × packaged} and
+{prod × upgrade-arrival × packaged} stop being sandbox-only.
+
+Deliberately **not** built now: a `prod=true` dev-stack mode (the in-process integration tests
+plus the packaged lane cover that cell; a dev-stack mode is structure for a case the problem
+does not currently include).
+
+### G.5 W-HARNESS — the batch
+
+As itemized in Part E and F.5(e), unchanged in scope: the three staged-doc corrections (the
+`prod=false` claim, the MCP `execute:true` MANDATORY claim — the register's `validateHow` text
+is the authority to edit — and Memory reachability), the gaps-file generator diffing
+documented-vs-staged, staging `chat-ask.ps1`/`oracle.ps1`/`redact.ps1`, the `JustSearchGui.psm1`
+consolidation (`Set-AppWindowRect`, printed-vs-written dimensions, `-ProcName` echo, `crop.ps1`
+fail-loud), charter item 8 moved into `collect-evidence.ps1` Step 0, the two new coverage-
+register entries (chunk-embedding continuity across upgrade; EP-fallback-vs-status
+contradiction), and the charter-writing rule that a BROKEN criterion names the class.
+
+### G.6 Explicitly out of scope
+
+Rung-reachability declarativization (F.5c — its own campaign; four findings justify it but it
+shares no files or risk surface with this one), artifact-truthful status derivation (F.5d —
+parked per AHA until a second incident), the physical-schema fingerprint redesign, FAIL_CLOSED
+parity enforcement, and any change to 617's upgrade protocol beyond sharing its ordered-
+shutdown routine.
+
+### G.7 Reach judgment
+
+**Conformances (extending proven seams, not creating parallels):** the consequence classifier
+extends 595's single-verdict-authority + `verdict-derivation` gate pattern — the strongest
+empirical pattern in the round history (axes with an authority stopped producing findings).
+The EP-status split conforms to 804 §B6's requested/converged shape. The binding rewrite
+finally gives 637's `backend-restart` event its first consumer instead of inventing a new
+signal. The install-completeness module applies 553's projection-vs-fork discipline inside one
+subsystem. The shutdown leg reuses 617's ordered-shutdown routine — one routine, two callers —
+rather than a second shutdown path.
+
+**One new principle beyond Part D's three:** *normal termination must traverse the ordered
+shutdown path; force-kill is the fallback, not the design.* A product whose normal quit is a
+force-kill silently converts every shutdown hook into dead code and makes crash-residue the
+normal on-disk state — R11-F2's precondition was manufactured by the quit path, not by a
+crash. Candidate scope: any state whose cleanup lives in a JVM shutdown hook (the manifest
+today; audit what else registers one). Earns its keep if stale-residue defects stop appearing
+in restart/upgrade rounds; retire when a test asserts clean-quit residue is empty and the
+orderly leg is the only quit path left to describe.
