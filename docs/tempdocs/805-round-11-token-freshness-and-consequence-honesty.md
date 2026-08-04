@@ -1,6 +1,6 @@
 ---
 title: Round-11 fix campaign — token freshness, consequence-class honesty, and the class-eliminating refactors
-status: "DESIGNED 2026-08-04 (Part G) — five workstreams: W-BINDING (shell instance-keyed {instanceId,port,token} binding with provenance rule + orderly-shutdown quit leg sharing 617 ordered-shutdown routine + webview binding with backend-restart invalidation and one-shot 401 heal), W-CONSEQUENCE (exported consequence classifier with new passage-reduced class, availability.ts consumes it, verdict-derivation gate extended, frozen-card unknown-mode fix), W-TRUTH (observed EP fields beside intent in runtime status per the B6 requested/converged shape; file-granularity install completeness module; repair-needed consequence; ort-native asset content check at publish), W-MATRIX (verify lane wired into build-installer.yml with fresh/restart/upgrade-arrival legs; sub-ms-401 trace assertion), W-HARNESS (Part E batch). Out of scope: rung reachability (own campaign), artifact-truthful status (parked), 617 protocol changes. Orphans named per workstream in G.1-G.5. Implementation not started"
+status: "DESIGNED 2026-08-04 (Part G) — five workstreams: W-BINDING (shell instance-keyed {instanceId,port,token} binding with provenance rule + orderly-shutdown quit leg sharing 617 ordered-shutdown routine + webview binding with backend-restart invalidation and one-shot 401 heal), W-CONSEQUENCE (exported consequence classifier with new passage-reduced class, availability.ts consumes it, verdict-derivation gate extended, frozen-card unknown-mode fix), W-TRUTH (observed EP fields beside intent in runtime status per the B6 requested/converged shape; file-granularity install completeness module; repair-needed consequence; ort-native asset content check at publish), W-MATRIX (verify lane wired into build-installer.yml with fresh/restart/upgrade-arrival legs; sub-ms-401 trace assertion), W-HARNESS (Part E batch). Out of scope: rung reachability (own campaign), artifact-truthful status (parked), 617 protocol changes. Orphans named per workstream in G.1-G.5. Implementation not started. DERISKED 2026-08-04 (Part H): 10 uncertainties probed, 8 CONFIRMED (shutdownNormally + bridge already exist; OrtCudaStatus pre-models the EP failure states; derivation-gate family + availability.ts already governed; cargo test in CI; tauri event pattern exists; v0.1.0 manifests carry instanceId), 2 AMENDED: U3 - contract records variantless packages as skipped(No variant) with no files in BOTH versions, so the diff module needs entry-kind awareness and repair-needed keys on required-and-missing independent of contractedness; U5 - the quick pass IS mode:text by design, so the frozen-card identity must come from the refined pass or render unknown. Overall confidence 8/10"
 created: 2026-08-04
 updated: 2026-08-04
 ---
@@ -618,3 +618,100 @@ crash. Candidate scope: any state whose cleanup lives in a JVM shutdown hook (th
 today; audit what else registers one). Earns its keep if stale-residue defects stop appearing
 in restart/upgrade rounds; retire when a test asserts clean-quit residue is empty and the
 orderly leg is the only quit path left to describe.
+
+---
+
+## Part H — Derisk addendum (2026-08-04)
+
+Ten uncertainties probed before implementation; every verdict carries a source pointer. Two
+produced design amendments (U3, U5) — the rest confirmed Part G's mechanics, several more
+favorably than designed.
+
+### Verdicts
+
+**U1 [was HIGH] — CONFIRMED, better than designed.** The one-routine-two-callers structure
+already exists: `HeadShutdownCoordinator` implements the upgrade's `UpgradeShutdownAction` by
+delegating to its own `shutdownNormally()` (`HeadShutdownCoordinator.java:43,57-61`), and the
+JVM shutdown hook calls the same `shutdownNormally()` (`HeadlessApp.java:778-786`).
+`performOrderedShutdown` closes the manifest publisher (`HeadlessApp.java:829,862`), which
+deletes the manifest. W-BINDING's shutdown leg reduces to: expose `shutdownNormally()` over
+HTTP (the late-bound bridge pattern `UpgradeShutdownBridge` already solves the
+construction-order and package-visibility question) and call it from `kill_child` before the
+force-kill fallback. No extraction work.
+
+**U2 [was HIGH] — CONFIRMED; the modeling already exists, only the plumbing is missing.**
+`OrtCudaStatus` already models round 11's exact failure modes as named states —
+`missingDlls(variantId, path, missing)` and `providerFailed(variantId, path, reason)`
+(`OrtCudaStatus.java:89,104`). The Worker→Head health proto already carries per-model observed
+state (`OnnxDiscoveredModel.sessionActive`, populated from registered suppliers in
+`GrpcHealthService.java:263-270`) — but it is a boolean "a session exists", which is TRUE on a
+CPU-fallback session; that is mechanically why the status lies. W-TRUTH's runtime-status half
+is therefore: add the EP-outcome (provider actually in use + fallback reason) beside
+`sessionActive` in the proto (a `contracts/**` change — wire gate applies), populate it from
+the same supplier seam, and map it through the Head's status assembly. Moderate, with all
+semantics pre-modeled.
+
+**U3 [was HIGH] — AMENDED; three design refinements.** `ModelPackage.selectVariant` returns
+null for a variantless package (`ModelPackage.java:145-152`, `cuda-runtime` has
+`variants: []` in v0.1.0 AND 0.2.0 registries — verified at the `v0.1.0` tag), so the contract
+writer records `cuda-runtime` as **`skipped("No variant")` with no installedFiles** in both
+versions. Consequences: (1) round 11's `installedFully:false` came from `containsKey` matching
+a *skipped* entry — B8's package-level check has an entry-kind blindness on top of its
+granularity problem, so the diff module must treat skipped-kind entries as
+not-contracted-for-files; (2) on real upgraded machines the missing ORT natives therefore
+classify as registry additions, so **the repair-needed signal must key on
+"required-by-current-registry-for-this-profile AND missing", independent of the
+contracted-vs-addition classification** — contractedness decides only the `installedFully`
+truth claim and the additions list; (3) going forward the contract writer records variantless
+packages that had files planned as installed-with-files, so the contract regains per-file
+authority for the package class that caused round 11. Also confirmed: `PlannedDownload` is
+per-file with `packageId`/`targetPath`/`isModelVariant` (`InstallPlan.java:72-79`) — the diff
+module's input exists.
+
+**U4 [was MED] — CONFIRMED, and W-CONSEQUENCE is more conformant than designed.** The
+derivation-gate family is an established pattern (verdict-derivation, ai-verdict-derivation,
+folder-status-derivation, capability-availability — each a `governance/*.v1.json` register +
+`scripts/ci/check-*.mjs`). Better: `availability.ts` is **already a governed projection
+surface** under `governance/capability-availability-surfaces.v1.json`, whose note names
+exactly the fork class W-CONSEQUENCE fixes. The classifier gate is a sibling register+check
+with `check-capability-availability.mjs` as the template.
+
+**U5 [was MED] — ANSWERED by code-read; no live repro needed; one design refinement.** The
+quick pass **is** keyword-only by design: `buildSearchIntent` pins `body.mode = 'text'` +
+the cheap pipeline for `stage === 'quick'` (`searchState.ts:330-332`). A commit-on-open during
+the quick window freezes an honestly-TEXT trace (or a trace-less state) that the refined
+HYBRID pass supersedes on the live card but never on the frozen copy. So the frozen-card fix
+is not only the `?? 'TEXT'` default: **the frozen card's retrieval-mode identity must come
+from the refined pass of that query, or render as unknown** — a quick-pass mode must never
+masquerade as the search's identity. There is no upstream trace-loss bug to chase.
+
+**U6 [was MED] — CONFIRMED.** The shell's Rust tests run in CI: `cargo test --lib --locked`
+(`ci.yml:481`). W-BINDING's primary regression home is a real CI tier.
+
+**U7 [was MED] — CONFIRMED.** ui-web already has the lazy Tauri event-listener pattern
+(`router/tauriBridge.ts:41`, `TauriDeepLinkSource.ts:62` — dynamic `@tauri-apps/api/event`
+import, no-op outside Tauri). The `backend-restart` subscription copies it.
+
+**U8 [was LOW] — CONFIRMED.** The v0.1.0 `RuntimeManifestPublisher` already writes
+`instanceId` (11 references at the tag), so the binding rule's no-instanceId branch is
+defensive-only; every manifest the shipped product can encounter carries one.
+
+**U9 [was LOW] — CONFIRMED with the known residual.** The lane discovers the port from the
+stdout sentinel (not a fixed 8080), asserts the payload's own bundled JRE
+(`verify-installer-nsis-win.ps1:408,444`), and needs no GPU. Residual: runner wall-time/RAM —
+absorbed by the designed report-only first run.
+
+**U10 [was LOW] — CLEAN.** No consumer of `RETRIEVAL_IMPAIRING_CODES`/`isRetrievalImpairing`
+outside `readinessNotice.ts`; no test file pins `chunk_embedding.*` to the impairing branch,
+so the reclassification re-pins nothing beyond the classifier's own new tests.
+
+### Confidence and difficulty
+
+Per workstream (0-10): W-BINDING **8.5** (all seams verified; the rewrite is ~350 lines with
+an existing CI test tier); W-CONSEQUENCE **8.5** (register/gate template exists;
+classification semantics settled); W-TRUTH **7** (the most moving parts: proto change + wire
+gate + Worker plumbing + the U3 entry-kind rules); W-MATRIX **7.5** (mechanics verified;
+runner-fitness residual); W-HARNESS **9** (mechanical). Overall: **8/10** — the two genuine
+unknowns that could have invalidated the design (U1, U2) both resolved as
+already-built-just-unplumbed, and the two surprises (U3, U5) were absorbed as amendments
+rather than redesigns.
