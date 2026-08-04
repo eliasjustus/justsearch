@@ -1,6 +1,6 @@
 ---
 title: Round-11 fix campaign — token freshness across process instances, consequence-class honesty
-status: "theorizing — problem space and solution directions mapped from round 11's evidence (tempdoc 734, R11-F1/F2/F3/F4); design not settled, no implementation started"
+status: "theorizing — problem space and solution directions mapped from round 11's evidence (tempdoc 734, R11-F1/F2/F3/F4); Part F adds the cross-round (4-11) root-cause analysis and refactor judgment: rewrite the shell backend-discovery state (instance-keyed binding — the R11-F2 fix done as class elimination), extract install completeness as a pure file-level diff, extend the single-verdict-authority pattern to consequence wording and runtime/EP status, leave the search pipeline alone, and invest in the {dev,prod} x {fresh,restart,upgrade} x {in-process,packaged} verification matrix so the sandbox confirms instead of discovers. Design not settled, no implementation started"
 created: 2026-08-04
 updated: 2026-08-04
 ---
@@ -234,3 +234,134 @@ three scripts every upgrade round otherwise rewrites (`chat-ask`, `oracle`, `red
 continuity across upgrade; EP-fallback-vs-status contradiction), and the charter-writing rule
 that a BROKEN criterion names the *class*, not one instance ("any shipped-UI control whose
 mutating call 401s", not "401 on search").
+
+---
+
+## Part F — Cross-round root-cause analysis (rounds 4-11) and the refactor/rewrite judgment
+
+Written 2026-08-04, after round 11's analysis, against the full round history in tempdoc 734
+(rounds 4-11) and tempdoc 798 (round 7's mechanism detail). The question: what actually recurs
+across rounds, and is any of it better served by refactoring/rewriting the causal code than by
+another per-finding fix campaign.
+
+### F.1 The five recurring classes
+
+**Class 1 — recorded claims nothing verifies against reality ("truthfulness debt").** The
+largest class by count, and already named once: tempdoc 798 §D0 found seven of round 7's twelve
+findings were this one shape (`embedding_status=COMPLETED` with no vector; NER `COMPLETED`
+though never run; "reconnecting…" with no actuator; a register asserting reachability for
+unreachable shapes; an ADR asserting bundling that never built; `qualityKnown=false` hardcoded;
+a parity gate asserting comparability its own calibration never sampled). It kept recurring
+after 798's fixes because each fix addressed an *instance*: round 10 F1 (banner "keyword-only"
+while dense executed), round 11 F1 (same claim, second code path), round 11 F3's status side
+(`cuda12`/`active`/`gpuLayers: 99` while every ONNX session runs on CPU), round 11 F8 (activity
+PENDING(0) beside a live modal; GPU layers 0-vs-99). The structural signature: **a projection
+derives a user-facing claim from configuration, severity, or a heuristic — not from an
+observation — and no single authority owns the axis.** Where the codebase built a single
+verdict authority with anti-fork gates (595's system-health verdict, the canonical
+`SearchTrace`), findings stopped; the axes still producing findings are exactly the ones
+without one (runtime/EP status, install-state consequence, consequence wording until 804/805).
+
+**Class 2 — unexercised shipped configuration.** Every blocker in rounds 9-11: round 9 F1 (the
+packaged shell could not boot at all — updater config existed only in the tag overlay, and no
+tier ever booted the shipped shell), round 10 F7/F3 (the `prod=true` flip armed two latent
+defects — dev runs `prod=false`, so no tier had ever run the UI against token enforcement or
+prod-mode settings), round 11 F2 (the restart lifecycle of the packaged build — never
+exercised anywhere), round 11 F3 (the upgrade arrival state — tempdoc 772's payload trimming
+was validated for fresh installs only). The packaged verify lane itself turned out to run in
+**no** workflow until this campaign ran it by hand and found three rot defects. The signature:
+**verification tiers get added reactively, one blocker behind, because the axes of the shipped
+configuration — prod flag, packaged-vs-dev, boot count, arrival state — were never enumerated
+as a matrix anyone must cover.**
+
+**Class 3 — state machines that assume the first lifetime.** Round 4's dead capability gate;
+round 7's livelock (an idle loop whose continue-condition measured writes, not progress, plus
+two repair lanes each correctly undoing the other — the second *ingest* was the unexercised
+event); tempdoc 637's stale port; round 11 F2's stale token (same cache hierarchy, next field
+over); the backend-restart event no one subscribes to. The signature: **per-boot or
+per-operation state modeled as global-forever state; "first observation wins" applied across an
+instance boundary.**
+
+**Class 4 — upgrade/migration blindness.** All three upgrade rounds found arrival-state
+defects no fresh-install round could see: settings interplay (round 10 F3), the retained
+runtime pack vs the trimmed jar (round 11 F3), chunk-embedding survival True→False, contract
+granularity (round 11 F4). Registry, payload composition, and contract all evolve per release;
+nothing installs version N-1, upgrades, and asserts capability parity.
+
+**Class 5 — fail-open measurement.** `snap.ps1`'s silent capture failure recurred across
+rounds 9, 10, and — in the round's own hand-written wrapper — 11; PowerShell 5.1's discarded
+error bodies produced the same false "empty 400 body" conclusion in rounds 10 and 11;
+filename-credited coverage was defeated by mislabeled captures in round 5 (which is what
+created the evidence-review reader gate). The harness has been converging on fail-closed
+design one tool at a time; the class is real but its trend is the right direction already.
+
+### F.2 What rewriting has already proven here
+
+Two data points inside this same round history argue that **small, class-eliminating rewrites
+of state machines pay off, and instance-level patching does not**:
+
+- The 737 single-writer runtime reconciler was a rewrite of exactly a class-3 defect (round
+  4's dead gate). Zero recurrence across rounds 5-11; round 11's charter item 7 (the tri-state
+  mode response) passed on top of it.
+- The port got an instance-level patch (`force_set_port`, 637) instead of a class fix — and
+  the identical defect resurfaced one field over as round 11's blocker.
+
+### F.3 Judgment: what to rewrite, what to refactor, what to leave
+
+**Rewrite (small, class-eliminating): the shell's backend-discovery state.** `BackendState`'s
+discovery core plus the three delivery channels (stdout parse, manifest poll, updater reset) is
+~350 lines including its accreted special cases: per-field first-write-wins, a force override
+for one field but not the other, a reset that only the updater path calls, and a manifest
+reader that trusts any well-formed file. The 805 Part A direction (one atomically-replaced
+`{instanceId, port, token}` binding; observations for a new instance replace the record,
+observations for the current one fill gaps) deletes all four special cases and makes the 637
+port fix a corollary instead of a precedent to imitate per field. This is the 737 shape at
+1/10th the size. Pair it with the webview-side binding refactor (module-level token/port caches
+→ one invalidatable binding with the 401 one-shot heal), since the JS cache is the same class
+one layer up.
+
+**Refactor, not rewrite: install completeness.** `AiInstallService` is large and has accreted
+(one-shot recompute flags, resumable-bytes recovery, packs), but its download machinery
+demonstrably works — the failures (round 10 F2, round 11 F3/F4) are both in the
+*classification* of completeness. Extract that decision into a pure, file-level diff module
+(registry requirements × disk state × contract entries → {satisfied, real-gap,
+registry-addition} per file) with the service as its consumer. The contract already records
+per-file `installedFiles`; the data model needs no migration, only the comparison granularity.
+
+**Conform, not rewrite: the truthfulness axes.** Class 1 does not need new architecture — it
+needs the architecture the codebase already validated (single verdict authority + anti-fork
+gate, per 595/SearchTrace) extended to the two axes still producing findings: consequence
+wording (one exported classifier consumed by banner and availability; Part B) and runtime/EP
+status (observed execution-provider fields beside the intent fields; Part C). Where an axis
+got its authority, its findings stopped; that is the strongest empirical pattern in the whole
+round history.
+
+**Leave alone.** The Worker's search pipeline (no recurring defect concentration; the dense-leg
+dev↔sandbox divergence is a measured environment property under an owner decision, not a
+defect), the ingest/backfill loop (798 B1's termination redesign has not recurred), and the
+shell-v0 frontend at large (round findings concentrate in projections, not in the component
+architecture).
+
+**The highest-leverage investment is not product code: it is the verification matrix.** Every
+round-9/10/11 blocker was findable on the host in minutes once someone looked — boot the
+packaged shell once (round 9), run the UI tier against `prod=true` (round 10), restart the
+packaged backend and re-assert (round 11 F2), boot against an N-1-shaped data dir (rounds 10/11
+F3). The matrix is small and enumerable: {dev, prod} × {fresh boot, restart, upgrade-arrival}
+× {in-process, packaged}. The sandbox should be the *fidelity* tier that confirms, not the
+*discovery* tier that finds — three consecutive NOT QUALIFIABLE rounds, each burning ~3-4h of
+wall clock plus a 10 GB download, is the measured cost of covering that matrix reactively. The
+concrete increments, in value order: wire the existing verify lane into CI (it currently runs
+nowhere), add its restart leg (Part A.3), add an upgrade-arrival leg (the
+`ProdModeSettingsPersistenceIntegrationTest` seeding pattern already exists for the in-process
+tier; the lane needs the packaged equivalent), and adopt round 11's trace rule (zero sub-ms
+401 POST spans) as a standing lane assertion.
+
+### F.4 Sequencing implication for this campaign
+
+The shell-binding rewrite **is** the R11-F2 fix — Part A direction 1 done properly rather than
+`force_set_session_token` as one more special case. It should not be deferred to a separate
+"refactor later" item; doing it now costs marginally more than the patch and retires the class.
+The install-completeness extraction can ride with the F3/F4 consequence work for the same
+reason. The truthfulness-axis conformance (Part B/C) is this campaign's scope already. The
+verification-matrix work is independent of all product fixes and can proceed in parallel; its
+first two increments (CI wiring + restart leg) gate round 12's usefulness anyway.
