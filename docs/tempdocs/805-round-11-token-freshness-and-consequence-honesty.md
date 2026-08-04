@@ -365,3 +365,75 @@ The install-completeness extraction can ride with the F3/F4 consequence work for
 reason. The truthfulness-axis conformance (Part B/C) is this campaign's scope already. The
 verification-matrix work is independent of all product fixes and can proceed in parallel; its
 first two increments (CI wiring + restart leg) gate round 12's usefulness anyway.
+
+### F.5 Correction on re-examination: Part F.3 under-called the list (2026-08-04, same day)
+
+F.3 was anchored on blocker recurrence. Re-sweeping the full finding corpus at **any** severity
+— the honest method, since today's LOW class is the next round's blocker — adds three warranted
+items and puts one deliberately-deferred invariant on the table. F.3's "rewrite the discovery
+state" call stands; it was incomplete, not wrong.
+
+**(a) Shell shutdown path — refactor, same file as the discovery rewrite.** The normal quit
+path (`kill_child`, `lib.rs:163-202`) is taskkill-without-`/F` (which typically fails against a
+windowless `javaw`), a 2 s sleep, then force kill — so in the shipped product, **a normal quit
+is a crash from the JVM's point of view** and Head's shutdown hooks are effectively dead code.
+That is *why* stale manifests exist at all: `RuntimeManifestPublisher.close()` deletes the
+manifest on clean shutdown, and clean shutdown never happens. Meanwhile a complete orderly
+protocol already exists one subsystem over — the updater's prepare/commit handshake with a
+shutdown nonce and a validated receipt (`updater.rs`), which "never terminates the child" and
+waits for Head's own ordered exit. The refactor: normal quit attempts the orderly path
+(bounded), falls back to kill. This is defense-in-depth for R11-F2 (the stale manifest stops
+being the *normal* on-disk state), and it un-deadens every other shutdown hook the Head
+registers. Evidence class: 3 (first-lifetime assumptions) — the quit path is the *producer* of
+the stale state the discovery rewrite defends against.
+
+**(b) Install-state model consolidation — a real refactor, larger than F.3's "extract a diff
+module".** F.3 scoped this to completeness classification. The subsystem actually holds **six
+overlapping records of "what is installed / what should run"**: the model registry (current
+truth), the install contract (history), `InstalledPacksStore` (the packs subsystem's own
+ledger — round 10 found `/api/ai/packs/installed` empty post-upgrade and established nothing
+reads it for chat resolution), `settings.llmModelPath` (what activation reads),
+`inference-model-id.txt` (what `InferenceLifecycleManager` reads), and the `AiInstallStatus`
+ledger. The finding trail across the rounds is patches bridging pairs of these: round 10 F3's
+fix added a contract-fallback into activation (contract ↔ settings); B8 recomputes the ledger
+from disk (ledger ↔ disk); round 7 B5's destructive cancel and hardcoded consent copy are the
+same subsystem's lifecycle edges. This is the representation-fork class (tempdoc 553) *inside
+one subsystem*: pick one authority for "installed" (the contract, at file granularity), derive
+the rest as projections, and — per retire-with-a-sweep — delete or explicitly re-purpose the
+vestigial records rather than leaving them as false authorities. The download machinery still
+does not need rewriting.
+
+**(c) Escalation-rung reachability — make it declared, not emergent.** Four findings across
+three rounds, all one class: round 5 finding 6 (`agent-run`/`free-chat` "not found" — the entry
+points existed but were hidden behind composer state), round 7 B2a/B2b (`workflow-run`
+unreachable by ANY user; `free-chat` reachable only via an unsurfaced deep link), round 11
+retrospective item 9 (the Delegate rung reachable only from the empty landing state; ~8 min
+lost re-finding it). Reachability of a rung is currently an emergent property of scattered
+conditionals (`deriveAffordance`, `resolveShape`, `renderLanding` state) inside a 4,000+-line
+view. The register side already exists (`CoreConversationShapeCatalog` + the
+`check-intent-tier-coverage` gate + the coverage register's `reach` fields); what is missing is
+the FE half: each rung's entry conditions declared as data, rendered from the declaration, and
+testable as "for composer state S, rung R is reachable" — so an unreachable rung fails a unit
+test instead of a sandbox round. Medium-size refactor of the entry-point layer only, not of
+UnifiedChatView at large.
+
+**(d) On the table, deliberately not asserted: artifact-truthful status derivation
+(tempdoc 717 §TH-6).** The invariant behind round 7's livelock — status columns recorded
+independently of the artifacts they describe (`embedding_status=COMPLETED` with no vector) —
+was named by 717 and deferred. The shipped fix treated the lying writes and the loop's
+termination; the invariant itself (derive status from artifact presence, don't record it
+separately) remains unbuilt, and B8's recompute-from-disk is a partial instantiation of exactly
+it. Per AHA this stays deferred until the class recurs — recorded here so a recurrence is
+recognized as the second incident of a named class, not a novel finding.
+
+**(e) Minor, batch when touched:** the GUI harness's accumulated paper cuts (missing
+`Set-AppWindowRect`, printed-vs-written dimensions, `-ProcName` error reporting, `crop.ps1`
+silent defaults) — one small consolidation pass over `JustSearchGui.psm1`, already itemized in
+Part E.
+
+**Unchanged from F.3:** the search pipeline, the Worker, the post-798 backfill loop, and
+shell-v0's component architecture stay off the list — the corpus shows no structural defect
+concentration there. And the ranking also stands: the verification matrix remains the
+highest-leverage single investment; (a) and the discovery rewrite are one work item in one
+file; (b) rides with the F3/F4 consequence work; (c) is independent and can wait for its own
+campaign if round 12 must ship first.
