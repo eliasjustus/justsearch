@@ -1,8 +1,8 @@
 ---
 title: Round-10 blockers — the unexercised shipped configuration
-status: "design settled 2026-08-01 — implementation not started. Covers the round-10 fix campaign: both blockers (F7 UI-401, F3 AI-dead — one root cause: PR #350's prod=true flip arming two latent defects), the 12 non-blocking findings, and the harness items. Root-cause evidence lives in tempdoc 734's round-10 section; this doc holds the design."
+status: "IMPLEMENTED AND MERGED 2026-08-04 (PR #359, main 6df8a2f3; CI green). All seven bundles landed with bite-proven tests; live browser pass verified the user-visible fixes incl. the W8 residual found during validation. Remaining open: rebuild candidate + sandbox round 11 (webview-under-prod is its registered must-watch); follow-up candidates recorded in SS I. Original design context: Covers the round-10 fix campaign: both blockers (F7 UI-401, F3 AI-dead — one root cause: PR #350's prod=true flip arming two latent defects), the 12 non-blocking findings, and the harness items. Root-cause evidence lives in tempdoc 734's round-10 section; this doc holds the design."
 created: 2026-08-01
-updated: 2026-08-01
+updated: 2026-08-04
 ---
 
 # Round-10 blockers — the unexercised shipped configuration
