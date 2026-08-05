@@ -223,7 +223,7 @@ export interface AiState {
   verdict: SystemHealthVerdict;
   /**
    * Tempdoc 807 A.3 — is the retained snapshot still a LIVE observation, or only a past
-   * measurement? Projected ONCE from the verdict by {@link isSnapshotLive}; every surface that
+   * measurement? Projected ONCE from contact reachability by {@link isSnapshotLive}; every surface that
    * renders raw snapshot fields (progress, coverage, queue counts, capability counts, the CONN dot)
    * consults this instead of inventing its own staleness heuristic. `false` ⟹ degrade rather than
    * assert: stop animating, say "last known", make live-backend-preconditioned controls unavailable.
@@ -487,22 +487,27 @@ function verdictOwnsStatus(verdict: SystemHealthVerdict): boolean {
  * photographed an animating "Building semantic search 2.0% · 5,084 pending", "4/4 active" and a green
  * CONN dot with BOTH java processes dead — the values were right, their TENSE was not.
  *
- * The two non-live kinds are exactly the two `computeVerdict` mints when `reachableViaContact` is
- * false, so this is a faithful re-reading of the verdict, not a new signal:
- *   - `unreachable`               — no poll ever landed and no contact of any kind (phase `disconnected`).
- *   - `transitioning`/`channel-stale` — a poll DID land once, then all contact aged out (phase `stale`).
- *     This is the kill-the-backend-mid-session case, i.e. the one round 13 actually reproduced.
- * Every other kind means positive contact within the reachability window, so the snapshot is live.
+ * THE RULE: liveness is a CONTACT fact, never a verdict-kind classification. The snapshot is live
+ * exactly while the origin is reachable — `computeReachability()`, the same `reachableViaContact`
+ * `computeVerdict` itself consumes. The first cut of this predicate read the verdict KIND instead
+ * and claimed the two non-live kinds were "exactly the two `computeVerdict` mints when
+ * `reachableViaContact` is false". That was false at source (round-13 review): `computeStability`
+ * returns from SIX higher-precedence branches before it can reach the `phase === 'stale'` one, and
+ * every one of them reads a RETAINED snapshot field — `indexState: UNAVAILABLE` (worker-restart),
+ * `migrationState` SWITCHING/MIGRATING, a building≠active generation, serving-search≠serving-ingest,
+ * `catchingUp`. `statusSig` is retained on a failed poll, so with the Worker dying first (the
+ * ordinary case: the backend writes `indexState: UNAVAILABLE`, then the Head dies) the verdict
+ * stayed `transitioning`/`worker-restart` FOREVER, never `channel-stale`, and the whole fix was
+ * silently disabled. Contact cannot be retained: it is a stamp of when we last heard anything.
  *
- * AGE is already accounted for and needs no new threshold: reachability is earned by positive contact
- * within `STREAM_WATCHDOG_STALE_MS` (`originContact.isOriginReachable`, the generated 40s stream
- * watchdog window = >2× the 15s heartbeat), and the verdict consumes that as `reachableViaContact`.
- * A second age check here would be a second authority — precisely what A.3 rejects.
+ * AGE is already accounted for and needs no new threshold or second authority: reachability is
+ * earned by positive contact within `STREAM_WATCHDOG_STALE_MS` (`originContact.isOriginReachable`,
+ * the generated 40s stream-watchdog window = >2× the 15s heartbeat), and before the first contact
+ * the boot grace window applies (`computeReachability`, mirroring `neverConnected`) so startup is
+ * live, not a false alarm.
  */
-export function isSnapshotLive(verdict: SystemHealthVerdict): boolean {
-  if (verdict.kind === 'unreachable') return false;
-  if (verdict.kind === 'transitioning' && verdict.reasons.includes('channel-stale')) return false;
-  return true;
+export function isSnapshotLive(connection: Pick<AiConnection, 'reachable'>): boolean {
+  return connection.reachable;
 }
 
 function computeStatusLabel(
@@ -726,10 +731,11 @@ function buildSnapshot(): AiState {
   });
   const installStatus = installStatusSig.get();
   const runtimeStatus = runtimeStatusSig.get();
-  // Tempdoc 807 — the ONE liveness answer, computed here from the verdict just derived and threaded
-  // BOTH into the engine verdict (so it cannot claim a live engine off a dead snapshot) and onto the
-  // state (so snapshot-rendering surfaces re-tense the same way, at the same moment).
-  const snapshotLive = isSnapshotLive(verdict);
+  // Tempdoc 807 — the ONE liveness answer, computed here from the SAME contact reachability the
+  // verdict above consumes, and threaded BOTH into the engine verdict (so it cannot claim a live
+  // engine off a dead snapshot) and onto the state (so snapshot-rendering surfaces re-tense the same
+  // way, at the same moment).
+  const snapshotLive = isSnapshotLive(connection);
   // Tempdoc 663 Design pass 2 - the AI-engine rollup, computed the same way stability/verdict are
   // (purely observed signals; no surface-local UI intent). Computed BEFORE statusLabel/statusTone
   // (Design pass 3) since those now project their AI-specific wording/tone from this value.

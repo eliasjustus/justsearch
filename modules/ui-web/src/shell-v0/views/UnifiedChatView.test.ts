@@ -4201,13 +4201,38 @@ describe('Tempdoc 807 B.2 — escalation rungs survive the landing → post-sear
     const view = await mountPostSearch();
     const pressed = (id: string): boolean =>
       view.shadowRoot!.querySelector(`[data-testid="${id}"]`)!.hasAttribute('data-pressed');
+    // Round-13 review (P3): `data-pressed` is a CSS hook and NOTHING else — `jf-control` has no
+    // `aria-pressed` passthrough, so asserting it alone passes for the wrong reason (a sighted-only
+    // signal). The state a screen reader gets is the accessible NAME (the `renderPinToggle`
+    // convention, 200 lines up), so assert that too — read off the rendered button, not the property.
+    const accName = async (id: string): Promise<string> => {
+      const el = view.shadowRoot!.querySelector(`[data-testid="${id}"]`)!;
+      await (el as unknown as { updateComplete: Promise<boolean> }).updateComplete;
+      return el.shadowRoot!.querySelector('button')!.getAttribute('aria-label') ?? '';
+    };
+
     expect(pressed('escalation-search')).toBe(true);
     expect(pressed('escalation-delegate')).toBe(false);
+    expect(await accName('escalation-search')).toContain('(current mode)');
+    for (const id of ['escalation-delegate', 'escalation-ask', 'escalation-structured']) {
+      expect(await accName(id), id).not.toContain('(current mode)');
+    }
 
     await clickRung(view, 'escalation-delegate');
     await view.updateComplete;
     expect(pressed('escalation-delegate')).toBe(true);
     expect(pressed('escalation-search')).toBe(false);
+    expect(await accName('escalation-delegate')).toBe(
+      'Delegate a multi-step task to the agent (current mode)',
+    );
+    expect(await accName('escalation-search')).toBe('Back to instant search — no AI needed');
+
+    await clickRung(view, 'escalation-structured');
+    await view.updateComplete;
+    expect(await accName('escalation-structured')).toBe(
+      'Extract structured fields against a JSON schema (current mode)',
+    );
+    expect(await accName('escalation-delegate')).not.toContain('(current mode)');
   });
 });
 

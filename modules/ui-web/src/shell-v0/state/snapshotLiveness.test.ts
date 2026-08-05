@@ -21,45 +21,109 @@ import {
 } from './aiStateStore.js';
 import type { StatusSnapshot } from '../utils/statusPoll.js';
 import { projectAvailability } from './availability.js';
+import '../components/Control.js';
+import type { Control } from '../components/Control.js';
+import { EPHEMERAL_TOAST_EVENT } from '../components/advisory/ephemeralToast.js';
 import { presentAiEngineVerdict } from './aiVerdict.js';
 import { reasonFor } from './readinessNotice.js';
-import type { SystemHealthVerdict } from './verdict.js';
 
 describe('isSnapshotLive — the predicate', () => {
-  it('a verdict that never contacted the origin is NOT live (`unreachable`)', () => {
-    const v: SystemHealthVerdict = { kind: 'unreachable', severity: 'error', reasons: ['binding.unreachable'] };
-    expect(isSnapshotLive(v)).toBe(false);
+  it('an unreachable origin is NOT live; a reachable one is', () => {
+    // Round-13 review: liveness is a CONTACT fact, not a verdict-kind classification. The first cut
+    // read `verdict.kind` and was bypassed by every higher-precedence `computeStability` branch (see
+    // the precedence suite below); contact is the one thing a retained snapshot cannot fake.
+    expect(isSnapshotLive({ reachable: false })).toBe(false);
+    expect(isSnapshotLive({ reachable: true })).toBe(true);
   });
+});
 
-  it('a verdict whose contact aged out mid-session is NOT live (`transitioning`/`channel-stale`)', () => {
-    // THE case round 13 reproduced: a poll DID land, then the backend died. `computeVerdict` mints
-    // transitioning/channel-stale here, NOT `unreachable` — a predicate that only knew `unreachable`
-    // would have left every photographed surface exactly as it was.
-    const v: SystemHealthVerdict = { kind: 'transitioning', severity: 'warn', reasons: ['channel-stale'] };
-    expect(isSnapshotLive(v)).toBe(false);
-  });
+/**
+ * Round-13 review of this bundle — THE regression home for the hole the first cut left.
+ *
+ * `computeStability` (verdict.ts:100-131) returns from six branches BEFORE the `phase === 'stale'`
+ * one that mints `channel-stale`, and every one reads a field off the RETAINED snapshot. Since
+ * `statusSig` is kept on a failed poll (`onStatusUpdate`), a backend that dies while any of them
+ * holds — the ordinary case being the Worker dying first, which writes `indexState: UNAVAILABLE` —
+ * pinned the verdict on that branch forever. A kind-based predicate then reported LIVE indefinitely
+ * and silently disabled the entire fix. These six states are live IFF contact is fresh.
+ */
+describe('AiState.snapshotLive — the higher-precedence stability states (round-13 review)', () => {
+  beforeEach(() => __resetAiStateForTest());
+  afterEach(() => __resetAiStateForTest());
 
-  it('BOUNDARY — a transitioning verdict from any OTHER cause is still live (work in flight, backend answering)', () => {
-    for (const cause of ['rebuilding', 'generation-switch', 'updating', 'worker-restart']) {
-      const v: SystemHealthVerdict = { kind: 'transitioning', severity: 'busy', reasons: [cause] };
-      expect(isSnapshotLive(v), cause).toBe(true);
-    }
-  });
+  const worker = (migration: Record<string, unknown>): StatusSnapshot =>
+    ({ worker: { core: { indexedDocuments: 42 }, migration } }) as unknown as StatusSnapshot;
 
-  it('BOUNDARY — channel-stale alongside another reason is still NOT live (presence, not sole-reason)', () => {
-    const v: SystemHealthVerdict = { kind: 'transitioning', severity: 'warn', reasons: ['rebuilding', 'channel-stale'] };
-    expect(isSnapshotLive(v)).toBe(false);
-  });
+  const CASES: ReadonlyArray<{ name: string; status: StatusSnapshot; cause: string }> = [
+    {
+      name: 'worker down/restarting (indexState UNAVAILABLE) — the Worker-dies-first case',
+      status: { worker: { core: { indexedDocuments: 42, indexState: 'UNAVAILABLE' } } } as unknown as StatusSnapshot,
+      cause: 'worker-restart',
+    },
+    { name: 'migrationState SWITCHING', status: worker({ migrationState: 'SWITCHING' }), cause: 'generation-switch' },
+    { name: 'migrationState MIGRATING', status: worker({ migrationState: 'MIGRATING' }), cause: 'rebuilding' },
+    {
+      name: 'a building generation differs from the active one',
+      status: worker({ buildingGenerationId: 'g2', activeGenerationId: 'g1' }),
+      cause: 'rebuilding',
+    },
+    {
+      name: 'serving-search differs from serving-ingest',
+      status: worker({ servingSearchGenerationId: 'g1', servingIngestGenerationId: 'g2' }),
+      cause: 'generation-switch',
+    },
+    {
+      name: 'catchingUp (post-resume reconcile)',
+      status: { worker: { core: { indexedDocuments: 42 } }, catchingUp: true } as unknown as StatusSnapshot,
+      cause: 'catching-up',
+    },
+  ];
 
-  it('every reachable kind is live — the anti-regression half (the predicate must not blank a healthy UI)', () => {
-    const kinds: SystemHealthVerdict[] = [
-      { kind: 'operational', severity: 'ok', reasons: [] },
-      { kind: 'checking', severity: 'info', reasons: [] },
-      { kind: 'connecting', severity: 'info', reasons: [] },
-      { kind: 'degraded', severity: 'warn', reasons: ['lambdamart.not_configured'] },
-    ];
-    for (const v of kinds) expect(isSnapshotLive(v), v.kind).toBe(true);
-  });
+  for (const c of CASES) {
+    it(`NOT live once contact dies: ${c.name}`, () => {
+      vi.useFakeTimers();
+      try {
+        const t0 = new Date('2026-01-01T00:00:00Z').getTime();
+        vi.setSystemTime(t0);
+        __feedForTest({ status: c.status });
+        __tickClockForTest();
+
+        vi.setSystemTime(t0 + 41_000); // past the 40s reachability window: no contact of any channel
+        __tickClockForTest();
+        const dead = getAiState();
+        // Precision: this state must still be winning its higher-precedence branch — otherwise the
+        // assertion below would pass for the WRONG reason (the `channel-stale` path the old
+        // kind-based predicate already handled).
+        expect(dead.stability, c.name).toEqual({ kind: 'provisional', cause: c.cause });
+        expect(dead.verdict.reasons.includes('channel-stale'), c.name).toBe(false);
+        expect(dead.connection.reachable, c.name).toBe(false);
+        expect(dead.snapshotLive, c.name).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it(`ANTI-REGRESSION — still live while contact is fresh: ${c.name}`, () => {
+      vi.useFakeTimers();
+      try {
+        const t0 = new Date('2026-01-01T00:00:00Z').getTime();
+        vi.setSystemTime(t0);
+        __feedForTest({ status: c.status });
+        __tickClockForTest();
+        // Work in flight with the backend answering: still a LIVE observation. That is what the
+        // retired "work in flight, backend answering" pin actually meant — live IFF contact is fresh.
+        expect(getAiState().stability, c.name).toEqual({ kind: 'provisional', cause: c.cause });
+        expect(getAiState().snapshotLive, c.name).toBe(true);
+
+        // ...and it stays live across a poll gap while an SSE frame keeps contact fresh (649).
+        vi.setSystemTime(t0 + 60_000);
+        __feedContactForTest(t0 + 58_000);
+        expect(getAiState().snapshotLive, c.name).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  }
 });
 
 describe('AiState.snapshotLive — projected once, in the store', () => {
@@ -117,15 +181,22 @@ describe('AiState.snapshotLive — projected once, in the store', () => {
     }
   });
 
-  it('a never-contacted origin past the grace window is not live', () => {
+  it('a never-contacted origin is not live — and the boot window is still worded as "starting", not "disconnected"', () => {
     vi.useFakeTimers();
     try {
       const t0 = new Date('2026-01-01T00:00:00Z').getTime();
       vi.setSystemTime(t0);
-      // No poll ever succeeded and the store was never started ⇒ phase 'connecting', which carries no
-      // snapshot to misrepresent. The honest answer there is "live" (nothing stale is being shown).
+      // No poll ever succeeded ⇒ no contact ⇒ not a live observation (round-13 review: liveness is a
+      // contact fact). There is no snapshot to misrepresent either, and the boot window keeps its own
+      // wording: `projectAvailability` answers `phase === 'connecting'` BEFORE it consults liveness,
+      // so "still starting" — not "Backend disconnected." — is what a control says while booting.
       expect(getAiState().verdict.kind).toBe('connecting');
-      expect(getAiState().snapshotLive).toBe(true);
+      expect(getAiState().phase).toBe('connecting');
+      expect(getAiState().snapshotLive).toBe(false);
+      const a = projectAvailability('extract', getAiState());
+      expect(a.kind).toBe('unavailable');
+      if (a.kind !== 'unavailable') throw new Error('unreachable');
+      expect(a.reason).toBe(reasonFor('inference.starting').wording);
     } finally {
       vi.useRealTimers();
     }
@@ -206,8 +277,59 @@ describe('projectAvailability — a live backend is a precondition (807 A.3)', (
         if (av.kind !== 'unavailable') throw new Error('unreachable');
         // ...but the control now says WHY, in the same words the verdict + banner use.
         expect(av.reason).toBe(reasonFor('binding.unreachable').wording);
-        expect(av.transient).toBe(true); // the shell reconnects; this self-clears
+        // NOT transient (round-13 review) — see the click test below for what that flag actually does.
+        expect(av.transient, affordance).toBe(false);
       }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * Round-13 review, P2 — the campaign converted these controls from `?disabled` (inert) to a
+   * transient soft-block, and `transient` is exactly what makes `jf-control` QUEUE the intent
+   * (`Control.activate`) and replay it on the next operable render (`resolveQueued`). "Disabled while
+   * the backend is down" and "queued and fired the moment it comes back" are opposite behaviours; a
+   * live-backend precondition must be the former.
+   */
+  it('a click while not live does not enqueue an intent that later fires', async () => {
+    const t0 = Date.now();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(t0);
+      __feedForTest({
+        status: { worker: { core: { indexedDocuments: 42 } } } as unknown as StatusSnapshot,
+        inference: { mode: 'online', available: true } as never,
+      });
+      __tickClockForTest();
+      vi.setSystemTime(t0 + 41_000);
+      __tickClockForTest();
+
+      const onActivate = vi.fn();
+      const toasts: string[] = [];
+      const listener = (e: Event) => toasts.push((e as CustomEvent).detail?.message ?? '');
+      document.addEventListener(EPHEMERAL_TOAST_EVENT, listener);
+
+      const el = document.createElement('jf-control') as Control;
+      el.label = 'Ask';
+      el.availability = projectAvailability('documents', getAiState());
+      el.onActivate = onActivate;
+      document.body.appendChild(el);
+      await el.updateComplete;
+
+      el.shadowRoot!.querySelector('button')!.click();
+      expect(onActivate).not.toHaveBeenCalled();
+      expect(toasts.some((m) => /queued/i.test(m))).toBe(false);
+      expect(toasts.some((m) => m === reasonFor('binding.unreachable').wording)).toBe(true);
+
+      // The backend comes back: nothing may fire by itself. The user re-clicks if they still want it.
+      __feedContactForTest(Date.now());
+      el.availability = projectAvailability('documents', getAiState());
+      await el.updateComplete;
+      document.removeEventListener(EPHEMERAL_TOAST_EVENT, listener);
+      expect(el.availability.kind).toBe('available'); // precision: the control DID become operable
+      expect(onActivate).not.toHaveBeenCalled();
+      el.remove();
     } finally {
       vi.useRealTimers();
     }

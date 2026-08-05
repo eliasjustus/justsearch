@@ -39,10 +39,10 @@ function makeAiState(overrides: Partial<AiState> = {}): AiState {
     aiEngine: { kind: 'offline', stability: { kind: 'settled' }, installFailure: null },
     ...overrides,
   };
-  // Tempdoc 807 — keep the fixture COHERENT: a test that overrides the verdict to a non-live kind
-  // must not silently keep `snapshotLive: true` (production derives one from the other in
+  // Tempdoc 807 — keep the fixture COHERENT: a test that overrides `connection` to an unreachable
+  // origin must not silently keep `snapshotLive: true` (production derives one from the other in
   // `buildSnapshot`). An explicit override still wins, so a test can pin the pair deliberately.
-  return { ...built, snapshotLive: overrides.snapshotLive ?? isSnapshotLive(built.verdict) };
+  return { ...built, snapshotLive: overrides.snapshotLive ?? isSnapshotLive(built.connection) };
 }
 
 function make(): StatusDeck {
@@ -96,8 +96,10 @@ describe('StatusDeck (slice 461)', () => {
     } as unknown as AiState['status'];
     // The exact round-13 state: a fully-healthy retained snapshot + contact aged out mid-session
     // (verdict `transitioning`/`channel-stale`, NOT `unreachable` — the poll had succeeded once).
+    // Liveness comes from CONTACT (round-13 review), so the fixture states the contact fact.
     el.aiState = makeAiState({
       status: READY_SNAPSHOT,
+      connection: { reachable: false, lastSuccessMs: Date.now() - 60_000, lastContactMs: Date.now() - 60_000, consecutiveFailures: 1 },
       verdict: { kind: 'transitioning', severity: 'warn', reasons: ['channel-stale'] },
     });
     await el.updateComplete;
@@ -121,6 +123,7 @@ describe('StatusDeck (slice 461)', () => {
       status: {
         components: { head: { state: 'LIFECYCLE_STATE_READY' }, worker: { state: 'LIFECYCLE_STATE_READY' } },
       } as unknown as AiState['status'],
+      connection: { reachable: false, lastSuccessMs: null, lastContactMs: null, consecutiveFailures: 1 },
       verdict: { kind: 'unreachable', severity: 'error', reasons: ['binding.unreachable'] },
     });
     await el.updateComplete;

@@ -224,7 +224,10 @@ describe('projectAvailability (tempdoc 596)', () => {
       const a = projectAvailability(affordance, aiState({ chat: true, docs: 5, snapshotLive: false }));
       expect(a.kind, affordance).toBe('unavailable');
       expect(isUnavailable(a) && a.reason).toBe(reasonFor('binding.unreachable').wording);
-      expect(isUnavailable(a) && a.transient).toBe(true); // the shell reconnects; this self-clears
+      // NOT transient (round-13 review): `transient` means "queue the intent and auto-fire it on the
+      // next operable render" (Control.activate/resolveQueued). An unbounded outage must refuse the
+      // click with its reason, not defer it into a command that fires unwatched on reconnect.
+      expect(isUnavailable(a) && a.transient, affordance).toBe(false);
     }
   });
 

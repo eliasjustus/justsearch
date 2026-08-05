@@ -2330,7 +2330,11 @@ export class BrainSurface extends JfElement {
     const live = !this._unifiedAiState || this._unifiedAiState.snapshotLive;
     // The reason is IMPORTED from the one cause vocabulary (`binding.unreachable` — the same row the
     // verdict and the disconnection banner word themselves from), never re-authored here.
-    const offlineGate = unavailableBecause(reasonFor('binding.unreachable').wording, true);
+    // NOT transient (round-13 review): `transient` makes `jf-control` QUEUE the intent and auto-fire
+    // it on reconnect, so an offline click on Online/Indexing/Reload/Activate/Deactivate would land a
+    // burst of conflicting RUNTIME MUTATIONS the moment the backend returns. These controls must be
+    // refused with their reason now, not deferred — the user can re-click once the card is live again.
+    const offlineGate = unavailableBecause(reasonFor('binding.unreachable').wording);
 
     return html`
       <div class="section">

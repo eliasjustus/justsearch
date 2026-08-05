@@ -345,6 +345,18 @@ function dedupDegradationCauses(
   return notice.causes;
 }
 
+/**
+ * Round-13 review (P3) — the docked rungs' ACTIVE tier was `?data-pressed` only: a CSS hook, invisible
+ * to assistive tech, because `jf-control` has no `aria-pressed` passthrough. This project already has
+ * the convention for exactly that gap — {@link UnifiedChatView.renderPinToggle} carries the toggle
+ * state in the accessible LABEL ("Pin this search" / "Unpin this search"). Same convention here: the
+ * label states which rung you are ON, so a screen-reader user can tell the current tier without seeing
+ * the highlight. One helper, so the four rungs cannot word it four different ways.
+ */
+function rungLabel(base: string, active: boolean): string {
+  return active ? `${base} (current mode)` : base;
+}
+
 export class UnifiedChatView extends JfElement {
   static properties = {
     apiBase: { attribute: 'api-base', type: String },
@@ -2529,7 +2541,7 @@ export class UnifiedChatView extends JfElement {
                 class="escalation-search"
                 data-testid="escalation-search"
                 ?data-pressed=${this.affordance === 'retrieve'}
-                label="Back to instant search — no AI needed"
+                label=${rungLabel('Back to instant search — no AI needed', this.affordance === 'retrieve')}
                 .onActivate=${() => {
                   this.explicitAffordance = null;
                   this.schemaAttached = false;
@@ -2546,7 +2558,7 @@ export class UnifiedChatView extends JfElement {
                 class="escalation-structured"
                 data-testid="escalation-structured"
                 ?data-pressed=${this.affordance === 'extract'}
-                label="Extract structured fields against a JSON schema"
+                label=${rungLabel('Extract structured fields against a JSON schema', this.affordance === 'extract')}
                 .availability=${this.aiState?.capabilities?.chat
                   ? undefined
                   : unavailableBecause('The local AI model is offline')}
@@ -2564,8 +2576,9 @@ export class UnifiedChatView extends JfElement {
   /**
    * Tempdoc 807 B.2 — the two AI escalation rungs, rendered by BOTH the landing strip and the docked
    * one so the pair cannot drift (one definition of label, availability gate and test id). The
-   * `data-pressed` bindings are inert on landing (isLanding() implies the `retrieve` tier), so the
-   * landing renders the same elements, attributes and order it did before.
+   * `data-pressed` bindings and the {@link rungLabel} active-suffix are inert on landing (isLanding()
+   * implies the `retrieve` tier), so the landing renders the same elements, attributes, names and
+   * order it did before.
    */
   private renderEscalationRungs(): TemplateResult {
     return html`
@@ -2578,7 +2591,7 @@ export class UnifiedChatView extends JfElement {
         class="escalation-ask"
         data-testid="escalation-ask"
         ?data-pressed=${this.affordance === 'documents'}
-        label="Ask a question and get an answer with citations"
+        label=${rungLabel('Ask a question and get an answer with citations', this.affordance === 'documents')}
         .availability=${this.aiState?.capabilities?.chat
           ? undefined
           : unavailableBecause('The local AI model is offline')}
@@ -2594,7 +2607,7 @@ export class UnifiedChatView extends JfElement {
         class="escalation-delegate"
         data-testid="escalation-delegate"
         ?data-pressed=${this.affordance === 'agent'}
-        label="Delegate a multi-step task to the agent"
+        label=${rungLabel('Delegate a multi-step task to the agent', this.affordance === 'agent')}
         .availability=${this.aiState?.capabilities?.chat
           ? undefined
           : unavailableBecause('The local AI model is offline')}

@@ -10,9 +10,13 @@
  * TEXT, and each has an anti-regression twin proving a healthy verdict still renders normally.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, type TemplateResult } from 'lit';
 import './BrainSurface.js';
+import '../components/Control.js';
+import type { Control } from '../components/Control.js';
+import { EPHEMERAL_TOAST_EVENT } from '../components/advisory/ephemeralToast.js';
+import type { Availability } from '../state/availability.js';
 import type { AiRuntime, AiState, InstallStatus } from '../state/aiStateStore.js';
 import { computeAiEngineVerdict } from '../state/aiVerdict.js';
 import { UNKNOWN, type Maybe } from '../state/known.js';
@@ -218,14 +222,49 @@ describe('BrainSurface — Runtime card (807)', () => {
     // block), not silently clickable-and-failing.
     const buttons = Array.from(dom.querySelectorAll('jf-button')) as unknown as {
       label: string;
-      availability?: { kind: string; reason?: string };
+      availability?: { kind: string; reason?: string; transient?: boolean };
     }[];
     const gated = buttons.filter((b) => ['Online', 'Indexing', 'Reload'].includes(b.label));
     expect(gated.length).toBe(3);
     for (const b of gated) {
       expect(b.availability?.kind, b.label).toBe('unavailable');
       expect(b.availability?.reason, b.label).toBe(DISCONNECTED);
+      // Round-13 review, P2: NOT transient. `transient` is what makes `jf-control` queue the intent
+      // and replay it on reconnect (Control.activate/resolveQueued) — for RUNTIME MUTATIONS that
+      // turns an offline click into a burst of conflicting POSTs the moment the backend returns,
+      // the opposite of the "disabled while disconnected" these controls are supposed to be.
+      expect(b.availability?.transient, b.label).toBeFalsy();
     }
+  });
+
+  it('P2: an offline click on a runtime control neither queues nor fires when the backend returns', async () => {
+    // The REAL gate value the surface produces, driven through a REAL jf-control.
+    const dom = domOf(harness(false).renderRuntimeSection());
+    const online = Array.from(dom.querySelectorAll('jf-button')).find(
+      (b) => (b as unknown as { label: string }).label === 'Online',
+    ) as unknown as { availability?: Availability };
+    expect(online?.availability?.kind).toBe('unavailable');
+
+    const onActivate = vi.fn();
+    const toasts: string[] = [];
+    const listener = (e: Event) => toasts.push((e as CustomEvent).detail?.message ?? '');
+    document.addEventListener(EPHEMERAL_TOAST_EVENT, listener);
+    const el = document.createElement('jf-control') as Control;
+    el.label = 'Online';
+    el.availability = online.availability as Availability;
+    el.onActivate = onActivate;
+    document.body.appendChild(el);
+    await el.updateComplete;
+
+    el.shadowRoot!.querySelector('button')!.click();
+    expect(onActivate).not.toHaveBeenCalled();
+    expect(toasts.some((m) => /queued/i.test(m))).toBe(false);
+
+    el.availability = { kind: 'available' }; // the backend comes back
+    await el.updateComplete;
+    document.removeEventListener(EPHEMERAL_TOAST_EVENT, listener);
+    expect(onActivate).not.toHaveBeenCalled(); // no unattended runtime mutation
+    el.remove();
   });
 
   it('ANTI-REGRESSION: a healthy verdict leaves the Runtime readout and its controls alone', () => {

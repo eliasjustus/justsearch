@@ -386,8 +386,11 @@ export class StatusDeck extends JfElement {
    * predicate gates them rather than a second, dot-local staleness heuristic.
    */
   private connDot(): { cls: string; name: string } {
-    if (this.aiState && !this.aiState.snapshotLive) return { cls: 'error', name: 'disconnected' };
+    // No snapshot at all (pre-first-poll) ⇒ nothing to re-tense and nothing to claim: the honest dot
+    // is the muted "unknown", not a red "disconnected" (round-13 review — liveness is now a CONTACT
+    // fact, and before the shell has looked even once there is no contact either).
     if (!this.status) return { cls: 'muted', name: 'unknown' };
+    if (this.aiState && !this.aiState.snapshotLive) return { cls: 'error', name: 'disconnected' };
     const head = this.status.components?.head?.state;
     const worker = this.status.components?.worker?.state;
     if (head === LIFECYCLE.READY && worker === LIFECYCLE.READY)

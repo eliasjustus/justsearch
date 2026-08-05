@@ -431,3 +431,114 @@ heartbeat-derived contact window, deliberate and defensible — but a round that
 within it will see the pre-fix appearance. The must-watch and any future finding should measure
 **after** the contact window, and the window's existence is the honest cost of not adding a
 second, faster staleness authority.
+
+---
+
+## Part E — Review pass and its fixes (2026-08-05)
+
+A `/review-changes` pass over `92aeed25` produced a claims list with evidence pointers, and an
+**independent refute-first subagent** was given the default stance that every claim was wrong
+until its evidence held. It earned its place twice: it found the campaign's central fix
+bypassable, and it refuted a finding the orchestrator had raised.
+
+### E.1 The fix was silently disabled in SIX states (found by review, now fixed)
+
+`isSnapshotLive` derived from the verdict **kind**. But `computeStability`
+(`verdict.ts:100-126`) returns from six higher-precedence branches *before* it can reach
+`channel-stale`, and every one reads a **retained snapshot** field: `indexState ===
+'UNAVAILABLE'` (`:103`), `migrationState SWITCHING` (`:107`) / `MIGRATING` (`:108`), `building ≠
+active` (`:110`), `servingSearch ≠ servingIngest` (`:115`), `catchingUp` (`:120`). Because
+`statusSig` is retained on a failed poll, any of them wins **forever** once the backend dies —
+`snapshotLive` stayed true and every claim in Part D's before/after table reverted to the
+"Before" column. The ordinary trigger is not exotic: **the Worker dies first** (the backend
+writes `UNAVAILABLE`), then the Head; a laptop resume (`catchingUp`) or a mid-upgrade reindex
+does the same.
+
+What makes this the review's most valuable find is what was defending it: **a green 4005-test
+suite, a doc comment asserting the two non-live kinds were "exactly" what the verdict mints when
+contact is lost, and a test blessing three of the six states as live** ("work in flight, backend
+answering"). The suite passed because the tests asked the wrong question — `audit-without-test`
+inverted: a test that passes for a wrong reason is worse than no test, because it also defends
+the defect.
+
+**Fix:** liveness is now a **contact fact**, not a verdict-kind classification —
+`isSnapshotLive(connection)` returns `connection.reachable`, from `computeReachability()`, which
+already owns both edges (the never-contacted boot grace and the 40 s `isOriginReachable` aging)
+and is the same `reachableViaContact` the verdict itself consumes. No new number, no second
+authority — and *more* faithful to A.3's one-authority rule than what shipped, because a verdict
+kind is a classification six unrelated branches can pre-empt. Both defending artefacts were
+corrected in the same change, and the re-pinned test now asserts those states are live **iff
+contact is fresh**, which is what its own justification always meant.
+
+**Live proof of the specific case** (dev stack, this worktree): Worker killed first so
+`indexState: UNAVAILABLE` is the retained value, then the Head, then waited past the contact
+window. Result: "Search Quality Features **4/4 when last observed**", Runtime "the values below
+are the **last observed readings, not live**" with values dimmed, Online/Indexing/Reload
+**disabled**, "embed queue: 0 · VDU queue: 0 **(last observed)**", "Models **4 when last
+observed**", **red CONN dot**. Against the pre-fix derivation this state rendered fully live,
+indefinitely.
+
+### E.2 Two regressions the campaign introduced, neither covered by any claim
+
+**Queue-and-replay.** Converting the Runtime controls from `?disabled` to
+`.availability=unavailableBecause(reason, transient=true)` changed them from inert to **queued**:
+`Control.activate` holds a transient-unavailable intent and `resolveQueued` fires it the moment
+the control becomes operable. Clicking Online / Indexing / Reload during an outage would have
+fired a burst of conflicting runtime mutations on reconnect — the opposite of the "disabled" this
+document claimed. Fixed by making the liveness-derived unavailability **non-transient** in both
+`BrainSurface`'s gate and `availability.ts`'s arm, on the reasoning that `transient` means a
+*bounded* wait (boot, model load) while not-live is by construction ≥40 s with no contact on any
+channel. The boot window is untouched: `projectAvailability` answers `phase === 'connecting'` →
+`inference.starting` (transient) *before* it consults liveness, so the "queued, runs when ready"
+promise still covers the case it was designed for.
+
+**Visual-only state.** The docked rungs' active tier was CSS-only (`?data-pressed`), while
+`jf-control` has no `aria-pressed` passthrough — and this project documents its own workaround
+200 lines away (`renderPinToggle`: the accessible LABEL carries the state). Now followed via
+`rungLabel(base, active)`; the old test asserted the attribute and so passed for the wrong reason.
+
+### E.3 A finding the orchestrator raised and the refuter REFUTED
+
+The orchestrator claimed Part D overstated W3's precision work ("zero production readers of
+`cpuPrecision()`/`gpuPrecision()`" when four readers exist). **That correction was wrong and was
+not applied.** It is a method-name collision across two types:
+`ModelCapabilities.cpuPrecision()` returns `ModelPrecision`;
+`ModelManifest.Capabilities.cpuPrecision()` returns `String`. All four readers are of the
+*manifest* accessor. Zero production readers of the `ModelCapabilities` accessor — exactly as
+`CapabilityRequirements.java:32-33` states. Applying the "correction" would have inserted a false
+claim into an accurate record. Recorded here because the near-miss is the lesson: the reviewer's
+own finding needed refuting as much as the implementer's.
+
+### E.4 Known residual, evidenced and deliberately not fixed
+
+The **verdict itself** is still pinned by retained fields, so the status *line* can project a
+retained cause after contact is lost (probed: retained `UNAVAILABLE` + 41 s aged contact ⇒
+`{"kind":"transitioning","reasons":["worker-restart"]}`, `statusLabel: "Restarting…"`, while
+`snapshotLive: false` and the dot is red; a later orchestrator run of the same shape showed
+"Reconnecting…", so the wording varies with what the final snapshot held). Everything Part D
+claimed — last-observed wording, blocked controls, red dot, AI-engine gating — is now honest;
+this is the status wording alone. The fix is a precedence change inside `computeStability` (lost
+contact should dominate anything derived from a retained snapshot), which moves the status bar,
+the announcer, the Health surface and the N1 completion-toast edge — a change to the one verdict
+authority that should not be made unasked immediately before a qualification round. **Recorded so
+that if round 14 files it, the decision is on the record rather than rediscovered.**
+
+Also recorded from the review, not fixed: `expiresAt` now ships on the wire with **no ui-web
+consumer** (the expired-pending must-watch is API-performable only — a round should not expect a
+countdown in the UI); the floor rung is clickable mid-stream and swaps away a streaming answer
+(recoverable, pre-existing in kind); and no ui-shot covers the docked composer at a small
+viewport, which is where round 8's F5 layout defect lived.
+
+### E.5 Verification
+
+`isSnapshotLive` bite proof restored the old derivation and failed **7 tests** — all six
+precedence states plus the never-contacted case. Each regression fix carries its own bite proof
+(the queue test observes the "queued" toast reappear; the a11y test loses "(current mode)").
+Suite **4015 tests / 384 files** green (was 4005); `check-ai-verdict-derivation`, the ui-web,
+shell-v0, views and kernel gate sets all green, with the two known-red-on-main entries unchanged
+and confined to their own files. Two corrections to the review's own brief, from the fixer: there
+are **six** precedence branches, not five (`catchingUp` was missed), and the pre-existing test
+`a never-contacted origin past the grace window is not live` **asserted the opposite of its own
+name** — now matching it. One further production bug surfaced by the contact rule and fixed:
+`StatusDeck.connDot()` painted a red "disconnected" dot when there was no snapshot at all
+(pre-first-poll), now answering "no snapshot" before it consults liveness.
