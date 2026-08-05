@@ -215,7 +215,12 @@ export class AuthorizationHost extends JfElement {
 
   private failClosed(item: CeremonyItem): void {
     // Only the one-shot authorize prompt fails closed. A capability request is left pending.
-    if (item.kind === 'authorize') item.resolve({ approved: false, allowAlways: false });
+    // `failedClosed` (tempdoc 807 item 4) marks this as a teardown, not a human deny, so the
+    // awaiting dispatcher can tell the user the approval never completed rather than ending in
+    // silence — the ceremony vanished from under the user, which looks exactly like a dismissal.
+    if (item.kind === 'authorize') {
+      item.resolve({ approved: false, allowAlways: false, failedClosed: true });
+    }
   }
 
   /**

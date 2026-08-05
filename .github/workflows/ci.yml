@@ -179,6 +179,16 @@ jobs:
       - name: Update never ships or deletes models
         run: node scripts/ci/check-update-preserves-models.mjs
 
+      - name: Test the installer-branding gate
+        run: node scripts/ci/check-installer-branding.test.mjs
+
+      # Three sandbox rounds reported an NSIS wizard naming no version anywhere. Tempdoc 806 routed
+      # it through bundle.copyright -> BrandingText; round 13 found that covered only the interior
+      # pages, because MUI's Welcome and Finish pages draw no strip (tempdoc 807 R13-F1). Both
+      # halves live outside any build the repo can run, so both can regress with every test green.
+      - name: Installer wizard names the version it installs
+        run: node scripts/ci/check-installer-branding.mjs
+
       # Sandbox round 9 F1 (BLOCKER): lib.rs registered tauri_plugin_updater unconditionally
       # while plugins.updater lived only in the tag-build overlay, so every non-tag candidate's
       # shell panicked at startup (PluginInitialization, exit 101) before any window or log.

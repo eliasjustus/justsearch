@@ -1233,6 +1233,14 @@ export const unifiedChatBodyStyles = css`
       font-size: var(--font-size-xs);
       color: var(--text-tertiary);
     }
+    /* 807 B.2 — the DOCKED variant of the strip (rendered once a search has run, where the rungs used
+       to disappear entirely). It rides under the bar with the row's own left alignment and the quiet
+       gap of the other bar-secondary rows; the landing rules above are untouched. */
+    .escalation-strip-docked {
+      justify-content: flex-start;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
     /* Schema input textarea: not migrated to jf-composer (no submit). */
     .composer textarea.mono {
       font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, monospace;
@@ -1286,7 +1294,8 @@ export const unifiedChatBodyStyles = css`
     jf-control.pin-toggle::part(control),
     jf-control.schema-attach::part(control),
     jf-control.schema-detach::part(control),
-    jf-control.escalation-delegate::part(control) {
+    jf-control.escalation-delegate::part(control),
+    .escalation-strip-docked jf-control::part(control) {
       display: inline-flex;
       align-items: center;
       gap: 0.3rem;
@@ -1302,9 +1311,18 @@ export const unifiedChatBodyStyles = css`
     jf-control.pin-toggle::part(control):hover,
     jf-control.schema-attach::part(control):hover,
     jf-control.schema-detach::part(control):hover,
-    jf-control.escalation-delegate::part(control):hover {
+    jf-control.escalation-delegate::part(control):hover,
+    .escalation-strip-docked jf-control::part(control):hover {
       color: var(--text-primary);
       border-color: var(--border-strong);
+    }
+    /* 807 B.2 — the rung you are ON. Without it the docked strip would offer the current tier as an
+       escalation target and the click would look like a no-op. Deliberately NOT the pin-toggle's
+       accent departure (an active tier is the normal state, not an exception worth an accent). */
+    .escalation-strip-docked jf-control[data-pressed]::part(control) {
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+      background: var(--surface-hover);
     }
     /* The pinned state is the one deliberate departure from the shared quiet look (the accent
        marks the exception being pinned, not a fourth bespoke class). */

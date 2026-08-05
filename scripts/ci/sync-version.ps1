@@ -119,15 +119,23 @@ $changed = (Update-FileRegex -Path $tauriConf -Label "tauri.conf.json" -Pattern 
 $changed = (Update-FileRegex -Path $shellPkg -Label "modules/shell/package.json" -Pattern '\"version\"\s*:\s*\"[^\"]+\"' -Replacement ('"version": "' + $version + '"') -DryRun:$WhatIf) -or $changed
 
 # Tempdoc 806 B.2 (round-12, third round to report it): the NSIS wizard named no version on any
-# page. Tauri's generated installer.nsi renders `bundle.copyright` as `BrandingText` -- the strip
-# at the bottom of EVERY wizard page -- so this is the one place the version can reach the visible
-# installer without forking a Tauri-generated asset. (`bundle.windows.nsis.installerHooks`, the one
-# installer file this repo owns, is `!include`d BEFORE `!define VERSION`, so it cannot name the
-# version at all.) Derived here from the SAME canonical gradle version as everything above, so the
-# branding line cannot drift into claiming a version the build is not.
+# page. Tauri's generated installer.nsi renders `bundle.copyright` as `BrandingText`, the strip at
+# the bottom of the wizard's INTERIOR pages (Choose Install Location, Installing, Complete) and of
+# the uninstaller -- so this is the one place the version can reach those pages without forking a
+# Tauri-generated asset. Derived here from the SAME canonical gradle version as everything above,
+# so the branding line cannot drift into claiming a version the build is not.
+#
+# Corrected by tempdoc 807 R13-F1 (round 13 verified the wizard page by page): "every wizard page"
+# was wrong. MUI's Welcome and Finish pages are full-window and draw no branding strip, so 806's
+# lever never reached them. Those two are now covered separately, by MUI_WELCOMEPAGE_TEXT /
+# MUI_FINISHPAGE_TEXT in nsis/installer-hooks.nsh -- which 806 believed impossible because the
+# template `!include`s that file before `!define VERSION`/`COPYRIGHT`. That constraint is real only
+# for IMMEDIATE uses: NSIS expands a nested `${...}` inside a define when the define is USED, and
+# both pages are declared after the template's defines (verified with makensis, 807 Part C).
+# `check-installer-branding.mjs` gates both halves; keep them in step.
 $tauriConfRaw = Get-Content -LiteralPath $tauriConf -Raw -Encoding UTF8
 if ($tauriConfRaw -notmatch '\"copyright\"\s*:\s*\"') {
-  Fail "tauri.conf.json has no bundle.copyright field. It carries the installer branding line (the only visible surface that names the version); add it rather than dropping the version from the wizard."
+  Fail "tauri.conf.json has no bundle.copyright field. It carries the installer branding line on the wizard's interior pages and the uninstaller; add it rather than dropping the version from the wizard."
 }
 $changed = (Update-FileRegex -Path $tauriConf -Label "tauri.conf.json (installer branding line)" -Pattern '\"copyright\"\s*:\s*\"[^\"]*\"' -Replacement ('"copyright": "JustSearch ' + $version + ' - Copyright (c) JustSearch"') -DryRun:$WhatIf) -or $changed
 $changed = (Update-FileRegex -Path $cargoToml -Label "Cargo.toml" -Pattern '^(\s*version\s*=\s*\")[^\"]+(\"\s*)$' -Replacement ('${1}' + $version + '${2}') -DryRun:$WhatIf) -or $changed

@@ -71,6 +71,15 @@ export interface AuthorizationDecision {
    * legible "previous run's pending action was cancelled" notice instead of a per-ceremony error.
    */
   readonly superseded?: boolean;
+  /**
+   * Tempdoc 807 item 4 — set when the deny is a FAIL-CLOSED outcome rather than a human decision:
+   * no presenter was mounted when the ceremony was requested, or a mounted host was torn down with
+   * the ceremony still open. Both resolve `approved: false` by design (550: a gated action is never
+   * silently approved because the UI wasn't there to ask) — but they are failures, not refusals,
+   * and a caller that treats them as "the user said no" tells the user nothing. Sandbox round 13's
+   * residual finding: the modal dismissed, nothing dispatched, and no visible error said why.
+   */
+  readonly failedClosed?: boolean;
 }
 
 /** Resolves to the user's {@link AuthorizationDecision}. */
@@ -121,7 +130,9 @@ export async function requestAuthorization(
   prompt: AuthorizationPrompt,
 ): Promise<AuthorizationDecision> {
   if (!presenter) {
-    return { approved: false, allowAlways: false }; // fail-closed: no host mounted
+    // Fail-closed: no host mounted. Flagged (tempdoc 807 item 4) so a caller can tell this apart
+    // from a human deny and say so, instead of ending the ceremony in silence.
+    return { approved: false, allowAlways: false, failedClosed: true };
   }
   return presenter(prompt);
 }

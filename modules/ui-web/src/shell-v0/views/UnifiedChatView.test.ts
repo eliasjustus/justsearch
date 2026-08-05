@@ -64,6 +64,10 @@ import { setUiMode, __resetUiModeForTest } from '../state/uiModeState.js';
 const AI_STATE_READY = {
   capabilities: { chat: true, rag: true, extract: false, embedding: false },
   activity: { state: 'idle', shapeId: null, startedAtMs: null, canCancel: false, cancel: null },
+  // Tempdoc 807 A.3 — "READY" means the backend is answering, so the snapshot is a LIVE observation.
+  // `projectAvailability` now gates on this first (a dead backend leaves `capabilities.chat` true off
+  // the retained snapshot), so a fixture that omits it would describe a disconnected backend.
+  snapshotLive: true,
 };
 vi.mock('../state/aiStateStore.js', () => ({
   startAiStateStore: vi.fn(),
@@ -2310,6 +2314,43 @@ describe('UnifiedChatView retrieve base tier (577 Goal 3 §3.2)', () => {
       view.remove();
     });
 
+    // Tempdoc 807 A.3 (round-13 R13-F2) — a DEAD backend leaves `capabilities.chat` true (it is read
+    // off the retained inference snapshot), so before the liveness gate the chip happily offered Ask
+    // against a process that no longer existed. Liveness now pins it exactly as a chat gap does.
+    it('807: pins to search when the snapshot is no longer live, even though chat still reads capable', async () => {
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.aiState = {
+        ...AI_STATE_READY,
+        capabilities: { ...AI_STATE_READY.capabilities, chat: true },
+        snapshotLive: false,
+      } as unknown as UnifiedChatView['aiState'];
+      view.inputDraft = 'how do I configure ocr?';
+      await view.updateComplete;
+      const chip = view.shadowRoot?.querySelector('jf-route-chip') as
+        | (HTMLElement & { route: string; pinned: boolean })
+        | null;
+      expect(chip!.pinned).toBe(true);
+      expect(chip!.route).toBe('search');
+      view.remove();
+    });
+
+    it('807 ANTI-REGRESSION: the SAME state with a live snapshot is not pinned', async () => {
+      const view = mountView();
+      await view.updateComplete;
+      view.affordance = 'retrieve';
+      view.aiState = { ...AI_STATE_READY } as unknown as UnifiedChatView['aiState'];
+      view.inputDraft = 'how do I configure ocr?';
+      await view.updateComplete;
+      const chip = view.shadowRoot?.querySelector('jf-route-chip') as
+        | (HTMLElement & { route: string; pinned: boolean })
+        | null;
+      expect(chip!.pinned).toBe(false);
+      expect(chip!.route).toBe('ask');
+      view.remove();
+    });
+
     it('never escalates to Ask when pinned — submit runs a search instead', async () => {
       const { submitSearch } = await import('../state/searchState.js');
       const view = mountView();
@@ -4016,6 +4057,182 @@ describe('Search Thread Round-2 R4 — bar re-skin (jf-control compositions)', (
     await clickJfControl(view.shadowRoot?.querySelector('[data-testid="escalation-ask"]'));
     await view.updateComplete;
     expect(view.affordance).toBe('documents');
+  });
+});
+
+// Tempdoc 807 B.2 — the rung-reachability class, root-caused: the escalation strip rendered ONLY
+// while `isLanding()`, so after ANY search every rung control left the DOM. Round 11 lost ~8 minutes
+// to a Delegate reachable only from the empty landing; round 13 found no route back to Structured
+// after a search and forfeited its `shape:core.extract` coverage gate. These tests assert the rungs
+// are PRESENT AND ACTIVATABLE in the post-search state — the assertion both rounds would have failed.
+describe('Tempdoc 807 B.2 — escalation rungs survive the landing → post-search transition', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetUnifiedChatState();
+    searchListener = null;
+  });
+
+  async function clickRung(view: UnifiedChatView, testid: string): Promise<void> {
+    const el = view.shadowRoot?.querySelector(`[data-testid="${testid}"]`);
+    expect(el, `${testid} must be in the DOM to be clickable`).toBeTruthy();
+    expect(el!.tagName.toLowerCase()).toBe('jf-control');
+    await (el as unknown as { updateComplete: Promise<boolean> }).updateComplete;
+    (el!.shadowRoot!.querySelector('button') as HTMLButtonElement).click();
+  }
+
+  function shapeOf(view: UnifiedChatView): string {
+    return (view as unknown as { currentShapeId(): string }).currentShapeId();
+  }
+
+  /** A POST-SEARCH state: a live query + hits, so `isLanding()` is false and the bar is docked. */
+  async function mountPostSearch(): Promise<UnifiedChatView> {
+    const view = mountView();
+    await view.updateComplete;
+    searchListener!({
+      ...SEARCH_EMPTY,
+      query: 'quarterly report',
+      results: [{ id: 'h1', title: 'T', path: '/t.md', snippet: '', kind: 'markdown' }],
+      matchCount: 1,
+      totalHits: 1,
+    });
+    await view.updateComplete;
+    expect(
+      view.shadowRoot?.querySelector('[data-testid="escalation-strip-docked"]'),
+      'the docked strip must exist once a search has run',
+    ).not.toBeNull();
+    return view;
+  }
+
+  it('every rung is reachable AFTER a search has run — Delegate (round 11), Structured (round 13), Ask, and back to the floor', async () => {
+    const view = await mountPostSearch();
+    expect(view.affordance).toBe('retrieve');
+
+    // Round 11: Delegate existed only on the empty landing; a cold restart was the only route.
+    await clickRung(view, 'escalation-delegate');
+    await view.updateComplete;
+    expect(view.affordance).toBe('agent');
+
+    // Round 13: no route back to Structured after a search — and from a non-retrieve tier the route
+    // row (with its "+ Schema") is not rendered at all, so the strip is the ONLY way in.
+    await clickRung(view, 'escalation-structured');
+    await view.updateComplete;
+    expect(view.affordance).toBe('extract');
+    expect(shapeOf(view)).toBe('core.extract');
+
+    await clickRung(view, 'escalation-ask');
+    await view.updateComplete;
+    expect(view.affordance).toBe('documents');
+    expect(shapeOf(view)).toBe('core.rag-ask');
+
+    await clickRung(view, 'escalation-search');
+    await view.updateComplete;
+    expect(view.affordance).toBe('retrieve');
+  });
+
+  it('the Structured rung ATTACHES (it does not pin the tier), so "Detach schema" still returns to the floor', async () => {
+    const view = await mountPostSearch();
+    // Pin a tier first: `explicit` outranks the attachment in deriveAffordance, so a rung that only
+    // set `schemaAttached` from here would change nothing at all.
+    await clickRung(view, 'escalation-ask');
+    await view.updateComplete;
+    expect(view.affordance).toBe('documents');
+
+    await clickRung(view, 'escalation-structured');
+    await view.updateComplete;
+    expect((view as unknown as { schemaAttached: boolean }).schemaAttached).toBe(true);
+    expect((view as unknown as { explicitAffordance: unknown }).explicitAffordance).toBeNull();
+    expect(view.affordance).toBe('extract');
+
+    await clickRung(view, 'schema-detach');
+    await view.updateComplete;
+    expect(view.affordance).toBe('retrieve');
+  });
+
+  it('post-search, an AI-requiring rung still NAMES its reason offline instead of dying silently (804 §B9 semantics survive)', async () => {
+    const view = await mountPostSearch();
+    (view as unknown as { aiState: unknown }).aiState = {
+      ...AI_STATE_READY,
+      capabilities: { ...AI_STATE_READY.capabilities, chat: false },
+    };
+    view.requestUpdate();
+    await view.updateComplete;
+
+    for (const id of ['escalation-ask', 'escalation-delegate', 'escalation-structured']) {
+      const el = view.shadowRoot?.querySelector(`[data-testid="${id}"]`) as HTMLElement & {
+        availability?: { kind: string; reason?: string };
+      };
+      expect(el, id).not.toBeNull();
+      expect(el.availability?.kind, id).toBe('unavailable');
+      expect(el.availability?.reason, id).toBe('The local AI model is offline');
+    }
+
+    await clickRung(view, 'escalation-structured');
+    await view.updateComplete;
+    expect(view.affordance).toBe('retrieve'); // blocked — and it says why
+
+    // The search floor is never AI-gated: its rung stays operable with the model down.
+    const floor = view.shadowRoot?.querySelector('[data-testid="escalation-search"]') as HTMLElement & {
+      availability?: { kind: string };
+    };
+    expect(floor.availability).toBeUndefined();
+  });
+
+  it('the landing strip is UNCHANGED: one strip, landing copy, no docked-only rungs, no pressed state', async () => {
+    const view = mountView();
+    await view.updateComplete;
+
+    const strips = view.shadowRoot!.querySelectorAll('.escalation-strip');
+    expect(strips.length).toBe(1);
+    const strip = strips[0] as HTMLElement;
+    expect(strip.className).toBe('escalation-strip');
+    expect(view.shadowRoot?.querySelector('[data-testid="escalation-strip-docked"]')).toBeNull();
+    expect(strip.textContent).toContain('Search instantly');
+    expect(strip.querySelector('[data-testid="escalation-ask"]')).not.toBeNull();
+    expect(strip.querySelector('[data-testid="escalation-delegate"]')).not.toBeNull();
+    // The docked-only rungs stay off the landing — there, Structured is still the route row's
+    // "+ Schema" attachment and the floor is where you already are.
+    expect(view.shadowRoot?.querySelector('[data-testid="escalation-structured"]')).toBeNull();
+    expect(view.shadowRoot?.querySelector('[data-testid="escalation-search"]')).toBeNull();
+    expect(strip.querySelector('[data-pressed]')).toBeNull();
+    expect(view.shadowRoot?.querySelector('[data-testid="schema-attach"]')).not.toBeNull();
+  });
+
+  it('the docked strip marks the tier you are ON, so no rung offers a click that would change nothing', async () => {
+    const view = await mountPostSearch();
+    const pressed = (id: string): boolean =>
+      view.shadowRoot!.querySelector(`[data-testid="${id}"]`)!.hasAttribute('data-pressed');
+    // Round-13 review (P3): `data-pressed` is a CSS hook and NOTHING else — `jf-control` has no
+    // `aria-pressed` passthrough, so asserting it alone passes for the wrong reason (a sighted-only
+    // signal). The state a screen reader gets is the accessible NAME (the `renderPinToggle`
+    // convention, 200 lines up), so assert that too — read off the rendered button, not the property.
+    const accName = async (id: string): Promise<string> => {
+      const el = view.shadowRoot!.querySelector(`[data-testid="${id}"]`)!;
+      await (el as unknown as { updateComplete: Promise<boolean> }).updateComplete;
+      return el.shadowRoot!.querySelector('button')!.getAttribute('aria-label') ?? '';
+    };
+
+    expect(pressed('escalation-search')).toBe(true);
+    expect(pressed('escalation-delegate')).toBe(false);
+    expect(await accName('escalation-search')).toContain('(current mode)');
+    for (const id of ['escalation-delegate', 'escalation-ask', 'escalation-structured']) {
+      expect(await accName(id), id).not.toContain('(current mode)');
+    }
+
+    await clickRung(view, 'escalation-delegate');
+    await view.updateComplete;
+    expect(pressed('escalation-delegate')).toBe(true);
+    expect(pressed('escalation-search')).toBe(false);
+    expect(await accName('escalation-delegate')).toBe(
+      'Delegate a multi-step task to the agent (current mode)',
+    );
+    expect(await accName('escalation-search')).toBe('Back to instant search — no AI needed');
+
+    await clickRung(view, 'escalation-structured');
+    await view.updateComplete;
+    expect(await accName('escalation-structured')).toBe(
+      'Extract structured fields against a JSON schema (current mode)',
+    );
+    expect(await accName('escalation-delegate')).not.toContain('(current mode)');
   });
 });
 

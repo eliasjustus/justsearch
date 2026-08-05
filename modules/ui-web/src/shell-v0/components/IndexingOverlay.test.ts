@@ -1,8 +1,11 @@
 // @vitest-environment happy-dom
 
 import { describe, expect, it, beforeEach } from 'vitest';
+import { nothing } from 'lit';
 import './IndexingOverlay.js';
 import type { IndexingOverlay } from './IndexingOverlay.js';
+import type { AiState } from '../state/aiStateStore.js';
+import { known } from '../state/known.js';
 
 function make(): IndexingOverlay {
   const el = document.createElement('jf-indexing-overlay') as IndexingOverlay;
@@ -73,5 +76,35 @@ describe('IndexingOverlay (slice 460)', () => {
     el.dismissible = false;
     await el.updateComplete;
     expect(el.shadowRoot?.querySelector('button.close')).toBeNull();
+  });
+});
+
+/**
+ * Tempdoc 807 A.3 (round-13 R13-F2) — the HOST decides whether the overlay may assert "indexing is
+ * happening right now". Its inputs are fields off the retained snapshot, so with the backend dead it
+ * kept asserting live work (and offered a "Go online" button that would POST into the void).
+ */
+describe('IndexingOverlayHost — snapshot liveness (807)', () => {
+  interface HostHarness {
+    aiState: AiState | null;
+    render(): unknown;
+  }
+  /** Detached (never appended) ⇒ no connectedCallback ⇒ the store subscription can't overwrite the fixture. */
+  const host = (snapshotLive: boolean): HostHarness => {
+    const el = document.createElement('jf-indexing-overlay-host') as unknown as HostHarness;
+    el.aiState = {
+      runtime: { mode: 'indexing' },
+      index: { embeddingQueueSize: known(4789), vduQueueSize: known(0) },
+      snapshotLive,
+    } as unknown as AiState;
+    return el;
+  };
+
+  it('withdraws when the snapshot is no longer a live observation', () => {
+    expect(host(false).render()).toBe(nothing);
+  });
+
+  it('ANTI-REGRESSION: still renders while the snapshot IS live', () => {
+    expect(host(true).render()).not.toBe(nothing);
   });
 });
