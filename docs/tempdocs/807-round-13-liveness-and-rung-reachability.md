@@ -135,3 +135,47 @@ regression home is a source-side assertion extended to those templates.
 - **C4 — the CONN dot may be a distinct authority** from the AI-state store (the status bar has
   its own connection tracking, `HealthLitView.ts:144` carries a disconnect debounce). If so, the
   fix must reconcile the two rather than adding a third; report which authority won.
+
+---
+
+## Part D — Implementation record
+
+**W2 (rung reachability) — ACCEPTED.** Route (a) extended: the escalation strip now renders in
+both states from ONE rung definition (`renderEscalationRungs()`), landing markup byte-for-byte
+unchanged, both branches at the same position inside the same `.composer` container so 687 R5a's
+stable-slot invariant holds (`jf-composer` is never moved, re-parented or re-keyed). Route (b)
+was rejected with evidence: the post-search route chip expresses the per-turn route
+(search↔ask), a different axis from the standing tier, and its whole row renders only while
+`affordance === 'retrieve'` — i.e. it is invisible in exactly the pinned-tier states rounds 11
+and 13 got stuck in, so it cannot be the carrier.
+
+Two docked-only rungs beyond the brief's three, each forced by the fix and each argued:
+**Structured** goes through the one derivation authority (`explicitAffordance = null;
+schemaAttached = true` — `deriveAffordance` prefers explicit over attachment) rather than setting
+`affordance = 'extract'` directly, which would have made "Detach schema" a silent no-op
+(bite-proven); and **Search (back to the floor)** exists because adding a post-search entry into
+`agent`/`documents` WITHOUT an exit would have re-created round 11's trap in reverse, escapable
+only via "New chat". Five bite proofs, the first of which re-broke the exact pre-fix condition
+(`isLanding() || true`) and failed the four post-search tests while the landing test stayed green
+— proving the bite touched only the new route.
+
+**Round 13's uncovered `shape:core.extract` is closed at its cause:** one test drives the real
+DOM (`jf-control` → shadow `<button>` → click) from a rendered-results state and reaches
+Delegate → `agent` (round 11's finding), Structured → `extract` / `core.extract` (round 13's),
+Ask → `documents`, and Search → `retrieve`. Offline, all three AI rungs report
+`kind: 'unavailable'` with the 804 §B9 sibling wording rather than dead-clicking.
+
+Two refinements the worker established at source, worth keeping: post-search **in the retrieve
+tier** the "+ Schema" route row was still present — the Structured dead-end begins the moment
+the tier is pinned away from retrieve (`escalateAsk` pins `documents`), which is exactly round
+13's path; and the Structured rung is deliberately left unconditional even where that duplicates
+"+ Schema", because hiding it when another route happens to be showing would re-create the
+"hidden behind composer state" class this campaign exists to kill.
+
+**Cross-bundle finding (recorded because the discipline is the point):** W2 measured 24 failures
+across three test files, traced them to W1's in-flight `snapshotLive` arm in
+`projectAvailability`, and PROVED causation by adding the field to one fixture (157/157 green)
+before reverting it per "report, don't fix" — leaving the fix to the owning bundle in one
+coherent pass. Residual for W1's C3 enumeration: the rungs gate on `aiState.capabilities.chat`
+directly rather than `projectAvailability`, so with a dead backend they stay clickable —
+pre-existing, not a regression, and the same class as A.3.
