@@ -138,6 +138,87 @@ regression home is a source-side assertion extended to those templates.
 
 ---
 
+## Part E — W3 outcomes (R13-F1 and the three round-13 smaller findings)
+
+### E.1 R13-F1 — FIXED, and 806's "impossible" was wrong at source
+
+**A clean non-fork lever exists.** MUI takes both full pages' text through `MUI_DEFAULT` — an
+`!ifndef` (`Contrib/Modern UI 2/Pages/Welcome.nsh:72`, `Pages/Finish.nsh:156`) — so a `!define` in
+`nsis/installer-hooks.nsh`, the one installer file this repo owns, wins over MUI's default. No
+template fork, no `customLanguageFiles`.
+
+806's blocking note — *"`installer_hooks` is included before `!define VERSION`, so hooks cannot
+reference the version"* — is **false for this use**, and that was verified rather than argued.
+`!include "{{installer_hooks}}"` is indeed line 35 and `!define VERSION`/`COPYRIGHT` lines 42/55
+(tauri-bundler `installer.nsi`, dev @ 2.11.x), but NSIS expands a nested `${...}` inside a define
+when the define is **used**, not when it is written. A `makensis` probe settled it:
+
+```
+!define HOOKTITLE "JustSearch ${VERSION}"    ; VERSION not yet defined
+!define VERSION "0.2.0"
+!warning "PROBE_RESULT=[${HOOKTITLE}]"       ->  PROBE_RESULT=[JustSearch 0.2.0]
+```
+
+A second probe compiled the REAL hook file in the template's exact ordering with
+`MUI_PAGE_WELCOME`/`MUI_PAGE_FINISH` (exit 0) and found the branding line baked into the built
+installer twice in its appended form — once per page. The 806 constraint holds only for
+*immediate* uses at include time.
+
+Shipped: `MUI_WELCOMEPAGE_TEXT` / `MUI_FINISHPAGE_TEXT` appended with `${COPYRIGHT}` (localized MUI
+text preserved, so non-English installers keep their wording), plus `MUI_FINISHPAGE_TEXT_LARGE` —
+not cosmetic: the finish page carries both checkboxes, which caps its text box at 40u and would
+clip the appended line. Regression home: `scripts/ci/check-installer-branding.mjs` (+ test, wired
+into CI) pins both halves — `bundle.copyright` must name the bundle version, and both MUI pages
+must declare `${COPYRIGHT}`-bearing text. The false claim in `sync-version.ps1` ("the strip at the
+bottom of EVERY wizard page", "hooks cannot name the version at all") is corrected in place.
+
+### E.2 "Shipped models reported degraded" — half fixed here, half needs a release asset
+
+Six warnings, and they split cleanly. **Four are precision, and they were this repo's defect.**
+`Fact.PRECISION` sat in the `EMBEDDING` and `NER` role presets justified as *"informational —
+surfaced by `DevModeVariantProbe`"*. That premise is false at source: `DevModeVariantProbe:59,75-83`
+loads its own manifest and runs its own filename guess, never consulting the resolver, and nothing
+in production reads `ModelCapabilities.cpuPrecision()`/`gpuPrecision()` at all — the runtime's
+precision authority is `VariantSelection.precision()` off the install contract. So the resolver
+guessed an unread fact from a filename and logged the guess as "model capability degraded",
+including **FP32 for the NER CPU variant the registry declares INT8**, about a file a CUDA install
+never downloads. Precision is now in no role preset (still reachable via `ALL` for diagnostics);
+`ModelCapabilityResolverShippedPackTest` pins the shipped-pack layouts.
+
+**Two are real and CANNOT be fixed here.** The released `embed-model_manifest.json` asset (135
+bytes) predates the tempdoc-710 capability authoring pass: no `capabilities` block, and `cpu`
+pointing at `model_fp16.onnx` where the repo's own manifest says `model.onnx`. The `ner`,
+`reranker`, `citation-scorer` and `splade` packs ship **no manifest at all**. So a clean install
+genuinely cannot declare the embedding pack's context length or prefixes, and those two warnings
+are correct — they are the release assets telling the truth about themselves. Closing them means
+uploading regenerated manifests to `justsearch-releases@models-v1` and adding the matching
+`supportingFiles` sha256/URL entries to `model-registry.v2.json`. Deliberately left undone and
+logged; the test above asserts those two warnings STAY, so silencing them later is a visible change.
+
+### E.3 F3's premise was wrong: pendings do expire — nothing said when
+
+Round 13 called the `expired-pending-approval-ceremony` unperformable "because no TTL exists".
+The TTL exists: `PendingAuthorizationStore.DEFAULT_TTL` is 5 minutes, `PendingAuthorization` has
+carried `expiresAt` since it was written, and `PendingAuthorizationEvent` carries it too. It was
+simply never put on any consumer-facing surface. Added additively (ISO-8601 UTC) to the peek
+endpoint's payload and the advisory stream's `classExtras`; the raw `system:pending-authorizations`
+payload already carried it (whole-record serialization). The charter item is now performable, and a
+client can tell a user how long an approval request is valid.
+
+### E.4 The silent failed approval was a fail-closed deny wearing a refusal's clothes
+
+Every approve path already reported network/HTTP failures. The one branch with no user-visible
+outcome was `!decision.approved` — which conflates an explicit human deny with a **fail-closed**
+outcome: no `<jf-authorization-host>` mounted (`authorizationBroker:124`) or a mounted host torn
+down mid-ceremony (`AuthorizationHost.failClosed`). Both resolved the identical
+`{approved: false, allowAlways: false}`, so the bridge returned in silence — exactly round 13's
+shape: the modal dismissed, nothing dispatched, nothing said. Fixed by marking those two sites
+`failedClosed: true` (additive, mirroring `superseded`) and reporting them through
+`reportExecutionFailure` → the existing sticky error toast. An explicit deny stays silent; a
+decision is not a failure.
+
+---
+
 ## Part D — Implementation record
 
 **W2 (rung reachability) — ACCEPTED.** Route (a) extended: the escalation strip now renders in
@@ -179,3 +260,79 @@ before reverting it per "report, don't fix" — leaving the fix to the owning bu
 coherent pass. Residual for W1's C3 enumeration: the rungs gate on `aiState.capabilities.chat`
 directly rather than `projectAvailability`, so with a dead backend they stay clickable —
 pre-existing, not a regression, and the same class as A.3.
+
+**W1 (snapshot liveness) — ACCEPTED, and it corrected this document's design twice.**
+
+*Correction 1, material:* Part A.2's premise was wrong. `computeVerdict` mints `unreachable`
+ONLY when `phase === 'disconnected'`, which requires that **no poll ever succeeded**. Killing a
+backend that was working drives `phase` to `'stale'` → `computeStability` returns
+`channel-stale` → the verdict is **`transitioning` / warn / `['channel-stale']`**, label
+"Reconnecting…". A predicate keyed on `unreachable` alone — which is what A.3 described — would
+have left every photographed surface exactly as it was. The shipped `isSnapshotLive(verdict)`
+covers both kinds (precisely the two `computeVerdict` mints when `reachableViaContact` is false),
+so it is a faithful re-reading of the one verdict authority rather than a second signal.
+
+*Correction 2:* A.3's claim that the "Backend disconnected." banner is the loud correct signal
+the surfaces were contradicting is also wrong — that banner is `unreachable`-only too, so it
+never appeared in the reproduced state either (the loud signal there is the pill's
+"Reconnecting…"). W1 authored no new disconnection phrase; every string it added imports
+`reasonFor('binding.unreachable').wording`, the same row the verdict words itself from, so the
+surfaces cannot drift from the status line.
+
+*C4 answer (a real find):* `HealthLitView`'s `DISCONNECT_DEBOUNCE_MS` is NOT a rival authority —
+it debounces the SSE channel only, and that view already consumes
+`getAiState().connection.reachable`. The actual second authority was
+**`StatusDeck.connDotClass()`**, re-deriving connection health from raw
+`status.components.head/worker.state` off the retained snapshot — which reads `READY/READY`
+forever after both processes die. That is why the dot stayed green. The store's authority won;
+the lifecycle fields now answer only "what were the components doing when we last heard".
+
+*C3 enumeration (honest, with named non-fixes):* five consumers changed (embedding-progress card,
+Search-Quality count + per-feature dots, Models count, Runtime card readout + 5 controls, plus
+`projectAvailability` and the indexing overlay). Deliberately left: Health (the diagnosis surface
+— degrading it blanks the screen a user opens to find out what is wrong), `projectFact` (answers
+"what is the value", not "is it live"; and the 595 §15.3 last-known/dimmed treatment already
+covers it via `stability`), and the already-verdict-projecting readouts. Threshold: **no new
+number** — age is already carried by `originContact`'s generated `STREAM_WATCHDOG_STALE_MS` (40 s,
+>2× the 15 s heartbeat), so a second age check would have been the second authority A.3 rejects.
+7 bite proofs; fixture debt settled in one pass across the three files the sibling had isolated.
+
+**W3 (installer branding + small findings) — ACCEPTED; it disproved a claim this project had
+recorded as fact.** Tempdoc 806 recorded that `installer-hooks.nsh` "cannot reference the version
+at all" because the template includes hooks before `!define VERSION`. **False for defines**, and
+W3 proved it empirically with `makensis` rather than by argument: NSIS expands a nested `${...}`
+inside a define when the define is USED, not when it is written — probe output
+`PROBE_RESULT=[JustSearch 0.2.0]` — and a second probe compiled the real hooks file in the
+template's exact ordering with the MUI Welcome/Finish pages and found the branding baked into the
+built `.exe` twice. So **R13-F1 is FIXED with a clean non-fork lever** (`MUI_WELCOMEPAGE_TEXT` /
+`MUI_FINISHPAGE_TEXT` appending `${COPYRIGHT}` to the LOCALIZED MUI text, plus
+`MUI_FINISHPAGE_TEXT_LARGE` — not cosmetic: the checkboxes cap that box at 40u and would clip the
+line), pinned by a new `check-installer-branding` CI check, with 806's two false claims corrected
+in place. Pixel verification on a CI build is still owed.
+
+*Item 2 (the app calling its own shipped models degraded) — half fixed, half honestly blocked.*
+Four of the six warnings were this repo's defect: `Fact.PRECISION` sat in the EMBEDDING/NER
+presets justified as "informational — surfaced by `DevModeVariantProbe`", which is false at
+source (that probe runs its own filename guess and never consults the resolver; **zero**
+production readers of `cpuPrecision()`/`gpuPrecision()` — the runtime authority is
+`VariantSelection.precision()` off the install contract). So the resolver guessed an unread fact
+from a filename and logged the guess as a degraded capability — and guessed *wrong* (FP32 for a
+variant the registry declares INT8, about a file a CUDA install never downloads). Removed from
+the presets. The remaining two are a **release-asset** gap, not a code gap: the published
+`embed-model_manifest.json` is 135 bytes with no `capabilities` block and overwrites the repo's
+fully-authored copy on download; four other models ship no manifest at all. Logged, not forced —
+and the new test asserts those two warnings STAY, so a future silencing is a visible change.
+
+*Item 3 — premise corrected, then fixed.* Round 13's F3 said no TTL exists. It does:
+`PendingAuthorizationStore.DEFAULT_TTL` = 5 min, and `expiresAt` has been on the domain records
+since they were written — it was simply never put on a consumer surface. Now additive on the peek
+payload and the advisory stream's `classExtras`, so the `expired-pending-approval-ceremony`
+must-watch becomes performable.
+
+*Item 4 — the real cause, and the user-visible half landed.* Every approve path already reported
+network/HTTP failures; the one silent branch was `!decision.approved`, which **conflates a human
+deny with a fail-closed outcome** (no host mounted, or a host torn down mid-ceremony) — both
+returning an identical `{approved:false, allowAlways:false}`. That is exactly round 13's shape.
+Now marked `failedClosed` and routed through the existing sticky error toast; the test pins the
+toast (severity + text), not just the flag, and the bite proof turned that assertion red. An
+explicit human deny stays silent by design.
