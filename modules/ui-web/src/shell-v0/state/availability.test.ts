@@ -11,6 +11,7 @@ import {
   KEYWORD_FALLBACK_CAVEAT,
   OPTIONAL_CAPABILITY_CAVEAT,
   PASSAGE_REDUCED_CAVEAT,
+  reasonFor,
 } from './readinessNotice.js';
 import type { AiState } from './aiStateStore.js';
 import { known, UNKNOWN } from './known.js';
@@ -32,6 +33,12 @@ function aiState(opts: {
   reasons?: string[];
   /** Tempdoc 601 — the last successful startup duration the model-load estimate reads (-1 ⇒ unknown). */
   lastStartupMs?: number;
+  /**
+   * Tempdoc 807 A.3 — is the snapshot still a LIVE observation? A fixture whose subject is NOT
+   * liveness asserts a live snapshot (the honest default: these tests describe a backend that is
+   * answering). The one test that IS about liveness passes `false`.
+   */
+  snapshotLive?: boolean;
 }): AiState {
   const docs = opts.docs ?? 'unknown';
   const verdict =
@@ -40,6 +47,7 @@ function aiState(opts: {
       : { kind: 'degraded', severity: opts.degradedSeverity, reasons: opts.reasons ?? [] };
   return {
     phase: opts.phase ?? 'connected',
+    snapshotLive: opts.snapshotLive ?? true,
     capabilities: { chat: opts.chat ?? true, rag: false, extract: false, embedding: false },
     runtime: { mode: opts.mode ?? 'online' },
     verdict,
@@ -203,6 +211,25 @@ describe('projectAvailability (tempdoc 596)', () => {
     expect(projectAvailability('documents', aiState({ chat: true, docs: 'unknown' })).kind).toBe(
       'available',
     );
+  });
+
+  /**
+   * Tempdoc 807 A.3 (round-13 R13-F2) — a dead backend leaves `capabilities.chat` TRUE, because it is
+   * computed off the retained inference snapshot. Every gate below it therefore reads "available" for
+   * a control that would POST into the void. Liveness is checked first, and says so in the same words
+   * the verdict and the "Backend disconnected." banner use.
+   */
+  it('807: a not-live snapshot blocks every affordance, in the shared vocabulary', () => {
+    for (const affordance of ['documents', 'extract', 'agent'] as const) {
+      const a = projectAvailability(affordance, aiState({ chat: true, docs: 5, snapshotLive: false }));
+      expect(a.kind, affordance).toBe('unavailable');
+      expect(isUnavailable(a) && a.reason).toBe(reasonFor('binding.unreachable').wording);
+      expect(isUnavailable(a) && a.transient).toBe(true); // the shell reconnects; this self-clears
+    }
+  });
+
+  it('807 ANTI-REGRESSION: the SAME state with a live snapshot is available (the gate is liveness, nothing else)', () => {
+    expect(projectAvailability('documents', aiState({ chat: true, docs: 5 })).kind).toBe('available');
   });
 });
 

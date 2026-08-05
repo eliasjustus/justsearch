@@ -1871,6 +1871,38 @@ export class BrainSurface extends JfElement {
         : total > 0
           ? (completed / total) * 100
           : 0;
+    // Tempdoc 807 A.3 — these are fields off the RETAINED snapshot. With the backend gone they kept
+    // animating a confident "Building semantic search 2.0% · 5,084 pending" (round 13, R13-F2): the
+    // numbers were right, the present tense was not. Not live ⟹ stop asserting progress — no spinner,
+    // no live-work colouring, every figure explicitly labelled as the last observation.
+    const live = !this._unifiedAiState || this._unifiedAiState.snapshotLive;
+    if (!live) {
+      return html`
+        <div class="section">
+          <div style="display: flex; gap: 0.625rem; align-items: flex-start">
+            ${icon({ name: 'zap', size: 18 })}
+            <div style="flex: 1">
+              <div style="font-weight: 600; color: var(--text-secondary)">
+                Semantic search build — last known
+              </div>
+              <div style="font-size: var(--font-size-sm); color: var(--text-secondary); margin-top: 0.25rem">
+                ${reasonFor('binding.unreachable').wording} — these figures are the last observed
+                values, not live progress.
+              </div>
+            </div>
+            <div style="font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text-muted)">
+              ${pct.toFixed(1)}%
+            </div>
+          </div>
+          <div class="progress" style="margin-top: 0.625rem">
+            <div class="progress-bar" style="width: ${pct}%; background: var(--text-muted)"></div>
+          </div>
+          <div style="font-size: var(--font-size-xs); color: var(--text-muted); margin-top: 0.5rem">
+            ${NUM.format(pending)} pending when last observed
+          </div>
+        </div>
+      `;
+    }
     return html`
       <div class="section" style="border-color: var(--accent-warning-30); background: var(--accent-warning-08)">
         <div style="display: flex; gap: 0.625rem; align-items: flex-start">
@@ -1934,12 +1966,18 @@ export class BrainSurface extends JfElement {
   private renderSearchQualityFeatures(): TemplateResult {
     const features = this.runtimeStatus?.onnxFeatures ?? [];
     const activeCount = features.filter((f) => f.modelActive).length;
+    // Tempdoc 807 A.3 — "N/N active" is a PRESENT-tense claim read off the retained runtime snapshot;
+    // round 13 photographed "4/4 active" with the backend dead. Not live ⟹ the count is history, and
+    // the per-feature green dot (which asserts "running right now") drops to neutral.
+    const live = !this._unifiedAiState || this._unifiedAiState.snapshotLive;
     return this.renderAccordion(
       'search-quality',
       'Search Quality Features',
       features.length > 0
         ? activeCount > 0
-          ? `${activeCount}/${features.length} active`
+          ? live
+            ? `${activeCount}/${features.length} active`
+            : `${activeCount}/${features.length} when last observed`
           : 'optional'
         : null,
       () => html`
@@ -1953,7 +1991,13 @@ export class BrainSurface extends JfElement {
                   <div class="data-row">
                     <span>
                       <jf-status-dot
-                        tone=${f.gpuFallback ? 'warning' : f.modelActive ? 'success' : 'neutral'}
+                        tone=${!live
+                          ? 'neutral'
+                          : f.gpuFallback
+                            ? 'warning'
+                            : f.modelActive
+                              ? 'success'
+                              : 'neutral'}
                         style="margin-right: 0.5rem; vertical-align: middle"
                       ></jf-status-dot>
                       ${f.label ?? f.id ?? 'feature'}
@@ -2005,10 +2049,12 @@ export class BrainSurface extends JfElement {
   private renderModels(): TemplateResult {
     const features = this.runtimeStatus?.onnxFeatures ?? [];
     const active = features.filter((f) => f.modelActive).length;
+    // Tempdoc 807 A.3 — "N loaded" is the same present-tense claim as the Search Quality count.
+    const live = !this._unifiedAiState || this._unifiedAiState.snapshotLive;
     return this.renderAccordion(
       'models',
       'Models',
-      active > 0 ? `${active} loaded` : null,
+      active > 0 ? (live ? `${active} loaded` : `${active} when last observed`) : null,
       () => html`
         <div style="margin-top: 0.625rem; font-size: var(--font-size-sm)">
           ${this.renderTierBreakdown()}
@@ -2277,14 +2323,29 @@ export class BrainSurface extends JfElement {
     const actState = this.runtimeStatus?.activation?.state ?? 'idle';
     const activating = actState === 'running' || !!this.busy['variant'];
     const provisional = isGpuReadingProvisional(this._unifiedAiState?.aiEngine.stability);
+    // Tempdoc 807 A.3 — the whole Runtime card is a readout of the retained snapshot (CUDA, VRAM,
+    // tier, which variant is active), and every control in it POSTs to a backend that must be alive.
+    // Not live ⟹ the readout is labelled as history and the controls become unavailable-with-a-reason
+    // (the 596 soft block: focusable, reason reachable) rather than silently clickable-and-failing.
+    const live = !this._unifiedAiState || this._unifiedAiState.snapshotLive;
+    // The reason is IMPORTED from the one cause vocabulary (`binding.unreachable` — the same row the
+    // verdict and the disconnection banner word themselves from), never re-authored here.
+    const offlineGate = unavailableBecause(reasonFor('binding.unreachable').wording, true);
 
     return html`
       <div class="section">
         <h3>${icon({ name: 'hard-drive', size: 12 })} Runtime</h3>
 
+        ${live
+          ? nothing
+          : html`<div style="font-size: var(--font-size-xs); color: var(--text-muted); margin-bottom: 0.5rem">
+              ${reasonFor('binding.unreachable').wording} — the values below are the last observed
+              readings, not live.
+            </div>`}
+
         ${this.inference?.gpu
           ? html`
-              <div class="grid" style="margin-bottom: 0.75rem; ${provisional ? 'opacity: 0.6' : ''}">
+              <div class="grid" style="margin-bottom: 0.75rem; ${provisional || !live ? 'opacity: 0.6' : ''}">
                 <span class="key">CUDA</span
                 ><span class="val">${this.inference.gpu.cudaAvailable ? 'available' : 'no'}</span>
                 ${(() => {
@@ -2326,7 +2387,11 @@ export class BrainSurface extends JfElement {
                     ${v.id === activeId
                       ? html`<jf-button
                           label="Deactivate"
-                          ?disabled=${activating}
+                          .availability=${!live
+                            ? offlineGate
+                            : activating
+                              ? { kind: 'blocked' }
+                              : AVAILABLE}
                           .onActivate=${() => void this.deactivateVariant()}
                         >
                           Deactivate
@@ -2334,7 +2399,11 @@ export class BrainSurface extends JfElement {
                       : html`<jf-button
                           variant="primary"
                           label="Activate"
-                          ?disabled=${activating || v.available === false}
+                          .availability=${!live
+                            ? offlineGate
+                            : activating || v.available === false
+                              ? { kind: 'blocked' }
+                              : AVAILABLE}
                           .onActivate=${() => void this.activateVariant(v.id)}
                         >
                           Activate
@@ -2361,11 +2430,13 @@ export class BrainSurface extends JfElement {
             <jf-button
               variant=${this.inference?.mode === 'online' ? 'primary' : 'secondary'}
               label="Online"
-              .availability=${this.policy?.onlineAiEnabled === false
-                ? unavailableBecause('Online AI is disabled by administrator policy.')
-                : this.busy['inference-switch']
-                  ? { kind: 'blocked' }
-                  : AVAILABLE}
+              .availability=${!live
+                ? offlineGate
+                : this.policy?.onlineAiEnabled === false
+                  ? unavailableBecause('Online AI is disabled by administrator policy.')
+                  : this.busy['inference-switch']
+                    ? { kind: 'blocked' }
+                    : AVAILABLE}
               .onActivate=${() => void this.setChatEnabled(true)}
             >
               Online
@@ -2373,14 +2444,22 @@ export class BrainSurface extends JfElement {
             <jf-button
               variant=${this.inference?.mode === 'indexing' ? 'primary' : 'secondary'}
               label="Indexing"
-              ?disabled=${!!this.busy['inference-switch']}
+              .availability=${!live
+                ? offlineGate
+                : this.busy['inference-switch']
+                  ? { kind: 'blocked' }
+                  : AVAILABLE}
               .onActivate=${() => void this.setChatEnabled(false)}
             >
               Indexing
             </jf-button>
             <jf-button
               label="Reload"
-              ?disabled=${!!this.busy['inference-switch']}
+              .availability=${!live
+                ? offlineGate
+                : this.busy['inference-switch']
+                  ? { kind: 'blocked' }
+                  : AVAILABLE}
               .onActivate=${() =>
                 this.withBusy('inference-switch', () => this.invokeOp('core.reload-inference'))}
             >
@@ -2392,6 +2471,7 @@ export class BrainSurface extends JfElement {
                   ${this.inference.vduQueueSize !== undefined
                     ? html` · VDU queue: ${NUM.format(this.inference.vduQueueSize)}`
                     : nothing}
+                  ${live ? nothing : html` (last observed)`}
                 </span>`
               : nothing}
           </div>

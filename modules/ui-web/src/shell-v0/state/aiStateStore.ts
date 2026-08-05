@@ -222,6 +222,14 @@ export interface AiState {
    */
   verdict: SystemHealthVerdict;
   /**
+   * Tempdoc 807 A.3 — is the retained snapshot still a LIVE observation, or only a past
+   * measurement? Projected ONCE from the verdict by {@link isSnapshotLive}; every surface that
+   * renders raw snapshot fields (progress, coverage, queue counts, capability counts, the CONN dot)
+   * consults this instead of inventing its own staleness heuristic. `false` ⟹ degrade rather than
+   * assert: stop animating, say "last known", make live-backend-preconditioned controls unavailable.
+   */
+  snapshotLive: boolean;
+  /**
    * The last-known raw poll snapshots (B7). Consumers that need fields beyond
    * the projection above (GPU, memory ceiling, uptime, index state, inference
    * queues) read these instead of running a SECOND status/inference poll — the
@@ -468,6 +476,35 @@ function verdictOwnsStatus(verdict: SystemHealthVerdict): boolean {
   );
 }
 
+/**
+ * Tempdoc 807 A.3 (round-13 R13-F2) — the ONE liveness predicate: "is what we last observed still a
+ * LIVE observation, or only a past measurement?". Sibling of {@link verdictOwnsStatus}: both are pure
+ * projections of the SAME verdict authority, so a surface can never invent a second detection
+ * mechanism (that divergence is how the status label and the CONN dot drifted apart, 806 W2).
+ *
+ * `verdictOwnsStatus` governs the status line's own WORDING and TONE. This governs everything the
+ * status line does not: the surfaces that render fields off the retained snapshot. Round 13
+ * photographed an animating "Building semantic search 2.0% · 5,084 pending", "4/4 active" and a green
+ * CONN dot with BOTH java processes dead — the values were right, their TENSE was not.
+ *
+ * The two non-live kinds are exactly the two `computeVerdict` mints when `reachableViaContact` is
+ * false, so this is a faithful re-reading of the verdict, not a new signal:
+ *   - `unreachable`               — no poll ever landed and no contact of any kind (phase `disconnected`).
+ *   - `transitioning`/`channel-stale` — a poll DID land once, then all contact aged out (phase `stale`).
+ *     This is the kill-the-backend-mid-session case, i.e. the one round 13 actually reproduced.
+ * Every other kind means positive contact within the reachability window, so the snapshot is live.
+ *
+ * AGE is already accounted for and needs no new threshold: reachability is earned by positive contact
+ * within `STREAM_WATCHDOG_STALE_MS` (`originContact.isOriginReachable`, the generated 40s stream
+ * watchdog window = >2× the 15s heartbeat), and the verdict consumes that as `reachableViaContact`.
+ * A second age check here would be a second authority — precisely what A.3 rejects.
+ */
+export function isSnapshotLive(verdict: SystemHealthVerdict): boolean {
+  if (verdict.kind === 'unreachable') return false;
+  if (verdict.kind === 'transitioning' && verdict.reasons.includes('channel-stale')) return false;
+  return true;
+}
+
 function computeStatusLabel(
   verdict: SystemHealthVerdict,
   runtime: AiRuntime,
@@ -689,6 +726,10 @@ function buildSnapshot(): AiState {
   });
   const installStatus = installStatusSig.get();
   const runtimeStatus = runtimeStatusSig.get();
+  // Tempdoc 807 — the ONE liveness answer, computed here from the verdict just derived and threaded
+  // BOTH into the engine verdict (so it cannot claim a live engine off a dead snapshot) and onto the
+  // state (so snapshot-rendering surfaces re-tense the same way, at the same moment).
+  const snapshotLive = isSnapshotLive(verdict);
   // Tempdoc 663 Design pass 2 - the AI-engine rollup, computed the same way stability/verdict are
   // (purely observed signals; no surface-local UI intent). Computed BEFORE statusLabel/statusTone
   // (Design pass 3) since those now project their AI-specific wording/tone from this value.
@@ -697,6 +738,9 @@ function buildSnapshot(): AiState {
     runtimeStatus,
     runtime,
     reachable: connection.reachable,
+    // Tempdoc 807 Part A (round-13 R13-F2) — W1's predicate, threaded in rather than re-derived inside
+    // the verdict function: a retained `engineState: 'Healthy'` must not mint a settled green "Online".
+    snapshotLive,
     // Tempdoc 737 §12b/§12c — the runtime-authority engine axis (preferred over runtime.mode when present).
     engineState: status?.inference?.engineState,
     chatEnabledSpec: status?.inference?.chatEnabledSpec,
@@ -720,6 +764,8 @@ function buildSnapshot(): AiState {
     statusTone,
     stability,
     verdict,
+    // Tempdoc 807 A.3 — projected once, here, from the verdict just computed above.
+    snapshotLive,
     status,
     inference: inferenceSig.get(),
     lastSettledIndex: lastSettledIndexSig.get(),

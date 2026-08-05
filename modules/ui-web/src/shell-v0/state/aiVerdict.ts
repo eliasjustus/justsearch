@@ -112,6 +112,16 @@ export interface AiEngineObservedInput {
    * than re-derived, so the calm "connecting"/stale-poll states degrade honestly under a starved poll. */
   readonly reachable: boolean;
   /**
+   * Tempdoc 807 Part A (round-13 R13-F2) — `aiStateStore.isSnapshotLive(verdict)`, threaded in from the
+   * single call site rather than re-derived here: "is what we last observed still a LIVE observation,
+   * or only a past measurement?". Deliberately NOT a second liveness answer. It is strictly narrower
+   * than `reachable` (both non-live verdict kinds are minted only when `reachableViaContact` is false),
+   * so every engine claim this function withholds is one W1's snapshot-rendering surfaces are
+   * simultaneously re-tensing to "last known" — the Brain card cannot say "Online" while the progress
+   * card beside it says "last known".
+   */
+  readonly snapshotLive: boolean;
+  /**
    * Tempdoc 737 §12b/§12c — the runtime-authority engine axis, projected additively onto the
    * `/api/status` inference block (`engineState`/`chatEnabledSpec`/`procedure`/`engineReason`). When
    * present, these are the authoritative signals and are PREFERRED over the legacy `runtime.mode`
@@ -132,8 +142,16 @@ export interface AiEngineObservedInput {
  * instead read the result off `AiState.aiEngine` (optionally overlaid via `applyLocalIntent`).
  */
 export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVerdict {
-  const { installStatus, runtimeStatus, runtime, reachable, engineState, chatEnabledSpec, procedure } =
-    input;
+  const {
+    installStatus,
+    runtimeStatus,
+    runtime,
+    reachable,
+    snapshotLive,
+    engineState,
+    chatEnabledSpec,
+    procedure,
+  } = input;
 
   if (installStatus?.state === 'running') {
     return {
@@ -151,6 +169,33 @@ export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVe
     };
   }
 
+  // Tempdoc 807 Part A (round-13 R13-F2) — EVERY engine-axis arm below describes a running process,
+  // and reads it off the RETAINED snapshot. So each one is evidence of what WAS true at the last
+  // successful observation; presenting it in the PRESENT TENSE additionally requires that the
+  // observation still be live. Round 13 killed both java processes and photographed a green
+  // "Online / Chat and summaries ready." that was minted right here, from a retained
+  // `engineState: 'Healthy'` — the value was right, its tense was not.
+  //
+  // `unconfirmed` is the honest answer for that state, and is not a new vocabulary: it is the same
+  // calm `connecting`/`stale-poll` pair this function already mints when it cannot see the engine
+  // (below), the pair whose own doc explicitly covers "an already-installed engine's runtime state can
+  // no longer be confirmed", and the pair `BrainSurface` falls back to before the store has emitted.
+  // It claims nothing about the engine, renders amber rather than green, and its primary action is
+  // blocked rather than a dead "Shut Down AI"/"Start AI" click against a backend that is gone.
+  //
+  // Applied UNIFORMLY to every engine-axis arm (both the authored and the legacy block, plus the legacy
+  // `transitioning` arm further down) rather than to the photographed arm alone: picking arms by
+  // judgement is how the defect existed in the first place. The install arms — `installing`,
+  // `install_failed`, `paused`, `not_installed` — are deliberately NOT gated: they describe DISK and
+  // install history, which a dead backend process does not change, and blanking them would hide the
+  // install CTA that is the only thing a user can act on there.
+  const unconfirmed: AiEngineVerdict = {
+    kind: 'connecting',
+    stability: { kind: 'provisional', cause: 'stale-poll' },
+    installFailure: null,
+  };
+  const observedNow = (v: AiEngineVerdict): AiEngineVerdict => (snapshotLive ? v : unconfirmed);
+
   // Engine axis (tempdoc 737 §12b/§12c). The runtime-authority `engineState` — when the backend
   // provides it — is the ONE signal for the engine's lifecycle; PREFER it over the legacy
   // `runtime.mode`. A running/healthy engine is itself proof of an installed, working engine,
@@ -160,48 +205,49 @@ export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVe
     if (engineState === 'Healthy') {
       // Soft-off (§15 decision 1): a background procedure holds the engine up while the user has
       // chat DISABLED. Chat is intentionally NOT offered — surface it as 'background', never the
-      // green 'online', so the UI is honest about chat being off while work continues.
+      // green 'online', so the UI is honest about chat being off while work continues. This precedence
+      // is unchanged by 807: whenever the observation IS live, soft-off still wins over 'online'.
       if (chatEnabledSpec === false && !!procedure) {
-        return { kind: 'background', stability: { kind: 'settled' }, installFailure: null };
+        return observedNow({ kind: 'background', stability: { kind: 'settled' }, installFailure: null });
       }
-      return { kind: 'online', stability: { kind: 'settled' }, installFailure: null };
+      return observedNow({ kind: 'online', stability: { kind: 'settled' }, installFailure: null });
     }
     if (engineState === 'Starting' || engineState === 'Recovering') {
-      return {
+      return observedNow({
         kind: 'starting',
         stability: { kind: 'provisional', cause: 'starting' },
         installFailure: null,
-      };
+      });
     }
     // engineState === 'Down' with the GPU yielded to indexing is the INDEXING state; any other
     // 'Down' reason falls through to the shared installed / connecting / offline logic below.
     if (engineState === 'Down' && input.engineReason === 'gpu-yielded-to-indexing') {
-      return {
+      return observedNow({
         kind: 'indexing',
         stability: { kind: 'settled' },
         installFailure: null,
         awaitingChatEnable: chatEnabledSpec === false,
-      };
+      });
     }
   } else {
     // Legacy fallback (pre-authority backends). Retires with the phase/mode aliases (§12d).
     if (runtime.mode === 'online') {
-      return { kind: 'online', stability: { kind: 'settled' }, installFailure: null };
+      return observedNow({ kind: 'online', stability: { kind: 'settled' }, installFailure: null });
     }
     if (runtime.mode === 'indexing') {
-      return {
+      return observedNow({
         kind: 'indexing',
         stability: { kind: 'settled' },
         installFailure: null,
         awaitingChatEnable: chatEnabledSpec === false,
-      };
+      });
     }
     if (runtime.mode === 'starting') {
-      return {
+      return observedNow({
         kind: 'starting',
         stability: { kind: 'provisional', cause: 'starting' },
         installFailure: null,
-      };
+      });
     }
   }
 
@@ -238,20 +284,28 @@ export function computeAiEngineVerdict(input: AiEngineObservedInput): AiEngineVe
   }
 
   // Legacy transitioning (pre-authority): the authored path already mapped Starting/Recovering above.
+  // 807: an engine-axis claim like the rest, so it carries the same liveness gate.
   if (!authored && runtime.mode === 'transitioning') {
-    return {
+    return observedNow({
       kind: 'starting',
       stability: { kind: 'provisional', cause: 'starting' },
       installFailure: null,
-    };
+    });
   }
 
   // Design pass 2 - resilient to a starved poll (649/§K), extended to the already-installed axis: a
   // genuinely-installed engine whose runtime state we can no longer confirm (the poll has gone stale)
-  // must not settle to a confident negative - only this ONE fallback branch needs the check (the
-  // online/indexing/starting/transitioning branches above are each themselves direct, specific evidence
-  // and correctly stay unconditional, matching 595's own `computeStability` precedent of a low-precedence
-  // catch-all, not a check repeated on every branch).
+  // must not settle to a confident negative.
+  //
+  // Tempdoc 807 Part A corrects what this comment used to argue. It claimed only this ONE fallback
+  // branch needed the check, because "the online/indexing/starting/transitioning branches above are
+  // each themselves direct, specific evidence and correctly stay unconditional". That argument is the
+  // campaign's signature TENSE error, stated in the one place that mints the sentence round 13
+  // photographed: direct evidence is evidence of what WAS true at the moment it was observed, and
+  // presenting it as a settled present-tense claim additionally requires that the observation still be
+  // live. Those branches are now gated by `observedNow` (see the block above); this branch keeps its
+  // own `!reachable` de-settling because it answers a different, weaker question (the poll may be
+  // starved while the snapshot is still live — 649's calm "Catching up…" case).
   if (!reachable) {
     return {
       kind: 'offline',

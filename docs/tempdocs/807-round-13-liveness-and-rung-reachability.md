@@ -1,6 +1,6 @@
 ---
 title: Round-13 fix campaign — snapshot liveness, and the escalation rungs' landing-only gate
-status: "designed 2026-08-05 (Parts A-C); implementation running. Scope: R13-F2 (stale surface vs dead backend, MEDIUM, 5th instance of the campaign's signature class), the rung-reachability class's minimum viable fix (5th finding, now blocking a qualification gate), R13-F1 (installer branding on two templates). Target: a clean 0.2.0 qualification on one confirmation round."
+status: "IMPLEMENTED 2026-08-05 (Part D) — four bundles landed and accepted. R13-F2 fixed and PROVEN LIVE (every stale present-tense claim now reads as last-observed; red CONN dot; controls disabled) after the designed ~40s contact window; the headline sentence is proven at the rendered-DOM test tier because this dev data dir has no chat model. The rung-reachability class is closed at its cause (the escalation strip no longer vanishes post-search), which also fixes round 13 shape:core.extract coverage gap properly. R13-F1 fixed with a clean non-fork NSIS lever after a makensis probe DISPROVED tempdoc 806 recorded blocker. Plus: model-degraded warnings half-fixed (the rest is a release-asset gap, logged), expiresAt now on the wire (the TTL existed all along), and fail-closed approvals now tell the user. Forced suite 186/186 with one non-causal flake proven by isolation; ui-web 4005 green. NEXT: PR, then ONE fresh-install confirmation round for a clean 0.2.0 qualification"
 created: 2026-08-05
 updated: 2026-08-05
 ---
@@ -336,3 +336,98 @@ returning an identical `{approved:false, allowAlways:false}`. That is exactly ro
 Now marked `failedClosed` and routed through the existing sticky error toast; the test pins the
 toast (severity + text), not just the flag, and the bite proof turned that assertion red. An
 explicit human deny stays silent by design.
+
+**W4 (the headline tense error) — ACCEPTED, and it refuted both the brief's preferred shape and
+one of its explicit instructions.**
+
+*It refuted option (a) with a consumer table, not an opinion.* The brief argued for keeping
+`kind: 'online'` and marking `stability: provisional`, on the premise that "consumers already
+branch on `stability`". True of the SYSTEM `Stability`; **false of `AiStability`** — W4
+enumerated every consumer (`aiEngineHeadline`, `aiEngineTone`, `aiEngineBody`, BrainSurface's
+`statusConfig.online`, the store's status label/tone) and all of them key on `kind` ALONE; the
+single reader of `aiEngine.stability` (`isGpuReadingProvisional`) explicitly excludes
+`stale-poll`. So option (a) would have changed **zero pixels** and left the photographed sentence
+intact. It chose (b) — but not a new kind: the gated arms return the **existing**
+`{ kind: 'connecting', stability: { kind: 'provisional', cause: 'stale-poll' } }`, the same pair
+this function already mints when it cannot see the engine, whose doc already reads "an
+already-installed engine's runtime state can no longer be confirmed". Every exhaustive switch
+already handles it. Renders amber "Connecting… / Checking AI status…" with a **blocked**
+action instead of a green dot and a dead "Shut Down AI" click. `offline` was rejected for a
+reason worth keeping: "AI Offline" is itself an unconfirmable present-tense claim, and its
+primary action is a "Start AI" that cannot succeed.
+
+*It declined a literal instruction, correctly.* The brief said the soft-off `background` arm must
+still win over the new branch. Taken literally that leaves "AI engine is finishing document
+understanding — chat is off." rendered against a dead backend — **the identical tense defect one
+arm over**. W4 preserved what tempdoc 737 §15 decision 1 actually protects (soft-off beats
+`online` whenever the observation is live, asserted) and gated `background` too, flagging the
+divergence rather than making it silently. That is the correct reading of the rule over its
+letter.
+
+*Scope discipline in both directions:* all seven engine-axis arms gated uniformly — "cherry-picking
+arms is the judgement that let the defect exist" — while the four install-history arms
+(`installing`/`install_failed`/`paused`/`not_installed`) are deliberately left alone with a
+boundary test, because disk and install history do not change when a process dies and blanking
+them would hide the install CTA that is the only actionable thing in that state. Liveness is
+threaded (a new required `snapshotLive` input fed from W1's predicate at the single call site),
+never re-derived; making it *required* immediately caught a second construction site.
+
+*The sentence is provably gone at three tiers:* the derivation (`kind` is never `online`), the one
+presentation projection (`body !== 'Chat and summaries ready.'`, `tone !== 'success'`), and the
+**rendered Brain card** — `renderSimplePanel()` driven through the real `computeAiEngineVerdict`
+asserts the DOM contains neither "Online" nor "Chat and summaries ready.", the status dot is not
+`success`, and the action is neither "Shut Down AI" nor available. Bite proof 1 (restoring the
+exact pre-fix condition) fires all four of those assertions plus 9 more; bite proof 2 (forcing
+the unconfirmed path always) fires all three anti-regression halves, proving the fix does not
+blank a healthy UI vacuously; bite proof 3 isolates the store wiring from the pure function.
+`check-ai-verdict-derivation` green — the fix stayed in the single authority and no consumer
+re-derives. Suite: **4005 passed / 384 files**.
+
+### Cross-cutting verification (2026-08-05)
+
+**Forced full suite** `test --rerun-tasks --no-build-cache`, 186/186 executed: **one failure,
+established as NOT causal.** `RuntimeReconcilerTest.specWriteDuringProcedure_deferredUntilEnd`
+threw `AccessDeniedException` at `:256` under full-suite parallelism, then passed cleanly when
+re-run alone (BUILD SUCCESSFUL, 9 s). The campaign diff contains **zero** `modules/app-services`
+changes, so the test is outside the blast radius — a Windows temp-file lock under concurrent
+execution. Logged as a flake with its evidence rather than dismissed or re-run until green.
+ui-web: **4005 tests / 384 files** green (W4's final run); `check-ai-verdict-derivation` green.
+
+**Live before/after proof of R13-F2 — the decisive check.** Dev stack served from this worktree,
+Brain surface open, both Head and Worker killed, `/api/health` unreachable. This reproduces the
+scenario the orchestrator photographed at the start of the day, and the two screenshots are a
+direct comparison.
+
+*Immediately after the kill* the surface still showed the stale claims — and that is the fix's
+**designed detection window, not a failure**: liveness derives from `originContact`'s generated
+`STREAM_WATCHDOG_STALE_MS` (40 s, >2× the 15 s SSE heartbeat), so for up to ~40 s the last
+observation is still legitimately treated as live. Distinguishing "fix did not work" from "fix
+has not triggered yet" required waiting past that window — the interrogate-results discipline
+applied to an expected-looking result.
+
+*After the window elapsed*, every single claim flipped to honest past tense:
+
+| Before (this morning, and pre-fix) | After (post-fix, same scenario) |
+|---|---|
+| "**Building** semantic search" + animating amber bar | "Semantic search build — **last known**", bar greyed and static |
+| (no caveat) | "The connection to the search backend was lost — these figures are the last observed values, **not live progress**." |
+| "4,189 pending" | "4,189 pending **when last observed**" |
+| "Search Quality Features **4/4 active**" | "Search Quality Features **4/4 when last observed**" |
+| Runtime card asserting CUDA/VRAM/Tier | same values, **dimmed**, under "the values below are the last observed readings, **not live**" |
+| Online / Indexing / Reload **clickable** | all three **disabled** |
+| "embed queue: 4,089 · VDU queue: 0" | "… **(last observed)**" |
+| **GREEN** CONN dot | **RED** CONN dot + "Reconnecting…" |
+
+**Tier honesty (green-masked-destructive):** the one thing NOT proven live is the literal
+sentence "Online / Chat and summaries ready." — reaching `engineState: Healthy` needs an
+installed chat model, and this dev data dir has none (`ai_activate` → "Variant not installed:
+cuda12"). That sentence is proven at W4's three test tiers instead, including a rendered-DOM
+assertion driven through the real `computeAiEngineVerdict`, with a bite proof showing all four
+assertions fire on the un-fixed code. Stated as a tier rather than claimed as a live result.
+
+**Recorded for the next round (so it is not re-filed):** there is a bounded ~40 s window after a
+backend dies during which the UI still presents the last observation as current. That is the
+heartbeat-derived contact window, deliberate and defensible — but a round that photographs
+within it will see the pre-fix appearance. The must-watch and any future finding should measure
+**after** the contact window, and the window's existence is the honest cost of not adding a
+second, faster staleness authority.

@@ -11,6 +11,7 @@ import io.justsearch.configuration.model.ModelPrecision;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.EnumSet;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -245,9 +246,16 @@ class ModelCapabilityResolverTest {
     ModelManifest manifest =
         new ModelManifest("model_int8.onnx", "model_fp16.onnx", null, null, null);
 
+    // Precision is the subject here, so it is requested explicitly. Since tempdoc 807 item 2 it is
+    // in no ROLE preset — no production consumer reads it — but the rung itself still works and is
+    // still reachable for diagnostics.
     ModelCapabilities caps =
         ModelCapabilityResolver.resolve(
-            "ner", modelDir, manifest, CapabilityRequirements.NER, false);
+            "ner",
+            modelDir,
+            manifest,
+            new CapabilityRequirements(EnumSet.of(CapabilityRequirements.Fact.PRECISION)),
+            false);
 
     assertEquals(ModelPrecision.INT8, caps.cpuPrecision());
     assertEquals(ModelPrecision.FP16, caps.gpuPrecision());

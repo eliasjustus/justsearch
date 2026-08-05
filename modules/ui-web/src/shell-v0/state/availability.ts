@@ -97,6 +97,16 @@ export function projectAvailability(
     return unavailableFor('inference.starting', true);
   }
 
+  // Tempdoc 807 A.3 — every capability gate below reads the RETAINED snapshot (`capabilities.chat`
+  // comes from the last inference poll, which keeps saying `online` after the backend dies). A
+  // control whose precondition is a live backend must therefore consult liveness FIRST, or it stays
+  // clickable and fails on activation. `binding.unreachable` is the same reason code the verdict
+  // mints and the "Backend disconnected." banner words, so the control and the banner cannot drift.
+  // TRANSIENT: the shell reconnects automatically, so this self-clears.
+  if (!s.snapshotLive) {
+    return unavailableFor('binding.unreachable', true);
+  }
+
   // Tempdoc 601 — the local AI model is actively LOADING (runtime.mode==='starting'): a TRANSIENT,
   // forward-looking gap distinct from the settled "offline" below. Keyed on the load state, not the
   // FE connect phase (which is the transport window above). Attach the time-estimate from the last

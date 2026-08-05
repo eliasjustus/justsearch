@@ -226,6 +226,12 @@ public final class AuthorizationController {
     payload.put("riskTier", p.riskTier().name());
     payload.put("gateBehavior", p.gateBehavior().name());
     payload.put("rationale", p.rationale());
+    // Tempdoc 807 item 3: pendings DO expire (PendingAuthorizationStore.DEFAULT_TTL, 5 min) and
+    // {@link PendingAuthorization} has carried expiresAt since it was written — but no surface put
+    // it on the wire, so no client could say how long an approval request is valid and no round
+    // could deterministically induce or verify expiry (sandbox round 13 F3: the
+    // expired-pending-approval ceremony was UNPERFORMABLE as written). Additive, ISO-8601 UTC.
+    payload.put("expiresAt", p.expiresAt().toString());
     // Tempdoc 655: display-only — omitted (not present as a key) when absent, so the FE's
     // optional-field pattern (undefined ⇒ don't render the line) works without a null-vs-missing
     // distinction on the wire.

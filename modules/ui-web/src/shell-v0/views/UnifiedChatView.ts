@@ -2504,44 +2504,105 @@ export class UnifiedChatView extends JfElement {
               re-parents — the stable-slot invariant holds; only static text moved). */ ''}
         ${this.isLanding() ? this.renderLanding() : nothing}
         ${this.renderComposerBlock()}
+        ${/* Tempdoc 807 B.2 — the rungs used to render ONLY while isLanding(): once a search had run
+              every escalation control left the DOM, so Delegate (round 11) and Structured (round 13,
+              which cost that round its `shape:core.extract` coverage) were reachable only from an
+              empty landing / a fresh session. The rungs THEMSELVES were already correct; only this
+              condition was wrong. Landing keeps its exact strip (687 R5a's stable slot is untouched —
+              both branches render in the SAME position inside the SAME composer container, and the
+              composer element itself still never re-parents); the docked branch adds the two rungs the
+              landing reaches through the route row (Search floor / + Schema), which is gone whenever
+              the tier is not `retrieve`. */ ''}
         ${this.isLanding()
           ? html`<div class="escalation-strip">
               <div>Search instantly · no AI</div>
-              ${/* Tempdoc 804 §B9 (round-10 F14) — Ask was the ONE escalation rung that failed
-                    silently offline: a plain <div>, so clicking it changed nothing and said nothing
-                    while its siblings (Delegate, Extract) both named the reason. It is the same kind
-                    of affordance as Delegate, so it is the same kind of control: availability-gated
-                    by the one operability authority, with the sibling wording. */ ''}
-              <jf-control
-                class="escalation-ask"
-                data-testid="escalation-ask"
-                label="Ask a question and get an answer with citations"
-                .availability=${this.aiState?.capabilities?.chat
-                  ? undefined
-                  : unavailableBecause('The local AI model is offline')}
-                .onActivate=${() => {
-                  this.affordance = 'documents';
-                }}
-                >Ask — answers with citations</jf-control
-              >
-              ${/* S8 live finding — the tab row's death orphaned agent-mode entry (the palette
-                    only carries diagnostics); until delegation folds into ask-turns entirely, the
-                    strip's Delegate line IS the entry (explicit pin, availability-gated). */ ''}
-              <jf-control
-                class="escalation-delegate"
-                data-testid="escalation-delegate"
-                label="Delegate a multi-step task to the agent"
-                .availability=${this.aiState?.capabilities?.chat
-                  ? undefined
-                  : unavailableBecause('The local AI model is offline')}
-                .onActivate=${() => {
-                  this.affordance = 'agent';
-                }}
-                >Delegate — the agent works multi-step</jf-control
-              >
+              ${this.renderEscalationRungs()}
             </div>`
-          : nothing}
+          : html`<div
+              class="escalation-strip escalation-strip-docked"
+              data-testid="escalation-strip-docked"
+            >
+              ${/* The way BACK to the always-available floor. It clears the sticky pin AND any held
+                    schema attachment: with the attachment held, clearing only the pin would re-derive
+                    'extract' (deriveAffordance precedence) and the click would be a silent no-op. */ ''}
+              <jf-control
+                class="escalation-search"
+                data-testid="escalation-search"
+                ?data-pressed=${this.affordance === 'retrieve'}
+                label="Back to instant search — no AI needed"
+                .onActivate=${() => {
+                  this.explicitAffordance = null;
+                  this.schemaAttached = false;
+                  this.routeOverride = null;
+                }}
+                >Search — instant, no AI</jf-control
+              >
+              ${this.renderEscalationRungs()}
+              ${/* Structured is an ATTACHMENT, not a place (S5a decision 6) — so this rung sets the
+                    attachment and lets the ONE derivation authority resolve the tier, which also keeps
+                    "Detach schema" honest. Clearing the sticky pin is required: `explicit` outranks the
+                    attachment, so attaching from a pinned Ask/Delegate would otherwise change nothing. */ ''}
+              <jf-control
+                class="escalation-structured"
+                data-testid="escalation-structured"
+                ?data-pressed=${this.affordance === 'extract'}
+                label="Extract structured fields against a JSON schema"
+                .availability=${this.aiState?.capabilities?.chat
+                  ? undefined
+                  : unavailableBecause('The local AI model is offline')}
+                .onActivate=${() => {
+                  this.explicitAffordance = null;
+                  this.schemaAttached = true;
+                }}
+                >Structured — fields as JSON</jf-control
+              >
+            </div>`}
       </div>
+    `;
+  }
+
+  /**
+   * Tempdoc 807 B.2 — the two AI escalation rungs, rendered by BOTH the landing strip and the docked
+   * one so the pair cannot drift (one definition of label, availability gate and test id). The
+   * `data-pressed` bindings are inert on landing (isLanding() implies the `retrieve` tier), so the
+   * landing renders the same elements, attributes and order it did before.
+   */
+  private renderEscalationRungs(): TemplateResult {
+    return html`
+      ${/* Tempdoc 804 §B9 (round-10 F14) — Ask was the ONE escalation rung that failed
+            silently offline: a plain <div>, so clicking it changed nothing and said nothing
+            while its siblings (Delegate, Extract) both named the reason. It is the same kind
+            of affordance as Delegate, so it is the same kind of control: availability-gated
+            by the one operability authority, with the sibling wording. */ ''}
+      <jf-control
+        class="escalation-ask"
+        data-testid="escalation-ask"
+        ?data-pressed=${this.affordance === 'documents'}
+        label="Ask a question and get an answer with citations"
+        .availability=${this.aiState?.capabilities?.chat
+          ? undefined
+          : unavailableBecause('The local AI model is offline')}
+        .onActivate=${() => {
+          this.affordance = 'documents';
+        }}
+        >Ask — answers with citations</jf-control
+      >
+      ${/* S8 live finding — the tab row's death orphaned agent-mode entry (the palette
+            only carries diagnostics); until delegation folds into ask-turns entirely, the
+            strip's Delegate line IS the entry (explicit pin, availability-gated). */ ''}
+      <jf-control
+        class="escalation-delegate"
+        data-testid="escalation-delegate"
+        ?data-pressed=${this.affordance === 'agent'}
+        label="Delegate a multi-step task to the agent"
+        .availability=${this.aiState?.capabilities?.chat
+          ? undefined
+          : unavailableBecause('The local AI model is offline')}
+        .onActivate=${() => {
+          this.affordance = 'agent';
+        }}
+        >Delegate — the agent works multi-step</jf-control
+      >
     `;
   }
 

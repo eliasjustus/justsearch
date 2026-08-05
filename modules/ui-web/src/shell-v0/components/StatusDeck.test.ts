@@ -5,13 +5,13 @@ import './StatusDeck.js';
 import type { StatusDeck } from './StatusDeck.js';
 import { __resetStatusPollForTest } from '../utils/statusPoll.js';
 import { __resetInferencePollForTest } from '../utils/inferencePoll.js';
-import { __resetAiStateForTest, type AiState } from '../state/aiStateStore.js';
+import { __resetAiStateForTest, isSnapshotLive, type AiState } from '../state/aiStateStore.js';
 import { known, UNKNOWN } from '../state/known.js';
 import { EPHEMERAL_TOAST_EVENT } from './advisory/ephemeralToast.js';
 import { formatCount } from '../display/format.js';
 
 function makeAiState(overrides: Partial<AiState> = {}): AiState {
-  return {
+  const built: AiState = {
     phase: 'connected',
     readiness: UNKNOWN,
     capabilities: { chat: false, rag: false, extract: false, embedding: false },
@@ -29,6 +29,7 @@ function makeAiState(overrides: Partial<AiState> = {}): AiState {
     statusTone: 'neutral',
     stability: { kind: 'settled' },
     verdict: { kind: 'operational', severity: 'ok', reasons: [] },
+    snapshotLive: true,
     status: null,
     inference: null,
     lastSettledIndex: null,
@@ -38,6 +39,10 @@ function makeAiState(overrides: Partial<AiState> = {}): AiState {
     aiEngine: { kind: 'offline', stability: { kind: 'settled' }, installFailure: null },
     ...overrides,
   };
+  // Tempdoc 807 — keep the fixture COHERENT: a test that overrides the verdict to a non-live kind
+  // must not silently keep `snapshotLive: true` (production derives one from the other in
+  // `buildSnapshot`). An explicit override still wins, so a test can pin the pair deliberately.
+  return { ...built, snapshotLive: overrides.snapshotLive ?? isSnapshotLive(built.verdict) };
 }
 
 function make(): StatusDeck {
@@ -79,6 +84,47 @@ describe('StatusDeck (slice 461)', () => {
     await el.updateComplete;
     const dot = el.shadowRoot?.querySelector('.dot');
     expect(dot?.classList.contains('healthy')).toBe(true);
+  });
+
+  // Tempdoc 807 A.3 (round-13 R13-F2) — the CONN dot reflects REACHABILITY, not the last good poll.
+  // `components.head/worker.state` are fields off the retained snapshot: they said READY/READY forever
+  // after both java processes died, so the dot stayed green beside a "Backend disconnected." banner.
+  it('807: the connection dot goes red when the snapshot is no longer live — READY/READY notwithstanding', async () => {
+    const el = make();
+    const READY_SNAPSHOT = {
+      components: { head: { state: 'LIFECYCLE_STATE_READY' }, worker: { state: 'LIFECYCLE_STATE_READY' } },
+    } as unknown as AiState['status'];
+    // The exact round-13 state: a fully-healthy retained snapshot + contact aged out mid-session
+    // (verdict `transitioning`/`channel-stale`, NOT `unreachable` — the poll had succeeded once).
+    el.aiState = makeAiState({
+      status: READY_SNAPSHOT,
+      verdict: { kind: 'transitioning', severity: 'warn', reasons: ['channel-stale'] },
+    });
+    await el.updateComplete;
+    const dot = el.shadowRoot?.querySelector('.dot');
+    expect(dot?.classList.contains('healthy')).toBe(false);
+    expect(dot?.classList.contains('error')).toBe(true);
+    expect(el.shadowRoot?.querySelector('.dot')?.parentElement?.getAttribute('aria-label')).toContain(
+      'disconnected',
+    );
+
+    // Anti-regression: the SAME snapshot with a live verdict is still green (the fix must not
+    // permanently red-line a healthy UI).
+    el.aiState = makeAiState({ status: READY_SNAPSHOT });
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.dot')?.classList.contains('healthy')).toBe(true);
+  });
+
+  it('807: the never-contacted `unreachable` verdict reddens the dot too', async () => {
+    const el = make();
+    el.aiState = makeAiState({
+      status: {
+        components: { head: { state: 'LIFECYCLE_STATE_READY' }, worker: { state: 'LIFECYCLE_STATE_READY' } },
+      } as unknown as AiState['status'],
+      verdict: { kind: 'unreachable', severity: 'error', reasons: ['binding.unreachable'] },
+    });
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.dot')?.classList.contains('error')).toBe(true);
   });
 
   it('memory dot turns warn at >80% utilization', async () => {

@@ -19,13 +19,24 @@ import java.util.Set;
  * <p>Presets are derived from what each encoder actually consumes off {@link ModelCapabilities}
  * (verified against the call sites, not guessed): {@code OnnxEmbeddingEncoder.buildAssembly} reads
  * {@code poolingMode}/{@code embeddingDimension}, {@code KnowledgeServer} reads {@code
- * documentPrefix}/{@code queryPrefix} off the embedding assembly's capabilities, and both {@code
- * cpuPrecision}/{@code gpuPrecision} are resolved for every role (informational — surfaced by
- * {@code DevModeVariantProbe} today, a hard fact worth getting right regardless of role). {@code
- * BertNerInference.buildAssembly} reads only {@code labelMapping}; SPLADE/reranker/citation/BGE-M3
- * don't call the resolver yet, but their pending integration needs only context length + precision
- * (no pooling — those lanes consume raw token-level or single-score outputs, not a pooled sentence
- * vector; no prefixes; no label taxonomy).
+ * documentPrefix}/{@code queryPrefix} off the embedding assembly's capabilities, and {@code
+ * BertNerInference.buildAssembly} reads only {@code labelMapping}. SPLADE/reranker/citation/BGE-M3
+ * don't call the resolver yet, but their pending integration needs only context length (no pooling
+ * — those lanes consume raw token-level or single-score outputs, not a pooled sentence vector; no
+ * prefixes; no label taxonomy).
+ *
+ * <p><strong>{@link Fact#PRECISION} is in no preset (tempdoc 807 item 2).</strong> It used to be in
+ * every one, justified as "informational — surfaced by {@code DevModeVariantProbe}". That premise is
+ * false at source: {@code DevModeVariantProbe} loads its own {@link ModelManifest} and runs its own
+ * filename-substring guess ({@code DevModeVariantProbe:59,75-83}); it never consults {@link
+ * ModelCapabilityResolver}. No production code reads {@link ModelCapabilities#cpuPrecision()} or
+ * {@link ModelCapabilities#gpuPrecision()} at all — the runtime's precision authority is {@code
+ * VariantSelection.precision()}, which comes from the install contract that chose the file. So the
+ * resolver was guessing an unread fact off a filename and logging the guess as "model capability
+ * degraded": four of the six such lines sandbox round 13 saw on a clean, correctly-installed
+ * machine, and one of them guessed FP32 for the NER CPU variant the registry declares INT8, about a
+ * file a CUDA install never downloads. Precision remains resolvable via {@link #ALL} for
+ * diagnostics; put it back in a role preset only together with a consumer that reads it.
  *
  * @param facts the facts this role resolves; every other fact stays at its "undeclared" sentinel
  *     ({@code UNKNOWN}/{@code 0}/{@code null}/empty map) with zero warnings, unconditionally
@@ -54,21 +65,20 @@ public record CapabilityRequirements(Set<Fact> facts) {
   /** {@code OnnxEmbeddingEncoder}: pooling, dimension, and prefixes; no label taxonomy. */
   public static final CapabilityRequirements EMBEDDING =
       new CapabilityRequirements(
-          EnumSet.of(
-              Fact.POOLING, Fact.CONTEXT_LENGTH, Fact.DIMENSION, Fact.PRECISION, Fact.PREFIXES));
+          EnumSet.of(Fact.POOLING, Fact.CONTEXT_LENGTH, Fact.DIMENSION, Fact.PREFIXES));
 
   /** {@code BertNerInference}: label taxonomy only; NER never pools or prefixes. */
   public static final CapabilityRequirements NER =
-      new CapabilityRequirements(EnumSet.of(Fact.CONTEXT_LENGTH, Fact.PRECISION, Fact.LABELS));
+      new CapabilityRequirements(EnumSet.of(Fact.CONTEXT_LENGTH, Fact.LABELS));
 
   /**
    * SPLADE/reranker/citation/BGE-M3: none of these lanes pool a sentence vector, apply a
-   * task-instruction prefix, or consume a label taxonomy — only context length and precision are
-   * ever read. Not yet wired to any {@code ModelCapabilityResolver.resolve} call site (those
-   * encoders don't call the resolver yet); declared ahead of that integration.
+   * task-instruction prefix, or consume a label taxonomy — only context length is ever read. Not
+   * yet wired to any {@code ModelCapabilityResolver.resolve} call site (those encoders don't call
+   * the resolver yet); declared ahead of that integration.
    */
   public static final CapabilityRequirements SPLADE =
-      new CapabilityRequirements(EnumSet.of(Fact.CONTEXT_LENGTH, Fact.PRECISION));
+      new CapabilityRequirements(EnumSet.of(Fact.CONTEXT_LENGTH));
 
   public static final CapabilityRequirements RERANKER = SPLADE;
   public static final CapabilityRequirements CITATION = SPLADE;

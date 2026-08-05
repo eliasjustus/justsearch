@@ -53,7 +53,9 @@ async function activateJfButton(el: Element | null | undefined): Promise<void> {
 describe('authorizationBroker', () => {
   it('fails closed (deny) when no presenter is registered', async () => {
     setAuthorizationPresenter(null);
-    await expect(requestAuthorization({ pendingId: 'pa-1', operationId: 'core.x', gateBehavior: 'INLINE_CONFIRM' })).resolves.toEqual({ approved: false, allowAlways: false });
+    // Tempdoc 807 item 4: still a deny, now marked `failedClosed` — the ceremony was never shown,
+    // which is a failure the caller must be able to report, not a refusal to pass over in silence.
+    await expect(requestAuthorization({ pendingId: 'pa-1', operationId: 'core.x', gateBehavior: 'INLINE_CONFIRM' })).resolves.toEqual({ approved: false, allowAlways: false, failedClosed: true });
   });
 });
 
@@ -152,7 +154,14 @@ describe('<jf-authorization-host> (tempdoc 550 C3)', () => {
     const decision = requestAuthorization({ pendingId: 'pa-4', operationId: 'core.x', gateBehavior: 'INLINE_CONFIRM' });
     await settle();
     host.remove();
-    await expect(decision).resolves.toEqual({ approved: false, allowAlways: false });
+    // Tempdoc 807 item 4: still a deny (never silently approved), but flagged `failedClosed` so a
+    // caller can tell it apart from a human refusal and say so. Round 13's residual was exactly
+    // this shape read as a deny: the modal dismissed, nothing dispatched, nothing said.
+    await expect(decision).resolves.toEqual({
+      approved: false,
+      allowAlways: false,
+      failedClosed: true,
+    });
   });
 });
 

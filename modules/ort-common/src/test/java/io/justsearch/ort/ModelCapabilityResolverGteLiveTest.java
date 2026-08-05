@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import io.justsearch.configuration.model.ModelPrecision;
 import io.justsearch.ort.testing.ModelDirTestResolver;
 import java.nio.file.Path;
+import java.util.EnumSet;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -42,10 +43,23 @@ class ModelCapabilityResolverGteLiveTest {
     assumeTrue(discovery.modelDir() != null, discovery.missDescription());
     Path modelDir = discovery.modelDir();
 
+    // Precision is asserted below, and since tempdoc 807 item 2 it is in no role preset (no
+    // production consumer reads it), so this test requests it explicitly alongside the embedding
+    // role's own facts.
     ModelManifest manifest = ModelManifest.load(modelDir);
     ModelCapabilities caps =
         ModelCapabilityResolver.resolve(
-            "embedding", modelDir, manifest, CapabilityRequirements.EMBEDDING, false);
+            "embedding",
+            modelDir,
+            manifest,
+            new CapabilityRequirements(
+                EnumSet.of(
+                    CapabilityRequirements.Fact.POOLING,
+                    CapabilityRequirements.Fact.CONTEXT_LENGTH,
+                    CapabilityRequirements.Fact.DIMENSION,
+                    CapabilityRequirements.Fact.PRECISION,
+                    CapabilityRequirements.Fact.PREFIXES)),
+            false);
 
     assertEquals(ModelCapabilities.PoolingMode.CLS, caps.poolingMode());
     assertEquals(8192, caps.trainedContextLength());

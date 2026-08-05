@@ -54,6 +54,8 @@ async function renderFor(installStatus: InstallStatus): Promise<string> {
         loadStartedAtMs: null,
       } as never,
       reachable: true,
+      // Tempdoc 807 — the install axis is deliberately NOT liveness-gated, but the input is explicit.
+      snapshotLive: true,
     }),
   };
   el.requestUpdate();
