@@ -16,7 +16,15 @@
          MUTATING surface with it (POST /api/knowledge/search). A 401 here is
          reported as a LOUD FAILURE, not a quietly recorded status: the
          all-GET ladder above scored 6/6 in round 10 while every non-GET
-         request the product makes was 401-dead.
+         request the product makes was 401-dead. The verdict is ALSO written
+         to evidence\mutating-probe.v1.json, which check_coverage.py grades
+         fail-closed host-side (tempdoc 808 I1b) -- before that it existed
+         only in console output and the summary, which nothing read.
+      2.6. Copy every ladder snapshot into evidence\api-history\<UTC stamp>\
+         so repeated runs stop overwriting each other's evidence, and append
+         one record to evidence\collect-runs.ndjson (tempdoc 808 I3). The
+         fixed-name snapshots are unchanged -- other consumers read them by
+         name.
       3. Exercise the /mcp endpoint via the official MCP Inspector CLI (npx).
       3.1. Raw POST /mcp reachability probe carrying the session header the
          Inspector CLI cannot send -- run whenever the inspector path did not
@@ -71,6 +79,70 @@ function Write-Utf8NoBom {
         $utf8NoBom = New-Object System.Text.UTF8Encoding $false
         [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
     }
+}
+
+function Write-MutatingProbeVerdict {
+    # tempdoc 808 I1b: the mutating-surface rung's verdict, machine-readable.
+    # It was already detected and already printed loudly -- but only to the
+    # console and collect-evidence-summary.txt, which NO host-side checker
+    # reads, so three rounds of tested detection never reached an exit code.
+    # check_coverage.py's check_mutating_probe grades this file. Still no exit
+    # -code change here: collect-evidence is capture-only by contract.
+    param(
+        [Parameter(Mandatory = $true)][string]$EvidenceDirectory,
+        [Parameter(Mandatory = $true)][ValidateSet("pass", "fail", "skipped")][string]$Status,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Detail
+    )
+    $record = New-Object PSObject -Property @{
+        schema = "mutating-probe.v1"
+        status = $Status
+        detail = $Detail
+    }
+    $outPath = Join-Path -Path $EvidenceDirectory -ChildPath "mutating-probe.v1.json"
+    ($record | ConvertTo-Json -Depth 5) | Write-Utf8NoBom -Path $outPath
+    Write-Log "Wrote mutating-probe.v1.json (status=$Status)"
+}
+
+function Add-CollectRunRecord {
+    # tempdoc 808 I3: one appended JSON line per invocation. sandbox-CLAUDE.md
+    # tells rounds to run this script "early and after each major step", and
+    # every run overwrote the last one's fixed-name snapshots -- so the
+    # product's progression through install/enrichment was unrecoverable
+    # afterwards (rounds 10-13 could not reconstruct it). This is pure
+    # information preservation: nothing grades it.
+    param(
+        [Parameter(Mandatory = $true)][string]$EvidenceDirectory,
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)][bool]$BackendReachable,
+        [Parameter(Mandatory = $true)][bool]$LadderOk,
+        [Parameter(Mandatory = $true)][string]$MutatingProbe
+    )
+    $record = New-Object PSObject -Property @{
+        ts               = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        mode             = $Mode
+        backendReachable = $BackendReachable
+        ladderOk         = $LadderOk
+        mutatingProbe    = $MutatingProbe
+    }
+    # Compress-Archive-style one-line JSON: -Compress keeps each record on a
+    # single line, which is what makes the file NDJSON rather than a stream of
+    # pretty-printed blocks.
+    $line = ($record | ConvertTo-Json -Depth 5 -Compress)
+    $outPath = Join-Path -Path $EvidenceDirectory -ChildPath "collect-runs.ndjson"
+    $existing = ""
+    if (Test-Path -LiteralPath $outPath) {
+        try {
+            $existing = [System.IO.File]::ReadAllText($outPath)
+        }
+        catch {
+            $existing = ""
+        }
+    }
+    if (($existing -ne "") -and (-not $existing.EndsWith("`n"))) {
+        $existing = $existing + "`r`n"
+    }
+    ($existing + $line + "`r`n") | Write-Utf8NoBom -Path $outPath
+    Write-Log "Appended a run record to collect-runs.ndjson (mode=$Mode, ladderOk=$LadderOk, mutatingProbe=$MutatingProbe)"
 }
 
 function Invoke-ApiRequest {
@@ -233,13 +305,22 @@ Write-Log $elevationNote
 # instead (the upgrade scenario did not happen as expected). Absent/
 # malformed/missing validation-mode.md defaults to false, i.e. today's
 # behavior below, unchanged.
+#
+# tempdoc 808 I3: the same file is the only in-sandbox source for the round's
+# resolved MODE (write_validation_mode writes a "- Mode: <mode>" line), so it
+# is read back here too for the collect-runs.ndjson invocation log below --
+# recorded, never guessed. Absent/malformed leaves it "unknown".
 $validationModePath = Join-Path -Path $PSScriptRoot -ChildPath "validation-mode.md"
 $expectPriorInstall = $false
+$roundMode = "unknown"
 if (Test-Path -LiteralPath $validationModePath) {
     try {
         $validationModeContent = Get-Content -LiteralPath $validationModePath -Raw -ErrorAction Stop
         if ($validationModeContent -match 'ExpectPriorInstall:\s*true') {
             $expectPriorInstall = $true
+        }
+        if ($validationModeContent -match '(?m)^\s*-\s*Mode:\s*(\S+)') {
+            $roundMode = $Matches[1]
         }
     }
     catch {
@@ -429,6 +510,16 @@ if (-not $port) {
     $summaryLines += "Resolved port: NONE"
     $summaryLines += $errorText
     ($summaryLines -join "`r`n") | Write-Utf8NoBom -Path $summaryPath
+    # tempdoc 808 I1b/I3: this is the ONE branch where 'skipped' is honest --
+    # the backend was never reachable, so the mutating surface was never
+    # probed (as opposed to probed and refused). Both artifacts are still
+    # written, so a round that died here is legible host-side instead of
+    # simply missing the files.
+    Write-MutatingProbeVerdict -EvidenceDirectory $EvidenceDir -Status "skipped" -Detail (
+        "Backend API port could not be determined, so no request was ever sent. " + $errorText
+    )
+    Add-CollectRunRecord -EvidenceDirectory $EvidenceDir -Mode $roundMode `
+        -BackendReachable $false -LadderOk $false -MutatingProbe "skipped"
     exit 1
 }
 
@@ -615,6 +706,54 @@ $ladderResults += New-Object PSObject -Property @{
     StatusCode = $mutatingResult.StatusCode
     Ok         = $mutatingResult.Ok
     File       = $mutatingFileName
+}
+
+# tempdoc 808 I1b: the same verdict the console and the summary already carry,
+# now in a file check_coverage.py actually reads. 'skipped' is NOT reachable
+# here -- the backend answered something, or the run exited earlier at the
+# port-discovery branch above.
+if ($mutatingFailReason -ne "") {
+    Write-MutatingProbeVerdict -EvidenceDirectory $EvidenceDir -Status "fail" -Detail $mutatingFailReason
+    $mutatingProbeStatus = "fail"
+}
+else {
+    Write-MutatingProbeVerdict -EvidenceDirectory $EvidenceDir -Status "pass" -Detail (
+        "POST $mutatingPath returned $($mutatingResult.StatusCode) -- the ladder is not GET-only. $sessionTokenNote"
+    )
+    $mutatingProbeStatus = "pass"
+}
+
+# ---------------------------------------------------------------------------
+# Step 2.6: timestamped API-ladder history (tempdoc 808 I3)
+# ---------------------------------------------------------------------------
+# Every rung above wrote a FIXED filename, and sandbox-CLAUDE.md tells rounds
+# to run this script "early and after each major step" -- so each run silently
+# destroyed the previous one's snapshots and the product's progression through
+# install/enrichment was unreconstructable afterwards. The fixed-name copies
+# stay exactly where they were (check_golden_parity.py reads
+# api-api-knowledge-status.json BY NAME, and the golden capture below reads it
+# too); this ADDITIONALLY copies each snapshot into a per-invocation directory.
+# Copying the already-written files -- rather than writing twice at each rung --
+# keeps the two copies byte-identical by construction and leaves every existing
+# write path untouched.
+$apiHistoryDir = Join-Path -Path $EvidenceDir -ChildPath ("api-history\" + (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss"))
+try {
+    if (-not (Test-Path -LiteralPath $apiHistoryDir)) {
+        New-Item -ItemType Directory -Path $apiHistoryDir -Force | Out-Null
+    }
+    $historyCopied = 0
+    foreach ($result in $ladderResults) {
+        $sourceFile = Join-Path -Path $EvidenceDir -ChildPath $result.File
+        if (Test-Path -LiteralPath $sourceFile) {
+            Copy-Item -LiteralPath $sourceFile -Destination (Join-Path -Path $apiHistoryDir -ChildPath $result.File) -Force
+            $historyCopied++
+        }
+    }
+    Write-Log "Archived $historyCopied ladder snapshot(s) to $apiHistoryDir"
+}
+catch {
+    # Never fatal: history is a bonus, the fixed-name snapshots are the contract.
+    Write-Log "Could not write the API-ladder history dir ($($_.Exception.Message)) -- fixed-name snapshots are unaffected."
 }
 
 # ---------------------------------------------------------------------------
@@ -1193,5 +1332,11 @@ if ($mutatingFailReason -ne "") {
     # but the failure can no longer hide inside a green-looking ladder count.
     Write-Host "[collect-evidence] $mutatingFailReason"
 }
+
+# tempdoc 808 I3: one line per invocation, so a round's sequence of captures is
+# recoverable afterwards. ladderOk means EVERY rung (including the POST rung)
+# answered 2xx -- the same number the Done line above prints.
+Add-CollectRunRecord -EvidenceDirectory $EvidenceDir -Mode $roundMode `
+    -BackendReachable $true -LadderOk ($okCount -eq $totalCount) -MutatingProbe $mutatingProbeStatus
 
 exit 0

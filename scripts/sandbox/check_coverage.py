@@ -16,6 +16,12 @@ Gates enforced by main() (all fail-closed unless noted):
     Bach, STQE 2000 -- adapted; tempdoc 750 Part B)
   - evidence review (735-followup): a reader must examine every credit-
     eligible screenshot
+  - mustWatch verdict record (808 I1a): every mode-included mustWatch id
+    carries a verdict; 'observed-fail' prints loudly but does NOT flip the
+    exit code (recording is graded, outcomes stay judgment)
+  - mutating-surface probe verdict (808 I1b): collect-evidence.ps1's POST
+    rung result, fail-closed; 'skipped' warns loudly instead
+  - session self-analysis (808 I2): presence + byte floor, content ungraded
   - evidence mtime timeline: REPORT-ONLY, does not affect the exit code
 
 Pure Python 3 stdlib. No network access.
@@ -372,6 +378,265 @@ def check_evidence_review(evidence_dir: str | None, screenshots: set[str]) -> tu
         f"{EVIDENCE_REVIEW_FILENAME} present, all {len(screenshots)} credit-eligible "
         "screenshot(s) examined, no mismatches, none uncertain"
     )
+
+
+# --------------------------------------------------------------------------
+# mustWatch verdict record (tempdoc 808 I1a).
+#
+# The register's mustWatch items are re-injected into every round's brief
+# (gen_coverage_brief.py's build_manifest writes the mode-filtered list into
+# coverage-manifest.json's top-level "mustWatch" array) with their validateHow
+# notes -- and until now nothing here referenced them. A round could observe
+# NOTHING on all 13 and still exit 0: a recorded claim nothing verifies, which
+# is this campaign's own signature defect class applied to the harness itself.
+#
+# What is graded is the RECORDING, not the outcome. The gate's job is to make
+# the *claim of observation* verifiable (the write-time witness shape of
+# tempdoc 798 D2); deciding what a failed watch MEANS is the round agent's and
+# the owner's call, and flows through the findings process like any defect.
+# So: a missing file, an item set that does not cover every mode-included
+# mustWatch id, an invalid verdict enum, or an 'unobservable' with no note all
+# fail closed -- while 'observed-fail' prints prominently and does NOT flip the
+# exit code.
+#
+# The 'unobservable' + non-empty-note rule mirrors the register's own honesty
+# rule for install-trust-prompts (observability: blocked-by-posture carries a
+# note explaining WHY): "not observable this round" is an acceptable answer
+# only when it says why.
+# --------------------------------------------------------------------------
+
+MUSTWATCH_VERDICTS_FILENAME = "mustwatch-verdicts.v1.json"
+
+MUSTWATCH_VERDICT_VALUES = ("observed-pass", "observed-fail", "unobservable")
+
+
+def check_mustwatch_verdicts(
+    evidence_dir: str | None, manifest: dict
+) -> tuple[bool, str, list[str]]:
+    """Check evidence/mustwatch-verdicts.v1.json against the manifest's
+    mode-included mustWatch ids (tempdoc 808 I1a).
+
+    Returns (ok, reason, observed_fail_ids). The third element is reported
+    separately BECAUSE it is deliberately not part of `ok`: an observed-fail
+    is a real finding the report must shout about, but severity is judgment,
+    so it must not silently flip the exit code (see the section comment).
+
+    Does not raise on I/O or shape errors -- reported as a normal failure
+    reason, matching check_retrospective/check_evidence_review's style.
+    """
+    required_ids = [
+        str(item.get("id", ""))
+        for item in (manifest.get("mustWatch") or [])
+        if isinstance(item, dict) and item.get("id")
+    ]
+
+    if not evidence_dir:
+        return False, f"no --evidence-dir given; cannot check for evidence/{MUSTWATCH_VERDICTS_FILENAME}", []
+
+    path = os.path.join(evidence_dir, MUSTWATCH_VERDICTS_FILENAME)
+    if not os.path.isfile(path):
+        return False, (
+            f"{MUSTWATCH_VERDICTS_FILENAME} not found in evidence dir {evidence_dir!r} -- "
+            f"the round must record a verdict for each of the {len(required_ids)} mustWatch "
+            "item(s) in this round's coverage-manifest.json"
+        ), []
+
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except OSError as exc:
+        return False, f"{MUSTWATCH_VERDICTS_FILENAME} could not be read: {exc}", []
+    except json.JSONDecodeError as exc:
+        return False, f"{MUSTWATCH_VERDICTS_FILENAME} is not valid JSON: {exc}", []
+
+    if not isinstance(data, dict):
+        return False, (
+            f"{MUSTWATCH_VERDICTS_FILENAME} must contain a JSON object, got "
+            f"{type(data).__name__}"
+        ), []
+
+    items = data.get("items")
+    if not isinstance(items, list):
+        return False, (
+            f"{MUSTWATCH_VERDICTS_FILENAME} 'items' must be a list, got "
+            f"{type(items).__name__}"
+        ), []
+
+    recorded: dict[str, str] = {}
+    observed_fail_ids: list[str] = []
+    for index, raw in enumerate(items):
+        if not isinstance(raw, dict):
+            return False, (
+                f"{MUSTWATCH_VERDICTS_FILENAME} items[{index}] must be an object, got "
+                f"{type(raw).__name__}"
+            ), []
+        item_id = str(raw.get("id", "")).strip()
+        if not item_id:
+            return False, f"{MUSTWATCH_VERDICTS_FILENAME} items[{index}] has no 'id'", []
+        verdict = raw.get("verdict")
+        if verdict not in MUSTWATCH_VERDICT_VALUES:
+            return False, (
+                f"{MUSTWATCH_VERDICTS_FILENAME} item {item_id!r} has verdict={verdict!r}, "
+                f"must be one of {list(MUSTWATCH_VERDICT_VALUES)!r}"
+            ), []
+        if verdict == "unobservable" and not str(raw.get("note", "")).strip():
+            return False, (
+                f"{MUSTWATCH_VERDICTS_FILENAME} item {item_id!r} is verdict='unobservable' "
+                "with an empty/missing 'note' -- 'not observable this round' is only an "
+                "honest answer when it says WHY (mirrors the register's own note rule for "
+                "observability='blocked-by-posture')"
+            ), []
+        recorded[item_id] = verdict
+        if verdict == "observed-fail":
+            observed_fail_ids.append(item_id)
+
+    missing = [item_id for item_id in required_ids if item_id not in recorded]
+    if missing:
+        return False, (
+            f"{MUSTWATCH_VERDICTS_FILENAME} records no verdict for {len(missing)} "
+            f"mode-included mustWatch item(s): {sorted(missing)!r} -- every mustWatch id in "
+            "this round's coverage-manifest.json must carry a verdict. An item nobody looked "
+            "at is 'unobservable' WITH a note, not an omission."
+        ), []
+
+    extra = sorted(set(recorded) - set(required_ids))
+    extra_note = f"; {len(extra)} extra id(s) also recorded: {extra!r}" if extra else ""
+    return True, (
+        f"{MUSTWATCH_VERDICTS_FILENAME} present, all {len(required_ids)} mode-included "
+        f"mustWatch item(s) carry a verdict{extra_note}"
+    ), observed_fail_ids
+
+
+# --------------------------------------------------------------------------
+# Mutating-surface probe verdict (tempdoc 808 I1b).
+#
+# collect-evidence.ps1 already detects the round-10 false-green class (every
+# GET rung green while the whole mutating surface 401s) and already refuses to
+# change its own exit code -- capture-only by contract, judgment is host-side.
+# But it wrote that verdict only to the console and collect-evidence-summary.txt,
+# which NO host-side checker reads, so three rounds of tested detection never
+# reached an exit code. It now also writes a machine-readable
+# evidence/mutating-probe.v1.json; this is the host-side half that grades it.
+#
+# Fail-closed immediately (no soak period): this completes existing, three-
+# rounds-tested machinery rather than debuting new detection. 'skipped' -- the
+# backend was never reachable -- prints a prominent warning instead of failing,
+# because an unreachable backend already fails coverage elsewhere and a second
+# failure for the same cause is noise, not signal.
+# --------------------------------------------------------------------------
+
+MUTATING_PROBE_FILENAME = "mutating-probe.v1.json"
+
+MUTATING_PROBE_STATUS_VALUES = ("pass", "fail", "skipped")
+
+
+def check_mutating_probe(evidence_dir: str | None) -> tuple[bool, str, bool]:
+    """Check evidence/mutating-probe.v1.json (tempdoc 808 I1b).
+
+    Returns (ok, reason, skipped). `skipped` is surfaced separately so main()
+    can print the loud warning without the status flipping the exit code.
+    """
+    if not evidence_dir:
+        return False, f"no --evidence-dir given; cannot check for evidence/{MUTATING_PROBE_FILENAME}", False
+
+    path = os.path.join(evidence_dir, MUTATING_PROBE_FILENAME)
+    if not os.path.isfile(path):
+        return False, (
+            f"{MUTATING_PROBE_FILENAME} not found in evidence dir {evidence_dir!r} -- "
+            "collect-evidence.ps1 writes it on every run, so its absence means the capture "
+            "harness never ran (or ran a pre-808 copy) and the mutating surface was never "
+            "probed this round"
+        ), False
+
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except OSError as exc:
+        return False, f"{MUTATING_PROBE_FILENAME} could not be read: {exc}", False
+    except json.JSONDecodeError as exc:
+        return False, f"{MUTATING_PROBE_FILENAME} is not valid JSON: {exc}", False
+
+    if not isinstance(data, dict):
+        return False, (
+            f"{MUTATING_PROBE_FILENAME} must contain a JSON object, got {type(data).__name__}"
+        ), False
+
+    status = data.get("status")
+    detail = str(data.get("detail", "")).strip()
+    if status not in MUTATING_PROBE_STATUS_VALUES:
+        return False, (
+            f"{MUTATING_PROBE_FILENAME} has status={status!r}, must be one of "
+            f"{list(MUTATING_PROBE_STATUS_VALUES)!r}"
+        ), False
+
+    if status == "fail":
+        return False, (
+            f"{MUTATING_PROBE_FILENAME} reports status='fail' -- the product's mutating "
+            "surface (search, ingest, chat) did not answer this round. Every GET rung can "
+            "still be green while this is true; that combination IS the round-10 false-green "
+            f"(finding F7). Detail: {detail or '(none given)'}"
+        ), False
+
+    if status == "skipped":
+        return True, (
+            f"{MUTATING_PROBE_FILENAME} reports status='skipped' (backend never reachable) -- "
+            f"the mutating surface was NOT proven this round. Detail: {detail or '(none given)'}"
+        ), True
+
+    return True, f"{MUTATING_PROBE_FILENAME} reports status='pass'. Detail: {detail or '(none given)'}", False
+
+
+# --------------------------------------------------------------------------
+# Session self-analysis (tempdoc 808 I2).
+#
+# Round 12 wrote a session-level self-analysis nobody asked for -- what the
+# harness/charter made hard, what was done off-charter and why, what the next
+# round should do differently -- and it produced ~11 adopted harness fixes
+# (tempdoc 734), the single highest-yield artifact of the campaign. Nothing
+# collected it, so it happened once.
+#
+# Deliberately dumb, exactly like check_retrospective's byte floor and for the
+# same stated reason: this cannot judge QUALITY, only reject an absent file and
+# a placeholder stub. The value is that the artifact exists at all.
+#
+# Not folded into retrospective.md on purpose: the retrospective debriefs THE
+# ROUND against its charter (SBTM), this debriefs THE SESSION against the
+# harness. Merging them loses the second every time the first is long enough
+# to feel done.
+# --------------------------------------------------------------------------
+
+SESSION_ANALYSIS_FILENAME = "session-analysis.md"
+
+SESSION_ANALYSIS_MIN_BYTES = 400
+
+
+def check_session_analysis(evidence_dir: str | None) -> tuple[bool, str]:
+    """Check evidence/session-analysis.md is present and not a stub (808 I2).
+
+    Content is UNGRADED beyond the byte floor -- see the section comment.
+    """
+    if not evidence_dir:
+        return False, f"no --evidence-dir given; cannot check for evidence/{SESSION_ANALYSIS_FILENAME}"
+
+    path = os.path.join(evidence_dir, SESSION_ANALYSIS_FILENAME)
+    if not os.path.isfile(path):
+        return False, f"{SESSION_ANALYSIS_FILENAME} not found in evidence dir {evidence_dir!r}"
+
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            content = fh.read()
+    except OSError as exc:
+        return False, f"{SESSION_ANALYSIS_FILENAME} could not be read: {exc}"
+
+    stripped = content.strip()
+    if len(stripped) < SESSION_ANALYSIS_MIN_BYTES:
+        return False, (
+            f"{SESSION_ANALYSIS_FILENAME} is only {len(stripped)} non-whitespace-trimmed "
+            f"byte(s) (minimum {SESSION_ANALYSIS_MIN_BYTES}) -- reads like an empty or "
+            "placeholder stub, not a real session self-analysis"
+        )
+
+    return True, f"{SESSION_ANALYSIS_FILENAME} present ({len(stripped)} bytes; content ungraded)"
 
 
 # --------------------------------------------------------------------------
@@ -1122,11 +1387,93 @@ def main(argv: list[str] | None = None) -> int:
         )
         print("=" * 72)
 
+    mustwatch_ok, mustwatch_reason, observed_fail_ids = check_mustwatch_verdicts(
+        args.evidence_dir, manifest
+    )
+    print("=" * 72)
+    print("mustWatch verdict record (808 I1a -- the claim of observation must be verifiable)")
+    print("=" * 72)
+    print(f"[{'PRESENT' if mustwatch_ok else 'BLOCKING'}] evidence/{MUSTWATCH_VERDICTS_FILENAME}")
+    print(f"    reason: {mustwatch_reason}")
+    if not mustwatch_ok:
+        print("=" * 72)
+        print(f"BLOCKING: evidence/{MUSTWATCH_VERDICTS_FILENAME} is required and must be complete.")
+        print(
+            "Every mustWatch id in this round's coverage-manifest.json needs a verdict of "
+            f"{list(MUSTWATCH_VERDICT_VALUES)!r}; 'unobservable' needs a note saying why. "
+            "See scripts/sandbox/sandbox-CLAUDE.md 'Writing results' -> 'Must-watch verdicts'."
+        )
+        print("=" * 72)
+    if observed_fail_ids:
+        # Deliberately NOT part of the exit composition below (808 I1a): what a
+        # failed watch MEANS is judgment, routed through the findings process.
+        # It must be impossible to MISS, not impossible to pass.
+        print("=" * 72)
+        print(f"**OBSERVED-FAIL** on {len(observed_fail_ids)} mustWatch item(s): {sorted(observed_fail_ids)!r}")
+        print(
+            "This does NOT flip the exit code by itself -- severity is the round's and the "
+            "owner's call -- but each one must be written up as a finding, not left in this "
+            "file alone. A round that ends with an unexplained observed-fail is not finished."
+        )
+        print("=" * 72)
+
+    mutating_ok, mutating_reason, mutating_skipped = check_mutating_probe(args.evidence_dir)
+    print("=" * 72)
+    print("Mutating-surface probe (808 I1b -- the round-10 false-green, now machine-visible)")
+    print("=" * 72)
+    print(f"[{'PRESENT' if mutating_ok else 'BLOCKING'}] evidence/{MUTATING_PROBE_FILENAME}")
+    print(f"    reason: {mutating_reason}")
+    if not mutating_ok:
+        print("=" * 72)
+        print(f"BLOCKING: evidence/{MUTATING_PROBE_FILENAME} is required and must not report 'fail'.")
+        print(
+            "collect-evidence.ps1 writes this on every run. A missing file means the capture "
+            "harness never ran; status='fail' means every GET rung above can be green while "
+            "the product's whole mutating surface is dead (round-10 finding F7)."
+        )
+        print("=" * 72)
+    elif mutating_skipped:
+        print("=" * 72)
+        print(
+            "**WARNING** the mutating-surface probe was SKIPPED (backend never reachable) -- "
+            "this round proved nothing about search/ingest/chat. Not failed here only because "
+            "an unreachable backend already fails coverage above."
+        )
+        print("=" * 72)
+
+    session_analysis_ok, session_analysis_reason = check_session_analysis(args.evidence_dir)
+    print("=" * 72)
+    print("Session self-analysis (808 I2 -- the harness's own highest-yield artifact)")
+    print("=" * 72)
+    print(f"[{'PRESENT' if session_analysis_ok else 'MISSING/TRIVIAL'}] evidence/{SESSION_ANALYSIS_FILENAME}")
+    print(f"    reason: {session_analysis_reason}")
+    if not session_analysis_ok:
+        print("=" * 72)
+        print(f"BLOCKING: evidence/{SESSION_ANALYSIS_FILENAME} is required and must be substantial.")
+        print(
+            "Write what the harness/charter/instructions made HARD, what was done off-charter "
+            "and why, and what the next round should do differently. Content is not graded -- "
+            "see scripts/sandbox/sandbox-CLAUDE.md 'Writing results' -> 'Session self-analysis'."
+        )
+        print("=" * 72)
+
     # Report-only (no gate): see emit_evidence_timeline's docstring. Runs
     # after every gate above and never affects the exit code below.
     emit_evidence_timeline(args.evidence_dir)
 
-    return 0 if (all_covered and retrospective_ok and evidence_review_ok and not collisions) else 1
+    return (
+        0
+        if (
+            all_covered
+            and retrospective_ok
+            and evidence_review_ok
+            and mustwatch_ok
+            and mutating_ok
+            and session_analysis_ok
+            and not collisions
+        )
+        else 1
+    )
 
 
 if __name__ == "__main__":
