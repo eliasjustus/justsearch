@@ -251,7 +251,12 @@ Two staged tools make rounds repeatable and make coverage fail closed:
   backend port from the runtime manifest, hits the API sanity ladder, exercises
   `/mcp` via the Inspector CLI, and saves raw snapshots into `evidence/`. Run it
   early and after each major step. It *captures*; the honesty/scary-UI judgment
-  stays with you.
+  stays with you. Re-running it is now **non-destructive**: each invocation also
+  copies its ladder snapshots into `evidence/api-history/<UTC timestamp>/` and
+  appends a line to `evidence/collect-runs.ndjson`, so the product's progression
+  through install/enrichment survives (the fixed-name snapshots at the evidence
+  root are still overwritten in place — they are the "latest" copies other tools
+  read by name).
 - **Endpoint tracing** — launch JustSearch with `JUSTSEARCH_HEAD_TRACING_LEVEL=detailed`
   so every API request is recorded to `%APPDATA%\io.justsearch.shell\telemetry\traces.ndjson`.
   This is the empirical record of which endpoints the round actually exercised.
@@ -282,6 +287,13 @@ Two staged tools make rounds repeatable and make coverage fail closed:
   claims a surface; it cannot prove the PIXELS show it, so a reader pass over
   every credited screenshot is a required, separately fail-closed gate, not an
   optional judgment call.
+  Three further artifacts are required by the same check, each separately
+  fail-closed (all under *Writing results* below): **`mustwatch-verdicts.v1.json`**
+  (a verdict for every must-watch id in this round's brief),
+  **`session-analysis.md`** (the session-vs-harness debrief), and
+  **`mutating-probe.v1.json`** (written for you by `collect-evidence.ps1` — a
+  `status: "fail"` there means the product's whole mutating surface was dead while
+  every GET rung read green, and it now fails the round instead of only printing).
 - **Token health (host-side, tempdoc 805 Part G.4)** -- the same `traces.ndjson`
   is also checked for round 11's discriminator: any POST/PUT/DELETE span
   answered 401 in under 5ms is the auth-filter-rejection fingerprint (a
@@ -765,6 +777,69 @@ Cover, at minimum, four things:
 `evidence/retrospective.md` is checked at finalize (see *Coverage & evidence*
 above) and the round **fails closed** if it is missing or too thin to be a real
 retrospective — a stub file does not satisfy this.
+
+### Session self-analysis (required — separate from the retrospective, on purpose)
+
+Every round must also write `evidence/session-analysis.md`. The retrospective
+above debriefs **the round against its charter**; this one debriefs **the session
+against the harness**. They are not the same artifact and merging them loses the
+second one every time the first is long enough to feel done.
+
+This exists because it already happened once, unasked: round 12 wrote a
+session-level self-analysis nobody requested, and it produced roughly **11 adopted
+harness fixes** — the single highest-yield artifact of the whole campaign — while
+nothing in the harness collected it, so it happened exactly once. Write it in that
+shape:
+
+- **What the harness, charter, or instructions made HARD** — not just wrong (that
+  is the retrospective's first bullet), but *expensive*: the step that took four
+  attempts, the thing you had to re-derive because no staged file carried it, the
+  instruction that was technically followable but pointed the wrong way first.
+- **What you did off-charter, and why** — off-charter pursuit of something
+  important you stumbled into is sanctioned. Name it and say what made it worth
+  the detour; an unrecorded detour looks like drift afterwards.
+- **What the NEXT round should do differently** — concrete, addressed to the next
+  agent, not to the harness authors.
+
+`evidence/session-analysis.md` is checked at finalize and the round **fails
+closed** if it is missing or a stub. Its content is **not graded** — no keyword
+check, no topic list, no quality judgment (the finalize check cannot judge quality
+and does not pretend to). The value is that the artifact exists at all.
+
+### Must-watch verdicts (required — a watch nobody recorded is a watch nobody did)
+
+`coverage-brief.md` lists this round's **must-watch** items with their
+`validateHow` notes. Until now nothing checked them: a round could observe
+**nothing** on every single one and still exit 0 — a recorded claim nothing
+verifies, which is the exact defect class this campaign exists to find, sitting in
+the harness itself.
+
+Before finalize, write `evidence/mustwatch-verdicts.v1.json`:
+
+```json
+{ "schema": "mustwatch-verdicts.v1",
+  "items": [ { "id": "<must-watch id, exactly as in coverage-brief.md>",
+               "verdict": "observed-pass | observed-fail | unobservable",
+               "note": "what was actually seen / why unobservable",
+               "evidence": ["optional artifact filenames"] } ] }
+```
+
+- **Every must-watch id in this round's brief needs an entry.** The finalize check
+  fails closed on any omission. An item nobody got to is `unobservable` **with a
+  note**, not a missing row.
+- **`unobservable` requires a non-empty `note`** saying *why* — the same honesty
+  rule the register itself applies to `install-trust-prompts` (its
+  `observability: blocked-by-posture` carries the reason the prompts cannot fire
+  under the current sandbox posture). "Not observable this round" is an acceptable
+  answer only when it says why.
+- **`observed-fail` does NOT fail the round by itself.** It prints prominently in
+  the finalize report and then goes through the findings process like any other
+  defect — what a failed watch *means* is your call and the owner's, not a byte
+  count's. But an observed-fail with no corresponding finding write-up is an
+  unfinished round.
+
+What is graded is the **recording**, never the outcome: the check exists to make
+the *claim of observation* verifiable, not to decide what you saw.
 
 ## Independence invariant (durable — do not "streamline" this away)
 

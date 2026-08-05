@@ -81,7 +81,18 @@ A release **candidate** is qualified before its number is finalized:
    finalize, on the **host** (the sandbox has no Python), against the persisted evidence dir:
    `python scripts/sandbox/check_coverage.py --manifest <share>/coverage-manifest.json --traces
    <share>/evidence/traces.ndjson --evidence-dir <share>/evidence` — a non-zero exit means a
-   required surface was not exercised. The round also captures golden-query search responses
+   required surface was not exercised.
+   **A qualifying round must also leave five process artifacts in the evidence dir**, each
+   separately fail-closed by that same check: `retrospective.md` (the round-vs-charter debrief,
+   with its time-accounting section), `evidence-review.v1.json` (a reader examined every
+   credit-eligible screenshot), and — added 2026-08-05, tempdoc 808 — `mustwatch-verdicts.v1.json`
+   (a verdict for every must-watch id in the round's brief; `unobservable` needs a reason,
+   `observed-fail` prints loudly but routes through findings rather than flipping the exit),
+   `session-analysis.md` (what the harness/charter made hard, what was off-charter and why, what
+   the next round should change — round 12's unprompted version of this yielded ~11 adopted harness
+   fixes), and `mutating-probe.v1.json` (written by `collect-evidence.ps1`; a `fail` means every GET
+   rung read green while the product's whole mutating surface was dead — the round-10 false-green,
+   which until now reached no exit code). The round also captures golden-query search responses
    (`evidence/golden/<queryId>.json`), checked at finalize by `check_golden_parity.py` against
    the per-candidate baseline generated from the dev stack on the same build — parity-with-dev,
    not absolute quality, since the Sandbox has no `jseval`. That check fails closed (exit 1, not a
@@ -361,7 +372,7 @@ each release's convergence tempdoc + its GitHub Release):
 | Version | Date | Sandbox verdict | Notes | Links |
 |---|---|---|---|---|
 | v0.1.0 | 2026-06-25 | (pre-pipeline) | Prerelease/alpha. **No MCP endpoint.** Installer built locally, not via CI. | [release](https://github.com/eliasjustus/justsearch/releases/tag/v0.1.0) |
-| v0.2.x | pending | rounds 1-6: dense-retrieval + capability-gate fixes confirmed working; `core.workflow-run` fixed 2026-07-16 (tempdoc 744); round 6 (fresh-install, pre-registered) is **DO-NOT-QUALIFY** — the golden-query parity regression reproduces with the CPU/GPU-precision hypothesis now ruled out, root cause still unidentified; a new HIGH-severity RAG chunk-retrieval bug was also found (tempdoc 749) | First cut with the MCP endpoint + the hash-consistent asset pipeline. | tempdoc 734, tempdoc 749 |
+| v0.2.x | pending | rounds 1-13 run. Rounds 1-6 confirmed the dense-retrieval + capability-gate fixes and `core.workflow-run` (tempdoc 744), but round 6 was **DO-NOT-QUALIFY** (golden-query parity regression, plus a HIGH-severity RAG chunk-retrieval bug, tempdoc 749). Rounds 7-13 converged those and later findings. **Round 13 (2026-08-04) found no blocking product defect** — it failed on harness state only: the coverage gate at 25/26 (an unreachable `core.extract` route pointer) and finding R13-F2, both fixed in tempdoc 807 / PR #366. Next step: **one fresh-install confirmation round** against the fixed build to qualify. | First cut with the MCP endpoint + the hash-consistent asset pipeline. | tempdoc 734, tempdoc 749, tempdoc 807 |
 
 ## See also
 
