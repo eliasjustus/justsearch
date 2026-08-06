@@ -5,20 +5,21 @@ import './StatusDeck.js';
 import type { StatusDeck } from './StatusDeck.js';
 import { __resetStatusPollForTest } from '../utils/statusPoll.js';
 import { __resetInferencePollForTest } from '../utils/inferencePoll.js';
-import { __resetAiStateForTest, type AiState } from '../state/aiStateStore.js';
+import { __resetAiStateForTest, isSnapshotLive, type AiState } from '../state/aiStateStore.js';
 import { known, UNKNOWN } from '../state/known.js';
+import { updateShellContext, __resetShellContextForTest } from '../state/shellContextState.js';
 import { EPHEMERAL_TOAST_EVENT } from './advisory/ephemeralToast.js';
 import { formatCount } from '../display/format.js';
 
 function makeAiState(overrides: Partial<AiState> = {}): AiState {
-  return {
+  const built: AiState = {
     phase: 'connected',
     readiness: UNKNOWN,
     capabilities: { chat: false, rag: false, extract: false, embedding: false },
     connection: { reachable: true, lastSuccessMs: Date.now(), lastContactMs: Date.now(), consecutiveFailures: 0 },
     runtime: { mode: 'offline', modelId: null, modelLabel: null, contextWindow: null, gpu: null, installed: known(false), installing: known(false), loadStartedAtMs: null },
     activity: { state: 'idle', shapeId: null, startedAtMs: null, canCancel: false, cancel: null },
-    index: { documentCount: known(0), pendingJobs: known(0), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+    index: { documentCount: known(0), searchableDocumentCount: known(0), pendingJobs: known(0), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
     realized: {
       reranker: { loaded: false, accelerator: null, failureReason: null },
       embed: { loaded: false, accelerator: null, failureReason: null },
@@ -29,15 +30,21 @@ function makeAiState(overrides: Partial<AiState> = {}): AiState {
     statusTone: 'neutral',
     stability: { kind: 'settled' },
     verdict: { kind: 'operational', severity: 'ok', reasons: [] },
+    snapshotLive: true,
     status: null,
     inference: null,
     lastSettledIndex: null,
+    episodeMaxPendingJobs: 0,
     installStatus: null,
     runtimeStatus: null,
     packStatus: null,
     aiEngine: { kind: 'offline', stability: { kind: 'settled' }, installFailure: null },
     ...overrides,
   };
+  // Tempdoc 807 — keep the fixture COHERENT: a test that overrides `connection` to an unreachable
+  // origin must not silently keep `snapshotLive: true` (production derives one from the other in
+  // `buildSnapshot`). An explicit override still wins, so a test can pin the pair deliberately.
+  return { ...built, snapshotLive: overrides.snapshotLive ?? isSnapshotLive(built.connection) };
 }
 
 function make(): StatusDeck {
@@ -81,6 +88,50 @@ describe('StatusDeck (slice 461)', () => {
     expect(dot?.classList.contains('healthy')).toBe(true);
   });
 
+  // Tempdoc 807 A.3 (round-13 R13-F2) — the CONN dot reflects REACHABILITY, not the last good poll.
+  // `components.head/worker.state` are fields off the retained snapshot: they said READY/READY forever
+  // after both java processes died, so the dot stayed green beside a "Backend disconnected." banner.
+  it('807: the connection dot goes red when the snapshot is no longer live — READY/READY notwithstanding', async () => {
+    const el = make();
+    const READY_SNAPSHOT = {
+      components: { head: { state: 'LIFECYCLE_STATE_READY' }, worker: { state: 'LIFECYCLE_STATE_READY' } },
+    } as unknown as AiState['status'];
+    // The exact round-13 state: a fully-healthy retained snapshot + contact aged out mid-session
+    // (verdict `transitioning`/`channel-stale`, NOT `unreachable` — the poll had succeeded once).
+    // Liveness comes from CONTACT (round-13 review), so the fixture states the contact fact.
+    el.aiState = makeAiState({
+      status: READY_SNAPSHOT,
+      connection: { reachable: false, lastSuccessMs: Date.now() - 60_000, lastContactMs: Date.now() - 60_000, consecutiveFailures: 1 },
+      verdict: { kind: 'transitioning', severity: 'warn', reasons: ['channel-stale'] },
+    });
+    await el.updateComplete;
+    const dot = el.shadowRoot?.querySelector('.dot');
+    expect(dot?.classList.contains('healthy')).toBe(false);
+    expect(dot?.classList.contains('error')).toBe(true);
+    expect(el.shadowRoot?.querySelector('.dot')?.parentElement?.getAttribute('aria-label')).toContain(
+      'disconnected',
+    );
+
+    // Anti-regression: the SAME snapshot with a live verdict is still green (the fix must not
+    // permanently red-line a healthy UI).
+    el.aiState = makeAiState({ status: READY_SNAPSHOT });
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.dot')?.classList.contains('healthy')).toBe(true);
+  });
+
+  it('807: the never-contacted `unreachable` verdict reddens the dot too', async () => {
+    const el = make();
+    el.aiState = makeAiState({
+      status: {
+        components: { head: { state: 'LIFECYCLE_STATE_READY' }, worker: { state: 'LIFECYCLE_STATE_READY' } },
+      } as unknown as AiState['status'],
+      connection: { reachable: false, lastSuccessMs: null, lastContactMs: null, consecutiveFailures: 1 },
+      verdict: { kind: 'unreachable', severity: 'error', reasons: ['binding.unreachable'] },
+    });
+    await el.updateComplete;
+    expect(el.shadowRoot?.querySelector('.dot')?.classList.contains('error')).toBe(true);
+  });
+
   it('memory dot turns warn at >80% utilization', async () => {
     const el = make();
     el.aiState = makeAiState({
@@ -116,10 +167,17 @@ describe('StatusDeck (slice 461)', () => {
     expect(badgeTone(el)).toBe('error');
   });
 
+  // Tempdoc 813 §3b — the chip's NUMBERS now come from the one indexing-progress projection over the
+  // `/api/status` snapshot, so these fixtures carry the wire fields that projection reads
+  // (`worker.core.indexState` + `pendingJobs`) alongside the store's `index` slice. Same scenario,
+  // same assertions — only the seed now matches how the number actually reaches the chip.
   it('queue group renders when pendingJobs > 0', async () => {
     const el = make();
     el.aiState = makeAiState({
-      index: { documentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      index: { documentCount: known(0), searchableDocumentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      status: {
+        worker: { core: { indexState: 'INDEXING', pendingJobs: 5 } },
+      } as unknown as AiState['status'],
     });
     await el.updateComplete;
     const groups = el.shadowRoot?.querySelectorAll('.group');
@@ -137,8 +195,11 @@ describe('StatusDeck (slice 461)', () => {
   it('630: queue reads "paused" on the main-surface bar when energy saver is active', async () => {
     const el = make();
     el.aiState = makeAiState({
-      index: { documentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
-      status: { power: { energyReduced: true } } as unknown as AiState['status'],
+      index: { documentCount: known(0), searchableDocumentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      status: {
+        power: { energyReduced: true },
+        worker: { core: { indexState: 'INDEXING', pendingJobs: 5 } },
+      } as unknown as AiState['status'],
     });
     await el.updateComplete;
     expect(queueText(el)).toContain('paused');
@@ -147,18 +208,92 @@ describe('StatusDeck (slice 461)', () => {
   it('630: queue stays the plain active count when not energy-reduced', async () => {
     const el = make();
     el.aiState = makeAiState({
-      index: { documentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
-      status: { power: { energyReduced: false } } as unknown as AiState['status'],
+      index: { documentCount: known(0), searchableDocumentCount: known(0), pendingJobs: known(5), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      status: {
+        power: { energyReduced: false },
+        worker: { core: { indexState: 'INDEXING', pendingJobs: 5 } },
+      } as unknown as AiState['status'],
     });
     await el.updateComplete;
     expect(queueText(el)).toBeTruthy();
     expect(queueText(el)).not.toContain('paused');
   });
 
+  // Tempdoc 813 §4 — during the enrichment window the chip's second number is the coverage FRACTION,
+  // not a raw backlog count: the files are already indexed; the semantic layers are catching up.
+  it('813: jobs drained but enrichment outstanding ⇒ the chip reads the enriching percent', async () => {
+    const el = make();
+    el.aiState = makeAiState({
+      index: { documentCount: known(100), searchableDocumentCount: known(100), pendingJobs: known(0), embeddingPending: known(40), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      status: {
+        worker: {
+          core: { indexState: 'IDLE', pendingJobs: 0 },
+          enrichment: {
+            backfillMode: 'combined',
+            embeddingEnabled: true,
+            embeddingDocCount: 100,
+            embeddingPendingCount: 40,
+          },
+        },
+      } as unknown as AiState['status'],
+    });
+    await el.updateComplete;
+    expect(queueText(el)).toContain('enriching: 60%');
+    expect(queueText(el)).not.toContain('embed:');
+  });
+
+  // 813 review objection 2 — the count fallback under the "embed" label is the EMBEDDING stage's
+  // own pending number, never the multi-stage rawPending sum (which counts a document once per
+  // pending stage plus its chunks — ~10x embedding on a chunked corpus, under an embedding label).
+  it('813: the embed-count fallback shows the embedding number, not the multi-stage sum', async () => {
+    const el = make();
+    el.aiState = makeAiState({
+      index: { documentCount: known(100), searchableDocumentCount: known(100), pendingJobs: known(0), embeddingPending: known(40), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      status: {
+        worker: {
+          core: { indexState: 'IDLE', pendingJobs: 0 },
+          enrichment: {
+            backfillMode: 'combined',
+            embeddingEnabled: true,
+            // No doc counts anywhere ⇒ no faithful denominator ⇒ percent arm suppressed, the
+            // count fallback renders. rawPending here is 40 + 400 = 440; the label says "embed".
+            embeddingPendingCount: 40,
+            chunk: { chunkEmbeddingPendingCount: 400 },
+          },
+        },
+      } as unknown as AiState['status'],
+    });
+    await el.updateComplete;
+    expect(queueText(el)).toContain('embed: 40');
+    expect(queueText(el)).not.toContain('440');
+  });
+
+  it('813: a blocked embedding stage claims no enrichment progress', async () => {
+    const el = make();
+    el.aiState = makeAiState({
+      index: { documentCount: known(100), searchableDocumentCount: known(100), pendingJobs: known(0), embeddingPending: known(40), embeddingBlocked: known(true), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      status: {
+        worker: {
+          core: { indexState: 'IDLE', pendingJobs: 0 },
+          enrichment: {
+            backfillMode: 'combined',
+            embeddingEnabled: true,
+            embeddingDocCount: 100,
+            embeddingPendingCount: 40,
+          },
+        },
+      } as unknown as AiState['status'],
+    });
+    await el.updateComplete;
+    // Nothing to report and nothing to work off ⇒ the chip stays hidden rather than showing a
+    // fraction that will never advance.
+    expect(queueText(el)).toBeUndefined();
+  });
+
   it('§17.2 — files/size/memory values come from the projectFact authority (one formatter)', async () => {
     const el = make();
     el.aiState = makeAiState({
-      index: { documentCount: known(605), pendingJobs: known(0), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
+      index: { documentCount: known(605), searchableDocumentCount: known(605), pendingJobs: known(0), embeddingPending: known(0), embeddingBlocked: known(false), embeddingQueueSize: known(0), vduQueueSize: known(0) },
       status: {
         worker: { core: { indexSizeBytes: 53_477_376 } },
         memoryUsedBytes: 238_026_752,
@@ -293,7 +428,7 @@ describe('StatusDeck (slice 461)', () => {
     const el = make();
     el.aiState = makeAiState({
       stability: { kind: 'provisional', cause: 'worker-restart' },
-      lastSettledIndex: { documentCount: 1234, indexSizeBytes: 4096 },
+      lastSettledIndex: { documentCount: 1234, searchableDocumentCount: 1234, indexSizeBytes: 4096 },
     });
     await el.updateComplete;
     const vals = Array.from(el.shadowRoot?.querySelectorAll('.val') ?? []);
@@ -321,7 +456,7 @@ describe('StatusDeck (slice 461)', () => {
     const el = make();
     el.aiState = makeAiState({
       stability: { kind: 'provisional', cause: 'worker-restart' },
-      lastSettledIndex: { documentCount: 1234, indexSizeBytes: null },
+      lastSettledIndex: { documentCount: 1234, searchableDocumentCount: 1234, indexSizeBytes: null },
     });
     await el.updateComplete;
     const texts = Array.from(el.shadowRoot?.querySelectorAll('.val') ?? []).map((v) => v.textContent?.trim());
@@ -391,6 +526,94 @@ describe('StatusDeck (slice 461)', () => {
       await el.updateComplete;
       const control = el.shadowRoot?.querySelector('[label*="Open Health"]');
       expect(control).not.toBeNull();
+    });
+  });
+
+  // ── Tempdoc 814 §D5 — the chip yields the degradation fact to a surface banner ──
+  //
+  // Finding 12's measured duplication: "Reduced capability"/"Service degraded" rendered twice, ~660px
+  // apart, in two components (this bar is Shell chrome; the banner is UnifiedChatView's) neither of
+  // which could see the other. The rule is per-SURFACE, not global — these four cases pin both halves
+  // of it, including the two ways over-suppressing would be a truthfulness regression.
+  describe('814 §D5 — capability-degradation arbitration with the surface banner', () => {
+    const CHAT_SURFACE = 'core.unified-chat-surface';
+    const DEGRADED_WARN = {
+      kind: 'degraded',
+      severity: 'warn',
+      reasons: ['worker.health.embedding_not_ready'],
+    } as AiState['verdict'];
+
+    function degradedDeck(): StatusDeck {
+      const el = make();
+      el.aiState = makeAiState({
+        verdict: DEGRADED_WARN,
+        // The production projections of that verdict (aiStateStore.computeStatusLabel/Tone).
+        statusLabel: 'Service degraded',
+        statusTone: 'warning',
+        // …while the AI engine itself is up: the mode readout the chip falls back to.
+        runtime: { mode: 'online', modelId: 'm', modelLabel: 'Qwen', contextWindow: null, gpu: null, installed: known(true), installing: known(false), loadStartedAtMs: null },
+        aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null },
+      });
+      return el;
+    }
+
+    function pillText(el: StatusDeck): string {
+      return (el.shadowRoot?.querySelector('.status-pill jf-status-badge')?.textContent ?? '').trim();
+    }
+
+    beforeEach(() => {
+      __resetShellContextForTest();
+    });
+
+    it('yields on the chat surface when the verdict warrants that surface a banner', async () => {
+      updateShellContext({ activeSurface: CHAT_SURFACE });
+      const el = degradedDeck();
+      await el.updateComplete;
+      // The banner (UnifiedChatView.renderDegradationBanner) is the ONE persistent home of the fact
+      // here — it carries the 600 wording and the remedy — so the chip reports the AI mode instead.
+      expect(pillText(el)).not.toContain('degraded');
+      expect(pillText(el)).toBe('Online — Qwen');
+      expect(el.shadowRoot?.querySelector('.status-pill jf-status-badge')?.getAttribute('tone')).toBe(
+        'success',
+      );
+    });
+
+    it('does NOT yield on another surface — the chip is the global indicator there', async () => {
+      updateShellContext({ activeSurface: 'core.library-surface' });
+      const el = degradedDeck();
+      await el.updateComplete;
+      expect(pillText(el)).toBe('Service degraded');
+    });
+
+    it('does NOT yield on the chat surface when the verdict warrants NO banner (info tier)', async () => {
+      // Post-finding-9 an info-severity verdict is bannerless (`warrantsSearchDegradationBanner`),
+      // so yielding here would suppress the ONLY indicator of the fact — the load-bearing case.
+      updateShellContext({ activeSurface: CHAT_SURFACE });
+      const el = make();
+      el.aiState = makeAiState({
+        verdict: { kind: 'degraded', severity: 'info', reasons: ['lambdamart.not_configured'] },
+        statusLabel: 'Reduced capability',
+        statusTone: 'info',
+        aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null },
+      });
+      await el.updateComplete;
+      expect(pillText(el)).toBe('Reduced capability');
+    });
+
+    it('does NOT yield an UNREACHABLE verdict — that is a connection fact, not this register row', async () => {
+      // `unreachable` also warrants a banner, but yielding it would let the bar report the AI engine's
+      // "Online" while the backend is gone: the regression this rule exists to prevent.
+      updateShellContext({ activeSurface: CHAT_SURFACE });
+      const el = make();
+      el.aiState = makeAiState({
+        verdict: { kind: 'unreachable', severity: 'error', reasons: ['binding.unreachable'] },
+        statusLabel: 'Backend disconnected',
+        statusTone: 'error',
+        connection: { reachable: false, lastSuccessMs: null, lastContactMs: null, consecutiveFailures: 3 },
+        aiEngine: { kind: 'online', stability: { kind: 'settled' }, installFailure: null },
+      });
+      await el.updateComplete;
+      expect(pillText(el)).toBe('Backend disconnected');
     });
   });
 });

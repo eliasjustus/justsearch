@@ -20,8 +20,11 @@ Two traps the experiment found, encoded here so they can't recur:
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
+
+from .agent_stream_fixture import DONE_RUN_BODY
 
 def _find_fixtures_dir() -> Path:
     """Locate `modules/ui-web/src/api/__fixtures__` by walking up to the repo root
@@ -71,9 +74,100 @@ def _empty_catalog(primitive: str) -> str:
 _BODY_INDEXED_ROOTS = json.dumps({"items": [], "count": 0})
 
 
+def _minutes_ago_iso(minutes: int) -> str:
+    """An ISO instant ``minutes`` in the past, computed AT REQUEST TIME.
+
+    Deliberately not a hard-coded literal: the row's meta line renders this through the host's
+    relative formatter (`relativeTime.formatRelative` — 'just now' / 'Nm ago' / 'Nh ago' / 'Nd ago'),
+    so a frozen timestamp would render a DIFFERENT string every day the capture is re-taken ('3d
+    ago' → '47d ago'). Deriving it from `now` is what keeps the rendered text byte-stable; the
+    minute bucket only moves if a capture takes >1 min between fixture-serve and paint."""
+    stamp = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    return stamp.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _indexed_roots_body(variant: str) -> str:
+    """The Library substrate list for a variant (tempdoc 813 §4 — the ENRICHING folder tier).
+
+    The `enriching` variant serves TWO rows that differ ONLY in enrichment coverage, so one capture
+    renders both drained arms of `folderStatus` (folderStatus.ts:289-319) side by side:
+      - `docs` — coverage KNOWN and incomplete ⟹ state `enriching`: the shared
+        `ENRICHMENT_CATCHING_UP_CAVEAT` wording plus THIS root's own percent.
+      - `notes` — every applicable stage settled ⟹ state `ready` ("fully searchable"), which is the
+        per-root truth OUTRANKING the still-active index-wide backfill (813 §17's four-arm merge).
+
+    Every non-coverage field is pinned to the drained-and-clean shape the tier requires
+    (`inFlightCount`/`failedCount` 0, `status` "indexed", `walkCompleted` true, both timestamps set,
+    `deleteDetectionUnverified` false) — any one of them off would divert the row to an EARLIER
+    branch (indexing / failed / unverified) and the capture would silently stop being about
+    enrichment at all.
+
+    The coverage denominators follow the wire's own discipline: each parent stage counts only the
+    documents carrying ITS status field, and the chunk tier is counted over CHUNKED documents. The
+    applicability flags come from the index-wide `/api/status` snapshot (`_status_body`'s matching
+    `enriching` arm), never from the row — the wire row carries counts only.
+
+    Every other variant keeps `_BODY_INDEXED_ROOTS` (the empty list), unchanged."""
+    if variant != "enriching":
+        return _BODY_INDEXED_ROOTS
+    return json.dumps({
+        "items": [
+            {
+                "pathHash": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+                "collection": "docs",
+                "status": "indexed",
+                "fileCount": 300,
+                "inFlightCount": 0,
+                "failedCount": 0,
+                "walkCompleted": True,
+                "deleteDetectionUnverified": False,
+                "lastIndexedIsoTime": _minutes_ago_iso(6),
+                "lastVerifiedIsoTime": _minutes_ago_iso(4),
+                # 1,080 settled of 1,800 applicable ⟹ 60%: embedding mid-flight (120/300), SPLADE and
+                # NER settled (300/300 each), chunk embeddings mid-flight (360/900).
+                "parentDocsTotalEmbedding": 300,
+                "parentDocsSettledEmbedding": 120,
+                "parentDocsTotalSplade": 300,
+                "parentDocsSettledSplade": 300,
+                "parentDocsTotalNer": 300,
+                "parentDocsSettledNer": 300,
+                "chunkDocsTotal": 900,
+                "chunkDocsSettled": 360,
+            },
+            {
+                "pathHash": "0f9e8d7c6b5a49382716253443526170",
+                "collection": "notes",
+                "status": "indexed",
+                "fileCount": 100,
+                "inFlightCount": 0,
+                "failedCount": 0,
+                "walkCompleted": True,
+                "deleteDetectionUnverified": False,
+                "lastIndexedIsoTime": _minutes_ago_iso(9),
+                "lastVerifiedIsoTime": _minutes_ago_iso(4),
+                # Settled on every applicable stage ⟹ `complete` is EXACT (settled >= total), the only
+                # basis on which the row may claim "fully searchable".
+                "parentDocsTotalEmbedding": 100,
+                "parentDocsSettledEmbedding": 100,
+                "parentDocsTotalSplade": 100,
+                "parentDocsSettledSplade": 100,
+                "parentDocsTotalNer": 100,
+                "parentDocsSettledNer": 100,
+                "chunkDocsTotal": 300,
+                "chunkDocsSettled": 300,
+            },
+        ],
+        "count": 2,
+    })
+
+
 # Path substring -> fixture body. First match wins. `/api/status`, `/api/knowledge/search`,
 # `/api/inference/status`, and `/api/settings` are NOT here — all four have a per-variant
 # transform and are dispatched explicitly in `fixture_body()` before this table is consulted.
+# `/api/indexing-roots/substrate` DOES have a per-variant transform (`_indexed_roots_body`) and is
+# likewise dispatched first, but it STAYS in this table: `_ROUTES` is the authority the
+# `check-ui-step-coverage` fixture-coverage clause reads (615 §37.1), and this row is the body every
+# non-`enriching` variant still serves.
 _ROUTES: tuple[tuple[str, str], ...] = (
     ("/api/indexing-roots/substrate", _BODY_INDEXED_ROOTS),
     ("/api/registry/operations", _empty_catalog("Operation")),
@@ -111,7 +205,160 @@ def is_api_path(url: str) -> bool:
 # search surface — adding `degraded` here would silently add a fuzzer cell. `degraded` is
 # reachable only via an explicit `install_fixtures(ctx, variant="degraded")` call, made by
 # the isolated `chat-proportion` ui-shot step alone (`ui_check.py`'s `Step.fixtures_variant`).
+# The same reasoning holds for `indexing` (tempdoc 813 Slice D), reachable only from the
+# isolated `tasks-occlusion` step, and for `enriching` (tempdoc 813 §4/§5), reachable only from the
+# isolated `library-enriching` step.
 VARIANTS = ("default", "empty")
+
+# The two variants that turn the degraded-readiness knobs. `degraded` (tempdoc 697) also flips
+# `ui.mode` to "simple" so the COLLAPSED pill renders; `degraded-detailed` (tempdoc 814 closure,
+# the `chat-bands-detailed` step) is the same readiness/inference state with the captured
+# "advanced" disclosure LEFT ALONE, so the banner renders EXPANDED instead — the Detailed-mode
+# floor the D1 share assertion had no capture for. Neither is a fuzzer axis (see the note above).
+# `degraded-thread` (tempdoc 814 review pass, the `chat-spine-multi` step) is the same
+# readiness/inference/disclosure state as `degraded` PLUS a canonical thread RECORD with two
+# user turns — the state `spineItems()` needs and the only fixture-reachable way to reach it
+# (see `_thread_body`).
+# `agent-run` (tempdoc 814 §D8, the `chat-evidence-rail` / `chat-activity-rail-open` steps) is
+# `degraded-thread` PLUS (a) grounding sources + a DONE lifecycle on the thread record and
+# (b) a real terminating SSE body for POST /api/chat/dispatch (agent_stream_fixture.DONE_RUN).
+# It is the only variant under which a fixture-driven agent RUN completes.
+_DEGRADED_VARIANTS = frozenset({"degraded", "degraded-detailed", "degraded-thread", "agent-run"})
+
+# The variants that serve a `/api/thread/{id}` RECORD (and therefore seed the per-tab
+# lastViewedConversation pointer so a cold chat surface auto-restores it).
+_THREAD_RECORD_VARIANTS = frozenset({"degraded-thread", "agent-run"})
+
+# The per-tab pointer UnifiedChatView reads on connect (`readLastViewedConversation`,
+# controllers/lastViewedConversation.ts KEY) — seeding it is what makes a COLD chat surface
+# auto-load the fixture conversation below instead of landing on an empty thread.
+_FIXTURE_CONVERSATION_ID = "fixture-multi-turn-conversation"
+THREAD_POINTER_SEED = (
+    "try { sessionStorage.setItem('justsearch.lastViewedConversation.v1', "
+    f"'{_FIXTURE_CONVERSATION_ID}'); }} catch (e) {{}}"
+)
+
+
+# Tempdoc 814 §D8.1 — the grounding the `agent-run` variant hangs on its LAST assistant message.
+# Shape: `api/generated/shape-handlers/shared.ts`'s `AgentSource` (every field required — the FE
+# reads `path`/`title`/`headingText` for the rail rows and `parentDocId` + `startLine`/`endLine`
+# for the click-to-local-line deep link). `hydrateAnswerEvidenceFromRecord` (UnifiedChatView)
+# scans the record BACKWARD for the newest `ASSISTANT_MESSAGE` carrying a non-empty
+# `attributes.sources`, so this is what mounts `.evidence-rail` with NO stream involvement —
+# the whole point of §D8.1's record-path-first split.
+#
+# THREE rows, not one: `EVIDENCE_RAIL_MAX_VISIBLE` bounds the docked rail to a top-N index (§D3),
+# so a single row could never show the "N of M" bounded-index behaviour the rail exists to have.
+_AGENT_RUN_SOURCES: tuple[dict, ...] = (
+    {
+        "parentDocId": "doc-indexing-pipeline",
+        "chunkIndex": 3,
+        "path": "docs/explanation/indexing-pipeline.md",
+        "title": "Indexing pipeline",
+        "excerpt": "The worker enriches each document before the head projects the result set.",
+        "startLine": 41,
+        "endLine": 48,
+        "headingText": "Enrichment stages",
+    },
+    {
+        "parentDocId": "doc-system-overview",
+        "chunkIndex": 7,
+        "path": "docs/explanation/01-system-overview.md",
+        "title": "System overview",
+        "excerpt": "Head, Body and Brain are separate processes; only the Body owns the index.",
+        "startLine": 12,
+        "endLine": 19,
+        "headingText": "Process model",
+    },
+    {
+        "parentDocId": "doc-retrieval-contract",
+        "chunkIndex": 1,
+        "path": "docs/reference/api-contract-map.md",
+        "title": "API contract map",
+        "excerpt": "Retrieval results reach the head over gRPC and are projected onto the surface.",
+        "startLine": 88,
+        "endLine": 95,
+        "headingText": "Knowledge search",
+    },
+)
+
+# Tempdoc 814 §D8.1 — the typed loop object the rail's lifecycle row reads (`unifiedLifecycles`,
+# validated by `unifiedThreadClient.ts`'s `lifecycleSchema`). `state: "DONE"` is load-bearing
+# twice: it is the row's own text, and `runCompleted` (UnifiedChatView) reads it to render a
+# finished run as a neutral FACT rather than an alarm. Counts agree with the SSE `done` payload
+# (`agent_stream_fixture.DONE_RUN`) and the budget agrees with its `budget_update`, so the record
+# and the stream cannot tell two different stories about the same run.
+_AGENT_RUN_LIFECYCLE: dict = {
+    "sessionId": "fixture-agent-run-0001",
+    "state": "DONE",
+    "actor": "primary",
+    "turns": 2,
+    "iterations": 2,
+    "toolCalls": 1,
+    "actors": ["primary"],
+    "budget": {"initial": 8192, "consumed": 1840, "remaining": 6352, "overBudget": False},
+}
+
+
+def _thread_body(variant: str = "degraded-thread") -> str:
+    """The `GET /api/thread/{id}` record for the `degraded-thread` variant (tempdoc 814
+    review pass): TWO user turns and their answers, in the wire shape
+    `views/unifiedThreadClient.ts` validates (`conversationId` + `events[]` of
+    `{id, occurredAt, kind, originator, content, attributes}` with `kind` in
+    KNOWN_EVENT_KINDS).
+
+    WHY A RECORD AND NOT TWO SUBMITS: `spineItems()` reads `mergedTimeline()`, which is built
+    from the canonical RECORD (`projectUnifiedThread(this.unifiedEvents)`) plus the live agent
+    overlay — NOT from `this.thread`, the plain ask-turn array. So submitting asks under
+    `--fixtures` (which is all the stubbed SSE allows) can never move the spine's turn count,
+    however many turns land: measured — two rendered `.message.user` bubbles, `affordance:
+    'agent'`, `wideZone: true`, and still zero `.run-spine`, because the record was empty.
+    Two turns is exactly `spineItems()`'s `turns < 2` floor (UnifiedChatView.ts ~3163).
+    Content is inert prose; no evidence/sources, so nothing else in the view changes shape.
+
+    Tempdoc 814 §D8.1 — the `agent-run` variant keeps that structure UNCHANGED (so
+    `chat-spine-multi` is untouched) and adds exactly the two fields the record can already
+    carry: `attributes.sources` on the LAST assistant message (which
+    `hydrateAnswerEvidenceFromRecord` turns into `agentCtrl.answerSources`, mounting
+    `.evidence-rail`) and a DONE `lifecycles[]` entry (which the activity rail's
+    `.activity-lifecycle` row reads). Neither needs a stream; that is §D8.1's whole claim."""
+    with_evidence = variant == "agent-run"
+
+    def _event(idx: int, kind: str, originator: str, content: str,
+               attributes: dict | None = None) -> dict:
+        return {
+            "id": f"evt-{idx}",
+            # Fixed timestamps keep the capture byte-stable (the projection sorts on them).
+            "occurredAt": f"2026-08-06T10:0{idx}:00Z",
+            "kind": kind,
+            "originator": originator,
+            "content": content,
+            "attributes": attributes or {},
+        }
+
+    return json.dumps({
+        "conversationId": _FIXTURE_CONVERSATION_ID,
+        "events": [
+            _event(1, "USER_MESSAGE", "user", "What is this file about?"),
+            _event(2, "ASSISTANT_MESSAGE", "assistant",
+                   "It describes how the indexing pipeline hands results to the head process."),
+            _event(3, "USER_MESSAGE", "user", "And how does indexing reach it?"),
+            _event(4, "ASSISTANT_MESSAGE", "assistant",
+                   "The worker enriches each document, then the head projects the result set.",
+                   {"sources": list(_AGENT_RUN_SOURCES), "citations": []} if with_evidence else None),
+        ],
+        "lifecycles": [_AGENT_RUN_LIFECYCLE] if with_evidence else [],
+    })
+
+
+# Tempdoc 814 §D8.2 — the agent capability probe (`AgentSessionController.checkAvailability`,
+# polled by `agentSessionStore`'s `startPolling`). Under every other variant this endpoint is
+# unmapped, so `data.available` reads `undefined` -> `ctrl.available` never becomes `true` ->
+# `UnifiedChatView.send()`'s `if (ctrl.available !== true) return` SILENTLY drops the submit and
+# no agent run can start. LIVE-VERIFIED as the blocker (the run never left the composer without
+# it). Variant-gated so no other step gains an agent capability it does not model. `tools: []` is
+# honest: the fixture run executes no tool through this probe's catalog.
+_AGENT_TOOLS_BODY = json.dumps({"available": True, "tools": []})
 
 
 def _search_body(variant: str) -> str:
@@ -142,8 +389,85 @@ def _status_body(variant: str) -> str:
     zero document count regardless of AI capability); with docs > 0 the SAME projection
     instead returns `{kind:'degraded', caveat}` off this step's own degraded verdict
     (availability.ts:134-143), which does NOT pin Ask. NOT a fuzzer axis — see the
-    `VARIANTS` note above."""
-    if variant == "degraded":
+    `VARIANTS` note above.
+
+    'indexing' (tempdoc 813 Slice D) puts the worker in a live INDEXING state with enrichment
+    still behind, so the Tasks panel renders its aggregate card deterministically for the
+    `tasks-occlusion` step. Every knob is load-bearing for `selectIndexingProgress`
+    (indexingProgress.ts):
+      - `core.indexState` -> "INDEXING": the projection ignores any state the WORKER does not
+        report (WORKER_REPORTED_INDEX_STATES = IDLE/INDEXING/ERROR). The captured live fixture
+        says "SERVING", a `WorkerOperationalView.fallback` state, so the projection is on its
+        `unknown` arm by default and the panel correctly renders nothing.
+      - `core.pendingJobs` > 0: the ONLY input that selects the `indexing` phase (and the panel's
+        "N files remaining" count). `migration.processingJobsCount` splits it running/queued.
+      - `core.recentDocsPerSec`: three equal non-zero samples — the projection's stability test
+        (all trailing samples non-zero) — so the coarse "~" estimate line renders too. Equal
+        samples keep the median, and therefore the rendered string, byte-stable.
+      - the `enrichment` counters + `backfillMode`: enrichment genuinely behind, so the fixture
+        represents the real overlap (jobs draining WHILE the backfill runs) rather than a
+        jobs-only state that could never occur with a live backfill.
+    Critically, the panel's visibility under this variant derives from the POLL projection, not
+    from the SSE task list — `install_fixtures` serves every `/stream` as an EMPTY event stream
+    (see `_handler` below), so a panel gated on SSE tasks would capture as hidden and the
+    occlusion assertion would pass vacuously. NOT a fuzzer axis — see the `VARIANTS` note above.
+
+    'enriching' (tempdoc 813 §4/§5) is the ENRICHING phase the `indexing` variant deliberately does
+    NOT reach: the job queue is DRAINED (`pendingJobs` 0) while the enrichment backfill still owes
+    work, which is the only input combination `selectIndexingProgress` reads as
+    `phase === 'enriching'` (indexingProgress.ts:333-334 — `jobsPending > 0` would win the ternary,
+    so a variant with any backlog can never render this phase). `indexState` stays "IDLE" because the
+    projection only reads WORKER-reported states, and IDLE is the honest one for a drained queue.
+    The counters are internally consistent (completed + pending == doc count per stage) and give the
+    aggregate card its faithful denominator: 640 pending of 2,400 applicable ⟹ 73%, with SPLADE and
+    NER already settled so the number comes from the two stages that are genuinely behind. This is
+    the ONLY variant that also transforms the Library substrate list (`_indexed_roots_body`), because
+    the per-root tier needs BOTH halves — coverage counts from the row, stage applicability from
+    here.
+
+    `degraded-detailed` needs the identical readiness state — the banner it expands is the same
+    one this transform gives something to render."""
+    if variant == "enriching":
+        d = json.loads(_BODY_STATUS)
+        core = d["worker"]["core"]
+        core["indexState"] = "IDLE"
+        core["indexHealthy"] = True
+        core["indexedDocuments"] = 400
+        core["pendingJobs"] = 0
+        enrichment = d["worker"]["enrichment"]
+        enrichment["backfillMode"] = "combined"
+        enrichment["embeddingEnabled"] = True
+        enrichment["spladeEnabled"] = True
+        enrichment["nerEnabled"] = True
+        enrichment["embeddingDocCount"] = 400
+        enrichment["embeddingPendingCount"] = 160
+        enrichment["embeddingCompletedCount"] = 240
+        enrichment["spladeDocCount"] = 400
+        enrichment["spladePendingCount"] = 0
+        enrichment["spladeCompletedCount"] = 400
+        enrichment["pendingNerCount"] = 0
+        enrichment["completedNerCount"] = 400
+        enrichment["chunk"]["chunkDocCount"] = 1200
+        enrichment["chunk"]["chunkEmbeddingPendingCount"] = 480
+        enrichment["chunk"]["chunkEmbeddingCompletedCount"] = 720
+        return json.dumps(d)
+    if variant == "indexing":
+        d = json.loads(_BODY_STATUS)
+        core = d["worker"]["core"]
+        core["indexState"] = "INDEXING"
+        core["indexHealthy"] = True
+        core["indexedDocuments"] = 1218
+        core["pendingJobs"] = 412
+        core["recentDocsPerSec"] = [4.0, 4.0, 4.0]
+        d["worker"]["migration"]["processingJobsCount"] = 4
+        enrichment = d["worker"]["enrichment"]
+        enrichment["backfillMode"] = "combined"
+        enrichment["embeddingDocCount"] = 1218
+        enrichment["embeddingPendingCount"] = 430
+        enrichment["spladeDocCount"] = 1218
+        enrichment["spladePendingCount"] = 430
+        return json.dumps(d)
+    if variant in _DEGRADED_VARIANTS:
         d = json.loads(_BODY_STATUS)
         d["readiness"]["composites"]["retrieval"] = {
             "state": "DEGRADED",
@@ -164,8 +488,9 @@ def _inference_body(variant: str) -> str:
     correct behavior for those (AI genuinely offline with no dev stack). 'degraded' reports
     the model ONLINE so the `chat-proportion` step can actually submit a turn (escalateAsk()
     -> send()). Kept variant-gated (NOT added to `_ROUTES`) so no other step's rendering
-    changes."""
-    if variant == "degraded":
+    changes. `degraded-detailed` needs the same ONLINE report for the same two reasons (a
+    submitted turn, and the Delegate rung's `capabilities.chat` availability gate)."""
+    if variant in _DEGRADED_VARIANTS:
         return json.dumps({
             "mode": "online",
             "available": True,
@@ -192,9 +517,14 @@ def _settings_body(variant: str) -> str:
     'error'`), so `.degradation-banner-collapsed` never renders under the captured default —
     only the wider expanded `.degradation-banner` form does. 'degraded' flips `ui.mode` to
     "simple" so the collapsed pill (the element this ratchet tracks) renders. Every other
-    variant keeps the captured `advanced` default unchanged (no other step reads disclosure
-    mode from its screenshot)."""
-    if variant == "degraded":
+    variant keeps the captured `advanced` default unchanged.
+
+    DELIBERATELY not extended to `degraded-detailed` (tempdoc 814 closure): that variant exists
+    precisely to KEEP the captured "advanced" disclosure, which is how the `chat-bands-detailed`
+    step gets the EXPANDED banner (`forcedExpanded = isAdvancedMode() && !this.shortZone`) — the
+    Detailed-mode height floor that had no registered ceiling. This one function is the ONLY knob
+    separating the two degraded variants."""
+    if variant in ("degraded", "degraded-thread", "agent-run"):
         d = json.loads(_BODY_SETTINGS)
         d["ui"]["mode"] = "simple"
         return json.dumps(d)
@@ -212,6 +542,12 @@ def fixture_body(url: str, variant: str = "default") -> str:
         return _settings_body(variant)
     if "/api/knowledge/search" in url:
         return _search_body(variant)
+    if "/api/indexing-roots/substrate" in url:
+        return _indexed_roots_body(variant)
+    if "/api/thread/" in url and variant in _THREAD_RECORD_VARIANTS:
+        return _thread_body(variant)
+    if "/api/chat/agent/tools" in url and variant == "agent-run":
+        return _AGENT_TOOLS_BODY
     for needle, body in _ROUTES:
         if needle in url:
             return body
@@ -225,9 +561,23 @@ async def install_fixtures(ctx, variant: str = "default") -> None:
     'empty') and `_status_body` (readiness state, 'degraded' — tempdoc 697) both key off
     the same ``variant`` string. Call once on a fresh context, before `new_page`."""
     await ctx.add_init_script(WALKTHROUGH_SEED)
+    # Variant-gated: only the record-bearing variants want a cold chat surface to auto-restore
+    # the fixture conversation (`_thread_body`), so no other step's boot changes.
+    if variant in _THREAD_RECORD_VARIANTS:
+        await ctx.add_init_script(THREAD_POINTER_SEED)
 
     async def _handler(route):
         req = route.request
+        # Tempdoc 814 §D8.2 — the agent run's OWN transport. `host.ai.streamShape` POSTs the
+        # shape to /api/chat/dispatch and reads the RESPONSE as SSE; the generic JSON branch
+        # below used to answer it with `{}`, so both buffer-based parsers saw no terminal frame
+        # and `pumpHostAiStream` threw STREAM_INCOMPLETE — the "Connection lost — the response
+        # was interrupted." row in every agent-mode capture. Serving a complete, schema-validated
+        # multi-frame body instead is what makes a DONE run capture-reachable. Checked BEFORE the
+        # `/stream`-ish branch (this path contains no "/stream") and before the JSON branch.
+        if "/api/chat/dispatch" in req.url and variant == "agent-run":
+            await route.fulfill(status=200, content_type="text/event-stream", body=DONE_RUN_BODY)
+            return
         accept = req.headers.get("accept") or ""
         if "/stream" in req.url or "text/event-stream" in accept:
             await route.fulfill(status=200, content_type="text/event-stream", body="")

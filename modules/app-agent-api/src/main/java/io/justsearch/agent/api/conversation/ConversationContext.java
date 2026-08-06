@@ -47,6 +47,20 @@ public interface ConversationContext {
   String sessionId();
 
   /**
+   * The id of the {@code ConversationShape} currently being run (e.g. {@code "core.extract"}),
+   * or {@code null} when the context was built outside the engine.
+   *
+   * <p>A shared SPI serves several shapes, and some of its output is only correct relative to the
+   * requesting one — {@code SelectionContextInjector} fronts an injected selection with an
+   * instruction, and "summarize this" is wrong for an extraction. The request body is not a
+   * reliable source for this: only the dynamic {@code /api/chat/dispatch} route carries a
+   * {@code shapeId} field; the per-shape routes ({@code /api/chat/extract}, …) do not.
+   */
+  default String shapeId() {
+    return null;
+  }
+
+  /**
    * The raw request body that initiated this conversation (parsed JSON as a {@code Map}).
    *
    * <p>Per tempdoc 491 Phase C: shape-specific request fields (e.g., {@code docId},

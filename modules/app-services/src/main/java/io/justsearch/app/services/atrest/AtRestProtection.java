@@ -13,7 +13,9 @@ package io.justsearch.app.services.atrest;
  * on/off state (the Explorer {@code System.Volume.BitLockerProtection} shell property); the
  * configuration-quality distinction (weak TPM-only vs a secure pre-boot PIN) and cloud-escrow
  * status require admin elevation and are therefore NOT carried here. The honest status surface
- * renders configuration quality as "unknown — needs admin".
+ * renders configuration quality as "unknown — needs admin" only where elevation could actually
+ * resolve it ({@code atRestPresentation} in {@code atRestCard.ts}) — never for {@link
+ * State#NOT_APPLICABLE} or {@link State#NOT_ENCRYPTED}, where there is no configuration to learn.
  */
 public record AtRestProtection(State state, String source, Confidence confidence) {
 
@@ -25,6 +27,13 @@ public record AtRestProtection(State state, String source, Confidence confidence
     NOT_ENCRYPTED,
     /** Encryption or decryption is in progress. */
     ENCRYPTING,
+    /**
+     * The volume cannot be encrypted by the OS at all (Windows PKEY 4, {@code NotApplicable} — e.g. a
+     * removable/network/unsupported-filesystem volume). Distinct from {@link #UNKNOWN}: nothing is
+     * missing here, so no amount of elevation or retrying will produce an on/off answer. Collapsing
+     * the two made the status surface recommend "needs admin" for a case elevation cannot resolve.
+     */
+    NOT_APPLICABLE,
     /** Could not be determined (non-Windows, probe failure, or an indeterminate shell-property value). */
     UNKNOWN
   }

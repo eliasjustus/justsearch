@@ -1,16 +1,27 @@
 // @vitest-environment happy-dom
 
 /**
- * §32 R-E1 — <jf-task-list> render tests.
+ * §32 R-E1 — <jf-task-list> render tests, re-expressed for the tempdoc 813 §5 redesign.
+ *
+ * The panel's default view is now ONE aggregate card driven by the indexing-progress projection;
+ * the per-file rows moved behind an opt-in "Show files" disclosure. Every pre-813 case below is
+ * preserved in INTENT and re-pointed at where its subject now lives (the row cases open the
+ * disclosure first), plus the new cases the redesign's honesty rules require.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TaskList } from './TaskList.js';
+import { TaskList, READY_DISMISS_MS } from './TaskList.js';
 import {
   startTask,
   upsertMirroredTask,
   __resetTasksForTest,
 } from '../substrates/tasks/index.js';
+import {
+  __feedForTest,
+  __resetAiStateForTest,
+  type StatusSnapshot,
+} from '../state/aiStateStore.js';
+import type { IndexingProgress } from '../state/indexingProgress.js';
 
 void TaskList;
 
@@ -18,12 +29,14 @@ let host: HTMLElement;
 
 beforeEach(() => {
   __resetTasksForTest();
+  __resetAiStateForTest();
   host = document.createElement('jf-task-list');
   document.body.appendChild(host);
 });
 
 afterEach(() => {
   host.remove();
+  vi.useRealTimers();
 });
 
 async function flush(): Promise<void> {
@@ -40,40 +53,82 @@ async function activateJfButton(el: Element | null | undefined): Promise<void> {
   (control.shadowRoot!.querySelector('button') as HTMLButtonElement).click();
 }
 
+const q = (sel: string): Element | null | undefined => host.shadowRoot?.querySelector(sel);
+const text = (sel: string): string | undefined => q(sel)?.textContent?.trim();
+
+/** Open the opt-in per-file disclosure (813 §5) — where the row list now lives. */
+async function showFiles(): Promise<void> {
+  (q('[data-testid="tasks-disclosure"]') as HTMLButtonElement | null)?.click();
+  await flush();
+}
+
+/** Set the projection directly — the render-level equivalent of a poll landing. */
+async function setProgress(p: Partial<IndexingProgress>): Promise<void> {
+  (host as TaskList).progress = {
+    phase: 'unknown',
+    jobsPending: 0,
+    jobsRunning: 0,
+    jobsQueued: 0,
+    enrichingPercent: null,
+    enrichingPending: 0,
+    embeddingPending: 0,
+    vduPending: 0,
+    etaSeconds: null,
+    indexingPercent: null,
+    pendingBytes: null,
+    live: true,
+    stages: { embedding: true, splade: true, ner: true },
+    ...p,
+  };
+  await flush();
+}
+
+const snapshot = (worker: unknown): StatusSnapshot => ({ worker }) as unknown as StatusSnapshot;
+
+const INDEXING_SNAPSHOT = snapshot({
+  core: { indexState: 'INDEXING', pendingJobs: 412 },
+  enrichment: { backfillMode: 'idle' },
+});
+const READY_SNAPSHOT = snapshot({
+  core: { indexState: 'IDLE', pendingJobs: 0 },
+  enrichment: { backfillMode: 'idle' },
+});
+
 describe('<jf-task-list> (§32 R-E1)', () => {
-  it('collapses when there are no tasks', async () => {
+  it('collapses when there are no tasks and nothing is indexing or enriching', async () => {
     await flush();
     expect(host.hasAttribute('data-empty')).toBe(true);
   });
 
-  it('renders a running task with status, progress bar, and cancel', async () => {
+  // Pre-813 intent preserved: a running task still renders its status chip, its progress bar and a
+  // cancel affordance — they now live inside the opt-in disclosure rather than the default view.
+  it('renders a running task with status, progress bar, and cancel (inside the disclosure)', async () => {
     const id = startTask({ label: 'reindex', progress: 0.4, cancel: () => {} });
     await flush();
     expect(host.hasAttribute('data-empty')).toBe(false);
-    expect(
-      host.shadowRoot
-        ?.querySelector(`[data-testid="task-status-${id}"]`)
-        ?.textContent?.trim(),
-    ).toBe('running');
-    expect(
-      host.shadowRoot?.querySelector(`[data-testid="task-cancel-${id}"]`),
-    ).not.toBeNull();
-    expect(host.shadowRoot?.querySelector('.bar > span')).not.toBeNull();
+    expect(q(`[data-testid="task-status-${id}"]`)).toBeNull(); // collapsed by default
+    await showFiles();
+    expect(text(`[data-testid="task-status-${id}"]`)).toBe('running');
+    expect(q(`[data-testid="task-cancel-${id}"]`)).not.toBeNull();
+    expect(q('.bar > span')).not.toBeNull();
   });
 
-  // Tempdoc 550 Thesis III (bounded projection / F-1 cure): a backlog of queued
-  // jobs must render as a single COUNT chip, never as N individual pills.
+  // Tempdoc 550 Thesis III (bounded projection / F-1 cure), re-expressed at 813 §5's default view:
+  // a backlog of queued jobs must render as BOUNDED content — a single COUNT chip, never N pills —
+  // and 813 adds that the default view renders no rows at all until asked.
   it('collapses a large queued backlog to a count chip (no per-item flood)', async () => {
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 550; i++) {
       upsertMirroredTask({ id: `idxjob:q${i}`, label: `Indexing · default (q${i})`, status: 'queued' });
     }
     await flush();
     expect(host.hasAttribute('data-empty')).toBe(false);
-    // The count chip reads "40 queued"…
-    expect(
-      host.shadowRoot?.querySelector('[data-testid="task-count-queued"]')?.textContent?.trim(),
-    ).toBe('40 queued');
-    // …and NOT one row per queued job (queued is collapsed, not listed).
+    // Default view: 550 queued jobs produce ZERO rows and no chip strip.
+    expect(host.shadowRoot?.querySelectorAll('.task').length).toBe(0);
+    expect(q('[data-testid="task-summary"]')).toBeNull();
+    await showFiles();
+    // Disclosed: the count chip reads "550 queued"…
+    expect(text('[data-testid="task-count-queued"]')).toBe('550 queued');
+    // …and STILL not one row per queued job (queued is collapsed, not listed).
     expect(host.shadowRoot?.querySelectorAll('.task').length).toBe(0);
   });
 
@@ -83,12 +138,9 @@ describe('<jf-task-list> (§32 R-E1)', () => {
       upsertMirroredTask({ id: `idxjob:q${i}`, label: `q${i}`, status: 'queued' });
     }
     await flush();
-    expect(
-      host.shadowRoot?.querySelector('[data-testid="task-count-running"]')?.textContent?.trim(),
-    ).toBe('1 running');
-    expect(
-      host.shadowRoot?.querySelector('[data-testid="task-count-queued"]')?.textContent?.trim(),
-    ).toBe('12 queued');
+    await showFiles();
+    expect(text('[data-testid="task-count-running"]')).toBe('1 running');
+    expect(text('[data-testid="task-count-queued"]')).toBe('12 queued');
     // The single running job is listed as a row; the 12 queued are not.
     expect(host.shadowRoot?.querySelectorAll('.task').length).toBe(1);
   });
@@ -97,15 +149,240 @@ describe('<jf-task-list> (§32 R-E1)', () => {
     const cancel = vi.fn();
     const id = startTask({ label: 'x', cancel });
     await flush();
-    await activateJfButton(
-      host.shadowRoot?.querySelector(`[data-testid="task-cancel-${id}"]`),
-    );
+    await showFiles();
+    await activateJfButton(q(`[data-testid="task-cancel-${id}"]`));
     await flush();
     expect(cancel).toHaveBeenCalledTimes(1);
+    expect(text(`[data-testid="task-status-${id}"]`)).toBe('cancelled');
+  });
+});
+
+describe('<jf-task-list> — aggregate card (813 §5)', () => {
+  // The pre-813-§19 intent, now the NO-DRAIN-OBSERVED arm: with no high-water denominator the
+  // backlog is a count, not a fraction, so the bar must claim activity and never a position.
+  it('the Indexing phase leads with the phase noun, an INDETERMINATE bar and a remaining count', async () => {
+    await setProgress({ phase: 'indexing', jobsPending: 412, jobsQueued: 412, indexingPercent: null });
+    expect(host.hasAttribute('data-empty')).toBe(false);
+    expect(text('[data-testid="task-title"]')).toBe('Indexing');
+    const bar = q('[data-testid="task-aggregate-bar"]')!;
+    expect(bar.classList.contains('indeterminate')).toBe(true);
+    expect(bar.getAttribute('aria-valuenow')).toBeNull();
+    expect(text('[data-testid="task-aggregate-counts"]')).toBe('412 files remaining');
+  });
+
+  // 813 §19 (W2) — once the projection HAS measured a drain against the episode's high-water
+  // backlog, the same bar becomes determinate and reports its position to assistive tech.
+  it('the Indexing phase renders a DETERMINATE bar once a drain has been observed', async () => {
+    await setProgress({ phase: 'indexing', jobsPending: 400, jobsQueued: 400, indexingPercent: 75 });
+    const bar = q('[data-testid="task-aggregate-bar"]')!;
+    expect(bar.classList.contains('indeterminate')).toBe(false);
+    expect(bar.getAttribute('aria-valuenow')).toBe('75');
+    expect(bar.getAttribute('aria-valuemin')).toBe('0');
+    expect(bar.getAttribute('aria-valuemax')).toBe('100');
+    // The counts line still says what remains — the bar is the position, not a substitute for it.
+    expect(text('[data-testid="task-aggregate-counts"]')).toBe('400 files remaining');
+  });
+
+  // The whole W2 seam end to end, through the REAL store: the high-water backlog is cross-poll
+  // memory the component never holds itself, so only a two-poll feed proves it is threaded from
+  // `aiStateStore` into the selector and out to the bar. (Setting `progress` directly above cannot.)
+  it('derives the determinate position from the STORE across two polls, not from one snapshot', async () => {
+    __feedForTest({ status: snapshot({ core: { indexState: 'INDEXING', pendingJobs: 1600 } }) });
+    const el = document.createElement('jf-task-list') as TaskList;
+    document.body.appendChild(el);
+    await flush();
+    // First poll: max == pending, no drain witnessed ⟹ still indeterminate.
+    expect(el.progress.indexingPercent).toBeNull();
     expect(
-      host.shadowRoot
-        ?.querySelector(`[data-testid="task-status-${id}"]`)
-        ?.textContent?.trim(),
-    ).toBe('cancelled');
+      el.shadowRoot
+        ?.querySelector('[data-testid="task-aggregate-bar"]')
+        ?.classList.contains('indeterminate'),
+    ).toBe(true);
+
+    __feedForTest({ status: snapshot({ core: { indexState: 'INDEXING', pendingJobs: 400 } }) });
+    await flush();
+    await flush();
+    expect(el.progress.indexingPercent).toBe(75);
+    const bar = el.shadowRoot?.querySelector('[data-testid="task-aggregate-bar"]')!;
+    expect(bar.classList.contains('indeterminate')).toBe(false);
+    expect(bar.getAttribute('aria-valuenow')).toBe('75');
+    el.remove();
+  });
+
+  // 813 Slice B — "12 files remaining" says nothing about a mixed corpus where one file is a 2 GB
+  // video. The weight rides the SAME counts line, and only when the projection calls it faithful.
+  it('appends the remaining byte weight when the projection has a faithful one', async () => {
+    await setProgress({ phase: 'indexing', jobsPending: 412, pendingBytes: 8 * 1024 * 1024 * 1024 });
+    expect(text('[data-testid="task-aggregate-counts"]')).toBe('412 files remaining · 8.00 GB');
+  });
+
+  it('renders no byte figure at all when the weight is not faithful (never "0 B")', async () => {
+    await setProgress({ phase: 'indexing', jobsPending: 412, pendingBytes: null });
+    expect(text('[data-testid="task-aggregate-counts"]')).toBe('412 files remaining');
+    expect(text('[data-testid="task-aggregate-counts"]')).not.toContain('B');
+  });
+
+  it('the Enriching phase renders the coverage percent as a real fraction', async () => {
+    await setProgress({ phase: 'enriching', enrichingPercent: 64, enrichingPending: 900 });
+    // 813 §19 (W1) — capability first: keyword search already works during enrichment.
+    expect(text('[data-testid="task-title"]')).toBe('Search is ready — still improving');
+    const bar = q('[data-testid="task-aggregate-bar"]')!;
+    expect(bar.classList.contains('indeterminate')).toBe(false);
+    expect(bar.getAttribute('aria-valuenow')).toBe('64');
+    expect(text('[data-testid="task-aggregate-counts"]')).toBe('64% · semantic search catching up');
+  });
+
+  // Denominator honesty (§1f / availability.ts:193-194): no faithful denominator ⇒ NO number and NO
+  // bar — the panel still says what is happening, it just does not invent a fraction.
+  it('enriching with a null percent suppresses the number AND the bar, not the card', async () => {
+    await setProgress({ phase: 'enriching', enrichingPercent: null, enrichingPending: 0 });
+    expect(host.hasAttribute('data-empty')).toBe(false);
+    expect(q('[data-testid="task-aggregate-bar"]')).toBeNull();
+    expect(text('[data-testid="task-aggregate-counts"]')).toBe('semantic search catching up');
+    expect(text('[data-testid="task-aggregate-counts"]')).not.toContain('%');
+  });
+
+  // §1d's absence-as-claim defect: the panel used to hide at zero TASKS, so "it disappeared" read as
+  // "done" while the semantic layers were still catching up. The aggregate reads the poll, not the
+  // SSE row feed, so an empty task list can no longer withdraw the claim.
+  it('stays visible during enriching even when the SSE task list is empty', async () => {
+    await setProgress({ phase: 'enriching', enrichingPercent: 20, enrichingPending: 500 });
+    expect((host as TaskList).tasks.length).toBe(0);
+    expect(host.hasAttribute('data-empty')).toBe(false);
+    expect(text('[data-testid="task-title"]')).toBe('Search is ready — still improving');
+    // Nothing to disclose — the disclosure is a row-list affordance, not decoration.
+    expect(q('[data-testid="tasks-disclosure"]')).toBeNull();
+  });
+
+  it('says nothing at all on the `unknown` arm — no phase, no bar, no counts', async () => {
+    upsertMirroredTask({ id: 'idxjob:r1', label: 'agent op', status: 'running' });
+    await setProgress({ phase: 'unknown' });
+    expect(text('[data-testid="task-title"]')).toBe('Tasks');
+    expect(q('[data-testid="task-aggregate"]')).toBeNull();
+  });
+
+  it('a non-live snapshot renders the stall line rather than passing counts off as live', async () => {
+    await setProgress({ phase: 'indexing', jobsPending: 412, live: false });
+    expect(q('[data-testid="task-feed-stalled"]')).not.toBeNull();
+  });
+});
+
+// 813 §19 (W4) — the estimate merged INTO the counts line; the separate `.eta` element is retired,
+// so every case below is re-expressed at SEGMENT level on the one fact row. Intent unchanged: a
+// coarse "~" estimate when the projection has one, nothing at all when it does not.
+describe('<jf-task-list> — indicative estimate (813 §5b, merged by §19 W4)', () => {
+  it('renders a coarse "~" estimate as the last segment of the one fact row', async () => {
+    await setProgress({ phase: 'indexing', jobsPending: 412, etaSeconds: 130 });
+    expect(text('[data-testid="task-aggregate-counts"]')).toBe('412 files remaining · ~2m 10s left');
+    // ONE fact row, not two: the card holds the bar and the counts line and nothing else, so the
+    // estimate cannot have been merged AND still rendered as its own (retired) element.
+    expect(host.shadowRoot?.querySelectorAll('.aggregate > *').length).toBe(2);
+  });
+
+  // The full merged run, all three segments — the width case §19 flags as the occlusion risk.
+  it('merges counts, byte weight and estimate into a single line', async () => {
+    await setProgress({
+      phase: 'indexing',
+      jobsPending: 412,
+      pendingBytes: 8 * 1024 * 1024 * 1024,
+      etaSeconds: 103,
+    });
+    expect(text('[data-testid="task-aggregate-counts"]')).toBe(
+      '412 files remaining · 8.00 GB · ~1m 43s left',
+    );
+  });
+
+  // The visible line stays one line; the INDICATIVE qualifier survives in the accessible label and
+  // the hover title rather than being dropped.
+  it('carries "at the current rate" in the accessible label and title, not the visible text', async () => {
+    await setProgress({ phase: 'indexing', jobsPending: 412, etaSeconds: 130 });
+    const line = q('[data-testid="task-aggregate-counts"]')!;
+    expect(line.textContent?.trim()).not.toContain('at the current rate');
+    expect(line.getAttribute('aria-label')).toBe(
+      '412 files remaining · ~2m 10s left at the current rate',
+    );
+    expect(line.getAttribute('title')).toBe(
+      '412 files remaining · ~2m 10s left at the current rate',
+    );
+  });
+
+  it('renders NO estimate segment when the projection has no honest basis (no placeholder)', async () => {
+    await setProgress({ phase: 'indexing', jobsPending: 412, etaSeconds: null });
+    const line = q('[data-testid="task-aggregate-counts"]')!;
+    expect(line.textContent?.trim()).toBe('412 files remaining');
+    expect(line.textContent).not.toContain('left');
+    expect(line.textContent).not.toContain('~');
+    // No estimate ⇒ no label either, rather than one that just repeats the visible line.
+    expect(line.getAttribute('aria-label')).toBeNull();
+    expect(line.getAttribute('title')).toBeNull();
+  });
+
+  // §1e — enrichment throughput is legitimately unstable (ingest preempts the backfill at batch
+  // boundaries), so the Enriching phase never carries an estimate even if one were supplied.
+  it('never renders an estimate during Enriching', async () => {
+    await setProgress({ phase: 'enriching', enrichingPercent: 40, etaSeconds: 130 });
+    const line = q('[data-testid="task-aggregate-counts"]')!;
+    expect(line.textContent).not.toContain('left');
+    expect(line.textContent).not.toContain('~');
+  });
+});
+
+describe('<jf-task-list> — disclosure + terminal state (813 §5)', () => {
+  it('the disclosure toggles the row list and reports its state to assistive tech', async () => {
+    upsertMirroredTask({ id: 'idxjob:r1', label: 'Indexing · default (r1)', status: 'running' });
+    await flush();
+    const btn = () => q('[data-testid="tasks-disclosure"]') as HTMLButtonElement;
+    expect(btn().getAttribute('aria-expanded')).toBe('false');
+    expect(btn().textContent?.trim()).toBe('Show files');
+    expect(q('[data-testid="tasks-files"]')).toBeNull();
+
+    btn().click();
+    await flush();
+    expect(btn().getAttribute('aria-expanded')).toBe('true');
+    expect(btn().textContent?.trim()).toBe('Hide files');
+    expect(q('[data-testid="tasks-files"]')).not.toBeNull();
+
+    btn().click();
+    await flush();
+    expect(btn().getAttribute('aria-expanded')).toBe('false');
+    expect(q('[data-testid="tasks-files"]')).toBeNull();
+  });
+
+  // The completion signal 813 §14.3 chose: a brief STATE, then dismissal — so "the panel vanished"
+  // is no longer the only thing the product ever said about being done.
+  it('shows a brief terminal state on the active→ready edge, then dismisses itself', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    __feedForTest({ status: INDEXING_SNAPSHOT });
+    const el = document.createElement('jf-task-list') as TaskList;
+    document.body.appendChild(el);
+    await flush();
+    expect(el.progress.phase).toBe('indexing');
+
+    __feedForTest({ status: READY_SNAPSHOT });
+    await flush();
+    await flush();
+    expect(el.showingReady).toBe(true);
+    expect(el.shadowRoot?.querySelector('[data-testid="task-title"]')?.textContent?.trim()).toBe(
+      'Ready — fully searchable',
+    );
+    expect(el.hasAttribute('data-empty')).toBe(false);
+
+    vi.advanceTimersByTime(READY_DISMISS_MS);
+    await flush();
+    expect(el.showingReady).toBe(false);
+    expect(el.hasAttribute('data-empty')).toBe(true);
+    el.remove();
+  });
+
+  // `ready` is also the steady state of an idle index — a panel that announced completion on every
+  // poll would be claiming an event it never witnessed.
+  it('does not flash the terminal state when it never saw an active phase', async () => {
+    __feedForTest({ status: READY_SNAPSHOT });
+    const el = document.createElement('jf-task-list') as TaskList;
+    document.body.appendChild(el);
+    await flush();
+    expect(el.showingReady).toBe(false);
+    expect(el.hasAttribute('data-empty')).toBe(true);
+    el.remove();
   });
 });

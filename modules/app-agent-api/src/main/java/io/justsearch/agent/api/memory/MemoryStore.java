@@ -25,6 +25,20 @@ public interface MemoryStore {
   /** User control — forget everything. */
   void clear();
 
+  /**
+   * Tempdoc 806 W1 — TRUE when the store cannot be read or written right now (encrypted at rest with
+   * the data key locked). It is the read-side companion {@link #whatItKnows()} cannot express: a
+   * {@code List} has no value for "I cannot read", so empty-because-nothing-was-learned and
+   * empty-because-locked collapse into the same answer and every consumer renders the unreadable state
+   * as a positive claim ("No learned memory yet."). Mutations while locked throw {@code
+   * KeyLockedException} rather than reporting a success the store cannot verify.
+   *
+   * <p>Default {@code false} — an unencrypted or in-memory store is always readable.
+   */
+  default boolean isLocked() {
+    return false;
+  }
+
   /** Null Object for environments without a configured memory store. */
   static MemoryStore noop() {
     return NoOpMemoryStore.INSTANCE;

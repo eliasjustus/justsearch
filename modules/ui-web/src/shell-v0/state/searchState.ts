@@ -21,6 +21,7 @@
  *    generation) is dropped, never rendered.
  */
 
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import type { SelectedItem } from './inspectorState.js';
 // Tempdoc 549 (Slice 1) — query-level search trace (SearchIntrospection) is
 // captured into search state so the SearchSurface can mount the explain panel
@@ -59,6 +60,10 @@ export interface SearchHit {
   /** Tempdoc 577 Phase 7 — excerpt regions (refined pass, `includeExcerpts`): the
    *  worker-computed best passages; preferred snippet source over content_preview. */
   excerptRegions?: Array<{ text?: string; approxLine?: number }>;
+  /** Tempdoc 811 (C-1a) — the corpus this hit came from (`fields.collection`). Absent or
+   *  `default` for the user's own documents; a named value (e.g. `justsearch-help`) marks the
+   *  row so app-internal docs are distinguishable in the result list. */
+  collection?: string;
 }
 
 /** Tempdoc 577 Phase 5 — which execution pass produced the current results. */
@@ -162,7 +167,7 @@ function emit(): void {
 
 /** Tempdoc 580 §17 P3 — POST a result disposition to the canonical stream (fire-and-forget). */
 function postDisposition(interactionId: string, docId: string, kind: string): void {
-  void fetch((apiBase || '') + '/api/knowledge/disposition', {
+  void authorizedFetch((apiBase || '') + '/api/knowledge/disposition', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ interactionId, docId, kind }),
@@ -561,7 +566,7 @@ async function runSearch(q: string, stage: SearchPassStage, gen: number): Promis
       _searchScope,
       scopeChips,
     );
-    const res = await fetch((apiBase || '') + '/api/knowledge/search', {
+    const res = await authorizedFetch((apiBase || '') + '/api/knowledge/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -592,6 +597,9 @@ async function runSearch(q: string, stage: SearchPassStage, gen: number): Promis
         kind: r.fields?.file_kind,
         mimeBase: r.fields?.mime_base,
         excerptRegions: Array.isArray(r.excerptRegions) ? r.excerptRegions : undefined,
+        // Tempdoc 811 (C-1a): the corpus marker's input — the row says which collection it came
+        // from when that is not the user's own documents.
+        collection: r.fields?.collection,
       };
     });
     // Tempdoc 564 Phase 3: validate the raw trace JSON against the generated SearchTrace Zod once,

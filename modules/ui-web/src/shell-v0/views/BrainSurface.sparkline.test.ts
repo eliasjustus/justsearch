@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import './BrainSurface';
 
 interface SparklineHost extends HTMLElement {
+  settings: { mode?: 'simple' | 'advanced' };
   inference: { generation?: number; mode?: string; activeModelId?: string | null } | null;
   transitions: Array<{
     timestampMs: number;
@@ -29,11 +30,17 @@ async function mountAndRender(state: {
   transitions: SparklineHost['transitions'];
 }): Promise<string> {
   const el = document.createElement('jf-brain-surface') as SparklineHost;
+  // The transition timeline (and its sparkline) is Advanced-mode developer telemetry — it was
+  // moved out of the Simple panel, which is the first-run consumer surface.
+  el.settings = { mode: 'advanced' };
   el.inference = { generation: state.generation, mode: 'offline', activeModelId: null };
   el.transitions = state.transitions;
   document.body.appendChild(el);
   await el.updateComplete;
-  const html = el.shadowRoot?.innerHTML ?? '';
+  // Scope to the sparkline itself: the Advanced panel's own chrome contains SVG icons, so a
+  // whole-shadowRoot `<circle` count would no longer measure the sparkline's dots.
+  const sparkline = el.shadowRoot?.querySelector('[data-testid="brain-generation-sparkline"]');
+  const html = sparkline?.outerHTML ?? '';
   document.body.removeChild(el);
   return html;
 }

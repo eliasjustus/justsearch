@@ -27,6 +27,7 @@ final class EngineConversationContext implements ConversationContext {
   private final List<Map<String, Object>> messages;
   private final Audience audience;
   private final String sessionId;
+  private final String shapeId;
   private final Map<String, Object> requestBody;
   private final Map<String, Object> attributes;
   private int iteration;
@@ -35,11 +36,13 @@ final class EngineConversationContext implements ConversationContext {
       List<Map<String, Object>> initialMessages,
       Audience audience,
       String sessionId,
+      String shapeId,
       Map<String, Object> requestBody) {
     Objects.requireNonNull(initialMessages, "initialMessages");
     this.messages = new ArrayList<>(initialMessages);
     this.audience = Objects.requireNonNull(audience, "audience");
     this.sessionId = sessionId; // nullable for Ephemeral shapes
+    this.shapeId = Objects.requireNonNull(shapeId, "shapeId");
     this.requestBody =
         Map.copyOf(Objects.requireNonNull(requestBody, "requestBody"));
     this.attributes = new HashMap<>();
@@ -64,6 +67,11 @@ final class EngineConversationContext implements ConversationContext {
   @Override
   public String sessionId() {
     return sessionId;
+  }
+
+  @Override
+  public String shapeId() {
+    return shapeId;
   }
 
   @Override

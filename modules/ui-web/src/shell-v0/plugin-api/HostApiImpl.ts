@@ -25,6 +25,7 @@ import { createDataApi } from './capabilities/data.js';
 import { createSelectionApi } from './capabilities/selection.js';
 import { createRegistrationApi } from './capabilities/registration.js';
 import { createUiApi } from './capabilities/ui.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import {
   subscribeInspector,
   getInspectorState,
@@ -145,7 +146,7 @@ export function createHostApi(
         }));
       },
       getSystemStatus: async (): Promise<unknown> => {
-        const res = await globalThis.fetch(`${deps.apiBase}/api/status`);
+        const res = await authorizedFetch(`${deps.apiBase}/api/status`);
         return res.json();
       },
     },

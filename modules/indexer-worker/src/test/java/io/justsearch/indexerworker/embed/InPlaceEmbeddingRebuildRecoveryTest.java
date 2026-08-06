@@ -46,6 +46,14 @@ class InPlaceEmbeddingRebuildRecoveryTest {
 
   private static final String FP = "in-place-recovery-fp-sha256";
   private static final CommitMetadataValidator PERMISSIVE = metadata -> {};
+
+  /**
+   * A dense vector to accompany every {@code embedding_status=COMPLETED} write. The write-time
+   * contract (tempdoc 798) rejects a COMPLETED that carries no vector, and an embedded doc in this
+   * test's fixture is meant to be genuinely embedded — the vector's *provenance* is what these
+   * tests probe, not its absence.
+   */
+  private static final float[] VEC = vec();
   private static final org.slf4j.Logger LOG =
       LoggerFactory.getLogger(InPlaceEmbeddingRebuildRecoveryTest.class);
 
@@ -75,6 +83,7 @@ class InPlaceEmbeddingRebuildRecoveryTest {
                     Map.of(
                         SchemaFields.DOC_ID, "d" + i,
                         SchemaFields.DOC_UID, "d" + i + "#0",
+                        SchemaFields.VECTOR, VEC,
                         SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED)));
       }
       r1.commitOps().commitAndTrack();
@@ -195,6 +204,7 @@ class InPlaceEmbeddingRebuildRecoveryTest {
                     Map.of(
                         SchemaFields.DOC_ID, "f" + i,
                         SchemaFields.DOC_UID, "f" + i + "#0",
+                        SchemaFields.VECTOR, VEC,
                         SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED)));
       }
       r1.commitOps().commitAndTrack();
@@ -295,6 +305,12 @@ class InPlaceEmbeddingRebuildRecoveryTest {
     }
   }
 
+  private static float[] vec() {
+    float[] v = new float[768];
+    java.util.Arrays.fill(v, 0.05f);
+    return v;
+  }
+
   private static io.justsearch.adapters.lucene.runtime.RunningRuntime openRuntime(
       Path dir, Supplier<CommitMetadataSource> commitMetadata) {
     return io.justsearch.adapters.lucene.runtime.IndexSchema.fromCatalog(
@@ -315,7 +331,9 @@ class InPlaceEmbeddingRebuildRecoveryTest {
       updates.add(
           Map.entry(
               id,
-              Map.of(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED)));
+              Map.of(
+                  SchemaFields.VECTOR, VEC,
+                  SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED)));
     }
     r.indexingCoordinator().updateDocumentsBatch(updates);
   }

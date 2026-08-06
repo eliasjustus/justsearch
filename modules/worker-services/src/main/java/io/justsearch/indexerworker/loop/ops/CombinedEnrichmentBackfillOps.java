@@ -62,6 +62,48 @@ public final class CombinedEnrichmentBackfillOps {
   /** VECTOR-only mode (tempdoc 691 §Phase M): no char spans are derived or passed to the encoder. */
   private static final int[][] NO_SPANS = new int[0][];
 
+  /**
+   * Documents per {@code embedDocumentBatch} call in Phase 3a (tempdoc 809 finding 3).
+   *
+   * <p>The windowed embed used to hand the whole batch — up to {@code embeddingBackfillBatchSize}
+   * (100) parents plus {@code chunkSlotsPerBatch} (50) chunk docs — to ONE
+   * {@link EmbeddingProvider#embedDocumentBatch} call, measured live at ~43 s. Nothing could be
+   * observed, let alone interrupted, inside it, which is what made the scheduler's 5 s cycle budget
+   * unenforceable and made removing a watched root cost a full minute of GPU on documents that were
+   * already deleted.
+   *
+   * <p>8 is not a new pacing knob: it is {@code OnnxEmbeddingEncoder.MAX_ORT_BATCH_SIZE}, the size
+   * the encoder ALREADY sub-batches every caller batch down to before each ORT run
+   * ({@code OnnxEmbeddingEncoder.embedBatch:304-311}, {@code embedPreTokenizedBatch}). Slicing here
+   * therefore issues the same sequence of native forward passes it always did — it only puts an
+   * observation point between them, so the true atomic unit (one ORT run) becomes the interruption
+   * granularity instead of the whole batch.
+   */
+  private static final int EMBED_ENCODE_SLICE = 8;
+
+  /**
+   * Whether this batch should stop starting NEW enrichment work (tempdoc 809 finding 3).
+   *
+   * <p>Two independent reasons, both meaning "everything after this point is wasted": the
+   * scheduler's composite yield signal (shutdown, user activity, GPU claimed, pending ingest, cycle
+   * budget spent), and a bulk deletion landing underneath the batch — which is how removing a
+   * watched root reaches this pass ({@link IndexingCoordinator#bulkDeleteEpoch()}).
+   *
+   * <p>{@code unitsDone == 0} is a deliberate floor: a batch has already paid for its content and
+   * status fetch by the time the first encoder unit runs, and a batch that yields having done
+   * nothing would report no activity, flipping the scheduler out of combined mode and starving the
+   * enrichment population instead of pacing it. Every batch completes at least one unit; only the
+   * REST of the batch is interruptible.
+   */
+  private static boolean stopRequested(
+      BackfillContext context, int unitsDone, long epochAtSelection) {
+    if (unitsDone == 0) {
+      return false;
+    }
+    return context.stopRequestedSupplier().getAsBoolean()
+        || context.indexingCoordinator().bulkDeleteEpoch() != epochAtSelection;
+  }
+
   public record BackfillContext(
       DocumentFieldOps documentFieldOps,
       IndexingCoordinator indexingCoordinator,
@@ -87,7 +129,12 @@ public final class CombinedEnrichmentBackfillOps {
       int chunkSlotsPerBatch,
       java.util.ArrayDeque<String> parentIdCache,
       java.util.ArrayDeque<String> chunkIdCache,
-      int[] batchesSinceCommit) {}
+      int[] batchesSinceCommit,
+      // Tempdoc 809 finding 3: "stop starting new enrichment work" — the caller's composite of
+      // shutdown, user activity, GPU yield, pending ingest and the remaining cycle budget. Read at
+      // the sub-batch boundaries below, never mid-encode. A context that supplies `() -> false`
+      // behaves exactly as this pass did before the checkpoints existed.
+      BooleanSupplier stopRequestedSupplier) {}
 
   /**
    * Outcome of one {@link #processCombinedBackfill} call (tempdoc 710 Move 2 item 4).
@@ -98,8 +145,33 @@ public final class CombinedEnrichmentBackfillOps {
    * Recording moves to {@link BackfillScheduler} (the only component that knows which pass ran);
    * this record carries exactly what that {@code finally} block used to read directly.
    *
-   * @param anyWorkDone the original return value ({@code written > 0}) — drives the tight-loop /
-   *     {@code useCombined} control flow in {@link BackfillScheduler}.
+   * @param wroteAnything the original return value ({@code written > 0}) — ACTIVITY, not progress:
+   *     a document that is rewritten every batch without ever advancing a stage pins this true
+   *     forever. Tempdoc 798 renamed it from {@code anyWorkDone} because that name invited exactly
+   *     one wrong use: driving a loop's continue-condition (a 20-minute ingest livelock, zero
+   *     diagnostics). It selects combined-vs-individual mode and feeds logging/sleep selection —
+   *     it must NEVER be a loop's continue-condition. Use {@link #progressed()} for that.
+   * @param progressed whether at least one document actually ADVANCED a stage this batch: a stage
+   *     completed, an attempted stage failed (the encoder ran and its retry seam consumed the
+   *     attempt), or a document with no usable content reached its terminal {@code FAILED} state.
+   *     This is the termination signal for the tight loop — the population it drains is finite, so
+   *     a loop conditioned on it cannot livelock.
+   *     <p>Deliberately excluded (tempdoc 798 review F2): the INTERMEDIATE retry-count bump of the
+   *     Phase-2 blank-content escalation branch. Nothing was attempted there — no encoder ran, no
+   *     artifact could exist — and the document has not left the pending population, so the next
+   *     tight-loop batch would be an identical no-work batch. Only its terminal step counts.
+   *     Counting every bump instead would make this field equal {@link #wroteAnything()}: every
+   *     mutation of a document's update map in {@link #processCombinedBackfill} increments some
+   *     stage counter, so "the write was non-empty" and "a counter moved" would coincide, and the
+   *     distinction this field exists to draw would collapse.
+   * @param aborted whether this batch stopped starting new enrichment work before its document set
+   *     was exhausted (tempdoc 809 finding 3) — either because the caller's stop signal came up
+   *     (shutdown / user activity / GPU yield / pending ingest / cycle budget) or because a bulk
+   *     deletion landed underneath it, which is how removing a watched root reaches this pass.
+   *     Whatever the earlier stages already produced is still written, so an aborted batch is not
+   *     discarded work; the documents it never reached simply stay PENDING and are re-selected next
+   *     cycle. A loop over this method must stop when it sees this: the stop condition that ended
+   *     the batch is by construction still true.
    * @param recordTiming the original {@code recordTiming} flag: {@code true} once processing got
    *     past the early-return/interruption checks (mirrors the pre-move gate on whether the
    *     {@code finally} block recorded anything at all). {@code false} means every count/timing
@@ -108,7 +180,9 @@ public final class CombinedEnrichmentBackfillOps {
    * @param embedMs / spladeMs / nerMs / fetchMs / writeMs / totalMs per-phase wall-clock ms.
    */
   public record CombinedOutcome(
-      boolean anyWorkDone,
+      boolean wroteAnything,
+      boolean progressed,
+      boolean aborted,
       boolean recordTiming,
       int embedProcessed,
       int spladeProcessed,
@@ -122,7 +196,7 @@ public final class CombinedEnrichmentBackfillOps {
 
     /** No pending work / interrupted before any stage ran — nothing to record. */
     public static CombinedOutcome none() {
-      return new CombinedOutcome(false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+      return new CombinedOutcome(false, false, false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
   }
 
@@ -131,8 +205,9 @@ public final class CombinedEnrichmentBackfillOps {
    * document is read once, enriched with embedding + SPLADE + NER as needed, and written once via a
    * single batch RMW call.
    *
-   * @return the batch outcome; {@code outcome.anyWorkDone()} replaces the pre-Move-2 boolean
-   *     return for backfillDidWork/tight-loop tracking.
+   * @return the batch outcome; {@code outcome.wroteAnything()} replaces the pre-Move-2 boolean
+   *     return for backfillDidWork/mode selection, and {@code outcome.progressed()} is what any
+   *     loop over this method must terminate on (tempdoc 798).
    */
   public static CombinedOutcome processCombinedBackfill(BackfillContext context) {
     // Timing/count accumulators hoisted so they survive exceptions (350).
@@ -146,6 +221,12 @@ public final class CombinedEnrichmentBackfillOps {
     long writeMs = 0;
     long totalMs = 0;
     boolean recordTiming = false;
+    // Tempdoc 809 finding 3 — interruption bookkeeping, hoisted with the accumulators above so the
+    // catch block below can report it too.
+    boolean aborted = false;
+    int docsSkipped = 0;
+    int unitsDone = 0;
+    long epochAtSelection = 0;
 
     // Tempdoc 400 LR2-a: enrichment.batch parent span. Encoder ORT spans
     // emitted inside are parented under this when detailed tracing is on;
@@ -153,6 +234,11 @@ public final class CombinedEnrichmentBackfillOps {
     Span enrichmentSpan = EncoderOrtRunSpans.maybeEnrichmentBatch();
     try (Scope _ = enrichmentSpan.makeCurrent()) {
     try {
+      // Tempdoc 809 finding 3: the bulk-deletion epoch as it stood when this batch chose its
+      // documents. Captured before the pending-ID queries so a root removal racing the selection is
+      // caught too, and re-read at every checkpoint below.
+      epochAtSelection = context.indexingCoordinator().bulkDeleteEpoch();
+
       // Phase 0: Query pending docs. Uses caches from tight loop — first call queries all
       // pending IDs (no limit), subsequent calls pop from cache. Eliminates 4 Lucene queries
       // per iteration after the first (334 Phase 10).
@@ -281,6 +367,11 @@ public final class CombinedEnrichmentBackfillOps {
       // Track which doc IDs are chunk docs (need CHUNK_VECTOR instead of VECTOR)
       Set<String> chunkIdsInBatch = new HashSet<>();
 
+      // Tempdoc 798 review F2: blank-content escalations that reached their terminal FAILED state
+      // this batch. Those documents leave the pending population, so they are progress; the
+      // intermediate retry bumps below are not (see CombinedOutcome#progressed).
+      int blankContentTerminal = 0;
+
       for (String docId : pendingIds) {
         boolean isChunkDoc = chunkDocIds.contains(docId);
         updatesByDocId.put(docId, new HashMap<>());
@@ -303,9 +394,10 @@ public final class CombinedEnrichmentBackfillOps {
             // max — never COMPLETED-without-data.
             int currentRetryCount =
                 parseRetryCountOrZero(docFields.get(SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT));
-            updatesByDocId
-                .get(docId)
-                .putAll(EmbeddingBackfillOps.computeChunkEmbeddingFailureUpdate(currentRetryCount));
+            Map<String, Object> escalation =
+                EmbeddingBackfillOps.computeChunkEmbeddingFailureUpdate(currentRetryCount);
+            if (escalation.containsKey(SchemaFields.CHUNK_EMBEDDING_STATUS)) blankContentTerminal++;
+            updatesByDocId.get(docId).putAll(escalation);
             continue;
           }
           embedDocIds.add(docId);
@@ -331,40 +423,52 @@ public final class CombinedEnrichmentBackfillOps {
         // Parent doc: full enrichment (embed + SPLADE + NER)
         String content = contentByDocId.get(docId);
 
-        String embedStatus = docFields.getOrDefault(
-            SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_PENDING);
-        String spladeStatus = docFields.getOrDefault(
-            SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_PENDING);
-        String nerStatus = docFields.getOrDefault(
-            SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING);
+        // Read the RAW status: an ABSENT status means the stage does not apply to this document,
+        // not that it is PENDING. Chunk docs are written with SPLADE_STATUS/CHUNK_EMBEDDING_STATUS
+        // but no EMBEDDING_STATUS and no NER_STATUS (ChunkDocumentWriter), and reach this parent
+        // branch whenever the splade-status query pulls them in. Defaulting absent to PENDING made
+        // the blank-content branch below manufacture an EMBEDDING_STATUS=COMPLETED on a chunk doc
+        // that has no vector — a data-less COMPLETED the RMW reset policy (tempdoc 711) then
+        // resets straight back to PENDING, forever (the F-032 "status lies" class).
+        String embedStatus = docFields.get(SchemaFields.EMBEDDING_STATUS);
+        String spladeStatus = docFields.get(SchemaFields.SPLADE_STATUS);
+        String nerStatus = docFields.get(SchemaFields.NER_STATUS);
 
         if (content == null || content.isBlank()) {
+          // No content means no artifact can be produced for any stage that applies here. Escalate
+          // through each stage's retry-count seam (retry next cycle, FAILED at max) exactly as
+          // EmbeddingBackfillOps does for the identical condition — never COMPLETED-without-data.
           Map<String, Object> updates = updatesByDocId.get(docId);
           if (embedAvailable && SchemaFields.EMBEDDING_STATUS_PENDING.equals(embedStatus)) {
-            updates.put(SchemaFields.EMBEDDING_STATUS, SchemaFields.EMBEDDING_STATUS_COMPLETED);
+            Map<String, Object> escalation =
+                EmbeddingBackfillOps.computeEmbeddingFailureUpdate(
+                    parseRetryCountOrZero(docFields.get(SchemaFields.EMBEDDING_RETRY_COUNT)));
+            if (escalation.containsKey(SchemaFields.EMBEDDING_STATUS)) blankContentTerminal++;
+            updates.putAll(escalation);
           }
           if (nerAvailable && SchemaFields.NER_STATUS_PENDING.equals(nerStatus)) {
-            updates.put(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED);
+            Map<String, Object> escalation =
+                NerBackfillOps.computeNerFailureUpdate(
+                    parseRetryCountOrZero(docFields.get(SchemaFields.NER_RETRY_COUNT)));
+            if (escalation.containsKey(SchemaFields.NER_STATUS)) blankContentTerminal++;
+            updates.putAll(escalation);
           }
-          if (spladeAvailable) {
+          if (spladeAvailable && SchemaFields.SPLADE_STATUS_PENDING.equals(spladeStatus)) {
             // A splade-PENDING doc with no CONTENT is a chunk doc picked up via the splade-status
             // query (chunks carry CHUNK_CONTENT, never CONTENT). With chunk-SPLADE on (tempdoc
-            // 712) encode it; flag-off keeps the historical mark-COMPLETED-without-data. The
-            // COMPLETED-and-writing-anyway case also re-derives: an RMW that omits splade
-            // destroys the postings and reset-statuses them back to PENDING (tempdoc 711);
-            // carrying a fresh encode in the same bundled write skips that churn cycle.
+            // 712) its CHUNK_CONTENT is encoded here and lands in this doc's bundled write.
+            // Flag-off there is nothing to encode, so the stage escalates like any other
+            // artifact-less outcome rather than claiming COMPLETED with no postings.
             String chunkContent = docFields.get(SchemaFields.CHUNK_CONTENT);
-            boolean chunkSparseEligible =
-                context.chunkSpladeEnabled()
-                    && chunkContent != null
-                    && !chunkContent.isBlank()
-                    && !SchemaFields.SPLADE_STATUS_FAILED.equals(spladeStatus);
-            boolean spladePending = SchemaFields.SPLADE_STATUS_PENDING.equals(spladeStatus);
-            if (chunkSparseEligible && (spladePending || !updates.isEmpty())) {
+            if (context.chunkSpladeEnabled() && chunkContent != null && !chunkContent.isBlank()) {
               spladeDocIds.add(docId);
               spladeContents.add(chunkContent);
-            } else if (spladePending) {
-              updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
+            } else {
+              Map<String, Object> escalation =
+                  SpladeBackfillOps.computeSpladeFailureUpdate(
+                      parseRetryCountOrZero(docFields.get(SchemaFields.SPLADE_RETRY_COUNT)));
+              if (escalation.containsKey(SchemaFields.SPLADE_STATUS)) blankContentTerminal++;
+              updates.putAll(escalation);
             }
           }
           continue;
@@ -411,6 +515,10 @@ public final class CombinedEnrichmentBackfillOps {
       // Phase 3a: Batch embedding
       long tEmbed = System.nanoTime();
       int embedFailed = 0;
+      // Docs the embed batch could not serve AT ALL (null / size-mismatched result). They receive
+      // no update of any kind, so unlike embedFailed they are NOT progress — see the
+      // size-mismatch branch below (tempdoc 798 review F2).
+      int embedBatchUnusable = 0;
       int singlePassProcessed = 0;
       int longDocWindowed = 0;
       int arenaOomWindowed = 0;
@@ -425,6 +533,13 @@ public final class CombinedEnrichmentBackfillOps {
       if (!lateChunkingDocIds.isEmpty() && embedAvailable) {
         EmbeddingProvider lateChunkingProvider = context.embeddingProviderSupplier().get();
         for (int i = 0; i < lateChunkingDocIds.size(); i++) {
+          // One whole-document forward pass per iteration — already the atomic unit, so the
+          // checkpoint costs nothing but a volatile read (tempdoc 809 finding 3).
+          if (stopRequested(context, unitsDone, epochAtSelection)) {
+            aborted = true;
+            docsSkipped += lateChunkingDocIds.size() - i;
+            break;
+          }
           String lcDocId = lateChunkingDocIds.get(i);
           String lcContent = lateChunkingContents.get(i);
           try {
@@ -473,66 +588,86 @@ public final class CombinedEnrichmentBackfillOps {
               embedFailed++;
             }
           }
+          unitsDone++;
         }
       }
 
       if (!embedDocIds.isEmpty() && embedAvailable) {
         EmbeddingProvider provider = context.embeddingProviderSupplier().get();
-        List<float[]> vectors = provider.embedDocumentBatch(embedContents);
-        // Trusting a batch result's length to match the request is what crash-loops the
-        // embedding-chunk sibling (EmbeddingBackfillOps#processChunkEmbeddingBackfill) — guard
-        // size mismatch the same way here, not just null.
-        if (vectors != null && vectors.size() == embedDocIds.size()) {
-          for (int i = 0; i < embedDocIds.size(); i++) {
-            float[] vector = vectors.get(i);
-            String eid = embedDocIds.get(i);
-            Map<String, Object> updates = updatesByDocId.get(eid);
-            boolean isChunk = chunkIdsInBatch.contains(eid);
-            if (vector != null && vector.length > 0) {
-              // Chunk docs use CHUNK_VECTOR/CHUNK_EMBEDDING_STATUS; parents use VECTOR/EMBEDDING_STATUS
-              updates.put(
-                  isChunk ? SchemaFields.CHUNK_VECTOR : SchemaFields.VECTOR, vector);
-              updates.put(
-                  isChunk ? SchemaFields.CHUNK_EMBEDDING_STATUS : SchemaFields.EMBEDDING_STATUS,
-                  SchemaFields.EMBEDDING_STATUS_COMPLETED);
-              updates.put(
-                  isChunk
-                      ? SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT
-                      : SchemaFields.EMBEDDING_RETRY_COUNT,
-                  "0");
-              embedProcessed++;
-            } else {
-              // Tempdoc 700: escalate instead of silently resetting to PENDING forever. Look up
-              // the retry count already fetched in the batched pre-fetch, delegate the
-              // increment/FAILED-at-max decision to the same pure helper the individual
-              // EmbeddingBackfillOps siblings use, and merge the result into this doc's entry in
-              // updatesByDocId — never a direct updateDocument call (preserves the single-batched-
-              // write invariant, tempdoc 312 BUG-1).
-              Map<String, String> eidFields = batchedFields.getOrDefault(eid, Map.of());
-              int currentRetryCount =
-                  parseRetryCountOrZero(
-                      eidFields.get(
-                          isChunk
-                              ? SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT
-                              : SchemaFields.EMBEDDING_RETRY_COUNT));
-              updates.putAll(
-                  isChunk
-                      ? EmbeddingBackfillOps.computeChunkEmbeddingFailureUpdate(currentRetryCount)
-                      : EmbeddingBackfillOps.computeEmbeddingFailureUpdate(currentRetryCount));
-              embedFailed++;
-            }
+        // Tempdoc 809 finding 3: encode in EMBED_ENCODE_SLICE-document slices instead of one call
+        // over the whole batch. Same native forward passes (the encoder sub-batches at exactly this
+        // size anyway), but the loop can now be left between them — which is what makes the
+        // scheduler's cycle budget, ingest preemption and root-removal cancellation enforceable
+        // rather than aspirational.
+        for (int sliceStart = 0; sliceStart < embedDocIds.size(); sliceStart += EMBED_ENCODE_SLICE) {
+          if (stopRequested(context, unitsDone, epochAtSelection)) {
+            aborted = true;
+            docsSkipped += embedDocIds.size() - sliceStart;
+            break;
           }
-        } else {
-          // Batch failed or size-mismatched — mark all as still pending (will retry next cycle)
-          context.log().warn(
-              "Combined backfill: batch embedding returned {} (expected {} vectors)",
-              vectors == null ? "null" : vectors.size() + " results",
-              embedDocIds.size());
-          // += not =: embedDocIds can now include late-chunking windowed-fallback docs, and
-          // embedFailed may already carry Phase 3a-i single-pass escalation failures — a bare
-          // reassignment here would silently erase those from the summary log (tempdoc 691
-          // forensics fold-in; the write correctness is unaffected, only this counter).
-          embedFailed += embedDocIds.size();
+          int sliceEnd = Math.min(sliceStart + EMBED_ENCODE_SLICE, embedDocIds.size());
+          List<String> sliceDocIds = embedDocIds.subList(sliceStart, sliceEnd);
+          List<float[]> vectors =
+              provider.embedDocumentBatch(embedContents.subList(sliceStart, sliceEnd));
+          unitsDone++;
+          // Trusting a batch result's length to match the request is what crash-loops the
+          // embedding-chunk sibling (EmbeddingBackfillOps#processChunkEmbeddingBackfill) — guard
+          // size mismatch the same way here, not just null.
+          if (vectors != null && vectors.size() == sliceDocIds.size()) {
+            for (int i = 0; i < sliceDocIds.size(); i++) {
+              float[] vector = vectors.get(i);
+              String eid = sliceDocIds.get(i);
+              Map<String, Object> updates = updatesByDocId.get(eid);
+              boolean isChunk = chunkIdsInBatch.contains(eid);
+              if (vector != null && vector.length > 0) {
+                // Chunk docs use CHUNK_VECTOR/CHUNK_EMBEDDING_STATUS; parents use
+                // VECTOR/EMBEDDING_STATUS
+                updates.put(isChunk ? SchemaFields.CHUNK_VECTOR : SchemaFields.VECTOR, vector);
+                updates.put(
+                    isChunk ? SchemaFields.CHUNK_EMBEDDING_STATUS : SchemaFields.EMBEDDING_STATUS,
+                    SchemaFields.EMBEDDING_STATUS_COMPLETED);
+                updates.put(
+                    isChunk
+                        ? SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT
+                        : SchemaFields.EMBEDDING_RETRY_COUNT,
+                    "0");
+                embedProcessed++;
+              } else {
+                // Tempdoc 700: escalate instead of silently resetting to PENDING forever. Look up
+                // the retry count already fetched in the batched pre-fetch, delegate the
+                // increment/FAILED-at-max decision to the same pure helper the individual
+                // EmbeddingBackfillOps siblings use, and merge the result into this doc's entry in
+                // updatesByDocId — never a direct updateDocument call (preserves the
+                // single-batched-write invariant, tempdoc 312 BUG-1).
+                Map<String, String> eidFields = batchedFields.getOrDefault(eid, Map.of());
+                int currentRetryCount =
+                    parseRetryCountOrZero(
+                        eidFields.get(
+                            isChunk
+                                ? SchemaFields.CHUNK_EMBEDDING_RETRY_COUNT
+                                : SchemaFields.EMBEDDING_RETRY_COUNT));
+                updates.putAll(
+                    isChunk
+                        ? EmbeddingBackfillOps.computeChunkEmbeddingFailureUpdate(currentRetryCount)
+                        : EmbeddingBackfillOps.computeEmbeddingFailureUpdate(currentRetryCount));
+                embedFailed++;
+              }
+            }
+          } else {
+            // Slice failed or size-mismatched — mark all as still pending (will retry next cycle)
+            context.log().warn(
+                "Combined backfill: batch embedding returned {} (expected {} vectors)",
+                vectors == null ? "null" : vectors.size() + " results",
+                sliceDocIds.size());
+            // Tempdoc 798 review F2: these docs get NO update — not even a retry bump — so nothing
+            // about them changed on disk and the next batch would be byte-identical. Counting them
+            // as progress kept the tight loop spinning on a systematically failing embed batch
+            // until the cycle budget expired. They stay out of `progressed` and are folded back
+            // into the summary log's fail= count only (a separate counter, so the Phase 3a-i
+            // single-pass escalation failures already in embedFailed are still reported — 691).
+            // Tempdoc 809: accumulated across slices, since only the failing slice is unusable now.
+            embedBatchUnusable += sliceDocIds.size();
+          }
         }
       }
       embedMs = (System.nanoTime() - tEmbed) / 1_000_000;
@@ -540,14 +675,26 @@ public final class CombinedEnrichmentBackfillOps {
       // Phase 3b: Batch SPLADE (CPU to avoid GPU VRAM contention with embedding)
       long tSplade = System.nanoTime();
       int spladeFailed = 0;
-      if (!spladeDocIds.isEmpty() && spladeAvailable) {
+      if (!spladeDocIds.isEmpty()
+          && spladeAvailable
+          && stopRequested(context, unitsDone, epochAtSelection)) {
+        // Tempdoc 809 finding 3: checked at the stage boundary, not sliced. SPLADE's own
+        // encodeBatchTokenBudget sorts the WHOLE caller batch by token count to minimise padding
+        // waste (SpladeEncoder:338-349) — slicing it at this call site would degrade a measured
+        // optimisation to buy an interruption point the stage boundary already provides, since the
+        // embed stage above is what consumes the budget.
+        aborted = true;
+        docsSkipped += spladeDocIds.size();
+      } else if (!spladeDocIds.isEmpty() && spladeAvailable) {
         SpladeEncoder encoder = context.spladeEncoderSupplier().get();
         try {
           List<Map<String, Float>> sparseVecs = encoder.encodeBatch(spladeContents);
           for (int i = 0; i < spladeDocIds.size(); i++) {
             Map<String, Object> updates = updatesByDocId.get(spladeDocIds.get(i));
             updates.put(SchemaFields.SPLADE, sparseVecs.get(i));
-            updates.put(SchemaFields.SPLADE_STATUS, SchemaFields.SPLADE_STATUS_COMPLETED);
+            updates.put(
+                SchemaFields.SPLADE_STATUS,
+                SpladeBackfillOps.spladeStatusFor(sparseVecs.get(i)));
             updates.put(SchemaFields.SPLADE_RETRY_COUNT, "0");
             spladeProcessed++;
           }
@@ -559,8 +706,12 @@ public final class CombinedEnrichmentBackfillOps {
           int stillFailed = 0;
           for (String spladeDocId : spladeDocIds) {
             Map<String, Object> docUpdates = updatesByDocId.get(spladeDocId);
-            if (SchemaFields.SPLADE_STATUS_COMPLETED.equals(
-                docUpdates.get(SchemaFields.SPLADE_STATUS))) {
+            // Both terminal-success tokens count as "already written above" — a COMPLETED_EMPTY
+            // entry is a finished encode too, and overwriting it with a retry/FAILED update would
+            // re-open the doc the empty-encode just drained.
+            Object alreadyWritten = docUpdates.get(SchemaFields.SPLADE_STATUS);
+            if (SchemaFields.SPLADE_STATUS_COMPLETED.equals(alreadyWritten)
+                || SchemaFields.SPLADE_STATUS_COMPLETED_EMPTY.equals(alreadyWritten)) {
               continue;
             }
             Map<String, String> spladeDocFields = batchedFields.getOrDefault(spladeDocId, Map.of());
@@ -571,6 +722,7 @@ public final class CombinedEnrichmentBackfillOps {
           }
           spladeFailed = stillFailed;
         }
+        unitsDone++;
       }
       spladeMs = (System.nanoTime() - tSplade) / 1_000_000;
 
@@ -580,6 +732,10 @@ public final class CombinedEnrichmentBackfillOps {
       int nerFailed = 0;
       if (nerAvailable) {
         NerService nerService = context.nerServiceSupplier().get();
+        // Tempdoc 809 finding 3: the eligible set is materialised first (same predicate, same
+        // order, previously inline `continue`s) so that abandoning the stage part-way can report
+        // exactly how many documents it skipped, the way the embed and SPLADE stages can.
+        List<String> nerDocIds = new ArrayList<>();
         for (String docId : pendingIds) {
           Map<String, String> docFields = batchedFields.getOrDefault(docId, Map.of());
           String nerSt = docFields.getOrDefault(
@@ -591,11 +747,27 @@ public final class CombinedEnrichmentBackfillOps {
           if (content == null || content.isBlank()) {
             continue;
           }
+          nerDocIds.add(docId);
+        }
+        for (int n = 0; n < nerDocIds.size(); n++) {
+          // Per-document GPU inference — already the atomic unit (batching regressed, item 22).
+          if (stopRequested(context, unitsDone, epochAtSelection)) {
+            aborted = true;
+            docsSkipped += nerDocIds.size() - n;
+            break;
+          }
+          String docId = nerDocIds.get(n);
+          Map<String, String> docFields = batchedFields.getOrDefault(docId, Map.of());
+          String content = contentByDocId.get(docId);
           try {
             List<NerResult> nerBatch = nerService.extractEntitiesBatch(List.of(content));
             NerResult result = nerBatch.isEmpty() ? NerResult.EMPTY : nerBatch.get(0);
             Map<String, Object> updates = updatesByDocId.get(docId);
-            updates.put(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED);
+            updates.put(
+                SchemaFields.NER_STATUS,
+                result.isEmpty()
+                    ? SchemaFields.NER_STATUS_COMPLETED_EMPTY
+                    : SchemaFields.NER_STATUS_COMPLETED);
             updates.put(SchemaFields.NER_RETRY_COUNT, "0");
             NerBackfillOps.applyEntityFieldUpdates(updates, result);
             nerProcessed++;
@@ -614,6 +786,7 @@ public final class CombinedEnrichmentBackfillOps {
                 .putAll(NerBackfillOps.computeNerFailureUpdate(currentRetryCount));
             nerFailed++;
           }
+          unitsDone++;
         }
       }
       nerMs = (System.nanoTime() - tNer) / 1_000_000;
@@ -664,7 +837,7 @@ public final class CombinedEnrichmentBackfillOps {
               fetchMs,
               embedMs,
               embedProcessed,
-              embedFailed,
+              embedFailed + embedBatchUnusable,
               singlePassProcessed,
               longDocWindowed,
               arenaOomWindowed,
@@ -678,13 +851,45 @@ public final class CombinedEnrichmentBackfillOps {
               written,
               totalMs);
 
+      if (aborted) {
+        boolean populationChanged =
+            context.indexingCoordinator().bulkDeleteEpoch() != epochAtSelection;
+        context
+            .log()
+            .info(
+                "Combined backfill: batch stopped early after {} encoder units, {} document-stages"
+                    + " left unprocessed — {}. Everything already enriched was written; the rest"
+                    + " stays PENDING for the next cycle (tempdoc 809).",
+                unitsDone,
+                docsSkipped,
+                populationChanged
+                    ? "documents were bulk-deleted underneath this batch (a watched root was"
+                        + " removed, or the index was reset)"
+                    : "the scheduler asked background enrichment to yield (pending ingest, user"
+                        + " active, GPU claimed, or the cycle budget was spent)");
+      }
+
       // 710 Move 2 item 4: per-stage enrichment counts/timing are no longer recorded here —
       // recordTiming carries "past the early-return/interruption checks" forward on the returned
       // outcome (mirrors the pre-move finally-block gate) so BackfillScheduler can record from
       // completed-stage data even when a later stage throws (the same "survives exceptions in
       // later stages" property the old finally block had — see the catch block below).
+      // Tempdoc 798: `progressed` is the tight loop's termination signal — at least one doc
+      // advanced a stage (processed, an attempted stage resolved into its retry seam, or a
+      // blank-content doc reached terminal FAILED). `written > 0` is only ACTIVITY and can stay
+      // true forever. See CombinedOutcome#progressed for what is deliberately NOT counted.
       return new CombinedOutcome(
           written > 0,
+          embedProcessed
+                  + spladeProcessed
+                  + nerProcessed
+                  + singlePassProcessed
+                  + embedFailed
+                  + spladeFailed
+                  + nerFailed
+                  + blankContentTerminal
+              > 0,
+          aborted,
           recordTiming,
           embedProcessed,
           spladeProcessed,
@@ -701,6 +906,14 @@ public final class CombinedEnrichmentBackfillOps {
       return recordTiming
           ? new CombinedOutcome(
               false,
+              // The batch aborted before its single write, so nothing landed: no doc advanced a
+              // stage durably, whatever the in-flight stage counters say (tempdoc 798).
+              false,
+              // Carries whatever an earlier stage already decided; the exception itself does not
+              // set it — a crash says nothing about whether the caller wants backfill to yield,
+              // and reporting one as an orderly early stop would stop the tight loop for the
+              // wrong reason (tempdoc 809).
+              aborted,
               true,
               embedProcessed,
               spladeProcessed,

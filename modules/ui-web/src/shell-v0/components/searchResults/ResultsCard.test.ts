@@ -501,3 +501,52 @@ describe('ResultsCard — variant="excerpt" (Search Thread S4-final)', () => {
     expect(el.shadowRoot?.querySelector('[data-testid="card-fork-btn"]')).not.toBeNull();
   });
 });
+
+/**
+ * Tempdoc 811 (C-1a) — the corpus marker on the row. `docs/reference/search-ui-behavior.md`
+ * (§Result Row Anatomy 9, §Built-in Searchable Help Content) documents a teal "Help" pill for
+ * `collection === 'justsearch-help'`; this card is the ONE render path, so the same pill also
+ * covers the retrieve tier and the agent tool-search excerpt.
+ */
+describe('ResultsCard — collection pill (811 C-1a)', () => {
+  const pill = (el: ResultsCard, id: string): HTMLElement | null =>
+    row(el, id).querySelector('[data-testid="collection-pill"]');
+
+  it('marks a justsearch-help hit with the teal Help pill', async () => {
+    const el = await mount({
+      ...BASE,
+      matchCount: 1,
+      totalHits: 1,
+      results: [hit('a', { collection: 'justsearch-help' })],
+    });
+    const p = pill(el, 'a');
+    expect(p?.textContent?.trim()).toBe('Help');
+    expect(p?.getAttribute('data-tone')).toBe('help');
+    expect(p?.getAttribute('data-collection')).toBe('justsearch-help');
+  });
+
+  it('leaves the user\'s own documents unmarked (absent and `default` collection alike)', async () => {
+    const el = await mount({
+      ...BASE,
+      matchCount: 2,
+      totalHits: 2,
+      results: [hit('a'), hit('b', { collection: 'default' })],
+    });
+    expect(pill(el, 'a')).toBeNull();
+    expect(pill(el, 'b')).toBeNull();
+  });
+
+  it('marks any other named collection with the neutral pill (per-collection, not one string)', async () => {
+    const el = await mount({
+      ...BASE,
+      matchCount: 2,
+      totalHits: 2,
+      results: [hit('a', { collection: 'agent-history' }), hit('b', { collection: 'mcp-ingest' })],
+    });
+    expect(pill(el, 'a')?.textContent?.trim()).toBe('Agent history');
+    expect(pill(el, 'a')?.getAttribute('data-tone')).toBe('neutral');
+    // An unregistered collection still marks — by its own name.
+    expect(pill(el, 'b')?.textContent?.trim()).toBe('mcp-ingest');
+    expect(pill(el, 'b')?.getAttribute('data-tone')).toBe('neutral');
+  });
+});

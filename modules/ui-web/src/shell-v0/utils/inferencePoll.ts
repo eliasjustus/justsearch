@@ -9,6 +9,8 @@
  * stops it. Initial fetch is eager (no wait for first interval tick).
  */
 
+import { authorizedFetch } from '../api/authorizedFetch.js';
+
 export interface InferenceSnapshot {
   // Tempdoc 663 Stage 2 — matches the backend's Mode enum (app-api Mode.java) 1:1. Previously an
   // untyped `string`, which let 'transitioning' (a real backend value) escape the FE's type system;
@@ -48,7 +50,7 @@ const INTERVAL_MS = 5000;
 
 async function fetchOnce(): Promise<void> {
   try {
-    const res = await fetch((apiBase || '') + '/api/inference/status');
+    const res = await authorizedFetch((apiBase || '') + '/api/inference/status');
     if (!res.ok) {
       for (const l of listeners) l(null);
       return;

@@ -52,13 +52,17 @@ public interface IndexingJobChangeFeed {
       long lastUpdatedMs,
       String errorMessage,
       long retryAfterMs,
-      String collection) {
+      String collection,
+      String scanId) {
 
     public JobRow {
       Objects.requireNonNull(pathHash, "pathHash");
       Objects.requireNonNull(state, "state");
       Objects.requireNonNull(collection, "collection");
       errorMessage = errorMessage == null ? "" : errorMessage;
+      // Tempdoc 812 D2: empty means "not part of a directory scan" (single-file ingest, watcher,
+      // or a row written before the scan_id column existed) — never null on the wire.
+      scanId = scanId == null ? "" : scanId;
     }
   }
 

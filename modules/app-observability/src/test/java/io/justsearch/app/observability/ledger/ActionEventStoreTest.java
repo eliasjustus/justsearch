@@ -1,13 +1,19 @@
 package io.justsearch.app.observability.ledger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 /** Tempdoc 550 thesis I / F1 — the one log is id-keyed (idempotent) + bounded. */
 @DisplayName("ActionEventStore — idempotent, bounded one-log")
@@ -27,7 +33,7 @@ class ActionEventStoreTest {
 
   private static ActionEvent idx(String id, String at) {
     return new ActionEvent.Index(
-        id, Instant.parse(at), "system", "WORKER_INDEXER", "h-" + id, "default", "DONE", 0, "");
+        id, Instant.parse(at), "system", "WORKER_INDEXER", "h-" + id, "default", "DONE", 0, "", "");
   }
 
   @Test
@@ -94,5 +100,51 @@ class ActionEventStoreTest {
     store.append(idx("b", "2026-05-26T00:00:01Z"));
     store.append(idx("c", "2026-05-26T00:00:02Z")); // evicts oldest index 'a'
     assertEquals(List.of("b", "c"), store.recent().stream().map(ActionEvent::id).toList());
+  }
+
+  @Test
+  @DisplayName("append reports whether the id was newly added (tempdoc 812: the journal's write gate)")
+  void appendReportsWhetherItAdded() {
+    ActionEventStore store = new ActionEventStore(4);
+    assertTrue(store.append(op("a", "2026-05-26T00:00:00Z")), "a new id is added");
+    assertFalse(store.append(op("a", "2026-05-26T00:00:05Z")), "a duplicate id is not re-added");
+    assertFalse(store.append(null), "a null event is not added");
+  }
+
+  @Test
+  @DisplayName("the actor cliff is not silent: one WARN per episode, counted, re-armed by an index eviction")
+  void actorEvictionWarnsOncePerEpisode() {
+    Logger ringLogger = (Logger) LoggerFactory.getLogger(ActionEventStore.class);
+    ListAppender<ILoggingEvent> captured = new ListAppender<>();
+    captured.start();
+    ringLogger.addAppender(captured);
+    try {
+      // Capacity 2, actor rows only: every append past capacity evicts an actor row.
+      ActionEventStore store = new ActionEventStore(2);
+      for (int i = 0; i < 12; i++) {
+        store.append(op("a" + i, "2026-05-26T00:00:0" + (i % 10) + "Z"));
+      }
+      assertEquals(10, store.actorEvictions(), "every actor eviction is counted");
+      assertEquals(
+          1,
+          warnCount(captured),
+          "ten actor evictions in one episode produce ONE warning, not ten");
+
+      // An index eviction closes the episode. (At capacity 2 with the ring full of actor rows, the
+      // incoming index row is itself the oldest INDEX, so index-first eviction sacrifices it — an
+      // index eviction either way, which is exactly the "pressure is back on index rows" signal.)
+      store.append(idx("i1", "2026-05-26T00:01:00Z"));
+      store.append(idx("i2", "2026-05-26T00:01:01Z"));
+      assertEquals(1, warnCount(captured), "an index eviction re-arms the warning, it does not emit one");
+      store.append(op("z1", "2026-05-26T00:02:00Z"));
+      store.append(op("z2", "2026-05-26T00:02:01Z"));
+      assertEquals(2, warnCount(captured), "the next actor cliff is reported as a new episode");
+    } finally {
+      ringLogger.detachAppender(captured);
+    }
+  }
+
+  private static long warnCount(ListAppender<ILoggingEvent> appender) {
+    return appender.list.stream().filter(e -> e.getLevel() == Level.WARN).count();
   }
 }

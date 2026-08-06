@@ -2,6 +2,7 @@
 package io.justsearch.app.services.feedback;
 
 import io.justsearch.agent.api.encryption.StoreCipher;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -13,6 +14,7 @@ import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
 
 /**
  * Tempdoc 580 §17 (Track C) — a generic append-only NDJSON record store (one JSON object per line,
@@ -35,6 +37,7 @@ import tools.jackson.databind.ObjectMapper;
  */
 public final class NdjsonAppendStore<T> {
 
+  private static final int CURRENT_SCHEMA_VERSION = 1;
   private static final Logger log = LoggerFactory.getLogger(NdjsonAppendStore.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -69,7 +72,11 @@ public final class NdjsonAppendStore<T> {
   /** Appends one record as an NDJSON line. Best-effort — never throws. */
   public synchronized void append(T record) {
     try {
-      String line = cipher.seal(MAPPER.writeValueAsString(record)) + "\n";
+      String line =
+          cipher.seal(
+                  MAPPER.writeValueAsString(
+                      new PersistedRecord<>(CURRENT_SCHEMA_VERSION, record)))
+              + "\n";
       Files.writeString(
           storeFile, line, StandardCharsets.UTF_8, StandardOpenOption.CREATE,
           StandardOpenOption.APPEND);
@@ -92,7 +99,25 @@ public final class NdjsonAppendStore<T> {
       if (line.isBlank()) {
         continue;
       }
-      out.add(MAPPER.readValue(cipher.open(line), type));
+      JsonNode root = MAPPER.readTree(cipher.open(line));
+      JsonNode version = root.get("schemaVersion");
+      if (version == null) {
+        out.add(MAPPER.treeToValue(root, type));
+        continue;
+      }
+      if (!version.isInt()) {
+        throw new IOException("feedback record schemaVersion must be an integer");
+      }
+      int observed = version.intValue();
+      if (observed > CURRENT_SCHEMA_VERSION) {
+        throw new UnsupportedStoreVersionException(
+            "feedback-records", observed, CURRENT_SCHEMA_VERSION);
+      }
+      JsonNode record = root.get("record");
+      if (observed != CURRENT_SCHEMA_VERSION || record == null) {
+        throw new IOException("unsupported feedback record envelope");
+      }
+      out.add(MAPPER.treeToValue(record, type));
     }
     return out;
   }
@@ -101,4 +126,6 @@ public final class NdjsonAppendStore<T> {
   Path storeFile() {
     return storeFile;
   }
+
+  private record PersistedRecord<T>(int schemaVersion, T record) {}
 }

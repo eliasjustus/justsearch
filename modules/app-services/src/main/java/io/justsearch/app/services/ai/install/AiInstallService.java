@@ -7,6 +7,10 @@ import io.justsearch.app.api.ApiErrorCode;
 import io.justsearch.app.api.InstallPlanPreview;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
+import io.justsearch.app.api.OpCriticality;
+import io.justsearch.app.api.OpLeaseOutcome;
+import io.justsearch.app.api.OperationLeaseHandle;
+import io.justsearch.app.api.OperationLeaseService;
 import io.justsearch.app.services.runtimestate.RuntimeReconciler;
 import io.justsearch.app.services.runtimestate.RuntimeStatus;
 import io.justsearch.configuration.PlatformPaths;
@@ -93,6 +97,25 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
   private final Object lock = new Object();
   private final AtomicBoolean running = new AtomicBoolean(false);
+
+  /**
+   * Op-lease SPI (tempdoc 617). This is the primary model-acquisition path: it downloads and moves
+   * roughly 9 GB into AI Home on a virtual thread that outlives its HTTP request, so the
+   * request-scoped mutation lease in {@code ApiSecurityFilters} is long released while
+   * {@code DownloadExecutor.moveAtomicBestEffort} is still promoting partial files into place.
+   * Without a lease, upgrade prepare reports no blocker and the installer can launch mid-download —
+   * the exact outcome D2's "an update never touches models" invariant exists to prevent. Defaults
+   * to no-op so existing constructors and tests are unaffected.
+   */
+  private volatile OperationLeaseService operationLeases = OperationLeaseService.noOp();
+
+  /**
+   * Late-binds the op-lease SPI. Set by {@code ServicePhase}, which creates the lease service after
+   * this service is constructed.
+   */
+  public void setOperationLeaseService(OperationLeaseService leases) {
+    this.operationLeases = leases == null ? OperationLeaseService.noOp() : leases;
+  }
   private final AtomicBoolean cancelFlag = new AtomicBoolean(false);
   private final AiInstallStatus status = new AiInstallStatus();
   private volatile DownloadExecutor downloadExecutor;
@@ -109,6 +132,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   private final AtomicBoolean recomputeInProgress = new AtomicBoolean(false);
   private final AtomicInteger recomputeAttempts = new AtomicInteger(0);
   private static final int MAX_RECOMPUTE_ATTEMPTS = 3;
+
+  // Bytes an interrupted run left staged in `.partial` files, as last derived FROM DISK by the
+  // planner. Kept off the polling hot path (the plan needs a hardware probe): refreshed at every
+  // point the plan is already being computed — boot recompute, plan preview, install start — plus
+  // explicitly on cancellation, the one moment the number changes without a plan being asked for.
+  private volatile long resumableBytesOnDisk;
 
   public AiInstallService(
       OnlineAiService onlineAi,
@@ -213,8 +242,31 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     maybeRecomputeInstalledFromDisk();
     synchronized (lock) {
       reapIfStale();
+      status.resumableBytes = resumableBytesOnDisk;
       return status;
     }
+  }
+
+  /**
+   * Re-derives {@link AiInstallStatus#resumableBytes} from disk via the planner. Used where the
+   * staged-byte total changes but no plan is being computed anyway (cancellation); everywhere else
+   * {@link #recordResumableBytes} folds the number off a plan already in hand. Best-effort — a probe
+   * failure leaves the last known value rather than reporting a false zero, which would read as
+   * "your download was discarded".
+   */
+  private void refreshResumableBytesFromDisk() {
+    try {
+      recordResumableBytes(
+          InstallPlanner.plan(
+              getManifest(), buildHardwareProfile(), installIntent(), modelsDir, homeDir));
+    } catch (Exception e) {
+      log.debug("AiInstall resumable-bytes probe skipped (best-effort): {}", e.toString());
+    }
+  }
+
+  /** Folds a freshly-computed plan's staged-byte total into the polled status. */
+  private void recordResumableBytes(InstallPlan plan) {
+    resumableBytesOnDisk = plan.resumableBytes();
   }
 
   @Override
@@ -229,7 +281,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
     // Reuse the PURE planner (no side effects) — tempdoc 381 §F "show the plan before download".
     InstallPlan plan = InstallPlanner.plan(registry, hardware, intent, modelsDir, homeDir);
-    preview.totalDownloadBytes = plan.totalBytes();
+    // What the download will actually COST: complete files are already excluded by the planner, and
+    // `remainingBytes()` also drops the bytes an interrupted run left staged. Stating `totalBytes()`
+    // here charged the user for bytes already on their disk (Sandbox round 8).
+    preview.totalDownloadBytes = plan.remainingBytes();
+    preview.resumableBytes = plan.resumableBytes();
+    recordResumableBytes(plan);
 
     // Bytes still to download, per package id.
     Map<String, Long> downloadByPkg = new HashMap<>();
@@ -295,6 +352,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       InstallPlan plan = InstallPlanner.plan(registry, hardware, installIntent(), modelsDir, homeDir);
       // A successful plan is a DEFINITIVE answer (installed or not) — consume the one-shot now.
       diskRecomputeDone = true;
+      // Same disk-is-the-authority reasoning, applied to the OTHER thing a restart forgets: bytes a
+      // cancelled run left staged. Without this the first post-restart poll reports 0 staged bytes.
+      recordResumableBytes(plan);
       if (applyInstalledFromPlan(plan, registry)) {
         log.info(
             "AiInstall: recomputed installedFully=true from on-disk model presence after restart (tempdoc 562).");
@@ -318,10 +378,32 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
    * empty-registry case; the former is the profile-aware "chat model + required encoders present" check, not
    * the bundled runtime exe alone). When so, set {@code installedFully} — re-checking under the lock that no
    * real install run has taken over since the caller's guard. Returns whether it flipped the status.
+   *
+   * <p>Tempdoc 804 §B8 (round-10 F2) — the plan alone is a claim about the CURRENT registry, not about the
+   * installation. A newer app version that adds a package made every completed installation read "Not
+   * Installed" with an empty package list. So when downloads remain, completeness is measured against the
+   * {@link InstallContract} that recorded the install: a remaining download for a package the contract
+   * covered is a genuine gap (still "Not Installed"); one for a package the contract never covered is a
+   * newly-registered artifact, reported as {@link AiInstallStatus#pendingRegistryAdditions}.
    */
   boolean applyInstalledFromPlan(InstallPlan plan, ModelRegistry registry) {
-    boolean fullyOnDisk = plan.downloads().isEmpty() && !plan.alreadyInstalled().isEmpty();
-    if (!fullyOnDisk) {
+    return applyInstalledFromPlan(plan, registry, readInstallContractBestEffort());
+  }
+
+  /** Contract-injecting overload — the seam the B8 regression test drives (no on-disk contract staging). */
+  boolean applyInstalledFromPlan(InstallPlan plan, ModelRegistry registry, InstallContract contract) {
+    // Tempdoc 805 G.3 — the decision moved into InstallCompleteness, at FILE granularity and aware of
+    // the contract's entry kind (a skipped entry claims no files). The package-level `containsKey`
+    // this replaces called round 11's skipped cuda-runtime entry a contracted gap.
+    InstallCompleteness completeness = InstallCompleteness.compute(plan, contract);
+    // repairNeeded is set even when the completeness claim is unchanged — it answers a different
+    // question ("is a required file missing?") and must reach the UI on every recompute.
+    synchronized (lock) {
+      if (!running.get() && "idle".equals(status.state)) {
+        status.repairNeeded = completeness.repairNeeded();
+      }
+    }
+    if (!completeness.installedFully()) {
       return false; // genuinely not (fully) installed — leave the honest "Not Installed".
     }
     synchronized (lock) {
@@ -330,10 +412,26 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       }
       status.packages.clear();
       populateStatusPackages(plan, registry);
+      status.pendingRegistryAdditions.clear();
+      status.pendingRegistryAdditions.addAll(completeness.pendingRegistryAdditions());
       status.installedFully = true;
       touch();
     }
     return true;
+  }
+
+  /**
+   * The install contract recorded by the run that installed this machine, or null when absent or
+   * unreadable. Best-effort by design: a missing/corrupt contract must degrade to "the plan is the only
+   * authority", never fail a status read.
+   */
+  private InstallContract readInstallContractBestEffort() {
+    try {
+      return InstallContractIO.read(homeDir);
+    } catch (Exception e) {
+      log.debug("AiInstall: install contract unreadable (best-effort): {}", e.toString());
+      return null;
+    }
   }
 
   /**
@@ -367,16 +465,51 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           409, ApiErrorCode.INSTALL_ALREADY_RUNNING, "AI install is already running.");
     }
     cancelFlag.set(false);
-    Thread.ofVirtual()
-        .name("ai-install-v2")
-        .start(
-            () -> {
-              try {
-                runInstallInternal();
-              } finally {
-                running.set(false);
-              }
-            });
+    // Registered on the CALLING thread, before the virtual thread starts: registering inside it
+    // leaves a window where upgrade prepare sees no blocker while the download is about to begin.
+    // Same race-window closure as BulkReindexHandler.
+    OperationLeaseHandle lease =
+        operationLeases.register(
+            "ai.model-install",
+            OpCriticality.INTERRUPTIBLE_WITH_LOSS,
+            7200L,
+            Map.of("source", "ai.model-install"),
+            // Cancellation callback: upgrade prepare drains every active lease, so without this a
+            // consented update would sit behind a multi-hour download instead of asking it to
+            // stop. Safe to honour because a cancelled download resumes from its .partial rather
+            // than restarting (tempdoc 798). The lease still blocks until this actually returns —
+            // the request is an ask, not a release.
+            this::cancel);
+    try {
+      Thread.ofVirtual()
+          .name("ai-install-v2")
+          .start(
+              () -> {
+                boolean ok = false;
+                try {
+                  runInstallInternal();
+                  ok = true;
+                } finally {
+                  running.set(false);
+                  try {
+                    // Every exit — completed, failed, cancelled — changes what is staged on disk,
+                    // and a run that ends is exactly when a surface starts asking again. One
+                    // re-derivation here covers all three rather than one per terminal path.
+                    // Refresh BEFORE releasing the lease so a draining upgrade reads a truthful
+                    // resumable-bytes state, and inside its own try so a refresh failure can
+                    // never leak the lease.
+                    refreshResumableBytesFromDisk();
+                  } finally {
+                    lease.release(ok ? OpLeaseOutcome.SUCCESS : OpLeaseOutcome.FAILURE);
+                  }
+                }
+              });
+    } catch (RuntimeException e) {
+      // The thread never ran, so its finally block will not release the lease.
+      running.set(false);
+      lease.release(OpLeaseOutcome.FAILURE);
+      throw e;
+    }
   }
 
   public void cancel() {
@@ -437,6 +570,7 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
         plan.skipped().size(),
         plan.alreadyInstalled().size(),
         plan.totalBytes());
+    recordResumableBytes(plan);
 
     // Populate status
     synchronized (lock) {
@@ -481,15 +615,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       updatePackageState(dl.packageId(), "downloading");
 
       Path targetFile = modelsDir.resolve(dl.targetPath());
-      Path partialFile = targetFile.resolveSibling(targetFile.getFileName() + ".partial");
+      Path partialFile = InstallPlanner.partialPathFor(targetFile);
       try {
         Files.createDirectories(targetFile.getParent());
-        Files.deleteIfExists(partialFile);
-        // Tempdoc 374 sandbox round 4 issue G: BITS leaves BIT*.tmp scratch
-        // files when its download fails. The .partial cleanup above only
-        // catches our own naming; orphaned BITS tmps would otherwise
-        // accumulate across retries (~hundreds of MB on slow connections).
-        cleanupBitsTmpFiles(targetFile.getParent());
       } catch (IOException e) {
         failPackage(dl.packageId(), "Failed to prepare download directory: " + e.getMessage());
         continue;
@@ -497,10 +625,15 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
       final long progressBase = downloadedSoFar;
       final long packageBaseBytes = packageCompletedBytes.getOrDefault(dl.packageId(), 0L);
-      boolean downloaded =
-          downloadExecutor.download(
-              dl.url(),
-              partialFile,
+      // A cancelled multi-GB install used to delete its .partial here and start over from zero.
+      // ResumableFetch decides instead whether the bytes on disk provably belong to THIS download
+      // (sidecar identity) and resumes them — always followed by the same SHA-256 verification a
+      // fresh download gets, with a discard-and-restart-once on mismatch.
+      ResumableFetch.Outcome outcome =
+          ResumableFetch.fetch(
+              new ResumableFetch.Request(
+                  partialFile, dl.url(), dl.sizeBytes(), dl.sha256(), dl.targetPath()),
+              downloadExecutor,
               (bytes, total) -> {
                 synchronized (lock) {
                   status.downloadedBytes = progressBase + bytes;
@@ -510,23 +643,27 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
                   updatePackageProgress(dl.packageId(), packageBaseBytes + bytes, 0);
                   touch();
                 }
-              });
+              },
+              cancelFlag::get,
+              // Tempdoc 374 sandbox round 4 issue G: BITS leaves BIT*.tmp scratch files when its
+              // download fails; they would otherwise accumulate across retries. Only on a fresh
+              // start — a suspended BITS job we are about to resume still owns its scratch file.
+              () -> cleanupBitsTmpFiles(targetFile.getParent()),
+              () -> updatePackageState(dl.packageId(), "verifying"));
 
-      if (!downloaded) {
-        if (cancelFlag.get()) {
+      // Project the resume verdict onto the package so the UI can say the earlier progress was
+      // kept. Sticky across a multi-file package: one resumed file makes the package resumed.
+      if (outcome.firstAction() == DownloadResume.Action.RESUME_RANGE
+          || outcome.firstAction() == DownloadResume.Action.RESUME_BITS) {
+        markPackageResumed(dl.packageId());
+      }
+
+      if (!outcome.ok()) {
+        if (outcome.cancelled() || cancelFlag.get()) {
           cancelled();
           return;
         }
-        failPackage(dl.packageId(), "Download failed for " + dl.targetPath());
-        continue;
-      }
-
-      // Verify
-      updatePackageState(dl.packageId(), "verifying");
-      try {
-        DownloadExecutor.verify(partialFile, dl.sizeBytes(), dl.sha256());
-      } catch (Exception e) {
-        failPackage(dl.packageId(), "Verification failed: " + e.getMessage());
+        failPackage(dl.packageId(), outcome.error());
         continue;
       }
 
@@ -648,6 +785,13 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
     }
     synchronized (lock) {
       status.installedFully = fullyInstalled;
+      // Tempdoc 804 §B8 — a run just planned against the CURRENT registry, so nothing is a pending
+      // registry addition any more (the signal only describes a contract older than the registry).
+      status.pendingRegistryAdditions.clear();
+      // Tempdoc 805 G.3 — a run against the current registry leaves a required file missing only
+      // where a package FAILED; a hardware/policy skip is not a repairable gap (the file was never
+      // required on this machine).
+      status.repairNeeded = failedCount > 0;
       touch();
     }
   }
@@ -749,7 +893,12 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
   // Contract generation
   // ---------------------------------------------------------------------------
 
-  private InstallContract buildContract(
+  /**
+   * Package-private (not private) for the same reason as {@link #applyInstalledFromPlan}: the
+   * entry-kind decision this makes is what {@link InstallCompleteness} later reads as install
+   * history, so it needs a regression test that does not stage real downloads (tempdoc 805 G.3).
+   */
+  InstallContract buildContract(
       InstallPlan plan, ModelRegistry registry, HardwareProfile hardware) {
     Map<String, InstallContract.InstalledModel> models = new LinkedHashMap<>();
 
@@ -769,14 +918,21 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
       }
 
       ModelVariant variant = pkg.selectVariant(plan.profile());
-      if (variant == null) {
+      if (variant == null && pkg.supportingFiles().isEmpty()) {
+        // Nothing to record: no variant AND no supporting files.
         models.put(pkg.id(), InstallContract.InstalledModel.skipped(pkg.id(), "No variant"));
         continue;
       }
 
-      // Collect installed files
+      // Collect installed files. Tempdoc 805 G.3 (derisk U3, refinement 3): a VARIANTLESS package
+      // whose supporting files this run installed is recorded as installed-WITH-FILES, not
+      // skipped("No variant"). `ModelPackage.selectVariant` returns null for `variants: []`, which
+      // is exactly cuda-runtime — the package whose new supporting file round 11 lost — so the
+      // contract carried no per-file authority for the one package class that needed it.
       List<String> installedFiles = new ArrayList<>();
-      installedFiles.add(variant.filename());
+      if (variant != null) {
+        installedFiles.add(variant.filename());
+      }
       for (var sf : pkg.supportingFiles()) {
         installedFiles.add(sf.filename());
       }
@@ -785,11 +941,11 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           pkg.id(),
           new InstallContract.InstalledModel(
               pkg.id(),
-              variant.filename(),
-              variant.precision(),
-              variant.targetEP(),
+              variant == null ? null : variant.filename(),
+              variant == null ? null : variant.precision(),
+              variant == null ? null : variant.targetEP(),
               pkg.targetDir(),
-              variant.sha256(),
+              variant == null ? null : variant.sha256(),
               installedFiles,
               false,
               null));
@@ -1173,6 +1329,9 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
 
   private void cancelled() {
     updateState("cancelled", status.phase, "Cancelled.");
+    // The surviving byte count is re-derived from disk by startInstall's finally block, which covers
+    // this path and every other terminal one. `state = "cancelled"` itself is session-ephemeral and
+    // gone after a restart; the staged bytes are not, which is why the UI keys on them, not on this.
   }
 
   private void touch() {
@@ -1233,6 +1392,17 @@ public final class AiInstallService implements io.justsearch.app.api.AiInstallSe
           return;
         }
         ps.state = state;
+      }
+      touch();
+    }
+  }
+
+  /** Records that this package continued an earlier run's bytes instead of restarting from zero. */
+  private void markPackageResumed(String packageId) {
+    synchronized (lock) {
+      var ps = findPackageStatus(packageId);
+      if (ps != null) {
+        ps.resumed = true;
       }
       touch();
     }

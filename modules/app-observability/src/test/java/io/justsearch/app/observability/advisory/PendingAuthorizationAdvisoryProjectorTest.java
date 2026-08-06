@@ -67,6 +67,17 @@ final class PendingAuthorizationAdvisoryProjectorTest {
   }
 
   @Test
+  @DisplayName("classExtras carries expiresAt — tempdoc 807 item 3")
+  void classExtrasCarriesExpiresAt() {
+    // Sandbox round 13 F3: pendings really do expire (5-min TTL) but no surface said when, so a
+    // client could not tell the user how long an approval request is valid and the
+    // expired-pending-approval ceremony was unperformable as written.
+    AdvisoryProjection p = projector.project(event("pa-abc123")).orElseThrow();
+
+    assertEquals(T0.plusSeconds(300).toString(), p.classExtras().get("expiresAt"));
+  }
+
+  @Test
   @DisplayName(
       "a non-MCP (browser) gate-firing does NOT project — avoids a redundant advisory for an"
           + " action the user just triggered themselves via the ceremony dialog")

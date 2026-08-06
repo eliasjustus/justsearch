@@ -26,6 +26,6 @@ export const HOOK_INTEGRITY_RULE_DESCRIPTIONS = {
     'A role:blocking hook declares no `bite` spec, so its rung-2 claim is unverified.',
   'hook-integrity/blocking-hook-has-bite-spec': 'A blocking hook declares a bite spec (pass).',
   'hook-integrity/tier-register-hook-unresolved':
-    'A `hook:` marker in .claude/rules/tier-register.md does not resolve to a manifest.hooks entry.',
+    'A `hook:` marker in docs/reference/contributing/tier-register.md does not resolve to a manifest.hooks entry.',
   'hook-integrity/tier-register-hook-resolves': 'A tier-register hook marker resolves (pass).',
 };

@@ -20,6 +20,7 @@ import {
   subscribeAgentSession,
 } from '../state/agentSessionStore.js';
 import { isSourcesOpen, setSourcesOpen, subscribeSources } from '../state/sourcesDrawer.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import {
   getSelectedSource,
   setSelectedSource,
@@ -50,12 +51,16 @@ export class SourcesPane extends JfElement {
     // Tempdoc 565 §12.3.E — docked mode: the persistent evidence rail (always-visible, inline in the
     // three-zone conversation layout, OUTSIDE the single-drawer arbiter) rather than the toggle drawer.
     docked: { type: Boolean, reflect: true },
+    // Tempdoc 814 §D3 — cap the rendered card count (the docked rail is a bounded INDEX, not a
+    // scroller). 0 = unbounded, the drawer's behaviour, unchanged.
+    maxVisible: { type: Number, attribute: 'max-visible' },
     apiBase: { type: String, attribute: 'api-base' },
     host_: { attribute: false },
   };
 
   declare open: boolean;
   declare docked: boolean;
+  declare maxVisible: number;
   declare apiBase: string;
   declare host_: PluginHostApi | undefined;
 
@@ -73,6 +78,7 @@ export class SourcesPane extends JfElement {
     super();
     this.open = isSourcesOpen();
     this.docked = false;
+    this.maxVisible = 0;
     this.apiBase = '';
   }
 
@@ -153,7 +159,7 @@ export class SourcesPane extends JfElement {
   private recordCitationClick(parentDocId: string): void {
     const interactionId = getConversationListState().activeId;
     if (!interactionId || !parentDocId) return;
-    void fetch(`${this.apiBase || ''}/api/knowledge/disposition`, {
+    void authorizedFetch(`${this.apiBase || ''}/api/knowledge/disposition`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -198,6 +204,8 @@ export class SourcesPane extends JfElement {
       border-radius: 0.5rem;
       border: 1px solid var(--border-subtle);
       background: var(--surface-2);
+      /* 814 §D3 — the bounded index clips rather than scrolls if a card runs long. */
+      overflow: hidden;
     }
     .head {
       flex-shrink: 0;
@@ -220,6 +228,31 @@ export class SourcesPane extends JfElement {
       display: flex;
       flex-direction: column;
       gap: 0.5rem;
+    }
+    /* Tempdoc 814 §D3 — the DOCKED rail is the bounded index: a capped card list with no scroller of
+       its own (the conversation column is the surface's ONE scroll region). The drawer copy above keeps
+       its scrolling — same component, one property apart. */
+    :host([docked]) .scroll {
+      flex: 0 1 auto;
+      overflow: visible;
+    }
+    /* The index's exit to the full list — the sanctioned OverlayHost drawer (the same pane, undocked). */
+    .open-all {
+      all: unset;
+      flex-shrink: 0;
+      margin-top: auto;
+      box-sizing: border-box;
+      cursor: pointer;
+      padding: 0.5rem 1rem;
+      border-top: 1px solid var(--border-subtle);
+      font-size: var(--font-size-xs);
+      color: var(--text-secondary);
+    }
+    .open-all:hover,
+    .open-all:focus-visible {
+      color: var(--text-primary);
+      background: var(--surface-hover);
+      outline: none;
     }
     .empty-state {
       flex: 1;
@@ -304,16 +337,21 @@ export class SourcesPane extends JfElement {
   `;
 
   override render(): TemplateResult {
-    const sources = this.sources();
+    const all = this.sources();
+    // Tempdoc 814 §D3 — the bounded index: the docked rail renders the top N and hands the full list
+    // to the drawer. `maxVisible <= 0` (the drawer's own state) keeps the complete list.
+    const sources = this.maxVisible > 0 ? all.slice(0, this.maxVisible) : all;
     return html`
       <div class="panel" role="region" aria-label="Answer sources" @keydown=${this.onKeydown}>
         <div class="head">
-          <span class="title">Sources${sources.length > 0 ? ` · ${sources.length}` : ''}</span>
+          ${/* 814 §D5 — the head's count is the TOTAL (the authority for the source-count fact), never
+                the truncated index length. */ ''}
+          <span class="title">Sources${all.length > 0 ? ` · ${all.length}` : ''}</span>
           ${this.docked
             ? nothing
             : html`<jf-button class="close" size="sm" label="Close" .onActivate=${() => setSourcesOpen(false)}>Close</jf-button>`}
         </div>
-        ${sources.length === 0
+        ${all.length === 0
           ? html`<div class="empty-state">No grounded sources for the latest answer.</div>`
           : html`<div class="scroll">
               ${sources.map((s) => {
@@ -360,6 +398,17 @@ export class SourcesPane extends JfElement {
                 `;
               })}
             </div>`}
+        ${/* Tempdoc 814 §D3 — the index's one exit: the SAME pane, undocked, in Shell's OverlayHost
+              right-drawer (no new overlay mechanics, no second source authority). */ ''}
+        ${this.docked && all.length > 0
+          ? html`<button
+              class="open-all"
+              aria-label=${`Open all ${all.length} answer sources`}
+              @click=${() => setSourcesOpen(true)}
+            >
+              Open all · ${all.length}
+            </button>`
+          : nothing}
       </div>
     `;
   }

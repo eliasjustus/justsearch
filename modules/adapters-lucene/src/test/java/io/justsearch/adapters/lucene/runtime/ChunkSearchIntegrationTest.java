@@ -619,6 +619,205 @@ class ChunkSearchIntegrationTest {
     }
   }
 
+  // ========== Chunk-branch filter scoping (human-validation finding 4) ==========
+
+  /**
+   * The chunk branch runs its legs under {@link QueryFilterBuilder#buildChunkFilterQuery}, which used
+   * to drop {@code pathPrefix} on the premise that a chunk's {@code PATH} "stores parentDocId, not
+   * the file path". It stores both: the parent's {@code DOC_ID} IS its absolute path. Dropping the
+   * scope let the chunk branch retrieve candidates from outside the requested prefix, which enter
+   * the fused candidate union the response reports as {@code totalHits} and — at a high enough fused
+   * rank — leak into {@code results}.
+   */
+  @Test
+  @DisplayName("chunk retrieval is scoped by pathPrefix (out-of-prefix parents must not come back)")
+  void chunkFilterScopesByPathPrefix() throws Exception {
+    String insideDir = QueryFilterBuilder.normalizePathPrefix("corpus/inside");
+    String outsideDir = QueryFilterBuilder.normalizePathPrefix("corpus/outside");
+    String insideDoc = insideDir + "note-a.md";
+    String outsideDoc = outsideDir + "note-b.md";
+
+    indexDoc(insideDoc, "parent inside the requested prefix");
+    indexChunk(insideDoc, 0, 1, "neural networks overview");
+    indexDoc(outsideDoc, "parent outside the requested prefix");
+    indexChunk(outsideDoc, 0, 1, "neural networks overview");
+    commitAndRefresh();
+
+    var filters =
+        LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
+            .pathPrefix("corpus/inside")
+            .build();
+    var chunkFilter = QueryFilterBuilder.buildChunkFilterQuery(filters);
+    var result = runtime.chunkSearchOps().searchChunksText("neural", 10, chunkFilter);
+
+    assertNotNull(result);
+    assertEquals(
+        1,
+        result.hits().size(),
+        "the chunk leg must retrieve only chunks whose parent is under the requested pathPrefix; "
+            + "an extra hit means the out-of-prefix parent's chunk was retrieved");
+    assertEquals(
+        insideDoc,
+        result.hits().get(0).fields().get(SchemaFields.PARENT_DOC_ID),
+        "the surviving chunk must belong to the in-prefix parent");
+  }
+
+  @Test
+  @DisplayName("chunk retrieval is scoped by doc_ids (PATH holds the parent's absolute path)")
+  void chunkFilterScopesByDocIds() throws Exception {
+    String insideDir = QueryFilterBuilder.normalizePathPrefix("corpus/inside");
+    String insideDoc = insideDir + "note-a.md";
+    String otherDoc = insideDir + "note-b.md";
+
+    indexDoc(insideDoc, "first parent");
+    indexChunk(insideDoc, 0, 1, "neural networks overview");
+    indexDoc(otherDoc, "second parent");
+    indexChunk(otherDoc, 0, 1, "neural networks overview");
+    commitAndRefresh();
+
+    var filters =
+        LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
+            .docIds(java.util.List.of(insideDoc))
+            .build();
+    var chunkFilter = QueryFilterBuilder.buildChunkFilterQuery(filters);
+    var result = runtime.chunkSearchOps().searchChunksText("neural", 10, chunkFilter);
+
+    assertNotNull(result);
+    assertEquals(1, result.hits().size(), "doc_ids must scope the chunk leg to the named documents");
+    assertEquals(
+        insideDoc,
+        result.hits().get(0).fields().get(SchemaFields.PARENT_DOC_ID),
+        "the surviving chunk must belong to the requested document");
+  }
+
+  @Test
+  @DisplayName("an unfiltered request still produces a chunk filter: the default collection scope")
+  void chunkFilterCarriesDefaultCollectionScopeWithoutFilters() {
+    // Tempdoc 811 item 3 supersedes the previous contract (an all-default filter set produced NO
+    // chunk filter). The default agent-history exclusion is part of the default scope, so it must
+    // be present on the chunk branch too — otherwise agent-history chunks enter the fused union
+    // whenever no pathPrefix/doc_ids filter is set.
+    var filters = LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder().build();
+    var q = QueryFilterBuilder.buildChunkFilterQuery(filters);
+    assertNotNull(q, "the default agent-history exclusion always produces a chunk filter");
+    String s = q.toString();
+    assertTrue(s.contains("-collection:agent-history"), "agent-history is MUST_NOT excluded: " + s);
+    assertTrue(s.contains("*:*"), "the pure-negative filter is anchored with MatchAllDocs: " + s);
+  }
+
+  // ========== Tempdoc 811 item 3 — collection scoping on the chunk branch ==========
+
+  @Test
+  @DisplayName("an agent-history parent's chunk is excluded from a default-scope chunk search")
+  void chunkFilterDefaultExcludesAgentHistoryChunks() throws Exception {
+    indexDocInCollection("agent-run.md", "transcript parent", SchemaFields.AGENT_HISTORY_COLLECTION);
+    indexChunkInCollection(
+        "agent-run.md", 0, 1, "neural networks overview", SchemaFields.AGENT_HISTORY_COLLECTION);
+    indexDoc("user-note.md", "ordinary parent");
+    indexChunk("user-note.md", 0, 1, "neural networks overview");
+    commitAndRefresh();
+
+    var chunkFilter =
+        QueryFilterBuilder.buildChunkFilterQuery(
+            LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder().build());
+    var result = runtime.chunkSearchOps().searchChunksText("neural", 10, chunkFilter);
+
+    assertNotNull(result);
+    assertEquals(
+        1,
+        result.hits().size(),
+        "the default scope must drop the agent-history parent's chunk; an extra hit means an "
+            + "indexed transcript's chunk entered the candidate union");
+    assertEquals(
+        "user-note.md",
+        result.hits().get(0).fields().get(SchemaFields.PARENT_DOC_ID),
+        "the surviving chunk must belong to the ordinary parent");
+  }
+
+  @Test
+  @DisplayName("an explicit agent-history scope includes that parent's chunks (and only those)")
+  void chunkFilterExplicitAgentHistoryScopeIncludesChunks() throws Exception {
+    indexDocInCollection("agent-run.md", "transcript parent", SchemaFields.AGENT_HISTORY_COLLECTION);
+    indexChunkInCollection(
+        "agent-run.md", 0, 1, "neural networks overview", SchemaFields.AGENT_HISTORY_COLLECTION);
+    indexDoc("user-note.md", "ordinary parent");
+    indexChunk("user-note.md", 0, 1, "neural networks overview");
+    commitAndRefresh();
+
+    var chunkFilter =
+        QueryFilterBuilder.buildChunkFilterQuery(
+            LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
+                .collection(java.util.List.of(SchemaFields.AGENT_HISTORY_COLLECTION))
+                .build());
+    var result = runtime.chunkSearchOps().searchChunksText("neural", 10, chunkFilter);
+
+    assertNotNull(result);
+    assertEquals(
+        1, result.hits().size(), "an explicit scope is a positive include filter, not an exclusion");
+    assertEquals(
+        "agent-run.md",
+        result.hits().get(0).fields().get(SchemaFields.PARENT_DOC_ID),
+        "the surviving chunk must belong to the agent-history parent");
+  }
+
+  @Test
+  @DisplayName("a default-collection parent's chunks are unaffected by the collection scope")
+  void chunkFilterLeavesUntaggedChunksAlone() throws Exception {
+    indexDoc("user-note.md", "ordinary parent");
+    indexChunk("user-note.md", 0, 1, "neural networks overview");
+    indexDoc("other-note.md", "another ordinary parent");
+    indexChunk("other-note.md", 0, 1, "neural networks overview");
+    commitAndRefresh();
+
+    var chunkFilter =
+        QueryFilterBuilder.buildChunkFilterQuery(
+            LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder().build());
+    var result = runtime.chunkSearchOps().searchChunksText("neural", 10, chunkFilter);
+
+    assertNotNull(result);
+    assertEquals(
+        2,
+        result.hits().size(),
+        "the MUST_NOT only matches docs carrying the agent-history tag — untagged chunks pass");
+  }
+
+  // ========== Tempdoc 811 D-1 — the null-filters bypass ==========
+
+  @Test
+  @DisplayName("a null-filters text search still excludes agent-history documents")
+  void nullFiltersTextSearchExcludesAgentHistory() throws Exception {
+    // The production chain: HybridSearchOps.searchHybrid -> textQueryOps.searchText(t, l, null)
+    // -> buildTextQuery(text, null) -> applyRuntimeFilters(query, null). Before tempdoc 811 D-1
+    // that path returned BEFORE addCollectionScope, so it searched indexed agent transcripts.
+    indexDocInCollection("agent-run.md", "neural networks overview", SchemaFields.AGENT_HISTORY_COLLECTION);
+    indexDoc("user-note.md", "neural networks overview");
+    commitAndRefresh();
+
+    var result = runtime.textQueryOps().searchText("neural", 10, null);
+
+    assertNotNull(result);
+    assertEquals(1, result.hits().size(), "null filters must mean the DEFAULT scope, not no scope");
+    assertEquals("user-note.md", result.hits().get(0).docId());
+  }
+
+  @Test
+  @DisplayName("an explicit agent-history scope still returns transcripts on the text path")
+  void explicitAgentHistoryScopeTextSearchIncludesTranscripts() throws Exception {
+    indexDocInCollection("agent-run.md", "neural networks overview", SchemaFields.AGENT_HISTORY_COLLECTION);
+    indexDoc("user-note.md", "neural networks overview");
+    commitAndRefresh();
+
+    var filters =
+        LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
+            .collection(java.util.List.of(SchemaFields.AGENT_HISTORY_COLLECTION))
+            .build();
+    var result = runtime.textQueryOps().searchText("neural", 10, filters);
+
+    assertNotNull(result);
+    assertEquals(1, result.hits().size());
+    assertEquals("agent-run.md", result.hits().get(0).docId());
+  }
+
   // ========== Helper Methods ==========
 
   private void indexDoc(String docId, String content) {
@@ -627,6 +826,37 @@ class ChunkSearchIntegrationTest {
         SchemaFields.DOC_UID, docId + "#0",
         SchemaFields.CONTENT, content,
         SchemaFields.PATH, docId
+    )));
+  }
+
+  /** Indexes a parent document carrying a collection tag (585 D4b). */
+  private void indexDocInCollection(String docId, String content, String collection) {
+    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+        SchemaFields.DOC_ID, docId,
+        SchemaFields.DOC_UID, docId + "#0",
+        SchemaFields.CONTENT, content,
+        SchemaFields.PATH, docId,
+        SchemaFields.COLLECTION, collection
+    )));
+  }
+
+  /**
+   * Indexes a chunk document carrying its PARENT's collection tag — what
+   * {@code ChunkDocumentWriter} writes since tempdoc 811 item 3.
+   */
+  private void indexChunkInCollection(
+      String parentDocId, int index, int total, String content, String collection) {
+    String chunkId = parentDocId + "#chunk_" + index;
+    runtime.indexingCoordinator().indexSingle(new IndexDocument(Map.of(
+        SchemaFields.DOC_ID, chunkId,
+        SchemaFields.DOC_UID, chunkId + "#0",
+        SchemaFields.IS_CHUNK, "true",
+        SchemaFields.PARENT_DOC_ID, parentDocId,
+        SchemaFields.CHUNK_INDEX, String.valueOf(index),
+        SchemaFields.CHUNK_TOTAL, String.valueOf(total),
+        SchemaFields.CHUNK_CONTENT, content,
+        SchemaFields.PATH, parentDocId,
+        SchemaFields.COLLECTION, collection
     )));
   }
 

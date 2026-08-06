@@ -22,6 +22,7 @@ import {
   type JournalEntry,
   type EffectOriginator,
 } from '../substrates/effects/index.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 import { EnvelopeStream, type EnvelopeStreamSnapshot } from '../streaming/EnvelopeStream.js';
 import type { MultiplexedStream } from '../streaming/MultiplexedStream.js';
 import { SHELL_EVENT_STREAM_IDS } from '../streaming/shellEventStreamIds.js';
@@ -66,6 +67,18 @@ export interface BackendLedgerEntry {
   readonly pathHash?: string;
   readonly collection?: string;
   readonly state?: string;
+  // Tempdoc 812 D2 — the capture-side scan key. On kind='index' rows: which directory scan
+  // enqueued the document (absent for single-file ingests, the watcher, and pre-812 rows — those
+  // fall back to the adjacency collapse). On the scan ROLLUP row (kind='operation',
+  // operationId='core.scan-root'): the scan this row summarizes.
+  readonly scanId?: string;
+  // Tempdoc 812 D2 — scan-rollup summary fields (present only on the rollup row). The counts are
+  // the REAL terminal job states the backend observed, not the enqueue-time admitted count.
+  readonly root?: string;
+  readonly docsDone?: number;
+  readonly docsFailed?: number;
+  readonly docsAdmitted?: number;
+  readonly durationMs?: number;
   // Tempdoc 561 P-A1 — the cross-domain loop/session join key (the agent loop stamps its sessionId
   // here). Present on agent-originated operation rows; lets the agent History view project itself
   // from this one ledger filtered to a single session (P-B1).
@@ -104,7 +117,43 @@ export interface UnifiedActionEntry {
    * Derived via `isRoutineActivity`. Absent ⇒ not routine.
    */
   readonly isRoutine?: boolean;
+  /**
+   * Tempdoc 812 D2/D4 — the scan this row belongs to. Set on the scan ROLLUP row and on every
+   * per-document `index` row the same scan produced, so the Activity view expands a rollup to its
+   * own documents by KEY. Absent on keyless rows (single-file ingest, watcher, pre-812), which
+   * keep the render-time adjacency collapse as their only grouping.
+   */
+  readonly scanId?: string;
+  /** Present on `index` rows — the hash `core.resolve-path-hash` turns into a friendly name. */
+  readonly pathHash?: string;
+  /** Present on `index` rows — the job's collection, so a collapsed burst can name it. */
+  readonly collection?: string;
+  /** Tempdoc 812 D4 — true on a scan-rollup row (an `operation` row summarizing a whole scan). */
+  readonly isScanRollup?: boolean;
 }
+
+/** "6m 12s" / "45s" / "1h 03m" — a scan's duration at human altitude (millis are not). */
+function formatScanDuration(ms: number | undefined): string {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return '';
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (min < 60) return `${min}m ${String(sec).padStart(2, '0')}s`;
+  return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`;
+}
+
+/**
+ * Tempdoc 812 D2 — is this backend row a scan ROLLUP? The backend emits it as an `operation`-kind
+ * row (the durable tier) discriminated by its operation id, so every kind-keyed consumer keeps
+ * treating it as the consequential record it is.
+ */
+function isScanRollupRow(e: BackendLedgerEntry): boolean {
+  return e.kind === 'operation' && e.operationId === SCAN_ROLLUP_OPERATION_ID;
+}
+
+/** Mirrors `ActionEvent.ScanRollup.OPERATION_ID` (backend). */
+const SCAN_ROLLUP_OPERATION_ID = 'core.scan-root';
 
 export interface ActionLedgerClientConfig {
   /** Absolute API base, or '' for same-origin (relative URLs). */
@@ -118,7 +167,7 @@ export class ActionLedgerClient {
 
   constructor(config: ActionLedgerClientConfig = {}) {
     this.apiBase = (config.apiBase ?? '').replace(/\/$/, '');
-    this.fetchImpl = config.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.fetchImpl = config.fetchImpl ?? authorizedFetch;
   }
 
   /** Fetch the backend unified ledger (operations + navigations), oldest-first. */
@@ -155,6 +204,10 @@ export class ActionLedgerClient {
  * we cannot grade. Reads the same `getOperation` singleton `present()` already uses for labels here.
  */
 function isRoutineBackendRow(e: BackendLedgerEntry): boolean {
+  // Tempdoc 812 D4 — per-document index rows are routine regardless of originator (they are
+  // system-originated by construction), so this grades BEFORE the direct-user guard. The scan
+  // rollup below is an operation row and stays foreground: it is the durable audit record.
+  if (e.kind === 'index') return isRoutineActivity(e.kind, e.originator, e.effectKind);
   if (e.originator !== 'user') return false;
   if (e.kind === 'operation') {
     if (e.outcome === 'FAILURE') return false;
@@ -206,6 +259,20 @@ export function projectBackend(e: BackendLedgerEntry): UnifiedActionEntry {
     // pathHash is a SHA-256 hex (not a raw path); a short prefix disambiguates without leaking.
     const where = `${e.collection ?? 'default'}${e.pathHash ? ' (' + e.pathHash.slice(0, 6) + ')' : ''}`;
     label = e.state === 'FAILED' ? `Index failed · ${where}` : `Indexed · ${where}`;
+  } else if (isScanRollupRow(e)) {
+    // tempdoc 812 D2 — the scan rollup: ONE row for a whole directory scan, stating what it DID
+    // (counts are the backend's observed terminal job states). This is the audit record the
+    // per-document rows are the detail of.
+    const where = e.collection ? ` · ${e.collection}` : '';
+    if (e.outcome === 'STARTED') {
+      label = `Indexing${where}…`;
+    } else {
+      const dur = formatScanDuration(e.durationMs);
+      const failed = (e.docsFailed ?? 0) > 0 ? ` · ${e.docsFailed} failed` : '';
+      const partial = e.outcome === 'PARTIAL' ? ' (incomplete)' : '';
+      label =
+        `Indexed ${e.docsDone ?? 0} documents${where}${dur ? ' · ' + dur : ''}${failed}${partial}`;
+    }
   } else if (e.kind === 'operation') {
     // tempdoc 558 Deepening 3 — the outcome is a STRUCTURED facet (the row projects it as a glyph +
     // tone via statusTone), not concatenated here; the label is just the humanized operation.
@@ -231,8 +298,23 @@ export function projectBackend(e: BackendLedgerEntry): UnifiedActionEntry {
     // user operations (LOW/no-confirm/not-fully-audited/no-affects). Everything else stays foreground.
     ...(isRoutineBackendRow(e) ? { isRoutine: true } : {}),
   };
-  // Index rows carry their collection as the bounded-projection group key (tempdoc 550 III(b)).
-  return e.kind === 'index' ? { ...base, groupKey: e.collection ?? 'default' } : base;
+  // Tempdoc 812 D4 — the scan rollup carries its scan key so the view can expand it to the
+  // per-document rows that scan produced (and suppress its own STARTED row once it finished).
+  if (isScanRollupRow(e)) {
+    return { ...base, isScanRollup: true, ...(e.scanId ? { scanId: e.scanId } : {}) };
+  }
+  // Index rows carry a bounded-projection group key: the SCAN when the capture-side key is present
+  // (tempdoc 812 D2 — exact even when two scans interleave), else the collection, which keeps the
+  // pre-812 adjacency collapse working for keyless legacy rows (tempdoc 550 III(b)).
+  return e.kind === 'index'
+    ? {
+        ...base,
+        groupKey: e.scanId ? e.scanId : (e.collection ?? 'default'),
+        collection: e.collection ?? 'default',
+        ...(e.scanId ? { scanId: e.scanId } : {}),
+        ...(e.pathHash ? { pathHash: e.pathHash } : {}),
+      }
+    : base;
 }
 
 /** Map a FE Effect Journal entry to a unified row. */
@@ -430,9 +512,7 @@ export function openActionLedgerStream(
  */
 export function startEffectIngest(config: { apiBase?: string; fetchImpl?: typeof fetch }): () => void {
   const base = (config.apiBase ?? '').replace(/\/$/, '');
-  const fetchImpl =
-    config.fetchImpl ??
-    (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined);
+  const fetchImpl = config.fetchImpl ?? ('fetch' in globalThis ? authorizedFetch : undefined);
   let lastId = 0;
   const flush = (): void => {
     if (!fetchImpl) return; // no fetch available (e.g. a non-browser test env) — nothing to ingest.

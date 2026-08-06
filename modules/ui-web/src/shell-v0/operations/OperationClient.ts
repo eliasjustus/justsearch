@@ -14,6 +14,8 @@
  *   - Future Lit reactive controllers in slice 3a.2+ surfaces.
  */
 
+import { authorizedFetch } from '../api/authorizedFetch.js';
+
 /** Risk policy axes per `OperationPolicy.RiskTier` on the Java side. */
 export type Risk = 'LOW' | 'MEDIUM' | 'HIGH';
 
@@ -166,10 +168,11 @@ export class OperationClient {
     this.explicitFetch = config.fetchImpl;
   }
 
-  /** The fetch to use: an explicit override if configured, else the CURRENT global fetch resolved
-   * per call (so runtime fetch mocks and a shared cached client both work). */
+  /** The fetch to use: an explicit override if configured, else the token-attaching
+   * {@link authorizedFetch}, which itself resolves the CURRENT global fetch per call
+   * (so runtime fetch mocks and a shared cached client both work). */
   private get fetchImpl(): typeof fetch {
-    return this.explicitFetch ?? globalThis.fetch.bind(globalThis);
+    return this.explicitFetch ?? authorizedFetch;
   }
 
   /**

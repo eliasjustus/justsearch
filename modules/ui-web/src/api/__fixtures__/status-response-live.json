@@ -40,7 +40,10 @@
       "commitCount" : 0,
       "refreshLagMs" : 0,
       "recentJobQueueDepth" : [ ],
-      "recentDocsPerSec" : [ ]
+      "recentDocsPerSec" : [ ],
+      "pendingBytes" : 0,
+      "pendingUnknownSizeJobs" : 0,
+      "searchableDocuments" : 0
     },
     "failure" : {
       "failedJobs" : 0,

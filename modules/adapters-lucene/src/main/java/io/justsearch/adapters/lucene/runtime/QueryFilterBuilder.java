@@ -30,6 +30,17 @@ public final class QueryFilterBuilder {
   /** Default boost weight for soft-boost filters (363). Calibrated by weight sweep (w=20). */
   public static final float DEFAULT_BOOST_WEIGHT = 20.0f;
 
+  /**
+   * Tempdoc 811 D-1 — the empty filter set. A {@code null} {@link RuntimeSearchFilters} means "the
+   * caller supplied no filters", which is the DEFAULT scope — never "no scope at all". Every entry
+   * point substitutes this record for {@code null} so the null-filters path runs the exact same
+   * code as an explicitly-empty filter set, and the tempdoc-585-D4b default agent-history exclusion
+   * applies either way. Before this, both builders returned BEFORE {@link #addCollectionScope},
+   * so any null-filters call site searched indexed agent transcripts.
+   */
+  private static final RuntimeSearchFilters NO_FILTERS =
+      LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder().build();
+
   private QueryFilterBuilder() {
     // Utility class - no instantiation
   }
@@ -133,27 +144,23 @@ public final class QueryFilterBuilder {
    * and applies default chunk exclusion unless explicitly requested.
    *
    * @param contentQuery the base content query (must not be null)
-   * @param filters optional structured filters (may be null)
+   * @param raw optional structured filters (null == the default scope, see {@link #NO_FILTERS})
    * @return combined query with filters applied, or null if contentQuery is null
    */
-  public static Query applyRuntimeFilters(Query contentQuery, RuntimeSearchFilters filters) {
+  public static Query applyRuntimeFilters(Query contentQuery, RuntimeSearchFilters raw) {
     if (contentQuery == null) {
       return null;
     }
+    RuntimeSearchFilters filters = raw == null ? NO_FILTERS : raw;
 
     BooleanQuery.Builder qb = new BooleanQuery.Builder();
     qb.add(contentQuery, BooleanClause.Occur.MUST);
 
     // Always exclude chunks by default unless explicitly requested.
     // This prevents opaque chunk doc IDs (chunk:<uuid>) from leaking into normal search results.
-    boolean includeChunks = filters != null && filters.includeChunks();
+    boolean includeChunks = filters.includeChunks();
     if (!includeChunks) {
       qb.add(new TermQuery(new Term(SchemaFields.IS_CHUNK, "true")), BooleanClause.Occur.MUST_NOT);
-    }
-
-    // If no filters, we still needed to apply chunk exclusion above, so return early now.
-    if (filters == null) {
-      return qb.build();
     }
 
     // Term-based filters: mime, file_kind, mime_base, language
@@ -201,24 +208,12 @@ public final class QueryFilterBuilder {
    *
    * <p>Used by VECTOR and HYBRID search modes to apply user filters and chunk exclusion.
    *
-   * @param filters optional structured filters (may be null)
+   * @param raw optional structured filters (null == the default scope, see {@link #NO_FILTERS})
    * @return filter query, or null if no filtering is needed
    */
-  public static Query buildFilterQueryOnly(RuntimeSearchFilters filters) {
-    // If no filters provided, still need to exclude chunks by default
-    boolean includeChunks = filters != null && filters.includeChunks();
-
-    // If filters is null and we need to exclude chunks, build minimal filter
-    if (filters == null) {
-      if (!includeChunks) {
-        // Exclude chunks by default
-        return new BooleanQuery.Builder()
-            .add(new MatchAllDocsQuery(), BooleanClause.Occur.MUST)
-            .add(new TermQuery(new Term(SchemaFields.IS_CHUNK, "true")), BooleanClause.Occur.MUST_NOT)
-            .build();
-      }
-      return null;  // No filtering needed
-    }
+  public static Query buildFilterQueryOnly(RuntimeSearchFilters raw) {
+    RuntimeSearchFilters filters = raw == null ? NO_FILTERS : raw;
+    boolean includeChunks = filters.includeChunks();
 
     // Build filter using same logic as applyRuntimeFilters but without content query
     BooleanQuery.Builder qb = new BooleanQuery.Builder();
@@ -284,18 +279,33 @@ public final class QueryFilterBuilder {
   /**
    * Builds a filter query for chunk search from structured filters.
    *
-   * <p>Only applies filters that are stored on chunk documents: mime, fileKind, mimeBase, language.
-   * Skips: IS_CHUNK exclusion (chunks are the target), pathPrefix (PATH on chunks stores
-   * parentDocId, not the file path), modifiedAt range (not stored on chunks), and entity filters
-   * (not stored on chunks).
+   * <p>Applies the filters whose fields chunk documents actually carry: mime, fileKind, mimeBase,
+   * language, and the two PATH-keyed scopes (pathPrefix, doc_ids). A chunk's {@code PATH} holds its
+   * PARENT's absolute path — {@code ChunkDocumentWriter} writes {@code PATH = parentDocId} and
+   * {@code IndexingDocumentOps} writes the parent's {@code DOC_ID = PATH = absolutePath} — so the
+   * same {@link PrefixQuery}/TermInSet the whole-doc legs use is valid verbatim on chunks. (An
+   * earlier revision skipped both on the premise that chunk PATH "stores parentDocId, not the file
+   * path"; the two are the same string, and skipping them let the chunk branch retrieve candidates
+   * from OUTSIDE the requested scope — inflating the fused candidate union that {@code totalHits}
+   * reports and, at high enough fused rank, leaking an out-of-scope document into {@code results}.)
    *
-   * @param filters optional structured filters (may be null)
+   * <p>Since tempdoc 811 item 3 the collection scope applies here too: {@code ChunkDocumentWriter}
+   * now writes the PARENT's {@code collection} onto every chunk document, so the default
+   * agent-history exclusion (and an explicit collection scope) bind on the chunk branch exactly as
+   * they do on the whole-doc legs. Without it, agent-history CHUNKS entered the fused candidate
+   * union whenever no pathPrefix/doc_ids filter was set — the same leak class #371 closed for the
+   * two PATH-keyed scopes. ({@code IndexCountOps#queryRootCoverageCounts} relies on the same
+   * chunk-PATH-is-parent-path fact for per-root coverage counting — tempdoc 813.)
+   *
+   * <p>Still skipped, because chunk documents genuinely do not carry these fields: IS_CHUNK
+   * exclusion (chunks are the target), modifiedAt / metaPublishedAt ranges, entity filters, and
+   * metadata filters.
+   *
+   * @param raw optional structured filters (null == the default scope, see {@link #NO_FILTERS})
    * @return filter query for chunk search, or null if no applicable filters exist
    */
-  public static Query buildChunkFilterQuery(RuntimeSearchFilters filters) {
-    if (filters == null) {
-      return null;
-    }
+  public static Query buildChunkFilterQuery(RuntimeSearchFilters raw) {
+    RuntimeSearchFilters filters = raw == null ? NO_FILTERS : raw;
 
     BooleanQuery.Builder qb = new BooleanQuery.Builder();
     boolean hasClause = false;
@@ -304,7 +314,30 @@ public final class QueryFilterBuilder {
     hasClause |= addTermOrFilter(qb, filters.mimeBase(), SchemaFields.MIME_BASE);
     hasClause |= addTermOrFilter(qb, filters.language(), SchemaFields.LANGUAGE);
 
-    return hasClause ? qb.build() : null;
+    // Tempdoc 811 item 3 — the collection scope on the chunk branch. STALE-INDEX DISPOSITION
+    // (owner precedent, tempdoc 798, 2026-07-30: no current users, no data repair; dev indices are
+    // rebuilt with --clean): chunk documents written BEFORE this change carry no `collection`
+    // field, and the default exclusion is a MUST_NOT that only matches docs which DO carry the
+    // agent-history tag. Pre-existing agent-history chunks therefore remain un-excluded until the
+    // index is rebuilt. This is accepted and deliberately not migrated — a re-index is the fix.
+    hasClause |= addCollectionScope(qb, filters.collection());
+
+    if (filters.pathPrefix() != null && !filters.pathPrefix().isBlank()) {
+      String normalized = normalizePathPrefix(filters.pathPrefix());
+      qb.add(new PrefixQuery(new Term(SchemaFields.PATH, normalized)), BooleanClause.Occur.FILTER);
+      hasClause = true;
+    }
+    hasClause |= addTermOrFilter(qb, filters.docIds(), SchemaFields.PATH);
+
+    // Mirrors buildFilterQueryOnly: with no positive include-filter the builder holds only the
+    // default agent-history MUST_NOT, and a pure-negative BooleanQuery matches nothing — anchor it.
+    if (!hasClause) {
+      if (qb.build().clauses().isEmpty()) {
+        return null;
+      }
+      qb.add(new MatchAllDocsQuery(), BooleanClause.Occur.MUST);
+    }
+    return qb.build();
   }
 
   // ---- Soft-boost filters (363: query understanding) ----

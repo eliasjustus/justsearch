@@ -332,6 +332,51 @@ describe('pendingAuthorizationBridge (tempdoc 655)', () => {
     stop();
   });
 
+  // ── Tempdoc 807 item 4: sandbox round 13's residual. A ceremony that ends WITHOUT a human
+  // decision — no host mounted, or a mounted host torn down mid-ceremony — resolves `approved:
+  // false`, the same shape an explicit deny has. The bridge returned silently for both, so the
+  // round saw the modal dismiss with nothing dispatched and nothing said. `failedClosed` separates
+  // the two; only the failure is reported.
+
+  it('reports a fail-closed ceremony (no host / host torn down) through the same channel', async () => {
+    peekPendingMock.mockResolvedValue(detailFor('pa-failclosed'));
+    requestAuthorizationMock.mockResolvedValue({
+      approved: false,
+      allowAlways: false,
+      failedClosed: true,
+    });
+
+    const stop = startPendingAuthorizationBridge('http://test', { multiplex: multiplexOn(fakeEs) });
+    fakeEs.emitFrame(pendingFrame(1, 'pa-failclosed'));
+    await flush();
+
+    expect(approveAndExecutePendingMock).not.toHaveBeenCalled();
+    expect(emitEphemeralToastMock).toHaveBeenCalledTimes(1);
+    const toast = emitEphemeralToastMock.mock.calls[0]?.[0] as {
+      message: string;
+      severity: string;
+    };
+    expect(toast.severity).toBe('error');
+    expect(toast.message).toContain('core.ingest-files');
+    expect(toast.message).toContain('closed before the decision was sent');
+
+    stop();
+  });
+
+  it('stays silent on an explicit human deny (a decision is not a failure)', async () => {
+    peekPendingMock.mockResolvedValue(detailFor('pa-denied'));
+    requestAuthorizationMock.mockResolvedValue({ approved: false, allowAlways: false });
+
+    const stop = startPendingAuthorizationBridge('http://test', { multiplex: multiplexOn(fakeEs) });
+    fakeEs.emitFrame(pendingFrame(1, 'pa-denied'));
+    await flush();
+
+    expect(approveAndExecutePendingMock).not.toHaveBeenCalled();
+    expect(emitEphemeralToastMock).not.toHaveBeenCalled();
+
+    stop();
+  });
+
   it('re-peeks immediately before POSTing and skips the doomed POST when the pending died during the ceremony', async () => {
     // Alive when first fetched (peek-before-present) — the human takes a while to decide — then
     // gone by the time the re-peek runs right before the POST.

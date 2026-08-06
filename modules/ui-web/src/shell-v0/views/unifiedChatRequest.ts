@@ -94,10 +94,12 @@ export function buildRequestBody(
       body.sessionId = sessionId;
       break;
   }
-  // Tempdoc 526 §12.4 — when compose() handed us a typed selection, forward
-  // it as body.selection so the backend SelectionContextInjector receives it
-  // verbatim. Applies to every shape today; shapes that don't read body.selection
-  // simply ignore the field. SummarizeShape opts in via selectionPolicy=OPTIONAL.
+  // Tempdoc 526 §12.4 — forward the typed selection as body.selection so the backend
+  // SelectionContextInjector receives it verbatim. Applies to every shape today; shapes that
+  // don't read body.selection simply ignore the field. A shape opts in by listing
+  // `SelectionContextInjector.ID` in its `contextInjectorIds` — SummarizeShape and ExtractShape
+  // do. (There is no `selectionPolicy` concept anywhere in the Java code; the comment that
+  // claimed one described an opt-in mechanism that never existed.)
   if (selection) {
     body.selection = selection;
   }
@@ -131,7 +133,28 @@ export function buildRequestBody(
 export const CONVERSATION_ZONES: readonly ZoneDecl[] = [
   { track: 'minmax(0, 8rem)', wideOnly: true },
   { selector: '.run-spine', track: 'auto', col: 2, wideOnly: true },
-  { selector: '.conversation', track: 'minmax(0, 50rem)', col: 3 },
+  // The reading column's floor lives in the TRACK, not in `.conversation`'s own CSS: an explicit
+  // `minmax(0, …)` pins the track minimum at 0, which SUPPRESSES the item's automatic minimum
+  // contribution — so an item-side `min-width` makes the item overflow its (still-0-floored) track
+  // and overlap the rail instead of widening it. Measured at a 1050px viewport with rail +
+  // document-pane mounted: `minmax(0, 50rem)` sized the track to 102px (~one word per line) while
+  // the rail (240px) and pane (384px) held their own `min-width` floors; adding `min-width: 24rem`
+  // to the item left the track at 102px and rendered a 384px item straddling the rail. A `24rem`
+  // track floor (the document-pane's own 24-28rem convention) sizes the track to 384px instead.
+  // The budget these floors are drawn against, stated in full (798 round 8 — the earlier note here
+  // estimated the shortfall at ~15px because it measured against a bare viewport instead of the box
+  // the tracks are laid out in; the real figure was 56px). The zone's width is the SURFACE content
+  // width — viewport minus the Shell rail (11rem expanded) minus the surface's 1rem padding — so a
+  // 1040px window gives the zone 832px, not 1040px. Six tracks always charge five 1.5rem gutters
+  // (7.5rem = 120px), even across the collapsed ones. Reading column + reading pane + gutters =
+  // 24 + 24 + 7.5 = 55.5rem (888px), which is why the wide layout is now gated on a `@container`
+  // query against that 832px box rather than a `@media` query against the 1040px viewport: at the
+  // 64rem (1024px) container the two floors fit with 136px of slack instead of overflowing by 56px.
+  // KNOWN RESIDUAL, unchanged by this: in agent mode the evidence rail's own 15rem floor makes it
+  // 24 + 15 + 24 + 7.5 = 70.5rem (1128px), so a container between 64rem and 70.5rem with all three
+  // zones mounted still overflows (by up to 104px). Closing that needs a mount threshold of its own
+  // for whichever zone yields — a separate decision, not a smaller number here.
+  { selector: '.conversation', track: 'minmax(24rem, 50rem)', col: 3 },
   { selector: '.evidence-rail', track: 'fit-content(20rem)', col: 4, wideOnly: true },
   { selector: '.document-pane', track: 'fit-content(28rem)', col: 5, wideOnly: true },
   { track: 'minmax(0, 8rem)', wideOnly: true },

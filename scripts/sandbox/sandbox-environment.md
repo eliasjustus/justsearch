@@ -17,6 +17,11 @@ folder at `C:\Users\WDAGUtilityAccount\Desktop\JustSearchTest\` with:
   must-touch surface set (derived from what the candidate ships)
 - `validation-mode.md` — generated authority for this instance's model mode
   (`fresh-install` vs `pre-staged-models`)
+- `candidate-provenance.md` — generated record of WHAT was validated: the
+  installer's filename, SHA-256, size, host source path, agreement with any
+  `SHA256SUMS` staged beside it, and the build commit when the build made it
+  derivable. Quote it in the final summary so the archived evidence identifies
+  its own build instead of needing host-side archaeology later
 - `staging-gaps.md` — generated record of assets the host failed to stage this
   round (e.g. a missing SciFact corpus or Node installer); each entry must be
   recorded as a round-level coverage gap, not silently absorbed
@@ -80,8 +85,12 @@ GitHub Release (the 726 asset pipeline), per `docs/how-to/cut-a-release.md`.
   authoritative GPU metadata. The bundled `cuda12` llama-server ships its own
   runtime, so chat runs at GPU speed without a system CUDA toolkit.
 - **Internet available** — needed for OAuth, Claude install, model downloads.
-- **`prod=false`** — the backend accepts CORS from any loopback origin and does
-  not enforce session tokens, enabling browser-based API testing.
+- **`prod=true`** -- the packaged candidate is the SHIPPED build, and
+  `ApiSecurityFilters` enforces the session token (`X-JustSearch-Session`) on
+  every mutating (`POST`/`PUT`/`DELETE`) call, with no path exemption. This is
+  NOT the dev stack. See `CLAUDE.md`'s session-token section (the "packaged
+  candidate boots `prod=true`" paragraph) for the authoritative token-fetch
+  pattern before assuming any mutating call is unauthenticated.
 - **Log rotation** — every launch rotates `logs/headless-backend.log` (one prior
   generation kept as `.log.1`, older discarded) and each Worker spawn rotates
   `logs/worker.log` similarly. When investigating a crash, check `.log.1` (the

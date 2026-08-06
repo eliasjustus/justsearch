@@ -4,7 +4,7 @@
 
 export const PROSE_TIER_RULE_DESCRIPTIONS = {
   'prose-tier-register/register-missing':
-    'Tier register file not found at .claude/rules/tier-register.md',
+    'Tier register file not found at docs/reference/contributing/tier-register.md',
   'prose-tier-register/malformed-row':
     'A register row could not be parsed (missing required cell)',
   'prose-tier-register/unknown-tier':

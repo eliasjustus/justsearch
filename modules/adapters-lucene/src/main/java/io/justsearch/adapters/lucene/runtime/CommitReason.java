@@ -21,6 +21,7 @@ public enum CommitReason {
   SYNC_PRUNE("sync/prune"),
   GRPC_DELETE_BY_PATH("grpc/deleteByPath"),
   GRPC_DELETE_BY_ID("grpc/deleteById"),
+  GRPC_DELETE_BY_COLLECTION("grpc/deleteByCollection"),
   GRPC_UPDATE_PATHS("grpc/updatePaths"),
   INDEXING_LOOP_IDLE("indexing-loop/idle"),
   INDEXING_LOOP_REBUILD_STAMP("indexing-loop/rebuild-stamp"),

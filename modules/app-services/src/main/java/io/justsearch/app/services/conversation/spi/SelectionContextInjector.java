@@ -62,6 +62,13 @@ public final class SelectionContextInjector implements ContextInjector {
   /** Per-doc char cap for {@link SelectionPayload.ResultSet} injection. */
   static final int RESULT_SET_PER_DOC_CHARS = 10_000;
 
+  /**
+   * Id of the summarize shape, as a literal so this SPI does not depend on the {@code shapes}
+   * package (the dependency runs shapes → spi everywhere else). {@code SelectionContextInjectorTest}
+   * asserts it still equals {@code SummarizeShape.ID}, so the literal cannot drift silently.
+   */
+  static final String SUMMARIZE_SHAPE_ID = "core.summarize";
+
   private static final ObjectMapper MAPPER = JsonMapper.builder().build();
 
   private final DocumentService documents;
@@ -175,7 +182,7 @@ public final class SelectionContextInjector implements ContextInjector {
 
     String slice = fullContent.substring(startChar, endChar);
     String truncated = truncate(slice, MAX_CONTENT_CHARS);
-    Map<String, Object> message = userMessage("Summarize the following selection:\n\n", truncated);
+    Map<String, Object> message = userMessage(textRangePrefix(ctx.shapeId()), truncated);
 
     ContextCitation citation =
         new ContextCitation(
@@ -361,6 +368,20 @@ public final class SelectionContextInjector implements ContextInjector {
   // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * The instruction that fronts an injected text-range.
+   *
+   * <p>A selection is MATERIAL, not a task, so the default frames it as context and leaves the task
+   * to the requesting shape's own prompt contributors and user message. The summarize shape is the
+   * exception: it declares no {@code core.user-prompt} injector, so this prefix is the only
+   * instruction in its message list and must keep saying "summarize".
+   */
+  private static String textRangePrefix(String shapeId) {
+    return SUMMARIZE_SHAPE_ID.equals(shapeId)
+        ? "Summarize the following selection:\n\n"
+        : "Use the following selected passage as context:\n\n";
+  }
 
   private static Map<String, Object> userMessage(String prefix, String content) {
     Map<String, Object> m = new LinkedHashMap<>();

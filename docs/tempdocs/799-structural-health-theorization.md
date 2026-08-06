@@ -1,9 +1,9 @@
 ---
 title: "799 — Structural health: assertion channels, ratchet gaps, unexercised substrate, corpus topology (theorization)"
 type: tempdocs
-status: "theorization (2026-07-30) — no design settled, no implementation licensed. Source: a measured code-structure/health pass over `main` at 4d94d034. Every number here is reproducible by the command cited next to it. The Hard-Invariant/ArchUnit item from the same pass is deliberately OUT OF SCOPE (owner set it aside); so is release/distribution work (owned elsewhere). UPDATED same day with §K owner decisions (3 of the 4 §J questions answered) and a §F.1 self-correction that downgrades this document's own headline idea."
+status: "IMPLEMENTED (2026-07-31). Began as theorization over a measured code-structure/health pass on `main` @ 4d94d034; §K records the owner decisions, §L the derisking, §M/§N/§P/§R the implementation, §O the root-cause archaeology, §Q an adversarial review that refuted two of this document's own claims. Shipped: always-loaded budget paid down 80,837 -> 54,628 B and the ratchet WIRED into CI; tier-register evicted; config-surface gate + dead-config detector built and CI-wired; 22 shadowed config knobs withdrawn, 4 wired, and the dead ResolvedConfig.Llm record retired. OUT OF SCOPE throughout: the Hard-Invariant/ArchUnit item (owner set it aside) and release/distribution (owned elsewhere). Six self-corrections are recorded in place rather than edited away — that record is part of the document's point."
 created: 2026-07-30
-updated: 2026-07-30 (§K owner decisions; §F.1 confidence corrected down and split; §E.1 resolved as early-bet)
+updated: 2026-07-31 (§Q adversarial review + fixes; §R the Llm-record retirement and the three bookkeeping corrections this status line is one of)
 category: structural / governance / dx / context-engineering
 related:
   - 530-class-size-ratchet-automation.md      # the discipline-gate kernel; §What's-already-shipped ledger
@@ -813,3 +813,781 @@ tempdoc 686), so a directory of `.md` files can be ingested without authoring a
 `corpus.jsonl`. But ingest drives `/api/indexing/roots` (`ingest.py:189`), i.e. it needs a
 running backend — the **shared, contended** dev stack, requiring a lease and owner
 coordination. "An afternoon" in §F.1.c understated this even before L.4 killed the probe.
+
+---
+
+## §M Implementation log — workstreams A + B + C (2026-07-30)
+
+Branch `worktree-799-structural-health`. K.4 (config surface) is deliberately **not** in
+this changeset — different subject, separate PR.
+
+### M.1 Outcome
+
+| | before | after |
+|---|---:|---:|
+| always-loaded total | 80,837 B (~20,209 tok) | **54,628 B (~13,657 tok)** |
+| ceiling | 68,198 B | 55,287 B |
+| verdict | **RED, +12,639 B** | **PASS** |
+| files over ceiling | 5 of 7 | **0 of 6** |
+
+**≈6,550 fewer tokens loaded into every session**, and the check now runs in CI, so it
+cannot silently drift back.
+
+### M.2 What was done
+
+**A1 — `CLAUDE.md` −3,324 B.** `## Common Pitfalls` cut from 11 rows to 4. Three rows
+(`lockfiles`, `ssot-catalog`, `api-record`) were **deleted** as verified-redundant — each
+is already double-delivered by a shipped hook *and* a skill (checked, not assumed: the
+destination skills were grepped for the specific commands first). Three rows migrated to
+new `governance/consult-register.v1.json` regions (`model-blobs`,
+`index-rebuild-after-field-change`, `dev-stack-stale-jar`). Two environmental rows and the
+installer row (release-lane scope) stay.
+
+`## Key Modules` was **deleted**: a hand-maintained list of 10 modules that omitted
+`app-services` (62k LOC) and `worker-services` (30k) — the two largest in the repo — i.e. a
+stale fork. Its unique content (role descriptions) moved to a corrected **Module roles**
+table in `docs/explanation/01-system-overview.md`, the doc CLAUDE.md already cited as
+authority; the inventory + dependency graph remain generated in
+`docs/reference/architecture/module-deps.md`.
+
+**A2 — `agent-lessons.md` −3,599 B.** The `## Named substrate-discipline principles`
+section self-described as an index into `agent-postmortems.md` and then restated all 13
+handles with glosses — a fork. Collapsed to a pointer + bare handle list. The
+`subset-isnt-the-suite` bullet was **kept** in shortened form because it carries a
+registered anchor (tier-register row 42); deleting it would have failed
+`prose-tier-register/orphan-register-row`. Three unanchored platform-constraint bullets
+were promoted to real postmortem cases: #25 `parked-subagent`, #26
+`probe-reports-own-leak`, #27 `chrome-tab-exhaustion`.
+
+**A3 — declared growth, not migration.** `branch-safety.md` (+2,612 B) and
+`hooks-reference.md` (+202 B) were `--bump`ed with recorded reasons. Rationale for the
+split: worktree/branch safety must be known *before* the first tool call, which is 620's
+own residence test — the content is in the right tier and the ceiling was the wrong
+constraint. 202 B does not repay migration overhead.
+
+**B — `tier-register.md` evicted** to `docs/reference/contributing/tier-register.md`
+(19,286 B out of always-loaded), with the full §L.3 sweep. Both traps materialised as
+predicted: `hook-integrity/enforcer.mjs` hardcoded the path (now config-driven via
+`gate.config.tierRegister`, so the next move is a registry edit), and the settings chain
+needed codegen rather than hand-editing.
+
+**C — the actual fix.** `check-always-loaded-budget.mjs` added to `ci.yml`'s
+`public-claims` job. The stale `$comment` claiming "run pre-merge (manual now)" was
+corrected in the same commit.
+
+### M.3 Three things the plan did not predict
+
+1. **`skills-sync` silently reverted an edit.** The jseval content was first written into
+   `.claude/skills/jseval/SKILL.md` — inside a `<!-- generated:start -->` fence — and the
+   next `skills-sync.mjs` run erased it. The source of truth is
+   `docs/reference/jseval-pipeline-reference.md`. Caught by re-grepping for the moved
+   strings rather than trusting the edit.
+2. **Moving the register into `docs/reference/` subjected it to the canonical-doc link
+   rule**, which forbids `docs/tempdocs/*.md` references. One "See also" line failed. Fixed
+   by pointing at `discipline-gate-kernel.md` (the checker was *not* weakened — prose
+   "tempdoc 530" mentions are unaffected, only explicit paths).
+3. **Self-test fixtures embed the register path.** Four fixture copies under
+   `scripts/governance/_fixtures/prose-tier-register/` had to move too, or
+   `--self-test` fails `register-missing`. `--gate ... --mode gate` passed while the
+   self-test was broken, so gate-green alone would have shipped it.
+
+### M.4 ⚠️ CORRECTION to §C.4 — the missing gates were removed deliberately
+
+§C.4 attributed the absent `class-size` / `ui-bundle` gates to inherited-authority drift
+across the public/private cut. `docs/reference/contributing/discipline-gate-kernel.md`'s
+own frontmatter states it plainly: *"The size/count ratchets (class-size, clone,
+ui-bundle, exception-count) **were removed for go-public — tempdoc 634**."*
+
+So the gates were **deliberately retired**, not lost in the cut. §C.4's mechanism is wrong
+for the gates. What survives is narrower and still real: `expected-state.v1.json:40-45`
+still warns agents that both gates "carry standing RED on main," citing observation
+conditions absent from this repo — residue of a retirement that did not sweep its
+fingerprints. That is a `retire-with-a-sweep` miss, not inherited authority. §G.4 (already
+the weakest candidate principle, n=1) loses this as supporting evidence.
+
+**Fourth self-correction in this document.** Recorded rather than quietly amended, because
+the error rate under scrutiny is the most useful thing 799 has measured about itself.
+
+### M.5 Verification
+
+`check-always-loaded-budget` PASS · `prose-tier-register` PASS · `hook-integrity` PASS ·
+`run.mjs --self-test` PASS · `llmstxt-generate --check` OK · `skills-sync --check` OK ·
+`verify-canonical-doc-links` OK (159 files) · `gen-agent-hooks-wiring --check` PASS ·
+`check-workflow-triggers` OK · `check-premerge-table` PASS · `module-deps --check-canonical`
+OK · diff carries no unintended non-ASCII.
+
+Full kernel: 31/34 pass. The 3 fails are all `kernel/input-missing` in a fresh worktree
+with no `node_modules` (`npm-audit`, `dead-code`, `dead-code-jvm`); `npm-audit` was
+confirmed **passing on `main`**, so they are environmental, not introduced. No gate that
+reads the register fails.
+
+---
+
+## §N Workstream D — config surface (K.4)
+
+Committed separately from A+B+C so the two can publish as separate PRs (different
+subjects); both currently sit on `worktree-799-structural-health`.
+
+### N.1 D2 — the `config-surface` regrowth gate — DONE
+
+754's status line names its own gap verbatim: *"no regrowth gate."* That is now closed.
+
+**Built on existing infrastructure rather than a new counter** (`explore-before-implementing`):
+`scripts/docs/generate-runtime-config-matrix.mjs` already reads the three configuration
+authorities (`EnvRegistry`, `ConfigKey`, `ResolvedConfigBuilder`) and emits
+`yamlKeyCount` / `envSyspropPairCount` / `configKeyCount`. The gate consumes that report
+via `config.inputs` with the generator declared as its producer — the `module-deps`
+pattern exactly.
+
+Pinned baseline (measured 2026-07-30, post-754): `yaml_keys 115`,
+`env_sysprop_pairs 269`, `config_keys 56`.
+
+**A kernel gate, deliberately, not a `scripts/ci/check-*.mjs`.** That choice *is* this
+document's Class-1 finding applied to its own output: an unwired lint rots (§C.1/§C.3),
+a registered gate is enumerable, self-tested, changeset-governed and SARIF-reporting.
+
+⚠️ **Qualification — the first draft of this section overstated it.** "A registered gate
+runs" is not true *automatically* in this repo: **no workflow and no Gradle task invokes
+`scripts/governance/run.mjs`.** The kernel is agent-invoked pre-merge (CLAUDE.md's
+Pre-merge table). `scripts/agent-analytics/expected-state.v1.json:40` matches on a
+`verifyGovernanceGates` Gradle task that **does not exist here** — the same go-public
+retirement residue as §M.4's class-size/ui-bundle entry, in the same expected-state row.
+
+So the honest claim is narrower: a registered gate is *discoverable, self-tested and
+delivered at the moment of relevance* (here, via the `workflow-config-key` recipe),
+where the always-loaded lint was referenced by nothing at all and had no bite proof.
+That is a real tier difference and it justifies the choice — but it is not CI
+enforcement, and this document should not imply it is while criticising exactly that
+kind of overclaim. Two consequences worth separating for a later decision:
+
+- The gate cannot break `main` (nothing runs it there), so shipping it carries no CI risk.
+- Whether the kernel itself should be CI-invoked is a *bigger* question than K.4 and is
+  deliberately not answered here. It is the natural successor to §C.5.
+
+Growth stays possible but must be **declared** — a changeset under
+`gates/config-surface/.changesets/` classified `declared-growth` with a tempdoc/adr
+justification. Same shape as `--bump` in §L.1: the goal is attribution, not prohibition.
+
+Delivery: the rule reaches an author at the moment of relevance through the existing
+`workflow-config-key` consult-register recipe (which already fires on
+`EnvRegistry.java` / `ConfigKey.java` / `ResolvedConfigBuilder.java`), so it costs zero
+always-loaded bytes — the residence discipline §L.2 was paid for.
+
+**Honest limit, stated in the gate's own header rather than discovered later:**
+configuration reaches the Worker by three parallel paths (snapshot, blanket
+`JUSTSEARCH_*` env forwarding, the explicit `WorkerSpawner` forwarded-props list) and the
+post-handshake divergence check only WARNs. The gate ratchets what is *declared*; it does
+not claim to see every effective knob.
+
+Verification: `--gate config-surface --mode gate` PASS; `--self-test` positive PASS /
+negative FAIL, both expected; full kernel now **35 gates** (was 34) with no new failure;
+`check-premerge-table` resolves the new gate reference (11 gate refs, was 10).
+
+### N.2 D1 — the shadowed knobs — owner-decided 2026-07-30, removal half DONE
+
+**Owner disposition received:** delete the duplicate, wire the user-facing few, withdraw the
+rest. Executed as **22 removals + 4 wirings** (not 28 — see N.2.a).
+
+#### N.2.a Two of 754's 28 were already gone
+
+`Health.refreshIntervalMs` and `Health.stalenessAlertSeconds` have no trace in
+`EnvRegistry`, `ResolvedConfig` or the docs — 754's own deletion pass took them with the
+dead `Translator` tree. 754 §150 is dated history and its count was stale by two.
+`tempdocs-are-dated-history`, third instance in this document.
+
+#### N.2.b The measurement that made removal safe
+
+Before touching anything, every candidate was counted by **record-accessor calls**
+(`.field()`), not by name — a plain word-grep overcounts badly because names like
+`maxBatchSize` and `maxSlots` collide with unrelated locals (17-18 hits each).
+
+**17 of the 22 had ZERO accessor calls anywhere.** The remaining 5 had 9 call sites
+between them, and **all 9 were in `ResolvedConfigBuilderTest`** — tests asserting that
+resolution works for values nothing reads. That is `unreachable-seed-green` in its purest
+form: green tests around a pipe that goes nowhere.
+
+The full build then confirmed it independently — after removal, **every compile error was
+in a test file. No production code broke.**
+
+#### N.2.c Disposition
+
+| Group | # | Action |
+|---|---:|---|
+| `Llm.llmGpuLayers` | 1 | **Deleted** — dead duplicate of `justsearch.gpu.layers` |
+| `Rag.retrieveTopK` | 1 | **Deleted** — 754 records it as a second attempt at `ragTopK`; wiring both would recreate a duplicate |
+| `Llm` VRAM/session cluster | 11 | **Withdrawn** — governed by deliberate safety thresholds, not user preference |
+| `Llm` summarization group | 5 | **Withdrawn** — internal tuning + a hardcoded SSOT prompts root |
+| `Worker.maxBatchSize`/`maxQueueDepth` | 2 | **Withdrawn** — gRPC transport internals |
+| `Index.commitDebounceMs`, `Watcher.overflowRescanOnOverflow` | 2 | **Withdrawn** — internal timers |
+| `Rag.ragTopK`, `Rag.citationMatchThreshold`, `Worker.maxContentLength`, `Worker.maxFileSize` | 4 | **To wire** — genuine user-facing choices |
+
+17 doc rows deleted from `environment-variables.md`. That is the half users actually see:
+each was a documented promise that did nothing.
+
+#### N.2.d A test improved rather than deleted
+
+`HeadlessAppGpuAutoPopulateTest` asserted `justsearch.llm.gpu_layers == "99"`, with the
+comment *"BOTH gpu.layers and llm.gpu_layers sysprops set, since `rc.ai().gpuLayers` and
+`rc.llm().gpuLayers` read different keys"* — i.e. it asserted the duplicate. Rather than
+delete the assertion, it was **inverted to `assertNull`**, so the test now guards against
+the duplicate being re-introduced. Stronger coverage than before, not weaker.
+
+#### N.2.e The new gate exercised itself
+
+Removing the knobs shrank the surface, and `config-surface` detected it immediately:
+`env_sysprop_pairs` 269 → 251, `yaml_keys` 115 → 114, reported as `rebalance-available`,
+then ratcheted down via `--rebalance`. The gate was built and validated against a real
+shrink within the same session.
+
+**Verification:** `./gradlew.bat build -x test` clean · full `./gradlew.bat test`
+**BUILD SUCCESSFUL** · `verify-runtime-config-matrix` OK · `verify-canonical-doc-links` OK
+· `config-surface` PASS at the new baseline.
+
+#### N.2.f The 4 wirings — IMPLEMENTED 2026-07-30 (analysis retained below)
+
+All four are wired, tested and green. Two corrections to the analysis that follows, both
+found by reading the code before editing it:
+
+1. **The hazard's mechanism was mis-stated.** It is not a "digest". `ExtractionArtifact`
+   stamps `policyId` — a *name* — onto every extraction, and `SqliteJobQueue` persists it.
+   So the failure mode is that a **persisted identity silently stops identifying the
+   policy**: two materially different policies would both call themselves
+   `tika-default-v1`, and any staleness or re-extract decision keyed on the id would treat
+   them as equivalent. Worse than a mismatch, because nothing would ever error.
+   Resolved by `TikaExtractionPolicy.fromWorkerLimits(...)`, which returns `defaults()`
+   byte-identical when limits match, and otherwise mints a deterministic
+   `tika-config-v1-<chars>-<bytes>` id. `defaults()` is untouched, so the sandbox-child
+   path and `validate()`'s fallback stay deterministic. Eight tests guard it; the central
+   one fails under the naive "make defaults() read config" implementation, which is the
+   point of writing it.
+2. **The claimed teardown did not exist.** §N.2.f originally said
+   `StreamingCitationMatcher` duplicated `DEFAULT_CITATION_SIMILARITY_THRESHOLD`. It does
+   not — it already delegates to the `DocumentService` constant; tempdoc 565 §15.A unified
+   them. No duplicate to remove. **Fifth self-correction in this document**, and the one
+   that most vindicates reading before editing.
+
+A constraint that shaped the citation wiring and was not in the plan: 565 §15.A made that
+cutoff *one shared value* precisely because a divergent local `0.45` was a defect. Wiring
+only the RAG path would have recreated it, so **both** composition roots
+(`ConversationApiAssembly`, `AgentLoopWiring`) read the same key.
+
+Config is read at composition roots, never inside the SPI classes, so `RAGContext`,
+`StreamingCitationMatcher` and `AgentCitationResolver` stay constructor-injected and
+unit-testable. `ragTopK` precedence is **body → configured → 5**: an explicit per-request
+`topK` still wins.
+
+**Verification:** full `./gradlew.bat test` BUILD SUCCESSFUL · `config-surface` PASS at an
+**unchanged** key count (251 — the plan's own mis-scope check) · `verify-runtime-config-matrix`
+OK · always-loaded budget PASS · kernel `--self-test` PASS.
+
+#### N.2.f.1 The live tier ran — and caught what everything else missed
+
+`use-every-verification-tier` says check whether a tool provides the tier before declaring it
+unavailable. The stack was free (no contention), so it was run: dist built from this worktree,
+`distFrom` start, `ready_worker` reached. Two results.
+
+**1. Boot smoke passed.** The change adds a `ConfigStore` read at two composition roots, which
+no unit test covers. The stack reaches `ready_worker` with it, so the read does not break
+startup.
+
+**2. It found residue I had left — my own `retire-with-a-sweep` failure.** `effective_config`
+on the running backend still listed `worker.limits.max_queue_depth`. The consumer was gone, but
+the **`EnvRegistry` declaration and the YAML contribution were not**, so the key still resolved
+into the live resolution map: declared, documented as removed, read by nothing. Precisely the
+defect class this whole tempdoc is about, reintroduced by an incomplete sweep of my own.
+
+A full audit then found **four** such knobs (`worker.limits.max_batch_size`,
+`worker.limits.max_queue_depth`, `index.commit.debounce_ms`,
+`index.watcher.overflow.rescan_on_overflow`) — two with orphaned `EnvRegistry` entries, all four
+with orphaned `putYaml*` contributions, plus a `contributeYamlWatcher` method left empty. All
+removed; the surface shrank again (`yaml_keys` 114→110, `env_sysprop_pairs` 251→249) and the
+gate ratcheted down.
+
+**Nothing else would have caught this.** The full unit suite was green, `build -x test` was
+green, and `config-surface` was green — because a key that resolves but is never read is exactly
+what none of them can see (§O.3). Only looking at the running system's own config surface
+exposed it. That is the concrete argument for the live tier, and a live instance of §O.6's
+warning that the new gate counts keys without knowing whether anyone reads them.
+
+**Not done:** observing a changed retrieved-chunk count under a non-default
+`justsearch.rag.top_k`. The MCP `dev_start` surface has no sysprop-injection parameter, so that
+specific observation was not reachable without driving the backend outside the dev-runner.
+Precedence is covered by unit tests instead; the gap is stated rather than papered over.
+
+##### Original analysis (retained — it is why the design is shaped this way)
+
+The withdrawal half is done and green. The wiring half is deliberately left for a scoped
+follow-up, because the investigation turned up a hazard that makes "just read it from
+config" wrong.
+
+**`Worker.maxContentLength` / `maxFileSize`.** The seam looked clean: `TikaExtractionPolicy`
+is a record whose `DEFAULT_MAX_EXTRACTED_CHARS` (10 MB) and `DEFAULT_MAX_INPUT_BYTES`
+(100 MB) match the config defaults *exactly*, `StructuredContentExtractor` already takes
+`maxContentLength` by constructor, and `TikaExtractionPolicy.defaults()` is the single
+convergence point for 8+ call sites. The obvious move is to make `defaults()` consult
+`ConfigStore.globalOrNull()`, mirroring the established
+`DefaultWorkerAppServices.resolvedOcrConfig()` idiom.
+
+**That would be a bug.** `ExtractionArtifact` (`:67`, `:126`) uses `defaults()` to build and
+verify a **policy digest**. If `defaults()` becomes configuration-dependent, the digest
+varies with configuration, and artifact verification starts comparing against a moving
+reference. `ExtractionSandboxChild` compounds it: extraction runs in a **child process**
+where the global `ConfigStore` may not be initialised at all, so the same policy would
+resolve differently across the process boundary.
+
+The correct shape is therefore a *separate* resolved-policy factory
+(`TikaExtractionPolicy.fromWorkerLimits(ResolvedConfig.Worker)`, mirroring
+`OcrRoutingConfig.from(...)`) wired only at the production construction seam, leaving
+`defaults()` deterministic for digests and sandbox children. That is a real design, with a
+real determinism invariant to protect — not a one-line read.
+
+**`Rag.ragTopK`.** Seam is clear: `RAGContext.extractTopK` (`:343-350`) reads only the
+request body and falls back to `DEFAULT_TOP_K = 5`. Wiring means threading the resolved
+config to that static, which needs a plumbing decision (constructor injection vs. the
+`ConfigStore` idiom) — and request-body `topK` must keep winning over config.
+
+**`Rag.citationMatchThreshold`** is the messiest: it is typed `String`, resolves to `""`,
+and is never parsed, while the live value is a `double`
+(`DocumentService.DEFAULT_CITATION_SIMILARITY_THRESHOLD = 0.5`) read by
+`StreamingCitationMatcher` and `AgentCitationResolver`. Wiring it is a type change plus
+two consumer changes, not a hookup.
+
+**Why this is the right stopping point:** the withdrawal half removes 22 false promises and
+is verifiable by compile + full suite. The wiring half adds 4 *new behaviours* to
+extraction and RAG, one of which has a determinism invariant that a naive implementation
+silently breaks. Bolting it on at the end of a long session is precisely the
+`static-green ≠ live-working` failure this document has been cataloguing. Scoped as a
+follow-up with the hazard named above so the next pass starts informed rather than
+discovering it.
+
+#### N.2.g Original blocking analysis (retained)
+
+**This is an owner decision, not an implementation gap.** 754 §150 is explicit:
+
+> "Per owner scope, they are logged, not fixed, and **not deleted** — deleting would erase
+> the record of intent without delivering the feature."
+
+Each of the 28 resolves one of two ways — *wire the knob to its consumer* (deliver the
+feature) or *delete it* (withdraw the promise) — and both are product calls the owner
+already parked once. Making 28 of them unilaterally would re-open a settled deferral and
+would be exactly the "summarize-and-suggest-closure" move `tempdoc-is-your-contract`
+warns against, in reverse.
+
+What is ready for that decision: 754 §150 already enumerates every knob with its shadowing
+constant at `file:line` (e.g. `Worker.maxBatchSize`/`maxQueueDepth` ←
+`GrpcIngestService.java:99,102`; the 11-knob `Llm` VRAM/session cluster ←
+`HardwareProfile.java:24` + `VramRequirements.java:32` + `OnlineModeOps.java:73` +
+`LlamaServerOps.java:230-232`; `Rag.ragTopK` ← `RAGContext.java:55`). The two genuinely
+distinct sub-cases worth separating when the call is made:
+
+1. **`Llm.llmGpuLayers` is a *duplicate*, not merely shadowed** — `justsearch.llm.gpu_layers`
+   is dead while `justsearch.gpu.layers` works, and **both are documented**
+   (`environment-variables.md:103` and `:81`). One of the two doc rows is simply false.
+   This one is closer to a documentation defect than a product call.
+2. **The rest are undelivered features.** Wiring them is real work with real behavioural
+   risk (e.g. making `Worker.maxBatchSize` live changes ingest characteristics).
+
+Note the new gate does **not** pressure these: it ratchets the *count*, and these knobs
+already exist. Deleting any of them would only make the gate greener.
+
+---
+
+## §O Root causes (git archaeology, 2026-07-30)
+
+Everything above this section describes *what* is broken. This section is the *why*, traced
+through history rather than reasoned from the symptoms. It is the most reusable output of
+this tempdoc, because the three findings turn out to be one mechanism wearing three
+costumes.
+
+**Method note and its limit:** this repo's history begins at the v0.1.0 public squash
+(`29579e51`, 2026-06-25) — 425 commits. Anything born before that date is unknowable here,
+which is why Cause 3 is argued from code shape rather than from commits.
+
+### O.1 Cause 1 — a deferral with no trigger
+
+The always-loaded budget ratchet shipped with its own excuse written into its config file,
+present in the **first public commit** and unchanged for **35 days** until this branch
+edited it:
+
+> *"Wiring: run pre-merge (manual now); fold into the prose-tier-register gate or
+> verifyGovernanceGates **once the doc set stabilizes**."*
+
+The deferral itself was defensible. The *condition* was not: "once the doc set stabilizes"
+has no definition of done, no owner, and no date — and it can never fire, because the
+always-loaded set is living documentation that changes most weeks. A permanent deferral
+written in the grammar of a temporary one.
+
+What the history then shows (reconstructed by replaying actual vs. ceiling at every commit
+that touched either):
+
+| date | state | note |
+|---|---|---|
+| 2026-06-25 | **RED** 78,606 / 76,480 | over its limit on day one, at the public cut |
+| 2026-07-01 | ok | ceiling *raised* twice (76,480 → 81,661 → 83,187) |
+| 2026-07-03 | RED 86,094 | drifted past the raised ceiling |
+| 2026-07-07 | ok 66,493 | a genuine cleanup — "681: instruction-layer re-baseline" |
+| 2026-07-11 | **RED** | four days later |
+| …19 days… | RED | climbing to 79,201 with the ceiling frozen at 68,004 |
+
+So this was never slow neglect. It is a **cycle**: clean, drift, clean. Nothing made the
+drift cost anything at the moment it happened, so it always resumed. Note also that raising
+the ceiling and cleaning up are indistinguishable from outside — both turn the check green.
+
+### O.2 Cause 2 — a retirement that swept the wiring but not the tools
+
+Commit `88d14e8c` (2026-06-25, one day after the cut) built the public CI lane and cut
+`ci.yml` from **771 lines to 59** — a 712-line deletion. Among the deleted lines:
+
+```
+- run: node scripts/ci/check-ui-cycles.mjs … --mode gate
+- run: node scripts/ci/check-chip-fact-authority.mjs
+```
+
+The check *scripts* stayed in the tree. Only their invocations left.
+
+**11 of the 13 non-release orphaned checks date from that single day.** They were not
+accumulated over a month of neglect; they were created in one restructuring, by one commit,
+as a side effect of a decision that was itself correct — a public repo *should* have a
+smaller CI surface than a private one.
+
+This also explains a detail §C.3 observed but could not account for: `check-ui-cycles`
+reports 6 real circular dependencies and exits 0. Its `--mode gate` flag was in the deleted
+line. The same commit family retired the `class-size` / `ui-bundle` gates (§M.4), leaving
+`expected-state.v1.json` still warning agents about them a month later.
+
+The missing step was never "don't trim CI". It was the follow-up question: **what did we
+just stop enforcing, and do we still claim to enforce it?**
+
+### O.3 Cause 3 — nothing links a config key to a reader
+
+Pre-cut history hides these knobs' birth, so the argument is from code shape — and the
+shape is unambiguous.
+
+The hardcoded constants match the config defaults **exactly**: `MAX_BATCH_SIZE = 10_000`
+against `resolveInt(…, 10_000)`; `MAX_QUEUE_DEPTH = 100_000` against
+`resolveLong(…, 100_000L)`; 10 MB and 100 MB likewise. That is not coincidence — both
+authors knew the same number. Yet **neither constant references the knob**, and
+`GrpcIngestService`'s javadoc describes its constant as *"Maximum files allowed in a single
+batch request"*, i.e. as the authority. `HierarchicalShapeRunner`'s says its value
+*"matches legacy `TokenEstimationUtils.SECTION_TARGET_TOKENS`"* — carried from another
+constant, not from config.
+
+Two people writing the same number in two places at different times, and **nothing in the
+system able to notice**. Verified: `consumer-presence` covers registry declarations, not
+config keys, and no unused-config-key detector exists anywhere in `scripts/`.
+
+### O.4 The mechanism underneath all three
+
+> **This project can create an authority faster than it can create the thing that enforces
+> it — and nothing notices when a claim loses its enforcer.**
+
+Each individual decision was reasonable. Deferring wiring until things settle sounds
+prudent. Trimming CI for a public repo is correct. Adding a config knob for a value is
+routine. None of them is a mistake in isolation; the failure is that a document row, a doc
+sentence, or a config key costs nothing to write and nothing to *keep* after the mechanism
+behind it disappears. There is no decay pressure on claims.
+
+That is why §B's Class 1 is a **class** and not three incidents, and it is the honest
+justification for the `config-surface` gate being a registered kernel gate rather than
+another `scripts/ci/check-*.mjs`.
+
+**The public cut concentrated the damage.** Two of the three causes trace to the same week.
+A large one-time restructuring is precisely when authority-to-enforcement links snap, and
+no post-cut audit asked what had quietly become untrue.
+
+### O.5 Coda — the same failure, applied to me
+
+This document corrected itself four times (§L.1, §L.2, §L.4, §M.4). Every one had the same
+shape: **I trusted a document that had stopped being true.** A tempdoc row marked `OPEN`
+for a mechanism that had shipped; a list of 28 items of which 2 were already gone; a theory
+about missing gates that had been deliberately retired.
+
+That is Cause 1 and Cause 3 applied to documentation instead of code, and it is why §F.1's
+"design history is 12× canonical" is not a tidiness complaint. The corpus is the same
+hazard surface as the config surface — claims with no decay pressure — and it caught the
+agent that was writing *about* the hazard.
+
+### O.6 What this implies for the fixes already shipped
+
+Stated plainly so no one over-reads what this branch accomplished:
+
+- Wiring the budget check fixes **one instance** of Cause 1. The pattern is untouched.
+- The `config-surface` gate caps **how many** config keys exist. It cannot tell whether one
+  is read, so **Cause 3 remains open** — the same 22 could regrow, merely fewer of them.
+- **Nothing here addresses Cause 2.** The other 13 orphaned checks are still orphaned.
+
+The generalised fix for Causes 1 and 2 is the same object: a reachability control over the
+whole control surface (§C.5), which is deliberately not built here.
+
+---
+
+## §P Cause 3 closed — the dead-config detector (2026-07-31)
+
+§O.6 said the `config-surface` gate "cannot tell whether a key is read, so Cause 3 remains
+open". §N.2.f.1 then proved it at my own expense: four dead keys survived this branch's own
+cleanup with the full unit suite, `build -x test`, and the count ratchet all green. That is
+the argument for building the reader check, and it is now built.
+
+### P.1 What it checks
+
+`scripts/governance/gates/config-surface/dead-config.mjs`, folded into the existing
+`config-surface` gate rather than authored as a new one (582 R4 — finish wiring rather than
+grow the gate count). Two rules:
+
+- **`config-surface/dead-key`** — a setting is declared but no reader exists.
+- **`config-surface/unread-component`** — a `ResolvedConfig` record component whose accessor
+  is never called.
+
+### P.2 Three read paths, and why that matters more than the rule itself
+
+A setting counts as read if **any** of three paths reaches it: resolved into a record
+component someone calls; read directly via `EnvRegistry.CONST.getX()`; or its raw key string
+appearing anywhere outside the configuration module.
+
+This was not obvious and it was not free. The first draft knew only path 1 and reported **33
+dead keys**. Adding path 2 cut it to 10; adding path 3 removed a further false positive
+(`justsearch.lite.mode`, read as a raw string elsewhere). A gate shipping with ~30 false
+positives is not a strict gate — it is a gate that gets switched off, which is §O.1's failure
+mode arriving by a different road. The iteration was the work; the rule was the easy part.
+
+### P.3 Measured state, and what is baselined
+
+**1 unread component + 10 dead keys**, pinned in
+`gates/config-surface/dead-config-baseline.txt`. The gate fails on any NEW one.
+
+The component is `simulatedLatencyMs` — an `Llm` field this very branch *kept* while removing
+22 others. The detector found it within minutes of existing, which is the most direct evidence
+available that manual sweeps do not substitute for it.
+
+They are baselined rather than deleted because each is another wire-it-or-withdraw-it product
+call — the same judgement 754 deferred and §N.2 put to the owner. The gate's job is to stop
+the list growing while those calls are made, not to make them silently.
+
+### P.4 Bite verified, not assumed
+
+§C.3 found that "reachable but advisory" is its own failure mode, so reporting is not enough.
+Verified by injecting a plausible unread knob into `EnvRegistry`:
+
+- with the knob: gate **exits 1**, naming the key and both remedies (wire it or delete it);
+- after revert: **exits 0**, and the injection is byte-clean gone.
+
+`scripts/ci/test-config-surface-dead-config.mjs` makes the deciding logic permanently covered
+(6 assertions, including that a *baselined* entry stays `info` while a new one *fails*), and
+is wired into `ci.yml` so it is not itself an unrun check — which would be Cause 2, committed
+by the person who wrote Cause 2 up.
+
+### P.5 What is still open
+
+Cause 1 (one instance fixed, pattern untouched) and Cause 2 (13 orphaned checks) remain. This
+closes Cause 3 for the *declared* config surface only — §D.1's warning stands that
+configuration reaches the Worker by three parallel paths, and a key travelling an undeclared
+one is still invisible.
+
+> ⚠️ **§P.5 overstated.** An adversarial review (§Q) then refuted "Cause 3 closed" outright.
+> It is **narrowed**, not closed — see §Q.3.
+
+---
+
+## §Q Adversarial review of this branch (2026-07-31)
+
+A refute-first review was run over the nine commits, with the brief that **every claim is wrong
+until the evidence forces concession**. It refuted two. I re-verified both against primary
+sources before acting: **both are real, and both are mine.** One is a correctness bug in the
+commit whose own message argues it cannot happen.
+
+Confirmed sound, no change needed: Phase-0 config ordering (`resolveConfig()` is the first
+statement of the boot try-block, so the composition-root reads are not silent no-ops);
+`ragTopK` precedence; the `TikaExtractionPolicy` identity design; and that the gate
+mechanically bites.
+
+### Q.1 ⚠️ CORRECTNESS BUG — the citation cutoff diverged after all
+
+`64f022a1`'s message argued that reading the same key at both composition roots made RAG/agent
+divergence impossible. It did not. The two matchers **clamped the configured value
+differently**:
+
+| Path | Site | Clamp |
+|---|---|---|
+| RAG | `StreamingCitationMatcher.java:75` | `Math.max(0.01, Math.min(1.0, t))` |
+| Agent | `AgentCitationResolver.java:51-57` | `t > 0.0 && t <= 1.0 ? t : 0.5` |
+
+A configured `0` therefore meant **0.01 on the RAG path and 0.5 on the agent path** — a *wider*
+split than the 0.45/0.5 drift tempdoc 565 §15.A was written to remove.
+
+The lesson is sharper than the bug: **sharing a constant is not sharing a decision.** 565
+unified the *value*; nothing unified the *interpretation of an out-of-range value*, and that is
+where the divergence came back.
+
+**Fix:** one normaliser, `DocumentService.effectiveCitationThreshold(double)`, beside the
+constant both paths already import; both constructors delegate to it and neither clamps locally.
+Out-of-range resolves to the default rather than to a silent floor — a nonsensical cutoff should
+behave like "unset", not like "cite almost anything".
+
+**Tests:** the assertion whose absence let this ship, added in three places. The parity
+assertion deliberately does **not** live in `app-api` alone: asserting it there could only call
+the shared function twice, which is tautological and would still pass if a matcher re-clamped
+afterwards. The real assertions observe the value each matcher actually hands to
+`DocumentService.matchCitations` — `StreamingCitationMatcherTest` for RAG,
+`AgentCitationResolverThresholdTest` for the agent path.
+
+One of my own earlier tests failed on this fix, correctly: it asserted `9.0` to `1.0`, encoding
+the very clamp that caused the divergence. Updated, with the reason recorded inline.
+
+### Q.2 ⚠️ The scanner had a false positive, by construction
+
+`dead-config.mjs` built its reader corpus by excluding the **entire**
+`/io/justsearch/configuration/` package, making every in-package reader invisible.
+`justsearch.fieldCatalog` is read via `EnvRegistry.FIELD_CATALOG.getPath()` at
+`JustSearchConfigurationLoader.java:116` (called from `KnowledgeServer.java:1334,1383`) — a
+working override that the gate recorded as a false promise.
+
+**Fix:** exclude only the three *declaration* files, not the package. A key naming itself in its
+own declaration is not a reader; everything else must stay visible. Dead-key count 10 to 9, and
+`justsearch.fieldCatalog` is removed from the baseline with the reason recorded there.
+
+### Q.3 The scanner's blind spot is larger than §P admitted — and there is a real finding inside it
+
+`unreadComponents` matches a bare `.name(`, so an unrelated call on a different type counts as a
+read. Consequence: **`ResolvedConfig.llm()` is never called in production** — the only
+non-declaration `.llm()` is `LlmSettingsV2.llm()` at `SettingsController.java:200`, a different
+type. The entire `Llm` record is unreachable, and roughly **ten documented settings behind it are
+false promises**, including `JUSTSEARCH_LLM_MIN_P` and `JUSTSEARCH_LLM_RNG_SEED`
+(`environment-variables.md:102-103`). The scanner reports exactly one of them —
+`simulatedLatencyMs`, the only uniquely-named component.
+
+That is the same class as the 22 already withdrawn, found by the review rather than by the gate
+built to find it.
+
+**Not fixed with a heuristic, deliberately.** Two were tried and both falsified against real
+code: requiring the chained `.parent().component()` form (defeated — `hybridSearch()` is consumed
+only via assignment), and requiring the containing file to mention `ResolvedConfig` (defeated —
+`SettingsController` mentions it incidentally). Precision needs type information a string scan
+does not have, and a gate that cries wolf gets switched off — §O.1's failure mode.
+
+So the limitation is **written into the scanner's header** instead, naming the `Llm` instance and
+saying plainly that a green result does not mean the surface is clean. The ten settings are
+recorded in the baseline as a comment block and **staged for an owner wire-it-or-withdraw-it
+decision**, not deleted here.
+
+### Q.4 The gate ran nowhere
+
+The review's sharpest structural point: `grep -rn governance .github/workflows/` returned
+**nothing**. The kernel — and so `config-surface` — ran only when an agent typed the command.
+`ci.yml` ran the scanner's *unit test*, not the gate.
+
+That is exactly §L.1's "shipped but wired to nothing", reproduced by me in the branch that
+documents it. §N.1 had qualified the tier claim, but qualifying is not wiring.
+
+**Fix:** a CI step in `public-claims` that produces the declared input and runs the gate in gate
+mode. Verified by running that step verbatim from a cleaned `tmp/`, not by assuming it works.
+Scoped to this gate only — other kernel gates need inputs (knip, npm audit, a Gradle run) that
+this fast job does not build, which is a separate decision.
+
+### Q.5 Carried forward, not fixed
+
+- **Post-boot config rebuild.** `ConfigStoreRebuilder.rebuild(...)` replaces the global store at
+  runtime, but both newly wired values are captured once at composition, so a settings change
+  does not reach them until restart. Pre-existing for every other composition-time read and a
+  larger design question than this branch — recorded, not silently accepted.
+- **Body `topK` of 0 or negative** now falls back to the *configured* default rather than the
+  compiled 5. Defensible ("0 means unspecified") but untested.
+
+### Q.6 What this says about the work
+
+The gate's green was, in part, evidence of its own blind spots. That is worth stating plainly
+because it is the tempdoc's own thesis turned on its author: I built a mechanism to detect
+claims that outrun their enforcement, and it shipped making exactly that kind of claim — twice.
+The adversarial pass, not the test suite and not the gate, is what caught it.
+
+---
+
+## §R Final pass (2026-07-31) — the dead `Llm` record, and three corrections to this document
+
+### R.1 `ResolvedConfig.Llm` retired — one dead record, not ten stray knobs
+
+§Q.3 surfaced this as "~10 documented settings are false promises" and staged it for an owner
+decision. A derisking pass then corrected the framing, which changed the disposition from an
+open question into an evidenced one: **`Llm` was a dead parallel of the live `Ai` record.**
+`ResolvedConfig.Ai` is what the inference layer actually reads (`.ai().contextSize`,
+`.ai().gpuLayers`, `.ai().llmModelPath`, `.ai().useThinking`, `.ai().reasoningBudget`); `Llm`
+was consumed by nothing. Same defect as the `llm.gpu_layers` / `gpu.layers` twin deleted earlier
+on this branch — but at record scale.
+
+**Withdrawn rather than wired, for a design reason rather than a tidiness one.**
+`SamplingParams` sets `temperature`/`topP` **per purpose** — `AGENT (0.7, 0.8)`,
+`DETERMINISTIC (0.1, 0.9)`, `VDU (0.0, 0.9)` — and references configuration zero times. A single
+global `justsearch.llm.temperature` could not sensibly override all three, which is very likely
+*why* it was never wired. `maxNewTokens`/`rngSeed` are per-call. `contextLength` duplicated
+`Ai.contextSize()`. Corroboration: `LocalIntentTranslatorConfig` mirrors the same fields, so
+`Llm` looks like an abandoned earlier shape of what `Ai` + that config became.
+
+**The split that mattered.** Four `justsearch.llm.*` keys feed the **live `Ai`** record —
+`enabled`, `model_path`, `reasoning_budget`, `use_thinking`. Removing them would have broken
+inference. The removal was guarded by an assertion on every deletion pass, and verified live.
+
+Removed: the `Llm` record, its component on `ResolvedConfig`, `buildLlm()`, 10 `EnvRegistry`
+entries, 10 doc rows. Surface: `env_sysprop_pairs` 249 → **239**.
+
+**The gate caught its own author.** After the first removal pass, `config-surface` **failed** on
+`justsearch.llm.model_sha256` — a registry entry left behind once `buildLlm()` was gone. That is
+the identical residue class that, one day earlier (§N.2.f.1), only a running backend exposed.
+This time a gate caught it *before* the commit. That is the clearest evidence in this document
+that the detector earns its keep.
+
+Also fixed while sweeping: `Ai`'s javadoc said "LLM runtime tuning lives in `{@link Llm}`" — both
+a dangling reference and backwards, since `Ai` is where it actually lives.
+
+**A small irony worth recording.** `EnvRegistryTest` exercised `getInt`/`getLong` using
+`LLM_THREADS` and `LLM_DEADLINE_MS` as arbitrary vehicles. §M.2 had already substituted
+`LLM_THREADS` in as a supposedly "live" constant — and it was itself dead, so this pass deleted
+it. Both are now `API_PORT` and `HEAD_PID`, chosen because they have real production readers.
+Substituting one dead vehicle for another is exactly the mistake this tempdoc is about.
+
+**Verification:** full `./gradlew.bat test` BUILD SUCCESSFUL · `config-surface` PASS at the new
+baseline · `verify-runtime-config-matrix` OK (yaml=110, pairs=239) · `verify-canonical-doc-links`
+OK · scanner unit test PASS · always-loaded budget PASS · **live**: all 10 retired keys absent
+from a running backend's `effective_config` while all 4 live `Ai` keys remain present.
+
+### R.2 Correction — K.1's own open item was never closed
+
+§K.1 resolved the plugin framework as a held bet and then named its own residue: nothing in the
+repo distinguishes a *deliberately held* bet from neglect, so the distinguishing artifact would
+be a **recorded trigger**. None was recorded, and §K.1's prediction duly came true — a later
+review re-flagged it exactly as the first pass had.
+
+**Trigger, recorded now.** The bet is exercised or folded when either fires:
+
+- **Exercise** — a second real consumer of `shell-v0/plugin-api` is designed (not merely wanted).
+  The most plausible candidate is the public-center thesis in
+  `docs/explanation/28`: an external agent contributing a surface. Designing that is the signal
+  the option is being cashed.
+- **Fold** — the next structural-health pass finds `plugins/` still contains exactly one plugin
+  AND `docs/explanation/28` has not moved toward external surface contribution. At that point the
+  option has gone unexercised across two review cycles and the ~10,300 lines should be collapsed
+  into the shell with a `retire-with-a-sweep`.
+
+Neither is a date, deliberately — a date would be the "wait-for-more-evidence" deferral
+`structural-defects-no-repeat` bans. Both are observable conditions.
+
+### R.3 Correction — §K.4 delivered something narrower than its own wording
+
+§K.4 reads: *re-triage the config surface by **why each knob exists*** (incident escape hatch /
+A-B lever / genuine user preference / never-flipped).
+
+**That taxonomy was never produced.** What shipped was a *disposition* pass — wire-or-withdraw
+over 754's existing per-module list — plus a count-based regrowth gate that encodes no origin
+categories. The narrowing was agreed in conversation (§D.1 argued the origin cut is worth more as
+input to the gate's design than as a labelling exercise, and the owner agreed with that
+recommendation), but the page never recorded it, so the decision and the delivery did not match.
+
+Recorded now: **K.4 as delivered = bounded disposition + regrowth ratchet. The origin taxonomy
+remains unbuilt**, and it is the natural input if a future pass wants the gate to distinguish
+*kinds* of knob rather than counting them.
+
+### R.4 What remains open
+
+Unchanged and correctly scoped out: the eval-harness scoring bug (`retriever.py:143`, still the
+highest-value single finding in this document), the 13 orphaned CI checks, the class-size
+ratchet, and §J.5–7. §O.6 stands: Cause 1's pattern and Cause 2 are untouched — only Cause 3 is
+now closed for the declared config surface, and even there §D.1's three-delivery-path caveat
+still applies.

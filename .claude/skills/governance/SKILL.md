@@ -1,5 +1,5 @@
 ---
-description: "TRIGGER when: editing baseline files (scripts/ci/npm-audit-ratchet-baseline.v1.json, .claude/rules/tier-register.md), authoring changesets under gates/<id>/.changesets/, running the discipline-gate kernel, or seeing a SARIF ruleId from prose-tier-register / npm-audit / consumer-drift / ssot-catalog-sync and unsure what to do. Loads the kernel's protocol + classification grammar + CLI subcommands."
+description: "TRIGGER when: editing baseline files (scripts/ci/npm-audit-ratchet-baseline.v1.json, docs/reference/contributing/tier-register.md), authoring changesets under gates/<id>/.changesets/, running the discipline-gate kernel, or seeing a SARIF ruleId from prose-tier-register / npm-audit / consumer-drift / ssot-catalog-sync and unsure what to do. Loads the kernel's protocol + classification grammar + CLI subcommands."
 user-invocable: true
 ---
 
@@ -82,7 +82,7 @@ documented:
    `prose-tier-register/untagged-sentence`.
 
 If you're authoring a rule, anchor it with `<!-- rule:<slug> -->` and add a
-row to `.claude/rules/tier-register.md` with the same slug.
+row to `docs/reference/contributing/tier-register.md` with the same slug.
 
 ## See also
 

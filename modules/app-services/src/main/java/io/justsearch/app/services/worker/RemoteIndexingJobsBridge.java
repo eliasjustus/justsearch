@@ -330,6 +330,8 @@ public final class RemoteIndexingJobsBridge {
         proto.getLastUpdatedMs(),
         proto.getErrorMessage(),
         proto.getRetryAfterMs(),
-        proto.getCollection());
+        proto.getCollection(),
+        // Tempdoc 812 D2 — the rollup key travels with the row (empty for non-scan jobs).
+        proto.getScanId());
   }
 }

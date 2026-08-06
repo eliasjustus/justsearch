@@ -35,6 +35,91 @@ public interface JobQueue extends Closeable {
    */
   record IndexJob(Path path, String collection) {}
 
+  /** Sentinel for {@link EnqueueEntry#sizeBytes()} when the file's byte size could not be read. */
+  long UNKNOWN_SIZE_BYTES = -1L;
+
+  /**
+   * A path to enqueue plus the byte size observed at enqueue time (tempdoc 813 Slice B).
+   *
+   * <p>Size rides the enqueue <em>signature</em> rather than a side-channel write on purpose: the
+   * jobs-table insert is {@code INSERT OR REPLACE} ({@code SqliteJobQueue.enqueueEntries}), so any
+   * column not supplied by the enqueue call is reset on every re-enqueue of the same path. Carrying
+   * it in the entry makes "the enqueuer states the size" the only way the column is ever written.
+   *
+   * @param path the file path to index
+   * @param sizeBytes byte size at enqueue time, or {@link #UNKNOWN_SIZE_BYTES} when unknown
+   */
+  record EnqueueEntry(Path path, long sizeBytes) {
+
+    /** An entry whose size is not known (persisted as NULL, excluded from pending-bytes sums). */
+    public static EnqueueEntry ofUnknownSize(Path path) {
+      return new EnqueueEntry(path, UNKNOWN_SIZE_BYTES);
+    }
+
+    /**
+     * Stats {@code path} for its size, degrading to {@link #ofUnknownSize(Path)} when the stat
+     * fails. Callers that already hold {@link java.nio.file.attribute.BasicFileAttributes} (the
+     * bulk walk paths) should construct directly from {@code attrs.size()} instead — a stat here
+     * would be a second, redundant filesystem round-trip.
+     */
+    public static EnqueueEntry stat(Path path) {
+      if (path == null) {
+        return ofUnknownSize(null);
+      }
+      try {
+        return new EnqueueEntry(path, java.nio.file.Files.size(path));
+      } catch (IOException | RuntimeException e) {
+        return ofUnknownSize(path);
+      }
+    }
+
+    /** Wraps each path with an unknown size. */
+    public static List<EnqueueEntry> ofUnknownSizes(List<Path> paths) {
+      if (paths == null) return List.of();
+      List<EnqueueEntry> entries = new java.util.ArrayList<>(paths.size());
+      for (Path p : paths) {
+        entries.add(ofUnknownSize(p));
+      }
+      return entries;
+    }
+
+    /** Extracts the paths, dropping sizes. */
+    public static List<Path> paths(List<EnqueueEntry> entries) {
+      if (entries == null) return List.of();
+      List<Path> paths = new java.util.ArrayList<>(entries.size());
+      for (EnqueueEntry e : entries) {
+        if (e != null && e.path() != null) paths.add(e.path());
+      }
+      return paths;
+    }
+  }
+
+  /**
+   * Aggregate byte weight of remaining indexing work (tempdoc 813 Slice B).
+   *
+   * <p>{@code knownBytes} sums {@code size_bytes} over PENDING + PROCESSING rows that recorded a
+   * size; {@code unknownSizeJobs} counts the PENDING + PROCESSING rows that did not, so a consumer
+   * can tell "no work left" from "work left whose weight is unknown" instead of silently treating
+   * an unknown as zero.
+   *
+   * @param knownBytes summed byte size of remaining jobs with a recorded size
+   * @param unknownSizeJobs remaining jobs with no recorded size; {@code -1} when the aggregate
+   *     could not be computed at all (see {@link #UNAVAILABLE})
+   */
+  record PendingBytes(long knownBytes, long unknownSizeJobs) {
+    /** Nothing known and nothing counted — the default for queues that don't track sizes. */
+    public static final PendingBytes EMPTY = new PendingBytes(0L, 0L);
+
+    /**
+     * The query FAILED, so nothing may be asserted about remaining weight. Distinct from {@link
+     * #EMPTY}, which is the positive claim "nothing is pending": a failed aggregate that returned
+     * EMPTY would render as "0 bytes remaining" mid-backlog. The {@code -1} marker keeps that
+     * distinction on the wire, where a consumer that only checks {@code knownBytes > 0} still
+     * renders nothing.
+     */
+    public static final PendingBytes UNAVAILABLE = new PendingBytes(0L, -1L);
+  }
+
   /**
    * Summary of recent failures in the queue.
    *
@@ -89,6 +174,61 @@ public interface JobQueue extends Closeable {
    * @return Number of jobs accepted
    */
   int enqueue(List<Path> paths, String collection);
+
+  /**
+   * Enqueues entries carrying the byte size observed at enqueue time (tempdoc 813 Slice B).
+   *
+   * <p>Default implementation drops the sizes and delegates to {@link #enqueue(List, String)}, so
+   * queue implementations that do not persist sizes (in-memory test fakes) keep working unchanged.
+   *
+   * @param entries paths plus their sizes ({@link #UNKNOWN_SIZE_BYTES} where unknown)
+   * @param collection collection tag for the indexed documents, or null for default
+   * @return number of jobs accepted
+   */
+  default int enqueueEntries(List<EnqueueEntry> entries, String collection) {
+    return enqueue(EnqueueEntry.paths(entries), collection);
+  }
+
+  /**
+   * Enqueues sized entries tagged with the directory scan that admitted them (tempdoc 812 D2).
+   *
+   * <p>The scan id is the same {@code ScanRootProgress.scan_id} the Head reads to subscribe to live
+   * scan progress, so a job row remembers which scan produced it and the Head can roll the
+   * per-document terminal outcomes up into ONE durable scan-completion audit record.
+   *
+   * <p>It rides THIS signature — the single jobs-table write path (813 Slice B) — rather than a
+   * parallel enqueue overload, for the same reason the size does: the insert is
+   * {@code INSERT OR REPLACE}, so any column not supplied by the enqueue call is reset on every
+   * re-enqueue of the same path. One call states both facts, or one of them is silently lost.
+   *
+   * <p>Default implementation drops the scan id and delegates to {@link #enqueueEntries(List,
+   * String)} — NOT straight to {@link #enqueue(List, String)}: implementations that record sized
+   * entries by overriding the two-arg form (the size-asserting test queues) must still see the
+   * entries when a scan enqueues through this overload. Queues without a {@code scan_id} column
+   * keep the pre-812 behaviour; their rows are keyless and fall back to adjacency grouping.
+   *
+   * @param entries paths plus their sizes ({@link #UNKNOWN_SIZE_BYTES} where unknown)
+   * @param collection collection tag for the indexed documents, or null for default
+   * @param scanId the enqueueing scan's id, or null when not part of a directory scan
+   * @return number of jobs accepted
+   */
+  default int enqueueEntries(List<EnqueueEntry> entries, String collection, String scanId) {
+    return enqueueEntries(entries, collection);
+  }
+
+  /** Enqueues sized entries with no collection tag. */
+  default int enqueueEntries(List<EnqueueEntry> entries) {
+    return enqueueEntries(entries, null);
+  }
+
+  /**
+   * Returns the aggregate byte weight of remaining (PENDING + PROCESSING) work.
+   *
+   * <p>Default is {@link PendingBytes#EMPTY} for implementations that do not record sizes.
+   */
+  default PendingBytes pendingBytes() {
+    return PendingBytes.EMPTY;
+  }
 
   /**
    * Polls for pending jobs and marks them as PROCESSING.
@@ -511,6 +651,16 @@ public interface JobQueue extends Closeable {
    */
   default QueueDbHealthSnapshot queueDbHealthSnapshot() {
     return null;
+  }
+
+  /**
+   * Flush durable queue state before an application upgrade handoff.
+   *
+   * <p>Implementations that do not use a write-ahead log may return {@code true}. A false result
+   * blocks the handoff.
+   */
+  default boolean checkpointForUpgrade() {
+    return true;
   }
 
   /**

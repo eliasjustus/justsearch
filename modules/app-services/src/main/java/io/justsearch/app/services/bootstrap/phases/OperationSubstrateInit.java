@@ -80,6 +80,8 @@ public final class OperationSubstrateInit {
           authorizationOutcomeStore,
       io.justsearch.app.observability.ledger.ActionLedgerChangeRegistry
           actionLedgerChangeRegistry,
+      // Tempdoc 812 D2: the scan-rollup aggregator over that log (one durable audit row per scan).
+      io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedger,
       io.justsearch.app.services.registry.executor.GlobalHardStop globalHardStop,
       // Tempdoc 550 thesis III: the ONE intent-gate evaluator, shared with the Preview endpoint.
       io.justsearch.app.services.intent.IntentGateEvaluator intentGateEvaluator,
@@ -160,8 +162,25 @@ public final class OperationSubstrateInit {
     // Tempdoc 550 G3/G4/G5: the unified live change-stream. The three federated sources
     // (operation history, navigation, gate firings) fan in here; the controller's /stream
     // endpoint subscribes once so the receipt/timeline/undo/trust-audit are live read-views.
+    // Tempdoc 812 D1: the durable audit journal for the actor kinds (grant / gate / operation),
+    // written synchronously beside the ring at this one fan-in point. Mode-aware exactly like
+    // DurableGrantStore above — READ_WRITE persists under <dataDir>/audit, IN_MEMORY (prod/CI
+    // isolation, tests) creates no files at all. The ledger's READ path then serves ring ∪
+    // journal-tail, so Activity is not empty after a restart.
+    io.justsearch.app.observability.ledger.ActionEventJournal actionEventJournal =
+        io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode.resolveMode()
+                .isWritable()
+            ? io.justsearch.app.observability.ledger.ActionEventJournal.persistent()
+            : io.justsearch.app.observability.ledger.ActionEventJournal.disabled();
     io.justsearch.app.observability.ledger.ActionLedgerChangeRegistry actionLedgerChangeRegistry =
-        new io.justsearch.app.observability.ledger.ActionLedgerChangeRegistry();
+        new io.justsearch.app.observability.ledger.ActionLedgerChangeRegistry(actionEventJournal);
+    // Tempdoc 812 D2: the scan-rollup aggregator listens on that one log for terminal per-document
+    // indexing outcomes and emits ONE durable `operation`-kind scan-completion row per directory
+    // scan — which the D1 journal above then persists for free, because a scan rollup IS an
+    // operation-kind event. Owned here (beside the log it projects) rather than on the API
+    // composition root, so its quiescence sweeper's lifetime is the substrate's.
+    io.justsearch.app.observability.ledger.ScanRollupLedger scanRollupLedger =
+        new io.justsearch.app.observability.ledger.ScanRollupLedger(actionLedgerChangeRegistry);
     // Tempdoc 550 E2: process-wide emergency stop the lattice consults (default released).
     io.justsearch.app.services.registry.executor.GlobalHardStop globalHardStop =
         new io.justsearch.app.services.registry.executor.GlobalHardStop();
@@ -294,6 +313,7 @@ public final class OperationSubstrateInit {
         healthRecoveryProjector,
         authorizationOutcomeStore,
         actionLedgerChangeRegistry,
+        scanRollupLedger,
         globalHardStop,
         intentGateEvaluator,
         durableGrantStore,

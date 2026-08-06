@@ -1008,6 +1008,33 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return rootLifecycleOps.deleteDocById(docId);
     }
 
+    /**
+     * Tempdoc 811 (C-2a) — collection-keyed removal route. Gating (which collections are deletable)
+     * belongs to the caller via {@code IngestCollectionPolicy.isDeletable}; this is the transport.
+     */
+    @Override
+    public int deleteDocsByCollection(String collection) {
+        if (collection == null || collection.isBlank()) {
+            return -1;
+        }
+        io.justsearch.ipc.DeleteByCollectionRequest request =
+            io.justsearch.ipc.DeleteByCollectionRequest.newBuilder()
+                .setCollection(collection)
+                .build();
+        io.justsearch.ipc.DeleteByCollectionResponse response =
+            executeIngestRpc(
+                "deleteByCollection",
+                RpcDeadlineCategory.STANDARD,
+                stub -> stub.deleteByCollection(request));
+        if (response == null) {
+            return -1;
+        }
+        if (!response.getError().isEmpty()) {
+            log.warn("deleteByCollection RPC returned error for {}: {}", collection, response.getError());
+        }
+        return response.getDeletedDocs();
+    }
+
     @Override
     public int removeWatchedPath(Path path) {
         return rootLifecycleOps.removeWatchedPath(path);
@@ -1085,6 +1112,63 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
         return migrationOps.runIndexGc(keepLatest, pruneMarkedOnly);
     }
 
+    /**
+     * Projects the Worker's gRPC quiescence message onto the app-api contract record.
+     *
+     * <p>The mapping lives here, at the single gRPC boundary, so the generated proto type never
+     * reaches {@code ui.api} — see {@code UiApiGuardrailsTest} and {@link
+     * io.justsearch.app.api.WorkerQuiescenceSnapshot}.
+     */
+    private static io.justsearch.app.api.WorkerQuiescenceSnapshot toSnapshot(
+            io.justsearch.ipc.UpgradeQuiescenceResponse response) {
+        if (response == null) {
+            return null;
+        }
+        return new io.justsearch.app.api.WorkerQuiescenceSnapshot(
+                response.getPreparationId(),
+                response.getReady(),
+                response.getLoopQuiesced(),
+                response.getQueueCheckpointed(),
+                response.getMigrationState(),
+                response.getBlockersList());
+    }
+
+    public io.justsearch.app.api.WorkerQuiescenceSnapshot prepareUpgrade(String preparationId) {
+        var request =
+                io.justsearch.ipc.UpgradeQuiescenceRequest.newBuilder()
+                        .setPreparationId(preparationId)
+                        .build();
+        return toSnapshot(
+                executeIngestRpc(
+                        "prepareUpgrade",
+                        RpcDeadlineCategory.STANDARD,
+                        stub -> stub.prepareUpgrade(request)));
+    }
+
+    public io.justsearch.app.api.WorkerQuiescenceSnapshot upgradeStatus(String preparationId) {
+        var request =
+                io.justsearch.ipc.UpgradeQuiescenceRequest.newBuilder()
+                        .setPreparationId(preparationId)
+                        .build();
+        return toSnapshot(
+                executeIngestRpc(
+                        "upgradeStatus",
+                        RpcDeadlineCategory.STANDARD,
+                        stub -> stub.upgradeStatus(request)));
+    }
+
+    public io.justsearch.app.api.WorkerQuiescenceSnapshot cancelUpgrade(String preparationId) {
+        var request =
+                io.justsearch.ipc.UpgradeQuiescenceRequest.newBuilder()
+                        .setPreparationId(preparationId)
+                        .build();
+        return toSnapshot(
+                executeIngestRpc(
+                        "cancelUpgrade",
+                        RpcDeadlineCategory.STANDARD,
+                        stub -> stub.cancelUpgrade(request)));
+    }
+
     @Override
     public List<IndexingService.FailedJobInfo> listFailedJobs(int limit) {
         ListFailedJobsRequest req = ListFailedJobsRequest.newBuilder()
@@ -1134,7 +1218,19 @@ public final class RemoteKnowledgeClient implements Closeable, SearchPort, Index
                 stub -> stub.countJobsByPathPrefix(req));
         io.justsearch.ipc.IndexingJobCounts c = resp.getCounts();
         long inFlight = c.getPendingCount() + c.getProcessingCount();
-        return new IndexingService.JobCounts(inFlight, c.getFailedCount());
+        io.justsearch.ipc.RootCoverageCounts cov = resp.getCoverage();
+        return new IndexingService.JobCounts(
+                inFlight,
+                c.getFailedCount(),
+                new IndexingService.RootCoverage(
+                        cov.getParentDocsTotalEmbedding(),
+                        cov.getParentDocsSettledEmbedding(),
+                        cov.getParentDocsTotalSplade(),
+                        cov.getParentDocsSettledSplade(),
+                        cov.getParentDocsTotalNer(),
+                        cov.getParentDocsSettledNer(),
+                        cov.getChunkDocsTotal(),
+                        cov.getChunkDocsSettled()));
     }
 
     @Override

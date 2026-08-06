@@ -63,3 +63,68 @@ class TestFixtureBodies:
     def test_walkthrough_seed_dismisses_welcome(self):
         assert "welcome" in ui_fixtures.WALKTHROUGH_SEED
         assert "dismissed: true" in ui_fixtures.WALKTHROUGH_SEED
+
+
+class TestAgentRunVariant:
+    """Tempdoc 814 §D8 — the variant that makes a COMPLETED agent run capture-reachable.
+
+    Two halves, deliberately split by provider (§D8.1/§D8.2): the thread RECORD carries the
+    grounding + the DONE lifecycle, the SSE body carries budget/context. Keeping one
+    provider per fact is what makes each capture assertion falsifiable on its own.
+    """
+
+    def _thread(self, variant):
+        return json.loads(ui_fixtures.fixture_body(
+            f"http://localhost:5174/api/thread/{ui_fixtures._FIXTURE_CONVERSATION_ID}", variant))
+
+    def test_the_record_carries_sources_on_the_last_assistant_message(self):
+        body = self._thread("agent-run")
+        # hydrateAnswerEvidenceFromRecord scans BACKWARD for the newest ASSISTANT_MESSAGE
+        # with a non-empty attributes.sources, so the LAST one has to carry it.
+        assistants = [e for e in body["events"] if e["kind"] == "ASSISTANT_MESSAGE"]
+        assert assistants[-1]["attributes"]["sources"], "the newest answer must carry grounding"
+        assert len(assistants[-1]["attributes"]["sources"]) >= 2
+
+    def test_every_source_has_the_full_AgentSource_shape(self):
+        required = {"parentDocId", "chunkIndex", "path", "title", "excerpt",
+                    "startLine", "endLine", "headingText"}
+        for s in self._thread("agent-run")["events"][-1]["attributes"]["sources"]:
+            assert required <= set(s), f"missing {required - set(s)}"
+
+    def test_the_record_carries_a_DONE_lifecycle(self):
+        lifecycles = self._thread("agent-run")["lifecycles"]
+        assert len(lifecycles) == 1
+        lc = lifecycles[0]
+        assert lc["state"] == "DONE"
+        # The lifecycleSchema (unifiedThreadClient.ts) requires all of these.
+        assert {"sessionId", "state", "actor", "turns", "iterations", "toolCalls",
+                "actors", "budget"} <= set(lc)
+        assert {"initial", "consumed", "remaining", "overBudget"} <= set(lc["budget"])
+
+    def test_the_record_and_the_stream_agree_about_the_same_run(self):
+        from jseval import agent_stream_fixture as asf
+
+        lc = self._thread("agent-run")["lifecycles"][0]
+        started = dict(asf.DONE_RUN)["session_started"]
+        done = dict(asf.DONE_RUN)["done"]
+        budget = dict(asf.DONE_RUN)["budget_update"]
+        assert lc["sessionId"] == started["sessionId"]
+        assert lc["iterations"] == done["iterationsUsed"]
+        assert lc["toolCalls"] == done["toolCallsExecuted"]
+        assert lc["budget"]["consumed"] == budget["totalTokensConsumed"]
+        assert lc["budget"]["remaining"] == budget["tokensRemaining"]
+        assert lc["budget"]["initial"] == budget["totalTokensConsumed"] + budget["tokensRemaining"]
+
+    def test_the_degraded_thread_variant_is_unchanged(self):
+        # `chat-spine-multi` reads this record; §D8 must not move it.
+        body = self._thread("degraded-thread")
+        assert body["lifecycles"] == []
+        assert all(e["attributes"] == {} for e in body["events"])
+
+    def test_agent_availability_is_reported_only_for_this_variant(self):
+        url = "http://localhost:5174/api/chat/agent/tools"
+        assert json.loads(ui_fixtures.fixture_body(url, "agent-run"))["available"] is True
+        # Every other variant leaves it unmapped — an agent run must not become reachable
+        # from a step that does not model one.
+        for other in ("default", "degraded", "degraded-thread", "degraded-detailed"):
+            assert json.loads(ui_fixtures.fixture_body(url, other)) == {}

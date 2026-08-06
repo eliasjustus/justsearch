@@ -63,12 +63,17 @@ describe('computeStability (595 §4.1)', () => {
     ).toEqual({ kind: 'provisional', cause: 'rebuilding' });
   });
 
-  it('generalizes ConnectionPhase: connecting→initial-load, stale→channel-stale', () => {
+  it('generalizes ConnectionPhase: connecting→initial-load, stale(no contact)→channel-stale', () => {
     expect(computeStability({ ...settledInput, phase: 'connecting' })).toEqual({
       kind: 'provisional',
       cause: 'initial-load',
     });
-    expect(computeStability({ ...settledInput, phase: 'stale' })).toEqual({
+    // Review 2026-08 (FE review-fix bundle, item 2) — RE-ENCODED. This used to omit
+    // `reachableViaContact` entirely and pin `undefined ⇒ channel-stale`, which is what made the two
+    // consumption sites disagree about the same value (`=== false` at the lost-contact guard, truthy
+    // here). Lost contact is now a claim only an explicit `false` can license, so the assertion states
+    // the contact fact it depends on instead of leaning on the UNKNOWN case.
+    expect(computeStability({ ...settledInput, phase: 'stale', reachableViaContact: false })).toEqual({
       kind: 'provisional',
       cause: 'channel-stale',
     });
@@ -110,6 +115,133 @@ describe('computeStability (595 §4.1)', () => {
         indexState: 'UNAVAILABLE',
       }),
     ).toEqual({ kind: 'provisional', cause: 'worker-restart' });
+  });
+});
+
+/**
+ * Review 2026-08 (FE review-fix bundle, item 2) — `reachableViaContact` is OPTIONAL, so it has three
+ * states, and the two consumption sites used to read the third one oppositely: the lost-contact guard
+ * tests `=== false` while the stale-phase branch tested it truthily, so `undefined` (an older snapshot
+ * shape, or the field not populated yet) was UNKNOWN at one site and "contact lost" at the other.
+ * The unified rule: UNKNOWN never licenses a positive claim about contact IN EITHER DIRECTION — the
+ * phase's own default stands. Asserting contact LOSS needs an explicit `false` (computeStability);
+ * asserting contact ALIVE needs an explicit `true` (computeVerdict's disconnected arm).
+ */
+describe('reachableViaContact is three-state: true / false / undefined(UNKNOWN)', () => {
+  it('computeStability(stale): true ⇒ updating, false ⇒ channel-stale, undefined ⇒ updating', () => {
+    const at = (reachableViaContact?: boolean) =>
+      computeStability({ ...settledInput, phase: 'stale', reachableViaContact });
+    expect(at(true)).toEqual({ kind: 'provisional', cause: 'updating' });
+    expect(at(false)).toEqual({ kind: 'provisional', cause: 'channel-stale' });
+    // UNKNOWN is not evidence of a lost channel — the poll data is merely behind.
+    expect(at(undefined)).toEqual({ kind: 'provisional', cause: 'updating' });
+  });
+
+  it('computeStability: UNKNOWN does not fire the lost-contact override either — retained causes stand', () => {
+    // The override at the top of computeStability must not steal a retained cause on UNKNOWN: with no
+    // explicit `false` there is nothing to say contact was lost, so `UNAVAILABLE` still reads
+    // worker-restart (this is what the `=== false` guard already did — pinned so it stays symmetric).
+    expect(
+      computeStability({ ...settledInput, phase: 'stale', indexState: 'UNAVAILABLE' }),
+    ).toEqual({ kind: 'provisional', cause: 'worker-restart' });
+    expect(
+      computeStability({
+        ...settledInput,
+        phase: 'stale',
+        reachableViaContact: false,
+        indexState: 'UNAVAILABLE',
+      }),
+    ).toEqual({ kind: 'provisional', cause: 'channel-stale' });
+  });
+
+  it('computeVerdict(disconnected): true ⇒ connecting; false and undefined ⇒ unreachable', () => {
+    const at = (reachableViaContact?: boolean) =>
+      computeVerdict({
+        phase: 'disconnected',
+        stability: { kind: 'settled' },
+        readiness: UNKNOWN,
+        reachableViaContact,
+      }).kind;
+    expect(at(true)).toBe('connecting');
+    expect(at(false)).toBe('unreachable');
+    // The SAME rule, pointing the other way: downgrading the unreachable alarm to a calm
+    // "Connecting…" is a positive claim that contact is alive, so UNKNOWN must not license it.
+    expect(at(undefined)).toBe('unreachable');
+  });
+});
+
+// Tempdoc 807 §E.4 — the residual that document recorded and deliberately deferred: the VERDICT
+// itself was still pinned by retained snapshot fields, so after contact was lost the status LINE
+// projected a retained cause present-tense (probed: retained `UNAVAILABLE` + 41 s aged contact ⇒
+// `worker-restart` / "Restarting…") while every liveness signal correctly read stale. These
+// assertions SUPERSEDE the pre-807-§E.4 precedence (a retained cause winning over lost contact);
+// the live-contact cases above are unchanged and pin that this is a lost-contact rule, not a
+// retained-cause deletion.
+describe('807 §E.4: lost contact dominates every retained-snapshot cause', () => {
+  it('retained UNAVAILABLE + no contact ⇒ channel-stale, not the retained "Restarting…" cause', () => {
+    expect(
+      computeStability({
+        ...settledInput,
+        phase: 'stale',
+        reachableViaContact: false,
+        indexState: 'UNAVAILABLE',
+      }),
+    ).toEqual({ kind: 'provisional', cause: 'channel-stale' });
+  });
+
+  it('all six retained-cause branches yield channel-stale once contact is lost', () => {
+    const lost = { phase: 'stale' as const, reachableViaContact: false };
+    const retained: ReadonlyArray<Partial<StabilityInput>> = [
+      { indexState: 'UNAVAILABLE' },
+      { migrationState: 'SWITCHING' },
+      { migrationState: 'MIGRATING' },
+      { buildingGenerationId: 'g2', activeGenerationId: 'g1' },
+      { servingSearchGenerationId: 'g1', servingIngestGenerationId: 'g2' },
+      { catchingUp: true },
+    ];
+    for (const r of retained) {
+      expect(computeStability({ ...settledInput, ...lost, ...r }), JSON.stringify(r)).toEqual({
+        kind: 'provisional',
+        cause: 'channel-stale',
+      });
+    }
+  });
+
+  it('live contact leaves every retained cause exactly as it was (this is a contact rule)', () => {
+    expect(
+      computeStability({ ...settledInput, reachableViaContact: true, migrationState: 'MIGRATING' }),
+    ).toEqual({ kind: 'provisional', cause: 'rebuilding' });
+    expect(computeStability({ ...settledInput, reachableViaContact: true, catchingUp: true })).toEqual({
+      kind: 'provisional',
+      cause: 'catching-up',
+    });
+    expect(computeStability({ ...settledInput, reachableViaContact: true })).toEqual({ kind: 'settled' });
+  });
+
+  it('the boot grace is untouched: connecting + no contact yet stays initial-load', () => {
+    // Scoped to the POLL-STALE phase deliberately: `connecting` is the first-poll window (no poll has
+    // ever succeeded), so there is no retained snapshot for a cause to be projected FROM, and
+    // `disconnected` is already dominated by `computeVerdict`'s own `unreachable` arm.
+    expect(
+      computeStability({ ...settledInput, phase: 'connecting', reachableViaContact: false }),
+    ).toEqual({ kind: 'provisional', cause: 'initial-load' });
+  });
+
+  it('the lost-contact verdict words itself "Reconnecting…", never a retained cause', () => {
+    const stability = computeStability({
+      ...settledInput,
+      phase: 'stale',
+      reachableViaContact: false,
+      indexState: 'UNAVAILABLE',
+    });
+    const v = computeVerdict({
+      phase: 'stale',
+      stability,
+      readiness: known(readyReadiness),
+      reachableViaContact: false,
+    });
+    expect(v).toEqual({ kind: 'transitioning', severity: 'warn', reasons: ['channel-stale'] });
+    expect(verdictHeadline(v)).toBe('Reconnecting…');
   });
 });
 

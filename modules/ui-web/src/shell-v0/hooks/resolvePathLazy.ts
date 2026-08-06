@@ -101,25 +101,45 @@ export async function resolvePathLazy(
     return null;
   }
 
+  // Tempdoc 804 §B9 (round-10 F8): only a DEFINITIVE answer is cached. A failed invocation (the
+  // round's 401 on the mutating operations route, or any transport hiccup) used to be memoized as a
+  // permanent `null`, so every folder row rendered its hash for the rest of the session even after
+  // the cause cleared — a transient failure became a sticky one. An error now leaves the cache
+  // empty so the next caller retries; a resolver that answers `found: false` still caches null.
   const promise: Promise<string | null> = client
     .invoke(resolverId, { args: { [argName]: primaryKey } })
     .then((success: OperationInvocationSuccess) => {
       const data = success.structuredData;
-      if (!data || data['found'] !== true) return null;
-      const path = data['path'];
-      return typeof path === 'string' ? path : null;
+      const path = data && data['found'] === true ? data['path'] : null;
+      const resolved = typeof path === 'string' ? path : null;
+      cache.set(cacheKey, resolved); // definitive: the resolver answered
+      return resolved;
     })
-    .catch(() => null)
+    .catch(() => null) // NOT cached — retryable
     .finally(() => {
       inflight.delete(cacheKey);
-    })
-    .then((result: string | null) => {
-      cache.set(cacheKey, result);
-      return result;
     });
 
   inflight.set(cacheKey, promise);
   return promise;
+}
+
+/**
+ * "C:\a\b\report.pdf" → "b/report.pdf" — a resolved path at ROW altitude: the file plus its parent
+ * folder for context, never the full absolute path. Lives beside the resolver because every caller
+ * that resolves a hash for display shares this reason to change (tempdoc 812 D4 gave it its second
+ * consumer: the Activity ledger's per-document rows, alongside the Tasks tray).
+ */
+export function friendlyPathName(path: string): string {
+  const parts = path
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .split('/')
+    .filter(Boolean);
+  if (parts.length === 0) return path;
+  const file = parts[parts.length - 1]!;
+  const parent = parts.length >= 2 ? parts[parts.length - 2] : '';
+  return parent ? `${parent}/${file}` : file;
 }
 
 /** Test-only: clear all cached resolutions. */

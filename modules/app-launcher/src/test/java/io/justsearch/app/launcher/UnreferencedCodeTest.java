@@ -62,6 +62,9 @@ class UnreferencedCodeTest {
       Map.ofEntries(
           // Test-only callers (ArchUnit excludes test sources)
           Map.entry("RetryDecision.action", "AgentRetryPolicyTest"),
+          Map.entry("Builder.operationLeaseService",
+              "UpgradeLifecycleContractTest (LocalApiServer.Builder op-lease test seam; production "
+                  + "resolves the service from HeadAssembly.serviceOut(), tempdoc 617)"),
           Map.entry("LauncherEnvironment.HeadAssembly", "LauncherEnvironmentCloseTest"),
           Map.entry("LauncherEnvironment.configManager", "LauncherEnvironmentCloseTest"),
           Map.entry("LauncherEnvironment.telemetry", "LauncherEnvironmentCloseTest"),

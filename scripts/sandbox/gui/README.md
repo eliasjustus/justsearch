@@ -14,17 +14,50 @@ alongside `collect-evidence.ps1`.
 | Script | Purpose |
 |---|---|
 | `JustSearchGui.psm1` | Shared module — P/Invoke boilerplate, window connect/click/capture, and the assert-then-act primitive. The other scripts are thin wrappers over this; import it directly if you're scripting something ad hoc (`Import-Module (Join-Path $PSScriptRoot "JustSearchGui.psm1") -Force`). |
-| `snap.ps1` | Full-desktop capture (`CopyFromScreen`). Use for the Step-0 capability probe and whole-screen evidence. |
+| `snap.ps1` | Full-desktop capture (`CopyFromScreen`). Use for the Step-0 capability probe and whole-screen evidence. Prints the PHYSICAL-pixel dimensions actually written (read back from the saved PNG), not `Screen.PrimaryScreen.Bounds`, which can be DPI-scaled and mismatch what got saved. |
 | `win-capture.ps1` | Locate + focus + capture ONE window by process name (`GetWindowRect` + `SetForegroundWindow`). Optional `-Keys` sends keystrokes before capturing. |
-| `click.ps1` | Click at window-relative coordinates in a target window, then capture. Fails closed (exits 1, no click sent) if the window did not actually take foreground focus. |
-| `crop.ps1` | Crop + magnify a region of an existing PNG (for illegible small text). |
+| `click.ps1` | Click at window-relative coordinates in a target window, then capture. Fails closed (exits 1, no click sent) if the window did not actually take foreground focus; `NO WINDOW` failures echo the actual `-ProcName` value searched for, not a hardcoded default. |
+| `crop.ps1` | Crop + magnify a region of an existing PNG (for illegible small text). Parameters are `-X -Y -W -H`, not `-Width`/`-Height` -- passing the wrong flag names fails loud instead of silently cropping the 100x100 default. |
 | `gui-approve.ps1` | **EXAMPLE**, not a generic tool — see below. |
+
+## Parameter-signature quick reference (round 12: `-Path` silently wrote ZERO PNGs for 10 minutes)
+
+Each capture/connect function in `JustSearchGui.psm1` has a DIFFERENT
+parameter name for "where does this go" / "what am I connecting to" -- a
+round guessed wrong once and lost 10 minutes to a `try/catch` that swallowed
+the resulting error while reporting nothing:
+
+| Function | Required parameters | Notes |
+|---|---|---|
+| `Connect-App` | `-ProcName` (default `"JustSearch"`), `-FocusDelayMs` (default `700`), `-MaxFocusAttempts` (default `4`) | Produces the connection object (`$conn` in every wrapper script's examples) that every other function below needs -- `$conn.Handle`, `$conn.Focused`, `$conn.Process`, `$conn.Foreground`. The README used to show `$conn.Handle` without ever naming this function. |
+| `Save-DesktopShot` | `-Out` | Full-desktop capture. **NOT `-Path`.** |
+| `Save-AppShot` | `-Handle`, `-Out` | Captures ONE window by hwnd (pass `$conn.Handle`). **NOT `-Path`, and there is NO `-ProcName`** on this function -- unlike `win-capture.ps1`, which takes `-ProcName` and calls `Connect-App` + `Save-AppShot` internally. |
+| `Save-AppShotRegion` | `-InPath`, `-OutPath`, `-X -Y -W -H`, `-Scale` (default `3`) | Crop + magnify an EXISTING PNG. Different shape from the two above: `-InPath`/`-OutPath`, not `-Out`. |
+
+Passing `-Path` to `Save-DesktopShot`/`Save-AppShot`/`Save-AppShotRegion` is a
+silent no-op from PowerShell's perspective in a script that also swallows
+the resulting parameter-binding error (e.g. a driver wrapping the call in
+`try/catch`) -- the function throws "CAPTURE FAILED" or a binding error, the
+`catch` eats it, and nothing is written with no visible failure. Always
+verify with `Test-Path` on the actual `-Out`/`-OutPath` value after a
+capture call, not just a non-throwing script exit.
 
 The observe -> locate -> act -> observe loop: capture a PNG with `snap.ps1`
 or `win-capture.ps1`, `Read` it to see the UI, read the target's pixel
 coordinates off the image, act with `click.ps1` / `SendKeys`, then
 re-capture to confirm the action registered. This is functionally what a
 computer-use tool does, assembled from parts native to Windows.
+
+**A capture that fails exits non-zero.** Every capture entry point
+(`Save-DesktopShot` / `Save-AppShot` / `Save-AppShotRegion`) creates the
+output's parent directory if missing, and then THROWS if the PNG is not on
+disk afterwards -- so `snap.ps1` / `win-capture.ps1` / `click.ps1` exit
+non-zero instead of printing a `saved:` line for a file that was never
+written (sandbox round 10, finding H1: a whole round's screenshot evidence
+was reported as captured and did not exist). Judge a capture by the process
+exit code and `Test-Path`, never by the `saved:` line -- it is `Write-Host`
+output, invisible to a caller that redirects stdout. Regression test:
+`scripts/sandbox/test_gui_capture_failure.py`.
 
 **Crop before you read.** A full-window screenshot easily runs to hundreds
 of KB and burns a large chunk of an agent's context just to check one small
@@ -83,7 +116,13 @@ tested-negative list below) — every click is a raw pixel coordinate.
 Mitigations:
 
 - **Fix the window size** at the start of a round for determinism across
-  screenshots.
+  screenshots, via `Set-AppWindowRect` in `JustSearchGui.psm1`
+  (`Set-AppWindowRect -Handle $conn.Handle -X 0 -Y 0 -Width 1600 -Height 900`
+  -- physical pixels, no DPI conversion). It restores the window before
+  calling `MoveWindow` and reads the rect back afterward, throwing if the
+  result does not match what was requested -- round 11 had no primitive for
+  this at all and its first hand-written attempt corrupted the window's
+  restored geometry to 1520x32767 (tempdoc 805 item 6).
 - **Re-locate from a fresh screenshot every time**, not from memory or a
   prior round's coordinates. A coordinate that worked yesterday may not work
   today (theme, DPI, window position, dialog content length can all shift

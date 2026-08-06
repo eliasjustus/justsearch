@@ -515,3 +515,80 @@ describe('projectBackend — 612 routine curation', () => {
     expect(row.isRoutine).toBe(true);
   });
 });
+
+/**
+ * Tempdoc 812 D2/D4 — the scan rollup is the DURABLE record of an indexing run; the per-document
+ * index rows are the routine detail behind it, keyed to their scan.
+ */
+describe('scan rollup + index tiering (tempdoc 812)', () => {
+  const rollup = (over: Partial<BackendLedgerEntry> = {}) =>
+    projectBackend(
+      backendEntry({
+        kind: 'operation',
+        operationId: 'core.scan-root',
+        originator: 'system',
+        outcome: 'COMPLETED',
+        scanId: 'scan-1',
+        collection: 'scifact',
+        docsDone: 5184,
+        docsFailed: 0,
+        docsAdmitted: 5184,
+        durationMs: 372_000,
+        ...over,
+      }),
+    );
+
+  it('projects one legible summary row and never routes it routine', () => {
+    const row = rollup();
+    expect(row.isScanRollup).toBe(true);
+    expect(row.scanId).toBe('scan-1');
+    expect(row.label).toBe('Indexed 5184 documents · scifact · 6m 12s');
+    expect(row.isRoutine).toBeUndefined(); // the audit record is never de-flooded
+  });
+
+  it('states failures and incompleteness rather than rounding them away', () => {
+    expect(rollup({ docsFailed: 3 }).label).toContain('3 failed');
+    expect(rollup({ outcome: 'PARTIAL', docsDone: 12 }).label).toContain('(incomplete)');
+    expect(rollup({ outcome: 'STARTED' }).label).toBe('Indexing · scifact…');
+    expect(rollup({ durationMs: 45_000 }).label).toContain('45s');
+    expect(rollup({ durationMs: 3_780_000 }).label).toContain('1h 03m');
+  });
+
+  it('a per-document index row is routine and carries its scan key as the group key', () => {
+    const row = projectBackend(
+      backendEntry({
+        kind: 'index',
+        originator: 'system',
+        collection: 'scifact',
+        state: 'DONE',
+        pathHash: 'f7e852aa',
+        scanId: 'scan-1',
+      }),
+    );
+    expect(row.isRoutine).toBe(true);
+    expect(row.groupKey).toBe('scan-1'); // exact grouping, not render-time adjacency
+    expect(row.scanId).toBe('scan-1');
+    expect(row.pathHash).toBe('f7e852aa');
+    expect(row.collection).toBe('scifact');
+  });
+
+  it('a keyless index row falls back to the collection group key (pre-812 / single-file ingest)', () => {
+    const row = projectBackend(
+      backendEntry({ kind: 'index', originator: 'system', collection: 'default', state: 'DONE', pathHash: 'f7e852aa' }),
+    );
+    expect(row.groupKey).toBe('default');
+    expect(row.scanId).toBeUndefined();
+    expect(row.isRoutine).toBe(true);
+  });
+
+  it('grant and gate rows stay foreground on every originator (the tier must not hide them)', () => {
+    for (const originator of ['user', 'agent', 'system'] as const) {
+      expect(
+        projectBackend(backendEntry({ kind: 'grant', originator, action: 'ISSUED', grantId: 'g', subject: 'core.search-index' })).isRoutine,
+      ).toBeUndefined();
+      expect(
+        projectBackend(backendEntry({ kind: 'gate', originator, operationId: 'core.reindex', disposition: 'GATED', gateBehavior: 'TYPED_CONFIRM' })).isRoutine,
+      ).toBeUndefined();
+    }
+  });
+});

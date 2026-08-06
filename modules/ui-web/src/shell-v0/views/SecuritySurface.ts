@@ -277,7 +277,8 @@ export class SecuritySurface extends JfElement {
     this.encBusy = true;
     try {
       // POST (not GET): the export streams the encrypted vault, and only POST carries the session token
-      // (629 Fix 1). doFetch injects the token via host_.data.fetch.
+      // (629 Fix 1). doFetch reaches host_.data.fetch, whose performFetch routes every non-GET through
+      // shell-v0's authorizedFetch seam, which attaches the token (804 B3).
       const res = await this.doFetch('/api/conversations/encryption/export', { method: 'POST' });
       if (!res.ok) {
         this.encError = 'Could not export your backup.';

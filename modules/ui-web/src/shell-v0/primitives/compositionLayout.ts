@@ -30,10 +30,76 @@ export interface ZoneDecl {
 export interface ComposeOpts {
   /** The grid container's CSS class (e.g. `'.conversation-zone'`). */
   readonly container: string;
+  /**
+   * The `container-name` of the SURFACE box the breakpoint is evaluated against — an ancestor of
+   * {@link container} that declares `container-type: inline-size` (a box cannot query itself).
+   */
+  readonly containerName: string;
   /** The wide breakpoint, e.g. `'64rem'`. */
   readonly breakpoint: string;
   /** The inter-zone gap (a token reference or a literal). */
   readonly gap: string;
+}
+
+/**
+ * Tempdoc 814 §D6 — THE single BLOCK-axis breakpoint authority.
+ *
+ * The inline axis is owned above ({@link composeGridStyles} composes the one `@container` query the
+ * surface's grid frame commits on). Height had no owner at all — no height-based `@media`/`@container`
+ * query existed anywhere in the chat-surface layout — which is how chrome accreted to ~60% of a
+ * ~790px window with every band individually justified. This constant is that owner: every block-axis
+ * yield (the Detailed-banner gate, the document-pane floor) reads THIS number, so "what counts as a
+ * short window" is one decision, not one per band.
+ *
+ * VIEWPORT `@media`, not `@container` (§B.12): the surface box declares `container-type: inline-size`,
+ * so it cannot query its own block size, and `container-type: size` collapses a height-indeterminate
+ * box — strictly riskier here for no benefit, because the surface fills the viewport minus fixed Shell
+ * chrome, making the viewport height a faithful proxy.
+ */
+export const SHORT_VIEWPORT_MAX_HEIGHT_PX = 820;
+
+/** The block-axis breakpoint as a media condition — the JS half (`matchMedia`) of the same decision. */
+export const SHORT_VIEWPORT_QUERY = `(max-height: ${SHORT_VIEWPORT_MAX_HEIGHT_PX}px)`;
+
+/** The `@media` prelude, for splicing the block-axis breakpoint into a surface stylesheet's `css`. */
+export const shortViewportMedia: CSSResult = unsafeCSS(`@media ${SHORT_VIEWPORT_QUERY}`);
+
+type ShortViewportListener = (short: boolean) => void;
+const shortViewportListeners = new Set<ShortViewportListener>();
+let shortViewportMql: MediaQueryList | null = null;
+
+/**
+ * Is the window below the block-axis breakpoint? FALSE when `matchMedia` is unavailable (SSR, unit
+ * tests): the roomy branch is the safe default — an unknown viewport keeps every band's full form
+ * rather than silently collapsing chrome the user asked for. Mirrors `isWideLayout`'s own
+ * unavailable-means-roomy fallback in `state/responsiveState.ts`.
+ */
+export function isShortViewport(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia(SHORT_VIEWPORT_QUERY).matches;
+}
+
+/**
+ * Subscribe to block-axis breakpoint crossings. Fires once immediately with the current value (the
+ * `subscribeWide` contract), so a consumer needs no separate initial read.
+ */
+export function subscribeShortViewport(listener: ShortViewportListener): () => void {
+  if (
+    shortViewportMql === null &&
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function'
+  ) {
+    shortViewportMql = window.matchMedia(SHORT_VIEWPORT_QUERY);
+    shortViewportMql.addEventListener('change', () => {
+      const short = isShortViewport();
+      for (const l of shortViewportListeners) l(short);
+    });
+  }
+  shortViewportListeners.add(listener);
+  listener(isShortViewport());
+  return () => {
+    shortViewportListeners.delete(listener);
+  };
 }
 
 /** The narrow / wide `grid-template-columns` track list for a zone-set (exported for the unit assertion). */
@@ -50,9 +116,17 @@ export function trackTemplate(zones: readonly ZoneDecl[], viewport: 'narrow' | '
  * §13 Pillar B — generate the grid-frame {@link CSSResult} for a declared zone-set. Faithful to the
  * de-risk Probe S2 (reproduces the prior hand-authored grid exactly). Empty-collapse needs no branch:
  * a zone whose element is unmounted leaves its `minmax(0,…)` track to collapse to zero width.
+ *
+ * 798 round 8 — the breakpoint is a `@container` query against the SURFACE box, not a `@media` query
+ * against the viewport. A zone-set's declared track minimums are a budget on the width the CONTAINER
+ * gets; the viewport is a different, always-larger number (it still contains the Shell rail and the
+ * surface's own padding), so a media query committed the grid to multi-column at widths where the
+ * tracks provably did not fit and the surface overflowed by the difference. Querying the box the tracks
+ * are actually laid out in makes that class of error unrepresentable rather than re-tuned.
  */
 export function composeGridStyles(zones: readonly ZoneDecl[], opts: ComposeOpts): CSSResult {
   const container = unsafeCSS(opts.container);
+  const containerName = unsafeCSS(opts.containerName);
   const narrow = unsafeCSS(trackTemplate(zones, 'narrow'));
   const wide = unsafeCSS(trackTemplate(zones, 'wide'));
   const gap = unsafeCSS(opts.gap);
@@ -72,7 +146,7 @@ export function composeGridStyles(zones: readonly ZoneDecl[], opts: ComposeOpts)
       grid-template-columns: ${narrow};
       gap: ${gap};
     }
-    @media (min-width: ${bp}) {
+    @container ${containerName} (min-width: ${bp}) {
       ${container} {
         grid-template-columns: ${wide};
       }

@@ -66,6 +66,8 @@ import '../components/RetrospectivePanel.js';
 import '../components/FailedJobsDrawer.js';
 import '../components/SourcesPane.js';
 import '../components/ContextInspectorPane.js';
+import '../components/AppUpdateBanner.js';
+import { startAppUpdateMonitor } from '../state/appUpdateState.js';
 import type { AgentActivityPanel } from '../components/AgentActivityPanel.js';
 // §25.β3 — elicit chrome surface (modal form host for Action handlers
 // asking the user mid-invocation questions).
@@ -123,7 +125,7 @@ import {
   subscribeInspector,
   type InspectorState,
 } from '../state/inspectorState.js';
-import { isWideViewport, subscribeWide } from '../state/responsiveState.js';
+import { isWideLayout, subscribeWide } from '../state/responsiveState.js';
 // 687 R5b — the narrow-viewport reading mount: the SAME <jf-document-pane> presents through the
 // OverlayHost right-drawer slot below the breakpoint (UnifiedChatView's grid mount is wide-only).
 import '../components/documentPane/DocumentPane.js';
@@ -440,6 +442,7 @@ export class Shell extends JfElement {
   private evalContextScopeBumpUnsub: (() => void) | null = null;
   // §32 #1 — indexing-jobs → Task tray bridge teardown handle.
   private indexingJobsBridgeStop: (() => void) | null = null;
+  private appUpdateMonitorStop: (() => void) | null = null;
   // Tempdoc 655 — pending-authorization (out-of-band gate, e.g. MCP) bridge teardown handle.
   private pendingAuthorizationBridgeStop: (() => void) | null = null;
   private effectIngestStop: (() => void) | null = null;
@@ -565,10 +568,14 @@ export class Shell extends JfElement {
   static styles = css`
     :host {
       display: grid;
-      grid-template-columns: 3.25rem 1fr;
-      grid-template-rows: 2.5rem 1fr 1.75rem;
+      /* Tempdoc 813 §5c — the rail track reads its width from the ONE --rail-width token
+         (tokens.css) instead of an inline literal, so a viewport-docked overlay can reserve the
+         same band the rail actually occupies rather than re-deriving it. */
+      grid-template-columns: var(--rail-width) 1fr;
+      grid-template-rows: 2.5rem auto 1fr 1.75rem;
       grid-template-areas:
         'topbar topbar'
+        'update update'
         'rail   stage'
         'rail   status';
       width: 100vw;
@@ -579,9 +586,13 @@ export class Shell extends JfElement {
       background: var(--surface-1);
     }
     /* Search Thread S5b — the expanded (labels-visible) rail needs its GRID TRACK widened too:
-       the Rail's own :host([expanded]) width is clamped by this column otherwise. */
+       the Rail's own :host([expanded]) width is clamped by this column otherwise.
+       Tempdoc 813 §5c — expressed as an override of the ONE --rail-width token so everything
+       that reserves the rail's band (the OverlayHost bottom-left slot) follows the expansion
+       automatically; a second literal here would have left the reservation calibrated to the
+       collapsed rail and occluded again the moment the user expands it. */
     :host([data-rail-expanded]) {
-      grid-template-columns: 11rem 1fr;
+      --rail-width: 11rem;
     }
     .topbar {
       grid-area: topbar;
@@ -715,6 +726,7 @@ export class Shell extends JfElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    this.appUpdateMonitorStop = startAppUpdateMonitor();
     // Tempdoc 629 (#10): start the app-wide auto-lock idle watcher. The fetch is resolved lazily so it
     // works once hostApi_ is bound during mount; until then the tick's fetch rejects and is a no-op.
     this.autoLock_ = startAutoLock((p, i) =>
@@ -1332,10 +1344,13 @@ export class Shell extends JfElement {
     // dispatch + the ProvenanceBadge visibility.
     // Slice 472 — also re-filter rail when surfaceVisibility /
     // surfaceOrder change.
-    // 687 R5b — narrow reading mount inputs (viewport + the shared inspector selection).
+    // 687 R5b — narrow reading mount inputs (the wide-layout decision + the shared inspector
+    // selection). 798 round 8 — that decision is the reading SURFACE's measured width, not the raw
+    // viewport, and it is the same one UnifiedChatView's grid mount reads; the two must stay exact
+    // complements or the pane renders twice, or nowhere.
     this.narrowReadingUnsubs = [
       subscribeWide(() => {
-        this.wideForReading = isWideViewport();
+        this.wideForReading = isWideLayout();
         this.requestUpdate();
       }),
       subscribeInspector((st) => {
@@ -1639,6 +1654,8 @@ export class Shell extends JfElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.appUpdateMonitorStop?.();
+    this.appUpdateMonitorStop = null;
     this.autoLock_?.stop();
     this.autoLock_ = null;
     this.removeEventListener('navigate-with-context', this.onNavigateWithContext);
@@ -2065,7 +2082,7 @@ export class Shell extends JfElement {
     }
   }
 
-  private wideForReading = isWideViewport();
+  private wideForReading = isWideLayout();
   private inspectorForReading: InspectorState = getInspectorStateInternal();
   private narrowReadingUnsubs: Array<() => void> = [];
 
@@ -2247,6 +2264,7 @@ export class Shell extends JfElement {
               : 'Copy URL'}
         </button>
       </div>
+      <jf-app-update-banner hidden></jf-app-update-banner>
       ${this.isRailVisible() ? html`<jf-rail
         role=${placementToLandmarkRole('RAIL')}
         aria-label="Surfaces"

@@ -40,9 +40,15 @@ public final class IndexingDocumentOps {
       String language,
       Long parentTokenCount) {
 
-    public ChunkDocumentWriter.ParentChunkMetadata toChunkMetadata() {
+    /**
+     * @param collection the parent document's collection tag (nullable) — carried onto the chunk
+     *     so the chunk branch can apply collection scopes (tempdoc 811 item 3). It is NOT part of
+     *     this record because it is a property of the indexing job, not of the extracted content
+     *     {@code deriveParentMetadata} sees.
+     */
+    public ChunkDocumentWriter.ParentChunkMetadata toChunkMetadata(String collection) {
       return new ChunkDocumentWriter.ParentChunkMetadata(
-          mime, mimeBase, fileKind, language, parentTokenCount);
+          mime, mimeBase, fileKind, language, parentTokenCount, collection);
     }
   }
 
@@ -371,18 +377,18 @@ public final class IndexingDocumentOps {
     };
   }
 
-  public static int indexChunks(
-      Path filePath, ExtractionResult extraction,
-      DocumentFieldOps documentFieldOps, IndexingCoordinator indexingCoordinator) {
-    return indexChunks(filePath, extraction, documentFieldOps, indexingCoordinator, null);
-  }
-
+  /**
+   * @param collection the parent document's collection tag (nullable), written onto every chunk so
+   *     collection scoping works on the chunk branch (tempdoc 811 item 3). Must be the same value
+   *     passed to {@link #buildDocument} for the parent, or parent and chunks disagree on scope.
+   */
   public static int indexChunks(
       Path filePath,
       ExtractionResult extraction,
       DocumentFieldOps documentFieldOps,
       IndexingCoordinator indexingCoordinator,
-      ParentIndexMetadata parentMetadata) {
+      ParentIndexMetadata parentMetadata,
+      String collection) {
     String content = extraction.content();
     String parentDocId = PathNormalizer.normalizePath(filePath.toAbsolutePath().toString());
 
@@ -401,7 +407,7 @@ public final class IndexingDocumentOps {
         indexingCoordinator,
         parentDocId,
         content,
-        metadata.toChunkMetadata());
+        metadata.toChunkMetadata(collection));
   }
 
   public static ParentIndexMetadata deriveParentMetadata(

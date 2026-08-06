@@ -245,10 +245,61 @@ public final class WritePathOps {
         throw new IllegalStateException("IndexWriter not available (runtime not started or closed)");
       }
       w.deleteDocuments(query);
+      // Tempdoc 809 finding 3: publish the bulk-deletion signal AFTER the delete is submitted, so
+      // any reader that observes the new epoch is guaranteed the deletion is already in the writer.
+      session.bulkDeleteEpoch.incrementAndGet();
       log.info("deleteByPathPrefix: deletion submitted for path prefix: {}", normalized);
     } catch (IOException e) {
       throw new IndexRuntimeIOException(
           classifyIOException(e), "Failed to delete by path prefix", e);
+    }
+  }
+
+  /**
+   * Tempdoc 811 (C-2a) — deletes every document (parent and chunk) carrying the given collection
+   * term. This is the removal route for ad-hoc ingests: {@link #deleteByPathPrefix} is
+   * watched-root-prefix driven and can never reach a document indexed from a path under no watched
+   * root, so before 811 those documents were permanently unaddressable.
+   *
+   * <p>Caller is responsible for refusing reserved/default collections — this method deletes exactly
+   * what it is told to.
+   *
+   * @return the number of documents matched (and submitted for deletion)
+   */
+  int deleteByCollection(String collection) {
+    if (collection == null || collection.isBlank()) {
+      throw new IllegalArgumentException("deleteByCollection requires a non-blank collection");
+    }
+    LifecycleSnapshot snap = session.snapshot;
+    IndexWriter w = snap != null ? snap.writer() : null;
+    if (w == null) {
+      throw new IllegalStateException("IndexWriter not available (runtime not started or closed)");
+    }
+    Query query = new TermQuery(new Term(SchemaFields.COLLECTION, collection));
+    int matched = 0;
+    org.apache.lucene.search.SearcherManager mgr = snap.searcherManager();
+    try {
+      if (mgr != null) {
+        IndexSearcher searcher = mgr.acquire();
+        try {
+          matched = searcher.count(query);
+        } finally {
+          mgr.release(searcher);
+        }
+      }
+      w.deleteDocuments(query);
+      // Mirrors deleteByPathPrefix (tempdoc 809 finding 3): publish the bulk-deletion signal AFTER
+      // the delete is submitted, so a reader observing the new epoch is guaranteed the deletion is
+      // already in the writer.
+      session.bulkDeleteEpoch.incrementAndGet();
+      log.info(
+          "deleteByCollection: deletion submitted for collection {} ({} documents matched)",
+          collection,
+          matched);
+      return matched;
+    } catch (IOException e) {
+      throw new IndexRuntimeIOException(
+          classifyIOException(e), "Failed to delete by collection", e);
     }
   }
 
@@ -304,6 +355,14 @@ public final class WritePathOps {
 
     // Apply updates (overwrites existing values, including anything the engine restored)
     fields.putAll(updates);
+
+    // Write-time status/artifact contract (tempdoc 798). The merged map — existing stored fields
+    // union rmwPolicy-preserved fields union the caller's updates — is exactly what will be
+    // indexed, so it is the only place the RMW lane can tell a truthful COMPLETED from a lie.
+    // IndexingCoordinator.validate() never runs here (only indexSingle/indexBatch call it), and
+    // readModifyWriteBatch / updateDocumentPaths funnel through this method, so this one call
+    // covers every partial-update path.
+    StatusArtifactContract.enforce(session, fields, "read-modify-write:" + docId);
 
     // Re-index with updated fields
     Document newDoc = session.fieldMapper.toDocument(fields);
@@ -630,6 +689,7 @@ public final class WritePathOps {
         throw new IllegalStateException("IndexWriter not available (runtime not started or closed)");
       }
       w.deleteAll();
+      session.bulkDeleteEpoch.incrementAndGet(); // tempdoc 809 finding 3 — see deleteByPathPrefix
       log.info("deleteAll: all documents deleted from index");
     } catch (IOException e) {
       throw new IndexRuntimeIOException(

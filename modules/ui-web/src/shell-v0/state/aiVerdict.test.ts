@@ -37,6 +37,9 @@ function input(overrides: Partial<AiEngineObservedInput> = {}): AiEngineObserved
     runtimeStatus: null,
     runtime: runtime(),
     reachable: true,
+    // Tempdoc 807 — the default is a LIVE observation, so every pre-807 case below keeps asserting the
+    // behaviour it was written for; the liveness cases opt out explicitly.
+    snapshotLive: true,
     ...overrides,
   };
 }
@@ -59,6 +62,58 @@ describe('computeAiEngineVerdict (observed axes only — no local intent)', () =
     const v = computeAiEngineVerdict(input({ installStatus }));
     expect(v.kind).toBe('not_installed');
     expect(v.stability).toEqual({ kind: 'settled' });
+  });
+
+  // ── Sandbox round 8: a cancelled multi-GB download. The cancel dialog promises the bytes stay on
+  //    disk and the next install resumes; the Brain surface then said "Not Installed — Install AI
+  //    models to get started" over 1.2 GB of them. `not_installed` is a SETTLED negative, so this was
+  //    not vagueness, it was a confident false claim contradicting the app's own promise. ──
+
+  it('bytes staged on disk → "paused", not a settled "not_installed"', () => {
+    const installStatus: InstallStatus = {
+      state: 'idle',
+      phase: 'idle',
+      installedFully: false,
+      resumableBytes: 1_140_000_000,
+    };
+    const v = computeAiEngineVerdict(input({ installStatus }));
+    expect(v.kind).toBe('paused');
+    expect(v.stability).toEqual({ kind: 'settled' });
+    expect(v.resumableBytes).toBe(1_140_000_000);
+  });
+
+  it('paused is derived from the DISK-probed byte count, not from state:"cancelled"', () => {
+    // The state a restart erases (`cancelled`) with no staged bytes must NOT read as paused...
+    const forgotten: InstallStatus = { state: 'cancelled', phase: 'download', installedFully: false };
+    expect(computeAiEngineVerdict(input({ installStatus: forgotten })).kind).toBe('not_installed');
+    // ...while the state a restart RESTORES (`idle`) with staged bytes must — this is exactly the
+    // returning-user case, and keying on `state` would invert both answers.
+    const restarted: InstallStatus = {
+      state: 'idle',
+      phase: 'idle',
+      installedFully: false,
+      resumableBytes: 512,
+    };
+    expect(computeAiEngineVerdict(input({ installStatus: restarted })).kind).toBe('paused');
+  });
+
+  it('a running install outranks staged bytes (the download is live, not paused)', () => {
+    const installStatus: InstallStatus = {
+      state: 'running',
+      phase: 'download',
+      resumableBytes: 1_140_000_000,
+    };
+    expect(computeAiEngineVerdict(input({ installStatus })).kind).toBe('installing');
+  });
+
+  it('zero staged bytes leaves the honest "not_installed" untouched', () => {
+    const installStatus: InstallStatus = {
+      state: 'idle',
+      phase: 'idle',
+      installedFully: false,
+      resumableBytes: 0,
+    };
+    expect(computeAiEngineVerdict(input({ installStatus })).kind).toBe('not_installed');
   });
 
   it('install running → "installing", provisional, regardless of other axes', () => {
@@ -127,7 +182,9 @@ describe('computeAiEngineVerdict (observed axes only — no local intent)', () =
 
   it('installed via onnxFeatures.modelActive (runtimeStatus-derived), mode transitioning → "starting", cause "starting"', () => {
     const runtimeStatus: AiRuntimeStatus = {
-      onnxFeatures: [{ feature: 'llm', modelActive: true }],
+      // `id` (not `feature`) is the real wire field — AiRuntimeStatusResponse.OnnxFeatureStatus.
+      // The FE type carried a phantom `feature`/`modelDescription` pair until tempdoc 805 G.3.
+      onnxFeatures: [{ id: 'llm', modelActive: true }],
     };
     const v = computeAiEngineVerdict(
       input({ runtimeStatus, runtime: runtime({ mode: 'transitioning' }) }),
@@ -259,6 +316,131 @@ describe('computeAiEngineVerdict — runtime-authority engine axis (tempdoc 737 
   });
 });
 
+/**
+ * Tempdoc 807 Part A (round-13 R13-F2) — the headline defect. With BOTH java processes dead, the Brain
+ * surface reported a green "Online / Chat and summaries ready." indefinitely, across two reproductions.
+ * It was minted here: `engineState` is read off the RETAINED snapshot, so after the backend dies it
+ * still says 'Healthy', and this function turned that past measurement into a SETTLED present-tense
+ * capability claim. Each case below has an anti-regression twin proving a live observation is untouched.
+ */
+describe('computeAiEngineVerdict — a retained observation is not a present-tense claim (807 Part A)', () => {
+  const UNCONFIRMED = { kind: 'provisional', cause: 'stale-poll' } as const;
+
+  it('THE round-13 sentence: engineState Healthy + snapshot NOT live → never a settled "online"', () => {
+    const v = computeAiEngineVerdict(
+      input({ engineState: 'Healthy', chatEnabledSpec: true, snapshotLive: false, reachable: false }),
+    );
+    expect(v.kind).not.toBe('online');
+    expect(v.stability).not.toEqual({ kind: 'settled' });
+    expect(v.kind).toBe('connecting');
+    expect(v.stability).toEqual(UNCONFIRMED);
+  });
+
+  it('THE round-13 sentence, at the presentation layer: no "Online", no "Chat and summaries ready.", no green', () => {
+    const p = presentAiEngineVerdict(
+      computeAiEngineVerdict(
+        input({ engineState: 'Healthy', chatEnabledSpec: true, snapshotLive: false, reachable: false }),
+      ),
+    );
+    expect(p.headline).not.toBe('Online');
+    expect(p.body).not.toBe('Chat and summaries ready.');
+    expect(p.tone).not.toBe('success');
+    expect(p.headline).toBe('Connecting…');
+  });
+
+  it('ANTI-REGRESSION: engineState Healthy + snapshot live → still EXACTLY settled "online"', () => {
+    const v = computeAiEngineVerdict(
+      input({ engineState: 'Healthy', chatEnabledSpec: true, snapshotLive: true }),
+    );
+    expect(v).toEqual({ kind: 'online', stability: { kind: 'settled' }, installFailure: null });
+    expect(presentAiEngineVerdict(v).body).toBe('Chat and summaries ready.');
+  });
+
+  it('soft-off precedence is intact: Healthy + chat off + procedure, snapshot LIVE → "background", not "online" (737 §15 decision 1)', () => {
+    const v = computeAiEngineVerdict(
+      input({
+        engineState: 'Healthy',
+        chatEnabledSpec: false,
+        procedure: 'VDU_BATCH',
+        snapshotLive: true,
+      }),
+    );
+    expect(v.kind).toBe('background');
+    expect(v.stability).toEqual({ kind: 'settled' });
+  });
+
+  it('the soft-off arm is an engine claim too: chat off + procedure, snapshot NOT live → unconfirmed, and still never "online"', () => {
+    const v = computeAiEngineVerdict(
+      input({
+        engineState: 'Healthy',
+        chatEnabledSpec: false,
+        procedure: 'VDU_BATCH',
+        snapshotLive: false,
+        reachable: false,
+      }),
+    );
+    expect(v.kind).not.toBe('online');
+    expect(v.kind).toBe('connecting');
+    expect(v.stability).toEqual(UNCONFIRMED);
+  });
+
+  // The sibling arms audited alongside the photographed one: each mints a claim about a RUNNING
+  // process from the same retained snapshot, so each carries the same gate, with the same twin.
+  it.each([
+    ['authored indexing (Down + gpu-yielded)', { engineState: 'Down', engineReason: 'gpu-yielded-to-indexing' }, 'indexing'],
+    ['authored starting', { engineState: 'Starting' }, 'starting'],
+    ['authored recovering', { engineState: 'Recovering' }, 'starting'],
+    ['legacy runtime.mode online', { runtime: runtime({ mode: 'online' }) }, 'online'],
+    ['legacy runtime.mode indexing', { runtime: runtime({ mode: 'indexing' }) }, 'indexing'],
+    ['legacy runtime.mode starting', { runtime: runtime({ mode: 'starting' }) }, 'starting'],
+  ] as const)(
+    '%s: live → %s (anti-regression); not live → unconfirmed',
+    (_name, overrides, liveKind) => {
+      expect(computeAiEngineVerdict(input({ ...overrides, snapshotLive: true })).kind).toBe(liveKind);
+      const dead = computeAiEngineVerdict(
+        input({ ...overrides, snapshotLive: false, reachable: false }),
+      );
+      expect(dead.kind).toBe('connecting');
+      expect(dead.stability).toEqual(UNCONFIRMED);
+    },
+  );
+
+  it('legacy transitioning (installed engine, pre-authority backend) carries the gate too', () => {
+    const installStatus: InstallStatus = { state: 'idle', phase: 'idle', installedFully: true };
+    const live = computeAiEngineVerdict(
+      input({ installStatus, runtime: runtime({ mode: 'transitioning' }), snapshotLive: true }),
+    );
+    expect(live.kind).toBe('starting');
+    const dead = computeAiEngineVerdict(
+      input({
+        installStatus,
+        runtime: runtime({ mode: 'transitioning' }),
+        snapshotLive: false,
+        reachable: false,
+      }),
+    );
+    expect(dead.kind).toBe('connecting');
+    expect(dead.stability).toEqual(UNCONFIRMED);
+  });
+
+  // The install axis is NOT gated: it describes disk and install history, which a dead backend process
+  // does not change, and blanking it would hide the only action a user can take there.
+  it('BOUNDARY — the install axis is untouched by liveness (a dead backend does not un-install anything)', () => {
+    const running: InstallStatus = { state: 'running', phase: 'downloading' };
+    expect(
+      computeAiEngineVerdict(input({ installStatus: running, engineState: 'Healthy', snapshotLive: false })).kind,
+    ).toBe('installing');
+    const failed: InstallStatus = { state: 'failed', phase: 'idle', lastError: 'disk full' };
+    expect(computeAiEngineVerdict(input({ installStatus: failed, snapshotLive: false })).kind).toBe(
+      'install_failed',
+    );
+    const notInstalled: InstallStatus = { state: 'idle', phase: 'idle', installedFully: false };
+    expect(
+      computeAiEngineVerdict(input({ installStatus: notInstalled, snapshotLive: false })).kind,
+    ).toBe('not_installed');
+  });
+});
+
 describe('applyLocalIntent (surface-local optimistic overlay — BrainSurface only)', () => {
   const settledOffline: AiEngineVerdict = {
     kind: 'offline',
@@ -329,6 +511,7 @@ describe('presentAiEngineVerdict (Design pass 3 — the presentation projection)
   // deliberately, not `statusConfig`'s "AI Online"/"AI Offline") for the four kinds it already covered.
   it.each([
     ['not_installed', 'Not Installed', 'neutral'],
+    ['paused', 'Download Paused', 'neutral'],
     ['installing', 'Installing…', 'info'],
     // Critical-review fix (2026-07-01) — 'error', not 'neutral': must agree with the
     // `core.ai-engine.failed` toast's `defaultSeverity: 'error'` (messageClasses.ts).
@@ -342,6 +525,24 @@ describe('presentAiEngineVerdict (Design pass 3 — the presentation projection)
     const p = presentAiEngineVerdict(verdictFor(kind));
     expect(p.headline).toBe(headline);
     expect(p.tone).toBe(tone);
+  });
+
+  it('paused states the retained amount in the body — the pause promise made checkable', () => {
+    const p = presentAiEngineVerdict({
+      kind: 'paused',
+      stability: { kind: 'settled' },
+      installFailure: null,
+      resumableBytes: 1_140_000_000,
+    });
+    expect(p.headline).toBe('Download Paused');
+    expect(p.body).toBe(
+      '1.06 GB already downloaded is kept on disk — resuming continues from there.',
+    );
+  });
+
+  it('paused without a byte count still says the download is paused, never invents a number', () => {
+    const p = presentAiEngineVerdict(verdictFor('paused'));
+    expect(p.body).toBe('An earlier download is paused — resuming continues from where it stopped.');
   });
 
   it('install_failed surfaces the install service error text in the body', () => {

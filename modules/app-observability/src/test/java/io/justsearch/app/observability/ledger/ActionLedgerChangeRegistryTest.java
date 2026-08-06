@@ -174,7 +174,7 @@ final class ActionLedgerChangeRegistryTest {
 
     ActionEvent done =
         ActionLedgerProjection.projectIndex(
-            "abc123def456", "default", "DONE", 0, "", Instant.parse("2026-05-28T00:00:00Z"));
+            "abc123def456", "default", "DONE", 0, "", Instant.parse("2026-05-28T00:00:00Z"), "");
     registry.broadcastActionEvent(done);
 
     Map<String, Object> row = rowOf(seen.get(0));
@@ -191,7 +191,7 @@ final class ActionLedgerChangeRegistryTest {
 
     ActionEvent failed =
         ActionLedgerProjection.projectIndex(
-            "abc123def456", "default", "FAILED", 3, "boom", Instant.parse("2026-05-28T00:00:00Z"));
+            "abc123def456", "default", "FAILED", 3, "boom", Instant.parse("2026-05-28T00:00:00Z"), "");
     assertNotEquals(done.id(), failed.id());
     // The failure detail is carried only when present.
     assertEquals("boom", ActionLedgerProjection.toWireRow(failed).get("errorMessage"));

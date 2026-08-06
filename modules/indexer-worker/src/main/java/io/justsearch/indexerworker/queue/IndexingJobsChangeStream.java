@@ -191,7 +191,7 @@ public final class IndexingJobsChangeStream implements IndexingJobChangeFeed, Cl
   private List<JobRow> readAllRows() throws SQLException {
     List<JobRow> result = new ArrayList<>();
     String sql =
-        "SELECT path, state, attempts, last_updated, error_message, retry_after, collection "
+        "SELECT path, state, attempts, last_updated, error_message, retry_after, collection, scan_id "
             + "FROM jobs";
     try (Statement stmt = conn.createStatement(); ResultSet rs = stmt.executeQuery(sql)) {
       while (rs.next()) {
@@ -211,6 +211,9 @@ public final class IndexingJobsChangeStream implements IndexingJobChangeFeed, Cl
     if (rs.wasNull()) retryAfter = 0L;
     String collection = rs.getString(7);
     if (collection == null) collection = "default";
+    // Tempdoc 812 D2: the enqueueing scan's id; NULL for single-file ingests, watcher-driven
+    // enqueues, and rows written before the scan_id column existed.
+    String scanId = rs.getString(8);
     return new JobRow(
         sha256(path),
         state == null ? "PENDING" : state,
@@ -218,7 +221,8 @@ public final class IndexingJobsChangeStream implements IndexingJobChangeFeed, Cl
         lastUpdated,
         errorMessage,
         retryAfter,
-        collection);
+        collection,
+        scanId);
   }
 
   // dbName is unused but required by the SQLiteUpdateListener SAM signature (method-ref binding).
@@ -286,7 +290,7 @@ public final class IndexingJobsChangeStream implements IndexingJobChangeFeed, Cl
 
   private JobRow readRowByRowId(long rowId) {
     String sql =
-        "SELECT path, state, attempts, last_updated, error_message, retry_after, collection "
+        "SELECT path, state, attempts, last_updated, error_message, retry_after, collection, scan_id "
             + "FROM jobs WHERE rowid = ?";
     try (PreparedStatement stmt = conn.prepareStatement(sql)) {
       stmt.setLong(1, rowId);

@@ -6,7 +6,11 @@ import io.justsearch.app.observability.ledger.ActionEvent;
 import io.justsearch.app.services.settings.UiSettingsStore.PersistenceMode;
 import io.justsearch.configuration.EnvRegistry;
 import io.justsearch.configuration.PlatformPaths;
+import io.justsearch.configuration.persistence.AtomicFileWrites;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.StoreFormatVersions;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -16,9 +20,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -50,8 +53,8 @@ import tools.jackson.databind.json.JsonMapper;
  */
 public final class DurableGrantStore {
 
-  private static final Logger LOG = LoggerFactory.getLogger(DurableGrantStore.class);
   private static final ObjectMapper MAPPER = JsonMapper.builder().build();
+  static final int CURRENT_SCHEMA_VERSION = 1;
 
   /** An operation grant: args-independent allow-always for one operation from a source tier. */
   private record OperationKey(String operationId, SourceTier sourceTier) {}
@@ -217,26 +220,48 @@ public final class DurableGrantStore {
   // ── Persistence ─────────────────────────────────────────────────────────────────────────────────
 
   /** Serialized shape on disk: one flat list of grants (kind + target + tier). */
-  private record PersistedState(List<DurableGrant> grants) {}
+  private record PersistedState(int schemaVersion, List<DurableGrant> grants) {}
+
+  private record LegacyPersistedState(List<DurableGrant> grants) {}
 
   private void load() {
     if (persistenceFile == null || !Files.exists(persistenceFile)) {
       return;
     }
     try {
-      PersistedState state = MAPPER.readValue(persistenceFile.toFile(), PersistedState.class);
-      if (state == null || state.grants() == null) {
-        return;
+      JsonNode root = MAPPER.readTree(persistenceFile.toFile());
+      if (root == null || !root.isObject()) {
+        throw new CorruptDurableStoreException("durable-grants", "JSON document is empty");
       }
-      for (DurableGrant g : state.grants()) {
+      boolean versioned = root.has("schemaVersion");
+      int observedVersion =
+          versioned && root.get("schemaVersion").isIntegralNumber()
+              ? root.get("schemaVersion").asInt()
+              : versioned
+                  ? -1
+                  : 0;
+      StoreFormatVersions.requireReadable(
+          "durable-grants", observedVersion, CURRENT_SCHEMA_VERSION, 0, 0);
+      List<DurableGrant> grants =
+          versioned
+              ? MAPPER.treeToValue(root, PersistedState.class).grants()
+              : MAPPER.treeToValue(root, LegacyPersistedState.class).grants();
+      if (grants == null) {
+        throw new CorruptDurableStoreException("durable-grants", "grants payload is missing");
+      }
+      for (DurableGrant g : grants) {
         if (g.kind() == GrantKind.OPERATION) {
           grantedOps.add(new OperationKey(g.target(), g.sourceTier()));
         } else {
           grantedFamilies.add(new FamilyKey(g.target(), g.sourceTier()));
         }
       }
+    } catch (CorruptDurableStoreException
+        | io.justsearch.configuration.persistence.UnsupportedStoreVersionException e) {
+      throw e;
     } catch (Exception e) {
-      LOG.warn("Failed to read durable grants (starting empty)", e);
+      throw new CorruptDurableStoreException(
+          "durable-grants", "cannot parse " + persistenceFile, e);
     }
   }
 
@@ -245,10 +270,11 @@ public final class DurableGrantStore {
       return;
     }
     try {
-      Files.createDirectories(persistenceFile.getParent());
-      MAPPER.writeValue(persistenceFile.toFile(), new PersistedState(snapshot()));
+      AtomicFileWrites.replace(
+          persistenceFile,
+          MAPPER.writeValueAsBytes(new PersistedState(CURRENT_SCHEMA_VERSION, snapshot())));
     } catch (IOException e) {
-      LOG.warn("Failed to persist durable grants", e);
+      throw new UncheckedIOException("Failed to persist durable grants to " + persistenceFile, e);
     }
   }
 

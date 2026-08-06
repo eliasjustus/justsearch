@@ -23,6 +23,7 @@ namespace JustSearchGui {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int width, int height, bool repaint);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, IntPtr e);
@@ -56,10 +57,24 @@ function Connect-App {
   # the exact "NO WINDOW" message/exit code, so wrapper output stays
   # unchanged). Returns a PSCustomObject with .Process/.Handle/.Foreground/
   # .Focused otherwise; .Focused is what Invoke-AppClick gates on.
+  #
+  # ALT-nudge focus retry (round 12, tempdoc 806 W3 item 5 / retrospective
+  # A3): Windows refuses SetForegroundWindow from a background process when
+  # the desktop shell ("Program Manager") currently holds foreground -- this
+  # made SetForegroundWindow return $true while NOT actually moving focus,
+  # for five consecutive attempts in round 12 (~20 minutes lost, plus two
+  # captures that recorded a pre-click state under a post-click name).
+  # WScript.Shell.AppActivate and minimize/restore did not help; a raw ALT
+  # keypress immediately before the retry did -- it satisfies the Win32
+  # foreground-lock rule ("the calling thread must have received the last
+  # input event") that SetForegroundWindow silently enforces. Only engages
+  # when the first attempt fails, so the common case (focus succeeds
+  # immediately) pays no extra delay.
   [CmdletBinding()]
   param(
     [string]$ProcName = "JustSearch",
-    [int]$FocusDelayMs = 700
+    [int]$FocusDelayMs = 700,
+    [int]$MaxFocusAttempts = 4
   )
   $p = Get-Process -Name $ProcName -ErrorAction SilentlyContinue |
     Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
@@ -71,6 +86,17 @@ function Connect-App {
   [void][JustSearchGui.Native]::SetForegroundWindow($h)
   Start-Sleep -Milliseconds $FocusDelayMs
   $fg = [JustSearchGui.Native]::GetForegroundWindow()
+
+  $attempt = 1
+  while ($fg -ne $h -and $attempt -lt $MaxFocusAttempts) {
+    [System.Windows.Forms.SendKeys]::SendWait("%")
+    Start-Sleep -Milliseconds 400
+    [void][JustSearchGui.Native]::SetForegroundWindow($h)
+    Start-Sleep -Milliseconds $FocusDelayMs
+    $fg = [JustSearchGui.Native]::GetForegroundWindow()
+    $attempt++
+  }
+
   [PSCustomObject]@{
     Process    = $p
     Handle     = $h
@@ -84,6 +110,47 @@ function Get-AppWindowRect {
   param([Parameter(Mandatory = $true)][IntPtr]$Handle)
   $r = New-Object JustSearchGui.RECT
   [void][JustSearchGui.Native]::GetWindowRect($Handle, [ref]$r)
+  return $r
+}
+
+function Set-AppWindowRect {
+  # Moves/resizes the window at $Handle to an explicit rect via the Win32
+  # MoveWindow API, in PHYSICAL pixels (same coordinate space as
+  # GetWindowRect / Save-AppShot -- no DPI conversion here, keep it simple).
+  #
+  # README.md prescribes "Fix the window size at the start of a round for
+  # determinism" but JustSearchGui.psm1 had no move/resize primitive -- round
+  # 11 (tempdoc 805 item 6) had to write one from scratch, and its first
+  # attempt called MoveWindow while the window was still maximized, which
+  # corrupted the window's RESTORED geometry to 1520x32767; that bad geometry
+  # then silently reappeared every time Connect-App's SW_RESTORE ran
+  # afterward. This function restores the window BEFORE calling MoveWindow
+  # (the same SW_RESTORE Connect-App uses), then reads the rect back and
+  # THROWS if it does not match what was requested -- never a silent partial
+  # resize a caller could mistake for success.
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)][IntPtr]$Handle,
+    [Parameter(Mandatory = $true)][int]$X,
+    [Parameter(Mandatory = $true)][int]$Y,
+    [Parameter(Mandatory = $true)][int]$Width,
+    [Parameter(Mandatory = $true)][int]$Height,
+    [int]$SettleDelayMs = 200
+  )
+  [void][JustSearchGui.Native]::ShowWindow($Handle, [JustSearchGui.Native]::SW_RESTORE)
+  Start-Sleep -Milliseconds $SettleDelayMs
+  $ok = [JustSearchGui.Native]::MoveWindow($Handle, $X, $Y, $Width, $Height, $true)
+  if (-not $ok) {
+    throw "Set-AppWindowRect: MoveWindow failed for hwnd $Handle (requested $X,$Y ${Width}x${Height})"
+  }
+  Start-Sleep -Milliseconds $SettleDelayMs
+  $r = Get-AppWindowRect -Handle $Handle
+  $actualW = $r.Right - $r.Left
+  $actualH = $r.Bottom - $r.Top
+  if ($r.Left -ne $X -or $r.Top -ne $Y -or $actualW -ne $Width -or $actualH -ne $Height) {
+    throw "Set-AppWindowRect: post-move rect ($($r.Left),$($r.Top) ${actualW}x${actualH}) does not match requested ($X,$Y ${Width}x${Height}) -- window may be maximized/snapped/minimized or under DPI virtualization; verify manually before trusting subsequent window-relative coordinates."
+  }
+  Write-Host "Set-AppWindowRect: OK -- hwnd $Handle now at $X,$Y ${Width}x${Height} (physical pixels)"
   return $r
 }
 
@@ -164,9 +231,59 @@ function Send-AppText {
   }
 }
 
+function Save-PngChecked {
+  # FAIL-LOUD PNG writer shared by every capture entry point.
+  #
+  # Sandbox round 10 finding H1 (second round reporting it): a capture whose
+  # $bmp.Save() failed -- missing parent directory, unwritable path -- printed
+  # its "saved: <path>" line anyway and the wrapper still exited 0, so the
+  # harness reported evidence it had never produced. Three defences, in order:
+  #   1. create the parent directory if missing (the common cause);
+  #   2. Save inside try/catch that disposes AND rethrows (never swallows);
+  #   3. assert the file actually exists afterwards and throw if it does not
+  #      -- only then print "saved:", with the byte size read AFTER the assert.
+  # The "saved:" line is Write-Host (host stream, not capturable), so a caller
+  # can never treat it as evidence; existence + a nonzero process exit code
+  # are the only honest signals, which is what this enforces.
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)][System.Drawing.Bitmap]$Bitmap,
+    [Parameter(Mandatory = $true)][string]$ResolvedOut,
+    [System.Drawing.Graphics[]]$Graphics = @()
+  )
+  try {
+    $parent = [System.IO.Path]::GetDirectoryName($ResolvedOut)
+    if ($parent -and -not (Test-Path -LiteralPath $parent -PathType Container)) {
+      if (Test-Path -LiteralPath $parent) {
+        throw "parent path '$parent' exists but is not a directory"
+      }
+      New-Item -ItemType Directory -Path $parent -Force -ErrorAction Stop | Out-Null
+    }
+    $Bitmap.Save($ResolvedOut, [System.Drawing.Imaging.ImageFormat]::Png)
+  }
+  catch {
+    throw "CAPTURE FAILED: could not save '$ResolvedOut': $($_.Exception.Message)"
+  }
+  finally {
+    foreach ($gfx in $Graphics) {
+      if ($gfx) {
+        $gfx.Dispose()
+      }
+    }
+    $Bitmap.Dispose()
+  }
+  if (-not (Test-Path -LiteralPath $ResolvedOut -PathType Leaf)) {
+    throw "CAPTURE FAILED: '$ResolvedOut' does not exist after Save() reported no error -- the capture produced NO evidence."
+  }
+  $bytes = (Get-Item -LiteralPath $ResolvedOut).Length
+  Write-Host "saved: $ResolvedOut ($bytes bytes)"
+  return $ResolvedOut
+}
+
 function Save-AppShot {
   # Captures the window described by $Handle's current rect and saves it as
-  # a PNG at an absolute, resolved path (Resolve-AppPath).
+  # a PNG at an absolute, resolved path (Resolve-AppPath). Throws (does not
+  # return quietly) if the capture cannot be produced -- see Save-PngChecked.
   [CmdletBinding()]
   param(
     [Parameter(Mandatory = $true)][IntPtr]$Handle,
@@ -177,22 +294,20 @@ function Save-AppShot {
   $w = $r.Right - $r.Left
   $ht = $r.Bottom - $r.Top
   if ($w -le 0 -or $ht -le 0) {
-    Write-Host "BAD RECT"
-    return $null
+    # Same false-success class as a failed Save: returning $null here left
+    # callers ([void](Save-AppShot ...)) exiting 0 with no PNG on disk.
+    throw "CAPTURE FAILED: BAD RECT for hwnd $Handle ($($w)x$($ht)) -- no capture written to '$resolvedOut'."
   }
   $bmp = New-Object System.Drawing.Bitmap($w, $ht)
   $g = [System.Drawing.Graphics]::FromImage($bmp)
   $g.CopyFromScreen((New-Object System.Drawing.Point($r.Left, $r.Top)), [System.Drawing.Point]::Empty, (New-Object System.Drawing.Size($w, $ht)))
-  $bmp.Save($resolvedOut, [System.Drawing.Imaging.ImageFormat]::Png)
-  $g.Dispose()
-  $bmp.Dispose()
-  Write-Host "saved: $resolvedOut ($((Get-Item -LiteralPath $resolvedOut).Length) bytes)"
-  return $resolvedOut
+  return (Save-PngChecked -Bitmap $bmp -ResolvedOut $resolvedOut -Graphics @($g))
 }
 
 function Save-DesktopShot {
   # Full-desktop capture (CopyFromScreen over the primary screen bounds).
   # Used by snap.ps1 for the Step-0 capability probe / whole-screen evidence.
+  # Throws if the capture cannot be produced -- see Save-PngChecked.
   [CmdletBinding()]
   param([Parameter(Mandatory = $true)][string]$Out)
   $resolvedOut = Resolve-AppPath -Path $Out
@@ -200,11 +315,7 @@ function Save-DesktopShot {
   $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
   $gfx = [System.Drawing.Graphics]::FromImage($bmp)
   $gfx.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-  $bmp.Save($resolvedOut, [System.Drawing.Imaging.ImageFormat]::Png)
-  $gfx.Dispose()
-  $bmp.Dispose()
-  Write-Host "saved: $resolvedOut ($((Get-Item -LiteralPath $resolvedOut).Length) bytes)"
-  return $resolvedOut
+  return (Save-PngChecked -Bitmap $bmp -ResolvedOut $resolvedOut -Graphics @($gfx))
 }
 
 function Save-AppShotRegion {
@@ -242,12 +353,10 @@ function Save-AppShotRegion {
   $g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
   $g2.DrawImage($crop, 0, 0, ($W * $Scale), ($H * $Scale))
   $g2.Dispose()
-  $big.Save($resolvedOut, [System.Drawing.Imaging.ImageFormat]::Png)
   $src.Dispose()
   $crop.Dispose()
-  $big.Dispose()
-  Write-Host "saved: $resolvedOut ($($W * $Scale)x$($H * $Scale))"
-  return $resolvedOut
+  Write-Host "cropped region: $($W * $Scale)x$($H * $Scale)"
+  return (Save-PngChecked -Bitmap $big -ResolvedOut $resolvedOut)
 }
 
 function Get-AppApiPort {
@@ -358,6 +467,7 @@ Export-ModuleMember -Function `
   Resolve-AppPath, `
   Connect-App, `
   Get-AppWindowRect, `
+  Set-AppWindowRect, `
   Invoke-AppClick, `
   Send-AppKeys, `
   Send-AppText, `

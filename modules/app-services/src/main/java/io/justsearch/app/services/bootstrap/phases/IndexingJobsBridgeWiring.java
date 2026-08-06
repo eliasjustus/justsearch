@@ -102,6 +102,10 @@ public final class IndexingJobsBridgeWiring {
             state,
             row.attempts(),
             row.errorMessage(),
-            Instant.ofEpochMilli(row.lastUpdatedMs())));
+            Instant.ofEpochMilli(row.lastUpdatedMs()),
+            // Tempdoc 812 D2 — the scan that enqueued this job (empty for non-scan jobs). The
+            // rollup aggregator counts these terminal outcomes per scanId; the FE groups the
+            // surviving per-doc rows under their scan's rollup by the same key.
+            row.scanId()));
   }
 }

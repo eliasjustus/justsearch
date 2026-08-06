@@ -226,9 +226,19 @@ public final class McpToolSurface {
                 "justsearch_ingest",
                 INGEST_DESC,
                 schema(
-                    Map.of(
+                    orderedMap(
                         "paths",
-                        propStringArray("Absolute file or folder paths to index")),
+                            propStringArray("Absolute file or folder paths to index"),
+                        // Tempdoc 811 (C-2a) — optional collection tag. Server-side validation in
+                        // IngestTool is the guard; this schema only advertises the argument.
+                        "collection",
+                            prop(
+                                "string",
+                                "Optional collection tag for the indexed documents. Omit to inherit"
+                                    + " the containing indexed root's collection, or 'mcp-ingest'"
+                                    + " for paths outside every indexed root. The app-internal"
+                                    + " collections 'justsearch-help' and 'agent-history' are"
+                                    + " rejected.")),
                     List.of("paths")),
                 orderedMap("readOnlyHint", false, "idempotentHint", true)),
             tool("justsearch_status", STATUS_DESC, STATUS_SCHEMA, Map.of("readOnlyHint", true)),
@@ -907,7 +917,8 @@ public final class McpToolSurface {
         resp.indexCapabilities(),
         resp.queryUnderstanding(),
         resp.filterNormalization(),
-        resp.searchTrace());
+        resp.searchTrace(),
+        resp.appliedFilters());
   }
 
   /**

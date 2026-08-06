@@ -90,6 +90,35 @@ Configuration reaches the Worker subprocess through three channels:
     *   **External Instance Adoption:** If a healthy `llama-server` is already listening on the configured port, the manager can **adopt** it after probing `GET /props` (prevents restart loops and avoids accidentally adopting unrelated HTTP services). Adopted servers are still health-monitored; if they die mid-session, inference switches to Offline.
     *   **Health & Props:** The manager polls `GET /health` during startup and reads `GET /props` (best-effort) to learn the *actual* `n_ctx` and `model_alias` for diagnostics.
 
+## Module roles
+
+The three processes above are assembled from Gradle modules. This table gives each
+significant module's **role**; the authoritative inventory and the full dependency graph
+are generated into `docs/reference/architecture/module-deps.md` by
+`node scripts/architecture/module-deps.mjs`.
+
+| Module | Process | Role |
+|---|---|---|
+| `modules/ui` | Head | UI Host backend — Javalin REST API, gateway to Worker gRPC, watchdogs the other processes |
+| `modules/ui-web` | Head | Frontend — TypeScript, Lit web components, Vite |
+| `modules/app-services` | Head | Head-side service layer — bootstrap/assembly, conversation, operation registry, worker client |
+| `modules/shell` | Head | Tauri desktop shell |
+| `modules/indexer-worker` | Body | Knowledge Server entry point — sole owner of the Lucene index |
+| `modules/worker-services` | Body | Worker service layer — gRPC ingest, indexing loop, RAG context, search execution |
+| `modules/worker-core` | Body | Worker encoders and index primitives — SPLADE, ONNX embedding |
+| `modules/adapters-lucene` | Body | Lucene search integration — the only module that depends on Lucene itself |
+| `modules/indexing` | Body | Index document model and field definitions |
+| `modules/app-inference` | Brain | Online `llama-server` lifecycle management |
+| `modules/ai-backend` | Brain | Backend abstractions and local translator support |
+| `modules/ort-common` | shared | ORT session infrastructure — `OrtSessionAssembler`, `SessionHandle`, `OnnxSessionCache`, `ModelManifest` |
+| `modules/reranker` | shared | Cross-encoder reranking |
+| `modules/gpu-bridge` | shared | GPU/VRAM detection and hardware capability helpers |
+| `modules/prompt-support` | shared | Prompt templates and reasoning-support utilities |
+| `modules/configuration` | shared | `EnvRegistry`, `ConfigKey`, resolved-config assembly — the single configuration authority |
+| `modules/app-api` | shared | Wire DTOs and API contract records |
+| `modules/ipc-common` | shared | gRPC protobuf definitions and MMF signalling |
+| `modules/telemetry` | shared | Tracing and metrics emission |
+
 ## Design Philosophy
 
 ### "Verify, Don't Guess"

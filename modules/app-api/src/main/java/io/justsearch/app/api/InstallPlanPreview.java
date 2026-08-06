@@ -23,8 +23,20 @@ public final class InstallPlanPreview {
   /** The hardware-selected {@code DownloadProfile} name (e.g. {@code GPU_FULL}). */
   public String downloadProfile = "";
 
-  /** Total bytes still to download across all wanted tiers on this hardware. */
+  /**
+   * Bytes that still have to come over the network across all wanted tiers on this hardware —
+   * {@code InstallPlan.remainingBytes()}, i.e. already-complete files excluded AND bytes an earlier
+   * interrupted run left staged in {@code .partial} files excluded. The number a consent surface
+   * must state, because it is what the download will actually cost.
+   */
   public long totalDownloadBytes;
+
+  /**
+   * Of the planned downloads, bytes already on disk from an interrupted earlier run that a resume
+   * will keep. Non-zero means "there is a paused download here"; the pause promise ("everything
+   * already downloaded stays on disk") is only checkable by the user if this is stated.
+   */
+  public long resumableBytes;
 
   /** Per-tier estimates, in canonical tier order. */
   public final List<TierEstimate> tiers = new ArrayList<>();

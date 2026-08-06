@@ -91,6 +91,34 @@ final class GrpcIngestServiceTest {
     assertTrue(observer.completed);
   }
 
+  /**
+   * Tempdoc 813 Slice B call-site pin. {@code SubmitBatch} is one of the four producers of queue
+   * rows; the remaining-work byte weight is only as good as what each producer records, and a
+   * producer that quietly used the unsized overload would not fail anything — the aggregate would
+   * just understate the backlog. So the size is asserted at the call site.
+   */
+  @Test
+  void submitBatchRecordsEachFilesSizeAtEnqueue() throws Exception {
+    Path small = Files.writeString(tempDir.resolve("small.txt"), "x".repeat(10));
+    Path big = Files.writeString(tempDir.resolve("big.txt"), "y".repeat(4_096));
+
+    CapturingObserver<BatchResponse> observer = new CapturingObserver<>();
+    service.submitBatch(
+        BatchRequest.newBuilder()
+            .addFilePaths(small.toAbsolutePath().toString())
+            .addFilePaths(big.toAbsolutePath().toString())
+            .build(),
+        observer);
+    assertEquals(2, observer.single().getAcceptedCount());
+
+    JobQueue.PendingBytes bytes = jobQueue.pendingBytes();
+    assertEquals(
+        Files.size(small) + Files.size(big),
+        bytes.knownBytes(),
+        "SubmitBatch must stat each admitted file and carry the size on the enqueue entry");
+    assertEquals(0L, bytes.unknownSizeJobs(), "no admitted file may land as an unsized row");
+  }
+
   @Test
   void submitBatchRejectsNonExistentFiles() {
     BatchRequest request = BatchRequest.newBuilder()
@@ -713,6 +741,46 @@ final class GrpcIngestServiceTest {
     assertEquals(2, response.getCounts().getPendingCount());
     assertEquals(0, response.getCounts().getProcessingCount());
     assertEquals(0, response.getCounts().getFailedCount());
+    assertTrue(observer.completed);
+  }
+
+  @Test
+  void countJobsByPathPrefixDegradesCoverageWhenIndexRuntimeAbsent() throws Exception {
+    // Tempdoc 813 Slice A: the queue counts come from SQLite (always available), the coverage
+    // counts from Lucene. This fixture constructs the service with a null ingestLifecycle, so the
+    // coverage leg must degrade to all-zero WITHOUT costing the caller its job counts — the
+    // Library row still needs its truthful "N remaining".
+    Path root = Files.createDirectories(tempDir.resolve("degraded"));
+    Path f1 = root.resolve("f1.txt");
+    Files.writeString(f1, "f1");
+    assertEquals(
+        1,
+        observeSingle(
+                (StreamObserver<BatchResponse> obs) ->
+                    service.submitBatch(
+                        BatchRequest.newBuilder()
+                            .addFilePaths(f1.toAbsolutePath().toString())
+                            .build(),
+                        obs))
+            .getAcceptedCount());
+
+    CapturingObserver<CountJobsByPathPrefixResponse> observer = new CapturingObserver<>();
+    service.countJobsByPathPrefix(
+        CountJobsByPathPrefixRequest.newBuilder()
+            .setPathPrefix(root.toAbsolutePath().toString())
+            .build(),
+        observer);
+
+    CountJobsByPathPrefixResponse response = observer.single();
+    assertEquals(1, response.getCounts().getPendingCount(), "queue counts must survive");
+    assertEquals(0, response.getCoverage().getParentDocsTotalEmbedding());
+    assertEquals(0, response.getCoverage().getParentDocsSettledEmbedding());
+    assertEquals(0, response.getCoverage().getParentDocsTotalSplade());
+    assertEquals(0, response.getCoverage().getParentDocsSettledSplade());
+    assertEquals(0, response.getCoverage().getParentDocsTotalNer());
+    assertEquals(0, response.getCoverage().getParentDocsSettledNer());
+    assertEquals(0, response.getCoverage().getChunkDocsTotal());
+    assertEquals(0, response.getCoverage().getChunkDocsSettled());
     assertTrue(observer.completed);
   }
 

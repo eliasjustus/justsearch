@@ -4,6 +4,9 @@ package io.justsearch.agent;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import io.justsearch.agent.api.encryption.StoreCipher;
+import io.justsearch.configuration.persistence.AtomicFileWrites;
+import io.justsearch.configuration.persistence.CorruptDurableStoreException;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -37,6 +40,7 @@ public final class RunEventStore {
   private static final Logger LOG = LoggerFactory.getLogger(RunEventStore.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
   private static final TypeReference<Map<String, Object>> MAP_REF = new TypeReference<>() {};
+  static final int CURRENT_SCHEMA_VERSION = 1;
 
   private final Path rootDir; // nullable for noop
   private final StoreCipher cipher; // tempdoc 629 (LAYER) — seals events.ndjson + meta.json when enabled
@@ -105,6 +109,7 @@ public final class RunEventStore {
     try {
       Files.createDirectories(runDir(sessionId));
       var record = new LinkedHashMap<String, Object>();
+      record.put("schemaVersion", CURRENT_SCHEMA_VERSION);
       record.put("timestamp", Instant.now().toString());
       record.put("shapeId", shapeId);
       record.put("eventType", eventType);
@@ -118,8 +123,8 @@ public final class RunEventStore {
           StandardOpenOption.APPEND);
       return record;
     } catch (Exception e) {
-      LOG.warn("Failed to append event for session {}", sessionId, e);
-      return null;
+      throw new CorruptDurableStoreException(
+          "run-events", "Failed to append event for session " + sessionId, e);
     }
   }
 
@@ -155,11 +160,34 @@ public final class RunEventStore {
           StandardOpenOption.CREATE,
           StandardOpenOption.APPEND);
     } catch (Exception e) {
-      LOG.warn("Failed to append raw events for session {}", sessionId, e);
+      throw new CorruptDurableStoreException(
+          "run-events", "Failed to append imported events for session " + sessionId, e);
     }
   }
 
-  /** Read all persisted events for a run (oldest first), upcasting legacy payloads on read. */
+  /**
+   * Read all persisted events for a run (oldest first), upcasting legacy payloads on read.
+   *
+   * <p><strong>KNOWN DEFECT, not a design limitation (tempdoc 806 C5).</strong> While the chat
+   * cipher is sealed and locked this returns an empty list, so "the ledger is unreadable right now"
+   * and "this run has no events" are the same answer. That is the exact shape tempdoc 806 fixed for
+   * {@code FileMemoryStore} after round 12 filed it as a HIGH: an unreadable state answered as an
+   * empty one, which consumers then render as a positive factual claim. Here the observable
+   * consequences are {@code GET /api/chat/sessions/{id}/events} answering <em>404 "No events found
+   * for session X"</em> (a confident negative derived from a read that could not run) and {@code GET
+   * /api/chat/sessions/{id}/transcript} downloading a transcript with {@code events: []} — a "save
+   * your record" affordance that silently produces an empty record. Every restart locks the key, so
+   * this is the ordinary state, not an edge case.
+   *
+   * <p>The fix conforms to the precedent W1 shipped for memory rather than inventing one: the read
+   * path exposes its locked state and the API answers <strong>423 Locked</strong> with the typed
+   * {@code STORE_LOCKED} errorCode (the tempdoc-629 global handler in {@code LocalApiServer} already
+   * maps {@code KeyLockedException} that way). It is deliberately NOT applied in this change:
+   * {@code AgentRunQueryService.threadEvents} also reads this method to build the unified
+   * conversation thread, so failing loud here changes what a locked chat surface renders, and that
+   * needs live verification the ride-along scope did not cover. Do not re-label this a "documented
+   * limitation" — it is an unfixed instance of a named defect class.
+   */
   public synchronized List<Map<String, Object>> readEvents(String sessionId) {
     if (!isEnabled()) {
       return List.of();
@@ -169,7 +197,9 @@ public final class RunEventStore {
       return List.of();
     }
     if (cipher.enabled() && cipher.locked()) {
-      return List.of(); // sealed + locked: empty until unlock (documented agent-run ledger limitation)
+      // Tempdoc 806 C5 — sealed + locked: unreadable, reported as empty. See the method javadoc:
+      // this is a known unfixed instance of the 806 unreadable-is-not-empty defect class.
+      return List.of();
     }
     try {
       List<String> lines = Files.readAllLines(events, StandardCharsets.UTF_8);
@@ -179,12 +209,20 @@ public final class RunEventStore {
           continue;
         }
         Map<String, Object> event = MAPPER.readValue(cipher.open(line), MAP_REF);
+        int version =
+            event.get("schemaVersion") instanceof Number number ? number.intValue() : 0;
+        if (version > CURRENT_SCHEMA_VERSION) {
+          throw new UnsupportedStoreVersionException(
+              "run-events", version, CURRENT_SCHEMA_VERSION);
+        }
         out.add(EventPayloadUpcaster.upcast(event));
       }
       return out;
+    } catch (UnsupportedStoreVersionException e) {
+      throw e;
     } catch (Exception e) {
-      LOG.warn("Failed to read events for session {}", sessionId, e);
-      return List.of();
+      throw new CorruptDurableStoreException(
+          "run-events", "Event log is unreadable for session " + sessionId, e);
     }
   }
 
@@ -200,11 +238,11 @@ public final class RunEventStore {
       return;
     }
     try {
-      Files.createDirectories(runDir(sessionId));
       String json = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(meta);
-      Files.writeString(metaPath(sessionId), cipher.seal(json), StandardCharsets.UTF_8);
+      AtomicFileWrites.replaceUtf8(metaPath(sessionId), cipher.seal(json));
     } catch (Exception e) {
-      LOG.warn("Failed to write run meta for session {}", sessionId, e);
+      throw new CorruptDurableStoreException(
+          "run-events", "Failed to write run metadata for session " + sessionId, e);
     }
   }
 

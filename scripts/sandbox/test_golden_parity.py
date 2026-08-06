@@ -20,10 +20,14 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from check_golden_parity import (  # noqa: E402
     KNOWLEDGE_STATUS_EVIDENCE_FILENAME,
+    OVERLAP_DESCRIPTIVE_FLOOR,
     BASELINE_FORMAT_VERSION,
+    PARITY_BASELINE_INCOMPLETE,
+    PARITY_CAPTURE_MISSING,
     PARITY_CORPUS_MISMATCH,
     PARITY_DENSE_LEG_SKIPPED,
     PARITY_EMBEDDING_VARIANCE,
+    PARITY_FIRST_HIT_MISS,
     PARITY_LEG_DIVERGENCE,
     PARITY_MODEL_MISMATCH,
     PARITY_OVERLAP_MISS,
@@ -99,8 +103,10 @@ class ExtractTopIdentitiesTests(unittest.TestCase):
 
 
 class EvaluateQueryTests(unittest.TestCase):
-    """Core tolerance-rule fixtures required by the harness spec:
-    full match pass, 6/10-overlap fail, golden-#1-at-rank-4 fail, and
+    """Core tolerance-rule fixtures. Since the 2026-07-30 demotion the rule
+    has two tiers: BLOCKING is golden-#1-in-captured-top-3; overlap@10 is
+    computed and reported but descriptive. Fixtures: full match pass,
+    6/10-overlap reported-not-blocking, golden-#1-at-rank-4 blocks, and
     basename-normalization-across-roots pass."""
 
     def _golden(self, expected: list[str]) -> GoldenQuery:
@@ -112,24 +118,39 @@ class EvaluateQueryTests(unittest.TestCase):
         verdict = evaluate_query(self._golden(expected), captured)
         self.assertTrue(verdict.passed, verdict.reason)
         self.assertEqual(verdict.overlap, 10)
+        self.assertTrue(verdict.overlap_ok)
+        self.assertIsNone(verdict.blocking_code)
 
-    def test_six_of_ten_overlap_fails(self):
+    def test_six_of_ten_overlap_is_reported_but_does_not_block(self):
+        """The 2026-07-30 demotion, at the unit level: a sub-floor overlap is
+        still COMPUTED, still surfaced in the reason with its own typed code —
+        it just no longer makes the verdict block."""
         expected = [f"d{i}.txt" for i in range(1, 11)]
-        # 6 shared identities (d1..d6), 4 replaced with never-seen ids.
+        # 6 shared identities (d1..d6), 4 replaced with never-seen ids. The
+        # golden #1 (d1.txt) is still at rank 1, so the blocking assertion holds.
         captured = [f"d{i}.txt" for i in range(1, 7)] + [f"x{i}.txt" for i in range(1, 5)]
         verdict = evaluate_query(self._golden(expected), captured)
-        self.assertFalse(verdict.passed, verdict.reason)
+        self.assertTrue(verdict.passed, verdict.reason)
+        self.assertIsNone(verdict.blocking_code)
+        # Descriptive half: computed, below floor, and named in the reason.
         self.assertEqual(verdict.overlap, 6)
-        self.assertIn("FAIL", verdict.reason)
+        self.assertFalse(verdict.overlap_ok)
+        self.assertIn(f"[{PARITY_OVERLAP_MISS}]", verdict.reason)
+        self.assertIn("does not block", verdict.reason)
 
-    def test_golden_first_at_rank_four_fails_despite_high_overlap(self):
+    def test_golden_first_at_rank_four_blocks_despite_high_overlap(self):
         expected = [f"d{i}.txt" for i in range(1, 11)]
         # Full 10/10 overlap (same set), but the golden #1 (d1.txt) is pushed
         # to rank 4 (index 3) in the captured ordering — outside top-3.
         captured = ["d2.txt", "d3.txt", "d4.txt", "d1.txt", "d5.txt", "d6.txt", "d7.txt", "d8.txt", "d9.txt", "d10.txt"]
         verdict = evaluate_query(self._golden(expected), captured)
         self.assertFalse(verdict.passed, verdict.reason)
+        self.assertEqual(verdict.blocking_code, PARITY_FIRST_HIT_MISS)
+        # Overlap is a perfect 10/10 here, so this can only be blocking
+        # because of the golden-#1 assertion — the right reason, not a
+        # coincidence of the fixture.
         self.assertEqual(verdict.overlap, 10)
+        self.assertTrue(verdict.overlap_ok)
         self.assertIn("NOT found", verdict.reason)
 
     def test_basename_normalization_different_roots_same_basenames_passes(self):
@@ -148,6 +169,7 @@ class EvaluateQueryTests(unittest.TestCase):
     def test_empty_expected_top10_fails(self):
         verdict = evaluate_query(self._golden([]), ["a.txt"])
         self.assertFalse(verdict.passed)
+        self.assertEqual(verdict.blocking_code, PARITY_BASELINE_INCOMPLETE)
 
 
 class EvaluateAllMissingCaptureTests(unittest.TestCase):
@@ -169,6 +191,7 @@ class EvaluateAllMissingCaptureTests(unittest.TestCase):
             by_id = {v.query.id: v for v in verdicts}
             self.assertTrue(by_id["q01"].passed, by_id["q01"].reason)
             self.assertFalse(by_id["q02"].passed)
+            self.assertEqual(by_id["q02"].blocking_code, PARITY_CAPTURE_MISSING)
             self.assertIn("missing or unreadable capture file", by_id["q02"].reason)
 
     def test_unreadable_capture_file_fails_closed(self):
@@ -669,11 +692,12 @@ class PreconditionTypedCodesTests(PreconditionTestsBase):
             self.assertIn(f"[{PARITY_DENSE_LEG_SKIPPED}]", buf.getvalue())
 
 
-class ExitCodeEquivalenceTests(PreconditionTestsBase):
-    """The new attribution signals are report payload only -- main()'s exit
-    code stays governed solely by the (unchanged) tolerance rule (tempdoc 750
-    Part A: exit 1 iff a precondition fails or any query fails tolerance;
-    exit 0 otherwise)."""
+class ExitCodePolicyTests(PreconditionTestsBase):
+    """main()'s exit code is governed by the BLOCKING tier only: exit 1 iff a
+    fail-closed precondition fails, a capture is missing, or a golden #1 falls
+    out of the captured top-3. The descriptive tier (overlap@10, dense-score
+    identity, leg attribution) is report payload and never moves the exit code
+    (2026-07-30 demotion; tempdoc 750 option A4)."""
 
     def test_passing_v2_fixture_with_variance_flag_still_exits_0(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -713,16 +737,207 @@ class ExitCodeEquivalenceTests(PreconditionTestsBase):
             self.assertEqual(rc, 0)
             self.assertIn(f"[{PARITY_EMBEDDING_VARIANCE}]", buf_out.getvalue())
 
-    def test_failing_v2_fixture_still_exits_1(self):
+    def _write_v2_round(self, tmp: str, evidence_dir: Path, captured: list[str], expected: list[str]) -> Path:
+        """Stage a complete, precondition-clean v2 round whose only variable is
+        the captured ordering, and return the baseline path."""
+        self._write_knowledge_status(evidence_dir, embeddingFingerprintCurrent="fp-abc123", indexedDocuments=100)
+        response = _response(captured)
+        response["searchTrace"] = {"stages": [{"id": "dense-retrieval", "status": "executed"}]}
+        self._write_capture(evidence_dir, "q01", response)
+
+        golden = self._baseline(
+            formatVersion=BASELINE_FORMAT_VERSION,
+            calibration={
+                "denseScoreEnvelopeAbs": 2.0e-4,
+                "population": "same-machine-dev-rebuilds",
+            },
+            queries=[
+                {
+                    "id": "q01",
+                    "query": "a",
+                    "kind": "semantic",
+                    "expectedTop10": expected,
+                    "legScores": {},
+                    "legTop10": {},
+                }
+            ],
+        )
+        golden_path = Path(tmp) / "golden-parity.json"
+        golden_path.write_text(json.dumps(golden), encoding="utf-8")
+        return golden_path
+
+    def test_overlap_only_failure_is_reported_but_exits_0(self):
+        """The policy change end-to-end: 6/10 overlap (below the old floor of
+        7) with the golden #1 still at rank 1 exits 0, while the finding is
+        still printed with its typed code, its per-query count, and the
+        policy note explaining WHY it is descriptive."""
         with tempfile.TemporaryDirectory() as tmp:
             evidence_dir = self._make_evidence_dir(tmp)
             expected = [f"d{i}.txt" for i in range(1, 11)]
-            self._write_knowledge_status(evidence_dir, embeddingFingerprintCurrent="fp-abc123", indexedDocuments=100)
-
             captured = [f"d{i}.txt" for i in range(1, 7)] + [f"x{i}.txt" for i in range(1, 5)]
+            golden_path = self._write_v2_round(tmp, evidence_dir, captured, expected)
+
+            buf_out, buf_err = io.StringIO(), io.StringIO()
+            with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                rc = main(["--golden", str(golden_path), "--evidence-dir", str(evidence_dir)])
+            output = buf_out.getvalue()
+
+            self.assertEqual(rc, 0, output)
+            # Reported, not suppressed: typed code, the actual count, and the
+            # prominent descriptive block.
+            self.assertIn(f"[{PARITY_OVERLAP_MISS}]", output)
+            self.assertIn(f"overlap 6/{10}", output)
+            self.assertIn("descriptive findings (reported, NOT blocking)", output)
+            self.assertIn("1 of 1 golden queries are below", output)
+            # And the operator can read WHY from the log itself.
+            self.assertIn("overlap@10 is DESCRIPTIVE, not blocking", output)
+            self.assertIn("same-machine-dev-rebuilds", output)
+            self.assertIn("UNCALIBRATED MEASUREMENT", output)
+            # No blocking block was emitted.
+            self.assertNotIn("BLOCKING: the following golden queries", output)
+
+    def test_first_hit_miss_exits_1(self):
+        """The remaining blocking assertion: same 10 identities, but the
+        golden #1 is pushed to rank 4. Overlap is a perfect 10/10, so this can
+        only block for the golden-#1 reason."""
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            expected = [f"d{i}.txt" for i in range(1, 11)]
+            captured = ["d2.txt", "d3.txt", "d4.txt", "d1.txt"] + [f"d{i}.txt" for i in range(5, 11)]
+            golden_path = self._write_v2_round(tmp, evidence_dir, captured, expected)
+
+            buf_out, buf_err = io.StringIO(), io.StringIO()
+            with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                rc = main(["--golden", str(golden_path), "--evidence-dir", str(evidence_dir)])
+            output = buf_out.getvalue()
+
+            self.assertEqual(rc, 1, output)
+            self.assertIn(f"[{PARITY_FIRST_HIT_MISS}]", output)
+            self.assertIn("BLOCKING: the following golden queries", output)
+            # Blocked for the right reason: overlap was fine.
+            self.assertIn(f"overlap 10/10 (floor >={OVERLAP_DESCRIPTIVE_FLOOR}) OK", output)
+            self.assertNotIn(f"[{PARITY_OVERLAP_MISS}] 1 of 1", output)
+
+    def test_missing_capture_still_exits_1(self):
+        """Fail-closed on a missing capture survives the demotion: nothing was
+        measured, so this is a blocking condition, not a descriptive one."""
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            expected = [f"d{i}.txt" for i in range(1, 11)]
+            golden_path = self._write_v2_round(tmp, evidence_dir, list(expected), expected)
+            (evidence_dir / "golden" / "q01.json").unlink()
+
+            buf_out, buf_err = io.StringIO(), io.StringIO()
+            with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                rc = main(["--golden", str(golden_path), "--evidence-dir", str(evidence_dir)])
+            output = buf_out.getvalue()
+
+            self.assertEqual(rc, 1, output)
+            self.assertIn(f"[{PARITY_CAPTURE_MISSING}]", output)
+
+    def test_clean_round_exits_0_and_says_no_overlap_findings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            expected = [f"d{i}.txt" for i in range(1, 11)]
+            golden_path = self._write_v2_round(tmp, evidence_dir, list(expected), expected)
+
+            buf_out, buf_err = io.StringIO(), io.StringIO()
+            with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                rc = main(["--golden", str(golden_path), "--evidence-dir", str(evidence_dir)])
+            output = buf_out.getvalue()
+
+            self.assertEqual(rc, 0, output)
+            self.assertIn(f"[{PARITY_OVERLAP_MISS}] none:", output)
+
+
+class PreconditionsStillBlockAfterDemotionTests(PreconditionTestsBase):
+    """The demotion touched only the overlap tier. Every fail-closed
+    PRECONDITION still returns exit 1 EVEN WHEN the round would otherwise be
+    a clean pass on the blocking assertion — i.e. they are not reachable-only
+    through an overlap failure."""
+
+    def _clean_round(self, tmp: str, evidence_dir: Path) -> dict:
+        expected = [f"d{i}.txt" for i in range(1, 11)]
+        response = _response(expected)
+        response["searchTrace"] = {"stages": [{"id": "dense-retrieval", "status": "executed"}]}
+        self._write_capture(evidence_dir, "q01", response)
+        return self._baseline(
+            formatVersion=BASELINE_FORMAT_VERSION,
+            queries=[{"id": "q01", "query": "a", "kind": "semantic", "expectedTop10": expected}],
+        )
+
+    def _run(self, tmp: str, evidence_dir: Path, golden: dict) -> tuple[int, str]:
+        golden_path = Path(tmp) / "golden-parity.json"
+        golden_path.write_text(json.dumps(golden), encoding="utf-8")
+        buf_out, buf_err = io.StringIO(), io.StringIO()
+        with redirect_stdout(buf_out), redirect_stderr(buf_err):
+            rc = main(["--golden", str(golden_path), "--evidence-dir", str(evidence_dir)])
+        return rc, buf_err.getvalue()
+
+    def test_model_identity_still_blocks_an_otherwise_clean_round(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            golden = self._clean_round(tmp, evidence_dir)
+            self._write_knowledge_status(
+                evidence_dir, embeddingFingerprintCurrent="fp-DIFFERENT", indexedDocuments=100
+            )
+            rc, err = self._run(tmp, evidence_dir, golden)
+            self.assertEqual(rc, 1)
+            self.assertIn(f"[{PARITY_MODEL_MISMATCH}]", err)
+
+    def test_corpus_sanity_still_blocks_an_otherwise_clean_round(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            golden = self._clean_round(tmp, evidence_dir)
+            self._write_knowledge_status(
+                evidence_dir, embeddingFingerprintCurrent="fp-abc123", indexedDocuments=5
+            )
+            rc, err = self._run(tmp, evidence_dir, golden)
+            self.assertEqual(rc, 1)
+            self.assertIn(f"[{PARITY_CORPUS_MISMATCH}]", err)
+
+    def test_dense_leg_still_blocks_an_otherwise_clean_round(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            golden = self._clean_round(tmp, evidence_dir)
+            self._write_knowledge_status(
+                evidence_dir, embeddingFingerprintCurrent="fp-abc123", indexedDocuments=100
+            )
+            # Same otherwise-clean round, dense leg reported as skipped.
+            response = _response([f"d{i}.txt" for i in range(1, 11)])
+            response["searchTrace"] = {
+                "stages": [{"id": "dense-retrieval", "status": "skipped", "reason": "NO_EMBEDDING_MODEL"}]
+            }
+            self._write_capture(evidence_dir, "q01", response)
+            rc, err = self._run(tmp, evidence_dir, golden)
+            self.assertEqual(rc, 1)
+            self.assertIn(f"[{PARITY_DENSE_LEG_SKIPPED}]", err)
+
+
+class LegAttributionOnDescriptiveFindingTests(PreconditionTestsBase):
+    """A sub-floor overlap no longer blocks, so it must still receive the
+    per-leg attribution line — printing attribution only for blocking
+    failures is what left earlier rounds unattributable."""
+
+    def test_descriptive_overlap_finding_gets_leg_attribution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_dir = self._make_evidence_dir(tmp)
+            expected = [f"d{i}.txt" for i in range(1, 11)]
+            captured = [f"d{i}.txt" for i in range(1, 7)] + [f"x{i}.txt" for i in range(1, 5)]
+            self._write_knowledge_status(
+                evidence_dir, embeddingFingerprintCurrent="fp-abc123", indexedDocuments=100
+            )
             response = _response(captured)
             response["searchTrace"] = {"stages": [{"id": "dense-retrieval", "status": "executed"}]}
             self._write_capture(evidence_dir, "q01", response)
+            for mode, identities in (
+                ("vector", [f"d{i}.txt" for i in range(1, 5)] + [f"x{i}.txt" for i in range(1, 7)]),
+                ("text", expected),
+                ("splade", expected),
+            ):
+                (evidence_dir / "golden" / f"q01.{mode}.json").write_text(
+                    json.dumps(_response(identities)), encoding="utf-8"
+                )
 
             golden = self._baseline(
                 formatVersion=BASELINE_FORMAT_VERSION,
@@ -731,10 +946,10 @@ class ExitCodeEquivalenceTests(PreconditionTestsBase):
                     {
                         "id": "q01",
                         "query": "a",
-                        "kind": "keyword",
+                        "kind": "semantic",
                         "expectedTop10": expected,
                         "legScores": {},
-                        "legTop10": {},
+                        "legTop10": {"vector": expected, "text": expected, "splade": expected},
                     }
                 ],
             )
@@ -744,8 +959,10 @@ class ExitCodeEquivalenceTests(PreconditionTestsBase):
             buf_out, buf_err = io.StringIO(), io.StringIO()
             with redirect_stdout(buf_out), redirect_stderr(buf_err):
                 rc = main(["--golden", str(golden_path), "--evidence-dir", str(evidence_dir)])
-            self.assertEqual(rc, 1)
-            self.assertIn(f"[{PARITY_OVERLAP_MISS}]", buf_out.getvalue())
+            output = buf_out.getvalue()
+
+            self.assertEqual(rc, 0, output)
+            self.assertIn(f"[{PARITY_LEG_DIVERGENCE}: dense]", output)
 
 
 if __name__ == "__main__":

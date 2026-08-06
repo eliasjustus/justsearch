@@ -14,23 +14,60 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Tests for {@link QueryFilterBuilder#buildChunkFilterQuery} which builds Lucene filter queries
- * applicable to chunk documents (only mime, fileKind, mimeBase, language — skipping pathPrefix,
- * modifiedAt range, entity fields, and IS_CHUNK exclusion).
+ * applicable to chunk documents: mime, fileKind, mimeBase, language, the collection scope, and the
+ * two PATH-keyed scopes (pathPrefix, doc_ids) — skipping modifiedAt range, entity fields, metadata
+ * fields, and IS_CHUNK exclusion, none of which chunk documents carry.
+ *
+ * <p>The collection scope joined that list in tempdoc 811 item 3, once {@code ChunkDocumentWriter}
+ * started writing the parent's {@code collection} onto each chunk. Before that, the default
+ * agent-history exclusion could not bind on the chunk branch at all.
+ *
+ * <p>The PATH-keyed pair used to be skipped too. That was wrong on the facts: {@code
+ * ChunkDocumentWriter} writes {@code PATH = parentDocId} and {@code IndexingDocumentOps} writes the
+ * parent's {@code DOC_ID = PATH = absolutePath}, so a chunk's PATH IS the parent file's path. The
+ * end-to-end consequence (an out-of-prefix parent's chunk retrieved under a pathPrefix filter) is
+ * pinned by {@code ChunkSearchIntegrationTest#chunkFilterScopesByPathPrefix}.
  */
 final class QueryFilterBuilderTest {
 
+  /**
+   * The rendered chunk filter when NO chunk-applicable filter was requested: the default
+   * agent-history exclusion plus its MatchAllDocs anchor, and nothing else. Asserting on this exact
+   * string keeps "filter X is skipped on the chunk branch" a precise claim — a skipped filter that
+   * quietly started contributing a clause would no longer be equal to it.
+   */
+  private static final String DEFAULT_CHUNK_SCOPE_ONLY = "-collection:agent-history +*:*";
+
   @Test
-  void buildChunkFilterQuery_nullFiltersReturnsNull() {
-    assertNull(QueryFilterBuilder.buildChunkFilterQuery(null));
+  void buildChunkFilterQuery_nullFiltersStillCarriesDefaultCollectionScope() {
+    // Tempdoc 811: null filters mean the DEFAULT scope, never "no scope".
+    Query q = QueryFilterBuilder.buildChunkFilterQuery(null);
+    assertNotNull(q, "null filters must still yield the default agent-history exclusion");
+    assertTrue(q.toString().contains("-collection:agent-history"), "excluded: " + q);
   }
 
   @Test
-  void buildChunkFilterQuery_emptyFiltersReturnsNull() {
+  void buildChunkFilterQuery_emptyFiltersStillCarriesDefaultCollectionScope() {
     RuntimeSearchFilters filters =
         LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
             .mime(List.of()).language(List.of()).fileKind(List.of()).mimeBase(List.of())
             .build();
-    assertNull(QueryFilterBuilder.buildChunkFilterQuery(filters));
+    Query q = QueryFilterBuilder.buildChunkFilterQuery(filters);
+    assertNotNull(q);
+    assertTrue(q.toString().contains("-collection:agent-history"), "excluded: " + q);
+  }
+
+  @Test
+  void buildChunkFilterQuery_explicitCollectionScopeIsAPositiveFilter() {
+    RuntimeSearchFilters filters =
+        LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
+            .collection(List.of("agent-history"))
+            .build();
+    Query q = QueryFilterBuilder.buildChunkFilterQuery(filters);
+    assertNotNull(q);
+    String s = q.toString();
+    assertTrue(s.contains("collection:agent-history"), "included: " + s);
+    assertTrue(!s.contains("-collection:agent-history"), "not also excluded: " + s);
   }
 
   @Test
@@ -74,23 +111,57 @@ final class QueryFilterBuilderTest {
             .build();
     Query q = QueryFilterBuilder.buildChunkFilterQuery(filters);
     assertNotNull(q, "Should produce combined filter");
-    // Should be a BooleanQuery with 4 FILTER clauses
+    // 4 FILTER clauses + the always-present default collection exclusion (811 item 3).
     BooleanQuery bq = (BooleanQuery) q;
-    assertEquals(4, bq.clauses().size(), "4 filter clauses: mime, language, fileKind, mimeBase");
+    assertEquals(
+        5,
+        bq.clauses().size(),
+        "4 filter clauses (mime, language, fileKind, mimeBase) + the default collection exclusion");
   }
 
   @Test
-  void buildChunkFilterQuery_ignoresPathPrefixAndDateRange() {
-    // pathPrefix and modifiedAt range are NOT stored on chunks — should be ignored
+  void buildChunkFilterQuery_ignoresDateRange() {
+    // modified_at is NOT stored on chunks — should be ignored
     RuntimeSearchFilters filters =
         LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
-            .pathPrefix("/some/path")
             .modifiedFromMs(1000L)
             .modifiedToMs(2000L)
             .build();
-    assertNull(
-        QueryFilterBuilder.buildChunkFilterQuery(filters),
-        "pathPrefix and date range should not produce chunk filter");
+    assertEquals(
+        DEFAULT_CHUNK_SCOPE_ONLY,
+        QueryFilterBuilder.buildChunkFilterQuery(filters).toString(),
+        "a modified_at range must add no chunk clause — chunks do not carry the field; only the "
+            + "default collection scope remains");
+  }
+
+  @Test
+  void buildChunkFilterQuery_appliesPathPrefix() {
+    // A chunk's PATH holds the PARENT's absolute path (ChunkDocumentWriter writes
+    // PATH = parentDocId; IndexingDocumentOps writes DOC_ID = PATH = absolutePath), so the same
+    // PrefixQuery the whole-doc legs use is valid on chunks. Skipping it let the chunk branch
+    // retrieve out-of-scope candidates.
+    RuntimeSearchFilters filters =
+        LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
+            .pathPrefix("/some/path")
+            .build();
+    Query q = QueryFilterBuilder.buildChunkFilterQuery(filters);
+    assertNotNull(q, "pathPrefix must scope the chunk branch");
+    assertTrue(
+        q.toString().contains("path:"),
+        "the chunk filter must constrain the PATH field: " + q);
+  }
+
+  @Test
+  void buildChunkFilterQuery_appliesDocIds() {
+    RuntimeSearchFilters filters =
+        LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
+            .docIds(List.of("/path/to/doc1.txt"))
+            .build();
+    Query q = QueryFilterBuilder.buildChunkFilterQuery(filters);
+    assertNotNull(q, "doc_ids must scope the chunk branch (PATH holds the parent path)");
+    assertTrue(
+        q.toString().contains("/path/to/doc1.txt"),
+        "the chunk filter must name the requested document: " + q);
   }
 
   @Test
@@ -102,9 +173,10 @@ final class QueryFilterBuilderTest {
             .entityOrganizations(List.of("Acme Corp"))
             .entityLocations(List.of("Berlin"))
             .build();
-    assertNull(
-        QueryFilterBuilder.buildChunkFilterQuery(filters),
-        "Entity filters should not produce chunk filter");
+    assertEquals(
+        DEFAULT_CHUNK_SCOPE_ONLY,
+        QueryFilterBuilder.buildChunkFilterQuery(filters).toString(),
+        "entity filters must add no chunk clause; only the default collection scope remains");
   }
 
   @Test
@@ -116,9 +188,10 @@ final class QueryFilterBuilderTest {
             .metaAuthor(List.of("stan choe"))
             .metaCategory(List.of("tech"))
             .build();
-    assertNull(
-        QueryFilterBuilder.buildChunkFilterQuery(filters),
-        "Metadata filters should not produce chunk filter");
+    assertEquals(
+        DEFAULT_CHUNK_SCOPE_ONLY,
+        QueryFilterBuilder.buildChunkFilterQuery(filters).toString(),
+        "metadata filters must add no chunk clause; only the default collection scope remains");
   }
 
   @Test
@@ -143,17 +216,21 @@ final class QueryFilterBuilderTest {
   }
 
   @Test
-  void buildChunkFilterQuery_mimeFilterWithPathPrefixOnlyAppliesMime() {
-    // Mixed: mime is applicable to chunks, pathPrefix is not
+  void buildChunkFilterQuery_mimeAndPathPrefixBothApply() {
+    // Mixed: both mime and pathPrefix are enforceable on chunk documents.
     RuntimeSearchFilters filters =
         LuceneRuntimeTypesRuntimeSearchFiltersBuilder.builder()
             .mime(List.of("application/pdf"))
-            .pathPrefix("/ignored/path")
+            .pathPrefix("/scoped/path")
+            .entityPersons(List.of("Alice")) // not stored on chunks — still skipped
             .build();
     Query q = QueryFilterBuilder.buildChunkFilterQuery(filters);
-    assertNotNull(q, "Should produce a filter for the mime part");
+    assertNotNull(q, "Should produce a filter for the applicable parts");
     BooleanQuery bq = (BooleanQuery) q;
-    assertEquals(1, bq.clauses().size(), "Only mime clause, pathPrefix ignored");
+    assertEquals(
+        3,
+        bq.clauses().size(),
+        "mime + pathPrefix + the default collection exclusion; the entity filter stays skipped");
   }
 
   // ---- doc_ids filter tests (366 Phase 6) ----
@@ -271,5 +348,31 @@ final class QueryFilterBuilderTest {
     Query content = new org.apache.lucene.search.MatchAllDocsQuery();
     Query q = QueryFilterBuilder.applyRuntimeFilters(content, filters);
     assertTrue(q.toString().contains("-collection:agent-history"), "excluded: " + q);
+  }
+
+  // ===== Tempdoc 811 D-1 — the `filters == null` bypass of the collection scope =====
+
+  @Test
+  void applyRuntimeFilters_nullFiltersStillExcludeAgentHistory() {
+    // Before D-1 this returned right after the chunk exclusion, BEFORE addCollectionScope — so
+    // every null-filters call site (HybridSearchOps.searchHybrid -> searchText(t, l, null) ->
+    // buildTextQuery(text, null)) searched indexed agent transcripts.
+    Query content = new org.apache.lucene.search.MatchAllDocsQuery();
+    Query q = QueryFilterBuilder.applyRuntimeFilters(content, null);
+    assertNotNull(q);
+    String s = q.toString();
+    assertTrue(s.contains("-collection:agent-history"), "excluded on the null path: " + s);
+    assertTrue(s.contains("-is_chunk:true"), "the chunk exclusion is not lost: " + s);
+  }
+
+  @Test
+  void buildFilterQueryOnly_nullFiltersStillExcludeAgentHistory() {
+    // Same defect on the VECTOR/HYBRID filter-only path (RagContextOps union leg, the dense legs).
+    Query q = QueryFilterBuilder.buildFilterQueryOnly(null);
+    assertNotNull(q);
+    String s = q.toString();
+    assertTrue(s.contains("-collection:agent-history"), "excluded on the null path: " + s);
+    assertTrue(s.contains("-is_chunk:true"), "the chunk exclusion is not lost: " + s);
+    assertTrue(s.contains("*:*"), "the pure-negative query stays anchored: " + s);
   }
 }

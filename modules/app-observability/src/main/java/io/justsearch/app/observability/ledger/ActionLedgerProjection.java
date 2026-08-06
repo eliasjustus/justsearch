@@ -126,7 +126,8 @@ public final class ActionLedgerProjection {
       String state,
       int attempts,
       String errorMessage,
-      Instant occurredAt) {
+      Instant occurredAt,
+      String scanId) {
     return new ActionEvent.Index(
         deterministicId("index", occurredAt, collection, pathHash, state),
         occurredAt,
@@ -136,7 +137,42 @@ public final class ActionLedgerProjection {
         collection,
         state,
         attempts,
-        errorMessage == null ? "" : errorMessage);
+        errorMessage == null ? "" : errorMessage,
+        // Tempdoc 812 D2 — the scan this document belonged to, so the Activity view groups the
+        // surviving per-doc rows under their scan's rollup by KEY rather than by render adjacency.
+        scanId == null ? "" : scanId);
+  }
+
+  /**
+   * Tempdoc 812 D2 — a directory scan's rollup: the one durable audit record for "this scan
+   * indexed N documents". Counts come from the observed terminal job states, so the row states
+   * what the scan DID. The deterministic id is keyed on the scan + phase (not the counts), so a
+   * re-emitted completion for the same scan dedups in the id-keyed store.
+   */
+  public static ActionEvent projectScanRollup(
+      String scanId,
+      String collection,
+      String root,
+      String outcome,
+      int docsDone,
+      int docsFailed,
+      int docsAdmitted,
+      long durationMs,
+      Instant occurredAt) {
+    String phase = "STARTED".equals(outcome) ? "STARTED" : "FINISHED";
+    return new ActionEvent.ScanRollup(
+        deterministicId("scan", Instant.EPOCH, scanId, phase),
+        occurredAt,
+        "system",
+        "WORKER_INDEXER",
+        scanId == null ? "" : scanId,
+        collection == null ? "" : collection,
+        root == null ? "" : root,
+        outcome,
+        docsDone,
+        docsFailed,
+        docsAdmitted,
+        durationMs);
   }
 
   /**
@@ -191,9 +227,151 @@ public final class ActionLedgerProjection {
         if (!idx.errorMessage().isEmpty()) {
           m.put("errorMessage", idx.errorMessage());
         }
+        // Tempdoc 812 D2 — omitted when absent so a keyless legacy row is legibly keyless and the
+        // FE falls back to the adjacency collapse rather than grouping everything under "".
+        if (!idx.scanId().isEmpty()) {
+          m.put("scanId", idx.scanId());
+        }
+      }
+      case ActionEvent.ScanRollup scan -> {
+        // Tempdoc 812 D2 — rendered as an OPERATION row (kind() is OPERATION); operationId is what
+        // the FE discriminates the scan rollup on, the rest is the summary the row states.
+        m.put("operationId", ActionEvent.ScanRollup.OPERATION_ID);
+        m.put("outcome", scan.outcome());
+        m.put("scanId", scan.scanId());
+        m.put("collection", scan.collection());
+        if (!scan.root().isEmpty()) {
+          m.put("root", scan.root());
+        }
+        m.put("docsDone", scan.docsDone());
+        m.put("docsFailed", scan.docsFailed());
+        m.put("docsAdmitted", scan.docsAdmitted());
+        m.put("durationMs", scan.durationMs());
       }
     }
     return m;
+  }
+
+  /**
+   * The inverse of {@link #toWireRow} — tempdoc 812 D1. The durable audit journal stores one wire
+   * row per line, so reading the journal back is exactly this parse; keeping the inverse HERE,
+   * beside the forward projection, is what stops the journal from becoming a second schema that
+   * drifts from the endpoint's. Returns empty for a row whose {@code kind} is unknown (a file
+   * written by a newer build) or whose required fields are missing/malformed — the caller skips the
+   * line rather than failing the whole read.
+   */
+  public static Optional<ActionEvent> fromWireRow(Map<String, Object> row) {
+    if (row == null) {
+      return Optional.empty();
+    }
+    try {
+      String id = str(row, "id");
+      String kind = str(row, "kind");
+      String originator = str(row, "originator");
+      String transport = str(row, "transport");
+      if (id.isEmpty() || kind.isEmpty()) {
+        return Optional.empty();
+      }
+      Instant occurredAt = Instant.parse(str(row, "occurredAt"));
+      Optional<String> correlationId = optional(row, "correlationId");
+      return Optional.ofNullable(
+          switch (kind) {
+            // Tempdoc 812 D1×D2 — a scan rollup is journaled as an OPERATION row (its kind() IS
+            // operation, which is what makes it durable), so the read path must restore the ROLLUP,
+            // not a bare Operation: the latter would silently drop the counts + scan key and render
+            // a restored row as "Indexed 0 documents".
+            case "operation" ->
+                ActionEvent.ScanRollup.OPERATION_ID.equals(str(row, "operationId"))
+                    ? new ActionEvent.ScanRollup(
+                        id,
+                        occurredAt,
+                        originator,
+                        transport,
+                        str(row, "scanId"),
+                        str(row, "collection"),
+                        str(row, "root"),
+                        str(row, "outcome"),
+                        intOf(row, "docsDone"),
+                        intOf(row, "docsFailed"),
+                        intOf(row, "docsAdmitted"),
+                        row.get("durationMs") instanceof Number n ? n.longValue() : 0L)
+                    : new ActionEvent.Operation(
+                        id,
+                        occurredAt,
+                        originator,
+                        transport,
+                        str(row, "operationId"),
+                        str(row, "outcome"),
+                        optional(row, "executionId"),
+                        correlationId);
+            case "navigation" ->
+                new ActionEvent.Navigation(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "targetSurface"),
+                    str(row, "sourceId"));
+            case "gate" ->
+                new ActionEvent.Gate(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "operationId"),
+                    str(row, "disposition"),
+                    str(row, "gateBehavior"),
+                    str(row, "sourceTier"));
+            case "grant" ->
+                new ActionEvent.Grant(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "grantId"),
+                    str(row, "action"),
+                    str(row, "subject"));
+            case "effect" ->
+                new ActionEvent.Effect(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "effectKind"),
+                    str(row, "subject"));
+            case "index" ->
+                new ActionEvent.Index(
+                    id,
+                    occurredAt,
+                    originator,
+                    transport,
+                    str(row, "pathHash"),
+                    str(row, "collection"),
+                    str(row, "state"),
+                    intOf(row, "attempts"),
+                    str(row, "errorMessage"),
+                    // Tempdoc 812 D2 — the scan key round-trips too (empty for keyless rows).
+                    str(row, "scanId"));
+            default -> null;
+          });
+    } catch (RuntimeException malformed) {
+      return Optional.empty();
+    }
+  }
+
+  private static String str(Map<String, Object> row, String key) {
+    Object v = row.get(key);
+    return v == null ? "" : v.toString();
+  }
+
+  /** A JSON number round-trips as Integer/Long/Double depending on the parser; 0 when absent. */
+  private static int intOf(Map<String, Object> row, String key) {
+    return row.get(key) instanceof Number n ? n.intValue() : 0;
+  }
+
+  private static Optional<String> optional(Map<String, Object> row, String key) {
+    Object v = row.get(key);
+    return v == null || v.toString().isEmpty() ? Optional.empty() : Optional.of(v.toString());
   }
 
   /**

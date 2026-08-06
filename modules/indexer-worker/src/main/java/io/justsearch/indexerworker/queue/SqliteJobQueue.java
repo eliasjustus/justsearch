@@ -156,6 +156,9 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
 
       // Capture whether DB existed BEFORE opening (JDBC will create empty file if missing)
       existedBeforeOpen = Files.exists(dbPath) && Files.size(dbPath) > 0;
+      if (existedBeforeOpen) {
+        SqliteQueueMigrationOps.refuseFutureSchema(dbPath);
+      }
 
       String jdbcUrl = "jdbc:sqlite:" + dbPath.toAbsolutePath();
       connection = DriverManager.getConnection(jdbcUrl);
@@ -232,6 +235,10 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
   @Override
   public JobQueue.JobStateCounts jobStateCounts() { return switchBufferOps.stateCounts(); }
 
+  /** Byte weight of remaining PENDING/PROCESSING work; unknown sizes counted, not summed. */
+  @Override
+  public JobQueue.PendingBytes pendingBytes() { return switchBufferOps.pendingBytes(); }
+
   /**
    * Inserts or replaces an operation in the durable switch buffer.
    *
@@ -256,13 +263,37 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
 
   @Override
   public int enqueue(List<Path> paths, String collection) {
-    if (paths == null || paths.isEmpty()) {
+    return enqueueEntries(JobQueue.EnqueueEntry.ofUnknownSizes(paths), collection);
+  }
+
+  /**
+   * Untagged enqueue of sized entries. Overridden (rather than inherited) because the interface
+   * default routes back through {@link #enqueue(List, String)}, which lands here again — this is
+   * the one hop that ends the cycle at the real write path.
+   */
+  @Override
+  public int enqueueEntries(List<JobQueue.EnqueueEntry> entries, String collection) {
+    return enqueueEntries(entries, collection, null);
+  }
+
+  /**
+   * Tempdoc 813 Slice B: the single write path for the jobs table. {@code size_bytes} is listed in
+   * the INSERT precisely because the statement is {@code INSERT OR REPLACE} — an unlisted column
+   * would be reset to its default on every re-enqueue of an already-queued path, so the caller's
+   * entry is the sole authority for the recorded size (a re-enqueue restates it, including
+   * restating it as unknown). Tempdoc 812 D2 puts {@code scan_id} on the same footing for the same
+   * reason: the enqueue call states which scan admitted the row, or the key is lost on re-enqueue.
+   */
+  @Override
+  public int enqueueEntries(
+      List<JobQueue.EnqueueEntry> entries, String collection, String scanId) {
+    if (entries == null || entries.isEmpty()) {
       return 0;
     }
 
     if (!hasSufficientDiskSpace()) {
       log.warn("Refusing to enqueue {} jobs: insufficient free disk space (< {} MB)",
-          paths.size(), MIN_FREE_DISK_BYTES / 1024 / 1024);
+          entries.size(), MIN_FREE_DISK_BYTES / 1024 / 1024);
       return 0;
     }
 
@@ -271,27 +302,41 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
       ensureOpen();
 
       String sql = """
-          INSERT OR REPLACE INTO jobs (path, state, attempts, last_updated, collection)
-          VALUES (?, 'PENDING', 0, ?, ?)
+          INSERT OR REPLACE INTO jobs
+            (path, state, attempts, last_updated, collection, size_bytes, scan_id)
+          VALUES (?, 'PENDING', 0, ?, ?, ?, ?)
           """;
 
       long now = System.currentTimeMillis();
       int count = 0;
       String col = (collection != null && !collection.isBlank()) ? collection : null;
+      // Tempdoc 812 D2: the enqueueing scan's identity rides the row so the Head can group the
+      // per-document terminal outcomes into one durable scan-completion audit record.
+      String scan = (scanId != null && !scanId.isBlank()) ? scanId : null;
 
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
-        for (Path path : paths) {
-          String normalizedPath = PathNormalizer.normalizePath(path.toAbsolutePath().toString());
+        for (JobQueue.EnqueueEntry entry : entries) {
+          if (entry == null || entry.path() == null) {
+            continue;
+          }
+          String normalizedPath =
+              PathNormalizer.normalizePath(entry.path().toAbsolutePath().toString());
           stmt.setString(1, normalizedPath);
           stmt.setLong(2, now);
           stmt.setString(3, col);
+          if (entry.sizeBytes() >= 0) {
+            stmt.setLong(4, entry.sizeBytes());
+          } else {
+            stmt.setNull(4, java.sql.Types.INTEGER);
+          }
+          stmt.setString(5, scan);
           stmt.addBatch();
           count++;
         }
         stmt.executeBatch();
       }
 
-      log.debug("Enqueued {} jobs (collection={})", count, col);
+      log.debug("Enqueued {} jobs (collection={}, scanId={})", count, col, scan);
       return count;
     } catch (SQLException e) {
       log.error("Failed to enqueue jobs", e);
@@ -1908,5 +1953,29 @@ public final class SqliteJobQueue implements SwitchBufferCapableQueue {
         lastQuickCheckOk,
         lastBackupAtMs,
         lastDbErrorAtMs);
+  }
+
+  @Override
+  public boolean checkpointForUpgrade() {
+    lock.lock();
+    try {
+      ensureOpen();
+      try (Statement statement = connection.createStatement();
+          ResultSet result = statement.executeQuery("PRAGMA wal_checkpoint(FULL)")) {
+        // SQLite returns (busy, log, checkpointed). A non-zero busy count means a writer still
+        // owns frames and the upgrade must wait rather than pretending the queue is closed over.
+        boolean complete = result.next() && result.getInt(1) == 0;
+        if (!complete) {
+          log.warn("Upgrade WAL checkpoint could not drain all frames");
+        }
+        return complete;
+      }
+    } catch (SQLException e) {
+      recordDbError();
+      log.warn("Upgrade WAL checkpoint failed: {}", e.getMessage());
+      return false;
+    } finally {
+      lock.unlock();
+    }
   }
 }

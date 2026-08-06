@@ -183,11 +183,77 @@ def cmd_ui_proportion_gate(ctx, ui_url, output_dir, timeout_ms):
 
     report = ui_proportion_gate.evaluate(_capture)
     for row in report["rows"]:
-        if row.get("status") == "GROWN":
+        status = row.get("status")
+        if status == "GROWN":
             click.echo(
                 f"GROWN: step={row['step']} selector={row['selector']} "
                 f"measured={row['measuredHeight']}px > baseline={row['maxHeightPx']}px "
                 f"(+{row['tolerancePx']}px tolerance)",
+                err=True,
+            )
+        elif status == "UNDER_MIN_HEIGHT":
+            click.echo(
+                f"UNDER_MIN_HEIGHT: step={row['step']} selector={row['selector']} "
+                f"measured={row['measuredHeight']}px < floor={row['minHeightPx']}px "
+                f"(-{row['tolerancePx']}px tolerance) — the band this row exists to bound "
+                f"collapsed, so its ceiling is measuring the wrong state",
+                err=True,
+            )
+        elif status == "UNDER_SHARE":
+            click.echo(
+                f"UNDER_SHARE: step={row['step']} selector={row['selector']} "
+                f"share={row['measuredShare']} < floor={row['floor']} "
+                f"({row['measuredHeight']}px / {row['otherHeight']}px of {row['otherSelector']!r})",
+                err=True,
+            )
+        elif status == "CLIPPED":
+            click.echo(
+                f"CLIPPED: step={row['step']} selector={row['selector']} "
+                f"bottom={row['measuredBottom']}px > maxBottomPx={row['maxBottomPx']}px",
+                err=True,
+            )
+        elif status == "MULTI_SCROLL":
+            click.echo(
+                f"MULTI_SCROLL: step={row['step']} scrollableCount={row['scrollableCount']} "
+                f"> maxScrollableRegions={row['maxScrollableRegions']}",
+                err=True,
+            )
+        elif status == "NO_SCROLLER":
+            click.echo(
+                f"NO_SCROLLER: step={row['step']} scrollableCount={row['scrollableCount']} "
+                f"< minScrollableRegions={row['minScrollableRegions']} — the one-scroller rule "
+                f"has nothing to witness on this capture",
+                err=True,
+            )
+        elif status == "DUPLICATE_STATUS_FACT":
+            click.echo(
+                f"DUPLICATE_STATUS_FACT: step={row['step']} phrase={row['phrase']!r} "
+                f"count={row['count']} > maxPersistentRenders={row['maxPersistentRenders']}",
+                err=True,
+            )
+        elif status == "PRESENT_BUT_SHOULD_BE_ABSENT":
+            click.echo(
+                f"PRESENT_BUT_SHOULD_BE_ABSENT: step={row['step']} selector={row['selector']}",
+                err=True,
+            )
+        elif status == "MISSING_REQUIRED":
+            click.echo(
+                f"MISSING_REQUIRED: step={row['step']} selector={row['selector']} — the step's "
+                f"state did not mount an element the register requires it to",
+                err=True,
+            )
+        elif status == "IS_SCROLLER":
+            click.echo(
+                f"IS_SCROLLER: step={row['step']} selector={row['selector']} "
+                f"scrollDelta={row.get('scrollDelta')} — D3 reserves the surface's one scroll "
+                f"region for the conversation; this element must not be a scroller"
+                + (f" ({row['error']})" if row.get("error") else ""),
+                err=True,
+            )
+        elif status == "FORBIDDEN_TEXT_VISIBLE":
+            click.echo(
+                f"FORBIDDEN_TEXT_VISIBLE: step={row['step']} phrase={row['phrase']!r} "
+                f"count={row['count']} > 0 — this step's state must not render that wording",
                 err=True,
             )
     click.echo(json.dumps(report, indent=2, default=str), err=True)

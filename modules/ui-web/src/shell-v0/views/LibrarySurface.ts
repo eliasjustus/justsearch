@@ -43,6 +43,13 @@ import {
 } from '../../api/generated/schema-types/indexed-root-view.js';
 // Tempdoc 599 §9.1 — the ONE per-folder status derivation; the row glyph + meta line project from it.
 import { folderStatus } from '../state/folderStatus.js';
+// Tempdoc 813 §4 — the index-wide progress authority supplies enrichment-stage applicability, which
+// the per-root wire row cannot carry (counts only, no enabled flags).
+import {
+  selectIndexingProgress,
+  type EnrichmentApplicability,
+} from '../state/indexingProgress.js';
+import { enrichmentProgress } from '../state/enrichmentCoverage.js';
 // Tempdoc 599 §16/B1 — the clickable "N failed" chip opens the per-folder failed-files drawer.
 import { openFailedJobs } from '../state/failedJobsDrawer.js';
 // Tempdoc 599 §9.4 — gate the Add button with a reachable reason (596 operability authority).
@@ -66,6 +73,33 @@ const listResponseSchema = z
     count: z.number().optional(),
   })
   .loose();
+
+/**
+ * Tempdoc 804 §B9 (round-10 F8) — how a watched-folder row NAMES itself.
+ *
+ * The row used to render `[b5ec60937d1a…]` — the raw path hash — whenever the lazy resolver had
+ * not answered, next to a Remove button: the only offered action on an unidentifiable row was the
+ * destructive one. The wire is hash-only by construction (ADR-0028 + `LibraryResolveHashOnlyCallerPin`
+ * keep raw paths off it), so the fix is not "put the path on the wire": it is that an UNRESOLVED row
+ * says so in words, and a resolved one shows its folder name with the full path on hover.
+ *
+ * Returns the visible `label` and the `title` (hover/assistive text). The hash stays the row's
+ * identity for Remove/failed-jobs intents — it is just never the user-visible name.
+ */
+export function folderRowLabel(
+  pathHash: string,
+  resolvedPath: string | undefined,
+): { label: string; title: string } {
+  if (resolvedPath && resolvedPath.length > 0) {
+    const name = resolvedPath.split(/[\\/]/).filter((s) => s.length > 0).pop() ?? resolvedPath;
+    return { label: name, title: resolvedPath };
+  }
+  return {
+    label: 'Folder (path unavailable)',
+    // The short hash is diagnostic detail, not the name — reachable on hover, never the label.
+    title: pathHash ? `Path could not be resolved (id ${pathHash.slice(0, 12)}…)` : 'Path could not be resolved',
+  };
+}
 
 const RESOURCE_ID = 'core.indexed-roots';
 const ENDPOINT = '/api/indexing-roots/substrate';
@@ -94,6 +128,8 @@ export class LibrarySurface extends JfElement {
     isTauri: { state: true },
     activeTab: { state: true },
     provisional: { state: true },
+    enrichmentStages: { state: true },
+    enrichmentPending: { state: true },
   };
 
   declare apiBase: string;
@@ -118,6 +154,19 @@ export class LibrarySurface extends JfElement {
    * catastrophe-reading empty state. Projected from the one `Stability` axis.
    */
   declare provisional: boolean;
+  /**
+   * Tempdoc 813 §4 — which enrichment stages apply, from the ONE index-wide progress derivation.
+   * Passed into `folderStatus` so a row's second tier (the catching-up caveat + this root's percent
+   * → "fully searchable") is computed from applicable stages only. `null` until the first poll
+   * snapshot arrives, which the seam reads as "coverage unknown" (no percent).
+   */
+  declare enrichmentStages: EnrichmentApplicability | null;
+  /**
+   * 809 finding 1 — the enrichment backfill still owes work, so a drained folder is keyword-searchable
+   * but not yet semantically searchable. Projected from the one `enrichmentProgress` derivation and
+   * handed to `folderStatus`, which decides whether the row may make the terminal "✓ indexed" claim.
+   */
+  declare enrichmentPending: boolean;
 
   private aiUnsub: (() => void) | null = null;
   // Tempdoc 599 §9.4 — debounce the add-time preview while typing.
@@ -140,6 +189,8 @@ export class LibrarySurface extends JfElement {
     this.isTauri = false;
     this.activeTab = 'folders';
     this.provisional = false;
+    this.enrichmentStages = null;
+    this.enrichmentPending = false;
   }
 
   // Tempdoc 571 §11 / 578: Library is a host surface — it delegates layout to <jf-surface-tabs>
@@ -386,6 +437,16 @@ export class LibrarySurface extends JfElement {
     // transition renders as "Rebuilding…", not "No watched folders".
     this.aiUnsub = subscribeAiState((s) => {
       this.provisional = s.stability.kind === 'provisional';
+      // Tempdoc 813 §4 — the per-root second tier needs to know which stages apply; take it from the
+      // ONE index-wide progress derivation rather than re-reading the enrichment wire flags here.
+      this.enrichmentStages = selectIndexingProgress(
+        s.status,
+        s.snapshotLive,
+        s.episodeMaxPendingJobs,
+      ).stages;
+      // 809 finding 1 — same tick, same store: whether the enrichment backfill is still running, so a
+      // row cannot claim the terminal "✓ indexed" while semantic search is still being built.
+      this.enrichmentPending = enrichmentProgress(s.status).pending;
       // Tempdoc 599 §9.3 — ride the existing status tick to live-refresh the rows (counts-free, no
       // new poller), so a folder's "Indexing · N remaining → ✓ indexed" updates without re-nav.
       void this.refresh({ live: true });
@@ -438,10 +499,14 @@ export class LibrarySurface extends JfElement {
         // confirmed (distinct from lastIndexed, the last write). Same host time-ago util, no new formatter.
         verifiedRelativeTime: this.host_.utilities.formatRelativeTime(r.lastVerifiedIsoTime ?? ''),
         provisional: this.provisional,
+        // Tempdoc 813 §4 — the enrichment tier of the row's meta line.
+        enrichmentStages: this.enrichmentStages,
+        enrichmentPending: this.enrichmentPending,
       });
       return {
         pathHash,
-        displayPath: this.resolvedPaths[pathHash] ?? `[${pathHash.slice(0, 12)}…]`,
+        // Tempdoc 804 §B9 (F8) — never the raw hash as the row's name (see folderRowLabel).
+        displayPath: folderRowLabel(pathHash, this.resolvedPaths[pathHash]).label,
         status: fs.glyph,
         metaText: fs.metaText,
         walkError: undefined,
@@ -664,7 +729,12 @@ export class LibrarySurface extends JfElement {
       return;
     }
     const ok = await this.host_.ui.showConfirmDialog(
-      `Remove ${resolved}? Files indexed from this folder will be removed from search results.`,
+      // 813 §19 (W3) — the confirm states the ENRICHMENT consequence too: removal also discards
+      // whatever semantic work was still in flight for this folder. Deliberately no numeric latency:
+      // the stop-to-quiet bound is mode-dependent (combined mode checkpoints at 1-8 document
+      // granularity; individual mode retains whole-batch atomicity), so "within seconds" would
+      // overclaim exactly where the old copy underclaimed.
+      `Remove ${resolved}? Files indexed from this folder will be removed from search results, and any enrichment still running for it is stopped and discarded.`,
       { confirmLabel: 'Remove', destructive: true },
     );
     if (!ok) return;
@@ -722,7 +792,12 @@ export class LibrarySurface extends JfElement {
 
   private renderCard(root: IndexedRootView): TemplateResult {
     const pathHash = root.pathHash ?? '';
-    const displayPath = this.resolvedPaths[pathHash] ?? `[${pathHash.slice(0, 12)}…]`;
+    // Tempdoc 804 §B9 (F8) — the row's NAME is its folder name (full path on hover), or an honest
+    // "path unavailable"; never the raw hash beside a Remove button.
+    const { label: displayPath, title: displayTitle } = folderRowLabel(
+      pathHash,
+      this.resolvedPaths[pathHash],
+    );
     // Tempdoc 599 §9.1 — glyph + meta line project from the single folderStatus seam, so the row
     // reports a truthful state (✓ only on job drain) and a live "Indexing · N remaining" count-down.
     const status = folderStatus(root, {
@@ -731,13 +806,21 @@ export class LibrarySurface extends JfElement {
       // lastIndexed (last write). Same host time-ago util.
       verifiedRelativeTime: this.host_.utilities.formatRelativeTime(root.lastVerifiedIsoTime ?? ''),
       provisional: this.provisional,
+      // Tempdoc 813 §4 — the enrichment tier of the row's meta line.
+      enrichmentStages: this.enrichmentStages,
+      enrichmentPending: this.enrichmentPending,
     });
     return html`
       <div class="card">
         <span class="card-icon">${icon({ name: 'folder', size: 24 })}</span>
         <div class="card-info">
           <div class="card-path">
-            ${this.renderStatusIcon(status.glyph)}<span>${displayPath}</span>
+            ${this.renderStatusIcon(status.glyph)}<span
+              class="folder-name"
+              title=${displayTitle}
+              data-testid="library-folder-name"
+              >${displayPath}</span
+            >
           </div>
           <div class="card-meta">
             ${status.metaText}${status.failed > 0
@@ -785,10 +868,10 @@ export class LibrarySurface extends JfElement {
                is user-tier; core.reindex's wire audience=USER passes
                the gate. -->
           <jf-operation context="button" operation-id="core.reindex" api-base=${this.apiBase} @op-success=${() => this.refresh()}></jf-operation>
-          <!-- Tempdoc 672 follow-up: manual "Process Now" trigger for VDU/embedding offline
-               processing, same catalog-driven pattern as core.reindex above — the operation
-               already exists (core.trigger-offline-processing, LOW risk, no confirmation) and
-               was previously wired to nothing in the UI. -->
+          <!-- Tempdoc 813 §6: the manual "Process pending enrichment" trigger — drains the pending
+               VDU + embedding work for already-indexed documents, same catalog-driven pattern as
+               core.reindex above. Its LABEL comes from the operation catalog (one string, both
+               render sites); the operation id keeps its historical name. -->
           <jf-operation
             context="button"
             operation-id="core.trigger-offline-processing"

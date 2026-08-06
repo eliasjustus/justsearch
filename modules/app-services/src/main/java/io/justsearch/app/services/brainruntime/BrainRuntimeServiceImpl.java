@@ -3,6 +3,7 @@ package io.justsearch.app.services.brainruntime;
 
 import io.justsearch.app.api.BrainRuntimeService;
 import io.justsearch.app.api.EnterprisePolicyService;
+import io.justsearch.app.api.ModeTransitionOutcome;
 import io.justsearch.app.api.OnlineAiRuntimeControl;
 import io.justsearch.app.api.OnlineAiService;
 import io.justsearch.app.api.UiSettings;
@@ -101,13 +102,14 @@ public final class BrainRuntimeServiceImpl implements BrainRuntimeService {
    * mode transition is the reconciler's business.
    *
    * <p><b>Async semantics:</b> the intent write returns immediately; the engine converges toward the
-   * new spec on the reconciler thread and may still be transitioning when this method returns. The
-   * returned string is the <i>live</i> {@code getCurrentMode()} at return time (unchanged contract),
-   * not a guarantee the target state has been reached. Enterprise online-AI / GPU enforcement is a
-   * convergence ceiling inside the reconciler, not an intent-time denial (§12b).
+   * new spec on the reconciler thread and may still be transitioning when this method returns.
+   * Tempdoc 804 §B6: the outcome therefore carries the live {@code getCurrentMode()} <i>and</i>
+   * whether it already equals what was requested — a bare live-mode read was being reported as if
+   * it were the transition's result. Enterprise online-AI / GPU enforcement is a convergence ceiling
+   * inside the reconciler, not an intent-time denial (§12b).
    */
   @Override
-  public String switchInferenceMode(String mode) throws Exception {
+  public ModeTransitionOutcome switchInferenceMode(String mode) throws Exception {
     if (mode == null || mode.isBlank()) {
       throw new IllegalArgumentException("Missing 'mode' field");
     }
@@ -123,6 +125,6 @@ public final class BrainRuntimeServiceImpl implements BrainRuntimeService {
       throw new IllegalStateException("Runtime authority unavailable (AI runtime not configured)");
     }
     SetChatEnabledHandler.RuntimeIntentWrite.writeIntent(runtimeSpecStore, runtimeReconciler, enabled);
-    return onlineAi.getCurrentMode();
+    return ModeTransitionOutcome.of(mode, onlineAi.getCurrentMode());
   }
 }

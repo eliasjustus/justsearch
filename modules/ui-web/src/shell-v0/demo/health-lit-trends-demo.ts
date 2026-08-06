@@ -23,6 +23,7 @@ import '../views/TimeseriesSparkline.js';
 import '../themes/default.css';
 import type { TimeseriesSnapshot } from '../../api/generated/index.js';
 import { localizeResourceKey } from '../../i18n/resourceCatalog.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 
 interface TrendDescriptor {
   resourceId: string;
@@ -55,7 +56,7 @@ const TRENDS: ReadonlyArray<TrendDescriptor> = [
 
 async function fetchSnapshot(endpoint: string): Promise<TimeseriesSnapshot | null> {
   try {
-    const resp = await fetch(endpoint);
+    const resp = await authorizedFetch(endpoint);
     if (!resp.ok) return null;
     const json = (await resp.json()) as { snapshot?: TimeseriesSnapshot };
     return json.snapshot ?? null;

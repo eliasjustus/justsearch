@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.justsearch.agent.api.encryption.KeyLockedException;
+import io.justsearch.configuration.persistence.UnsupportedStoreVersionException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -126,5 +128,20 @@ final class DataKeyManagerTest {
     // Regenerate requires UNLOCKED.
     DataKeyManager locked = fresh();
     assertThrows(KeyLockedException.class, locked::regenerateRecovery);
+  }
+
+  @Test
+  void futureKeystoreVersionIsRefusedWithoutRewritingTheFile() throws Exception {
+    Path file = dataDir.resolve("encryption").resolve("keystore.json");
+    Files.createDirectories(file.getParent());
+    String future =
+        """
+        {"version":2,"kdf":"PBKDF2WithHmacSHA256","iterations":1,"salt":"AA==",
+         "wrappedDek":"AA==","recoverySalt":"AA==","recoveryWrappedDek":"AA=="}
+        """;
+    Files.writeString(file, future);
+
+    assertThrows(UnsupportedStoreVersionException.class, () -> new EncryptionKeystore(dataDir).load());
+    assertEquals(future, Files.readString(file));
   }
 }

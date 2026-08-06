@@ -190,21 +190,52 @@ describe('AdvisoryToastHost (Group A2 + B4)', () => {
     expect(el.visible.length).toBe(2);
   });
 
-  it('Substrate-completion — REQUIRES_ACK toasts have no auto-dismiss timer', async () => {
-    const store = new StubAdvisoryStore();
-    const el = make(store as unknown as AdvisoryStore);
-    store.push({ advisories: [], lastFrameKind: 'snapshot' });
-    store.push({
-      advisories: [
-        rec('core.req-ack', '2026-05-12T09:00:00Z', false, 'REQUIRES_ACK'),
-      ],
-      lastFrameKind: 'update',
+  // Sandbox round 8 — a REQUIRES_ACK toast had NO timeout at all, so two of them were still
+  // covering the Library header's control row ~6 minutes and several navigations later (one hid
+  // the `Add Folder` button the empty state told the user to press). The toast is now bounded;
+  // the RECORD is untouched, keeping its durable home in the inbox drawer + rail badge.
+  describe('REQUIRES_ACK toast is time-bounded (round 8 — a persistent advisory was a persistent overlay)', () => {
+    it('gets an auto-dismiss timer, unlike the pre-round-8 behaviour', async () => {
+      const store = new StubAdvisoryStore();
+      const el = make(store as unknown as AdvisoryStore);
+      store.push({ advisories: [], lastFrameKind: 'snapshot' });
+      store.push({
+        advisories: [
+          rec('core.req-ack', '2026-05-12T09:00:00Z', false, 'REQUIRES_ACK'),
+        ],
+        lastFrameKind: 'update',
+      });
+      await el.updateComplete;
+      expect(el.visible.length).toBe(1);
+      expect(el.visible[0]?.timeoutId).not.toBeNull();
     });
-    await el.updateComplete;
-    expect(el.visible.length).toBe(1);
-    // The REQUIRES_ACK toast must persist (no auto-dismiss). The dispatch is
-    // now per-event via record.sourceRenderHint (substrate-completion P2.3).
-    expect(el.visible[0]?.timeoutId).toBeNull();
+
+    it('dwells longer than a plain toast, then hides — without acknowledging or dropping the record', async () => {
+      vi.useFakeTimers();
+      try {
+        const store = new StubAdvisoryStore();
+        const el = make(store as unknown as AdvisoryStore);
+        store.push({ advisories: [], lastFrameKind: 'snapshot' });
+        store.push({
+          advisories: [rec('core.req-ack', '2026-05-12T09:00:00Z', false, 'REQUIRES_ACK')],
+          lastFrameKind: 'update',
+        });
+        expect(el.visible.length).toBe(1);
+        // Still up at the plain TOAST_DURATION_MS — the ack-required dwell is deliberately longer,
+        // so a pass here cannot come from the toast simply reusing the 5s timer.
+        vi.advanceTimersByTime(5000);
+        expect(el.visible.length).toBe(1);
+        // ACK_TOAST_DURATION_MS = 3 x 5000.
+        vi.advanceTimersByTime(10_000);
+        expect(el.visible.length).toBe(0);
+        // The overlay is gone; the RECORD is not. Auto-hide must never acknowledge it (that would
+        // clear the rail badge's unread mark) nor drop it (that would empty the inbox drawer).
+        expect(store.acknowledge).not.toHaveBeenCalled();
+        expect(store.dropEphemeral).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('Substrate-completion — EPHEMERAL + PERSISTED records in same snapshot dispatch independently', async () => {
@@ -221,7 +252,7 @@ describe('AdvisoryToastHost (Group A2 + B4)', () => {
     });
     await el.updateComplete;
     expect(el.visible.length).toBe(3);
-    // Both EPHEMERAL and PERSISTED have auto-dismiss timers; REQUIRES_ACK doesn't.
+    // Every store-backed hint gets an auto-dismiss timer; REQUIRES_ACK's is just longer (round 8).
     const ephemeralToast = el.visible.find(
       (t) => t.record.event.classExtras.operationId === 'core.transient',
     );
@@ -233,7 +264,7 @@ describe('AdvisoryToastHost (Group A2 + B4)', () => {
     );
     expect(ephemeralToast?.timeoutId).not.toBeNull();
     expect(persistedToast?.timeoutId).not.toBeNull();
-    expect(requiresAckToast?.timeoutId).toBeNull();
+    expect(requiresAckToast?.timeoutId).not.toBeNull();
   });
 
   it('clicking a toast acknowledges + dismisses it', async () => {
@@ -250,6 +281,103 @@ describe('AdvisoryToastHost (Group A2 + B4)', () => {
     toast.click();
     expect(store.acknowledge).toHaveBeenCalledWith('operation.completed:core.click:SUCCESS');
     expect(el.visible.length).toBe(0);
+  });
+
+  // Sandbox round 7 — the OverlayHost `.top-right` slot is an uncapped, unscrolled fixed flex
+  // column, so an unbounded `visible` array stacked a burst of toasts downward over the chat
+  // surface's header control row. The stack is now a BOUNDED projection.
+  describe('bounded toast stack (round 7 — occlusion of the header control row)', () => {
+    /** Drive `n` new stream advisories through the store as consecutive UPDATE frames. */
+    async function burst(el: AdvisoryToastHost, store: StubAdvisoryStore, n: number) {
+      store.push({ advisories: [], lastFrameKind: 'snapshot' });
+      const advisories: AdvisoryRecord[] = [];
+      for (let i = 0; i < n; i += 1) {
+        advisories.push(rec(`core.burst-${i}`, `2026-05-12T09:0${i}:00Z`, false, 'REQUIRES_ACK'));
+        store.push({ advisories: [...advisories], lastFrameKind: 'update' });
+      }
+      await el.updateComplete;
+    }
+
+    it('renders at most 3 toasts for a burst of 8, summarizing the rest as "+N earlier"', async () => {
+      const store = new StubAdvisoryStore();
+      const el = make(store as unknown as AdvisoryStore);
+      await burst(el, store, 8);
+      // All 8 stay live (nothing is silently acknowledged or dropped) — only the RENDER is bounded.
+      expect(el.visible.length).toBe(8);
+      expect(el.shadowRoot?.querySelectorAll('.toast').length).toBe(3);
+      const more = el.shadowRoot?.querySelector('[data-testid="toast-more"]');
+      expect(more?.textContent?.replace(/\s+/g, ' ').trim()).toBe('+5 earlier notifications');
+    });
+
+    it('keeps the NEWEST toasts visible — a burst never buries the just-arrived advisory', async () => {
+      const store = new StubAdvisoryStore();
+      const el = make(store as unknown as AdvisoryStore);
+      await burst(el, store, 5);
+      const keys = Array.from(el.shadowRoot?.querySelectorAll('.toast') ?? []).map((t) =>
+        t.getAttribute('data-key'),
+      );
+      expect(keys).toEqual([
+        'operation.completed:core.burst-2:SUCCESS',
+        'operation.completed:core.burst-3:SUCCESS',
+        'operation.completed:core.burst-4:SUCCESS',
+      ]);
+    });
+
+    it('renders no overflow summary while the stack is within the cap', async () => {
+      const store = new StubAdvisoryStore();
+      const el = make(store as unknown as AdvisoryStore);
+      await burst(el, store, 3);
+      expect(el.shadowRoot?.querySelectorAll('.toast').length).toBe(3);
+      expect(el.shadowRoot?.querySelector('[data-testid="toast-more"]')).toBeNull();
+    });
+
+    it('gives every burst toast — visible or capped-out — its own bounded timer', async () => {
+      // The cap bounds how MANY toasts render; the timer bounds how LONG each stays. Round 8 showed
+      // the cap alone leaves a REQUIRES_ACK burst on screen indefinitely, so both bounds apply.
+      const store = new StubAdvisoryStore();
+      const el = make(store as unknown as AdvisoryStore);
+      await burst(el, store, 6);
+      expect(el.visible.every((t) => t.timeoutId !== null)).toBe(true);
+    });
+  });
+
+  describe('visible dismiss control (round 7 — dismissal was click-anywhere and undiscoverable)', () => {
+    function dismissButton(el: AdvisoryToastHost): HTMLElement | null {
+      return el.shadowRoot?.querySelector(
+        '.toast jf-button[label="Dismiss notification"]',
+      ) as HTMLElement | null;
+    }
+
+    it('renders a labelled dismiss button on each toast', async () => {
+      const store = new StubAdvisoryStore();
+      const el = make(store as unknown as AdvisoryStore);
+      store.push({ advisories: [], lastFrameKind: 'snapshot' });
+      store.push({
+        advisories: [rec('core.dismissable', '2026-05-12T09:00:00Z', false, 'REQUIRES_ACK')],
+        lastFrameKind: 'update',
+      });
+      await el.updateComplete;
+      expect(dismissButton(el)).not.toBeNull();
+    });
+
+    it('activating it acknowledges + dismisses exactly once (the wrapper stops the toast click)', async () => {
+      const store = new StubAdvisoryStore();
+      const el = make(store as unknown as AdvisoryStore);
+      store.push({ advisories: [], lastFrameKind: 'snapshot' });
+      store.push({
+        advisories: [rec('core.dismissable', '2026-05-12T09:00:00Z', false, 'REQUIRES_ACK')],
+        lastFrameKind: 'update',
+      });
+      await el.updateComplete;
+      const btn = dismissButton(el);
+      expect(btn).not.toBeNull();
+      // jf-button activates through its nested shadow <button>; drive the same callback the
+      // control would, then assert the click it emits does not ALSO reach `.toast`'s handler.
+      (btn as unknown as { onActivate: () => void }).onActivate();
+      btn!.dispatchEvent(new Event('click', { bubbles: true, composed: true }));
+      expect(store.acknowledge).toHaveBeenCalledTimes(1);
+      expect(el.visible.length).toBe(0);
+    });
   });
 
   // Tempdoc 559 Authority III — local-origin ephemeral records render through the

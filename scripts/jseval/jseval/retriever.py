@@ -131,7 +131,24 @@ def retrieve(
                 continue
 
             resolution_errors = 0
-            for hit in response.get("results", []):
+            # Tempdoc 803: score by DELIVERED RANK, not by `hit["score"]`.
+            #
+            # `hit["score"]` is the pre-rerank fusion score. The engine reorders results into
+            # cross-encoder order without rewriting it (`KnowledgeSearchEngine`'s reorder block
+            # moves SearchResult objects and mutates no score), so scoring by that field made
+            # `ir_measures` sort the list back into fusion order and evaluate a ranking the
+            # engine never returned. The cross-encoder's contribution was invisible to the
+            # metric judging it — measured at −0.0418 to +0.0184 nDCG@10 across the five
+            # published corpora, with the top-1 result differing on 30–53% of queries
+            # (tempdoc 802).
+            #
+            # `results` is already in delivered order, so a strictly decreasing score makes
+            # ir_measures reconstruct exactly that order. `len - idx` keeps scores positive
+            # and needs no magic constant; a skipped unresolvable hit leaves a gap, which is
+            # harmless because only the ORDER is meaningful here. The engine's own score is
+            # not lost — the full response is retained in `raw_responses`.
+            hits = response.get("results", [])
+            for idx, hit in enumerate(hits):
                 try:
                     doc_id = resolve_doc_id(hit)
                 except ValueError as e:
@@ -140,7 +157,9 @@ def retrieve(
                         log.warning("Doc ID resolution failed for query %s: %s", qid, e)
                         continue
                     raise
-                scored_docs.append(ScoredDoc(query_id=qid, doc_id=doc_id, score=hit["score"]))
+                scored_docs.append(
+                    ScoredDoc(query_id=qid, doc_id=doc_id, score=float(len(hits) - idx)),
+                )
 
             raw_responses.append({
                 "query_id": qid,

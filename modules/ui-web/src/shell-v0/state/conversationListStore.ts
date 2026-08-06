@@ -6,6 +6,8 @@
  * because conversations are a content domain, not an AI state concern.
  */
 
+import { authorizedFetch } from '../api/authorizedFetch.js';
+
 export interface Conversation {
   id: string;
   title: string | null;
@@ -120,7 +122,7 @@ export async function loadConversations(): Promise<void> {
   state = { ...state, loading: true };
   emit();
   try {
-    const res = await fetch(`${apiBase}/api/chat/conversations?limit=20`);
+    const res = await authorizedFetch(`${apiBase}/api/chat/conversations?limit=20`);
     if (!res.ok) { state = { ...state, loading: false }; emit(); return; }
     const data = await res.json();
     const titles = loadTitles();
@@ -212,10 +214,14 @@ export async function generateConversationTitle(
   // (modules/app-agent-api/.../conversation/ConversationStore.java).
   // FileConversationStore.deleteSession bypasses the branches-prevent-
   // deletion check for sessions starting with this prefix.
+  // 804 B3: the dispatch POST goes through authorizedFetch (token-enforced in the
+  // packaged app). The hand-rolled reader loop stays: consumeShapeStream would
+  // change this best-effort path's failure mode (it throws) and would book a
+  // throwaway title generation against the live-channel budget (662).
   const throwawayId = `_title_${crypto.randomUUID()}`;
   const prompt = `Generate a concise 3-5 word title for this conversation. Reply with only the title, nothing else.\n\nUser: ${userMsg.slice(0, 200)}\nAssistant: ${aiMsg.slice(0, 200)}`;
   try {
-    const res = await fetch(`${apiBase}/api/chat/dispatch`, {
+    const res = await authorizedFetch(`${apiBase}/api/chat/dispatch`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shapeId: 'core.free-chat', prompt, sessionId: throwawayId }),
@@ -253,7 +259,7 @@ export async function generateConversationTitle(
 
 async function deleteThrowaway(sessionId: string): Promise<void> {
   try {
-    await fetch(`${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}`, {
+    await authorizedFetch(`${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}`, {
       method: 'DELETE',
     });
   } catch { /* best-effort cleanup */ }
@@ -305,7 +311,7 @@ export async function resumeConversation(
   shapeId: string,
 ): Promise<ResumedConversation> {
   try {
-    const res = await fetch(`${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}/history`);
+    const res = await authorizedFetch(`${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}/history`);
     // Tempdoc 629 (LAYER): 423 = the conversation store is encrypted + locked. Surface it as a typed
     // locked state so the chat surface renders an unlock affordance instead of an empty (deleted-looking)
     // transcript. Other non-OK responses remain a benign empty resume.
@@ -367,7 +373,7 @@ export async function setContextFloor(
   floorMessageId: string,
 ): Promise<boolean> {
   try {
-    const res = await fetch(
+    const res = await authorizedFetch(
       `${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}/context-floor`,
       {
         method: 'POST',
@@ -384,7 +390,7 @@ export async function setContextFloor(
 /** Tempdoc 610 Phase C — clear the floor (restore full context). */
 export async function clearContextFloor(sessionId: string): Promise<boolean> {
   try {
-    const res = await fetch(
+    const res = await authorizedFetch(
       `${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}/context-floor`,
       { method: 'DELETE' },
     );
@@ -404,7 +410,7 @@ export async function compactContext(
   floorMessageId: string,
 ): Promise<string | null> {
   try {
-    const res = await fetch(
+    const res = await authorizedFetch(
       `${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}/compact`,
       {
         method: 'POST',
@@ -430,7 +436,7 @@ export async function editContextFloorSummary(
   summaryText: string,
 ): Promise<boolean> {
   try {
-    const res = await fetch(
+    const res = await authorizedFetch(
       `${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}/context-floor/summary`,
       {
         method: 'POST',
@@ -454,7 +460,7 @@ export async function setMessageExcluded(
   excluded: boolean,
 ): Promise<boolean> {
   try {
-    const res = await fetch(
+    const res = await authorizedFetch(
       `${apiBase}/api/chat/conversations/${encodeURIComponent(
         sessionId,
       )}/messages/${encodeURIComponent(messageId)}/exclude`,
@@ -481,7 +487,7 @@ export async function setSourceExcluded(
   excluded: boolean,
 ): Promise<boolean> {
   try {
-    const res = await fetch(
+    const res = await authorizedFetch(
       `${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}/sources/exclude`,
       {
         method: 'POST',
@@ -507,7 +513,7 @@ export async function fetchMessageIds(
   sessionId: string,
 ): Promise<Array<{ role: string; content: string; id?: string }> | null> {
   try {
-    const res = await fetch(`${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}/history`);
+    const res = await authorizedFetch(`${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}/history`);
     if (!res.ok) return null;
     const data = (await res.json()) as {
       messages?: Array<{ role?: string; content?: string; id?: string }>;
@@ -537,7 +543,7 @@ export async function branchConversation(
   try {
     const url = `${apiBase}/api/chat/conversations/${encodeURIComponent(parentSessionId)}/branch`
       + `?fromMsgId=${encodeURIComponent(fromMsgId)}`;
-    const res = await fetch(url, { method: 'POST' });
+    const res = await authorizedFetch(url, { method: 'POST' });
     if (!res.ok) return null;
     const data = (await res.json()) as { sessionId?: string };
     const newSessionId = data.sessionId;
@@ -555,7 +561,7 @@ export async function branchConversation(
 
 export async function deleteConversation(sessionId: string): Promise<boolean> {
   try {
-    const res = await fetch(`${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}`, {
+    const res = await authorizedFetch(`${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}`, {
       method: 'DELETE',
     });
     if (!res.ok) return false;
@@ -600,7 +606,7 @@ export async function deleteConversationWithCascade(
   onChildsFound?: (childIds: string[]) => Promise<boolean>,
 ): Promise<DeleteCascadeResult> {
   try {
-    const res = await fetch(`${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}`, {
+    const res = await authorizedFetch(`${apiBase}/api/chat/conversations/${encodeURIComponent(sessionId)}`, {
       method: 'DELETE',
     });
     if (res.ok) {

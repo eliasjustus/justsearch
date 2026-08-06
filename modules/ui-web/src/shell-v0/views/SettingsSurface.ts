@@ -20,6 +20,7 @@
 
 import { html, css, nothing, type TemplateResult, type PropertyValues } from 'lit';
 import { JfElement } from '../primitives/JfElement.js';
+import { authorizedFetch } from '../api/authorizedFetch.js';
 // Tempdoc 511 §511-followup-B: reset-settings now routes through
 // `<jf-operation>` → ActionButton → OperationClient internally; the
 // surface no longer needs a direct OperationClient handle. Tauri-only
@@ -97,6 +98,13 @@ import type { Audience } from '../../api/types/registry.js';
 // confirm modal + manual `client.invoke` here are replaced.
 import '../aggregate-substrate/components/JfOperation.js';
 import type { OpErrorEventDetail } from '../components/OpButton.js';
+import {
+  checkForAppUpdate as checkForAppUpdateFromHost,
+  installAppUpdate as installAppUpdateFromHost,
+  refreshAppUpdateStatus,
+  subscribeAppUpdate,
+  type AppUpdateStatus,
+} from '../state/appUpdateState.js';
 
 interface UISettings {
   mode?: 'simple' | 'advanced';
@@ -121,6 +129,8 @@ export class SettingsSurface extends JfElement {
     saving: { state: true },
     autostart: { state: true },
     autostartLoaded: { state: true },
+    updateStatus: { state: true },
+    updateBusy: { state: true },
     // Tempdoc 778 — the default-on local feedback-capture flag + its privacy note.
     feedbackCaptureEnabled: { state: true },
     feedbackPrivacyNote: { state: true },
@@ -171,6 +181,8 @@ export class SettingsSurface extends JfElement {
   declare saving: boolean;
   declare autostart: boolean | null;
   declare autostartLoaded: boolean;
+  declare updateStatus: AppUpdateStatus | null;
+  declare updateBusy: boolean;
   // Tempdoc 778 — null until loaded from GET /api/feedback/capture; default-on locally.
   declare feedbackCaptureEnabled: boolean | null;
   declare feedbackPrivacyNote: string;
@@ -238,6 +250,7 @@ export class SettingsSurface extends JfElement {
   private viewerAudienceUnsub: (() => void) | null = null;
   // Tempdoc 543 §20.7 B6 — WorkspaceProfile registry subscription.
   private workspaceProfilesUnsub: (() => void) | null = null;
+  private appUpdateUnsub: (() => void) | null = null;
 
   constructor() {
     super();
@@ -248,6 +261,8 @@ export class SettingsSurface extends JfElement {
     this.saving = false;
     this.autostart = null;
     this.autostartLoaded = false;
+    this.updateStatus = null;
+    this.updateBusy = false;
     this.feedbackCaptureEnabled = null;
     this.feedbackPrivacyNote = '';
     this.error = null;
@@ -627,6 +642,10 @@ export class SettingsSurface extends JfElement {
     void this.loadFeedbackCapture();
     if (this.host_.platform.capabilities.has('native-notifications')) {
       void this.loadAutostart();
+      this.appUpdateUnsub = subscribeAppUpdate((status) => {
+        this.updateStatus = status;
+      });
+      void this.loadAppUpdateStatus();
     } else {
       this.autostartLoaded = true;
     }
@@ -745,6 +764,8 @@ export class SettingsSurface extends JfElement {
     this.memberTabUnsub = null;
     this.viewerAudienceUnsub?.();
     this.workspaceProfilesUnsub?.();
+    this.appUpdateUnsub?.();
+    this.appUpdateUnsub = null;
     this.consentUnsub?.();
     if (this.saveSettingsListener) {
       document.removeEventListener('jf-save-settings', this.saveSettingsListener);
@@ -833,7 +854,7 @@ export class SettingsSurface extends JfElement {
   /** Tempdoc 778 — load the default-on local feedback-capture flag + privacy note. */
   private async loadFeedbackCapture(): Promise<void> {
     try {
-      const res = await fetch(`${this.apiBase || ''}/api/feedback/capture`);
+      const res = await authorizedFetch(`${this.apiBase || ''}/api/feedback/capture`);
       if (!res.ok) return;
       const data = (await res.json()) as { enabled?: boolean; privacyNote?: string };
       this.feedbackCaptureEnabled = data.enabled !== false;
@@ -849,7 +870,7 @@ export class SettingsSurface extends JfElement {
     const next = !this.feedbackCaptureEnabled;
     this.feedbackCaptureEnabled = next;
     try {
-      const res = await fetch(`${this.apiBase || ''}/api/feedback/capture`, {
+      const res = await authorizedFetch(`${this.apiBase || ''}/api/feedback/capture`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: next }),
@@ -884,6 +905,16 @@ export class SettingsSurface extends JfElement {
     }
     if (updates.mode !== undefined) {
       m.send(updates.mode === 'advanced' ? 'MODE_ADVANCED' : 'MODE_SIMPLE');
+    }
+    // Tempdoc 806 B.2 (round-12) — the declared Interface region also offers `vimMode` and
+    // `defaultAction`. Without these two branches the edit reached line 897's local `this.ui` and
+    // stopped there: the statechart's `save-settings` effect is the only persistence, so the toggle
+    // rendered ON off the optimistic local copy while the backend's value never changed.
+    if (updates.vimMode !== undefined) {
+      m.send(updates.vimMode ? 'VIM_ON' : 'VIM_OFF');
+    }
+    if (updates.defaultAction !== undefined) {
+      m.send(`DEFAULT_ACTION_${String(updates.defaultAction).toUpperCase()}`);
     }
   }
 
@@ -935,6 +966,35 @@ export class SettingsSurface extends JfElement {
     } catch (err) {
       this.error = err instanceof Error ? err.message : String(err);
       this.deleting = false;
+    }
+  }
+
+  private async loadAppUpdateStatus(): Promise<void> {
+    this.updateStatus = await refreshAppUpdateStatus();
+  }
+
+  private async checkForAppUpdate(): Promise<void> {
+    this.updateBusy = true;
+    this.error = null;
+    try {
+      this.updateStatus = await checkForAppUpdateFromHost();
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : String(err);
+      await this.loadAppUpdateStatus();
+    } finally {
+      this.updateBusy = false;
+    }
+  }
+
+  private async installAppUpdate(): Promise<void> {
+    this.updateBusy = true;
+    this.error = null;
+    try {
+      await installAppUpdateFromHost();
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : String(err);
+      await this.loadAppUpdateStatus();
+      this.updateBusy = false;
     }
   }
 
@@ -1986,6 +2046,55 @@ export class SettingsSurface extends JfElement {
     `;
   }
 
+  private renderAppUpdates(): TemplateResult {
+    if (!this.host_.platform.capabilities.has('native-notifications')) {
+      return html``;
+    }
+    const status = this.updateStatus;
+    const available = status?.state === 'available' && status.availableVersion;
+    const repairRequired = status?.state === 'repair_required';
+    return html`
+      <div class="section" data-testid="settings-app-updates">
+        <h3>${icon({ name: 'download', size: 12 })} App updates</h3>
+        <p class="help" style="margin-top: 0">
+          ${available
+            ? `Version ${status.availableVersion} is ready to install.`
+            : repairRequired
+              ? `The last update needs repair. ${status?.error ?? ''}`
+              : status?.state === 'up_to_date'
+                ? `JustSearch ${status.currentVersion} is up to date.`
+                : `Installed version: ${status?.currentVersion ?? 'unknown'}.`}
+        </p>
+        <div class="row" style="margin-top: 0.5rem">
+          <jf-button
+            variant="secondary"
+            label="Check for updates"
+            ?disabled=${this.updateBusy || repairRequired}
+            .onActivate=${() => void this.checkForAppUpdate()}
+          >
+            ${this.updateBusy && status?.state === 'checking' ? 'Checkingâ€¦' : 'Check for updates'}
+          </jf-button>
+          ${available
+            ? html`<jf-button
+                variant="primary"
+                label="Install update"
+                ?disabled=${this.updateBusy}
+                .onActivate=${() => void this.installAppUpdate()}
+              >
+                Install ${status.availableVersion}
+              </jf-button>`
+            : nothing}
+        </div>
+        ${repairRequired
+          ? html`<p class="help">
+              Re-run the signed installer for
+              ${status?.availableVersion ?? 'the target release'}, then restart JustSearch.
+            </p>`
+          : nothing}
+      </div>
+    `;
+  }
+
   /**
    * 569 §15 (Move 8) — the declared `confirming` state of the delete ceremony, rendered inline. The
    * typed input feeds the statechart's `typed == true` GUARD: `CONFIRM` only advances to `done`
@@ -2138,6 +2247,7 @@ export class SettingsSurface extends JfElement {
         ${this.renderViewerAudience()}
         ${this.renderKeyboard()}
         ${this.renderDesktop()}
+        ${this.renderAppUpdates()}
         <div class="section">
           <h3>${icon({ name: 'shield', size: 12 })} Security &amp; Privacy</h3>
           <p class="help" style="margin-top: 0">

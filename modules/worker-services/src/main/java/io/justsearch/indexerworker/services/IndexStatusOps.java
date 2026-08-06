@@ -4,6 +4,7 @@ package io.justsearch.indexerworker.services;
 import io.justsearch.adapters.lucene.commit.SsotCommitMetadataSource;
 import io.justsearch.adapters.lucene.runtime.IndexCountOps;
 import io.justsearch.adapters.lucene.runtime.LuceneRuntimeTypes;
+import io.justsearch.adapters.lucene.runtime.QueryFilterBuilder;
 import io.justsearch.adapters.lucene.runtime.VectorFormatDetector;
 import io.justsearch.indexerworker.coordination.WorkerSignalBus;
 import io.justsearch.indexerworker.embed.EmbeddingCompatibilityController;
@@ -42,6 +43,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
+import org.apache.lucene.search.Query;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -241,6 +243,14 @@ final class IndexStatusOps {
     long queueDepth = jobQueue.queueDepth();
     JobQueue.FailureSummary failures = jobQueue.failureSummary();
 
+    long activeDocCount = 0;
+    IndexCountOps activeCountOps = searchCountOps != null ? searchCountOps : ingestCountOps;
+    if (activeCountOps != null) {
+      long totalDocs = activeCountOps.docCount();
+      int chunkDocs = activeCountOps.countByField(SchemaFields.IS_CHUNK, "true");
+      activeDocCount = totalDocs - chunkDocs;
+    }
+
     long docCount;
     if (ingestCountOps != null) {
       long totalDocs = ingestCountOps.docCount();
@@ -250,13 +260,13 @@ final class IndexStatusOps {
       docCount = jobQueue.completedCount();
     }
 
-    long activeDocCount = 0;
-    IndexCountOps activeCountOps = searchCountOps != null ? searchCountOps : ingestCountOps;
-    if (activeCountOps != null) {
-      long totalDocs = activeCountOps.docCount();
-      int chunkDocs = activeCountOps.countByField(SchemaFields.IS_CHUNK, "true");
-      activeDocCount = totalDocs - chunkDocs;
-    }
+    // searchableDocCount answers "how many documents can a DEFAULT-scope search return", so it must
+    // be counted on the reader that SERVES search — the same one activeDocCount reads. During a
+    // rebuild the ingest reader is the half-built NEW generation while search still serves the old
+    // one, so counting there described a generation no query could reach.
+    long searchableDocCount =
+        activeCountOps != null ? countDefaultScopeDocs(activeCountOps, activeDocCount) : docCount;
+
     long buildingDocCount = 0;
     if (ingestCountOps != null && ingestCountOps != activeCountOps) {
       buildingDocCount = docCount;
@@ -281,7 +291,9 @@ final class IndexStatusOps {
 
     // --- Build sub-messages ---
     return StatusResponse.newBuilder()
-        .setCore(buildCore(queueDepth, docCount, healthy, state))
+        .setCore(
+            buildCore(
+                queueDepth, docCount, searchableDocCount, healthy, state, jobQueue.pendingBytes()))
         .setFailure(buildFailure(failures))
         .setMigration(
             buildMigration(
@@ -331,7 +343,48 @@ final class IndexStatusOps {
     }
   }
 
-  private CoreStatus buildCore(long queueDepth, long docCount, boolean healthy, String state) {
+  /**
+   * Tempdoc 811 C-4 — the population a DEFAULT-scope search can actually return: non-chunk
+   * documents minus the collections the default scope excludes (today exactly {@code
+   * agent-history}). The exclusion set is NOT re-listed here: {@link
+   * QueryFilterBuilder#buildFilterQueryOnly} with {@code null} filters IS the production
+   * default-scope filter (chunk {@code MUST_NOT} + the reserved-collection {@code MUST_NOT} + the
+   * {@code MatchAllDocs} anchor), so this count is a projection of the one search authority and
+   * cannot drift from what search does. Help docs and {@code mcp-ingest} documents are IN the
+   * default scope and therefore counted — that is the honest number; a per-collection breakdown is
+   * deferred (811 §After the decisions).
+   *
+   * <p>Honest limit: the collection {@code MUST_NOT} only matches documents that CARRY the
+   * collection tag, and chunk documents written before #379 carry none. That caveat cannot bite
+   * here because this counts NON-chunk documents, whose {@code collection} has always been written.
+   *
+   * @param fallback returned when the builder yields no filter at all (it cannot today — the
+   *     default scope always contributes the two exclusions — but a zero would be a silent lie if
+   *     that ever changed)
+   */
+  private static long countDefaultScopeDocs(IndexCountOps countOps, long fallback) {
+    Query defaultScope = QueryFilterBuilder.buildFilterQueryOnly(null);
+    if (defaultScope == null) {
+      return fallback;
+    }
+    try {
+      return countOps.countQueryOrThrow(defaultScope);
+    } catch (IOException e) {
+      // A transient reader IO error must not report a hard 0: the FE renders a known 0 as the
+      // "nothing indexed yet" empty-state CTA. Fall back to the unscoped count — an over-count
+      // during a blip is honest about the corpus existing; a 0 is not.
+      log.debug("Default-scope count failed; falling back to the unscoped count: {}", e.getMessage());
+      return fallback;
+    }
+  }
+
+  private CoreStatus buildCore(
+      long queueDepth,
+      long docCount,
+      long searchableDocCount,
+      boolean healthy,
+      String state,
+      JobQueue.PendingBytes pendingBytes) {
     Supplier<LuceneRuntimeTypes.RuntimeGaugesSnapshot> rgs = runtimeGaugesSupplier;
     LuceneRuntimeTypes.RuntimeGaugesSnapshot gauges =
         rgs != null ? rgs.get() : LuceneRuntimeTypes.RuntimeGaugesSnapshot.EMPTY;
@@ -340,6 +393,7 @@ final class IndexStatusOps {
         CoreStatus.newBuilder()
             .setQueueDepth(queueDepth)
             .setDocCount(docCount)
+            .setSearchableDocCount(searchableDocCount)
             .setIsHealthy(healthy)
             .setState(state)
             .setLastCommitTimestamp(indexingLoop.getLastCommitTime())
@@ -355,7 +409,9 @@ final class IndexStatusOps {
             .setWriterQueueDepth(gauges.writerQueueDepth())
             .setWriterPendingDocs(gauges.writerPendingDocs())
             .setCommitCount(gauges.commitCount())
-            .setRefreshLagMs(gauges.refreshLagMs());
+            .setRefreshLagMs(gauges.refreshLagMs())
+            .setPendingBytes(pendingBytes == null ? 0L : pendingBytes.knownBytes())
+            .setPendingUnknownSizeJobs(pendingBytes == null ? 0L : pendingBytes.unknownSizeJobs());
     for (long v : recentJobQueueDepthTrend()) {
       b.addRecentJobQueueDepth(v);
     }
@@ -637,8 +693,14 @@ final class IndexStatusOps {
                 .build())
         .setPendingNerCount(
             countPendingByStatus(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_PENDING))
+        // NER's terminal-success vocabulary is two-valued: COMPLETED (entities found) and
+        // COMPLETED_EMPTY (ran fine, found none). Both are "NER is done for this document", so the
+        // progress counter must sum them — counting only COMPLETED would make NER look permanently
+        // unfinished to every readiness gate reading this field once pending hits zero.
         .setCompletedNerCount(
-            countPendingByStatus(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED))
+            countPendingByStatus(SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED)
+                + countPendingByStatus(
+                    SchemaFields.NER_STATUS, SchemaFields.NER_STATUS_COMPLETED_EMPTY))
         .setEmbeddingEnabled(embeddingEnabled)
         .setSpladeEnabled(spladeEnabled)
         .setNerEnabled(nerEnabled)
