@@ -32,8 +32,21 @@ public final class ChunkDocumentWriter {
 
   private ChunkDocumentWriter() {}
 
+  /**
+   * Parent-document metadata a chunk inherits at write time.
+   *
+   * <p>{@code collection} (tempdoc 811 item 3) is what lets the default agent-history exclusion
+   * bind on the chunk branch at all: {@code QueryFilterBuilder.buildChunkFilterQuery} filters
+   * chunks on the same {@code collection} field the whole-doc legs use, and a chunk that does not
+   * carry its parent's tag is invisible to that clause.
+   */
   public record ParentChunkMetadata(
-      String mime, String mimeBase, String fileKind, String language, Long parentTokenCount) {}
+      String mime,
+      String mimeBase,
+      String fileKind,
+      String language,
+      Long parentTokenCount,
+      String collection) {}
 
   /**
    * Regenerates chunk docs for a parent doc by loading metadata from the existing parent document.
@@ -52,6 +65,8 @@ public final class ChunkDocumentWriter {
     String fileKind = documentFieldOps.getDocumentField(parentDocId, SchemaFields.FILE_KIND);
     String parentTokenCountRaw =
         documentFieldOps.getDocumentField(parentDocId, SchemaFields.PARENT_TOKEN_COUNT);
+    // Tempdoc 811 item 3 — inherit the parent's collection tag so the chunk branch can scope on it.
+    String collection = documentFieldOps.getDocumentField(parentDocId, SchemaFields.COLLECTION);
 
     boolean isMarkdown = "markdown".equalsIgnoreCase(fileKind);
     String preview = LanguageUtils.contentPreview(content, CONTENT_PREVIEW_MAX_CHARS, isMarkdown);
@@ -66,7 +81,7 @@ public final class ChunkDocumentWriter {
         indexingCoordinator,
         parentDocId,
         content,
-        new ParentChunkMetadata(mime, mimeBase, fileKind, language, parentTokenCount));
+        new ParentChunkMetadata(mime, mimeBase, fileKind, language, parentTokenCount, collection));
   }
 
   /**
@@ -166,6 +181,11 @@ public final class ChunkDocumentWriter {
         }
         if (meta.parentTokenCount != null) {
           fields.put(SchemaFields.PARENT_TOKEN_COUNT, meta.parentTokenCount);
+        }
+        // Tempdoc 811 item 3 — the chunk carries its PARENT's collection tag, so a collection
+        // scope (and the default agent-history exclusion) applies to chunks as well as documents.
+        if (meta.collection != null && !meta.collection.isBlank()) {
+          fields.put(SchemaFields.COLLECTION, meta.collection);
         }
       }
 

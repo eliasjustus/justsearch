@@ -1,6 +1,6 @@
 ---
 title: "811 — Corpus scoping & internal-documents policy (T-C): decision brief"
-status: "investigation complete 2026-08-06; OWNER DECISIONS PENDING (§Decisions); two independent defects routed to the correctness lane regardless of policy"
+status: "investigation complete 2026-08-06; correctness lane (D-1, D-2, chunk-collection item 3) IMPLEMENTED 2026-08-06; OWNER DECISIONS STILL PENDING (§Decisions C-1..C-4)"
 created: 2026-08-06
 updated: 2026-08-06
 related: [809, 810, 585, 629, 553]
@@ -65,11 +65,33 @@ partly corrects.
 These are defects under every policy option and are queued as item #6 of the 810 Lane-1
 sequence — they do not wait for the decisions below:
 
-- **D-1**: close the `filters == null` early-returns so `addCollectionScope` always applies
-  (`QueryFilterBuilder.java:155-157, 212-221`), with a regression test per bypass path.
-- **D-2**: `RagContextOps.withIncludeChunks` copies `collection` and `docIds` when
-  rebuilding the filter record (`:1612-1631`), with a test that an explicit agent-history
-  scope survives the RAG path.
+- **D-1** ✅ IMPLEMENTED 2026-08-06: closed the `filters == null` early-returns so
+  `addCollectionScope` always applies. All three builders now substitute a shared `NO_FILTERS`
+  empty record for `null` (`QueryFilterBuilder.java:33-43`), so the null path runs the identical
+  code as an explicitly-empty filter set — "null filters" means the DEFAULT scope, never "no
+  scope". Live null-filters call sites closed: `RagContextOps` doc-level union leg
+  (`buildFilterQueryOnly(null)`) and RAG chunk legs (`buildChunkFilterQuery(null)`), both reached
+  on EVERY RAG question that carries no filters (`buildRagFilters` returns `null` unless
+  pathPrefix/fileKind/entity/meta/date is set), plus `HybridSearchOps.searchHybrid` →
+  `searchText(t, l, null)` → `applyRuntimeFilters(q, null)`. `buildFilterQueryOnly` can no longer
+  return `null` at all, which also retires the unfiltered `searchHybrid` fallback in production.
+- **D-2** ✅ IMPLEMENTED 2026-08-06: `RuntimeSearchFilters` now implements the generated
+  `LuceneRuntimeTypesRuntimeSearchFiltersBuilder.With` interface, and `withIncludeChunks` is a
+  one-line `f.withIncludeChunks(val)` — every component is copied by construction, so the next
+  component added to the record cannot be silently dropped. Pre-fix the hand-rolled rebuild turned
+  an explicit `collection=[agent-history]` scope into the default `-collection:agent-history`
+  exclusion, i.e. it excluded exactly what the caller asked to include.
+- **Item 3** ✅ IMPLEMENTED 2026-08-06 (the chunk-branch half): `ChunkDocumentWriter` now writes
+  the PARENT's `collection` onto every chunk (`ParentChunkMetadata.collection`, threaded from
+  `JobBatchWriter` via `IndexingDocumentOps.indexChunks`, and read off the existing parent doc on
+  the VDU/replay path), and `buildChunkFilterQuery` applies `addCollectionScope`. No SSOT catalog
+  change was needed — `collection` is already a declared `keyword` field (`fields.v1.json`) and
+  `FieldMapper.toDocument` imposes no per-doc-type restriction; chunk docs simply never populated
+  it. **Stale-index disposition (accept-and-document, per the 798 owner precedent):** chunk docs
+  written before this change carry no `collection`, and the default exclusion is a `MUST_NOT` that
+  only matches docs which DO carry the tag — so pre-existing agent-history chunks stay
+  un-excluded until a re-index. No migration was built; the comment at the exclusion site records
+  this.
 
 ## Decisions (owner)
 
