@@ -75,6 +75,7 @@ async function setProgress(p: Partial<IndexingProgress>): Promise<void> {
     vduPending: 0,
     etaSeconds: null,
     live: true,
+    stages: { embedding: true, splade: true, ner: true },
     ...p,
   };
   await flush();

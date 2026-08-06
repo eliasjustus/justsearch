@@ -43,6 +43,12 @@ import {
 } from '../../api/generated/schema-types/indexed-root-view.js';
 // Tempdoc 599 §9.1 — the ONE per-folder status derivation; the row glyph + meta line project from it.
 import { folderStatus } from '../state/folderStatus.js';
+// Tempdoc 813 §4 — the index-wide progress authority supplies enrichment-stage applicability, which
+// the per-root wire row cannot carry (counts only, no enabled flags).
+import {
+  selectIndexingProgress,
+  type EnrichmentApplicability,
+} from '../state/indexingProgress.js';
 // Tempdoc 599 §16/B1 — the clickable "N failed" chip opens the per-folder failed-files drawer.
 import { openFailedJobs } from '../state/failedJobsDrawer.js';
 // Tempdoc 599 §9.4 — gate the Add button with a reachable reason (596 operability authority).
@@ -121,6 +127,7 @@ export class LibrarySurface extends JfElement {
     isTauri: { state: true },
     activeTab: { state: true },
     provisional: { state: true },
+    enrichmentStages: { state: true },
   };
 
   declare apiBase: string;
@@ -145,6 +152,13 @@ export class LibrarySurface extends JfElement {
    * catastrophe-reading empty state. Projected from the one `Stability` axis.
    */
   declare provisional: boolean;
+  /**
+   * Tempdoc 813 §4 — which enrichment stages apply, from the ONE index-wide progress derivation.
+   * Passed into `folderStatus` so a row's second tier ("keyword-ready · enriching N%" → "fully
+   * searchable") is computed from applicable stages only. `null` until the first poll snapshot
+   * arrives, which the seam reads as "coverage unknown" (no percent).
+   */
+  declare enrichmentStages: EnrichmentApplicability | null;
 
   private aiUnsub: (() => void) | null = null;
   // Tempdoc 599 §9.4 — debounce the add-time preview while typing.
@@ -167,6 +181,7 @@ export class LibrarySurface extends JfElement {
     this.isTauri = false;
     this.activeTab = 'folders';
     this.provisional = false;
+    this.enrichmentStages = null;
   }
 
   // Tempdoc 571 §11 / 578: Library is a host surface — it delegates layout to <jf-surface-tabs>
@@ -413,6 +428,9 @@ export class LibrarySurface extends JfElement {
     // transition renders as "Rebuilding…", not "No watched folders".
     this.aiUnsub = subscribeAiState((s) => {
       this.provisional = s.stability.kind === 'provisional';
+      // Tempdoc 813 §4 — the per-root second tier needs to know which stages apply; take it from the
+      // ONE index-wide progress derivation rather than re-reading the enrichment wire flags here.
+      this.enrichmentStages = selectIndexingProgress(s.status, s.snapshotLive).stages;
       // Tempdoc 599 §9.3 — ride the existing status tick to live-refresh the rows (counts-free, no
       // new poller), so a folder's "Indexing · N remaining → ✓ indexed" updates without re-nav.
       void this.refresh({ live: true });
@@ -465,6 +483,8 @@ export class LibrarySurface extends JfElement {
         // confirmed (distinct from lastIndexed, the last write). Same host time-ago util, no new formatter.
         verifiedRelativeTime: this.host_.utilities.formatRelativeTime(r.lastVerifiedIsoTime ?? ''),
         provisional: this.provisional,
+        // Tempdoc 813 §4 — the enrichment tier of the row's meta line.
+        enrichmentStages: this.enrichmentStages,
       });
       return {
         pathHash,
@@ -764,6 +784,8 @@ export class LibrarySurface extends JfElement {
       // lastIndexed (last write). Same host time-ago util.
       verifiedRelativeTime: this.host_.utilities.formatRelativeTime(root.lastVerifiedIsoTime ?? ''),
       provisional: this.provisional,
+      // Tempdoc 813 §4 — the enrichment tier of the row's meta line.
+      enrichmentStages: this.enrichmentStages,
     });
     return html`
       <div class="card">
@@ -823,10 +845,10 @@ export class LibrarySurface extends JfElement {
                is user-tier; core.reindex's wire audience=USER passes
                the gate. -->
           <jf-operation context="button" operation-id="core.reindex" api-base=${this.apiBase} @op-success=${() => this.refresh()}></jf-operation>
-          <!-- Tempdoc 672 follow-up: manual "Process Now" trigger for VDU/embedding offline
-               processing, same catalog-driven pattern as core.reindex above — the operation
-               already exists (core.trigger-offline-processing, LOW risk, no confirmation) and
-               was previously wired to nothing in the UI. -->
+          <!-- Tempdoc 813 §6: the manual "Finish enrichment now" trigger — drains the pending
+               VDU + embedding work for already-indexed documents, same catalog-driven pattern as
+               core.reindex above. Its LABEL comes from the operation catalog (one string, both
+               render sites); the operation id keeps its historical name. -->
           <jf-operation
             context="button"
             operation-id="core.trigger-offline-processing"

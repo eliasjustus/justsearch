@@ -24,6 +24,24 @@ import type { StatusResponse } from '../../api/generated/index.js';
  */
 export type IndexingPhase = 'indexing' | 'enriching' | 'ready' | 'unknown';
 
+/**
+ * 813 §4 — which PARENT enrichment stages are applicable to this deployment, index-wide.
+ *
+ * The per-root wire row (`IndexedRootView`) carries coverage COUNTS but no enabled flags, so a
+ * per-root percent has no way of its own to learn that (say) SPLADE is switched off — and a
+ * disabled stage's permanently-unsettled documents would pin every folder below 100% forever
+ * (the index-wide `stage()` guard below, applied at folder granularity). This is the ONE place
+ * applicability is decided, so the per-root derivation consumes it instead of re-reading the
+ * `*Enabled` wire flags itself.
+ *
+ * All-false in the {@link EMPTY} snapshot: the worker did not report, so nothing may be asserted.
+ */
+export interface EnrichmentApplicability {
+  readonly embedding: boolean;
+  readonly splade: boolean;
+  readonly ner: boolean;
+}
+
 export interface IndexingProgress {
   /** §3a phase. `unknown` ⟹ the worker did not report; NO number below may be rendered. */
   phase: IndexingPhase;
@@ -68,6 +86,11 @@ export interface IndexingProgress {
    * particular never reads `chunkCoverage.observedAtMs`, which is a Head serialization stamp.
    */
   live: boolean;
+  /**
+   * 813 §4 — the applicable parent enrichment stages (see {@link EnrichmentApplicability}). Read by
+   * the per-root folder derivation (`folderStatus`), which has counts but no enabled flags.
+   */
+  stages: EnrichmentApplicability;
 }
 
 /**
@@ -90,6 +113,8 @@ const EMPTY: IndexingProgress = {
   vduPending: 0,
   etaSeconds: null,
   live: false,
+  // Nothing was reported ⟹ no stage is known to apply ⟹ no per-root percent may be asserted.
+  stages: { embedding: false, splade: false, ner: false },
 };
 
 /** Trailing `recentDocsPerSec` samples that must ALL be non-zero before the rate is extrapolated. */
@@ -186,19 +211,28 @@ export function selectIndexingProgress(
   const nerCompleted = count(enrichment?.completedNerCount);
   const nerPending = count(enrichment?.pendingNerCount);
 
+  // The ONE applicability decision (813 §4): consumed both by the index-wide stage math below and,
+  // via `IndexingProgress.stages`, by the per-root folder derivation — so "is SPLADE on?" is
+  // answered once for every progress surface.
+  const applicable: EnrichmentApplicability = {
+    embedding: enrichment?.embeddingEnabled !== false,
+    splade: enrichment?.spladeEnabled !== false,
+    ner: enrichment?.nerEnabled !== false,
+  };
+
   const stages: Array<StageWork | null> = [
     stage(
       count(enrichment?.embeddingDocCount),
       count(enrichment?.embeddingPendingCount),
-      enrichment?.embeddingEnabled,
+      applicable.embedding,
     ),
     stage(
       count(enrichment?.spladeDocCount),
       count(enrichment?.spladePendingCount),
-      enrichment?.spladeEnabled,
+      applicable.splade,
     ),
     // NER reports no doc-count, so its denominator is its own two-valued census.
-    stage(nerCompleted + nerPending, nerPending, enrichment?.nerEnabled),
+    stage(nerCompleted + nerPending, nerPending, applicable.ner),
     // The chunk tier's denominator is CHUNKED documents (813 §13) — never "N of M files".
     stage(count(chunk?.chunkDocCount), count(chunk?.chunkEmbeddingPendingCount), undefined),
   ];
@@ -233,5 +267,6 @@ export function selectIndexingProgress(
         ? deriveEtaSeconds(core.recentDocsPerSec, jobsPending)
         : null,
     live: snapshotLive,
+    stages: applicable,
   };
 }

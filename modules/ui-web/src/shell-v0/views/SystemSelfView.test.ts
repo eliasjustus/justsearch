@@ -174,6 +174,7 @@ describe('enrichingLabel (813 §4 — the narrowed F-2 suppression)', () => {
     vduPending: 0,
     etaSeconds: null,
     live: true,
+    stages: { embedding: true, splade: true, ner: true },
     ...over,
   });
 

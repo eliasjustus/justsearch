@@ -15,16 +15,23 @@
  * flag (the caller's projection of the `Stability` axis, mirroring `renderObserved`), so the seam
  * needs no host-utility or store import and is trivially unit-testable.
  *
- * `ready` means KEYWORD-searchable (the folder's index jobs drained). The vector/embedding tier is
- * a separate global backfill (tempdoc 599 §10 / 598) and is intentionally NOT reflected here.
+ * TWO TIERS (tempdoc 813 §4, superseding the 599 §10 / 598 note that used to sit here): job drain
+ * makes a folder KEYWORD-searchable, which is not the same fact as "fully searchable" — the semantic
+ * layers are a separate backfill that carries no per-root job rows. Since 813 the wire row also
+ * carries per-root enrichment COVERAGE, so the drained tier splits: `keyword-ready` while coverage is
+ * still climbing ("keyword-ready · enriching 40%") and `ready` once it is complete ("fully
+ * searchable"). Enrichment is no longer invisible at folder granularity; what is still true is that
+ * neither tier is derived from the walk timestamp.
  */
 
 import type { IndexedRootView } from '../../api/generated/schema-types/indexed-root-view.js';
+import type { EnrichmentApplicability } from './indexingProgress.js';
 
 export type FolderState =
   | 'scanning' // walk in progress — files not yet fully enqueued
   | 'indexing' // in-flight jobs > 0
-  | 'ready' // scanned, drained, no failures — keyword-searchable
+  | 'keyword-ready' // tempdoc 813 §4 — drained + keyword-searchable, enrichment coverage still climbing
+  | 'ready' // scanned, drained, no failures — fully searchable (or coverage unknowable)
   | 'unverified' // tempdoc 626 §Axis-C — indexed, but the reconcile couldn't verify deletions (cap-skipped)
   | 'failed' // walk error, or terminal failed jobs with nothing in flight
   | 'empty' // scanned, zero indexable files
@@ -53,6 +60,74 @@ export interface FolderStatusContext {
   readonly verifiedRelativeTime: string;
   /** The system `Stability` axis projected to a boolean (`stability.kind === 'provisional'`). */
   readonly provisional: boolean;
+  /**
+   * Tempdoc 813 §4 — which parent enrichment stages apply to this deployment, taken from the ONE
+   * index-wide progress derivation (`selectIndexingProgress(...).stages`). The wire row carries
+   * per-root coverage counts but no enabled flags, so without this a switched-off stage's
+   * never-settling documents would pin every folder at "enriching 67%" forever.
+   *
+   * Absent / `null` ⟹ applicability is UNKNOWN (no poll snapshot yet, or the worker did not
+   * report) ⟹ no percent is asserted and the row falls back to the pre-813 wording.
+   */
+  readonly enrichmentStages?: EnrichmentApplicability | null;
+}
+
+/** A non-negative finite count from an optional wire number (absent / negative ⟹ 0). */
+function count(value: number | null | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * Tempdoc 813 §4 — this root's enrichment coverage as a settled-over-total percent, or `null` when
+ * there is no faithful denominator (the `indexingProgress` discipline at folder granularity: never
+ * 0/0 → NaN, never a fabricated 0%).
+ *
+ * Same semantics as the index-wide selector: each APPLICABLE stage contributes its own numerator and
+ * denominator, and "settled" is the TERMINAL count the Worker computed (COMPLETED + COMPLETED_EMPTY
+ * where the stage defines it + FAILED — `IndexedRootView`'s numerator discipline), so a permanently
+ * failed document cannot hold a folder below 100% forever. Denominator discipline is likewise the
+ * wire's: the three parent stages share the parent-doc total (chunk docs excluded) and the chunk tier
+ * is counted over CHUNKED documents, never "N of M files".
+ *
+ * `complete` is EXACT (`settled >= total`), never "the percent rounded to 100": 999 settled of 1000
+ * rounds to 100%, and claiming "fully searchable" there would be the §8.1 false-terminal in a new
+ * costume. The displayed percent is correspondingly capped at 99 while work remains.
+ */
+interface RootCoverage {
+  /** 0-100, capped at 99 while any document is unsettled. */
+  readonly percent: number;
+  readonly complete: boolean;
+}
+
+function rootCoverage(
+  row: IndexedRootView,
+  stages: EnrichmentApplicability | null | undefined,
+): RootCoverage | null {
+  if (!stages) return null;
+  const parentTotal = count(row.parentDocsTotal);
+  const chunkTotal = count(row.chunkDocsTotal);
+  let total = 0;
+  let settled = 0;
+  const addParentStage = (applicable: boolean, stageSettled: number | undefined): void => {
+    if (!applicable || parentTotal <= 0) return;
+    total += parentTotal;
+    settled += Math.min(count(stageSettled), parentTotal);
+  };
+  addParentStage(stages.embedding, row.parentDocsSettledEmbedding);
+  addParentStage(stages.splade, row.parentDocsSettledSplade);
+  addParentStage(stages.ner, row.parentDocsSettledNer);
+  // The chunk tier needs no applicability flag: a deployment that does not chunk has no chunk docs
+  // under this root, so its own denominator withdraws it.
+  if (chunkTotal > 0) {
+    total += chunkTotal;
+    settled += Math.min(count(row.chunkDocsSettled), chunkTotal);
+  }
+  if (total <= 0) return null;
+  const complete = settled >= total;
+  return {
+    percent: complete ? 100 : Math.min(99, Math.round((settled / total) * 100)),
+    complete,
+  };
 }
 
 /**
@@ -153,7 +228,9 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
     };
   }
 
-  // Drained, indexed, no failures → keyword-searchable. The ONLY path that yields the ✓ glyph.
+  // Drained, indexed, no failures → searchable. The ONLY path that yields the ✓ glyph — in either of
+  // its two tiers (813 §4): the row is honestly searchable as soon as its jobs drain, so the ✓ stays
+  // and the meta line carries which tier ("keyword-ready · enriching N%" vs "fully searchable").
   if (indexed) {
     // Tempdoc 626 §Axis-C — an indexed folder whose deletions couldn't be verified must NOT show the
     // green ✓ (the 599 false-"✓" class, generalized to reconciliation completeness). It is still
@@ -174,10 +251,28 @@ export function folderStatus(row: IndexedRootView, ctx: FolderStatusContext): Fo
     // round-robin reconcile hasn't reached lately read as mildly stale ("Verified 8m ago") rather than
     // falsely-fresh. Display-only — the `index.drift-unknown` Condition owns the "needs attention" alarm.
     const verifiedSuffix = ctx.verifiedRelativeTime ? ` · Verified ${ctx.verifiedRelativeTime}` : '';
+    // Tempdoc 813 §4 — the two-tier split. A percent is rendered ONLY when the coverage denominator is
+    // faithful; with no denominator (coverage fields absent/zero, or applicability unknown) the row
+    // keeps the pre-813 wording rather than inventing "enriching 0%".
+    const coverage = rootCoverage(row, ctx.enrichmentStages);
+    if (coverage !== null && !coverage.complete) {
+      // Keyword-searchable NOW, semantic layers still catching up. The "indexed <time>" stamp is
+      // dropped here: the folder's headline fact is the work still running, not when it last changed.
+      return {
+        state: 'keyword-ready',
+        glyph: 'indexed',
+        metaText: `${collection} · ${fileCountText} · keyword-ready · enriching ${coverage.percent}%${verifiedSuffix}`,
+        inFlight,
+        failed,
+      };
+    }
     return {
       state: 'ready',
       glyph: 'indexed',
-      metaText: `${collection} · ${fileCountText}${indexedSuffix}${verifiedSuffix}`,
+      metaText:
+        coverage === null
+          ? `${collection} · ${fileCountText}${indexedSuffix}${verifiedSuffix}`
+          : `${collection} · ${fileCountText} · fully searchable${indexedSuffix}${verifiedSuffix}`,
       inFlight,
       failed,
     };

@@ -111,7 +111,32 @@ graph TD
     *   **Index Stats:** Total documents, Index size, Memory usage.
     *   **AI Mode:** "Online" (Brain active) vs "Indexing" (Embeddings active).
     *   **Queues:** **Only visible when active.** Shows pending VDU or Embedding job counts (e.g., "5 VDU pending").
-    *   **Process Button:** Appears only when queues are non-zero, allowing manual trigger of offline processing.
+    *   **Finish enrichment now:** Appears only when queues are non-zero, allowing a manual trigger of the pending enrichment work (VDU + embedding backfill) for already-indexed documents.
+
+### Progress vocabulary (Tasks panel, Health, folder rows)
+
+Every surface that reports indexing progress uses one set of words, and derives its
+numbers from one place — the `selectIndexingProgress` projection over the `/api/status`
+snapshot (`shell-v0/state/indexingProgress.ts`). Numbers may differ between surfaces by
+**scope** (index-wide vs one folder), never by derivation.
+
+*   **Phases:** **Scanning** (walking a folder, nothing enqueued yet) → **Indexing**
+    (files becoming keyword-searchable; the job queue drains) → **Enriching** (the
+    semantic layers — embeddings, SPLADE, entities, passage vectors — catching up on
+    already-indexed documents) → **Ready**.
+*   **Two tiers of "done":** job drain makes a folder keyword-searchable, which is not the
+    same fact as fully searchable. A Library row therefore reads
+    `312 files · keyword-ready · enriching 40%` while coverage climbs, and
+    `312 files · fully searchable · indexed 2m ago` once it is complete
+    (`shell-v0/state/folderStatus.ts`, from the per-root coverage counts on
+    `IndexedRootView`). "Up to date" in Health is likewise reserved for
+    coverage-complete, not job-drain.
+*   **No fabricated numbers:** a percent is rendered only when the denominator is
+    faithful (at least one applicable stage with documents to enrich). With no
+    denominator — or a stale snapshot — the surface says less rather than showing a
+    placeholder, and the estimate line is withdrawn entirely outside the Indexing phase.
+*   **"Offline" is not a progress word.** It describes the AI engine or a service being
+    down, and nothing else; enrichment copy uses the phase nouns above.
 
 ## 3. Key Interaction Models
 
@@ -156,7 +181,7 @@ The system operates in two mutually exclusive modes to manage GPU VRAM:
 
 **Transition:**
 *   Users can manually toggle via the "Brain" view (Settings).
-*   "Process Now" in Zone E triggers offline processing (VDU + embedding backfill) by dispatching the `core.trigger-offline-processing` Operation (catalog-driven `<jf-operation>`, tempdoc 672) and reflects progress via `/api/inference/status`. (The earlier direct `POST /api/offline/process` endpoint this button previously would have called was orphaned — zero FE consumers — and was torn down; tempdoc 689.)
+*   "Finish enrichment now" (Library header and the degradation-banner remedy) drains the pending enrichment work — vision transcription (VDU) plus the semantic layers — for already-indexed documents, by dispatching the `core.trigger-offline-processing` Operation (catalog-driven `<jf-operation>`); it requires the AI engine to be running, and reflects progress via `/api/inference/status`. The operation id keeps its historical name; the user-visible label lives once in the operation catalog (`registry-operation.en.properties`), so both render sites read the same words. (The earlier direct `POST /api/offline/process` endpoint this button previously would have called was orphaned — zero FE consumers — and was torn down.)
 
 ## 4. Visual Language & Accessibility
 

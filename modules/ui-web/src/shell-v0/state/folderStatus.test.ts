@@ -5,6 +5,11 @@ import type { IndexedRootView } from '../../api/generated/schema-types/indexed-r
 // Tempdoc 599 §9.1/§9.5 — the seam's invariant + precedence. The load-bearing regression is
 // "ready ⟹ inFlight === 0 && failed === 0" and "a walk timestamp alone never yields ready"
 // (the §8.1 false-terminal fix).
+//
+// Tempdoc 813 §4 adds the SECOND tier: the drained outcome splits into `keyword-ready` (coverage
+// still climbing) and `ready` (complete). The base `row()` below deliberately carries NO coverage
+// fields, so every pre-813 case above keeps exercising the no-denominator fallback wording it
+// always pinned; the two-tier cases opt in explicitly.
 
 const row = (over: Partial<IndexedRootView> = {}): IndexedRootView => ({
   pathHash: 'h',
@@ -20,7 +25,12 @@ const row = (over: Partial<IndexedRootView> = {}): IndexedRootView => ({
 });
 
 const ctx = (
-  over: Partial<{ relativeTime: string; verifiedRelativeTime: string; provisional: boolean }> = {},
+  over: Partial<{
+    relativeTime: string;
+    verifiedRelativeTime: string;
+    provisional: boolean;
+    enrichmentStages: { embedding: boolean; splade: boolean; ner: boolean } | null;
+  }> = {},
 ) => ({
   relativeTime: 'just now',
   verifiedRelativeTime: '',
@@ -28,15 +38,25 @@ const ctx = (
   ...over,
 });
 
+/** All three parent stages on — the ordinary deployment (813 §4 applicability). */
+const ALL_STAGES = { embedding: true, splade: true, ner: true };
+
 describe('folderStatus', () => {
-  it('ready ⟹ inFlight === 0 && failed === 0 (the core invariant)', () => {
-    // Exhaustive small grid: ready is the ONLY drained, failure-free, scanned outcome.
+  it('a searchable tier ⟹ inFlight === 0 && failed === 0 (the core invariant)', () => {
+    // Exhaustive small grid: the searchable outcomes — 813 §4 made that two states, `ready` and
+    // `keyword-ready` — are the ONLY drained, failure-free, scanned ones. Both tiers are checked so
+    // the new state cannot become a back door around the §8.1 drain requirement.
     for (const inFlight of [0, 1, 5]) {
       for (const failed of [0, 1]) {
-        const fs = folderStatus(row({ inFlightCount: inFlight, failedCount: failed }), ctx());
-        if (fs.state === 'ready') {
-          expect(inFlight).toBe(0);
-          expect(failed).toBe(0);
+        for (const coverage of [{}, { parentDocsTotal: 10, parentDocsSettledEmbedding: 4 }]) {
+          const fs = folderStatus(
+            row({ inFlightCount: inFlight, failedCount: failed, ...coverage }),
+            ctx({ enrichmentStages: ALL_STAGES }),
+          );
+          if (fs.state === 'ready' || fs.state === 'keyword-ready') {
+            expect(inFlight).toBe(0);
+            expect(failed).toBe(0);
+          }
         }
       }
     }
@@ -50,11 +70,14 @@ describe('folderStatus', () => {
     expect(fs.metaText).toContain('5 remaining');
   });
 
-  it('ready: drained + scanned + no failures → ✓ glyph + "indexed" meta', () => {
+  it('ready: drained + scanned + no failures → ✓ glyph + "indexed" meta (no coverage on the wire)', () => {
     const fs = folderStatus(row(), ctx({ relativeTime: '2 minutes ago' }));
     expect(fs.state).toBe('ready');
     expect(fs.glyph).toBe('indexed');
     expect(fs.metaText).toContain('indexed 2 minutes ago');
+    // 813 §4 — with no faithful denominator the row asserts neither tier, it just stays as it was.
+    expect(fs.metaText).not.toContain('enriching');
+    expect(fs.metaText).not.toContain('fully searchable');
   });
 
   it('ready: shows the §Recency "Verified" heartbeat when lastVerified is known', () => {
@@ -174,5 +197,126 @@ describe('folderStatus', () => {
     expect(fs.state).toBe('unknown');
     expect(fs.glyph).toBe('pending');
     expect(fs.metaText).toContain('Rebuilding');
+  });
+});
+
+// Tempdoc 813 §4 — the two-tier split of the drained outcome. The regression these pin: a folder
+// whose jobs drained but whose semantic layers are 40% done must SAY so ("keyword-ready · enriching
+// 40%") instead of the pre-813 unqualified "indexed", and a folder with no faithful coverage
+// denominator must NOT gain a fabricated percent.
+describe('folderStatus — per-root enrichment tier (813 §4)', () => {
+  const covered = (over: Partial<IndexedRootView> = {}): IndexedRootView =>
+    row({
+      fileCount: 312,
+      parentDocsTotal: 100,
+      parentDocsSettledEmbedding: 100,
+      parentDocsSettledSplade: 100,
+      parentDocsSettledNer: 100,
+      chunkDocsTotal: 100,
+      chunkDocsSettled: 100,
+      ...over,
+    });
+
+  it('keyword-ready: drained but coverage incomplete → "keyword-ready · enriching N%"', () => {
+    // Four applicable stages of 100 docs each, 40 settled in every one: 160/400 = 40%.
+    const fs = folderStatus(
+      covered({
+        parentDocsSettledEmbedding: 40,
+        parentDocsSettledSplade: 40,
+        parentDocsSettledNer: 40,
+        chunkDocsSettled: 40,
+      }),
+      ctx({ relativeTime: '2 minutes ago', enrichmentStages: ALL_STAGES }),
+    );
+    expect(fs.state).toBe('keyword-ready');
+    expect(fs.metaText).toBe('default · 312 files · keyword-ready · enriching 40%');
+  });
+
+  it('ready: coverage complete → "fully searchable", keeping the indexed + Verified suffixes', () => {
+    const fs = folderStatus(
+      covered(),
+      ctx({
+        relativeTime: '2 minutes ago',
+        verifiedRelativeTime: 'just now',
+        enrichmentStages: ALL_STAGES,
+      }),
+    );
+    expect(fs.state).toBe('ready');
+    expect(fs.glyph).toBe('indexed');
+    expect(fs.metaText).toBe(
+      'default · 312 files · fully searchable · indexed 2 minutes ago · Verified just now',
+    );
+  });
+
+  it('zero denominator: coverage fields absent/zero → no percent, pre-813 wording', () => {
+    const absent = folderStatus(row(), ctx({ enrichmentStages: ALL_STAGES }));
+    expect(absent.state).toBe('ready');
+    expect(absent.metaText).not.toContain('%');
+    // Explicit zeros are the "index runtime unavailable" shape (IndexedRootView: all-zero) — the
+    // same withdrawal, never "enriching 0%".
+    const zeros = folderStatus(
+      row({ parentDocsTotal: 0, chunkDocsTotal: 0, parentDocsSettledEmbedding: 0 }),
+      ctx({ enrichmentStages: ALL_STAGES }),
+    );
+    expect(zeros.state).toBe('ready');
+    expect(zeros.metaText).not.toContain('enriching');
+  });
+
+  it('applicability unknown (no snapshot yet) → no percent even with coverage on the row', () => {
+    const fs = folderStatus(covered({ parentDocsSettledSplade: 0 }), ctx({ enrichmentStages: null }));
+    expect(fs.state).toBe('ready');
+    expect(fs.metaText).not.toContain('enriching');
+  });
+
+  it('a disabled stage leaves the denominator — it cannot pin a folder below 100% forever', () => {
+    // SPLADE off with zero SPLADE-settled docs: with the stage counted the root would sit at 75%.
+    const row0 = covered({ parentDocsSettledSplade: 0 });
+    const spladeOff = folderStatus(
+      row0,
+      ctx({ enrichmentStages: { embedding: true, splade: false, ner: true } }),
+    );
+    expect(spladeOff.state).toBe('ready');
+    expect(spladeOff.metaText).toContain('fully searchable');
+    const spladeOn = folderStatus(row0, ctx({ enrichmentStages: ALL_STAGES }));
+    expect(spladeOn.state).toBe('keyword-ready');
+    expect(spladeOn.metaText).toContain('enriching 75%');
+  });
+
+  it('coverage never overrides the active/failed/unverified states (precedence unchanged)', () => {
+    const stages = ctx({ enrichmentStages: ALL_STAGES });
+    expect(folderStatus(covered({ inFlightCount: 3 }), stages).state).toBe('indexing');
+    expect(folderStatus(covered({ failedCount: 2 }), stages).state).toBe('failed');
+    expect(folderStatus(covered({ deleteDetectionUnverified: true }), stages).state).toBe(
+      'unverified',
+    );
+  });
+
+  it('999 of 1000 is NOT "fully searchable" — completeness is exact, never a rounded 100%', () => {
+    // The §8.1 false-terminal in a new costume: Math.round would report 100% with a document still
+    // pending. Completeness gates on settled >= total, and the displayed percent caps at 99.
+    const fs = folderStatus(
+      row({
+        fileCount: 1000,
+        parentDocsTotal: 1000,
+        parentDocsSettledEmbedding: 999,
+        parentDocsSettledSplade: 1000,
+        parentDocsSettledNer: 1000,
+        chunkDocsTotal: 0,
+        chunkDocsSettled: 0,
+      }),
+      ctx({ enrichmentStages: ALL_STAGES }),
+    );
+    expect(fs.state).toBe('keyword-ready');
+    expect(fs.metaText).toContain('enriching 99%');
+    expect(fs.metaText).not.toContain('fully searchable');
+  });
+
+  it('settled counts are clamped to their total — a stale count can never exceed 100%', () => {
+    const fs = folderStatus(
+      covered({ parentDocsSettledEmbedding: 500, chunkDocsSettled: 500 }),
+      ctx({ enrichmentStages: ALL_STAGES }),
+    );
+    expect(fs.state).toBe('ready');
+    expect(fs.metaText).toContain('fully searchable');
   });
 });

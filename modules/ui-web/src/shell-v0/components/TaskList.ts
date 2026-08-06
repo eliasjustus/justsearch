@@ -80,6 +80,7 @@ const NO_PROGRESS: IndexingProgress = {
   vduPending: 0,
   etaSeconds: null,
   live: false,
+  stages: { embedding: false, splade: false, ner: false },
 };
 
 export class TaskList extends JfElement {
