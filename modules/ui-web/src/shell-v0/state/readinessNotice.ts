@@ -35,8 +35,13 @@ export interface ReadinessNoticeView {
   remedy: NoticeRemedy;
 }
 
-/** The "Open Health" fallback remedy — always actionable, never wrong. */
-const OPEN_HEALTH: NoticeRemedy = {
+/**
+ * The "Open Health" fallback remedy — always actionable, never wrong.
+ *
+ * Exported for the affordance-scoped `degraded` caveat (round-14 finding 8: the info-tier caveat
+ * carried no route to the detail the warn tier already routes to), so the two cannot drift apart.
+ */
+export const OPEN_HEALTH: NoticeRemedy = {
   kind: 'navigate',
   target: 'core.health-surface',
   label: 'Open Health',
@@ -511,9 +516,27 @@ export const KEYWORD_FALLBACK_CAVEAT =
 export const PASSAGE_REDUCED_CAVEAT =
   'Passage-level precision is reduced — results are still ranked semantically';
 
-/** 805 §G.2 — the calm caveat: nothing about retrieval itself is reduced. */
+/**
+ * 805 §G.2 — the calm caveat: nothing about retrieval itself is reduced.
+ *
+ * Round-14 finding 8: the pre-fix wording ("An optional ranking model is unavailable") named NEITHER
+ * the feature nor the model, and a careful reader with full API access resolved it to the WRONG one
+ * (the cross-encoder reranker, which was measured `status: active` / `executionProvider: cuda` while
+ * the actual gap was `lambdamartModel: DEGRADED / lambdamart.not_configured`). The caveat now names
+ * the feature the `cosmetic` class is actually about — the same feature `CAUSE_ROWS`' LambdaMART rows
+ * word — so the affordance caveat and the cause list cannot be resolved to different models.
+ */
 export const OPTIONAL_CAPABILITY_CAVEAT =
-  'An optional ranking model is unavailable — results are complete, ranking may be simpler';
+  'Learned re-ranking (LambdaMART) is unavailable — results are complete, ranking may be simpler';
+
+/**
+ * Round-14 finding 8 — the AI-model-unavailable sibling. `ai-unavailable` is a different consequence
+ * class from `cosmetic` (chat/answer features are off; retrieval is untouched), so it must not borrow
+ * the learned-re-ranking wording above: naming a feature the cause is not about is the very defect
+ * finding 8 records, in the other direction. Same claim the banner's AI branch makes, at affordance scope.
+ */
+export const AI_UNAVAILABLE_CAVEAT =
+  'The local AI model is unavailable — search results are complete, chat and answers are off';
 
 const SEVERITY_RANK: Record<ReasonSeverity, number> = { info: 0, warn: 1, error: 2 };
 
@@ -641,6 +664,25 @@ export function readinessNotice(verdict: SystemHealthVerdict): ReadinessNoticeVi
     causes: wordCauses(listed),
     remedy: pickRemedy(listed),
   };
+}
+
+/**
+ * Round-14 finding 9 — does this verdict warrant the search surface's BANNER-TIER warning?
+ *
+ * The banner's chrome (alert triangle + a "Reduced search capability" headline in the same slot a
+ * genuine retrieval failure uses) is warning-tier presentation. An `info`-severity verdict is by
+ * construction a cause that leaves search fully serving — measured live as a permanent, unconfigurable
+ * optional gap holding ~25% of the space above the fold indefinitely, which trains the alarm to be
+ * ignored. So severity decides the TIER: `info`-only causes drop out of the banner and are carried by
+ * Health (which renders the same verdict's causes), while `warn`/`error` — and `unreachable`, which is
+ * not a degradation at all — keep the banner.
+ *
+ * The notice itself is unchanged: `readinessNotice` still projects the info-tier wording (Health reads
+ * it), and this predicate never *widens* what the banner shows — it can only withhold it.
+ */
+export function warrantsSearchDegradationBanner(verdict: SystemHealthVerdict): boolean {
+  if (readinessNotice(verdict) === null) return false;
+  return !(verdict.kind === 'degraded' && verdict.severity === 'info');
 }
 
 /** Word each known code; unknown codes word generically (deduped, original order). */

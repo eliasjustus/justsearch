@@ -1028,6 +1028,12 @@ export const unifiedChatBodyStyles = css`
       color: var(--text-danger);
       font-weight: 600;
     }
+    /* Round-14 finding 12(b) — the SAME figure on a run that already reported DONE: a settled fact,
+     * not an alarm. Same words, ordinary text tone (the danger colour + bold is reserved for a state
+     * the user can still act on, which is exactly when the remedies render). */
+    .activity-rail .budget-settled {
+      color: var(--text-secondary);
+    }
     /* Tempdoc 577 Ext III — posture POLICY text is grammatically + typographically distinct from
      * live status (italic secondary, never the bold status treatment). */
     .activity-rail .posture-policy {
