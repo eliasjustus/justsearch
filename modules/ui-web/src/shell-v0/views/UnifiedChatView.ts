@@ -28,7 +28,11 @@ import {
   type ShapeId,
   type ThreadMessage,
 } from './unifiedChatRequest.js';
-import { composeGridStyles, subscribeShortViewport } from '../primitives/compositionLayout.js';
+import {
+  alignToZoneStyles,
+  composeGridStyles,
+  subscribeShortViewport,
+} from '../primitives/compositionLayout.js';
 import { friendlyStreamError } from '../utils/streamError.js';
 import { composerStyles } from '../components/Composer.js';
 import '../components/Composer.js';
@@ -2241,6 +2245,24 @@ export class UnifiedChatView extends JfElement {
       containerName: 'chat-surface',
       breakpoint: '64rem',
       gap: '1.5rem',
+    }),
+    // Tempdoc 816 §5 — the docked composer, its escalation strip and the conversation column are three
+    // rows of ONE reading column. The composer is a stable DOM slot that must NEVER re-parent (the
+    // keystroke-drop race documented in renderAnswerPlane), so it cannot become a child of the zone;
+    // instead it is laid out on the SAME generated frame and its children are placed in the SAME
+    // column track. One zones authority, two consumers — not a hand-copied `max-width`.
+    // `.answer-plane > .composer` deliberately: `<jf-composer>` renders its own `div.composer` into
+    // THIS shadow root (Composer.ts createRenderRoot returns `this`), and only the outer wrapper is a
+    // direct child of the query container.
+    alignToZoneStyles(CONVERSATION_ZONES, {
+      container: '.answer-plane > .composer',
+      containerName: 'chat-surface',
+      breakpoint: '64rem',
+      // Row gap stays the composer's own tight stack (0.35rem); the COLUMN gap must equal the zone's
+      // 1.5rem or the tracks — and therefore the column — would not coincide.
+      gap: '0.35rem 1.5rem',
+      alignTo: '.conversation',
+      alignedChildren: '.answer-plane > .composer > *',
     }),
   ];
 

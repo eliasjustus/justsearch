@@ -12,6 +12,22 @@
     "captureState": { "type": "string" },
     "constraintKinds": { "type": "string", "description": "Prose summary of the constraint vocabulary an element may declare." },
     "occlusionNote": { "type": "string", "description": "Prose record of the measured defects the overlap/floor constraints were added for, including the honest residual." },
+    "rolesNote": { "type": "string", "description": "Prose record of what a ROLE is, why bounds are in content units, and the anti-vacuity rule role-bound rows inherit." },
+    "roles": {
+      "type": "object",
+      "description": "Tempdoc 816 §3/§4a.1 — the FUNCTIONAL role vocabulary. A role declares inline-axis bounds in CONTENT units (`ch`), resolved at measure time against the bound element's OWN rendered font (ui_measure.py's per-element `chPx`), so a role means the same number of characters on 11px chrome and a 16px banner. Element rows reference a role via `inlineSizeRole` instead of repeating numbers. Logical (flow-relative) naming is deliberate (§2c): role bounds follow text flow, while the physical constraint kinds (minWidthPx/maxHeightPx/…) keep their physical names because occlusion and viewport-fit are physical facts.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "why": { "type": "string", "description": "The FUNCTION that produces the bound. §3: a bound that cannot cite a function does not belong in the register." },
+          "minInlineSizeCh": { "type": "number", "minimum": 0, "description": "Functional minimum in `ch`. A role-bound row measuring below this (minus tolerancePx) is UNDER_MEASURE." },
+          "maxInlineSizeCh": { "type": "number", "minimum": 0, "description": "Functional maximum in `ch` (the reading MEASURE, the industry name — §4b). A role-bound row measuring above this (plus tolerancePx) is OVER_MEASURE." },
+          "token": { "type": "string", "description": "The CSS custom property in modules/ui-web/src/styles/tokens.css that RENDERS this role's maximum. The gate asserts the token's value equals `<maxInlineSizeCh>ch` — one authority renders AND judges (§4a.3, the catalog-verbatim pattern). Omit for a role with no rendered token." },
+          "documentational": { "type": "boolean", "description": "True for a role declared for vocabulary completeness that no element row references yet (e.g. `pane`, whose members are already covered physically by minWidthPx/minShareOfSelector rows). A documentational role is never resolved, so it needs no bound; referencing one from a row is an error." }
+        },
+        "additionalProperties": false
+      }
+    },
     "tolerancePx": {
       "type": "integer",
       "minimum": 0,
@@ -76,7 +92,9 @@
                 { "required": ["minWidthPx"] },
                 { "required": ["mustNotOverlapSelector"] },
                 { "required": ["minShareOfSelector"] },
-                { "required": ["maxBottomPx"] }
+                { "required": ["maxBottomPx"] },
+                { "required": ["maxWidthPx"] },
+                { "required": ["inlineSizeRole"] }
               ],
               "description": "An element declares at least one geometric constraint; the gate reports an element with none as an ERROR rather than a silent pass.",
               "properties": {
@@ -98,6 +116,15 @@
                   "type": "integer",
                   "minimum": 0,
                   "description": "Rendered-width FLOOR in px for primary content that chrome must not starve. A measured width below minWidthPx - tolerancePx is a starvation violation."
+                },
+                "maxWidthPx": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Tempdoc 816 — minWidthPx's symmetric CEILING: the rendered width must not exceed this (plus tolerancePx). The physical-family twin, for an element whose function-derived bound is its CONTAINER rather than a line length (a control row is intrinsic-width; §3's `control-row` max is `fit-content`, which is not expressible in `ch`). Only meaningful on a step with a pinned viewport, exactly like maxHeightPx."
+                },
+                "inlineSizeRole": {
+                  "type": "string",
+                  "description": "Tempdoc 816 §4a.2 — bind this element to a `roles` entry instead of repeating numbers. The gate resolves the role's ch bounds against the element's OWN captured `chPx`. ANTI-VACUITY: a ceiling alone would pass on a collapsed/failed render, so a role-bound row must also have a floor — either the role's `minInlineSizeCh` or the row's own `minWidthPx`; a row with neither is an ERROR."
                 },
                 "mustNotOverlapSelector": {
                   "type": "string",

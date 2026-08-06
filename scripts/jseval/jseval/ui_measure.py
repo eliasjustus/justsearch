@@ -341,6 +341,26 @@ _JS_GEOMETRY = """(extraSels) => {
         if (oy !== 'auto' && oy !== 'scroll') return false;
         return Math.round((el.scrollHeight || 0) - (el.clientHeight || 0)) > 1;
     };
+    // Tempdoc 816 §4a.1/R2 — the CONTENT-UNIT resolver: how many px is `1ch` in THIS element's own
+    // rendered font. A role's bounds are stored in `ch` (a bound follows text flow, not pixels), so the
+    // gate needs the per-element conversion to judge a captured rect against them — the same token is a
+    // different pixel count on 11px chip chrome and a 16px banner, which is the point.
+    //
+    // ROUTE: canvas `measureText('0')` over a font string composed from the computed longhands, NOT a
+    // DOM probe span. `ch` IS the advance measure of the "0" glyph, so this is the definition rather
+    // than an approximation; the shorthand `cs.font` is not used because Chromium returns "" for it
+    // whenever the longhands are not all consistent, and a probe ELEMENT cannot be appended inside the
+    // element that matters most here (a <textarea> takes no element children). Null when the measure
+    // comes back non-positive (no font available) — the gate then falls back to fontSize * 0.5 and
+    // says so, rather than silently judging against a wrong number.
+    const chPxOf = (el, cs) => {
+        try {
+            const ctx = (chPxOf._c || (chPxOf._c = document.createElement('canvas'))).getContext('2d');
+            ctx.font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily;
+            const w = ctx.measureText('0').width;
+            return w > 0 ? Math.round(w * 100) / 100 : null;
+        } catch (e) { return null; }
+    };
     const pick = (el) => {
         if (!el) return null;
         const r = el.getBoundingClientRect();
@@ -351,6 +371,7 @@ _JS_GEOMETRY = """(extraSels) => {
             label: el.getAttribute && el.getAttribute('aria-label') || null,
             rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
             z: cs.zIndex, fontSize: cs.fontSize, display: cs.display,
+            chPx: chPxOf(el, cs),
             scrollable: isScroller(el),
             scrollDelta: Math.round((el.scrollHeight || 0) - (el.clientHeight || 0)),
         };
