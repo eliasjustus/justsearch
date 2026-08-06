@@ -83,7 +83,14 @@ public final class LuceneRuntimeTypes {
     LUCENE,
   }
 
-  /** Filter spec for interactive file search (Worker-side). */
+  /**
+   * Filter spec for interactive file search (Worker-side).
+   *
+   * <p>Implements the generated {@code With} interface (tempdoc 811 D-2) so a caller that needs to
+   * override ONE component copies the rest by construction: {@code f.withIncludeChunks(false)}.
+   * Hand-rolled rebuilds silently dropped {@code collection} and {@code docIds} — an explicit scope
+   * vanished on the RAG path — and would drop the next component added here just as silently.
+   */
   @RecordBuilder
   public record RuntimeSearchFilters(
       List<String> mime,
@@ -104,7 +111,8 @@ public final class LuceneRuntimeTypes {
       Long metaPublishedToMs,
       List<String> docIds,
       // Tempdoc 585 §D Phase 4 (D4b) — scope to Lucene collection tag(s) (e.g. "agent-history").
-      List<String> collection) {}
+      List<String> collection)
+      implements LuceneRuntimeTypesRuntimeSearchFiltersBuilder.With {}
 
   // ==========================================================================
   // Search Results
