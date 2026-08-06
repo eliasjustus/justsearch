@@ -493,13 +493,18 @@ export const unifiedChatBodyStyles = css`
       background: var(--accent-tint);
       color: var(--accent-on-tint);
     }
-    /* Tempdoc 577 §2.14 Root I (#19) — the ambient turn-boundary timestamp under the user turn. */
+    /* Tempdoc 577 §2.14 Root I (#19) — the ambient turn-boundary timestamp under the user turn.
+       814 review pass: it is INSIDE .message.user, which paints --accent-tint, so the
+       surface-calibrated --text-secondary was the wrong token — measured 1.27:1 (axe
+       color-contrast, faded secondary text over the accent tint) the moment a capture first
+       rendered a record-path user turn. The bubble's own foreground token is the one
+       calibrated against this background; recession comes from size alone, not from fading
+       the text into the tint. */
     .turn-time {
       display: block;
       margin-top: 0.2rem;
       font-size: var(--font-size-xs);
-      color: var(--text-secondary);
-      opacity: 0.7;
+      color: var(--accent-on-tint);
       text-align: right;
     }
     /* Tempdoc 577 §2.14 Root I (#19) — the run/session boundary seam between restored history and the

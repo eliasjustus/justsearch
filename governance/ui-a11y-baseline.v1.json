@@ -98,6 +98,18 @@
       "uiShotStep": "chat-spine-single",
       "e2eViews": [],
       "knownRules": []
+    },
+    {
+      "surface": "chat",
+      "uiShotStep": "chat-spine-multi",
+      "e2eViews": [],
+      "knownRules": []
+    },
+    {
+      "surface": "chat",
+      "uiShotStep": "chat-chip-yield",
+      "e2eViews": [],
+      "knownRules": []
     }
   ]
 }

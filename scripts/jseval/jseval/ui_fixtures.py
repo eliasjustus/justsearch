@@ -120,7 +120,60 @@ VARIANTS = ("default", "empty")
 # the `chat-bands-detailed` step) is the same readiness/inference state with the captured
 # "advanced" disclosure LEFT ALONE, so the banner renders EXPANDED instead — the Detailed-mode
 # floor the D1 share assertion had no capture for. Neither is a fuzzer axis (see the note above).
-_DEGRADED_VARIANTS = frozenset({"degraded", "degraded-detailed"})
+# `degraded-thread` (tempdoc 814 review pass, the `chat-spine-multi` step) is the same
+# readiness/inference/disclosure state as `degraded` PLUS a canonical thread RECORD with two
+# user turns — the state `spineItems()` needs and the only fixture-reachable way to reach it
+# (see `_thread_body`).
+_DEGRADED_VARIANTS = frozenset({"degraded", "degraded-detailed", "degraded-thread"})
+
+# The per-tab pointer UnifiedChatView reads on connect (`readLastViewedConversation`,
+# controllers/lastViewedConversation.ts KEY) — seeding it is what makes a COLD chat surface
+# auto-load the fixture conversation below instead of landing on an empty thread.
+_FIXTURE_CONVERSATION_ID = "fixture-multi-turn-conversation"
+THREAD_POINTER_SEED = (
+    "try { sessionStorage.setItem('justsearch.lastViewedConversation.v1', "
+    f"'{_FIXTURE_CONVERSATION_ID}'); }} catch (e) {{}}"
+)
+
+
+def _thread_body() -> str:
+    """The `GET /api/thread/{id}` record for the `degraded-thread` variant (tempdoc 814
+    review pass): TWO user turns and their answers, in the wire shape
+    `views/unifiedThreadClient.ts` validates (`conversationId` + `events[]` of
+    `{id, occurredAt, kind, originator, content, attributes}` with `kind` in
+    KNOWN_EVENT_KINDS).
+
+    WHY A RECORD AND NOT TWO SUBMITS: `spineItems()` reads `mergedTimeline()`, which is built
+    from the canonical RECORD (`projectUnifiedThread(this.unifiedEvents)`) plus the live agent
+    overlay — NOT from `this.thread`, the plain ask-turn array. So submitting asks under
+    `--fixtures` (which is all the stubbed SSE allows) can never move the spine's turn count,
+    however many turns land: measured — two rendered `.message.user` bubbles, `affordance:
+    'agent'`, `wideZone: true`, and still zero `.run-spine`, because the record was empty.
+    Two turns is exactly `spineItems()`'s `turns < 2` floor (UnifiedChatView.ts ~3163).
+    Content is inert prose; no evidence/sources, so nothing else in the view changes shape."""
+    def _event(idx: int, kind: str, originator: str, content: str) -> dict:
+        return {
+            "id": f"evt-{idx}",
+            # Fixed timestamps keep the capture byte-stable (the projection sorts on them).
+            "occurredAt": f"2026-08-06T10:0{idx}:00Z",
+            "kind": kind,
+            "originator": originator,
+            "content": content,
+            "attributes": {},
+        }
+
+    return json.dumps({
+        "conversationId": _FIXTURE_CONVERSATION_ID,
+        "events": [
+            _event(1, "USER_MESSAGE", "user", "What is this file about?"),
+            _event(2, "ASSISTANT_MESSAGE", "assistant",
+                   "It describes how the indexing pipeline hands results to the head process."),
+            _event(3, "USER_MESSAGE", "user", "And how does indexing reach it?"),
+            _event(4, "ASSISTANT_MESSAGE", "assistant",
+                   "The worker enriches each document, then the head projects the result set."),
+        ],
+        "lifecycles": [],
+    })
 
 
 def _search_body(variant: str) -> str:
@@ -249,7 +302,7 @@ def _settings_body(variant: str) -> str:
     step gets the EXPANDED banner (`forcedExpanded = isAdvancedMode() && !this.shortZone`) — the
     Detailed-mode height floor that had no registered ceiling. This one function is the ONLY knob
     separating the two degraded variants."""
-    if variant == "degraded":
+    if variant in ("degraded", "degraded-thread"):
         d = json.loads(_BODY_SETTINGS)
         d["ui"]["mode"] = "simple"
         return json.dumps(d)
@@ -267,6 +320,8 @@ def fixture_body(url: str, variant: str = "default") -> str:
         return _settings_body(variant)
     if "/api/knowledge/search" in url:
         return _search_body(variant)
+    if "/api/thread/" in url and variant == "degraded-thread":
+        return _thread_body()
     for needle, body in _ROUTES:
         if needle in url:
             return body
@@ -280,6 +335,10 @@ async def install_fixtures(ctx, variant: str = "default") -> None:
     'empty') and `_status_body` (readiness state, 'degraded' — tempdoc 697) both key off
     the same ``variant`` string. Call once on a fresh context, before `new_page`."""
     await ctx.add_init_script(WALKTHROUGH_SEED)
+    # Variant-gated: only `degraded-thread` wants a cold chat surface to auto-restore the
+    # fixture conversation (`_thread_body`), so no other step's boot changes.
+    if variant == "degraded-thread":
+        await ctx.add_init_script(THREAD_POINTER_SEED)
 
     async def _handler(route):
         req = route.request

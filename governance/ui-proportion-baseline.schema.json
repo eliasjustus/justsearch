@@ -25,6 +25,7 @@
         "required": ["uiShotStep", "elements"],
         "properties": {
           "uiShotStep": { "type": "string", "description": "The jseval ui-shot step name this registration is captured under." },
+          "$comment": { "type": "string", "description": "Why this step's rows exist / what state they are measured in — the reasoning that would otherwise live only in a commit message." },
           "tolerancePx": {
             "type": "integer",
             "minimum": 0,
@@ -49,6 +50,16 @@
             "items": { "type": "string" },
             "description": "Tempdoc 814 D7.2 — selectors that must NOT be present in the captured geometry (e.g. the run-spine on a single-turn conversation). A present selector is a PRESENT_BUT_SHOULD_BE_ABSENT violation. Unioned into ui_measure.py's geometry probe like `selector`/`mustNotOverlapSelector`."
           },
+          "requiredSelectors": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Tempdoc 814 D7.2 — absentSelectors' positive twin (the spine PAIR): selectors that MUST be present in the captured geometry (e.g. the run-spine on a multi-turn agent run). An absent selector is a MISSING_REQUIRED violation. Declared on the STEP, not as an element row, because the assertion is presence itself — an element row with no size constraint is an error by design. Unioned into ui_measure.py's geometry probe."
+          },
+          "forbiddenVisibleText": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Tempdoc 814 D5 (review pass) — literal phrases that must not render VISIBLY in this step's capture; count > 0 is a FORBIDDEN_TEXT_VISIBLE violation. Counted by the same visibility-filtered statusFacts probe the status-facts register feeds, but STEP-scoped with a ceiling of 0. Its case: the chip-yield duplication is cross-wording (banner 'Semantic search degraded.' vs. chip 'Service degraded'), which a same-phrase counter cannot witness — what a capture CAN decide is that the banner-owning surface does not also show the chip's wording."
+          },
           "elements": {
             "type": "array",
             "items": {
@@ -56,6 +67,7 @@
               "required": ["selector"],
               "anyOf": [
                 { "required": ["maxHeightPx"] },
+                { "required": ["minHeightPx"] },
                 { "required": ["minWidthPx"] },
                 { "required": ["mustNotOverlapSelector"] },
                 { "required": ["minShareOfSelector"] },
@@ -71,6 +83,11 @@
                   "type": "integer",
                   "minimum": 0,
                   "description": "Recorded rendered-height ceiling in px. A measured height above maxHeightPx + tolerancePx is a growth violation."
+                },
+                "minHeightPx": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Tempdoc 814 (review pass) — the ceiling's anti-vacuity FLOOR companion. A maxHeightPx alone is satisfied by an element that COLLAPSED (the Detailed banner's 176px ceiling passes at 34px, exactly when Detailed expansion regressed to the collapsed pill), so a band registered because it EXPANDS declares both bounds. A measured height below minHeightPx - tolerancePx is an UNDER_MIN_HEIGHT violation."
                 },
                 "minWidthPx": {
                   "type": "integer",

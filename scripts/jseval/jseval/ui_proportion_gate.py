@@ -16,6 +16,13 @@ checks (not per-element) round out tempdoc 814's D7 enforcement list.
 
   ``maxHeightPx``            697's original shrink-only ratchet — persistent chrome must
                              not GROW. Shrinking is always clean.
+  ``minHeightPx``            the CEILING's floor companion (814 review pass). A ceiling
+                             alone is satisfied by an element that COLLAPSED: the Detailed
+                             banner's 176px ceiling passes at 34px, i.e. exactly when
+                             Detailed expansion has regressed to the collapsed pill and the
+                             row is measuring the wrong element. A band whose whole point is
+                             that it EXPANDS declares both bounds. (Same anti-vacuity move
+                             as `minScrollableRegions` next to `maxScrollableRegions`.)
   ``minWidthPx``             a FLOOR for primary content — the surface that must not be
                              starved by the chrome around it. Added for the round-7
                              defect where the RAG answer column collapsed to ~one word
@@ -63,6 +70,23 @@ Step-level (not per-element; declared alongside ``elements`` on the step object)
                              A present selector is a violation, not a silent pass —
                              mirrors the "declaring none is an error" discipline for the
                              positive case.
+  ``requiredSelectors``      `absentSelectors`' positive twin (814 §D7.2's spine PAIR):
+                             a selector that MUST be present in the captured geometry.
+                             Registered on the step, not as an element row, because the
+                             assertion is presence itself — the step declares no budget for
+                             it, and an element row with no constraint is an error by
+                             design.
+  ``forbiddenVisibleText``   a literal phrase that must not render VISIBLY in this step's
+                             capture (814 §D5's chip-yield witness). Counted by the same
+                             visibility-filtered `ui_measure.py` probe the status-facts
+                             register feeds — the difference is scope: a status fact is
+                             register-wide with a `maxPersistentRenders` ceiling, a
+                             forbidden phrase is THIS step's state with a ceiling of 0.
+                             It exists because the D5 chip-yield is a CROSS-WORDING
+                             duplication (banner "Semantic search degraded." vs. chip
+                             "Service degraded") that a same-phrase counter cannot witness:
+                             what is decidable at capture time is that the surface owning
+                             the banner does not ALSO show the chip's wording.
 """
 from __future__ import annotations
 
@@ -165,6 +189,7 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
 
     Violations, one row per declared constraint:
       - ``GROWN``                       — ``rect.h > maxHeightPx + tolerancePx``
+      - ``UNDER_MIN_HEIGHT``            — ``rect.h < minHeightPx - tolerancePx``
       - ``STARVED``                     — ``rect.w < minWidthPx - tolerancePx``
       - ``OVERLAPS``                    — the element's rect intersects
                                            ``mustNotOverlapSelector``'s rect
@@ -175,6 +200,9 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
       - ``DUPLICATE_STATUS_FACT``       — a status-facts phrase's count exceeds its
                                            registered ``maxPersistentRenders``
       - ``PRESENT_BUT_SHOULD_BE_ABSENT`` — an ``absentSelectors`` entry WAS captured
+      - ``MISSING_REQUIRED``            — a ``requiredSelectors`` entry was NOT captured
+      - ``FORBIDDEN_TEXT_VISIBLE``      — a ``forbiddenVisibleText`` phrase rendered
+                                           visibly (count > 0)
 
     Returns ``exit_code`` 0 = clean, 1 = a violation, 2 = capture error (including a
     registered selector missing from the captured geometry, or an element that declares
@@ -191,6 +219,8 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
         step = s.get("uiShotStep")
         elements = s.get("elements") or []
         absent_selectors = s.get("absentSelectors") or []
+        required_selectors = s.get("requiredSelectors") or []
+        forbidden_text = s.get("forbiddenVisibleText") or []
         max_scrollable = s.get("maxScrollableRegions")
         min_scrollable = s.get("minScrollableRegions")
         status_facts_singleton = bool(s.get("statusFactsSingleton"))
@@ -201,7 +231,8 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
         # hatch, not a silent miss: a step that DOES declare a step-level flag with an
         # empty `elements` array, e.g. `chat-spine-single`'s `absentSelectors`-only row,
         # still runs every check below).
-        if (not elements and not absent_selectors and max_scrollable is None
+        if (not elements and not absent_selectors and not required_selectors
+                and not forbidden_text and max_scrollable is None
                 and min_scrollable is None and not status_facts_singleton):
             continue
         res = capture_fn(step)
@@ -223,16 +254,17 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
         for el in elements:
             selector = el.get("selector")
             max_height_px = el.get("maxHeightPx")
+            min_height_px = el.get("minHeightPx")
             min_width_px = el.get("minWidthPx")
             not_overlap = el.get("mustNotOverlapSelector")
             min_share = el.get("minShareOfSelector")
             max_bottom_px = el.get("maxBottomPx")
-            if (max_height_px is None and min_width_px is None and not_overlap is None
-                    and min_share is None and max_bottom_px is None):
+            if (max_height_px is None and min_height_px is None and min_width_px is None
+                    and not_overlap is None and min_share is None and max_bottom_px is None):
                 any_error = True
                 rows.append({"step": step, "selector": selector, "status": "ERROR",
                              "error": "element declares no constraint (maxHeightPx / "
-                                      "minWidthPx / mustNotOverlapSelector / "
+                                      "minHeightPx / minWidthPx / mustNotOverlapSelector / "
                                       "minShareOfSelector / maxBottomPx)"})
                 continue
             rect = _rect_of(geo_elements, selector)
@@ -257,6 +289,26 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
                         "status": "GROWN" if grown else "ok",
                         "measuredHeight": measured_height,
                         "maxHeightPx": max_height_px,
+                        "tolerancePx": tolerance_px,
+                    })
+
+            # The ceiling's floor companion: a band registered because it EXPANDS must not
+            # silently collapse into its ceiling's comfortable interior (review pass).
+            if min_height_px is not None:
+                measured_height = rect.get("h")
+                if measured_height is None:
+                    any_error = True
+                    rows.append({"step": step, "selector": selector,
+                                 "constraint": "minHeightPx", "status": "ERROR",
+                                 "error": "captured geometry has no rect.h"})
+                else:
+                    collapsed = measured_height < min_height_px - tolerance_px
+                    any_violation = any_violation or collapsed
+                    rows.append({
+                        "step": step, "selector": selector, "constraint": "minHeightPx",
+                        "status": "UNDER_MIN_HEIGHT" if collapsed else "ok",
+                        "measuredHeight": measured_height,
+                        "minHeightPx": min_height_px,
                         "tolerancePx": tolerance_px,
                     })
 
@@ -366,6 +418,14 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
                 "status": "PRESENT_BUT_SHOULD_BE_ABSENT" if present else "ok",
             })
 
+        for sel in required_selectors:
+            present = _rect_of(geo_elements, sel) is not None
+            any_violation = any_violation or not present
+            rows.append({
+                "step": step, "selector": sel, "constraint": "requiredSelectors",
+                "status": "ok" if present else "MISSING_REQUIRED",
+            })
+
         if max_scrollable is not None:
             scrollable_count = geo.get("scrollableCount")
             if scrollable_count is None:
@@ -431,6 +491,28 @@ def evaluate(capture_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
                         "status": "DUPLICATE_STATUS_FACT" if dup else "ok",
                         "phrase": phrase, "count": count, "maxPersistentRenders": max_renders,
                     })
+
+        # The step-scoped copy assertion (814 §D5 chip-yield witness). Same probe, same
+        # `statusFacts` list — a ceiling of 0 rather than the register's per-phrase ceiling.
+        if forbidden_text:
+            captured = {f.get("phrase"): f.get("count") for f in doc.get("statusFacts") or []}
+            for phrase in forbidden_text:
+                count = captured.get(phrase)
+                if count is None:
+                    any_error = True
+                    rows.append({"step": step, "constraint": "forbiddenVisibleText",
+                                 "status": "ERROR", "phrase": phrase,
+                                 "error": "phrase missing from this capture's statusFacts "
+                                          "(ui_measure.py does not union this step's "
+                                          "forbiddenVisibleText into the probe?)"})
+                    continue
+                visible = count > 0
+                any_violation = any_violation or visible
+                rows.append({
+                    "step": step, "constraint": "forbiddenVisibleText",
+                    "status": "FORBIDDEN_TEXT_VISIBLE" if visible else "ok",
+                    "phrase": phrase, "count": count,
+                })
 
     exit_code = 2 if any_error else (1 if any_violation else 0)
     return {
